@@ -217,11 +217,18 @@ const parsesAsConfigObject = (p: string): boolean => {
   }
 };
 
-// OpenCode accepts `plugin` as a string or an array; normalize before reading.
+// V2 uses plugins; V1 accepts plugin as a string or array. Inspect both.
 const pluginEntries = (cfg: Record<string, any> | null): string[] => {
-  const plugin = cfg?.plugin;
-  const list = Array.isArray(plugin) ? plugin : typeof plugin === "string" ? [plugin] : [];
-  return list.map(String).filter(isWorkitPlugin);
+  const entries = [cfg?.plugins, cfg?.plugin].flatMap((value) =>
+    Array.isArray(value) ? value : typeof value === "string" ? [value] : [],
+  );
+  return [
+    ...new Set(
+      entries.filter(
+        (entry): entry is string => typeof entry === "string" && isWorkitPlugin(entry),
+      ),
+    ),
+  ];
 };
 
 export const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {

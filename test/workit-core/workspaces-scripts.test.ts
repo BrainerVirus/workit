@@ -298,6 +298,7 @@ test(
             name: "personal",
             glob: `${base}/personal/**`,
             vcs: { provider: "github" },
+            youtrack: { link_issues: true, baseUrl: "https://yt.example.test" },
             issues: { provider: "github", link_on_pr: true },
           },
         ],
@@ -323,8 +324,8 @@ test(
       expect(g.workspace_name).toBe("personal");
       expect(g.issues_provider).toBe("github");
       expect(g.link_on_pr).toBe(true);
-      expect(g.link_issues).toBeNull();
-      expect(g.youtrack_base_url).toBeNull();
+      expect(g.link_issues).toBe(true);
+      expect(g.youtrack_base_url).toBe("https://yt.example.test");
 
       const elsewhere = path.join(os.tmpdir(), `wf-ws-load-elsewhere-${Math.random()}`);
       mkdirSync(elsewhere, { recursive: true });
@@ -339,6 +340,49 @@ test(
   },
   { timeout: 60_000 },
 );
+
+test("YouTrack PR-body links survive both GitHub and GitLab workspace resolution", () => {
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-yt-hosts-")));
+  mkdirSync(path.join(base, "github"), { recursive: true });
+  mkdirSync(path.join(base, "gitlab"), { recursive: true });
+  const files = {
+    "vcs.json": JSON.stringify(GLOBAL_VCS),
+    "workspaces.json": JSON.stringify({
+      workspaces: [
+        {
+          name: "github",
+          glob: `${base}/github/**`,
+          vcs: { provider: "github" },
+          youtrack: { link_issues: true, baseUrl: "https://yt.example.test" },
+        },
+        {
+          name: "gitlab",
+          glob: `${base}/gitlab/**`,
+          vcs: { provider: "gitlab" },
+          youtrack: { link_issues: true, baseUrl: "https://yt.example.test" },
+        },
+      ],
+    }),
+  };
+  try {
+    for (const host of ["github", "gitlab"] as const) {
+      const root = path.join(base, host);
+      const config = withConfigFiles(files, {}, () => vcsConfig("load", root));
+      expect(config.provider).toBe(host);
+      expect(config.link_issues).toBe(true);
+      expect(config.youtrack_base_url).toBe("https://yt.example.test");
+      expect(
+        prBuildBody({
+          LINK_ISSUES: String(config.link_issues),
+          YT_BASE_URL: config.youtrack_base_url,
+          BRANCH: "feature/IRP-123-fix",
+        }),
+      ).toBe("Related to: https://yt.example.test/issue/IRP-123");
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
 
 test(
   "pr-create.sh: missing gh/glab on PATH -> structured error with official install URL",

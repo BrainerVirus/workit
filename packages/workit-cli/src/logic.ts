@@ -14,6 +14,8 @@ import {
   validateWorkspacesDocument,
   workspacesPath,
   type WorkspaceConfig,
+  type WorkspaceProfile,
+  type ReleaseTrack,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
 import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
@@ -66,6 +68,323 @@ export type ConfigInput = {
 export function collectConfigValues(input: ConfigInput, current: ToolkitConfig): ToolkitConfig {
   return mergeConfigValues(input, current);
 }
+
+/**
+ * Apply one friendly-form field to a workspace while retaining unrelated
+ * legacy/custom keys. Form field IDs are deliberately closed and never accept
+ * arbitrary property paths from terminal input.
+ */
+export type WorkspaceEditorField =
+  | "vcs.defaultTargetBranch"
+  | "vcs.account"
+  | "youtrack.baseUrl"
+  | "youtrack.link_issues"
+  | "issues.link_on_pr"
+  | "branchPolicy.developBranch"
+  | "branchPolicy.preset"
+  | "branchPolicy.allowed"
+  | "branchPolicy.protected"
+  | "branchPolicy.prefixes.feature"
+  | "branchPolicy.prefixes.bugfix"
+  | "branchPolicy.prefixes.release"
+  | "branchPolicy.prefixes.hotfix"
+  | "branchPolicy.integration"
+  | "commitPolicy.preset"
+  | "commitPolicy.pattern"
+  | "defaultProfile";
+
+export function workspaceEditorValue(
+  workspace: WorkspaceConfig,
+  field: WorkspaceEditorField,
+): string {
+  const [section, key, leaf] = field.split(".");
+  if (section === "defaultProfile") return workspace.defaultProfile ?? "";
+  if (section === "vcs") {
+    if (key === "account") return workspace.vcs?.account ?? "";
+    return workspace.vcs?.defaultTargetBranch ?? "";
+  }
+  if (section === "youtrack")
+    return key === "baseUrl"
+      ? (workspace.youtrack?.baseUrl ?? "")
+      : workspace.youtrack?.link_issues === undefined
+        ? "inherit"
+        : String(workspace.youtrack.link_issues);
+  if (section === "issues")
+    return workspace.issues?.link_on_pr === undefined
+      ? "inherit"
+      : String(workspace.issues.link_on_pr);
+  if (section === "branchPolicy") {
+    const value = workspace.branchPolicy;
+    if (key === "preset") return value?.preset ?? "inherit";
+    if (key === "allowed") return value?.allowed?.join(", ") ?? "";
+    if (key === "protected") return value?.protected?.join(", ") ?? "";
+    if (key === "developBranch") return value?.developBranch ?? "";
+    if (key === "integration") return value?.integration ?? "merge";
+    if (key === "prefixes")
+      return value?.prefixes?.[leaf as "feature" | "bugfix" | "release" | "hotfix"] ?? "";
+  }
+  if (section === "commitPolicy") {
+    if (key === "preset") return workspace.commitPolicy?.preset ?? "inherit";
+    if (key === "pattern") return workspace.commitPolicy?.pattern ?? "";
+  }
+  return "";
+}
+
+export function setWorkspaceEditorValue(
+  workspace: WorkspaceConfig,
+  field: WorkspaceEditorField,
+  value: string,
+  defaults: {
+    branchPreset?: BranchPreset;
+    commitPreset?: ToolkitConfig["commitPolicy"]["preset"];
+  } = {},
+): WorkspaceConfig {
+  const [section, key, leaf] = field.split(".");
+  const list = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (section === "defaultProfile")
+    return { ...workspace, defaultProfile: value.trim() || undefined };
+  if (section === "vcs")
+    return workspace.vcs
+      ? { ...workspace, vcs: { ...workspace.vcs, [key!]: value.trim() || undefined } }
+      : workspace;
+  if (section === "youtrack") {
+    const current = workspace.youtrack ?? {};
+    if (key === "baseUrl")
+      return { ...workspace, youtrack: { ...current, baseUrl: value.trim() || undefined } };
+    if (!value || value === "inherit") {
+      const { link_issues: _discard, ...rest } = current;
+      return { ...workspace, youtrack: Object.keys(rest).length ? rest : undefined };
+    }
+    return { ...workspace, youtrack: { ...current, link_issues: value === "true" } };
+  }
+  if (section === "issues") {
+    const current = workspace.issues ?? { provider: "github" as const };
+    if (!value || value === "inherit") {
+      const { link_on_pr: _discard, ...rest } = current;
+      return { ...workspace, issues: Object.keys(rest).length ? rest : undefined };
+    }
+    return {
+      ...workspace,
+      issues: { ...current, provider: "github", link_on_pr: value === "true" },
+    };
+  }
+  if (section === "branchPolicy") {
+    if (key === "preset" && (!value.trim() || value === "inherit")) {
+      const { branchPolicy: _discard, ...rest } = workspace;
+      return rest as WorkspaceConfig;
+    }
+    const current = workspace.branchPolicy ?? { preset: defaults.branchPreset ?? "gitflow" };
+    const branchPolicy =
+      key === "preset"
+        ? { ...current, preset: (value || "gitflow") as typeof current.preset }
+        : key === "allowed"
+          ? { ...current, allowed: list }
+          : key === "protected"
+            ? { ...current, protected: list }
+            : key === "developBranch"
+              ? { ...current, developBranch: value.trim() || undefined }
+              : key === "integration"
+                ? { ...current, integration: value === "pr" ? ("pr" as const) : ("merge" as const) }
+                : key === "prefixes"
+                  ? {
+                      ...current,
+                      prefixes: {
+                        feature: "feature/",
+                        bugfix: "bugfix/",
+                        release: "release/",
+                        hotfix: "hotfix/",
+                        ...current.prefixes,
+                        [leaf!]: value.trim(),
+                      },
+                    }
+                  : current;
+    return { ...workspace, branchPolicy };
+  }
+  if (section === "commitPolicy") {
+    if (key === "preset" && (!value.trim() || value === "inherit")) {
+      const { commitPolicy: _discard, ...rest } = workspace;
+      return rest as WorkspaceConfig;
+    }
+    const current = workspace.commitPolicy ?? { preset: defaults.commitPreset ?? "conventional" };
+    return {
+      ...workspace,
+      commitPolicy:
+        key === "pattern"
+          ? { ...current, pattern: value || undefined }
+          : { ...current, preset: value as typeof current.preset },
+    };
+  }
+  return workspace;
+}
+
+export type ProfileEditorField =
+  | "branchPolicy.preset"
+  | "branchPolicy.developBranch"
+  | "branchPolicy.allowed"
+  | "branchPolicy.protected"
+  | "branchPolicy.integration"
+  | "branchPolicy.prefixes.feature"
+  | "branchPolicy.prefixes.bugfix"
+  | "branchPolicy.prefixes.release"
+  | "branchPolicy.prefixes.hotfix"
+  | "commitPolicy.preset"
+  | "commitPolicy.pattern";
+export type TrackEditorField =
+  | "strategy"
+  | "productionBranch"
+  | "integrationBranch"
+  | "naming.feature"
+  | "naming.release"
+  | "naming.hotfix"
+  | "baseBranch"
+  | "mergeBackBranches"
+  | "pullRequestTarget"
+  | "tagNamespace"
+  | "versionSource.kind"
+  | "versionSource.path"
+  | "versionSource.field"
+  | "requiredChecks";
+
+const splitList = (value: string) =>
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+const emptyTrack = (): ReleaseTrack => ({
+  strategy: "gitflow",
+  productionBranch: "main",
+  integrationBranch: "develop",
+  naming: { feature: "feature/{name}", release: "release/{version}", hotfix: "hotfix/{name}" },
+  baseBranch: "develop",
+  mergeBackBranches: ["develop"],
+  pullRequestTarget: "develop",
+  tagNamespace: "",
+  versionSource: { kind: "git-tag" },
+  requiredChecks: [],
+});
+
+export function profileEditorValue(
+  profile: WorkspaceProfile | undefined,
+  field: ProfileEditorField,
+): string {
+  const [section, key, leaf] = field.split(".");
+  if (section === "branchPolicy") {
+    const value = profile?.branchPolicy;
+    if (key === "prefixes")
+      return value?.prefixes?.[leaf as "feature" | "bugfix" | "release" | "hotfix"] ?? "";
+    if (key === "allowed" || key === "protected") return value?.[key]?.join(", ") ?? "";
+    return String(value?.[key as "preset" | "developBranch" | "integration"] ?? "");
+  }
+  return String(profile?.commitPolicy?.[key as "preset" | "pattern"] ?? "");
+}
+
+export function setProfileEditorValue(
+  profile: WorkspaceProfile,
+  field: ProfileEditorField,
+  value: string,
+  defaults: {
+    branchPreset?: BranchPreset;
+    commitPreset?: ToolkitConfig["commitPolicy"]["preset"];
+  } = {},
+): WorkspaceProfile {
+  const [section, key, leaf] = field.split(".");
+  if (section === "branchPolicy") {
+    if (key === "preset" && (!value.trim() || value === "inherit")) {
+      const { branchPolicy: _discard, ...rest } = profile;
+      return rest;
+    }
+    const current = profile.branchPolicy ?? { preset: defaults.branchPreset ?? "gitflow" };
+    let branchPolicy: NonNullable<WorkspaceProfile["branchPolicy"]>;
+    if (key === "preset")
+      branchPolicy = { ...current, preset: (value || "gitflow") as typeof current.preset };
+    else if (key === "allowed" || key === "protected")
+      branchPolicy = { ...current, [key]: splitList(value) };
+    else if (key === "prefixes")
+      branchPolicy = {
+        ...current,
+        prefixes: {
+          feature: "feature/",
+          bugfix: "bugfix/",
+          release: "release/",
+          hotfix: "hotfix/",
+          ...current.prefixes,
+          [leaf!]: value,
+        },
+      };
+    else if (key === "developBranch")
+      branchPolicy = { ...current, developBranch: value || undefined };
+    else branchPolicy = { ...current, integration: value === "pr" ? "pr" : "merge" };
+    return { ...profile, branchPolicy };
+  }
+  const current = profile.commitPolicy ?? { preset: defaults.commitPreset ?? "conventional" };
+  if (key === "preset" && (!value.trim() || value === "inherit")) {
+    const { commitPolicy: _discard, ...rest } = profile;
+    return rest;
+  }
+  return {
+    ...profile,
+    commitPolicy:
+      key === "pattern"
+        ? { ...current, pattern: value || undefined }
+        : { ...current, preset: (value || "conventional") as typeof current.preset },
+  };
+}
+
+export function trackEditorValue(track: ReleaseTrack, field: TrackEditorField): string {
+  if (field.startsWith("naming."))
+    return track.naming[field.slice(7) as "feature" | "release" | "hotfix"];
+  if (field === "mergeBackBranches" || field === "requiredChecks") return track[field].join(", ");
+  if (field.startsWith("versionSource.")) {
+    const key = field.slice(14);
+    if (key === "kind") return track.versionSource.kind;
+    if (key === "path")
+      return track.versionSource.kind === "package-json" ? track.versionSource.path : "";
+    return track.versionSource.kind === "package-json" ? track.versionSource.field : "";
+  }
+  return String(track[field as keyof ReleaseTrack] ?? "");
+}
+
+export function setTrackEditorValue(
+  track: ReleaseTrack,
+  field: TrackEditorField,
+  value: string,
+): ReleaseTrack {
+  if (field.startsWith("naming."))
+    return { ...track, naming: { ...track.naming, [field.slice(7)]: value } };
+  if (field === "mergeBackBranches" || field === "requiredChecks")
+    return { ...track, [field]: splitList(value) };
+  if (field.startsWith("versionSource.")) {
+    const key = field.slice(14) as "kind" | "path" | "field";
+    const kind = key === "kind" ? value : track.versionSource.kind;
+    const versionSource =
+      kind === "package-json"
+        ? {
+            kind,
+            path:
+              key === "path"
+                ? value
+                : track.versionSource.kind === kind
+                  ? track.versionSource.path
+                  : "package.json",
+            field:
+              key === "field"
+                ? value
+                : track.versionSource.kind === kind
+                  ? track.versionSource.field
+                  : "version",
+          }
+        : kind === "manual"
+          ? { kind }
+          : { kind: "git-tag" as const };
+    return { ...track, versionSource } as ReleaseTrack;
+  }
+  return { ...track, [field]: value } as ReleaseTrack;
+}
+
+export const createReleaseTrack = emptyTrack;
 
 export type ProjectSetupResult = {
   gitignore: { ok: true; path: string; added: string[] } | { ok: false; error: string };

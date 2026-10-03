@@ -1,10 +1,82 @@
 # Adaptive Workit implementation plan
 
-Status: Workit 2.0.0 is published; the V2 lifecycle and trigger follow-up is
-active on `fix/opencode-v2-lifecycle-routing`. This plan follows
-[`spec.md`](./spec.md) and [`reliability-spec.md`](./reliability-spec.md).
-Keep checkpoints current so another session can resume without redoing
-discovery.
+### Complete setup and upgrade — 2026-10-03
+
+Source: [setup-spec.md](./setup-spec.md). Baseline clean `main` at `c2da781`;
+development branch `feat/complete-workit-setup`. Preserve active host pins and
+all real history/config; validate machine settings read-only.
+
+1. Independent core slice: remove tracker/hosting coupling; schema/resolver/PR
+   link regressions and exact workspace validation. No permission changes.
+2. Wizard slice depends on 1: short basic path, advanced commit/branch/tracker
+   editors, profiles/tracks, explicit inheritance and effective scope preview.
+   Reuse reducers/shared validators and revision-protected apply; test specific
+   nun checkout versus broad work and personal scopes, independent of order.
+3. Host slice: supported native installation for all four hosts; OS-aware
+   detection/all-none-manual selection, disabled absent hosts, reviewed commands
+   and sandbox verification. Depends on researched native install interfaces.
+4. Upgrade slice depends on 3: inspect/preview/apply/verify package upgrades,
+   tested versioned migrations, native automatic updates or optional pre-launch
+   wrapper. Local pins stay explicit. Add maintenance requirements to AGENTS.
+5. Integrate: focused tests per slice, full supported-Node/static/isolated pack
+   checks, atomic commits and PR CI, merge/release/manifest synchronization under
+   existing authorization. No activation of a loaded local pin during a session.
+
+Checkpoint: slice 1 complete. Shared workspace validation and VCS resolution
+accept YouTrack with either GitHub or GitLab; GitHub Issues retain their hosting
+restriction. Schema/resolver/PR-body regressions and existing specificity checks
+pass (51 focused tests). Machine config can be validated without editing it.
+Luna workers implement wizard/host setup in separate scopes; coordinator owns
+upgrade/integration. Next: complete advanced editors and isolated host installers.
+
+Checkpoint: package-directory local pins are now recognized without requiring a
+trailing slash, including installed node_modules paths. This prevents setup or
+upgrade from overlooking an existing local registration. Registration checks
+pass (27 tests / 109 assertions). Advanced wizard and native installers are in
+progress; upgrade fixtures pass (6 tests / 32 assertions). The initial full run
+identified obsolete host/tracker expectations and wizard navigation fixtures;
+update those, then rerun with source edits frozen. Active host configs/bundles
+remain untouched.
+
+Checkpoint: advanced wizard slice complete and frozen. Basic/advanced controls
+cover branch/commit rules, independent tracker/hosting, profiles/defaults and
+release tracks, with duplicate-name guards, effective-policy seeding and shared
+pure scope matching. All CLI tests pass on Node 24 (240 tests at handoff).
+Host setup covers four detected hosts, native Codex/Pi installers, Cursor npm
+staging, explicit pin preservation and V2 plural-registration doctor support.
+Native Codex/Pi installs passed in temp homes. Official Docker OpenCode 2.0.21
+registered Workit, but rejects scoped server-plugin updates; preserve/report
+unsupported rather than invoking all-plugin update. Upgrade review fixes cover
+home isolation, inventory failures, stale Cursor manifests and recoverable
+CLI package backups. Remaining: final whole-suite/static/packed checks, native
+Codex/Pi upgrade qualification, atomic commits/PR/release. No current host reload.
+
+Checkpoint: upgrade slice and local integration complete. Scoped Cursor/Codex/Pi
+updates, explicit global CLI updates, idempotent ignored-field migration,
+backup/revision checks and opt-in pre-launch ordering are implemented. OpenCode
+unsupported updates remain visible and preserve every registration. Native
+Codex/Pi refresh from 2.0.1 to 2.0.2 and Cursor npm bootstrap passed in isolated
+homes; no real host config was changed. Full frozen-source checks pass on Node
+24.20.0: 1,572 tests / 8,541 assertions, typecheck, lint, format, Knip and all
+seven isolated tarballs. Current config/bundle hashes match the restored
+published baseline below. Remaining: push atomic commits, PR CI, squash merge,
+semantic release and manifest-sync CI, then branch cleanup. Local bundle refresh
+awaits a stopped-session boundary; a user state question is pending.
+
+Recovery checkpoint: a Luna worker accidentally invoked root `bun run check`,
+which rebuilt ignored generated bundles. No real host configuration or reload
+was performed. Coordinator restored only generated dist/assets from the
+published npm 2.0.2 artifacts, preserving the accidental output under
+`/tmp/workit-runtime-restore.y52363/previous-generated`. OpenCode published bundle
+SHA256 is `290f41d7a4a423740036af6190e751d6c7f2f6bbada47fe82eca1d24a57c7a72`;
+global OpenCode config still hashes to
+`2a764f56aefcb5554f9ee47c2de04acdd71cbf603746e9e5d06703dd5eaa72cc`.
+Use direct lint/typecheck/tests and isolated candidate packing only; never root
+check/build while the checkout supplies a live host pin.
+
+Status: Workit 2.0.2 is published. This setup/upgrade slice follows
+[setup-spec.md](./setup-spec.md), alongside the existing adaptive and reliability
+contracts. Historical checkpoints below describe their original release state.
 
 ## Scope and working rules
 

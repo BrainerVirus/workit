@@ -134,13 +134,6 @@ const workspaceConfigSchema = z
   })
   .passthrough()
   .superRefine((workspace, context) => {
-    if (workspace.youtrack && workspace.vcs?.provider !== "gitlab") {
-      context.addIssue({
-        code: "custom",
-        path: ["youtrack"],
-        message: `YouTrack issue linking requires the gitlab provider, got ${workspace.vcs?.provider ?? "unset"}`,
-      });
-    }
     if (workspace.issues && workspace.vcs?.provider !== "github") {
       context.addIssue({
         code: "custom",
@@ -446,23 +439,21 @@ const selectWorkspaceMatch = <T extends { name: string; glob: string }>(
   return mostSpecific[0];
 };
 
-/** Match a cwd against the workspaces.json under an explicit config dir. */
-export const resolveWorkspaceFrom = (
+/** Shared pure workspace matcher for draft previews and disk-backed resolution. */
+export const resolveWorkspaceFromEntries = <T extends { name: string; glob: string }>(
   cwd: string,
-  dir: string,
+  entries: readonly T[],
   workspaceName?: string,
-): WorkspaceConfig | null => {
+): T | null => {
   // macOS/Windows tmpdir symlinks (/var -> /private/var): git's
   // --show-toplevel returns the realpath while config globs are usually
   // written with the logical path, so a workspace would silently stop
   // matching on macOS. Match both forms on each side — same class as the
   // docs-migration escape-guard realpath comparison; on Linux both forms
   // are identical so behavior is unchanged.
-  const result = readWorkspacesResult(dir);
-  if (result.status === "malformed" || result.status === "invalid") throw new Error(result.error);
   const targets = [cwd, realpathOf(cwd)].map((p) => p.replaceAll("\\", "/"));
-  const matches: WorkspaceConfig[] = [];
-  for (const ws of result.entries) {
+  const matches: T[] = [];
+  for (const ws of entries) {
     const glob = ws.glob.replaceAll("\\", "/");
     const canonical = canonicalGlob(glob);
     let matched = false;
@@ -478,6 +469,17 @@ export const resolveWorkspaceFrom = (
     if (matched) matches.push(ws);
   }
   return selectWorkspaceMatch(matches, cwd, workspaceName) ?? null;
+};
+
+/** Match a cwd against the workspaces.json under an explicit config dir. */
+export const resolveWorkspaceFrom = (
+  cwd: string,
+  dir: string,
+  workspaceName?: string,
+): WorkspaceConfig | null => {
+  const result = readWorkspacesResult(dir);
+  if (result.status === "malformed" || result.status === "invalid") throw new Error(result.error);
+  return resolveWorkspaceFromEntries(cwd, result.entries, workspaceName);
 };
 
 export const resolveWorkspace = (

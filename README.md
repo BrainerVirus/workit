@@ -25,27 +25,34 @@ completion; a local commit does not prove a remote push.
 ## Install
 
 Requires **Node.js 24 or newer**. The wizard detects your hosts, configures the
-OpenCode/Cursor installations you pick, and writes your global config and optional project files:
+OpenCode, Cursor, Codex and Pi installations you pick, and writes your global config and optional project files:
 
 ```bash
 npx @brainervirus/workit-cli init
 ```
 
-`workit init` is an interactive TTY wizard (locale, timezone, branch policy,
-YouTrack, VCS, workspaces, project hygiene). `workit doctor` verifies any
-install. GitHub and GitLab use `gh auth login` / `glab auth login`; Workit does
-not create or read separate VCS token files. YouTrack retains its permanent
-token. Existing VCS token files are left untouched during setup. Project setup
-defaults to No: press `n` to skip adding files when
-configuring from a parent folder containing multiple repositories. Press `y`
-only to add hygiene files and gitignore entries to the displayed directory.
-Re-running init preserves existing credentials and files; it does not remove
-templates created by an earlier install. Locale and timezone selectors keep
-the current selection until you choose another value.
+`workit init` is an interactive TTY wizard with a short basic path and optional
+advanced setup. Detected hosts are selected initially; unavailable hosts are
+disabled. Select all available, clear all, or pick individual hosts. Installation
+uses native package/plugin commands and shows the changes before applying them;
+it does not install the host applications or reload your running sessions.
 
-The platforms step always shows Codex and Pi with detection/configuration status
-and separate setup guidance. Init does not register these hosts: use the Codex
-plugin/hooks instructions below or `pi install @brainervirus/workit-pi`.
+Advanced setup edits workspace hosting and issue tracking independently, branch
+and commit policies, profiles/default profiles, and named release tracks. Narrow
+workspace globs override broader matches regardless of file order; equal-specificity
+ambiguity is reported. Choose inheritance to remove an override. Existing
+workspace choices and custom fields survive edits, including when changing the
+default tracker for new workspaces. GitHub and GitLab can both link YouTrack;
+GitHub Issues requires GitHub hosting.
+
+GitHub and GitLab use `gh auth login` / `glab auth login`; Workit does not create
+or read separate VCS token files. YouTrack retains its permanent token. Existing
+VCS token files and templates stay untouched. Project setup defaults to No:
+press `n` to skip adding files when configuring from a parent folder containing
+multiple repositories. Press `y` only to add hygiene files and gitignore entries
+to the displayed directory. Locale and timezone keep their existing selections
+until changed. `workit doctor` checks the configured installation.
+
 `workit cutover` is for migrating legacy installations.
 
 Manual setup per tool:
@@ -114,13 +121,16 @@ submission-ready for the Cursor Marketplace; it is not published there.
 <details>
 <summary><strong>Codex CLI / desktop</strong> — plugin manifest and shared MCP</summary>
 
-Register the plugin manifest and hooks per the Codex docs, pointing the
-launchers at this package:
+Select Codex in the wizard, or use its native marketplace installer:
 
 ```bash
-workit-codex-mcp    # shared-transport MCP server (reads)
-workit-codex-hook   # SessionStart / PreToolUse / subagent hooks
+codex plugin marketplace add https://github.com/BrainerVirus/workit.git
+codex plugin add workit@workflow-toolkit
 ```
+
+The marketplace references the built npm package, so installation does not depend
+on unbuilt Git checkout artifacts. The plugin includes hooks and the shared MCP
+server. Native Codex permission and sandbox settings remain authoritative.
 
 Reads run over MCP; mutations run CLI-driven because caller-unattested MCP
 cannot attest effects:
@@ -141,7 +151,7 @@ bound session and nothing else.
 Install the package alongside the Pi peer dependency (Pi 0.85.1):
 
 ```bash
-pi install @brainervirus/workit-pi             # published package
+pi install npm:@brainervirus/workit-pi         # published package
 pi install ./packages/workit-pi -l --approve   # this checkout (local development)
 ```
 
@@ -161,7 +171,11 @@ npx @brainervirus/workit-cli init
 ```
 
 ```bash
-workit init              # interactive setup wizard
+workit init              # basic / advanced setup wizard
+workit upgrade           # read-only package and config upgrade preview
+workit upgrade --apply --confirm  # apply a reviewed preview
+workit upgrade --cli --apply --confirm  # also update an existing global CLI
+workit launch pi --auto-upgrade --  # update before starting Pi
 workit doctor            # offline installation health report (--json for machines)
 workit <family> <action> [--payload <json|@file|->] [--task <id>] [--confirm] [--json]
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--json]
@@ -189,6 +203,32 @@ workit cutover rollback preview|apply <backupId> [--json] [--confirm]
 ```
 
 </details>
+
+### Upgrades
+
+`workit upgrade` checks the selected Workit registrations, queries npm, and
+previews targeted updates and supported configuration migrations. Use
+`--hosts=opencode,cursor,codex,pi` to limit the hosts. Applying requires
+`--apply --confirm`, backs up affected configuration under
+`~/.local/state/workit/upgrades/`, rejects changed configuration, and verifies
+the requested installed version. Local checkout sources and intentional version
+pins remain unchanged. OpenCode JSONC configuration requires native inspection
+before an automatic update. `--cli` updates an existing global npm CLI install (`--hosts=none` targets only the CLI); for
+an ephemeral install, run `npx @brainervirus/workit-cli@latest` instead.
+
+OpenCode 2.0.21 cannot target a server plugin with its `plugin update` command
+(verified in the official Docker image). Workit reports that limitation and
+preserves the OpenCode registration; it never falls back to updating every
+plugin or deleting caches. OpenCode package resolution remains host-owned.
+Cursor, Codex and Pi use their supported scoped update paths.
+
+Automatic updates are opt-in: `workit launch <host> --auto-upgrade -- <args>`
+updates before starting that host. Stop other instances of the selected host
+first; Workit refuses to replace loaded plugins. A registry outage starts the
+unchanged installation with a visible warning; an installation or verification
+failure stops the launch. Native startup hooks do not run competing installers.
+This does not migrate task history, change host permissions, or change package
+pins. Re-run the preview after resolving a failure rather than blindly retrying.
 
 ## What it provides
 

@@ -380,15 +380,19 @@ test("skip = no writeWorkspaces call → file untouched", () => {
   });
 });
 
-test("writeWorkspaces rejects provider/linking cross-combos", () => {
+test("writeWorkspaces keeps YouTrack independent and rejects GitHub Issues on GitLab without writing", () => {
   withConfigDir((dir) => {
-    const youtrackOnGithub = writeWorkspaces([
-      { name: "work", glob: "/w/**", vcs: { provider: "github" }, youtrack: { link_issues: true } },
-    ]);
-    expect(youtrackOnGithub.ok).toBe(false);
-    expect(youtrackOnGithub.error).toContain("youtrack");
-    expect(youtrackOnGithub.error).toContain("github");
-
+    const entries = [
+      {
+        name: "work",
+        glob: "/w/**",
+        vcs: { provider: "github" as const },
+        youtrack: { link_issues: true },
+      },
+      { name: "x", glob: "/x/**", youtrack: { link_issues: true } },
+    ];
+    expect(writeWorkspaces(entries).ok).toBe(true);
+    const before = readFileSync(wsFile(dir), "utf8");
     const issuesOnGitlab = writeWorkspaces([
       {
         name: "personal",
@@ -400,14 +404,8 @@ test("writeWorkspaces rejects provider/linking cross-combos", () => {
     expect(issuesOnGitlab.ok).toBe(false);
     expect(issuesOnGitlab.error).toContain("issues");
     expect(issuesOnGitlab.error).toContain("gitlab");
-
-    const youtrackNoVcs = writeWorkspaces([
-      { name: "x", glob: "/x/**", youtrack: { link_issues: true } },
-    ]);
-    expect(youtrackNoVcs.ok).toBe(false);
-
-    expect(existsSync(wsFile(dir))).toBe(false);
-    expect(loadWorkspaces()).toEqual([]);
+    expect(readFileSync(wsFile(dir), "utf8")).toBe(before);
+    expect(loadWorkspaces()).toEqual(entries);
   });
 });
 

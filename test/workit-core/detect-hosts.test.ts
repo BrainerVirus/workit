@@ -18,7 +18,7 @@ test("empty home detects nothing and configures nothing", () => {
   const home = tmp("wf-detect-empty-");
   const bins = tmp("wf-detect-empty-bin-");
   try {
-    const found = detectHosts({ home, env: envWith(home, bins) });
+    const found = detectHosts({ env: envWith(home, bins) });
     for (const host of ["opencode", "cursor", "codex", "pi"] as const) {
       expect(found[host], host).toEqual({ detected: false, configured: false });
     }
@@ -45,7 +45,7 @@ test("CLI on PATH detects the host without configuring it", () => {
   }
 });
 
-test("config markers detect the host; workit registrations mark configured", () => {
+test("config directories do not detect host presence; registrations mark configured", () => {
   const home = tmp("wf-detect-cfg-");
   const bins = tmp("wf-detect-cfg-bin-");
   try {
@@ -63,25 +63,24 @@ test("config markers detect the host; workit registrations mark configured", () 
     );
     mkdirSync(path.join(home, ".codex"), { recursive: true });
     mkdirSync(path.join(home, ".pi"), { recursive: true });
-    const found = detectHosts({ home, env: envWith(home, bins) });
-    expect(found.opencode).toEqual({ detected: true, configured: true });
-    expect(found.cursor).toEqual({ detected: true, configured: true });
-    // Detect-all/mark-two: codex/pi surface presence but never configured.
-    expect(found.codex).toEqual({ detected: true, configured: false });
-    expect(found.pi).toEqual({ detected: true, configured: false });
+    const found = detectHosts({ env: envWith(home, bins) });
+    expect(found.opencode).toEqual({ detected: false, configured: true });
+    expect(found.cursor).toEqual({ detected: false, configured: true });
+    expect(found.codex).toEqual({ detected: false, configured: false });
+    expect(found.pi).toEqual({ detected: false, configured: false });
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(bins, { recursive: true, force: true });
   }
 });
 
-test("cursor plugin dir alone marks cursor configured", () => {
+test("cursor plugin directory marks configured without falsely detecting Cursor", () => {
   const home = tmp("wf-detect-plug-");
   const bins = tmp("wf-detect-plug-bin-");
   try {
     mkdirSync(path.join(home, ".cursor", "plugins", "local", "workit"), { recursive: true });
     const found = detectHosts({ home, env: envWith(home, bins) });
-    expect(found.cursor).toEqual({ detected: true, configured: true });
+    expect(found.cursor).toEqual({ detected: false, configured: true });
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(bins, { recursive: true, force: true });
@@ -112,12 +111,12 @@ test("version-manager CLIs detect without a PATH entry", () => {
   }
 });
 
-test("preselectedPlatforms keeps detected wizard hosts only", () => {
+test("preselectedPlatforms includes all detected supported hosts", () => {
   const found = {
     ...emptyDetection(),
     opencode: { detected: true, configured: false },
     pi: { detected: true, configured: false },
   };
-  expect(preselectedPlatforms(found)).toEqual(["opencode"]);
+  expect(preselectedPlatforms(found)).toEqual(["opencode", "pi"]);
   expect(preselectedPlatforms(emptyDetection())).toEqual([]);
 });

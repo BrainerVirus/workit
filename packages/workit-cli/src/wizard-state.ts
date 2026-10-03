@@ -15,10 +15,16 @@ import { validateWorkspaceGlob } from "@brainervirus/workit-core/src/core/worksp
 import {
   loadWorkspaces,
   parseList,
+  setWorkspaceEditorValue,
+  setProfileEditorValue,
+  setTrackEditorValue,
+  createReleaseTrack,
   validateBaseUrl,
   validateLocale,
   validateTimezone,
   type VcsProvider,
+  type ProfileEditorField,
+  type TrackEditorField,
 } from "./logic";
 
 // Sequential in-memory wizard state machine (WZ-01-WZ-03, WZ-07, WZ-11). All
@@ -44,6 +50,10 @@ export type WizardScreen =
   | "workspaceName"
   | "workspaceGlob"
   | "workspaceProvider"
+  | "workspaceAdvanced"
+  | "workspaceAdvancedValue"
+  | "globalCommitPolicy"
+  | "globalCommitPattern"
   | "branchPolicy"
   | "branchPolicyDevelop"
   | "project"
@@ -70,6 +80,8 @@ export type SetupValues = {
   branchPreset: BranchPreset;
   branchAllowed: string;
   branchProtected: string;
+  /** Global commit convention; workspace overrides remain independent. */
+  commitPolicy: ToolkitConfig["commitPolicy"];
   /** Where issues live: YouTrack scaffolds youtrack.json, GitHub Issues links
    *  new workspaces via WorkspaceConfig.issues, GitLab Issues reads via the
    *  vcs gitlab token, none skips all three. */
@@ -95,6 +107,7 @@ export type WizardDraft = {
   cancelled: boolean;
   /** Workspace entry being added/edited; null when the add/edit flow is idle. */
   workspaceDraft: WorkspaceConfig | null;
+  workspaceEditorField?: import("./logic").WorkspaceEditorField;
   /** Index of the entry being edited; null when adding a new entry. */
   workspaceIndex: number | null;
 };
@@ -105,6 +118,11 @@ export type WizardAction =
   | { type: "set"; field: "vcsProvider"; value: string }
   | { type: "set"; field: "issueTracker"; value: string }
   | { type: "set"; field: "applyProject"; value: boolean }
+  | { type: "globalCommitOpen" }
+  | { type: "globalCommitEditPattern" }
+  | { type: "globalCommitPreset"; value: string }
+  | { type: "globalCommitPattern"; value: string }
+  | { type: "globalCommitPatternDone" }
   | { type: "set"; field: "branchPolicyDetected"; value: BranchPolicyProposal }
   | { type: "set"; field: "branchPolicy"; value: BranchPolicyProposal }
   | { type: "set"; field: "branchPolicyIntegration"; value: "pr" | "merge" }
@@ -118,10 +136,20 @@ export type WizardAction =
   | { type: "workspaceAdd" }
   | { type: "workspaceAddCurrent"; path: string }
   | { type: "workspaceEdit"; index: number }
+  | { type: "workspaceAdvancedOpen"; index: number }
   | { type: "workspaceRemove"; index: number }
   | { type: "workspaceDraftName"; value: string }
   | { type: "workspaceDraftGlob"; value: string }
   | { type: "workspaceDraftProvider"; value: string }
+  | { type: "workspaceAdvancedSelect"; field: import("./logic").WorkspaceEditorField }
+  | { type: "workspaceAdvancedSet"; field: import("./logic").WorkspaceEditorField; value: string }
+  | { type: "workspaceProfileCreate"; name: string }
+  | { type: "workspaceProfileDelete"; name: string }
+  | { type: "workspaceProfileDefault"; name: string }
+  | { type: "workspaceProfileSet"; name: string; field: ProfileEditorField; value: string }
+  | { type: "workspaceTrackCreate"; name: string }
+  | { type: "workspaceTrackDelete"; name: string }
+  | { type: "workspaceTrackSet"; name: string; field: TrackEditorField; value: string }
   | { type: "workspaceSave" }
   | { type: "branchPolicyEditDevelop" }
   | { type: "next" }
@@ -146,6 +174,10 @@ const NEXT: Record<WizardScreen, WizardScreen | null> = {
   workspaceName: "workspaceGlob",
   workspaceGlob: "workspaceProvider",
   workspaceProvider: null,
+  workspaceAdvanced: null,
+  workspaceAdvancedValue: null,
+  globalCommitPolicy: null,
+  globalCommitPattern: null,
   branchPolicy: "project",
   branchPolicyDevelop: "branchPolicy",
   project: "summary",
@@ -170,6 +202,10 @@ const PREV: Record<WizardScreen, WizardScreen | null> = {
   workspaceName: "workspaces",
   workspaceGlob: "workspaceName",
   workspaceProvider: "workspaceGlob",
+  workspaceAdvanced: "workspaces",
+  workspaceAdvancedValue: "workspaceAdvanced",
+  globalCommitPolicy: "workspaces",
+  globalCommitPattern: "globalCommitPolicy",
   branchPolicy: "workspaces",
   branchPolicyDevelop: "branchPolicy",
   project: "branchPolicy",
@@ -392,6 +428,7 @@ export function createInitialDraft(
       branchPreset: config.branchPolicy.preset,
       branchAllowed: policy.allowed.join(", "),
       branchProtected: policy.protected.join(", "),
+      commitPolicy: { ...config.commitPolicy },
       // WZ-04/CA-14: no organization-specific default base URL — empty means
       // the YouTrack integration is not selected.
       baseUrl: "",
@@ -437,35 +474,19 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
           // preview can never emit youtrack mutations for an integration the
           // user did not choose — even after walking back. Switching back keeps
           // it cleared: the URL is retyped deliberately.
-          // Retroactive strip (Task 5 advisory): any change AWAY from github
-          // strips issues linking from already-added entries and the
-          // in-progress draft, so the applied config can never link issues for
-          // a tracker that is not GitHub.
-          const stripIssues = (workspace: WorkspaceConfig): WorkspaceConfig => {
-            const rest = { ...workspace };
-            delete rest.issues;
-            return rest;
-          };
-          const needsStrip =
-            next !== "github" &&
-            (draft.values.workspaces.some((w) => w.issues !== undefined) ||
-              draft.workspaceDraft?.issues !== undefined);
           const errors = { ...draft.errors };
           delete errors.baseUrl;
           return {
             ...draft,
             errors,
-            workspaceDraft:
-              needsStrip && draft.workspaceDraft
-                ? stripIssues(draft.workspaceDraft)
-                : draft.workspaceDraft,
+            workspaceDraft: draft.workspaceDraft,
             values: {
               ...draft.values,
               issueTracker: next,
               baseUrl: next === "youtrack" ? draft.values.baseUrl : "",
-              workspaces: needsStrip
-                ? draft.values.workspaces.map(stripIssues)
-                : draft.values.workspaces,
+              // Tracker choice sets defaults for new workspaces only; existing
+              // per-workspace tracker/link settings remain independent.
+              workspaces: draft.values.workspaces,
             },
           };
         }
@@ -614,6 +635,17 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         errors: {},
       };
     }
+    case "workspaceAdvancedOpen": {
+      const entry = draft.values.workspaces[action.index];
+      if (!entry) return draft;
+      return {
+        ...draft,
+        screen: "workspaceAdvanced",
+        workspaceIndex: action.index,
+        workspaceDraft: entry.vcs ? { ...entry, vcs: { ...entry.vcs } } : { ...entry },
+        workspaceEditorField: undefined,
+      };
+    }
     case "workspaceRemove":
       return {
         ...draft,
@@ -642,10 +674,133 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
           ...base,
           // "skip" omits the section: an unconfigured provider fails closed
           // downstream instead of silently assuming a host.
-          vcs:
-            provider === "skip"
+          vcs: provider === "skip" ? undefined : { ...vcs, provider },
+        },
+      };
+    }
+    case "workspaceAdvancedSelect":
+      return { ...draft, screen: "workspaceAdvancedValue", workspaceEditorField: action.field };
+    case "workspaceAdvancedSet": {
+      if (!draft.workspaceDraft) return draft;
+      return {
+        ...draft,
+        workspaceDraft: setWorkspaceEditorValue(draft.workspaceDraft, action.field, action.value, {
+          branchPreset: draft.values.branchPreset,
+          commitPreset: draft.values.commitPolicy.preset,
+        }),
+        screen: "workspaceAdvanced",
+      };
+    }
+    case "globalCommitOpen":
+      return { ...draft, screen: "globalCommitPolicy" };
+    case "globalCommitEditPattern":
+      return { ...draft, screen: "globalCommitPattern" };
+    case "globalCommitPreset": {
+      const valid = [
+        "conventional",
+        "gitmoji",
+        "ticket-prefix",
+        "freeform",
+        "custom",
+        "auto",
+      ] as const;
+      if (!valid.includes(action.value as (typeof valid)[number])) return draft;
+      return {
+        ...draft,
+        values: {
+          ...draft.values,
+          commitPolicy: {
+            ...draft.values.commitPolicy,
+            preset: action.value as (typeof valid)[number],
+          },
+        },
+      };
+    }
+    case "globalCommitPattern":
+      return {
+        ...draft,
+        values: {
+          ...draft.values,
+          commitPolicy: { ...draft.values.commitPolicy, pattern: action.value || undefined },
+        },
+      };
+    case "globalCommitPatternDone":
+      return { ...draft, screen: "globalCommitPolicy" };
+    case "workspaceProfileCreate": {
+      const name = action.name.trim();
+      if (!draft.workspaceDraft || !name || draft.workspaceDraft.profiles?.[name]) return draft;
+      const profiles = {
+        ...draft.workspaceDraft.profiles,
+        [name]: { commitPolicy: { preset: "conventional" as const } },
+      };
+      return { ...draft, workspaceDraft: { ...draft.workspaceDraft, profiles } };
+    }
+    case "workspaceProfileDelete": {
+      if (!draft.workspaceDraft?.profiles?.[action.name]) return draft;
+      const profiles = { ...draft.workspaceDraft.profiles };
+      delete profiles[action.name];
+      return {
+        ...draft,
+        workspaceDraft: {
+          ...draft.workspaceDraft,
+          profiles,
+          defaultProfile:
+            draft.workspaceDraft.defaultProfile === action.name
               ? undefined
-              : { provider, defaultTargetBranch: vcs?.defaultTargetBranch },
+              : draft.workspaceDraft.defaultProfile,
+        },
+      };
+    }
+    case "workspaceProfileDefault": {
+      if (!draft.workspaceDraft?.profiles?.[action.name]) return draft;
+      return { ...draft, workspaceDraft: { ...draft.workspaceDraft, defaultProfile: action.name } };
+    }
+    case "workspaceProfileSet": {
+      const profile = draft.workspaceDraft?.profiles?.[action.name];
+      if (!draft.workspaceDraft || !profile) return draft;
+      return {
+        ...draft,
+        workspaceDraft: {
+          ...draft.workspaceDraft,
+          profiles: {
+            ...draft.workspaceDraft.profiles,
+            [action.name]: setProfileEditorValue(profile, action.field, action.value, {
+              branchPreset: draft.values.branchPreset,
+              commitPreset: draft.values.commitPolicy.preset,
+            }),
+          },
+        },
+      };
+    }
+    case "workspaceTrackCreate": {
+      const name = action.name.trim();
+      if (!draft.workspaceDraft || !name || draft.workspaceDraft.releaseTracks?.[name])
+        return draft;
+      return {
+        ...draft,
+        workspaceDraft: {
+          ...draft.workspaceDraft,
+          releaseTracks: { ...draft.workspaceDraft.releaseTracks, [name]: createReleaseTrack() },
+        },
+      };
+    }
+    case "workspaceTrackDelete": {
+      if (!draft.workspaceDraft?.releaseTracks?.[action.name]) return draft;
+      const releaseTracks = { ...draft.workspaceDraft.releaseTracks };
+      delete releaseTracks[action.name];
+      return { ...draft, workspaceDraft: { ...draft.workspaceDraft, releaseTracks } };
+    }
+    case "workspaceTrackSet": {
+      const track = draft.workspaceDraft?.releaseTracks?.[action.name];
+      if (!draft.workspaceDraft || !track) return draft;
+      return {
+        ...draft,
+        workspaceDraft: {
+          ...draft.workspaceDraft,
+          releaseTracks: {
+            ...draft.workspaceDraft.releaseTracks,
+            [action.name]: setTrackEditorValue(track, action.field, action.value),
+          },
         },
       };
     }

@@ -77,3 +77,60 @@ test("dev checkout Apply writes a file:// OpenCode pin", () => {
     clean(dir);
   }
 });
+
+test("setup preserves an existing explicit OpenCode package version pin", () => {
+  const home = tempDir("wk-oc-pinned-home-");
+  const dir = tempDir("wk-oc-pinned-cfg-");
+  const file = path.join(home, ".config", "opencode", "opencode.json");
+  const original = JSON.stringify({
+    plugin: ["@brainervirus/workit-opencode@2.0.1", "other-plugin"],
+  });
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, original);
+    const result = applySetupPreview(
+      buildSetupPreview(values(), { dir, cwd: dir, env: {}, home }),
+      {
+        home,
+        configDir: dir,
+        dev: repoRoot,
+        cwd: dir,
+        env: isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: dir }),
+      },
+    );
+    expect(result.ok, JSON.stringify(result.entries)).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe(original);
+  } finally {
+    clean(home);
+    clean(dir);
+  }
+});
+
+test("setup preserves an existing OpenCode v2 plugins array pin byte-for-byte", () => {
+  const home = tempDir("wk-oc-v2-pinned-home-");
+  const dir = tempDir("wk-oc-v2-pinned-cfg-");
+  const file = path.join(home, ".config", "opencode", "opencode.json");
+  const original = JSON.stringify({
+    plugins: ["@brainervirus/workit-opencode@2.0.1", "other-plugin"],
+    model: "provider/model",
+  });
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, original);
+    const result = applySetupPreview(
+      buildSetupPreview(values(), { dir, cwd: dir, env: {}, home }),
+      {
+        home,
+        configDir: dir,
+        dev: repoRoot,
+        cwd: dir,
+        env: isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: dir }),
+      },
+    );
+    expect(result.ok, JSON.stringify(result.entries)).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe(original);
+  } finally {
+    clean(home);
+    clean(dir);
+  }
+});

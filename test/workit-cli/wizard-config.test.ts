@@ -8,6 +8,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -850,7 +851,7 @@ test("github mode: new workspaces default provider github with issues linked", (
   }
 });
 
-test("walking the tracker back from github strips issues linking from added workspaces", () => {
+test("changing the global tracker preserves independent workspace issue settings", () => {
   const dir = tempDir();
   try {
     process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
@@ -860,17 +861,19 @@ test("walking the tracker back from github strips issues linking from added work
     expect(d.values.workspaces[0].issues).toEqual({ provider: "github", link_on_pr: true });
     for (const tracker of ["none", "youtrack"] as const) {
       let t = reducer(d, { type: "set", field: "issueTracker", value: tracker });
-      expect(t.values.workspaces[0].issues, tracker).toBeUndefined();
+      expect(t.values.workspaces[0].issues, tracker).toEqual({
+        provider: "github",
+        link_on_pr: true,
+      });
       expect(t.values.workspaces[0].name).toBe("proj"); // everything else intact
     }
-    // switching back to github re-links new workspaces but stays honest about
-    // existing ones (they were stripped; nothing silently re-links)
+    // Switching global tracker does not rewrite existing workspace overrides.
     const back = reducer(reducer(d, { type: "set", field: "issueTracker", value: "none" }), {
       type: "set",
       field: "issueTracker",
       value: "github",
     });
-    expect(back.values.workspaces[0].issues).toBeUndefined();
+    expect(back.values.workspaces[0].issues).toEqual({ provider: "github", link_on_pr: true });
     // no-op guard: an unchanged tracker dispatch returns the same draft object
     expect(reducer(d, { type: "set", field: "issueTracker", value: "github" })).toBe(d);
   } finally {
@@ -890,6 +893,7 @@ test("youtrack mode stays byte-identical: preview equals the legacy literal inpu
     const legacy = values({
       baseUrl: "https://yt.example.com",
       vcsProvider: "gitlab",
+      commitPolicy: { preset: "conventional" },
       workspaces: [{ name: "proj", glob: "/home/u/proj/**", vcs: { provider: "gitlab" } }],
     });
     const fromWizard = buildSetupPreview(d.values, { dir, cwd: dir, env: {} });
@@ -1089,17 +1093,28 @@ class ExitSentinel extends Error {
   }
 }
 
-// CA-07 end-to-end: runInit resolves Apply's cwd from the base path. Zero
-// platforms keeps host registrations out of the run; applyProject hygiene is
-// the observable cwd seam — the gitignore must land in the resolved basePath,
-// never in the process cwd the wizard used to silently inherit.
+// CA-07 end-to-end: runInit resolves Apply's cwd from the base path. A hermetic
+// detected OpenCode executable makes the host choice available while keeping
+// the fixture independent of the developer's installed Codex/Pi apps.
 test("runInit apply resolves its cwd from the base path, never the process cwd", async () => {
   const base = mkdtempSync(path.join(os.tmpdir(), "wk-t6-drive-"));
   const root = path.join(base, "root");
   const cwdDir = path.join(base, "cwd");
   const configDir = path.join(base, "config");
   const home = path.join(base, "home");
-  for (const dir of [root, cwdDir, configDir, home]) mkdirSync(dir, { recursive: true });
+  const bin = path.join(base, "bin");
+  for (const dir of [root, cwdDir, configDir, home, bin]) mkdirSync(dir, { recursive: true });
+  const node24Bin = process.env.PATH?.split(path.delimiter)
+    .map((entry) => path.join(entry, "node"))
+    .find(existsSync);
+  if (!node24Bin) throw new Error("Node 24 must be first on PATH for the runInit host fixture");
+  symlinkSync(node24Bin, path.join(bin, "node"));
+  const gitBin = process.env.PATH?.split(path.delimiter)
+    .map((entry) => path.join(entry, "git"))
+    .find(existsSync);
+  if (!gitBin) throw new Error("Git must be available for the runInit host fixture");
+  symlinkSync(gitBin, path.join(bin, "git"));
+  writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
   const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
   const prevDev = process.env.WORKFLOW_TOOLKIT_DEV;
@@ -1107,6 +1122,7 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
   // ~/.config/opencode on any machine (dev pointer keeps adapter resolution
   // inside the repository, so the install succeeds hermetically).
   const prevHome = process.env.HOME;
+  const prevPath = process.env.PATH;
   const prevCwd = process.cwd();
   const prevExit = process.exit;
   const prevLog = console.log;
@@ -1122,6 +1138,7 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
     process.env.WORKFLOW_TOOLKIT_DEV = REPO_ROOT;
     process.env.HOME = home;
+    process.env.PATH = bin;
     writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config()), "utf8");
     process.chdir(cwdDir);
 
@@ -1157,7 +1174,6 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     }) as typeof process.exit;
 
     const ENTER = "\r";
-    const SPACE = " ";
     const { runInit } = await import("@/packages/workit-cli/src/index");
     const flush = async (): Promise<void> => {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1166,11 +1182,9 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     const running = runInit();
     running.catch(() => {});
     await flush();
-    // empty platforms submit is blocked; select OpenCode, then straight through
-    // to Apply with the env root set (no basePath prompt appears): platforms
-    // submit, locale, timezone, preset->tracker, tracker->youtrack,
-    // youtrack->vcs, vcs->workspaces (env skips the prompt), Done->project
-    for (const key of [ENTER, SPACE, ENTER, ...Array(7).fill(ENTER), "y", "y"] as string[]) {
+    // OpenCode is preselected from the fixture executable; continue through
+    // setup with the env root set (no basePath prompt appears).
+    for (const key of [ENTER, ...Array(7).fill(ENTER), "y", "y"] as string[]) {
       process.stdin.push(key);
       await flush();
     }
@@ -1195,6 +1209,8 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     else process.env.WORKFLOW_TOOLKIT_DEV = prevDev;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
     process.chdir(prevCwd);
     process.exit = prevExit;
     console.log = prevLog;
@@ -1207,7 +1223,7 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
   }
 }, 30_000);
 
-test("platform options tag detection state; externals list wizard-external hosts", () => {
+test("platform options show all hosts and detection state without external-install guidance", () => {
   const detection: Record<HostId, HostDetection> = {
     ...emptyDetection(),
     opencode: { detected: true, configured: true },
@@ -1217,17 +1233,17 @@ test("platform options tag detection state; externals list wizard-external hosts
   expect(platformOptions(detection)).toEqual([
     { label: "OpenCode · already configured", value: "opencode" },
     { label: "Cursor · detected", value: "cursor" },
+    { label: "Codex · detected", value: "codex" },
+    { label: "Pi · unavailable", value: "pi" },
   ]);
   expect(platformOptions(emptyDetection())).toEqual([
-    { label: "OpenCode", value: "opencode" },
-    { label: "Cursor", value: "cursor" },
+    { label: "OpenCode · unavailable", value: "opencode" },
+    { label: "Cursor · unavailable", value: "cursor" },
+    { label: "Codex · unavailable", value: "codex" },
+    { label: "Pi · unavailable", value: "pi" },
   ]);
-  expect(externalHostGuidance(detection)[0]).toContain("Codex · detected — plugin/hooks setup:");
-  expect(externalHostGuidance(detection)[1]).toContain(
-    "Pi · not detected — install separately: pi install @brainervirus/workit-pi",
-  );
-  expect(externalHostGuidance(emptyDetection())).toHaveLength(2);
-  expect(externalHostGuidance(emptyDetection())[0]).toContain("Codex · not detected");
+  expect(externalHostGuidance(detection)).toEqual([]);
+  expect(externalHostGuidance(emptyDetection())).toEqual([]);
 });
 
 test("createInitialDraft seeds platforms from detection; empty by default", () => {
@@ -1237,19 +1253,18 @@ test("createInitialDraft seeds platforms from detection; empty by default", () =
   expect(createInitialDraft(config()).values.platforms).toEqual([]);
 });
 
-test("external hosts list codex and pi; preselect keeps wizard hosts only", () => {
+test("detected hosts across all four platforms are preselected", () => {
   const detection: Record<HostId, HostDetection> = {
     ...emptyDetection(),
     cursor: { detected: true, configured: false },
     codex: { detected: true, configured: false },
     pi: { detected: true, configured: false },
   };
-  expect(externalHostGuidance(detection)[0]).toContain("Codex · detected");
-  expect(externalHostGuidance(detection)[1]).toContain("Pi · detected");
+  expect(externalHostGuidance(detection)).toEqual([]);
   detection.codex.configured = true;
   detection.pi.configured = true;
   expect(externalHostGuidance(detection).every((line) => line.includes("already configured"))).toBe(
     true,
   );
-  expect(preselectedPlatforms(detection)).toEqual(["cursor"]);
+  expect(preselectedPlatforms(detection)).toEqual(["cursor", "codex", "pi"]);
 });

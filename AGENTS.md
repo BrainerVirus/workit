@@ -149,3 +149,26 @@ process around it.
 - Before any GitHub remote mutation (push, PR create/close, branch delete), verify the effective identity with `gh api user --jq .login` and, when configured, confirm it matches the target checkout's area account — `gh auth status` shows config metadata and can disagree with the credential actually used (keyring vs hosts file). Never trust the status display for this check.
 - Development OpenCode V1 and V2 sessions watch every adapter/core TypeScript source loaded from the checkout. A later source modification emits one fail-open restart warning; installed bundles with no source tree simply retain their bundle marker.
 - PR creation does not start babysitting. `babysit:true` opts into PR-ready follow-up; omission or `false` means no follow-up. PR creation and babysitting do not authorize merge or release; require an explicit delivery endpoint and host authority.
+
+
+## Setup and upgrade maintenance
+
+- Every adapter/package/config version change must keep the basic and advanced
+  wizard, native installation commands, marketplace sources, upgrade verification,
+  and README instructions current. Maintain temporary-home fixtures for all four
+  hosts and Linux/macOS/Windows command planning.
+- Keep versioned config migrations idempotent and covered by preservation and
+  repeat-application tests. Back up before applying; preserve unknown fields,
+  credential files, exact/local pins and narrower workspace overrides. Never
+  migrate task history through setup/upgrade or weaken native host permissions.
+- Prefer supported native package commands. Verify the installed package version
+  and registration, report partial failure without blind retries, and refuse to
+  replace files loaded by running hosts. Automatic upgrade belongs before host
+  startup via the explicit launch wrapper, never inside a loaded plugin hook.
+- New workspace/profile/release-track fields require friendly advanced controls
+  and inheritance/preservation tests; do not silently lose them on wizard edits.
+- When a host uses this checkout as a local pin, never run root `bun run check`
+  or root build: they replace loaded ignored bundles. Run static checks/tests
+  directly and use isolated release-candidate packaging. Build scripts accept
+  an external target directory; use it for local qualification. Record bundle
+  and config hashes before qualification and check them afterward.

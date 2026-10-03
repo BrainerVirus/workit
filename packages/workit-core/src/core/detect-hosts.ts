@@ -1,20 +1,24 @@
-// Host presence detection for the CLI setup wizard: which tools are installed
-// (CLI on PATH or home config marker — never a subprocess probe) and which of
-// the wizard-managed hosts already carry a workit registration. The configured
-// signal reuses planUninstall's installed bit so detection and uninstall can
-// never disagree; codex/pi are presence-only (their setup runs via cutover).
-import { existsSync, readdirSync } from "node:fs";
+// Host presence detection uses actual CLI executables or supported desktop app
+// locations; configuration directories alone never count as installation.
+// Existing registrations reuse uninstall planning so the two paths agree.
+import { readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { commandOnPath } from "./doctor";
 import { planUninstall, type UninstallPaths } from "./uninstall";
-
-export type HostId = "opencode" | "cursor" | "codex" | "pi";
+import {
+  findHostExecutable,
+  installedHostApp,
+  isCodexWorkitInstalled,
+  isPiWorkitInstalled,
+  type HostId,
+} from "./host-install";
+export type { HostId } from "./host-install";
 
 export type HostDetection = {
-  /** CLI on PATH or a home config marker exists. */
+  /** Host executable or supported desktop application is present. */
   detected: boolean;
-  /** A workit registration is present (opencode/cursor only; always false). */
+  /** A Workit registration is present for this host. */
   configured: boolean;
 };
 
@@ -22,15 +26,8 @@ export type DetectHostsOptions = UninstallPaths;
 
 const HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
 
-const HOME_MARKERS: Record<HostId, string[]> = {
-  opencode: [path.join(".config", "opencode")],
-  cursor: [".cursor"],
-  codex: [".codex"],
-  pi: [".pi"],
-};
-
-/** Hosts the wizard Apply path registers (codex/pi set up via cutover). */
-export const WIZARD_HOSTS: HostId[] = ["opencode", "cursor"];
+/** Hosts the setup wizard configures through their native install paths. */
+export const WIZARD_HOSTS: HostId[] = [...HOSTS];
 
 /** Detected hosts the wizard can preselect (presence ∩ wizard-managed). */
 export function preselectedPlatforms(detection: Record<HostId, HostDetection>): string[] {
@@ -51,15 +48,20 @@ export function detectHosts(options: DetectHostsOptions = {}): Record<HostId, Ho
   // Same chain as uninstall path resolution: explicit home > env.HOME > homedir.
   const home = options.home ?? env.HOME ?? os.homedir();
   // Pure reader: classifies the installed state, never writes.
-  const plan = planUninstall(options);
+  const plan = planUninstall({ ...options, home, env });
   const configuredByHost = new Map(plan.hosts.map((h) => [h.host, h.installed]));
   const found = emptyDetection();
   for (const host of HOSTS) {
     const detected =
-      cliFound(host, env, home) || HOME_MARKERS[host].some((m) => existsSync(path.join(home, m)));
+      findHostExecutable(host, { home, env }) !== null || installedHostApp(host, home, env);
     found[host] = {
       detected,
-      configured: WIZARD_HOSTS.includes(host) && (configuredByHost.get(host) ?? false),
+      configured:
+        host === "codex"
+          ? isCodexWorkitInstalled(home, env) || (configuredByHost.get(host) ?? false)
+          : host === "pi"
+            ? isPiWorkitInstalled(home, env) || (configuredByHost.get(host) ?? false)
+            : (configuredByHost.get(host) ?? false),
     };
   }
   return found;

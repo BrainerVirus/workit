@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -22,7 +22,6 @@ import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
 
 const CLEAR = "\x1b[2J\x1b[H";
 const ENTER = "\r";
-const SPACE = " ";
 // Ink's input parser emits the first two ESCs of a triple-ESC chunk as an
 // escape keypress synchronously (a leading pair can't start a CSI sequence);
 // a lone or doubled ESC is held "pending" for a 20 ms wall-clock disambiguation
@@ -79,15 +78,37 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
   const { isTTY = true, malformedConfig = false } = options;
   const base = mkdtempSync(path.join(os.tmpdir(), "workit-clean-"));
   const home = mkdtempSync(path.join(os.tmpdir(), "workit-clean-home-"));
+  const bin = path.join(base, "bin");
+  mkdirSync(bin, { recursive: true });
+  const originalPath = process.env.PATH ?? "";
+  const nodeBin = originalPath
+    .split(path.delimiter)
+    .map((entry) => path.join(entry, "node"))
+    .find(existsSync);
+  const gitBin = originalPath
+    .split(path.delimiter)
+    .map((entry) => path.join(entry, "git"))
+    .find(existsSync);
+  if (!nodeBin || !gitBin) throw new Error("Node 24 and Git must be available for this fixture");
+  symlinkSync(nodeBin, path.join(bin, "node"));
+  symlinkSync(gitBin, path.join(bin, "git"));
+  writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const configPath = path.join(base, "config");
   mkdirSync(configPath, { recursive: true });
   const prevToolkitConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
-  // Hermetic host detection: an empty HOME means no platforms are preselected,
-  // so SPACE always selects the first option instead of toggling a detected
-  // one off (CI runners detect an already-configured OpenCode).
+  // Hermetic host detection: expose one detected OpenCode binary so the wizard
+  // preselects it, while keeping every user config root inside this fixture.
   const prevHome = process.env.HOME;
+  const prevCodexHome = process.env.CODEX_HOME;
+  const prevPiDir = process.env.PI_CODING_AGENT_DIR;
+  const prevXdg = process.env.XDG_CONFIG_HOME;
   process.env.HOME = home;
+  process.env.CODEX_HOME = path.join(home, ".codex");
+  process.env.PI_CODING_AGENT_DIR = path.join(home, ".pi/agent");
+  process.env.XDG_CONFIG_HOME = path.join(home, ".config");
+  const prevPath = process.env.PATH;
+  process.env.PATH = bin;
   if (malformedConfig) writeFileSync(path.join(configPath, "config.json"), "{ not json", "utf8");
   const prevWorkspaceRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
   // Non-git resolution root keeps the branch-policy screen out of the walk.
@@ -212,6 +233,14 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
     else process.env.WORKFLOW_TOOLKIT_CONFIG = prevToolkitConfig;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
+    if (prevCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = prevCodexHome;
+    if (prevPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = prevPiDir;
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prevXdg;
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
     rmSync(home, { recursive: true, force: true });
     if (prevWorkspaceRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prevWorkspaceRoot;
@@ -243,12 +272,9 @@ function clearCount(joined: string): number {
 test("apply path: first chunk clears, exactly one post-exit clear precedes the first summary line", () =>
   retryOnce(async () => {
     const { chunks, exitCode } = await driveRunInit([
-      SPACE,
-      { waitFor: /[✔√]/ }, // selection applied — @inkjs/ui MultiSelect renders
-      // `figures.tick`, which resolves to "✔" on unicode-capable runs and
-      // "√" on the figures fallback. CI runners choose the fallback even
-      // with TTY stdout, so the gate has to accept either glyph.
-      ENTER, // platforms -> locale
+      { waitFor: "OpenCode · detected" },
+      ENTER, // accept the detected OpenCode host and enter the wizard
+      { waitFor: "Locale" },
       ENTER, // locale -> timezone
       ENTER, // timezone -> branchPreset
       ENTER, // branchPreset -> issueTracker
@@ -286,15 +312,9 @@ test("apply path: first chunk clears, exactly one post-exit clear precedes the f
 test("cancel path: still exactly two clears; exit output never sits atop stale frames", () =>
   retryOnce(async () => {
     const { chunks, exitCode } = await driveRunInit([
-      SPACE,
-      { waitFor: /[✔√]/ }, // selection applied — @inkjs/ui MultiSelect renders
-      // `figures.tick`; gate is glyph-tolerant (see apply-path note).
-      ENTER, // platforms -> locale (or any subsequent step if ENTER lands
-      // before SPACE settles — the swallowed-ENTER race). The next wait
-      // accepts any post-platforms wizard frame, not just "Locale", so
-      // ESC always fires from inside a real wizard screen.
-      { waitFor: /Step 2|Step 3|Locale|Timezone/, nudge: ENTER }, // any non-platforms
-      // wizard heading already painted (post-ENTER settled)
+      { waitFor: "OpenCode · detected" },
+      ENTER, // accept the detected OpenCode host
+      { waitFor: "Locale", nudge: ENTER },
       ESC, // cancel from the select screen
     ]);
     expect(exitCode).toBe(1);

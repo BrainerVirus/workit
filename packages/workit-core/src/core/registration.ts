@@ -31,10 +31,9 @@ export function isWorkitPlugin(value: unknown): boolean {
   const s = String(value).replaceAll("\\", "/");
   const url = s.startsWith("file://") || s.startsWith("git+file://");
   const pkgPath =
-    s.includes("/packages/workit-opencode/") ||
-    s.includes("/packages/workit-cursor/") ||
-    s.includes("/node_modules/@brainervirus/workit-opencode/") ||
-    s.includes("/node_modules/@brainervirus/workit-cursor/");
+    /\/(?:packages\/workit-(?:opencode|cursor)|node_modules\/@brainervirus\/workit-(?:opencode|cursor))(?:\/|$)/.test(
+      s,
+    );
   return (
     named(s, "workflow-toolkit") ||
     named(s, "workflow-toolkit-opencode") ||
