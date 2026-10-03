@@ -229,7 +229,7 @@ test("Given a stale leftover temp file, When gc runs, Then it is removed while f
   expect(statSync(fresh).isFile()).toBe(true);
 });
 
-const cliEntry = resolve(import.meta.dir, "../../packages/workit-cli/src/index.tsx");
+const cliEntry = resolve(import.meta.dir, "../../packages/workit-cli/src/main.ts");
 
 test("Given stale recovery copies, When `workit gc --json` runs, Then it prunes to the cap and reports the count", () => {
   const { store, task } = startedStore();

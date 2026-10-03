@@ -1075,6 +1075,7 @@ export class TaskStore {
     // One budget for the whole acquisition: a lost reclaim race retries with
     // the remaining time, never a fresh timeout.
     const deadline = Date.now() + (options.timeoutMs ?? 0);
+    let deniedWithoutHolder = 0;
     while (true) {
       try {
         return acquireFileLockSync(this.workspacePath, {
@@ -1090,6 +1091,14 @@ export class TaskStore {
           Date.now() >= deadline
         )
           throw error;
+        // A denial with no lock file is not contention but a permission
+        // problem (read-only attribute, ACL). Allow a couple of attempts for
+        // a holder that was mid-delete, then fail fast instead of burning
+        // the whole budget.
+        if (code !== "file_lock_stale" && !this.lockHolderPresent()) {
+          deniedWithoutHolder += 1;
+          if (deniedWithoutHolder >= 3) throw error;
+        } else deniedWithoutHolder = 0;
         if (code !== "file_lock_stale")
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
       }
@@ -1275,12 +1284,32 @@ export class TaskStore {
     return result;
   }
 
+  /** A lock file (or an entry Windows is still tearing down) exists. */
+  private lockHolderPresent(): boolean {
+    try {
+      fs.lstatSync(this.lockPath);
+      return true;
+    } catch (error) {
+      return (error as { code?: unknown } | null)?.code !== "ENOENT";
+    }
+  }
+
   private lockFailure(
     error: unknown,
     contention: "busy" | "recovery_required" = "busy",
   ): Result<never> {
     const value = error as { code?: unknown; message?: unknown };
     const code = typeof value?.code === "string" ? value.code : "";
+    // A sharing-class denial is contention only when someone holds the lock.
+    if (isTransientWindowsError(error) && !this.lockHolderPresent())
+      return failure(
+        "storage_error",
+        `cannot create the workspace metadata lock (${code}); no other Workit call holds it`,
+        {
+          path: this.lockPath,
+          guidance: `Check permissions and the read-only attribute on ${path.dirname(this.lockPath)}.`,
+        },
+      );
     if (
       code === "EEXIST" ||
       code === "file_lock_timeout" ||

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -373,3 +374,38 @@ test.skipIf(!localLockHost().includes("#"))(
     expect(existsSync(lockPath)).toBe(false);
   },
 );
+
+// Permission denials are not contention: with nothing holding the lock, a
+// read-only .workit must fail fast with storage_error and a permissions hint,
+// never spend the budget and report busy. Windows reports these as
+// EPERM/EACCES, so the Windows path is exercised by simulating the platform.
+const readOnlyWorkit = !(
+  process.platform === "win32" ||
+  (typeof process.getuid === "function" && process.getuid() === 0)
+);
+for (const simulateWindows of [false, true])
+  test.skipIf(!readOnlyWorkit)(
+    `Given a read-only .workit and no lock holder${simulateWindows ? " (simulated Windows)" : ""}, When a write runs, Then it fails fast with storage_error and a permissions hint`,
+    () => {
+      const { store, task } = startedStore({ lockTimeoutMs: 2_000 });
+      const workit = join(store.root, ".workit");
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      chmodSync(workit, 0o555);
+      try {
+        if (simulateWindows) Object.defineProperty(process, "platform", { value: "win32" });
+        const started = performance.now();
+        const result = store.mutateTask(task.id, task.revision, identity);
+        const elapsed = performance.now() - started;
+        Object.defineProperty(process, "platform", platform);
+        expect(result).toMatchObject({ ok: false, code: "storage_error" });
+        if (simulateWindows)
+          expect(result).toMatchObject({
+            details: { guidance: expect.stringContaining("read-only attribute") },
+          });
+        expect(elapsed).toBeLessThan(1_000);
+      } finally {
+        Object.defineProperty(process, "platform", platform);
+        chmodSync(workit, 0o755);
+      }
+    },
+  );
