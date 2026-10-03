@@ -134,13 +134,6 @@ const workspaceConfigSchema = z
   })
   .passthrough()
   .superRefine((workspace, context) => {
-    if (workspace.youtrack && workspace.vcs?.provider !== "gitlab") {
-      context.addIssue({
-        code: "custom",
-        path: ["youtrack"],
-        message: `YouTrack issue linking requires the gitlab provider, got ${workspace.vcs?.provider ?? "unset"}`,
-      });
-    }
     if (workspace.issues && workspace.vcs?.provider !== "github") {
       context.addIssue({
         code: "custom",

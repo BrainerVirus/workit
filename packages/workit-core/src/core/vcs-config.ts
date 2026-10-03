@@ -191,10 +191,8 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
       (hasWorkspacePolicy ? policyDefault : (cfg.defaultTargetBranch ?? policyDefault)) ??
       "develop",
   );
-  const linkIssues =
-    provider === "gitlab" && typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
-  const youtrackBaseUrl =
-    provider === "gitlab" && typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;
+  const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
+  const youtrackBaseUrl = typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;
   // github issues path only when BOTH providers are github (mirrors WorkspaceConfig.issues).
   let issuesProvider: string | null = null;
   let linkOnPr: boolean | null = null;

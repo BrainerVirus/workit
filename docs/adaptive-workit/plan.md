@@ -1,5 +1,34 @@
 # Adaptive Workit implementation plan
 
+### Complete setup and upgrade — 2026-10-03
+
+Source: [setup-spec.md](./setup-spec.md). Baseline clean `main` at `c2da781`;
+development branch `feat/complete-workit-setup`. Preserve active host pins and
+all real history/config; validate machine settings read-only.
+
+1. Independent core slice: remove tracker/hosting coupling; schema/resolver/PR
+   link regressions and exact workspace validation. No permission changes.
+2. Wizard slice depends on 1: short basic path, advanced commit/branch/tracker
+   editors, profiles/tracks, explicit inheritance and effective scope preview.
+   Reuse reducers/shared validators and revision-protected apply; test specific
+   nun checkout versus broad work and personal scopes, independent of order.
+3. Host slice: supported native installation for all four hosts; OS-aware
+   detection/all-none-manual selection, disabled absent hosts, reviewed commands
+   and sandbox verification. Depends on researched native install interfaces.
+4. Upgrade slice depends on 3: inspect/preview/apply/verify package upgrades,
+   tested versioned migrations, native automatic updates or optional pre-launch
+   wrapper. Local pins stay explicit. Add maintenance requirements to AGENTS.
+5. Integrate: focused tests per slice, full supported-Node/static/isolated pack
+   checks, atomic commits and PR CI, merge/release/manifest synchronization under
+   existing authorization. No activation of a loaded local pin during a session.
+
+Checkpoint: slice 1 complete. Shared workspace validation and VCS resolution
+accept YouTrack with either GitHub or GitLab; GitHub Issues retain their hosting
+restriction. Schema/resolver/PR-body regressions and existing specificity checks
+pass (51 focused tests). Machine config can be validated without editing it.
+Luna workers implement wizard/host setup in separate scopes; coordinator owns
+upgrade/integration. Next: complete advanced editors and isolated host installers.
+
 Status: Workit 2.0.0 is published; the V2 lifecycle and trigger follow-up is
 active on `fix/opencode-v2-lifecycle-routing`. This plan follows
 [`spec.md`](./spec.md) and [`reliability-spec.md`](./reliability-spec.md).

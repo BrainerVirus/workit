@@ -173,6 +173,52 @@ test("matched workspace carries vcs.provider, vcs.defaultTargetBranch, youtrack.
   });
 });
 
+test("YouTrack settings are valid with either hosting provider while GitHub Issues stay host-bound", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-tracker-hosts-"));
+  try {
+    writeWorkspaces(
+      dir,
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "github-youtrack",
+            glob: "/home/*/github/**",
+            vcs: { provider: "github" },
+            youtrack: { link_issues: true, baseUrl: "https://yt.example.test" },
+          },
+          {
+            name: "gitlab-youtrack",
+            glob: "/home/*/gitlab/**",
+            vcs: { provider: "gitlab" },
+            youtrack: { link_issues: true, baseUrl: "https://yt.example.test" },
+          },
+        ],
+      }),
+    );
+    withIsolatedConfig(dir, () => expect(readWorkspacesResult().status).toBe("valid"));
+
+    writeWorkspaces(
+      dir,
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "gitlab-github-issues",
+            glob: "/home/*/gitlab/**",
+            vcs: { provider: "gitlab" },
+            issues: { provider: "github", link_on_pr: true },
+          },
+        ],
+      }),
+    );
+    withIsolatedConfig(dir, () => {
+      expect(readWorkspacesResult().status).toBe("invalid");
+      expect(readWorkspacesResult().error).toContain("GitHub issue linking requires the github provider");
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("CA-01: resolveWorkspace maps work/personal globs to vcs + branchPolicy presets", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-ca01-"));
   const cfg = {
@@ -553,13 +599,14 @@ test("runtime VCS resolution ignores invalid unrelated workspace settings", () =
             name: "personal",
             glob: "/home/*/personal/**",
             vcs: { provider: "github" },
-            youtrack: { link_issues: true },
+            youtrack: { link_issues: true, baseUrl: "https://yt.example.test" },
           },
           {
             name: "unmatched-invalid",
             glob: "/srv/other/**",
             vcs: { provider: "github" },
-            youtrack: { link_issues: true },
+            youtrack: { link_issues: true, baseUrl: "https://yt.example.test" },
+            branchPolicy: { preset: "not-a-preset" },
           },
         ],
       }),
@@ -570,8 +617,8 @@ test("runtime VCS resolution ignores invalid unrelated workspace settings", () =
         ok: true,
         provider: "github",
         workspace_name: "personal",
-        link_issues: null,
-        youtrack_base_url: null,
+        link_issues: true,
+        youtrack_base_url: "https://yt.example.test",
       });
     });
   } finally {
