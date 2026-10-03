@@ -6,6 +6,7 @@ import { configDir, isConfigObject } from "./config";
 import {
   context as legacyContext,
   logTime as legacyLogTime,
+  meetingWorkItemText,
   parseDuration as legacyParseDuration,
   postUpdate as legacyPostUpdate,
   verifyYouTrackToken,
@@ -206,18 +207,35 @@ export async function logTimeUpdate(
 }
 
 export function normalizeContext(value: LegacyValue, mode?: string): LegacyValue {
-  if (!value || mode !== "meetings") return value;
+  if (!value || mode !== "meetings" || value.error) return value;
+  // Operations may return the legacy `{ data }` envelope; normalize inside it.
+  if (value.data && typeof value.data === "object" && !Array.isArray(value.data)) {
+    const inner = normalizeContext(value.data as Record<string, unknown>, mode);
+    return inner && inner.error
+      ? { ...value, ...inner, data: undefined }
+      : { ...value, data: inner };
+  }
   const config = value.config as Record<string, unknown> | undefined;
-  const issue = String(config?.meetingIssue || "IRPT-12");
   const { meetingIssues: _meetingIssues, ...singleMeetingConfig } = config ?? {};
   const options = Array.isArray(value.meetingOptions)
     ? (value.meetingOptions as Array<Record<string, unknown>>)
     : [];
+  // The meeting issue comes only from youtrack.json — there is no built-in one.
+  const configured = typeof config?.meetingIssue === "string" ? config.meetingIssue : "";
+  const resolved = typeof value.issueId === "string" ? value.issueId : "";
+  const firstOption = typeof options[0]?.issue === "string" ? options[0].issue : "";
+  const issue = configured || resolved || firstOption;
+  if (!issue)
+    return {
+      ...value,
+      error: "no meeting issue configured — set meetingIssue in youtrack.json",
+      requiresIssueInput: true,
+    };
   const selected = options.find((option) => option.issue === issue) ?? {
     key: "general",
     issue,
     label: issue,
-    workItemText: "Reuniones",
+    workItemText: meetingWorkItemText(config),
   };
   return {
     ...value,
@@ -225,6 +243,6 @@ export function normalizeContext(value: LegacyValue, mode?: string): LegacyValue
     meetingOptions: [selected],
     requiresMeetingChoice: false,
     issueId: issue,
-    workItemText: selected.workItemText ?? "Reuniones",
+    workItemText: meetingWorkItemText(config, selected),
   };
 }

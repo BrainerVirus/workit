@@ -34,7 +34,7 @@ workit uninstall                           # remove host registrations (keeps ~/
 workit                                     # help
 ```
 
-`workit init` guides you through: detected host selection, basic global config (locale, timezone, branch policy), optional advanced commit policy, YouTrack, VCS, workspaces (scoped hosting/tracker/branch/commit rules, profiles and release tracks), and project hygiene files. The wizard is a TTY application — `workit init` requires an interactive terminal and prints guidance (exiting nonzero) when stdin is not a TTY.
+`workit init` guides you through: detected host selection, basic global config (locale, branch policy), optional advanced commit policy, YouTrack, VCS, workspaces (scoped hosting/tracker/branch/commit rules, profiles and release tracks), and project hygiene files. The wizard is a TTY application — `workit init` requires an interactive terminal and prints guidance (exiting nonzero) when stdin is not a TTY.
 
 Authenticate GitHub or GitLab with `gh auth login` or `glab auth login` before hosting actions; Workit does not need a second provider token file. `workit action` Git/hosting payloads accept `cwd` to target any checkout while task state stays in the session directory. Non-Git directories can host tasks for OS work; YouTrack keeps its own permanent token.
 

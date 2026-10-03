@@ -233,13 +233,13 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
     JSON.stringify({
       tokenFile: tokenPath,
       baseUrl: "https://youtrack.example.test",
-      meetingIssue: "IRPT-12",
+      meetingIssue: "MEET-1",
     }),
   );
 
   withNeutralXdg(xdg, () => {
     const out = youTrackConfigLoad();
-    expect("data" in out ? out.data.meetingIssue : null).toBe("IRPT-12");
+    expect("data" in out ? out.data.meetingIssue : null).toBe("MEET-1");
   });
 });
 
@@ -323,17 +323,36 @@ test("token helper runtime output uses OpenCode-neutral descriptions", () => {
   }
 });
 
+test("Given a youtrack.json without baseUrl, When the token-create link is built, Then there is no organization default and a clear error", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-token-nobase-"));
+  const config = path.join(root, "youtrack.json");
+  writeFileSync(config, JSON.stringify({}));
+  const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
+  process.env.WORKFLOW_YOUTRACK_CONFIG = config;
+  try {
+    const output = youTrackTokenCreateUrl().data;
+    expect(output.createUrl).toBeNull();
+    expect(output.error).toContain("baseUrl missing");
+    expect(output.error).toContain(config);
+    expect(JSON.stringify(output)).not.toMatch(/youtrack\.cloud/);
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
+    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("meeting context exposes only the configured meetingIssue", () => {
   expect(
     normalizeContext(
       {
         config: {
-          meetingIssue: "IRPT-12",
-          meetingIssues: { web: { issue: "NSXFT-21" } },
+          meetingIssue: "MEET-1",
+          meetingIssues: { web: { issue: "MEET-9" } },
         },
         meetingOptions: [
-          { key: "general", issue: "IRPT-12", label: "General", workItemText: "Reuniones" },
-          { key: "web", issue: "NSXFT-21", label: "Web", workItemText: "Reuniones web" },
+          { key: "general", issue: "MEET-1", label: "General", workItemText: "Meetings" },
+          { key: "web", issue: "MEET-9", label: "Web", workItemText: "Web meetings" },
         ],
         requiresMeetingChoice: true,
         issueId: null,
@@ -341,14 +360,23 @@ test("meeting context exposes only the configured meetingIssue", () => {
       "meetings",
     ),
   ).toEqual({
-    config: { meetingIssue: "IRPT-12" },
+    config: { meetingIssue: "MEET-1" },
     meetingOptions: [
-      { key: "general", issue: "IRPT-12", label: "General", workItemText: "Reuniones" },
+      { key: "general", issue: "MEET-1", label: "General", workItemText: "Meetings" },
     ],
     requiresMeetingChoice: false,
-    issueId: "IRPT-12",
-    workItemText: "Reuniones",
+    issueId: "MEET-1",
+    workItemText: "Meetings",
   });
+});
+
+test("Given no meeting issue in youtrack.json, When meeting context is normalized, Then it asks for one instead of using a built-in issue", () => {
+  const out = normalizeContext(
+    { config: { baseUrl: "https://yt.example.test" }, meetingOptions: [], issueId: null },
+    "meetings",
+  ) as Record<string, unknown>;
+  expect(out.error).toContain("meetingIssue");
+  expect(out.requiresIssueInput).toBe(true);
 });
 
 test("bundled API failures never expose the token or authorization header", async () => {

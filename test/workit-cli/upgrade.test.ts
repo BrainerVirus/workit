@@ -19,7 +19,6 @@ const fixture = () => {
     config,
     JSON.stringify({
       locale: "en",
-      timezone: "UTC",
       trustedPaths: ["/old"],
       custom: { keep: true },
     }),
