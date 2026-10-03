@@ -7,6 +7,8 @@ import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { server as plugin } from "@/packages/workit-opencode/src/index";
 import { enforceNativeWriter } from "@/packages/workit-pi/src/tools";
 import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
+import { handleCursorHook } from "@/packages/workit-cursor/hooks/workit-hook";
+import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 
 const previousEnv = {
   config: process.env.WORKFLOW_TOOLKIT_CONFIG,
@@ -98,6 +100,32 @@ const codexDenies = (root: string, command: string): boolean => {
   return result.permissionDecision === "deny";
 };
 
+const cursorDenies = (root: string, command: string): boolean => {
+  const result = handleCursorHook({
+    hook_event_name: "beforeShellExecution",
+    conversation_id: "conversation-1",
+    workspace_roots: [root],
+    cwd: root,
+    command,
+  });
+  return result.permission === "deny";
+};
+
+const claudeDenies = (root: string, command: string): boolean => {
+  const result = dispatchHook(claudeCodeAdapter, {
+    hook_event_name: "PreToolUse",
+    session_id: "session-1",
+    cwd: root,
+    transcript_path: "/tmp/transcript.jsonl",
+    permission_mode: "default",
+    tool_name: "Bash",
+    tool_input: { command },
+    tool_use_id: "toolu_1",
+  });
+  const output = result.json.hookSpecificOutput as { permissionDecision?: string } | undefined;
+  return output?.permissionDecision === "deny";
+};
+
 test("all adapters enforce only recognized noncompliant branch targets", async () => {
   for (const hasTask of [false, true]) {
     const root = mkdtempSync(path.join(tmpdir(), "workit-parity-"));
@@ -113,6 +141,8 @@ test("all adapters enforce only recognized noncompliant branch targets", async (
         expect(await opencodeDenies(root, command), `opencode ${command}`).toBe(denied);
         expect(piDenies(root, command), `pi ${command}`).toBe(denied);
         expect(codexDenies(root, command), `codex ${command}`).toBe(denied);
+        expect(cursorDenies(root, command), `cursor ${command}`).toBe(denied);
+        expect(claudeDenies(root, command), `claude_code ${command}`).toBe(denied);
       }
       expect(codexResult(root, "git status --short")).toEqual({ hookEventName: "PreToolUse" });
     } finally {

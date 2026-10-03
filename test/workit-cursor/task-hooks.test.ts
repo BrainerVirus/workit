@@ -463,3 +463,47 @@ test("outside absolute paths pass through without writer ownership", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("given a protected main, beforeShellExecution branch creation is denied with exit 2", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-policy-"));
+  const configDir = mkdtempSync(path.join(tmpdir(), "workit-cursor-policy-config-"));
+  writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+    }),
+  );
+  const env: NodeJS.ProcessEnv = { ...process.env, WORKFLOW_TOOLKIT_CONFIG_DIR: configDir };
+  delete env.WORKFLOW_TOOLKIT_CONFIG;
+  delete env.WORKFLOW_PROFILE;
+  delete env.WORKFLOW_WORKSPACE_NAME;
+  const run = (command: string) =>
+    spawnSync(
+      process.execPath,
+      ["run", path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks/workit-hook.ts")],
+      {
+        input: JSON.stringify({
+          hook_event_name: "beforeShellExecution",
+          conversation_id: "conv-1",
+          workspace_roots: [root],
+          cwd: root,
+          command,
+        }),
+        encoding: "utf8",
+        env,
+      },
+    );
+  try {
+    const denied = run("git checkout -b main");
+    expect(denied.status).toBe(2);
+    const output = JSON.parse(denied.stdout) as { permission: string; agent_message: string };
+    expect(output.permission).toBe("deny");
+    expect(output.agent_message).toContain("protected_ref");
+    const allowed = run("git checkout -b feature/ok");
+    expect(allowed.status).toBe(0);
+    expect(JSON.parse(allowed.stdout)).toEqual({ permission: "allow" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
