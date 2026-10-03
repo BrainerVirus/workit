@@ -84,7 +84,6 @@ export function parseList(raw: string): string[] {
 export type SetupPreviewInput = {
   platforms?: string[];
   locale: string;
-  timezone: string;
   branchPreset: BranchPreset;
   branchAllowed: string;
   branchProtected: string;
@@ -143,8 +142,6 @@ export type SetupPreview = {
 const YT_OVERRIDES: { envKey: string; affects: string }[] = [
   { envKey: "WORKFLOW_YT_BASE_URL", affects: "youtrack.json baseUrl" },
   { envKey: "WORKFLOW_YT_TOKEN_FILE", affects: "youtrack.json tokenFile" },
-  { envKey: "WORKFLOW_YT_TIMEZONE", affects: "youtrack.json timezone" },
-  { envKey: "WORKFLOW_YT_MENTION", affects: "youtrack.json defaultMention" },
   { envKey: "WORKFLOW_YT_MEETING_ISSUE", affects: "youtrack.json meetingIssue" },
   { envKey: "WORKFLOW_YT_WEB_MEETING_ISSUE", affects: "youtrack.json web meeting issue" },
 ];
@@ -182,7 +179,6 @@ function youtrackDraft(values: SetupPreviewInput, tokenPath: string): Record<str
   return {
     baseUrl: values.baseUrl.replace(/\/+$/, ""),
     tokenFile: tokenPath,
-    timezone: values.timezone,
     locale: values.locale,
     tokenDefaults: {
       name: "workit",
@@ -265,7 +261,6 @@ export function buildSetupPreview(
       value: {
         locale: values.locale,
         localeOptions: current.localeOptions,
-        timezone: values.timezone,
         ...(values.commitPolicy === undefined ? {} : { commitPolicy: values.commitPolicy }),
         branchPolicy: mergePreset(
           values.branchPreset,

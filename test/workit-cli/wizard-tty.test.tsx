@@ -7,7 +7,6 @@ import {
   Wizard as WorkitWizard,
   SelectList,
   SCREEN_PLACEHOLDERS,
-  timezonePickerOptions,
 } from "../../packages/workit-cli/src/steps";
 import { renderInk } from "../shared/helpers/ink-tty";
 import { REPO_ROOT } from "../shared/helpers/packages";
@@ -63,7 +62,6 @@ async function withNonGitRoot(run: () => void | Promise<void>): Promise<void> {
 const seedConfig: ToolkitConfig = {
   locale: "en",
   localeOptions: ["en", "es-CL"],
-  timezone: "UTC",
   branchPolicy: {
     preset: "gitflow",
     allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
@@ -90,7 +88,6 @@ function draft(preset: BranchPreset): WizardDraft {
   return createInitialDraft({
     locale: "en",
     localeOptions: ["en", "es-CL"],
-    timezone: "UTC",
     branchPolicy: { preset, allowed: [], protected: [] },
     commitPolicy: { preset: "conventional" },
   });
@@ -115,7 +112,6 @@ test("next advances through the sequential screens", async () => {
     // screen is skipped in both directions here (see the D-06 tests).
     const sequence: WizardScreen[] = [
       "locale",
-      "timezone",
       "branchPreset",
       "issueTracker",
       "youtrack",
@@ -176,15 +172,11 @@ test("back reverses through screens and skips custom branch screens when not cus
 test("back from a custom-value screen returns to its parent select screen", () => {
   let d = at("gitflow", "localeOther");
   expect(reducer(d, { type: "back" }).screen).toBe("locale");
-  d = at("gitflow", "timezoneOther");
-  expect(reducer(d, { type: "back" }).screen).toBe("timezone");
 });
 
-test("pickOther opens the custom-value screen for locale and timezone", () => {
+test("pickOther opens the custom-value screen for locale", () => {
   let d = at("gitflow", "locale");
   expect(reducer(d, { type: "pickOther" }).screen).toBe("localeOther");
-  d = at("gitflow", "timezone");
-  expect(reducer(d, { type: "pickOther" }).screen).toBe("timezoneOther");
   d = at("gitflow", "vcs");
   expect(reducer(d, { type: "pickOther" }).screen).toBe("vcs");
 });
@@ -214,18 +206,11 @@ test("cancel and apply both terminate on the exit screen with the right flag", (
   expect(applied.cancelled).toBe(false);
 });
 
-test("empty locale and timezone cannot be committed from the select screens", () => {
+test("empty locale cannot be committed from the select screen", () => {
   let d = { ...at("gitflow", "locale"), values: { ...at("gitflow", "locale").values, locale: "" } };
   d = reducer(d, { type: "next" });
   expect(d.screen).toBe("locale");
   expect(d.errors.locale).toContain("locale is required");
-  d = {
-    ...at("gitflow", "timezone"),
-    values: { ...at("gitflow", "timezone").values, timezone: "" },
-  };
-  d = reducer(d, { type: "next" });
-  expect(d.screen).toBe("timezone");
-  expect(d.errors.timezone).toContain("timezone is required");
 });
 
 // ---------------------------------------------------------------------------
@@ -239,7 +224,6 @@ test("unchanged set values return the same draft object", () => {
   // message and an unchanged dispatch is a true no-op.
   let settled = draft("custom");
   settled = reducer(settled, { type: "set", field: "locale", value: "es-CL" });
-  settled = reducer(settled, { type: "set", field: "timezone", value: "America/Santiago" });
   settled = reducer(settled, { type: "set", field: "branchAllowed", value: "feature/*" });
   settled = reducer(settled, { type: "set", field: "branchProtected", value: "main" });
   settled = reducer(settled, { type: "set", field: "baseUrl", value: "https://yt.example.com" });
@@ -270,11 +254,6 @@ test("unchanged set values return the same draft object", () => {
       action: { type: "set", field: "platforms", value: ["opencode"] },
     },
     { name: "locale", state: settled, action: { type: "set", field: "locale", value: "es-CL" } },
-    {
-      name: "timezone",
-      state: settled,
-      action: { type: "set", field: "timezone", value: "America/Santiago" },
-    },
     {
       name: "branchPreset",
       state: settled,
@@ -410,9 +389,8 @@ test("exactly one input control is mounted on every screen", async () => {
       // SearchSelect owns its input handling; its display-only TextInput is
       // disabled and never subscribes, so the invariant holds unchanged
       expect(tty.inputListenerCount()).toBe(3);
-      await tty.keys(ENTER); // locale -> timezone
+      await tty.keys(ENTER); // locale -> branchPreset
       expect(tty.inputListenerCount()).toBe(3);
-      await tty.keys(ENTER); // timezone -> branchPreset
       await tty.keys(DOWN, ENTER); // github-flow -> issueTracker
       await tty.keys(ENTER); // YouTrack -> youtrack
       await tty.keys(ENTER); // youtrack -> vcs
@@ -431,7 +409,7 @@ test("exactly one input control is mounted on every screen", async () => {
   });
 });
 
-test("locale and timezone inputs are independent; revisiting shows the current value", async () => {
+test("locale goes straight to the branch policy (no timezone step); revisiting shows the current value", async () => {
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
@@ -441,16 +419,13 @@ test("locale and timezone inputs are independent; revisiting shows the current v
     expect(localeFrame).not.toContain("Timezone");
 
     await tty.keys("mx", ENTER); // search narrows to Español (México) -> commits es-MX
-    const tzFrame = tty.lastFrame();
-    expect(tzFrame).toContain("Timezone");
-    expect(tzFrame).not.toContain("es-MX");
+    const presetFrame = tty.lastFrame();
+    expect(presetFrame).toContain("Branch policy");
+    expect(presetFrame).not.toContain("Timezone");
 
-    // timezone search owns cold 'b'; clear the query to hand 'b' back to nav
-    await tty.keys("b", BACKSPACE);
     await tty.key("b"); // back -> locale
     const backFrame = tty.lastFrame();
     expect(backFrame).toContain("es-MX");
-    expect(backFrame).not.toContain("UTC");
     tty.unmount();
   } finally {
     cleanup();
@@ -470,7 +445,7 @@ test("a custom Other value is validated before advancing", async () => {
     expect(invalid).toContain("custom");
     for (let i = 0; i < "en_US".length; i++) await tty.key(BACKSPACE);
     await tty.keys("es-MX", ENTER);
-    expect(tty.lastFrame()).toContain("Timezone");
+    expect(tty.lastFrame()).toContain("Branch policy");
     tty.unmount();
   } finally {
     cleanup();
@@ -481,7 +456,7 @@ test("branch policy screen shows the resolved policy, not the raw preset", async
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(ENTER, ENTER, ENTER); // -> branchPreset
+    await tty.keys(ENTER, ENTER); // -> branchPreset
     const gitflow = tty.lastFrame();
     expect(gitflow).toContain("feature/*");
     expect(gitflow).toContain("main");
@@ -502,7 +477,7 @@ test("custom branch policy requires nonempty allowed and protected patterns", as
   });
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(ENTER, ENTER, ENTER); // -> branchPreset (custom)
+    await tty.keys(ENTER, ENTER); // -> branchPreset (custom)
     await tty.keys(ENTER); // -> branchAllowed
     expect(tty.lastFrame()).toContain("Allowed branch patterns");
     expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.branchAllowed); // CA-09 wiring
@@ -529,8 +504,7 @@ test("Back preserves the draft values entered so far", async () => {
     try {
       const tty = await renderInk(<Wizard onExit={noop} />);
       await tty.keys(ENTER); // -> locale
-      await tty.keys("mx", ENTER); // search narrows to Español (México) -> timezone
-      await tty.keys(ENTER); // -> branchPreset
+      await tty.keys("mx", ENTER); // search narrows to Español (México) -> branchPreset
       await tty.keys(DOWN, ENTER); // github-flow -> issueTracker
       await tty.keys(ENTER); // YouTrack -> youtrack
       await tty.keys(ENTER); // -> vcs
@@ -546,9 +520,7 @@ test("Back preserves the draft values entered so far", async () => {
       expect(tty.lastFrame()).toContain("Issue tracker");
       await tty.keys("b"); // back -> branchPreset (custom screens skipped)
       expect(tty.lastFrame()).toContain("GitHub Flow");
-      await tty.keys("b"); // back -> timezone
-      await tty.keys("b", BACKSPACE); // cold 'b' searches; clearing hands it back…
-      await tty.key("b"); // …then navigates back -> locale
+      await tty.keys("b"); // back -> locale
       expect(tty.lastFrame()).toContain("es-MX");
       tty.unmount();
     } finally {
@@ -566,7 +538,7 @@ test("Escape cancels without writing anything", async () => {
     const exitCalls: boolean[] = [];
     const tty = await renderInk(<Wizard onExit={(complete) => exitCalls.push(complete)} />);
     await tty.keys(ENTER); // -> locale
-    await tty.keys("mx", ENTER); // -> timezone (searched pick)
+    await tty.keys("mx", ENTER); // -> branchPreset (searched pick)
     await tty.burst(ESC); // cancel (select screen): single chunk, no pending-byte race
     expect(exitCalls).toEqual([false]);
     expect(existsSync(configPath)).toBe(false);
@@ -583,9 +555,9 @@ test("no competing Enter/provider race — one submit path per screen", async ()
     const cleanup = withSeedConfig(seedConfig);
     try {
       const tty = await renderInk(<Wizard onExit={noop} />);
-      // platforms, locale, timezone, branchPreset walks to issueTracker
+      // platforms, locale, branchPreset walks to issueTracker
       // (custom screens skipped for the gitflow seed).
-      await tty.keys(ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+      await tty.keys(ENTER, ENTER, ENTER); // -> issueTracker
       expect(tty.lastFrame()).toContain("Issue tracker");
       await tty.keys(ENTER); // issueTracker (YouTrack) -> youtrack
       expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.youtrack); // CA-09 wiring
@@ -795,7 +767,7 @@ test("project setup can be skipped after previously selecting it", async () => {
     const cleanup = withSeedConfig(seedConfig);
     const tty = await renderInk(<Wizard onExit={noop} />);
     try {
-      await tty.keys(ENTER, ENTER, ENTER, DOWN, ENTER, ENTER, ENTER, ENTER, ENTER);
+      await tty.keys(ENTER, ENTER, DOWN, ENTER, ENTER, ENTER, ENTER, ENTER);
       expect(tty.lastFrame()).toContain("Step 6 — Project setup");
       await tty.key("y");
       expect(tty.lastFrame()).toContain("Project hygiene: yes");
@@ -839,9 +811,7 @@ test("arrows move within the filtered set and Enter commits the highlighted row"
     await tty.keys(DOWN, DOWN); // highlight Español (Chile)
     expect(tty.lastFrame()).toContain("❯ Español (Chile)");
     await tty.key(ENTER);
-    expect(tty.lastFrame()).toContain("Timezone");
-    // timezone search owns cold 'b'; clear the query to hand 'b' back to nav
-    await tty.keys("b", BACKSPACE);
+    expect(tty.lastFrame()).toContain("Branch policy");
     await tty.key("b"); // back -> the select screen shows the committed value
     expect(tty.lastFrame()).toContain("Current: es-CL");
     tty.unmount();
@@ -858,7 +828,7 @@ test("'Other…' routes to the existing validated custom-locale flow (CA-03)", a
     await tty.keys("other", ENTER); // query isolates Other… -> pickOther flow
     expect(tty.lastFrame()).toContain("custom");
     await tty.keys("es-419", ENTER); // 3-digit region subtag validates via LOCALE_RE
-    expect(tty.lastFrame()).toContain("Timezone");
+    expect(tty.lastFrame()).toContain("Branch policy");
     tty.unmount();
   } finally {
     cleanup();
@@ -908,118 +878,6 @@ test("'b' starts a search instead of walking back; once cleared it navigates bac
   }
 });
 
-// ---------------------------------------------------------------------------
-// Timezone SearchSelect (Task 4): full IANA catalog with the detected host
-// zone preselected; identical consumed-'b' semantics as locale (the wizard's
-// global back handler would otherwise eat the first query character).
-// ---------------------------------------------------------------------------
-
-const detectedTz = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-
-test("the detected zone is preselected without typing", async () => {
-  const cleanup = withSeedConfig(seedConfig);
-  try {
-    const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(ENTER); // -> locale
-    await tty.keys(ENTER); // commit highlighted locale -> timezone
-    const frame = tty.lastFrame();
-    expect(frame).toContain("Timezone");
-    expect(frame).toContain("Type to filter"); // searchable picker mounted
-    expect(frame).toContain(`❯ ${detectedTz()}`); // preselected, zero typing
-    expect(frame).not.toContain("Use current"); // fixed SelectList gone
-    tty.unmount();
-  } finally {
-    cleanup();
-  }
-});
-
-test("typing narrows the timezone picker and Enter commits the searched zone", async () => {
-  const cleanup = withSeedConfig(seedConfig);
-  try {
-    const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(ENTER, ENTER); // -> timezone
-    await tty.keys("santiago");
-    const narrowed = tty.lastFrame();
-    expect(narrowed).toContain("America/Santiago");
-    expect(narrowed).not.toContain("Europe/London");
-    await tty.key(ENTER); // commit America/Santiago -> branchPreset
-    expect(tty.lastFrame()).toContain("Branch policy");
-    await tty.keys("b"); // back -> the picker shows the committed draft value
-    expect(tty.lastFrame()).toContain("Current: America/Santiago");
-    tty.unmount();
-  } finally {
-    cleanup();
-  }
-});
-
-test("revisiting the timezone picker highlights the committed draft zone, not the host zone", async () => {
-  const cleanup = withSeedConfig(seedConfig);
-  try {
-    const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(ENTER, ENTER); // -> timezone
-    // Commit the second catalog row: guaranteed inside the first window and,
-    // by construction, never the detected host zone (row 0).
-    const committed = timezonePickerOptions()[1].value;
-    await tty.keys(committed.split("/")[1].toLowerCase()); // search narrows
-    await tty.key(ENTER); // commit -> branchPreset
-    expect(tty.lastFrame()).toContain("Branch policy");
-    await tty.keys("b"); // walk back -> the picker
-    const frame = tty.lastFrame();
-    expect(frame).toContain("Current: " + committed);
-    expect(frame).toContain(`❯ ${committed}`); // highlight follows the committed value
-    expect(frame).not.toContain(`❯ ${detectedTz()}`);
-    tty.unmount();
-  } finally {
-    cleanup();
-  }
-});
-
-test("'b' starts a timezone search instead of walking back; once cleared it navigates back", async () => {
-  const cleanup = withSeedConfig(seedConfig);
-  try {
-    const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(ENTER, ENTER); // -> timezone
-    await tty.key("b"); // cold 'b' must reach the query, never walk back
-    const searching = tty.lastFrame();
-    expect(searching).toContain("Timezone"); // still the picker…
-    expect(searching).not.toContain("Locale"); // …never walked back
-    expect(searching).not.toContain("Type to search timezones…"); // live query owns the field
-    await tty.key("b"); // live query keeps consuming 'b'
-    expect(tty.lastFrame()).not.toContain("Type to search timezones…");
-    for (let i = 0; i < 2; i++) await tty.key(BACKSPACE); // clear the query
-    const restored = tty.lastFrame();
-    expect(restored).toContain("Type to search timezones…"); // full window restored…
-    expect(restored).toContain(`❯ ${detectedTz()}`); // …detected zone re-highlighted
-    await tty.key("b"); // cleared search hands 'b' back to navigation
-    expect(tty.lastFrame()).toContain("Locale");
-    tty.unmount();
-  } finally {
-    cleanup();
-  }
-});
-
-test("'Other…' keeps the validated custom-timezone flow (CA-04)", async () => {
-  const cleanup = withSeedConfig(seedConfig);
-  try {
-    const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(ENTER, ENTER); // -> timezone
-    // DOWN isolates Other… ("other" also substring-matches Antarctica/Rothera)
-    await tty.keys("other", DOWN, ENTER);
-    expect(tty.lastFrame()).toContain("custom");
-    expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.timezoneOther); // CA-09 wiring
-    await tty.keys("Not/AZone", ENTER); // validateTimezone blocks unknown names
-    const invalid = tty.lastFrame();
-    expect(invalid).toContain("unknown timezone");
-    expect(invalid).toContain("custom");
-    for (let i = 0; i < "Not/AZone".length; i++) await tty.key(BACKSPACE);
-    await tty.keys("Europe/Madrid", ENTER);
-    expect(tty.lastFrame()).toContain("Branch policy");
-    tty.unmount();
-  } finally {
-    cleanup();
-  }
-});
-
 test("the develop-branch editor carries its example placeholder (CA-09 wiring)", async () => {
   const cleanup = withSeedConfig(seedConfig);
   // The branchPolicy screen only mounts over a git repo; pin the resolution
@@ -1029,7 +887,7 @@ test("the develop-branch editor carries its example placeholder (CA-09 wiring)",
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
     await tty.keys(ENTER); // -> locale
-    await tty.keys(ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> workspaces
+    await tty.keys(ENTER, ENTER, ENTER, ENTER, ENTER); // -> workspaces
     await tty.keys(ENTER); // Done -> branchPolicy (repo is git)
     expect(tty.lastFrame()).toContain("Step 5 — Branch policy");
     await tty.keys(DOWN, DOWN, ENTER); // Edit develop -> text editor screen
@@ -1070,7 +928,6 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
       const exitCalls: boolean[] = [];
       const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
       await tty.keys(ENTER); // -> locale
-      await tty.keys(ENTER); // -> timezone
       await tty.keys(ENTER); // -> branchPreset
       await tty.keys(ENTER); // -> issueTracker
       await tty.keys(ENTER); // YouTrack -> youtrack
@@ -1125,7 +982,6 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
       const exitCalls: boolean[] = [];
       const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
       await tty.keys(ENTER); // -> locale
-      await tty.keys(ENTER); // -> timezone
       await tty.keys(ENTER); // -> branchPreset
       await tty.keys(ENTER); // -> issueTracker
       await tty.keys(ENTER); // YouTrack -> youtrack

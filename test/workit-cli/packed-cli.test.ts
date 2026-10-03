@@ -67,7 +67,6 @@ const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const PREVIEW_VALUES = {
   platforms: ["opencode", "cursor"],
   locale: "en",
-  timezone: "UTC",
   branchPreset: "gitflow",
   branchAllowed: "feature/*",
   branchProtected: "main",

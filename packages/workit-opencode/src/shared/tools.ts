@@ -66,7 +66,6 @@ export const WORKIT_TOOL_CATALOG: readonly WorkitToolSpec[] = [
           ],
         },
         base_url: { type: "string" },
-        default_mention: { type: "string" },
         meeting_issue: { type: "string" },
         vcs_provider: { type: "string", enum: ["gitlab", "github"] },
         vcs_target_branch: { type: "string" },
@@ -75,7 +74,6 @@ export const WORKIT_TOOL_CATALOG: readonly WorkitToolSpec[] = [
         integration: { type: "string", enum: ["pr", "merge"] },
         locale: { type: "string" },
         locale_options: { type: "array", items: { type: "string" } },
-        timezone: { type: "string" },
         branch_policy_preset: {
           type: "string",
           enum: ["gitflow", "github-flow", "trunk-based", "custom"],

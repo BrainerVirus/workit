@@ -38,7 +38,6 @@ export type InitApplyArgs = {
     | "hygiene"
     | "branch_policy";
   base_url?: string;
-  default_mention?: string;
   meeting_issue?: string;
   vcs_provider?: "gitlab" | "github";
   vcs_target_branch?: string;
@@ -47,7 +46,6 @@ export type InitApplyArgs = {
   integration?: "pr" | "merge";
   locale?: string;
   locale_options?: string[];
-  timezone?: string;
   branch_policy_preset?: "gitflow" | "github-flow" | "trunk-based" | "custom";
   branch_policy_allowed?: string[];
   branch_policy_protected?: string[];
@@ -91,7 +89,6 @@ export const executeInitApply = (
       {
         locale: args.locale,
         localeOptions: args.locale_options,
-        timezone: args.timezone,
         preset: args.branch_policy_preset as BranchPreset,
         allowed: args.branch_policy_allowed,
         protectedNames: args.branch_policy_protected,
@@ -104,7 +101,6 @@ export const executeInitApply = (
   const env = Object.fromEntries(
     Object.entries({
       WORKFLOW_YT_BASE_URL: args.base_url,
-      WORKFLOW_YT_MENTION: args.default_mention,
       WORKFLOW_YT_MEETING_ISSUE: args.meeting_issue,
       WORKFLOW_VCS_PROVIDER: args.vcs_provider,
       WORKFLOW_VCS_TARGET_BRANCH: args.vcs_target_branch,

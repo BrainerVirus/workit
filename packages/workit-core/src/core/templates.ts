@@ -3,7 +3,7 @@ import path from "node:path";
 import { configDir } from "./config";
 import { assetRoot } from "./package-root";
 
-export type TemplateName = "issue-update" | "greeting" | "headers";
+export type TemplateName = "issue-update" | "headers";
 
 const repoRoot = assetRoot();
 

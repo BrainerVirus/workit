@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withTempConfigDir } from "@/test/shared/helpers/env";
+import { templatePath } from "@/packages/workit-core/src/core/templates";
 import {
   buildDraft,
   context,
@@ -23,7 +25,6 @@ const cfg = (overrides: Record<string, unknown> = {}) => ({
 
 const scripts = (overrides: Partial<YouTrackScripts> = {}): YouTrackScripts => ({
   config: () => ({ data: cfg() }),
-  greeting: () => ({ stdout: "Hola", exitCode: 0, stderr: "" }),
   parseDuration: (text: string) => ({ minutes: text === "30m" ? 30 : 0 }),
   api: (args: string[]) => ({ ok: true, args }),
   ...overrides,
@@ -77,7 +78,7 @@ test("context falls back to meeting issue and spec/plan YouTrack ref", () => {
     scripts(),
   );
   expect(meetings.mode).toBe("meetings");
-  expect(meetings.workItemText).toBe("Reuniones");
+  expect(meetings.workItemText).toBe("Meetings");
 
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-yt-paths-"));
   try {
@@ -90,17 +91,11 @@ test("context falls back to meeting issue and spec/plan YouTrack ref", () => {
   }
 });
 
-test("context errors: config failure, greeting failure, missing issue", () => {
+test("context errors: config failure, missing issue", () => {
   expect(
     context({ workspace_root: os.tmpdir() }, scripts({ config: () => ({ error: "cfg down" }) }))
       .error,
   ).toBe("cfg down");
-  expect(
-    context(
-      { workspace_root: os.tmpdir() },
-      scripts({ greeting: () => ({ stdout: "", exitCode: 1, stderr: "no greet" }) }),
-    ).error,
-  ).toContain("no greet");
   expect(
     context(
       { workspace_root: os.tmpdir() },
@@ -129,6 +124,35 @@ test("context uses meetingIssues map with custom labels and urls", () => {
   expect(result.meetingOptions).toHaveLength(2);
   expect(result.meetingOptions[0].label).toBe("Daily");
   expect(result.meetingOptions[1].url).toBe("https://custom/MEET-3");
+});
+
+test("Given youtrack.json meeting text settings, When meeting context is read, Then the configured text is used and the default is neutral", () => {
+  const read = (data: Record<string, unknown>) =>
+    context(
+      { mode: "meetings", workspace_root: os.tmpdir() },
+      scripts({ config: () => ({ data: cfg(data) }) }),
+    ).meetingOptions;
+  expect(read({})[0].workItemText).toBe("Meetings");
+  expect(read({ meetingWorkItemText: "Team sync" })[0].workItemText).toBe("Team sync");
+  expect(
+    read({
+      meetingWorkItemText: "Team sync",
+      meetingIssues: { a: { issue: "MEET-2", workItemText: "Planning" }, b: { issue: "MEET-3" } },
+    }).map((o: { workItemText: string }) => o.workItemText),
+  ).toEqual(["Planning", "Team sync"]);
+});
+
+test("Given a youtrack.json with or without timezone, When context is read, Then it surfaces the effective work-item timezone and its source", () => {
+  const configured = context(
+    { issue_id: "NSR-1", workspace_root: os.tmpdir() },
+    scripts({ config: () => ({ data: cfg({ timezone: "Asia/Tokyo" }) }) }),
+  );
+  expect(configured.workTimezone).toEqual({ timezone: "Asia/Tokyo", source: "youtrack.json" });
+  const fallback = context({ issue_id: "NSR-1", workspace_root: os.tmpdir() }, scripts());
+  expect(fallback.workTimezone).toEqual({
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    source: "process",
+  });
 });
 
 test("parseDuration delegates and maps errors", () => {
@@ -175,26 +199,63 @@ test("logTime validates, formats date arg, and delegates", async () => {
   ).toBe("api down");
 });
 
-test("buildDraft composes header, greeting, project, notes, and facts", () => {
-  const bare = buildDraft({ issueId: "NSR-1" });
-  expect(bare.markdown).toBe("# Actualización\n\n");
-  const full = buildDraft({
-    issueId: "NSR-1",
-    projectName: "Tracer",
-    userNotes: "Terminé el modulo",
-    greeting: "Hola equipo",
-    includeProjectOpener: true,
-    includeFacts: true,
-    facts: {
-      progress_excerpt: ["Task 1: done"],
-      git_commits: ["abc123 fix"],
-    },
+test("Given an old youtrack.json with greeting and mention fields, When context is read, Then it succeeds and emits no greeting or mention", () => {
+  const legacy = cfg({
+    timezone: "America/Santiago",
+    defaultMention: "Some.Person",
+    greetings: { morning: "good morning", afternoon: "good afternoon" },
+    greetingCutoff: "12:00",
   });
-  expect(full.markdown).toContain("Hola equipo");
-  expect(full.markdown).toContain("Hoy estuve full con Tracer");
-  expect(full.markdown).toContain("Terminé el modulo");
-  expect(full.markdown).toContain("- Task 1: done");
-  expect(full.markdown).toContain("- abc123 fix");
+  const result = context(
+    { issue_id: "NSR-40", workspace_root: os.tmpdir() },
+    scripts({ config: () => ({ data: legacy }) }),
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.issueId).toBe("NSR-40");
+  expect(result).not.toHaveProperty("greeting");
+  const serialized = JSON.stringify(result);
+  for (const banned of ["defaultMention", "Some.Person", "greetings", "greetingCutoff"])
+    expect(serialized, banned).not.toContain(banned);
+  expect(result.config.timezone).toBe("America/Santiago");
+});
+
+test("buildDraft composes a neutral header, project, notes, and facts", () => {
+  // Isolated config dir: the bundled template is under test, never a user override.
+  withTempConfigDir(() => {
+    const bare = buildDraft({ issueId: "NSR-1" });
+    expect(bare.markdown).toBe("# Update\n\n");
+    const full = buildDraft({
+      issueId: "NSR-1",
+      projectName: "Tracer",
+      userNotes: "Finished the module",
+      includeProjectOpener: true,
+      includeFacts: true,
+      facts: {
+        progress_excerpt: ["Task 1: done"],
+        git_commits: ["abc123 fix"],
+      },
+    });
+    expect(full.markdown.startsWith("# Update\n\nProject: Tracer\n\nFinished the module")).toBe(
+      true,
+    );
+    expect(full.markdown).toContain("Finished the module");
+    expect(full.markdown).toContain("- Task 1: done");
+    expect(full.markdown).toContain("- abc123 fix");
+  });
+});
+
+test("Given a user issue-update template with a legacy {{greetingSection}}, When a draft is built, Then it renders and the unknown placeholder is empty", () => {
+  withTempConfigDir(() => {
+    const file = templatePath("issue-update");
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      "# Status\n{{greetingSection}}\n{{userNotesSection}}\n{{someFuturePlaceholder}}\n",
+    );
+    const draft = buildDraft({ issueId: "NSR-1", userNotes: "Shipped the fix" });
+    expect(draft.markdown).toBe("# Status\n\nShipped the fix");
+    expect(draft.markdown).not.toContain("{{");
+  });
 });
 
 test("postUpdate validates confirmed, issueId, and markdown", async () => {

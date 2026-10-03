@@ -14,7 +14,6 @@ import {
   TOKEN_PLACEHOLDER,
   validateBaseUrl,
   validateLocale,
-  validateTimezone,
   writeWorkspaces,
 } from "@/packages/workit-cli/src/logic";
 import { readWorkspacesResult, resolveWorkspace } from "@/packages/workit-core/src/core/workspaces";
@@ -24,7 +23,6 @@ import { withTempConfigDir as withConfigDir } from "@/test/shared/helpers/env";
 const current: ToolkitConfig = {
   locale: "en",
   localeOptions: ["en", "es-CL"],
-  timezone: "America/Santiago",
   branchPolicy: {
     preset: "gitflow",
     allowed: [...PRESETS.gitflow.allowed],
@@ -41,16 +39,8 @@ test("validateLocale accepts BCP-47, rejects bad formats", () => {
   expect(validateLocale("")).not.toBeNull();
 });
 
-test("validateTimezone accepts known IANA zones, rejects junk when Intl supports it", () => {
-  expect(validateTimezone("America/Santiago")).toBeNull();
-  expect(validateTimezone("")).not.toBeNull();
-  if (typeof Intl.supportedValuesOf === "function") {
-    expect(validateTimezone("Mars/Olympus")).not.toBeNull();
-  }
-});
-
 test("validateBaseUrl requires https", () => {
-  expect(validateBaseUrl("https://enghouseamg.youtrack.cloud")).toBeNull();
+  expect(validateBaseUrl("https://example.youtrack.cloud")).toBeNull();
   expect(validateBaseUrl("http://example.com")).not.toBeNull();
   expect(validateBaseUrl("not a url")).not.toBeNull();
   expect(validateBaseUrl("")).not.toBeNull();
@@ -67,9 +57,9 @@ test("parseList splits on commas and trims", () => {
 });
 
 test("collectConfigValues merges with current config", () => {
-  const merged = collectConfigValues({ locale: "es-CL", timezone: "Europe/Madrid" }, current);
+  const merged = collectConfigValues({ locale: "es-CL" }, current);
   expect(merged.locale).toBe("es-CL");
-  expect(merged.timezone).toBe("Europe/Madrid");
+  expect(merged).not.toHaveProperty("timezone");
   expect(merged.branchPolicy).toEqual(current.branchPolicy);
   expect(merged.localeOptions).toEqual(current.localeOptions);
 });
@@ -140,13 +130,20 @@ test("scaffoldYouTrack writes youtrack.json + placeholder token + token URL", ()
   try {
     const s = scaffoldYouTrack(dir, "https://youtrack.example.com", {
       locale: "es-CL",
-      timezone: "America/Santiago",
     });
     expect(s.tokenCreateUrl).toBe("https://youtrack.example.com/users/me?tab=account-security");
     const cfg = JSON.parse(readFileSync(s.youtrackJson, "utf8"));
     expect(cfg.baseUrl).toBe("https://youtrack.example.com");
     expect(cfg.locale).toBe("es-CL");
-    expect(cfg.timezone).toBe("America/Santiago");
+    // Neutral draft: no timezone, mention, greeting or organization defaults.
+    for (const key of [
+      "timezone",
+      "defaultMention",
+      "greetings",
+      "greetingCutoff",
+      "meetingIssues",
+    ])
+      expect(cfg).not.toHaveProperty(key);
     expect(readFileSync(s.tokenPath, "utf8").trim()).toBe(TOKEN_PLACEHOLDER);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -177,7 +174,6 @@ test("scaffoldYouTrack preserves an existing token byte-for-byte (WZ-05)", () =>
     writeFileSync(tokenPath, "perm_abcdef123456\n", { mode: 0o600 });
     const s = scaffoldYouTrack(dir, "https://youtrack.example.com", {
       locale: "es-CL",
-      timezone: "America/Santiago",
     });
     expect(s.ok).toBe(true);
     expect(s.status).toBe("preserved");

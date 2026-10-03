@@ -101,72 +101,58 @@ export function youTrackConfigLoad(): YouTrackConfigResult {
   return { data: redacted };
 }
 
-function tzParts(
-  date: Date,
-  tz: string,
-): { y: string; m: string; d: string; hour: string; minute: string } {
+function tzParts(date: Date, tz: string): { y: string; m: string; d: string } {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: tz,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
   }).formatToParts(date);
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
-  return { y: map.year, m: map.month, d: map.day, hour: map.hour, minute: map.minute };
+  return { y: map.year, m: map.month, d: map.day };
 }
 
-/** Port of scripts/youtrack/greeting.sh. */
-export function youTrackGreeting(configOverride?: string): {
-  stdout: string;
-  exitCode: number;
-  stderr: string;
-} {
-  const cfgPath = configOverride ?? youTrackConfigPath();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
-  } catch {
-    return {
-      stdout: "",
-      exitCode: 1,
-      stderr: fs.existsSync(cfgPath)
-        ? `${cfgPath} is not valid JSON`
-        : `missing youtrack.json: ${cfgPath}`,
-    };
-  }
-  if (!isConfigObject(parsed)) {
-    return { stdout: "", exitCode: 1, stderr: `${cfgPath} is not a JSON object` };
-  }
-  const config = parsed as Record<string, any>;
-  try {
-    const tz = String(config.timezone ?? "America/Santiago");
-    const now = new Date();
-    const { y, m, d, hour, minute } = tzParts(now, tz);
-    const cutoff = String(config.greetingCutoff ?? "12:00").split(":");
-    const cutoffHour = Number(cutoff[0]);
-    const cutoffMinute = Number(cutoff[1] ?? 0);
-    const greetings = (config.greetings ?? {}) as Record<string, string>;
-    const isMorning =
-      Number(hour) < cutoffHour || (Number(hour) === cutoffHour && Number(minute) < cutoffMinute);
-    const greeting = isMorning
-      ? (greetings.morning ?? "buenos días")
-      : (greetings.afternoon ?? "buenas tardes");
-    const mention = String(config.defaultMention ?? "Alejandra.Flores");
-    void y;
-    void m;
-    void d;
-    return { stdout: `@${mention} Hola, ${greeting}.\n`, exitCode: 0, stderr: "" };
-  } catch (err) {
-    return {
-      stdout: "",
-      exitCode: 1,
-      stderr: err instanceof Error ? err.message : "greeting failed",
-    };
-  }
-}
+// The process timezone (honours TZ). Used when youtrack.json has no explicit
+// `timezone` override; there is no hard-coded default zone.
+const processTimezone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+export type WorkTimezone = { timezone: string; source: "youtrack.json" | "process" };
+
+/** The timezone that decides a work item's calendar day: an explicit
+ * youtrack.json `timezone` wins, otherwise the process timezone (TZ). */
+export const effectiveWorkTimezone = (
+  cfg: Record<string, any> | null | undefined,
+): WorkTimezone => {
+  const configured = cfg?.timezone;
+  return typeof configured === "string" && configured.trim()
+    ? { timezone: configured.trim(), source: "youtrack.json" }
+    : { timezone: processTimezone(), source: "process" };
+};
+
+/** Neutral default work-item text for meeting time; youtrack.json can set a
+ * global `meetingWorkItemText` or a per-meeting `workItemText`. */
+export const DEFAULT_MEETING_WORK_ITEM_TEXT = "Meetings";
+
+export const meetingWorkItemText = (
+  cfg: Record<string, any> | null | undefined,
+  item?: Record<string, any> | null,
+): string => {
+  if (typeof item?.workItemText === "string" && item.workItemText) return item.workItemText;
+  if (typeof cfg?.meetingWorkItemText === "string" && cfg.meetingWorkItemText)
+    return cfg.meetingWorkItemText;
+  return DEFAULT_MEETING_WORK_ITEM_TEXT;
+};
+
+// A YouTrack work-item date is the calendar day at UTC midnight. Computing it
+// with Date.UTC keeps it independent of the process timezone (Date.parse of a
+// local "T00:00:00" shifted it a day back east of UTC).
+const utcMidnight = (y: number, m: number, d: number): number | null => {
+  const ms = Date.UTC(y, m - 1, d);
+  const check = new Date(ms);
+  return check.getUTCFullYear() === y && check.getUTCMonth() === m - 1 && check.getUTCDate() === d
+    ? ms
+    : null;
+};
 
 /** Port of scripts/youtrack/parse-duration.sh. */
 export function youTrackParseDuration(
@@ -181,12 +167,21 @@ export function youTrackParseDuration(
   return { data: { minutes: total, text: String(text).trim() } };
 }
 
-/** Port of scripts/youtrack/work-date-ms.sh — resolve work-item date as epoch ms. */
-export function youTrackWorkDateMs(
-  dateRaw: string,
-): { data: { dateMs: number; timezone: string; localDate: string } } | { error: string } {
+/** Port of scripts/youtrack/work-date-ms.sh — resolve work-item date as epoch ms.
+ * The calendar day comes from youtrack.json `timezone` when set (optional
+ * override), otherwise from the process timezone. */
+export function youTrackWorkDateMs(dateRaw: string):
+  | {
+      data: {
+        dateMs: number;
+        timezone: string;
+        timezoneSource: WorkTimezone["source"];
+        localDate: string;
+      };
+    }
+  | { error: string } {
   const cfgPath = youTrackConfigPath();
-  let tz = "America/Santiago";
+  let effective = effectiveWorkTimezone(null);
   // Missing file is a legitimate unconfigured state (reader: "missing" keeps
   // defaults); a parseable non-object is malformed and must propagate the
   // exact-path error instead of silently defaulting the timezone.
@@ -200,31 +195,30 @@ export function youTrackWorkDateMs(
     if (!isConfigObject(parsed)) {
       return { error: `${cfgPath} is not a JSON object` };
     }
-    tz = String((parsed as Record<string, any>).timezone ?? "America/Santiago");
+    effective = effectiveWorkTimezone(parsed as Record<string, any>);
   }
+  const tz = effective.timezone;
+  const meta = { timezone: tz, timezoneSource: effective.source };
   const raw = dateRaw || "auto";
   try {
-    if (raw === "auto" || !raw) {
-      const now = new Date();
-      const { y, m, d } = tzParts(now, tz);
-      const dateMs = Math.floor(Date.parse(`${y}-${m}-${d}T00:00:00`) / 86400000) * 86400000;
-      return { data: { dateMs, timezone: tz, localDate: `${y}-${m}-${d}` } };
+    if (raw === "auto") {
+      const { y, m, d } = tzParts(new Date(), tz);
+      const dateMs = utcMidnight(Number(y), Number(m), Number(d));
+      if (dateMs === null) return { error: "could not resolve date" };
+      return { data: { dateMs, ...meta, localDate: `${y}-${m}-${d}` } };
     }
     if (/^\d+$/.test(raw)) {
+      // An explicit epoch is already a work-item date (UTC midnight of the
+      // day); its label is that UTC calendar day so it round-trips exactly.
       const dt = new Date(Number(raw));
-      const { y, m, d } = tzParts(dt, tz);
-      return { data: { dateMs: Number(raw), timezone: tz, localDate: `${y}-${m}-${d}` } };
+      if (Number.isNaN(dt.getTime())) return { error: `invalid date: ${raw}` };
+      return { data: { dateMs: Number(raw), ...meta, localDate: dt.toISOString().slice(0, 10) } };
     }
-    const [y, m, d] = raw.split("-").map(Number);
-    const iso = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T00:00:00`;
-    const dateMs = Math.floor(Date.parse(iso) / 86400000) * 86400000;
-    return {
-      data: {
-        dateMs,
-        timezone: tz,
-        localDate: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
-      },
-    };
+    const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(raw);
+    const dateMs = match ? utcMidnight(Number(match[1]), Number(match[2]), Number(match[3])) : null;
+    if (!match || dateMs === null) return { error: `invalid date: ${raw} (expected YYYY-MM-DD)` };
+    const localDate = `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+    return { data: { dateMs, ...meta, localDate } };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "could not resolve date" };
   }
@@ -341,67 +335,6 @@ export async function youTrackApi(
   return { error: "unknown subcommand" };
 }
 
-/** Port of scripts/youtrack/verify-token.sh — read-only GET /api/users/me. */
-export async function youTrackVerifyToken(): Promise<
-  { data: Record<string, any> } | { error: string; http_status?: number; path?: string }
-> {
-  const cfgPath = youTrackConfigPath();
-  if (!fs.existsSync(cfgPath)) return { error: "missing youtrack.json" };
-  const creds = youTrackToken();
-  if ("error" in creds) return { error: creds.error };
-  const { token, base } = creds;
-
-  const me = await youTrackRequest(`${base}/api/users/me?fields=id,login,name,email`, {
-    method: "GET",
-    token,
-  });
-  if (me.status !== 0) {
-    const err =
-      me.status === 401 || me.status === 403
-        ? "authentication failed (401/403)"
-        : `HTTP error: ${me.stderr.slice(0, 200)}`;
-    return { error: err, http_status: me.status };
-  }
-  let user: Record<string, any>;
-  try {
-    user = JSON.parse(me.stdout) as Record<string, any>;
-  } catch {
-    return { error: "invalid JSON from YouTrack /api/users/me" };
-  }
-  const result: Record<string, any> = {
-    ok: true,
-    method: "GET /api/users/me",
-    baseUrl: base,
-    login: user.login,
-    name: user.name,
-    email: user.email,
-    id: user.id,
-  };
-  const meeting = readYouTrackConfig(false);
-  const meetingIssue = "config" in meeting ? meeting.config.meetingIssue : undefined;
-  if (meetingIssue) {
-    const issue = await youTrackRequest(
-      `${base}/api/issues/${meetingIssue}?fields=id,idReadable,summary`,
-      { method: "GET", token },
-    );
-    if (issue.status === 0) {
-      try {
-        const parsed = JSON.parse(issue.stdout) as Record<string, any>;
-        result.meetingIssue = meetingIssue;
-        result.meetingIssueReadable = true;
-        result.meetingIssueSummary = parsed.summary;
-      } catch {
-        /* unreadable */
-      }
-    } else {
-      result.meetingIssue = meetingIssue;
-      result.meetingIssueReadable = false;
-      result.warning = `token valid but cannot read issue ${meetingIssue}`;
-    }
-  }
-  return { data: result };
-}
-
 /** Port of scripts/youtrack/token-create-url.sh — deep link to Account Security. */
 export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
   const tokenName = process.env.WORKFLOW_YT_TOKEN_NAME ?? "workit";
@@ -416,12 +349,14 @@ export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
     defaults.description ?? "OpenCode workit — /wk-issue-update and /wk-meetings",
   );
   const scopes = Array.isArray(defaults.scopes) ? defaults.scopes : ["YouTrack"];
-  const base = String(config.baseUrl ?? "https://enghouseamg.youtrack.cloud").replace(/\/+$/, "");
+  // No organization default: without a configured baseUrl there is no
+  // account page to link to, so createUrl is null and `error` says why.
+  const base = String(config.baseUrl ?? "").replace(/\/+$/, "");
   const tokenFile = String(
     config.tokenFile ?? path.join(path.dirname(loaded.path), "youtrack.token"),
   );
   const tab = String(defaults.profileTab ?? "account-security");
-  const createUrl = `${base}/users/me?${new URLSearchParams({ tab })}`;
+  const createUrl = base ? `${base}/users/me?${new URLSearchParams({ tab })}` : null;
   const docsUrl = "https://www.jetbrains.com/help/youtrack/cloud/manage-permanent-token.html";
   return {
     data: {
@@ -432,6 +367,9 @@ export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
       createUrl,
       docsUrl,
       prefillSupported: false,
+      ...(base
+        ? {}
+        : { error: `baseUrl missing in ${loaded.path} — set your YouTrack base URL first` }),
       steps: [
         "Profile → Account Security → **New token** (or open createUrl)",
         `Name: **${name}**`,
@@ -469,21 +407,18 @@ export function parseIssueRef(
 
 export type YouTrackScripts = {
   config(): Record<string, any>;
-  greeting(): { stdout: string; exitCode: number; stderr: string };
   parseDuration(text: string): Record<string, any>;
   api(args: string[]): Record<string, any> | Promise<Record<string, any>>;
 };
 
 const defaultScripts: YouTrackScripts = {
   config: () => youTrackConfigLoad(),
-  greeting: () => youTrackGreeting(),
   parseDuration: (text) => youTrackParseDuration(text),
   api: (args) => youTrackApi(args, process.env.WORKFLOW_YT_WRITE ?? ""),
 };
 
 const contextScripts: YouTrackScripts = {
   config: readYouTrackContextConfig,
-  greeting: () => youTrackGreeting(youTrackReadOnlyConfigPath()),
   parseDuration: (text) => youTrackParseDuration(text),
   api: () => ({ error: "YouTrack context is read-only" }),
 };
@@ -522,7 +457,7 @@ function meetingOptionsFromConfig(cfg: any): Record<string, any>[] {
       key,
       issue: item.issue,
       label: item.label ?? item.issue,
-      workItemText: item.workItemText ?? "Reuniones",
+      workItemText: meetingWorkItemText(cfg, item),
       url: item.url ?? (base && item.issue ? `${base}/issue/${item.issue}` : null),
     }));
   }
@@ -532,7 +467,7 @@ function meetingOptionsFromConfig(cfg: any): Record<string, any>[] {
       key: "general",
       issue,
       label: "General meetings",
-      workItemText: "Reuniones",
+      workItemText: meetingWorkItemText(cfg),
       url: base && issue ? `${base}/issue/${issue}` : null,
     },
   ];
@@ -553,14 +488,8 @@ const readOnlyYouTrackConfig = (cfg: Record<string, any>): Record<string, any> =
   const safe: Record<string, any> = {};
   const baseUrl = publicUrl(cfg.baseUrl);
   if (baseUrl) safe.baseUrl = baseUrl;
-  for (const key of ["timezone", "greetingCutoff", "defaultMention", "meetingIssue"])
+  for (const key of ["timezone", "meetingIssue", "meetingWorkItemText"])
     if (typeof cfg[key] === "string") safe[key] = cfg[key];
-  if (cfg.greetings && typeof cfg.greetings === "object" && !Array.isArray(cfg.greetings)) {
-    const greetings: Record<string, string> = {};
-    for (const key of ["morning", "afternoon"])
-      if (typeof cfg.greetings[key] === "string") greetings[key] = cfg.greetings[key];
-    if (Object.keys(greetings).length) safe.greetings = greetings;
-  }
   if (
     cfg.meetingIssues &&
     typeof cfg.meetingIssues === "object" &&
@@ -605,18 +534,13 @@ export function context(
   const cfg = scripts.config();
   if (cfg.error) return { error: cfg.error };
 
-  const greeting = scripts.greeting();
-  if (greeting.exitCode !== 0) {
-    return { error: (greeting.stderr || greeting.stdout || "greeting failed").trim() };
-  }
-
   const safeConfig = readOnlyYouTrackConfig(cfg.data);
   const meetingOptions = meetingOptionsFromConfig(safeConfig);
 
   if (mode === "meetings" && !issue_id && !issue_url && !issue_ref) {
     return {
       config: safeConfig,
-      greeting: greeting.stdout.trim(),
+      workTimezone: effectiveWorkTimezone(safeConfig),
       mode: "meetings",
       requiresMeetingChoice: true,
       meetingOptions,
@@ -647,7 +571,7 @@ export function context(
 
   return {
     config: safeConfig,
-    greeting: greeting.stdout.trim(),
+    workTimezone: effectiveWorkTimezone(safeConfig),
     issueId: issue,
     issueUrl,
     mode: mode ?? (selectedMeeting ? "meetings" : "task"),
@@ -757,7 +681,6 @@ export function buildDraft({
   issueId,
   projectName,
   userNotes,
-  greeting,
   facts,
   includeProjectOpener,
   includeFacts,
@@ -765,40 +688,35 @@ export function buildDraft({
   issueId: string;
   projectName?: string;
   userNotes?: string;
-  greeting?: string;
   facts?: any;
   includeProjectOpener?: boolean;
   includeFacts?: boolean;
 }): Record<string, any> {
+  // The wording lives in the editable issue-update template (config
+  // templates/issue-update.md overrides the bundled neutral one). Placeholders
+  // this build does not fill (e.g. a legacy {{greetingSection}}) render empty.
   const tpl = readTemplate("issue-update").content;
   const para = (value: string): string => (value ? `\n\n${value}` : "");
-  const filled = tpl
-    .replaceAll("{{greetingSection}}", para(greeting ? `${greeting}` : ""))
-    .replaceAll(
-      "{{projectSection}}",
-      para(includeProjectOpener && projectName ? `Hoy estuve full con ${projectName}.` : ""),
-    )
-    .replaceAll("{{userNotesSection}}", para((userNotes ?? "").trim()))
-    .replaceAll(
-      "{{progressSection}}",
-      para(
-        includeFacts && facts?.progress_excerpt?.length
-          ? facts.progress_excerpt.map((l: string) => `- ${l}`).join("\n")
-          : "",
-      ),
-    )
-    .replaceAll(
-      "{{gitCommitsSection}}",
-      para(
-        includeFacts && facts?.git_commits?.length
-          ? facts.git_commits.map((c: string) => `- ${c}`).join("\n")
-          : "",
-      ),
-    );
+  const sections: Record<string, string> = {
+    "{{projectSection}}": includeProjectOpener && projectName ? `Project: ${projectName}` : "",
+    "{{userNotesSection}}": (userNotes ?? "").trim(),
+    "{{progressSection}}":
+      includeFacts && facts?.progress_excerpt?.length
+        ? facts.progress_excerpt.map((l: string) => `- ${l}`).join("\n")
+        : "",
+    "{{gitCommitsSection}}":
+      includeFacts && facts?.git_commits?.length
+        ? facts.git_commits.map((c: string) => `- ${c}`).join("\n")
+        : "",
+  };
+  let filled = tpl;
+  for (const [placeholder, value] of Object.entries(sections))
+    filled = filled.replaceAll(placeholder, para(value));
+  filled = filled.replace(/\{\{[A-Za-z0-9_]+\}\}/g, "");
   const collapsed = filled.replace(/\n{3,}/g, "\n\n").trimEnd();
   // Bare draft keeps the header's trailing blank line (matches legacy output);
   // drafts with sections end right after the last one.
-  const markdown = collapsed === "# Actualización" ? `${collapsed}\n\n` : collapsed;
+  const markdown = Object.values(sections).some(Boolean) ? collapsed : `${collapsed}\n\n`;
   return { issueId, markdown };
 }
 
