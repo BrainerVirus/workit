@@ -38,7 +38,9 @@ test("a hook bundle loads no doctor/setup modules or the core barrel, within its
         { cwd: ROOT, encoding: "utf8" },
       );
       expect(built.status, built.stderr).toBe(0);
-      const inputs = Object.keys(JSON.parse(readFileSync(metafile, "utf8")).inputs);
+      const inputs = Object.keys(JSON.parse(readFileSync(metafile, "utf8")).inputs).map((input) =>
+        input.replaceAll("\\", "/"),
+      );
       expect(
         inputs.some((input) => input.includes("workit-core/src/hooks/handle.ts")),
         entry,

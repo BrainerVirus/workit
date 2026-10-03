@@ -14,7 +14,11 @@ export const fixture = (
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> => ({
   ...JSON.parse(
-    readFileSync(path.join(FIXTURES, host, `${name}.json`), "utf8").replaceAll("__CWD__", cwd),
+    readFileSync(path.join(FIXTURES, host, `${name}.json`), "utf8").replaceAll(
+      "__CWD__",
+      // JSON-escaped, so Windows backslashes stay valid inside the string.
+      JSON.stringify(cwd).slice(1, -1),
+    ),
   ),
   ...overrides,
 });
