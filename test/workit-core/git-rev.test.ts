@@ -365,6 +365,17 @@ test("worktreeTree records oversized untracked files by stat instead of hashing 
   expect(hashed.key).toBe(hashed.tree);
 });
 
+// Wall-clock bounds prove "returned instead of hanging", not speed. Starting
+// the watchdog runtime and killing a process tree (taskkill on Windows) can
+// take seconds on a busy CI runner, so the bound is the configured timeout
+// plus generous per-platform slack. That is still far below the 30-60 s the
+// fake hangs (or ssh's own connect retries) would take. Whether the timer
+// fired is asserted through the error text, which does not depend on the runner.
+const HANG_SLACK_MS = process.platform === "win32" ? 20_000 : 10_000;
+const expectReturnedWithin = (started: number, timeoutMs: number): void => {
+  expect(Date.now() - started).toBeLessThan(timeoutMs + HANG_SLACK_MS);
+};
+
 test("remoteTip on an unreachable SSH host returns unavailable within the timeout", () => {
   const root = repo();
   // Windows: killing git on timeout orphans its ssh child, which keeps the
@@ -376,7 +387,7 @@ test("remoteTip on an unreachable SSH host returns unavailable within the timeou
     git(root, "remote", "add", "dead", "ssh://git@10.255.255.1:22/o/r.git");
     const started = Date.now();
     const tip = remoteTip(root, "dead", "main", { timeoutMs: 2_000 });
-    expect(Date.now() - started).toBeLessThan(8_000);
+    expectReturnedWithin(started, 2_000);
     expect(tip).toMatchObject({ ok: false, code: "unavailable" });
     if (!tip.ok) expect(tip.error).toContain("dead");
   } finally {
@@ -386,7 +397,7 @@ test("remoteTip on an unreachable SSH host returns unavailable within the timeou
       // EBUSY on Windows while the orphaned ssh is still connecting.
     }
   }
-}, 15_000);
+}, 45_000);
 
 test("remote URLs are redacted everywhere they are echoed", () => {
   const secret = "tok3n-s3cret";
@@ -582,11 +593,12 @@ test.skipIf(!posix)(
     const tip = await withEnv({ ...HERMETIC, GIT_SSH_COMMAND: fake }, () =>
       remoteTip(root, "origin", "main", { timeoutMs: 8_000 }),
     );
-    expect(Date.now() - started).toBeLessThan(5_000);
+    expectReturnedWithin(started, 8_000);
     expect(tip).toMatchObject({ ok: false, code: "unavailable" });
+    // Ended by ssh's own refusal, not by the watchdog timer.
     if (!tip.ok) expect(tip.error).not.toContain("timed out");
   },
-  20_000,
+  45_000,
 );
 
 test.skipIf(!posix)(
@@ -604,14 +616,16 @@ test.skipIf(!posix)(
         () =>
           remoteTip(root, `http://127.0.0.1:${server.port}/o/r.git`, "main", { timeoutMs: 8_000 }),
       );
-      expect(Date.now() - started).toBeLessThan(5_000);
+      expectReturnedWithin(started, 8_000);
       expect(tip).toMatchObject({ ok: false, code: "unavailable" });
+      // Failed on the 401 without asking, not by the watchdog timer.
+      if (!tip.ok) expect(tip.error).not.toContain("timed out");
       expect(existsSync(asked)).toBe(false);
     } finally {
       server.stop();
     }
   },
-  20_000,
+  45_000,
 );
 
 test.skipIf(!posix)(
@@ -627,7 +641,7 @@ test.skipIf(!posix)(
     const tip = await withEnv({ ...HERMETIC, GIT_SSH_COMMAND: fake }, () =>
       remoteTip(root, "origin", "main", { timeoutMs: 1_500 }),
     );
-    expect(Date.now() - started).toBeLessThan(6_000);
+    expectReturnedWithin(started, 1_500);
     expect(tip).toMatchObject({ ok: false, code: "unavailable" });
     if (!tip.ok) expect(tip.error).toContain("timed out after 1500 ms");
     const sshPid = Number(readFileSync(pidFile, "utf8").trim());
@@ -660,5 +674,5 @@ test.skipIf(!posix)(
       server.stop();
     }
   },
-  30_000,
+  60_000,
 );
