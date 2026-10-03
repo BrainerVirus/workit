@@ -17,13 +17,17 @@ import {
   type SetupMutation,
   type SetupPreviewInput,
 } from "../../packages/workit-core/src/core/setup";
+import { setWorkspaceEditorValue } from "../../packages/workit-cli/src/logic";
 import {
   loadWorkspacesFrom,
   matchWorkspace,
+  resolveWorkspaceFrom,
+  resolveWorkspaceFromEntries,
   type WorkspaceConfig,
 } from "../../packages/workit-core/src/core/workspaces";
 import { isolatedEnv } from "../shared/helpers/packages";
 import type { ToolkitConfig } from "../../packages/workit-core/src/core/config";
+import { emptyDetection, type HostId } from "../../packages/workit-core/src/core/detect-hosts";
 
 // Task 15 (WZ-12, WZ-16): the workspace draft supports current-project setup and
 // add/edit/remove, every accepted pattern shows a match preview produced by the
@@ -39,6 +43,11 @@ const SPACE = " ";
 const BACKSPACE = "\x7f";
 
 const noop = () => {};
+const availableHosts = {
+  ...emptyDetection(),
+  opencode: { detected: true, configured: false },
+  cursor: { detected: true, configured: false },
+};
 
 const seedConfig: ToolkitConfig = {
   locale: "en",
@@ -54,6 +63,31 @@ const seedConfig: ToolkitConfig = {
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const clean = (dir: string) => rmSync(dir, { recursive: true, force: true });
+
+test("draft workspace preview resolver matches disk specificity and preserves ambiguity errors", () => {
+  const dir = tmp("wk-ws-resolve-");
+  const root = path.join(dir, "work");
+  const repo = path.join(root, "app");
+  mkdirSync(repo, { recursive: true });
+  const entries: WorkspaceConfig[] = [
+    { name: "broad", glob: `${root}/**`, vcs: { provider: "github" } },
+    { name: "repo", glob: `${repo}/**`, vcs: { provider: "gitlab" } },
+  ];
+  try {
+    writeFileSync(path.join(dir, "workspaces.json"), JSON.stringify({ workspaces: entries }));
+    expect(resolveWorkspaceFromEntries(repo, entries)?.name).toBe("repo");
+    expect(resolveWorkspaceFrom(repo, dir)?.name).toBe("repo");
+    const ambiguous = [
+      { name: "first", glob: `${repo}/**` },
+      { name: "second", glob: `${repo}/**` },
+    ];
+    expect(() => resolveWorkspaceFromEntries(repo, ambiguous)).toThrow(/ambiguous workspace/);
+    writeFileSync(path.join(dir, "workspaces.json"), JSON.stringify({ workspaces: ambiguous }));
+    expect(() => resolveWorkspaceFrom(repo, dir)).toThrow(/ambiguous workspace/);
+  } finally {
+    clean(dir);
+  }
+});
 
 function withConfigDir(configDir: string, workspaces?: WorkspaceConfig[]): void {
   process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
@@ -78,6 +112,7 @@ function draftWith(workspaces: WorkspaceConfig[]): WizardDraft {
       branchPreset: "gitflow",
       branchAllowed: "",
       branchProtected: "",
+      commitPolicy: { preset: "conventional" },
       baseUrl: "",
       vcsProvider: "gitlab",
       issueTracker: "youtrack",
@@ -186,6 +221,115 @@ test("workspaceEdit with a provider-less entry preserves the shape", () => {
   });
   d = reducer(d, { type: "workspaceSave" });
   expect(d.values.workspaces[0].vcs).toBeUndefined();
+});
+
+test("advanced workspace reducer preserves unknown fields and round-trips profiles and release tracks", () => {
+  const original = {
+    name: "repo",
+    glob: "/work/repo/**",
+    customLegacy: { keep: true },
+    vcs: {
+      provider: "github" as const,
+      account: "team",
+      defaultTargetBranch: "main",
+      tokenFile: "/secret/token",
+    },
+  };
+  let draft = draftWith([original]);
+  draft = reducer(draft, { type: "workspaceAdvancedOpen", index: 0 });
+  draft = reducer(draft, { type: "workspaceProfileCreate", name: "release" });
+  draft = reducer(draft, {
+    type: "workspaceProfileSet",
+    name: "release",
+    field: "branchPolicy.preset",
+    value: "github-flow",
+  });
+  draft = reducer(draft, {
+    type: "workspaceProfileSet",
+    name: "release",
+    field: "commitPolicy.preset",
+    value: "ticket-prefix",
+  });
+  const profileBeforeDuplicate = draft;
+  draft = reducer(draft, { type: "workspaceProfileCreate", name: " release " });
+  expect(draft).toBe(profileBeforeDuplicate);
+  draft = reducer(draft, { type: "workspaceProfileDefault", name: "release" });
+  draft = reducer(draft, { type: "workspaceTrackCreate", name: "production" });
+  draft = reducer(draft, {
+    type: "workspaceTrackSet",
+    name: "production",
+    field: "versionSource.kind",
+    value: "package-json",
+  });
+  draft = reducer(draft, {
+    type: "workspaceTrackSet",
+    name: "production",
+    field: "versionSource.path",
+    value: "apps/web/package.json",
+  });
+  draft = reducer(draft, {
+    type: "workspaceTrackSet",
+    name: "production",
+    field: "versionSource.field",
+    value: "version",
+  });
+  draft = reducer(draft, {
+    type: "workspaceTrackSet",
+    name: "production",
+    field: "requiredChecks",
+    value: "lint, test",
+  });
+  const trackBeforeDuplicate = draft;
+  draft = reducer(draft, { type: "workspaceTrackCreate", name: "production" });
+  expect(draft).toBe(trackBeforeDuplicate);
+  draft = reducer(draft, { type: "workspaceSave" });
+  const saved = draft.values.workspaces[0];
+  expect(saved.customLegacy).toEqual({ keep: true });
+  expect(saved.vcs).toEqual({
+    provider: "github",
+    account: "team",
+    defaultTargetBranch: "main",
+    tokenFile: "/secret/token",
+  });
+  expect(saved.defaultProfile).toBe("release");
+  expect(saved.profiles?.release).toMatchObject({
+    branchPolicy: { preset: "github-flow" },
+    commitPolicy: { preset: "ticket-prefix" },
+  });
+  expect(saved.releaseTracks?.production).toMatchObject({
+    versionSource: { kind: "package-json", path: "apps/web/package.json", field: "version" },
+    requiredChecks: ["lint", "test"],
+  });
+  const inherited = setWorkspaceEditorValue(
+    { ...saved, commitPolicy: { preset: "custom", pattern: "foo" } },
+    "commitPolicy.preset",
+    "inherit",
+  );
+  expect(inherited.commitPolicy).toBeUndefined();
+});
+
+test("first scoped field edit inherits the selected global preset without copying policy lists", () => {
+  let draft = draftWith([entry("repo", "/work/repo/**")]);
+  draft = reducer(draft, { type: "set", field: "branchPreset", value: "github-flow" });
+  draft = reducer(draft, { type: "globalCommitPreset", value: "custom" });
+  draft = reducer(draft, { type: "globalCommitPattern", value: "^WKT" });
+  draft = reducer(draft, { type: "workspaceAdvancedOpen", index: 0 });
+  draft = reducer(draft, {
+    type: "workspaceAdvancedSet",
+    field: "branchPolicy.allowed",
+    value: "feature/*",
+  });
+  draft = reducer(draft, {
+    type: "workspaceAdvancedSet",
+    field: "commitPolicy.pattern",
+    value: "^WKT-\\d+",
+  });
+  expect(draft.workspaceDraft?.branchPolicy).toEqual({
+    preset: "github-flow",
+    allowed: ["feature/*"],
+  });
+  expect(draft.workspaceDraft?.branchPolicy?.protected).toBeUndefined();
+  expect(draft.workspaceDraft?.commitPolicy).toEqual({ preset: "custom", pattern: "^WKT-\\d+" });
 });
 
 test("workspaceRemove splices the entry out", () => {
@@ -426,7 +570,7 @@ test("workspaces menu renders real controls, not a placeholder", async () => {
   process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
-    const tty = await renderInk(<Wizard onExit={noop} />);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
     await gotoWorkspaces(tty);
     const frame = tty.lastFrame();
     expect(frame).toContain("Add workspace");
@@ -443,6 +587,87 @@ test("workspaces menu renders real controls, not a placeholder", async () => {
   }
 });
 
+test("advanced workspace menu exposes typed profile and release-track controls", async () => {
+  const dir = tmp("wk-ws-advanced-cfg-");
+  const projectRoot = tmp("wk-ws-advanced-proj-");
+  const previous = process.cwd();
+  process.chdir(projectRoot);
+  process.env.WORKFLOW_WORKSPACE_ROOT = projectRoot;
+  try {
+    withConfigDir(dir, [entry("work", `${projectRoot}/**`)]);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
+    await gotoWorkspaces(tty);
+    // Advanced workspace entries follow the stable Done position.
+    await tty.keys(DOWN, DOWN, ENTER);
+    expect(tty.lastFrame()).toContain("Advanced workspace settings");
+    expect(tty.lastFrame()).toContain("Manage profiles");
+    expect(tty.lastFrame()).toContain("Manage release tracks");
+    tty.unmount();
+  } finally {
+    process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+    clean(projectRoot);
+  }
+});
+
+test("host picker disables absent hosts and supports all, clear, and manual selection", async () => {
+  const dir = tmp("wk-host-picker-cfg-");
+  const detection: Record<HostId, { detected: boolean; configured: boolean }> = {
+    ...emptyDetection(),
+    cursor: { detected: true, configured: false },
+    pi: { detected: true, configured: false },
+  };
+  try {
+    withConfigDir(dir, []);
+    const tty = await renderInk(<Wizard onExit={noop} detection={detection} />);
+    expect(tty.lastFrame()).toContain("OpenCode · unavailable");
+    expect(tty.lastFrame()).toContain("Codex · unavailable");
+    expect(tty.lastFrame()).toContain("[✓] Cursor · detected");
+    // Select all available, then clear all and manually choose Cursor. Codex
+    // is highlighted below but Space cannot select an unavailable host.
+    await tty.keys(SPACE);
+    await tty.keys(DOWN, SPACE);
+    await tty.keys(DOWN, DOWN, SPACE);
+    await tty.keys(DOWN, SPACE);
+    expect(tty.lastFrame()).toContain("[✓] Cursor · detected");
+    expect(tty.lastFrame()).toContain("[ ] Pi · detected");
+    await tty.keys(ENTER);
+    expect(tty.lastFrame()).toContain("Step 2 — Global config · Locale");
+    tty.unmount();
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+  }
+});
+
+test("advanced global commit policy is reachable with named preset and pattern controls", async () => {
+  const dir = tmp("wk-global-commit-cfg-");
+  const projectRoot = tmp("wk-global-commit-proj-");
+  const previous = process.cwd();
+  process.chdir(projectRoot);
+  process.env.WORKFLOW_WORKSPACE_ROOT = projectRoot;
+  try {
+    withConfigDir(dir, []);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
+    await gotoWorkspaces(tty);
+    await tty.keys(DOWN, ENTER);
+    expect(tty.lastFrame()).toContain("Advanced global commit policy");
+    expect(tty.lastFrame()).toContain("Conventional commits");
+    await tty.keys(DOWN, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
+    expect(tty.lastFrame()).toContain("Custom pattern");
+    expect(tty.lastFrame()).toContain("Regular expression matched against the commit subject line");
+    tty.unmount();
+  } finally {
+    process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+    clean(projectRoot);
+  }
+});
+
 test("add flow: name → glob preview → provider → menu shows the entry with a verdict", async () => {
   const configDir = tmp("wk-ws-add-cfg-");
   const project = tmp("wk-ws-add-proj-");
@@ -453,7 +678,7 @@ test("add flow: name → glob preview → provider → menu shows the entry with
   process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
-    const tty = await renderInk(<Wizard onExit={noop} />);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
     await gotoWorkspaces(tty);
     // menu highlights Done (last); UP UP -> Add workspace
     await tty.keys(UP, UP, ENTER);
@@ -496,7 +721,7 @@ test("a matching current-project pattern renders a ✓ verdict in the menu", asy
   process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", `${project}/**`)]);
-    const tty = await renderInk(<Wizard onExit={noop} />);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
     await gotoWorkspaces(tty);
     const menu = tty.lastFrame();
     expect(menu).toContain("✓ matches work");
@@ -519,7 +744,7 @@ test("edit flow: change the pattern, the verdict flips and the save persists it"
   process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", "/work/**")]);
-    const tty = await renderInk(<Wizard onExit={noop} />);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
     await gotoWorkspaces(tty);
     expect(tty.lastFrame()).toContain("✗ no match work");
     // menu options: Edit(0) Remove(1) Add(2) Use current(3) Done(4); UP x4 -> Edit
@@ -553,7 +778,7 @@ test("remove flow: the entry disappears from the menu", async () => {
   process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", "/work/**")]);
-    const tty = await renderInk(<Wizard onExit={noop} />);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
     await gotoWorkspaces(tty);
     // UP x3 -> Remove work
     await tty.keys(UP, UP, UP, ENTER);
@@ -580,7 +805,7 @@ test("current-project setup adds the cwd pattern in one step", async () => {
   process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
-    const tty = await renderInk(<Wizard onExit={noop} />);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
     await gotoWorkspaces(tty);
     // UP once -> Use current project
     await tty.keys(UP, ENTER);
@@ -609,7 +834,7 @@ test("workspace name/glob validation blocks advancing with inline errors", async
   process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
-    const tty = await renderInk(<Wizard onExit={noop} />);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
     await gotoWorkspaces(tty);
     await tty.keys(UP, UP, ENTER); // Add workspace
     await tty.keys(ENTER); // empty name
@@ -640,7 +865,9 @@ test("back and cancel inside the workspace flow preserve state and write nothing
   try {
     withConfigDir(configDir);
     const exitCalls: boolean[] = [];
-    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+    const tty = await renderInk(
+      <Wizard onExit={(ok) => exitCalls.push(ok)} detection={availableHosts} />,
+    );
     await gotoWorkspaces(tty);
     await tty.keys(UP, UP, ENTER); // Add workspace
     await tty.keys("work", ENTER);
@@ -683,7 +910,9 @@ test("summary shows the update-workspaces mutation after an add", async () => {
   try {
     withConfigDir(configDir);
     const exitCalls: boolean[] = [];
-    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+    const tty = await renderInk(
+      <Wizard onExit={(ok) => exitCalls.push(ok)} detection={availableHosts} />,
+    );
     await gotoWorkspaces(tty);
     await tty.keys(UP, UP, ENTER); // Add workspace
     await tty.keys("work", ENTER);
@@ -720,7 +949,9 @@ test("untouched workspaces produce no update-workspaces mutation in the summary"
   try {
     withConfigDir(configDir, [entry("work", "/work/**")]);
     const exitCalls: boolean[] = [];
-    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+    const tty = await renderInk(
+      <Wizard onExit={(ok) => exitCalls.push(ok)} detection={availableHosts} />,
+    );
     await gotoWorkspaces(tty);
     await tty.keys(ENTER); // Done (default highlight) -> project
     await tty.keys("y"); // project -> summary
@@ -770,7 +1001,9 @@ test("choosing None skips the baseUrl screen: summary shows — and applies no y
   try {
     withConfigDir(configDir);
     const exitCalls: boolean[] = [];
-    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+    const tty = await renderInk(
+      <Wizard onExit={(ok) => exitCalls.push(ok)} detection={availableHosts} />,
+    );
     await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
     await tty.keys(DOWN, DOWN, DOWN, ENTER); // None -> vcs (youtrack skipped)
     await tty.keys(ENTER); // gitlab -> workspaces
@@ -810,6 +1043,7 @@ test("choosing GitHub Issues defaults new workspaces to github with issues linke
     const exitCalls: boolean[] = [];
     const tty = await renderInk(
       <Wizard
+        detection={availableHosts}
         onExit={(ok, values) => {
           exitCalls.push(ok);
           if (ok && values) captured = values;
@@ -860,7 +1094,7 @@ test(
     process.chdir(project);
     try {
       withConfigDir(configDir);
-      const tty = await renderInk(<Wizard onExit={noop} />);
+      const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
       // platforms SPACE+ENTER, then ENTERs to vcs (locale/timezone/preset/tracker/youtrack)
       await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
       await tty.keys(ENTER); // vcs -> base-path prompt (env unset)
@@ -900,7 +1134,7 @@ test("with WORKFLOW_WORKSPACE_ROOT set, current-project and previews derive from
   process.env.WORKFLOW_WORKSPACE_ROOT = root;
   try {
     withConfigDir(configDir);
-    const tty = await renderInk(<Wizard onExit={noop} />);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
     await gotoWorkspaces(tty);
     const menu = tty.lastFrame();
     expect(menu).toContain(`Use current project (${root})`);
@@ -930,7 +1164,7 @@ test("Step 6 prints the resolved basePath as the exact hygiene target", async ()
   process.env.WORKFLOW_WORKSPACE_ROOT = root;
   try {
     withConfigDir(configDir, [entry("work", `${root}/**`)]);
-    const tty = await renderInk(<Wizard onExit={noop} />);
+    const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
     await gotoWorkspaces(tty);
     await tty.keys(ENTER); // Done -> project
     const proj = tty.lastFrame();

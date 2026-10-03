@@ -212,7 +212,9 @@ test("YouTrack settings are valid with either hosting provider while GitHub Issu
     );
     withIsolatedConfig(dir, () => {
       expect(readWorkspacesResult().status).toBe("invalid");
-      expect(readWorkspacesResult().error).toContain("GitHub issue linking requires the github provider");
+      expect(readWorkspacesResult().error).toContain(
+        "GitHub issue linking requires the github provider",
+      );
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });

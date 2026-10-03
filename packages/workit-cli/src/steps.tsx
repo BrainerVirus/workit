@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { ConfirmInput, MultiSelect, TextInput } from "@inkjs/ui";
+import { ConfirmInput, TextInput } from "@inkjs/ui";
 import {
   useEffect,
   useReducer,
@@ -12,11 +12,26 @@ import {
 import {
   mergePreset,
   PRESETS,
+  readConfig,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
-import { buildSetupPreview, parseList, type SetupMutation } from "./logic";
-import { matchWorkspace } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import {
+  buildSetupPreview,
+  parseList,
+  workspaceEditorValue,
+  profileEditorValue,
+  trackEditorValue,
+  type SetupMutation,
+  type WorkspaceEditorField,
+  type ProfileEditorField,
+  type TrackEditorField,
+} from "./logic";
+import {
+  matchWorkspace,
+  resolveWorkspaceFromEntries,
+  resolveWorkspacePolicy,
+} from "@brainervirus/workit-core/src/core/workspaces.ts";
 import { detectBranchPolicy } from "@brainervirus/workit-core/src/core/branch-policy.ts";
 import {
   createInitialDraft,
@@ -35,11 +50,11 @@ import {
 } from "@brainervirus/workit-core/src/core/detect-hosts.ts";
 import { LOCALE_LANGUAGE_MAP, SearchSelect } from "./search-select";
 
-// Platform selection stays limited to hosts the setup Apply path registers today.
-// Codex/Pi use their host-native setup paths outside this wizard.
-const PLATFORM_LABELS: { label: string; value: string }[] = [
+const PLATFORM_LABELS: { label: string; value: HostId }[] = [
   { label: "OpenCode", value: "opencode" },
   { label: "Cursor", value: "cursor" },
+  { label: "Codex", value: "codex" },
+  { label: "Pi", value: "pi" },
 ];
 
 /** Wizard platform options with auto-detect tags (pure: takes the detection). */
@@ -47,24 +62,19 @@ export function platformOptions(
   detection: Record<HostId, HostDetection>,
 ): { label: string; value: string }[] {
   return PLATFORM_LABELS.map(({ label, value }) => {
-    const found = detection[value as HostId];
-    const tag = found.configured ? " · already configured" : found.detected ? " · detected" : "";
+    const found = detection[value];
+    const tag = found.configured
+      ? " · already configured"
+      : found.detected
+        ? " · detected"
+        : " · unavailable";
     return { label: `${label}${tag}`, value };
   });
 }
 
 export function externalHostGuidance(detection: Record<HostId, HostDetection>): string[] {
-  return (["codex", "pi"] as const).map((host) => {
-    const found = detection[host];
-    const status = found.configured
-      ? "already configured"
-      : found.detected
-        ? "detected"
-        : "not detected";
-    return host === "codex"
-      ? `Codex · ${status} — plugin/hooks setup: https://github.com/BrainerVirus/workit#readme (Codex CLI / desktop)`
-      : `Pi · ${status} — install separately: pi install @brainervirus/workit-pi`;
-  });
+  void detection;
+  return [];
 }
 
 const BRANCH_PRESETS: { label: string; value: BranchPreset }[] = [
@@ -118,6 +128,101 @@ const ISSUE_TRACKERS: { label: string; value: SetupValues["issueTracker"] }[] = 
   { label: "GitHub Issues", value: "github" },
   { label: "GitLab Issues", value: "gitlab" },
   { label: "None", value: "none" },
+];
+
+const WORKSPACE_ADVANCED_FIELDS: { label: string; value: WorkspaceEditorField }[] = [
+  { label: "Hosting provider account", value: "vcs.account" },
+  { label: "Default target branch", value: "vcs.defaultTargetBranch" },
+  { label: "Workspace YouTrack URL", value: "youtrack.baseUrl" },
+  { label: "Link issues in YouTrack", value: "youtrack.link_issues" },
+  { label: "Link GitHub issues on pull requests", value: "issues.link_on_pr" },
+  { label: "Branch preset", value: "branchPolicy.preset" as WorkspaceEditorField },
+  { label: "Allowed branch patterns", value: "branchPolicy.allowed" },
+  { label: "Protected branches", value: "branchPolicy.protected" },
+  { label: "Develop branch", value: "branchPolicy.developBranch" },
+  { label: "Integration method (pr or merge)", value: "branchPolicy.integration" },
+  { label: "Feature prefix", value: "branchPolicy.prefixes.feature" },
+  { label: "Bugfix prefix", value: "branchPolicy.prefixes.bugfix" },
+  { label: "Release prefix", value: "branchPolicy.prefixes.release" },
+  { label: "Hotfix prefix", value: "branchPolicy.prefixes.hotfix" },
+  { label: "Commit policy preset", value: "commitPolicy.preset" },
+  { label: "Custom commit pattern", value: "commitPolicy.pattern" },
+  { label: "Default profile name", value: "defaultProfile" },
+];
+
+const PROFILE_FIELDS: { label: string; value: ProfileEditorField }[] = [
+  { label: "Branch preset", value: "branchPolicy.preset" },
+  { label: "Allowed patterns", value: "branchPolicy.allowed" },
+  { label: "Protected branches", value: "branchPolicy.protected" },
+  { label: "Develop branch", value: "branchPolicy.developBranch" },
+  { label: "Integration (pr or merge)", value: "branchPolicy.integration" },
+  { label: "Feature prefix", value: "branchPolicy.prefixes.feature" },
+  { label: "Bugfix prefix", value: "branchPolicy.prefixes.bugfix" },
+  { label: "Release prefix", value: "branchPolicy.prefixes.release" },
+  { label: "Hotfix prefix", value: "branchPolicy.prefixes.hotfix" },
+  { label: "Commit preset", value: "commitPolicy.preset" },
+  { label: "Commit pattern", value: "commitPolicy.pattern" },
+];
+const TRACK_FIELDS: { label: string; value: TrackEditorField }[] = [
+  { label: "Strategy", value: "strategy" },
+  { label: "Production branch", value: "productionBranch" },
+  { label: "Integration branch", value: "integrationBranch" },
+  { label: "Feature branch naming", value: "naming.feature" },
+  { label: "Release branch naming", value: "naming.release" },
+  { label: "Hotfix branch naming", value: "naming.hotfix" },
+  { label: "Base branch", value: "baseBranch" },
+  { label: "Merge-back branches", value: "mergeBackBranches" },
+  { label: "Pull request target", value: "pullRequestTarget" },
+  { label: "Tag namespace", value: "tagNamespace" },
+  { label: "Version source (manual, git-tag, package-json)", value: "versionSource.kind" },
+  { label: "Package.json path", value: "versionSource.path" },
+  { label: "Package version field", value: "versionSource.field" },
+  { label: "Required checks", value: "requiredChecks" },
+];
+const enumFieldOptions = (field: string): { label: string; value: string }[] | null => {
+  if (field === "commitPolicy.preset")
+    return [{ label: "Inherit global", value: "inherit" }, ...commitPresetOptions];
+  if (field === "branchPolicy.preset")
+    return [
+      { label: "Inherit global", value: "inherit" },
+      { label: "GitFlow", value: "gitflow" },
+      { label: "GitHub Flow", value: "github-flow" },
+      { label: "Trunk-based", value: "trunk-based" },
+      { label: "Custom", value: "custom" },
+    ];
+  if (field === "strategy")
+    return [
+      { label: "GitFlow", value: "gitflow" },
+      { label: "GitHub Flow", value: "github-flow" },
+      { label: "Trunk-based", value: "trunk-based" },
+      { label: "Custom", value: "custom" },
+    ];
+  if (field.endsWith(".integration"))
+    return [
+      { label: "Pull requests", value: "pr" },
+      { label: "Merge commits", value: "merge" },
+    ];
+  if (field === "versionSource.kind")
+    return [
+      { label: "Package.json", value: "package-json" },
+      { label: "Git tag", value: "git-tag" },
+      { label: "Manual", value: "manual" },
+    ];
+  if (field === "youtrack.link_issues" || field === "issues.link_on_pr")
+    return [
+      { label: "Inherit global behavior", value: "inherit" },
+      { label: "Enabled", value: "true" },
+      { label: "Disabled", value: "false" },
+    ];
+  return null;
+};
+const commitPresetOptions = [
+  { label: "Conventional commits", value: "conventional" },
+  { label: "Gitmoji", value: "gitmoji" },
+  { label: "Ticket prefix", value: "ticket-prefix" },
+  { label: "Freeform", value: "freeform" },
+  { label: "Custom pattern", value: "custom" },
+  { label: "Auto-detect", value: "auto" },
 ];
 
 // Timezone catalog: the runtime's full canonical IANA set when available,
@@ -176,6 +281,8 @@ const TEXT_SCREENS: ReadonlySet<WizardScreen> = new Set([
   "basePath",
   "workspaceName",
   "workspaceGlob",
+  "workspaceAdvancedValue",
+  "globalCommitPattern",
   "branchPolicyDevelop",
 ]);
 
@@ -259,6 +366,411 @@ export function SelectList<T extends string>({
           {option.label}
         </Text>
       ))}
+    </Box>
+  );
+}
+
+function HostPicker({
+  detection,
+  selected,
+  onChange,
+  onSubmit,
+}: {
+  detection: Record<HostId, HostDetection>;
+  selected: string[];
+  onChange: (selected: string[]) => void;
+  onSubmit: (selected: string[]) => void;
+}): JSX.Element {
+  const available = PLATFORM_LABELS.filter(({ value }) => detection[value].detected).map(
+    ({ value }) => value,
+  );
+  const options = [
+    { label: "Select all available", value: "__all" },
+    { label: "Clear all", value: "__none" },
+    ...PLATFORM_LABELS.map(({ label, value }) => ({ label, value })),
+  ];
+  const [index, setIndex] = useState(0);
+  const indexRef = useRef(index);
+  const [chosen, setChosen] = useState(selected);
+  const chosenRef = useRef(chosen);
+  useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
+  useEffect(() => {
+    chosenRef.current = chosen;
+  }, [chosen]);
+  const update = (next: string[]) => {
+    chosenRef.current = next;
+    setChosen(next);
+    onChange(next);
+  };
+  useInput((input, key) => {
+    if (key.upArrow || key.downArrow) {
+      const next = Math.max(
+        0,
+        Math.min(options.length - 1, indexRef.current + (key.downArrow ? 1 : -1)),
+      );
+      indexRef.current = next;
+      setIndex(next);
+      return;
+    }
+    if (input === " ") {
+      const option = options[indexRef.current];
+      if (option.value === "__all") update([...available]);
+      else if (option.value === "__none") update([]);
+      else if (detection[option.value as HostId].detected) {
+        const next = chosenRef.current.includes(option.value)
+          ? chosenRef.current.filter((host) => host !== option.value)
+          : [...chosenRef.current, option.value];
+        update(next);
+      }
+    } else if (key.return) {
+      const option = options[indexRef.current];
+      if (option.value === "__all") update([...available]);
+      else if (option.value === "__none") update([]);
+      onSubmit(chosenRef.current);
+    }
+  });
+  return (
+    <Box flexDirection="column" gap={0}>
+      {options.map((option, row) => {
+        const host =
+          option.value === "__all" || option.value === "__none" ? null : (option.value as HostId);
+        const detected = host === null || detection[host].detected;
+        const checked = host !== null && chosen.includes(host);
+        const label =
+          host === null
+            ? option.label
+            : `${checked ? "[✓]" : "[ ]"} ${option.label}${detection[host].configured ? " · already configured" : detection[host].detected ? " · detected" : " · unavailable"}`;
+        return (
+          <Text key={option.value} color={row === index ? "cyan" : undefined} dimColor={!detected}>
+            {row === index ? "❯ " : "  "}
+            {label}
+          </Text>
+        );
+      })}
+    </Box>
+  );
+}
+
+function WorkspaceCollectionEditor({
+  draft,
+  dispatch,
+}: {
+  draft: WizardDraft;
+  dispatch: Dispatch<WizardAction>;
+}): JSX.Element {
+  type Mode =
+    | "main"
+    | "profiles"
+    | "profileName"
+    | "profileEdit"
+    | "profileValue"
+    | "tracks"
+    | "trackName"
+    | "trackEdit"
+    | "trackValue";
+  const [mode, setMode] = useState<Mode>("main");
+  const [name, setName] = useState("");
+  const [field, setField] = useState<ProfileEditorField | TrackEditorField | null>(null);
+  const [nameError, setNameError] = useState("");
+  const workspace = draft.workspaceDraft;
+  const profileNames = Object.keys(workspace?.profiles ?? {});
+  const trackNames = Object.keys(workspace?.releaseTracks ?? {});
+  if (!workspace) return <Text color="red">Workspace draft is unavailable.</Text>;
+
+  if (mode === "profiles") {
+    const options = [
+      ...profileNames.flatMap((profile) => [
+        { label: `Edit profile ${profile}`, value: `edit:${profile}` },
+        { label: `Set ${profile} as default`, value: `default:${profile}` },
+        { label: `Delete profile ${profile}`, value: `delete:${profile}` },
+      ]),
+      { label: "Create profile", value: "create" },
+      { label: "Back to advanced settings", value: "back" },
+    ];
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Profiles · default: {workspace.defaultProfile ?? "none"}</Text>
+        <Text dimColor>Profiles can override branch rules and commit conventions.</Text>
+        <SelectList
+          options={options}
+          value="back"
+          onSelect={(value) => {
+            const profileName = value.slice(value.indexOf(":") + 1);
+            if (value === "create") {
+              setNameError("");
+              setName("");
+              setMode("profileName");
+            } else if (value.startsWith("edit:")) {
+              setName(profileName);
+              setMode("profileEdit");
+            } else if (value.startsWith("default:"))
+              dispatch({ type: "workspaceProfileDefault", name: profileName });
+            else if (value.startsWith("delete:"))
+              dispatch({ type: "workspaceProfileDelete", name: profileName });
+            else setMode("main");
+          }}
+        />
+      </Box>
+    );
+  }
+  if (mode === "profileName")
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Create profile</Text>
+        <Text dimColor>Profile name:</Text>
+        <TextInput
+          onSubmit={(value) => {
+            const next = value.trim();
+            if (!next) {
+              setNameError("Enter a profile name.");
+              return;
+            }
+            if (workspace.profiles?.[next]) {
+              setNameError(
+                `Profile ${next} already exists. Choose a different name or edit it from the list.`,
+              );
+              return;
+            }
+            dispatch({ type: "workspaceProfileCreate", name: next });
+            setName(next);
+            setMode("profileEdit");
+          }}
+        />
+        {nameError && <Text color="red">{nameError}</Text>}
+        <Text dimColor>Enter to create · Esc Back</Text>
+      </Box>
+    );
+  if (mode === "profileEdit" || mode === "profileValue") {
+    const selected = workspace.profiles?.[name];
+    if (mode === "profileValue" && field) {
+      const item = PROFILE_FIELDS.find((entry) => entry.value === field);
+      const choices = enumFieldOptions(field);
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>
+            Profile {name} · {item?.label}
+          </Text>
+          {choices ? (
+            <SelectList
+              options={choices}
+              value={
+                selected
+                  ? profileEditorValue(selected, field as ProfileEditorField)
+                  : choices[0].value
+              }
+              onSelect={(value) => {
+                dispatch({
+                  type: "workspaceProfileSet",
+                  name,
+                  field: field as ProfileEditorField,
+                  value,
+                });
+                setMode("profileEdit");
+              }}
+            />
+          ) : (
+            <TextInput
+              defaultValue={
+                selected ? profileEditorValue(selected, field as ProfileEditorField) : ""
+              }
+              onSubmit={(value) => {
+                dispatch({
+                  type: "workspaceProfileSet",
+                  name,
+                  field: field as ProfileEditorField,
+                  value,
+                });
+                setMode("profileEdit");
+              }}
+            />
+          )}
+          <Text dimColor>Enter to save · Esc Back</Text>
+        </Box>
+      );
+    }
+    const options = [
+      ...PROFILE_FIELDS,
+      { label: "Done editing", value: "done" as ProfileEditorField },
+    ];
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Edit profile · {name}</Text>
+        {PROFILE_FIELDS.map((item) => (
+          <Text key={item.value} dimColor>
+            {item.label}: {selected ? profileEditorValue(selected, item.value) || "unset" : ""}
+          </Text>
+        ))}
+        <SelectList
+          options={options}
+          value="done"
+          onSelect={(value) => {
+            if (value === "done") setMode("profiles");
+            else {
+              setField(value);
+              setMode("profileValue");
+            }
+          }}
+        />
+      </Box>
+    );
+  }
+  if (mode === "tracks") {
+    const options = [
+      ...trackNames.flatMap((track) => [
+        { label: `Edit release track ${track}`, value: `edit:${track}` },
+        { label: `Delete release track ${track}`, value: `delete:${track}` },
+      ]),
+      { label: "Create release track", value: "create" },
+      { label: "Back to advanced settings", value: "back" },
+    ];
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Named release tracks</Text>
+        <Text dimColor>Each track has its own branches, naming, version source, and checks.</Text>
+        <SelectList
+          options={options}
+          value="back"
+          onSelect={(value) => {
+            const trackName = value.slice(value.indexOf(":") + 1);
+            if (value === "create") {
+              setNameError("");
+              setName("");
+              setMode("trackName");
+            } else if (value.startsWith("edit:")) {
+              setName(trackName);
+              setMode("trackEdit");
+            } else if (value.startsWith("delete:"))
+              dispatch({ type: "workspaceTrackDelete", name: trackName });
+            else setMode("main");
+          }}
+        />
+      </Box>
+    );
+  }
+  if (mode === "trackName")
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Create release track</Text>
+        <Text dimColor>Track name:</Text>
+        <TextInput
+          onSubmit={(value) => {
+            const next = value.trim();
+            if (!next) {
+              setNameError("Enter a release-track name.");
+              return;
+            }
+            if (workspace.releaseTracks?.[next]) {
+              setNameError(
+                `Release track ${next} already exists. Choose a different name or edit it from the list.`,
+              );
+              return;
+            }
+            dispatch({ type: "workspaceTrackCreate", name: next });
+            setName(next);
+            setMode("trackEdit");
+          }}
+        />
+        {nameError && <Text color="red">{nameError}</Text>}
+        <Text dimColor>Enter to create · Esc Back</Text>
+      </Box>
+    );
+  if (mode === "trackEdit" || mode === "trackValue") {
+    const selected = workspace.releaseTracks?.[name];
+    if (mode === "trackValue" && field) {
+      const item = TRACK_FIELDS.find((entry) => entry.value === field);
+      const choices = enumFieldOptions(field);
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>
+            Release track {name} · {item?.label}
+          </Text>
+          {choices ? (
+            <SelectList
+              options={choices}
+              value={
+                selected ? trackEditorValue(selected, field as TrackEditorField) : choices[0].value
+              }
+              onSelect={(value) => {
+                dispatch({
+                  type: "workspaceTrackSet",
+                  name,
+                  field: field as TrackEditorField,
+                  value,
+                });
+                setMode("trackEdit");
+              }}
+            />
+          ) : (
+            <TextInput
+              defaultValue={selected ? trackEditorValue(selected, field as TrackEditorField) : ""}
+              onSubmit={(value) => {
+                dispatch({
+                  type: "workspaceTrackSet",
+                  name,
+                  field: field as TrackEditorField,
+                  value,
+                });
+                setMode("trackEdit");
+              }}
+            />
+          )}
+          <Text dimColor>Lists use comma-separated values · Enter to save · Esc Back</Text>
+        </Box>
+      );
+    }
+    const options = [...TRACK_FIELDS, { label: "Done editing", value: "done" as TrackEditorField }];
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Edit release track · {name}</Text>
+        {TRACK_FIELDS.map((item) => (
+          <Text key={item.value} dimColor>
+            {item.label}: {selected ? trackEditorValue(selected, item.value) || "unset" : ""}
+          </Text>
+        ))}
+        <SelectList
+          options={options}
+          value="done"
+          onSelect={(value) => {
+            if (value === "done") setMode("tracks");
+            else {
+              setField(value);
+              setMode("trackValue");
+            }
+          }}
+        />
+      </Box>
+    );
+  }
+
+  const options = [
+    ...WORKSPACE_ADVANCED_FIELDS,
+    { label: "Manage profiles", value: "profiles" as const },
+    { label: "Manage release tracks", value: "tracks" as const },
+    { label: "Save workspace settings", value: "save" as const },
+  ];
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Advanced workspace settings · {workspace.name}</Text>
+      <Text dimColor>
+        Choose a setting to edit. Lists use comma-separated values; blank clears an override.
+      </Text>
+      {[...WORKSPACE_ADVANCED_FIELDS].map(({ label, value }) => (
+        <Text key={value} dimColor>
+          {label}: {workspaceEditorValue(workspace, value) || "inherited / unset"}
+        </Text>
+      ))}
+      <SelectList
+        options={options}
+        value="save"
+        onSelect={(value) => {
+          if (value === "save") dispatch({ type: "workspaceSave" });
+          else if (value === "profiles") setMode("profiles");
+          else if (value === "tracks") setMode("tracks");
+          else dispatch({ type: "workspaceAdvancedSelect", field: value });
+        }}
+      />
     </Box>
   );
 }
@@ -463,6 +975,8 @@ function describeMutation(m: SetupMutation): string {
       return `+ register ${m.platform}: ${m.path}`;
     case "install-adapter":
       return `+ copy adapter ${m.platform}: ${m.path}`;
+    case "install-host":
+      return `+ install ${m.platform}: ${m.commands.map((command) => command.command).join(", ")}`;
     case "set-token-path":
       return `+ change ${m.key} in ${m.path} → ${m.value}`;
   }
@@ -511,21 +1025,17 @@ function Screen({
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 1 — Platforms</Text>
-          <Text>This wizard configures OpenCode and Cursor only.</Text>
-          <Text dimColor>Select the tools to configure (space to toggle):</Text>
-          <MultiSelect
-            options={platformOptions(detection)}
-            defaultValue={draft.values.platforms}
+          <Text>Choose the detected tools where Workit should be configured.</Text>
+          <Text dimColor>Use Space to toggle, or choose Select all available / Clear all.</Text>
+          <HostPicker
+            detection={detection}
+            selected={draft.values.platforms}
             onChange={(values) => dispatch({ type: "set", field: "platforms", value: values })}
             onSubmit={(values) => {
               dispatch({ type: "set", field: "platforms", value: values });
               dispatch({ type: "next" });
             }}
           />
-          {externalHostGuidance(detection).map((guidance) => (
-            <Text key={guidance}>{guidance}</Text>
-          ))}
-          <Text dimColor>For legacy installations, use `workit cutover` to preview migration.</Text>
           {draft.errors.platforms && <Text color="red">{draft.errors.platforms}</Text>}
           <Text dimColor>Enter to continue · Esc Cancel</Text>
         </Box>
@@ -737,6 +1247,11 @@ function Screen({
         { label: "Add workspace", value: "add" },
         { label: `Use current project (${base})`, value: "current" },
         { label: "Done", value: "done" },
+        { label: "Advanced global commit policy", value: "global-commit" },
+        ...draft.values.workspaces.map((w, i) => ({
+          label: `Advanced settings for ${w.name}`,
+          value: `advanced:${i}`,
+        })),
       ];
       return (
         <Box flexDirection="column" gap={1}>
@@ -765,6 +1280,9 @@ function Screen({
                 dispatch({ type: "workspaceEdit", index: Number(value.slice(5)) });
               else if (value.startsWith("remove:"))
                 dispatch({ type: "workspaceRemove", index: Number(value.slice(7)) });
+              else if (value.startsWith("advanced:"))
+                dispatch({ type: "workspaceAdvancedOpen", index: Number(value.slice(9)) });
+              else if (value === "global-commit") dispatch({ type: "globalCommitOpen" });
               else if (value === "add") dispatch({ type: "workspaceAdd" });
               else if (value === "current") dispatch({ type: "workspaceAddCurrent", path: base });
               else dispatch({ type: "next" });
@@ -840,6 +1358,105 @@ function Screen({
           <Text dimColor>Enter to save · b Back · Esc Cancel</Text>
         </Box>
       );
+    case "workspaceAdvanced": {
+      return <WorkspaceCollectionEditor draft={draft} dispatch={dispatch} />;
+    }
+    case "workspaceAdvancedValue": {
+      const field = draft.workspaceEditorField;
+      const current =
+        draft.workspaceDraft && field ? workspaceEditorValue(draft.workspaceDraft, field) : "";
+      const label =
+        WORKSPACE_ADVANCED_FIELDS.find((entry) => entry.value === field)?.label ?? "Setting";
+      const choices = field ? enumFieldOptions(field) : null;
+      const profileChoices =
+        field === "defaultProfile"
+          ? [
+              { label: "Inherit / no default profile", value: "" },
+              ...Object.keys(draft.workspaceDraft?.profiles ?? {}).map((name) => ({
+                label: name,
+                value: name,
+              })),
+            ]
+          : null;
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Advanced workspace settings · {label}</Text>
+          <Text dimColor>
+            Leave empty to clear this override. Use comma-separated values for lists.
+          </Text>
+          {profileChoices ? (
+            <SelectList
+              options={profileChoices}
+              value={current}
+              onSelect={(value) =>
+                field && dispatch({ type: "workspaceAdvancedSet", field, value })
+              }
+            />
+          ) : choices ? (
+            <SelectList
+              options={choices}
+              value={current || choices[0].value}
+              onSelect={(value) =>
+                field && dispatch({ type: "workspaceAdvancedSet", field, value })
+              }
+            />
+          ) : (
+            <TextInput
+              defaultValue={current}
+              onSubmit={(value) =>
+                field && dispatch({ type: "workspaceAdvancedSet", field, value })
+              }
+            />
+          )}
+          {field?.endsWith("integration") && <Text dimColor>Enter pr or merge.</Text>}
+          <Text dimColor>Enter to save · Esc Back</Text>
+        </Box>
+      );
+    }
+    case "globalCommitPolicy": {
+      const options = [
+        { label: "Conventional commits", value: "conventional" },
+        { label: "Gitmoji", value: "gitmoji" },
+        { label: "Ticket prefix", value: "ticket-prefix" },
+        { label: "Freeform", value: "freeform" },
+        { label: "Custom pattern", value: "custom" },
+        { label: "Auto-detect", value: "auto" },
+        { label: "Edit custom pattern…", value: "pattern" },
+        { label: "Done", value: "done" },
+      ];
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Advanced global commit policy</Text>
+          <Text dimColor>Default convention used when a workspace has no commit override.</Text>
+          {draft.values.commitPolicy.pattern && (
+            <Text dimColor>Custom pattern: {draft.values.commitPolicy.pattern}</Text>
+          )}
+          <SelectList
+            options={options}
+            value={draft.values.commitPolicy.preset}
+            onSelect={(value) => {
+              if (value === "pattern") dispatch({ type: "globalCommitEditPattern" });
+              else if (value === "done") dispatch({ type: "back" });
+              else dispatch({ type: "globalCommitPreset", value });
+            }}
+          />
+          <Text dimColor>Enter to select · b Back</Text>
+        </Box>
+      );
+    }
+    case "globalCommitPattern":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Advanced global commit policy · Custom pattern</Text>
+          <Text dimColor>Regular expression matched against the commit subject line.</Text>
+          <TextInput
+            defaultValue={draft.values.commitPolicy.pattern ?? ""}
+            onChange={(value) => dispatch({ type: "globalCommitPattern", value })}
+            onSubmit={() => dispatch({ type: "globalCommitPatternDone" })}
+          />
+          <Text dimColor>Enter to save · Esc Back</Text>
+        </Box>
+      );
     case "branchPolicy":
       return <BranchPolicyScreen draft={draft} dispatch={dispatch} />;
     case "branchPolicyDevelop":
@@ -895,6 +1512,39 @@ function Screen({
       // CA-07: the preview's hygiene target is the same displayed base path
       // runInit will pass to Apply.
       const preview = buildSetupPreview(draft.values, { cwd: resolveBasePath(draft.values) });
+      const policyPreview = (() => {
+        try {
+          const current = readConfig();
+          const config = {
+            ...current,
+            branchPolicy: mergePreset(
+              draft.values.branchPreset,
+              {
+                allowed: parseList(draft.values.branchAllowed),
+                protectedNames: parseList(draft.values.branchProtected),
+              },
+              current,
+            ),
+            commitPolicy: draft.values.commitPolicy,
+          };
+          const checkout = resolveBasePath(draft.values);
+          const workspace = resolveWorkspaceFromEntries(checkout, draft.values.workspaces);
+          const resolved = resolveWorkspacePolicy(config, workspace);
+          if (resolved.status === "invalid") return { error: resolved.error };
+          return {
+            error: null,
+            workspace: workspace?.name ?? null,
+            branchSource: resolved.provenance.branchPolicy,
+            commitSource: resolved.provenance.commitPolicy,
+            target: resolved.branchPolicy.defaultTargetBranch,
+            branchPreset: resolved.branchPolicy.preset,
+            commitPreset: resolved.commitPolicy.preset,
+          };
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : String(error) };
+        }
+      })();
+      const canApply = preview.ok && policyPreview.error === null;
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold color="cyan">
@@ -913,6 +1563,26 @@ function Screen({
             Branch policy: <Text color="green">{policy.preset}</Text> — allowed:{" "}
             {policy.allowed.join(", ")} · protected: {policy.protected.join(", ")}
           </Text>
+          {policyPreview.error === null ? (
+            <Box flexDirection="column" gap={0}>
+              <Text>
+                Sample checkout: <Text color="green">{resolveBasePath(draft.values)}</Text>
+                {policyPreview.workspace
+                  ? ` · workspace ${policyPreview.workspace}`
+                  : " · no matching workspace"}
+              </Text>
+              <Text>
+                Effective branch policy: <Text color="green">{policyPreview.branchPreset}</Text> ·
+                target {policyPreview.target} · source {policyPreview.branchSource}
+              </Text>
+              <Text>
+                Effective commit policy: <Text color="green">{policyPreview.commitPreset}</Text> ·
+                source {policyPreview.commitSource}
+              </Text>
+            </Box>
+          ) : (
+            <Text color="red">Policy preview failed: {policyPreview.error}</Text>
+          )}
           <Text>
             YouTrack base URL:{" "}
             <Text color="green">
@@ -939,11 +1609,11 @@ function Screen({
               ))}
             </Box>
           )}
-          {preview.ok ? (
+          {canApply ? (
             <Box flexDirection="column" gap={0}>
               <Text bold>Will apply:</Text>
-              {preview.mutations.map((m) => (
-                <Text key={`${m.type}:${m.path}`}>{describeMutation(m)}</Text>
+              {preview.mutations.map((m, index) => (
+                <Text key={`${m.type}:${index}`}>{describeMutation(m)}</Text>
               ))}
               {preview.preserved.map((p) => (
                 <Text key={p} color="green">
@@ -966,7 +1636,7 @@ function Screen({
               </Text>
             </Box>
           )}
-          {preview.ok && (
+          {canApply && (
             <ConfirmInput
               defaultChoice="confirm"
               submitOnEnter={false}
@@ -975,7 +1645,7 @@ function Screen({
             />
           )}
           <Text dimColor>
-            {preview.ok ? "y to apply · b Back · Esc Cancel" : "b Back · Esc Cancel"}
+            {canApply ? "y to apply · b Back · Esc Cancel" : "b Back · Esc Cancel"}
           </Text>
         </Box>
       );

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import React from "react";
 import {
-  Wizard,
+  Wizard as WorkitWizard,
   SelectList,
   SCREEN_PLACEHOLDERS,
   timezonePickerOptions,
@@ -34,6 +34,14 @@ const SPACE = " ";
 const BACKSPACE = "\x7f";
 
 const noop = () => {};
+
+const testHostDetection = {
+  ...emptyDetection(),
+  opencode: { detected: true, configured: false },
+};
+const Wizard = (props: React.ComponentProps<typeof WorkitWizard>) => (
+  <WorkitWizard {...props} detection={props.detection ?? testHostDetection} />
+);
 
 // CA-06 (Task 5): the branchPolicy screen appears only when the resolution root
 // is a git repo. This suite drives the non-git flow (workspaces ↔ project
@@ -398,7 +406,7 @@ test("exactly one input control is mounted on every screen", async () => {
       const tty = await renderInk(<Wizard onExit={noop} />);
       // Ink tab-navigation listener + wizard nav handler + the screen control
       expect(tty.inputListenerCount()).toBe(3);
-      await tty.keys(SPACE, ENTER); // platforms -> locale
+      await tty.keys(ENTER); // platforms -> locale
       // SearchSelect owns its input handling; its display-only TextInput is
       // disabled and never subscribes, so the invariant holds unchanged
       expect(tty.inputListenerCount()).toBe(3);
@@ -427,7 +435,7 @@ test("locale and timezone inputs are independent; revisiting shows the current v
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     const localeFrame = tty.lastFrame();
     expect(localeFrame).toContain("Locale");
     expect(localeFrame).not.toContain("Timezone");
@@ -453,7 +461,7 @@ test("a custom Other value is validated before advancing", async () => {
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.keys("other", ENTER); // query isolates Other… -> custom text screen
     expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.localeOther); // CA-09 wiring
     await tty.keys("en_US", ENTER); // invalid BCP-47
@@ -473,7 +481,7 @@ test("branch policy screen shows the resolved policy, not the raw preset", async
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER, ENTER, ENTER); // -> branchPreset
+    await tty.keys(ENTER, ENTER, ENTER); // -> branchPreset
     const gitflow = tty.lastFrame();
     expect(gitflow).toContain("feature/*");
     expect(gitflow).toContain("main");
@@ -494,7 +502,7 @@ test("custom branch policy requires nonempty allowed and protected patterns", as
   });
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER, ENTER, ENTER); // -> branchPreset (custom)
+    await tty.keys(ENTER, ENTER, ENTER); // -> branchPreset (custom)
     await tty.keys(ENTER); // -> branchAllowed
     expect(tty.lastFrame()).toContain("Allowed branch patterns");
     expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.branchAllowed); // CA-09 wiring
@@ -520,7 +528,7 @@ test("Back preserves the draft values entered so far", async () => {
     const cleanup = withSeedConfig(seedConfig);
     try {
       const tty = await renderInk(<Wizard onExit={noop} />);
-      await tty.keys(SPACE, ENTER); // -> locale
+      await tty.keys(ENTER); // -> locale
       await tty.keys("mx", ENTER); // search narrows to Español (México) -> timezone
       await tty.keys(ENTER); // -> branchPreset
       await tty.keys(DOWN, ENTER); // github-flow -> issueTracker
@@ -557,7 +565,7 @@ test("Escape cancels without writing anything", async () => {
   try {
     const exitCalls: boolean[] = [];
     const tty = await renderInk(<Wizard onExit={(complete) => exitCalls.push(complete)} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.keys("mx", ENTER); // -> timezone (searched pick)
     await tty.burst(ESC); // cancel (select screen): single chunk, no pending-byte race
     expect(exitCalls).toEqual([false]);
@@ -577,7 +585,7 @@ test("no competing Enter/provider race — one submit path per screen", async ()
       const tty = await renderInk(<Wizard onExit={noop} />);
       // platforms, locale, timezone, branchPreset walks to issueTracker
       // (custom screens skipped for the gitflow seed).
-      await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+      await tty.keys(ENTER, ENTER, ENTER, ENTER); // -> issueTracker
       expect(tty.lastFrame()).toContain("Issue tracker");
       await tty.keys(ENTER); // issueTracker (YouTrack) -> youtrack
       expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.youtrack); // CA-09 wiring
@@ -724,7 +732,7 @@ test("Ctrl+C cancels from a text screen instead of walking back (Task 12 advisor
     const tty = await renderInk(<Wizard onExit={(complete) => exitCalls.push(complete)} />, {
       exitOnCtrlC: false,
     });
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.keys("other", ENTER); // -> Other (text screen)
     await tty.key("\x03"); // ctrl+c must cancel, never walk back
     expect(exitCalls).toEqual([false]);
@@ -738,7 +746,7 @@ test("backspace-to-empty custom locale surfaces the block on the select screen",
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.keys("other", ENTER); // -> Other
     await tty.keys("en_US"); // invalid BCP-47 stored while editing
     for (let i = 0; i < "en_US".length; i++) await tty.key(BACKSPACE);
@@ -787,7 +795,7 @@ test("project setup can be skipped after previously selecting it", async () => {
     const cleanup = withSeedConfig(seedConfig);
     const tty = await renderInk(<Wizard onExit={noop} />);
     try {
-      await tty.keys(SPACE, ENTER, ENTER, ENTER, DOWN, ENTER, ENTER, ENTER, ENTER, ENTER);
+      await tty.keys(ENTER, ENTER, ENTER, DOWN, ENTER, ENTER, ENTER, ENTER, ENTER);
       expect(tty.lastFrame()).toContain("Step 6 — Project setup");
       await tty.key("y");
       expect(tty.lastFrame()).toContain("Project hygiene: yes");
@@ -806,7 +814,7 @@ test("typing narrows the locale picker's visible rows", async () => {
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     const full = tty.lastFrame();
     expect(full).toContain("❯ English");
     expect(full).toContain("Español (Argentina)");
@@ -826,7 +834,7 @@ test("arrows move within the filtered set and Enter commits the highlighted row"
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.keys("es"); // the five Español rows
     await tty.keys(DOWN, DOWN); // highlight Español (Chile)
     expect(tty.lastFrame()).toContain("❯ Español (Chile)");
@@ -846,7 +854,7 @@ test("'Other…' routes to the existing validated custom-locale flow (CA-03)", a
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.keys("other", ENTER); // query isolates Other… -> pickOther flow
     expect(tty.lastFrame()).toContain("custom");
     await tty.keys("es-419", ENTER); // 3-digit region subtag validates via LOCALE_RE
@@ -861,7 +869,7 @@ test("empty result renders 'No matches'; arrows clamp at both ends of a one-row 
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.keys("qqzz");
     expect(tty.lastFrame()).toContain("No matches"); // empty-state copy
     for (let i = 0; i < 4; i++) await tty.key(BACKSPACE);
@@ -881,7 +889,7 @@ test("'b' starts a search instead of walking back; once cleared it navigates bac
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.key("b"); // first search character must reach the query
     const searching = tty.lastFrame();
     expect(searching).toContain("Locale"); // still the picker…
@@ -912,7 +920,7 @@ test("the detected zone is preselected without typing", async () => {
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.keys(ENTER); // commit highlighted locale -> timezone
     const frame = tty.lastFrame();
     expect(frame).toContain("Timezone");
@@ -929,7 +937,7 @@ test("typing narrows the timezone picker and Enter commits the searched zone", a
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER, ENTER); // -> timezone
+    await tty.keys(ENTER, ENTER); // -> timezone
     await tty.keys("santiago");
     const narrowed = tty.lastFrame();
     expect(narrowed).toContain("America/Santiago");
@@ -948,7 +956,7 @@ test("revisiting the timezone picker highlights the committed draft zone, not th
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER, ENTER); // -> timezone
+    await tty.keys(ENTER, ENTER); // -> timezone
     // Commit the second catalog row: guaranteed inside the first window and,
     // by construction, never the detected host zone (row 0).
     const committed = timezonePickerOptions()[1].value;
@@ -970,7 +978,7 @@ test("'b' starts a timezone search instead of walking back; once cleared it navi
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER, ENTER); // -> timezone
+    await tty.keys(ENTER, ENTER); // -> timezone
     await tty.key("b"); // cold 'b' must reach the query, never walk back
     const searching = tty.lastFrame();
     expect(searching).toContain("Timezone"); // still the picker…
@@ -994,7 +1002,7 @@ test("'Other…' keeps the validated custom-timezone flow (CA-04)", async () => 
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER, ENTER); // -> timezone
+    await tty.keys(ENTER, ENTER); // -> timezone
     // DOWN isolates Other… ("other" also substring-matches Antarctica/Rothera)
     await tty.keys("other", DOWN, ENTER);
     expect(tty.lastFrame()).toContain("custom");
@@ -1020,7 +1028,7 @@ test("the develop-branch editor carries its example placeholder (CA-09 wiring)",
   process.env.WORKFLOW_WORKSPACE_ROOT = REPO_ROOT;
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> locale
     await tty.keys(ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> workspaces
     await tty.keys(ENTER); // Done -> branchPolicy (repo is git)
     expect(tty.lastFrame()).toContain("Step 5 — Branch policy");
@@ -1061,7 +1069,7 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
       );
       const exitCalls: boolean[] = [];
       const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
-      await tty.keys(SPACE, ENTER); // -> locale
+      await tty.keys(ENTER); // -> locale
       await tty.keys(ENTER); // -> timezone
       await tty.keys(ENTER); // -> branchPreset
       await tty.keys(ENTER); // -> issueTracker
@@ -1116,7 +1124,7 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
       writeFileSync(path.join(configPath, "youtrack.json"), "{ not json", "utf8");
       const exitCalls: boolean[] = [];
       const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
-      await tty.keys(SPACE, ENTER); // -> locale
+      await tty.keys(ENTER); // -> locale
       await tty.keys(ENTER); // -> timezone
       await tty.keys(ENTER); // -> branchPreset
       await tty.keys(ENTER); // -> issueTracker
@@ -1160,12 +1168,11 @@ test("platforms screen preselects detected hosts and tags configured ones", asyn
     );
     const first = tty.lastFrame();
     expect(first).toContain("already configured");
-    expect(first).toContain("This wizard configures OpenCode and Cursor only.");
-    expect(first).toContain("Codex · detected — plugin/hooks setup:");
-    expect(first).toContain(
-      "Pi · detected — install separately: pi install @brainervirus/workit-pi",
-    );
-    expect(first).toContain("For legacy installations, use `workit cutover`");
+    expect(first).toContain("OpenCode · already configured");
+    expect(first).toContain("Cursor · unavailable");
+    expect(first).toContain("Codex · detected");
+    expect(first).toContain("Pi · detected");
+    expect(first).not.toContain("install separately");
     // The opencode preselection satisfies validation: ENTER advances with no toggle.
     await tty.keys(ENTER);
     expect(tty.lastFrame()).toContain("Locale");

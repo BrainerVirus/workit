@@ -255,7 +255,7 @@ test("packed CLI partial failure exits nonzero with a Failed entry", async () =>
     const nm = path.join(install, "node_modules");
     mkdirSync(nm, { recursive: true });
     installPackedPackage(nm, byName(packs, CORE));
-    installPackedPackage(nm, byName(packs, OPENCODE)); // cursor deliberately absent
+    installPackedPackage(nm, byName(packs, OPENCODE));
     installPackedPackage(nm, byName(packs, CLI));
     copyHoistedDeps(nm, ["zod"]);
     const setup = await loadSetup(nm);
@@ -270,7 +270,15 @@ test("packed CLI partial failure exits nonzero with a Failed entry", async () =>
       cwd: install,
       env,
     });
-    const result = setup.applySetupPreview(preview, { home, configDir, cwd: install, env });
+    const result = setup.applySetupPreview(preview, {
+      home,
+      configDir,
+      cwd: install,
+      env,
+      // Fail the Cursor installer deterministically; package availability in
+      // the developer's npm cache must not decide this partial-failure test.
+      runHostCommand: () => ({ exitCode: 1, stdout: "", stderr: "fixture install failure" }),
+    });
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(1);
     expect(result.entries.some((e) => e.platform === "cursor" && e.status === "Failed")).toBe(true);
