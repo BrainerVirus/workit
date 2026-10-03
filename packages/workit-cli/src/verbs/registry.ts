@@ -145,15 +145,16 @@ export const VERBS: readonly VerbEntry[] = [
     name: "ledger",
     group: "delivery",
     usage: "workit ledger decision|ruling|verdict|list|check ...",
-    summary: "Record and query decisions, rulings and verdicts",
-    planned: "S13",
+    summary:
+      "Record and query decisions, rulings and SHA-keyed verdicts (patch-id carry-over across rebases)",
     load: () => import("./ledger"),
   },
   {
     name: "handoff",
     group: "delivery",
-    usage: "workit handoff --task <id>",
-    summary: "Export task state and compact destination context",
+    usage: "workit handoff [--note <t>] [--next <t>] [--record] | workit handoff --task <id>",
+    summary:
+      "Print a resume brief (branch, HEAD, dirty state, verdict, rulings, next command); --task exports v1 task state",
     load: () => import("./handoff"),
   },
 ];

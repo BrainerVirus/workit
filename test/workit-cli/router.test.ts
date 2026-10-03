@@ -154,7 +154,7 @@ test("help, version and per-verb usage answer through the envelope", async () =>
   expect((await run([])).stdout).toContain("Usage: workit <command>");
 });
 
-test("planned S9b–S13 verbs answer not_implemented with exit 2", async () => {
+test("planned S9b–S12 verbs answer not_implemented with exit 2", async () => {
   for (const [verb, slice] of [
     ["check", "S9b"],
     ["pr", "S10/S11"],
@@ -162,10 +162,8 @@ test("planned S9b–S13 verbs answer not_implemented with exit 2", async () => {
     ["git", "S11"],
     ["verify-delivery", "S11"],
     ["stack", "S12"],
-    ["ledger", "S13"],
-    ["handoff", "S13"],
   ] as const) {
-    if (verb !== "handoff") expect(VERBS.find((entry) => entry.name === verb)?.planned).toBe(slice);
+    expect(VERBS.find((entry) => entry.name === verb)?.planned).toBe(slice);
     const result = await run([verb, "status", "--json"]);
     expect(result.code, verb).toBe(2);
     expect(JSON.parse(result.stdout)).toEqual({
