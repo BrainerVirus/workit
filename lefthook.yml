@@ -1,5 +1,7 @@
 # Local git hooks. Opt in once per clone with `bun run hooks:install`
 # (hooks are shared by every worktree of the clone). CI runs the same gates.
+# The npm package's postinstall (`lefthook install`) is kept from running on
+# dependency install: bun does not trust it, and package.json opts pnpm/yarn out.
 no_auto_install: true
 
 pre-commit:
