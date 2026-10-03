@@ -9,6 +9,7 @@ import { planUninstall, type UninstallPaths } from "./uninstall";
 import {
   findHostExecutable,
   installedHostApp,
+  isClaudeWorkitInstalled,
   isCodexWorkitInstalled,
   isPiWorkitInstalled,
   type HostId,
@@ -24,7 +25,7 @@ export type HostDetection = {
 
 export type DetectHostsOptions = UninstallPaths;
 
-const HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
+const HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi", "claude-code"];
 
 /** Hosts the setup wizard configures through their native install paths. */
 export const WIZARD_HOSTS: HostId[] = [...HOSTS];
@@ -40,6 +41,7 @@ export function emptyDetection(): Record<HostId, HostDetection> {
     cursor: { detected: false, configured: false },
     codex: { detected: false, configured: false },
     pi: { detected: false, configured: false },
+    "claude-code": { detected: false, configured: false },
   };
 }
 
@@ -52,8 +54,10 @@ export function detectHosts(options: DetectHostsOptions = {}): Record<HostId, Ho
   const configuredByHost = new Map(plan.hosts.map((h) => [h.host, h.installed]));
   const found = emptyDetection();
   for (const host of HOSTS) {
+    // Claude Code ships as the `claude` CLI (the desktop app embeds it).
+    const executable = host === "claude-code" ? "claude" : host;
     const detected =
-      findHostExecutable(host, { home, env }) !== null || installedHostApp(host, home, env);
+      findHostExecutable(executable, { home, env }) !== null || installedHostApp(host, home, env);
     found[host] = {
       detected,
       configured:
@@ -61,7 +65,9 @@ export function detectHosts(options: DetectHostsOptions = {}): Record<HostId, Ho
           ? isCodexWorkitInstalled(home, env) || (configuredByHost.get(host) ?? false)
           : host === "pi"
             ? isPiWorkitInstalled(home, env) || (configuredByHost.get(host) ?? false)
-            : (configuredByHost.get(host) ?? false),
+            : host === "claude-code"
+              ? isClaudeWorkitInstalled(home, env)
+              : (configuredByHost.get(host) ?? false),
     };
   }
   return found;

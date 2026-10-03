@@ -96,7 +96,10 @@ describe("analyzeReleaseScope", () => {
     r.tag("v0.8.11");
     try {
       r.commit("fix(cli): flag parsing", { "packages/workit-cli/src/index.tsx": "export {};\n" });
-      expect(analyzeReleaseScope(r.root)).toEqual({ level: "patch", productPkgs: ["workit-cli"] });
+      expect(analyzeReleaseScope(r.root)).toEqual({
+        level: "patch",
+        productPkgs: ["workit-cli", "workit-claude-code"],
+      });
     } finally {
       r.cleanup();
     }
@@ -163,7 +166,10 @@ describe("analyzeReleaseScope", () => {
     try {
       r.commit("docs: readme", { "README.md": "# x\n" });
       r.commit("fix(workit-cli): title (#42)", { "packages/workit-cli/src/main.ts": "m\n" });
-      expect(analyzeReleaseScope(r.root)).toEqual({ level: "patch", productPkgs: ["workit-cli"] });
+      expect(analyzeReleaseScope(r.root)).toEqual({
+        level: "patch",
+        productPkgs: ["workit-cli", "workit-claude-code"],
+      });
     } finally {
       r.cleanup();
     }
@@ -183,6 +189,7 @@ describe("analyzeReleaseScope", () => {
           "workit-cursor",
           "workit-codex",
           "workit-pi",
+          "workit-claude-code",
         ],
       });
     } finally {
@@ -203,7 +210,10 @@ describe("analyzeReleaseScope", () => {
       g(["checkout", "-q", "main"]);
       r.commit("docs: notes", { "docs/x.md": "x\n" });
       g(["merge", "--no-ff", "-q", "-m", "Merge branch 'hotfix'", "hotfix"]);
-      expect(analyzeReleaseScope(r.root)).toEqual({ level: null, productPkgs: ["workit-cli"] });
+      expect(analyzeReleaseScope(r.root)).toEqual({
+        level: null,
+        productPkgs: ["workit-cli", "workit-claude-code"],
+      });
     } finally {
       r.cleanup();
     }
@@ -216,7 +226,20 @@ describe("analyzeReleaseScope", () => {
       r.commit("docs(skills): pause parked leads", {
         "packages/workit-core/skills/workit-steer/SKILL.md": "# steer\n",
       });
-      expect(analyzeReleaseScope(r.root)).toEqual({ level: "patch", productPkgs: ["workit-core"] });
+      expect(analyzeReleaseScope(r.root)).toEqual({
+        level: "patch",
+        // Core is inlined (and its skills copied) into every adapter.
+        productPkgs: [
+          "workit-core",
+          "workit-mcp",
+          "workit-cli",
+          "workit-opencode",
+          "workit-cursor",
+          "workit-codex",
+          "workit-pi",
+          "workit-claude-code",
+        ],
+      });
     } finally {
       r.cleanup();
     }
@@ -241,7 +264,10 @@ describe("analyzeReleaseScope", () => {
     r.tag("v0.8.11");
     try {
       r.commit("fix(cli): café", { "packages/workit-cli/src/café.ts": "c\n" });
-      expect(analyzeReleaseScope(r.root)).toEqual({ level: "patch", productPkgs: ["workit-cli"] });
+      expect(analyzeReleaseScope(r.root)).toEqual({
+        level: "patch",
+        productPkgs: ["workit-cli", "workit-claude-code"],
+      });
     } finally {
       r.cleanup();
     }

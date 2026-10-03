@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "Claude Code 2.1.288 command-hook JSON output, transcribed from the zod schemas embedded in the binary (~/.local/share/claude/versions/2.1.288): the common fields plus the hookSpecificOutput variants for the events the Workit plugin registers. PreCompact, Stop and SubagentStop accept common fields only (SubagentStop may add additionalContext). Re-transcribe when the support-matrix Claude Code pin moves.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "continue": { "type": "boolean" },
+    "suppressOutput": { "type": "boolean" },
+    "stopReason": { "type": "string" },
+    "decision": { "enum": ["approve", "block"] },
+    "reason": { "type": "string" },
+    "systemMessage": { "type": "string" },
+    "terminalSequence": { "type": "string" },
+    "hookSpecificOutput": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hookEventName"],
+          "properties": {
+            "hookEventName": { "const": "PreToolUse" },
+            "permissionDecision": { "enum": ["allow", "deny", "ask", "defer"] },
+            "permissionDecisionReason": { "type": "string" },
+            "updatedInput": { "type": "object" },
+            "additionalContext": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hookEventName"],
+          "properties": {
+            "hookEventName": { "const": "UserPromptSubmit" },
+            "additionalContext": { "type": "string" },
+            "sessionTitle": { "type": "string" },
+            "suppressOriginalPrompt": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hookEventName"],
+          "properties": {
+            "hookEventName": { "const": "SessionStart" },
+            "additionalContext": { "type": "string" },
+            "initialUserMessage": { "type": "string" },
+            "sessionTitle": { "type": "string" },
+            "watchPaths": { "type": "array", "items": { "type": "string" } },
+            "reloadSkills": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hookEventName"],
+          "properties": {
+            "hookEventName": { "const": "SubagentStart" },
+            "additionalContext": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hookEventName"],
+          "properties": {
+            "hookEventName": { "const": "SubagentStop" },
+            "additionalContext": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hookEventName"],
+          "properties": {
+            "hookEventName": { "const": "PostToolUse" },
+            "additionalContext": { "type": "string" },
+            "classifierContext": { "type": "string" },
+            "updatedMCPToolOutput": {}
+          }
+        }
+      ]
+    }
+  }
+}

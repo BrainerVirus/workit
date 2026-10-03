@@ -10,12 +10,20 @@ import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "n
 import os from "node:os";
 import path from "node:path";
 import { isWorkitPlugin } from "./registration";
+import {
+  claudeWorkitInstalls,
+  findHostExecutable,
+  runHostCommand,
+  type HostCommandRunner,
+} from "./host-install";
 
-export type UninstallHost = "opencode" | "cursor" | "codex" | "pi";
+export type UninstallHost = "opencode" | "cursor" | "codex" | "pi" | "claude-code";
 
 export type UninstallAction =
   | { kind: "edit-json-remove"; path: string; detail: string }
-  | { kind: "remove-dir"; path: string; detail: string };
+  | { kind: "remove-dir"; path: string; detail: string }
+  /** A host-native uninstall (Claude Code owns its plugin cache and registry). */
+  | { kind: "host-command"; path: string; detail: string; command: "claude"; args: string[] };
 
 export type UninstallHostPlan = {
   host: UninstallHost;
@@ -49,6 +57,8 @@ export type UninstallPaths = {
   cursorSettings?: string;
   cursorMcp?: string;
   cursorPluginDir?: string;
+  /** Injectable host-command runner for host-native uninstall actions. */
+  runHostCommand?: HostCommandRunner;
 };
 
 type ResolvedUninstall = {
@@ -321,7 +331,23 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
       : [],
   };
 
-  return { hosts: [opencode, cursor, codex, pi] };
+  // Claude Code: one native `claude plugin uninstall <id>` per recorded
+  // Workit install (any marketplace). A --plugin-dir pin is never recorded.
+  const home = paths.home ?? paths.env?.HOME ?? os.homedir();
+  const claudeInstalls = claudeWorkitInstalls(home, paths.env ?? process.env);
+  const claude: UninstallHostPlan = {
+    host: "claude-code",
+    installed: claudeInstalls.length > 0,
+    actions: claudeInstalls.map((install) => ({
+      kind: "host-command" as const,
+      path: install.installPath,
+      detail: `claude plugin uninstall ${install.id}`,
+      command: "claude" as const,
+      args: ["plugin", "uninstall", install.id],
+    })),
+  };
+
+  return { hosts: [opencode, cursor, codex, pi, claude] };
 }
 
 // CA-14 traversal guard: rm -rf is permitted ONLY on the exact resolved
@@ -390,6 +416,46 @@ const applyEditJsonRemove = (
   return { status: "removed" };
 };
 
+const CLAUDE_PLUGIN_ID = /^workit@[A-Za-z0-9._-]+$/;
+
+/** Runs a reviewed `claude plugin uninstall workit@<marketplace>`; any other
+ *  argv is refused, so a tampered plan cannot run an arbitrary command. */
+const applyClaudeUninstall = (
+  action: Extract<UninstallAction, { kind: "host-command" }>,
+  paths: UninstallPaths,
+): { status: UninstallResultStatus; detail?: string } => {
+  const [verb, sub, id, ...rest] = action.args;
+  if (
+    action.command !== "claude" ||
+    verb !== "plugin" ||
+    sub !== "uninstall" ||
+    !CLAUDE_PLUGIN_ID.test(id ?? "") ||
+    rest.length > 0
+  )
+    return {
+      status: "failed",
+      detail: `refusing unreviewed host command: ${action.args.join(" ")}`,
+    };
+  const home = paths.home ?? paths.env?.HOME ?? os.homedir();
+  const env = paths.env ?? process.env;
+  if (!claudeWorkitInstalls(home, env).some((install) => install.id === id))
+    return { status: "skipped", detail: `${id} is no longer installed` };
+  const executable = findHostExecutable("claude", { home, env });
+  if (!executable && !paths.runHostCommand)
+    return { status: "failed", detail: "claude executable was not found on PATH" };
+  const step = {
+    command: executable ?? "claude",
+    args: action.args,
+    purpose: `Uninstall the Workit Claude Code plugin ${id}`,
+  };
+  const result = paths.runHostCommand
+    ? paths.runHostCommand(step)
+    : runHostCommand(step, { home, env });
+  return result.exitCode === 0
+    ? { status: "removed", detail: action.detail }
+    : { status: "failed", detail: result.stderr || `exit ${result.exitCode}` };
+};
+
 /** Applies ONLY the reviewed plan actions with the given path options. Each
  *  planned action yields exactly one result entry; malformed host JSON fails
  *  its own action untouched while the remaining actions proceed (CA-13). */
@@ -400,7 +466,11 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
     for (const action of hostPlan.actions) {
       let status: UninstallResultStatus;
       let detail: string | undefined;
-      if (action.kind === "remove-dir") {
+      if (action.kind === "host-command") {
+        const outcome = applyClaudeUninstall(action, paths);
+        status = outcome.status;
+        detail = outcome.detail;
+      } else if (action.kind === "remove-dir") {
         // Resolve before comparing so ".."/symlink tricks can never widen the rm.
         const resolved = path.resolve(action.path);
         const allowed =

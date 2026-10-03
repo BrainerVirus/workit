@@ -21,6 +21,7 @@ const ADAPTERS = [
   "workit-codex",
   "workit-pi",
   "workit-cli",
+  "workit-claude-code",
 ] as const;
 
 test(
@@ -168,7 +169,7 @@ test(
     }
     // bumpers only: exactly four @semantic-release/npm entries, none publishing.
     const npmEntries = cfg.plugins.filter(isNpm);
-    expect(npmEntries).toHaveLength(7);
+    expect(npmEntries).toHaveLength(8);
     for (const entry of npmEntries) expect(opts(entry).npmPublish).toBe(false);
     // selective publish lands after the bumpers and before the GitHub
     // release/tag plugin (AR-16).

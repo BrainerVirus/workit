@@ -11,7 +11,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-export type HostId = "opencode" | "cursor" | "codex" | "pi";
+export type HostId = "opencode" | "cursor" | "codex" | "pi" | "claude-code";
 
 /** A reviewed argv vector. Arguments are never composed into a shell string. */
 export type HostInstallCommand = {
@@ -89,6 +89,12 @@ export type HostInstallOptions = {
 
 const MARKETPLACE = "https://github.com/BrainerVirus/workit.git";
 const CODEX_MARKETPLACE_NAME = "workflow-toolkit";
+/** Claude Code reads the git-hosted marketplace at the repo root
+ * (`.claude-plugin/marketplace.json`, name `workit`); its entry installs the
+ * published npm package. */
+export const CLAUDE_MARKETPLACE_REPO = "BrainerVirus/workit";
+export const CLAUDE_MARKETPLACE_NAME = "workit";
+export const CLAUDE_PLUGIN_ID = `workit@${CLAUDE_MARKETPLACE_NAME}`;
 const validPackageVersion = (value: string): boolean =>
   value === "latest" || /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value);
 
@@ -224,6 +230,73 @@ export const isCodexWorkitInstalled = (
   return false;
 };
 
+/** Claude Code's config root (`CLAUDE_CONFIG_DIR`, default `~/.claude`). */
+export const claudeConfigDir = (home: string, env: NodeJS.ProcessEnv = process.env): string =>
+  env.CLAUDE_CONFIG_DIR ?? path.join(home, ".claude");
+
+export type ClaudeWorkitInstall = { id: string; version: string | null; installPath: string };
+
+const isCanonicalClaudePlugin = (root: string): boolean => {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(path.join(root, ".claude-plugin", "plugin.json"), "utf8"),
+    ) as { name?: string; repository?: string | { url?: string } };
+    const repository =
+      typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url;
+    return (
+      manifest.name === "workit" &&
+      repository?.replace(/\.git$/, "").toLowerCase() === "https://github.com/brainervirus/workit"
+    );
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Workit installs recorded in Claude Code's plugin registry
+ * (`<config>/plugins/installed_plugins.json`, v2: `{plugins: {"name@market":
+ * [{installPath, version}]}}`). Only entries whose install directory carries
+ * the canonical Workit manifest count, whatever marketplace they came from.
+ * A `--plugin-dir` local pin is per-session and never appears here.
+ */
+export const claudeWorkitInstalls = (
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): ClaudeWorkitInstall[] => {
+  const file = path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json");
+  let registry: unknown;
+  try {
+    registry = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return [];
+  }
+  const plugins =
+    registry && typeof registry === "object" && "plugins" in registry ? registry.plugins : null;
+  if (!plugins || typeof plugins !== "object") return [];
+  const found: ClaudeWorkitInstall[] = [];
+  for (const [id, entries] of Object.entries(plugins as Record<string, unknown>)) {
+    if (!id.startsWith("workit@") || !Array.isArray(entries)) continue;
+    for (const entry of entries as Array<{ installPath?: unknown; version?: unknown }>) {
+      if (typeof entry?.installPath !== "string" || !isCanonicalClaudePlugin(entry.installPath))
+        continue;
+      found.push({
+        id,
+        installPath: entry.installPath,
+        version:
+          typeof entry.version === "string" && /^\d+\.\d+\.\d+/.test(entry.version)
+            ? entry.version
+            : null,
+      });
+    }
+  }
+  return found;
+};
+
+export const isClaudeWorkitInstalled = (
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean => claudeWorkitInstalls(home, env).length > 0;
+
 export function installedHostApp(
   host: HostId,
   home: string,
@@ -294,6 +367,39 @@ export function planHostInstall(
         ...base,
         args: [...base.args, "plugin", "add", `workit@${CODEX_MARKETPLACE_NAME}`],
         purpose: upgrading ? "Refresh the Workit Codex plugin" : "Install the Workit Codex plugin",
+      },
+    ];
+  }
+  if (host === "claude-code") {
+    if (!upgrading && isClaudeWorkitInstalled(home, env)) return [];
+    const base = hostCommand("claude", [], { home, cwd, env });
+    return [
+      nodePrerequisite({ home, cwd, env }),
+      {
+        ...base,
+        args: [...base.args, "plugin", "marketplace", "list", "--json"],
+        purpose: "Check whether the Workit Claude Code marketplace is already registered",
+      },
+      upgrading
+        ? {
+            ...base,
+            args: [...base.args, "plugin", "marketplace", "update", CLAUDE_MARKETPLACE_NAME],
+            purpose: "Refresh the Workit Claude Code marketplace",
+          }
+        : {
+            ...base,
+            args: [...base.args, "plugin", "marketplace", "add", CLAUDE_MARKETPLACE_REPO],
+            purpose: "Register the Workit Claude Code marketplace",
+            skipWhenOutputIncludes: `"name": "${CLAUDE_MARKETPLACE_NAME}"`,
+          },
+      {
+        ...base,
+        args: upgrading
+          ? [...base.args, "plugin", "update", CLAUDE_PLUGIN_ID]
+          : [...base.args, "plugin", "install", CLAUDE_PLUGIN_ID, "--scope", "user"],
+        purpose: upgrading
+          ? "Update the Workit Claude Code plugin"
+          : "Install the Workit Claude Code plugin",
       },
     ];
   }
@@ -440,6 +546,7 @@ export function runHostCommand(
       const env: NodeJS.ProcessEnv = { ...process.env, ...context.env, HOME: home };
       env.CODEX_HOME = context.env?.CODEX_HOME ?? path.join(home, ".codex");
       env.PI_CODING_AGENT_DIR = context.env?.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent");
+      env.CLAUDE_CONFIG_DIR = context.env?.CLAUDE_CONFIG_DIR ?? path.join(home, ".claude");
       env.XDG_CONFIG_HOME = context.env?.XDG_CONFIG_HOME ?? path.join(home, ".config");
       return env;
     })(),

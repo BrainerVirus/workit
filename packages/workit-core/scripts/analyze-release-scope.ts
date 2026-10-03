@@ -15,7 +15,39 @@ export const RELEASE_PACKAGES = [
   "workit-cursor",
   "workit-codex",
   "workit-pi",
+  "workit-claude-code",
 ] as const;
+
+type ReleasePackage = (typeof RELEASE_PACKAGES)[number];
+
+/**
+ * Sources a package's published dist/ inlines from OUTSIDE its own directory.
+ * Every adapter build is a no-external `bun build`, so whatever it imports
+ * from another workspace package is copied into its bundle: a runtime
+ * dependency on that package does not reach the shipped code. A change in
+ * these sources must therefore republish the bundling package too. Verified
+ * against the build entries' metafiles by
+ * test/workit-core/bundled-sources.test.ts.
+ */
+const CORE = "packages/workit-core/";
+const MCP_SRC = "packages/workit-mcp/src/";
+// The bundled CLI also inlines its package.json (`workit --version`).
+const CLI = ["packages/workit-cli/src/", "packages/workit-cli/package.json"];
+export const BUNDLED_SOURCES: Partial<Record<ReleasePackage, readonly string[]>> = {
+  "workit-mcp": [CORE],
+  "workit-cli": [CORE],
+  "workit-opencode": [CORE],
+  "workit-cursor": [CORE, MCP_SRC],
+  "workit-codex": [CORE, MCP_SRC],
+  "workit-pi": [CORE],
+  "workit-claude-code": [CORE, ...CLI],
+};
+
+/** Every repository path whose change alters `pkg`'s published payload. */
+export const payloadPaths = (pkg: ReleasePackage): string[] => [
+  `packages/${pkg}/`,
+  ...(BUNDLED_SOURCES[pkg] ?? []),
+];
 
 /** The release pipeline's own version-sync commit: never a release trigger. */
 const RELEASE_SYNC = /^chore\(release\): sync manifests\b/;
@@ -90,10 +122,9 @@ export function analyzeReleaseScope(root = process.cwd()): {
     const lvl = subjectLevel(message);
     if (lvl) levels.push(lvl);
     else if (!subject.startsWith("Merge ")) payloadOnly = true;
-    for (const f of touched) {
-      const pkg = RELEASE_PACKAGES.find((p) => f.startsWith(`packages/${p}/`));
-      if (pkg) pkgs.add(pkg);
-    }
+    for (const pkg of RELEASE_PACKAGES)
+      if (touched.some((f) => payloadPaths(pkg).some((prefix) => f.startsWith(prefix))))
+        pkgs.add(pkg);
   }
   if (levels.length === 0) return { level: payloadOnly ? "patch" : null, productPkgs: [...pkgs] };
   const level = levels.reduce<Level>(

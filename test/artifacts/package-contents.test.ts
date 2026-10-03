@@ -349,7 +349,8 @@ test("shipped skill/template/vendor markdown uses workit_ tool identifiers with 
       pack.packageName !== CURSOR &&
       pack.packageName !== "@brainervirus/workit-mcp" &&
       pack.packageName !== "@brainervirus/workit-codex" &&
-      pack.packageName !== "@brainervirus/workit-pi"
+      pack.packageName !== "@brainervirus/workit-pi" &&
+      pack.packageName !== "@brainervirus/workit-claude-code"
     )
       expect(sawWorkitTool, `${pack.packageName} ships renamed workit_ tool references`).toBe(true);
   }

@@ -18,9 +18,13 @@ const SYNC_MANIFEST_PATHS = [
   "packages/workit-cursor/package.json",
   "packages/workit-codex/package.json",
   "packages/workit-pi/package.json",
+  "packages/workit-claude-code/package.json",
   // Kept in lockstep with packages/workit-core/package.json by contract test.
   "packages/workit-cursor/.cursor-plugin/plugin.json",
   "packages/workit-codex/.codex-plugin/plugin.json",
+  // Claude Code reads the plugin version from here (the marketplace entry
+  // carries none), so it must track the published npm version.
+  "packages/workit-claude-code/.claude-plugin/plugin.json",
 ];
 
 export type ManifestSyncResult = { version: string; changed: string[] };
