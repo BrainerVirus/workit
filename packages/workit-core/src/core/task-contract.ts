@@ -815,9 +815,15 @@ export const parseStoredRecord = <S extends z.ZodType>(
     typeof value === "object" &&
     value !== null &&
     Array.isArray((value as { critical?: unknown }).critical)
-      ? (value as { critical: unknown[] }).critical.filter(
-          (item): item is string => typeof item === "string",
-        )
+      ? (value as { critical: unknown[] }).critical
+          .filter((item): item is string => typeof item === "string")
+          // An array index in a declaration means any element, like `*`.
+          .map((item) =>
+            item
+              .split(".")
+              .map((key) => (/^\d+$/.test(key) ? "*" : key))
+              .join("."),
+          )
       : [];
   const stripped: string[] = [];
   let current: unknown = structuredClone(value);

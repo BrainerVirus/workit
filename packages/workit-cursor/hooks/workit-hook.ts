@@ -1,4 +1,3 @@
-import { realpathSync } from "node:fs";
 // Direct module imports keep the core barrel (setup, doctor, cutover) out of the hook bundle.
 import { failure, success } from "@brainervirus/workit-core/src/core/task-contract";
 import { WorkitCore, type OperationContext } from "@brainervirus/workit-core/src/core/task-engine";
@@ -12,6 +11,7 @@ import {
   capabilitiesFor,
   cursorAdapter,
   cursorDeny as deny,
+  cursorWorkspaceRoot,
   dispatchHook,
   parseCursorHookInput,
   runHookProcess,
@@ -192,7 +192,7 @@ const handleSubagentStart = (input: CursorHookInput, root: string) => {
 const handleSubagentStartHook = (raw: unknown) => {
   const parsed = parseCursorHookInput(raw);
   if (!parsed.ok) return deny(parsed.error);
-  return handleSubagentStart(parsed.data, realpathSync(parsed.data.workspace_roots[0]));
+  return handleSubagentStart(parsed.data, cursorWorkspaceRoot(parsed.data));
 };
 
 const isSubagentStart = (raw: unknown) =>

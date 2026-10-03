@@ -507,3 +507,37 @@ test("given a protected main, beforeShellExecution branch creation is denied wit
     rmSync(configDir, { recursive: true, force: true });
   }
 });
+
+test("subagentStart assigns the worker in the workspace root that contains the payload cwd", () => {
+  const first = mkdtempSync(path.join(tmpdir(), "workit-cursor-root-a-"));
+  const second = mkdtempSync(path.join(tmpdir(), "workit-cursor-root-b-"));
+  try {
+    const core = new WorkitCore(new TaskStore(second), {
+      root: second,
+      caller: caller({ host: "cursor", actor: "parent" }),
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    expect(core.task(taskStartRequest()).ok).toBe(true);
+    expect(
+      handleCursorHook({
+        hook_event_name: "subagentStart",
+        conversation_id: "parent",
+        parent_conversation_id: "parent",
+        subagent_id: "reviewer",
+        workspace_roots: [first, second],
+        cwd: second,
+        task: "[workit-role: reviewer] inspect the bounded change",
+      }),
+    ).toMatchObject({ permission: "allow" });
+    const tasks = new TaskStore(second).listTasks();
+    expect(tasks.ok && tasks.data[0]?.workers.map((worker) => worker.data.assignment.role)).toEqual(
+      ["reviewer"],
+    );
+    expect(new TaskStore(first).listTasks()).toMatchObject({ ok: true, data: [] });
+  } finally {
+    rmSync(first, { recursive: true, force: true });
+    rmSync(second, { recursive: true, force: true });
+  }
+});

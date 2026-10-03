@@ -34,6 +34,7 @@ export {
   CURSOR_DESCRIPTOR,
   cursorAdapter,
   cursorDeny,
+  cursorWorkspaceRoot,
   parseCursorHookInput,
   type CursorHookEvent,
   type CursorHookInput,

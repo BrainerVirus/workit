@@ -252,6 +252,12 @@ const within = (root: string, dir: string) =>
 const hookCwd = (input: CursorHookInput): string => {
   const cwd = existingDirectory(input.cwd);
   if (cwd && input.hook_event_name === "beforeShellExecution") return cwd;
+  return cursorWorkspaceRoot(input);
+};
+
+/** The workspace root that contains the payload `cwd`, else the first root. */
+export const cursorWorkspaceRoot = (input: CursorHookInput): string => {
+  const cwd = existingDirectory(input.cwd);
   return (
     (cwd && input.workspace_roots.find((root) => within(root, cwd))) || input.workspace_roots[0]
   );

@@ -18,9 +18,11 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
   switch (event.kind) {
     case "session.start": {
       if (!usable(descriptor.context.sessionStart)) return NONE;
-      const key = `${input.host}\0${input.session.id}`;
-      const offer = event.source === "startup" && !offered.has(key);
-      if (offer) offered.add(key);
+      // A session without an id cannot be told apart from another one, so it
+      // is offered on every startup and never recorded.
+      const key = input.session.id ? `${input.host}\0${input.session.id}` : null;
+      const offer = event.source === "startup" && (key === null || !offered.has(key));
+      if (offer && key !== null) offered.add(key);
       return {
         kind: "context",
         text: sessionContextText(input, descriptor, { offer, addendum: deps.addendum }),

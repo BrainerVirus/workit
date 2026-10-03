@@ -22,13 +22,16 @@ export const existingDirectory = (value: unknown): string | null => {
   }
 };
 
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "pwsh", "powershell"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "pwsh", "powershell", "cmd"]);
+/** `-c`, `-lc`, `-ec`…, PowerShell `-Command`, and cmd `/c`. */
+const SCRIPT_FLAG = /^(?:-\w*c|-command|\/c)$/i;
 const quoteArg = (arg: string) => (/^[\w@%+=:,./-]+$/.test(arg) ? arg : JSON.stringify(arg));
 
 /**
- * A shell command as one string. Hosts send either a string or an argv array;
- * `[shell, "-c"|"-lc", script]` yields the script itself, other arrays are
- * joined with quoting so a single argument never splits.
+ * A shell command as one string. Hosts send either a string or an argv array.
+ * For a shell wrapper (`[bash, -e, -c, script]`, `[powershell.exe, -Command,
+ * script]`, `[cmd, /c, script]`) the script after the first script flag is
+ * the command; other arrays are joined with quoting so one argument never splits.
  */
 export const commandText = (value: unknown): string | null => {
   if (nonEmpty(value)) return value;
@@ -41,8 +44,12 @@ export const commandText = (value: unknown): string | null => {
       .at(-1)
       ?.replace(/\.exe$/i, "")
       .toLowerCase() ?? "";
-  if (argv.length >= 3 && SHELLS.has(shell) && /^-\w*c$/i.test(argv[1]) && nonEmpty(argv[2]))
-    return argv[2];
+  if (SHELLS.has(shell))
+    for (let index = 1; index < argv.length - 1; index++) {
+      if (SCRIPT_FLAG.test(argv[index])) return nonEmpty(argv[index + 1]) ? argv[index + 1] : null;
+      // Other options may precede the script flag; a positional ends the scan.
+      if (!/^[-/]/.test(argv[index])) break;
+    }
   const joined = argv.map(quoteArg).join(" ");
   return nonEmpty(joined) ? joined : null;
 };

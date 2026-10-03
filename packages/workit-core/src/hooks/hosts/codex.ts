@@ -292,6 +292,7 @@ export const codexAdapter: HostAdapter = {
     };
   },
   render,
+  // Without a session id there is no actor to bind a writer to.
   addendum: (input) =>
-    `<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run the workit CLI for task mutations: node_modules/.bin/workit <family> <action> --json --confirm; bind the writer to this session with node_modules/.bin/workit writer acquire --task <id> --revision <rev> --actor ${input.session.id} --confirm. Binding decisions and external actions need a human.</workit-codex-mutations>`,
+    `<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run the workit CLI for task mutations: node_modules/.bin/workit <family> <action> --json --confirm${input.session.id ? `; bind the writer to this session with node_modules/.bin/workit writer acquire --task <id> --revision <rev> --actor ${input.session.id} --confirm` : ""}. Binding decisions and external actions need a human.</workit-codex-mutations>`,
 };
