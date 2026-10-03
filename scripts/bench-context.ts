@@ -4,7 +4,9 @@
  *
  * Builds a throwaway Git checkout with ~70 Workit tasks (each carrying a
  * recorded candidate, like real long-lived records) and times
- * `compactContextFor`, the call OpenCode makes on every model turn.
+ * `compactContextFor`, the call OpenCode makes on every model turn, both
+ * right after the fixture is written and once records are older than the
+ * index's racy-signature window.
  *
  *   bun scripts/bench-context.ts [--tasks 70] [--files 1500] [--turns 30]
  */
@@ -74,14 +76,27 @@ try {
   }
 
   const session = `session-${Math.floor(TASKS / 2)}`;
-  const samples: number[] = [];
-  let output: string | null = null;
-  for (let turn = 0; turn < TURNS; turn += 1) {
-    const started = performance.now();
-    output = compactContextFor(root, session);
-    samples.push(performance.now() - started);
-  }
-  if (!output) throw new Error("benchmark produced no context");
+  const measure = () => {
+    const samples: number[] = [];
+    let output: string | null = null;
+    for (let turn = 0; turn < TURNS; turn += 1) {
+      const started = performance.now();
+      output = compactContextFor(root, session);
+      samples.push(performance.now() - started);
+    }
+    if (!output) throw new Error("benchmark produced no context");
+    const sorted = [...samples].sort((left, right) => left - right);
+    const pick = (q: number) =>
+      Number(sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!.toFixed(2));
+    return { firstMs: Number(samples[0]!.toFixed(2)), medianMs: pick(0.5), p95Ms: pick(0.95) };
+  };
+  // Worst case: every task was written within the racy-signature window, so
+  // each record is re-read (but no candidate is captured).
+  const allRecent = measure();
+  // Steady state: records older than the window are served from the index.
+  Bun.sleepSync(2100);
+  const steady = measure();
+
   // Cold index: a missing .workit/index.json is rebuilt on the next turn.
   rmSync(path.join(root, ".workit", "index.json"), { force: true });
   const coldStart = performance.now();
@@ -101,16 +116,13 @@ try {
   const updated = compactContextFor(root, session);
   const afterUpdateMs = performance.now() - updatedStart;
   if (!updated?.includes("benchmark next")) throw new Error("context did not reflect the update");
-  const sorted = [...samples].sort((left, right) => left - right);
-  const pick = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
   console.log(
     JSON.stringify({
       tasks: TASKS,
       files: FILES,
       turns: TURNS,
-      firstMs: Number(samples[0]!.toFixed(2)),
-      medianMs: Number(pick(0.5).toFixed(2)),
-      p95Ms: Number(pick(0.95).toFixed(2)),
+      allRecent,
+      steady,
       coldIndexMs: Number(coldIndexMs.toFixed(2)),
       afterUpdateMs: Number(afterUpdateMs.toFixed(2)),
     }),

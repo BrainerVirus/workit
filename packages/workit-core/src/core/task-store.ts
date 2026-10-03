@@ -150,14 +150,24 @@ const indexEntry = (task: TaskRecord, file: string): TaskIndexEntry => {
     file,
   };
 };
-/** Cheap change detector: atomic replacement gives every write a new inode. */
+/** Cheap change detector. Atomic replacement can reuse inodes and file
+ * timestamps are often only jiffy-granular, so a signature alone may repeat
+ * across rapid rewrites; see `racySignature`. */
 export const fileSignature = (file: string): string | null => {
   try {
     const stat = fs.statSync(file, { bigint: true });
-    return `${stat.ino}:${stat.size}:${stat.mtimeNs}`;
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
   } catch {
     return null;
   }
+};
+const RACY_WINDOW_NS = 2_000_000_000n;
+/** Like Git's racy-index rule: a file changed within the timestamp-granularity
+ * window may be rewritten again without changing its signature, so callers
+ * must re-read it instead of trusting a cached signature. */
+export const racySignature = (signature: string): boolean => {
+  const modified = BigInt(signature.split(":")[3] ?? "0");
+  return BigInt(Date.now()) * 1_000_000n - modified < RACY_WINDOW_NS;
 };
 
 export type RecoveryCandidate = {
@@ -346,11 +356,10 @@ export class TaskStore {
         continue;
       }
       const cached = stored[name.slice(0, -5)];
-      if (cached && cached.file === signature) {
+      if (cached && cached.file === signature && !racySignature(signature)) {
         entries.push(cached);
         continue;
       }
-      changed = true;
       const item = this.readRecord<TaskRecord>(file, taskRecordSchema);
       if (!item.exists) continue;
       if (!item.result.ok) return item.result as Result<never>;
@@ -358,15 +367,12 @@ export class TaskStore {
         return failure("recovery_required", "task filename and record ID differ", { path: name });
       if (item.result.data.workspaceId !== workspace.data.id)
         return failure("recovery_required", "task workspace binding is invalid", { path: name });
-      entries.push(indexEntry(item.result.data, signature));
+      const entry = indexEntry(item.result.data, signature);
+      if (!cached || canonicalJson(cached) !== canonicalJson(entry)) changed = true;
+      entries.push(entry);
     }
     if (changed) this.writeIndex(workspace.data.id, entries);
     return success(null, null, entries);
-  }
-
-  /** Stat signature of the workspace record; changes on every workspace write. */
-  workspaceSignature(): string | null {
-    return fileSignature(this.workspacePath);
   }
 
   readWorkspace(): Result<WorkspaceRecord | null> {
