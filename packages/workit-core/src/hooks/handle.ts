@@ -12,6 +12,19 @@ const NONE: HookDecision = { kind: "none" };
 /** Sessions already offered unfinished tasks in this process. */
 const offered = new Set<string>();
 
+/** Claude Code's worktree-isolated implementer (`implementer`, or the
+ * plugin-namespaced `workit:implementer`) is the one subagent that writes. */
+const CLAUDE_WORKTREE_IMPLEMENTER = /^(?:[\w-]+:)?implementer$/;
+
+const subagentStartText = (
+  host: HookInput["host"],
+  descriptor: HostDescriptor,
+  event: Extract<HookInput["event"], { kind: "subagent.start" }>,
+): string =>
+  host === "claude_code" && CLAUDE_WORKTREE_IMPLEMENTER.test(event.agentType)
+    ? `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) working in its own git worktree: it may edit and commit there, within its brief's scope. Before the first commit, switch to a policy-compliant branch (\`git switch -c <type>/<slug>\`, e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never push, open a PR, or merge unless the brief asks for it.`
+    : `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) as read-only/agent-guided; writer delegation is unavailable.`;
+
 export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
   const { descriptor } = deps;
   const event = input.event;
@@ -36,10 +49,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
     case "shell.pre":
       return usable(descriptor.shellPolicy.deny) ? shellPolicy(input.cwd, event.command) : NONE;
     case "subagent.start":
-      return {
-        kind: "context",
-        text: `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) as read-only/agent-guided; writer delegation is unavailable.`,
-      };
+      return { kind: "context", text: subagentStartText(input.host, descriptor, event) };
     case "compact.pre":
       return {
         kind: "notice",
