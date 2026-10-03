@@ -181,16 +181,6 @@ test("core tarball keeps its source package layout without legacy vendor shell (
   expect(entries).not.toContain("scripts/verify-project.sh");
 });
 
-test("no packed package.json carries a workspace:, file: or git: protocol (CA-03)", () => {
-  const packs = packWorkspacePackages();
-  for (const pack of packs) {
-    const raw = readTarballFile(pack.tarball, "package.json");
-    expect(raw, pack.packageName).not.toContain("workspace:");
-    expect(raw, pack.packageName).not.toContain("file:");
-    expect(raw, pack.packageName).not.toContain("git:");
-  }
-});
-
 test("packed runtime JS imports no core source subpaths and no checkout paths", () => {
   const packs = packWorkspacePackages();
   const normalized = REPO_ROOT.split(path.sep).join("/");

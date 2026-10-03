@@ -108,7 +108,6 @@ const decisionInput = (root: string) => {
 
 const nodeExecutable = "node";
 
-
 test("clean Pi package declares stock discovery and the eight families plus external action", async () => {
   const manifest = JSON.parse(
     readFileSync(path.join(import.meta.dir, "../../packages/workit-pi/package.json"), "utf8"),
