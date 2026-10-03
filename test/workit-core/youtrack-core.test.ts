@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withTempConfigDir } from "@/test/shared/helpers/env";
 import {
   buildDraft,
   context,
@@ -189,26 +190,29 @@ test("Given an old youtrack.json with greeting and mention fields, When context 
 });
 
 test("buildDraft composes a neutral header, optional opener, project, notes, and facts", () => {
-  const bare = buildDraft({ issueId: "NSR-1" });
-  expect(bare.markdown).toBe("# Update\n\n");
-  const full = buildDraft({
-    issueId: "NSR-1",
-    projectName: "Tracer",
-    userNotes: "Finished the module",
-    greeting: "Caller-supplied opener",
-    includeProjectOpener: true,
-    includeFacts: true,
-    facts: {
-      progress_excerpt: ["Task 1: done"],
-      git_commits: ["abc123 fix"],
-    },
+  // Isolated config dir: the bundled template is under test, never a user override.
+  withTempConfigDir(() => {
+    const bare = buildDraft({ issueId: "NSR-1" });
+    expect(bare.markdown).toBe("# Update\n\n");
+    const full = buildDraft({
+      issueId: "NSR-1",
+      projectName: "Tracer",
+      userNotes: "Finished the module",
+      greeting: "Caller-supplied opener",
+      includeProjectOpener: true,
+      includeFacts: true,
+      facts: {
+        progress_excerpt: ["Task 1: done"],
+        git_commits: ["abc123 fix"],
+      },
+    });
+    expect(full.markdown.startsWith("# Update\n\nCaller-supplied opener\n\nProject: Tracer")).toBe(
+      true,
+    );
+    expect(full.markdown).toContain("Finished the module");
+    expect(full.markdown).toContain("- Task 1: done");
+    expect(full.markdown).toContain("- abc123 fix");
   });
-  expect(full.markdown.startsWith("# Update\n\nCaller-supplied opener\n\nProject: Tracer")).toBe(
-    true,
-  );
-  expect(full.markdown).toContain("Finished the module");
-  expect(full.markdown).toContain("- Task 1: done");
-  expect(full.markdown).toContain("- abc123 fix");
 });
 
 test("postUpdate validates confirmed, issueId, and markdown", async () => {

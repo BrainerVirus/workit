@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { youTrackWorkDateMs } from "@/packages/workit-core/src/core/youtrack";
@@ -114,4 +114,24 @@ test("Given an invalid YYYY-MM-DD date, When it is resolved, Then an error is re
     const out = youTrackWorkDateMs(raw);
     expect("error" in out, raw).toBe(true);
   }
+});
+
+test("Given the shipped packages, When their sources and templates are scanned, Then no hard-coded greeting, mention or default timezone remains", () => {
+  const root = path.resolve(import.meta.dir, "../../packages");
+  const banned =
+    /\b(?:Hola|buenos d[ií]as|buenas tardes|Hoy estuve|defaultMention|greetingCutoff|WORKFLOW_YT_MENTION|WORKFLOW_YT_TIMEZONE)\b|America\/Santiago/;
+  const hits: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === "dist") continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(?:ts|tsx|md|json)$/.test(entry.name)) {
+        const text = readFileSync(full, "utf8");
+        if (banned.test(text)) hits.push(path.relative(root, full));
+      }
+    }
+  };
+  walk(root);
+  expect(hits).toEqual([]);
 });
