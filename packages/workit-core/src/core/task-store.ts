@@ -270,6 +270,23 @@ export const sameDirectoryIdentity = (left: string, right: string): boolean => {
   }
 };
 type LockSnapshot = { raw: string; data: MetadataLock };
+const TRANSIENT_WINDOWS_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+/** Windows briefly refuses to replace or open a file that another process is
+ * reading or renaming at that instant. That is contention, not damage: retry
+ * for about a second before surfacing the error. */
+const retryTransient = <T>(run: () => T): T => {
+  if (process.platform !== "win32") return run();
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return run();
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      if (attempt >= 20 || typeof code !== "string" || !TRANSIENT_WINDOWS_CODES.has(code))
+        throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 * (attempt + 1));
+    }
+  }
+};
 const externalActionLockRoots = new AsyncLocalStorage<ReadonlySet<string>>();
 /** Roots whose metadata lock this process holds; waiting on them can only time out. */
 const heldInProcess = new Map<string, number>();
@@ -1306,7 +1323,7 @@ export class TaskStore {
       } finally {
         fs.closeSync(fd);
       }
-      fs.renameSync(temporary, file);
+      retryTransient(() => fs.renameSync(temporary!, file));
       temporary = undefined;
       this.fsyncDirectory(path.dirname(file));
       if (path.dirname(file) === this.tasksDir) this.indexTaskWrite(file, value as TaskRecord);
@@ -1365,7 +1382,7 @@ export class TaskStore {
         }),
         { mode: 0o600, flag: "wx" },
       );
-      fs.renameSync(temporary, this.indexPath);
+      retryTransient(() => fs.renameSync(temporary, this.indexPath));
     } catch {
       try {
         fs.unlinkSync(temporary);
@@ -1408,7 +1425,7 @@ export class TaskStore {
       } finally {
         fs.closeSync(fd);
       }
-      fs.renameSync(temporary, destination);
+      retryTransient(() => fs.renameSync(temporary!, destination));
       temporary = undefined;
       this.fsyncDirectory(this.recoveryDir);
       this.pruneRecovery(`${target}.${id}.`, destination);
@@ -1632,7 +1649,7 @@ export class TaskStore {
 
   private readRecord<T>(file: string, schema: { safeParse(value: unknown): any }) {
     try {
-      const bytes = fs.readFileSync(file, "utf8");
+      const bytes = retryTransient(() => fs.readFileSync(file, "utf8"));
       return { exists: true, result: this.parseBytes<T>(bytes, schema) };
     } catch (error: any) {
       if (error?.code === "ENOENT")
