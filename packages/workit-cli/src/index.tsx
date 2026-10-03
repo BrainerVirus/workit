@@ -14,6 +14,7 @@ import {
   setDefaultLockTimeout,
 } from "@brainervirus/workit-core/src/core/store-lock";
 import { createInterface } from "node:readline/promises";
+import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";
 import {
   applySetupPreview,
   buildSetupPreview,
@@ -66,6 +67,8 @@ Usage:
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
                    --fix-lock clears a stale .workit metadata lock in the workspace root
                    --fix-lock --force [--yes] clears it even when its owner cannot be verified
+  workit gc        Prune .workit/recovery copies beyond the cap and dedupe stored candidates
+                   in the workspace root (--dry-run to preview read-only, --json for machines)
   workit uninstall Remove workit host registrations interactively (~/.config/workit is kept)
   workit cutover   Preview or apply an explicit v1 cutover (apply requires --confirm)
 ${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`).join("\n")}
@@ -381,6 +384,37 @@ async function runDoctorCommand(args: string[]) {
   process.exit(report.exitCode);
 }
 
+// `workit gc`: bounded recovery state for the current directory's .workit.
+function runGcCommand(args: string[]): number {
+  const result = new TaskStore(workspaceRootFor()).collectGarbage({
+    dryRun: args.includes("--dry-run"),
+  });
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+  if (!result.ok) {
+    console.log(`workit gc — failed (${result.code}): ${result.error}`);
+    return 1;
+  }
+  const { recovery, temporary, candidates, dryRun } = result.data;
+  const verb = dryRun ? "would remove" : "removed";
+  const megabytes = (recovery.removedBytes / 1_048_576).toFixed(1);
+  console.log(`workit gc${dryRun ? " (dry run)" : ""}`);
+  console.log(
+    `recovery: ${verb} ${recovery.removed} copies (${megabytes} MB), kept ${recovery.kept}`,
+  );
+  console.log(`temporary files: ${verb} ${temporary.removed}`);
+  console.log(
+    `candidates: ${verb} ${candidates.removed} duplicates in ${candidates.tasks.length} tasks` +
+      (candidates.skippedActive.length
+        ? `; skipped active ${candidates.skippedActive.join(", ")}`
+        : "") +
+      (candidates.failed.length ? `; failed ${candidates.failed.join(", ")}` : ""),
+  );
+  return 0;
+}
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const [subcommand] = args;
@@ -406,6 +440,8 @@ if (import.meta.main) {
     await runInit();
   } else if (subcommand === "doctor") {
     await runDoctorCommand(args);
+  } else if (subcommand === "gc") {
+    process.exit(runGcCommand(args.slice(1)));
   } else if ((TASK_FAMILIES as readonly string[]).includes(subcommand)) {
     process.exit(await runTaskCommand(args));
   } else if (subcommand === "action") {

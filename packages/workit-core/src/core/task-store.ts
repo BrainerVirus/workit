@@ -45,6 +45,17 @@ import {
 } from "./store-lock";
 
 export type { MetadataLock } from "./store-lock";
+/** Recovery copies kept per record (task or workspace); older copies are pruned. */
+export const RECOVERY_COPIES_PER_RECORD = 3;
+/** A temp file older than this was left by a crashed writer. */
+const STALE_TEMPORARY_MS = 60 * 60_000;
+const RECOVERY_NAME = /^(task|workspace)\.([^.]+)\.([0-9a-f]{64})\.json$/;
+export type GarbageReport = {
+  dryRun: boolean;
+  recovery: { removed: number; removedBytes: number; kept: number };
+  temporary: { removed: number };
+  candidates: { removed: number; tasks: Id[]; skippedActive: Id[]; failed: Id[] };
+};
 export type TaskStoreOptions = {
   /** Total time a mutation retries a lock held by a live writer before `busy`
    * (default: `defaultLockTimeout()`, short for in-process hosts). */
@@ -261,6 +272,12 @@ const dropRoot = (root: string) => {
   const count = (heldInProcess.get(root) ?? 1) - 1;
   if (count > 0) heldInProcess.set(root, count);
   else heldInProcess.delete(root);
+};
+
+/** Drop earlier copies of a repeated candidate ID; content is identical by ID. */
+const dedupeCandidates = (candidates: TaskRecord["candidates"]): TaskRecord["candidates"] => {
+  const last = new Map(candidates.map((candidate, index) => [candidate.id, index]));
+  return candidates.filter((candidate, index) => last.get(candidate.id) === index);
 };
 
 export class TaskStore {
@@ -787,7 +804,7 @@ export class TaskStore {
     try {
       const candidates: RecoveryCandidate[] = [];
       for (const name of fs.readdirSync(this.recoveryDir)) {
-        const match = /^(task|workspace)\.([^.]+)\.([0-9a-f]{64})\.json$/.exec(name);
+        const match = RECOVERY_NAME.exec(name);
         if (match)
           candidates.push({
             target: match[1] as "task" | "workspace",
@@ -1367,8 +1384,13 @@ export class TaskStore {
     const id = target === "task" ? path.basename(file, ".json") : "workspace";
     const destination = path.join(this.recoveryDir, `${target}.${id}.${digestBytes(bytes)}.json`);
     if (fs.existsSync(destination)) {
-      if (digestBytes(fs.readFileSync(destination)) === digestBytes(bytes)) return;
-      throw new Error("recovery copy already exists with different bytes");
+      if (digestBytes(fs.readFileSync(destination)) !== digestBytes(bytes))
+        throw new Error("recovery copy already exists with different bytes");
+      // Re-saved bytes are the newest copy again for pruning purposes.
+      const stamp = new Date();
+      fs.utimesSync(destination, stamp, stamp);
+      this.pruneRecovery(`${target}.${id}.`, destination);
+      return;
     }
     let temporary: string | undefined;
     try {
@@ -1383,12 +1405,142 @@ export class TaskStore {
       fs.renameSync(temporary, destination);
       temporary = undefined;
       this.fsyncDirectory(this.recoveryDir);
+      this.pruneRecovery(`${target}.${id}.`, destination);
     } finally {
       if (temporary)
         try {
           fs.unlinkSync(temporary);
         } catch {}
     }
+  }
+
+  /**
+   * Keep the newest RECOVERY_COPIES_PER_RECORD copies of one record (always
+   * including `keep`, the copy just written). Pruning is best-effort: a
+   * failure never fails the mutation that triggered it.
+   */
+  private pruneRecovery(prefix: string, keep: string) {
+    try {
+      const copies = this.recoveryCopies(prefix);
+      const surplus = this.surplusCopies(copies, path.basename(keep));
+      for (const copy of surplus) fs.rmSync(copy.path, { force: true });
+    } catch {}
+  }
+
+  private recoveryCopies(
+    prefix = "",
+  ): { name: string; path: string; group: string; mtimeNs: bigint }[] {
+    if (!fs.existsSync(this.recoveryDir)) return [];
+    const copies = [];
+    for (const name of fs.readdirSync(this.recoveryDir)) {
+      if (!name.startsWith(prefix)) continue;
+      const match = RECOVERY_NAME.exec(name);
+      if (!match) continue;
+      const file = path.join(this.recoveryDir, name);
+      try {
+        const stat = fs.lstatSync(file, { bigint: true });
+        if (!stat.isFile()) continue;
+        copies.push({ name, path: file, group: `${match[1]}.${match[2]}`, mtimeNs: stat.mtimeNs });
+      } catch {}
+    }
+    return copies;
+  }
+
+  /** Copies of one record beyond the cap, oldest first out; `keep` is never surplus. */
+  private surplusCopies<T extends { name: string; mtimeNs: bigint }>(copies: T[], keep?: string) {
+    const ordered = [...copies].sort((left, right) =>
+      left.name === keep
+        ? -1
+        : right.name === keep
+          ? 1
+          : left.mtimeNs === right.mtimeNs
+            ? left.name.localeCompare(right.name)
+            : left.mtimeNs > right.mtimeNs
+              ? -1
+              : 1,
+    );
+    return ordered.slice(RECOVERY_COPIES_PER_RECORD);
+  }
+
+  /**
+   * `workit gc`: prune recovery copies beyond the per-record cap, remove temp
+   * files left by crashed writers, and collapse duplicate stored candidates in
+   * paused/closed tasks. Live records (tasks/*.json, workspace.json) are never
+   * deleted; candidate dedupe keeps every candidate ID and the latest position.
+   */
+  collectGarbage(options: { dryRun?: boolean } = {}): Result<GarbageReport> {
+    const dryRun = options.dryRun === true;
+    const report: GarbageReport = {
+      dryRun,
+      recovery: { removed: 0, removedBytes: 0, kept: 0 },
+      temporary: { removed: 0 },
+      candidates: { removed: 0, tasks: [], skippedActive: [], failed: [] },
+    };
+    if (!fs.existsSync(this.workitDir)) return success(null, null, report);
+    const pruned = this.withLock<null>(() => {
+      try {
+        const groups = new Map<string, ReturnType<TaskStore["recoveryCopies"]>>();
+        for (const copy of this.recoveryCopies())
+          groups.set(copy.group, [...(groups.get(copy.group) ?? []), copy]);
+        for (const copies of groups.values()) {
+          const surplus = this.surplusCopies(copies);
+          report.recovery.kept += copies.length - surplus.length;
+          for (const copy of surplus) {
+            report.recovery.removed += 1;
+            try {
+              report.recovery.removedBytes += fs.statSync(copy.path).size;
+            } catch {}
+            if (!dryRun) fs.rmSync(copy.path, { force: true });
+          }
+        }
+        const nowMs = Date.now();
+        for (const directory of [this.recoveryDir, this.tasksDir, this.workitDir]) {
+          if (!fs.existsSync(directory)) continue;
+          for (const name of fs.readdirSync(directory)) {
+            if (!name.endsWith(".tmp")) continue;
+            const file = path.join(directory, name);
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || nowMs - stat.mtimeMs <= STALE_TEMPORARY_MS) continue;
+            report.temporary.removed += 1;
+            if (!dryRun) fs.rmSync(file, { force: true });
+          }
+        }
+        return success(null, null, null);
+      } catch (error) {
+        return failure("storage_error", `garbage collection failed: ${String(error)}`, {
+          path: this.recoveryDir,
+        });
+      }
+    });
+    if (!pruned.ok) return pruned as Result<never>;
+    const tasks = this.listTasks();
+    if (!tasks.ok) return tasks as Result<never>;
+    for (const task of tasks.data) {
+      const deduped = dedupeCandidates(task.candidates);
+      const removed = task.candidates.length - deduped.length;
+      if (removed === 0) continue;
+      // An active task belongs to a live session; rewriting it would bump the
+      // revision under that session's feet.
+      if (task.status === "active") {
+        report.candidates.skippedActive.push(task.id);
+        continue;
+      }
+      if (!dryRun) {
+        const written = this.mutateTask(task.id, task.revision, (current) =>
+          success(current.revision, null, {
+            ...current,
+            candidates: dedupeCandidates(current.candidates),
+          }),
+        );
+        if (!written.ok) {
+          report.candidates.failed.push(task.id);
+          continue;
+        }
+      }
+      report.candidates.removed += removed;
+      report.candidates.tasks.push(task.id);
+    }
+    return success(null, null, report);
   }
 
   private findRecovery(

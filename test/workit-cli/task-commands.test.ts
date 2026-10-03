@@ -50,7 +50,7 @@ test("the CLI exposes exactly the eight families and 24 actions", () => {
     "writer",
     "state",
   ]);
-  expect(Object.values(TASK_ACTIONS).flat()).toHaveLength(24);
+  expect(Object.values(TASK_ACTIONS).flat()).toHaveLength(23);
 });
 
 test("CLI external action previews its exact descriptor and refuses headless mutation", async () => {

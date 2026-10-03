@@ -58,7 +58,8 @@ export const TASK_ACTIONS = {
   decision: ["record", "revoke"],
   worker: ["assign", "report", "cancel"],
   writer: ["acquire", "release"],
-  state: ["export", "import", "recover"],
+  // state.recover is not exposed: no shipped host supplies native recovery authority.
+  state: ["export", "import"],
 } as const satisfies Record<OperationFamily, readonly string[]>;
 
 type Stream = { write: (chunk: string) => void };
@@ -336,7 +337,6 @@ const CONSENT_ACTIONS = new Set([
   "writer.acquire",
   "writer.release",
   "state.import",
-  "state.recover",
 ]);
 
 const needsConsent = (parsed: Parsed): boolean =>
