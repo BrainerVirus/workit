@@ -462,6 +462,34 @@ describe("S10 ci rerun", () => {
     ).toMatchObject({ ok: false, code: "blocked" });
   });
 
+  test("--failed waits for the run to finish: busy while a sibling job is still running", () => {
+    const repo = repoFor("github");
+    const { resolved, calls } = connect(repo, githubRoutes());
+    const status = resolved.forge.prStatus(12);
+    if (!status.ok) throw new Error(status.error);
+    const running = {
+      ...status.data,
+      checks: [
+        ...status.data.checks,
+        {
+          ...status.data.checks[0],
+          name: "CI / test (windows-latest)",
+          state: "pending" as const,
+          jobId: 104,
+        },
+      ],
+    };
+    expect(
+      executeRerun(repo.cwd, resolved, running, {
+        failed: true,
+        names: [],
+        reason: "flake",
+        force: false,
+      }),
+    ).toMatchObject({ ok: false, code: "busy", unblock: "workit ci wait, then rerun" });
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+  });
+
   test("a forge refusal is reported and nothing is recorded", () => {
     const repo = repoFor("github");
     const routes = githubRoutes();

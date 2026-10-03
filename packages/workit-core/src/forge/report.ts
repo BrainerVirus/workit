@@ -330,7 +330,20 @@ export function planRerun(
   const skipped = checks.filter((check) => !rerunnable.includes(check)).map((check) => check.name);
   const targets: RerunTarget[] = [];
   if (selection.names.length === 0) {
-    // One "rerun failed jobs" per workflow run / pipeline.
+    // One "rerun failed jobs" per workflow run / pipeline. The forge refuses
+    // it while the run still has jobs in progress (GitHub: HTTP 403).
+    const busy = status.checks.filter(
+      (check) =>
+        check.state === "pending" &&
+        check.runId !== null &&
+        rerunnable.some((failing) => failing.runId === check.runId),
+    );
+    if (busy.length)
+      return failure(
+        "busy",
+        `the failed jobs' run is still in progress (${busy.map((check) => check.name).join(", ")})`,
+        "workit ci wait, then rerun",
+      );
     const seen = new Set<number>();
     for (const check of rerunnable)
       if (!seen.has(check.runId!)) {
