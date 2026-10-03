@@ -1,0 +1,143 @@
+// Shared plumbing for the forge verbs (`pr status`, `ci wait`, `ci rerun`):
+// flag parsing, forge resolution + identity check, envelope mapping, and the
+// human rendering of a PR status document.
+import type { ForgeRunner } from "@brainervirus/workit-core/src/forge/exec";
+import type { PrStatusDoc } from "@brainervirus/workit-core/src/forge/report";
+import {
+  checkIdentity,
+  resolveForge,
+  type ResolvedForge,
+} from "@brainervirus/workit-core/src/forge/resolve";
+import type { ForgeResult } from "@brainervirus/workit-core/src/forge/types";
+import { emit, fail, type Io } from "../output";
+
+/** Test seams: a recorded-fixture runner and a virtual clock. */
+export const forgeDeps: {
+  runner: ForgeRunner | undefined;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+} = {
+  runner: undefined,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now: () => Date.now(),
+};
+
+export type FlagSpec = Record<string, "value" | "boolean" | "list">;
+
+export type ParsedFlags = {
+  values: Record<string, string>;
+  booleans: Set<string>;
+  lists: Record<string, string[]>;
+  positionals: string[];
+};
+
+/** `--name value`, `--name=value`, booleans, repeatable lists; unknown flags are errors. */
+export function parseFlags(argv: readonly string[], spec: FlagSpec): ParsedFlags | string {
+  const parsed: ParsedFlags = { values: {}, booleans: new Set(), lists: {}, positionals: [] };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--json") continue;
+    if (!arg.startsWith("--")) {
+      parsed.positionals.push(arg);
+      continue;
+    }
+    const eq = arg.indexOf("=");
+    const name = arg.slice(2, eq < 0 ? undefined : eq);
+    const kind = spec[name];
+    if (!kind) return `unknown option --${name}`;
+    if (kind === "boolean") {
+      if (eq >= 0) return `--${name} takes no value`;
+      parsed.booleans.add(name);
+      continue;
+    }
+    const value = eq >= 0 ? arg.slice(eq + 1) : argv[++index];
+    if (value === undefined || value === "" || (eq < 0 && value.startsWith("--")))
+      return `--${name} requires a value`;
+    if (kind === "list") (parsed.lists[name] ??= []).push(value);
+    else parsed.values[name] = value;
+  }
+  return parsed;
+}
+
+export function positiveInt(value: string | undefined, flag: string): number | null | string {
+  if (value === undefined) return null;
+  return /^[1-9]\d{0,8}$/u.test(value) ? Number(value) : `${flag} must be a positive integer`;
+}
+
+/** `20m`, `30s`, `1500ms`, `1h`, or bare seconds. */
+export function parseDuration(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/u.exec(value.trim());
+  if (!match) return null;
+  const unit = match[2] ?? "s";
+  const factor = unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60_000 : 3_600_000;
+  return Math.round(Number(match[1]) * factor);
+}
+
+export const usage = (io: Io, message: string, line: string): number =>
+  emit(io, fail("invalid_input", message, { unblock: line }));
+
+export const forgeFail = (
+  io: Io,
+  result: Extract<ForgeResult<unknown>, { ok: false }>,
+  data?: Record<string, unknown>,
+): number => emit(io, fail(result.code, result.error, { data, unblock: result.unblock }));
+
+/** Resolve the forge from the push remote and verify the effective account. */
+export function connect(
+  io: Io,
+  branch?: string | null,
+): ForgeResult<ResolvedForge & { login: string }> {
+  const resolved = resolveForge(io.cwd, { branch, env: io.env, runner: forgeDeps.runner });
+  if (!resolved.ok) return resolved;
+  const identity = checkIdentity(resolved.data);
+  if (!identity.ok) return identity;
+  return { ok: true, data: { ...resolved.data, login: identity.data.login } };
+}
+
+const short = (sha: string | null): string => (sha ? sha.slice(0, 7) : "?");
+
+export function renderStatus(doc: PrStatusDoc): string[] {
+  const noun = doc.forge === "github" ? `PR #${doc.number}` : `MR !${doc.number}`;
+  const lines = [
+    `${noun} ${doc.state}${doc.draft ? " (draft)" : ""}: ${doc.head.branch} -> ${doc.base}  ${doc.url}`,
+  ];
+  const local =
+    doc.head.localSha === null
+      ? "not checked out"
+      : doc.head.pushed
+        ? "local matches"
+        : `local ${short(doc.head.localSha)} differs`;
+  lines.push(`head ${short(doc.head.sha)} (${local})`);
+  const behind = doc.behindBase;
+  const behindText = !behind
+    ? ""
+    : behind.behind === null
+      ? ` · behind ${doc.base}: unknown (${behind.error ?? "unavailable"})`
+      : ` · behind ${doc.base}: ${behind.behind}, ahead ${behind.ahead}`;
+  lines.push(
+    `mergeable ${doc.mergeable} · conflicts ${doc.conflicts ? "yes" : "no"}${doc.rebaseRequired ? " · rebase required" : ""}${behindText}`,
+  );
+  const checks = doc.checks;
+  lines.push(
+    `checks ${checks.state}: ${checks.failing.length} failing, ${checks.pending.length} pending, ${checks.passing} passing`,
+  );
+  for (const check of checks.failing) {
+    lines.push(
+      `  x ${check.name} (${check.conclusion ?? "failed"})${check.rerunsOnHead ? ` [rerun ${check.rerunsOnHead}x on this head]` : ""}${check.url ? `  ${check.url}` : ""}`,
+    );
+    for (const value of check.logTail) lines.push(`      ${value}`);
+    if (check.logError) lines.push(`      (log unavailable: ${check.logError})`);
+  }
+  if (checks.pending.length) lines.push(`  pending: ${checks.pending.join(", ")}`);
+  const threads = doc.reviews.unresolvedThreads;
+  lines.push(
+    `reviews ${doc.reviews.decision ?? "none"} · ${threads.length} unresolved thread${threads.length === 1 ? "" : "s"}`,
+  );
+  for (const thread of threads)
+    lines.push(
+      `  - ${thread.path ? `${thread.path}${thread.line ? `:${thread.line}` : ""} ` : ""}@${thread.author ?? "?"}${thread.isBot ? " (bot)" : ""}: ${thread.body}`,
+    );
+  if (doc.truncated) lines.push("(lists truncated at the page cap)");
+  lines.push(`next: ${doc.next}`);
+  return lines;
+}

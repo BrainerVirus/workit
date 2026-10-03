@@ -55,6 +55,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workit pr status`, `workit ci wait` and `workit ci rerun` (S10). One
+  forge-neutral status document for GitHub (`gh api graphql`) and GitLab
+  (`glab api`): mergeability, conflicts, required rebase, behind-base counted
+  locally against the fetched base, checks with redacted failing job log tails,
+  unresolved review threads, and a `next` action (conflicts > rebase > threads
+  > CI). `ci wait` polls with a deterministic backoff and exits 0/1/3/4;
+  `ci rerun` reruns failed jobs once per (PR, head, check) unless `--force`,
+  recorded in `<git-common-dir>/workit/ci-reruns.jsonl`. The forge comes from
+  the push remote, a disagreeing workspace provider or a `gh`/`glab` login
+  that is not the workspace account is `blocked`, and every call is bounded.
 - Action-time `cwd` targeting for Git and hosting actions from a task rooted in
   any directory, including a non-Git OS workspace; no related-repository list
   is required. Cross-checkout actions hold target writer serialization through

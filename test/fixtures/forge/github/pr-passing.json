@@ -1,0 +1,78 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 12,
+        "url": "https://github.com/o/r/pull/12",
+        "state": "OPEN",
+        "isDraft": false,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "baseRefName": "main",
+        "baseRefOid": "{{BASE}}",
+        "headRefName": "feature/x",
+        "headRefOid": "{{HEAD}}",
+        "reviewDecision": "APPROVED",
+        "reviewThreads": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          },
+          "nodes": []
+        },
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "{{HEAD}}",
+                "statusCheckRollup": {
+                  "state": "FAILURE",
+                  "contexts": {
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": "NA"
+                    },
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "fast checks",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/101",
+                        "databaseId": 101,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 1,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "test (ubuntu-latest)",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/102",
+                        "databaseId": 102,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 1,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

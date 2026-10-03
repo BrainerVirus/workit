@@ -1,0 +1,98 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 12,
+        "url": "https://github.com/o/r/pull/12",
+        "state": "OPEN",
+        "isDraft": false,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "BLOCKED",
+        "baseRefName": "main",
+        "baseRefOid": "{{BASE}}",
+        "headRefName": "feature/x",
+        "headRefOid": "{{HEAD}}",
+        "reviewDecision": "REVIEW_REQUIRED",
+        "reviewThreads": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          },
+          "nodes": [
+            {
+              "id": "PRRT_4",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "src/d.ts",
+              "line": 7,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": {
+                      "login": "coderabbitai",
+                      "__typename": "Bot"
+                    },
+                    "body": "Potential null dereference.",
+                    "url": "https://github.com/o/r/pull/12#discussion_r4"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "{{HEAD}}",
+                "statusCheckRollup": {
+                  "state": "FAILURE",
+                  "contexts": {
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": "C2"
+                    },
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "test (ubuntu-latest)",
+                        "status": "COMPLETED",
+                        "conclusion": "FAILURE",
+                        "detailsUrl": "https://github.com/o/r/actions/runs/2/job/202",
+                        "databaseId": 202,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 2,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "lint",
+                        "status": "IN_PROGRESS",
+                        "conclusion": null,
+                        "detailsUrl": "https://github.com/o/r/actions/runs/2/job/203",
+                        "databaseId": 203,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 2,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

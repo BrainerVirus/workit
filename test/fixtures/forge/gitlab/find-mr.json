@@ -1,0 +1,18 @@
+[
+  {
+    "iid": 9,
+    "state": "closed",
+    "source_branch": "feature/x",
+    "web_url": "https://gitlab.com/group/project/-/merge_requests/9",
+    "sha": "0000000000000000000000000000000000000000",
+    "target_branch": "main"
+  },
+  {
+    "iid": 12,
+    "state": "opened",
+    "source_branch": "feature/x",
+    "web_url": "https://gitlab.com/group/project/-/merge_requests/12",
+    "sha": "{{HEAD}}",
+    "target_branch": "main"
+  }
+]
