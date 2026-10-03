@@ -13,6 +13,7 @@ import {
   changedSourcesSinceLoad,
   markSourcesLoaded,
 } from "@brainervirus/workit-core/src/core/boundary";
+import { capabilitiesFor, OPENCODE_DESCRIPTOR } from "@brainervirus/workit-core/hooks";
 import { executeInitApply, initApplyRuntime } from "../shared/init-apply";
 import { sameWorkspace } from "../shared/session";
 import { WORKIT_TOOL_CATALOG, workitFamilyOf } from "../shared/tools";
@@ -63,41 +64,6 @@ const sessionFacts = async (ctx: Context, sessionID: string): Promise<V2Session 
 const resultContent = (value: unknown): { content: string } => ({
   content: JSON.stringify(value, null, 2),
 });
-
-/** V2 host capabilities are declared as each native surface is ported. */
-const v2Capabilities = () => [
-  {
-    name: "interactive_decision",
-    surface: "question",
-    assurance: "enforced" as const,
-    reason: "native question answers are observed by tool.execute.after and consumed once",
-    refs: [{ kind: "host" as const, host: "opencode" as const, handle: "question" }],
-  },
-  {
-    name: "known_product_writes",
-    surface: "edit/shell",
-    assurance: "unavailable" as const,
-    reason:
-      "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
-    refs: [{ kind: "host" as const, host: "opencode" as const, handle: "permission.evaluate" }],
-  },
-  {
-    name: "direct_child_workers",
-    surface: "subagent",
-    assurance: "enforced" as const,
-    reason:
-      "nested subagent launches are denied and observed child sessions are parent-bound before they may own a worker",
-    refs: [{ kind: "host" as const, host: "opencode" as const, handle: "subagent" }],
-  },
-  {
-    name: "fresh-context-review",
-    surface: "subagent",
-    assurance: "agent_guided" as const,
-    reason:
-      "independent review runs as a native child session; evidence evaluation enforces creator and duplicate-reviewer exclusion",
-    refs: [{ kind: "host" as const, host: "opencode" as const, handle: "subagent" }],
-  },
-];
 
 /** A child session may run family tools only as a validated running worker of
  * its coordinator; anything else stays denied. */
@@ -195,7 +161,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     const core = new WorkitCore(store, {
       root,
       caller: { host: "opencode", actor: session.id },
-      capabilities: v2Capabilities(),
+      capabilities: capabilitiesFor(OPENCODE_DESCRIPTOR),
       constraints: [],
       now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
       workerId,
