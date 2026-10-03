@@ -36,14 +36,11 @@ const ENTRIES = [
     .filter((entry) => existsSync(rel(entry))),
 ].filter((entry) => !entry.endsWith("scripts/check-reachability.ts"));
 
-// Core modules executed directly by shell scripts or CI rather than imported.
+// Core modules loaded at runtime by a shell script, which no bundle models.
 // Each needs a live invocation; delete the line when that invocation goes away.
 const SCRIPT_LOADED: Record<string, string> = {
-  "packages/workit-core/src/core/skill-manifests.ts": "sync-runtime.sh runs it to validate skills",
   "packages/workit-core/src/core/rules.ts":
     "sync-runtime.sh imports writeCompiledCursorRules via `bun -e`",
-  "packages/workit-core/src/core/registration.ts": "install-*-plugin.sh run it directly",
-  "packages/workit-core/src/core/support-matrix.ts": "ci.yml runs it directly",
 };
 
 const reached = new Set<string>(Object.keys(SCRIPT_LOADED));
