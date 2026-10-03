@@ -323,18 +323,23 @@ test("Given doctor --fix-lock is preempted while a writer reclaims the same stal
   expect(spans.every((item) => item.code === "ok" || item.code === "revision_conflict")).toBe(true);
 }, 30_000);
 
-test("Given a plain-hostname lock naming live pid 1 with a mismatched start time (a container's lock), When a write runs, Then it stays busy and is not reclaimed", () => {
-  const { store, task, lockPath } = startedStore({ lockTimeoutMs: 150 });
-  // Pre-namespace locks carried only hostname(); judging pid 1 against this
-  // host's process table would steal a live container's lock.
-  const bytes = `${JSON.stringify({ pid: 1, processStart: "1", host: hostname(), nonce: "c" })}\n`;
-  writeFileSync(lockPath, bytes);
-  expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
-    ok: false,
-    code: "busy",
-  });
-  expect(readFileSync(lockPath, "utf8")).toBe(bytes);
-});
+// Linux only: where there is no pid-namespace identity (macOS, Windows) a
+// plain-hostname lock is this host's own format and pid checks apply.
+test.skipIf(!localLockHost().includes("#"))(
+  "Given a plain-hostname lock naming live pid 1 with a mismatched start time (a container's lock), When a write runs, Then it stays busy and is not reclaimed",
+  () => {
+    const { store, task, lockPath } = startedStore({ lockTimeoutMs: 150 });
+    // Pre-namespace locks carried only hostname(); judging pid 1 against this
+    // host's process table would steal a live container's lock.
+    const bytes = `${JSON.stringify({ pid: 1, processStart: "1", host: hostname(), nonce: "c" })}\n`;
+    writeFileSync(lockPath, bytes);
+    expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
+      ok: false,
+      code: "busy",
+    });
+    expect(readFileSync(lockPath, "utf8")).toBe(bytes);
+  },
+);
 
 test.skipIf(!localLockHost().includes("#"))(
   "Given a lock from the same host and pid namespace but an earlier boot, When a write runs, Then it is reclaimed immediately",
