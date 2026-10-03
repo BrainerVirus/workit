@@ -70,7 +70,7 @@ export function previewConversion(input: ConversionInput): ConversionPreview {
         allowed?: string[];
         protected?: string[];
       };
-      const preset = (bp.preset ?? "gitflow") as BranchPreset;
+      const preset = bp.preset ?? "gitflow";
       const merged = mergePreset(
         preset,
         {

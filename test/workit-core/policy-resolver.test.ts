@@ -619,7 +619,5 @@ test("diffPolicy reports explicit additions and removals", () => {
   expect(change?.retired).toEqual(
     expect.arrayContaining(previous.requirements.map((requirement) => requirement.id)),
   );
-  expect(() =>
-    diffPolicy(previous, { ...next, inputDigest: "bad" } as typeof next, "invalid", "bad"),
-  ).toThrow();
+  expect(() => diffPolicy(previous, { ...next, inputDigest: "bad" }, "invalid", "bad")).toThrow();
 });

@@ -134,7 +134,7 @@ test("Pi failed compaction does not trigger a restoration injection", async () =
 
 test("Pi context is static when untrusted and selects the latest non-closed task for this session", async () => {
   const { ctx, root } = await setup();
-  const untrusted = { ...ctx, isProjectTrusted: () => false } as any;
+  const untrusted = { ...ctx, isProjectTrusted: () => false };
   expect(workitContext(untrusted)).toContain("unavailable until Pi trusts this project");
   expect(workitContext(untrusted)).not.toContain("Current task context:");
 

@@ -30,41 +30,58 @@
   "scripts": {
     "build": "bun packages/workit-mcp/scripts/build.ts && bun packages/workit-opencode/scripts/build.ts && bun packages/workit-cursor/scripts/build.ts && bun packages/workit-codex/scripts/build.ts && bun packages/workit-pi/scripts/build.ts && bun packages/workit-cli/scripts/build.ts",
     "verify:release-candidate": "bun scripts/verify-release-candidate.ts",
+    "release": "semantic-release",
     "test:acceptance": "bun test test/acceptance/deterministic.test.ts",
     "validate:cursor-marketplace": "bun packages/workit-core/scripts/validate-cursor-marketplace.ts",
-    "lint": "oxlint --deny-warnings packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
-    "lint:fix": "oxlint --fix packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
-    "doctor": "npx -y react-doctor@latest packages/workit-cli/src -y --no-telemetry --blocking error",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "doctor": "react-doctor packages/workit-cli/src -y --no-telemetry --blocking error",
     "knip": "knip --no-progress --no-config-hints && knip --no-progress --production --files && bun scripts/check-reachability.ts",
-    "format": "oxfmt packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
-    "format:check": "oxfmt --check packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
+    "hooks:install": "lefthook install",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "test": "bun scripts/test.ts unit",
     "test:packaging": "bun scripts/test.ts packaging",
     "typecheck": "tsc --noEmit",
     "check": "bun run build && bun run lint && bun run format:check && bun run test && bun run test:packaging && tsc --noEmit"
   },
   "devDependencies": {
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
     "@earendil-works/pi-coding-agent": "0.85.1",
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "@opencode-ai/plugin": "1.18.30",
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "@opencode-ai/plugin": "1.18.34",
     "@semantic-release/exec": "7.1.0",
-    "@semantic-release/github": "12.0.9",
-    "@semantic-release/npm": "13.1.5",
+    "@semantic-release/github": "12.0.10",
+    "@semantic-release/npm": "13.2.0",
     "@semantic-release/release-notes-generator": "14.1.1",
     "@types/bun": "1.4.1",
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "conventional-changelog-conventionalcommits": "8.0.0",
+    "conventional-changelog-conventionalcommits": "9.3.1",
     "ink": "7.1.1",
-    "knip": "6.35.1",
-    "oxfmt": "0.66.0",
-    "oxlint": "1.81.0",
+    "knip": "6.39.0",
+    "lefthook": "2.1.16",
+    "oxfmt": "0.71.0",
+    "oxlint": "1.86.0",
+    "oxlint-tsgolint": "7.0.2003",
     "react": "19.2.8",
     "react-devtools-core": "7.0.1",
+    "react-doctor": "0.9.14",
     "semantic-release": "25.0.9",
     "typescript": "7.0.2"
   },
-  "packageManager": "bun@1.4.1"
+  "dependenciesMeta": {
+    "lefthook": {
+      "built": false
+    }
+  },
+  "packageManager": "bun@1.4.1",
+  "pnpm": {
+    "neverBuiltDependencies": [
+      "lefthook"
+    ]
+  }
 }

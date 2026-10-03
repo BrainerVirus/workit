@@ -324,7 +324,7 @@ test("migrates the legacy Cursor identity to workit, preserving unrelated bytes 
 
     // MCP: the legacy server name is dropped, the unrelated server is kept.
     const mcp = JSON.parse(readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8"));
-    expect(Object.keys(mcp.mcpServers).sort()).toEqual(["other-server", "workit"]);
+    expect(Object.keys(mcp.mcpServers).toSorted()).toEqual(["other-server", "workit"]);
   } finally {
     clean(home);
     clean(dir);

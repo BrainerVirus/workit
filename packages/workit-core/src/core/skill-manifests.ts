@@ -41,7 +41,7 @@ export const skillManifestNames = (root: string): string[] =>
   existsSync(root)
     ? readdirSync(root)
         .filter((name) => existsSync(path.join(root, name, "SKILL.md")))
-        .sort()
+        .toSorted()
     : [];
 
 export const validateSkillManifests = (

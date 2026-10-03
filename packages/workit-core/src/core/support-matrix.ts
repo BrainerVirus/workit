@@ -10,7 +10,7 @@ export const SUPPORT_MATRIX = {
   // The object-form dual entry (server() + setup()) only loads from
   // 1.18.29+; the supported floor is 1.18.30 so no host can pass doctor while
   // being unable to load the entry shape.
-  opencode: { minimum: "1.18.30", current: "1.18.30" },
+  opencode: { minimum: "1.18.30", current: "1.18.34" },
   // Codex is a qualification host, not a runtime dependency: the CLI version
   // below is the one live qualification evidence covers. The doctor warns when
   // an installed CLI drifts ahead so a fresh install never silently outruns

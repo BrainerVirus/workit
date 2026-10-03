@@ -125,7 +125,7 @@ function cleanCursorSettings(
   const next = { ...settings };
   let changed = false;
   if (isRecord(next.enabled_plugins)) {
-    const enabled = { ...(next.enabled_plugins as Record<string, unknown>) };
+    const enabled = { ...next.enabled_plugins };
     for (const identity of ["workit", ...CURSOR_LEGACY_IDENTITIES]) {
       if (identity in enabled) {
         delete enabled[identity];
@@ -177,7 +177,7 @@ function cleanCursorMcp(mcp: Record<string, unknown>): {
   const next = { ...mcp };
   let changed = false;
   if (isRecord(next.mcpServers)) {
-    const servers = { ...(next.mcpServers as Record<string, unknown>) };
+    const servers = { ...next.mcpServers };
     for (const name of ["workit", "workflow-toolkit"]) {
       if (name in servers) {
         delete servers[name];
@@ -211,7 +211,7 @@ function cleanPiConfig(config: Record<string, unknown>): {
       changed = true;
     }
   }
-  const pi = isRecord(next.pi) ? { ...(next.pi as Record<string, unknown>) } : null;
+  const pi = isRecord(next.pi) ? { ...next.pi } : null;
   if (pi && Array.isArray(pi.extensions)) {
     const kept = pi.extensions.filter((entry) => !String(entry).includes("workit"));
     if (kept.length !== pi.extensions.length) {

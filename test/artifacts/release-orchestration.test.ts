@@ -11,6 +11,7 @@ import { REPO_ROOT } from "@/test/shared/helpers/packages";
 // could already have been published.
 
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- caller-typed JSON fixture reader
 const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 
 const ADAPTERS = [
@@ -95,7 +96,7 @@ test(
     // with the RELEASE_SYNC_TOKEN PAT (GITHUB_TOKEN-opened PRs never trigger
     // the required checks, so auto-merge would hang); any pre-sync dirtiness
     // (the transient workspace-dep rewrite) is discarded first.
-    const syncStep = wf.jobs.release.steps[idx[4]]!;
+    const syncStep = wf.jobs.release.steps[idx[4]];
     const syncRun = syncStep.run ?? "";
     expect(syncRun).toContain("git checkout --");
     expect(syncRun).toContain("gh pr create");

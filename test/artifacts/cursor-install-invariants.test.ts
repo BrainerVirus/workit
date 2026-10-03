@@ -26,12 +26,12 @@ import {
 
 const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";
-const WORKIT = [...WORKIT_METHOD_SKILLS].sort();
+const WORKIT = [...WORKIT_METHOD_SKILLS].toSorted();
 
 const skillManifests = (root: string): string[] =>
   readdirSync(root)
     .filter((name) => existsSync(path.join(root, name, "SKILL.md")))
-    .sort();
+    .toSorted();
 
 const walkFiles = (root: string, visit: (file: string) => void): void => {
   for (const entry of readdirSync(root, { withFileTypes: true })) {

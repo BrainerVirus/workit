@@ -44,8 +44,10 @@ test("config registers only the policy-selected method skills", async () => {
   const config: Record<string, any> = {};
   await hooks.config?.(config);
   expect(config.skills.paths).toEqual([packageSkills]);
-  expect(readdirSync(packageSkills).sort()).toEqual([...WORKIT_METHOD_SKILLS].sort());
-  expect(Object.keys(config.command).sort()).toEqual(Object.keys(WORKIT_SKILL_ALIASES).sort());
+  expect(readdirSync(packageSkills).toSorted()).toEqual([...WORKIT_METHOD_SKILLS].toSorted());
+  expect(Object.keys(config.command).toSorted()).toEqual(
+    Object.keys(WORKIT_SKILL_ALIASES).toSorted(),
+  );
   expect(config.command["wk-challenge"].description).toContain("workit-challenge");
   expect(config.command["wk-challenge"].template).toContain("$ARGUMENTS");
 });

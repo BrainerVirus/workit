@@ -349,7 +349,7 @@ export const baselinePassesCapability = (cell: CapabilityCell): boolean => {
 
 export const renderCapabilitiesMarkdown = (cells: CapabilityCell[]): string => {
   const hosts = [...CODING_HOSTS, "cli"] as const;
-  const capabilities = [...new Set(cells.map((c) => c.capability))].sort();
+  const capabilities = [...new Set(cells.map((c) => c.capability))].toSorted();
   const lines = [
     "# Workit v1 host capability matrix",
     "",

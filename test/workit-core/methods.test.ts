@@ -293,5 +293,5 @@ test("method manifest matches the canonical skill directories", () => {
   expect(WORKIT_METHOD_SKILLS).toHaveLength(14);
   expect(
     skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
-  ).toEqual([...WORKIT_METHOD_SKILLS].sort());
+  ).toEqual([...WORKIT_METHOD_SKILLS].toSorted());
 });

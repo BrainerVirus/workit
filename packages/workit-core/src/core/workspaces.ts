@@ -552,6 +552,7 @@ const resolveRuntimeWorkspaceCandidate = (
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw new Error(
       `${file} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
   let parsed: unknown;
@@ -567,7 +568,7 @@ const resolveRuntimeWorkspaceCandidate = (
       .join("; ");
     throw new Error(`${file} has invalid workspace matching data: ${detail}`);
   }
-  const entries = validated.data.workspaces as RuntimeWorkspaceCandidate[] | undefined;
+  const entries = validated.data.workspaces;
   for (const entry of entries ?? []) {
     const glob = validateWorkspaceGlob(entry.glob);
     if (!glob.ok) throw new Error(`${file} workspace ${entry.name}: ${glob.error}`);
@@ -619,10 +620,7 @@ export const resolveRuntimeWorkspacePolicy = (
       `workspace ${JSON.stringify(candidate.name)} has no profile ${JSON.stringify(profileName)}`,
     );
   const profilePolicy = profile?.[key] as WorkspaceBranchPolicy | WorkspaceCommitPolicy | undefined;
-  const workspacePolicy = candidate[key] as
-    | WorkspaceBranchPolicy
-    | WorkspaceCommitPolicy
-    | undefined;
+  const workspacePolicy = candidate[key];
   return {
     policy: profilePolicy ?? workspacePolicy,
     source: profilePolicy
@@ -700,7 +698,7 @@ export const selectReleaseTrack = (
   requestedTrack?: string,
 ): ReleaseTrackSelection => {
   const tracks = workspace.releaseTracks ?? {};
-  const choices = Object.keys(tracks).sort();
+  const choices = Object.keys(tracks).toSorted();
   if (requestedTrack === undefined) {
     if (choices.length === 0) return { status: "not_configured" };
     if (choices.length > 1) return { status: "choice_required", choices };

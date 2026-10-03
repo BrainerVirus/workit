@@ -177,16 +177,20 @@ test("hosting API host must match the remote or its resolved SSH alias", () => {
 });
 
 test("an explicitly pinned push URL is rejected if Git would rewrite its destination", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-push-rewrite-"));
+  const repoRoot = mkdtempSync(path.join(os.tmpdir(), "wf-push-rewrite-"));
   try {
-    git(root, ["init", "-q"]);
-    git(root, ["remote", "add", "origin", "https://github.com/org/repo.git"]);
-    expect(pushTargetIsStable(root, "https://github.com/org/repo.git")).toBe(true);
-    git(root, ["config", "url.https://mirror.example/org/.insteadOf", "https://github.com/org/"]);
-    expect(pushTargetIsStable(root, "https://github.com/org/repo.git")).toBe(false);
-    expect(pushTargetIsStable(root, "https://gitlab.com/org/repo.git")).toBe(true);
+    git(repoRoot, ["init", "-q"]);
+    git(repoRoot, ["remote", "add", "origin", "https://github.com/org/repo.git"]);
+    expect(pushTargetIsStable(repoRoot, "https://github.com/org/repo.git")).toBe(true);
+    git(repoRoot, [
+      "config",
+      "url.https://mirror.example/org/.insteadOf",
+      "https://github.com/org/",
+    ]);
+    expect(pushTargetIsStable(repoRoot, "https://github.com/org/repo.git")).toBe(false);
+    expect(pushTargetIsStable(repoRoot, "https://gitlab.com/org/repo.git")).toBe(true);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(repoRoot, { recursive: true, force: true });
   }
 });
 

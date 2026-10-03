@@ -232,7 +232,7 @@ test("exported bundles carry no host sessions, receipts, or unmapped refs", () =
       if (record.kind === "host") throw new Error(`host ref leaked: ${JSON.stringify(node)}`);
       if (record.kind === "record" && typeof record.id === "string" && record.id.length === 0)
         throw new Error("empty record id");
-      for (const value of Object.values(record)) scan(value);
+      for (const child of Object.values(record)) scan(child);
     };
     scan(bundle);
     const receipts: unknown[] = [];
@@ -246,7 +246,7 @@ test("exported bundles carry no host sessions, receipts, or unmapped refs", () =
       const record = node as Record<string, unknown>;
       if (Array.isArray(record.receipts)) receipts.push(...record.receipts);
       if (record.session !== undefined) sessions.push(record.session);
-      for (const value of Object.values(record)) collect(value);
+      for (const child of Object.values(record)) collect(child);
     };
     collect(bundle);
     expect(receipts).toEqual([]);
