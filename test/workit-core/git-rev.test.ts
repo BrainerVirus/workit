@@ -24,7 +24,10 @@ import {
 
 const dirs: string[] = [];
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  // Windows: after a timed-out network call, git's ssh child may hold the
+  // repo dir open until its own ConnectTimeout ends, so retry the removal.
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 });
 const tmp = (prefix: string): string => {
   const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
