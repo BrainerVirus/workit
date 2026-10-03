@@ -20,3 +20,7 @@ Thumbs.db
 dist/
 *.log
 .cache/
+
+# workit-claude-code: generated plugin skills and bundled CLI assets (scripts/build.ts)
+packages/workit-claude-code/skills/
+packages/workit-claude-code/assets/

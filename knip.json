@@ -15,7 +15,8 @@
     "packages/workit-cursor/scripts/build.ts",
     "packages/workit-codex/scripts/build.ts",
     "packages/workit-pi/scripts/build.ts",
-    "packages/workit-mcp/scripts/build.ts"
+    "packages/workit-mcp/scripts/build.ts",
+    "packages/workit-claude-code/scripts/build.ts"
   ],
   "workspaces": {
     ".": {
@@ -54,6 +55,11 @@
       "entry": ["extensions/workit.ts!", "src/worker.ts!", "scripts/build.ts!"],
       "project": ["src/**/*.ts!", "extensions/**/*.ts!", "scripts/**/*.ts!"],
       "ignoreDependencies": ["@brainervirus/workit-core"]
+    },
+    "packages/workit-claude-code": {
+      "entry": ["src/hook.ts!", "src/run.ts!", "scripts/build.ts!"],
+      "project": ["src/**/*.ts!", "scripts/**/*.ts!"],
+      "ignoreDependencies": ["@brainervirus/workit-cli"]
     },
     "packages/workit-mcp": {
       "entry": ["scripts/build.ts!"],

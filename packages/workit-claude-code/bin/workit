@@ -1,0 +1,26 @@
+#!/bin/sh
+# `workit` on the Claude Code Bash tool's PATH (Claude adds a plugin's bin/).
+# Local pin: run the CLI from the monorepo sources with bun. Installed
+# package: run the bundled dist/workit.js with node.
+# WORKIT_CLAUDE_RUNTIME=source|dist forces one; WORKIT_SHIM_TRACE=1 prints
+# the resolved entry on stderr.
+# TODO(S9a, PR #163): once packages/workit-cli/src/main.ts lands on main, drop
+# the index.tsx fallback below.
+set -e
+here=$(dirname "$0")
+root=$(cd "$here/.." && pwd)
+cli="$root/../workit-cli/src"
+entry=""
+if [ "${WORKIT_CLAUDE_RUNTIME:-}" != "dist" ] && [ -f "$root/../workit-core/src/core.ts" ]; then
+  if [ -f "$cli/main.ts" ]; then entry="$cli/main.ts"; elif [ -f "$cli/index.tsx" ]; then entry="$cli/index.tsx"; fi
+fi
+if [ "${WORKIT_CLAUDE_RUNTIME:-}" = "source" ] && [ -z "$entry" ]; then
+  echo "workit: WORKIT_CLAUDE_RUNTIME=source but no monorepo CLI source next to $root" >&2
+  exit 1
+fi
+if [ -n "$entry" ]; then
+  [ "${WORKIT_SHIM_TRACE:-}" = "1" ] && echo "workit-shim: source $entry" >&2
+  exec bun "$entry" "$@"
+fi
+[ "${WORKIT_SHIM_TRACE:-}" = "1" ] && echo "workit-shim: dist $root/dist/workit.js" >&2
+exec node "$root/dist/workit.js" "$@"

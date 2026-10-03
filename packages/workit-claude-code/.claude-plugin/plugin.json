@@ -1,0 +1,19 @@
+{
+  "name": "workit",
+  "displayName": "Workit",
+  "version": "2.1.5",
+  "description": "Workflow rails for agentic coding: task context on every session, branch policy on shell commands, and the workit method skills",
+  "author": {
+    "name": "BrainerVirus"
+  },
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
+  "repository": "https://github.com/BrainerVirus/workit",
+  "license": "MIT",
+  "keywords": [
+    "agentic-coding",
+    "branch-policy",
+    "skills",
+    "task-management",
+    "workflow"
+  ]
+}
