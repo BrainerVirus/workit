@@ -387,7 +387,7 @@ test("new and legacy records carry truthful runtime versions", () => {
   }
 });
 
-test("records written by a newer Workit ask for an upgrade", () => {
+test("records written by a newer Workit stay readable, and ask for an upgrade only when invalid", () => {
   const root = gitRepo();
   try {
     const core = coreFor(root);
@@ -398,6 +398,10 @@ test("records written by a newer Workit ask for an upgrade", () => {
     const raw = JSON.parse(readFileSync(taskFile, "utf8"));
     raw.runtime = { createdWith: "99.0.0", updatedWith: "99.0.0" };
     raw.futureField = "unknown-to-this-runtime";
+    writeFileSync(taskFile, JSON.stringify(raw));
+    // Reader tolerance (D17): an additive field never bricks an older reader.
+    expect(new TaskStore(root).readTask(taskId).ok).toBe(true);
+    raw.status = "status-from-the-future";
     writeFileSync(taskFile, JSON.stringify(raw));
     const task = new TaskStore(root).readTask(taskId);
     expect(task.ok).toBe(false);

@@ -17,6 +17,7 @@ import {
   intentSchema,
   newId,
   newRevision,
+  parseStoredRecord,
   provenanceSchema,
   refSchema,
   sha256,
@@ -1404,7 +1405,7 @@ export class TaskStore {
     }
   }
 
-  private readRecord<T>(file: string, schema: { safeParse(value: unknown): any }) {
+  private readRecord<T>(file: string, schema: z.ZodType) {
     try {
       const bytes = fs.readFileSync(file, "utf8");
       return { exists: true, result: this.parseBytes<T>(bytes, schema) };
@@ -1420,10 +1421,7 @@ export class TaskStore {
     }
   }
 
-  private parseBytes<T>(
-    bytes: string | Buffer,
-    schema: { safeParse(value: unknown): any },
-  ): Result<T> {
+  private parseBytes<T>(bytes: string | Buffer, schema: z.ZodType): Result<T> {
     let value: unknown;
     try {
       value = JSON.parse(typeof bytes === "string" ? bytes : bytes.toString("utf8"));
@@ -1432,8 +1430,8 @@ export class TaskStore {
     }
     if (isObject(value) && "schemaVersion" in value && value.schemaVersion !== SCHEMA_VERSION)
       return failure("unsupported_version", "unsupported snapshot schema version");
-    const parsed = schema.safeParse(value);
-    if (parsed.success) return success(null, null, parsed.data);
+    const parsed = parseStoredRecord(schema, value);
+    if (parsed.success) return success(null, null, parsed.data as T);
     const writerVersion =
       isObject(value) && isObject((value as { runtime?: unknown }).runtime)
         ? (value as { runtime: { updatedWith?: unknown } }).runtime.updatedWith

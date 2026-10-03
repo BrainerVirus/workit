@@ -84,6 +84,7 @@ export const hostSchema = z.enum([
   "codex_desktop",
   "pi",
   "workit_cli",
+  "claude_code",
 ]);
 export type Host = z.infer<typeof hostSchema>;
 export const assuranceSchema = z.enum(["enforced", "agent_guided", "unavailable"]);
@@ -749,6 +750,62 @@ export const taskRecordSchema = z
   })
   .strict();
 export type TaskRecord = z.infer<typeof taskRecordSchema>;
+
+type Strip = { path: PropertyKey[]; keys: string[] };
+/** Unknown-key issues only, flattened (union branches included); null when any
+ * issue is a real schema violation. */
+const strippable = (
+  issues: readonly z.core.$ZodIssue[],
+  prefix: PropertyKey[] = [],
+): Strip[] | null => {
+  const strips: Strip[] = [];
+  for (const issue of issues) {
+    if (issue.code === "unrecognized_keys") {
+      strips.push({ path: [...prefix, ...issue.path], keys: issue.keys });
+      continue;
+    }
+    if (issue.code !== "invalid_union") return null;
+    const branch = issue.errors
+      .map((errors) => strippable(errors, [...prefix, ...issue.path]))
+      .find((found) => found !== null && found.length > 0);
+    if (!branch) return null;
+    strips.push(...branch);
+  }
+  return strips;
+};
+
+/**
+ * Reader tolerance for stored records (D17): a record written by a newer
+ * runtime may carry keys this reader does not know. Strict record schemas
+ * reject them, so exactly the keys zod reports as unrecognized are dropped
+ * and the value is parsed again; every other violation still fails. Writes
+ * keep parsing strictly, so this reader never persists keys it cannot name.
+ */
+export const parseStoredRecord = <S extends z.ZodType>(
+  schema: S,
+  value: unknown,
+): z.ZodSafeParseResult<z.output<S>> => {
+  let parsed = schema.safeParse(value);
+  if (parsed.success || strippable(parsed.error.issues) === null) return parsed;
+  const first = parsed;
+  let current: unknown = structuredClone(value);
+  for (let round = 0; round < 8 && !parsed.success; round++) {
+    const strips = strippable(parsed.error.issues);
+    if (strips === null || strips.length === 0) return first;
+    for (const strip of strips) {
+      let target: unknown = current;
+      for (const key of strip.path)
+        target =
+          typeof target === "object" && target !== null
+            ? (target as Record<PropertyKey, unknown>)[key]
+            : undefined;
+      if (typeof target !== "object" || target === null) return first;
+      for (const key of strip.keys) delete (target as Record<string, unknown>)[key];
+    }
+    parsed = schema.safeParse(current);
+  }
+  return parsed.success ? parsed : first;
+};
 export const workspaceRecordSchema = z
   .object({
     schemaVersion: z.literal(1),
