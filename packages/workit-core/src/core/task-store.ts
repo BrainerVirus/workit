@@ -342,7 +342,7 @@ export class TaskStore {
       });
     }
     const workspace = this.readWorkspace();
-    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.ok) return workspace;
     if (!workspace.data)
       return failure("recovery_required", "task workspace binding is invalid", {
         path: this.workspacePath,
@@ -350,7 +350,7 @@ export class TaskStore {
     const stored = this.readIndex(workspace.data.id);
     const entries: TaskIndexEntry[] = [];
     let changed = Object.keys(stored).length !== names.length;
-    for (const name of names.sort()) {
+    for (const name of names.toSorted()) {
       const file = path.join(this.tasksDir, name);
       const signature = fileSignature(file);
       if (signature === null) {
@@ -364,7 +364,7 @@ export class TaskStore {
       }
       const item = this.readRecord<TaskRecord>(file, taskRecordSchema);
       if (!item.exists) continue;
-      if (!item.result.ok) return item.result as Result<never>;
+      if (!item.result.ok) return item.result;
       if (!validId(name.slice(0, -5)) || item.result.data.id !== name.slice(0, -5))
         return failure("recovery_required", "task filename and record ID differ", { path: name });
       if (item.result.data.workspaceId !== workspace.data.id)

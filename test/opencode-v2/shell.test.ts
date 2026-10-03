@@ -285,7 +285,7 @@ test("setup registers the subagent lifecycle hooks and an abortable event stream
     const { hooks, state, call } = await harness(root, {
       sessions: { ses_child: { parentID: "ses_parent" } },
     });
-    expect([...hooks.keys()].sort()).toEqual(["execute.after", "execute.before"]);
+    expect([...hooks.keys()].toSorted()).toEqual(["execute.after", "execute.before"]);
     expect(state.subscribed).toBe(true);
 
     // Hooks ignore unrelated tools and deny unmanaged nested launches.
@@ -330,7 +330,9 @@ test("setup registers every method skill with packaged content and paths", async
       expect(skill.path.endsWith(path.join(skill.id, "SKILL.md")), String(skill.id)).toBe(true);
       expect(skill.content.startsWith("---"), String(skill.id)).toBe(false);
     }
-    expect(skills.map((skill) => skill.id).sort()).toEqual([...WORKIT_METHOD_SKILLS].sort());
+    expect(skills.map((skill): string => skill.id).toSorted()).toEqual(
+      [...WORKIT_METHOD_SKILLS].toSorted(),
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -340,8 +342,8 @@ test("setup registers one collision-safe wk command per alias that forwards prom
   const root = repository();
   try {
     const { commands, prompts } = await harness(root);
-    expect(commands.map((command) => command.name).sort()).toEqual(
-      Object.keys(WORKIT_SKILL_ALIASES).sort(),
+    expect(commands.map((command): string => command.name).toSorted()).toEqual(
+      Object.keys(WORKIT_SKILL_ALIASES).toSorted(),
     );
     const names = commands.map((command) => command.name);
     expect(names).toContain("wk-tdd");
@@ -410,7 +412,7 @@ test("cleanup aborts the event subscription", async () => {
   try {
     const { state, cleanup } = await harness(root);
     expect(typeof cleanup).toBe("function");
-    if (typeof cleanup === "function") cleanup();
+    if (typeof cleanup === "function") void cleanup();
     const start = Date.now();
     while (!state.ended && Date.now() - start < 1000) await Bun.sleep(5);
     expect(state.ended).toBe(true);

@@ -1206,7 +1206,7 @@ test("worker context names the worker identity for self-references", async () =>
     // and a missing index is rebuilt with it.
     const indexed = new TaskStore(root).listTaskIndex();
     if (!indexed.ok) throw new Error(indexed.error);
-    expect(indexed.data[0]!.sessions).toContainEqual({
+    expect(indexed.data[0].sessions).toContainEqual({
       host: "opencode",
       handle: "child",
       workerId: first.data.id,

@@ -6,7 +6,6 @@ import {
   TaskStore,
   WorkitCore,
   type Capability,
-  type OperationContext,
 } from "@brainervirus/workit-core/src/core";
 
 export type CodexHost = "codex_cli" | "codex_desktop";
@@ -251,7 +250,7 @@ export const parseCodexHookInput = (value: unknown): HookParseResult => {
       session_id: value.session_id,
       model: value.model,
       permission_mode: value.permission_mode as PermissionMode,
-      transcript_path: value.transcript_path as string | null,
+      transcript_path: value.transcript_path,
       cwd: realpathSync(value.cwd),
       ...(event === "SessionStart" ? { source: value.source as SessionSource } : {}),
       ...(nonEmpty(value.turn_id) ? { turn_id: value.turn_id } : {}),
@@ -320,7 +319,7 @@ const unfinishedTaskOffer = (input: CodexHookInput, excludedTaskId?: string): st
               worker.data.session.handle === input.session_id,
           ),
       )
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 3);
     if (tasks.length === 0) return null;
     const quote = (value: string) => JSON.stringify(value.replace(/[<>]/g, " ").slice(0, 120));
@@ -352,7 +351,7 @@ const sessionContext = (input: CodexHookInput): string => {
         capabilities: codexCapabilities(detectCodexSurface(process.env), { sessionStart: true }),
         constraints: [],
         now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-      } as OperationContext).compactContext(state.task.id);
+      }).compactContext(state.task.id);
       if (view.ok) compact = `\n<workit-task-context>${view.data}</workit-task-context>`;
     }
   } catch {

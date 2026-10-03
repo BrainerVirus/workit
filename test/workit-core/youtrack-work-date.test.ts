@@ -174,10 +174,10 @@ test("Given org-specific and look-alike snippets, When the guard checks them, Th
 test("Given the shipped package sources, When they are scanned, Then no organization host, issue-id literal or hard-coded zone remains", () => {
   const root = path.resolve(import.meta.dir, "../../packages");
   const hits: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
       if (["node_modules", "dist", "build"].includes(entry.name)) continue;
-      const full = path.join(dir, entry.name);
+      const full = path.join(current, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (/\.(?:ts|tsx)$/.test(entry.name) && full.includes(`${path.sep}src${path.sep}`)) {
         for (const match of orgSpecificHits(readFileSync(full, "utf8")))
