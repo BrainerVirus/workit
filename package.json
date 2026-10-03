@@ -34,7 +34,7 @@
     "validate:cursor-marketplace": "bun packages/workit-core/scripts/validate-cursor-marketplace.ts",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
-    "doctor": "npx -y react-doctor@latest packages/workit-cli/src -y --no-telemetry --blocking error",
+    "doctor": "react-doctor packages/workit-cli/src -y --no-telemetry --blocking error",
     "knip": "knip --no-progress",
     "hooks:install": "lefthook install",
     "format": "oxfmt",
@@ -66,6 +66,7 @@
     "oxlint-tsgolint": "7.0.2003",
     "react": "19.2.8",
     "react-devtools-core": "7.0.1",
+    "react-doctor": "0.9.14",
     "semantic-release": "25.0.9",
     "typescript": "7.0.2"
   },
