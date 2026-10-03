@@ -76,10 +76,13 @@ const compareCodeUnits = (left: string, right: string): number => {
   return left.length - right.length;
 };
 
-const stableUnique = (values: string[]): string[] => [...new Set(values)].sort(compareCodeUnits);
+const stableUnique = (values: string[]): string[] =>
+  [...new Set(values)].toSorted(compareCodeUnits);
 
 const stableList = <T>(values: T[]): T[] =>
-  [...values].sort((left, right) => compareCodeUnits(canonicalJson(left), canonicalJson(right)));
+  [...values].toSorted((left, right) =>
+    compareCodeUnits(canonicalJson(left), canonicalJson(right)),
+  );
 
 const normalizedScope = (scope: Scope): Scope => ({
   description: scope.description,
@@ -463,10 +466,10 @@ export function diffPolicy(
   if (!policySchema.safeParse(previous).success && previous !== null)
     throw new TypeError("previous policy is invalid");
   if (!policySchema.safeParse(next).success) throw new TypeError("next policy is invalid");
-  const oldIds = new Set(previous?.requirements.map((requirement) => requirement.id) ?? []);
-  const newIds = new Set(next.requirements.map((requirement) => requirement.id));
-  const added = [...newIds].filter((id) => !oldIds.has(id)).sort(compareCodeUnits);
-  const retired = [...oldIds].filter((id) => !newIds.has(id)).sort(compareCodeUnits);
+  const oldIds = new Set(previous?.requirements.map((item) => item.id) ?? []);
+  const newIds = new Set(next.requirements.map((item) => item.id));
+  const added = [...newIds].filter((id) => !oldIds.has(id)).toSorted(compareCodeUnits);
+  const retired = [...oldIds].filter((id) => !newIds.has(id)).toSorted(compareCodeUnits);
   if (added.length === 0 && retired.length === 0) return null;
   const normalizedReason = reason.trim();
   const changeReason = retired.length

@@ -113,7 +113,7 @@ const purposeForQuestion = (question: Question): Receipt["purpose"] | undefined 
  * answers out-of-band, so the after-hook alone never sees them). */
 export class NativeReceiptStore {
   #receipts = new Map<string, Receipt[]>();
-  #observations = new WeakSet<object>();
+  #observations = new WeakSet();
   #reservations = new WeakMap<object, Receipt>();
   #pending = new Map<
     string,

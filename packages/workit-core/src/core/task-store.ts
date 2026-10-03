@@ -226,10 +226,10 @@ const isNewerVersion = (candidate: string, current: string): boolean => {
       .split("-")[0]
       .split(".")
       .map((item) => Number.parseInt(item, 10) || 0);
-  const [next, now] = [parts(candidate), parts(current)];
+  const [candidateParts, currentParts] = [parts(candidate), parts(current)];
   for (let index = 0; index < 3; index += 1) {
-    const left = next[index] ?? 0;
-    const right = now[index] ?? 0;
+    const left = candidateParts[index] ?? 0;
+    const right = currentParts[index] ?? 0;
     if (left !== right) return left > right;
   }
   return false;
@@ -306,7 +306,7 @@ export class TaskStore {
       return failure("recovery_required", "task filename and record ID differ", { taskId });
     if (result.result.ok) {
       const workspace = this.readWorkspace();
-      if (!workspace.ok) return workspace as Result<never>;
+      if (!workspace.ok) return workspace;
       if (!workspace.data || result.result.data.workspaceId !== workspace.data.id)
         return failure("recovery_required", "task workspace binding is invalid", { taskId });
     }
@@ -324,13 +324,13 @@ export class TaskStore {
       });
     }
     const workspace = this.readWorkspace();
-    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.ok) return workspace;
     if (!workspace.data)
       return failure("recovery_required", "task workspace binding is invalid", {
         path: this.workspacePath,
       });
     const tasks: TaskRecord[] = [];
-    for (const name of names.sort()) {
+    for (const name of names.toSorted()) {
       const item = this.readRecord<TaskRecord>(path.join(this.tasksDir, name), taskRecordSchema);
       if (!item.exists) continue;
       if (!item.result.ok) return item.result;
@@ -360,7 +360,7 @@ export class TaskStore {
       });
     }
     const workspace = this.readWorkspace();
-    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.ok) return workspace;
     if (!workspace.data)
       return failure("recovery_required", "task workspace binding is invalid", {
         path: this.workspacePath,
@@ -368,7 +368,7 @@ export class TaskStore {
     const stored = this.readIndex(workspace.data.id);
     const entries: TaskIndexEntry[] = [];
     let changed = Object.keys(stored).length !== names.length;
-    for (const name of names.sort()) {
+    for (const name of names.toSorted()) {
       const file = path.join(this.tasksDir, name);
       const signature = fileSignature(file);
       if (signature === null) {
@@ -382,7 +382,7 @@ export class TaskStore {
       }
       const item = this.readRecord<TaskRecord>(file, taskRecordSchema);
       if (!item.exists) continue;
-      if (!item.result.ok) return item.result as Result<never>;
+      if (!item.result.ok) return item.result;
       if (!validId(name.slice(0, -5)) || item.result.data.id !== name.slice(0, -5))
         return failure("recovery_required", "task filename and record ID differ", { path: name });
       if (item.result.data.workspaceId !== workspace.data.id)
@@ -532,11 +532,11 @@ export class TaskStore {
         if (origin.workspaceId === current.data.id) {
           const source = this.readTask(origin.taskId);
           if (source.ok) return success(source.data.revision, current.data.revision, source.data);
-          if (source.code !== "not_found") return source as Result<never>;
+          if (source.code !== "not_found") return source;
           return failure("not_found", "source task is not present in this shared workspace");
         }
         const tasks = this.listTasks();
-        if (!tasks.ok) return tasks as Result<never>;
+        if (!tasks.ok) return tasks;
         const prior = tasks.data.filter(
           (task) =>
             task.origin?.workspaceId === origin.workspaceId &&
@@ -548,7 +548,7 @@ export class TaskStore {
             `source task has multiple imported mappings: ${prior.map((task) => task.id).join(", ")}`,
           );
         if (prior.length === 1) {
-          const existing = prior[0]!;
+          const existing = prior[0];
           if (existing.origin!.exportDigest !== origin.exportDigest)
             return failure(
               "revision_conflict",

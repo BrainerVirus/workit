@@ -46,6 +46,7 @@ const PLUGIN_DIR_REL = "packages/workit-cursor";
 const PLUGIN_MANIFEST_REL = path.join(PLUGIN_DIR_REL, ".cursor-plugin/plugin.json");
 
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- caller-typed JSON fixture reader
 const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 
 const ajv = () => {

@@ -641,7 +641,7 @@ const validateAction = (
   if (input.binding && canonicalJson(input.binding) !== canonicalJson(decision.binding))
     return failure("permission_denied", "action binding does not match the approved decision");
   const content = verifyContentRefs(store, decision.binding);
-  if (!content.ok) return content as Result<never>;
+  if (!content.ok) return content;
   const requestedSteps = parseSteps(decision.binding.approvedContent);
   if (requestedSteps === null)
     return failure("invalid_input", "bounded action steps must be a unique non-empty array");
@@ -679,7 +679,7 @@ export function reserveAction(input: ReserveActionInput): Result<ActionReservati
     input.expectedRevision,
     (current, mutation) => {
       const workspace = input.store.readWorkspace();
-      if (!workspace.ok) return workspace as Result<never>;
+      if (!workspace.ok) return workspace;
       if (!workspace.data) return failure("not_found", "workspace not found");
       if (workspace.data.revision !== input.expectedWorkspaceRevision)
         return failure("revision_conflict", "workspace revision does not match", {
@@ -687,7 +687,7 @@ export function reserveAction(input: ReserveActionInput): Result<ActionReservati
           actualWorkspaceRevision: workspace.data.revision,
         });
       const valid = validateAction(input.store, current, workspace.data.id, input, authority);
-      if (!valid.ok) return valid as Result<never>;
+      if (!valid.ok) return valid;
       const { entry, workflow } = valid.data;
       const existing = entry.data.consumption;
       if (existing?.state === "uncertain")
@@ -736,7 +736,7 @@ export function reserveAction(input: ReserveActionInput): Result<ActionReservati
     },
     input.native?.now,
   );
-  if (!changed.ok) return changed as Result<never>;
+  if (!changed.ok) return changed;
   const workspace = input.store.readWorkspace();
   if (!workspace.ok || !workspace.data)
     return failure("recovery_required", "workspace disappeared after reservation");
@@ -793,7 +793,7 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
     input.taskRevision,
     (current, mutation) => {
       const workspace = input.store.readWorkspace();
-      if (!workspace.ok) return workspace as Result<never>;
+      if (!workspace.ok) return workspace;
       if (!workspace.data) return failure("not_found", "workspace not found");
       if (
         !authorityMatches(authority, {
@@ -909,7 +909,7 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
     },
     input.native?.now,
   );
-  if (!changed.ok) return changed as Result<never>;
+  if (!changed.ok) return changed;
   const entry = changed.data.decisions.find((candidate) => candidate.id === input.decisionId);
   if (!entry) return failure("recovery_required", "settled decision disappeared");
   if (outcomeResult) return outcomeResult;
@@ -943,7 +943,7 @@ export function reconcileAction(input: ReconcileActionInput): Result<Entry<Decis
     input.taskRevision,
     (current, mutation) => {
       const workspace = input.store.readWorkspace();
-      if (!workspace.ok) return workspace as Result<never>;
+      if (!workspace.ok) return workspace;
       if (!workspace.data) return failure("not_found", "workspace not found");
       if (authority.workspaceId !== workspace.data.id)
         return failure("permission_denied", "native reconciliation workspace does not match");
@@ -1022,7 +1022,7 @@ export function reconcileAction(input: ReconcileActionInput): Result<Entry<Decis
     },
     input.native?.now,
   );
-  if (!changed.ok) return changed as Result<never>;
+  if (!changed.ok) return changed;
   const entry = changed.data.decisions.find((candidate) => candidate.id === input.decisionId);
   return entry
     ? success(changed.data.revision, input.workspaceRevision, entry)

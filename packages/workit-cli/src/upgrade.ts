@@ -215,8 +215,8 @@ const sources = (
 const piInstalledVersion = (listing: string, selector: string): string | undefined => {
   const lines = listing.split(/\r?\n/).map((line) => line.trim());
   const index = lines.indexOf(selector);
-  if (index < 0 || !lines[index + 1] || !path.isAbsolute(lines[index + 1]!)) return undefined;
-  const pkg = object(path.join(lines[index + 1]!, "package.json"));
+  if (index < 0 || !lines[index + 1] || !path.isAbsolute(lines[index + 1])) return undefined;
+  const pkg = object(path.join(lines[index + 1], "package.json"));
   return pkg?.name === "@brainervirus/workit-pi" ? pkg.version : undefined;
 };
 
@@ -225,7 +225,7 @@ const versionAtLeast = (installed: string, latest: string): boolean => {
   const current = installed.split(".").map(Number);
   const target = latest.split(".").map(Number);
   for (let index = 0; index < 3; index++) {
-    if (current[index]! !== target[index]!) return current[index]! > target[index]!;
+    if (current[index] !== target[index]) return current[index] > target[index];
   }
   return true;
 };
@@ -279,9 +279,9 @@ export function previewUpgrade(hosts: HostId[] = HOSTS, deps: UpgradeDeps = {}):
         );
     }
     for (const source of installedSources.filter(
-      (source, index, list) =>
+      (candidate, index, list) =>
         list.findIndex(
-          (entry) => entry.host === source.host && entry.selector === source.selector,
+          (entry) => entry.host === candidate.host && entry.selector === candidate.selector,
         ) === index,
     )) {
       if (source.kind !== "floating") {
@@ -572,7 +572,7 @@ export async function runLaunchCommand(argv: string[], deps: UpgradeDeps = {}): 
   let launch: HostInstallCommand | undefined;
   if (!deps.run) {
     try {
-      launch = hostCommand(host!, hostArgs, { home, env });
+      launch = hostCommand(host, hostArgs, { home, env });
     } catch (error) {
       (deps.out ?? process.stderr).write(
         `${error instanceof Error ? error.message : "Host executable unavailable"}\n`,
@@ -599,7 +599,7 @@ export async function runLaunchCommand(argv: string[], deps: UpgradeDeps = {}): 
       return 1;
     }
   }
-  if (deps.run) return deps.run(host!, hostArgs).status ?? 1;
+  if (deps.run) return deps.run(host, hostArgs).status ?? 1;
   return (
     spawnSync(launch!.command, launch!.args, {
       stdio: "inherit",

@@ -404,7 +404,7 @@ test("dead skill routes are gone and self-review is routed", () => {
           policyVersion: "1.0.0" as const,
           inputDigest: "0".repeat(64),
           requirements: [mechanical],
-        } as never,
+        },
         [],
       ).map((method) => method.id),
     ).toContain("workit-behavioral-tdd");

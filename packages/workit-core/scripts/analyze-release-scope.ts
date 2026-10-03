@@ -26,11 +26,11 @@ const g = (root: string, args: string[]): string =>
 const SEMVER_TAG = /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 export function latestTag(root = process.cwd()): string | null {
-  const out = g(root, ["tag", "--list", "v*", "--sort=-v:refname"])
+  const tag = g(root, ["tag", "--list", "v*", "--sort=-v:refname"])
     .split("\n")
     .map((l) => l.trim())
-    .filter((l) => SEMVER_TAG.test(l));
-  return out[0] ?? null;
+    .find((l) => SEMVER_TAG.test(l));
+  return tag ?? null;
 }
 
 type Level = "major" | "minor" | "patch";

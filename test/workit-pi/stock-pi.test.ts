@@ -108,8 +108,8 @@ test(
         commands
           .filter((command) => command.name.startsWith("skill:workit-"))
           .map((command) => command.name.slice("skill:".length))
-          .sort(),
-      ).toEqual([...WORKIT_METHOD_SKILLS].sort());
+          .toSorted(),
+      ).toEqual([...WORKIT_METHOD_SKILLS].toSorted());
       expect(commands.map((command) => command.name)).toEqual(
         expect.arrayContaining(Object.keys(WORKIT_SKILL_ALIASES)),
       );

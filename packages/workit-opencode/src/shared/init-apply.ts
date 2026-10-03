@@ -5,7 +5,6 @@ import {
   mergeConfigValues,
   readConfig,
   writeConfig,
-  type BranchPreset,
 } from "@brainervirus/workit-core/src/core/config";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
 import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
@@ -89,7 +88,7 @@ export const executeInitApply = (
       {
         locale: args.locale,
         localeOptions: args.locale_options,
-        preset: args.branch_policy_preset as BranchPreset,
+        preset: args.branch_policy_preset,
         allowed: args.branch_policy_allowed,
         protectedNames: args.branch_policy_protected,
       },

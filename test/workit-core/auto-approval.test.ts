@@ -72,7 +72,7 @@ test("auto-approval honors class lists and rejects unknown classes", () => {
     expect(resolved.status).toBe("on");
     expect(autoApproves(root, "commit", configDir)).toBe(true);
     expect(autoApproves(root, "push", configDir)).toBe(false);
-    expect(autoApproves(root, "publish" as never, configDir)).toBe(false);
+    expect(autoApproves(root, "publish", configDir)).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(configDir, { recursive: true, force: true });

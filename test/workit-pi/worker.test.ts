@@ -94,14 +94,13 @@ test("worker stdout accepts JSON split across process chunks", () => {
     taskId: "task-1",
     workerId: "worker-1",
     sessionId: "session-1",
-    spawn: () =>
-      ({
-        pid: 41,
-        stdout: null,
-        stderr: null,
-        once: () => undefined,
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 41,
+      stdout: null,
+      stderr: null,
+      once: () => undefined,
+      kill: () => true,
+    }),
   });
   const line = JSON.stringify({
     type: "workit_worker_result",
@@ -123,20 +122,19 @@ test("native readiness requires the correlated get_state response and assigned s
     taskId: "task-ready",
     workerId: "worker-ready",
     sessionId: "session-ready",
-    spawn: () =>
-      ({
-        pid: 43,
-        stdout: {
-          on: (event: string, listener: (chunk?: string | Buffer) => void) => {
-            if (event === "data") stdoutListener = listener;
-          },
-          setEncoding: () => undefined,
+    spawn: () => ({
+      pid: 43,
+      stdout: {
+        on: (event: string, listener: (chunk?: string | Buffer) => void) => {
+          if (event === "data") stdoutListener = listener;
         },
-        stderr: null,
-        once: () => undefined,
-        stdin: { write: (value: string) => (writes.push(value), true), end: () => undefined },
-        kill: () => true,
-      }) as never,
+        setEncoding: () => undefined,
+      },
+      stderr: null,
+      once: () => undefined,
+      stdin: { write: (value: string) => (writes.push(value), true), end: () => undefined },
+      kill: () => true,
+    }),
   });
   expect(writes[0]).toContain('"id":"workit-ready"');
   stdoutListener?.(
@@ -205,8 +203,7 @@ test("worker stdout tolerates valid Pi RPC events around Workit protocol events"
     runtime: runtime(),
     workerId: "worker-rpc",
     sessionId: "session-rpc",
-    spawn: () =>
-      ({ pid: 44, stdout: null, stderr: null, once: () => undefined, kill: () => true }) as never,
+    spawn: () => ({ pid: 44, stdout: null, stderr: null, once: () => undefined, kill: () => true }),
   });
   const report = {
     outcome: "completed" as const,
@@ -245,18 +242,17 @@ test("stderr is diagnostics only and protocol identity is strict", () => {
     runtime: runtime(),
     workerId: "worker-1",
     sessionId: "session-1",
-    spawn: () =>
-      ({
-        pid: 51,
-        stdout: null,
-        stderr: {
-          on: (event: string, listener: (chunk?: string | Buffer) => void) =>
-            stderrListeners.set(event, listener),
-          setEncoding: () => undefined,
-        },
-        once: () => undefined,
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 51,
+      stdout: null,
+      stderr: {
+        on: (event: string, listener: (chunk?: string | Buffer) => void) =>
+          stderrListeners.set(event, listener),
+        setEncoding: () => undefined,
+      },
+      once: () => undefined,
+      kill: () => true,
+    }),
   });
   stderrListeners.get("data")?.(
     JSON.stringify({ type: "workit_worker_ready", workerId: "worker-1", sessionId: "session-1" }) +
@@ -277,14 +273,13 @@ test("stdout protocol rejects duplicate reports and bounded unterminated lines",
     runtime: runtime(),
     workerId: "worker-1",
     sessionId: "session-1",
-    spawn: () =>
-      ({
-        pid: 52,
-        stdout: null,
-        stderr: null,
-        once: () => undefined,
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 52,
+      stdout: null,
+      stderr: null,
+      once: () => undefined,
+      kill: () => true,
+    }),
   });
   const event = JSON.stringify({
     type: "workit_worker_result",
@@ -299,14 +294,13 @@ test("stdout protocol rejects duplicate reports and bounded unterminated lines",
     runtime: runtime(),
     workerId: "worker-2",
     sessionId: "session-2",
-    spawn: () =>
-      ({
-        pid: 53,
-        stdout: null,
-        stderr: null,
-        once: () => undefined,
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 53,
+      stdout: null,
+      stderr: null,
+      once: () => undefined,
+      kill: () => true,
+    }),
   });
   consumeWorkerOutput(oversized, "x".repeat(64 * 1024 + 1));
   expect(oversized.protocolError).toContain("limit");
@@ -326,7 +320,7 @@ test("cancellation escalates and remains unknown until an observed exit", async 
           if (signal) signals.push(signal);
           return true;
         },
-      } as never;
+      };
     },
   });
   const cancelled = await cancelWorker(worker, { graceMs: 1, killWaitMs: 1 });
@@ -361,7 +355,7 @@ test("implementer process is bound before prompt and receives scoped environment
     spawn: (_command, _args, options) => {
       observedPid = child.pid;
       observedEnv = options.env;
-      return child as never;
+      return child;
     },
     onSpawn: (handle) => {
       expect(handle.pid).toBe(9001);
@@ -406,15 +400,14 @@ test("an asynchronous spawn error never grants readiness or a writer", () => {
   const listeners = new Map<string, (...args: unknown[]) => void>();
   const worker = launchWorker(assignment("implementer"), {
     runtime: runtime(),
-    spawn: () =>
-      ({
-        pid: 600,
-        stdout: null,
-        stderr: null,
-        once: (event: string, listener: (...args: unknown[]) => void) =>
-          listeners.set(event, listener),
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 600,
+      stdout: null,
+      stderr: null,
+      once: (event: string, listener: (...args: unknown[]) => void) =>
+        listeners.set(event, listener),
+      kill: () => true,
+    }),
   });
   listeners.get("error")?.(new Error("spawn failed after return"));
   expect(worker.state).toBe("assigned");
@@ -425,14 +418,13 @@ test("an asynchronous spawn error never grants readiness or a writer", () => {
 test("report is not exit, and only observed exit reconciles", () => {
   const worker = launchWorker(assignment("reviewer"), {
     runtime: runtime(),
-    spawn: () =>
-      ({
-        pid: 77,
-        stdout: { on: () => undefined, setEncoding: () => undefined },
-        stderr: { on: () => undefined, setEncoding: () => undefined },
-        once: () => undefined,
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 77,
+      stdout: { on: () => undefined, setEncoding: () => undefined },
+      stderr: { on: () => undefined, setEncoding: () => undefined },
+      once: () => undefined,
+      kill: () => true,
+    }),
   });
   worker.report = { outcome: "completed", summary: "ok", evidenceIds: [], findingIds: [] };
   expect(worker.state).toBe("running");
@@ -447,14 +439,13 @@ test("report is not exit, and only observed exit reconciles", () => {
 test("restart reconciliation never infers a live worker is stopped", () => {
   const worker = launchWorker(assignment("reviewer"), {
     runtime: runtime(),
-    spawn: () =>
-      ({
-        pid: 77,
-        stdout: null,
-        stderr: null,
-        once: () => undefined,
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 77,
+      stdout: null,
+      stderr: null,
+      once: () => undefined,
+      kill: () => true,
+    }),
   });
   worker.child = null;
   worker.state = "running";
@@ -520,14 +511,13 @@ test("native start observation binds the exact assigned Pi session before work",
     taskId: task.data.id,
     workerId: assigned.data.id,
     sessionId: "pi-child-1",
-    spawn: () =>
-      ({
-        pid: 42,
-        stdout: null,
-        stderr: null,
-        once: () => undefined,
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 42,
+      stdout: null,
+      stderr: null,
+      once: () => undefined,
+      kill: () => true,
+    }),
   });
   const observed = observeWorkerStart(
     {
@@ -595,7 +585,7 @@ test("supervised implementer observes the child before acquiring writer or sendi
       sessionId: "session",
     },
     prompt: "implement",
-    spawn: () => child as never,
+    spawn: () => child,
   });
   expect(worker.state).toBe("running");
   expect(order).toEqual(["observe"]);
@@ -686,29 +676,28 @@ test("writer failure persists unknown before termination and reconciles only on 
       advanceWorkerBinding(binding, observed);
       return observed.ok;
     },
-    spawn: () =>
-      ({
-        pid: 813,
-        stdout: {
-          on: (event: string, listener: (chunk?: string | Buffer) => void) => {
-            if (event === "data") stdoutListener = listener;
-          },
-          setEncoding: () => undefined,
+    spawn: () => ({
+      pid: 813,
+      stdout: {
+        on: (event: string, listener: (chunk?: string | Buffer) => void) => {
+          if (event === "data") stdoutListener = listener;
         },
-        stderr: { on: () => undefined, setEncoding: () => undefined },
-        once: () => undefined,
-        stdin: {
-          write: (value: string) => {
-            expect(value).not.toContain('"type":"prompt"');
-            return true;
-          },
-          end: () => undefined,
-        },
-        kill: () => {
-          killed += 1;
+        setEncoding: () => undefined,
+      },
+      stderr: { on: () => undefined, setEncoding: () => undefined },
+      once: () => undefined,
+      stdin: {
+        write: (value: string) => {
+          expect(value).not.toContain('"type":"prompt"');
           return true;
         },
-      }) as never,
+        end: () => undefined,
+      },
+      kill: () => {
+        killed += 1;
+        return true;
+      },
+    }),
   });
   stdoutListener?.(
     JSON.stringify({
@@ -808,26 +797,25 @@ test("core-backed supervisor refreshes revisions through report and observed exi
       advanceWorkerBinding(binding, result);
       return result.ok;
     },
-    spawn: () =>
-      ({
-        pid: 777,
-        stdout: {
-          on: (event: string, listener: (chunk?: string | Buffer) => void) => {
-            if (event === "data") stdoutListener = listener;
-          },
-          setEncoding: () => undefined,
+    spawn: () => ({
+      pid: 777,
+      stdout: {
+        on: (event: string, listener: (chunk?: string | Buffer) => void) => {
+          if (event === "data") stdoutListener = listener;
         },
-        stderr: { on: () => undefined, setEncoding: () => undefined },
-        once: () => undefined,
-        stdin: {
-          write: (value: string) => {
-            prompt += value;
-            return true;
-          },
-          end: () => undefined,
+        setEncoding: () => undefined,
+      },
+      stderr: { on: () => undefined, setEncoding: () => undefined },
+      once: () => undefined,
+      stdin: {
+        write: (value: string) => {
+          prompt += value;
+          return true;
         },
-        kill: () => true,
-      }) as never,
+        end: () => undefined,
+      },
+      kill: () => true,
+    }),
   });
   expect(handle.state).toBe("running");
   stdoutListener?.(
@@ -921,15 +909,14 @@ test("supervised asynchronous spawn failure is persisted as unknown by core", ()
       child = spawned;
       return true;
     },
-    spawn: () =>
-      ({
-        pid: 812,
-        stdout: null,
-        stderr: null,
-        once: (event: string, listener: (...args: unknown[]) => void) =>
-          listeners.set(event, listener),
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 812,
+      stdout: null,
+      stderr: null,
+      once: (event: string, listener: (...args: unknown[]) => void) =>
+        listeners.set(event, listener),
+      kill: () => true,
+    }),
   });
   expect(handle.state).toBe("running");
   listeners.get("error")?.(new Error("late spawn failure"));
@@ -1036,14 +1023,13 @@ test("a spawned Pi worker is never recorded as not started", async () => {
       fixture.setChild(spawned);
       return true;
     },
-    spawn: () =>
-      ({
-        pid: 4242,
-        stdout: null,
-        stderr: null,
-        once: () => undefined,
-        kill: () => true,
-      }) as never,
+    spawn: () => ({
+      pid: 4242,
+      stdout: null,
+      stderr: null,
+      once: () => undefined,
+      kill: () => true,
+    }),
   });
   expect(handle.state).toBe("running");
   expect(handle.dispatch).toBeNull();

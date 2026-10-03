@@ -31,7 +31,10 @@ try {
   for (let index = 0; index < FILES; index += 1) {
     const dir = path.join(root, "src", `m${index % 40}`);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, `f${index}.ts`), `export const v${index} = ${"x".repeat(2000)};\n`);
+    writeFileSync(
+      path.join(dir, `f${index}.ts`),
+      `export const v${index} = ${"x".repeat(2000)};\n`,
+    );
   }
   const git = (...args: string[]) =>
     spawnSync("git", args, { cwd: root, encoding: "utf8", stdio: "ignore" });
@@ -66,7 +69,7 @@ try {
     if (!started.ok) throw new Error(started.error);
     const id = (started.data as { id: string; revision: string }).id;
     const revision = (started.data as { revision: string }).revision;
-    const grown = store.mutateTask(id, revision as never, (task) => ({
+    const grown = store.mutateTask(id, revision, (task) => ({
       ok: true,
       revision: null,
       workspaceRevision: null,
@@ -85,10 +88,10 @@ try {
       samples.push(performance.now() - started);
     }
     if (!output) throw new Error("benchmark produced no context");
-    const sorted = [...samples].sort((left, right) => left - right);
+    const sorted = [...samples].toSorted((left, right) => left - right);
     const pick = (q: number) =>
-      Number(sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!.toFixed(2));
-    return { firstMs: Number(samples[0]!.toFixed(2)), medianMs: pick(0.5), p95Ms: pick(0.95) };
+      Number(sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))].toFixed(2));
+    return { firstMs: Number(samples[0].toFixed(2)), medianMs: pick(0.5), p95Ms: pick(0.95) };
   };
   // Worst case: every task was written within the racy-signature window, so
   // each record is re-read (but no candidate is captured).

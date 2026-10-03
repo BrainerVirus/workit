@@ -36,7 +36,7 @@ describe("syncManifests", () => {
     const root = fixtureRoot({ "package.json": "0.4.0" }, "workit");
     try {
       const result = syncManifests(root, "v0.8.9");
-      expect(result.changed.sort()).toEqual([...manifestPaths].sort());
+      expect(result.changed.toSorted()).toEqual([...manifestPaths].toSorted());
       for (const rel of manifestPaths) {
         const parsed = JSON.parse(readFileSync(path.join(root, rel), "utf8"));
         expect(parsed.version).toBe("0.8.9");

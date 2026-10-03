@@ -73,12 +73,14 @@ test("Given the index is missing or corrupt, Then listing rebuilds it from the r
       damage();
       const listed = store.listTaskIndex();
       if (!listed.ok) throw new Error(listed.error);
-      expect(listed.data.map((entry) => entry.id).sort()).toEqual([first.id, second.id].sort());
-      expect(listed.data.map((entry) => entry.revision).sort()).toEqual(
-        expected.data.map((task) => task.revision).sort(),
+      expect(listed.data.map((entry) => entry.id).toSorted()).toEqual(
+        [first.id, second.id].toSorted(),
+      );
+      expect(listed.data.map((entry) => entry.revision).toSorted()).toEqual(
+        expected.data.map((task) => task.revision).toSorted(),
       );
       const rebuilt = JSON.parse(readFileSync(indexPath(root), "utf8"));
-      expect(Object.keys(rebuilt.tasks).sort()).toEqual([first.id, second.id].sort());
+      expect(Object.keys(rebuilt.tasks).toSorted()).toEqual([first.id, second.id].toSorted());
     }
   });
 });
@@ -92,7 +94,7 @@ test("index entries follow records changed outside the index (older writers)", (
     writeFileSync(file, `${JSON.stringify(record)}\n`);
     const listed = new TaskStore(root).listTaskIndex();
     if (!listed.ok) throw new Error(listed.error);
-    expect(listed.data[0]!.progress.summary).toBe("written by an older runtime");
+    expect(listed.data[0].progress.summary).toBe("written by an older runtime");
   });
 });
 

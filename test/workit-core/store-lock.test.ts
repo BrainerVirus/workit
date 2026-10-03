@@ -317,7 +317,7 @@ test("Given doctor --fix-lock is preempted while a writer reclaims the same stal
   const spans = [w, x].map((out) => JSON.parse(out.trim().split("\n").at(-1)!));
   expect(JSON.parse(doctorOut.trim())).toMatchObject({ cleared: true });
   // Revision conflicts are fine; overlapping critical sections are not.
-  const held = spans.filter((item) => item.span[0] > 0).sort((a, b) => a.span[0] - b.span[0]);
+  const held = spans.filter((item) => item.span[0] > 0).toSorted((a, b) => a.span[0] - b.span[0]);
   for (let index = 1; index < held.length; index += 1)
     expect(held[index].span[0]).toBeGreaterThanOrEqual(held[index - 1].span[1]);
   expect(spans.every((item) => item.code === "ok" || item.code === "revision_conflict")).toBe(true);
@@ -346,7 +346,7 @@ test.skipIf(!localLockHost().includes("#"))(
   () => {
     const { store, task, lockPath } = startedStore({ lockTimeoutMs: 150 });
     const [name, space] = localLockHost().split("#");
-    const [namespace] = space!.split(":");
+    const [namespace] = space.split(":");
     writeLock(lockPath, {
       pid: process.pid,
       processStart: processStart(process.pid),

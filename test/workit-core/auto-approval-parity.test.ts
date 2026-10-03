@@ -154,10 +154,10 @@ test("CLI executes a commit headless with no TTY under a standing rule", async (
       ],
       {
         cwd: value.root,
-        out: { write: (s: string) => out.push(s) } as any,
-        err: { write: (s: string) => err.push(s) } as any,
+        out: { write: (s: string) => out.push(s) },
+        err: { write: (s: string) => err.push(s) },
         stdinIsTTY: () => false,
-      } as any,
+      },
     );
     expect(code).toBe(0);
     expect(committed(value.root)).toBe("chore(auto): cli one");
@@ -228,10 +228,10 @@ test("plan reservations record under a standing rule on Pi and the CLI", async (
         ["git.commit", "--payload", JSON.stringify(planPayload), "--confirm", "--json"],
         {
           cwd: value.root,
-          out: { write: (s: string) => out.push(s) } as any,
-          err: { write: () => {} } as any,
+          out: { write: (s: string) => out.push(s) },
+          err: { write: () => {} },
           stdinIsTTY: () => false,
-        } as any,
+        },
       );
       expect(code).toBe(0);
       expect(JSON.parse(out.join(""))).toMatchObject({ ok: true, data: { plan_commits: 2 } });

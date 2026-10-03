@@ -55,7 +55,7 @@ const defaultCli = (bin: string, available: boolean): TrackerCli | null => {
     return Promise.resolve({
       status: out.status ?? 1,
       stdout: out.stdout ?? "",
-      stderr: (out.error as Error | undefined)?.message ?? out.stderr ?? "",
+      stderr: out.error?.message ?? out.stderr ?? "",
     });
   };
 };

@@ -955,8 +955,8 @@ test("writer acquire --actor stamps the session handle a hook can match", async 
     const started = core.task(taskStartRequest());
     expect(started.ok).toBe(true);
     if (!started.ok) throw new Error(started.error);
-    const id = (started.data as { id: string }).id;
-    const task = store.readTask(id);
+    const taskId = (started.data as { id: string }).id;
+    const task = store.readTask(taskId);
     const workspace = store.readWorkspace();
     if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
     const io = capture();
@@ -965,7 +965,7 @@ test("writer acquire --actor stamps the session handle a hook can match", async 
         "writer",
         "acquire",
         "--task",
-        id,
+        taskId,
         "--revision",
         task.data.revision,
         "--workspace-revision",
@@ -983,7 +983,7 @@ test("writer acquire --actor stamps the session handle a hook can match", async 
     expect(JSON.parse(io.read().stdout)).toMatchObject({ ok: true });
     const owner = store.readWorkspace();
     expect(owner.ok && owner.data?.writer?.owner).toMatchObject({
-      taskId: id,
+      taskId,
       workerId: null,
       session: { host: "workit_cli", handle: "session-9" },
     });
