@@ -21,7 +21,7 @@ const build = spawnSync(
   "bun",
   [
     "build",
-    path.join(pkgDir, "src/index.tsx"),
+    path.join(pkgDir, "src/main.ts"),
     "--outfile",
     path.join(dist, "index.js"),
     "--target",

@@ -28,7 +28,7 @@
       "project": ["src/**/*.ts!", "scripts/**/*.ts!"]
     },
     "packages/workit-cli": {
-      "entry": ["src/index.tsx!", "scripts/build.ts!"],
+      "entry": ["src/main.ts!", "scripts/build.ts!"],
       "project": ["src/**/*.{ts,tsx}!", "scripts/**/*.ts!"],
       "ignoreDependencies": ["@brainervirus/workit-cursor", "@brainervirus/workit-opencode"],
       "ignoreUnresolved": ["scripts/build.ts"]

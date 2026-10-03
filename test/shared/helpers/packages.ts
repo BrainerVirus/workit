@@ -39,6 +39,35 @@ const WORKSPACE_PACKAGES = [
 
 let cached: PackedPackage[] | null = null;
 
+// Tarball dirs outlive packWorkspacePackages (callers hold the tarball paths
+// for the rest of the run), so they are removed once at the end: by the global
+// afterAll in test/shared/temp-cleanup.ts under `bun test` (which does not emit
+// process "exit"), and by an exit/signal hook for scripts. A forced repack
+// keeps the earlier dir alive for callers still holding it.
+const tarballDirs = new Set<string>();
+let cleanupRegistered = false;
+
+export const removeTarballDirs = (): void => {
+  for (const dir of tarballDirs) rmSync(dir, { recursive: true, force: true });
+  tarballDirs.clear();
+};
+
+function trackTarballDir(dir: string): void {
+  tarballDirs.add(dir);
+  if (cleanupRegistered) return;
+  cleanupRegistered = true;
+  process.on("exit", removeTarballDirs);
+  // Interrupted runs: clean up, then exit with the conventional signal code.
+  for (const [signal, code] of [
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ] as const)
+    process.once(signal, () => {
+      removeTarballDirs();
+      process.exit(code);
+    });
+}
+
 function copyPackage(pkg: string, sandbox: string) {
   cpSync(path.join(REPO_ROOT, "packages", pkg), path.join(sandbox, "packages", pkg), {
     recursive: true,
@@ -54,10 +83,8 @@ export function packWorkspacePackages(options: { force?: boolean } = {}): Packed
   if (cached && !options.force) return cached;
   const sandbox = mkdtempSync(path.join(os.tmpdir(), "wk-pack-sandbox-"));
   const tarballs = mkdtempSync(path.join(os.tmpdir(), "wk-pack-tarballs-"));
-  // ponytail: the tarball temp dir deliberately leaks to a fresh OS temp dir —
-  // the returned PackedPackage entries reference the tarballs after this call
-  // returns, so cleanup here would break callers; the OS tempdir sweep reclaims
-  // it. Cleanup only if the pack itself throws before any caller can hold them.
+  // Removed at process exit (trackTarballDir), or right away if packing throws.
+  trackTarballDir(tarballs);
   try {
     for (const pkg of WORKSPACE_PACKAGES) copyPackage(pkg, sandbox);
 
@@ -95,6 +122,10 @@ export function packWorkspacePackages(options: { force?: boolean } = {}): Packed
 
     cached = packSandbox(sandbox, tarballs);
     return cached;
+  } catch (error) {
+    tarballDirs.delete(tarballs);
+    rmSync(tarballs, { recursive: true, force: true });
+    throw error;
   } finally {
     rmSync(sandbox, { recursive: true, force: true });
   }
