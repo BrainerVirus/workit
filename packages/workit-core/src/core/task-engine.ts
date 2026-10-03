@@ -60,6 +60,7 @@ import {
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { verifyStandingApproval } from "./auto-approval";
 import { TaskStore, type MetadataLock, type ProcessEvidence } from "./task-store";
+import { defaultLockTimeout } from "./store-lock";
 import {
   compactTaskContext,
   exportDigest,
@@ -452,19 +453,51 @@ const refsWithinScope = (refs: Ref[], scope: Scope): boolean =>
       bindingCovers(scope, { description: "", paths: [ref.path], exclusions: [] }),
   );
 
-/** Commit attempts for a call that omitted every revision (see retryOmittedRevisions). */
+/** Commit attempts for a call whose revisions the engine filled (see retryFilledRevisions). */
 const REVISION_RETRY_ATTEMPTS = 8;
 const retryPause = new Int32Array(new SharedArrayBuffer(4));
-const omitsRevisions = (request: unknown): boolean =>
-  typeof request === "object" &&
-  request !== null &&
-  (request as { expectedRevision?: unknown }).expectedRevision === undefined &&
-  (request as { expectedWorkspaceRevision?: unknown }).expectedWorkspaceRevision === undefined;
-/** Only the store's compare-and-swap rejections, which carry the actual revision, are retried. */
-const isCasConflict = (result: Result<unknown>): boolean =>
+/** Which revisions the caller left for the engine to fill from its own read. */
+type FilledRevisions = { task: boolean; workspace: boolean };
+const filledRevisions = (request: unknown): FilledRevisions => {
+  const value = (typeof request === "object" && request !== null ? request : {}) as {
+    expectedRevision?: unknown;
+    expectedWorkspaceRevision?: unknown;
+  };
+  return {
+    task: value.expectedRevision === undefined,
+    workspace: value.expectedWorkspaceRevision === undefined,
+  };
+};
+/**
+ * A store compare-and-swap rejection (it carries the actual revision) on a
+ * revision the engine filled. A conflict on a caller-supplied revision, or a
+ * semantic conflict such as a changed import source, is never retried.
+ */
+const filledConflict = (result: Result<unknown>, filled: FilledRevisions): boolean =>
   !result.ok &&
   result.code === "revision_conflict" &&
-  ("actualRevision" in result.details || "actualWorkspaceRevision" in result.details);
+  (("actualRevision" in result.details && filled.task) ||
+    ("actualWorkspaceRevision" in result.details && filled.workspace));
+/**
+ * Re-run `run` while it loses a compare-and-swap race on an engine-filled
+ * revision. Each attempt commits at most once and a CAS rejection commits
+ * nothing, so a success is applied exactly once. Attempts stop at
+ * REVISION_RETRY_ATTEMPTS or once the lock budget has elapsed — so blocking
+ * stays within about twice that budget — and end as retryable busy.
+ */
+const retryFilledRevisions = <T>(filled: FilledRevisions, run: () => Result<T>): Result<T> => {
+  if (!filled.task && !filled.workspace) return run();
+  const deadline = Date.now() + defaultLockTimeout();
+  let result = run();
+  for (let attempt = 1; filledConflict(result, filled); attempt += 1) {
+    if (attempt >= REVISION_RETRY_ATTEMPTS || Date.now() >= deadline)
+      return failure("busy", "records kept changing under concurrent writers; retry the call");
+    // Jittered backoff de-synchronizes writers that lost the same race.
+    Atomics.wait(retryPause, 0, 0, Math.floor(Math.random() * 4 * attempt) + 1);
+    result = run();
+  }
+  return result;
+};
 
 const trustedNow = (context: OperationContext): Utc =>
   typeof context.now === "function" ? context.now() : context.now;
@@ -762,26 +795,14 @@ export class WorkitCore {
   }
 
   /**
-   * A caller that omitted every revision is not asking for compare-and-swap:
-   * when another writer commits between this call's read and its locked
-   * commit, re-run the whole operation — fresh read, policy, requirement and
-   * candidate checks, then commit. Each attempt commits at most once and a
-   * store CAS conflict commits nothing, so a success is applied exactly once
-   * and a re-check that now fails returns that failure. Explicit revisions
-   * keep strict CAS and surface revision_conflict. Persistent contention
-   * ends as retryable busy after a bounded number of attempts.
+   * A revision the caller omitted is not a compare-and-swap request: when
+   * another writer commits between this call's read and its locked commit,
+   * re-run the whole operation — fresh read, policy, requirement and
+   * candidate checks, then commit — so a re-check that now fails returns that
+   * failure. Caller-supplied revisions stay strict CAS.
    */
   private retryOmittedRevisions<T>(request: unknown, run: () => Result<T>): Result<T> {
-    if (!omitsRevisions(request)) return run();
-    let result = run();
-    for (let attempt = 1; isCasConflict(result); attempt += 1) {
-      if (attempt >= REVISION_RETRY_ATTEMPTS)
-        return failure("busy", "records kept changing under concurrent writers; retry the call");
-      // Jittered backoff de-synchronizes writers that lost the same race.
-      Atomics.wait(retryPause, 0, 0, Math.floor(Math.random() * 4 * attempt) + 1);
-      result = run();
-    }
-    return result;
+    return retryFilledRevisions(filledRevisions(request), run);
   }
 
   private helperEntry(
@@ -1217,11 +1238,10 @@ export class WorkitCore {
   }
 
   decision(request: unknown): Result<Entry<Decision>> {
-    return this.retryOmittedRevisions(request, () => this.recordDecision(request));
+    return this.recordDecision(request);
   }
 
   observeDecision(request: unknown, observation: unknown): Result<Entry<Decision>> {
-    // A native receipt is retired on first use, so this path never retries.
     return this.recordDecision(request, observation, true);
   }
 
@@ -1232,9 +1252,37 @@ export class WorkitCore {
    * removal, which fails the next reserve closed.
    */
   observeStandingDecision(request: unknown): Result<Entry<Decision>> {
-    return this.retryOmittedRevisions(request, () =>
-      this.recordDecision(request, undefined, true, true),
-    );
+    return this.recordDecision(request, undefined, true, true);
+  }
+
+  /**
+   * Commit a task mutation whose update re-validates everything it depends on
+   * under the lock. Decisions use this instead of a whole-operation retry
+   * because a native receipt is retired before the commit and cannot be
+   * verified twice: a CAS loss on an engine-filled revision re-reads the
+   * record, repeats `recheck` against it and retries the commit; the update's
+   * in-lock receipt check keeps a receipt from being consumed twice.
+   */
+  private commitTask(
+    taskId: string,
+    expected: string,
+    filled: boolean,
+    recheck: (fresh: TaskRecord) => Result<unknown>,
+    update: Parameters<TaskStore["mutateTask"]>[2],
+  ): Result<TaskRecord> {
+    let revision = expected;
+    let first = true;
+    return retryFilledRevisions({ task: filled, workspace: false }, () => {
+      if (!first) {
+        const fresh = this.store.readTask(taskId);
+        if (!fresh.ok) return fresh;
+        const checked = recheck(fresh.data);
+        if (!checked.ok) return checked;
+        revision = fresh.data.revision;
+      }
+      first = false;
+      return this.store.mutateTask(taskId, revision, update, trustedNow(this.context));
+    });
   }
 
   private recordDecision(
@@ -1275,6 +1323,7 @@ export class WorkitCore {
     if (!task.ok) return task;
     if ((this.context.workerId ?? null) !== null)
       return failure("permission_denied", "helpers cannot record or revoke decisions");
+    const filled = input.expectedRevision === undefined;
     this.fillRevisions(input, task.data);
     if (input.action === "record") {
       if (task.data.status === "closed")
@@ -1330,9 +1379,19 @@ export class WorkitCore {
       const nativeProvenance = native?.ok ? retireNativeAuthority(native.data) : null;
       if (native?.ok && !nativeProvenance)
         return failure("permission_denied", "native decision authority was retired");
-      const changed = this.store.mutateTask(
+      // A retry repeats the pre-lock checks that depend on the task record;
+      // receipt reuse, content and requirements are re-checked in the lock.
+      const recheck = (fresh: TaskRecord): Result<unknown> =>
+        fresh.status === "closed"
+          ? failure("invalid_transition", "closed task cannot record a decision")
+          : standingApproval
+            ? verifyStandingApproval(this.store.root, fresh, this.context.caller, input.binding)
+            : success(null, null, null);
+      const changed = this.commitTask(
         task.data.id,
         input.expectedRevision,
+        filled,
+        recheck,
         (current, mutation) => {
           const latestContent = verifyDecisionContent(this.store, input.binding);
           if (!latestContent.ok) return latestContent;
@@ -1364,7 +1423,6 @@ export class WorkitCore {
             decisions: [...current.decisions, entry],
           });
         },
-        trustedNow(this.context),
       );
       if (!changed.ok) return changed;
       return success(changed.data.revision, null, changed.data.decisions.at(-1)!);
@@ -1376,9 +1434,11 @@ export class WorkitCore {
     if (decision.data.revoked) return failure("invalid_transition", "decision is already revoked");
     if (decision.data.consumption)
       return failure("permission_denied", "consumed decision cannot be revoked");
-    const changed = this.store.mutateTask(
+    const changed = this.commitTask(
       task.data.id,
       input.expectedRevision,
+      filled,
+      () => success(null, null, null),
       (current, mutation) => {
         const entry = current.decisions.find((candidate) => candidate.id === input.decisionId);
         if (!entry) return failure("not_found", "decision not found");
@@ -1397,7 +1457,6 @@ export class WorkitCore {
           ),
         });
       },
-      trustedNow(this.context),
     );
     if (!changed.ok) return changed;
     const entry = changed.data.decisions.find((candidate) => candidate.id === input.decisionId);

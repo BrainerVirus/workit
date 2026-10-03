@@ -6,15 +6,23 @@ import { join, resolve } from "node:path";
 import {
   TaskStore,
   WorkitCore,
+  failure,
+  sha256,
+  success,
   type Assessment,
+  type NativeAuthorityVerifier,
   type OperationContext,
 } from "@/packages/workit-core/src/core";
+import {
+  defaultLockTimeout,
+  setDefaultLockTimeout,
+} from "@/packages/workit-core/src/core/store-lock";
 import { assessment, caller, scope, taskStartRequest } from "./task-fixtures";
 
-// Engine revision retry (design §0 item 14): a call that omitted every
-// revision is not asking for compare-and-swap, so losing the race to another
-// writer re-reads, re-checks and re-applies instead of surfacing
-// revision_conflict. Explicit revisions keep strict CAS semantics.
+// Engine revision retry (design §0 item 14): a revision the caller omitted is
+// not a compare-and-swap request, so losing the race to another writer on it
+// re-reads, re-checks and re-applies instead of surfacing revision_conflict.
+// Caller-supplied revisions keep strict CAS semantics.
 
 const context = (root: string): OperationContext => ({
   root,
@@ -166,12 +174,269 @@ test("Given a competing write on every attempt, When the caller omitted revision
     },
     () => true,
   );
-  const begin = performance.now();
-  const result = core.task(progress(taskId));
-  const elapsed = performance.now() - begin;
-  expect(result).toMatchObject({ ok: false, code: "busy" });
-  expect(probe.attempts()).toBe(8);
-  expect(elapsed).toBeLessThan(2_000);
+  // A generous lock budget isolates the attempt cap from the wall-time cap.
+  const budget = defaultLockTimeout();
+  setDefaultLockTimeout(10_000);
+  try {
+    const begin = performance.now();
+    const result = core.task(progress(taskId));
+    const elapsed = performance.now() - begin;
+    expect(result).toMatchObject({ ok: false, code: "busy" });
+    expect(probe.attempts()).toBe(8);
+    expect(elapsed).toBeLessThan(2_000);
+  } finally {
+    setDefaultLockTimeout(budget);
+  }
+});
+
+test("Given slow competing writes on every attempt, When the lock budget elapses, Then retries stop within about twice the budget", () => {
+  const { root, store, core, taskId } = started();
+  const competitor = new WorkitCore(new TaskStore(root), context(root));
+  const probe = interleave(
+    store,
+    () => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40);
+      expect(competitor.task(progress(taskId)).ok).toBe(true);
+    },
+    () => true,
+  );
+  const budget = defaultLockTimeout();
+  setDefaultLockTimeout(100);
+  try {
+    const begin = performance.now();
+    const result = core.task(progress(taskId));
+    const elapsed = performance.now() - begin;
+    expect(result).toMatchObject({ ok: false, code: "busy" });
+    // 40 ms per interleaved write against a 100 ms budget: the deadline, not
+    // the 8-attempt cap, ends the loop.
+    expect(probe.attempts()).toBeLessThan(8);
+    expect(elapsed).toBeLessThan(2 * 100 + 150);
+  } finally {
+    setDefaultLockTimeout(budget);
+  }
+});
+
+const startOther = (root: string) => {
+  const other = new WorkitCore(new TaskStore(root), context(root));
+  expect(
+    other.task({ schemaVersion: 1, action: "start", intent: taskStartRequest().intent }).ok,
+  ).toBe(true);
+};
+
+test("Given an explicit current expectedRevision and an unrelated task start, When writer.acquire commits, Then the engine-filled workspace revision is retried and the call succeeds", () => {
+  const { root, store, core, taskId } = started();
+  const task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const probe = interleave(
+    store,
+    () => startOther(root),
+    (call) => call === 1,
+  );
+  const result = core.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId,
+    expectedRevision: task.data.revision,
+  });
+  expect(result).toMatchObject({ ok: true });
+  expect(probe.attempts()).toBe(2);
+});
+
+test("Given an explicit current expectedWorkspaceRevision and a competing task write, When writer.acquire commits, Then the engine-filled task revision is retried and the call succeeds", () => {
+  const { root, store, core, taskId } = started();
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const competitor = new WorkitCore(new TaskStore(root), context(root));
+  const probe = interleave(
+    store,
+    () => {
+      expect(competitor.task(progress(taskId)).ok).toBe(true);
+    },
+    (call) => call === 1,
+  );
+  const result = core.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId,
+    expectedWorkspaceRevision: workspace.data.revision,
+  });
+  expect(result).toMatchObject({ ok: true });
+  expect(probe.attempts()).toBe(2);
+});
+
+test("Given an explicit expectedWorkspaceRevision that a task start invalidates, When writer.acquire commits, Then revision_conflict reports the workspace revisions without retry", () => {
+  const { root, store, core, taskId } = started();
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const probe = interleave(
+    store,
+    () => startOther(root),
+    (call) => call === 1,
+  );
+  const result = core.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId,
+    expectedWorkspaceRevision: workspace.data.revision,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    code: "revision_conflict",
+    details: { expectedWorkspaceRevision: workspace.data.revision },
+  });
+  if (result.ok) throw new Error("conflict expected");
+  expect(result.details.actualWorkspaceRevision).toBeDefined();
+  expect(result.details.actualRevision).toBeUndefined();
+  expect(probe.attempts()).toBe(1);
+});
+
+test("Given a changed import source, When the import omits revisions, Then the semantic revision_conflict is returned without retry", () => {
+  const source = started();
+  const destination = mkdtempSync(join(tmpdir(), "workit-retry-dest-"));
+  const destinationStore = new TaskStore(destination);
+  const destinationCore = new WorkitCore(destinationStore, context(destination));
+  const exportBundle = () => {
+    const exported = source.core.state({
+      schemaVersion: 1,
+      action: "export",
+      taskId: source.taskId,
+    });
+    if (!exported.ok) throw new Error(exported.error);
+    return exported.data;
+  };
+  expect(
+    destinationCore.state({
+      schemaVersion: 1,
+      action: "import",
+      bundle: exportBundle(),
+      authorityRefs: [],
+    }),
+  ).toMatchObject({ ok: true });
+  expect(source.core.task(progress(source.taskId)).ok).toBe(true);
+  const changed = exportBundle();
+  let imports = 0;
+  const original = destinationStore.importTask.bind(destinationStore);
+  destinationStore.importTask = (input) => {
+    imports += 1;
+    return original(input);
+  };
+  const result = destinationCore.state({
+    schemaVersion: 1,
+    action: "import",
+    bundle: changed,
+    authorityRefs: [],
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    code: "revision_conflict",
+    error: expect.stringContaining("source task export changed"),
+  });
+  expect(imports).toBe(1);
+});
+
+test("Given a workspace write during state.recover with omitted revisions, When recovery commits, Then it stays a single compare-and-swap attempt", () => {
+  const { root, store, taskId } = started();
+  const core = new WorkitCore(store, {
+    ...context(root),
+    nativeRecovery: () =>
+      success(null, null, {
+        state: "accounted_for" as const,
+        pid: 0,
+        processStart: null,
+        ownerDigest: null,
+      }),
+  });
+  const task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  expect(
+    store.mutateTask(taskId, task.data.revision, (value, mutation) =>
+      success(mutation.revision, null, value),
+    ).ok,
+  ).toBe(true);
+  const candidates = store.recoveryCandidates();
+  if (!candidates.ok) throw new Error(candidates.error);
+  const candidate = candidates.data.find((item) => item.target === "task");
+  if (!candidate) throw new Error("missing recovery snapshot");
+  writeFileSync(join(root, ".workit", "tasks", `${taskId}.json`), "{broken");
+  let recoveries = 0;
+  const original = store.recoverTask.bind(store);
+  store.recoverTask = (...args: Parameters<TaskStore["recoverTask"]>) => {
+    recoveries += 1;
+    startOther(root);
+    return original(...args);
+  };
+  const result = core.state({
+    schemaVersion: 1,
+    action: "recover",
+    taskId,
+    target: "task",
+    expectedBytes: sha256("{broken"),
+    snapshotDigest: candidate.digest,
+    reason: "crash recovery",
+    authorityRefs: [],
+  });
+  expect(result).toMatchObject({ ok: false, code: "revision_conflict" });
+  expect(recoveries).toBe(1);
+});
+
+const receiptVerifier = (calls: unknown[]): NativeAuthorityVerifier => ({
+  verifyDecision: (input: Record<string, unknown>) => {
+    calls.push(input);
+    return success(null, null, {
+      kind: "host_observed" as const,
+      host: "workit_cli" as const,
+      session: { kind: "host" as const, host: "workit_cli" as const, handle: "test" },
+      workerId: null,
+      receipts: [{ kind: "host" as const, host: "workit_cli" as const, handle: "receipt-once" }],
+    });
+  },
+  verifyAction: () => failure("permission_denied", "not used"),
+});
+
+test("Given a competing write during a receipted decision, When the caller omitted revisions, Then the decision is recorded once and the receipt is not lost", () => {
+  const { root, store, taskId } = started();
+  const calls: unknown[] = [];
+  const core = new WorkitCore(store, { ...context(root), nativeAuthority: receiptVerifier(calls) });
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const competitor = new WorkitCore(new TaskStore(root), context(root));
+  const probe = interleave(
+    store,
+    () => {
+      expect(competitor.task(progress(taskId)).ok).toBe(true);
+    },
+    (call) => call === 1,
+  );
+  const result = core.observeDecision(
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId,
+      purpose: "action",
+      binding: {
+        taskId,
+        workspaceId: workspace.data.id,
+        scope: task.data.intent.data.scope,
+        presented: "run the bounded action",
+        approvedContent: "run the bounded action",
+        contentRefs: [],
+      },
+      response: "approved",
+      requirementIds: [],
+    },
+    { kind: "decision" },
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    data: { provenance: { kind: "host_observed", receipts: [{ handle: "receipt-once" }] } },
+  });
+  expect(probe.attempts()).toBe(2);
+  expect(calls.length).toBe(1);
+  const after = store.readTask(taskId);
+  if (!after.ok) throw new Error(after.error);
+  expect(after.data.decisions.length).toBe(1);
 });
 
 const coreModule = resolve(import.meta.dir, "../../packages/workit-core/src/core.ts");

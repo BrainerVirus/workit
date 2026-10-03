@@ -677,7 +677,8 @@ export class TaskStore {
       const current = this.readWorkspace();
       if (!current.ok) return current;
       if (!current.data) return failure("not_found", "workspace not found");
-      if (current.data.revision !== expected) return this.conflict(expected, current.data.revision);
+      if (current.data.revision !== expected)
+        return this.workspaceConflict(expected, current.data.revision);
       const previousBytes = this.snapshotBytes(this.workspacePath);
       if (!previousBytes)
         return failure("storage_error", "workspace snapshot disappeared during mutation");
@@ -715,7 +716,7 @@ export class TaskStore {
       if (!expected) return failure("invalid_input", "task revision is required");
       if (task.data.revision !== expected) return this.conflict(expected, task.data.revision);
       if (workspace.data.revision !== input.expectedWorkspaceRevision)
-        return this.conflict(input.expectedWorkspaceRevision, workspace.data.revision);
+        return this.workspaceConflict(input.expectedWorkspaceRevision, workspace.data.revision);
       const previousWorkspaceBytes = this.snapshotBytes(this.workspacePath);
       const previousTaskBytes = this.snapshotBytes(this.taskPath(input.taskId));
       if (!previousWorkspaceBytes || !previousTaskBytes)
@@ -1550,6 +1551,14 @@ export class TaskStore {
         expectedRevision: expected,
         actualRevision: actual,
       },
+    );
+  }
+
+  private workspaceConflict(expected: Revision, actual: Revision): Result<never> {
+    return failure(
+      "revision_conflict",
+      "workspace revision does not match; omit expectedWorkspaceRevision to use the current record",
+      { expectedWorkspaceRevision: expected, actualWorkspaceRevision: actual },
     );
   }
 

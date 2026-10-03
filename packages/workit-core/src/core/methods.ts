@@ -113,9 +113,10 @@ values are still concurrency-checked, so never copy revisions between calls.
 A busy result means another live Workit call holds the checkout lock: retry the
 same call; it is not a recovery condition. A lock left by a dead process is
 reclaimed on the next write, and \`workit doctor --fix-lock\` clears it on demand.
-Calls that omit revisions absorb concurrent writes and re-check policy; under
-persistent contention they return busy. A revision_conflict means an explicit
-revision is stale: re-read the record before deciding whether to retry.
+An omitted revision absorbs a concurrent write: Workit re-reads, re-checks
+policy, and reapplies the call, returning busy under persistent contention. A
+revision_conflict means a revision you passed is stale: re-read the record
+before deciding whether to retry.
 A solo edit does not need writer acquisition; use it when concurrent checkout
 writers need coordination. Record only observed facts and checks. Evidence can
 become stale when its bound candidate changes; reconcile findings against the
