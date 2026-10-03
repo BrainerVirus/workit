@@ -92,7 +92,7 @@ const usage = (io: Io, error: string): number =>
 
 const verdictLines = (check: VerdictCheck): string[] => {
   const lines = [
-    `${check.branch} @ ${(check.head ?? "no commit").slice(0, 12)}: current ${check.current.basis}; ${check.accepted.accepted ? "accepted" : `not accepted (${check.accepted.reasons.join(", ")})`}`,
+    `${check.branch} @ ${(check.head ?? "no commit").slice(0, 12)}: current: ${check.current.basis}${typeof check.current.verdict?.result === "string" ? ` (${check.current.verdict.result})` : ""}; ${check.accepted.accepted ? "accepted" : `not accepted (${check.accepted.reasons.join(", ")})`}`,
   ];
   for (const entry of check.verdicts)
     lines.push(
@@ -113,20 +113,23 @@ function targetBranch(
 ): LedgerResult<string | null> {
   if (pr !== undefined) {
     const resolved = branchForPr(io.cwd, rows, pr);
-    if (!resolved)
+    if (!resolved.ok)
       return {
         ok: false,
         code: "invalid_input",
-        error: `cannot resolve PR ${pr} to a branch: no workit pr row records it and no fetched forge ref (refs/pull/${pr}/head) points at a local branch tip`,
+        error:
+          resolved.reason === "ambiguous"
+            ? `cannot resolve PR ${pr} to a branch: ambiguous (${resolved.candidates.join(", ")})`
+            : `cannot resolve PR ${pr} to a branch: no workit pr row records it and no fetched forge ref (refs/pull/${pr}/head) points at a local branch tip`,
         unblock: "pass --branch <branch> instead, or fetch the PR ref",
       };
-    if (branch !== undefined && branch !== resolved)
+    if (branch !== undefined && branch !== resolved.branch)
       return {
         ok: false,
         code: "invalid_input",
-        error: `PR ${pr} is branch ${resolved}, not ${branch}`,
+        error: `PR ${pr} is branch ${resolved.branch}, not ${branch}`,
       };
-    return { ok: true, value: resolved };
+    return { ok: true, value: resolved.branch };
   }
   return { ok: true, value: branch ?? null };
 }
@@ -174,7 +177,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         data.rows.length
           ? data.rows.map((row) => {
               const line = summarizeRow(row);
-              return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${row.superseded ? " (superseded)" : ""}  ${line.summary}`;
+              return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${line.labels.length ? ` (${line.labels.join(", ")})` : ""}  ${line.summary}`;
             })
           : "ledger is empty",
     );

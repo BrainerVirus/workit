@@ -21,6 +21,7 @@ import {
   buildHandoff,
   checkVerdicts,
   isNetworkFsType,
+  ledgerLock,
   ledgerPath,
   readLedger,
   recordDecision,
@@ -276,15 +277,44 @@ test("network filesystems are detected by statfs type, and the advisory lock ser
 
   const root = repo();
   const file = value(ledgerPath(root));
+  const lock = `${file}.lock`;
   mkdirSync(path.dirname(file), { recursive: true });
   expect(withLedgerLock(file, () => "ran")).toBe("ran");
-  expect(existsSync(`${file}.lock`)).toBe(false);
-  mkdirSync(`${file}.lock`);
+  expect(existsSync(lock)).toBe(false);
+  // Held and fresh: a waiter gives up.
+  const held = ledgerLock.acquire(lock)!;
   expect(withLedgerLock(file, () => "ran", 50)).toBeNull();
+  // Release removes only a lock carrying the caller's own token.
+  expect(ledgerLock.release(lock, "someone-else")).toBe(false);
+  expect(ledgerLock.token(lock)).toBe(held);
+  // Stale: taken over.
   const old = new Date(Date.now() - 60_000);
-  utimesSync(`${file}.lock`, old, old);
+  utimesSync(path.join(lock, "owner"), old, old);
+  utimesSync(lock, old, old);
   expect(withLedgerLock(file, () => "taken over", 50)).toBe("taken over");
-  expect(existsSync(`${file}.lock`)).toBe(false);
+  expect(existsSync(lock)).toBe(false);
+  // The original holder's late release must not remove anyone's lock.
+  const mine = ledgerLock.acquire(lock)!;
+  expect(ledgerLock.release(lock, held)).toBe(false);
+  expect(ledgerLock.token(lock)).toBe(mine);
+  expect(ledgerLock.release(lock, mine)).toBe(true);
+
+  // Two takers judge the same stale lock (token T). B reaps it and acquires;
+  // A's reap, still keyed to T, must leave B's lock alone.
+  const stale = ledgerLock.acquire(lock)!;
+  const observedByA = ledgerLock.token(lock);
+  const observedByB = ledgerLock.token(lock);
+  expect(observedByA).toBe(stale);
+  expect(ledgerLock.reap(lock, observedByB)).toBe(true);
+  const b = ledgerLock.acquire(lock)!;
+  expect(ledgerLock.reap(lock, observedByA)).toBe(false);
+  expect(ledgerLock.token(lock)).toBe(b);
+  // A second reap of the same stale state after B released finds nothing.
+  expect(ledgerLock.release(lock, b)).toBe(true);
+  expect(ledgerLock.reap(lock, observedByA)).toBe(false);
+  expect(existsSync(lock)).toBe(false);
+  const leftovers = fs.readdirSync(path.dirname(file)).filter((name) => name.includes(".lock."));
+  expect(leftovers).toEqual([]);
   // The locked append path writes the same row.
   const locked = appendRow<DecisionRow>(
     root,
@@ -530,19 +560,23 @@ test("without WORKIT_SESSION_ID a verdict is recorded as self and never accepted
   });
 });
 
-test("when the ledger has no author rows, Workit-Session commit trailers name the authors", () => {
+test("authors are the union of session rows and Workit-Session commit trailers", () => {
   const root = repo();
   commit(root, "a.txt", "a\n", "base");
   git(root, "checkout", "-qb", "feature/x");
   writeFileSync(path.join(root, "f.txt"), "f\n");
   git(root, "add", ".");
   git(root, "commit", "-qm", "feature\n\nWorkit-Session: s-trailer");
-  const refused = recordVerdict(
-    { cwd: root, actor: actor("s-trailer") },
-    { result: "verified", how: "x" },
-  );
-  expect(refused.ok).toBe(false);
-  expect(recordVerdict(reviewer()(root), { result: "verified", how: "x" }).ok).toBe(true);
+  seedAuthor(root, "commit.recorded", "s-row");
+  for (const session of ["s-trailer", "s-row"]) {
+    const refused = recordVerdict(
+      { cwd: root, actor: actor(session) },
+      { result: "verified", how: "x" },
+    );
+    expect(refused.ok, session).toBe(false);
+  }
+  value(recordVerdict(reviewer()(root), { result: "verified", how: "x" }));
+  expect(checkVerdicts(root, "feature/x", read(root).rows).authors).toEqual(["s-row", "s-trailer"]);
 });
 
 test("failed and blocked verdicts are current but never accepted, and a current independent failure vetoes other kinds", () => {
@@ -600,16 +634,39 @@ test("a session's own supersede replaces its failing verdict", () => {
 
 test("a PR resolves to a branch only through observed pr rows or a fetched forge ref", () => {
   const root = featureRepo();
+  const resolve = (pr: number) => branchForPr(root, read(root).rows, pr);
   // An arbitrary row claiming pr 7 is not a mapping.
   value(recordDecision({ cwd: root, actor: actor("s1"), pr: 7 }, { what: "x", why: "y" }));
-  expect(branchForPr(root, read(root).rows, 7)).toBeNull();
+  // Nor is a pr.created row that no observing verb wrote.
+  appendFileSync(
+    value(ledgerPath(root)),
+    `${JSON.stringify({ v: 1, id: "forged-pr", at: "2030-01-01T00:00:00.000Z", type: "pr.created", pr: 7, branch: "main", observer: "agent_asserted", actor: { session: "s1" } })}\n`,
+  );
+  expect(resolve(7)).toEqual({ ok: false, reason: "unknown", candidates: [] });
   // A fetched forge ref pointing at exactly one local branch tip is.
   git(root, "update-ref", "refs/pull/7/head", git(root, "rev-parse", "feature/x"));
-  expect(branchForPr(root, read(root).rows, 7)).toBe("feature/x");
+  expect(resolve(7)).toEqual({ ok: true, branch: "feature/x", source: "forge_ref" });
   // A row the CLI's PR verbs observed wins.
   value(appendObserved(root, { type: "pr.created", pr: 9, branch: "feature/y", actor: actor() }));
-  expect(branchForPr(root, read(root).rows, 9)).toBe("feature/y");
-  expect(branchForPr(root, read(root).rows, 10)).toBeNull();
+  expect(resolve(9)).toEqual({ ok: true, branch: "feature/y", source: "pr_row" });
+  expect(resolve(10)).toEqual({ ok: false, reason: "unknown", candidates: [] });
+});
+
+test("a forge ref whose tip several branches share, or forge refs that disagree, are ambiguous", () => {
+  const root = featureRepo();
+  const tip = git(root, "rev-parse", "feature/x");
+  git(root, "branch", "feature/copy", tip);
+  git(root, "update-ref", "refs/pull/7/head", tip);
+  expect(branchForPr(root, read(root).rows, 7)).toEqual({
+    ok: false,
+    reason: "ambiguous",
+    candidates: ["feature/copy", "feature/x"],
+  });
+  // Each ref alone would resolve (main's tip is only main); together they disagree.
+  git(root, "update-ref", "refs/pull/8/head", git(root, "rev-parse", "main"));
+  expect(branchForPr(root, read(root).rows, 8)).toMatchObject({ ok: true, branch: "main" });
+  git(root, "update-ref", "refs/remotes/origin/pull/8/head", tip);
+  expect(branchForPr(root, read(root).rows, 8)).toMatchObject({ ok: false, reason: "ambiguous" });
 });
 
 // ---------------------------------------------------------------------------
@@ -660,4 +717,44 @@ test("handoff never suggests pr create on self-only or failed-only verdicts", ()
   expect(brief.nextCommand).toContain("fix what the failing verdict found");
   value(recordVerdict(reviewer("s2")(root), { result: "verified", how: "fixed" }));
   expect(value(buildHandoff(root)).nextCommand).toBe("workit pr create");
+});
+
+test("handoff and list label superseded, ignored and self rows", () => {
+  const root = featureRepo();
+  const first = value(recordDecision({ cwd: root, actor: actor("s1") }, { what: "old", why: "w" }));
+  value(
+    recordDecision(
+      { cwd: root, actor: actor("s1"), supersedes: first.id },
+      { what: "new", why: "w" },
+    ),
+  );
+  value(recordVerdict({ cwd: root, actor: actor(null) }, { result: "verified", how: "x" }));
+  appendFileSync(
+    value(ledgerPath(root)),
+    [
+      {
+        id: "bad-link",
+        type: "decision",
+        what: "hijack",
+        supersedes: first.id,
+        actor: { session: "s2" },
+      },
+      { id: "fake-check", type: "check", name: "lint", actor: {} },
+    ]
+      .map((row) => `${JSON.stringify({ v: 1, at: "2030-01-01T00:00:00.000Z", ...row })}\n`)
+      .join(""),
+  );
+  const labels = Object.fromEntries(
+    value(buildHandoff(root)).recent.map((row) => [
+      row.id === first.id ? "old" : row.id,
+      row.labels,
+    ]),
+  );
+  expect(labels.old).toEqual(["superseded"]);
+  expect(labels["bad-link"]).toEqual(["ignored"]);
+  expect(labels["fake-check"]).toEqual(["ignored"]);
+  const verdictLabels = value(buildHandoff(root)).recent.find(
+    (row) => row.type === "verdict",
+  )?.labels;
+  expect(verdictLabels).toEqual(["self"]);
 });

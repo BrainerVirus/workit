@@ -123,7 +123,13 @@ export type HandoffRow = RowCommon & { type: "handoff"; note: string | null; nex
 
 export type LedgerRow = DecisionRow | RulingRow | VerdictRow | HandoffRow;
 /** A row as read back: any known or future type, plus its position. */
-export type ReadRow = RowCommon & Record<string, unknown> & { seq: number; superseded: boolean };
+export type ReadRow = RowCommon &
+  Record<string, unknown> & {
+    seq: number;
+    superseded: boolean;
+    /** The row names a `supersedes` target the reader refused (D18 supersede rules). */
+    supersedeIgnored: boolean;
+  };
 
 export type LedgerError = {
   ok: false;
@@ -325,10 +331,96 @@ const onNetworkFs = (dir: string): boolean => {
 const LOCK_WAIT_MS = 5_000;
 const LOCK_STALE_MS = 30_000;
 
+const LOCK_OWNER = "owner";
+
+const lockToken = (lock: string): string | null => {
+  try {
+    return fs.readFileSync(path.join(lock, LOCK_OWNER), "utf8");
+  } catch {
+    return null;
+  }
+};
+
+/** Last sign of life: the owner file's mtime, else the directory's. */
+const lockAgeMs = (lock: string): number | null => {
+  for (const target of [path.join(lock, LOCK_OWNER), lock]) {
+    try {
+      return Date.now() - fs.statSync(target).mtimeMs;
+    } catch {
+      // try the next
+    }
+  }
+  return null;
+};
+
 /**
- * Run `fn` holding an advisory lock directory (`mkdir` is atomic on NFS too).
- * A lock older than LOCK_STALE_MS is presumed abandoned and taken over.
+ * Advisory lock directory for network filesystems (`mkdir` and `rename` are
+ * atomic on NFS too). The holder writes a random ownership token into it and
+ * releases only a lock that still carries its own token. A lock idle for
+ * LOCK_STALE_MS is taken over by `reap`, which renames it aside, checks that
+ * the renamed lock still holds the token the taker judged stale, and puts it
+ * back otherwise. So of two takers racing for one stale lock, at most one
+ * removes it, and neither removes a lock the other has since acquired.
  */
+export const ledgerLock = {
+  /** mkdir + token; null when the lock is held. */
+  acquire(lock: string): string | null {
+    try {
+      fs.mkdirSync(lock);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
+      throw error;
+    }
+    const token = `${process.pid}-${randomBytes(8).toString("hex")}`;
+    fs.writeFileSync(path.join(lock, LOCK_OWNER), token);
+    return token;
+  },
+  /** Remove the lock only if it still carries `token`. */
+  release(lock: string, token: string): boolean {
+    if (lockToken(lock) !== token) return false;
+    const tomb = `${lock}.release-${randomBytes(6).toString("hex")}`;
+    try {
+      fs.renameSync(lock, tomb);
+    } catch {
+      return false;
+    }
+    if (lockToken(tomb) !== token) {
+      // Lost a race with a reaper and a new holder: give the lock back.
+      try {
+        fs.renameSync(tomb, lock);
+      } catch {
+        // A third holder exists; the renamed lock is not ours to keep.
+      }
+      return false;
+    }
+    fs.rmSync(tomb, { recursive: true, force: true });
+    return true;
+  },
+  /** The lock's current token (null when absent or not yet written). */
+  token: lockToken,
+  /** Take over a lock judged stale while it carried `observed`. */
+  reap(lock: string, observed: string | null): boolean {
+    const tomb = `${lock}.reap-${randomBytes(6).toString("hex")}`;
+    try {
+      fs.renameSync(lock, tomb);
+    } catch {
+      return false; // another taker got there first, or the holder released
+    }
+    if (lockToken(tomb) === observed) {
+      fs.rmSync(tomb, { recursive: true, force: true });
+      return true;
+    }
+    try {
+      fs.renameSync(tomb, lock);
+    } catch {
+      // Someone acquired a fresh lock meanwhile; leave theirs alone.
+      fs.rmSync(tomb, { recursive: true, force: true });
+    }
+    return false;
+  },
+};
+
+/** Run `fn` holding the ledger's advisory lock; null when it stays held for `waitMs`. */
 export function withLedgerLock<T>(
   file: string,
   fn: () => T,
@@ -336,28 +428,20 @@ export function withLedgerLock<T>(
 ): T | null {
   const lock = `${file}.lock`;
   const deadline = Date.now() + waitMs;
+  let token: string | null = null;
   for (;;) {
-    try {
-      fs.mkdirSync(lock);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
-          fs.rmSync(lock, { recursive: true, force: true });
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      if (Date.now() >= deadline) return null;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-    }
+    token = ledgerLock.acquire(lock);
+    if (token) break;
+    const observed = lockToken(lock);
+    const age = lockAgeMs(lock);
+    if (age !== null && age > LOCK_STALE_MS && ledgerLock.reap(lock, observed)) continue;
+    if (Date.now() >= deadline) return null;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
   }
   try {
     return fn();
   } finally {
-    fs.rmSync(lock, { recursive: true, force: true });
+    ledgerLock.release(lock, token);
   }
 }
 
@@ -533,6 +617,7 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
       ...(str(parsed.supersedes) ? { supersedes: parsed.supersedes as string } : {}),
       seq: rows.length + 1,
       superseded: false,
+      supersedeIgnored: false,
     });
   }
   // Only a well-formed supersede link counts; anything else is ignored.
@@ -540,6 +625,7 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
   for (const row of rows) {
     const target = row.supersedes ? byId.get(row.supersedes) : undefined;
     if (target && supersedeAllowed(row, target) === null) target.superseded = true;
+    else if (row.supersedes) row.supersedeIgnored = true;
     if (!byId.has(row.id)) byId.set(row.id, row);
   }
   return { ok: true, value: { path: file.value, rows, skipped } };
@@ -562,18 +648,23 @@ export function filterRows(rows: readonly ReadRow[], filter: RowFilter): ReadRow
 // ---------------------------------------------------------------------------
 // PR → branch (never from arbitrary rows)
 
+export type PrBranch =
+  | { ok: true; branch: string; source: "pr_row" | "forge_ref" }
+  | { ok: false; reason: "unknown" | "ambiguous"; candidates: string[] };
+
 /**
  * The branch a PR/MR number belongs to, from (1) rows the CLI's own PR verbs
- * observed (`PR_ROW_TYPES`, `observer:"workit_cli"`), else (2) a fetched forge
- * ref (`refs/pull/<n>/head`, `refs/merge-requests/<n>/head`, or the same under
- * `refs/remotes/<remote>/`) whose commit is the tip of exactly one local
- * branch. Null when neither knows.
+ * observed (`PR_ROW_TYPES` with `observer:"workit_cli"`), else (2) a fetched
+ * forge ref (`refs/pull/<n>/head`, `refs/merge-requests/<n>/head`, or the same
+ * under `refs/remotes/<remote>/`) whose commit is the tip of exactly one local
+ * branch. Forge refs that disagree, or a tip shared by several branches, are
+ * `ambiguous`; nothing at all is `unknown`.
  */
-export function branchForPr(cwd: string, rows: readonly ReadRow[], pr: number): string | null {
+export function branchForPr(cwd: string, rows: readonly ReadRow[], pr: number): PrBranch {
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index];
     if (row.pr === pr && row.branch && PR_ROW_TYPES.has(row.type) && row.observer === "workit_cli")
-      return row.branch;
+      return { ok: true, branch: row.branch, source: "pr_row" };
   }
   const tips = git(cwd, [
     "for-each-ref",
@@ -584,14 +675,18 @@ export function branchForPr(cwd: string, rows: readonly ReadRow[], pr: number): 
     `refs/remotes/*/merge-requests/${pr}/head`,
   ]);
   const shas = [...new Set((tips ?? "").split("\n").filter(Boolean))];
-  if (shas.length !== 1) return null;
+  if (shas.length === 0) return { ok: false, reason: "unknown", candidates: [] };
+  if (shas.length > 1) return { ok: false, reason: "ambiguous", candidates: shas };
   const branches = (
     git(cwd, ["for-each-ref", "--format=%(refname:short)", "--points-at", shas[0], "refs/heads"]) ??
     ""
   )
     .split("\n")
     .filter(Boolean);
-  return branches.length === 1 ? branches[0] : null;
+  if (branches.length === 1) return { ok: true, branch: branches[0], source: "forge_ref" };
+  return branches.length === 0
+    ? { ok: false, reason: "unknown", candidates: [] }
+    : { ok: false, reason: "ambiguous", candidates: branches };
 }
 
 // ---------------------------------------------------------------------------
@@ -695,9 +790,9 @@ function trailerSessions(cwd: string, base: string | null, head: string | null):
 }
 
 /**
- * Sessions that authored `branch`: `commit.recorded` / `task.opened` ledger
- * rows; when the ledger has none for the branch, `Workit-Session:` commit
- * trailers on `base..head`. Git author name/email is not used: every agent on
+ * Sessions that authored `branch`: the union of `commit.recorded` /
+ * `task.opened` ledger rows and `Workit-Session:` commit trailers on
+ * `base..head`. Git author name/email is not used: every agent on
  * a machine shares it, so it cannot tell sessions apart.
  */
 export function authorSessions(
@@ -707,16 +802,13 @@ export function authorSessions(
   range: { base: string | null; head: string | null } = { base: null, head: null },
 ): Set<string> {
   const sessions = new Set<string>();
-  let recorded = false;
   for (const row of rows) {
     if (row.branch !== branch || (row.type !== "commit.recorded" && row.type !== "task.opened"))
       continue;
-    recorded = true;
     const session = str(row.session) ?? row.actor.session;
     if (session) sessions.add(session);
   }
-  if (!recorded)
-    for (const session of trailerSessions(cwd, range.base, range.head)) sessions.add(session);
+  for (const session of trailerSessions(cwd, range.base, range.head)) sessions.add(session);
   return sessions;
 }
 
@@ -1032,7 +1124,21 @@ export type RowSummary = {
   type: string;
   branch: string | null;
   summary: string;
+  /** Why a reader should discount the row: superseded, ignored (by the trust rules), self. */
+  labels: Array<"superseded" | "ignored" | "self">;
 };
+
+/** Row types that count only when an observing verb wrote them. */
+const OBSERVED_ONLY: ReadonlySet<string> = new Set(["check", ...PR_ROW_TYPES]);
+
+export function rowLabels(row: ReadRow): RowSummary["labels"] {
+  const labels: RowSummary["labels"] = [];
+  if (row.superseded) labels.push("superseded");
+  if (row.supersedeIgnored || (OBSERVED_ONLY.has(row.type) && row.observer !== "workit_cli"))
+    labels.push("ignored");
+  if (row.type === "verdict" && row.self === true) labels.push("self");
+  return labels;
+}
 
 export function summarizeRow(row: ReadRow): RowSummary {
   const text = (key: string): string => str(row[key]) ?? "";
@@ -1053,7 +1159,15 @@ export function summarizeRow(row: ReadRow): RowSummary {
     default:
       summary = text("what") || text("name") || row.type;
   }
-  return { seq: row.seq, id: row.id, at: row.at, type: row.type, branch: row.branch, summary };
+  return {
+    seq: row.seq,
+    id: row.id,
+    at: row.at,
+    type: row.type,
+    branch: row.branch,
+    summary,
+    labels: rowLabels(row),
+  };
 }
 
 export type StackPosition = {

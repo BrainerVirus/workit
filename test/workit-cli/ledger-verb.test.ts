@@ -185,7 +185,7 @@ test("ledger check reports carried after a base-only rebase and stale after a co
   git(root, "commit", "-qam", "change");
   const stale = await run(root, ["ledger", "check"]);
   expect(stale.code).toBe(0);
-  expect(stale.stdout).toContain("current stale; not accepted (stale)");
+  expect(stale.stdout).toContain("current: stale (verified); not accepted (stale)");
 });
 
 test("an author session's verdict is blocked (exit 3) unless --self", async () => {
@@ -268,4 +268,23 @@ test("handoff prints a resume brief, and --record makes it the next brief's last
   expect(second.stdout).toContain("finish parser (note: parser half done)");
   expect(second.stdout).toContain("next:   workit ledger verdict verified --branch feature/x");
   expect((await run(root, ["handoff", "--last", "x", "--json"])).code).toBe(2);
+});
+
+test("ledger check names the newest verdict's result, and an ambiguous --pr says so", async () => {
+  const root = featureRepo();
+  expect((await run(root, ["ledger", "verdict", "failed", "--how", "broke the parser"])).code).toBe(
+    0,
+  );
+  const check = await run(root, ["ledger", "check"]);
+  expect(check.stdout).toContain("current: fresh (failed); not accepted (failing_verdict)");
+  const tip = git(root, "rev-parse", "feature/x");
+  git(root, "branch", "feature/copy", tip);
+  git(root, "update-ref", "refs/pull/3/head", tip);
+  const ambiguous = await run(root, ["ledger", "check", "--pr", "3", "--json"]);
+  expect(ambiguous.code).toBe(2);
+  expect(ambiguous.json().error).toContain("ambiguous (feature/copy, feature/x)");
+  const human = await run(root, ["handoff"], { WORKIT_SESSION_ID: "" });
+  expect(human.stdout).toContain("verdict [feature/x]  failed [review]");
+  await run(root, ["ledger", "verdict", "verified", "--how", "x"], { WORKIT_SESSION_ID: "" });
+  expect((await run(root, ["handoff"])).stdout).toContain("verdict [feature/x] (self)  verified");
 });

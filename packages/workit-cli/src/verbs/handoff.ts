@@ -62,7 +62,8 @@ function human(brief: HandoffBrief & { recorded: string | null }): string[] {
     lines.push(
       "recent ledger:",
       ...brief.recent.map(
-        (row) => `  #${row.seq} ${row.type}${row.branch ? ` [${row.branch}]` : ""}  ${row.summary}`,
+        (row) =>
+          `  #${row.seq} ${row.type}${row.branch ? ` [${row.branch}]` : ""}${row.labels.length ? ` (${row.labels.join(", ")})` : ""}  ${row.summary}`,
       ),
     );
   if (brief.note) lines.push(`note:   ${brief.note}`);
