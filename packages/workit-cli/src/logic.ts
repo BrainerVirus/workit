@@ -34,18 +34,6 @@ export function validateLocale(locale: string): string | null {
   return null;
 }
 
-const KNOWN_TIMEZONES: string[] | null =
-  typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : null;
-
-export function validateTimezone(timezone: string): string | null {
-  const tz = timezone.trim();
-  if (!tz) return "timezone is required";
-  if (KNOWN_TIMEZONES && !KNOWN_TIMEZONES.includes(tz)) {
-    return `unknown timezone "${tz}" — check the IANA name (e.g. America/Santiago)`;
-  }
-  return null;
-}
-
 export function validateBaseUrl(url: string): string | null {
   let parsed: URL;
   try {
@@ -59,7 +47,6 @@ export function validateBaseUrl(url: string): string | null {
 
 export type ConfigInput = {
   locale?: string;
-  timezone?: string;
   preset?: BranchPreset;
   allowed?: string[];
   protectedNames?: string[];
@@ -409,9 +396,9 @@ export function runProjectSetup(
 
 // Shared scaffold outcome envelope (WZ-05/WZ-06): credentials are preserved
 // byte-for-byte unless absent, and malformed config files block every write.
-export type ScaffoldStatus = "missing" | "preserved" | "malformed";
+type ScaffoldStatus = "missing" | "preserved" | "malformed";
 
-export type ScaffoldOutcome = {
+type ScaffoldOutcome = {
   ok: boolean;
   status: ScaffoldStatus;
   /** Blocking diagnostic, set when status === "malformed". */
@@ -487,7 +474,7 @@ export function isSetupComplete(results: {
 export function scaffoldYouTrack(
   dir: string,
   baseUrl: string,
-  opts: { locale?: string; timezone?: string } = {},
+  opts: { locale?: string } = {},
 ): YouTrackScaffold {
   mkdirSync(dir, { recursive: true });
   const youtrackJson = path.join(dir, "youtrack.json");
@@ -515,29 +502,7 @@ export function scaffoldYouTrack(
   const config = {
     baseUrl,
     tokenFile: tokenPath,
-    timezone: opts.timezone ?? "America/Santiago",
-    locale: opts.locale ?? "es-CL",
-    defaultMention: "Alejandra.Flores",
-    greetings: { morning: "buenos días", afternoon: "buenas tardes" },
-    greetingCutoff: "12:00",
-    meetingIssue: "IRPT-12",
-    meetingIssues: {
-      general: {
-        issue: "IRPT-12",
-        label: "General meetings (Reuniones internas Team IRP)",
-        workItemText: "Reuniones",
-      },
-      web: {
-        issue: "NSXFT-21",
-        label: "Web meetings",
-        workItemText: "Reuniones web",
-        url: "https://enghouseamg.youtrack.cloud/projects/NSXFT/issues/NSXFT-21",
-      },
-    },
-    commentHeader: "# Actualización",
-    attachmentsHeaderImages: "## Adjunto capturas",
-    attachmentsHeaderFiles: "## Archivos adjuntos",
-    attachmentsHeaderMixed: "## Adjuntos",
+    locale: opts.locale ?? "en",
     tokenDefaults: {
       name: "workit",
       description: "OpenCode workit — /wk-issue-update and /wk-meetings",
@@ -663,18 +628,8 @@ export {
   TOKEN_PLACEHOLDER,
   parseList,
   buildSetupPreview,
-  activeSetupOverrides,
-  applySetupPreview,
-  setupCompletionGuidance,
   type SetupPreviewInput,
   type SetupMutation,
-  type SetupOverride,
-  type SetupPreview,
-  type Platform,
-  type SetupResult,
-  type SetupResultEntry,
-  type SetupResultStatus,
-  type ApplySetupOptions,
 } from "@brainervirus/workit-core/src/core/setup.ts";
 export {
   previewCutover,
@@ -682,10 +637,6 @@ export {
   resumeCutover,
   previewRollback,
   applyRollback,
-  previewConversion,
-  readGenerationState,
-  type CutoverPlan,
-  type CutoverReceipt,
   type CutoverDecision,
   type CutoverHost,
   type CutoverPaths,

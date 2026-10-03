@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import {
+  WORKIT_METHOD_SKILLS,
+  WORKIT_SKILL_ALIASES,
+} from "@/packages/workit-core/src/core/skill-manifests";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import {
   listTarball,
@@ -248,22 +251,7 @@ test(
     for (const skill of WORKIT_METHOD_SKILLS) {
       expect(entries, `skills/${skill}/SKILL.md`).toContain(`skills/${skill}/SKILL.md`);
     }
-    for (const alias of [
-      "wk-babysit",
-      "wk-blast-radius",
-      "wk-challenge",
-      "wk-debug",
-      "wk-deslop",
-      "wk-diagram",
-      "wk-green-run",
-      "wk-handoff",
-      "wk-implement",
-      "wk-mockup",
-      "wk-plan",
-      "wk-review",
-      "wk-steer",
-      "wk-tdd",
-    ]) {
+    for (const alias of Object.keys(WORKIT_SKILL_ALIASES)) {
       expect(entries, `commands/${alias}.md`).toContain(`commands/${alias}.md`);
     }
     expect(

@@ -32,6 +32,16 @@ matching). Caller-unattested MCP keeps optional mutations unavailable. The CLI
 (including `--confirm` without a TTY) return `needs_input` and never fabricate
 an approval receipt.
 
+YouTrack is an optional tracker adapter. Never hard-code greetings, `@mentions`,
+people's names, organization hosts, issue ids, meeting wording or a default
+timezone in core or tests; they come from `youtrack.json`, and comment wording
+belongs in the editable `issue-update` template (a source scan in
+`test/workit-core/youtrack-work-date.test.ts` guards hosts, issue-id literals
+and hard-coded zones). Work-item dates are calendar days computed with
+`Date.UTC` (process timezone unless `youtrack.json` sets `timezone`). The
+effective zone is surfaced as `workTimezone` / `workDate` for agents, but never
+inside the hashed approval descriptor, which must not vary by process timezone.
+
 Read-only `workit_context` is available on OpenCode; Pi and the CLI use
 `context.read` for the
 enumerated git/PR/YouTrack/changelog/release/affected contexts without

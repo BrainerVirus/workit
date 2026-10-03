@@ -396,7 +396,7 @@ test("OpenCode YouTrack context rejects spec and plan paths outside the workspac
   try {
     writeFileSync(
       configPath,
-      JSON.stringify({ baseUrl: "https://youtrack.example.test", greetings: { morning: "hola" } }),
+      JSON.stringify({ baseUrl: "https://youtrack.example.test", greetings: { morning: "hello" } }),
     );
     writeFileSync(outsideSpec, "**YouTrack:** NSR-40\n");
     symlinkSync(outsideSpec, link);

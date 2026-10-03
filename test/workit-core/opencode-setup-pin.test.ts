@@ -19,7 +19,6 @@ const clean = (dir: string) => rmSync(dir, { recursive: true, force: true });
 const values = (): SetupPreviewInput => ({
   platforms: ["opencode"],
   locale: "en",
-  timezone: "UTC",
   branchPreset: "gitflow",
   branchAllowed: "feature/*, bugfix/*",
   branchProtected: "main, develop",

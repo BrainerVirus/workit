@@ -1,7 +1,6 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import {
-  compactTaskContext,
   invariantBootstrap,
   shellBranchPolicyViolation,
   TaskStore,
@@ -353,14 +352,8 @@ const sessionContext = (input: CodexHookInput): string => {
         capabilities: codexCapabilities(detectCodexSurface(process.env), { sessionStart: true }),
         constraints: [],
         now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-      } as OperationContext).task({
-        schemaVersion: 1,
-        action: "inspect",
-        taskId: state.task.id,
-        view: "full",
-      });
-      if (view.ok)
-        compact = `\n<workit-task-context>${compactTaskContext(view.data as any)}</workit-task-context>`;
+      } as OperationContext).compactContext(state.task.id);
+      if (view.ok) compact = `\n<workit-task-context>${view.data}</workit-task-context>`;
     }
   } catch {
     compact = "\n[workit diagnostic: task state unavailable]";

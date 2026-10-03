@@ -1,13 +1,11 @@
 import { expect, test } from "bun:test";
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -36,27 +34,6 @@ const withNeutralXdg = async <T>(xdg: string, fn: () => Promise<T> | T): Promise
   }
 };
 
-// Minimal valid YouTrack config so tool executes (which read credentials for redact)
-// work in a clean HOME (CI has no real ~/.config/workflow-toolkit).
-const withYouTrackConfig = async (fn: () => Promise<void> | void) => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-yt-config-"));
-  mkdirSync(path.join(dir, "workflow-toolkit"), { recursive: true });
-  const tokenPath = path.join(dir, "workflow-toolkit", "token");
-  writeFileSync(tokenPath, "test-token\n", "utf8");
-  chmodSync(tokenPath, 0o600);
-  writeFileSync(
-    path.join(dir, "workflow-toolkit", "youtrack.json"),
-    JSON.stringify({ baseUrl: "https://yt.example.test", tokenFile: "./token" }, null, 2),
-    "utf8",
-  );
-  return withNeutralXdg(dir, async () => {
-    try {
-      return await fn();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-};
 import {
   configPath,
   normalizeContext,
@@ -70,12 +47,7 @@ import {
   youTrackTokenCreateUrl,
   youTrackWorkDateMs,
 } from "@/packages/workit-core/src/core/youtrack";
-import {
-  initApplyData,
-  initStatusData,
-  toolkitStatusData,
-} from "@/packages/workit-core/src/core/init";
-import { createYouTrackTools } from "@/packages/workit-opencode/src/tools/youtrack";
+import { initApplyData } from "@/packages/workit-core/src/core/init";
 
 test("comment success plus ambiguous time failure does not recommend retry", async () => {
   const result = await postUpdate(
@@ -220,42 +192,6 @@ test("posting requires explicit confirmation before either effect", async () => 
   expect(result).toEqual({ ok: false, data: null, error: "confirmed: true required" });
 });
 
-test("YouTrack context rejects escaped spec and plan paths before credentials or operations", async () => {
-  const parent = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-path-"));
-  const root = path.join(parent, "repo");
-  mkdirSync(root);
-  let calls = 0;
-  const tools = createYouTrackTools({
-    verifyToken: async () => {
-      calls++;
-    },
-    context: async () => {
-      calls++;
-      return {};
-    },
-    parseDuration: async () => ({}),
-    postComment: async () => ({}),
-    logTime: async () => ({}),
-  });
-  for (const input of [{ spec_path: "/tmp/outside" }, { plan_path: "../outside" }]) {
-    const raw = await tools.workit_youtrack_context.execute(
-      input as never,
-      { directory: root, worktree: root } as never,
-    );
-    expect(JSON.parse(raw as string).error).toContain("repository-relative");
-  }
-  const outside = path.join(parent, "outside.md");
-  writeFileSync(outside, "**YouTrack:** NSR-40\n");
-  symlinkSync(outside, path.join(root, "linked.md"));
-  const linked = await tools.workit_youtrack_context.execute({ spec_path: "linked.md" }, {
-    directory: root,
-    worktree: root,
-  } as never);
-  expect(JSON.parse(linked as string).error).toContain("repository-relative");
-  expect(calls).toBe(0);
-  rmSync(parent, { recursive: true, force: true });
-});
-
 test("tokens are removed from errors", () => {
   expect(redact("request Bearer secret-token failed", "secret-token")).toBe(
     "request Bearer [REDACTED] failed",
@@ -297,13 +233,13 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
     JSON.stringify({
       tokenFile: tokenPath,
       baseUrl: "https://youtrack.example.test",
-      meetingIssue: "IRPT-12",
+      meetingIssue: "MEET-1",
     }),
   );
 
   withNeutralXdg(xdg, () => {
     const out = youTrackConfigLoad();
-    expect("data" in out ? out.data.meetingIssue : null).toBe("IRPT-12");
+    expect("data" in out ? out.data.meetingIssue : null).toBe("MEET-1");
   });
 });
 
@@ -351,11 +287,6 @@ test("AR-07: non-object youtrack.json shapes fail closed with the exact path", (
         expect(String(work.error ?? ""), content).toContain(ytFile);
 
         expect(() => readCredentials(), content).toThrow(ytFile);
-
-        const status = initStatusData(workit);
-        const item = status.items.find((i: { id: string }) => i.id === "youtrack_json");
-        expect(item.ok, content).toBe(false);
-        expect(String(status.youtrack_config?.error ?? ""), content).toContain(ytFile);
       });
     }
   } finally {
@@ -363,7 +294,7 @@ test("AR-07: non-object youtrack.json shapes fail closed with the exact path", (
   }
 });
 
-test("init scaffolding and status share the neutral XDG config directory", () => {
+test("init scaffolding uses the neutral XDG config directory", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-init-"));
   withNeutralXdg(xdg, () => {
     initApplyData("youtrack_scaffold");
@@ -372,73 +303,7 @@ test("init scaffolding and status share the neutral XDG config directory", () =>
     expect(config.tokenFile).toBe(path.join(directory, "youtrack.token"));
     expect(config.tokenDefaults.description).toContain("OpenCode workit");
     expect(config.tokenDefaults.description).not.toContain("Cursor");
-
-    const configEditPath = initStatusData().youtrack_config.config_edit_path;
-    if (process.platform === "win32") {
-      expect(existsSync(configEditPath)).toBe(true);
-      expect(path.basename(configEditPath)).toBe("youtrack.json");
-    } else {
-      expect(configEditPath).toBe(path.join(realpathSync(directory), "youtrack.json"));
-    }
   });
-});
-
-test("toolkit status reads YouTrack health from its Result data envelope", async () => {
-  const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-toolkit-status-"));
-  const workit = path.join(xdg, "workit");
-  mkdirSync(workit, { recursive: true });
-  const youTrackToken = path.join(workit, "youtrack.token");
-  writeFileSync(youTrackToken, "youtrack-token\n", { mode: 0o600 });
-  writeFileSync(
-    path.join(workit, "youtrack.json"),
-    JSON.stringify({ baseUrl: "https://youtrack.example.test", tokenFile: youTrackToken }),
-  );
-  writeFileSync(
-    path.join(workit, "vcs.json"),
-    JSON.stringify({
-      provider: "gitlab",
-      gitlab: { apiUrl: "https://gitlab.example.test/api/v4" },
-    }),
-  );
-
-  const tools = path.join(xdg, "tools");
-  mkdirSync(tools);
-  writeFileSync(path.join(tools, "glab"), '#!/bin/sh\necho \'{"username":"workit"}\'\n', {
-    mode: 0o755,
-  });
-  writeFileSync(path.join(tools, "glab.cmd"), '@echo off\r\necho {"username":"workit"}\r\n');
-  const originalPath = process.env.PATH;
-  const originalRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
-  process.env.PATH = `${tools}${path.delimiter}${originalPath ?? ""}`;
-  process.env.WORKFLOW_WORKSPACE_ROOT = xdg;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = String(input);
-    return url.includes("youtrack.example.test")
-      ? new Response(JSON.stringify({ id: "1", login: "workit" }))
-      : new Response(JSON.stringify({ username: "workit" }));
-  }) as typeof fetch;
-  try {
-    await withNeutralXdg(xdg, async () => {
-      const status = await toolkitStatusData(workit);
-      expect(status.youtrack_verify).toEqual({
-        data: expect.objectContaining({ ok: true, login: "workit" }),
-      });
-      expect(status.vcs_verify).toEqual(
-        expect.objectContaining({ ok: true, provider: "gitlab", username: "workit" }),
-      );
-      expect(status).toEqual(
-        expect.objectContaining({ youtrack_ok: true, vcs_ok: true, ready: true }),
-      );
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-    if (originalPath === undefined) delete process.env.PATH;
-    else process.env.PATH = originalPath;
-    if (originalRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = originalRoot;
-    rmSync(xdg, { recursive: true, force: true });
-  }
 });
 
 test("token helper runtime output uses OpenCode-neutral descriptions", () => {
@@ -458,17 +323,36 @@ test("token helper runtime output uses OpenCode-neutral descriptions", () => {
   }
 });
 
+test("Given a youtrack.json without baseUrl, When the token-create link is built, Then there is no organization default and a clear error", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-token-nobase-"));
+  const config = path.join(root, "youtrack.json");
+  writeFileSync(config, JSON.stringify({}));
+  const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
+  process.env.WORKFLOW_YOUTRACK_CONFIG = config;
+  try {
+    const output = youTrackTokenCreateUrl().data;
+    expect(output.createUrl).toBeNull();
+    expect(output.error).toContain("baseUrl missing");
+    expect(output.error).toContain(config);
+    expect(JSON.stringify(output)).not.toMatch(/youtrack\.cloud/);
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
+    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("meeting context exposes only the configured meetingIssue", () => {
   expect(
     normalizeContext(
       {
         config: {
-          meetingIssue: "IRPT-12",
-          meetingIssues: { web: { issue: "NSXFT-21" } },
+          meetingIssue: "MEET-1",
+          meetingIssues: { web: { issue: "MEET-9" } },
         },
         meetingOptions: [
-          { key: "general", issue: "IRPT-12", label: "General", workItemText: "Reuniones" },
-          { key: "web", issue: "NSXFT-21", label: "Web", workItemText: "Reuniones web" },
+          { key: "general", issue: "MEET-1", label: "General", workItemText: "Meetings" },
+          { key: "web", issue: "MEET-9", label: "Web", workItemText: "Web meetings" },
         ],
         requiresMeetingChoice: true,
         issueId: null,
@@ -476,14 +360,23 @@ test("meeting context exposes only the configured meetingIssue", () => {
       "meetings",
     ),
   ).toEqual({
-    config: { meetingIssue: "IRPT-12" },
+    config: { meetingIssue: "MEET-1" },
     meetingOptions: [
-      { key: "general", issue: "IRPT-12", label: "General", workItemText: "Reuniones" },
+      { key: "general", issue: "MEET-1", label: "General", workItemText: "Meetings" },
     ],
     requiresMeetingChoice: false,
-    issueId: "IRPT-12",
-    workItemText: "Reuniones",
+    issueId: "MEET-1",
+    workItemText: "Meetings",
   });
+});
+
+test("Given no meeting issue in youtrack.json, When meeting context is normalized, Then it asks for one instead of using a built-in issue", () => {
+  const out = normalizeContext(
+    { config: { baseUrl: "https://yt.example.test" }, meetingOptions: [], issueId: null },
+    "meetings",
+  ) as Record<string, unknown>;
+  expect(out.error).toContain("meetingIssue");
+  expect(out.requiresIssueInput).toBe(true);
 });
 
 test("bundled API failures never expose the token or authorization header", async () => {
@@ -518,105 +411,3 @@ test("bundled API failures never expose the token or authorization header", asyn
     rmSync(root, { recursive: true, force: true });
   }
 });
-
-test("registers five read-only tools without workspace_root", async () => {
-  const tools = createYouTrackTools({
-    verifyToken: async () => ({}),
-    context: async () => ({}),
-    parseDuration: async () => ({ minutes: 30 }),
-    postComment: async () => ({}),
-    logTime: async () => ({}),
-  });
-  expect(Object.keys(tools).sort()).toEqual(
-    [
-      "workit_youtrack_verify_token",
-      "workit_youtrack_parse_issue",
-      "workit_youtrack_context",
-      "workit_youtrack_parse_duration",
-      "workit_youtrack_draft",
-    ].sort(),
-  );
-  for (const definition of Object.values(tools)) {
-    expect("workspace_root" in definition.args).toBe(false);
-  }
-});
-
-test.skipIf(process.platform === "win32")(
-  "verify token, parse issue, parse duration, and draft tools execute",
-  async () =>
-    withYouTrackConfig(async () => {
-      const tools = createYouTrackTools({
-        verifyToken: async () => ({ data: { ok: true } }),
-        context: async () => ({ data: { issueId: "NSR-1" } }),
-        parseDuration: async () => ({ minutes: 30 }),
-        postComment: async () => ({ data: { ok: true } }),
-        logTime: async () => ({ data: { ok: true } }),
-      });
-      const ctx = { directory: "/repo", worktree: "/repo" } as never;
-
-      const verify = JSON.parse(
-        (await tools.workit_youtrack_verify_token.execute({}, ctx)) as string,
-      );
-      expect(verify.ok).toBe(true);
-
-      const parsed = JSON.parse(
-        (await tools.workit_youtrack_parse_issue.execute({ issue_ref: "NSR-40" }, ctx)) as string,
-      );
-      expect(parsed.ok).toBe(true);
-      expect(parsed.data.issueId).toBe("NSR-40");
-
-      const duration = JSON.parse(
-        (await tools.workit_youtrack_parse_duration.execute({ text: "30m" }, ctx)) as string,
-      );
-      expect(duration.ok).toBe(true);
-      expect(duration.data.minutes).toBe(30);
-
-      const draft = JSON.parse(
-        (await tools.workit_youtrack_draft.execute(
-          {
-            issueId: "NSR-40",
-            userNotes: "Avance",
-          },
-          ctx,
-        )) as string,
-      );
-      expect(draft.ok).toBe(true);
-      expect(draft.data.markdown).toContain("Avance");
-    }),
-);
-
-test.skipIf(process.platform === "win32")(
-  "context tool normalizes meetings mode and rejects escaped paths",
-  async () =>
-    withYouTrackConfig(async () => {
-      const tools = createYouTrackTools({
-        verifyToken: async () => ({}),
-        context: async (input: any) => ({
-          data: { issueId: input.mode === "meetings" ? "MEET-1" : null },
-        }),
-        parseDuration: async () => ({ minutes: 30 }),
-        postComment: async () => ({}),
-        logTime: async () => ({}),
-      });
-      const ctx = { directory: "/repo", worktree: "/repo" } as never;
-      const meetings = JSON.parse(
-        (await tools.workit_youtrack_context.execute(
-          {
-            mode: "meetings",
-          },
-          ctx,
-        )) as string,
-      );
-      expect(meetings.ok).toBe(true);
-
-      const escaped = JSON.parse(
-        (await tools.workit_youtrack_context.execute(
-          {
-            spec_path: "../outside.md",
-          },
-          ctx,
-        )) as string,
-      );
-      expect(escaped.ok).toBe(false);
-    }),
-);

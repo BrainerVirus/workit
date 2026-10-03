@@ -1,14 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
   parseRule,
-  readRule,
-  writeRule,
   compileRuleCursor,
-  compileRuleOpenCode,
-  compiledOpenCodeSections,
+  rulesDir,
   writeCompiledCursorRules,
   type CanonicalRule,
 } from "@/packages/workit-core/src/core/rules";
@@ -29,6 +26,17 @@ const cleanupEnv = () => {
   else process.env.WORKFLOW_TOOLKIT_CONFIG = value;
   delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
   savedEnv.clear();
+};
+
+/** Seed a canonical user rule the way a user authors it under the config dir. */
+const writeRule = (rule: CanonicalRule) => {
+  const dir = path.join(rulesDir(), rule.name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, "rule.md"),
+    `---\nname: ${rule.name}\ndescription: ${rule.description}\nplatforms: [${rule.platforms.join(", ")}]\n---\n${rule.body}`,
+    "utf8",
+  );
 };
 
 const RULE_MD = `---
@@ -56,27 +64,6 @@ test("parseRule rejects bad frontmatter", () => {
   expect("error" in bad).toBe(true);
 });
 
-test("writeRule + readRule round trip", () => {
-  const dir = cfgDir();
-  try {
-    const rule: CanonicalRule = {
-      name: "my-rule",
-      description: "My custom rule",
-      platforms: ["cursor", "opencode"],
-      body: "# My rule\n\nDo the thing.\n",
-    };
-    const written = writeRule(rule, true);
-    expect(written.ok).toBe(true);
-    const read = readRule("my-rule");
-    if ("error" in read) throw new Error(read.error);
-    expect(read.source).toBe("config");
-    expect(read.rule.name).toBe("my-rule");
-  } finally {
-    cleanupEnv();
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test("compileRuleCursor emits mdc frontmatter", () => {
   const rule: CanonicalRule = {
     name: "no-worktrees",
@@ -90,42 +77,10 @@ test("compileRuleCursor emits mdc frontmatter", () => {
   expect(mdc).toContain("# No worktrees");
 });
 
-test("compileRuleOpenCode emits a contract section", () => {
-  const rule: CanonicalRule = {
-    name: "my-rule",
-    description: "d",
-    platforms: ["opencode"],
-    body: "# My rule\n\nDo it.\n",
-  };
-  const section = compileRuleOpenCode(rule);
-  expect(section).toContain("## my-rule");
-  expect(section).toContain("Do it.");
-});
-
-test("compiledOpenCodeSections includes user rules", () => {
-  const dir = cfgDir();
-  try {
-    writeRule(
-      { name: "alpha", description: "a", platforms: ["opencode"], body: "# Alpha\n\nDo alpha.\n" },
-      true,
-    );
-    writeRule(
-      { name: "cursor-only", description: "c", platforms: ["cursor"], body: "# C\n" },
-      true,
-    );
-    const sections = compiledOpenCodeSections();
-    expect(sections).toContain("## alpha");
-    expect(sections).not.toContain("## cursor-only");
-  } finally {
-    cleanupEnv();
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test("writeCompiledCursorRules writes mdc files", () => {
   const dir = cfgDir();
   try {
-    writeRule({ name: "beta", description: "b", platforms: ["cursor"], body: "# Beta\n" }, true);
+    writeRule({ name: "beta", description: "b", platforms: ["cursor"], body: "# Beta\n" });
     const target = mkdtempSync(path.join(os.tmpdir(), "wf-rules-out-"));
     const files = writeCompiledCursorRules(target);
     expect(files).toContain(path.join(target, "beta.mdc"));
@@ -140,34 +95,16 @@ test("writeCompiledCursorRules writes mdc files", () => {
 test("bootstrap is the static v1 contract without compiled rule sections", async () => {
   const dir = cfgDir();
   try {
-    writeRule(
-      { name: "zeta", description: "z", platforms: ["opencode"], body: "# Zeta\n\nDo zeta.\n" },
-      true,
-    );
+    writeRule({
+      name: "zeta",
+      description: "z",
+      platforms: ["opencode"],
+      body: "# Zeta\n\nDo zeta.\n",
+    });
     const fresh = await import(`../../packages/workit-opencode/src/bootstrap?rules=${Date.now()}`);
     const bootstrap = fresh.getWorkitBootstrap();
     expect(bootstrap).toContain("<workit-contract>");
     expect(bootstrap).not.toContain("## zeta");
-  } finally {
-    cleanupEnv();
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("writeRule rejects traversal rule names", () => {
-  const dir = cfgDir();
-  try {
-    const bad = writeRule(
-      { name: "../evil", description: "x", platforms: ["cursor"], body: "# X\n" },
-      true,
-    );
-    expect(bad.ok).toBe(false);
-    if (!bad.ok) expect(bad.error).toContain("invalid rule name");
-    const ok = writeRule(
-      { name: "good-rule", description: "x", platforms: ["cursor"], body: "# X\n" },
-      true,
-    );
-    expect(ok.ok).toBe(true);
   } finally {
     cleanupEnv();
     rmSync(dir, { recursive: true, force: true });

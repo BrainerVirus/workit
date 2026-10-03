@@ -556,6 +556,7 @@ daemon:
 | `.workit/tasks/<id>.json`    | One task's versioned state                              |
 | `.workit/workspace.json`     | Checkout identity and authoritative writer ownership    |
 | Previous validated snapshots | Recovery copies, never a second source of current state |
+| `.workit/index.json`         | Disposable listing cache, rebuilt from task records     |
 
 The workspace record is authoritative for writer ownership. Task records must
 not contain competing ownership claims; their shared-model ownership view is
@@ -819,6 +820,8 @@ already satisfies them.
 | CA-30 | Rollback after further user edits                       | Restore only approved integration/configuration changes; preserve repository work and v1 task data, and refuse to overwrite conflicting subsequent edits.                         |
 | CA-31 | Latest-compatible dependency qualification              | Typecheck, deterministic tests, package checks, and clean host smokes pass on the pinned Node/Bun/toolchain and adapter dependencies; no known failure is waived as tooling-only. |
 | CA-32 | Compiled schema and MCP publication parity              | Compiled and uncompiled operation schemas accept and reject the same corpus with equivalent data/issues, and MCP advertises draft-2020-12 generated from those definitions.       |
+
+Per-turn host context injection reads the task index and the last recorded candidate; it does not recompute evidence staleness against the live checkout. Resume, close, evidence recording, and full inspection capture a fresh candidate and reconcile staleness (CA-12, CA-18).
 
 ### Test strategy
 

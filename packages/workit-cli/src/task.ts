@@ -677,6 +677,7 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
       operation: normalized.operation,
       descriptor,
       payload: normalized.payload,
+      ...(resolved.data.workDate ? { workDate: resolved.data.workDate } : {}),
     });
     if (json) jsonResult(outOf(deps), result);
     else printHuman(result, deps);

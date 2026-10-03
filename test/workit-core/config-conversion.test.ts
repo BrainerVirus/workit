@@ -17,10 +17,10 @@ test("conversion preview is read only and redacts secrets", () => {
   expect(managedBytes(fixture)).toEqual(before);
 });
 
-test("supported preference mappings carry locale timezone and branchPolicy forward", () => {
+test("supported preference mappings carry locale and branchPolicy forward; the removed timezone is not mapped", () => {
   const preview = previewConversion({ configDir: fixture.configDir });
   expect(preview.mappings.find((m) => m.key === "locale")?.to).toBe("es-CL");
-  expect(preview.mappings.find((m) => m.key === "timezone")?.to).toBe("America/Santiago");
+  expect(preview.mappings.some((m) => m.key === "timezone")).toBe(false);
   expect(preview.mappings.find((m) => m.key === "branchPolicy")?.to).toMatchObject({
     preset: "custom",
   });

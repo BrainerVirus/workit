@@ -10,12 +10,11 @@ import {
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
 import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
 import { initApply } from "@brainervirus/workit-core/src/core/init";
-import type { RepoRuntime } from "@brainervirus/workit-core/src/core/repo-tools";
-import { legacyScriptResult, output, requireConfirmed } from "./repo-result";
+import { legacyScriptResult, output, requireConfirmed, type RepoRuntime } from "./repo-result";
 
 /** The core initApply call in RunResult shape, shared so the V1 repo-tool
  * runtime and the V2 adapter run the identical confirmed action. */
-export const initApplyRuntime: Pick<RepoRuntime, "initApply"> = {
+export const initApplyRuntime: RepoRuntime = {
   initApply: (root, action, env) => {
     const out = initApply({ action, confirmed: true, env });
     return {
@@ -39,7 +38,6 @@ export type InitApplyArgs = {
     | "hygiene"
     | "branch_policy";
   base_url?: string;
-  default_mention?: string;
   meeting_issue?: string;
   vcs_provider?: "gitlab" | "github";
   vcs_target_branch?: string;
@@ -48,7 +46,6 @@ export type InitApplyArgs = {
   integration?: "pr" | "merge";
   locale?: string;
   locale_options?: string[];
-  timezone?: string;
   branch_policy_preset?: "gitflow" | "github-flow" | "trunk-based" | "custom";
   branch_policy_allowed?: string[];
   branch_policy_protected?: string[];
@@ -60,7 +57,7 @@ export type InitApplyArgs = {
 export const executeInitApply = (
   args: InitApplyArgs,
   directory: string,
-  runtime: Pick<RepoRuntime, "initApply">,
+  runtime: RepoRuntime,
 ): string => {
   const rejected = requireConfirmed(args.confirmed);
   if (rejected) return rejected;
@@ -92,7 +89,6 @@ export const executeInitApply = (
       {
         locale: args.locale,
         localeOptions: args.locale_options,
-        timezone: args.timezone,
         preset: args.branch_policy_preset as BranchPreset,
         allowed: args.branch_policy_allowed,
         protectedNames: args.branch_policy_protected,
@@ -105,7 +101,6 @@ export const executeInitApply = (
   const env = Object.fromEntries(
     Object.entries({
       WORKFLOW_YT_BASE_URL: args.base_url,
-      WORKFLOW_YT_MENTION: args.default_mention,
       WORKFLOW_YT_MEETING_ISSUE: args.meeting_issue,
       WORKFLOW_VCS_PROVIDER: args.vcs_provider,
       WORKFLOW_VCS_TARGET_BRANCH: args.vcs_target_branch,
