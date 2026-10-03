@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -448,6 +456,14 @@ export function runHostCommand(
 }
 
 const findNpmCli = (npm: string): string | null => {
+  // `npm` is usually a symlink to npm-cli.js (Node's bin/npm, a package's
+  // node_modules/.bin/npm); resolve it before guessing install layouts.
+  try {
+    const resolved = realpathSync(npm);
+    if (path.basename(resolved) === "npm-cli.js") return resolved;
+  } catch {
+    // Fall through to the layout candidates.
+  }
   const dir = path.dirname(npm);
   const candidates = [
     path.join(dir, "node_modules", "npm", "bin", "npm-cli.js"),

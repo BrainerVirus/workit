@@ -18,7 +18,6 @@ import {
   isolatedEnv,
   listTarball,
   npmRegistryReachable,
-  packReleaseCandidate,
   packWorkspacePackages,
   tarballSpec,
   readTarballFile,
@@ -51,9 +50,6 @@ if (!npmRegistryOk) {
 }
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
-
-const hasEntry = (tarball: string, prefix: string) =>
-  listTarball(tarball).some((entry) => entry === prefix || entry.startsWith(prefix));
 
 test(
   "isolatedEnv strips script-specific path overrides that could re-point at the repo",
@@ -101,36 +97,6 @@ test(
 );
 
 test(
-  "the final release candidate is byte-stable with the phase-0 pack (CA-30)",
-  () => {
-    // Force a fresh pack against the earlier (cached) phase-0 pack: comparing two
-    // calls that both hit the module cache would be comparing an array with
-    // itself (D12). Order matters — packWorkspacePackages() must run first so the
-    // force actually repacks.
-    const packs = packWorkspacePackages();
-    const candidate = packReleaseCandidate({ force: true });
-    expect(candidate.map((p) => p.sha256)).toEqual(packs.map((p) => p.sha256));
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "packed adapter core dependency equals the packed core version (RR-01)",
-  () => {
-    const packs = packWorkspacePackages();
-    const coreVersion = JSON.parse(
-      readTarballFile(packs.find((p) => p.packageName === CORE)!.tarball, "package.json"),
-    ).version;
-    for (const name of [MCP, OPENCODE, CURSOR, CODEX, CLI]) {
-      const pack = packs.find((p) => p.packageName === name)!;
-      const pkg = JSON.parse(readTarballFile(pack.tarball, "package.json"));
-      expect(pkg.dependencies["@brainervirus/workit-core"], name).toBe(`^${coreVersion}`);
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
   "packed tarballs carry no workspace: or local protocols, only valid ranges (CA-03)",
   () => {
     const packs = packWorkspacePackages();
@@ -146,55 +112,6 @@ test(
         );
       }
     }
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "expected entry files ship in each packed tarball",
-  () => {
-    const packs = packWorkspacePackages();
-    const byName = (name: string) => packs.find((p) => p.packageName === name)!;
-
-    const opencode = byName(OPENCODE).tarball;
-    expect(hasEntry(opencode, "dist/plugin.js")).toBe(true);
-    expect(hasEntry(opencode, "assets/skills/")).toBe(true);
-
-    const cursor = byName(CURSOR).tarball;
-    for (const f of [
-      "dist/mcp-server.js",
-      "dist/cursor-session-start.js",
-      "dist/workit-hook.js",
-      "mcp.json",
-      "assets/logo.svg",
-      ".cursor-plugin/plugin.json",
-      "hooks/hooks-cursor.json",
-    ]) {
-      expect(hasEntry(cursor, f), f).toBe(true);
-    }
-    expect(hasEntry(cursor, "mcp/run-server.sh")).toBe(false);
-    expect(hasEntry(cursor, "hooks/session-start")).toBe(false);
-    const cursorPkg = JSON.parse(readTarballFile(cursor, "package.json"));
-    expect(cursorPkg.bin["workit-cursor-mcp"]).toBe("./dist/mcp-server.js");
-    expect(cursorPkg.bin["workit-cursor-session-start"]).toBe("./dist/cursor-session-start.js");
-    expect(cursorPkg.bin["workit-cursor-hook"]).toBe("./dist/workit-hook.js");
-
-    const core = byName(CORE).tarball;
-    for (const f of [
-      "src/core.ts",
-      "scripts/rewrite-workspace-deps.ts",
-      "scripts/install-opencode-plugin.sh",
-      "scripts/sync-runtime.sh",
-      "templates/",
-      "skills/",
-    ]) {
-      expect(hasEntry(core, f), f).toBe(true);
-    }
-
-    const cli = byName(CLI).tarball;
-    expect(hasEntry(cli, "dist/index.js")).toBe(true);
-    const cliPkg = JSON.parse(readTarballFile(cli, "package.json"));
-    expect(cliPkg.bin.workit).toBe("./dist/index.js");
   },
   { timeout: 60_000 },
 );

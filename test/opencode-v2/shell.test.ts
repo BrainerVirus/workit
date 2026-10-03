@@ -7,6 +7,10 @@ import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import definition from "@/packages/workit-opencode/src/v2/plugin";
 import { normalizeQuestionAnswers } from "@/packages/workit-opencode/src/v2/receipts";
 import { taskStartRequest } from "../workit-core/task-fixtures";
+import {
+  WORKIT_METHOD_SKILLS,
+  WORKIT_SKILL_ALIASES,
+} from "@/packages/workit-core/src/core/skill-manifests";
 
 /** The exact 10 registered Workit tool names in registration order. */
 const TOOL_NAMES = [
@@ -315,11 +319,10 @@ test("setup registers the subagent lifecycle hooks and an abortable event stream
   }
 });
 
-test("setup registers 14 method skills with packaged content and paths", async () => {
+test("setup registers every method skill with packaged content and paths", async () => {
   const root = repository();
   try {
     const { skills } = await harness(root);
-    expect(skills).toHaveLength(14);
     for (const skill of skills) {
       expect(skill.content.length, skill.id).toBeGreaterThan(100);
       expect(skill.description?.length, skill.id).toBeGreaterThan(0);
@@ -327,32 +330,19 @@ test("setup registers 14 method skills with packaged content and paths", async (
       expect(skill.path.endsWith(path.join(skill.id, "SKILL.md")), String(skill.id)).toBe(true);
       expect(skill.content.startsWith("---"), String(skill.id)).toBe(false);
     }
-    expect(skills.map((skill) => skill.id).sort()).toEqual([
-      "workit-babysit",
-      "workit-behavioral-tdd",
-      "workit-blast-radius",
-      "workit-challenge",
-      "workit-debug",
-      "workit-deslop",
-      "workit-diagram",
-      "workit-green-run",
-      "workit-handoff",
-      "workit-implement",
-      "workit-mockup",
-      "workit-plan",
-      "workit-review",
-      "workit-steer",
-    ]);
+    expect(skills.map((skill) => skill.id).sort()).toEqual([...WORKIT_METHOD_SKILLS].sort());
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("setup registers 14 collision-safe wk commands that forward prompts", async () => {
+test("setup registers one collision-safe wk command per alias that forwards prompts", async () => {
   const root = repository();
   try {
     const { commands, prompts } = await harness(root);
-    expect(commands).toHaveLength(14);
+    expect(commands.map((command) => command.name).sort()).toEqual(
+      Object.keys(WORKIT_SKILL_ALIASES).sort(),
+    );
     const names = commands.map((command) => command.name);
     expect(names).toContain("wk-tdd");
     expect(names).toContain("wk-babysit");

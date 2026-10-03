@@ -20,7 +20,6 @@ const tarballSkillNames = (tarball: string, prefix: string): string[] =>
     .sort();
 
 test("opencode packed tarball ships exactly the canonical method skills", () => {
-  expect(WORKIT).toHaveLength(14);
   const tarball = byName(packWorkspacePackages(), OPENCODE).tarball;
   expect(tarballSkillNames(tarball, "assets/skills/")).toEqual(WORKIT);
   expect(tarballSkillNames(tarball, "assets/vendor/superpowers/skills/")).toEqual([]);

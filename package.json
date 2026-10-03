@@ -38,9 +38,10 @@
     "knip": "knip --no-progress --no-config-hints && knip --no-progress --production --files && bun scripts/check-reachability.ts",
     "format": "oxfmt packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
     "format:check": "oxfmt --check packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
-    "test": "bun test",
+    "test": "bun scripts/test.ts unit",
+    "test:packaging": "bun scripts/test.ts packaging",
     "typecheck": "tsc --noEmit",
-    "check": "bun run build && bun run lint && bun run format:check && bun test && tsc --noEmit"
+    "check": "bun run build && bun run lint && bun run format:check && bun run test && bun run test:packaging && tsc --noEmit"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
