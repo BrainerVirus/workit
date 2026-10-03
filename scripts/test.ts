@@ -17,6 +17,7 @@ const PACKAGING = [
   "test/workit-cli/packed-cli.test.ts",
   "test/workit-cli/platform-install.test.ts",
   "test/workit-codex/packed-launcher.test.ts",
+  "test/workit-core/cursor-install-mcp.test.ts",
   "test/workit-core/doctor.test.ts",
   "test/workit-core/install-scripts.test.ts",
   "test/workit-pi/stock-pi.test.ts",

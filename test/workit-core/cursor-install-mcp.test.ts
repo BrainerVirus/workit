@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +18,19 @@ import { isolatedEnv } from "@/test/shared/helpers/packages";
 // at install time.
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// The dev-checkout install copies packages/workit-cursor, and its doctor step
+// requires the built dist entries. Build them from current source first (the
+// same step `bun run build` runs for Cursor) instead of depending on a prior
+// build or on another suite having built them.
+beforeAll(() => {
+  const build = spawnSync(
+    process.execPath,
+    [path.join(repoRoot, "packages/workit-cursor/scripts/build.ts")],
+    { encoding: "utf8" },
+  );
+  if (build.status !== 0) throw new Error(`cursor build failed: ${build.stderr}`);
+});
 
 const tempDir = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const clean = (dir: string) => rmSync(dir, { recursive: true, force: true });
