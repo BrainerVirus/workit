@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +15,9 @@ import {
 
 // S10 CLI verbs over recorded GitHub fixtures: `pr status`, `ci wait` (with a
 // virtual clock), `ci rerun`, and their envelope codes and exit codes.
+
+// Test repos fetch from a local bare remote; slow on Windows runners.
+setDefaultTimeout(60_000);
 
 let configDir = "";
 const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;

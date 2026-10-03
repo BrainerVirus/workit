@@ -1,12 +1,13 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { cliFailure, systemRunner } from "@/packages/workit-core/src/forge/exec";
@@ -38,6 +39,10 @@ import {
 
 // S10 (design §2.0, §2.1, §5): forge adapters behind one interface, replayed
 // from recorded gh/glab API fixtures. No test here reaches the network.
+
+// Each test builds git repos and fetches from a local bare remote; Windows
+// runners need well over the 5 s default.
+setDefaultTimeout(60_000);
 
 let configDir = "";
 const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
@@ -410,10 +415,8 @@ describe("S10 ci rerun", () => {
 
       // The record is shared by worktrees (git common dir) and visible in status.
       const log = rerunLogPath(repo.cwd);
-      // git reports the canonical path (/private/var on macOS, long names on Windows).
-      expect(realpathSync(log!)).toBe(
-        realpathSync(path.join(repo.cwd, ".git", "workit", "ci-reruns.jsonl")),
-      );
+      // Canonical spelling varies (/private/var on macOS, 8.3 names on Windows).
+      expect(log!.replaceAll("\\", "/")).toEndWith("/work/.git/workit/ci-reruns.jsonl");
       expect(readFileSync(log!, "utf8").trim().split("\n")).toHaveLength(2);
       const doc = prStatusReport(repo.cwd, resolved, { pr: 12 });
       expect(doc.ok && doc.data.doc.checks.failing[0].rerunsOnHead).toBe(2);
