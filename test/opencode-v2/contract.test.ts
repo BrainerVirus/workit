@@ -117,7 +117,7 @@ test("agent loop streams through the stub and reports envelopes with ids", async
   const id = await sessionWithModel("stub-text");
   await prompt(id, "hi");
   const msgs = await waitIdle(id);
-  const last = msgs.filter((m) => m.type === "assistant").at(-1);
+  const last = msgs.findLast((m) => m.type === "assistant");
   expect(last.content[0]).toMatchObject({ type: "text", text: "hello from stub" });
   expect(last.finish).toBe("stop");
   expect(msgs.at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" });
@@ -175,9 +175,9 @@ test("shell deny rules filter the tool from the offering", async () => {
   // observed manually during the spike and recorded in task evidence.)
   expect(call.executed).toBe(false);
   expect(call.state.status).toBe("error");
-  const offered = lines(h.stubLog())
-    .filter((r) => r.model === "stub-shell" && Array.isArray(r.tools) && r.tools.length > 0)
-    .at(-1)?.tools as string[];
+  const offered = lines(h.stubLog()).findLast(
+    (r) => r.model === "stub-shell" && Array.isArray(r.tools) && r.tools.length > 0,
+  )?.tools as string[];
   expect(offered).not.toContain("shell");
 }, 180_000);
 
@@ -239,7 +239,7 @@ test("question flow creates a form, accepts a reply, and completes", async () =>
     true,
   );
   const msgs = await waitIdle(id);
-  expect(msgs.filter((m) => m.type === "assistant").at(-1).content[0].text).toBe("question done");
+  expect(msgs.findLast((m) => m.type === "assistant").content[0].text).toBe("question done");
   expect(msgs.at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" });
 }, 180_000);
 
@@ -268,7 +268,7 @@ test("concurrent subagent calls complete in one turn", async () => {
   const calls = msgs
     .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
     .filter((c) => c.type === "tool" && c.name === "subagent");
-  expect(calls.map((c) => c.id).sort()).toEqual(["call_1", "call_2"]);
+  expect(calls.map((c): string => c.id).toSorted()).toEqual(["call_1", "call_2"]);
   for (const c of calls) expect(c.state.status).toBe("completed");
   const all = await h.api("GET", "/api/session");
   const kids = (all.data as any[]).filter((s) => s.parentID === id);

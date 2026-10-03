@@ -273,7 +273,7 @@ test("rollback removes generated integrations and rejects a damaged backup", () 
     expect(applyRollback(applied.backupId, resolvePathsForTest(fx)).ok).toBe(true);
 
     const storageDir = path.join(backupRoot, "files");
-    writeFileSync(path.join(storageDir, readdirSync(storageDir)[0]!), "damaged\n");
+    writeFileSync(path.join(storageDir, readdirSync(storageDir)[0]), "damaged\n");
     const preview = previewRollback(applied.backupId, resolvePathsForTest(fx));
     expect(preview.issues.length).toBeGreaterThan(0);
     expect(applyRollback(applied.backupId, resolvePathsForTest(fx))).toMatchObject({

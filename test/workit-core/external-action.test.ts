@@ -165,15 +165,15 @@ type SetupState = {
   decision: { id: string };
 };
 
-const inputFor = (setup: SetupState) => {
+const inputFor = (state: SetupState) => {
   const actionRef = { kind: "host" as const, host: "workit_cli" as const, handle: "external-1" };
   return {
-    core: setup.core,
-    taskId: setup.task.id,
-    decisionId: setup.decision.id,
+    core: state.core,
+    taskId: state.task.id,
+    decisionId: state.decision.id,
     actionRef,
-    expectedRevision: setup.task.revision,
-    expectedWorkspaceRevision: setup.workspace.revision,
+    expectedRevision: state.task.revision,
+    expectedWorkspaceRevision: state.workspace.revision,
     reserveObservation: { actionRef, outcome: "reserve" },
     settleObservation: (outcome: "succeeded" | "not_started" | "unknown") => ({
       actionRef,

@@ -23,6 +23,7 @@ const CURSOR = "@brainervirus/workit-cursor";
 const OPENCODE = "@brainervirus/workit-opencode";
 
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- caller-typed JSON fixture reader
 const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 
 // Advisory #4 (cursor-npx-runtime-latest): the canonical selector is `@latest`
@@ -321,7 +322,7 @@ test(
       expect(files.has(`packages/workit-cursor/skills/${skill}/SKILL.md`), skill).toBe(true);
     }
     expect(
-      [...files].filter((file) => file.startsWith("packages/workit-cursor/rules/")).sort(),
+      [...files].filter((file) => file.startsWith("packages/workit-cursor/rules/")).toSorted(),
     ).toEqual(["packages/workit-cursor/rules/workit-contract.mdc"]);
   },
   { timeout: 60_000 },

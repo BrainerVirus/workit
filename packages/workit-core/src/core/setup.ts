@@ -506,13 +506,13 @@ type ResolvedApply = {
 // the same options (defaulting both from env) — tests pass `home` explicitly.
 const resolveSetupPaths = (
   options: ApplySetupOptions,
-  configDir: string,
+  resolvedConfigDir: string,
 ): Omit<ResolvedApply, "dev"> => {
   const env = options.env ?? process.env;
   const home = options.home ?? env.HOME ?? os.homedir();
   return {
     home,
-    configDir,
+    configDir: resolvedConfigDir,
     cwd: options.cwd ?? process.cwd(),
     env,
     opencodeConfig:

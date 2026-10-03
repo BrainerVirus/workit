@@ -7,7 +7,7 @@ import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-mani
 import { listTarball, packWorkspacePackages, REPO_ROOT } from "@/test/shared/helpers/packages";
 
 const OPENCODE = "@brainervirus/workit-opencode";
-const WORKIT = [...WORKIT_METHOD_SKILLS].sort();
+const WORKIT = [...WORKIT_METHOD_SKILLS].toSorted();
 
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((pack) => pack.packageName === name)!;
@@ -17,7 +17,7 @@ const tarballSkillNames = (tarball: string, prefix: string): string[] =>
   listTarball(tarball)
     .filter((entry) => entry.startsWith(prefix) && entry.endsWith("/SKILL.md"))
     .map((entry) => entry.slice(prefix.length).split("/")[0])
-    .sort();
+    .toSorted();
 
 test("opencode packed tarball ships exactly the canonical method skills", () => {
   const tarball = byName(packWorkspacePackages(), OPENCODE).tarball;

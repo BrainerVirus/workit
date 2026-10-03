@@ -1,30 +1,40 @@
 name: Release
 
+# Called from ci.yml after every CI job passed for the same main commit, so a
+# red commit can never publish.
 on:
-  push:
-    branches: [main]
+  workflow_call:
+    secrets:
+      NPMJS:
+        required: true
+      RELEASE_SYNC_TOKEN:
+        required: false
 
-permissions:
-  contents: write # GitHub Release
-  issues: write # semantic-release success comments
-  pull-requests: write # semantic-release success comments
-  # ponytail: no id-token — OIDC trusted publishing needs a per-package trusted
-  # publisher configured in npm; until then NPM_TOKEN is the auth path.
+permissions: {}
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Two quick merges must not race on tags or the manifest-sync branch.
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # GitHub Release
+      issues: write # semantic-release success comments
+      pull-requests: write # semantic-release success comments
+      id-token: write # npm provenance attestation (NPM_TOKEN stays the auth path)
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24.20.0"
           registry-url: https://registry.npmjs.org
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.1"
 
@@ -41,9 +51,14 @@ jobs:
       - name: Verify release candidate
         run: bun run verify:release-candidate
 
+      # semantic-release is the pinned devDependency from bun.lock, not a
+      # version resolved from the registry at run time.
       - name: Release
-        run: npx semantic-release
+        run: bun run release
         env:
+          # npm publish (publish-changed-packages.ts) attaches a provenance
+          # attestation via the job's OIDC token; auth is still NPM_TOKEN.
+          NPM_CONFIG_PROVENANCE: "true"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPMJS }}
           # setup-node writes //registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}
@@ -98,4 +113,4 @@ jobs:
           # leaves the head ref when the repo has delete_branch_on_merge off.
           # cleanup-manifest-sync-branch.yml deletes chore/manifest-sync-* heads
           # once the PR actually merges.
-          gh pr merge --auto --squash --delete-branch || echo "auto-merge unavailable — merge https://github.com/${GITHUB_REPOSITORY}/pull/$(gh pr view ${BRANCH} --json number -q .number) manually"
+          gh pr merge --auto --squash --delete-branch || echo "auto-merge unavailable — merge https://github.com/${GITHUB_REPOSITORY}/pull/$(gh pr view "${BRANCH}" --json number -q .number) manually"

@@ -19,8 +19,8 @@ test("Codex plugin ships the current manifest layout and the canonical method sk
   // hooks.json bundle, so the manifest must not advertise a Hooks capability.
   expect(manifest.interface.capabilities).toEqual(["MCP", "Task continuity"]);
   expect(manifest.mcpServers).toBe("./.mcp.json");
-  expect(readdirSync(path.join(packageRoot, "skills")).sort()).toEqual(
-    [...WORKIT_METHOD_SKILLS].sort(),
+  expect(readdirSync(path.join(packageRoot, "skills")).toSorted()).toEqual(
+    [...WORKIT_METHOD_SKILLS].toSorted(),
   );
   expect(existsSync(path.join(packageRoot, "hooks/hooks.json"))).toBe(true);
   expect(existsSync(path.join(packageRoot, ".mcp.json"))).toBe(true);

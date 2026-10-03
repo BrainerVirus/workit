@@ -178,7 +178,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
   ): { task: T; entry: E } | null => {
     const tasks = new Set(items.map((item) => item.task.id));
     if (tasks.size !== 1 || items.length === 0) return null;
-    return [...items].sort((a, b) =>
+    return [...items].toSorted((a, b) =>
       a.entry.recordedAt < b.entry.recordedAt
         ? -1
         : a.entry.recordedAt > b.entry.recordedAt
@@ -186,7 +186,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
           : a.entry.id < b.entry.id
             ? -1
             : 1,
-    )[0]!;
+    )[0];
   };
 
   const prepareDispatch = (

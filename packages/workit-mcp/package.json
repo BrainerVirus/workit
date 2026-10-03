@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-mcp",
-  "version": "2.1.4",
+  "version": "2.1.5",
   "private": false,
   "description": "Workit shared MCP transport for the eight task and policy operation families",
   "keywords": [
@@ -43,8 +43,8 @@
   },
   "dependencies": {
     "@brainervirus/workit-core": "workspace:*",
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "zod": "4.5.4"
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "zod": "4.6.5"
   },
   "engines": {
     "node": ">=24"

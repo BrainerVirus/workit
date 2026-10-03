@@ -114,7 +114,7 @@ test("concurrent subagent launches interleave with unique event ids", async () =
   const calls = msgs
     .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
     .filter((c) => c.type === "tool" && c.name === "subagent");
-  expect(calls.map((c) => c.id).sort()).toEqual(["call_1", "call_2"]);
+  expect(calls.map((c): string => c.id).toSorted()).toEqual(["call_1", "call_2"]);
   for (const c of calls) expect(c.state.status).toBe("completed");
   const all = await need().api("GET", "/api/session");
   const kids = (all.data as any[]).filter((s) => s.parentID === id);

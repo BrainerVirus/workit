@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-core",
-  "version": "2.1.4",
+  "version": "2.1.5",
   "private": false,
   "description": "Workit shared core — task, policy, evidence, review, decision, worker, and writer state for agentic coding workflows",
   "keywords": [
@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@openclaw/fs-safe": "0.8.1",
-    "zod": "4.5.4"
+    "zod": "4.6.5"
   },
   "engines": {
     "node": ">=24"

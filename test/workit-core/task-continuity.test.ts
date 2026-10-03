@@ -258,7 +258,7 @@ test("portable action history keeps old IDs and outcomes without importing autho
       actionRef: {
         kind: "record",
         collection: "decisions",
-        id: decisions[0]!.id,
+        id: decisions[0].id,
       },
       historicalActionId: actionId,
     },
@@ -268,7 +268,7 @@ test("portable action history keeps old IDs and outcomes without importing autho
       actionRef: {
         kind: "record",
         collection: "decisions",
-        id: decisions[1]!.id,
+        id: decisions[1].id,
       },
       historicalActionId: actionId,
     },
@@ -295,7 +295,7 @@ test("portable action history keeps old IDs and outcomes without importing autho
       actionRef: {
         kind: "record",
         collection: "decisions",
-        id: task.data.decisions[index]!.id,
+        id: task.data.decisions[index].id,
       },
     })),
   );

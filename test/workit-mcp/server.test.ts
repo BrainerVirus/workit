@@ -109,7 +109,7 @@ test("unattested MCP callers see only read-only actions", async () => {
     const oneOf =
       (task.inputSchema as { oneOf?: Array<{ properties?: { action?: { const?: string } } }> })
         .oneOf ?? [];
-    expect(oneOf.map((branch) => branch.properties?.action?.const).sort()).toEqual([
+    expect(oneOf.map((branch) => branch.properties?.action?.const ?? "").toSorted()).toEqual([
       "inspect",
       "list",
     ]);

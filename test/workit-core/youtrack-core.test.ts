@@ -418,7 +418,7 @@ test("fetchYouTrackIssueBody returns summary plus description plus state on stub
   const result = await fetchYouTrackIssueBody(
     "TST-123",
     () => ({ token: "t", base: "https://yt.example.test" }),
-    (async (url: string) => {
+    async (url: string) => {
       seen.push(url);
       return {
         status: 0,
@@ -430,7 +430,7 @@ test("fetchYouTrackIssueBody returns summary plus description plus state on stub
         }),
         stderr: "",
       };
-    }) as never,
+    },
   );
   expect(seen[0]).toContain(
     "/api/issues/TST-123?fields=idReadable,summary,description,customFields(name,value(name))",
@@ -446,11 +446,11 @@ test("fetchYouTrackIssueBody returns summary plus description plus state on stub
   const noState = await fetchYouTrackIssueBody(
     "TST-123",
     () => ({ token: "t", base: "https://yt.example.test" }),
-    (async () => ({
+    async () => ({
       status: 0,
       stdout: JSON.stringify({ idReadable: "TST-123", summary: "S", customFields: [] }),
       stderr: "",
-    })) as never,
+    }),
   );
   expect(noState).toEqual({
     data: { idReadable: "TST-123", summary: "S", description: null, state: null },
@@ -458,7 +458,7 @@ test("fetchYouTrackIssueBody returns summary plus description plus state on stub
   const malformedState = await fetchYouTrackIssueBody(
     "TST-123",
     () => ({ token: "t", base: "https://yt.example.test" }),
-    (async () => ({
+    async () => ({
       status: 0,
       stdout: JSON.stringify({
         idReadable: "TST-123",
@@ -466,7 +466,7 @@ test("fetchYouTrackIssueBody returns summary plus description plus state on stub
         customFields: [{ name: "State", value: { $type: "StateBundleElement" } }],
       }),
       stderr: "",
-    })) as never,
+    }),
   );
   expect(malformedState).toEqual({
     data: { idReadable: "TST-123", summary: "S", description: null, state: null },
@@ -477,23 +477,23 @@ test("fetchYouTrackIssueBody degrades on creds failure, fails closed on request 
   const credsDown = await fetchYouTrackIssueBody(
     "TST-123",
     () => ({ error: "no token" }),
-    (async () => {
+    async () => {
       throw new Error("must not fetch without creds");
-    }) as never,
+    },
   );
   expect(credsDown).toEqual({ error: "no token", kind: "creds" });
 
   const requestDown = await fetchYouTrackIssueBody(
     "TST-123",
     () => ({ token: "t", base: "https://yt.example.test" }),
-    (async () => ({ status: 1, stdout: "", stderr: "boom" })) as never,
+    async () => ({ status: 1, stdout: "", stderr: "boom" }),
   );
   expect(requestDown).toEqual({ error: "boom", kind: "request" });
 
   const badJson = await fetchYouTrackIssueBody(
     "TST-123",
     () => ({ token: "t", base: "https://yt.example.test" }),
-    (async () => ({ status: 0, stdout: "not json", stderr: "" })) as never,
+    async () => ({ status: 0, stdout: "not json", stderr: "" }),
   );
   expect(badJson).toEqual({ error: "invalid JSON from YouTrack API", kind: "request" });
 });

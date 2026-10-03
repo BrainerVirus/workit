@@ -206,16 +206,16 @@ test("credentials use neutral XDG config and require token mode 0600", () => {
   writeFileSync(tokenPath, "dummy-token\n", { mode: 0o644 });
   writeFileSync(path.join(directory, "youtrack.json"), JSON.stringify({ tokenFile: tokenPath }));
 
-  expect(configPath({ XDG_CONFIG_HOME: xdg } as NodeJS.ProcessEnv, "/unused")).toBe(
+  expect(configPath({ XDG_CONFIG_HOME: xdg }, "/unused")).toBe(
     path.join(directory, "youtrack.json"),
   );
   if (process.platform !== "win32") {
-    expect(() => readCredentials({ XDG_CONFIG_HOME: xdg } as NodeJS.ProcessEnv, "/unused")).toThrow(
+    expect(() => readCredentials({ XDG_CONFIG_HOME: xdg }, "/unused")).toThrow(
       "youtrack.token mode must be 0600",
     );
 
     chmodSync(tokenPath, 0o600);
-    expect(readCredentials({ XDG_CONFIG_HOME: xdg } as NodeJS.ProcessEnv, "/unused")).toEqual({
+    expect(readCredentials({ XDG_CONFIG_HOME: xdg }, "/unused")).toEqual({
       configPath: path.join(directory, "youtrack.json"),
       token: "dummy-token",
     });
@@ -237,7 +237,7 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
     }),
   );
 
-  withNeutralXdg(xdg, () => {
+  void withNeutralXdg(xdg, () => {
     const out = youTrackConfigLoad();
     expect("data" in out ? out.data.meetingIssue : null).toBe("MEET-1");
   });
@@ -256,7 +256,7 @@ test("CA-03: youtrack config read resolves the token file inside the active conf
     path.join(workit, "youtrack.json"),
     JSON.stringify({ baseUrl: "https://youtrack.example.test", tokenFile: activeToken }),
   );
-  withNeutralXdg(xdg, () => {
+  void withNeutralXdg(xdg, () => {
     const out = youTrackConfigLoad();
     expect("data" in out).toBe(true);
     if ("data" in out) {
@@ -275,7 +275,7 @@ test("AR-07: non-object youtrack.json shapes fail closed with the exact path", (
   try {
     for (const content of ["null", '"just a string"', "42", "[]", "[1, 2, 3]"]) {
       writeFileSync(ytFile, content, "utf8");
-      withNeutralXdg(dir, () => {
+      void withNeutralXdg(dir, () => {
         const out = youTrackConfigLoad() as { ok?: boolean; error?: string; configPath?: string };
         expect(out.error, content).toBeTruthy();
         expect(String(out.error ?? ""), content).toContain(ytFile);
@@ -296,7 +296,7 @@ test("AR-07: non-object youtrack.json shapes fail closed with the exact path", (
 
 test("init scaffolding uses the neutral XDG config directory", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-init-"));
-  withNeutralXdg(xdg, () => {
+  void withNeutralXdg(xdg, () => {
     initApplyData("youtrack_scaffold");
     const directory = path.join(xdg, "workit");
     const config = JSON.parse(readFileSync(path.join(directory, "youtrack.json"), "utf8"));

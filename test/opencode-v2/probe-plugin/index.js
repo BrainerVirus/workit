@@ -17,7 +17,7 @@ export default {
   id: "v2probe",
   async setup(ctx) {
     log({ ev: "setup", version: ctx.app?.version, dir: ctx.location?.directory });
-    log({ ev: "ctx.keys", keys: Object.keys(ctx).sort() });
+    log({ ev: "ctx.keys", keys: Object.keys(ctx).toSorted() });
     await ctx.tool.transform((editor) => {
       editor.add({
         name: "probe_ping",

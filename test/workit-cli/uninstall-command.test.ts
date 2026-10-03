@@ -147,7 +147,7 @@ async function driveUninstall(
     // stream as the render target ONLY when it is an instanceof Stream, so a
     // duck-typed replacement object silently leaves ink with an undefined
     // stdout and nothing ever paints (CI-only failure class).
-    process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
+    process.stdout.write = ((chunk: unknown, cb?: () => void) => {
       chunks.push(String(chunk));
       cb?.();
       return true;
@@ -155,9 +155,9 @@ async function driveUninstall(
     console.log = (...args: unknown[]) => {
       chunks.push(`${args.map(String).join(" ")}\n`);
     };
-    process.exit = ((code?: number) => {
+    process.exit = (code?: number) => {
       throw new ExitSentinel(code);
-    }) as typeof process.exit;
+    };
 
     const { runUninstall } = await import("@/packages/workit-cli/src/index");
     // Real-timer beat per step: ink throttles frame writes on wall-clock timers.

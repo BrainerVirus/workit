@@ -6,7 +6,7 @@ import v1 from "@/packages/workit-opencode/src/v1/server";
 
 test("the checkout path re-exports the dual index entry", () => {
   expect(entry).toBe(index);
-  expect(Object.keys(entry).sort()).toEqual(["id", "server", "setup"]);
+  expect(Object.keys(entry).toSorted()).toEqual(["id", "server", "setup"]);
   expect(entry.id).toBe("workit");
   expect(typeof entry.server).toBe("function");
   expect(typeof entry.setup).toBe("function");
@@ -29,7 +29,7 @@ test("V1 behavior is unchanged through the dual entry", async () => {
     worktree: "/repo",
     serverUrl: new URL("http://localhost"),
   } as never);
-  expect(Object.keys(hooks.tool ?? {}).sort()).toEqual(
+  expect(Object.keys(hooks.tool ?? {}).toSorted()).toEqual(
     [
       "workit_task",
       "workit_policy",
@@ -41,7 +41,7 @@ test("V1 behavior is unchanged through the dual entry", async () => {
       "workit_state",
       "workit_context",
       "workit_init_apply",
-    ].sort(),
+    ].toSorted(),
   );
   expect(hooks.tool).not.toHaveProperty("workit_external_action");
 });

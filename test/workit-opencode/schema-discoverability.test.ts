@@ -14,7 +14,7 @@ test("V1 and V2 publish the same flat, read-only context arguments", () => {
     operation: "git.commit",
     payload: { message: "must not be available" },
   };
-  expect(Object.keys(v1).sort()).toEqual(Object.keys((v2 as any).properties).sort());
+  expect(Object.keys(v1).toSorted()).toEqual(Object.keys((v2 as any).properties).toSorted());
   expect(tools).not.toHaveProperty("workit_external_action");
   const validate = new Ajv2020({ strict: false }).compile(v2 as any);
   expect(validate({ kind: "affected", range: "HEAD~1...HEAD" })).toBe(true);

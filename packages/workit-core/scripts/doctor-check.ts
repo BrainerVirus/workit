@@ -11,8 +11,7 @@
 import { runDoctor } from "../src/core/doctor";
 
 const hostArg = process.argv[2];
-const host =
-  hostArg === "cursor" ? "cursor" : hostArg === "cli" ? "cli" : "opencode";
+const host = hostArg === "cursor" ? "cursor" : hostArg === "cli" ? "cli" : "opencode";
 const staleOnly = process.argv.includes("--stale");
 const report = runDoctor({ host, installer: true });
 

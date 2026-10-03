@@ -1120,7 +1120,7 @@ export function parseOperation(family: OperationFamily, input: unknown): Result<
     return failure("unsupported_version", "unsupported schema version", { operation: family });
   const compiled = compiledOperationSchemas[family].safeParse(input);
   const parsed = compiled.success ? operationSchemas[family].safeParse(input) : compiled;
-  if (parsed.success) return success(null, null, parsed.data as OperationRequest);
+  if (parsed.success) return success(null, null, parsed.data);
   const fields = parsed.error.issues.map((issue) => ({
     path: issue.code === "unrecognized_keys" ? issue.keys.join(".") : issue.path.join("."),
     reason: issue.message,
@@ -1295,7 +1295,7 @@ function canonical(value: unknown, seen: Set<object>): JsonValue {
       throw new TypeError("invalid Unicode");
     result = Object.fromEntries(
       Object.keys(value)
-        .sort()
+        .toSorted()
         .map((key) => [key, canonical((value as Record<string, unknown>)[key], seen)]),
     );
   }
@@ -1341,13 +1341,13 @@ export function decisionDigest(input: Omit<Decision, "digest"> | Decision): Dige
 export function candidateDigest(input: Candidate): Digest {
   const normalizedScope = {
     description: input.scope.description,
-    paths: [...input.scope.paths].sort(compareCodeUnits),
-    exclusions: [...input.scope.exclusions].sort(compareCodeUnits),
+    paths: [...input.scope.paths].toSorted(compareCodeUnits),
+    exclusions: [...input.scope.exclusions].toSorted(compareCodeUnits),
   };
   return sha256({
     scope: normalizedScope,
     completeness: input.completeness,
-    files: [...input.files].sort(
+    files: [...input.files].toSorted(
       (left, right) =>
         compareCodeUnits(left.path, right.path) ||
         compareCodeUnits(left.kind, right.kind) ||
@@ -1356,7 +1356,7 @@ export function candidateDigest(input: Candidate): Digest {
     ),
     environment: input.environment
       .map(({ name, value }) => ({ name, value }))
-      .sort(
+      .toSorted(
         (left, right) =>
           compareCodeUnits(left.name, right.name) || compareNullableText(left.value, right.value),
       ),
@@ -1374,8 +1374,8 @@ export function requirementId(input: {
     ...input,
     scope: {
       description: input.scope.description,
-      paths: [...input.scope.paths].sort(compareCodeUnits),
-      exclusions: [...input.scope.exclusions].sort(compareCodeUnits),
+      paths: [...input.scope.paths].toSorted(compareCodeUnits),
+      exclusions: [...input.scope.exclusions].toSorted(compareCodeUnits),
     },
   });
 }

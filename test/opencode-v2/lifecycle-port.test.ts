@@ -85,7 +85,7 @@ const fixture = (taskActor = "coordinator", coordinator = "coordinator") => {
   const worker = (index = 0) => {
     const current = store.readTask(task.data.id);
     if (!current.ok) throw new Error(current.error);
-    return current.data.workers[index]!;
+    return current.data.workers[index];
   };
   const revisions = () => {
     const current = store.readTask(task.data.id);

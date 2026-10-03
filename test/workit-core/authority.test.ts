@@ -19,15 +19,14 @@ import {
 } from "@/packages/workit-core/src/core/authority";
 import { assessment, caller, ref, scope, taskStartRequest } from "./task-fixtures";
 
-const context = (root: string, authority = verifier()): OperationContext =>
-  ({
-    root,
-    caller: caller(),
-    capabilities: [],
-    constraints: [],
-    now: "2026-01-01T00:00:00Z",
-    nativeAuthority: authority,
-  }) as OperationContext;
+const context = (root: string, authority = verifier()): OperationContext => ({
+  root,
+  caller: caller(),
+  capabilities: [],
+  constraints: [],
+  now: "2026-01-01T00:00:00Z",
+  nativeAuthority: authority,
+});
 
 const attested = (host: "workit_cli" | "cursor" = "workit_cli", handle = "receipt") => {
   const receipt = { kind: "host" as const, host, handle };

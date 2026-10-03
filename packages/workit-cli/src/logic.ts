@@ -135,7 +135,7 @@ export function setWorkspaceEditorValue(
     return { ...workspace, defaultProfile: value.trim() || undefined };
   if (section === "vcs")
     return workspace.vcs
-      ? { ...workspace, vcs: { ...workspace.vcs, [key!]: value.trim() || undefined } }
+      ? { ...workspace, vcs: { ...workspace.vcs, [key]: value.trim() || undefined } }
       : workspace;
   if (section === "youtrack") {
     const current = workspace.youtrack ?? {};
@@ -161,7 +161,7 @@ export function setWorkspaceEditorValue(
   if (section === "branchPolicy") {
     if (key === "preset" && (!value.trim() || value === "inherit")) {
       const { branchPolicy: _discard, ...rest } = workspace;
-      return rest as WorkspaceConfig;
+      return rest;
     }
     const current = workspace.branchPolicy ?? { preset: defaults.branchPreset ?? "gitflow" };
     const branchPolicy =
@@ -184,7 +184,7 @@ export function setWorkspaceEditorValue(
                         release: "release/",
                         hotfix: "hotfix/",
                         ...current.prefixes,
-                        [leaf!]: value.trim(),
+                        [leaf]: value.trim(),
                       },
                     }
                   : current;
@@ -193,7 +193,7 @@ export function setWorkspaceEditorValue(
   if (section === "commitPolicy") {
     if (key === "preset" && (!value.trim() || value === "inherit")) {
       const { commitPolicy: _discard, ...rest } = workspace;
-      return rest as WorkspaceConfig;
+      return rest;
     }
     const current = workspace.commitPolicy ?? { preset: defaults.commitPreset ?? "conventional" };
     return {
@@ -298,7 +298,7 @@ export function setProfileEditorValue(
           release: "release/",
           hotfix: "hotfix/",
           ...current.prefixes,
-          [leaf!]: value,
+          [leaf]: value,
         },
       };
     else if (key === "developBranch")
@@ -368,7 +368,7 @@ export function setTrackEditorValue(
           : { kind: "git-tag" as const };
     return { ...track, versionSource } as ReleaseTrack;
   }
-  return { ...track, [field]: value } as ReleaseTrack;
+  return { ...track, [field]: value };
 }
 
 export const createReleaseTrack = emptyTrack;
@@ -442,15 +442,15 @@ function malformedBlock(
   return { ok: false, status: "malformed", error: message, file, created: [], preserved: [] };
 }
 
-function ensureToken(path: string, outcome: { created: string[]; preserved: string[] }): void {
+function ensureToken(tokenPath: string, outcome: { created: string[]; preserved: string[] }): void {
   // wx (exclusive create) closes the TOCTOU window: a token created between any
   // existence check and write now races the write itself, and EEXIST means the
   // other writer won — preserve their bytes instead of clobbering them. Shared
   // with initApplyData via core/safe-write.ts (Task 14 Step 7 / CA-13).
-  if (writeFileExclusive(path, TOKEN_PLACEHOLDER + "\n", 0o600) === "created") {
-    outcome.created.push(path);
+  if (writeFileExclusive(tokenPath, TOKEN_PLACEHOLDER + "\n", 0o600) === "created") {
+    outcome.created.push(tokenPath);
   } else {
-    outcome.preserved.push(path);
+    outcome.preserved.push(tokenPath);
   }
 }
 
