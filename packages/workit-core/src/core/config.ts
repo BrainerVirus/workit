@@ -178,7 +178,9 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
     return { status: "malformed", path: file, error: `${file} is not a JSON object` };
   }
   const input = parsed as Partial<ToolkitConfig>;
-  const locale = LOCALE_RE.test(input.locale ?? "") ? (input.locale as string) : DEFAULTS.locale;
+  const locale = LOCALE_RE.test(String(input.locale ?? ""))
+    ? (input.locale as string)
+    : DEFAULTS.locale;
   const preset = (
     Object.hasOwn(PRESETS, input.branchPolicy?.preset as string)
       ? input.branchPolicy?.preset

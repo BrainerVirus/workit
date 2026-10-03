@@ -746,7 +746,8 @@ export async function logTime(
   if (!issueId || !ISSUE_RE.test(issueId)) return { error: "invalid issueId" };
   if (!minutes || minutes <= 0) return { error: "minutes must be positive" };
   const workText = text ?? "workit";
-  const dateArg = dateMs != null ? String(dateMs) : date && /^\d+$/.test(date) ? date : "auto";
+  const dateArg =
+    dateMs != null ? String(dateMs) : date && /^\d+$/.test(String(date)) ? String(date) : "auto";
   const out = await scripts.api(["log-time", issueId, String(minutes), workText, dateArg]);
   if (out.error) return { error: out.error };
   return { issueId, minutes, text: workText, ...out.data, ok: true };
