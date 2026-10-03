@@ -364,7 +364,7 @@ test("written file resolves via resolveWorkspace (parity CA-02)", () => {
   withConfigDir((dir) => {
     const projectDir = path.join(dir, "projects", "work", "repo");
     writeWorkspaces([
-      entry("work", path.join(dir, "projects", "work", "**").split(path.sep).join("/")),
+      entry("work", `${path.join(dir, "projects", "work", "**").split(path.sep).join("/")}`),
     ]);
     expect(resolveWorkspace(projectDir)?.name).toBe("work");
   });

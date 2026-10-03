@@ -41,7 +41,7 @@ test("docsValidate hard-fails on task number gap", () => {
     const result = docsValidate({ spec_path: spec, plan_path: plan, workspace_root: root });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toMatch(/task/i);
+    expect(String(result.error)).toMatch(/task/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

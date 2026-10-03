@@ -332,7 +332,7 @@ test("MCP publishes every core action in every family without a second action ta
   const families = new Map<string, Set<string>>();
   for (const fixture of operationCorpus()) {
     const actions = families.get(fixture.family) ?? new Set<string>();
-    actions.add((fixture.input as { action: string }).action);
+    actions.add(String((fixture.input as { action: string }).action));
     families.set(fixture.family, actions);
   }
   const { client, server } = await connect("cursor", {

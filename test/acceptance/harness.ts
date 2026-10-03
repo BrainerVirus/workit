@@ -149,7 +149,7 @@ export const authorizeLiveEvaluation = (
       `live evaluation requires an explicit bounded authorization (planned ${plannedRuns} > max ${authorization.maxRuns})`,
     );
   }
-  if (authorization.externalWrites) {
+  if (authorization.externalWrites !== false) {
     return failure(
       "needs_input",
       "live evaluation denies external writes unless separately authorized",
@@ -414,14 +414,7 @@ export const verifyCompiledSchemaParity = (): string[] => {
         (fixture, index, all) =>
           all.findIndex((other) => other.family === fixture.family) === index,
       )
-      .map((fixture) =>
-        Object.assign(fixture, {
-          input: {
-            ...fixture.input,
-            action: "unknown",
-          } as never,
-        }),
-      ),
+      .map((fixture) => ({ ...fixture, input: { ...fixture.input, action: "unknown" } as never })),
   ];
   for (const fixture of corpus) {
     const raw = operationSchemas[fixture.family].safeParse(fixture.input);

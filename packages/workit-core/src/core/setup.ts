@@ -1463,7 +1463,7 @@ export function applyWorkspaceBranchPolicy(opts: {
   if (status === "malformed" || status === "invalid")
     return { ok: false, error: workspacesError ?? `invalid workspaces.json: ${wsPath}` };
   const detection = detectBranchPolicy(workspace_root);
-  const name = env.WORKFLOW_BP_NAME ?? path.basename(workspace_root);
+  const name = String(env.WORKFLOW_BP_NAME ?? path.basename(workspace_root));
   const integration = (env.WORKFLOW_BP_INTEGRATION ?? detection.integration) as "pr" | "merge";
   const policy = {
     preset: detection.preset,

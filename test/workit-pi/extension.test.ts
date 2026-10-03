@@ -1335,7 +1335,7 @@ test("Pi dirty branch setup confirms the stash and executes in one approval", as
     actionContext.ui = {
       confirm: async (question: string) => {
         confirms += 1;
-        asked = question;
+        asked = String(question);
         return true;
       },
     };

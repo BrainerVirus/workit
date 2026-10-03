@@ -172,13 +172,13 @@ export function youTrackGreeting(configOverride?: string): {
 export function youTrackParseDuration(
   text: string,
 ): { data: { minutes: number; text: string } } | { error: string } {
-  const lower = text.toLowerCase().trim();
+  const lower = String(text).toLowerCase().trim();
   let total = 0;
   for (const match of lower.matchAll(/(\d+)\s*h/g)) total += Number(match[1]) * 60;
   for (const match of lower.matchAll(/(\d+)\s*m/g)) total += Number(match[1]);
   if (total === 0 && /^\d+$/.test(lower)) total = Number(lower);
   if (total <= 0) return { error: "could not parse duration" };
-  return { data: { minutes: total, text: text.trim() } };
+  return { data: { minutes: total, text: String(text).trim() } };
 }
 
 /** Port of scripts/youtrack/work-date-ms.sh — resolve work-item date as epoch ms. */
@@ -772,7 +772,7 @@ export function buildDraft({
   const tpl = readTemplate("issue-update").content;
   const para = (value: string): string => (value ? `\n\n${value}` : "");
   const filled = tpl
-    .replaceAll("{{greetingSection}}", para(greeting ? greeting : ""))
+    .replaceAll("{{greetingSection}}", para(greeting ? `${greeting}` : ""))
     .replaceAll(
       "{{projectSection}}",
       para(includeProjectOpener && projectName ? `Hoy estuve full con ${projectName}.` : ""),

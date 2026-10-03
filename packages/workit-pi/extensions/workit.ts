@@ -403,7 +403,7 @@ export default function extension(pi: ExtensionAPI): void {
       pi.registerCommand(alias, {
         description: `Apply the ${skill} method skill to the current task.`,
         handler: async (args) => {
-          const extra = (args ?? "").trim();
+          const extra = String(args ?? "").trim();
           (
             pi as unknown as { sendUserMessage: (content: string, options: unknown) => void }
           ).sendUserMessage(`/skill:${skill}${extra ? ` ${extra}` : ""}`, {

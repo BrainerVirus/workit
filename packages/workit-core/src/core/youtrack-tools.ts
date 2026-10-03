@@ -113,7 +113,7 @@ export async function postUpdate(
   input: PostInput,
   operations: Pick<YouTrackOperations, "postComment" | "logTime"> = defaultOperations,
 ): Promise<Result<PostData>> {
-  if (!input.confirmed) return fail("confirmed: true required");
+  if (input.confirmed !== true) return fail("confirmed: true required");
   if (!ISSUE_RE.test(input.issueId)) return fail("invalid issueId");
   if (!input.markdown?.trim()) return fail("markdown required");
   if (input.minutes != null && input.minutes <= 0) return fail("minutes must be positive");

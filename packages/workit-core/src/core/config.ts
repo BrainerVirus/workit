@@ -185,7 +185,7 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
       : "gitflow"
   ) as BranchPreset;
   const commitPreset = (
-    COMMIT_PRESETS.includes(input.commitPolicy?.preset ?? "")
+    COMMIT_PRESETS.includes(String(input.commitPolicy?.preset ?? ""))
       ? input.commitPolicy?.preset
       : "conventional"
   ) as CommitFlavorPreset;

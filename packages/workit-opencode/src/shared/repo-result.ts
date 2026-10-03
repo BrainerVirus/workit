@@ -10,7 +10,7 @@ const diagnostics = ({ stdout, stderr, exitCode }: RunResult) => ({
 });
 
 export const requireConfirmed = (confirmed: boolean) => {
-  if (confirmed) return null;
+  if (confirmed === true) return null;
   return output(fail("confirmed: true required"));
 };
 

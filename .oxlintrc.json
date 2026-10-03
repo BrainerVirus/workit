@@ -35,6 +35,17 @@
     // tsc already rejects missing returns for functions with a declared
     // return type; this rule additionally flags exhaustive `switch`es.
     "typescript/consistent-return": "off",
+    // Values typed boolean/string at JSON, env and host-input boundaries are
+    // not guaranteed at runtime. Strict `=== true` confirmation/authority
+    // gates and explicit String()/template coercions are defensive on
+    // purpose; these rules' autofixes loosened them (e.g. `confirmed: "no"`
+    // passing a `!== true` check rewritten to truthiness).
+    "typescript/no-unnecessary-boolean-literal-compare": "off",
+    "typescript/no-unnecessary-type-conversion": "off",
+    "typescript/no-unnecessary-template-expression": "off",
+    // Its suggested fix rewrites `({ ...x, k })` inside map() to
+    // Object.assign(x, ...), which mutates the source objects.
+    "oxc/no-map-spread": "off",
     // zod schema introspection reads the documented-but-underscored `_zod`
     // and `_def` handles.
     "eslint/no-underscore-dangle": ["warn", { "allow": ["_def", "_zod"] }]

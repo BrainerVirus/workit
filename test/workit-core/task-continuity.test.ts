@@ -290,15 +290,14 @@ test("portable action history keeps old IDs and outcomes without importing autho
   expect(task.ok).toBe(true);
   if (!task.ok) throw new Error(task.error);
   expect(task.data.decisions.map((entry) => entry.data.consumption)).toEqual(
-    bundle.task.decisions.map((entry: any, index: number) =>
-      Object.assign(entry.data.consumption, {
-        actionRef: {
-          kind: "record",
-          collection: "decisions",
-          id: task.data.decisions[index].id,
-        },
-      }),
-    ),
+    bundle.task.decisions.map((entry: any, index: number) => ({
+      ...entry.data.consumption,
+      actionRef: {
+        kind: "record",
+        collection: "decisions",
+        id: task.data.decisions[index].id,
+      },
+    })),
   );
   expect(task.data.decisions.every((entry) => entry.provenance.kind === "imported")).toBe(true);
 });

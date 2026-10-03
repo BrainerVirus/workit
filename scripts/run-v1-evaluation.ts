@@ -15,7 +15,7 @@ const readAuthorization = (): EvaluationAuthorization | undefined => {
   if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw) as EvaluationAuthorization;
-    return !parsed.externalWrites ? parsed : undefined;
+    return parsed.externalWrites === false ? parsed : undefined;
   } catch {
     return undefined;
   }

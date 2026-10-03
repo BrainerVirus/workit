@@ -337,7 +337,7 @@ export function initApplyData(
   action: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, any> {
-  const dir = env.WORKFLOW_TOOLKIT_CONFIG ?? configDir();
+  const dir = String(env.WORKFLOW_TOOLKIT_CONFIG ?? configDir());
   fs.mkdirSync(dir, { recursive: true });
 
   switch (action) {

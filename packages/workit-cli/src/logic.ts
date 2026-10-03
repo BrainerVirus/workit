@@ -276,9 +276,9 @@ export function profileEditorValue(
     if (key === "prefixes")
       return value?.prefixes?.[leaf as "feature" | "bugfix" | "release" | "hotfix"] ?? "";
     if (key === "allowed" || key === "protected") return value?.[key]?.join(", ") ?? "";
-    return value?.[key as "preset" | "developBranch" | "integration"] ?? "";
+    return String(value?.[key as "preset" | "developBranch" | "integration"] ?? "");
   }
-  return profile?.commitPolicy?.[key as "preset" | "pattern"] ?? "";
+  return String(profile?.commitPolicy?.[key as "preset" | "pattern"] ?? "");
 }
 
 export function setProfileEditorValue(

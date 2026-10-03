@@ -122,8 +122,8 @@ export const loadProvenance = (logger: Logger, pkgUrl: string | URL): Record<str
   try {
     const pkg = JSON.parse(readFileSync(pkgUrl, "utf8")) as { name?: string; version?: string };
     return {
-      name: pkg.name ?? "workit-opencode",
-      version: pkg.version ?? "unknown",
+      name: String(pkg.name ?? "workit-opencode"),
+      version: String(pkg.version ?? "unknown"),
     };
   } catch (err) {
     logger.warn(EVENT.provenance, errorDetail(err));

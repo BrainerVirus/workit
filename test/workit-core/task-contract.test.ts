@@ -37,14 +37,7 @@ test("compiled operation parsing preserves the canonical schema result", () => {
         (fixture, index, all) =>
           all.findIndex((other) => other.family === fixture.family) === index,
       )
-      .map((fixture) =>
-        Object.assign(fixture, {
-          input: {
-            ...fixture.input,
-            action: "unknown",
-          } as never,
-        }),
-      ),
+      .map((fixture) => ({ ...fixture, input: { ...fixture.input, action: "unknown" } as never })),
   ];
   for (const fixture of corpus) {
     const raw = operationSchemas[fixture.family].safeParse(fixture.input);

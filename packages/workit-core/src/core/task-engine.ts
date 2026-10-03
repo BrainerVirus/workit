@@ -655,7 +655,8 @@ const importedTask = (
     evidence,
     decisions: decisions.map((entry) => {
       const data = rewriteRecordRefs(entry.data, decisionSchema, remap) as typeof entry.data;
-      return Object.assign(entry, {
+      return {
+        ...entry,
         data: {
           ...data,
           binding: {
@@ -667,15 +668,11 @@ const importedTask = (
             ? {
                 ...data.consumption,
                 state: data.consumption.state === "reserved" ? "uncertain" : data.consumption.state,
-                actionRef: {
-                  kind: "record",
-                  collection: "decisions",
-                  id: entry.id,
-                },
+                actionRef: { kind: "record", collection: "decisions", id: entry.id },
               }
             : null,
         },
-      });
+      };
     }),
     ...(actionProgress ? { actionProgress } : {}),
     findings,

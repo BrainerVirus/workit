@@ -342,13 +342,13 @@ test("AR-07: non-object youtrack.json shapes fail closed with the exact path", (
       void withNeutralXdg(dir, () => {
         const out = youTrackConfigLoad() as { ok?: boolean; error?: string; configPath?: string };
         expect(out.error, content).toBeTruthy();
-        expect(out.error ?? "", content).toContain(ytFile);
+        expect(String(out.error ?? ""), content).toContain(ytFile);
         expect(out.ok, content).toBe(false);
         expect(out.configPath, content).toBe(ytFile);
 
         const work = youTrackWorkDateMs("auto") as { error?: string };
         expect(work.error, content).toBeTruthy();
-        expect(work.error ?? "", content).toContain(ytFile);
+        expect(String(work.error ?? ""), content).toContain(ytFile);
 
         expect(() => readCredentials(), content).toThrow(ytFile);
 

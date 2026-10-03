@@ -65,7 +65,7 @@ const cliRepository = (
 
 function parseGhIssue(value: string): string {
   const m = /issues\/(\d+)/.exec(value);
-  return m ? m[1] : value.trim().replace(/^#/, "");
+  return m ? m[1] : String(value).trim().replace(/^#/, "");
 }
 
 // RL-03/CA-25/AR-08: a branch-derived numeric issue id must be a bare number at
@@ -126,7 +126,7 @@ function buildBody(
 }
 
 const truthy = (v: string | undefined): boolean =>
-  ["1", "true", "yes"].includes((v ?? "").toLowerCase());
+  ["1", "true", "yes"].includes(String(v ?? "").toLowerCase());
 
 // Port of python's shutil.which — scan PATH in-process (no `which` binary needed).
 function whichOnPath(tool: string): string | null {
@@ -305,7 +305,7 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     cfg.defaultTargetBranch ?? policy.defaultTargetBranch ?? "develop",
   );
   const target = targetOverride || resolvedDefault;
-  const title = env.WF_PR_TITLE ?? "";
+  const title = String(env.WF_PR_TITLE ?? "");
   const br = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
     cwd: root,
     encoding: "utf8",
@@ -423,7 +423,7 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
 
   const pr = (cfg.pr ?? {}) as Record<string, any>;
   const body = env.WF_PR_BODY ?? "";
-  const draft = (env.WF_PR_DRAFT ?? "false").toLowerCase() === "true";
+  const draft = String(env.WF_PR_DRAFT ?? "false").toLowerCase() === "true";
 
   let baseUrl = cfg.youtrack_base_url as string | undefined;
   if (!baseUrl) {

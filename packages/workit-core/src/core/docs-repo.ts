@@ -141,7 +141,7 @@ export const promoteSpec = (
       plan_path: planRel,
       workspace_root: workspaceRootCanonical,
     });
-    if (!validated.ok) return { ok: false, error: validated.error };
+    if (validated.ok === false) return { ok: false, error: validated.error };
   }
 
   const findings = qualitySpec(specText);

@@ -426,8 +426,8 @@ const actionProposalAtRoot = (
           ? ` on local merge base ${shortSha(resolved.merge_base_commit)}`
           : "";
       return {
-        presented: `Workit decision: action — Open a PR in \`${String(resolved.remote ?? "unknown remote")}\` via \`${String(resolved.apiHost ?? "unknown host")}\`${resolved.account ? ` as ${String(resolved.account)}` : ""} from \`${String(resolved.source_branch ?? "")}\`@${sourceCommit} to \`${payloadTarget}\`${mergeBase} titled "${request.payload.title}"?`,
-        approvedText: `Open the PR in ${String(resolved.remote ?? "unknown remote")} via ${String(resolved.apiHost ?? "unknown host")}${resolved.account ? ` as ${String(resolved.account)}` : ""}: ${String(resolved.source_branch ?? "")}@${sourceCommit} → ${payloadTarget}${mergeBase}, "${request.payload.title}".`,
+        presented: `Workit decision: action — Open a PR in \`${String(resolved.remote ?? "unknown remote")}\` via \`${String(resolved.apiHost ?? "unknown host")}\`${resolved.account ? ` as ${String(resolved.account)}` : ""} from \`${String(resolved.source_branch ?? "")}\`@${sourceCommit} to \`${payloadTarget}\`${mergeBase} titled "${String(request.payload.title)}"?`,
+        approvedText: `Open the PR in ${String(resolved.remote ?? "unknown remote")} via ${String(resolved.apiHost ?? "unknown host")}${resolved.account ? ` as ${String(resolved.account)}` : ""}: ${String(resolved.source_branch ?? "")}@${sourceCommit} → ${payloadTarget}${mergeBase}, "${String(request.payload.title)}".`,
       };
     }
     case "hosting.merge":
@@ -447,18 +447,18 @@ const actionProposalAtRoot = (
       };
     case "youtrack.update":
       return {
-        presented: `Workit decision: action — Update YouTrack issue ${request.payload.issueId}${request.payload.minutes ? ` and log ${String(request.payload.minutes)}m` : ""}?`,
-        approvedText: `Update YouTrack issue ${request.payload.issueId}.`,
+        presented: `Workit decision: action — Update YouTrack issue ${String(request.payload.issueId)}${request.payload.minutes ? ` and log ${String(request.payload.minutes)}m` : ""}?`,
+        approvedText: `Update YouTrack issue ${String(request.payload.issueId)}.`,
       };
     case "youtrack.time":
       return {
-        presented: `Workit decision: action — Log ${String(request.payload.minutes)}m to YouTrack issue ${request.payload.issueId}?`,
-        approvedText: `Log time to YouTrack issue ${request.payload.issueId}.`,
+        presented: `Workit decision: action — Log ${String(request.payload.minutes)}m to YouTrack issue ${String(request.payload.issueId)}?`,
+        approvedText: `Log time to YouTrack issue ${String(request.payload.issueId)}.`,
       };
     case "youtrack.meeting":
       return {
-        presented: `Workit decision: action — Log meeting time to YouTrack issue ${request.payload.issueId}?`,
-        approvedText: `Log meeting time to YouTrack issue ${request.payload.issueId}.`,
+        presented: `Workit decision: action — Log meeting time to YouTrack issue ${String(request.payload.issueId)}?`,
+        approvedText: `Log meeting time to YouTrack issue ${String(request.payload.issueId)}.`,
       };
     default:
       return {
@@ -2040,8 +2040,8 @@ export const executeConcreteExternalAction = async (
       });
     }
     case "hosting.merge": {
-      const target = request.payload.target_branch ?? "";
-      const source = request.payload.source_branch ?? "";
+      const target = String(request.payload.target_branch ?? "");
+      const source = String(request.payload.source_branch ?? "");
       if (!target || !source)
         return failure("invalid_input", "hosting.merge requires target and source branches", {
           outcome: "not_started",
