@@ -275,15 +275,18 @@ const TRANSIENT_WINDOWS_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 /** Windows briefly refuses to replace or open a file that another process is
  * reading or renaming at that instant. That is contention, not damage: retry
  * for about a second before surfacing the error. */
+const isTransientWindowsError = (error: unknown): boolean => {
+  if (process.platform !== "win32") return false;
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && TRANSIENT_WINDOWS_CODES.has(code);
+};
 const retryTransient = <T>(run: () => T): T => {
   if (process.platform !== "win32") return run();
   for (let attempt = 0; ; attempt += 1) {
     try {
       return run();
     } catch (error) {
-      const code = (error as { code?: unknown } | null)?.code;
-      if (attempt >= 20 || typeof code !== "string" || !TRANSIENT_WINDOWS_CODES.has(code))
-        throw error;
+      if (attempt >= 20 || !isTransientWindowsError(error)) throw error;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 * (attempt + 1));
     }
   }
@@ -1079,9 +1082,16 @@ export class TaskStore {
           timeoutMs: Math.max(0, deadline - Date.now()),
         });
       } catch (error) {
-        // Losing a reclaim race to another process is contention, not damage.
+        // Losing a reclaim race to another process, or Windows refusing the
+        // lock file while another process opens or deletes it, is contention.
         const code = (error as { code?: unknown })?.code;
-        if (code !== "file_lock_stale" || Date.now() >= deadline) throw error;
+        if (
+          (code !== "file_lock_stale" && !isTransientWindowsError(error)) ||
+          Date.now() >= deadline
+        )
+          throw error;
+        if (code !== "file_lock_stale")
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
       }
     }
   }
@@ -1154,7 +1164,7 @@ export class TaskStore {
     }
     dropRoot(this.root);
     try {
-      handle.release();
+      retryTransient(() => handle.release());
     } catch (error) {
       const released = this.lockFailure(error);
       const releaseError = released.ok ? "metadata lock release failed" : released.error;
@@ -1251,7 +1261,7 @@ export class TaskStore {
     if (handle) {
       dropRoot(this.root);
       try {
-        handle.release();
+        retryTransient(() => handle.release());
       } catch (error) {
         const releaseFailure = this.lockFailure(error);
         const releaseError = releaseFailure.ok
@@ -1271,7 +1281,12 @@ export class TaskStore {
   ): Result<never> {
     const value = error as { code?: unknown; message?: unknown };
     const code = typeof value?.code === "string" ? value.code : "";
-    if (code === "EEXIST" || code === "file_lock_timeout" || code === "file_lock_stale") {
+    if (
+      code === "EEXIST" ||
+      code === "file_lock_timeout" ||
+      code === "file_lock_stale" ||
+      isTransientWindowsError(error)
+    ) {
       let lock: MetadataLock | null = null;
       try {
         lock = parseMetadataLockOrNull(fs.readFileSync(this.lockPath, "utf8"));
@@ -1308,9 +1323,16 @@ export class TaskStore {
   }
 
   private initializeMutationStorage() {
-    fs.mkdirSync(this.tasksDir, { recursive: true });
-    fs.mkdirSync(this.recoveryDir, { recursive: true });
-    fs.writeFileSync(this.gitignorePath, "*\n");
+    retryTransient(() => fs.mkdirSync(this.tasksDir, { recursive: true }));
+    retryTransient(() => fs.mkdirSync(this.recoveryDir, { recursive: true }));
+    // Rewriting an unchanged .gitignore on every call makes concurrent
+    // writers collide on it (Windows sharing violations); write it only when
+    // it is missing or different.
+    let current: string | null = null;
+    try {
+      current = retryTransient(() => fs.readFileSync(this.gitignorePath, "utf8"));
+    } catch {}
+    if (current !== "*\n") retryTransient(() => fs.writeFileSync(this.gitignorePath, "*\n"));
   }
 
   private replaceSnapshot(file: string, value: unknown, previous: unknown): Result<any> {
@@ -1412,11 +1434,11 @@ export class TaskStore {
     const id = target === "task" ? path.basename(file, ".json") : "workspace";
     const destination = path.join(this.recoveryDir, `${target}.${id}.${digestBytes(bytes)}.json`);
     if (fs.existsSync(destination)) {
-      if (digestBytes(fs.readFileSync(destination)) !== digestBytes(bytes))
+      if (digestBytes(retryTransient(() => fs.readFileSync(destination))) !== digestBytes(bytes))
         throw new Error("recovery copy already exists with different bytes");
       // Re-saved bytes are the newest copy again for pruning purposes.
       const stamp = new Date();
-      fs.utimesSync(destination, stamp, stamp);
+      retryTransient(() => fs.utimesSync(destination, stamp, stamp));
       this.pruneRecovery(`${target}.${id}.`, destination);
       return;
     }
@@ -1646,7 +1668,7 @@ export class TaskStore {
 
   private snapshotBytes(file: string): Buffer | null {
     try {
-      return fs.readFileSync(file);
+      return retryTransient(() => fs.readFileSync(file));
     } catch {
       return null;
     }
