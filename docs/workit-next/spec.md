@@ -32,6 +32,11 @@ independently verified PRs.
 | D9 | **Effect 4** only in the CLI I/O layer (subprocess, lock, retry, typed errors), once stable. The core stays plain TS + zod |
 | D10 | **BDD**: acceptance criteria are written Given/When/Then and become test names and seams. Gherkin only where a repo already uses it (e.g. playwright-bdd) |
 | D11 | **YouTrack** stays an optional tracker adapter. Remove the greeting, the hard-coded mention, org-specific defaults and the global timezone setting; work-item dates are UTC-midnight epochs, "auto" = process timezone (surfaced to the agent), `youtrack.json` `timezone` remains an optional override; fix the date bug |
+| D13 | **Store root** (amends D6): in git repos workit state lives under `$(git rev-parse --git-common-dir)/workit/`, so it is shared by all worktrees and survives worktree removal and `git clean`; non-git dirs keep `<cwd>/.workit/` |
+| D14 | **Evidence** is CLI-observed (`observer: workit_cli`) plus optional host attestation. Gates bind to *named* configured checks; ad-hoc `workit check` runs satisfy only ad-hoc requirements |
+| D15 | **Autonomy grants** live only in user config (`~/.config/workit/workspaces.json`), never in repo files, and cannot be raised headless. They are the real ceiling even when the host allowlists `workit *` |
+| D16 | **Forge** is derived from the push remote host. Config disagreement returns `blocked` with an unblock hint |
+| D17 | **Parsers** are lenient on unknown keys and strict only on required keys (hook inputs and stored records), so a newer runtime never bricks an older reader |
 | D12 | **Skills 14 → 10**: `shape`, `implement`, `review`, `debug`, `ship`, `continue`, `bdd`, `test-audit`, `deslop`, `fanout`. Host copies and Cursor commands are generated at build time, not committed |
 
 ## Target architecture
