@@ -22,6 +22,8 @@ Legend: ⟂ = parallel with siblings (branch from `main`) · ↳ = stacked on th
 - **S7** ⟂ `chore/tooling-refresh`: `.oxlintrc.json` (+ type-aware), single path list, lefthook + commitlint, actionlint/zizmor, dedupe CI builds, pin semantic-release, npm provenance, release gated on CI; dependency bumps (zod 4.6, MCP SDK 1.32, oxlint/oxfmt/knip, OpenCode SDK); delete probe workflows.
 
 ## Phase 2 — Deterministic CLI
+
+Refined slicing (S8a, S9a–S9b, S10–S18, waves and acceptance) lives in [`design.md`](design.md) §5 and supersedes the bullets below where they differ.
 - **S8** `feature/core-hooks`: extract the shared host-hook protocol (session context, shell branch policy, subagent start/stop, unfinished-task offer) into `core/hooks`; Codex/Cursor/Pi/OpenCode map onto it; add branch-policy denial to Cursor and Pi.
 - **S9** ↳ `feature/cli-check`: `workit check -- <cmd>` records host-observed evidence; close gates accept only observed evidence or a waiver.
 - **S10** ⟂S9 `feature/cli-pr-status`: `workit pr status --json`, `ci wait|rerun` (GitHub + GitLab).
