@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -306,4 +306,102 @@ test("existing task families still route through the router (with --cwd)", () =>
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// Error paths per verb. Every registered verb needs an entry, so a new verb
+// cannot ship without proving its --json stdout is one JSON document.
+const JSON_ERROR_PATHS: Record<string, string[][]> = {
+  init: [[]],
+  upgrade: [["--bogus"]],
+  launch: [[], ["nohost"]],
+  doctor: [["--fix-lock", "--force"]],
+  uninstall: [[]],
+  cutover: [[], ["bogus"]],
+  task: [[], ["bogus"]],
+  policy: [["bogus"]],
+  evidence: [["bogus"]],
+  finding: [["bogus"]],
+  decision: [["bogus"]],
+  worker: [["bogus"]],
+  writer: [["bogus"]],
+  state: [["bogus"]],
+  action: [[], ["--help"], ["git.commit", "--payload"]],
+  check: [["test"]],
+  pr: [["status"]],
+  ci: [["wait"]],
+  git: [["push"]],
+  "verify-delivery": [["push"]],
+  stack: [["plan"]],
+  ledger: [["list"]],
+  handoff: [[], ["--task"]],
+};
+
+test("under --json every verb's stdout is exactly one JSON document, error paths included", () => {
+  expect(Object.keys(JSON_ERROR_PATHS).toSorted()).toEqual(
+    VERBS.map((entry) => entry.name).toSorted(),
+  );
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-router-json-"));
+  try {
+    const home = path.join(root, "home");
+    const cwd = path.join(root, "work");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(path.join(cwd, ".workit"), { recursive: true });
+    spawnSync("git", ["init", "-q"], { cwd });
+    // An unverifiable lock makes `doctor --fix-lock --force` (no --yes) refuse.
+    writeFileSync(
+      path.join(cwd, ".workit", "metadata.lock"),
+      JSON.stringify({ pid: 1, processStart: null, host: "elsewhere", nonce: "n" }),
+    );
+    const env = Object.fromEntries(
+      Object.entries({
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        WORKFLOW_TOOLKIT_CONFIG: path.join(home, ".config", "workit"),
+        WORKFLOW_TOOLKIT_STATE: path.join(home, ".local", "state", "workit"),
+      }).filter(([key]) => key !== "WORKFLOW_WORKSPACE_ROOT"),
+    );
+    for (const [verb, cases] of Object.entries(JSON_ERROR_PATHS))
+      for (const args of cases)
+        for (const argv of [
+          ["--json", verb, ...args],
+          [verb, ...args, "--json"],
+        ]) {
+          const label = `workit ${argv.join(" ")}`;
+          const result = spawnSync("bun", [mainEntry, ...argv], {
+            cwd,
+            env,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 30_000,
+          });
+          expect(result.status, `${label}\n${result.stderr}`).not.toBeNull();
+          const text = result.stdout.trim();
+          expect(text, label).not.toBe("");
+          let parsed: unknown;
+          expect(() => (parsed = JSON.parse(text)), `${label}\n${text}`).not.toThrow();
+          expect(typeof parsed, label).toBe("object");
+          // The refused forced lock clear is a precise envelope, not a fallback.
+          if (verb === "doctor")
+            expect(parsed, label).toMatchObject({
+              ok: false,
+              code: "blocked",
+              unblock: "workit doctor --fix-lock --force --yes",
+              data: { lock: { present: true } },
+            });
+        }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 180_000);
+
+test("under --json a verb's plain-text stdout becomes an envelope with its exit code", async () => {
+  const result = await run(["--json", "launch"]);
+  expect(result.code).toBe(2);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    ok: false,
+    code: "invalid_input",
+    error: expect.stringContaining("Usage: workit launch"),
+  });
+  expect(result.stderr).toContain("Usage: workit launch");
 });

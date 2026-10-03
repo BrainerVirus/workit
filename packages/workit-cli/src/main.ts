@@ -4,7 +4,7 @@
 // only `init`/`uninstall` ever load ink/react (through index.tsx).
 import path from "node:path";
 import pkg from "../package.json" with { type: "json" };
-import { emit, fail, ok, type Io } from "./output";
+import { emit, fail, ok, type EnvelopeCode, type Io } from "./output";
 import {
   TASK_FAMILY_NAMES,
   VERBS,
@@ -149,7 +149,79 @@ export async function main(
   }
   if (options.diagnostics) (await import("./diagnostics")).installDiagnostics(command);
   const verb = await entry.load();
-  return verb.run(args, io);
+  if (!io.json) return verb.run(args, io);
+  return runJsonPure(io, command, (pure) => verb.run(args, pure));
+}
+
+const CODE_FOR_EXIT: Record<number, Exclude<EnvelopeCode, "ok">> = {
+  1: "failed",
+  2: "invalid_input",
+  3: "blocked",
+  4: "busy",
+  5: "unavailable",
+};
+
+const parsesAsJson = (text: string): boolean => {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Under --json, stdout carries exactly one JSON document. Verbs that predate
+ * the envelope may still print plain text on some paths (usage lines,
+ * confirmations). Their stdout is buffered: a JSON document passes through
+ * unchanged, anything else moves to stderr and is replaced by an envelope
+ * that keeps the verb's exit code.
+ */
+async function runJsonPure(
+  io: Io,
+  command: string,
+  run: (io: Io) => Promise<number>,
+): Promise<number> {
+  let buffered = "";
+  const capture = (chunk: string | Uint8Array): void => {
+    buffered += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
+  };
+  // Shadow the stream's write with an own property, then restore exactly what
+  // was there (usually nothing: write lives on the prototype).
+  const stream = process.stdout;
+  const own = Object.getOwnPropertyDescriptor(stream, "write");
+  Object.defineProperty(stream, "write", {
+    configurable: true,
+    writable: true,
+    value: (chunk: string | Uint8Array, ...rest: unknown[]) => {
+      capture(chunk);
+      const done = rest.find((arg) => typeof arg === "function") as (() => void) | undefined;
+      done?.();
+      return true;
+    },
+  });
+  let code: number;
+  try {
+    code = await run({ ...io, stdout: capture });
+  } finally {
+    if (own) Object.defineProperty(stream, "write", own);
+    else delete (stream as { write?: unknown }).write;
+  }
+  const text = buffered.trim();
+  if (text && parsesAsJson(text)) {
+    io.stdout(buffered);
+    return code;
+  }
+  if (text) io.stderr(buffered.endsWith("\n") ? buffered : `${buffered}\n`);
+  const envelope =
+    code === 0
+      ? ok(text ? { text } : {})
+      : fail(
+          CODE_FOR_EXIT[code] ?? "failed",
+          text.split("\n")[0] || `${command} exited with ${code}`,
+        );
+  io.stdout(`${JSON.stringify(envelope)}\n`);
+  return code;
 }
 
 const withJsonFlag = (args: string[]): string[] => {

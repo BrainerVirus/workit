@@ -8,25 +8,31 @@ import {
   clearStaleMetadataLock,
   inspectMetadataLock,
 } from "@brainervirus/workit-core/src/core/store-lock";
-import type { Io } from "../output";
+import { emit, fail, type Io } from "../output";
 import { workspaceRootFor } from "../task";
 
 // Explicit escape hatch for a lock whose owner cannot be verified (no process
 // start time, a foreign pid namespace): show the holder, then require --yes or
 // an interactive confirmation.
+// Under --json the holder line and the prompt go to stderr; a refusal is a
+// `blocked` envelope on stdout.
 async function confirmForcedLockClear(root: string, args: string[], io: Io): Promise<boolean> {
   const lock = inspectMetadataLock(root);
   if (!lock.present) return true;
   const owner = lock.owner
     ? `pid ${lock.owner.pid} on ${lock.owner.host} (start ${lock.owner.processStart ?? "unknown"})`
     : "unreadable lock";
-  io.stdout(`fix-lock --force: ${lock.path} is held by ${owner}: ${lock.reason}\n`);
+  const say = io.json ? io.stderr : io.stdout;
+  say(`fix-lock --force: ${lock.path} is held by ${owner}: ${lock.reason}\n`);
   if (args.includes("--yes")) return true;
   if (process.stdin.isTTY !== true) {
-    io.stdout("fix-lock --force: refusing without --yes outside an interactive terminal\n");
+    if (!io.json) say("fix-lock --force: refusing without --yes outside an interactive terminal\n");
     return false;
   }
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const rl = createInterface({
+    input: process.stdin,
+    output: io.json ? process.stderr : process.stdout,
+  });
   try {
     const answer = await rl.question("Remove this lock even if its holder may be alive? [y/N] ");
     return /^y(es)?$/i.test(answer.trim());
@@ -41,7 +47,21 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const force = argv.includes("--force");
   let fixLock: ReturnType<typeof clearStaleMetadataLock> | null = null;
   if (argv.includes("--fix-lock")) {
-    if (force && !(await confirmForcedLockClear(root, argv, io))) return 1;
+    if (force && !(await confirmForcedLockClear(root, argv, io))) {
+      // Exit 3 (blocked) in both output modes; the JSON form names the fix.
+      if (!io.json) return 3;
+      return emit(
+        io,
+        fail(
+          "blocked",
+          "fix-lock --force: refusing without --yes outside an interactive terminal",
+          {
+            data: { lock: inspectMetadataLock(root) },
+            unblock: "workit doctor --fix-lock --force --yes",
+          },
+        ),
+      );
+    }
     fixLock = clearStaleMetadataLock(root, { force });
   }
   const report = runDoctor({ host: "cli", cwd: io.cwd, workspaceRoot: root });
