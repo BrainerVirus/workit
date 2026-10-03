@@ -3,10 +3,11 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { OPERATION_FAMILIES } from "@/packages/workit-core/src/core";
 import { codexCapabilities, detectCodexSurface } from "@/packages/workit-codex/hooks/workit-hook";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 
 const packageRoot = path.resolve(import.meta.dir, "../../packages/workit-codex");
 
-test("Codex plugin ships current manifest layout and fourteen synchronized skills", () => {
+test("Codex plugin ships the current manifest layout and the canonical method skills", () => {
   const manifest = JSON.parse(
     readFileSync(path.join(packageRoot, ".codex-plugin/plugin.json"), "utf8"),
   );
@@ -18,22 +19,9 @@ test("Codex plugin ships current manifest layout and fourteen synchronized skill
   // hooks.json bundle, so the manifest must not advertise a Hooks capability.
   expect(manifest.interface.capabilities).toEqual(["MCP", "Task continuity"]);
   expect(manifest.mcpServers).toBe("./.mcp.json");
-  expect(readdirSync(path.join(packageRoot, "skills")).toSorted()).toEqual([
-    "workit-babysit",
-    "workit-behavioral-tdd",
-    "workit-blast-radius",
-    "workit-challenge",
-    "workit-debug",
-    "workit-deslop",
-    "workit-diagram",
-    "workit-green-run",
-    "workit-handoff",
-    "workit-implement",
-    "workit-mockup",
-    "workit-plan",
-    "workit-review",
-    "workit-steer",
-  ]);
+  expect(readdirSync(path.join(packageRoot, "skills")).sort()).toEqual(
+    [...WORKIT_METHOD_SKILLS].sort(),
+  );
   expect(existsSync(path.join(packageRoot, "hooks/hooks.json"))).toBe(true);
   expect(existsSync(path.join(packageRoot, ".mcp.json"))).toBe(true);
   const hooks = JSON.parse(readFileSync(path.join(packageRoot, "hooks/hooks.json"), "utf8"));

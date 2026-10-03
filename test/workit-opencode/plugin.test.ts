@@ -2,6 +2,10 @@ import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { server as plugin } from "@/packages/workit-opencode/src/index";
+import {
+  WORKIT_METHOD_SKILLS,
+  WORKIT_SKILL_ALIASES,
+} from "@/packages/workit-core/src/core/skill-manifests";
 
 const packageSkills = path.resolve(import.meta.dir, "../../packages/workit-opencode/assets/skills");
 const families = [
@@ -40,38 +44,8 @@ test("config registers only the policy-selected method skills", async () => {
   const config: Record<string, any> = {};
   await hooks.config?.(config);
   expect(config.skills.paths).toEqual([packageSkills]);
-  expect(readdirSync(packageSkills).toSorted()).toEqual([
-    "workit-babysit",
-    "workit-behavioral-tdd",
-    "workit-blast-radius",
-    "workit-challenge",
-    "workit-debug",
-    "workit-deslop",
-    "workit-diagram",
-    "workit-green-run",
-    "workit-handoff",
-    "workit-implement",
-    "workit-mockup",
-    "workit-plan",
-    "workit-review",
-    "workit-steer",
-  ]);
-  expect(Object.keys(config.command).toSorted()).toEqual([
-    "wk-babysit",
-    "wk-blast-radius",
-    "wk-challenge",
-    "wk-debug",
-    "wk-deslop",
-    "wk-diagram",
-    "wk-green-run",
-    "wk-handoff",
-    "wk-implement",
-    "wk-mockup",
-    "wk-plan",
-    "wk-review",
-    "wk-steer",
-    "wk-tdd",
-  ]);
+  expect(readdirSync(packageSkills).sort()).toEqual([...WORKIT_METHOD_SKILLS].sort());
+  expect(Object.keys(config.command).sort()).toEqual(Object.keys(WORKIT_SKILL_ALIASES).sort());
   expect(config.command["wk-challenge"].description).toContain("workit-challenge");
   expect(config.command["wk-challenge"].template).toContain("$ARGUMENTS");
 });

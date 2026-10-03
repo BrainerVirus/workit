@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { configDir } from "./config";
 import { assetRoot } from "./package-root";
 
-export type TemplateName = "issue-update" | "greeting" | "headers";
+export type TemplateName = "issue-update" | "headers";
 
 const repoRoot = assetRoot();
 
@@ -20,28 +20,3 @@ export const readTemplate = (
     content: readFileSync(path.join(repoRoot, "templates", `${name}.md`), "utf8"),
   };
 };
-
-export const writeTemplate = (
-  name: TemplateName,
-  content: string,
-  confirmed: boolean,
-): { ok: true; path: string } | { ok: false; error: string } => {
-  if (!confirmed) return { ok: false, error: "confirmed: true required" };
-  const file = templatePath(name);
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, content, "utf8");
-  return { ok: true, path: file };
-};
-
-export const listTemplates = (): {
-  name: TemplateName;
-  source: "config" | "repo" | "missing";
-  path: string;
-}[] =>
-  (["issue-update", "greeting", "headers"] as TemplateName[]).map((name) => {
-    const cfg = templatePath(name);
-    const repoFile = path.join(repoRoot, "templates", `${name}.md`);
-    if (existsSync(cfg)) return { name, source: "config", path: cfg };
-    if (existsSync(repoFile)) return { name, source: "repo", path: repoFile };
-    return { name, source: "missing", path: cfg };
-  });

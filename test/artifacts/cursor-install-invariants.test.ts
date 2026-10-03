@@ -16,7 +16,6 @@ import os from "node:os";
 import path from "node:path";
 import { runDoctor } from "@/packages/workit-core/src/core/doctor";
 import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
-import { syncRuntime } from "@/packages/workit-core/src/core/sync-runtime";
 import {
   extractTarball,
   installPackedPackage,
@@ -69,7 +68,6 @@ const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =
 test(
   "Cursor build, package, and packed CLI doctor enforce exact canonical method skills and Workit identity",
   () => {
-    expect(WORKIT).toHaveLength(14);
     const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-invariants-"));
     try {
       const missingWorkitRepo = copyBuildFixture(path.join(fixture, "missing-workit"));
@@ -183,26 +181,39 @@ const syncEnv = (home: string, lockDir: string, repo: string): Record<string, st
     Object.entries(process.env).filter(([key]) => !key.startsWith("WORKFLOW_") && key !== "HOME"),
   ),
   HOME: home,
+  XDG_CONFIG_HOME: path.join(home, ".config"),
   WORKFLOW_TOOLKIT_DEV: repo,
-  WORKIT_SYNC_LOCK_DIR: lockDir,
+  XDG_RUNTIME_DIR: lockDir,
 });
 
 test(
-  "sync-runtime installs the canonical method skills and no legacy vendor tree",
-  async () => {
+  "sync-runtime installs the canonical method skills, compiles user rules, and no legacy vendor tree",
+  () => {
     if (!syncToolsAvailable) return;
     const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-sync-runtime-"));
     const home = path.join(fixture, "home");
     const lockDir = path.join(fixture, "lock");
     const plugin = path.join(home, ".cursor/plugins/local/workit");
     mkdirSync(plugin, { recursive: true });
+    mkdirSync(lockDir, { recursive: true });
+    const rule = path.join(home, ".config/workit/rules/beta");
+    mkdirSync(rule, { recursive: true });
+    writeFileSync(
+      path.join(rule, "rule.md"),
+      "---\nname: beta\ndescription: Beta rule\nplatforms: [cursor]\n---\n# Beta\n",
+    );
     try {
-      const result = await syncRuntime({
-        env: syncEnv(home, lockDir, REPO_ROOT),
-      });
-      expect(result.ok).toBe(true);
+      const result = spawnSync(
+        "bash",
+        [path.join(REPO_ROOT, "packages/workit-core/scripts/sync-runtime.sh")],
+        { env: syncEnv(home, lockDir, REPO_ROOT), encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
       expect(skillManifests(path.join(plugin, "skills"))).toEqual(WORKIT);
       expect(existsSync(path.join(plugin, "vendor"))).toBe(false);
+      expect(readFileSync(path.join(plugin, "rules/beta.mdc"), "utf8")).toContain(
+        "description: Beta rule",
+      );
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -9,7 +9,6 @@ import {
   OPERATION_SCHEMA_MAX_DEPTH,
   type OperationContext,
 } from "@/packages/workit-core/src/core";
-import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import extension, { persistUncertainCancel } from "@/packages/workit-pi/extensions/workit";
 import { nativeWorkerForEvidence } from "@/packages/workit-pi/src/worker";
 import { piCapabilities } from "@/packages/workit-pi/src/context";
@@ -107,14 +106,6 @@ const decisionInput = (root: string) => {
   };
 };
 
-const nodeExecutable = "node";
-
-const assertCurrentNode = () => {
-  const result = spawnSync(nodeExecutable, ["--version"], { encoding: "utf8" });
-  if (result.status !== 0) throw new Error(result.stderr || result.stdout);
-  expect(result.stdout.trim()).toBe(`v${SUPPORT_MATRIX.node.current}`);
-};
-
 test("clean Pi package declares stock discovery and the eight families plus external action", async () => {
   const manifest = JSON.parse(
     readFileSync(path.join(import.meta.dir, "../../packages/workit-pi/package.json"), "utf8"),
@@ -161,27 +152,6 @@ test("clean Pi package declares stock discovery and the eight families plus exte
     expect(depth(tool.parameters), tool.name).toBeLessThanOrEqual(OPERATION_SCHEMA_MAX_DEPTH);
   }
   expect(pi.commands.map((command) => command.name)).toContain("workit-worker");
-});
-
-test("Pi package ships the fourteen canonical method skills", () => {
-  expect(
-    readdirSync(path.join(import.meta.dir, "../../packages/workit-pi/skills")).toSorted(),
-  ).toEqual([
-    "workit-babysit",
-    "workit-behavioral-tdd",
-    "workit-blast-radius",
-    "workit-challenge",
-    "workit-debug",
-    "workit-deslop",
-    "workit-diagram",
-    "workit-green-run",
-    "workit-handoff",
-    "workit-implement",
-    "workit-mockup",
-    "workit-plan",
-    "workit-review",
-    "workit-steer",
-  ]);
 });
 
 test("Pi registers wk- slash aliases that expand the bundled skill commands", async () => {
@@ -961,164 +931,6 @@ test("Pi allows recognized raw branch and PR creation outside live work", async 
     ).toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("npm installs the packed package without workspace protocol dependencies", async () => {
-  const repoRoot = path.resolve(import.meta.dir, "../..");
-  const packageRoot = path.join(repoRoot, "packages/workit-pi");
-  const stage = mkdtempSync(path.join(tmpdir(), "workit-pi-install-"));
-  const packed = spawnSync(
-    "npm",
-    ["pack", "--json", "--workspace", packageRoot, "--pack-destination", stage],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout);
-  const filename = (JSON.parse(packed.stdout) as Array<{ filename: string }>)[0].filename;
-  const consumer = path.join(stage, "consumer");
-  mkdirSync(consumer);
-  const installed = spawnSync(
-    "npm",
-    [
-      "install",
-      "--prefix",
-      consumer,
-      "--legacy-peer-deps",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      path.join(stage, filename),
-    ],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  try {
-    expect(installed.status, installed.stderr || installed.stdout).toBe(0);
-    expect(
-      readFileSync(
-        path.join(consumer, "node_modules/@brainervirus/workit-pi/package.json"),
-        "utf8",
-      ),
-    ).toContain('"name": "@brainervirus/workit-pi"');
-  } finally {
-    rmSync(stage, { recursive: true, force: true });
-  }
-});
-
-test("stock Pi discovers the package manifest through its local package manager", async () => {
-  const repoRoot = path.resolve(import.meta.dir, "../..");
-  const packageRoot = path.join(repoRoot, "packages/workit-pi");
-  const stage = mkdtempSync(path.join(tmpdir(), "workit-pi-discovery-"));
-  const isolated = path.join(stage, "project");
-  const agentDir = path.join(stage, "agent");
-  mkdirSync(isolated);
-  mkdirSync(agentDir);
-  const piBin = path.join(
-    repoRoot,
-    "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
-  );
-  // Hermetic HOME: stock Pi auto-discovers user-level agent skills
-  // (~/.agents/skills), so ambient user skills would pollute the exact
-  // command count. The fake home keeps discovery limited to the package.
-  const home = path.join(stage, "home");
-  mkdirSync(home);
-  const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, HOME: home };
-  assertCurrentNode();
-  const packed = spawnSync(
-    "npm",
-    ["pack", "--json", "--workspace", packageRoot, "--pack-destination", stage],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout);
-  const filename = (JSON.parse(packed.stdout) as Array<{ filename: string }>)[0].filename;
-  const extracted = path.join(stage, "extract");
-  mkdirSync(extracted);
-  const unpacked = spawnSync("tar", ["-xzf", path.join(stage, filename), "-C", extracted], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  if (unpacked.status !== 0) throw new Error(unpacked.stderr || unpacked.stdout);
-  const installed = spawnSync(
-    nodeExecutable,
-    [piBin, "install", path.join(extracted, "package"), "-l", "--approve"],
-    {
-      cwd: isolated,
-      env,
-      encoding: "utf8",
-    },
-  );
-  if (installed.status !== 0) throw new Error(installed.stderr || installed.stdout);
-  const child = spawn(
-    nodeExecutable,
-    [piBin, "--mode", "rpc", "--no-session", "--approve", "--offline", "--no-context-files"],
-    {
-      cwd: isolated,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
-  let stdout = "";
-  let stderr = "";
-  const responses = new Map<string, any>();
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk;
-    for (;;) {
-      const end = stdout.indexOf("\n");
-      if (end < 0) break;
-      const line = stdout.slice(0, end).trim();
-      stdout = stdout.slice(end + 1);
-      if (!line) continue;
-      const message = JSON.parse(line);
-      if (message.type === "response" && typeof message.command === "string")
-        responses.set(message.command, message);
-    }
-  });
-  child.stderr.on("data", (chunk) => (stderr += chunk));
-  try {
-    child.stdin.write('{"id":"commands","type":"get_commands"}\n');
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Pi discovery timeout: ${stderr}`)), 10000);
-      const poll = () => {
-        if (responses.has("get_commands")) {
-          clearTimeout(timer);
-          resolve();
-        } else setTimeout(poll, 10);
-      };
-      poll();
-    });
-    expect(
-      (responses.get("get_commands").data.commands as Array<{ name: string }>)
-        .filter((command) => command.name.startsWith("skill:workit-"))
-        .map((command) => command.name)
-        .toSorted(),
-    ).toHaveLength(14);
-    expect(
-      (responses.get("get_commands").data.commands as Array<{ name: string }>).map(
-        (command) => command.name,
-      ),
-    ).toEqual(
-      expect.arrayContaining([
-        "wk-challenge",
-        "wk-babysit",
-        "wk-implement",
-        "wk-plan",
-        "wk-debug",
-        "wk-review",
-        "wk-handoff",
-        "wk-tdd",
-        "wk-blast-radius",
-        "wk-deslop",
-        "wk-diagram",
-        "wk-mockup",
-        "wk-green-run",
-        "wk-steer",
-      ]),
-    );
-    expect(stderr).toBe("");
-  } finally {
-    child.kill();
-    rmSync(stage, { recursive: true, force: true });
   }
 });
 

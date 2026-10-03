@@ -502,57 +502,6 @@ test(
   { timeout: 60_000 },
 );
 
-// The legacy CLI port must never perform a hosted create itself: it returns
-// the same needs_input shape as the headless `workit action` route.
-
-const cliPortPath = path.resolve(
-  import.meta.dir,
-  "..",
-  "..",
-  "packages",
-  "workit-core",
-  "src",
-  "core",
-  "ports",
-  "pr-create.ts",
-);
-
-const runCliPort = (target: string) =>
-  withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
-    const spawned = spawnSync(process.execPath, [cliPortPath], {
-      cwd: root,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        WORKFLOW_TOOLKIT_CONFIG: cfgDir,
-        PATH: stubPath(),
-        WF_PR_CONFIRMED: "true",
-        WF_PR_TITLE: "T",
-        WF_PR_TARGET: target,
-      },
-    });
-    return { status: spawned.status, stdout: (spawned.stdout ?? "").trim() };
-  });
-
-test(
-  "legacy CLI port returns needs_input for default and non-default targets",
-  () => {
-    setupRepoWithOrigin();
-    git(root, ["checkout", "-q", "-b", "feature/ca06"]);
-    writeConfig({ preset: "gitflow" }, "develop");
-    for (const target of ["develop", "main"]) {
-      const result = runCliPort(target);
-      expect(result.status).toBe(1);
-      const parsed = JSON.parse(result.stdout);
-      expect(parsed).toMatchObject({ ok: false, code: "needs_input" });
-      expect(parsed.details.operation).toBe("hosting.pull_request");
-      expect(parsed.details.guidance).toContain("workit action hosting.pull_request");
-    }
-    expect(existsSync(logFile)).toBe(false);
-  },
-  { timeout: 60_000 },
-);
-
 test(
   "B2: day-first date segments never derive a numeric issue id",
   () => {
@@ -775,32 +724,6 @@ test(
     expect(
       git(root, ["ls-remote", `file://${bareRemote}`, "refs/heads/feature/t2"]).stdout,
     ).toContain("feature/t2");
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "CLI port retains its pure body-builder mode",
-  () => {
-    const portPath = path.resolve(
-      import.meta.dir,
-      "..",
-      "..",
-      "packages",
-      "workit-core",
-      "src",
-      "core",
-      "ports",
-      "pr-create.ts",
-    );
-    const result = Bun.spawnSync(["bun", portPath, "--build-body"], {
-      cwd: root,
-      env: { ...process.env, BODY: "Ready" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout.toString())).toEqual({ body: "Ready" });
   },
   { timeout: 60_000 },
 );

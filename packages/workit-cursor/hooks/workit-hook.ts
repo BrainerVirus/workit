@@ -1,7 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import {
-  compactTaskContext,
   invariantBootstrap,
   TaskStore,
   WorkitCore,
@@ -396,17 +395,11 @@ export const handleCursorHook = (raw: unknown): Record<string, unknown> => {
       : unfinishedTaskOffer(root, actor, state.ok ? state.task.id : undefined);
     historyOfferSessions.add(actor);
     if (state.ok) {
-      const view = new WorkitCore(
+      const context = new WorkitCore(
         store,
         contextFor(root, actor, null, { sessionStart: true }),
-      ).task({
-        schemaVersion: 1,
-        action: "inspect",
-        taskId: state.task.id,
-        view: "full",
-      });
-      if (view.ok)
-        compact = `\n<workit-task-context>${compactTaskContext(view.data as any)}</workit-task-context>`;
+      ).compactContext(state.task.id);
+      if (context.ok) compact = `\n<workit-task-context>${context.data}</workit-task-context>`;
     }
     return {
       additional_context: `<workit-contract>\n${invariantBootstrap()}${compact}${offer ? `\n${offer}` : ""}\n</workit-contract>`,

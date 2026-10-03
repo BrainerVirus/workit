@@ -479,11 +479,27 @@ export const actionProposalQuestion = (
     : proposal;
 };
 
+export type WorkDateInfo = {
+  localDate: string;
+  timezone: string;
+  timezoneSource: "youtrack.json" | "process";
+};
+
 export type ResolvedExternalAction = {
   request: ExternalActionRequest;
   descriptorPayload: unknown;
   marker?: string;
+  /** Display-only YouTrack work-item date context. Deliberately outside
+   * descriptorPayload: the descriptor is the hashed approval binding and must
+   * not depend on the process timezone of whoever resolves it. */
+  workDate?: WorkDateInfo;
 };
+
+const workDateOf = (data: WorkDateInfo): WorkDateInfo => ({
+  localDate: data.localDate,
+  timezone: data.timezone,
+  timezoneSource: data.timezoneSource,
+});
 
 export type HostingReadEvidence = {
   outcome: "succeeded" | "unknown";
@@ -1707,6 +1723,7 @@ const resolveExternalActionAtRoot = (
           return success(null, null, {
             request,
             marker,
+            workDate: workDateOf(date.data),
             descriptorPayload: {
               ...request.payload,
               resolved: {
@@ -1750,6 +1767,7 @@ const resolveExternalActionAtRoot = (
         return success(null, null, {
           request,
           marker,
+          workDate: workDateOf(date.data),
           descriptorPayload: {
             ...request.payload,
             resolved: {

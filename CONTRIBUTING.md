@@ -33,7 +33,7 @@ message changes release behavior. Hooks are shared by every worktree of a clone.
 
 - Every change lives on a `feature/<slug>` branch (bugfixes: `bugfix/<slug>`) cut from `main`.
 - `main` is the trunk; open a PR to `main` when the work is ready for review.
-- The spec/plan contract is enforced for tracked work: `docs/<slug>/spec.md` declares the branch and `docs/<slug>/plan.md` links it. Run `workit_docs_validate` on the spec/plan pair before handoff.
+- The spec/plan contract is enforced for tracked work: `docs/<slug>/spec.md` declares the branch and `docs/<slug>/plan.md` links it.
 
 ## Review flow
 

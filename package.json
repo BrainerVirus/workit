@@ -1,6 +1,6 @@
 {
   "name": "workit",
-  "version": "2.1.0",
+  "version": "2.1.3",
   "private": true,
   "description": "Workit — workflow rails for agentic coding: one shared task and policy core with native OpenCode, Cursor, Codex, Pi, and CLI surfaces",
   "keywords": [
@@ -36,13 +36,14 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "doctor": "react-doctor packages/workit-cli/src -y --no-telemetry --blocking error",
-    "knip": "knip --no-progress",
+    "knip": "knip --no-progress --no-config-hints && knip --no-progress --production --files && bun scripts/check-reachability.ts",
     "hooks:install": "lefthook install",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "test": "bun test",
+    "test": "bun scripts/test.ts unit",
+    "test:packaging": "bun scripts/test.ts packaging",
     "typecheck": "tsc --noEmit",
-    "check": "bun run build && bun run lint && bun run format:check && bun test && tsc --noEmit"
+    "check": "bun run build && bun run lint && bun run format:check && bun run test && bun run test:packaging && tsc --noEmit"
   },
   "devDependencies": {
     "@commitlint/cli": "21.2.3",
@@ -60,6 +61,7 @@
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "conventional-changelog-conventionalcommits": "9.3.1",
+    "ink": "7.1.1",
     "knip": "6.39.0",
     "lefthook": "2.1.16",
     "oxfmt": "0.71.0",

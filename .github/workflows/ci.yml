@@ -103,7 +103,8 @@ jobs:
           done
           exit "$failed"
 
-  # Every test directory on Linux, so a new suite cannot silently escape CI.
+  # Every test directory on Linux (unit + packaging tiers), so a new suite
+  # cannot silently escape CI.
   test:
     name: test (ubuntu-latest)
     runs-on: ubuntu-latest
@@ -141,8 +142,13 @@ jobs:
       - name: Build packages
         run: bun run build
 
-      - name: Test (every test directory)
-        run: bun test
+      # Both tiers together cover every test directory (scripts/test.ts):
+      # the unit tier excludes exactly the packaging suites.
+      - name: Test (unit tier)
+        run: bun run test
+
+      - name: Test (packaging tier)
+        run: bun run test:packaging
 
       # AR-01/CA-33: the same pack-only release-candidate gate release.yml
       # runs before publishing, so release breakage shows up pre-merge.

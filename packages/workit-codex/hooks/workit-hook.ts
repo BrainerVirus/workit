@@ -1,12 +1,12 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import {
-  compactTaskContext,
   invariantBootstrap,
   shellBranchPolicyViolation,
   TaskStore,
   WorkitCore,
   type Capability,
+  type OperationContext,
 } from "@brainervirus/workit-core/src/core";
 
 export type CodexHost = "codex_cli" | "codex_desktop";
@@ -251,7 +251,7 @@ export const parseCodexHookInput = (value: unknown): HookParseResult => {
       session_id: value.session_id,
       model: value.model,
       permission_mode: value.permission_mode as PermissionMode,
-      transcript_path: value.transcript_path,
+      transcript_path: value.transcript_path as string | null,
       cwd: realpathSync(value.cwd),
       ...(event === "SessionStart" ? { source: value.source as SessionSource } : {}),
       ...(nonEmpty(value.turn_id) ? { turn_id: value.turn_id } : {}),
@@ -320,7 +320,7 @@ const unfinishedTaskOffer = (input: CodexHookInput, excludedTaskId?: string): st
               worker.data.session.handle === input.session_id,
           ),
       )
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 3);
     if (tasks.length === 0) return null;
     const quote = (value: string) => JSON.stringify(value.replace(/[<>]/g, " ").slice(0, 120));
@@ -352,14 +352,8 @@ const sessionContext = (input: CodexHookInput): string => {
         capabilities: codexCapabilities(detectCodexSurface(process.env), { sessionStart: true }),
         constraints: [],
         now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-      }).task({
-        schemaVersion: 1,
-        action: "inspect",
-        taskId: state.task.id,
-        view: "full",
-      });
-      if (view.ok)
-        compact = `\n<workit-task-context>${compactTaskContext(view.data as any)}</workit-task-context>`;
+      } as OperationContext).compactContext(state.task.id);
+      if (view.ok) compact = `\n<workit-task-context>${view.data}</workit-task-context>`;
     }
   } catch {
     compact = "\n[workit diagnostic: task state unavailable]";

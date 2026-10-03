@@ -160,12 +160,7 @@ const nativeAuthority = (
   },
 });
 
-export const nativeExternalActionRunner = (
-  root: string,
-  actor: string,
-  core: WorkitCore,
-  step?: string,
-) =>
+const nativeExternalActionRunner = (root: string, actor: string, core: WorkitCore, step?: string) =>
   createAuthorizedExternalActionRunner(
     core,
     (operation) => {

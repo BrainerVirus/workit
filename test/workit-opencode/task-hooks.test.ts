@@ -1202,6 +1202,19 @@ test("worker context names the worker identity for self-references", async () =>
     expect(context.session).toEqual({ kind: "host", host: "opencode", handle: "child" });
     expect(context.taskId).toBe(active.task.id);
     expect(workerContextFor(root, "unknown", "coord", directChildren)).toBeNull();
+    // The lookup goes through the task index: the worker session is indexed,
+    // and a missing index is rebuilt with it.
+    const indexed = new TaskStore(root).listTaskIndex();
+    if (!indexed.ok) throw new Error(indexed.error);
+    expect(indexed.data[0]!.sessions).toContainEqual({
+      host: "opencode",
+      handle: "child",
+      workerId: first.data.id,
+    });
+    rmSync(join(root, ".workit", "index.json"));
+    expect(JSON.parse(workerContextFor(root, "child", "coord", directChildren)!).workerId).toBe(
+      first.data.id,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

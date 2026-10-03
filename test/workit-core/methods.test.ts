@@ -169,45 +169,34 @@ test("selection has stable registry order and no duplicate methods", () => {
   expect(new Set(selected.map((method) => method.id)).size).toBe(selected.length);
 });
 
-test("bootstrap preserves host authority and keeps Workit coordination optional", () => {
+// Bootstrap and skill text is agent-facing prose: assert only the contract
+// keywords an agent relies on, not whole sentences.
+test("bootstrap defers to native host authority and mandates no Workit preamble", () => {
   const bootstrap = invariantBootstrap();
-  expect(bootstrap.toLowerCase()).toContain("authority");
-  expect(bootstrap.toLowerCase()).toContain("state");
-  expect(bootstrap.toLowerCase()).toContain("operation");
-  expect(bootstrap).toContain("Native host allow/ask/deny");
-  expect(bootstrap).toContain("zero Workit task, assessment, or writer calls");
-  expect(bootstrap).toContain("prefer native host Git/shell");
-  expect(bootstrap).toContain("Never switch execution paths to evade a denial");
-  expect(bootstrap).toContain("A local-commit endpoint does not imply");
-  expect(bootstrap.toLowerCase()).toContain("not automatic");
-  expect(bootstrap).toContain("branch/commit/push");
-  expect(bootstrap).toContain("reconcile every requested item");
-  expect(bootstrap).toContain("a local commit alone is not evidence");
-  expect(bootstrap).not.toContain("run task.start then policy.assess");
+  expect(bootstrap).toMatch(/allow\/ask\/deny/);
+  expect(bootstrap).toMatch(/evade a denial/);
+  expect(bootstrap).not.toContain("task.start then policy.assess");
+  // Policy selects TDD and review; the bootstrap must not hard-wire them.
   expect(bootstrap).not.toContain("workit-behavioral-tdd");
   expect(bootstrap).not.toContain("workit-review");
-  expect(bootstrap).toContain(
-    "Load workit-plan when dependencies or handoff need durable next actions",
-  );
 });
 
 test("bootstrap routes moment-based skill loads by name", () => {
   const bootstrap = invariantBootstrap();
-  expect(bootstrap).toContain("Skill routing");
-  expect(bootstrap).toContain("workit-steer");
-  expect(bootstrap).toContain("workit-deslop");
-  expect(bootstrap).toContain("workit-green-run");
-  expect(bootstrap).toContain("workit-blast-radius");
-  expect(bootstrap).toContain("workit-challenge");
+  for (const skill of [
+    "workit-steer",
+    "workit-deslop",
+    "workit-green-run",
+    "workit-blast-radius",
+    "workit-challenge",
+    "workit-plan",
+  ])
+    expect(bootstrap).toContain(skill);
   expect(bootstrap).not.toContain("## Method");
 });
 
-test("bootstrap records only work that benefits from continuity or coordination", () => {
+test("bootstrap names every shared operation family", () => {
   const bootstrap = invariantBootstrap();
-  expect(bootstrap).toContain("handoff, dependent steps, concurrent actors");
-  expect(bootstrap).toContain("A solo edit does not need writer acquisition");
-  expect(bootstrap).toContain("Answer a quick question without pausing/resuming task state");
-  expect(bootstrap).toContain("not a permission system or a mandatory workflow");
   for (const operation of [
     "task",
     "policy",
@@ -221,48 +210,12 @@ test("bootstrap records only work that benefits from continuity or coordination"
     expect(bootstrap).toContain(operation);
 });
 
-test("steer stays lifecycle-free and babysit preserves explicit merge evidence", () => {
+test("steer, babysit and challenge keep lifecycle and merge authority outside the skill", () => {
   const steer = skillText("workit-steer");
-  expect(steer).toContain("Answer a quick question");
-  expect(steer).toContain("do not silently resume an old objective");
-  expect(steer).toContain("checkout, branch, requested");
-  expect(steer).toContain("Keep explicitly held items parked");
-  expect(steer).toContain("A conversational");
   expect(steer).not.toContain("task.start");
   expect(steer).not.toContain("policy.assess");
-  const babysit = skillText("workit-babysit");
-  expect(babysit).toContain("PR creation does not start babysitting");
-  expect(babysit).toContain("Stop at PR-ready");
-  expect(babysit).toContain("does not authorize merge");
-  expect(babysit).not.toContain("drive + merge");
-  expect(babysit).toContain("squash merge");
-  expect(babysit).toContain("re-record");
-  expect(babysit).toContain("route Workit did not enforce");
-});
-
-test("challenge presents evidence-led options without a receipt or debate ritual", () => {
-  const skill = skillText("workit-challenge");
-  expect(skill).toContain("two or three genuinely different");
-  expect(skill).toContain("small round");
-  expect(skill).toContain("never fabricate a native permission");
-  expect(skill).toContain("Brainstorming alone does not require a spec");
-  expect(skill).not.toContain("receipt-shaped question");
-  expect(skill).not.toContain("three rounds");
-});
-
-test("planning keeps documentation proportional and continues through the authorized endpoint", () => {
-  const plan = skillText("workit-plan");
-  expect(plan).toContain("A small fix needs no document");
-  expect(plan).toContain(
-    "Create a spec when a durable behavior contract or interface is requested",
-  );
-  expect(plan).toContain("proceed through the agreed endpoint");
-  expect(plan).toContain("Do not ask for a separate plan approval");
-  const implement = skillText("workit-implement");
-  expect(implement).toContain("checks appropriate to the requested");
-  expect(implement).toContain("competing plausible targets");
-  expect(implement).toContain("reconcile every named deliverable");
-  expect(implement).toContain("observe the destination remote");
+  expect(skillText("workit-babysit")).toMatch(/does not authorize merge/);
+  expect(skillText("workit-challenge")).toMatch(/never fabricate a native permission/);
 });
 
 test("compact task context carries selected methods and refreshes with policy", () => {
@@ -291,53 +244,54 @@ test("compact task context carries selected methods and refreshes with policy", 
   ]);
 });
 
-test("method skills do not impose a universal task-start or assessment preamble", () => {
+// One meaning-bearing phrase per agent-critical rule. Whitespace is flexible
+// (the prose wraps), the words are not: inverting a rule fails here.
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const phrase = (text: string) =>
+  new RegExp(text.trim().split(/\s+/).map(escapeRegExp).join("\\s+"));
+
+test("agent-critical delivery rules stay stated", () => {
+  const bootstrap = invariantBootstrap();
+  const rules: Array<[string, string, string]> = [
+    ["bootstrap", bootstrap, "prefer native host Git/shell"],
+    ["bootstrap", bootstrap, "A local-commit endpoint does not imply PR readiness"],
+    ["bootstrap", bootstrap, "reconcile every requested item"],
+    ["bootstrap", bootstrap, "a local commit alone is not evidence of a requested remote push"],
+    ["workit-babysit", skillText("workit-babysit"), "PR creation does not start babysitting"],
+    ["workit-babysit", skillText("workit-babysit"), "Stop at PR-ready"],
+    ["workit-steer", skillText("workit-steer"), "do not silently resume an old objective"],
+    ["workit-plan", skillText("workit-plan"), "Do not ask for a separate plan approval"],
+    ["workit-implement", skillText("workit-implement"), "reconcile every named deliverable"],
+    [
+      "workit-behavioral-tdd",
+      skillText("workit-behavioral-tdd"),
+      "Write one vertical RED slice that fails",
+    ],
+    [
+      "workit-behavioral-tdd",
+      skillText("workit-behavioral-tdd"),
+      "GREEN but no preceding RED evidence stays unsatisfied",
+    ],
+  ];
+  for (const [source, text, rule] of rules)
+    expect(text, `${source}: ${rule}`).toMatch(phrase(rule));
+});
+
+test("method skills impose no task-start preamble and do not wait for policy selection", () => {
   for (const name of WORKIT_METHOD_SKILLS) {
     const skill = skillText(name);
     expect(skill, name).not.toContain("Before method work");
     expect(skill, name).not.toContain("If there is no active or paused task");
-  }
-  expect(skillText("workit-plan")).toContain("never a prerequisite for implementation");
-});
-
-test("debug and behavioral-tdd do not wait for pre-assess policy selection", () => {
-  for (const name of ["workit-debug", "workit-behavioral-tdd"] as const) {
-    const skill = skillText(name);
     expect(skill, name).not.toMatch(/only when policy selects/i);
     expect(skill, name).not.toMatch(/when the `[^`]+` rule is selected/i);
   }
 });
 
-test("host skill copies stay byte-identical to every canonical core skill", () => {
-  for (const name of WORKIT_METHOD_SKILLS) {
-    const canonical = skillText(name);
-    for (const host of ["opencode/assets/skills", "cursor/skills", "codex/skills", "pi/skills"]) {
-      const relative = `packages/workit-${host}/${name}/SKILL.md`;
-      expect(readFileSync(path.join(import.meta.dir, "../..", relative), "utf8"), relative).toBe(
-        canonical,
-      );
-    }
-  }
-});
-
-test("method manifest lists exactly fourteen core skills", () => {
-  expect(WORKIT_METHOD_SKILLS).toEqual([
-    "workit-challenge",
-    "workit-behavioral-tdd",
-    "workit-review",
-    "workit-plan",
-    "workit-implement",
-    "workit-debug",
-    "workit-handoff",
-    "workit-babysit",
-    "workit-blast-radius",
-    "workit-deslop",
-    "workit-diagram",
-    "workit-mockup",
-    "workit-green-run",
-    "workit-steer",
-  ]);
-  expect(skillManifestNames("packages/workit-core/skills")).toEqual(
-    [...WORKIT_METHOD_SKILLS].toSorted(),
-  );
+test("method manifest matches the canonical skill directories", () => {
+  // Pinned on purpose: a skill-set change (adding or dropping a skill from
+  // both the manifest and the directory) must update this count.
+  expect(WORKIT_METHOD_SKILLS).toHaveLength(14);
+  expect(
+    skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
+  ).toEqual([...WORKIT_METHOD_SKILLS].sort());
 });

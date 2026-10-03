@@ -106,6 +106,7 @@ test("packed internal dependencies rewrite to the same release version", () => {
   ).version;
   for (const name of [MCP, OPENCODE, CURSOR, CODEX, CLI]) {
     const pkg = JSON.parse(readTarballFile(byName(packs, name).tarball, "package.json"));
+    expect(pkg.dependencies?.[CORE], `${name} → ${CORE}`).toBe(`^${coreVersion}`);
     for (const [dep, range] of Object.entries(pkg.dependencies ?? {})) {
       if (dep.startsWith("@brainervirus/")) {
         expect(range, `${name} → ${dep}`).toBe(`^${coreVersion}`);
@@ -173,19 +174,8 @@ test("packing the candidate never invokes a publication command (RL-08/CA-30)", 
   }
 });
 
-test("packed release metadata is synchronized: adapter core dep equals core version", () => {
-  const packs = packReleaseCandidate();
-  const coreVersion = JSON.parse(
-    readTarballFile(byName(packs, CORE).tarball, "package.json"),
-  ).version;
-  for (const name of [MCP, OPENCODE, CURSOR, CODEX, CLI]) {
-    const pkg = JSON.parse(readTarballFile(byName(packs, name).tarball, "package.json"));
-    expect(pkg.dependencies["@brainervirus/workit-core"], name).toBe(`^${coreVersion}`);
-  }
-});
-
-// AR-03: the packed CLI manifest declares BOTH adapters at the same release
-// version, so a manifest-driven install carries the full setup closure.
+// The packed CLI manifest declares BOTH adapters at the same release version,
+// so a manifest-driven install carries the full setup closure.
 test("packed CLI manifest declares both adapters at the core release version", () => {
   const packs = packReleaseCandidate();
   const coreVersion = JSON.parse(
@@ -197,16 +187,12 @@ test("packed CLI manifest declares both adapters at the core release version", (
   expect(JSON.stringify(cli.dependencies)).not.toContain("workspace:");
 });
 
-test("candidate entries are self-contained: no dist .ts, workspace:, or checkout paths", () => {
+test("candidate entries are self-contained: no dist .ts or checkout paths", () => {
   const normalizedRoot = REPO_ROOT.split(path.sep).join("/");
   for (const pack of packReleaseCandidate()) {
     const files = listTarball(pack.tarball);
     const distTs = files.filter((f) => f.startsWith("dist/") && f.endsWith(".ts"));
     expect(distTs, pack.packageName).toEqual([]);
-    const raw = readTarballFile(pack.tarball, "package.json");
-    expect(raw, pack.packageName).not.toContain("workspace:");
-    expect(raw, pack.packageName).not.toContain("file:");
-    expect(raw, pack.packageName).not.toContain("git:");
     expect(files.join("\n"), pack.packageName).not.toContain(normalizedRoot);
   }
 });

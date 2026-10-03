@@ -14,7 +14,6 @@ import type { ToolkitConfig } from "@/packages/workit-core/src/core/config";
 const baseConfig = (over: Partial<ToolkitConfig> = {}): ToolkitConfig => ({
   locale: "en",
   localeOptions: ["en"],
-  timezone: "UTC",
   branchPolicy: { preset: "gitflow", allowed: [], protected: [] },
   commitPolicy: { preset: "conventional" },
   ...over,

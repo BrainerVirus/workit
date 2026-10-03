@@ -19,7 +19,7 @@ test("root package exposes pinned Oxc lint and format checks", () => {
   expect(oxlintrc.options?.denyWarnings).toBe(true);
   expect(oxlintrc.options?.typeAware).toBe(true);
   expect(pkg.scripts.check).toBe(
-    "bun run build && bun run lint && bun run format:check && bun test && tsc --noEmit",
+    "bun run build && bun run lint && bun run format:check && bun run test && bun run test:packaging && tsc --noEmit",
   );
 });
 

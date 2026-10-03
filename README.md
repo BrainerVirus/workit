@@ -50,8 +50,34 @@ or read separate VCS token files. YouTrack retains its permanent token. Existing
 VCS token files and templates stay untouched. Project setup defaults to No:
 press `n` to skip adding files when configuring from a parent folder containing
 multiple repositories. Press `y` only to add hygiene files and gitignore entries
-to the displayed directory. Locale and timezone keep their existing selections
-until changed. `workit doctor` checks the configured installation.
+to the displayed directory. Locale keeps its existing selection until changed.
+`workit doctor` checks the configured installation.
+
+YouTrack is optional and everything organization-specific comes from
+`youtrack.json`; there are no built-in hosts, issues or wording:
+
+- `baseUrl` is required. Without it the token-create link is unavailable and
+  the error names the config file.
+- `meetingIssue` / `meetingIssues` choose the meeting issue(s); meetings mode
+  asks for one when none is configured. Meeting time uses each entry's
+  `workItemText`, else a global `meetingWorkItemText`, else `Meetings`.
+- Work-item dates are a calendar day sent as that day's UTC midnight. "auto"
+  means today in the process timezone (honouring `TZ`); an IANA `timezone` in
+  `youtrack.json` overrides it. YouTrack context reports the effective zone as
+  `workTimezone: { timezone, source }` (`source` is `youtrack.json` or
+  `process`). Resolved `youtrack.update` / `youtrack.meeting` /
+  `youtrack.time` actions (and `workit action --preview`) report
+  `workDate: { localDate, timezone, timezoneSource }` beside the approval
+  descriptor, never inside it, so an approval matches in any process
+  timezone. An explicit epoch `dateMs` is labelled with its UTC day.
+- Workit adds no greeting or `@mention` to comments. The text comes from the
+  editable `issue-update` template (`templates/issue-update.md` in the config
+  directory overrides the bundled neutral one); placeholders Workit does not
+  fill, such as a legacy `{{greetingSection}}`, render empty.
+
+Older configs load unchanged: a `timezone` in the global `config.json`, and
+`defaultMention`, `greetings` or `greetingCutoff` in `youtrack.json`, are
+ignored.
 
 `workit cutover` is for migrating legacy installations.
 

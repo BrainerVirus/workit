@@ -124,11 +124,15 @@ fi
 # Canonical user rules -> Cursor .mdc (compiled by the shared core)
 CONFIG_RULES_DIR="$(resolve_config_dir)/rules"
 if [ -d "$CONFIG_RULES_DIR" ]; then
-  "$BUN_BIN" -e "
-    import('${SHARE}/packages/workit-core/src/core/rules.ts').then(async ({ writeCompiledCursorRules }) => {
-      writeCompiledCursorRules('${PLUGIN_DIR}/rules');
-    });
-  " >/dev/null 2>&1 || true
+  # rules.ts is loaded only here (scripts/check-reachability.ts allowlists it):
+  # a failure must surface, never leave the Cursor rules silently stale.
+  if ! "$BUN_BIN" -e "
+    const { writeCompiledCursorRules } = await import('${SHARE}/packages/workit-core/src/core/rules.ts');
+    writeCompiledCursorRules('${PLUGIN_DIR}/rules');
+  " >/dev/null; then
+    echo "FATAL: Cursor rule compilation failed: $CONFIG_RULES_DIR -> $PLUGIN_DIR/rules" >&2
+    exit 1
+  fi
 fi
 printf '%s\n' "$SHARE/packages/workit-core" >"$PLUGIN_DIR/.workit-root"
 

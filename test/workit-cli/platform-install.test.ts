@@ -36,7 +36,6 @@ const clean = (dir: string) => rmSync(dir, { recursive: true, force: true });
 const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   platforms: ["opencode"],
   locale: "en",
-  timezone: "UTC",
   branchPreset: "gitflow",
   branchAllowed: "feature/*, bugfix/*",
   branchProtected: "main, develop",
@@ -433,7 +432,7 @@ test("file-vs-ignore: existing files merged/skipped, new files created (WZ-05/CA
       JSON.stringify({
         baseUrl: "https://org.youtrack.cloud",
         meetingIssue: "ORG-1",
-        greetingCutoff: "11:00",
+        customKey: "kept",
       }),
     );
     writeFileSync(ytToken, "perm_supersecret\n", { mode: 0o600 });
@@ -449,7 +448,7 @@ test("file-vs-ignore: existing files merged/skipped, new files created (WZ-05/CA
     expect(statusOf(result, ytJson)).toBe("Configured");
     const merged = JSON.parse(readFileSync(ytJson, "utf8"));
     expect(merged.meetingIssue).toBe("ORG-1");
-    expect(merged.greetingCutoff).toBe("11:00");
+    expect(merged.customKey).toBe("kept");
     expect(merged.baseUrl).toBe("https://new.example.com");
 
     // existing token byte-for-byte preserved and reported Skipped
