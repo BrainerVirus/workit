@@ -3,8 +3,9 @@
 // nothing but this file and the router, and no verb pays for ink/react.
 //
 // The S9b–S13 verbs are pre-registered against stub modules that answer
-// `not_implemented`. Each later slice replaces only its own verbs/<verb>.ts;
-// this table does not change.
+// `not_implemented`, and `planned` keeps them out of `workit help`. A later
+// slice replaces its own verbs/<verb>.ts and deletes only its entry's
+// `planned` line here.
 import type { Verb } from "../output";
 
 export type VerbGroup = "setup" | "task" | "delivery";
@@ -14,6 +15,8 @@ export type VerbEntry = {
   group: VerbGroup;
   usage: string;
   summary: string;
+  /** The slice that implements this verb; set while it is a stub. */
+  planned?: string;
   load: () => Promise<Verb>;
 };
 
@@ -94,6 +97,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage: "workit check <name> | workit check [--name <n>] -- <cmd…>",
     summary: "Run a configured or ad-hoc check and record CLI-observed evidence",
+    planned: "S9b",
     load: () => import("./check"),
   },
   {
@@ -101,6 +105,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage: "workit pr status|create|merge [--pr <n>] [--json]",
     summary: "Read PR/MR state (checks, threads, behind-base, next) or create/merge it",
+    planned: "S10/S11",
     load: () => import("./pr"),
   },
   {
@@ -108,6 +113,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage: "workit ci wait|rerun [--pr <n>] [--json]",
     summary: "Wait for CI on the current head or rerun failed jobs once",
+    planned: "S10",
     load: () => import("./ci"),
   },
   {
@@ -115,6 +121,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage: "workit git branch|commit|push ...",
     summary: "Policy-checked branch, commit and push",
+    planned: "S11",
     load: () => import("./git"),
   },
   {
@@ -122,6 +129,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage: "workit verify-delivery push|pr|merge|release ...",
     summary: "Confirm a push, PR head, merge or release landed",
+    planned: "S11",
     load: () => import("./verify-delivery"),
   },
   {
@@ -129,6 +137,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage: "workit stack plan|sync|land [--json]",
     summary: "Plan, restack and land a stack of PRs",
+    planned: "S12",
     load: () => import("./stack"),
   },
   {
@@ -136,13 +145,14 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage: "workit ledger decision|ruling|verdict|list|check ...",
     summary: "Record and query decisions, rulings and verdicts",
+    planned: "S13",
     load: () => import("./ledger"),
   },
   {
     name: "handoff",
     group: "delivery",
-    usage: "workit handoff [--json] | workit handoff --task <id>",
-    summary: "Resume brief for this branch (--task <id>: export task state)",
+    usage: "workit handoff --task <id>",
+    summary: "Export task state and compact destination context",
     load: () => import("./handoff"),
   },
 ];

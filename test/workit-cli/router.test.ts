@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { OPERATION_FAMILIES } from "@/packages/workit-core/src/core/task-contract";
 import { main, parseGlobals } from "@/packages/workit-cli/src/main";
-import type { Io } from "@/packages/workit-cli/src/output";
+import { emit, fail, type EnvelopeCode, type Io } from "@/packages/workit-cli/src/output";
 import { TASK_FAMILY_NAMES, VERBS } from "@/packages/workit-cli/src/verbs/registry";
 
 // S9a router (design §2.0 / §5): the verb table, the shared envelope and exit
@@ -119,7 +119,8 @@ test("given workit --help, then it lists every registered verb", () => {
   const help = spawnSync("bun", [mainEntry, "--help"], { cwd: repoRoot, encoding: "utf8" });
   expect(help.status, help.stderr).toBe(0);
   for (const entry of VERBS) {
-    if ((TASK_FAMILY_NAMES as readonly string[]).includes(entry.name))
+    if (entry.planned) expect(help.stdout).not.toContain(`workit ${entry.name} `);
+    else if ((TASK_FAMILY_NAMES as readonly string[]).includes(entry.name))
       expect(help.stdout).toContain(`<family>: ${TASK_FAMILY_NAMES.join(", ")}`);
     else expect(help.stdout).toContain(`  ${entry.usage}\n      ${entry.summary}\n`);
   }
@@ -141,12 +142,14 @@ test("help, version and per-verb usage answer through the envelope", async () =>
   const listed = JSON.parse(help.stdout);
   expect(listed.ok).toBe(true);
   expect(listed.data.verbs.map((verb: { name: string }) => verb.name)).toEqual(
-    VERBS.map((entry) => entry.name),
+    VERBS.filter((entry) => !entry.planned).map((entry) => entry.name),
   );
 
+  // A planned verb is not advertised but still explains itself on request.
   const usage = await run(["help", "pr"]);
   expect(usage.code).toBe(0);
   expect(usage.stdout).toContain("usage: workit pr status|create|merge");
+  expect(usage.stdout).toContain("(coming in S10/S11)");
 
   expect((await run([])).stdout).toContain("Usage: workit <command>");
 });
@@ -162,6 +165,7 @@ test("planned S9b–S13 verbs answer not_implemented with exit 2", async () => {
     ["ledger", "S13"],
     ["handoff", "S13"],
   ] as const) {
+    if (verb !== "handoff") expect(VERBS.find((entry) => entry.name === verb)?.planned).toBe(slice);
     const result = await run([verb, "status", "--json"]);
     expect(result.code, verb).toBe(2);
     expect(JSON.parse(result.stdout)).toEqual({
@@ -189,6 +193,66 @@ test("unknown commands and bad global flags are usage errors with an unblock hin
   const human = await run(["frobnicate"]);
   expect(human.stderr).toBe('workit: unknown command "frobnicate"\n  unblock: workit help\n');
   expect((await run(["check", "--cwd"])).code).toBe(2);
+});
+
+test("global --json works before and after the command", async () => {
+  for (const argv of [
+    ["--json", "--version"],
+    ["--version", "--json"],
+  ]) {
+    const result = await run(argv);
+    expect(result.code, argv.join(" ")).toBe(0);
+    expect(JSON.parse(result.stdout).data.version).toBeString();
+  }
+  for (const argv of [["--json", "help"], ["help", "--json"], ["--json"]]) {
+    const result = await run(argv);
+    expect(result.code, argv.join(" ")).toBe(0);
+    expect(JSON.parse(result.stdout).data.verbs.length).toBeGreaterThan(0);
+  }
+  for (const argv of [
+    ["--json", "stack", "plan"],
+    ["stack", "plan", "--json"],
+    ["stack", "--json", "plan"],
+  ]) {
+    const result = await run(argv);
+    expect(result.code, argv.join(" ")).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "not_implemented",
+      data: { verb: "stack", subcommand: "plan" },
+    });
+  }
+  // Existing verbs that parse --json themselves get it from either position.
+  const doctor = spawnSync("bun", [mainEntry, "--json", "--cwd", repoRoot, "doctor"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  expect(() => JSON.parse(doctor.stdout)).not.toThrow();
+  expect(parseGlobals(["--json", "--cwd", "/x", "doctor"])).toEqual({
+    json: true,
+    cwd: "/x",
+    rest: ["doctor"],
+  });
+});
+
+test("envelope codes map to the shared exit codes", () => {
+  const io: Io = { json: true, cwd: ".", env: {}, stdout: () => {}, stderr: () => {} };
+  const expected: Array<[Exclude<EnvelopeCode, "ok">, number]> = [
+    ["failed", 1],
+    ["not_found", 1],
+    ["invalid_input", 2],
+    ["not_implemented", 2],
+    ["blocked", 3],
+    ["busy", 4],
+    ["pending", 4],
+    ["unavailable", 5],
+  ];
+  for (const [code, exit] of expected) expect(emit(io, fail(code, code)), code).toBe(exit);
+  let stderr = "";
+  const human: Io = { ...io, json: false, stderr: (text) => void (stderr += text) };
+  expect(
+    emit(human, fail("blocked", "grant_required: merge", { unblock: "workit grant set w merge" })),
+  ).toBe(3);
+  expect(stderr).toBe("workit: grant_required: merge\n  unblock: workit grant set w merge\n");
 });
 
 test("global flags: --json is seen anywhere, --cwd is consumed, -- ends parsing", () => {
@@ -222,6 +286,23 @@ test("existing task families still route through the router (with --cwd)", () =>
     });
     expect(listed.status, listed.stderr).toBe(0);
     expect(JSON.parse(listed.stdout)).toMatchObject({ ok: true, data: [] });
+
+    // An explicit --cwd beats an inherited WORKFLOW_WORKSPACE_ROOT.
+    const bogus = path.join(root, "does-not-exist");
+    const inheritedArgv = argv.slice(0, -2);
+    const inherited = spawnSync("bun", inheritedArgv, {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: bogus },
+    });
+    expect(inherited.status).toBe(1);
+    const explicit = spawnSync("bun", argv, {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: bogus },
+    });
+    expect(explicit.status, explicit.stderr).toBe(0);
+    expect(JSON.parse(explicit.stdout)).toMatchObject({ ok: true, data: [] });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

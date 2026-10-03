@@ -25,8 +25,9 @@ const FAMILIES: readonly string[] = TASK_FAMILY_NAMES;
 // share one row (they share one grammar).
 function helpText(): string {
   const row = (usage: string, summary: string) => `  ${usage}\n      ${summary}`;
-  const sections = (Object.keys(GROUP_TITLES) as VerbGroup[]).map((group) => {
-    const entries = VERBS.filter((entry) => entry.group === group);
+  const sections = (Object.keys(GROUP_TITLES) as VerbGroup[]).flatMap((group) => {
+    const entries = listed().filter((entry) => entry.group === group);
+    if (entries.length === 0) return [];
     const rows = entries
       .filter((entry) => !FAMILIES.includes(entry.name))
       .map((entry) => row(entry.usage, entry.summary));
@@ -57,14 +58,17 @@ Run \`npx @brainervirus/workit-cli init\` to configure platforms, YouTrack, VCS 
 `;
 }
 
-const verbHelp = (entry: VerbEntry): string => `usage: ${entry.usage}\n\n${entry.summary}\n`;
+const verbHelp = (entry: VerbEntry): string =>
+  `usage: ${entry.usage}\n\n${entry.summary}${entry.planned ? ` (coming in ${entry.planned})` : ""}\n`;
 
 type Parsed = { json: boolean; cwd: string | null; rest: string[]; error?: string };
 
 /**
- * Pull the global flags out of argv. `--json` stays in the verb's argv as
- * well (existing verbs parse it themselves); `--cwd <dir>` is consumed.
- * Everything after a bare `--` belongs to the verb untouched.
+ * Pull the global flags out of argv, in any position before a bare `--`
+ * (everything after it belongs to the verb untouched). `--cwd <dir>` is
+ * consumed. `--json` before the command is consumed so the command is always
+ * the first token; after the command it stays in the verb's argv too, because
+ * existing verbs parse it themselves (main re-adds it for `--json <verb>`).
  */
 export function parseGlobals(argv: readonly string[]): Parsed {
   const rest: string[] = [];
@@ -76,7 +80,10 @@ export function parseGlobals(argv: readonly string[]): Parsed {
       rest.push(...argv.slice(index));
       break;
     }
-    if (arg === "--json") json = true;
+    if (arg === "--json") {
+      json = true;
+      if (rest.length === 0) continue;
+    }
     if (arg === "--cwd" || arg.startsWith("--cwd=")) {
       const value = arg === "--cwd" ? argv[++index] : arg.slice("--cwd=".length);
       if (!value || value.startsWith("--"))
@@ -107,7 +114,9 @@ export async function main(
   const cwd = path.resolve(overrides.cwd ?? process.cwd(), parsed.cwd ?? ".");
   const io: Io = { ...defaultIo(parsed.json), ...overrides, json: parsed.json, cwd };
   if (parsed.error) return emit(io, fail("invalid_input", parsed.error));
-  const [command, ...args] = parsed.rest;
+  const [command, ...verbArgs] = parsed.rest;
+  // `workit --json doctor` reaches the verb as `doctor --json` (before any `--`).
+  const args = parsed.json && !verbArgs.includes("--json") ? withJsonFlag(verbArgs) : verbArgs;
 
   if (command === "--version" || command === "-v" || command === "version") {
     return emit(io, ok({ version: pkg.version }), (data) => data.version);
@@ -119,7 +128,7 @@ export async function main(
       if (!entry) return unknown(io, topic);
       return emit(io, ok(describe(entry)), () => verbHelp(entry));
     }
-    return emit(io, ok({ version: pkg.version, verbs: VERBS.map(describe) }), () => helpText());
+    return emit(io, ok({ version: pkg.version, verbs: listed().map(describe) }), () => helpText());
   }
 
   const entry = findVerb(command);
@@ -131,17 +140,32 @@ export async function main(
     } catch {
       return emit(io, fail("invalid_input", `--cwd: cannot enter ${io.cwd}`));
     }
+    // An explicit --cwd beats an inherited workspace root (task.ts and the
+    // core read WORKFLOW_WORKSPACE_ROOT before process.cwd()).
+    if (process.env.WORKFLOW_WORKSPACE_ROOT !== undefined) {
+      process.env.WORKFLOW_WORKSPACE_ROOT = io.cwd;
+      io.env = process.env;
+    }
   }
   if (options.diagnostics) (await import("./diagnostics")).installDiagnostics(command);
   const verb = await entry.load();
   return verb.run(args, io);
 }
 
+const withJsonFlag = (args: string[]): string[] => {
+  const end = args.indexOf("--");
+  return end < 0 ? [...args, "--json"] : [...args.slice(0, end), "--json", ...args.slice(end)];
+};
+
+// Planned verbs answer `not_implemented`; help does not advertise them.
+const listed = (): VerbEntry[] => VERBS.filter((entry) => !entry.planned);
+
 const describe = (entry: VerbEntry) => ({
   name: entry.name,
   group: entry.group,
   usage: entry.usage,
   summary: entry.summary,
+  ...(entry.planned ? { planned: entry.planned } : {}),
 });
 
 const unknown = (io: Io, command: string): number =>
