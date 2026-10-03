@@ -72,6 +72,14 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./doctor"),
   },
   {
+    name: "gc",
+    group: "setup",
+    usage: "workit gc [--dry-run] [--json]",
+    summary:
+      "Prune .workit/recovery copies beyond the cap and dedupe stored candidates in paused tasks",
+    load: () => import("./gc"),
+  },
+  {
     name: "uninstall",
     group: "setup",
     usage: "workit uninstall",

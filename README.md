@@ -205,6 +205,7 @@ workit launch pi --auto-upgrade --  # update before starting Pi
 workit doctor            # offline installation health report (--json for machines)
 workit doctor --fix-lock # clear a stale .workit metadata lock (WORKFLOW_WORKSPACE_ROOT or cwd)
 workit doctor --fix-lock --force [--yes]  # clear a lock whose owner cannot be verified
+workit gc [--dry-run]    # prune .workit/recovery to the newest 3 copies per record
 workit <family> <action> [--payload <json|@file|->] [--task <id>] [--confirm] [--json]
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--json]
 workit handoff --task <id> [--json]
@@ -425,7 +426,12 @@ plugins and the MCP server, 2 s in the CLI) and then returns the retryable
 `busy` code, never `recovery_required`. `workit doctor` warns about a stale
 lock and `workit doctor --fix-lock` clears it under the same reclaim guard
 writers use; `--force` (with `--yes` or an interactive confirmation) is the
-explicit escape hatch for a lock whose owner cannot be verified. New branch
+explicit escape hatch for a lock whose owner cannot be verified. Each snapshot
+replacement keeps a copy of the previous bytes in `.workit/recovery/`, capped at
+the newest three per task or workspace record; `workit gc` prunes copies left by
+older versions, removes stale temp files, and collapses duplicate stored
+candidates in paused tasks (closed tasks are never rewritten). It never deletes
+the live task or workspace records, and `--dry-run` writes nothing. New branch
 setup shows both the existing local base SHA and remote base SHA in its
 approval, rechecks them, and creates only from an approved commit. Workit does
 not reject Git-valid branch names or user commit
