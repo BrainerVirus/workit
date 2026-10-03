@@ -1454,7 +1454,7 @@ export class TaskStore {
 
   /** Copies of one record beyond the cap, oldest first out; `keep` is never surplus. */
   private surplusCopies<T extends { name: string; mtimeNs: bigint }>(copies: T[], keep?: string) {
-    const ordered = [...copies].sort((left, right) =>
+    const ordered = copies.toSorted((left, right) =>
       left.name === keep
         ? -1
         : right.name === keep
@@ -1522,9 +1522,9 @@ export class TaskStore {
     };
     // withLock initializes storage (mkdir, .gitignore); a dry run must not.
     const pruned = dryRun ? sweep() : this.withLock<null>(sweep);
-    if (!pruned.ok) return pruned as Result<never>;
+    if (!pruned.ok) return pruned;
     const tasks = this.listTasks();
-    if (!tasks.ok) return tasks as Result<never>;
+    if (!tasks.ok) return tasks;
     for (const task of tasks.data) {
       const deduped = dedupeCandidates(task.candidates);
       const removed = task.candidates.length - deduped.length;

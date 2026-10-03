@@ -104,8 +104,10 @@ test("Given a recovery dir with N stale copies per record, When gc runs, Then ea
   const result = store.collectGarbage();
   expect(result.ok).toBe(true);
   if (!result.ok) throw new Error(result.error);
-  expect(copiesFor(store, `task.${task.id}.`).sort()).toEqual(taskCopies.slice(-3).sort());
-  expect(copiesFor(store, "workspace.workspace.").sort()).toEqual(workspaceCopies.slice(-3).sort());
+  expect(copiesFor(store, `task.${task.id}.`).toSorted()).toEqual(taskCopies.slice(-3).toSorted());
+  expect(copiesFor(store, "workspace.workspace.").toSorted()).toEqual(
+    workspaceCopies.slice(-3).toSorted(),
+  );
   expect(result.data.recovery.removed).toBe(before - readdirSync(recoveryDir(store)).length);
 });
 
@@ -118,7 +120,7 @@ test("Given gc --dry-run, Then it reports what it would remove and writes nothin
   const listing = () =>
     readdirSync(workit, { recursive: true })
       .map(String)
-      .sort()
+      .toSorted()
       .map((name) => `${name}:${statSync(join(workit, name)).mtimeMs}`);
   const before = listing();
   const result = store.collectGarbage({ dryRun: true });
