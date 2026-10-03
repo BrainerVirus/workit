@@ -10,8 +10,7 @@ import {
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
 import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
 import { initApply } from "@brainervirus/workit-core/src/core/init";
-import type { RepoRuntime } from "@brainervirus/workit-core/src/core/repo-tools";
-import { legacyScriptResult, output, requireConfirmed } from "./repo-result";
+import { legacyScriptResult, output, requireConfirmed, type RepoRuntime } from "./repo-result";
 
 /** The core initApply call in RunResult shape, shared so the V1 repo-tool
  * runtime and the V2 adapter run the identical confirmed action. */

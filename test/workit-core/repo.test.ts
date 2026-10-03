@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import os from "node:os";
 import path from "node:path";
 import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
-import type { RepoRuntime } from "@/packages/workit-core/src/core/repo-tools";
+import type { RepoRuntime } from "@/packages/workit-opencode/src/shared/repo-result";
 import { initApplyData } from "@/packages/workit-core/src/core/init";
 import { PLUGIN_ROOT } from "@/packages/workit-core/src/core/scripts";
 

@@ -1,5 +1,11 @@
-import { fail, ok } from "@brainervirus/workit-core/src/core";
-import type { RunResult } from "@brainervirus/workit-core/src/core/repo-tools";
+import { fail, ok, type run } from "@brainervirus/workit-core/src/core";
+
+export type RunResult = ReturnType<typeof run>;
+
+/** Host runtime seam for the confirmed `workit_init_apply` action. */
+export type RepoRuntime = {
+  initApply(root: string, action: string, env: Record<string, string>): RunResult;
+};
 
 export const output = (value: unknown) => JSON.stringify(value, null, 2);
 

@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin";
-import type { RepoRuntime } from "@brainervirus/workit-core/src/core/repo-tools";
+import type { RepoRuntime } from "../shared/repo-result";
 import { executeInitApply, initApplyRuntime } from "../shared/init-apply";
 
 /** OpenCode V1 registers only the confirmed init surface the contract claims. */
