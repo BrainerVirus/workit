@@ -26,6 +26,7 @@ import { applyWizardBranchPolicy } from "./logic";
 import { runCutoverCommand } from "./cutover-cli";
 import { runActionCommand, runTaskCommand, TASK_FAMILIES } from "./task";
 import { externalActionHelp } from "@brainervirus/workit-core/src/core";
+import { runLaunchCommand, runUpgradeCommand } from "./upgrade";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: CLI events mirror to stderr, never the Ink-rendered stdout. Routine
@@ -54,6 +55,8 @@ const HELP = `workit — workflow rails for agentic coding
 
 Usage:
   workit init      Run the interactive setup wizard
+  workit upgrade   Preview upgrades (--apply --confirm; --hosts=a,b; --cli for the CLI)
+  workit launch <host> [--auto-upgrade] [-- args]  Upgrade before host startup
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
   workit uninstall Remove workit host registrations interactively (~/.config/workit is kept)
   workit cutover   Preview or apply an explicit v1 cutover (apply requires --confirm)
@@ -61,7 +64,7 @@ ${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`
   action payloads: ${externalActionHelp}
   workit           Show this help
 
-Run \`npx workit init\` to configure platforms, YouTrack, VCS and project hygiene.
+Run \`npx @brainervirus/workit-cli init\` to configure platforms, YouTrack, VCS and project hygiene.
 `;
 
 // WZ-13-WZ-15 / CA-31: Apply prints one line per platform/file (Installed /
@@ -341,7 +344,11 @@ if (import.meta.main) {
     logger.error(EVENT.uncaughtFailure, { phase: "uncaughtException", ...errorDetail(err) });
     process.exit(1);
   });
-  if (subcommand === "init") {
+  if (subcommand === "upgrade") {
+    process.exit(await runUpgradeCommand(args.slice(1)));
+  } else if (subcommand === "launch") {
+    process.exit(await runLaunchCommand(args.slice(1)));
+  } else if (subcommand === "init") {
     await runInit();
   } else if (subcommand === "doctor") {
     runDoctorCommand(args);

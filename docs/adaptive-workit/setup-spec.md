@@ -1,6 +1,6 @@
 # Complete Workit setup
 
-Status: implementation in progress, 2026-10-03.
+Status: implemented and locally verified, 2026-10-03; PR/release delivery pending.
 
 ## Behavior
 
@@ -59,3 +59,20 @@ Status: implementation in progress, 2026-10-03.
    unavailable registry, failed install, preserved config and pre-launch ordering.
    AGENTS.md requires keeping install/upgrade fixtures and docs current whenever
    adapter/config versions change.
+
+## Qualified host limitations
+
+- OpenCode 2.0.21 server-plugin setup works through native registration. Its
+  scoped `plugin check/update` rejects the package selector and plugin ID;
+  unscoped check lists Workit correctly, while unscoped update affects every
+  configured package. The CLI therefore preserves OpenCode registrations and
+  reports unsupported scoped upgrades, without cache deletion or an all-plugin
+  fallback. A launch wrapper may start the unchanged OpenCode host with this
+  visible notice. Requalify when the native CLI gains scoped server updates.
+- The installed OpenCode 2.0.21 also rejects global `--standalone` on plugin
+  subcommands despite general docs guidance. Native plugin inspection starts
+  a service; upgrade previews never invoke it. Qualification uses official
+  isolated Docker without user mounts.
+- OpenCode JSONC configuration is preserved and blocks automatic package
+  inspection pending effective native config support. Exact/local sources are
+  never converted by an upgrade.
