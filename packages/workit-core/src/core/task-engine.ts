@@ -2340,9 +2340,9 @@ export class WorkitCore {
 
   /**
    * Compact task context for per-turn host injection. Unlike `inspect`
-   * view:"full", it never captures a candidate: evidence freshness is judged
-   * against the last recorded candidate, and live staleness is detected by
-   * evidence and close, which do capture.
+   * view:"full", it never captures a candidate: evidence and requirements are
+   * judged against the last recorded candidate, and live staleness is
+   * detected by evidence, close, resume, and full inspection, which capture.
    */
   compactContext(taskId: string): Result<string> {
     const root = this.contextRootError();
@@ -2365,7 +2365,7 @@ export class WorkitCore {
       ? success(null, null, historical)
       : capture
         ? captureCandidate(this.store.root, task.intent.data.scope, environment())
-        : success<Candidate | null>(null, null, null);
+        : success<Candidate | null>(null, null, task.candidates.at(-1) ?? null);
     if (!current.ok) return current as Result<never>;
     const evaluationWorkspace =
       task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;
