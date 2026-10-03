@@ -21,14 +21,26 @@ export const RELEASE_PACKAGES = [
 type ReleasePackage = (typeof RELEASE_PACKAGES)[number];
 
 /**
- * Sources a package's published dist/ bundles from OUTSIDE its own directory.
- * These packages ship no runtime dependency on what they bundle, so a change
- * there must republish them or installs keep the old bundled code. (The
- * other adapters also bundle core but declare it as a runtime dependency.)
+ * Sources a package's published dist/ inlines from OUTSIDE its own directory.
+ * Every adapter build is a no-external `bun build`, so whatever it imports
+ * from another workspace package is copied into its bundle: a runtime
+ * dependency on that package does not reach the shipped code. A change in
+ * these sources must therefore republish the bundling package too. Verified
+ * against the build entries' metafiles by
+ * test/workit-core/bundled-sources.test.ts.
  */
+const CORE = "packages/workit-core/";
+const MCP_SRC = "packages/workit-mcp/src/";
+// The bundled CLI also inlines its package.json (`workit --version`).
+const CLI = ["packages/workit-cli/src/", "packages/workit-cli/package.json"];
 export const BUNDLED_SOURCES: Partial<Record<ReleasePackage, readonly string[]>> = {
-  "workit-claude-code": ["packages/workit-core/", "packages/workit-cli/src/"],
-  "workit-pi": ["packages/workit-core/"],
+  "workit-mcp": [CORE],
+  "workit-cli": [CORE],
+  "workit-opencode": [CORE],
+  "workit-cursor": [CORE, MCP_SRC],
+  "workit-codex": [CORE, MCP_SRC],
+  "workit-pi": [CORE],
+  "workit-claude-code": [CORE, ...CLI],
 };
 
 /** Every repository path whose change alters `pkg`'s published payload. */

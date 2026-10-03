@@ -228,7 +228,17 @@ describe("analyzeReleaseScope", () => {
       });
       expect(analyzeReleaseScope(r.root)).toEqual({
         level: "patch",
-        productPkgs: ["workit-core", "workit-pi", "workit-claude-code"],
+        // Core is inlined (and its skills copied) into every adapter.
+        productPkgs: [
+          "workit-core",
+          "workit-mcp",
+          "workit-cli",
+          "workit-opencode",
+          "workit-cursor",
+          "workit-codex",
+          "workit-pi",
+          "workit-claude-code",
+        ],
       });
     } finally {
       r.cleanup();
