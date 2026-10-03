@@ -821,6 +821,8 @@ already satisfies them.
 | CA-31 | Latest-compatible dependency qualification              | Typecheck, deterministic tests, package checks, and clean host smokes pass on the pinned Node/Bun/toolchain and adapter dependencies; no known failure is waived as tooling-only. |
 | CA-32 | Compiled schema and MCP publication parity              | Compiled and uncompiled operation schemas accept and reject the same corpus with equivalent data/issues, and MCP advertises draft-2020-12 generated from those definitions.       |
 
+Per-turn host context injection reads the task index and the last recorded candidate; it does not recompute evidence staleness against the live checkout. Resume, close, evidence recording, and full inspection capture a fresh candidate and reconcile staleness (CA-12, CA-18).
+
 ### Test strategy
 
 Use three layers, each proving a different claim:

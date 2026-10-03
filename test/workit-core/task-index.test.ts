@@ -1,11 +1,19 @@
 import { expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import {
+  TaskStore,
+  WorkitCore,
+  compactTaskContext,
+  sha256,
+  success,
+  type Assessment,
+  type TaskView,
+} from "@/packages/workit-core/src/core";
 import * as evaluation from "@/packages/workit-core/src/core/task-evaluation";
 import { compactContextFor, unfinishedTaskOfferFor } from "@/packages/workit-opencode/src/runtime";
-import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
+import { assessment, ref, scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const withRoot = (run: (root: string) => void) => {
   const root = mkdtempSync(join(tmpdir(), "workit-index-"));
@@ -152,5 +160,177 @@ test("history offers come from the index and exclude the current session", () =>
     expect(offer).toContain(other.id);
     expect(offer).toContain('"parked  topic "');
     expect(offer).not.toContain("my task");
+  });
+});
+
+const behavioral = (): Assessment["signals"] => ({
+  approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
+  productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
+  behaviorChange: { value: true, basis: "observed", reason: "behavior", refs: [ref()] },
+  mechanicalLowRisk: { value: false, basis: "inferred", reason: "behavioral", refs: [] },
+  durableAgreementNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
+  coordinationPlanNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
+  helperUseful: { value: false, basis: "inferred", reason: "none", refs: [] },
+  testFirstPractical: { value: false, basis: "inferred", reason: "none", refs: [] },
+});
+
+test("capture-free context matches full inspection when a passing baseline precedes GREEN", () => {
+  withRoot((root) => {
+    writeFileSync(join(root, "a.ts"), "before");
+    const core = coreFor(root, "lead");
+    const task = start(root, "lead", "baseline then green");
+    const assessed = core.policy({
+      schemaVersion: 1,
+      action: "assess",
+      taskId: task.id,
+      assessment: assessment({ signals: behavioral() }),
+    });
+    if (!assessed.ok) throw new Error(assessed.error);
+    const record = new TaskStore(root).readTask(task.id);
+    if (!record.ok) throw new Error(record.error);
+    const testing = record.data.policy!.requirements.find((item) => item.dimension === "testing")!;
+    const check = (claim: string) =>
+      core.evidence({
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.id,
+        evidence: {
+          kind: "check",
+          claim,
+          requirementIds: [testing.id],
+          result: "passed",
+          summary: claim,
+          refs: [],
+          exitCode: 0,
+          reviewContext: null,
+        },
+      });
+    expect(check("baseline on C1").ok).toBe(true);
+    writeFileSync(join(root, "a.ts"), "after");
+    expect(check("green on C2").ok).toBe(true);
+
+    const full = core.task({ schemaVersion: 1, action: "inspect", taskId: task.id, view: "full" });
+    if (!full.ok) throw new Error(full.error);
+    const fast = core.compactContext(task.id);
+    if (!fast.ok) throw new Error(fast.error);
+    expect(JSON.parse(fast.data).gaps).toEqual(
+      JSON.parse(compactTaskContext(full.data as TaskView)).gaps,
+    );
+    expect(fast.data).toBe(compactTaskContext(full.data as TaskView));
+  });
+});
+
+test("cached context invalidates when a cited decision document or the workspace changes", () => {
+  withRoot((root) => {
+    const task = start(root, "lead", "cited documents");
+    const store = new TaskStore(root);
+    // Back-date the document so it is outside the racy-signature window.
+    const settle = (file: string) => utimesSync(file, new Date(0), new Date(Date.now() - 60_000));
+    writeFileSync(join(root, "decision.md"), "approved design");
+    settle(join(root, "decision.md"));
+    const current = store.readTask(task.id);
+    if (!current.ok) throw new Error(current.error);
+    const injected = store.mutateTask(task.id, current.data.revision, (record) =>
+      success(null, null, {
+        ...record,
+        decisions: [
+          {
+            id: "00000000-0000-4000-8000-0000000000d1",
+            recordedAt: record.createdAt,
+            provenance: record.intent.provenance,
+            data: {
+              purpose: "design",
+              binding: {
+                taskId: record.id,
+                workspaceId: record.workspaceId,
+                scope: scope(),
+                presented: "design",
+                approvedContent: "design",
+                contentRefs: [{ kind: "file", path: "decision.md", digest: sha256("x") }],
+              },
+              digest: sha256("design"),
+              response: "approved",
+              requirementIds: [],
+              revoked: null,
+              consumption: null,
+            },
+          },
+        ],
+      }),
+    );
+    if (!injected.ok) throw new Error(injected.error);
+
+    const built = spyOn(WorkitCore.prototype, "compactContext");
+    try {
+      expect(compactContextFor(root, "lead")).not.toBeNull();
+      expect(compactContextFor(root, "lead")).not.toBeNull();
+      expect(built).toHaveBeenCalledTimes(1);
+
+      writeFileSync(join(root, "decision.md"), "edited design document");
+      settle(join(root, "decision.md"));
+      expect(compactContextFor(root, "lead")).not.toBeNull();
+      expect(built).toHaveBeenCalledTimes(2);
+
+      const workspace = store.readWorkspace();
+      if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+      const touched = store.mutateWorkspace(workspace.data.revision, (value) =>
+        success(null, null, value),
+      );
+      if (!touched.ok) throw new Error(touched.error);
+      expect(compactContextFor(root, "lead")).not.toBeNull();
+      expect(built).toHaveBeenCalledTimes(3);
+
+      expect(compactContextFor(root, "lead")).not.toBeNull();
+      expect(built).toHaveBeenCalledTimes(3);
+    } finally {
+      built.mockRestore();
+    }
+  });
+});
+
+test("a document changed within the racy window is never served from cache", () => {
+  withRoot((root) => {
+    const task = start(root, "lead", "racy document");
+    const store = new TaskStore(root);
+    writeFileSync(join(root, "doc.md"), "fresh");
+    const current = store.readTask(task.id);
+    if (!current.ok) throw new Error(current.error);
+    const injected = store.mutateTask(task.id, current.data.revision, (record) =>
+      success(null, null, {
+        ...record,
+        decisions: [
+          {
+            id: "00000000-0000-4000-8000-0000000000d2",
+            recordedAt: record.createdAt,
+            provenance: record.intent.provenance,
+            data: {
+              purpose: "design",
+              binding: {
+                taskId: record.id,
+                workspaceId: record.workspaceId,
+                scope: scope(),
+                presented: "design",
+                approvedContent: "design",
+                contentRefs: [{ kind: "file", path: "doc.md", digest: sha256("x") }],
+              },
+              digest: sha256("design"),
+              response: "approved",
+              requirementIds: [],
+              revoked: null,
+              consumption: null,
+            },
+          },
+        ],
+      }),
+    );
+    if (!injected.ok) throw new Error(injected.error);
+    const built = spyOn(WorkitCore.prototype, "compactContext");
+    try {
+      compactContextFor(root, "lead");
+      compactContextFor(root, "lead");
+      expect(built).toHaveBeenCalledTimes(2);
+    } finally {
+      built.mockRestore();
+    }
   });
 });
