@@ -54,7 +54,13 @@ export type GarbageReport = {
   dryRun: boolean;
   recovery: { removed: number; removedBytes: number; kept: number };
   temporary: { removed: number };
-  candidates: { removed: number; tasks: Id[]; skippedActive: Id[]; failed: Id[] };
+  candidates: {
+    removed: number;
+    tasks: Id[];
+    skippedActive: Id[];
+    skippedClosed: Id[];
+    failed: Id[];
+  };
 };
 export type TaskStoreOptions = {
   /** Total time a mutation retries a lock held by a live writer before `busy`
@@ -1465,8 +1471,10 @@ export class TaskStore {
   /**
    * `workit gc`: prune recovery copies beyond the per-record cap, remove temp
    * files left by crashed writers, and collapse duplicate stored candidates in
-   * paused/closed tasks. Live records (tasks/*.json, workspace.json) are never
+   * paused tasks. Live records (tasks/*.json, workspace.json) are never
    * deleted; candidate dedupe keeps every candidate ID and the latest position.
+   * Closed tasks are history and are never rewritten. A dry run is read-only:
+   * no lock, no directory creation, no .gitignore rewrite.
    */
   collectGarbage(options: { dryRun?: boolean } = {}): Result<GarbageReport> {
     const dryRun = options.dryRun === true;
@@ -1474,10 +1482,10 @@ export class TaskStore {
       dryRun,
       recovery: { removed: 0, removedBytes: 0, kept: 0 },
       temporary: { removed: 0 },
-      candidates: { removed: 0, tasks: [], skippedActive: [], failed: [] },
+      candidates: { removed: 0, tasks: [], skippedActive: [], skippedClosed: [], failed: [] },
     };
     if (!fs.existsSync(this.workitDir)) return success(null, null, report);
-    const pruned = this.withLock<null>(() => {
+    const sweep = (): Result<null> => {
       try {
         const groups = new Map<string, ReturnType<TaskStore["recoveryCopies"]>>();
         for (const copy of this.recoveryCopies())
@@ -1511,7 +1519,9 @@ export class TaskStore {
           path: this.recoveryDir,
         });
       }
-    });
+    };
+    // withLock initializes storage (mkdir, .gitignore); a dry run must not.
+    const pruned = dryRun ? sweep() : this.withLock<null>(sweep);
     if (!pruned.ok) return pruned as Result<never>;
     const tasks = this.listTasks();
     if (!tasks.ok) return tasks as Result<never>;
@@ -1523,6 +1533,11 @@ export class TaskStore {
       // revision under that session's feet.
       if (task.status === "active") {
         report.candidates.skippedActive.push(task.id);
+        continue;
+      }
+      // Closed records are immutable history (docs/workit-v1/contracts.md).
+      if (task.status === "closed") {
+        report.candidates.skippedClosed.push(task.id);
         continue;
       }
       if (!dryRun) {

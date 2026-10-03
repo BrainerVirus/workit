@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
+  rmSync,
   readdirSync,
   readFileSync,
   statSync,
@@ -53,12 +55,12 @@ const copiesFor = (store: TaskStore, prefix: string) =>
 const touch = (task: TaskRecord, summary: string) =>
   success(task.revision, null, { ...task, progress: { ...task.progress, summary } });
 
-test(`Given 1,000 writes to one task, Then at most ${RECOVERY_COPIES_PER_RECORD} recovery copies remain and the latest prior bytes are kept`, () => {
+const writesLeaveBoundedCopies = (writes: number) => {
   const { store, task } = startedStore();
   const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
   let revision = task.revision;
   let previous = "";
-  for (let write = 0; write < 1000; write += 1) {
+  for (let write = 0; write < writes; write += 1) {
     previous = readFileSync(file, "utf8");
     const result = store.mutateTask(task.id, revision, (current) => touch(current, `w${write}`));
     if (!result.ok) throw new Error(result.error);
@@ -67,7 +69,18 @@ test(`Given 1,000 writes to one task, Then at most ${RECOVERY_COPIES_PER_RECORD}
   const copies = copiesFor(store, `task.${task.id}.`);
   expect(copies.length).toBeLessThanOrEqual(RECOVERY_COPIES_PER_RECORD);
   expect(copies).toContain(`task.${task.id}.${sha256(previous)}.json`);
-}, 120_000);
+};
+
+// 20 writes already exceed the cap several times over; the 1,000-write
+// version is an opt-in soak (WORKIT_SOAK=1) because it is fsync-bound.
+test(`Given 20 writes to one task, Then at most ${RECOVERY_COPIES_PER_RECORD} recovery copies remain and the latest prior bytes are kept`, () =>
+  writesLeaveBoundedCopies(20));
+
+test.skipIf(process.env.WORKIT_SOAK !== "1")(
+  `Given 1,000 writes to one task (soak), Then at most ${RECOVERY_COPIES_PER_RECORD} recovery copies remain`,
+  () => writesLeaveBoundedCopies(1000),
+  300_000,
+);
 
 const seedStaleCopies = (store: TaskStore, prefix: string, count: number) => {
   const names: string[] = [];
@@ -96,15 +109,25 @@ test("Given a recovery dir with N stale copies per record, When gc runs, Then ea
   expect(result.data.recovery.removed).toBe(before - readdirSync(recoveryDir(store)).length);
 });
 
-test("Given gc --dry-run, Then it reports what it would remove and deletes nothing", () => {
+test("Given gc --dry-run, Then it reports what it would remove and writes nothing at all", () => {
   const { store, task } = startedStore();
   seedStaleCopies(store, `task.${task.id}.`, 10);
-  const before = readdirSync(recoveryDir(store)).sort();
+  const workit = join(store.root, ".workit");
+  // No lock, no storage initialization: the .gitignore stays deleted.
+  rmSync(join(workit, ".gitignore"));
+  const listing = () =>
+    readdirSync(workit, { recursive: true })
+      .map(String)
+      .sort()
+      .map((name) => `${name}:${statSync(join(workit, name)).mtimeMs}`);
+  const before = listing();
   const result = store.collectGarbage({ dryRun: true });
   expect(result).toMatchObject({ ok: true, data: { dryRun: true } });
   if (!result.ok) throw new Error(result.error);
   expect(result.data.recovery.removed).toBeGreaterThan(0);
-  expect(readdirSync(recoveryDir(store)).sort()).toEqual(before);
+  expect(listing()).toEqual(before);
+  expect(existsSync(join(workit, ".gitignore"))).toBe(false);
+  expect(existsSync(join(workit, "metadata.lock"))).toBe(false);
 });
 
 test("Given gc runs, Then every current read returns the same records", () => {
@@ -135,7 +158,7 @@ const candidate = (head: string): Candidate => {
   return { ...value, id: candidateDigest(value) };
 };
 
-test("Given a paused task with duplicate stored candidates, When gc runs, Then duplicates collapse to their latest position and an active task is left alone", () => {
+test("Given paused, active, and closed tasks with duplicate stored candidates, When gc runs, Then only the paused task collapses to its latest positions", () => {
   const { store, task } = startedStore();
   const [a, b] = [candidate("a"), candidate("b")];
   const paused = store.mutateTask(task.id, task.revision, (current) =>
@@ -159,10 +182,29 @@ test("Given a paused task with duplicate stored candidates, When gc runs, Then d
     success(current.revision, null, { ...current, candidates: [a, a] }),
   );
   if (!activeWithDuplicates.ok) throw new Error(activeWithDuplicates.error);
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const closedTask = store.create({
+    expectedWorkspaceRevision: workspace.data.revision,
+    provenance,
+    intent: { objective: "closed", scope: scope(), authorityRefs: [ref()] },
+  });
+  if (!closedTask.ok) throw new Error(closedTask.error);
+  const closed = store.mutateTask(closedTask.data.id, closedTask.data.revision, (current) =>
+    success(current.revision, null, { ...current, status: "closed", candidates: [b, b] }),
+  );
+  if (!closed.ok) throw new Error(closed.error);
+  const closedFile = join(store.root, ".workit", "tasks", `${closedTask.data.id}.json`);
+  const closedBytes = readFileSync(closedFile);
 
   const result = store.collectGarbage();
   if (!result.ok) throw new Error(result.error);
-  expect(result.data.candidates).toMatchObject({ removed: 3, skippedActive: [active.data.id] });
+  expect(result.data.candidates).toMatchObject({
+    removed: 3,
+    skippedActive: [active.data.id],
+    skippedClosed: [closedTask.data.id],
+  });
+  expect(readFileSync(closedFile)).toEqual(closedBytes);
   const after = store.readTask(task.id);
   if (!after.ok) throw new Error(after.error);
   expect(after.data.candidates.map((item) => item.head)).toEqual(["b", "a"]);
