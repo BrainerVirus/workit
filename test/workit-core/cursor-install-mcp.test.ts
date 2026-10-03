@@ -1,6 +1,6 @@
-import { beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,17 +20,25 @@ import { isolatedEnv } from "@/test/shared/helpers/packages";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 // The dev-checkout install copies packages/workit-cursor, and its doctor step
-// requires the built dist entries. Build them from current source first (the
-// same step `bun run build` runs for Cursor) instead of depending on a prior
-// build or on another suite having built them.
+// requires the built dist entries. Stage a sandbox "checkout" holding a copy of
+// the Cursor package and build it there from current source, so the test
+// neither depends on a prior `bun run build` nor writes into this checkout.
+let devCheckout: string;
 beforeAll(() => {
+  devCheckout = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-dev-"));
+  const pkg = path.join(devCheckout, "packages", "workit-cursor");
+  cpSync(path.join(repoRoot, "packages", "workit-cursor"), pkg, {
+    recursive: true,
+    filter: (src) => !/[\\/](?:dist|node_modules)$/.test(src),
+  });
   const build = spawnSync(
     process.execPath,
-    [path.join(repoRoot, "packages/workit-cursor/scripts/build.ts")],
+    [path.join(repoRoot, "packages/workit-cursor/scripts/build.ts"), pkg],
     { encoding: "utf8" },
   );
   if (build.status !== 0) throw new Error(`cursor build failed: ${build.stderr}`);
 });
+afterAll(() => rmSync(devCheckout, { recursive: true, force: true }));
 
 const tempDir = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const clean = (dir: string) => rmSync(dir, { recursive: true, force: true });
@@ -56,7 +64,7 @@ const apply = (dir: string, home: string): SetupResult =>
   applySetupPreview(buildSetupPreview(values(), { dir, cwd: dir, env: {}, home }), {
     home,
     configDir: dir,
-    dev: repoRoot,
+    dev: devCheckout,
     cwd: dir,
     env: envFor(home, dir),
   });
