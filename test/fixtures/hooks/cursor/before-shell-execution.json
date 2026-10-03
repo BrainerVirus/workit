@@ -1,0 +1,13 @@
+{
+  "conversation_id": "cursor-conv-1",
+  "generation_id": "gen-1",
+  "model": "auto",
+  "cursor_version": "1.7.0",
+  "workspace_roots": ["__CWD__"],
+  "user_email": null,
+  "transcript_path": null,
+  "hook_event_name": "beforeShellExecution",
+  "command": "git checkout -b main",
+  "cwd": "__CWD__",
+  "sandbox": false
+}

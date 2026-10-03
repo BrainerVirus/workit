@@ -162,11 +162,13 @@ test("official payloads validate and malformed writes deny", () => {
       ),
     ),
   ).toMatchObject({ ok: true });
+  // Unknown keys are ignored (D17): a Codex release that adds a field must
+  // not turn into a parse failure.
   expect(
     parseCodexHookInput(
       official({ hook_event_name: "SessionStart", source: "clear", unexpected: true }, root),
     ),
-  ).toMatchObject({ ok: false });
+  ).toMatchObject({ ok: true });
   expect(
     handleCodexHook(official({ hook_event_name: "SubagentStart", agent_id: "agent-1" }, root)),
   ).not.toMatchObject({ hookSpecificOutput: { permissionDecision: expect.anything() } });
@@ -200,7 +202,8 @@ test("official payloads validate and malformed writes deny", () => {
         root,
       ),
     ),
-  ).toMatchObject({ ok: false });
+    // A permission mode Codex adds later is not a parse failure (D17).
+  ).toMatchObject({ ok: true });
   const outside = handleCodexHook(
     official(
       {

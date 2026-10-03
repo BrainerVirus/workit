@@ -1,49 +1,19 @@
 import {
   invariantBootstrap,
-  sessionCompactContext,
   TaskStore,
-  unfinishedTaskOffer as historyOffer,
   type Capability,
   type OperationContext,
 } from "@brainervirus/workit-core/src/core";
+import {
+  capabilitiesFor,
+  PI_DESCRIPTOR,
+  sessionCompactContext,
+  unfinishedTaskOffer as historyOffer,
+} from "@brainervirus/workit-core/hooks";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-const hostRef = (handle: string) => ({ kind: "host" as const, host: "pi" as const, handle });
-
-export const piCapabilities = (ctx?: Pick<ExtensionContext, "hasUI">): Capability[] => [
-  {
-    name: "product_write_interception",
-    surface: "write/edit tool_call",
-    assurance: "enforced",
-    reason:
-      "Pi exposes a before-tool boundary for known built-in write tools; it enforces project trust while file targets stay host-policy.",
-    refs: [hostRef("tool_call")],
-  },
-  {
-    name: "interactive_decision",
-    surface: "ui.confirm",
-    assurance: ctx?.hasUI ? "enforced" : "unavailable",
-    reason: ctx?.hasUI
-      ? "Pi supplies a native confirmation receipt when dialog UI is available."
-      : "Pi is running without dialog UI, so required decisions need user input.",
-    refs: [hostRef("ui.confirm")],
-  },
-  {
-    name: "arbitrary_shell_write",
-    surface: "bash",
-    assurance: "agent_guided",
-    reason: "Pi extensions do not sandbox arbitrary shell commands.",
-    refs: [hostRef("tool_call")],
-  },
-  {
-    name: "fresh-context-review",
-    surface: "supervised_worker",
-    assurance: "agent_guided",
-    reason:
-      "independent review runs as a supervised stock-Pi process; evidence evaluation enforces reviewer exclusivity",
-    refs: [hostRef("worker")],
-  },
-];
+export const piCapabilities = (ctx?: Pick<ExtensionContext, "hasUI">): Capability[] =>
+  capabilitiesFor(PI_DESCRIPTOR, { ui: ctx?.hasUI === true });
 
 export const piContext = (ctx: ExtensionContext): OperationContext => ({
   root: ctx.cwd,

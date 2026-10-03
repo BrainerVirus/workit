@@ -1,0 +1,14 @@
+{
+  "session_id": "codex-session-1",
+  "cwd": "__CWD__",
+  "model": "gpt-5",
+  "permission_mode": "default",
+  "transcript_path": null,
+  "hook_event_name": "SubagentStop",
+  "turn_id": "turn-1",
+  "agent_id": "agent-1",
+  "agent_type": "worker",
+  "agent_transcript_path": null,
+  "last_assistant_message": "done",
+  "stop_hook_active": false
+}
