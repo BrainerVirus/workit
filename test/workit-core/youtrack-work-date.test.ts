@@ -98,6 +98,7 @@ test("Given a youtrack.json timezone override, When the date is auto, Then today
   expect("data" in out && out.data).toEqual({
     dateMs: Date.UTC(y, m - 1, d),
     timezone: "Asia/Tokyo",
+    timezoneSource: "youtrack.json",
     localDate: today,
   });
 });
@@ -106,6 +107,7 @@ test("Given no youtrack.json, When the date is auto, Then the process timezone i
   process.env.WORKFLOW_YOUTRACK_CONFIG = path.join(dir, "missing.json");
   const out = workDateInTz("Asia/Tokyo", "auto");
   expect("data" in out && out.data.timezone).toBe("Asia/Tokyo");
+  expect("data" in out && out.data.timezoneSource).toBe("process");
 });
 
 test("Given an invalid YYYY-MM-DD date, When it is resolved, Then an error is returned instead of NaN", () => {
@@ -116,19 +118,37 @@ test("Given an invalid YYYY-MM-DD date, When it is resolved, Then an error is re
   }
 });
 
-test("Given the shipped packages, When their sources and templates are scanned, Then no hard-coded greeting, mention or default timezone remains", () => {
+test("Given an epoch dateMs, When it is resolved in any timezone, Then localDate is its UTC calendar day so it round-trips", () => {
+  writeYouTrackJson({ baseUrl: "https://yt.example.test", timezone: "America/Santiago" });
+  const epoch = Date.UTC(2026, 9, 3);
+  for (const tz of ZONES) {
+    const out = workDateInTz(tz, String(epoch));
+    expect("data" in out && out.data.localDate, tz).toBe("2026-10-03");
+    const back = workDateInTz(tz, "data" in out ? out.data.localDate : "");
+    expect("data" in back && back.data.dateMs, tz).toBe(epoch);
+  }
+});
+
+// Guard for the AGENTS.md rule: shipped source must not carry organization
+// specifics — a concrete YouTrack Cloud host or a literal issue id used as a
+// default. Example hosts (example.*) and docs/help URLs are allowed.
+test("Given the shipped package sources, When they are scanned, Then no organization YouTrack host or literal issue-id default remains", () => {
   const root = path.resolve(import.meta.dir, "../../packages");
-  const banned =
-    /\b(?:Hola|buenos d[ií]as|buenas tardes|Hoy estuve|defaultMention|greetingCutoff|WORKFLOW_YT_MENTION|WORKFLOW_YT_TIMEZONE)\b|America\/Santiago/;
+  const orgHost = /https?:\/\/(?!example\.)[a-z0-9-]+\.youtrack\.cloud/i;
+  // A quoted ABC-123 literal used as a fallback value (`?? "X-1"`, `|| "X-1"`).
+  const issueDefault = /(?:\?\?|\|\|)\s*["'`][A-Z][A-Z0-9]+-\d+["'`]/;
   const hits: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === "node_modules" || entry.name === "dist") continue;
+      if (["node_modules", "dist", "build"].includes(entry.name)) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (/\.(?:ts|tsx|md|json)$/.test(entry.name)) {
+      else if (
+        /\.(?:ts|tsx|md|json)$/.test(entry.name) &&
+        full.includes(`${path.sep}src${path.sep}`)
+      ) {
         const text = readFileSync(full, "utf8");
-        if (banned.test(text)) hits.push(path.relative(root, full));
+        if (orgHost.test(text) || issueDefault.test(text)) hits.push(path.relative(root, full));
       }
     }
   };

@@ -3,7 +3,7 @@ import path from "node:path";
 import { configDir } from "./config";
 import { assetRoot } from "./package-root";
 
-export type TemplateName = "issue-update" | "greeting" | "headers";
+export type TemplateName = "issue-update" | "headers";
 
 const repoRoot = assetRoot();
 
@@ -38,7 +38,7 @@ export const listTemplates = (): {
   source: "config" | "repo" | "missing";
   path: string;
 }[] =>
-  (["issue-update", "greeting", "headers"] as TemplateName[]).map((name) => {
+  (["issue-update", "headers"] as TemplateName[]).map((name) => {
     const cfg = templatePath(name);
     const repoFile = path.join(repoRoot, "templates", `${name}.md`);
     if (existsSync(cfg)) return { name, source: "config", path: cfg };

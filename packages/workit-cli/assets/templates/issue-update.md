@@ -1,5 +1,4 @@
 # Update
-{{greetingSection}}
 {{projectSection}}
 {{userNotesSection}}
 {{progressSection}}

@@ -66,12 +66,13 @@ test("writeTemplate requires confirmed", () => {
 test("listTemplates reports sources", () => {
   const dir = cfgDir();
   try {
-    writeTemplate("greeting", "Hello", true);
+    writeTemplate("headers", "## Attachments", true);
     const list = listTemplates();
     const issue = list.find((t) => t.name === "issue-update");
-    const greeting = list.find((t) => t.name === "greeting");
+    const headers = list.find((t) => t.name === "headers");
     expect(issue?.source).toBe("repo");
-    expect(greeting?.source).toBe("config");
+    expect(headers?.source).toBe("config");
+    expect(list.map((t) => t.name)).toEqual(["issue-update", "headers"]);
   } finally {
     cleanupEnv();
     rmSync(dir, { recursive: true, force: true });

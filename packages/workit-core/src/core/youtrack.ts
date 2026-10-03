@@ -116,6 +116,33 @@ function tzParts(date: Date, tz: string): { y: string; m: string; d: string } {
 // `timezone` override; there is no hard-coded default zone.
 const processTimezone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
+export type WorkTimezone = { timezone: string; source: "youtrack.json" | "process" };
+
+/** The timezone that decides a work item's calendar day: an explicit
+ * youtrack.json `timezone` wins, otherwise the process timezone (TZ). */
+export const effectiveWorkTimezone = (
+  cfg: Record<string, any> | null | undefined,
+): WorkTimezone => {
+  const configured = cfg?.timezone;
+  return typeof configured === "string" && configured.trim()
+    ? { timezone: configured.trim(), source: "youtrack.json" }
+    : { timezone: processTimezone(), source: "process" };
+};
+
+/** Neutral default work-item text for meeting time; youtrack.json can set a
+ * global `meetingWorkItemText` or a per-meeting `workItemText`. */
+export const DEFAULT_MEETING_WORK_ITEM_TEXT = "Meetings";
+
+export const meetingWorkItemText = (
+  cfg: Record<string, any> | null | undefined,
+  item?: Record<string, any> | null,
+): string => {
+  if (typeof item?.workItemText === "string" && item.workItemText) return item.workItemText;
+  if (typeof cfg?.meetingWorkItemText === "string" && cfg.meetingWorkItemText)
+    return cfg.meetingWorkItemText;
+  return DEFAULT_MEETING_WORK_ITEM_TEXT;
+};
+
 // A YouTrack work-item date is the calendar day at UTC midnight. Computing it
 // with Date.UTC keeps it independent of the process timezone (Date.parse of a
 // local "T00:00:00" shifted it a day back east of UTC).
@@ -143,11 +170,18 @@ export function youTrackParseDuration(
 /** Port of scripts/youtrack/work-date-ms.sh — resolve work-item date as epoch ms.
  * The calendar day comes from youtrack.json `timezone` when set (optional
  * override), otherwise from the process timezone. */
-export function youTrackWorkDateMs(
-  dateRaw: string,
-): { data: { dateMs: number; timezone: string; localDate: string } } | { error: string } {
+export function youTrackWorkDateMs(dateRaw: string):
+  | {
+      data: {
+        dateMs: number;
+        timezone: string;
+        timezoneSource: WorkTimezone["source"];
+        localDate: string;
+      };
+    }
+  | { error: string } {
   const cfgPath = youTrackConfigPath();
-  let tz = processTimezone();
+  let effective = effectiveWorkTimezone(null);
   // Missing file is a legitimate unconfigured state (reader: "missing" keeps
   // defaults); a parseable non-object is malformed and must propagate the
   // exact-path error instead of silently defaulting the timezone.
@@ -161,27 +195,30 @@ export function youTrackWorkDateMs(
     if (!isConfigObject(parsed)) {
       return { error: `${cfgPath} is not a JSON object` };
     }
-    const configured = (parsed as Record<string, any>).timezone;
-    if (typeof configured === "string" && configured.trim()) tz = configured.trim();
+    effective = effectiveWorkTimezone(parsed as Record<string, any>);
   }
+  const tz = effective.timezone;
+  const meta = { timezone: tz, timezoneSource: effective.source };
   const raw = dateRaw || "auto";
   try {
     if (raw === "auto") {
       const { y, m, d } = tzParts(new Date(), tz);
       const dateMs = utcMidnight(Number(y), Number(m), Number(d));
       if (dateMs === null) return { error: "could not resolve date" };
-      return { data: { dateMs, timezone: tz, localDate: `${y}-${m}-${d}` } };
+      return { data: { dateMs, ...meta, localDate: `${y}-${m}-${d}` } };
     }
     if (/^\d+$/.test(raw)) {
+      // An explicit epoch is already a work-item date (UTC midnight of the
+      // day); its label is that UTC calendar day so it round-trips exactly.
       const dt = new Date(Number(raw));
-      const { y, m, d } = tzParts(dt, tz);
-      return { data: { dateMs: Number(raw), timezone: tz, localDate: `${y}-${m}-${d}` } };
+      if (Number.isNaN(dt.getTime())) return { error: `invalid date: ${raw}` };
+      return { data: { dateMs: Number(raw), ...meta, localDate: dt.toISOString().slice(0, 10) } };
     }
     const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(raw);
     const dateMs = match ? utcMidnight(Number(match[1]), Number(match[2]), Number(match[3])) : null;
     if (!match || dateMs === null) return { error: `invalid date: ${raw} (expected YYYY-MM-DD)` };
     const localDate = `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
-    return { data: { dateMs, timezone: tz, localDate } };
+    return { data: { dateMs, ...meta, localDate } };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "could not resolve date" };
   }
@@ -373,12 +410,14 @@ export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
     defaults.description ?? "OpenCode workit — /wk-issue-update and /wk-meetings",
   );
   const scopes = Array.isArray(defaults.scopes) ? defaults.scopes : ["YouTrack"];
-  const base = String(config.baseUrl ?? "https://enghouseamg.youtrack.cloud").replace(/\/+$/, "");
+  // No organization default: without a configured baseUrl there is no
+  // account page to link to, so createUrl is null and `error` says why.
+  const base = String(config.baseUrl ?? "").replace(/\/+$/, "");
   const tokenFile = String(
     config.tokenFile ?? path.join(path.dirname(loaded.path), "youtrack.token"),
   );
   const tab = String(defaults.profileTab ?? "account-security");
-  const createUrl = `${base}/users/me?${new URLSearchParams({ tab })}`;
+  const createUrl = base ? `${base}/users/me?${new URLSearchParams({ tab })}` : null;
   const docsUrl = "https://www.jetbrains.com/help/youtrack/cloud/manage-permanent-token.html";
   return {
     data: {
@@ -389,6 +428,9 @@ export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
       createUrl,
       docsUrl,
       prefillSupported: false,
+      ...(base
+        ? {}
+        : { error: `baseUrl missing in ${loaded.path} — set your YouTrack base URL first` }),
       steps: [
         "Profile → Account Security → **New token** (or open createUrl)",
         `Name: **${name}**`,
@@ -476,7 +518,7 @@ function meetingOptionsFromConfig(cfg: any): Record<string, any>[] {
       key,
       issue: item.issue,
       label: item.label ?? item.issue,
-      workItemText: item.workItemText ?? "Reuniones",
+      workItemText: meetingWorkItemText(cfg, item),
       url: item.url ?? (base && item.issue ? `${base}/issue/${item.issue}` : null),
     }));
   }
@@ -486,7 +528,7 @@ function meetingOptionsFromConfig(cfg: any): Record<string, any>[] {
       key: "general",
       issue,
       label: "General meetings",
-      workItemText: "Reuniones",
+      workItemText: meetingWorkItemText(cfg),
       url: base && issue ? `${base}/issue/${issue}` : null,
     },
   ];
@@ -507,7 +549,7 @@ const readOnlyYouTrackConfig = (cfg: Record<string, any>): Record<string, any> =
   const safe: Record<string, any> = {};
   const baseUrl = publicUrl(cfg.baseUrl);
   if (baseUrl) safe.baseUrl = baseUrl;
-  for (const key of ["timezone", "meetingIssue"])
+  for (const key of ["timezone", "meetingIssue", "meetingWorkItemText"])
     if (typeof cfg[key] === "string") safe[key] = cfg[key];
   if (
     cfg.meetingIssues &&
@@ -559,6 +601,7 @@ export function context(
   if (mode === "meetings" && !issue_id && !issue_url && !issue_ref) {
     return {
       config: safeConfig,
+      workTimezone: effectiveWorkTimezone(safeConfig),
       mode: "meetings",
       requiresMeetingChoice: true,
       meetingOptions,
@@ -589,6 +632,7 @@ export function context(
 
   return {
     config: safeConfig,
+    workTimezone: effectiveWorkTimezone(safeConfig),
     issueId: issue,
     issueUrl,
     mode: mode ?? (selectedMeeting ? "meetings" : "task"),
@@ -698,7 +742,6 @@ export function buildDraft({
   issueId,
   projectName,
   userNotes,
-  greeting,
   facts,
   includeProjectOpener,
   includeFacts,
@@ -706,18 +749,16 @@ export function buildDraft({
   issueId: string;
   projectName?: string;
   userNotes?: string;
-  greeting?: string;
   facts?: any;
   includeProjectOpener?: boolean;
   includeFacts?: boolean;
 }): Record<string, any> {
   // The wording lives in the editable issue-update template (config
-  // templates/issue-update.md overrides the bundled neutral one). `greeting`
-  // is an optional caller-supplied opening line; there is no built-in text.
+  // templates/issue-update.md overrides the bundled neutral one). Placeholders
+  // this build does not fill (e.g. a legacy {{greetingSection}}) render empty.
   const tpl = readTemplate("issue-update").content;
   const para = (value: string): string => (value ? `\n\n${value}` : "");
   const sections: Record<string, string> = {
-    "{{greetingSection}}": (greeting ?? "").trim(),
     "{{projectSection}}": includeProjectOpener && projectName ? `Project: ${projectName}` : "",
     "{{userNotesSection}}": (userNotes ?? "").trim(),
     "{{progressSection}}":
@@ -732,6 +773,7 @@ export function buildDraft({
   let filled = tpl;
   for (const [placeholder, value] of Object.entries(sections))
     filled = filled.replaceAll(placeholder, para(value));
+  filled = filled.replace(/\{\{[A-Za-z0-9_]+\}\}/g, "");
   const collapsed = filled.replace(/\n{3,}/g, "\n\n").trimEnd();
   // Bare draft keeps the header's trailing blank line (matches legacy output);
   // drafts with sections end right after the last one.

@@ -7,7 +7,7 @@ import { writeFileExclusive } from "./safe-write";
 import { resolveWorkspace, workspacesPath } from "./workspaces";
 import { applyWorkspaceBranchPolicy } from "./setup";
 import { vcsConfig, vcsVerifyToken } from "./vcs-config";
-import { youTrackTokenCreateUrl, youTrackVerifyToken } from "./youtrack";
+import { meetingWorkItemText, youTrackTokenCreateUrl, youTrackVerifyToken } from "./youtrack";
 
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 
@@ -80,7 +80,7 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
           key,
           issue: iss,
           label: item?.label ?? iss,
-          workItemText: item?.workItemText ?? "Reuniones",
+          workItemText: meetingWorkItemText(ytParsed, item),
           url: item?.url ?? (base && iss ? `${base}/issue/${iss}` : null),
         });
       }

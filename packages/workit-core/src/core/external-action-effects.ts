@@ -1714,6 +1714,11 @@ const resolveExternalActionAtRoot = (
                 issueId: request.payload.issueId,
                 marker,
                 dateMs: date.data.dateMs,
+                workDate: {
+                  localDate: date.data.localDate,
+                  timezone: date.data.timezone,
+                  timezoneSource: date.data.timezoneSource,
+                },
                 workText,
                 minutes: request.payload.minutes,
                 steps: ["time"],
@@ -1757,6 +1762,11 @@ const resolveExternalActionAtRoot = (
               issueId: request.payload.issueId,
               marker,
               dateMs: date.data.dateMs,
+              workDate: {
+                localDate: date.data.localDate,
+                timezone: date.data.timezone,
+                timezoneSource: date.data.timezoneSource,
+              },
               ...(request.operation === "youtrack.update" ? { commentText: annotated } : {}),
               workText: annotated,
               ...(request.payload.minutes !== undefined

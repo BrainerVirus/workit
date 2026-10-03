@@ -108,8 +108,7 @@ test("wizard defaults contain no organization-specific data (WZ-04/CA-14)", () =
     const draft = createInitialDraft(config());
     expect(draft.values.baseUrl).toBe("");
     const serialized = JSON.stringify(draft.values);
-    expect(serialized).not.toContain("enghouseamg");
-    expect(serialized).not.toContain("IRPT");
+    expect(serialized).not.toContain("meetingIssue");
     expect(serialized).not.toContain("defaultMention");
     expect(serialized).not.toContain("timezone");
     expect(serialized).not.toContain("youtrack.cloud");
@@ -380,7 +379,7 @@ test("buildSetupPreview emits exact typed mutations for every section (WZ-08)", 
     expect(yt).toBeDefined();
     const ytValue = JSON.stringify((yt as { value: unknown }).value);
     expect(ytValue).toContain("https://yt.example.com");
-    expect(ytValue).not.toContain("IRPT");
+    expect(ytValue).not.toContain("meetingIssue");
     expect(ytValue).not.toContain("defaultMention");
     expect(ytValue).not.toContain("greeting");
     expect(ytValue).not.toContain("timezone");
