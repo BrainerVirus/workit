@@ -1,6 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -8,6 +16,7 @@ import {
   forgeConflict,
   headSha,
   mergeBase,
+  networkGitInvocation,
   parseRemoteUrl,
   patchId,
   pushForge,
@@ -403,6 +412,10 @@ test("remote URLs are redacted everywhere they are echoed", () => {
   expect(redactRemote("git@github.com:o/r.git")).toBe("git@github.com:o/r.git");
   expect(redactRemote("ssh://git@host:22/o/r")).toBe("ssh://git@host:22/o/r");
   expect(redactRemote("")).toBe("<unparseable remote>");
+  // git's <transport>::<address> form can carry a whole command line.
+  expect(redactRemote(`ext::ssh -i key user:${secret}@host %S repo`)).toBe("<unparseable remote>");
+  expect(redactRemote("fd::17")).toBe("<unparseable remote>");
+  expect(parseRemoteUrl("ext::sh -c x")).toBeNull();
   // A successful derivation reports the redacted URL too.
   const root = repo();
   git(root, "remote", "add", "origin", `https://user:${secret}@github.com/o/r.git`);
@@ -453,3 +466,199 @@ test("SSH Include applies only inside a matching block and the block continues a
   // Host lines inside an included file still work for their own aliases.
   expect(resolveSshHost("other", { text: "Include extra\n", home }).hostname).toBe("other.example");
 });
+
+// ---------------------------------------------------------------------------
+// Network safety: no prompts, ssh batch mode, a hard timeout, and nothing
+// (git, ssh, git-remote-https holding the URL) left running afterwards.
+
+const posix = process.platform !== "win32";
+
+test("networkGitInvocation never prompts and bounds ssh and HTTP stalls", () => {
+  const saved = { ...process.env };
+  try {
+    delete process.env.GIT_SSH_COMMAND;
+    delete process.env.GIT_SSH;
+    process.env.GIT_ASKPASS = "/usr/bin/ksshaskpass";
+    const plain = networkGitInvocation(repo(), ["ls-remote", "origin"], 7_500);
+    expect(plain.args).toEqual([
+      "-c",
+      "http.lowSpeedLimit=1",
+      "-c",
+      "http.lowSpeedTime=8",
+      "ls-remote",
+      "origin",
+    ]);
+    expect(plain.env).toMatchObject({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+      SSH_ASKPASS: "",
+      SSH_ASKPASS_REQUIRE: "never",
+      GCM_INTERACTIVE: "never",
+      GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=8",
+    });
+    // A user ssh command is kept and only extended; the connect timeout caps at 10 s.
+    process.env.GIT_SSH_COMMAND = "ssh -i ~/.ssh/id_work";
+    expect(networkGitInvocation(repo(), [], 60_000).env.GIT_SSH_COMMAND).toBe(
+      "ssh -i ~/.ssh/id_work -o BatchMode=yes -o ConnectTimeout=10",
+    );
+    const configured = repo();
+    delete process.env.GIT_SSH_COMMAND;
+    git(configured, "config", "core.sshCommand", "ssh -F /dev/null");
+    expect(networkGitInvocation(configured, [], 3_000).env.GIT_SSH_COMMAND).toBe(
+      "ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=3",
+    );
+    // A bare GIT_SSH program may not accept -o: left alone.
+    process.env.GIT_SSH = "plink";
+    expect(networkGitInvocation(repo(), [], 3_000).env.GIT_SSH_COMMAND).toBeUndefined();
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+});
+
+const withEnv = async <T>(vars: Record<string, string>, run: () => T | Promise<T>): Promise<T> => {
+  const saved = { ...process.env };
+  Object.assign(process.env, vars);
+  try {
+    return await run();
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+};
+
+// Hermetic git: no user/system config (credential helpers, insteadOf).
+const HERMETIC = { GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: "1" };
+
+const script = (dir: string, name: string, body: string): string => {
+  const file = path.join(dir, name);
+  writeFileSync(file, `#!/bin/sh\n${body}\n`);
+  chmodSync(file, 0o755);
+  return file;
+};
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const startServer = async (mode: "stall" | "401") => {
+  const dir = tmp("wk-rev-srv-");
+  const file = path.join(dir, "server.mjs");
+  writeFileSync(
+    file,
+    `import http from "node:http"; import net from "node:net";
+const server = ${
+      mode === "stall"
+        ? "net.createServer(() => {})"
+        : `http.createServer((_q, r) => { r.writeHead(401, { "WWW-Authenticate": 'Basic realm="x"' }); r.end(); })`
+    };
+server.listen(0, "127.0.0.1", () => console.log(server.address().port));`,
+  );
+  const child = spawn(process.execPath, [file], { stdio: ["ignore", "pipe", "inherit"] });
+  const port = await new Promise<number>((resolve, reject) => {
+    child.stdout.once("data", (chunk) => resolve(Number(String(chunk).trim())));
+    child.once("exit", () => reject(new Error("server exited")));
+  });
+  return { port, stop: () => child.kill("SIGKILL") };
+};
+
+test.skipIf(!posix)(
+  "ssh runs in batch mode with a connect timeout (a fake ssh that would block otherwise)",
+  async () => {
+    const bin = tmp("wk-rev-ssh-");
+    const fake = script(
+      bin,
+      "fake-ssh",
+      `case "$*" in *BatchMode=yes*ConnectTimeout=*) echo "fake ssh: denied" >&2; exit 255;; esac\nsleep 30`,
+    );
+    const root = repo();
+    git(root, "remote", "add", "origin", "ssh://git@example.invalid/o/r.git");
+    const started = Date.now();
+    const tip = await withEnv({ ...HERMETIC, GIT_SSH_COMMAND: fake }, () =>
+      remoteTip(root, "origin", "main", { timeoutMs: 8_000 }),
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(tip).toMatchObject({ ok: false, code: "unavailable" });
+    if (!tip.ok) expect(tip.error).not.toContain("timed out");
+  },
+  20_000,
+);
+
+test.skipIf(!posix)(
+  "credentials are never prompted for (a fake askpass that would block)",
+  async () => {
+    const server = await startServer("401");
+    try {
+      const bin = tmp("wk-rev-askpass-");
+      const asked = path.join(bin, "asked");
+      const askpass = script(bin, "askpass", `touch "${asked}"\nsleep 30`);
+      const root = repo();
+      const started = Date.now();
+      const tip = await withEnv(
+        { ...HERMETIC, GIT_ASKPASS: askpass, SSH_ASKPASS: askpass, GIT_TERMINAL_PROMPT: "1" },
+        () =>
+          remoteTip(root, `http://127.0.0.1:${server.port}/o/r.git`, "main", { timeoutMs: 8_000 }),
+      );
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(tip).toMatchObject({ ok: false, code: "unavailable" });
+      expect(existsSync(asked)).toBe(false);
+    } finally {
+      server.stop();
+    }
+  },
+  20_000,
+);
+
+test.skipIf(!posix)(
+  "a timed-out call kills git's whole process tree (ssh and git-remote-https included)",
+  async () => {
+    const bin = tmp("wk-rev-hang-");
+    const pidFile = path.join(bin, "ssh.pid");
+    // Ignores every option, so only the watchdog's timeout can end it.
+    const fake = script(bin, "hang-ssh", `echo $$ > "${pidFile}"\nexec sleep 60`);
+    const root = repo();
+    git(root, "remote", "add", "origin", "ssh://git@example.invalid/o/r.git");
+    const started = Date.now();
+    const tip = await withEnv({ ...HERMETIC, GIT_SSH_COMMAND: fake }, () =>
+      remoteTip(root, "origin", "main", { timeoutMs: 1_500 }),
+    );
+    expect(Date.now() - started).toBeLessThan(6_000);
+    expect(tip).toMatchObject({ ok: false, code: "unavailable" });
+    if (!tip.ok) expect(tip.error).toContain("timed out after 1500 ms");
+    const sshPid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(sshPid).toBeGreaterThan(0);
+    expect(alive(sshPid)).toBe(false);
+
+    // HTTPS to a server that accepts and never answers: git-remote-https has
+    // the credential URL in its argv and must not survive the timeout.
+    const server = await startServer("stall");
+    try {
+      const token = `tok-${process.pid}-${Date.now()}`;
+      const stalled = await withEnv(HERMETIC, () =>
+        remoteTip(root, `https://user:${token}@127.0.0.1:${server.port}/o/r.git`, "main", {
+          timeoutMs: 1_500,
+        }),
+      );
+      expect(stalled).toMatchObject({ ok: false, code: "unavailable" });
+      expect(JSON.stringify(stalled)).not.toContain(token);
+      // `ps` (not pgrep) lists every process with its full argv on Linux and macOS.
+      const listing = spawnSync("ps", ["-eo", "args="], { encoding: "utf8" });
+      expect(listing.status).toBe(0);
+      const left = {
+        stdout: listing.stdout
+          .split("\n")
+          .filter((row) => row.includes(token))
+          .join("\n"),
+      };
+      expect(left.stdout.trim()).toBe("");
+    } finally {
+      server.stop();
+    }
+  },
+  30_000,
+);

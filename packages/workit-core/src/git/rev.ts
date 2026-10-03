@@ -11,8 +11,9 @@
 //
 // Every git call is bounded: local reads time out after GIT_TIMEOUTS.local,
 // worktree hashing after GIT_TIMEOUTS.worktree, and network calls after
-// GIT_TIMEOUTS.network with prompts disabled (GIT_TERMINAL_PROMPT=0, ssh
-// BatchMode). Remote URLs are never echoed raw: messages go through
+// GIT_TIMEOUTS.network. Network calls run under a watchdog that kills git's
+// whole process tree on timeout, with prompts disabled
+// (networkGitInvocation). Remote URLs are never echoed raw: messages go through
 // redactRemote, which drops credentials, query and fragment.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -61,25 +62,97 @@ const line = (run: GitRun): string | null => {
 const safeArg = (value: string): boolean => value.length > 0 && !value.startsWith("-");
 
 /**
- * Environment for git calls that may touch the network: never prompt, and
- * make ssh fail fast. An existing GIT_SSH_COMMAND or core.sshCommand is kept
- * and only gets the options appended (ssh takes the first value of each
- * option, so the user's own BatchMode/ConnectTimeout still win). A bare
- * GIT_SSH program (e.g. plink) is left alone: it may not accept `-o`.
+ * The exact invocation for a git call that may touch the network: git args
+ * with HTTP stall limits, and an environment that can never prompt.
+ *
+ * - GIT_TERMINAL_PROMPT=0 and empty GIT_ASKPASS/SSH_ASKPASS (an empty value
+ *   stops git from falling back to core.askPass) mean no credential prompt.
+ *   SSH_ASKPASS_REQUIRE=never and GCM_INTERACTIVE=never cover ssh and Git
+ *   Credential Manager.
+ * - ssh gets `-o BatchMode=yes -o ConnectTimeout=N`, appended to an existing
+ *   GIT_SSH_COMMAND or core.sshCommand. ssh takes the first value of each
+ *   option, so the user's own settings still win. A bare GIT_SSH program
+ *   (e.g. plink) is left alone because it may not accept `-o`.
+ * - HTTPS aborts once the transfer stays below 1 B/s for the whole budget
+ *   (http.lowSpeedLimit/lowSpeedTime).
  */
-const networkEnv = (cwd: string, timeoutMs: number): NodeJS.ProcessEnv => {
-  const connectTimeout = Math.max(1, Math.min(10, Math.floor(timeoutMs / 1000)));
+export function networkGitInvocation(
+  cwd: string,
+  args: string[],
+  timeoutMs: number,
+): { args: string[]; env: NodeJS.ProcessEnv } {
+  const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "",
+    SSH_ASKPASS: "",
+    SSH_ASKPASS_REQUIRE: "never",
     GCM_INTERACTIVE: "never",
   };
   const base =
     process.env.GIT_SSH_COMMAND ||
     line(git(cwd, ["config", "--get", "core.sshCommand"])) ||
     (process.env.GIT_SSH ? null : "ssh");
-  if (base) env.GIT_SSH_COMMAND = `${base} -o BatchMode=yes -o ConnectTimeout=${connectTimeout}`;
-  return env;
+  if (base)
+    env.GIT_SSH_COMMAND = `${base} -o BatchMode=yes -o ConnectTimeout=${Math.min(10, seconds)}`;
+  return {
+    args: ["-c", "http.lowSpeedLimit=1", "-c", `http.lowSpeedTime=${seconds}`, ...args],
+    env,
+  };
+}
+
+// Runs in a child runtime (node or bun, whichever runs workit). It starts git
+// in its own process group and, on timeout, kills the whole group: git and
+// every helper it spawned (git-remote-https with the URL in its argv, ssh).
+// Leftover helpers are also killed after a normal exit. Windows has no
+// process groups, so the tree is killed with `taskkill /T`.
+const WATCHDOG = `
+const cp = require("node:child_process");
+const { ms, args } = JSON.parse(process.env.WORKIT_GIT_WATCHDOG);
+delete process.env.WORKIT_GIT_WATCHDOG;
+const win = process.platform === "win32";
+const child = cp.spawn("git", args, { stdio: "inherit", detached: !win, windowsHide: true });
+const killTree = () => {
+  if (!child.pid) return;
+  if (win) cp.spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+  else try { process.kill(-child.pid, "SIGKILL"); } catch {}
+};
+let timedOut = false;
+const timer = setTimeout(() => { timedOut = true; killTree(); }, ms);
+child.on("error", () => { clearTimeout(timer); process.exit(127); });
+child.on("exit", (code) => {
+  clearTimeout(timer);
+  if (!win) killTree();
+  process.exit(timedOut ? 124 : code ?? 1);
+});
+`;
+
+const WATCHDOG_TIMEOUT_EXIT = 124;
+
+/** A network git call under the process-group watchdog (see WATCHDOG). */
+const gitNetwork = (cwd: string, args: string[], timeoutMs: number): GitRun => {
+  const invocation = networkGitInvocation(cwd, args, timeoutMs);
+  const result = spawnSync(process.execPath, ["-e", WATCHDOG], {
+    cwd,
+    encoding: "utf8",
+    env: {
+      ...invocation.env,
+      WORKIT_GIT_WATCHDOG: JSON.stringify({ ms: timeoutMs, args: invocation.args }),
+    },
+    maxBuffer: MAX_BUFFER,
+    // Backstop only: the watchdog itself enforces timeoutMs.
+    timeout: timeoutMs + 10_000,
+    killSignal: "SIGKILL",
+    windowsHide: true,
+  });
+  const error: NodeJS.ErrnoException | undefined = result.error;
+  return {
+    ok: result.status === 0,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    timedOut: result.status === WATCHDOG_TIMEOUT_EXIT || error?.code === "ETIMEDOUT",
+  };
 };
 
 const UNPARSEABLE = "<unparseable remote>";
@@ -93,6 +166,8 @@ const UNPARSEABLE = "<unparseable remote>";
 export function redactRemote(raw: string): string {
   const value = raw.trim();
   if (!value) return UNPARSEABLE;
+  // git's `<transport>::<address>` syntax (ext::<command>) can embed anything.
+  if (/^[A-Za-z][A-Za-z0-9+.-]*::/u.test(value)) return UNPARSEABLE;
   if (/^[A-Za-z]:[\\/]/u.test(value) || value.startsWith("/") || value.startsWith("."))
     return value;
   // A remote name (origin) or a relative path carries no userinfo.
@@ -263,10 +338,7 @@ export function remoteTip(
     return { ok: false, code: "invalid_input", error: "remote and branch must not start with -" };
   const timeoutMs = options.timeoutMs ?? GIT_TIMEOUTS.network;
   const ref = `refs/heads/${branch}`;
-  const listed = git(cwd, ["ls-remote", remote, ref], {
-    env: networkEnv(cwd, timeoutMs),
-    timeoutMs,
-  });
+  const listed = gitNetwork(cwd, ["ls-remote", remote, ref], timeoutMs);
   if (!listed.ok)
     return {
       ok: false,
@@ -345,7 +417,7 @@ const cleanPath = (value: string): string =>
 /** Parse a git remote URL (scp-like `user@host:path` or URL syntax). */
 export function parseRemoteUrl(raw: string): RemoteUrl | null {
   const value = raw.trim();
-  if (!value) return null;
+  if (!value || /^[A-Za-z][A-Za-z0-9+.-]*::/u.test(value)) return null;
   // Local paths, including Windows drive paths that look scp-like (C:\repo).
   if (/^[A-Za-z]:[\\/]/u.test(value) || value.startsWith("/") || value.startsWith(".")) {
     return { protocol: "file", user: null, host: "", port: null, path: value };
