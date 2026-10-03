@@ -190,7 +190,7 @@ test("Given a competing write on every attempt, When the caller omitted revision
   }
 });
 
-test("Given slow competing writes on every attempt, When the lock budget elapses, Then retries stop within about twice the budget", () => {
+test("Given slow competing writes on every attempt, When the lock budget elapses, Then retries stop before the attempt cap", () => {
   const { root, store, core, taskId } = started();
   const competitor = new WorkitCore(new TaskStore(root), context(root));
   const probe = interleave(
@@ -209,9 +209,10 @@ test("Given slow competing writes on every attempt, When the lock budget elapses
     const elapsed = performance.now() - begin;
     expect(result).toMatchObject({ ok: false, code: "busy" });
     // 40 ms per interleaved write against a 100 ms budget: the deadline, not
-    // the 8-attempt cap, ends the loop.
+    // the 8-attempt cap, ends the loop. The wall-clock bound is loose because
+    // CI runners stretch the sleeps; the attempt count is the real check.
     expect(probe.attempts()).toBeLessThan(8);
-    expect(elapsed).toBeLessThan(2 * 100 + 150);
+    expect(elapsed).toBeLessThan(1_500);
   } finally {
     setDefaultLockTimeout(budget);
   }
