@@ -15,6 +15,7 @@ import {
   rewriteRecordRefs,
   success,
   type Assessment,
+  type Candidate,
   type Capability,
   type Caller,
   type Constraint,
@@ -60,6 +61,7 @@ import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { verifyStandingApproval } from "./auto-approval";
 import { TaskStore, type MetadataLock, type ProcessEvidence } from "./task-store";
 import {
+  compactTaskContext,
   exportDigest,
   reconcileResume as reconcileResumeContext,
   type ResumeReconciliation,
@@ -2336,14 +2338,34 @@ export class WorkitCore {
     });
   }
 
-  private view(task: TaskRecord): Result<TaskView> {
+  /**
+   * Compact task context for per-turn host injection. Unlike `inspect`
+   * view:"full", it never captures a candidate: evidence freshness is judged
+   * against the last recorded candidate, and live staleness is detected by
+   * evidence and close, which do capture.
+   */
+  compactContext(taskId: string): Result<string> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    const task = this.store.readTask(taskId);
+    if (!task.ok) return task as Result<never>;
+    const helper = this.helperTaskGuard(task.data, true);
+    if (!helper.ok) return helper as Result<never>;
+    const view = this.view(task.data, false);
+    if (!view.ok) return view as Result<never>;
+    return success(view.revision, view.workspaceRevision, compactTaskContext(view.data));
+  }
+
+  private view(task: TaskRecord, capture = true): Result<TaskView> {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
     const historical = task.status === "closed" ? task.candidates.at(-1) : undefined;
     const current = historical
       ? success(null, null, historical)
-      : captureCandidate(this.store.root, task.intent.data.scope, environment());
+      : capture
+        ? captureCandidate(this.store.root, task.intent.data.scope, environment())
+        : success<Candidate | null>(null, null, null);
     if (!current.ok) return current as Result<never>;
     const evaluationWorkspace =
       task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;

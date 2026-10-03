@@ -105,6 +105,61 @@ const metadataLockSchema = z
     externalAction: z.literal(true).optional(),
   })
   .strict();
+/** One task's listing facts, kept in `.workit/index.json` so per-turn host
+ * hooks can find a session's task without parsing every full record. */
+export type TaskIndexEntry = {
+  id: Id;
+  revision: Revision;
+  status: TaskRecord["status"];
+  createdAt: Utc;
+  updatedAt: Utc;
+  objective: string;
+  source: { host: string; kind: Provenance["kind"] };
+  progress: { summary: string; nextAction: string | null };
+  /** Host sessions bound to the task: the intent session (workerId null) and worker sessions. */
+  sessions: { host: string; handle: string; workerId: Id | null }[];
+  /** Stat signature of the task file the entry was derived from. */
+  file: string;
+};
+const INDEX_VERSION = 1;
+const hostSession = (value: unknown): { host: string; handle: string } | null =>
+  isObject(value) &&
+  value.kind === "host" &&
+  typeof value.host === "string" &&
+  typeof value.handle === "string"
+    ? { host: value.host, handle: value.handle }
+    : null;
+const indexEntry = (task: TaskRecord, file: string): TaskIndexEntry => {
+  const sessions: TaskIndexEntry["sessions"] = [];
+  const intent = hostSession(task.intent.provenance.session);
+  if (intent) sessions.push({ ...intent, workerId: null });
+  for (const worker of task.workers) {
+    const session = hostSession(worker.data.session);
+    if (session) sessions.push({ ...session, workerId: worker.id });
+  }
+  return {
+    id: task.id,
+    revision: task.revision,
+    status: task.status,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    objective: task.intent.data.objective,
+    source: { host: task.intent.provenance.host, kind: task.intent.provenance.kind },
+    progress: { summary: task.progress.summary, nextAction: task.progress.nextAction },
+    sessions,
+    file,
+  };
+};
+/** Cheap change detector: atomic replacement gives every write a new inode. */
+export const fileSignature = (file: string): string | null => {
+  try {
+    const stat = fs.statSync(file, { bigint: true });
+    return `${stat.ino}:${stat.size}:${stat.mtimeNs}`;
+  } catch {
+    return null;
+  }
+};
+
 export type RecoveryCandidate = {
   target: "task" | "workspace";
   path: string;
@@ -256,6 +311,62 @@ export class TaskStore {
       tasks.push(item.result.data);
     }
     return success(null, null, tasks);
+  }
+
+  /**
+   * List tasks from `.workit/index.json` without parsing full records. Each
+   * entry is checked against its task file's stat signature; missing, stale,
+   * or corrupt entries are rebuilt from the full (validated) record and the
+   * index is rewritten best-effort. Errors match `listTasks()`.
+   */
+  listTaskIndex(): Result<TaskIndexEntry[]> {
+    if (!fs.existsSync(this.tasksDir)) return success(null, null, []);
+    let names: string[];
+    try {
+      names = fs.readdirSync(this.tasksDir).filter((name) => name.endsWith(".json"));
+    } catch (error) {
+      return failure("storage_error", `unable to list tasks: ${String(error)}`, {
+        path: this.tasksDir,
+      });
+    }
+    const workspace = this.readWorkspace();
+    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.data)
+      return failure("recovery_required", "task workspace binding is invalid", {
+        path: this.workspacePath,
+      });
+    const stored = this.readIndex(workspace.data.id);
+    const entries: TaskIndexEntry[] = [];
+    let changed = Object.keys(stored).length !== names.length;
+    for (const name of names.sort()) {
+      const file = path.join(this.tasksDir, name);
+      const signature = fileSignature(file);
+      if (signature === null) {
+        changed = true;
+        continue;
+      }
+      const cached = stored[name.slice(0, -5)];
+      if (cached && cached.file === signature) {
+        entries.push(cached);
+        continue;
+      }
+      changed = true;
+      const item = this.readRecord<TaskRecord>(file, taskRecordSchema);
+      if (!item.exists) continue;
+      if (!item.result.ok) return item.result as Result<never>;
+      if (!validId(name.slice(0, -5)) || item.result.data.id !== name.slice(0, -5))
+        return failure("recovery_required", "task filename and record ID differ", { path: name });
+      if (item.result.data.workspaceId !== workspace.data.id)
+        return failure("recovery_required", "task workspace binding is invalid", { path: name });
+      entries.push(indexEntry(item.result.data, signature));
+    }
+    if (changed) this.writeIndex(workspace.data.id, entries);
+    return success(null, null, entries);
+  }
+
+  /** Stat signature of the workspace record; changes on every workspace write. */
+  workspaceSignature(): string | null {
+    return fileSignature(this.workspacePath);
   }
 
   readWorkspace(): Result<WorkspaceRecord | null> {
@@ -1108,6 +1219,7 @@ export class TaskStore {
       fs.renameSync(temporary, file);
       temporary = undefined;
       this.fsyncDirectory(path.dirname(file));
+      if (path.dirname(file) === this.tasksDir) this.indexTaskWrite(file, value as TaskRecord);
       return success(null, null, value);
     } catch (error) {
       return failure("storage_error", `snapshot replacement failed: ${String(error)}`, {
@@ -1118,6 +1230,68 @@ export class TaskStore {
         try {
           fs.unlinkSync(temporary);
         } catch {}
+    }
+  }
+
+  private readIndex(workspaceId: Id): Record<string, TaskIndexEntry> {
+    try {
+      const value = JSON.parse(fs.readFileSync(this.indexPath, "utf8")) as unknown;
+      if (
+        !isObject(value) ||
+        value.version !== INDEX_VERSION ||
+        value.workspaceId !== workspaceId ||
+        !isObject(value.tasks)
+      )
+        return {};
+      const tasks: Record<string, TaskIndexEntry> = {};
+      for (const [id, entry] of Object.entries(value.tasks))
+        if (
+          isObject(entry) &&
+          entry.id === id &&
+          typeof entry.file === "string" &&
+          typeof entry.status === "string" &&
+          typeof entry.updatedAt === "string" &&
+          Array.isArray(entry.sessions) &&
+          isObject(entry.progress) &&
+          isObject(entry.source)
+        )
+          tasks[id] = entry as TaskIndexEntry;
+      return tasks;
+    } catch {
+      return {};
+    }
+  }
+
+  /** The index is a disposable cache: write it atomically, never fail the caller. */
+  private writeIndex(workspaceId: Id, entries: TaskIndexEntry[]) {
+    const temporary = `${this.indexPath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(
+        temporary,
+        JSON.stringify({
+          version: INDEX_VERSION,
+          workspaceId,
+          tasks: Object.fromEntries(entries.map((entry) => [entry.id, entry])),
+        }),
+        { mode: 0o600, flag: "wx" },
+      );
+      fs.renameSync(temporary, this.indexPath);
+    } catch {
+      try {
+        fs.unlinkSync(temporary);
+      } catch {}
+    }
+  }
+
+  private indexTaskWrite(file: string, task: TaskRecord) {
+    try {
+      const signature = fileSignature(file);
+      if (signature === null) return;
+      const tasks = this.readIndex(task.workspaceId);
+      tasks[task.id] = indexEntry(task, signature);
+      this.writeIndex(task.workspaceId, Object.values(tasks));
+    } catch {
+      // A stale index entry is repaired by the next listTaskIndex().
     }
   }
 
@@ -1297,6 +1471,9 @@ export class TaskStore {
   }
   private get workspacePath() {
     return path.join(this.workitDir, "workspace.json");
+  }
+  private get indexPath() {
+    return path.join(this.workitDir, "index.json");
   }
   private get lockPath() {
     return path.join(this.workitDir, "metadata.lock");

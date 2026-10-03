@@ -556,6 +556,7 @@ daemon:
 | `.workit/tasks/<id>.json`    | One task's versioned state                              |
 | `.workit/workspace.json`     | Checkout identity and authoritative writer ownership    |
 | Previous validated snapshots | Recovery copies, never a second source of current state |
+| `.workit/index.json`         | Disposable listing cache, rebuilt from task records     |
 
 The workspace record is authoritative for writer ownership. Task records must
 not contain competing ownership claims; their shared-model ownership view is
