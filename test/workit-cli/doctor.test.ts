@@ -12,7 +12,7 @@ import { makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
 // network is involved (the command completes offline).
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const cliEntry = path.join(repoRoot, "packages/workit-cli/src/index.tsx");
+const cliEntry = path.join(repoRoot, "packages/workit-cli/src/main.ts");
 
 const fixture = makeDoctorFixture();
 afterAll(() => fixture.cleanup());
@@ -160,7 +160,7 @@ test("Given a lock whose owner cannot be verified, When workit doctor --fix-lock
   writeFileSync(lockPath, bytes);
   try {
     const refused = runCli(["doctor", "--fix-lock", "--force"], fixture.cwd);
-    expect(refused.status).toBe(1);
+    expect(refused.status).toBe(3);
     expect(refused.stdout).toContain("held by pid 1 on elsewhere");
     expect(refused.stdout).toContain("refusing without --yes");
     expect(readFileSync(lockPath, "utf8")).toBe(bytes);

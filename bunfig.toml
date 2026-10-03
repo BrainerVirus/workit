@@ -7,5 +7,6 @@ linker = "hoisted"
 minimumReleaseAge = 0
 
 [test]
-# Fail fast with one clear message when the PATH node is older than Node 24.
-preload = ["./test/shared/node-guard.ts"]
+# Fail fast with one clear message when the PATH node is older than Node 24,
+# and remove run-scoped temp dirs (packed tarballs) once all files ran.
+preload = ["./test/shared/node-guard.ts", "./test/shared/temp-cleanup.ts"]
