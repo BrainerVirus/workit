@@ -1,5 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { cliFailure, systemRunner } from "@/packages/workit-core/src/forge/exec";
@@ -403,7 +410,10 @@ describe("S10 ci rerun", () => {
 
       // The record is shared by worktrees (git common dir) and visible in status.
       const log = rerunLogPath(repo.cwd);
-      expect(log).toBe(path.join(repo.cwd, ".git", "workit", "ci-reruns.jsonl"));
+      // git reports the canonical path (/private/var on macOS, long names on Windows).
+      expect(realpathSync(log!)).toBe(
+        realpathSync(path.join(repo.cwd, ".git", "workit", "ci-reruns.jsonl")),
+      );
       expect(readFileSync(log!, "utf8").trim().split("\n")).toHaveLength(2);
       const doc = prStatusReport(repo.cwd, resolved, { pr: 12 });
       expect(doc.ok && doc.data.doc.checks.failing[0].rerunsOnHead).toBe(2);
