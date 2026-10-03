@@ -854,8 +854,8 @@ export class TaskStore {
       }
       const selectedRecord =
         target === "workspace"
-          ? this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema)
-          : this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema);
+          ? this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema, "rewrite")
+          : this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema, "rewrite");
       if (!selectedRecord.ok) return selectedRecord;
       if (target === "workspace") {
         const parsed = selectedRecord as Result<WorkspaceRecord>;
@@ -915,13 +915,17 @@ export class TaskStore {
               return this.conflict(input.expectedWorkspaceRevision, currentWorkspace.data.revision);
           }
           if (target === "workspace") {
-            const parsed = this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema);
+            const parsed = this.parseBytes<WorkspaceRecord>(
+              selectedBytes,
+              workspaceRecordSchema,
+              "rewrite",
+            );
             if (!parsed.ok) return parsed;
             const value = { ...parsed.data, revision: newRevision(), writer: null };
             const replaced = this.replaceSnapshot(file, value, reacquiredBytes);
             return replaced.ok ? success(value.revision, value.revision, value) : replaced;
           }
-          const parsed = this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema);
+          const parsed = this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema, "rewrite");
           if (!parsed.ok) return parsed;
           const value = {
             ...parsed.data,
@@ -1421,7 +1425,13 @@ export class TaskStore {
     }
   }
 
-  private parseBytes<T>(bytes: string | Buffer, schema: z.ZodType): Result<T> {
+  /** `rewrite` refuses a record that only parses after dropping unknown keys:
+   * recovery copies a snapshot back verbatim and must not lose its fields. */
+  private parseBytes<T>(
+    bytes: string | Buffer,
+    schema: z.ZodType,
+    mode: "read" | "rewrite" = "read",
+  ): Result<T> {
     let value: unknown;
     try {
       value = JSON.parse(typeof bytes === "string" ? bytes : bytes.toString("utf8"));
@@ -1431,11 +1441,23 @@ export class TaskStore {
     if (isObject(value) && "schemaVersion" in value && value.schemaVersion !== SCHEMA_VERSION)
       return failure("unsupported_version", "unsupported snapshot schema version");
     const parsed = parseStoredRecord(schema, value);
-    if (parsed.success) return success(null, null, parsed.data as T);
+    if (parsed.success && (mode === "read" || parsed.stripped.length === 0))
+      return success(null, null, parsed.data as T);
     const writerVersion =
       isObject(value) && isObject((value as { runtime?: unknown }).runtime)
         ? (value as { runtime: { updatedWith?: unknown } }).runtime.updatedWith
         : null;
+    const upgrade = `upgrade Workit before ${parsed.success ? "recovering" : "mutating"} this checkout`;
+    if (parsed.success)
+      return failure(
+        "recovery_required",
+        `snapshot carries fields this Workit cannot preserve (${parsed.stripped.join(", ")}); ${upgrade}`,
+      );
+    if (parsed.critical.length > 0)
+      return failure(
+        "recovery_required",
+        `snapshot requires fields this Workit cannot read (${parsed.critical.join(", ")}); ${upgrade}`,
+      );
     if (typeof writerVersion === "string" && isNewerVersion(writerVersion, runtimeVersion()))
       return failure(
         "recovery_required",

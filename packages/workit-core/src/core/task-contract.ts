@@ -747,13 +747,17 @@ export const taskRecordSchema = z
     actionProgress: actionProgressListSchema.optional(),
     findings: z.array(entrySchema(findingSchema)),
     workers: z.array(entrySchema(workerSchema)),
+    /** Paths a reader must understand; see parseStoredRecord. */
+    critical: z.array(nonEmpty).optional(),
   })
   .strict();
 export type TaskRecord = z.infer<typeof taskRecordSchema>;
 
 type Strip = { path: PropertyKey[]; keys: string[] };
-/** Unknown-key issues only, flattened (union branches included); null when any
- * issue is a real schema violation. */
+const stripCount = (strips: Strip[]) => strips.reduce((sum, strip) => sum + strip.keys.length, 0);
+/** Unknown-key issues only, flattened; null when any issue is a real schema
+ * violation. For a union, the branch that strips the fewest keys wins, so a
+ * key one branch knows is never dropped in favor of a narrower branch. */
 const strippable = (
   issues: readonly z.core.$ZodIssue[],
   prefix: PropertyKey[] = [],
@@ -767,27 +771,55 @@ const strippable = (
     if (issue.code !== "invalid_union") return null;
     const branch = issue.errors
       .map((errors) => strippable(errors, [...prefix, ...issue.path]))
-      .find((found) => found !== null && found.length > 0);
+      .filter((found): found is Strip[] => found !== null && found.length > 0)
+      .reduce<Strip[] | null>(
+        (best, found) => (best === null || stripCount(found) < stripCount(best) ? found : best),
+        null,
+      );
     if (!branch) return null;
     strips.push(...branch);
   }
   return strips;
 };
 
+/** A dotted record path with array indices as `*`, e.g. `evidence.*.data.observer`. */
+const recordPath = (path: PropertyKey[]): string =>
+  path.map((key) => (typeof key === "number" ? "*" : String(key))).join(".");
+const overlaps = (left: string, right: string) =>
+  left === right || left.startsWith(`${right}.`) || right.startsWith(`${left}.`);
+
+export type StoredRecordParse<T> =
+  | { success: true; data: T; stripped: string[] }
+  | { success: false; error: z.ZodError; critical: string[] };
+
 /**
- * Reader tolerance for stored records (D17): a record written by a newer
- * runtime may carry keys this reader does not know. Strict record schemas
- * reject them, so exactly the keys zod reports as unrecognized are dropped
- * and the value is parsed again; every other violation still fails. Writes
- * keep parsing strictly, so this reader never persists keys it cannot name.
+ * Reader tolerance for stored records (D17). A record written by a newer
+ * runtime may carry keys this reader does not know; exactly the keys zod
+ * reports as unrecognized are dropped and the value is parsed again, and
+ * every other violation still fails. Writes keep parsing strictly.
+ *
+ * The rule for new record fields: a field must be safe for an older reader
+ * to ignore (and to lose when that reader rewrites the record), or the writer
+ * must list its path in the record's top-level `critical` array. A reader
+ * that would strip a critical path fails closed instead (`critical` names the
+ * paths), so it neither acts on nor rewrites a record it cannot represent.
  */
 export const parseStoredRecord = <S extends z.ZodType>(
   schema: S,
   value: unknown,
-): z.ZodSafeParseResult<z.output<S>> => {
+): StoredRecordParse<z.output<S>> => {
   let parsed = schema.safeParse(value);
-  if (parsed.success || strippable(parsed.error.issues) === null) return parsed;
-  const first = parsed;
+  if (parsed.success) return { success: true, data: parsed.data, stripped: [] };
+  const first = { success: false as const, error: parsed.error, critical: [] as string[] };
+  const declared =
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { critical?: unknown }).critical)
+      ? (value as { critical: unknown[] }).critical.filter(
+          (item): item is string => typeof item === "string",
+        )
+      : [];
+  const stripped: string[] = [];
   let current: unknown = structuredClone(value);
   for (let round = 0; round < 8 && !parsed.success; round++) {
     const strips = strippable(parsed.error.issues);
@@ -800,11 +832,19 @@ export const parseStoredRecord = <S extends z.ZodType>(
             ? (target as Record<PropertyKey, unknown>)[key]
             : undefined;
       if (typeof target !== "object" || target === null) return first;
-      for (const key of strip.keys) delete (target as Record<string, unknown>)[key];
+      for (const key of strip.keys) {
+        stripped.push(recordPath([...strip.path, key]));
+        delete (target as Record<string, unknown>)[key];
+      }
     }
     parsed = schema.safeParse(current);
   }
-  return parsed.success ? parsed : first;
+  if (!parsed.success) return first;
+  const critical = [
+    ...new Set(stripped.filter((item) => declared.some((path) => overlaps(item, path)))),
+  ];
+  if (critical.length > 0) return { ...first, critical };
+  return { success: true, data: parsed.data, stripped: [...new Set(stripped)] };
 };
 export const workspaceRecordSchema = z
   .object({
@@ -817,6 +857,8 @@ export const workspaceRecordSchema = z
       .object({ state: z.enum(["held", "uncertain"]), owner: ownerSchema, acquiredAt: utc })
       .strict()
       .nullable(),
+    /** Paths a reader must understand; see parseStoredRecord. */
+    critical: z.array(nonEmpty).optional(),
   })
   .strict();
 export type WorkspaceRecord = z.infer<typeof workspaceRecordSchema>;

@@ -611,3 +611,24 @@ test("coupled mutation retains uncertain workspace ownership after task failure"
     data: { writer: { state: "uncertain" } },
   });
 });
+
+test("recovery never writes back a record it could only read by dropping fields", () => {
+  const { store, task } = startedStore();
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  const bytes = JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), futureField: 1 });
+  writeFileSync(file, bytes);
+  // Plain reads tolerate the unknown field (D17)...
+  expect(store.readTask(task.id).ok).toBe(true);
+  // ...but recovery copies a snapshot back verbatim, so it must refuse.
+  const recovered = store.recoverTask(task.id, {
+    expectedBytes: sha256(bytes),
+    snapshotDigest: sha256(bytes),
+    reason: "crash recovery",
+    authorityRefs: [],
+    expectedWorkspaceRevision: workspaceRevision(store),
+    processEvidence: recoveryEvidence(),
+  });
+  expect(recovered).toMatchObject({ ok: false, code: "recovery_required" });
+  expect(!recovered.ok && recovered.error).toContain("upgrade Workit before recovering");
+  expect(readFileSync(file, "utf8")).toBe(bytes);
+});
