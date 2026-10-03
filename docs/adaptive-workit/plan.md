@@ -186,9 +186,9 @@ focused question only when one of those choices blocks a concrete slice.
 ### Completed: host recovery and reconciliation
 
 - **Changes:** OpenCode v2.0.18's global config had one Workit registration,
-  `file:///home/cristhofer-pincetti/Documents/projects/personal/workflow-toolkit/packages/workit-opencode`.
+  `file://<checkout>/packages/workit-opencode`.
   Removed only that entry with `opencode plugin remove`; backed up the original
-  to `/home/cristhofer-pincetti/.local/state/opencode/workit-recovery/opencode.json.pre-workit-disable.20260927T150744Z.bak`.
+  to `~/.local/state/opencode/workit-recovery/opencode.json.pre-workit-disable.<timestamp>.bak`.
   Restarted the running service once so loaded hooks were dropped.
 - **Checks:** the restarted service is healthy; `opencode plugin list` reports
   "No plugins found"; `opencode debug config` shows only Command Code remains in

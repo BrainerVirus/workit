@@ -1,5 +1,4 @@
-# Actualización
-{{greetingSection}}
+# Update
 {{projectSection}}
 {{userNotesSection}}
 {{progressSection}}

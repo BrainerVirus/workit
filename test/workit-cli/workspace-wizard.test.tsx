@@ -52,7 +52,6 @@ const availableHosts = {
 const seedConfig: ToolkitConfig = {
   locale: "en",
   localeOptions: ["en", "es-CL"],
-  timezone: "UTC",
   branchPolicy: {
     preset: "gitflow",
     allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
@@ -108,7 +107,6 @@ function draftWith(workspaces: WorkspaceConfig[]): WizardDraft {
     values: {
       platforms: [],
       locale: "en",
-      timezone: "UTC",
       branchPreset: "gitflow",
       branchAllowed: "",
       branchProtected: "",
@@ -136,7 +134,6 @@ const entry = (name: string, glob: string): WorkspaceConfig => ({
 const previewValues = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   platforms: [],
   locale: "en",
-  timezone: "UTC",
   branchPreset: "gitflow",
   branchAllowed: "feature/*, bugfix/*",
   branchProtected: "main, develop",
@@ -148,10 +145,10 @@ const previewValues = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput
 });
 
 async function gotoWorkspaces(tty: Awaited<ReturnType<typeof renderInk>>) {
-  // platforms SPACE+ENTER, locale/timezone ENTERs, branchPreset ENTER (gitflow
+  // platforms SPACE+ENTER, locale ENTER, branchPreset ENTER (gitflow
   // skips the custom screens), issueTracker ENTER (YouTrack default),
   // youtrack ENTER on the empty base URL.
-  await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
+  await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
   expect(tty.lastFrame()).toContain("Step 5 — Workspaces");
 }
 
@@ -1004,7 +1001,7 @@ test("choosing None skips the baseUrl screen: summary shows — and applies no y
     const tty = await renderInk(
       <Wizard onExit={(ok) => exitCalls.push(ok)} detection={availableHosts} />,
     );
-    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+    await tty.keys(SPACE, ENTER, ENTER, ENTER); // -> issueTracker
     await tty.keys(DOWN, DOWN, DOWN, ENTER); // None -> vcs (youtrack skipped)
     await tty.keys(ENTER); // gitlab -> workspaces
     await tty.keys(ENTER); // Done -> project
@@ -1050,7 +1047,7 @@ test("choosing GitHub Issues defaults new workspaces to github with issues linke
         }}
       />,
     );
-    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+    await tty.keys(SPACE, ENTER, ENTER, ENTER); // -> issueTracker
     await tty.keys(DOWN, ENTER); // GitHub Issues -> vcs
     await tty.keys(DOWN, ENTER); // github provider -> workspaces
     await tty.keys(UP, ENTER); // Use current project -> entry added
@@ -1095,8 +1092,8 @@ test(
     try {
       withConfigDir(configDir);
       const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
-      // platforms SPACE+ENTER, then ENTERs to vcs (locale/timezone/preset/tracker/youtrack)
-      await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
+      // platforms SPACE+ENTER, then ENTERs to vcs (locale/preset/tracker/youtrack)
+      await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
       await tty.keys(ENTER); // vcs -> base-path prompt (env unset)
       expect(tty.lastFrame()).toContain("Workspace root");
       await tty.keys(ENTER); // empty submit refuses to advance

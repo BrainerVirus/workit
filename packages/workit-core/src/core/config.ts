@@ -26,7 +26,6 @@ export type BranchPreset = "gitflow" | "github-flow" | "trunk-based" | "custom";
 export type ToolkitConfig = {
   locale: string;
   localeOptions: string[];
-  timezone: string;
   branchPolicy: { preset: BranchPreset; allowed: string[]; protected: string[] };
   commitPolicy: { preset: CommitFlavorPreset; pattern?: string };
 };
@@ -131,7 +130,6 @@ export const LOCALE_RE = /^[a-z]{2,3}(-(?:[A-Z]{2}|[0-9]{3}))?$/;
 const DEFAULTS: ToolkitConfig = {
   locale: "en",
   localeOptions: ["en", "es-CL", "es-MX", "es-AR", "pt-BR"],
-  timezone: "America/Santiago",
   branchPolicy: {
     preset: "gitflow",
     allowed: [...PRESETS.gitflow.allowed],
@@ -177,6 +175,8 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
   if (!isConfigObject(parsed)) {
     return { status: "malformed", path: file, error: `${file} is not a JSON object` };
   }
+  // Only known keys are read: legacy fields such as the removed global
+  // `timezone` are tolerated and ignored, never an error.
   const input = parsed as Partial<ToolkitConfig>;
   const locale = LOCALE_RE.test(String(input.locale ?? ""))
     ? (input.locale as string)
@@ -199,7 +199,6 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
       localeOptions: Array.isArray(input.localeOptions)
         ? input.localeOptions
         : DEFAULTS.localeOptions,
-      timezone: input.timezone ?? DEFAULTS.timezone,
       // RL-02/CA-23: the persisted preset is authoritative; derived allowed /
       // protected fields always reset from PRESETS via the one shared merge.
       branchPolicy: mergePreset(
@@ -246,7 +245,6 @@ export const readConfigFromDir = (dir: string): ToolkitConfig => {
 export type ConfigInput = {
   locale?: string;
   localeOptions?: string[];
-  timezone?: string;
   preset?: BranchPreset;
   allowed?: string[];
   protectedNames?: string[];
@@ -259,7 +257,6 @@ export type ConfigInput = {
 export const mergeConfigValues = (input: ConfigInput, current: ToolkitConfig): ToolkitConfig => ({
   locale: input.locale ?? current.locale,
   localeOptions: input.localeOptions ?? current.localeOptions,
-  timezone: input.timezone ?? current.timezone,
   branchPolicy: mergePreset(input.preset ?? current.branchPolicy.preset, input, current),
   commitPolicy: input.commitPolicy ?? current.commitPolicy,
 });
