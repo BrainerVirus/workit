@@ -1,34 +1,48 @@
-// The run ledger (design §2.1 S13, §2.2; D13, D14, D17): an append-only,
+// The run ledger (design §2.1 S13, §2.2; D13, D14, D17, D18): an append-only,
 // repo-wide JSONL file of decisions, rulings, verdicts and handoff notes.
 //
 // - Location (D13): `$(git rev-parse --git-common-dir)/workit/ledger/ledger.jsonl`
-//   in a git repo, so every worktree of the repo shares one ledger and it
-//   survives worktree removal and `git clean`; `<cwd>/.workit/ledger/` outside
-//   git.
-// - Concurrency: one row is one `write(2)` of at most MAX_LINE_BYTES (the
-//   POSIX PIPE_BUF floor) on an O_APPEND descriptor, so concurrent appenders
-//   from any number of processes or worktrees never interleave or overwrite,
-//   and no lock is needed. A torn tail left by a crashed writer is fenced off
-//   with a newline before the next row instead of being glued to it.
+//   in a git repo, so every worktree shares one ledger and it survives worktree
+//   removal and `git clean`. `<cwd>/.workit/ledger/` is used only when git
+//   says the directory is not a repository; any other git failure is
+//   `unavailable`, never a silent split into a second ledger.
+// - Concurrency: one row is one `write(2)` of at most MAX_LINE_BYTES on an
+//   O_APPEND descriptor. POSIX promises atomicity only for pipes (PIPE_BUF),
+//   not regular files; what we rely on is that local filesystems (ext4, xfs,
+//   btrfs, apfs, NTFS via FILE_APPEND_DATA) position every O_APPEND write at
+//   the end under the inode lock, so small single writes never interleave. That
+//   does not hold on network filesystems (NFS, SMB, FUSE), so when statfs
+//   reports one the append runs under an advisory lock directory instead. A
+//   short write is reported as `unavailable`, and a torn tail left by a crashed
+//   writer is fenced off with a newline so it never swallows the next row.
 // - Reader tolerance (D17): unknown keys are kept and ignored, unparsable
 //   lines and rows without the required keys are skipped and counted, and the
-//   file is never rewritten. `seq` is the row's position among valid rows; a
-//   row supersedes an older one by its `id`.
+//   file is never rewritten. `seq` is the row's position among valid rows (a
+//   lock-free appender cannot allocate one); a row supersedes an older one by
+//   its `id`, and only a row of the same type from the same session may.
+// - Trust (D18): the threat model is honest mistakes and accidental
+//   self-certification, not adversarial agents. `ledger verdict` rows are
+//   `observer:"agent_asserted"`; `observer:"workit_cli"` is reserved for rows
+//   written by observing verbs through `appendObserved`. `actor.attested` is
+//   never trusted. A verdict is `current` when it still applies to the code and
+//   `accepted` only when it is current, passing, independent (not self, a
+//   known session, not an author) and no current independent verdict fails.
+//   Merge gates read only `accepted`.
 // - Verdict keying (§2.2): a verdict stores the HEAD SHA it judged plus
-//   `base` and the stable patch-id of `base...head`. Against the branch's
-//   current state it is `fresh` (same head), `carried` (new head, same
-//   patch-id: a rebase that only moved the base) or `stale` (the change
-//   itself differs).
+//   `base`, the stable patch-id of `base...head` and an exact diff hash. It is
+//   `fresh` (same head; verdicts on a dirty worktree are refused, so the head
+//   is the judged tree), `carried` (new head, same patch-id AND same exact
+//   diff: a rebase that only moved the base) or `stale`.
 //
 // Plain TS over the git binary: no zod, no task store, no config reads.
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { GIT_TIMEOUTS, currentBranch, headSha, patchId, worktreeTree } from "./git/rev";
 
 export const LEDGER_VERSION = 1;
-/** One row must fit one atomic append (POSIX guarantees PIPE_BUF ≥ 4096 bytes). */
+/** The largest row (including its newline) that one append may carry. */
 export const MAX_LINE_BYTES = 4096;
 
 export const VERDICT_RESULTS = [
@@ -39,18 +53,19 @@ export const VERDICT_RESULTS = [
   "failed",
 ] as const;
 export type VerdictResult = (typeof VERDICT_RESULTS)[number];
+const PASSING: ReadonlySet<string> = new Set(["verified", "tests-verified", "type-check-only"]);
+const FAILING: ReadonlySet<string> = new Set(["failed", "blocked"]);
 export const VERDICT_KINDS = ["unit", "live", "perf", "review"] as const;
 export type VerdictKind = (typeof VERDICT_KINDS)[number];
 export const VERDICT_SURFACES = ["ui", "cli", "api"] as const;
 export type VerdictSurface = (typeof VERDICT_SURFACES)[number];
+export type Observer = "agent_asserted" | "workit_cli";
 
-export type LedgerActor = {
-  host: string;
-  session: string | null;
-  agentId: string | null;
-  /** True only when a host hook attested this row; the CLI alone never does. */
-  attested: boolean;
-};
+/** Row types written by the CLI's own PR verbs (S10/S11); the only PR→branch source. */
+export const PR_ROW_TYPES: ReadonlySet<string> = new Set(["pr.created", "pr.status"]);
+
+/** Who wrote a row. Unverified: the environment says so (D18). */
+export type LedgerActor = { host: string; session: string | null; agentId: string | null };
 
 /** The code state a row was recorded against (§2.2). */
 export type CodeKey = {
@@ -60,7 +75,9 @@ export type CodeKey = {
   base: string | null;
   baseSha: string | null;
   patchId: string | null;
-  /** Worktree tree key, only when the row was recorded on the checked-out branch. */
+  /** sha256 of the exact `base...head` diff (whitespace-sensitive), minus line positions. */
+  diffHash: string | null;
+  /** Worktree tree key, only when recorded on the checked-out branch. */
   tree: string | null;
   dirty: boolean | null;
 };
@@ -72,7 +89,7 @@ type RowCommon = CodeKey & {
   type: string;
   actor: LedgerActor;
   pr?: number;
-  /** The `id` of an older row this one replaces. */
+  /** The `id` of an older row of the same type and session that this one replaces. */
   supersedes?: string;
 };
 
@@ -89,17 +106,17 @@ export type RulingRow = RowCommon & {
   costIfWrong: string;
   refs: string[];
 };
+export type SelfReason = "flag" | "no_session";
 export type VerdictRow = RowCommon & {
   type: "verdict";
   kind: VerdictKind;
   result: VerdictResult;
   how: string;
   surface: VerdictSurface | null;
-  /** Who saw the verdict being recorded (D14): always the CLI. */
-  observer: "workit_cli";
-  attestation: { host: string; session: string | null; agentId: string | null } | null;
-  /** Recorded by an author of the branch via `--self`: not an independent verdict. */
+  observer: Observer;
+  /** Not an independent verdict: `--self`, or no session to tell it from the author. */
   self: boolean;
+  selfReason: SelfReason | null;
   evidenceRefs: string[];
 };
 export type HandoffRow = RowCommon & { type: "handoff"; note: string | null; next: string };
@@ -108,29 +125,52 @@ export type LedgerRow = DecisionRow | RulingRow | VerdictRow | HandoffRow;
 /** A row as read back: any known or future type, plus its position. */
 export type ReadRow = RowCommon & Record<string, unknown> & { seq: number; superseded: boolean };
 
-export type LedgerResult<T> =
-  | { ok: true; value: T }
-  | {
-      ok: false;
-      code: "invalid_input" | "blocked" | "unavailable" | "not_found";
-      error: string;
-      unblock?: string;
-    };
+export type LedgerError = {
+  ok: false;
+  code: "invalid_input" | "blocked" | "busy" | "unavailable" | "not_found";
+  error: string;
+  unblock?: string;
+};
+export type LedgerResult<T> = { ok: true; value: T } | LedgerError;
+
+const err = (code: LedgerError["code"], error: string, unblock?: string): LedgerError => ({
+  ok: false,
+  code,
+  error,
+  ...(unblock ? { unblock } : {}),
+});
 
 // ---------------------------------------------------------------------------
-// git plumbing (bounded, never prompts)
+// git plumbing (bounded, never prompts, C locale so messages are matchable)
 
-const git = (cwd: string, args: string[]): string | null => {
+type GitRun = { ok: boolean; stdout: string; stderr: string };
+
+const gitRun = (cwd: string, args: string[], timeoutMs: number = GIT_TIMEOUTS.local): GitRun => {
   const run = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
-    timeout: GIT_TIMEOUTS.local,
+    timeout: timeoutMs,
     killSignal: "SIGKILL",
     windowsHide: true,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
+    maxBuffer: 256 * 1024 * 1024,
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_OPTIONAL_LOCKS: "0",
+      LC_ALL: "C",
+      LANGUAGE: "C",
+    },
   });
-  if (run.status !== 0) return null;
-  const value = (run.stdout ?? "").trim();
+  return {
+    ok: run.status === 0,
+    stdout: run.stdout ?? "",
+    stderr: run.error ? String(run.error.message) : (run.stderr ?? ""),
+  };
+};
+
+const git = (cwd: string, args: string[]): string | null => {
+  const run = gitRun(cwd, args);
+  const value = run.ok ? run.stdout.trim() : "";
   return value ? value : null;
 };
 
@@ -163,28 +203,85 @@ export function defaultBase(cwd: string): string | null {
   return null;
 }
 
+/**
+ * sha256 of the exact `base...head` diff with the pinned options rev.ts uses
+ * for patch-ids, plus `--binary`. Unlike `git patch-id --stable` it keeps
+ * whitespace, so a re-indent (meaningful in Python, YAML, Makefiles) changes
+ * it. Hunk headers lose their line numbers and `index` lines are dropped, so a
+ * base change elsewhere in the same file does not. Deterministic across git
+ * versions (no `patch-id --verbatim` dependency).
+ */
+export function diffHash(cwd: string, base: string, head: string): string | null {
+  if (!safeRef(base) || !safeRef(head)) return null;
+  const diff = gitRun(
+    cwd,
+    [
+      "diff",
+      "-U3",
+      "--diff-algorithm=myers",
+      "--indent-heuristic",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-renames",
+      "--full-index",
+      "--binary",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      `${base}...${head}`,
+      "--",
+    ],
+    GIT_TIMEOUTS.worktree,
+  );
+  if (!diff.ok || !diff.stdout) return null;
+  const hash = createHash("sha256");
+  for (const line of diff.stdout.split("\n")) {
+    if (line.startsWith("index ")) continue;
+    hash.update(line.startsWith("@@ ") ? "@@" : line);
+    hash.update("\n");
+  }
+  return `sha256:${hash.digest("hex")}`;
+}
+
 // ---------------------------------------------------------------------------
 // store root (D13)
 
 export type StoreRoot = { root: string; shared: boolean };
 
+const NOT_A_REPO = /not a git repository \(or any (of the parent directories|parent up to)/u;
+
 /**
  * Where workit state lives for `cwd`: `<git common dir>/workit` (shared by all
- * worktrees of the repo) or `<cwd>/.workit` outside git.
+ * worktrees of the repo), or `<cwd>/.workit` only when git reports that `cwd`
+ * is not inside a repository. A broken repository, a missing git binary or a
+ * refused (dubious-ownership) repository is `unavailable`.
  */
-export function storeRoot(cwd: string): StoreRoot {
-  const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  if (common) return { root: path.join(path.resolve(cwd, common), "workit"), shared: true };
-  return { root: path.join(path.resolve(cwd), ".workit"), shared: false };
+export function storeRoot(cwd: string): LedgerResult<StoreRoot> {
+  const run = gitRun(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const common = run.stdout.trim();
+  if (run.ok && common)
+    return {
+      ok: true,
+      value: { root: path.join(path.resolve(cwd, common), "workit"), shared: true },
+    };
+  if (!run.ok && NOT_A_REPO.test(run.stderr))
+    return { ok: true, value: { root: path.join(path.resolve(cwd), ".workit"), shared: false } };
+  return err(
+    "unavailable",
+    `cannot locate the workit store: git rev-parse failed (${run.stderr.trim().split("\n")[0] || "no output"})`,
+    "fix the repository (git status should work here) or run from a non-git directory",
+  );
 }
 
-export const ledgerPath = (cwd: string): string =>
-  path.join(storeRoot(cwd).root, "ledger", "ledger.jsonl");
+export function ledgerPath(cwd: string): LedgerResult<string> {
+  const root = storeRoot(cwd);
+  return root.ok ? { ok: true, value: path.join(root.value.root, "ledger", "ledger.jsonl") } : root;
+}
 
 // ---------------------------------------------------------------------------
 // append
 
-/** The acting identity from the environment (unattested: only hooks attest). */
+/** The acting identity from the environment. */
 export function actorFromEnv(env: NodeJS.ProcessEnv): LedgerActor {
   const value = (key: string): string | null => {
     const raw = env[key]?.trim();
@@ -194,35 +291,80 @@ export function actorFromEnv(env: NodeJS.ProcessEnv): LedgerActor {
     host: value("WORKIT_HOST") ?? "cli",
     session: value("WORKIT_SESSION_ID"),
     agentId: value("WORKIT_AGENT_ID"),
-    attested: false,
   };
 }
 
 const newId = (): string => `${Date.now().toString(36)}-${randomBytes(6).toString("hex")}`;
 
-export type NewRow<T extends LedgerRow> = Omit<T, "v" | "id" | "at">;
+// statfs magic numbers of network/userspace filesystems (linux/magic.h).
+const NETWORK_FS_TYPES: ReadonlySet<number> = new Set([
+  0x6969, // NFS
+  0x517b, // SMB
+  0xfe534d42, // SMB2
+  0xff534d42, // CIFS
+  0x65735546, // FUSE (sshfs, rclone, …)
+  0x5346414f, // AFS
+  0x00c36400, // Ceph
+  0x01021997, // 9P
+  0x47504653, // GPFS
+  0x0bd00bd0, // Lustre
+]);
+
+/** True when `type` (statfs f_type on Linux) names a network or FUSE filesystem. */
+export const isNetworkFsType = (type: number): boolean => NETWORK_FS_TYPES.has(type >>> 0);
+
+const onNetworkFs = (dir: string): boolean => {
+  if (process.platform !== "linux") return false;
+  try {
+    return isNetworkFsType(fs.statfsSync(dir).type);
+  } catch {
+    return false;
+  }
+};
+
+const LOCK_WAIT_MS = 5_000;
+const LOCK_STALE_MS = 30_000;
 
 /**
- * Append one row atomically. Fails with `invalid_input` when the serialized
- * row exceeds MAX_LINE_BYTES (put long text in a file and reference it).
+ * Run `fn` holding an advisory lock directory (`mkdir` is atomic on NFS too).
+ * A lock older than LOCK_STALE_MS is presumed abandoned and taken over.
  */
-export function appendRow<T extends LedgerRow>(
-  cwd: string,
-  row: NewRow<T>,
-  now: Date = new Date(),
-): LedgerResult<T> {
-  const full = { v: LEDGER_VERSION, id: newId(), at: now.toISOString(), ...row } as T;
-  const line = `${JSON.stringify(full)}\n`;
-  const bytes = Buffer.byteLength(line);
-  if (bytes > MAX_LINE_BYTES)
-    return {
-      ok: false,
-      code: "invalid_input",
-      error: `ledger row is ${bytes} bytes; the limit is ${MAX_LINE_BYTES}. Shorten the text and pass details by --ref <path|url>`,
-    };
-  const file = ledgerPath(cwd);
+export function withLedgerLock<T>(
+  file: string,
+  fn: () => T,
+  waitMs: number = LOCK_WAIT_MS,
+): T | null {
+  const lock = `${file}.lock`;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      fs.mkdirSync(lock);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
+          fs.rmSync(lock, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() >= deadline) return null;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
+    return fn();
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+}
+
+type AppendOptions = { now?: Date; forceLock?: boolean };
+
+function appendLine(file: string, line: string, options: AppendOptions): LedgerResult<void> {
+  const write = (): LedgerResult<void> => {
     // a+ = O_APPEND|O_RDWR: every write lands at the end, and we can still
     // peek at the last byte to fence off a torn tail.
     const fd = fs.openSync(file, "a+");
@@ -234,18 +376,78 @@ export function appendRow<T extends LedgerRow>(
         fs.readSync(fd, last, 0, 1, size - 1);
         if (last[0] !== 0x0a) fence = "\n";
       }
-      fs.writeSync(fd, fence + line);
+      const bytes = Buffer.from(fence + line);
+      const written = fs.writeSync(fd, bytes);
+      if (written !== bytes.length)
+        return err(
+          "unavailable",
+          `short write to ${file}: ${written} of ${bytes.length} bytes; the row is torn and will be skipped`,
+        );
+      return { ok: true, value: undefined };
     } finally {
       fs.closeSync(fd);
     }
+  };
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (!options.forceLock && !onNetworkFs(path.dirname(file))) return write();
+    const locked = withLedgerLock(file, write);
+    return (
+      locked ??
+      err(
+        "busy",
+        `ledger lock ${file}.lock is held`,
+        "retry; remove the .lock directory if no workit process is running",
+      )
+    );
   } catch (error) {
-    return {
-      ok: false,
-      code: "unavailable",
-      error: `cannot append to ${file}: ${(error as Error).message}`,
-    };
+    return err("unavailable", `cannot append to ${file}: ${(error as Error).message}`);
   }
-  return { ok: true, value: full };
+}
+
+export type NewRow<T extends LedgerRow> = Omit<T, "v" | "id" | "at">;
+
+const serialize = (row: object, now: Date) => {
+  const full = { v: LEDGER_VERSION, id: newId(), at: now.toISOString(), ...row };
+  return { full, line: `${JSON.stringify(full)}\n` };
+};
+
+function appendRaw<T>(cwd: string, row: object, options: AppendOptions): LedgerResult<T> {
+  const { full, line } = serialize(row, options.now ?? new Date());
+  const bytes = Buffer.byteLength(line);
+  if (bytes > MAX_LINE_BYTES)
+    return err(
+      "invalid_input",
+      `ledger row is ${bytes} bytes; the limit is ${MAX_LINE_BYTES}. Shorten the text and pass details by --ref <path|url>`,
+    );
+  const file = ledgerPath(cwd);
+  if (!file.ok) return file;
+  const written = appendLine(file.value, line, options);
+  return written.ok ? { ok: true, value: full as T } : written;
+}
+
+/** Append one agent-level row (decision, ruling, verdict, handoff). */
+export function appendRow<T extends LedgerRow>(
+  cwd: string,
+  row: NewRow<T>,
+  options: AppendOptions = {},
+): LedgerResult<T> {
+  if ((row as { observer?: unknown }).observer === "workit_cli")
+    return err("invalid_input", 'observer "workit_cli" is reserved for appendObserved');
+  return appendRaw<T>(cwd, row, options);
+}
+
+/**
+ * Internal API for observing verbs only (S9b `check`, S10 `ci`, S11 `pr`/`git
+ * commit`): append a row the CLI itself observed, stamped
+ * `observer:"workit_cli"`. Never reachable from `workit ledger`.
+ */
+export function appendObserved(
+  cwd: string,
+  row: Record<string, unknown> & { type: string; actor: LedgerActor },
+  options: AppendOptions = {},
+): LedgerResult<Record<string, unknown>> {
+  return appendRaw(cwd, { ...row, observer: "workit_cli" }, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -262,20 +464,38 @@ const normalizeActor = (value: unknown): LedgerActor => {
     host: str(actor.host) ?? "unknown",
     session: str(actor.session),
     agentId: str(actor.agentId),
-    attested: actor.attested === true,
   };
 };
 
+/**
+ * May `by` supersede `target`? Same type, same known session, later in the
+ * file, and a self verdict never replaces an independent one.
+ */
+export function supersedeAllowed(
+  by: Pick<ReadRow, "type" | "actor"> & { self?: unknown },
+  target: Pick<ReadRow, "type" | "actor"> & { self?: unknown },
+): string | null {
+  if (by.type !== target.type) return `a ${by.type} row cannot supersede a ${target.type} row`;
+  if (!by.actor.session || by.actor.session !== target.actor.session)
+    return "only the session that wrote a row can supersede it";
+  if (by.type === "verdict" && by.self === true && target.self !== true)
+    return "a self verdict cannot replace an independent verdict";
+  return null;
+}
+
 export type LedgerRead = { path: string; rows: ReadRow[]; skipped: number };
 
-/** Every valid row in append order. Never throws; a missing file is empty. */
-export function readLedger(cwd: string): LedgerRead {
+/** Every valid row in append order. A missing file is empty. */
+export function readLedger(cwd: string): LedgerResult<LedgerRead> {
   const file = ledgerPath(cwd);
+  if (!file.ok) return file;
   let text = "";
   try {
-    text = fs.readFileSync(file, "utf8");
-  } catch {
-    return { path: file, rows: [], skipped: 0 };
+    text = fs.readFileSync(file.value, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return { ok: true, value: { path: file.value, rows: [], skipped: 0 } };
+    return err("unavailable", `cannot read ${file.value}: ${(error as Error).message}`);
   }
   const rows: ReadRow[] = [];
   let skipped = 0;
@@ -306,6 +526,7 @@ export function readLedger(cwd: string): LedgerRead {
       base: str(parsed.base),
       baseSha: str(parsed.baseSha),
       patchId: str(parsed.patchId),
+      diffHash: str(parsed.diffHash),
       tree: str(parsed.tree),
       dirty: typeof parsed.dirty === "boolean" ? parsed.dirty : null,
       ...(pr === undefined ? {} : { pr }),
@@ -314,9 +535,14 @@ export function readLedger(cwd: string): LedgerRead {
       superseded: false,
     });
   }
-  const replaced = new Set(rows.map((row) => row.supersedes).filter(Boolean));
-  for (const row of rows) row.superseded = replaced.has(row.id);
-  return { path: file, rows, skipped };
+  // Only a well-formed supersede link counts; anything else is ignored.
+  const byId = new Map<string, ReadRow>();
+  for (const row of rows) {
+    const target = row.supersedes ? byId.get(row.supersedes) : undefined;
+    if (target && supersedeAllowed(row, target) === null) target.superseded = true;
+    if (!byId.has(row.id)) byId.set(row.id, row);
+  }
+  return { ok: true, value: { path: file.value, rows, skipped } };
 }
 
 export type RowFilter = { branch?: string; pr?: number; type?: string; last?: number };
@@ -331,6 +557,41 @@ export function filterRows(rows: readonly ReadRow[], filter: RowFilter): ReadRow
   return filter.last === undefined
     ? matched
     : matched.slice(Math.max(0, matched.length - filter.last));
+}
+
+// ---------------------------------------------------------------------------
+// PR → branch (never from arbitrary rows)
+
+/**
+ * The branch a PR/MR number belongs to, from (1) rows the CLI's own PR verbs
+ * observed (`PR_ROW_TYPES`, `observer:"workit_cli"`), else (2) a fetched forge
+ * ref (`refs/pull/<n>/head`, `refs/merge-requests/<n>/head`, or the same under
+ * `refs/remotes/<remote>/`) whose commit is the tip of exactly one local
+ * branch. Null when neither knows.
+ */
+export function branchForPr(cwd: string, rows: readonly ReadRow[], pr: number): string | null {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (row.pr === pr && row.branch && PR_ROW_TYPES.has(row.type) && row.observer === "workit_cli")
+      return row.branch;
+  }
+  const tips = git(cwd, [
+    "for-each-ref",
+    "--format=%(objectname)",
+    `refs/pull/${pr}/head`,
+    `refs/merge-requests/${pr}/head`,
+    `refs/remotes/*/pull/${pr}/head`,
+    `refs/remotes/*/merge-requests/${pr}/head`,
+  ]);
+  const shas = [...new Set((tips ?? "").split("\n").filter(Boolean))];
+  if (shas.length !== 1) return null;
+  const branches = (
+    git(cwd, ["for-each-ref", "--format=%(refname:short)", "--points-at", shas[0], "refs/heads"]) ??
+    ""
+  )
+    .split("\n")
+    .filter(Boolean);
+  return branches.length === 1 ? branches[0] : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +611,6 @@ export function codeKey(
   const head = branch ? branchHead(cwd, branch) : headSha(cwd);
   const base = options.base ?? defaultBase(cwd);
   const baseSha = base ? resolveCommit(cwd, base) : null;
-  const patch = base && head ? patchId(cwd, base, head) : null;
   const onTree = branch !== null && branch === checkedOut;
   const tree = onTree ? worktreeTree(cwd) : null;
   return {
@@ -358,7 +618,8 @@ export function codeKey(
     head,
     base,
     baseSha,
-    patchId: patch,
+    patchId: base && head ? patchId(cwd, base, head) : null,
+    diffHash: base && head ? diffHash(cwd, base, head) : null,
     tree: tree?.key ?? null,
     dirty: tree ? tree.dirty : null,
   };
@@ -366,22 +627,40 @@ export function codeKey(
 
 export type VerdictBasis = "fresh" | "carried" | "stale" | "none";
 
-/** fresh: same head · carried: same non-null patch-id · stale: otherwise. */
-export function verdictBasis(
-  verdict: { head: string | null; patchId: string | null },
-  current: { head: string | null; patchId: string | null },
-): Exclude<VerdictBasis, "none"> {
+type Keyed = { head: string | null; patchId: string | null; diffHash: string | null };
+
+/** fresh: same head · carried: same non-null patch-id AND exact diff · stale: otherwise. */
+export function verdictBasis(verdict: Keyed, current: Keyed): Exclude<VerdictBasis, "none"> {
   if (verdict.head && verdict.head === current.head) return "fresh";
-  if (verdict.patchId && verdict.patchId === current.patchId) return "carried";
+  if (
+    verdict.patchId &&
+    verdict.patchId === current.patchId &&
+    verdict.diffHash &&
+    verdict.diffHash === current.diffHash
+  )
+    return "carried";
   return "stale";
 }
 
-export type EffectiveVerdict = {
+export type RejectReason =
+  | "stale"
+  | "not_passing"
+  | "self"
+  | "no_session"
+  | "author_session"
+  | "failing_verdict"
+  | "no_verdict";
+
+export type VerdictEntry = {
   kind: string;
   basis: Exclude<VerdictBasis, "none">;
-  valid: boolean;
-  /** The branch's patch-id against this verdict's own base, now. */
-  currentPatchId: string | null;
+  /** The verdict still applies to the code (fresh or carried). */
+  current: boolean;
+  /** Independent: not self, a known session, not an author of the branch. */
+  independent: boolean;
+  /** current AND passing AND independent. */
+  accepted: boolean;
+  reasons: RejectReason[];
   verdict: ReadRow;
 };
 
@@ -390,73 +669,161 @@ export type VerdictCheck = {
   head: string | null;
   base: string | null;
   patchId: string | null;
-  valid: boolean;
-  basis: VerdictBasis;
-  /** The newest valid verdict, else the newest verdict, else null. */
-  verdict: ReadRow | null;
-  /** The newest live verdict per kind, after carry-over. */
-  verdicts: EffectiveVerdict[];
+  /** Newest current verdict (else newest verdict): does it still apply? */
+  current: { basis: VerdictBasis; verdict: ReadRow | null };
+  /** What merge gates read: an accepted verdict and no current independent failure. */
+  accepted: { accepted: boolean; verdict: ReadRow | null; reasons: RejectReason[] };
+  verdicts: VerdictEntry[];
+  authors: string[];
 };
 
-const isVerdict = (row: ReadRow): boolean =>
+const isLiveVerdict = (row: ReadRow): boolean =>
   row.type === "verdict" && typeof row.result === "string" && !row.superseded;
 
-/** The branch's PR-to-branch mapping as recorded in the ledger (newest wins). */
-export function branchForPr(rows: readonly ReadRow[], pr: number): string | null {
-  for (let index = rows.length - 1; index >= 0; index -= 1)
-    if (rows[index].pr === pr && rows[index].branch) return rows[index].branch;
-  return null;
+/** Sessions recorded in `Workit-Session:` trailers of `base...head` commits. */
+function trailerSessions(cwd: string, base: string | null, head: string | null): string[] {
+  if (!base || !head || !safeRef(base) || !safeRef(head)) return [];
+  const out = git(cwd, [
+    "log",
+    "--format=%(trailers:key=Workit-Session,valueonly,separator=%x00)",
+    `${base}..${head}`,
+  ]);
+  return (out ?? "")
+    .split(/[\0\n]/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
-/** Current effective verdicts for `branch`, after patch-id carry-over. */
-export function checkVerdicts(
+/**
+ * Sessions that authored `branch`: `commit.recorded` / `task.opened` ledger
+ * rows; when the ledger has none for the branch, `Workit-Session:` commit
+ * trailers on `base..head`. Git author name/email is not used: every agent on
+ * a machine shares it, so it cannot tell sessions apart.
+ */
+export function authorSessions(
   cwd: string,
+  rows: readonly ReadRow[],
   branch: string,
-  rows: readonly ReadRow[] = readLedger(cwd).rows,
-): VerdictCheck {
-  const head = branchHead(cwd, branch);
-  const fallbackBase = defaultBase(cwd);
-  const patchCache = new Map<string, string | null>();
-  const patchFor = (base: string | null): string | null => {
-    if (!base || !head) return null;
-    if (!patchCache.has(base)) patchCache.set(base, patchId(cwd, base, head));
-    return patchCache.get(base) ?? null;
-  };
-  const newestPerKind = new Map<string, ReadRow>();
-  for (const row of rows)
-    if (row.branch === branch && isVerdict(row))
-      newestPerKind.set(typeof row.kind === "string" ? row.kind : "review", row);
-  const verdicts: EffectiveVerdict[] = [...newestPerKind.entries()]
-    .map(([kind, row]) => {
-      const currentPatchId = patchFor(row.base ?? fallbackBase);
-      const basis = verdictBasis(row, { head, patchId: currentPatchId });
-      return { kind, basis, valid: basis !== "stale", currentPatchId, verdict: row };
-    })
-    .toSorted((a, b) => a.verdict.seq - b.verdict.seq);
-  const newestValid = verdicts.findLast((entry) => entry.valid);
-  const chosen = newestValid ?? verdicts.at(-1) ?? null;
-  return {
-    branch,
-    head,
-    base: chosen?.verdict.base ?? fallbackBase,
-    patchId: chosen ? chosen.currentPatchId : patchFor(fallbackBase),
-    valid: chosen?.valid ?? false,
-    basis: chosen?.basis ?? "none",
-    verdict: chosen?.verdict ?? null,
-    verdicts,
-  };
-}
-
-/** Sessions that authored `branch`: from `commit.recorded` and `task.opened` rows. */
-export function authorSessions(rows: readonly ReadRow[], branch: string): Set<string> {
+  range: { base: string | null; head: string | null } = { base: null, head: null },
+): Set<string> {
   const sessions = new Set<string>();
+  let recorded = false;
   for (const row of rows) {
     if (row.branch !== branch || (row.type !== "commit.recorded" && row.type !== "task.opened"))
       continue;
+    recorded = true;
     const session = str(row.session) ?? row.actor.session;
     if (session) sessions.add(session);
   }
+  if (!recorded)
+    for (const session of trailerSessions(cwd, range.base, range.head)) sessions.add(session);
   return sessions;
+}
+
+const independenceReasons = (row: ReadRow, authors: Set<string>): RejectReason[] => {
+  const reasons: RejectReason[] = [];
+  if (!row.actor.session) reasons.push("no_session");
+  else if (authors.has(row.actor.session)) reasons.push("author_session");
+  if (row.self === true && !reasons.includes("no_session")) reasons.push("self");
+  return reasons;
+};
+
+/**
+ * The effective verdict of one kind, walking rows in order: a self verdict
+ * never displaces an independent one, and an independent failed/blocked
+ * verdict sticks until an independent verdict from a different session (or
+ * its own session's supersede) replaces it.
+ */
+function effectiveOf(rows: readonly ReadRow[], authors: Set<string>): ReadRow | null {
+  let effective: ReadRow | null = null;
+  for (const row of rows) {
+    if (!effective) {
+      effective = row;
+      continue;
+    }
+    const rowIndependent = independenceReasons(row, authors).length === 0;
+    const effIndependent = independenceReasons(effective, authors).length === 0;
+    if (effIndependent && !rowIndependent) continue;
+    if (
+      effIndependent &&
+      FAILING.has(String(effective.result)) &&
+      row.actor.session === effective.actor.session
+    )
+      continue;
+    effective = row;
+  }
+  return effective;
+}
+
+/** Current and accepted verdicts for `branch`, after carry-over (D18). */
+export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRow[]): VerdictCheck {
+  const head = branchHead(cwd, branch);
+  const fallbackBase = defaultBase(cwd);
+  const keyCache = new Map<string, { patchId: string | null; diffHash: string | null }>();
+  const keyFor = (base: string | null) => {
+    if (!base || !head) return { patchId: null, diffHash: null };
+    let key = keyCache.get(base);
+    if (!key) {
+      key = { patchId: patchId(cwd, base, head), diffHash: diffHash(cwd, base, head) };
+      keyCache.set(base, key);
+    }
+    return key;
+  };
+  const authors = authorSessions(cwd, rows, branch, { base: fallbackBase, head });
+  const byKind = new Map<string, ReadRow[]>();
+  for (const row of rows)
+    if (row.branch === branch && isLiveVerdict(row)) {
+      const kind = typeof row.kind === "string" ? row.kind : "review";
+      byKind.set(kind, [...(byKind.get(kind) ?? []), row]);
+    }
+  const verdicts: VerdictEntry[] = [];
+  for (const [kind, list] of byKind) {
+    const row = effectiveOf(list, authors);
+    if (!row) continue;
+    const basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
+    const current = basis !== "stale";
+    const independence = independenceReasons(row, authors);
+    const reasons: RejectReason[] = [
+      ...(current ? [] : (["stale"] as const)),
+      ...(PASSING.has(String(row.result)) ? [] : (["not_passing"] as const)),
+      ...independence,
+    ];
+    verdicts.push({
+      kind,
+      basis,
+      current,
+      independent: independence.length === 0,
+      accepted: reasons.length === 0,
+      reasons,
+      verdict: row,
+    });
+  }
+  verdicts.sort((a, b) => a.verdict.seq - b.verdict.seq);
+  const newestCurrent = verdicts.findLast((entry) => entry.current) ?? verdicts.at(-1) ?? null;
+  const failing = verdicts.find(
+    (entry) => entry.current && entry.independent && FAILING.has(String(entry.verdict.result)),
+  );
+  const newestAccepted = verdicts.findLast((entry) => entry.accepted) ?? null;
+  const accepted =
+    newestAccepted && !failing
+      ? { accepted: true, verdict: newestAccepted.verdict, reasons: [] }
+      : {
+          accepted: false,
+          verdict: failing?.verdict ?? null,
+          reasons: failing
+            ? (["failing_verdict"] as RejectReason[])
+            : (newestCurrent?.reasons ?? (["no_verdict"] as RejectReason[])),
+        };
+  return {
+    branch,
+    head,
+    base: newestCurrent?.verdict.base ?? fallbackBase,
+    patchId: keyFor(newestCurrent?.verdict.base ?? fallbackBase).patchId,
+    current: { basis: newestCurrent?.basis ?? "none", verdict: newestCurrent?.verdict ?? null },
+    accepted,
+    verdicts,
+    authors: [...authors].toSorted(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -488,6 +855,7 @@ const noteKey = (context: RecordContext): CodeKey => {
     base: null,
     baseSha: null,
     patchId: null,
+    diffHash: null,
     tree: null,
     dirty: null,
   };
@@ -495,10 +863,21 @@ const noteKey = (context: RecordContext): CodeKey => {
 
 const required = (value: string | undefined | null, flag: string): LedgerResult<string> => {
   const text = value?.trim();
-  return text
-    ? { ok: true, value: text }
-    : { ok: false, code: "invalid_input", error: `${flag} is required` };
+  return text ? { ok: true, value: text } : err("invalid_input", `${flag} is required`);
 };
+
+/** Refuse a supersede link that the reader would ignore. */
+function checkSupersede(context: RecordContext, type: string, self?: boolean): LedgerResult<void> {
+  if (!context.supersedes) return { ok: true, value: undefined };
+  const ledger = readLedger(context.cwd);
+  if (!ledger.ok) return ledger;
+  const target = ledger.value.rows.find((row) => row.id === context.supersedes);
+  if (!target) return err("not_found", `no ledger row ${context.supersedes} to supersede`);
+  const problem = supersedeAllowed({ type, actor: context.actor, self }, target);
+  return problem
+    ? err("invalid_input", `--supersedes: ${problem}`)
+    : { ok: true, value: undefined };
+}
 
 export function recordDecision(
   context: RecordContext,
@@ -508,6 +887,8 @@ export function recordDecision(
   if (!what.ok) return what;
   const why = required(input.why, "--why");
   if (!why.ok) return why;
+  const link = checkSupersede(context, "decision");
+  if (!link.ok) return link;
   return appendRow<DecisionRow>(
     context.cwd,
     {
@@ -517,7 +898,7 @@ export function recordDecision(
       why: why.value,
       refs: input.refs ?? [],
     },
-    context.now,
+    { now: context.now },
   );
 }
 
@@ -531,6 +912,8 @@ export function recordRuling(
   if (!why.ok) return why;
   const cost = required(input.costIfWrong, "--cost-if-wrong");
   if (!cost.ok) return cost;
+  const link = checkSupersede(context, "ruling");
+  if (!link.ok) return link;
   return appendRow<RulingRow>(
     context.cwd,
     {
@@ -541,10 +924,16 @@ export function recordRuling(
       costIfWrong: cost.value,
       refs: input.refs ?? [],
     },
-    context.now,
+    { now: context.now },
   );
 }
 
+/**
+ * Record an agent-asserted verdict on a branch's committed head. Refused on a
+ * dirty worktree (the head would not be what was judged) and, for an author
+ * session, unless `--self`. Without a session the verdict is recorded as
+ * self: an unknown actor cannot be told apart from the author.
+ */
 export function recordVerdict(
   context: RecordContext,
   input: {
@@ -557,44 +946,53 @@ export function recordVerdict(
   },
 ): LedgerResult<VerdictRow> {
   if (!(VERDICT_RESULTS as readonly string[]).includes(input.result))
-    return {
-      ok: false,
-      code: "invalid_input",
-      error: `unknown verdict "${input.result}"; expected ${VERDICT_RESULTS.join("|")}`,
-    };
+    return err(
+      "invalid_input",
+      `unknown verdict "${input.result}"; expected ${VERDICT_RESULTS.join("|")}`,
+    );
   const kind = input.kind ?? "review";
   if (!(VERDICT_KINDS as readonly string[]).includes(kind))
-    return { ok: false, code: "invalid_input", error: `--kind must be ${VERDICT_KINDS.join("|")}` };
+    return err("invalid_input", `--kind must be ${VERDICT_KINDS.join("|")}`);
   const surface = input.surface ?? null;
   if (surface !== null && !(VERDICT_SURFACES as readonly string[]).includes(surface))
-    return {
-      ok: false,
-      code: "invalid_input",
-      error: `--surface must be ${VERDICT_SURFACES.join("|")}`,
-    };
+    return err("invalid_input", `--surface must be ${VERDICT_SURFACES.join("|")}`);
   const how = required(input.how, "--how");
   if (!how.ok) return how;
   const branch = context.branch ?? currentBranch(context.cwd);
   if (!branch)
-    return {
-      ok: false,
-      code: "invalid_input",
-      error: "HEAD is detached; name the branch the verdict is for",
-      unblock: "pass --branch <branch>",
-    };
+    return err(
+      "invalid_input",
+      "HEAD is detached; name the branch the verdict is for",
+      "pass --branch <branch>",
+    );
+  const ledger = readLedger(context.cwd);
+  if (!ledger.ok) return ledger;
   const key = codeKey(context.cwd, { branch, base: context.base });
-  if (!key.head)
-    return { ok: false, code: "not_found", error: `branch "${branch}" has no commit to judge` };
-  const self = input.self === true;
+  if (!key.head) return err("not_found", `branch "${branch}" has no commit to judge`);
+  if (key.dirty === true)
+    return err(
+      "blocked",
+      `dirty_worktree: ${branch} has uncommitted changes, so its head is not what was judged`,
+      "commit or stash the changes, re-check, then record the verdict",
+    );
   const session = context.actor.session;
-  if (!self && session && authorSessions(readLedger(context.cwd).rows, branch).has(session))
-    return {
-      ok: false,
-      code: "blocked",
-      error: `author_verdict: session ${session} authored ${branch}; a verdict must come from a different session`,
-      unblock:
-        'have a non-author session record the verdict, or pass --self (a self verdict is not accepted by merge:"verified")',
-    };
+  const selfReason: SelfReason | null =
+    input.self === true ? "flag" : session ? null : "no_session";
+  const self = selfReason !== null;
+  if (
+    !self &&
+    session &&
+    authorSessions(context.cwd, ledger.value.rows, branch, { base: key.base, head: key.head }).has(
+      session,
+    )
+  )
+    return err(
+      "blocked",
+      `author_verdict: session ${session} authored ${branch}; a verdict must come from a different session`,
+      'have a non-author session record the verdict, or pass --self (a self verdict is never accepted by merge:"verified")',
+    );
+  const link = checkSupersede(context, "verdict", self);
+  if (!link.ok) return link;
   return appendRow<VerdictRow>(
     context.cwd,
     {
@@ -604,12 +1002,12 @@ export function recordVerdict(
       result: input.result as VerdictResult,
       how: how.value,
       surface: surface as VerdictSurface | null,
-      observer: "workit_cli",
-      attestation: null,
+      observer: "agent_asserted",
       self,
+      selfReason,
       evidenceRefs: input.evidenceRefs ?? [],
     },
-    context.now,
+    { now: context.now },
   );
 }
 
@@ -620,7 +1018,7 @@ export function recordHandoff(
   return appendRow<HandoffRow>(
     context.cwd,
     { ...common(context, noteKey(context)), type: "handoff", note: input.note, next: input.next },
-    context.now,
+    { now: context.now },
   );
 }
 
@@ -647,7 +1045,7 @@ export function summarizeRow(row: ReadRow): RowSummary {
       summary = `${text("what")} (why: ${text("why")}; cost if wrong: ${text("costIfWrong")})`;
       break;
     case "verdict":
-      summary = `${text("result")} [${text("kind") || "review"}] at ${(row.head ?? "?").slice(0, 12)}${row.self === true ? " (self)" : ""}: ${text("how")}`;
+      summary = `${text("result")} [${text("kind") || "review"}] at ${(row.head ?? "?").slice(0, 12)}${row.self === true ? ` (self${text("selfReason") === "no_session" ? ": no session" : ""})` : ""}: ${text("how")}`;
       break;
     case "handoff":
       summary = `next: ${text("next")}${text("note") ? ` (note: ${text("note")})` : ""}`;
@@ -700,6 +1098,8 @@ export function stackPosition(root: string, branch: string): StackPosition | nul
 
 export type CheckFreshness = { name: string; result: string | null; fresh: boolean; at: string };
 
+type VerdictSummary = Omit<VerdictEntry, "verdict"> & { summary: string };
+
 export type HandoffBrief = {
   store: { root: string; shared: boolean; ledger: string };
   branch: string | null;
@@ -711,8 +1111,11 @@ export type HandoffBrief = {
   dirty: { dirty: boolean; files: number; paths: string[] };
   pr: number | null;
   stack: StackPosition | null;
-  verdict: Omit<VerdictCheck, "verdicts"> & {
-    verdicts: Array<Omit<EffectiveVerdict, "verdict"> & { summary: string }>;
+  verdict: {
+    current: VerdictCheck["current"]["basis"];
+    accepted: boolean;
+    reasons: RejectReason[];
+    verdicts: VerdictSummary[];
   };
   checks: CheckFreshness[];
   rulings: RowSummary[];
@@ -727,17 +1130,14 @@ export type HandoffBrief = {
 const MAX_DIRTY_PATHS = 10;
 
 const dirtyState = (cwd: string): HandoffBrief["dirty"] => {
-  const run = spawnSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=normal"], {
+  const run = gitRun(
     cwd,
-    encoding: "utf8",
-    timeout: GIT_TIMEOUTS.worktree,
-    killSignal: "SIGKILL",
-    windowsHide: true,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-  });
-  if (run.status !== 0) return { dirty: false, files: 0, paths: [] };
+    ["status", "--porcelain=v1", "-z", "--untracked-files=normal"],
+    GIT_TIMEOUTS.worktree,
+  );
+  if (!run.ok) return { dirty: false, files: 0, paths: [] };
   const paths: string[] = [];
-  const entries = (run.stdout ?? "").split("\0");
+  const entries = run.stdout.split("\0");
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     if (entry.length < 4) continue;
@@ -748,35 +1148,35 @@ const dirtyState = (cwd: string): HandoffBrief["dirty"] => {
   return { dirty: paths.length > 0, files: paths.length, paths: paths.slice(0, MAX_DIRTY_PATHS) };
 };
 
-const PASSING: ReadonlySet<string> = new Set(["verified", "tests-verified", "type-check-only"]);
-
 const nextCommandFor = (brief: Omit<HandoffBrief, "nextCommand" | "next">): string => {
   const branchFlag = brief.branch ? ` --branch ${brief.branch}` : "";
+  const verify = `workit ledger verdict verified${branchFlag} --how "<method and evidence>"  (from a session that did not author the branch, with WORKIT_SESSION_ID set)`;
   if (!brief.head) return "make the first commit on this branch, then: workit handoff";
   if (brief.dirty.dirty)
     return `commit or stash the ${brief.dirty.files} changed file(s), then: workit handoff`;
   const stale = brief.checks.find((check) => !check.fresh);
   if (stale) return `workit check ${stale.name}`;
-  const verdict = brief.verdict;
-  if (!verdict.valid)
-    return `workit ledger verdict verified${branchFlag} --how "<method and evidence>"  (from a session that did not author the branch)`;
-  const result = str(verdict.verdict?.result);
-  if (result && !PASSING.has(result))
-    return `address the ${result} verdict, then re-verify: workit ledger verdict verified${branchFlag} --how "<…>"`;
+  const { verdict } = brief;
+  if (verdict.reasons.includes("failing_verdict"))
+    return `fix what the failing verdict found, then get a new independent verdict: ${verify}`;
+  if (!verdict.accepted) return verify;
   return brief.pr === null ? "workit pr create" : `workit pr status --pr ${brief.pr}`;
 };
 
 /**
  * A compact resume brief for the checked-out branch: code state, dirty files,
- * stack position, verdict validity, check freshness, rulings, the newest
+ * stack position, verdict acceptance, check freshness, rulings, the newest
  * ledger rows, and one next command.
  */
 export function buildHandoff(
   cwd: string,
   options: { last?: number; note?: string | null; next?: string | null } = {},
-): HandoffBrief {
+): LedgerResult<HandoffBrief> {
   const store = storeRoot(cwd);
-  const ledger = readLedger(cwd);
+  if (!store.ok) return store;
+  const read = readLedger(cwd);
+  if (!read.ok) return read;
+  const ledger = read.value;
   const branch = currentBranch(cwd);
   const head = headSha(cwd);
   const base = defaultBase(cwd);
@@ -791,22 +1191,17 @@ export function buildHandoff(
     }
   }
   const mine = branch ? filterRows(ledger.rows, { branch }) : [];
-  const stack = branch ? stackPosition(store.root, branch) : null;
-  const prRow = mine.findLast((row) => row.pr !== undefined);
-  const pr = stack?.pr ?? prRow?.pr ?? null;
-  const verdict: VerdictCheck = branch
-    ? checkVerdicts(cwd, branch, ledger.rows)
-    : {
-        branch: "",
-        head,
-        base,
-        patchId: null,
-        valid: false,
-        basis: "none",
-        verdict: null,
-        verdicts: [],
-      };
-  const checkRows = mine.filter((row) => row.type === "check" && !row.superseded && str(row.name));
+  const stack = branch ? stackPosition(store.value.root, branch) : null;
+  const pr =
+    stack?.pr ??
+    mine.findLast(
+      (row) => row.pr !== undefined && PR_ROW_TYPES.has(row.type) && row.observer === "workit_cli",
+    )?.pr ??
+    null;
+  const check = branch ? checkVerdicts(cwd, branch, ledger.rows) : null;
+  const checkRows = mine.filter(
+    (row) => row.type === "check" && row.observer === "workit_cli" && str(row.name),
+  );
   const latestChecks = new Map<string, ReadRow>();
   for (const row of checkRows) latestChecks.set(str(row.name) as string, row);
   const tree = latestChecks.size ? (worktreeTree(cwd)?.key ?? null) : null;
@@ -818,7 +1213,7 @@ export function buildHandoff(
   }));
   const lastHandoffRow = mine.findLast((row) => row.type === "handoff");
   const partial: Omit<HandoffBrief, "nextCommand" | "next"> = {
-    store: { root: store.root, shared: store.shared, ledger: ledger.path },
+    store: { root: store.value.root, shared: store.value.shared, ledger: ledger.path },
     branch,
     head,
     subject: head ? git(cwd, ["log", "-1", "--format=%s", head]) : null,
@@ -829,8 +1224,10 @@ export function buildHandoff(
     pr,
     stack,
     verdict: {
-      ...verdict,
-      verdicts: verdict.verdicts.map(({ verdict: row, ...rest }) => ({
+      current: check?.current.basis ?? "none",
+      accepted: check?.accepted.accepted ?? false,
+      reasons: check?.accepted.reasons ?? ["no_verdict"],
+      verdicts: (check?.verdicts ?? []).map(({ verdict: row, ...rest }) => ({
         ...rest,
         summary: summarizeRow(row).summary,
       })),
@@ -852,5 +1249,8 @@ export function buildHandoff(
     skippedRows: ledger.skipped,
   };
   const nextCommand = nextCommandFor(partial);
-  return { ...partial, nextCommand, next: options.next?.trim() || nextCommand };
+  return {
+    ok: true,
+    value: { ...partial, nextCommand, next: options.next?.trim() || nextCommand },
+  };
 }
