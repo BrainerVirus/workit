@@ -238,10 +238,10 @@ test("YouTrack context rejects escaped spec and plan paths before credentials or
     logTime: async () => ({}),
   });
   for (const input of [{ spec_path: "/tmp/outside" }, { plan_path: "../outside" }]) {
-    const raw = await tools.workit_youtrack_context.execute(
-      input as never,
-      { directory: root, worktree: root } as never,
-    );
+    const raw = await tools.workit_youtrack_context.execute(input, {
+      directory: root,
+      worktree: root,
+    } as never);
     expect(JSON.parse(raw as string).error).toContain("repository-relative");
   }
   const outside = path.join(parent, "outside.md");
@@ -270,16 +270,16 @@ test("credentials use neutral XDG config and require token mode 0600", () => {
   writeFileSync(tokenPath, "dummy-token\n", { mode: 0o644 });
   writeFileSync(path.join(directory, "youtrack.json"), JSON.stringify({ tokenFile: tokenPath }));
 
-  expect(configPath({ XDG_CONFIG_HOME: xdg } as NodeJS.ProcessEnv, "/unused")).toBe(
+  expect(configPath({ XDG_CONFIG_HOME: xdg }, "/unused")).toBe(
     path.join(directory, "youtrack.json"),
   );
   if (process.platform !== "win32") {
-    expect(() => readCredentials({ XDG_CONFIG_HOME: xdg } as NodeJS.ProcessEnv, "/unused")).toThrow(
+    expect(() => readCredentials({ XDG_CONFIG_HOME: xdg }, "/unused")).toThrow(
       "youtrack.token mode must be 0600",
     );
 
     chmodSync(tokenPath, 0o600);
-    expect(readCredentials({ XDG_CONFIG_HOME: xdg } as NodeJS.ProcessEnv, "/unused")).toEqual({
+    expect(readCredentials({ XDG_CONFIG_HOME: xdg }, "/unused")).toEqual({
       configPath: path.join(directory, "youtrack.json"),
       token: "dummy-token",
     });
@@ -301,7 +301,7 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
     }),
   );
 
-  withNeutralXdg(xdg, () => {
+  void withNeutralXdg(xdg, () => {
     const out = youTrackConfigLoad();
     expect("data" in out ? out.data.meetingIssue : null).toBe("IRPT-12");
   });
@@ -320,7 +320,7 @@ test("CA-03: youtrack config read resolves the token file inside the active conf
     path.join(workit, "youtrack.json"),
     JSON.stringify({ baseUrl: "https://youtrack.example.test", tokenFile: activeToken }),
   );
-  withNeutralXdg(xdg, () => {
+  void withNeutralXdg(xdg, () => {
     const out = youTrackConfigLoad();
     expect("data" in out).toBe(true);
     if ("data" in out) {
@@ -339,16 +339,16 @@ test("AR-07: non-object youtrack.json shapes fail closed with the exact path", (
   try {
     for (const content of ["null", '"just a string"', "42", "[]", "[1, 2, 3]"]) {
       writeFileSync(ytFile, content, "utf8");
-      withNeutralXdg(dir, () => {
+      void withNeutralXdg(dir, () => {
         const out = youTrackConfigLoad() as { ok?: boolean; error?: string; configPath?: string };
         expect(out.error, content).toBeTruthy();
-        expect(String(out.error ?? ""), content).toContain(ytFile);
+        expect(out.error ?? "", content).toContain(ytFile);
         expect(out.ok, content).toBe(false);
         expect(out.configPath, content).toBe(ytFile);
 
         const work = youTrackWorkDateMs("auto") as { error?: string };
         expect(work.error, content).toBeTruthy();
-        expect(String(work.error ?? ""), content).toContain(ytFile);
+        expect(work.error ?? "", content).toContain(ytFile);
 
         expect(() => readCredentials(), content).toThrow(ytFile);
 
@@ -365,7 +365,7 @@ test("AR-07: non-object youtrack.json shapes fail closed with the exact path", (
 
 test("init scaffolding and status share the neutral XDG config directory", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-init-"));
-  withNeutralXdg(xdg, () => {
+  void withNeutralXdg(xdg, () => {
     initApplyData("youtrack_scaffold");
     const directory = path.join(xdg, "workit");
     const config = JSON.parse(readFileSync(path.join(directory, "youtrack.json"), "utf8"));
@@ -527,14 +527,14 @@ test("registers five read-only tools without workspace_root", async () => {
     postComment: async () => ({}),
     logTime: async () => ({}),
   });
-  expect(Object.keys(tools).sort()).toEqual(
+  expect(Object.keys(tools).toSorted()).toEqual(
     [
       "workit_youtrack_verify_token",
       "workit_youtrack_parse_issue",
       "workit_youtrack_context",
       "workit_youtrack_parse_duration",
       "workit_youtrack_draft",
-    ].sort(),
+    ].toSorted(),
   );
   for (const definition of Object.values(tools)) {
     expect("workspace_root" in definition.args).toBe(false);

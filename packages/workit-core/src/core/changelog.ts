@@ -328,7 +328,7 @@ function normalizeEntries(entries: any): { data: Record<string, string[]> } | { 
   if (typeof entries === "object") {
     const grouped: Record<string, string[]> = {};
     for (const [cat, bullets] of Object.entries(entries)) {
-      const canon = CATEGORIES.find((c) => c.toLowerCase() === String(cat).toLowerCase());
+      const canon = CATEGORIES.find((c) => c.toLowerCase() === cat.toLowerCase());
       if (!canon) return { error: `invalid category: ${cat}` };
       const list = Array.isArray(bullets) ? bullets : [bullets];
       grouped[canon] = list.filter(Boolean).map(String);

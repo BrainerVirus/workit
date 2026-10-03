@@ -77,10 +77,10 @@ test("prepare creates only missing docs/ and docs/<slug>/", () => {
     const res = prepareDocsLayout({ workspace_root: root, slug });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.created.sort()).toEqual(["docs", `docs/${slug}`]);
-    expect(readdirSync(root).sort()).toEqual(["docs"]);
-    expect(readdirSync(path.join(root, "docs")).sort()).toEqual([slug]);
-    expect(readdirSync(path.join(root, "docs", slug)).sort()).toEqual([]);
+    expect(res.created.toSorted()).toEqual(["docs", `docs/${slug}`]);
+    expect(readdirSync(root).toSorted()).toEqual(["docs"]);
+    expect(readdirSync(path.join(root, "docs")).toSorted()).toEqual([slug]);
+    expect(readdirSync(path.join(root, "docs", slug)).toSorted()).toEqual([]);
     expect(existsSync(path.join(root, "docs", slug, "sdd"))).toBe(false);
     expect(res.layout.workspace).toBe(realpathSync(root));
     expect(res.layout.dir).toBe(realpathSync(path.join(root, "docs", slug)));
@@ -344,7 +344,7 @@ test("workit_docs_layout prepare registers on the opencode adapter and prepares 
     expect(existsSync(path.join(root, "docs", slug, "sdd"))).toBe(false);
     if (out.ok) {
       expect(posix(out.data.layout.dir)).toBe(posix(realpathSync(path.join(root, "docs", slug))));
-      expect(out.data.created.sort()).toEqual(["docs", `docs/${slug}`]);
+      expect(out.data.created.toSorted()).toEqual(["docs", `docs/${slug}`]);
     }
   } finally {
     cleanup(root);

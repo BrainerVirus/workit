@@ -92,7 +92,7 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
     const viaTool = initApplyData("branch_policy", {
       WORKFLOW_WORKSPACE_ROOT: root,
       WORKFLOW_TOOLKIT_CONFIG: cfg,
-    } as NodeJS.ProcessEnv);
+    });
     const wsTool = readFileSync(path.join(cfg, "workspaces.json"), "utf8");
     expect(viaTool.policy.integration).toBe("merge");
     expect(wsFile).toBe(wsTool);

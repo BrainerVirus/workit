@@ -511,13 +511,13 @@ type ResolvedApply = {
 // the same options (defaulting both from env) — tests pass `home` explicitly.
 const resolveSetupPaths = (
   options: ApplySetupOptions,
-  configDir: string,
+  resolvedConfigDir: string,
 ): Omit<ResolvedApply, "dev"> => {
   const env = options.env ?? process.env;
   const home = options.home ?? env.HOME ?? os.homedir();
   return {
     home,
-    configDir,
+    configDir: resolvedConfigDir,
     cwd: options.cwd ?? process.cwd(),
     env,
     opencodeConfig:
@@ -1463,7 +1463,7 @@ export function applyWorkspaceBranchPolicy(opts: {
   if (status === "malformed" || status === "invalid")
     return { ok: false, error: workspacesError ?? `invalid workspaces.json: ${wsPath}` };
   const detection = detectBranchPolicy(workspace_root);
-  const name = String(env.WORKFLOW_BP_NAME ?? path.basename(workspace_root));
+  const name = env.WORKFLOW_BP_NAME ?? path.basename(workspace_root);
   const integration = (env.WORKFLOW_BP_INTEGRATION ?? detection.integration) as "pr" | "merge";
   const policy = {
     preset: detection.preset,

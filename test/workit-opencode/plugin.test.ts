@@ -40,7 +40,7 @@ test("config registers only the policy-selected method skills", async () => {
   const config: Record<string, any> = {};
   await hooks.config?.(config);
   expect(config.skills.paths).toEqual([packageSkills]);
-  expect(readdirSync(packageSkills).sort()).toEqual([
+  expect(readdirSync(packageSkills).toSorted()).toEqual([
     "workit-babysit",
     "workit-behavioral-tdd",
     "workit-blast-radius",
@@ -56,7 +56,7 @@ test("config registers only the policy-selected method skills", async () => {
     "workit-review",
     "workit-steer",
   ]);
-  expect(Object.keys(config.command).sort()).toEqual([
+  expect(Object.keys(config.command).toSorted()).toEqual([
     "wk-babysit",
     "wk-blast-radius",
     "wk-challenge",

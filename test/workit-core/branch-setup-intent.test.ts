@@ -176,7 +176,7 @@ test("branch drift names the moved element instead of demanding re-approval", ()
     );
     expect(remote.ok).toBe(false);
     if (remote.ok) throw new Error("expected drift failure");
-    expect(String(remote.error)).toContain("remote_base");
+    expect(remote.error).toContain("remote_base");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

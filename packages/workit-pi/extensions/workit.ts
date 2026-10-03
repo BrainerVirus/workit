@@ -34,7 +34,6 @@ import {
   workerCanLaunchNested,
   type ObservedExit,
   type WorkerHandle,
-  type WorkerAssignment,
   type WorkerLifecycleBinding,
 } from "../src/worker";
 
@@ -73,9 +72,9 @@ const readAssignment = (
 ): Result<ValidAssignment> => {
   const store = new TaskStore(ctx.cwd);
   const task = store.readTask(request.taskId);
-  if (!task.ok) return task as Result<never>;
+  if (!task.ok) return task;
   const workspace = store.readWorkspace();
-  if (!workspace.ok) return workspace as Result<never>;
+  if (!workspace.ok) return workspace;
   if (!workspace.data || task.data.workspaceId !== workspace.data.id)
     return failure("permission_denied", "worker assignment is not bound to this workspace");
   if (task.data.status !== "active")
@@ -285,7 +284,7 @@ export default function extension(pi: ExtensionAPI): void {
     const readyPromise = new Promise<boolean>((resolve) => {
       resolveReady = resolve;
     });
-    const handle = launchSupervisedWorker(worker.data.assignment as WorkerAssignment, {
+    const handle = launchSupervisedWorker(worker.data.assignment, {
       runtime: runtimeFor(ctx),
       binding,
       writerCore: childCore,
@@ -404,7 +403,7 @@ export default function extension(pi: ExtensionAPI): void {
       pi.registerCommand(alias, {
         description: `Apply the ${skill} method skill to the current task.`,
         handler: async (args) => {
-          const extra = String(args ?? "").trim();
+          const extra = (args ?? "").trim();
           (
             pi as unknown as { sendUserMessage: (content: string, options: unknown) => void }
           ).sendUserMessage(`/skill:${skill}${extra ? ` ${extra}` : ""}`, {

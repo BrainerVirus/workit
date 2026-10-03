@@ -1,10 +1,6 @@
 import { tool } from "@opencode-ai/plugin";
 import { fail, ok } from "@brainervirus/workit-core/src/core";
-import {
-  listTemplates,
-  writeTemplate,
-  type TemplateName,
-} from "@brainervirus/workit-core/src/core/templates";
+import { listTemplates, writeTemplate } from "@brainervirus/workit-core/src/core/templates";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -23,7 +19,7 @@ export function createTemplateTools() {
         confirmed: tool.schema.boolean(),
       },
       execute: async ({ name, content, confirmed }) => {
-        const result = writeTemplate(name as TemplateName, content, confirmed);
+        const result = writeTemplate(name, content, confirmed);
         return output(result.ok ? ok(result) : fail(result.error));
       },
     }),

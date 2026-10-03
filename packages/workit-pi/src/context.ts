@@ -86,7 +86,7 @@ export const workitContext = (ctx: ExtensionContext): string => {
                   worker.data.session.handle === session,
               )),
         )
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
       if (task) {
         const core = new WorkitCore(store, piContext(ctx));
         const view = core.task({
@@ -127,7 +127,7 @@ export const unfinishedTaskOffer = (ctx: ExtensionContext): string | null => {
               worker.data.session.handle === session,
           ),
       )
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 3);
     if (tasks.length === 0) return null;
     const quote = (value: string) => JSON.stringify(value.replace(/[<>]/g, " ").slice(0, 120));

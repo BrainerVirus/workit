@@ -1,0 +1,57 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // Single source for what gets linted: `oxlint` walks the repo from the root
+  // and skips gitignored paths (dist/, node_modules/) plus these patterns.
+  "ignorePatterns": ["test/fixtures/**"],
+  "plugins": ["eslint", "typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "options": {
+    // Type-aware rules via oxlint-tsgolint (bundles typescript-go, so it
+    // matches the TS 7 compiler used by `tsc`). Catches floating/misused
+    // promises and awaits of non-thenables in the async host adapters.
+    "typeAware": true,
+    "denyWarnings": true,
+    "reportUnusedDisableDirectives": "error"
+  },
+  "rules": {
+    // Sequential awaits are the norm here: git/gh/glab subprocesses, store
+    // locks and filesystem migrations must run in order, and tests drive
+    // hosts step by step. Parallelizing them would change behavior.
+    "eslint/no-await-in-loop": "off",
+    // Local helper closures are kept next to their only caller on purpose;
+    // hoisting them is churn with no correctness or perf benefit.
+    "unicorn/consistent-function-scoping": "off",
+    // ~1k hits: JSON/host-payload boundaries are narrowed with `as` after
+    // zod or shape checks. Tracked as a ratchet follow-up, not a gate today.
+    "typescript/no-unsafe-type-assertion": "off",
+    // tsgolint reports every String(unknown), and does not yet honor the
+    // `checkUnknown: false` option; all ~60 hits are deliberate display
+    // coercion of parsed host/descriptor JSON. Re-enable once supported.
+    "typescript/no-base-to-string": "off",
+    // tsc already rejects missing returns for functions with a declared
+    // return type; this rule additionally flags exhaustive `switch`es.
+    "typescript/consistent-return": "off",
+    // zod schema introspection reads the documented-but-underscored `_zod`
+    // and `_def` handles.
+    "eslint/no-underscore-dangle": ["warn", { "allow": ["_def", "_zod"] }]
+  },
+  "overrides": [
+    {
+      // bun-types declare `expect(...).resolves/.rejects` matchers as
+      // returning void, but bun returns a promise that must be awaited for
+      // the assertion to run; host fixtures also await possibly-sync
+      // factories on purpose. In tests the rule would push toward dropping
+      // load-bearing awaits.
+      "files": ["test/**"],
+      "rules": {
+        "typescript/await-thenable": "off",
+        // Tests save and restore process/console methods around monkeypatches.
+        "typescript/unbound-method": "off"
+      }
+    }
+  ]
+}

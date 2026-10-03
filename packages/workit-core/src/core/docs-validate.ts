@@ -10,9 +10,9 @@ const BRANCH_RE = /^\s*\*+Branch:\*+\s*`?([^`\s|]+)`?\s*$/im;
 const SPEC_LINK_RE = /^\s*\*+Spec:\*+\s*(?:`([^`]+)`|(\S+))\s*$/im;
 const TASK_RE = /^###\s+Task\s+(\d+):\s*(.*)$/i;
 
-const err = (code: string, message: string, path?: string): DocError => {
+const err = (code: string, message: string, filePath?: string): DocError => {
   const item: DocError = { code, message };
-  if (path) item.path = path;
+  if (filePath) item.path = filePath;
   return item;
 };
 
@@ -52,12 +52,15 @@ const scanTaskHeadings = (planText: string): [number[], string[], DocError | nul
   if (ids.length === 0)
     return [ids, titles, err("task_order", "no ### Task N sections found outside fences")];
   const expected = ids.map((_, i) => i + 1);
-  const sorted = [...ids].sort((a, b) => a - b);
+  const sorted = [...ids].toSorted((a, b) => a - b);
   if (JSON.stringify(sorted) !== JSON.stringify(expected) || new Set(ids).size !== ids.length) {
     return [
       ids,
       titles,
-      err("task_order", `task headings must be contiguous from 1..${ids.length}; found ${ids}`),
+      err(
+        "task_order",
+        `task headings must be contiguous from 1..${ids.length}; found ${ids.join(",")}`,
+      ),
     ];
   }
   return [ids, titles, null];

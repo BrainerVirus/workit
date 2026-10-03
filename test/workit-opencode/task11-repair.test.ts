@@ -1483,14 +1483,8 @@ test("each distinct compaction output receives context once", async () => {
     const hooks = await plugin(input(root) as never);
     const first = { context: [] as string[] };
     const second = { context: [] as string[] };
-    await hooks["experimental.session.compacting"]?.(
-      { sessionID: "lead" } as never,
-      first as never,
-    );
-    await hooks["experimental.session.compacting"]?.(
-      { sessionID: "lead" } as never,
-      second as never,
-    );
+    await hooks["experimental.session.compacting"]?.({ sessionID: "lead" }, first);
+    await hooks["experimental.session.compacting"]?.({ sessionID: "lead" }, second);
     expect(first.context).toHaveLength(1);
     expect(second.context).toHaveLength(1);
   } finally {
@@ -1507,10 +1501,7 @@ test("compaction context selects only the task bound to the session", async () =
       start(secondRoot, "second");
       const hooks = await plugin(input(root) as never);
       const output = { context: [] as string[] };
-      await hooks["experimental.session.compacting"]?.(
-        { sessionID: "second" } as never,
-        output as never,
-      );
+      await hooks["experimental.session.compacting"]?.({ sessionID: "second" }, output);
       expect(output.context).toHaveLength(0);
     } finally {
       rmSync(secondRoot, { recursive: true, force: true });
@@ -1541,8 +1532,8 @@ test("bootstrap retries after a transient session lookup failure", async () => {
   });
   const first = { messages: [user("lead")] };
   const second = { messages: [user("lead")] };
-  await hooks["experimental.chat.messages.transform"]?.({} as never, first as never);
-  await hooks["experimental.chat.messages.transform"]?.({} as never, second as never);
+  await hooks["experimental.chat.messages.transform"]?.({}, first as never);
+  await hooks["experimental.chat.messages.transform"]?.({}, second as never);
   expect(
     second.messages[0].parts.some((part: any) => part.text?.includes("<workit-contract>")),
   ).toBe(true);
@@ -1573,7 +1564,7 @@ test("partial session observations do not mark bootstrap complete", async () => 
       },
     ],
   };
-  await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
+  await hooks["experimental.chat.messages.transform"]?.({}, output as never);
   expect(
     output.messages[0].parts.some((part: any) => part.text?.includes("<workit-contract>")),
   ).toBe(false);

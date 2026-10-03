@@ -38,7 +38,7 @@ export function reconcileResume(
   if (observations.length > 0)
     return failure("permission_denied", "worker observations require native host verification");
   const candidate = captureCandidate(view.workspace.root, view.task.intent.data.scope, []);
-  if (!candidate.ok) return candidate as Result<never>;
+  if (!candidate.ok) return candidate;
   const staleEvidenceIds = evaluateEvidence(view.task, candidate.data)
     .filter((entry) => entry.status === "stale")
     .map((entry) => entry.evidenceId);
@@ -127,7 +127,7 @@ const compactReference = (ref: Ref): CompactReference => {
 export function compactTaskContext(view: TaskView): string {
   const decisions: CompactDecision[] = view.task.decisions
     .slice()
-    .sort((left, right) => {
+    .toSorted((left, right) => {
       const leftAt = compactTimestamp(left.recordedAt);
       const rightAt = compactTimestamp(right.recordedAt);
       if (leftAt !== rightAt) return leftAt > rightAt ? -1 : 1;
@@ -162,7 +162,7 @@ export function compactTaskContext(view: TaskView): string {
       ...view.task.progress.blockers.map((entry) => entry.reason),
     ]),
   )
-    .sort()
+    .toSorted()
     .slice(0, COMPACT_MAX_ITEMS)
     .map((gap) => compactText(gap, COMPACT_TEXT_BYTES)!);
   const context: CompactTaskContext = {

@@ -88,7 +88,7 @@ const rootVariants = (workspaceRoot?: string): string[] => {
   } catch {
     // The core will return a structured failure for an unavailable root.
   }
-  return [...roots].sort((left, right) => right.length - left.length);
+  return [...roots].toSorted((left, right) => right.length - left.length);
 };
 
 export const sanitizeTransportText = (value: unknown, workspaceRoot?: string): string => {
@@ -141,7 +141,7 @@ const schemaBranches = (schema: Record<string, unknown>): unknown[] =>
       : [schema];
 
 const readOnlyBranches = (family: OperationFamily): unknown[] =>
-  schemaBranches(boundedOperationJsonSchema(family) as Record<string, unknown>).filter((branch) => {
+  schemaBranches(boundedOperationJsonSchema(family)).filter((branch) => {
     const action = (branch as { properties?: { action?: { const?: unknown } } }).properties?.action
       ?.const;
     return typeof action === "string" && READ_ONLY_ACTIONS.has(action);
@@ -162,7 +162,7 @@ export const advertisedToolSchemas = (
   return OPERATION_FAMILIES.flatMap((family) => {
     const branches = readOnlyBranches(family);
     if (!branches.length) return [];
-    const schema = boundedOperationJsonSchema(family) as Record<string, unknown>;
+    const schema = boundedOperationJsonSchema(family);
     return [
       {
         name: `workit_${family}`,

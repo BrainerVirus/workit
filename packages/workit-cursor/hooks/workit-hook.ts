@@ -1,4 +1,4 @@
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import {
   compactTaskContext,
@@ -154,7 +154,7 @@ export const parseCursorHookInput = (value: unknown): HookParseResult => {
   const roots = value.workspace_roots;
   if (!Array.isArray(roots) || roots.length !== 1 || !roots.every(nonEmpty))
     return { ok: false, error: "exactly one workspace root is required" };
-  const root = roots[0] as string;
+  const root = roots[0];
   if (!path.isAbsolute(root) || !existsSync(root))
     return { ok: false, error: "workspace root must be an existing absolute path" };
   const event = value.hook_event_name as HookEvent;
@@ -255,7 +255,7 @@ const unfinishedTaskOffer = (
               worker.data.session.handle === session,
           ),
       )
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 3);
     if (tasks.length === 0) return null;
     const quote = (value: string) => JSON.stringify(value.replace(/[<>]/g, " ").slice(0, 120));

@@ -9,9 +9,9 @@ function boxLine(text: string, width: number): string {
 
 export function renderAsciiWireframe(spec: unknown): string {
   const parsed = typeof spec === "string" ? JSON.parse(spec) : spec;
-  const title = String((parsed as any).title ?? "UI");
-  const width = Number((parsed as any).width ?? 72);
-  const rows = Array.isArray((parsed as any).rows) ? (parsed as any).rows : [];
+  const title = String(parsed.title ?? "UI");
+  const width = Number(parsed.width ?? 72);
+  const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
 
   const top = "┌" + "─".repeat(Math.max(0, width - 2)) + "┐";
   const bot = "└" + "─".repeat(Math.max(0, width - 2)) + "┘";
@@ -64,10 +64,10 @@ export function renderAsciiWireframe(spec: unknown): string {
 
 export function renderFlowDiagram(spec: unknown): string {
   const parsed = typeof spec === "string" ? JSON.parse(spec) : spec;
-  const direction = String((parsed as any).direction ?? "TD");
-  const nodes = Array.isArray((parsed as any).nodes) ? (parsed as any).nodes : [];
-  const edges = Array.isArray((parsed as any).edges) ? (parsed as any).edges : [];
-  const title = (parsed as any).title;
+  const direction = String(parsed.direction ?? "TD");
+  const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+  const edges = Array.isArray(parsed.edges) ? parsed.edges : [];
+  const title = parsed.title;
 
   const lines = ["flowchart " + direction];
   if (title) lines.push("  %% " + String(title));

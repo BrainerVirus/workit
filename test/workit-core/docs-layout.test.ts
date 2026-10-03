@@ -74,7 +74,7 @@ test("docs validate rejects cross-slug pairs through the shared resolver", () =>
     });
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(String(out.error)).toMatch(/cross-slug|docs\//i);
+    expect(out.error).toMatch(/cross-slug|docs\//i);
   } finally {
     cleanup(root);
   }

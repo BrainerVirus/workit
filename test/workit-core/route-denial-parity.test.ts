@@ -62,8 +62,8 @@ const opencodeDenies = async (root: string, command: string): Promise<boolean> =
   } as never);
   try {
     await hooks["tool.execute.before"]?.(
-      { tool: "bash", sessionID: "lead", callID: command } as never,
-      { args: { command } } as never,
+      { tool: "bash", sessionID: "lead", callID: command },
+      { args: { command } },
     );
     return false;
   } catch {

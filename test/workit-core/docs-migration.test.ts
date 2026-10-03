@@ -185,7 +185,7 @@ test(
       putLegacy(root, "sdd-only", { spec: false, plan: false, sdd: true });
       const detect = detectLegacyDocs(root);
       expect(detect.orphaned.length).toBe(3);
-      expect(detect.orphaned.every((e) => e.paired === false)).toBe(true);
+      expect(detect.orphaned.every((e) => !e.paired)).toBe(true);
       expect(detect.paired.length).toBe(0);
       expect(detect.safe).toBe(true);
     } finally {

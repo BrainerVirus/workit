@@ -337,7 +337,7 @@ test("method manifest lists exactly fourteen core skills", () => {
     "workit-green-run",
     "workit-steer",
   ]);
-  expect(skillManifestNames("packages/workit-core/skills")).toEqual([
-    ...[...WORKIT_METHOD_SKILLS].sort(),
-  ]);
+  expect(skillManifestNames("packages/workit-core/skills")).toEqual(
+    [...WORKIT_METHOD_SKILLS].toSorted(),
+  );
 });

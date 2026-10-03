@@ -206,7 +206,7 @@ test(
             fn({ add: (command: any) => commands.push(command) }),
         },
       };
-      const cleanup = await mod.default.setup(fake as never);
+      const cleanup = await mod.default.setup(fake);
       if (typeof cleanup === "function") cleanup();
       expect(skills).toHaveLength(14);
       expect(commands).toHaveLength(14);
@@ -434,7 +434,6 @@ test(
       const cliDir = path.join(nm, CLI);
       const env = isolatedEnv(home);
 
-      const { spawnSync } = await import("node:child_process");
       const res = spawnSync("node", [path.join(cliDir, "dist", "index.js"), "--help"], {
         cwd: cliDir,
         env,

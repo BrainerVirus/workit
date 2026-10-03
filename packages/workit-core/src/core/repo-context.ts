@@ -258,7 +258,7 @@ export const documentationFiles = (cwd: string): string[] => {
     }
   };
   walk(cwd, 1);
-  return matches.sort().slice(0, 200);
+  return matches.toSorted().slice(0, 200);
 };
 
 const readTrimmed = (file: string, maxLines: number): string => {

@@ -275,9 +275,8 @@ const toolText = (call: any): string =>
 const dataOf = (value: any): any[] => (Array.isArray(value?.data) ? value.data : []);
 
 const offeredTools = (log: string): string[] =>
-  (lines(log)
-    .filter((request) => Array.isArray(request.tools) && request.tools.length > 5)
-    .at(-1)?.tools ?? []) as string[];
+  (lines(log).findLast((request) => Array.isArray(request.tools) && request.tools.length > 5)
+    ?.tools ?? []) as string[];
 
 test("V2 native lane loads the packed plugin, registers skills, and executes a family tool", async () => {
   const lane = need("v2-native");

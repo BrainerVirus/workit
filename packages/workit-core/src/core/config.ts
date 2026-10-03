@@ -178,16 +178,14 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
     return { status: "malformed", path: file, error: `${file} is not a JSON object` };
   }
   const input = parsed as Partial<ToolkitConfig>;
-  const locale = LOCALE_RE.test(String(input.locale ?? ""))
-    ? (input.locale as string)
-    : DEFAULTS.locale;
+  const locale = LOCALE_RE.test(input.locale ?? "") ? (input.locale as string) : DEFAULTS.locale;
   const preset = (
     Object.hasOwn(PRESETS, input.branchPolicy?.preset as string)
       ? input.branchPolicy?.preset
       : "gitflow"
   ) as BranchPreset;
   const commitPreset = (
-    COMMIT_PRESETS.includes(String(input.commitPolicy?.preset ?? ""))
+    COMMIT_PRESETS.includes(input.commitPolicy?.preset ?? "")
       ? input.commitPolicy?.preset
       : "conventional"
   ) as CommitFlavorPreset;
@@ -300,7 +298,7 @@ export const resolveBranchPolicy = (
   integration: "pr" | "merge";
   defaultTargetBranch: string;
 } => {
-  const wp = (workspace?.branchPolicy ?? {}) as Record<string, any>;
+  const wp = workspace?.branchPolicy ?? {};
   // An invalid workspace preset (e.g. a typo) falls back to the global preset,
   // preserving resolution order workspace > global > preset, instead of
   // crashing on PRESETS[preset] (mirrors parseConfigResult's Object.hasOwn).
@@ -348,12 +346,12 @@ export const resolveCommitPolicy = (
   config: ToolkitConfig,
   workspace?: { commitPolicy?: Record<string, any> } | null,
 ): { preset: CommitFlavorPreset; pattern?: string } => {
-  const wp = (workspace?.commitPolicy ?? {}) as Record<string, any>;
+  const wp = workspace?.commitPolicy ?? {};
   if (COMMIT_PRESETS.includes(String(wp.preset ?? ""))) {
     return {
       preset: wp.preset as CommitFlavorPreset,
       ...(typeof wp.pattern === "string" ? { pattern: wp.pattern } : {}),
     };
   }
-  return config.commitPolicy ?? ({ preset: "conventional" } as ToolkitConfig["commitPolicy"]);
+  return config.commitPolicy ?? { preset: "conventional" };
 };

@@ -136,7 +136,7 @@ const WORKSPACE_ADVANCED_FIELDS: { label: string; value: WorkspaceEditorField }[
   { label: "Workspace YouTrack URL", value: "youtrack.baseUrl" },
   { label: "Link issues in YouTrack", value: "youtrack.link_issues" },
   { label: "Link GitHub issues on pull requests", value: "issues.link_on_pr" },
-  { label: "Branch preset", value: "branchPolicy.preset" as WorkspaceEditorField },
+  { label: "Branch preset", value: "branchPolicy.preset" },
   { label: "Allowed branch patterns", value: "branchPolicy.allowed" },
   { label: "Protected branches", value: "branchPolicy.protected" },
   { label: "Develop branch", value: "branchPolicy.developBranch" },

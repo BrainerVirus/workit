@@ -164,24 +164,24 @@ test("clean Pi package declares stock discovery and the eight families plus exte
 });
 
 test("Pi package ships the fourteen canonical method skills", () => {
-  expect(readdirSync(path.join(import.meta.dir, "../../packages/workit-pi/skills")).sort()).toEqual(
-    [
-      "workit-babysit",
-      "workit-behavioral-tdd",
-      "workit-blast-radius",
-      "workit-challenge",
-      "workit-debug",
-      "workit-deslop",
-      "workit-diagram",
-      "workit-green-run",
-      "workit-handoff",
-      "workit-implement",
-      "workit-mockup",
-      "workit-plan",
-      "workit-review",
-      "workit-steer",
-    ],
-  );
+  expect(
+    readdirSync(path.join(import.meta.dir, "../../packages/workit-pi/skills")).toSorted(),
+  ).toEqual([
+    "workit-babysit",
+    "workit-behavioral-tdd",
+    "workit-blast-radius",
+    "workit-challenge",
+    "workit-debug",
+    "workit-deslop",
+    "workit-diagram",
+    "workit-green-run",
+    "workit-handoff",
+    "workit-implement",
+    "workit-mockup",
+    "workit-plan",
+    "workit-review",
+    "workit-steer",
+  ]);
 });
 
 test("Pi registers wk- slash aliases that expand the bundled skill commands", async () => {
@@ -1091,7 +1091,7 @@ test("stock Pi discovers the package manifest through its local package manager"
       (responses.get("get_commands").data.commands as Array<{ name: string }>)
         .filter((command) => command.name.startsWith("skill:workit-"))
         .map((command) => command.name)
-        .sort(),
+        .toSorted(),
     ).toHaveLength(14);
     expect(
       (responses.get("get_commands").data.commands as Array<{ name: string }>).map(
@@ -1335,7 +1335,7 @@ test("Pi dirty branch setup confirms the stash and executes in one approval", as
     actionContext.ui = {
       confirm: async (question: string) => {
         confirms += 1;
-        asked = String(question);
+        asked = question;
         return true;
       },
     };

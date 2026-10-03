@@ -7,10 +7,17 @@ test("root package exposes pinned Oxc lint and format checks", () => {
 
   expect(pkg.devDependencies.oxlint).toMatch(/^\d+\.\d+\.\d+$/);
   expect(pkg.devDependencies.oxfmt).toMatch(/^\d+\.\d+\.\d+$/);
-  expect(pkg.scripts.lint).toStartWith("oxlint --deny-warnings ");
-  expect(pkg.scripts["lint:fix"]).toStartWith("oxlint --fix ");
-  expect(pkg.scripts.format).toStartWith("oxfmt ");
-  expect(pkg.scripts["format:check"]).toStartWith("oxfmt --check ");
+  // The lint/format file set lives in .oxlintrc.json / .oxfmtrc.json
+  // (ignorePatterns), not in duplicated script arguments.
+  expect(pkg.scripts.lint).toBe("oxlint");
+  expect(pkg.scripts["lint:fix"]).toBe("oxlint --fix");
+  expect(pkg.scripts.format).toBe("oxfmt");
+  expect(pkg.scripts["format:check"]).toBe("oxfmt --check");
+  const oxlintrc = Bun.JSONC.parse(
+    readFileSync(path.resolve(import.meta.dir, "../../.oxlintrc.json"), "utf8"),
+  ) as { options?: { denyWarnings?: boolean; typeAware?: boolean } };
+  expect(oxlintrc.options?.denyWarnings).toBe(true);
+  expect(oxlintrc.options?.typeAware).toBe(true);
   expect(pkg.scripts.check).toBe(
     "bun run build && bun run lint && bun run format:check && bun test && tsc --noEmit",
   );

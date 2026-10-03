@@ -559,7 +559,8 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
 // no version abstraction.
 const canonicalCursorHook = cursorHooksEntry("").command;
 
-const registeredCursorHook = (res: Resolved): string | null | "invalid" => {
+// Returns the registered hook command, null when absent, or "invalid".
+const registeredCursorHook = (res: Resolved): string | null => {
   const hooksFile = path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json");
   if (!existsSync(hooksFile)) return "invalid";
   const config = readJson(hooksFile);
@@ -866,7 +867,7 @@ const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbe
       detail: "no workit opencode pin — package cache not inspected",
     };
   }
-  const pin = entries[0]!;
+  const pin = entries[0];
   if (pin.startsWith("file:") || pin.startsWith("git+file:")) {
     return {
       id: "stale_install",
@@ -1318,7 +1319,7 @@ const providerIdentityFinding = (
   provider: "github" | "gitlab",
   surfaces: IdentitySurface[],
 ): DoctorCheck => {
-  const id = `${provider}_identity` as "github_identity" | "gitlab_identity";
+  const id: "github_identity" | "gitlab_identity" = `${provider}_identity`;
   const label = provider === "github" ? "GitHub" : "GitLab";
   const resolved = surfaces.filter(
     (entry): entry is { surface: string; login: string } => typeof entry.login === "string",

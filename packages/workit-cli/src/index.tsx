@@ -110,7 +110,7 @@ export async function runInit() {
   }
   // ponytail: no-TTY guard — piping/disabling stdin would hang render(); print
   // guidance and exit nonzero instead of silently pretending setup happened
-  if (process.stdin.isTTY !== true) {
+  if (!process.stdin.isTTY) {
     // CA-02: same clean-screen rule as the malformed guard above.
     process.stdout.write("\x1b[2J\x1b[H");
     console.log("workit init requires an interactive terminal (TTY).");
@@ -258,7 +258,7 @@ function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => vo
 }
 
 export async function runUninstall() {
-  if (process.stdin.isTTY !== true) {
+  if (!process.stdin.isTTY) {
     console.log("workit uninstall requires an interactive terminal (TTY).");
     console.log(
       "It removes workit registrations from the selected hosts; your ~/.config/workit configuration is always kept.",

@@ -496,7 +496,7 @@ const cliActionProvenance = (actor: string): Provenance => ({
 
 const cliActionAuthority = (
   actor: string,
-  reconciliationTokens = new WeakSet<object>(),
+  reconciliationTokens = new WeakSet(),
 ): NativeAuthorityVerifier => ({
   verifyDecision: ({ observation, expected, caller }) => {
     const value = observation as Record<string, unknown>;
@@ -766,7 +766,7 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
         freshWorkspace.ok &&
         freshWorkspace.data
       ) {
-        const reconciliationTokens = new WeakSet<object>();
+        const reconciliationTokens = new WeakSet();
         const core = new WorkitCore(store, {
           ...contextFor(root, { ...deps, actor }, "host_observed"),
           nativeAuthority: cliActionAuthority(actor, reconciliationTokens),

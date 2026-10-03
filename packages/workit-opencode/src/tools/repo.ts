@@ -49,7 +49,7 @@ const optionalJson = (value: string | undefined) => {
     return null;
   }
 };
-const sections = (stdout: string) => parseSections(stdout) as Record<string, string>;
+const sections = (stdout: string) => parseSections(stdout);
 
 const parsePr = (stdout: string) => {
   const part = sections(stdout);
@@ -143,7 +143,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       description: "Inspect toolkit initialization",
       args: {},
       execute: async (_input, context) =>
-        output(scriptResult(await runtime.initStatus(context.directory), json)),
+        output(scriptResult(runtime.initStatus(context.directory), json)),
     }),
     workit_status: tool({
       description: "Inspect toolkit and repository state",
@@ -171,13 +171,23 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       description: "Gather branch-exclusive PR context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
-        contextWithRange(context.directory, runtime.prContext, range, parsePr),
+        contextWithRange(
+          context.directory,
+          (root, value) => runtime.prContext(root, value),
+          range,
+          parsePr,
+        ),
     }),
     workit_changelog_context: tool({
       description: "Gather changelog context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
-        contextWithRange(context.directory, runtime.changelogContext, range, parseChangelog),
+        contextWithRange(
+          context.directory,
+          (root, value) => runtime.changelogContext(root, value),
+          range,
+          parseChangelog,
+        ),
     }),
     workit_release_notes_context: tool({
       description: "Gather release notes for an explicit range",

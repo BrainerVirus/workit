@@ -106,13 +106,9 @@ export const hostingApiHostMatches = (
   const hostname = resolved.host.toLowerCase().replace(/\.$/u, "");
   const port = endpoint.port || resolved.port;
   if (hostname === expected.host) return port === (expected.port || "22");
-  return Boolean(
-    sshApiHostAliases[expected.host]?.some(
-      (alias) =>
-        alias.host === hostname &&
-        alias.port === port &&
-        (!expected.port || expected.port === port),
-    ),
+  return sshApiHostAliases[expected.host]?.some(
+    (alias) =>
+      alias.host === hostname && alias.port === port && (!expected.port || expected.port === port),
   );
 };
 

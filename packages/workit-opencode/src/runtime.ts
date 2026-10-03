@@ -28,7 +28,7 @@ export const compactContextFor = (root: string, sessionID: string): string | nul
                 worker.data.session.handle === sessionID,
             )),
       )
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
     if (!task) return null;
     const core = new WorkitCore(store, {
       root,
@@ -68,7 +68,7 @@ export const unfinishedTaskOfferFor = (
               worker.data.session.handle === sessionID,
           ),
       )
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 3);
     if (tasks.length === 0) return null;
     const quote = (value: string) => JSON.stringify(value.replace(/[<>]/g, " ").slice(0, 120));
@@ -122,8 +122,8 @@ export const loadProvenance = (logger: Logger, pkgUrl: string | URL): Record<str
   try {
     const pkg = JSON.parse(readFileSync(pkgUrl, "utf8")) as { name?: string; version?: string };
     return {
-      name: String(pkg.name ?? "workit-opencode"),
-      version: String(pkg.version ?? "unknown"),
+      name: pkg.name ?? "workit-opencode",
+      version: pkg.version ?? "unknown",
     };
   } catch (err) {
     logger.warn(EVENT.provenance, errorDetail(err));

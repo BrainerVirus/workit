@@ -216,8 +216,8 @@ const pruneOldFiles = (dir: string): void => {
   try {
     const files = readdirSync(dir)
       .filter((name) => DAY_FILE.test(name))
-      .sort()
-      .reverse();
+      .toSorted()
+      .toReversed();
     for (const file of files.slice(RETAINED_DAYS)) {
       try {
         unlinkSync(path.join(dir, file));

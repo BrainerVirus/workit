@@ -135,7 +135,7 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
           })
           .optional(),
       },
-      execute: async (input) => invoke(() => legacyBuildDraft(input as never)),
+      execute: async (input) => invoke(() => legacyBuildDraft(input)),
     }),
   };
 }

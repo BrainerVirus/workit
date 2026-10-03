@@ -31,7 +31,8 @@ export type ManifestSyncResult = { version: string; changed: string[] };
  * are left byte-untouched and omitted from `changed`. Throws on a value that
  * is not a plain release version (`latest`, branches, ranges).
  */
-export function syncManifests(root: string, tagOrVersion: string): ManifestSyncResult {  const match = /^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(tagOrVersion.trim());
+export function syncManifests(root: string, tagOrVersion: string): ManifestSyncResult {
+  const match = /^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(tagOrVersion.trim());
   if (!match) throw new Error(`invalid version tag: ${JSON.stringify(tagOrVersion)}`);
   const version = match[1];
   const changed: string[] = [];
@@ -48,15 +49,14 @@ export function syncManifests(root: string, tagOrVersion: string): ManifestSyncR
 
 /** The newest `v*` tag by descending semver refname order (empty repo throws). */
 function latestReleaseTag(cwd?: string): string {
-  const out = execFileSync("git", ["tag", "--list", "v*", "--sort=-v:refname"], {
+  const tag = execFileSync("git", ["tag", "--list", "v*", "--sort=-v:refname"], {
     cwd,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
   })
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean);
-  const tag = out[0];
+    .find(Boolean);
   if (!tag) throw new Error("no v* release tag found — run after the first semantic-release");
   return tag;
 }

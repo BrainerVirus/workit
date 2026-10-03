@@ -281,7 +281,7 @@ test("setup registers the subagent lifecycle hooks and an abortable event stream
     const { hooks, state, call } = await harness(root, {
       sessions: { ses_child: { parentID: "ses_parent" } },
     });
-    expect([...hooks.keys()].sort()).toEqual(["execute.after", "execute.before"]);
+    expect([...hooks.keys()].toSorted()).toEqual(["execute.after", "execute.before"]);
     expect(state.subscribed).toBe(true);
 
     // Hooks ignore unrelated tools and deny unmanaged nested launches.
@@ -327,7 +327,7 @@ test("setup registers 14 method skills with packaged content and paths", async (
       expect(skill.path.endsWith(path.join(skill.id, "SKILL.md")), String(skill.id)).toBe(true);
       expect(skill.content.startsWith("---"), String(skill.id)).toBe(false);
     }
-    expect(skills.map((skill) => skill.id).sort()).toEqual([
+    expect(skills.map((skill): string => skill.id).toSorted()).toEqual([
       "workit-babysit",
       "workit-behavioral-tdd",
       "workit-blast-radius",
@@ -420,7 +420,7 @@ test("cleanup aborts the event subscription", async () => {
   try {
     const { state, cleanup } = await harness(root);
     expect(typeof cleanup).toBe("function");
-    if (typeof cleanup === "function") cleanup();
+    if (typeof cleanup === "function") void cleanup();
     const start = Date.now();
     while (!state.ended && Date.now() - start < 1000) await Bun.sleep(5);
     expect(state.ended).toBe(true);

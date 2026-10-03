@@ -121,7 +121,7 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
       },
     };
     youtrackTokenCreate = youTrackTokenCreateUrl().data;
-    if (youtrackTokenCreate && !(youtrackConfig as Record<string, any>).error) {
+    if (youtrackTokenCreate && !youtrackConfig.error) {
       youtrackConfig.tokenCreate = youtrackTokenCreate;
     }
   } else if (fs.existsSync(ytJson)) {
@@ -255,7 +255,7 @@ export async function toolkitStatusData(configDirPath = configDir()): Promise<Re
   status.youtrack_verify = verify;
   status.youtrack_ok = placeholder ? false : Boolean(youTrackHealth.ok);
   status.vcs_verify = vcsVerify;
-  status.vcs_ok = vcsJsonOk && Boolean((vcsVerify as Record<string, any>).ok);
+  status.vcs_ok = vcsJsonOk && Boolean(vcsVerify.ok);
 
   const fsReady = status.items.every((i: Record<string, any>) => i.required === false || i.ok);
   status.ready = fsReady && Boolean(status.youtrack_ok) && (!vcsJsonOk || Boolean(status.vcs_ok));
@@ -337,7 +337,7 @@ export function initApplyData(
   action: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, any> {
-  const dir = String(env.WORKFLOW_TOOLKIT_CONFIG ?? configDir());
+  const dir = env.WORKFLOW_TOOLKIT_CONFIG ?? configDir();
   fs.mkdirSync(dir, { recursive: true });
 
   switch (action) {

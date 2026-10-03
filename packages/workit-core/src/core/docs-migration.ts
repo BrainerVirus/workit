@@ -521,7 +521,7 @@ export const migrateLegacyDocs = (input: {
   const { workspace_root, slug, confirmed } = input;
   const detect = detectLegacyDocs(workspace_root);
 
-  if (confirmed !== true) {
+  if (!confirmed) {
     const active = Boolean(slug && detect.paired.some((e) => e.slug === slug));
     return declined(active);
   }

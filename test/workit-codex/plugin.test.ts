@@ -18,7 +18,7 @@ test("Codex plugin ships current manifest layout and fourteen synchronized skill
   // hooks.json bundle, so the manifest must not advertise a Hooks capability.
   expect(manifest.interface.capabilities).toEqual(["MCP", "Task continuity"]);
   expect(manifest.mcpServers).toBe("./.mcp.json");
-  expect(readdirSync(path.join(packageRoot, "skills")).sort()).toEqual([
+  expect(readdirSync(path.join(packageRoot, "skills")).toSorted()).toEqual([
     "workit-babysit",
     "workit-behavioral-tdd",
     "workit-blast-radius",

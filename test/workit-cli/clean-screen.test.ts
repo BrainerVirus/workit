@@ -150,7 +150,7 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
     // stdout and nothing ever paints. The product's runInit/runUninstall
     // finally-unmount (088ddaa) plus assertNoLiveInkInstance below already
     // guarantee cross-drive teardown.
-    process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
+    process.stdout.write = ((chunk: unknown, cb?: () => void) => {
       chunks.push(String(chunk));
       cb?.();
       return true;
@@ -158,9 +158,9 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
     console.log = (...args: unknown[]) => {
       chunks.push(`${args.map(String).join(" ")}\n`);
     };
-    process.exit = ((code?: number) => {
+    process.exit = (code?: number) => {
       throw new ExitSentinel(code);
-    }) as typeof process.exit;
+    };
 
     const { runInit } = await import("@/packages/workit-cli/src/index");
     // A real-timer beat per step: ink throttles frame writes on wall-clock
@@ -301,11 +301,11 @@ test("apply path: first chunk clears, exactly one post-exit clear precedes the f
     // The first visible line after the clear is an Apply-summary entry line,
     // never leftover wizard frame content.
     const tail = clean(joined.slice(second + CLEAR.length));
-    const tailLines = tail
+    const firstTailLine = tail
       .split("\n")
       .map((line) => line.trim())
-      .filter(Boolean);
-    expect(tailLines[0]).toMatch(/^(Installed|Configured|Skipped|Failed)\b/);
+      .find(Boolean);
+    expect(firstTailLine).toMatch(/^(Installed|Configured|Skipped|Failed)\b/);
     expect(tail).toContain("Setup complete.");
   }));
 

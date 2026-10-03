@@ -146,7 +146,7 @@ test(
   "repo tools expose native names without workspace override",
   () => {
     const tools = createRepoTools(runtime);
-    expect(Object.keys(tools).sort()).toEqual(
+    expect(Object.keys(tools).toSorted()).toEqual(
       [
         "workit_changelog_context",
         "workit_docs_context",
@@ -157,7 +157,7 @@ test(
         "workit_status",
         "workit_verify",
         "workit_init_apply",
-      ].sort(),
+      ].toSorted(),
     );
     for (const definition of Object.values(tools)) {
       expect("workspace_root" in definition.args).toBe(false);

@@ -97,7 +97,7 @@ const wsEntry = (name: string, glob: string) => ({
 
 const snapshot = (dir: string): string[] => {
   const entries: string[] = [];
-  for (const name of readdirSync(dir).sort()) {
+  for (const name of readdirSync(dir).toSorted()) {
     const p = path.join(dir, name);
     entries.push(`${name}|${statSync(p).isDirectory() ? "dir" : "file"}`);
     if (!statSync(p).isDirectory()) entries.push(readFileSync(p, "utf8"));
@@ -714,10 +714,10 @@ test("timezone catalog matches the KNOWN_TIMEZONES guard and contains the detect
   expect(options[0].value).toBe(detected);
   const rest = options.slice(1, -1).map((option) => option.value);
   if (typeof Intl.supportedValuesOf === "function") {
-    expect([...rest].sort()).toEqual(
+    expect([...rest].toSorted()).toEqual(
       Intl.supportedValuesOf("timeZone")
         .filter((tz) => tz !== detected)
-        .sort(),
+        .toSorted(),
     );
   } else {
     expect(validateTimezone("Not/AZone")).toBeNull();
@@ -1161,7 +1161,7 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     // stream as the render target ONLY when it is an instanceof Stream, so a
     // duck-typed replacement object silently leaves ink with an undefined
     // stdout and nothing ever paints (CI-only failure class).
-    process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
+    process.stdout.write = ((chunk: unknown, cb?: () => void) => {
       chunks.push(String(chunk));
       cb?.();
       return true;
@@ -1169,9 +1169,9 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     console.log = (...args: unknown[]) => {
       chunks.push(`${args.map(String).join(" ")}\n`);
     };
-    process.exit = ((code?: number) => {
+    process.exit = (code?: number) => {
       throw new ExitSentinel(code);
-    }) as typeof process.exit;
+    };
 
     const ENTER = "\r";
     const { runInit } = await import("@/packages/workit-cli/src/index");

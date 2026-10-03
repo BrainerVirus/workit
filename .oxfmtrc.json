@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    "**/*.md",
+    "test/fixtures/cursor-schemas/**",
+    ".agents/**",
+    ".cursor-plugin/**",
+    "**/.cursor-plugin/**",
+    "**/.codex-plugin/**",
+    "packages/workit-cursor/mcp.json"
+  ]
+}

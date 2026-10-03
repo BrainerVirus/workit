@@ -86,9 +86,9 @@ const stagedPaths = (root: string): string[] | null => {
     const rename = /^(?:R|C)\d{3}$/.test(status);
     const count = rename ? 2 : 1;
     for (let offset = 0; offset < count; offset += 1) {
-      const path = tokens[index++];
-      if (!path) return null;
-      paths.push(path);
+      const filePath = tokens[index++];
+      if (!filePath) return null;
+      paths.push(filePath);
     }
   }
   return [...new Set(paths)];
@@ -258,8 +258,8 @@ export const assertLocalExternalActionWriter = (
   const store = new TaskStore(root);
   const listed = store.listTasks();
   const workspace = store.readWorkspace();
-  if (!listed.ok) return listed as Result<never>;
-  if (!workspace.ok) return workspace as Result<never>;
+  if (!listed.ok) return listed;
+  if (!workspace.ok) return workspace;
   if (!workspace.data) return failure("not_found", "workspace not found");
   if (
     expectedWorkspaceRevision !== undefined &&
@@ -317,7 +317,7 @@ const branchCreationBaseline = (
     };
   const remote = run(root, ["ls-remote", "origin", `refs/heads/${base}`]);
   const sha = remote.exitCode === 0 ? remote.stdout.trim().split(/\s+/)[0] : "";
-  const remoteBase = /^[0-9a-f]{40}$/.test(sha ?? "") ? (sha as string) : null;
+  const remoteBase = /^[0-9a-f]{40}$/.test(sha ?? "") ? sha : null;
   return {
     base_branch: base,
     target_exists: false,
@@ -426,8 +426,8 @@ const actionProposalAtRoot = (
           ? ` on local merge base ${shortSha(resolved.merge_base_commit)}`
           : "";
       return {
-        presented: `Workit decision: action — Open a PR in \`${String(resolved.remote ?? "unknown remote")}\` via \`${String(resolved.apiHost ?? "unknown host")}\`${resolved.account ? ` as ${String(resolved.account)}` : ""} from \`${String(resolved.source_branch ?? "")}\`@${sourceCommit} to \`${payloadTarget}\`${mergeBase} titled "${String(request.payload.title)}"?`,
-        approvedText: `Open the PR in ${String(resolved.remote ?? "unknown remote")} via ${String(resolved.apiHost ?? "unknown host")}${resolved.account ? ` as ${String(resolved.account)}` : ""}: ${String(resolved.source_branch ?? "")}@${sourceCommit} → ${payloadTarget}${mergeBase}, "${String(request.payload.title)}".`,
+        presented: `Workit decision: action — Open a PR in \`${String(resolved.remote ?? "unknown remote")}\` via \`${String(resolved.apiHost ?? "unknown host")}\`${resolved.account ? ` as ${String(resolved.account)}` : ""} from \`${String(resolved.source_branch ?? "")}\`@${sourceCommit} to \`${payloadTarget}\`${mergeBase} titled "${request.payload.title}"?`,
+        approvedText: `Open the PR in ${String(resolved.remote ?? "unknown remote")} via ${String(resolved.apiHost ?? "unknown host")}${resolved.account ? ` as ${String(resolved.account)}` : ""}: ${String(resolved.source_branch ?? "")}@${sourceCommit} → ${payloadTarget}${mergeBase}, "${request.payload.title}".`,
       };
     }
     case "hosting.merge":
@@ -447,18 +447,18 @@ const actionProposalAtRoot = (
       };
     case "youtrack.update":
       return {
-        presented: `Workit decision: action — Update YouTrack issue ${String(request.payload.issueId)}${request.payload.minutes ? ` and log ${String(request.payload.minutes)}m` : ""}?`,
-        approvedText: `Update YouTrack issue ${String(request.payload.issueId)}.`,
+        presented: `Workit decision: action — Update YouTrack issue ${request.payload.issueId}${request.payload.minutes ? ` and log ${String(request.payload.minutes)}m` : ""}?`,
+        approvedText: `Update YouTrack issue ${request.payload.issueId}.`,
       };
     case "youtrack.time":
       return {
-        presented: `Workit decision: action — Log ${String(request.payload.minutes)}m to YouTrack issue ${String(request.payload.issueId)}?`,
-        approvedText: `Log time to YouTrack issue ${String(request.payload.issueId)}.`,
+        presented: `Workit decision: action — Log ${String(request.payload.minutes)}m to YouTrack issue ${request.payload.issueId}?`,
+        approvedText: `Log time to YouTrack issue ${request.payload.issueId}.`,
       };
     case "youtrack.meeting":
       return {
-        presented: `Workit decision: action — Log meeting time to YouTrack issue ${String(request.payload.issueId)}?`,
-        approvedText: `Log meeting time to YouTrack issue ${String(request.payload.issueId)}.`,
+        presented: `Workit decision: action — Log meeting time to YouTrack issue ${request.payload.issueId}?`,
+        approvedText: `Log meeting time to YouTrack issue ${request.payload.issueId}.`,
       };
     default:
       return {
@@ -701,7 +701,7 @@ const mergedBranch = (root: string, branch: string): Result<Record<string, strin
       },
     );
   const live = remoteBranchTip(root, provider, auth.host, repo, branch);
-  if (!live.ok) return live as Result<never>;
+  if (!live.ok) return live;
   const tip = live.data;
   if (!tip)
     return failure("invalid_input", "remote branch is absent or could not be read", {
@@ -962,8 +962,8 @@ export const readYouTrackAction = async (
     const creds = youTrackToken();
     if ("error" in creds || creds.base !== baseUrl) return unknownHostingEvidence(operation);
     const bounded = "&$top=100&$skip=0";
-    const read = async (path: string): Promise<unknown[] | null> => {
-      const result = await youTrackRequest(`${baseUrl}${path}${bounded}`, {
+    const read = async (endpoint: string): Promise<unknown[] | null> => {
+      const result = await youTrackRequest(`${baseUrl}${endpoint}${bounded}`, {
         method: "GET",
         token: creds.token,
       });
@@ -1654,7 +1654,7 @@ const resolveExternalActionAtRoot = (
               request,
               descriptorPayload: { ...request.payload, resolved: checked.data },
             })
-          : (checked as Result<never>);
+          : checked;
       }
       case "changelog.apply": {
         const preview = changelogApplyPreview({ ...request.payload, workspace_root: root });
@@ -1691,7 +1691,7 @@ const resolveExternalActionAtRoot = (
           return failure("invalid_input", "youtrack.time requires an explicit dateMs");
         {
           const available = youTrackWritePreflight();
-          if (!available.ok) return available as Result<ResolvedExternalAction>;
+          if (!available.ok) return available;
           const baseUrl = youTrackBase();
           const date = youTrackWorkDateMs(String(request.payload.dateMs));
           if (!baseUrl)
@@ -1724,7 +1724,7 @@ const resolveExternalActionAtRoot = (
       case "youtrack.update":
       case "youtrack.meeting": {
         const available = youTrackWritePreflight();
-        if (!available.ok) return available as Result<ResolvedExternalAction>;
+        if (!available.ok) return available;
         const baseUrl = youTrackBase();
         const date = youTrackWorkDateMs(
           preservedDateMs === undefined ? "auto" : String(preservedDateMs),
@@ -1769,7 +1769,7 @@ const resolveExternalActionAtRoot = (
       }
       default:
         return success(null, null, {
-          request: request as never,
+          request: request,
           descriptorPayload: (request as unknown as { payload: unknown }).payload,
         });
     }
@@ -1784,7 +1784,7 @@ export const resolveExternalActionRequest = (
   preservedDateMs?: number,
 ): Result<ResolvedExternalAction> => {
   const target = actionRoot(taskRoot, request);
-  if (!target.ok) return target as Result<never>;
+  if (!target.ok) return target;
   const bindTarget = bindsActionTarget(request.operation);
   const normalized = bindTarget
     ? ({ ...request, payload: { ...request.payload, cwd: target.data } } as ExternalActionRequest)
@@ -1891,7 +1891,7 @@ export const executeConcreteExternalAction = async (
       );
     if (!sameDirectoryIdentity(root, coordinationRoot)) {
       const targetWorkspace = new TaskStore(root).readWorkspace();
-      if (!targetWorkspace.ok) return targetWorkspace as Result<never>;
+      if (!targetWorkspace.ok) return targetWorkspace;
       const owner = targetWorkspace.data?.writer?.owner;
       if (
         owner &&
@@ -2040,8 +2040,8 @@ export const executeConcreteExternalAction = async (
       });
     }
     case "hosting.merge": {
-      const target = String(request.payload.target_branch ?? "");
-      const source = String(request.payload.source_branch ?? "");
+      const target = request.payload.target_branch ?? "";
+      const source = request.payload.source_branch ?? "";
       if (!target || !source)
         return failure("invalid_input", "hosting.merge requires target and source branches", {
           outcome: "not_started",

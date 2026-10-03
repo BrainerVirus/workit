@@ -138,9 +138,7 @@ export function mergeCursorMcp(
   server: Record<string, unknown>,
 ): MergeResult<Record<string, unknown>> {
   const base = isRecord(mcp) ? { ...mcp } : {};
-  const servers = isRecord(base.mcpServers)
-    ? { ...(base.mcpServers as Record<string, unknown>) }
-    : {};
+  const servers = isRecord(base.mcpServers) ? { ...base.mcpServers } : {};
   delete servers["workflow-toolkit"]; // legacy duplicate registration
   servers[serverName] = server;
   const changed = JSON.stringify(servers) !== JSON.stringify(base.mcpServers) ? ["mcpServers"] : [];
@@ -157,7 +155,7 @@ export function mergeCursorHooks(
   sessionStartEntry: Record<string, unknown>,
 ): MergeResult<Record<string, unknown>> {
   const base: Record<string, unknown> = isRecord(hooks) ? { ...hooks } : { version: 1 };
-  const hooksMap = isRecord(base.hooks) ? { ...(base.hooks as Record<string, unknown>) } : {};
+  const hooksMap = isRecord(base.hooks) ? { ...base.hooks } : {};
   const changed: string[] = [];
   const list = Array.isArray(hooksMap.sessionStart) ? hooksMap.sessionStart : [];
   const same =
@@ -223,7 +221,7 @@ const canonicalHookEntry = (
  */
 export function cursorHookDrift(installed: unknown): string[] {
   if (!isRecord(installed) || !isRecord(installed.hooks)) return ["hooks file is not a hook map"];
-  const hooks = installed.hooks as Record<string, unknown>;
+  const hooks = installed.hooks;
   const drift: string[] = [];
   for (const event of ["preToolUse", "beforeShellExecution"] as const) {
     const list = hooks[event];

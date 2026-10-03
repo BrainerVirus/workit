@@ -300,8 +300,8 @@ const setup = async (ctx: Context): Promise<() => void> => {
   });
   await ctx.session.hook("context", async (event) => {
     const session = await sessionFacts(ctx, String(event.sessionID));
-    injectAgentContext(root, session, lifecycle.directChildren, event.system as never);
-    injectHistoryOffer(root, session, historyOfferSessions, event.system as never);
+    injectAgentContext(root, session, lifecycle.directChildren, event.system);
+    injectHistoryOffer(root, session, historyOfferSessions, event.system);
     if (!staleSourcesWarned) {
       const changed = changedSourcesSinceLoad(sourceMarker);
       if (changed.length > 0) {
@@ -314,7 +314,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     }
   });
   await ctx.session.hook("compaction", (event) => {
-    injectCompactionContext(root, String(event.sessionID), event.system as never);
+    injectCompactionContext(root, String(event.sessionID), event.system);
   });
   const registeredSkills = await registerSkills(ctx as never);
   await registerCommands(ctx as never, registeredSkills);
@@ -322,7 +322,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
   void (async () => {
     try {
       for await (const event of ctx.event.subscribe({ signal: subscription.signal })) {
-        await lifecycle.handleEvent(event as never);
+        await lifecycle.handleEvent(event);
       }
     } catch {
       // Subscription end and abort are normal teardown; event delivery must

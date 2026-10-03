@@ -77,7 +77,7 @@ type PiToolResult = AgentToolResult<Result<unknown>>;
 
 const nativeAuthority = (
   actor: string,
-  reconciliationTokens = new WeakSet<object>(),
+  reconciliationTokens = new WeakSet(),
 ): NativeAuthorityVerifier => ({
   verifyDecision: ({
     observation,
@@ -410,7 +410,7 @@ export const registerWorkitTools = (
         );
       const actor = context.caller.actor;
       const store = new TaskStore(ctx.cwd);
-      const reconciliationTokens = new WeakSet<object>();
+      const reconciliationTokens = new WeakSet();
       const core = new WorkitCore(store, {
         ...context,
         nativeAuthority: nativeAuthority(actor, reconciliationTokens),

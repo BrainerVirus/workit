@@ -1510,10 +1510,10 @@ const expectInstallerFailure = (id: string, fixKeyword: string) => {
   const report = runInstaller();
   expect(report.ok, JSON.stringify(report.checks)).toBe(false);
   expect(report.exitCode).toBe(1);
-  const check = report.checks.find((c) => c.id === id)!;
-  expect(check.status).toBe("fail");
-  expect(check.fix).toBeTruthy();
-  expect(check.fix, id).toContain(fixKeyword);
+  const failing = report.checks.find((c) => c.id === id)!;
+  expect(failing.status).toBe("fail");
+  expect(failing.fix).toBeTruthy();
+  expect(failing.fix, id).toContain(fixKeyword);
   expect(report.fixes.some((f) => f.id === id)).toBe(true);
 };
 

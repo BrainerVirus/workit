@@ -811,7 +811,7 @@ test("current-project setup adds the cwd pattern in one step", async () => {
     await tty.keys(UP, ENTER);
     const menu = tty.lastFrame();
     const name = project.slice(project.lastIndexOf("/") + 1);
-    expect(menu).toContain(`${name}`);
+    expect(menu).toContain(name);
     expect(menu).toContain(`${project}/**`);
     expect(menu).toContain("✓ matches");
     tty.unmount();
@@ -1108,10 +1108,10 @@ test(
       await tty.keys(missing, ENTER);
       expect(tty.lastFrame()).toContain("existing absolute directory");
       for (let i = 0; i < missing.length; i++) await tty.key(BACKSPACE);
-      await tty.keys(`${project}`, ENTER);
+      await tty.keys(project, ENTER);
       const menu = tty.lastFrame();
       expect(menu).toContain("Use current project");
-      expect(menu).toContain(`${project}`);
+      expect(menu).toContain(project);
       tty.unmount();
     } finally {
       process.chdir(previous);

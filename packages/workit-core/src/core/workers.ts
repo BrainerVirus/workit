@@ -117,7 +117,7 @@ const callerSession = (caller: CallerContext): HostSession =>
 const validPath = (value: unknown): value is string =>
   typeof value === "string" &&
   value.length > 0 &&
-  ![...value].some((char) => {
+  !Array.from(value).some((char) => {
     const code = char.charCodeAt(0);
     return code < 32 || code === 127;
   }) &&
@@ -157,9 +157,9 @@ export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owne
     return failure("invalid_input", "invalid product write path");
   if (!input.store) return failure("permission_denied", "write authorization requires core state");
   const task = input.store.readTask(input.task.id);
-  if (!task.ok) return task as Result<never>;
+  if (!task.ok) return task;
   const workspace = input.store.readWorkspace();
-  if (!workspace.ok) return workspace as Result<never>;
+  if (!workspace.ok) return workspace;
   if (!workspace.data) return failure("not_found", "workspace not found");
   const workspaceRecord = workspace.data;
   if (task.data.status !== "active")

@@ -25,5 +25,5 @@ export const cursorContextProvider = (
 if (import.meta.main) {
   const workspaceRoot = process.argv[2];
   if (workspaceRoot) process.env.WORKFLOW_WORKSPACE_ROOT = workspaceRoot;
-  await runStdioServer("cursor", cursorContextProvider() as Parameters<typeof runStdioServer>[1]);
+  await runStdioServer("cursor", cursorContextProvider());
 }

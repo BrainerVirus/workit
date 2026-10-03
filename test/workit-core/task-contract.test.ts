@@ -37,7 +37,14 @@ test("compiled operation parsing preserves the canonical schema result", () => {
         (fixture, index, all) =>
           all.findIndex((other) => other.family === fixture.family) === index,
       )
-      .map((fixture) => ({ ...fixture, input: { ...fixture.input, action: "unknown" } as never })),
+      .map((fixture) =>
+        Object.assign(fixture, {
+          input: {
+            ...fixture.input,
+            action: "unknown",
+          } as never,
+        }),
+      ),
   ];
   for (const fixture of corpus) {
     const raw = operationSchemas[fixture.family].safeParse(fixture.input);
@@ -149,8 +156,8 @@ test("candidate and requirement digests ignore unordered scope and inventory ord
   const reordered = {
     ...candidate,
     scope: { ...candidate.scope, paths: ["a", "b"], exclusions: ["y", "z"] },
-    files: [...candidate.files].reverse(),
-    environment: [...candidate.environment].reverse(),
+    files: [...candidate.files].toReversed(),
+    environment: [...candidate.environment].toReversed(),
   };
   expect(candidateDigest(candidate)).toBe(candidateDigest(reordered));
   expect(
@@ -188,12 +195,14 @@ test("candidate identity ordering is independent of localeCompare", () => {
     head: null,
   };
   const localeCompare = String.prototype.localeCompare;
+  // oxlint-disable-next-line eslint/no-extend-native -- deliberately trips locale-sensitive ordering
   String.prototype.localeCompare = () => {
     throw new Error("locale-sensitive ordering is not allowed");
   };
   try {
     expect(candidateDigest(candidate)).toBeString();
   } finally {
+    // oxlint-disable-next-line eslint/no-extend-native -- restores the original method
     String.prototype.localeCompare = localeCompare;
   }
 });

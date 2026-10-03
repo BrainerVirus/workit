@@ -172,13 +172,13 @@ export function youTrackGreeting(configOverride?: string): {
 export function youTrackParseDuration(
   text: string,
 ): { data: { minutes: number; text: string } } | { error: string } {
-  const lower = String(text).toLowerCase().trim();
+  const lower = text.toLowerCase().trim();
   let total = 0;
   for (const match of lower.matchAll(/(\d+)\s*h/g)) total += Number(match[1]) * 60;
   for (const match of lower.matchAll(/(\d+)\s*m/g)) total += Number(match[1]);
   if (total === 0 && /^\d+$/.test(lower)) total = Number(lower);
   if (total <= 0) return { error: "could not parse duration" };
-  return { data: { minutes: total, text: String(text).trim() } };
+  return { data: { minutes: total, text: text.trim() } };
 }
 
 /** Port of scripts/youtrack/work-date-ms.sh — resolve work-item date as epoch ms. */
@@ -746,8 +746,7 @@ export async function logTime(
   if (!issueId || !ISSUE_RE.test(issueId)) return { error: "invalid issueId" };
   if (!minutes || minutes <= 0) return { error: "minutes must be positive" };
   const workText = text ?? "workit";
-  const dateArg =
-    dateMs != null ? String(dateMs) : date && /^\d+$/.test(String(date)) ? String(date) : "auto";
+  const dateArg = dateMs != null ? String(dateMs) : date && /^\d+$/.test(date) ? date : "auto";
   const out = await scripts.api(["log-time", issueId, String(minutes), workText, dateArg]);
   if (out.error) return { error: out.error };
   return { issueId, minutes, text: workText, ...out.data, ok: true };
@@ -773,7 +772,7 @@ export function buildDraft({
   const tpl = readTemplate("issue-update").content;
   const para = (value: string): string => (value ? `\n\n${value}` : "");
   const filled = tpl
-    .replaceAll("{{greetingSection}}", para(greeting ? `${greeting}` : ""))
+    .replaceAll("{{greetingSection}}", para(greeting ? greeting : ""))
     .replaceAll(
       "{{projectSection}}",
       para(includeProjectOpener && projectName ? `Hoy estuve full con ${projectName}.` : ""),

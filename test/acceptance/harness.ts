@@ -149,7 +149,7 @@ export const authorizeLiveEvaluation = (
       `live evaluation requires an explicit bounded authorization (planned ${plannedRuns} > max ${authorization.maxRuns})`,
     );
   }
-  if (authorization.externalWrites !== false) {
+  if (authorization.externalWrites) {
     return failure(
       "needs_input",
       "live evaluation denies external writes unless separately authorized",
@@ -349,7 +349,7 @@ export const baselinePassesCapability = (cell: CapabilityCell): boolean => {
 
 export const renderCapabilitiesMarkdown = (cells: CapabilityCell[]): string => {
   const hosts = [...CODING_HOSTS, "cli"] as const;
-  const capabilities = [...new Set(cells.map((c) => c.capability))].sort();
+  const capabilities = [...new Set(cells.map((c) => c.capability))].toSorted();
   const lines = [
     "# Workit v1 host capability matrix",
     "",
@@ -414,7 +414,14 @@ export const verifyCompiledSchemaParity = (): string[] => {
         (fixture, index, all) =>
           all.findIndex((other) => other.family === fixture.family) === index,
       )
-      .map((fixture) => ({ ...fixture, input: { ...fixture.input, action: "unknown" } as never })),
+      .map((fixture) =>
+        Object.assign(fixture, {
+          input: {
+            ...fixture.input,
+            action: "unknown",
+          } as never,
+        }),
+      ),
   ];
   for (const fixture of corpus) {
     const raw = operationSchemas[fixture.family].safeParse(fixture.input);

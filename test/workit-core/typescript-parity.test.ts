@@ -598,9 +598,7 @@ test(
     const originalFetch = globalThis.fetch;
     let seenAuth = "";
     globalThis.fetch = (async (input: unknown, init?: unknown) => {
-      seenAuth = String(
-        (init as { headers?: Record<string, string> })?.headers?.Authorization ?? "",
-      );
+      seenAuth = (init as { headers?: Record<string, string> })?.headers?.Authorization ?? "";
       return new Response("boom", { status: 500 });
     }) as unknown as typeof fetch;
     process.env.WORKFLOW_YOUTRACK_CONFIG = configPath;
