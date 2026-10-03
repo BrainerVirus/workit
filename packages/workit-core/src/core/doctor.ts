@@ -19,6 +19,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { SUPPORT_MATRIX } from "./support-matrix";
+import { inspectMetadataLock } from "./store-lock";
 import { bundleHashOfFile, isEphemeralCachePath } from "./runtime-identity";
 import { EVENT } from "./boundary";
 import { getDiagnosticLogger, isConfigObject } from "./config";
@@ -61,6 +62,7 @@ export type DoctorCheckId =
   | "duplicate_registration"
   | "malformed_config"
   | "workspace_mismatch"
+  | "workspace_lock"
   | "credential_metadata"
   | "github_identity"
   | "gitlab_identity"
@@ -110,6 +112,8 @@ export type DoctorOptions = {
   /** Checkout containing packages/ (monorepo or share clone). */
   dev?: string;
   cwd?: string;
+  /** Workit store root for the lock check (default: WORKFLOW_WORKSPACE_ROOT, then cwd). */
+  workspaceRoot?: string;
   opencodeConfig?: string;
   /** OpenCode npm `@latest` package cache root (test seam). */
   opencodePackageCacheDir?: string;
@@ -129,6 +133,7 @@ type Resolved = {
   configDir: string;
   stateDir: string;
   cwd: string;
+  workspaceRoot: string;
   dev: string | null;
   opencodeConfig: string;
   opencodePackageCacheDir: string;
@@ -179,6 +184,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     configDir,
     stateDir,
     cwd,
+    workspaceRoot: options.workspaceRoot ?? env.WORKFLOW_WORKSPACE_ROOT ?? cwd,
     dev,
     opencodeConfig:
       options.opencodeConfig ?? path.join(home, ".config", "opencode", "opencode.json"),
@@ -1693,6 +1699,44 @@ const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
   };
 };
 
+// The checkout's `.workit/metadata.lock`. Writes reclaim a stale lock by
+// themselves, so a stale lock is a warning with an explicit cleanup command.
+const BLOCKING_LOCK_WARN_MS = 30_000;
+const checkWorkspaceLock = (res: Resolved): DoctorCheck => {
+  const lock = inspectMetadataLock(res.workspaceRoot);
+  const fix = "workit doctor --fix-lock";
+  if (lock.guard === "abandoned")
+    return {
+      id: "workspace_lock",
+      status: "warn",
+      detail: `abandoned lock reclaim guard at ${lock.path}.reclaim`,
+      fix,
+    };
+  if (lock.state === "absent")
+    return { id: "workspace_lock", status: "pass", detail: "no metadata lock held" };
+  if (lock.state === "stale")
+    return {
+      id: "workspace_lock",
+      status: "warn",
+      detail: `stale metadata lock at ${lock.path}: ${lock.reason}`,
+      fix,
+    };
+  // An unverifiable owner (other host, pid namespace, or an older Workit's
+  // lock) that has blocked writes this long needs an explicit decision.
+  if (lock.state === "unknown" && (lock.ageMs ?? 0) > BLOCKING_LOCK_WARN_MS)
+    return {
+      id: "workspace_lock",
+      status: "warn",
+      detail: `metadata lock at ${lock.path} has blocked writes for ${Math.round((lock.ageMs ?? 0) / 1000)}s and its owner cannot be verified: ${lock.reason}`,
+      fix: "workit doctor --fix-lock --force --yes",
+    };
+  return {
+    id: "workspace_lock",
+    status: "pass",
+    detail: `metadata lock ${lock.reason} (writes retry, then report busy)`,
+  };
+};
+
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
@@ -1705,6 +1749,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkDuplicateRegistration,
   checkMalformedConfig,
   checkWorkspaceMismatch,
+  checkWorkspaceLock,
   checkCredentialMetadata,
   checkGithubIdentity,
   checkGitLabIdentity,

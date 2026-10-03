@@ -244,6 +244,7 @@ function copyCoreSources(stub: string) {
     "legacy-ownership.ts",
     "safe-write.ts",
     "task-contract.ts",
+    "store-lock.ts",
     "runtime-identity.ts",
   ]) {
     const src =

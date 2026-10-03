@@ -66,8 +66,9 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "doctor",
     group: "setup",
-    usage: "workit doctor [--json]",
-    summary: "Verify the offline installation health",
+    usage: "workit doctor [--json] [--fix-lock [--force [--yes]]]",
+    summary:
+      "Verify the offline installation health (--fix-lock clears a stale .workit metadata lock)",
     load: () => import("./doctor"),
   },
   {
