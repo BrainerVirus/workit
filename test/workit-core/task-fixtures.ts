@@ -1,5 +1,8 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   Caller,
+  CheckObservation,
   OperationRequest,
   Scope,
   Assessment,
@@ -57,6 +60,38 @@ export const taskStartRequest = (overrides: Partial<TaskStartRequest> = {}): Tas
     scope: scope(),
     authorityRefs: [ref()],
   },
+  ...overrides,
+});
+
+/** A committed check config whose `test` check is `true` (what checkObservation() runs). */
+export const writeTestCheck = (root: string): void =>
+  writeFileSync(join(root, "workit.checks.json"), JSON.stringify({ checks: { test: ["true"] } }));
+
+/** What `workit check` would record; outside git (`tree: null`) it binds to the candidate. */
+export const checkObservation = (overrides: Partial<CheckObservation> = {}): CheckObservation => ({
+  observer: "workit_cli",
+  name: "test",
+  configured: true,
+  argv: ["true"],
+  shell: false,
+  cwd: ".",
+  exitCode: 0,
+  durationMs: 1,
+  timedOut: false,
+  head: null,
+  tree: null,
+  dirty: null,
+  signal: null,
+  treeAfter: null,
+  modifiedWorktree: false,
+  base: null,
+  patchId: null,
+  environment: { platform: "linux", arch: "x64", vars: {} },
+  logDigest: null,
+  logRef: null,
+  logTail: [],
+  ledgerRowId: null,
+  attestation: null,
   ...overrides,
 });
 

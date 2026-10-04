@@ -272,7 +272,12 @@ test("agent-critical delivery rules stay stated", () => {
     [
       "workit-behavioral-tdd",
       skillText("workit-behavioral-tdd"),
-      "GREEN but no preceding RED evidence stays unsatisfied",
+      'a recorded "tests pass" is a note',
+    ],
+    [
+      "workit-behavioral-tdd",
+      skillText("workit-behavioral-tdd"),
+      "ad-hoc `workit check -- <cmd>` never satisfies the gate",
     ],
   ];
   for (const [source, text, rule] of rules)

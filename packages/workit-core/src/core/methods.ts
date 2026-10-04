@@ -118,8 +118,11 @@ policy, and reapplies the call, returning busy under persistent contention. A
 revision_conflict means a revision you passed is stale: re-read the record
 before deciding whether to retry.
 A solo edit does not need writer acquisition; use it when concurrent checkout
-writers need coordination. Record only observed facts and checks. Evidence can
-become stale when its bound candidate changes; reconcile findings against the
+writers need coordination. Record only observed facts and checks. Close-time
+testing and verification gates accept only a configured check the CLI ran:
+\`workit check <name>\` (\`npx -y @brainervirus/workit-cli check <name>\` when
+\`workit\` is not on PATH); a recorded check result is a note and an ad-hoc
+\`workit check -- <cmd>\` never satisfies a gate. Evidence can become stale when its bound candidate or tree changes; reconcile findings against the
 current candidate before recording completion.
 
 Workit validates domain policy against the actual action target, configured
