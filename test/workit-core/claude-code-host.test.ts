@@ -225,12 +225,13 @@ test("setup apply reports Claude Code installed only when the plugin registry sh
 });
 
 // Each call runs the whole doctor (runtime, identity and lock probes too),
-// which takes seconds on a CI runner.
+// which takes several seconds per call on the Windows runner.
 test("doctor warns only when a newer Claude Code plugin version is published with the native update command", () => {
   const home = temp("workit-claude-doctor-");
   try {
     const check = (env: NodeJS.ProcessEnv) =>
-      runDoctor({ home, env: { HOME: home, ...env } }).checks.find(
+      // An isolated home as cwd keeps the other checks off the repository.
+      runDoctor({ home, cwd: home, env: { HOME: home, ...env } }).checks.find(
         (entry) => entry.id === "claude_plugin",
       )!;
     expect(check({}).status).toBe("pass");
@@ -252,7 +253,7 @@ test("doctor warns only when a newer Claude Code plugin version is published wit
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
-}, 30_000);
+}, 120_000);
 
 test("uninstall previews a native `claude plugin uninstall` per Workit install and runs only that argv", () => {
   const home = temp("workit-claude-uninstall-");
