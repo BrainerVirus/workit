@@ -141,13 +141,27 @@ describe("publishChanged", () => {
       r.cleanup();
     }
   });
-  test("a lockfile change republishes every package that inlines third-party code", () => {
+  test("a dev-tooling lockfile bump releases nothing; an inlined dep bump republishes its bundlers", () => {
     const r = repo();
+    const lock = (versions: Record<string, string>) =>
+      `{\n  "lockfileVersion": 1,\n  "packages": {\n${Object.entries(versions)
+        .map(([name, version]) => `    "${name}": ["${name}@${version}", "", {}, "sha512-x"],\n`)
+        .join("")}  }\n}\n`;
     try {
-      r.change("bun.lock", "{}\n");
-      expect(changedPackages(r.root, "v0.8.10")).toEqual(
+      r.change("bun.lock", lock({ zod: "4.6.5", oxlint: "1.86.0", ink: "7.1.1" }));
+      const r0 = r.root;
+      execFileSync("git", ["tag", "-f", "v0.8.10"], { cwd: r0 });
+      r.change("bun.lock", lock({ zod: "4.6.5", oxlint: "1.87.0", ink: "7.1.1" }));
+      expect(changedPackages(r0, "v0.8.10")).toEqual([]);
+      r.change("bun.lock", lock({ zod: "4.7.0", oxlint: "1.87.0", ink: "7.1.1" }));
+      // Every adapter inlines zod (through core); core ships sources.
+      expect(changedPackages(r0, "v0.8.10")).toEqual(
         RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-core"),
       );
+      execFileSync("git", ["tag", "-f", "v0.8.10"], { cwd: r0 });
+      r.change("bun.lock", lock({ zod: "4.7.0", oxlint: "1.87.0", ink: "7.2.0" }));
+      // ink is inlined only by the bundled CLI.
+      expect(changedPackages(r0, "v0.8.10")).toEqual(["workit-cli", "workit-claude-code"]);
     } finally {
       r.cleanup();
     }

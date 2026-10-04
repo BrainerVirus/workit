@@ -4,7 +4,12 @@
 // package so release logs answer "what shipped?" without leaving the terminal.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { latestTag, payloadPaths, RELEASE_PACKAGES } from "./analyze-release-scope";
+import {
+  latestTag,
+  lockChangedPackages,
+  payloadPaths,
+  RELEASE_PACKAGES,
+} from "./analyze-release-scope";
 
 const git = (root: string, args: string[]): string =>
   execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -12,7 +17,11 @@ const git = (root: string, args: string[]): string =>
 export function changedPackages(root: string, fromTag: string): string[] {
   // Committed state only: <tag>..HEAD, never the working tree — unreviewed
   // local edits must not decide what ships.
+  // Plus packages whose inlined third-party deps resolve differently in the
+  // lockfile (BUNDLED_DEPS); a dev-tooling-only lockfile bump changes none.
+  const relocked = new Set<string>(lockChangedPackages(root, fromTag, "HEAD"));
   return RELEASE_PACKAGES.filter((pkg) => {
+    if (relocked.has(pkg)) return true;
     // Own directory plus any sources bundled into its dist/ (BUNDLED_SOURCES).
     const out = git(root, ["diff", "--name-only", `${fromTag}..HEAD`, "--", ...payloadPaths(pkg)]);
     return out !== "";

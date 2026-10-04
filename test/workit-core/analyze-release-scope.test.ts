@@ -259,6 +259,37 @@ describe("analyzeReleaseScope", () => {
     }
   });
 
+  test("a dev-tooling lockfile bump is no release; an inlined dependency bump releases its bundlers", () => {
+    const lock = (versions: Record<string, string>) =>
+      `{\n  "lockfileVersion": 1,\n  "packages": {\n${Object.entries(versions)
+        .map(([name, version]) => `    "${name}": ["${name}@${version}", "", {}, "sha512-x"],\n`)
+        .join("")}  }\n}\n`;
+    const r = repo();
+    try {
+      r.commit("chore: lock", { "bun.lock": lock({ zod: "4.6.5", oxlint: "1.86.0" }) });
+      r.tag("v0.9.0");
+      r.commit("chore(deps): bump oxlint", {
+        "bun.lock": lock({ zod: "4.6.5", oxlint: "1.87.0" }),
+      });
+      expect(analyzeReleaseScope(r.root)).toEqual({ level: null, productPkgs: [] });
+      r.commit("fix(deps): bump zod", { "bun.lock": lock({ zod: "4.7.0", oxlint: "1.87.0" }) });
+      expect(analyzeReleaseScope(r.root)).toEqual({
+        level: "patch",
+        productPkgs: [
+          "workit-mcp",
+          "workit-cli",
+          "workit-opencode",
+          "workit-cursor",
+          "workit-codex",
+          "workit-pi",
+          "workit-claude-code",
+        ],
+      });
+    } finally {
+      r.cleanup();
+    }
+  });
+
   test("non-ASCII paths survive collection without C-quoting", () => {
     const r = repo();
     r.tag("v0.8.11");
