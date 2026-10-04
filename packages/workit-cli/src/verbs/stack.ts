@@ -39,7 +39,7 @@ import {
 
 const PLAN_USAGE = "workit stack plan [--name <n>] [--trunk <b>] [<bottom> … <top>] [--json]";
 const STATUS_USAGE = "workit stack status [--name <n>] [--json]";
-const SYNC_USAGE = "workit stack sync [--name <n>] [--local] [--dry-run] [--json]";
+const SYNC_USAGE = "workit stack sync [--name <n>] [--local] [--dry-run] [--force] [--json]";
 const LAND_USAGE =
   "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--timeout 20m] [--interval 30s] [--json]";
 const USAGE = "workit stack plan|status|sync|land ... (workit help stack)";
@@ -152,7 +152,12 @@ const renderSync = (data: SyncOutcome): string[] => [
 ];
 
 async function sync(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { name: "value", local: "boolean", "dry-run": "boolean" });
+  const flags = parseFlags(argv, {
+    name: "value",
+    local: "boolean",
+    "dry-run": "boolean",
+    force: "boolean",
+  });
   if (typeof flags === "string") return usage(io, flags, SYNC_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, SYNC_USAGE);
@@ -179,7 +184,11 @@ async function sync(argv: string[], io: Io): Promise<number> {
       io.cwd,
       ctx,
       fresh.data ?? selected.data,
-      { publish: !local, dryRun: flags.booleans.has("dry-run") },
+      {
+        publish: !local,
+        dryRun: flags.booleans.has("dry-run"),
+        force: flags.booleans.has("force"),
+      },
       actorFromEnv(io.env),
     );
   });

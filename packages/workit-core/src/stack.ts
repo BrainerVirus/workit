@@ -35,9 +35,11 @@
 // and replace the built-in restack/retarget; nothing else depends on how the
 // chain is rewritten.
 import { spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { requireGrant, type GrantDecision } from "./autonomy";
+import { classifyLockOwner, localLockHost, processStartOf } from "./core/store-lock";
 import { mergePullRequest, type Sleep } from "./forge/pr-ops";
 import {
   buildStatusDoc,
@@ -55,7 +57,6 @@ import {
   fetchRefs,
   GIT_TIMEOUTS,
   hasCommit,
-  headSha,
   mergeBase,
   patchId,
   pushRemoteName,
@@ -66,7 +67,6 @@ import {
   appendObserved,
   checkVerdicts,
   diffHash,
-  ledgerLock,
   readLedger,
   storeRoot,
   type LedgerActor,
@@ -184,7 +184,11 @@ const isAncestor = (cwd: string, ancestor: string, descendant: string): boolean 
 const branchTip = (cwd: string, branch: string): string | null =>
   resolveRef(cwd, `refs/heads/${branch}`);
 
-/** The worktree that has `branch` checked out, if any. */
+/**
+ * The worktree that has `branch` checked out, if any, including one where a
+ * rebase of it is stopped (HEAD is detached then; the branch is named in
+ * rebase-merge/head-name).
+ */
 function worktreeOf(cwd: string, branch: string): string | null {
   const list = gitRun(cwd, ["worktree", "list", "--porcelain"]);
   if (!list.ok) return null;
@@ -192,6 +196,21 @@ function worktreeOf(cwd: string, branch: string): string | null {
   for (const line of list.stdout.split("\n")) {
     if (line.startsWith("worktree ")) current = line.slice("worktree ".length);
     else if (line === `branch refs/heads/${branch}` && current) return current;
+    else if (line === "detached" && current && rebasingBranch(current) === `refs/heads/${branch}`)
+      return current;
+  }
+  return null;
+}
+
+function rebasingBranch(dir: string): string | null {
+  for (const name of ["rebase-merge/head-name", "rebase-apply/head-name"]) {
+    const found = gitRun(dir, ["rev-parse", "--path-format=absolute", "--git-path", name]);
+    if (!found.ok) continue;
+    try {
+      return fs.readFileSync(found.stdout.trim(), "utf8").trim();
+    } catch {
+      // not this one
+    }
   }
   return null;
 }
@@ -214,39 +233,75 @@ export type RestackOutcome =
   | { ok: true; head: string }
   | { ok: false; conflict: boolean; worktree: string; error: string };
 
+/** Where sync checks out branches nobody has checked out (never the user's checkout). */
+const scratchDir = (cwd: string): string | null => {
+  const dir = stacksDir(cwd);
+  return dir.ok ? path.join(dir.data, "worktrees") : null;
+};
+
 /**
- * `git rebase --onto <onto> <from> <branch>`, in the worktree that has the
- * branch checked out (else here). Never autostashes and never updates other
- * refs (`rebase.updateRefs` would move sibling stack branches behind our back).
+ * `git rebase --onto <onto> <from>` with the branch checked out: in the
+ * worktree that already has it, else in a temporary worktree under the store
+ * root (`git worktree add`), so the user's own checkout never moves. Never
+ * autostashes and never updates other refs (`rebase.updateRefs` would move
+ * sibling stack branches). A temporary worktree is removed on success and
+ * kept on a conflict, so the rebase can be continued there.
  */
 function gitRestack(
   cwd: string,
   input: { branch: string; onto: string; from: string },
 ): RestackOutcome {
   const owner = worktreeOf(cwd, input.branch);
-  const dir = owner ?? cwd;
-  const args = [
-    "-c",
-    "rebase.autoStash=false",
-    "-c",
-    "rebase.updateRefs=false",
-    "rebase",
-    "--no-autosquash",
-    "--onto",
-    input.onto,
-    input.from,
-    ...(owner ? [] : [input.branch]),
-  ];
-  const run = gitRun(dir, args, GIT_TIMEOUTS.worktree);
-  if (run.ok) {
-    const head = branchTip(cwd, input.branch);
-    return head
-      ? { ok: true, head }
-      : { ok: false, conflict: false, worktree: dir, error: `${input.branch} vanished` };
+  let dir = owner;
+  if (!dir) {
+    const scratch = scratchDir(cwd);
+    if (!scratch) return { ok: false, conflict: false, worktree: cwd, error: "no store root" };
+    fs.mkdirSync(scratch, { recursive: true });
+    dir = path.join(
+      scratch,
+      `${input.branch.replace(/[^A-Za-z0-9._-]+/gu, "_").slice(0, 40)}-${randomBytes(4).toString("hex")}`,
+    );
+    const added = gitRun(cwd, ["worktree", "add", "-q", dir, input.branch], GIT_TIMEOUTS.worktree);
+    if (!added.ok) return { ok: false, conflict: false, worktree: cwd, error: firstLine(added) };
   }
-  if (rebaseInProgress(dir))
-    return { ok: false, conflict: true, worktree: dir, error: firstLine(run) };
-  return { ok: false, conflict: false, worktree: dir, error: firstLine(run) };
+  const run = gitRun(
+    dir,
+    [
+      "-c",
+      "rebase.autoStash=false",
+      "-c",
+      "rebase.updateRefs=false",
+      "rebase",
+      "--no-autosquash",
+      "--onto",
+      input.onto,
+      input.from,
+    ],
+    GIT_TIMEOUTS.worktree,
+  );
+  if (!run.ok) {
+    if (rebaseInProgress(dir))
+      return { ok: false, conflict: true, worktree: dir, error: firstLine(run) };
+    if (!owner) gitRun(cwd, ["worktree", "remove", "--force", dir]);
+    return { ok: false, conflict: false, worktree: dir, error: firstLine(run) };
+  }
+  if (!owner) gitRun(cwd, ["worktree", "remove", "--force", dir]);
+  const head = branchTip(cwd, input.branch);
+  return head
+    ? { ok: true, head }
+    : { ok: false, conflict: false, worktree: dir, error: `${input.branch} vanished` };
+}
+
+/** Remove temporary sync worktrees that are clean and not mid-rebase. */
+function pruneScratch(cwd: string): void {
+  const scratch = scratchDir(cwd);
+  if (!scratch || !fs.existsSync(scratch)) return;
+  for (const name of fs.readdirSync(scratch)) {
+    const dir = path.join(scratch, name);
+    if (!rebaseInProgress(dir) && !trackedDirt(dir))
+      gitRun(cwd, ["worktree", "remove", "--force", dir]);
+  }
+  gitRun(cwd, ["worktree", "prune"]);
 }
 
 const firstLine = (run: GitRun): string =>
@@ -257,7 +312,29 @@ const firstLine = (run: GitRun): string =>
 // ---------------------------------------------------------------------------
 // store
 
-const fileFor = (name: string): string => `${encodeURIComponent(name)}.json`;
+/**
+ * Portable file name for a stack: a readable slug plus a hash of the exact
+ * name, so names differing only in case or in characters Windows rejects
+ * never collide, and no file is ever a reserved device name (CON, NUL, …).
+ */
+export const stackFileName = (name: string): string =>
+  `${name
+    .replace(/[^A-Za-z0-9._-]+/gu, "_")
+    .replace(/^[._]+/u, "")
+    .slice(0, 48)
+    .toLowerCase()}-${createHash("sha256").update(name).digest("hex").slice(0, 12)}.json`;
+
+const fileFor = stackFileName;
+
+/** A stack name must be printable and short. */
+const validName = (name: string): boolean => {
+  if (name.length === 0 || name.length > 200) return false;
+  for (let index = 0; index < name.length; index += 1) {
+    const code = name.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+};
 
 export function stacksDir(cwd: string): StackResult<string> {
   const root = storeRoot(cwd);
@@ -367,15 +444,23 @@ export function listStacks(cwd: string): StackResult<StackFile[]> {
     return { ok: true, data: [] };
   }
   const out: StackFile[] = [];
-  for (const name of names.toSorted()) {
-    const read = readStack(cwd, decodeURIComponent(name.slice(0, -".json".length)));
-    if (read.ok && read.data) out.push(read.data);
+  for (const name of names) {
+    let parsed: StackFile | null = null;
+    try {
+      parsed = parseStack(JSON.parse(fs.readFileSync(path.join(dir.data, name), "utf8")));
+    } catch {
+      parsed = null;
+    }
+    // Only files at the name's own path count (a renamed copy is ignored).
+    if (parsed && fileFor(parsed.name) === name) out.push(parsed);
   }
-  return { ok: true, data: out };
+  return { ok: true, data: out.toSorted((a, b) => a.name.localeCompare(b.name)) };
 }
 
 /** The stack `name`, else the one holding the current branch, else the only one. */
 export function selectStack(cwd: string, name: string | null): StackResult<StackFile> {
+  if (name !== null && !validName(name))
+    return stackFail("invalid_input", "a stack name must be 1-200 printable characters");
   if (name) {
     const read = readStack(cwd, name);
     if (!read.ok) return read;
@@ -410,26 +495,107 @@ export function selectStack(cwd: string, name: string | null): StackResult<Stack
 // single writer
 
 const LOCK_WAIT_MS = 2_000;
+/** The holder touches its owner file this often while it works (land waits for CI). */
+const HEARTBEAT_MS = 20_000;
+/** A lock whose owner has not touched it for this long is stale, whoever holds it. */
+const HEARTBEAT_STALE_MS = 2 * 60_000;
+/** A lock directory without a readable owner is debris after this (a holder writes it at once). */
+const OWNERLESS_STALE_MS = 30_000;
 
-const ownerPid = (token: string | null): number | null => {
-  const match = token ? /^(\d+)-/u.exec(token) : null;
-  return match ? Number(match[1]) : null;
-};
+const OWNER = "owner";
 
-const alive = (pid: number): boolean => {
+type LockOwner = { pid: number; processStart: string | null; host: string; nonce: string };
+
+const readOwner = (lock: string): { raw: string | null; age: number | null } => {
+  let raw: string | null = null;
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    raw = fs.readFileSync(path.join(lock, OWNER), "utf8");
+  } catch {
+    raw = null;
   }
+  let age: number | null = null;
+  for (const target of [path.join(lock, OWNER), lock])
+    try {
+      age = Date.now() - fs.statSync(target).mtimeMs;
+      break;
+    } catch {
+      // next
+    }
+  return { raw, age };
 };
 
 /**
+ * Is the lock's holder gone? Same machine (host + pid namespace + boot, the
+ * S1 store-lock identity): the pid is dead or reused. Any holder whose
+ * heartbeat is older than HEARTBEAT_STALE_MS. A lock with no readable owner
+ * once it is OWNERLESS_STALE_MS old.
+ */
+export function stackLockStale(raw: string | null, age: number | null): boolean {
+  let payload: unknown = null;
+  try {
+    payload = raw ? JSON.parse(raw) : null;
+  } catch {
+    payload = null;
+  }
+  if (payload === null) return age !== null && age > OWNERLESS_STALE_MS;
+  if (age !== null && age > HEARTBEAT_STALE_MS) return true;
+  return classifyLockOwner(payload, age).state === "stale";
+}
+
+function takeLock(lock: string): LockOwner | null {
+  try {
+    fs.mkdirSync(lock);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
+    throw error;
+  }
+  const owner: LockOwner = {
+    pid: process.pid,
+    processStart: processStartOf(process.pid),
+    host: localLockHost(),
+    nonce: randomBytes(8).toString("hex"),
+  };
+  fs.writeFileSync(path.join(lock, OWNER), JSON.stringify(owner));
+  return owner;
+}
+
+/** Move a stale lock aside, only if it still holds what was judged stale. */
+function reapLock(lock: string, observed: string | null): boolean {
+  const tomb = `${lock}.reap-${randomBytes(6).toString("hex")}`;
+  try {
+    fs.renameSync(lock, tomb);
+  } catch {
+    return false;
+  }
+  if (readOwner(tomb).raw === observed) {
+    fs.rmSync(tomb, { recursive: true, force: true });
+    return true;
+  }
+  try {
+    fs.renameSync(tomb, lock);
+  } catch {
+    fs.rmSync(tomb, { recursive: true, force: true });
+  }
+  return false;
+}
+
+function releaseLock(lock: string, owner: LockOwner): void {
+  const { raw } = readOwner(lock);
+  if (raw !== JSON.stringify(owner)) return;
+  const tomb = `${lock}.release-${randomBytes(6).toString("hex")}`;
+  try {
+    fs.renameSync(lock, tomb);
+    fs.rmSync(tomb, { recursive: true, force: true });
+  } catch {
+    // someone reaped it
+  }
+}
+
+/**
  * Hold the stack's lock for `fn`. A lock held by a live process answers
- * `busy` after LOCK_WAIT_MS (retryable); one left by a dead process on this
- * machine is reclaimed. Long operations (land waits for CI) keep the lock
- * for their whole run, so there is no age-based takeover.
+ * `busy` after LOCK_WAIT_MS (retryable). The holder heartbeats while it works,
+ * so a lock left by a dead process, a crashed host or an aborted mkdir is
+ * reclaimed (see stackLockStale) without ever stealing a working holder's.
  */
 export async function withStackLock<T>(
   cwd: string,
@@ -439,6 +605,8 @@ export async function withStackLock<T>(
 ): Promise<StackResult<T>> {
   const dir = stacksDir(cwd);
   if (!dir.ok) return dir;
+  if (!validName(name))
+    return stackFail("invalid_input", "a stack name must be 1-200 printable characters");
   const lock = path.join(dir.data, `${fileFor(name)}.lock`);
   try {
     fs.mkdirSync(dir.data, { recursive: true });
@@ -446,26 +614,43 @@ export async function withStackLock<T>(
     return stackFail("unavailable", `cannot create ${dir.data}: ${(error as Error).message}`);
   }
   const deadline = Date.now() + waitMs;
-  let token: string | null = null;
+  let owner: LockOwner | null = null;
   for (;;) {
-    token = ledgerLock.acquire(lock);
-    if (token) break;
-    const observed = ledgerLock.token(lock);
-    const pid = ownerPid(observed);
-    if (pid !== null && !alive(pid) && ledgerLock.reap(lock, observed)) continue;
-    if (Date.now() >= deadline)
+    owner = takeLock(lock);
+    if (owner) break;
+    const seen = readOwner(lock);
+    if (stackLockStale(seen.raw, seen.age) && reapLock(lock, seen.raw)) continue;
+    if (Date.now() >= deadline) {
+      let holder: Partial<LockOwner> = {};
+      try {
+        holder = seen.raw ? (JSON.parse(seen.raw) as LockOwner) : {};
+      } catch {
+        holder = {};
+      }
       return stackFail(
         "busy",
-        `stack ${name} is busy: another workit stack command${pid ? ` (pid ${pid})` : ""} holds ${lock}`,
-        "retry when it finishes; remove the .lock directory only if no workit process is running",
-        { lock, pid },
+        `stack ${name} is busy: another workit stack command${holder.pid ? ` (pid ${holder.pid} on ${holder.host ?? "?"})` : ""} holds ${lock}`,
+        "retry when it finishes; a lock whose holder stopped heartbeating is reclaimed automatically",
+        { lock, pid: holder.pid ?? null, host: holder.host ?? null },
       );
+    }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+  const held = owner;
+  const beat = setInterval(() => {
+    try {
+      const now = new Date();
+      fs.utimesSync(path.join(lock, OWNER), now, now);
+    } catch {
+      // lost the lock; the release below is a no-op then
+    }
+  }, HEARTBEAT_MS);
+  beat.unref?.();
   try {
     return await fn();
   } finally {
-    ledgerLock.release(lock, token);
+    clearInterval(beat);
+    releaseLock(lock, held);
   }
 }
 
@@ -578,13 +763,40 @@ export function planStack(
   for (const branch of branches) {
     const tip = branchTip(cwd, branch) as string;
     const before = previous.get(branch);
+    // A recorded merge is re-checked, never trusted: the PR must read merged,
+    // or (no PR) the branch must have its own commits and be on the trunk.
     if (before?.merged) {
-      entries.push(before);
-      continue;
+      let still = false;
+      if (before.pr && resolved) {
+        const status = resolved.forge.prStatus(before.pr);
+        still = status.ok && status.data.state === "merged";
+      } else
+        still = hasOwnCommits(cwd, tip, before.lastParentHead) && isAncestor(cwd, tip, trunkSha);
+      if (still) {
+        entries.push(before);
+        continue;
+      }
+      notes.push(`${branch} was recorded as merged but is not; it is back in the stack`);
     }
     const onParent = isAncestor(cwd, parentSha, tip);
-    // A branch not yet on its parent was forked at the merge base.
-    const builtOn = onParent ? parentSha : (mergeBase(cwd, parentSha, tip) ?? parentSha);
+    let builtOn = parentSha;
+    if (!onParent) {
+      if (before?.lastParentHead && isAncestor(cwd, before.lastParentHead, tip))
+        // What it was last built on still is in its history: keep it, so sync
+        // replays only this branch's own commits.
+        builtOn = before.lastParentHead;
+      else {
+        const old = oldParentVersion(cwd, parent, parentSha, tip);
+        if (old)
+          return stackFail(
+            "blocked",
+            `parent_rewritten: ${branch} is built on an older version of ${parent} (${old.slice(0, 12)}); replaying it from the merge base would bring the old ${parent} commits back`,
+            `git rebase --onto ${parent} ${old} ${branch}  # moves only ${branch}'s own commits; then workit stack plan`,
+            { branch, parent, oldParentTip: old },
+          );
+        builtOn = mergeBase(cwd, parentSha, tip) ?? parentSha;
+      }
+    }
     let pr = before?.pr ?? null;
     let prBase: string | null = null;
     if (resolved) {
@@ -645,6 +857,33 @@ export function planStack(
   };
 }
 
+/** `tip` has commits of its own beyond `base` (an empty branch is not "merged"). */
+function hasOwnCommits(cwd: string, tip: string, base: string | null): boolean {
+  if (!base) return false;
+  return tip !== base && !isAncestor(cwd, tip, base);
+}
+
+/**
+ * An earlier tip of `parent` (from its reflog) that `child` is built on but
+ * the current parent no longer contains: the parent was rewritten (amend,
+ * rebase) under the child.
+ */
+function oldParentVersion(
+  cwd: string,
+  parent: string,
+  parentSha: string,
+  child: string,
+): string | null {
+  if (!safeRef(parent)) return null;
+  const log = gitRun(cwd, ["reflog", "show", "--format=%H", `refs/heads/${parent}`, "--"]);
+  if (!log.ok) return null;
+  for (const sha of log.stdout.split("\n").map((line) => line.trim())) {
+    if (!sha || sha === parentSha) continue;
+    if (isAncestor(cwd, sha, child) && !isAncestor(cwd, sha, parentSha)) return sha;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // status
 
@@ -652,6 +891,7 @@ export type StackVerdict = "READY" | "WAITING" | "ADVANCE" | "COMPLETE";
 
 export type StopReason =
   | "no_pr"
+  | "pr_mismatch"
   | "pr_closed"
   | "base_not_trunk"
   | "not_ready"
@@ -708,6 +948,39 @@ function statusDoc(ctx: Ctx, pr: number): ForgeResult<PrStatusDoc> {
   return buildStatusDoc(ctx.cwd, ctx.resolved, status.data, { logLines: 0, behind: false });
 }
 
+/**
+ * The recorded PR number must still be this branch's PR from our head
+ * repository: the forge reports this branch as its head, and looking the
+ * branch up (owner/project matched, as `pr create` does) finds this number.
+ */
+function prBinding(ctx: Pick<Ctx, "resolved">, entry: StackEntry, doc: PrStatusDoc): string | null {
+  const label = noun(ctx.resolved, entry.pr as number);
+  if (doc.head.branch !== entry.branch)
+    return `${label} is for ${doc.head.branch}, not ${entry.branch}`;
+  const found = ctx.resolved.forge.findPr(entry.branch, {
+    owner: ctx.resolved.headRepo.split("/")[0] ?? null,
+    projectId: ctx.resolved.headProjectId,
+    sha: null,
+  });
+  if (!found.ok) return `cannot confirm ${label} belongs to ${entry.branch}: ${found.error}`;
+  if (found.data?.number !== entry.pr)
+    return `${entry.branch} from ${ctx.resolved.headRepo} is ${found.data ? noun(ctx.resolved, found.data.number) : "without a PR"}, not ${label}`;
+  return null;
+}
+
+/** The stack was planned against this forge repository. */
+export function repoMismatch(ctx: Pick<Ctx, "resolved">, stack: StackFile): StackError | null {
+  const { kind, repo } = ctx.resolved.forge;
+  if ((stack.repo && stack.repo !== repo) || (stack.forge && stack.forge !== kind))
+    return stackFail(
+      "blocked",
+      `repo_mismatch: stack ${stack.name} was planned on ${stack.forge ?? "?"} ${stack.repo ?? "?"}, but this checkout resolves to ${kind} ${repo}`,
+      `workit stack plan --name ${stack.name} <branch…>  # re-plan it here, or run from the right checkout`,
+      { planned: { forge: stack.forge, repo: stack.repo }, resolved: { forge: kind, repo } },
+    );
+  return null;
+}
+
 const verdictOf = (cwd: string, branch: string, rows: readonly ReadRow[]) => {
   const check = checkVerdicts(cwd, branch, rows);
   return {
@@ -734,6 +1007,8 @@ export function qualify(
   doc: PrStatusDoc | null,
   verdict: BranchStatus["verdict"],
   grant: GrantDecision,
+  /** Why the PR number no longer belongs to this branch (null: it does). */
+  binding: string | null = null,
 ): Qualification {
   const label = entry.pr ? noun(ctx.resolved, entry.pr) : entry.branch;
   const stop = (reason: StopReason, detail: string, unblock: string, ready = false) => ({
@@ -748,6 +1023,12 @@ export function qualify(
       "no_pr",
       `${entry.branch} has no open PR`,
       `git switch ${entry.branch} && workit pr create --fill --base ${entry.parent}  # then workit stack plan`,
+    );
+  if (binding)
+    return stop(
+      "pr_mismatch",
+      binding,
+      `workit stack plan --name ${stack.name}  # re-resolve the PRs`,
     );
   if (doc.state !== "open")
     return stop(
@@ -787,6 +1068,8 @@ export function qualify(
 }
 
 export function stackStatus(ctx: Ctx, stack: StackFile): StackResult<StatusOutcome> {
+  const mismatch = repoMismatch(ctx, stack);
+  if (mismatch) return mismatch;
   const ledger = readLedger(ctx.cwd);
   if (!ledger.ok) return stackFail(ledger.code, ledger.error, ledger.unblock);
   const remote = remoteFor(ctx.cwd, ctx.resolved, stack.trunk);
@@ -838,7 +1121,15 @@ export function stackStatus(ctx: Ctx, stack: StackFile): StackResult<StatusOutco
         reason = "a parent merged; the rest is not restacked or retargeted yet";
         next = "workit stack sync";
       } else {
-        const q = qualify(ctx, stack, entry, doc, row.verdict, grant);
+        const q = qualify(
+          ctx,
+          stack,
+          entry,
+          doc,
+          row.verdict,
+          grant,
+          doc ? prBinding(ctx, entry, doc) : null,
+        );
         if (q.ok) {
           verdict = "READY";
           next = "workit stack land";
@@ -874,6 +1165,8 @@ export type SyncOptions = {
   dryRun: boolean;
   /** Process only the first N unmerged branches (land moves just the new root). */
   limit?: number;
+  /** Push a restack whose content changed (after a resolved conflict); never used by land. */
+  force?: boolean;
 };
 
 export type SyncStep = {
@@ -913,11 +1206,23 @@ function detectMerged(
     if (entry.pr && ctx) {
       const read = statusDoc(ctx, entry.pr);
       if (!read.ok) return fromForge(read);
+      if (read.data.head.branch !== entry.branch)
+        return stackFail(
+          "blocked",
+          `pr_mismatch: ${noun(ctx.resolved, entry.pr)} is for ${read.data.head.branch}, not ${entry.branch}`,
+          `workit stack plan --name ${stack.name}  # re-resolve the PRs`,
+          { branch: entry.branch, pr: entry.pr },
+        );
       state.docs.set(entry.pr, read.data);
       merged = read.data.state === "merged";
     } else {
+      // Without a PR only ancestry can tell; a branch with no commits of its
+      // own is empty, not merged.
       const tip = branchTip(cwd, entry.branch);
-      merged = tip !== null && isAncestor(cwd, tip, trunkSha);
+      merged =
+        tip !== null &&
+        hasOwnCommits(cwd, tip, entry.lastParentHead) &&
+        isAncestor(cwd, tip, trunkSha);
     }
     if (merged) {
       entry.merged = { pr: entry.pr, mergeSha: null, at: new Date().toISOString() };
@@ -998,6 +1303,10 @@ export function syncStack(
       `trunk ${stack.trunk} is not available`,
       `git fetch ${remote} ${stack.trunk}`,
     );
+  if (ctx) {
+    const mismatch = repoMismatch(ctx, stack);
+    if (mismatch) return mismatch;
+  }
   const state: SyncState = { docs: new Map() };
   const merged = detectMerged(ctx, cwd, stack, trunkSha, state);
   if (!merged.ok) return merged;
@@ -1008,198 +1317,238 @@ export function syncStack(
     merged: merged.data,
     steps: [],
   };
-  const original = currentBranch(cwd);
-  const originalSha = original ? null : headSha(cwd);
-  // Pre-flight: no rebase may already be stopped anywhere we would work.
-  if (!options.dryRun && rebaseInProgress(cwd))
-    return stackFail(
-      "blocked",
-      "a rebase is already in progress in this worktree",
-      "resolve the conflicts, git rebase --continue (or git rebase --abort), then workit stack sync",
-    );
-  const restore = () => {
-    if (options.dryRun || rebaseInProgress(cwd)) return;
-    if (original && currentBranch(cwd) !== original) gitRun(cwd, ["switch", "-q", original]);
-    else if (originalSha && headSha(cwd) !== originalSha)
-      gitRun(cwd, ["switch", "-q", "--detach", originalSha]);
-  };
+  pruneScratch(cwd);
 
   let parent = { name: stack.trunk, tip: trunkSha as string | null };
   let processed = 0;
-  try {
-    for (const entry of stack.branches) {
-      if (entry.merged) continue;
-      if (options.limit !== undefined && processed >= options.limit) break;
-      processed += 1;
-      const tip = branchTip(cwd, entry.branch);
-      if (!tip)
-        return stackFail(
-          "not_found",
-          `stack branch ${entry.branch} does not exist locally`,
-          `git branch ${entry.branch} ${remote}/${entry.branch}  # then workit stack sync`,
-          { progress: outcome },
-        );
-      const step: SyncStep = {
-        branch: entry.branch,
-        pr: entry.pr,
-        parent: parent.name,
-        restack: null,
-        push: null,
-        retarget: null,
+  for (const entry of stack.branches) {
+    if (entry.merged) continue;
+    if (options.limit !== undefined && processed >= options.limit) break;
+    processed += 1;
+    const tip = branchTip(cwd, entry.branch);
+    if (!tip)
+      return stackFail(
+        "not_found",
+        `stack branch ${entry.branch} does not exist locally`,
+        `git branch ${entry.branch} ${remote}/${entry.branch}  # then workit stack sync`,
+        { progress: outcome },
+      );
+    const step: SyncStep = {
+      branch: entry.branch,
+      pr: entry.pr,
+      parent: parent.name,
+      restack: null,
+      push: null,
+      retarget: null,
+    };
+    let newTip: string | null = tip;
+    const parentTip = parent.tip;
+    if (parentTip === null) {
+      // Dry run: the parent would be rewritten first, so this one moves too.
+      step.restack = {
+        from: entry.lastParentHead ?? "?",
+        onto: `${parent.name} (restacked)`,
+        head: null,
+        carried: null,
       };
-      let newTip: string | null = tip;
-      const parentTip = parent.tip;
-      if (parentTip === null) {
-        // Dry run: the parent would be rewritten first, so this one moves too.
-        step.restack = {
-          from: entry.lastParentHead ?? "?",
-          onto: `${parent.name} (restacked)`,
-          head: null,
-          carried: null,
-        };
+      newTip = null;
+    } else if (!isAncestor(cwd, parentTip, tip)) {
+      const from =
+        entry.lastParentHead && isAncestor(cwd, entry.lastParentHead, tip)
+          ? entry.lastParentHead
+          : (mergeBase(cwd, entry.lastParentHead ?? parentTip, tip) ?? parentTip);
+      if (options.dryRun) {
+        step.restack = { from, onto: parentTip, head: null, carried: null };
         newTip = null;
-      } else if (!isAncestor(cwd, parentTip, tip)) {
-        const from =
-          entry.lastParentHead && isAncestor(cwd, entry.lastParentHead, tip)
-            ? entry.lastParentHead
-            : (mergeBase(cwd, entry.lastParentHead ?? parentTip, tip) ?? parentTip);
-        if (options.dryRun) {
-          step.restack = { from, onto: parentTip, head: null, carried: null };
-          newTip = null;
-        } else {
-          const owner = worktreeOf(cwd, entry.branch);
-          const dir = owner ?? cwd;
-          if (rebaseInProgress(dir))
-            return stackFail(
-              "blocked",
-              `a rebase is in progress in ${dir}`,
-              `cd ${dir} && git rebase --continue  # or --abort; then workit stack sync`,
-              { conflict: entry.branch, worktree: dir, progress: outcome },
-            );
-          if (trackedDirt(dir))
-            return stackFail(
-              "blocked",
-              `dirty_worktree: ${dir} has uncommitted changes; restacking ${entry.branch} needs a clean worktree`,
-              `commit or stash the changes in ${dir}, then workit stack sync`,
-              { branch: entry.branch, worktree: dir, progress: outcome },
-            );
-          const rebased = stackDeps.adapter.restack(cwd, {
-            branch: entry.branch,
-            onto: parentTip,
-            from,
-          });
-          if (!rebased.ok) {
-            outcome.steps.push(step);
-            return rebased.conflict
-              ? stackFail(
-                  "blocked",
-                  `conflict restacking ${entry.branch} onto ${parent.name}: ${rebased.error}`,
-                  `resolve the conflicts in ${rebased.worktree}, git rebase --continue, then workit stack sync  # or git rebase --abort`,
-                  { conflict: entry.branch, worktree: rebased.worktree, progress: outcome },
-                )
-              : stackFail(
-                  "failed",
-                  `restacking ${entry.branch} failed: ${rebased.error}`,
-                  undefined,
-                  {
-                    branch: entry.branch,
-                    progress: outcome,
-                  },
-                );
-          }
-          newTip = rebased.head;
-          step.restack = { from, onto: parentTip, head: newTip, carried: null };
+      } else {
+        // A plain rebase linearizes merges and drops their resolutions.
+        const merges = gitRun(cwd, ["rev-list", "--merges", `${from}..${tip}`]);
+        if (!merges.ok || merges.stdout.trim())
+          return stackFail(
+            "blocked",
+            `merge_commits: ${entry.branch} has merge commits since ${from.slice(0, 12)}; restacking would drop what they resolved`,
+            `git rebase --rebase-merges --onto ${parentTip} ${from} ${entry.branch}  # check the result, then: workit stack sync --force`,
+            {
+              branch: entry.branch,
+              merges: merges.stdout.trim().split("\n").filter(Boolean),
+              progress: outcome,
+            },
+          );
+        const owner = worktreeOf(cwd, entry.branch);
+        if (owner && rebaseInProgress(owner))
+          return stackFail(
+            "blocked",
+            `a rebase is in progress in ${owner}`,
+            `cd ${owner} && git rebase --continue  # or --abort; then workit stack sync`,
+            { conflict: entry.branch, worktree: owner, progress: outcome },
+          );
+        if (owner && trackedDirt(owner))
+          return stackFail(
+            "blocked",
+            `dirty_worktree: ${owner} has ${entry.branch} checked out with uncommitted changes; restacking needs it clean`,
+            `commit or stash the changes in ${owner}, then workit stack sync`,
+            { branch: entry.branch, worktree: owner, progress: outcome },
+          );
+        const rebased = stackDeps.adapter.restack(cwd, {
+          branch: entry.branch,
+          onto: parentTip,
+          from,
+        });
+        if (!rebased.ok) {
+          outcome.steps.push(step);
+          return rebased.conflict
+            ? stackFail(
+                "blocked",
+                `conflict restacking ${entry.branch} onto ${parent.name}: ${rebased.error}`,
+                `resolve the conflicts in ${rebased.worktree}, git rebase --continue, then workit stack sync  # or git rebase --abort`,
+                { conflict: entry.branch, worktree: rebased.worktree, progress: outcome },
+              )
+            : stackFail(
+                "failed",
+                `restacking ${entry.branch} failed: ${rebased.error}`,
+                undefined,
+                {
+                  branch: entry.branch,
+                  progress: outcome,
+                },
+              );
         }
+        newTip = rebased.head;
+        step.restack = { from, onto: parentTip, head: newTip, carried: null };
       }
-      if (!options.dryRun && newTip) {
-        // The change moved (restacked now, or after a resolved conflict):
-        // record whether it is the same change on the new base (S13 carry).
-        if (entry.lastHead && entry.lastHead !== newTip && entry.lastParentHead && parentTip) {
-          const before = {
-            p: patchId(cwd, entry.lastParentHead, entry.lastHead),
-            d: diffHash(cwd, entry.lastParentHead, entry.lastHead),
-          };
-          const after = { p: patchId(cwd, parentTip, newTip), d: diffHash(cwd, parentTip, newTip) };
-          const equal =
-            before.p !== null && before.p === after.p && before.d !== null && before.d === after.d;
+    }
+    if (!options.dryRun && newTip) {
+      // The change was moved onto a new base (now, or by a rebase the user
+      // finished after a conflict). Before anything is pushed, the moved
+      // change must be the same change: same exact diff against its base and
+      // no commit dropped. Otherwise nothing is pushed and the stack keeps
+      // its record, so the next sync checks again.
+      const moved =
+        entry.lastHead !== null &&
+        entry.lastHead !== newTip &&
+        entry.lastParentHead !== null &&
+        parentTip !== null &&
+        parentTip !== entry.lastParentHead;
+      if (moved) {
+        const fromBase = entry.lastParentHead as string;
+        const fromHead = entry.lastHead as string;
+        const onto = parentTip;
+        const before = {
+          p: patchId(cwd, fromBase, fromHead),
+          d: diffHash(cwd, fromBase, fromHead),
+          commits: commitCount(cwd, fromBase, fromHead),
+        };
+        const after = {
+          p: patchId(cwd, onto, newTip),
+          d: diffHash(cwd, onto, newTip),
+          commits: commitCount(cwd, onto, newTip),
+        };
+        const sameContent = before.d !== null && before.d === after.d;
+        const dropped = Math.max(0, before.commits - after.commits);
+        if ((!sameContent || dropped > 0) && !options.force) {
+          outcome.steps.push(step);
+          return stackFail(
+            "blocked",
+            `content_changed: ${entry.branch} on ${parent.name} is not the same change it was on ${fromBase.slice(0, 12)}${dropped ? ` (${dropped} commit${dropped === 1 ? "" : "s"} dropped as empty or already applied)` : ""}; nothing was pushed`,
+            `inspect: git range-diff ${fromBase}..${fromHead} ${onto}..${newTip}  # if intended: workit stack sync --force; to undo: git branch -f ${entry.branch} ${fromHead}`,
+            {
+              reason: "content_changed",
+              branch: entry.branch,
+              before: {
+                base: fromBase,
+                head: fromHead,
+                commits: before.commits,
+                stat: shortStat(cwd, fromBase, fromHead),
+              },
+              after: {
+                base: onto,
+                head: newTip,
+                commits: after.commits,
+                stat: shortStat(cwd, onto, newTip),
+              },
+              dropped,
+              progress: outcome,
+            },
+          );
+        }
+        const equal = sameContent && dropped === 0 && before.p !== null && before.p === after.p;
+        appendObserved(cwd, {
+          type: "stack.restacked",
+          actor,
+          stack: stack.name,
+          branch: entry.branch,
+          head: newTip,
+          fromHead,
+          fromBase,
+          toBase: onto,
+          patchId: after.p,
+          diffHash: after.d,
+          patchEqual: equal,
+          forced: !sameContent || dropped > 0,
+        });
+        if (step.restack) step.restack.carried = equal;
+        else step.restack = { from: fromBase, onto, head: newTip, carried: equal };
+      }
+      if (options.publish) {
+        const pushed = pushBranch(cwd, actor, entry.branch, entry.lastHead ?? tip);
+        if (!pushed.ok) {
+          outcome.steps.push(step);
+          return { ...pushed, data: { ...pushed.data, progress: outcome } };
+        }
+        step.push = pushed.data;
+      }
+      entry.lastHead = newTip;
+      entry.lastParentHead = parentTip;
+      entry.patchId = parentTip ? patchId(cwd, parentTip, newTip) : null;
+    }
+    if (options.publish && ctx && entry.pr) {
+      const doc = state.docs.get(entry.pr);
+      if (doc && doc.state === "open" && doc.base !== parent.name) {
+        step.retarget = { from: doc.base, to: parent.name };
+        if (!options.dryRun) {
+          const grant = requireGrant(cwd, "pr");
+          if (!grant.allowed)
+            return stackFail("blocked", grant.error, grant.unblock, {
+              reason: grant.reason,
+              progress: outcome,
+            });
+          const updated = ctx.resolved.forge.updateBase(entry.pr, parent.name);
+          if (!updated.ok)
+            return { ...fromForge(updated), data: { branch: entry.branch, progress: outcome } };
           appendObserved(cwd, {
-            type: "stack.restacked",
+            type: "pr.retargeted",
             actor,
             stack: stack.name,
             branch: entry.branch,
             head: newTip,
-            fromHead: entry.lastHead,
-            fromBase: entry.lastParentHead,
-            toBase: parentTip,
-            patchId: after.p,
-            diffHash: after.d,
-            patchEqual: equal,
+            pr: entry.pr,
+            base: parent.name,
+            previousBase: doc.base,
           });
-          if (step.restack) step.restack.carried = equal;
-          else
-            step.restack = {
-              from: entry.lastParentHead,
-              onto: parentTip,
-              head: newTip,
-              carried: equal,
-            };
-        }
-        if (options.publish) {
-          const pushed = pushBranch(cwd, actor, entry.branch, entry.lastHead ?? tip);
-          if (!pushed.ok) {
-            outcome.steps.push(step);
-            return { ...pushed, data: { ...pushed.data, progress: outcome } };
-          }
-          step.push = pushed.data;
-        }
-        entry.lastHead = newTip;
-        entry.lastParentHead = parentTip;
-        entry.patchId = parentTip ? patchId(cwd, parentTip, newTip) : null;
-      }
-      if (options.publish && ctx && entry.pr) {
-        const doc = state.docs.get(entry.pr);
-        if (doc && doc.state === "open" && doc.base !== parent.name) {
-          step.retarget = { from: doc.base, to: parent.name };
-          if (!options.dryRun) {
-            const grant = requireGrant(cwd, "pr");
-            if (!grant.allowed)
-              return stackFail("blocked", grant.error, grant.unblock, {
-                reason: grant.reason,
-                progress: outcome,
-              });
-            const updated = ctx.resolved.forge.updateBase(entry.pr, parent.name);
-            if (!updated.ok)
-              return { ...fromForge(updated), data: { branch: entry.branch, progress: outcome } };
-            appendObserved(cwd, {
-              type: "pr.retargeted",
-              actor,
-              stack: stack.name,
-              branch: entry.branch,
-              head: newTip,
-              pr: entry.pr,
-              base: parent.name,
-              previousBase: doc.base,
-            });
-          }
         }
       }
-      entry.parent = parent.name;
-      outcome.steps.push(step);
-      if (!options.dryRun) {
-        const written = writeStack(cwd, stack);
-        if (!written.ok) return written;
-      }
-      parent = { name: entry.branch, tip: newTip };
     }
+    entry.parent = parent.name;
+    outcome.steps.push(step);
     if (!options.dryRun) {
       const written = writeStack(cwd, stack);
       if (!written.ok) return written;
     }
-  } finally {
-    restore();
+    parent = { name: entry.branch, tip: newTip };
+  }
+  if (!options.dryRun) {
+    const written = writeStack(cwd, stack);
+    if (!written.ok) return written;
   }
   return { ok: true, data: outcome };
 }
+
+const commitCount = (cwd: string, base: string, head: string): number =>
+  Number(gitRun(cwd, ["rev-list", "--count", "--no-merges", `${base}..${head}`]).stdout.trim()) ||
+  0;
+
+const shortStat = (cwd: string, base: string, head: string): string =>
+  gitRun(cwd, ["diff", "--shortstat", `${base}...${head}`]).stdout.trim();
 
 // ---------------------------------------------------------------------------
 // land
@@ -1282,6 +1631,8 @@ export async function landStack(
     ...error,
     data: { ...error.data, land: outcome },
   });
+  const mismatch = repoMismatch(ctx, stack);
+  if (mismatch) return failWith(mismatch);
 
   // Catch up first: a parent merged elsewhere leaves the rest to restack.
   if (!options.dryRun) {
@@ -1342,7 +1693,15 @@ export async function landStack(
     // A dry run predicts the retarget the real run would do first.
     const effective =
       options.dryRun && simulated.size > 0 && doc ? { ...doc, base: stack.trunk } : doc;
-    const q = qualify(ctx, stack, entry, effective, verdict, grant);
+    const q = qualify(
+      ctx,
+      stack,
+      entry,
+      effective,
+      verdict,
+      grant,
+      doc ? prBinding(ctx, entry, doc) : null,
+    );
     if (!q.ok) {
       outcome.stoppedAt = {
         pr: entry.pr,
@@ -1363,7 +1722,13 @@ export async function landStack(
     const merged = await mergePullRequest(
       ctx.cwd,
       ctx.resolved,
-      { pr, method: options.method, deleteBranch: false, actor: ctx.actor },
+      {
+        pr,
+        method: options.method,
+        deleteBranch: false,
+        actor: ctx.actor,
+        expect: { base: stack.trunk, branch: entry.branch },
+      },
       ctx.sleep,
     );
     if (!merged.ok) {

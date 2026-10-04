@@ -286,7 +286,7 @@ workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 workit stack plan [<bottom> … <top>]  # record a base-branch chain (default: the current branch's)
 workit stack status      # per PR: next, checks, verdict, on parent; READY|WAITING|ADVANCE|COMPLETE
-workit stack sync [--local] [--dry-run]  # restack after a merge, lease push, retarget PR bases
+workit stack sync [--local] [--dry-run] [--force]  # restack after a merge, lease push, retarget PR bases
 workit stack land [--dry-run] [--max <n>]  # merge the contiguous verified run from the root
 workit uninstall         # remove host registrations (keeps ~/.config/workit)
 ```
@@ -326,18 +326,27 @@ state.
 on its parent branch) on GitHub and GitLab; it needs neither Graphite nor
 `gh stack`. The order is cached in `<git common dir>/workit/stacks/`, so every
 worktree shares it and it outlives a removed worktree, and one command at a
-time may change a stack (a second one answers `busy`). `stack sync` restacks
-each remaining branch onto its parent after a merge (`git rebase --onto`;
-squash merges always need this), pushes it through `git push`'s lease and
-retargets its PR. A conflict stops it with the rebase left in progress:
-resolve, `git rebase --continue`, then `workit stack sync`. When a restacked
-branch carries the same change (same patch-id and exact diff), its verdict
-carries; CI always runs again. `stack land` merges only the contiguous run
-from the root whose PRs target the trunk, read READY and have an accepted
-verdict, one at a time through `pr merge`'s gates. After each merge it moves
-the next PR onto the trunk and waits for its CI, and it stops at the first PR
-that does not qualify with the reason (`no_verdict`, `not_ready`,
-`grant_required` = verified and ready but not allowed to merge, …).
+time may change a stack (a second one answers `busy`; a holder that stopped
+heartbeating, or a dead process on this machine, is reclaimed). `stack sync`
+restacks each remaining branch onto its parent after a merge
+(`git rebase --onto`; squash merges always need this) in the worktree that
+has it checked out, or in a temporary worktree under the store, never moving
+your checkout. Before anything is pushed the moved branch must be the same
+change (exact diff against its base, no commit dropped); otherwise it is
+`blocked` with `content_changed`, the rebased branch stays local, and only
+`--force` pushes it. Branches with merge commits are refused (a plain rebase
+would drop their resolutions). It pushes through `git push`'s lease and
+retargets the PR, and a conflict stops it with the rebase left in progress:
+resolve, `git rebase --continue`, then `workit stack sync`. `--local` skips
+the forge and so cannot see squash merges. When a restacked branch carries
+the same change (same patch-id and exact diff), its verdict carries; CI
+always runs again. `stack land` merges only the contiguous run from the root
+whose PRs still belong to their branch in this repository, target the trunk,
+read READY and have an accepted verdict, one at a time through `pr merge`'s
+gates. After each merge it moves the next PR onto the trunk and waits for its
+CI, and it stops at the first PR that does not qualify with the reason
+(`no_verdict`, `not_ready`, `pr_mismatch`, `grant_required` = verified and
+ready but not allowed to merge, …).
 `--dry-run` changes nothing. `pr status` also reports the head's verdict.
 
 Merging needs no extra configuration today: the host's permission prompt is

@@ -258,8 +258,10 @@ export function makeStackForge(
     if (call.endpoint.startsWith("repos/o/r/branches/")) return out({ protected: false });
     if (call.endpoint.startsWith("repos/o/r/rules/branches/")) return out([]);
     if (call.endpoint === "graphql" && call.query?.includes("pullRequests(headRefName")) {
+      // Newest first, like orderBy CREATED_AT DESC.
       const nodes = [...prs.values()]
         .filter((pr) => pr.branch === call.vars.head)
+        .toSorted((a, b) => b.number - a.number)
         .map((pr) => ({
           number: pr.number,
           url: `https://github.com/o/r/pull/${pr.number}`,
@@ -345,6 +347,7 @@ export function makeStackForge(
       return out(
         [...prs.values()]
           .filter((pr) => pr.branch === name)
+          .toSorted((a, b) => b.number - a.number)
           .map((pr) => ({
             iid: pr.number,
             web_url: `https://gitlab.com/group/project/-/merge_requests/${pr.number}`,
