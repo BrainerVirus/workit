@@ -163,13 +163,21 @@ test("SubagentStart gives the worktree implementer write guidance and keeps othe
       runHook(PLUGIN_DIR, fixture("claude-code", "subagent-start", cwd, { agent_type }))
         .json as Specific
     ).hookSpecificOutput?.additionalContext ?? "";
-  for (const agent of ["workit:implementer", "implementer"]) {
+  for (const agent of ["workit:implementer"]) {
     const text = context(agent);
     expect(text, agent).toContain("working in its own git worktree");
     expect(text, agent).toContain("policy-compliant branch");
     expect(text, agent).not.toContain("read-only");
   }
-  for (const agent of ["workit:reviewer", "workit:verifier", "Explore"])
+  // Only the Workit plugin's own implementer: a bare or another plugin's
+  // `implementer` cannot be told apart from an unrelated agent.
+  for (const agent of [
+    "workit:reviewer",
+    "workit:verifier",
+    "Explore",
+    "implementer",
+    "other:implementer",
+  ])
     expect(context(agent), agent).toContain("read-only/agent-guided");
 });
 

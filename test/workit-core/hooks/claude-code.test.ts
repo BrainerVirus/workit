@@ -181,6 +181,8 @@ test("Claude SubagentStart keys its text on agent_type: only the worktree implem
     expect(text("workit:implementer")).not.toContain("read-only");
     expect(text("workit:reviewer")).toContain("read-only/agent-guided");
     expect(text("general-purpose")).toContain("read-only/agent-guided");
+    expect(text("implementer")).toContain("read-only/agent-guided");
+    expect(text("acme:implementer")).toContain("read-only/agent-guided");
     // Other hosts keep their text whatever the agent type is called.
     const codex = JSON.stringify(
       dispatchHook(
