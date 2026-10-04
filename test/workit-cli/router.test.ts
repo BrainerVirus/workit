@@ -315,6 +315,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   upgrade: [["--bogus"]],
   launch: [[], ["nohost"]],
   doctor: [["--fix-lock", "--force"]],
+  gc: [["--dry-run"]],
   uninstall: [[]],
   cutover: [[], ["bogus"]],
   task: [[], ["bogus"]],

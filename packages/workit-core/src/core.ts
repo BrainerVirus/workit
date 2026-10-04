@@ -7,6 +7,7 @@ export {
   POLICY_VERSION,
   OPERATION_FAMILIES,
   operationSchemas,
+  advertisedOperationSchemas,
   operationJsonSchema,
   boundedOperationJsonSchema,
   OPERATION_SCHEMA_DEPTH,
