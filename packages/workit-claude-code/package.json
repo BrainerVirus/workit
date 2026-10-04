@@ -1,0 +1,48 @@
+{
+  "name": "@brainervirus/workit-claude-code",
+  "version": "2.6.0",
+  "private": false,
+  "description": "Workit Claude Code plugin — session and per-turn task context, branch policy on git shell commands, workit method skills, and verifier/reviewer/implementer agents",
+  "keywords": [
+    "agentic-coding",
+    "ai-agents",
+    "claude-code",
+    "hooks",
+    "plugin",
+    "skills",
+    "workflow"
+  ],
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
+  "bugs": {
+    "url": "https://github.com/BrainerVirus/workit/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BrainerVirus/workit.git"
+  },
+  "files": [
+    ".claude-plugin/",
+    "hooks/hooks.json",
+    "bin/",
+    "agents/",
+    "skills/",
+    "assets/",
+    "dist/",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts"
+  },
+  "devDependencies": {
+    "@brainervirus/workit-cli": "workspace:*",
+    "@brainervirus/workit-core": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

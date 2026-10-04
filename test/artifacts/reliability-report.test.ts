@@ -33,6 +33,7 @@ test("default report aggregates the deterministic candidate and an isolated doct
     CURSOR,
     CODEX,
     PI,
+    "@brainervirus/workit-claude-code",
   ]);
   for (const c of report.candidate) {
     expect(c.sha256).toMatch(/^[0-9a-f]{64}$/);
@@ -40,15 +41,16 @@ test("default report aggregates the deterministic candidate and an isolated doct
   const packs = packReleaseCandidate();
   expect(report.candidate.map((c) => c.sha256)).toEqual(packs.map((p) => p.sha256));
   // The default env-isolated doctor (node+bun on PATH, no git) is deterministic:
-  // exactly the utility check fails (D11/D13); codex_pin passes (absent).
+  // exactly the utility check fails (D11/D13); codex_pin and claude_plugin
+  // pass (absent).
   // Counts include both provider identity checks (pass with no Git remote)
   // and the workspace_lock check (pass with no metadata lock).
   expect(report.doctor).toEqual({
     ok: false,
-    passed: 20,
+    passed: 21,
     warned: 0,
     failed: 1,
-    total: 21,
+    total: 22,
     fixes: 1,
   });
   expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -78,10 +80,10 @@ test("report doctor counts are exact against a controlled isolated fixture", () 
     // and the workspace_lock check (pass with no metadata lock).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 20,
+      passed: 21,
       warned: 0,
       failed: 1,
-      total: 21,
+      total: 22,
       fixes: 1,
     });
   } finally {

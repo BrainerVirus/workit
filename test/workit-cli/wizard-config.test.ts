@@ -1191,12 +1191,14 @@ test("platform options show all hosts and detection state without external-insta
     { label: "Cursor · detected", value: "cursor" },
     { label: "Codex · detected", value: "codex" },
     { label: "Pi · unavailable", value: "pi" },
+    { label: "Claude Code · unavailable", value: "claude-code" },
   ]);
   expect(platformOptions(emptyDetection())).toEqual([
     { label: "OpenCode · unavailable", value: "opencode" },
     { label: "Cursor · unavailable", value: "cursor" },
     { label: "Codex · unavailable", value: "codex" },
     { label: "Pi · unavailable", value: "pi" },
+    { label: "Claude Code · unavailable", value: "claude-code" },
   ]);
   expect(externalHostGuidance(detection)).toEqual([]);
   expect(externalHostGuidance(emptyDetection())).toEqual([]);

@@ -55,6 +55,7 @@ const PLATFORM_LABELS: { label: string; value: HostId }[] = [
   { label: "Cursor", value: "cursor" },
   { label: "Codex", value: "codex" },
   { label: "Pi", value: "pi" },
+  { label: "Claude Code", value: "claude-code" },
 ];
 
 /** Wizard platform options with auto-detect tags (pure: takes the detection). */

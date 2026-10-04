@@ -1,6 +1,6 @@
 # Agent Contract
 
-Multi-platform workit: OpenCode, Cursor, Codex CLI/desktop, Pi, and the CLI share one core. Every feature must ship with **feature parity across hosts, implemented the best way each host allows**.
+Multi-platform workit: OpenCode, Cursor, Codex CLI/desktop, Pi, Claude Code, and the CLI share one core. Every feature must ship with **feature parity across hosts, implemented the best way each host allows**.
 
 ## Host-native adaptation
 
@@ -59,6 +59,14 @@ human may bind a writer to a Codex session explicitly with
 `workit writer acquire --actor <session-id>`; the hook honors exactly that
 session and nothing else.
 
+Claude Code uses the `packages/workit-claude-code` plugin: one exec-form hook
+launcher maps every event through the shared host-hook protocol (never emitting
+`allow`), skills are generated from `packages/workit-core/skills` at build time
+(never committed), and `workit` reaches the Bash tool through the plugin `bin/`.
+It installs either as latest published (root `.claude-plugin/marketplace.json`,
+npm source) or as a local pin (`claude --plugin-dir` / `CLAUDE_CODE_PLUGIN_DIRS`),
+where hooks and `bin/workit` run the sources with Bun.
+
 Pi uses the stock 0.85.1 package contract. Its extension is self-contained
 apart from the Pi peer, reports native session/UI provenance truthfully, and
 bundles a coordinator for fresh stock-Pi reviewer/investigator and scoped
@@ -82,7 +90,7 @@ is never available to supervised children.
    (`docs/workit-v1/qualification.md`). Do not invoke `scripts/run-v1-evaluation.ts`
    or fabricate batch results without explicit model/run/time/usage authorization.
 7. Stale-install auto-load repair is automatic and fail-open: the doctor's `stale_install` finding (legacy `mcp.json`/hook selectors, a local-dist install behind the current/published runtime, or an OpenCode `@latest` package cache frozen behind the published `workit-opencode`) is enforced by `install-cursor-plugin.sh` via a `doctor-check.ts cursor --stale` pre-check for Cursor — exit 2 triggers a refresh + canonical re-registration, a healthy install is byte-untouched, and a registry-unreachable comparison warns as `registry_unreachable` (never `stale_install`, never an install failure). Canonical Cursor `@latest` installs never fail on version metadata. OpenCode npm pins keep the bare `@brainervirus/workit-opencode` identity; when OpenCode's `~/.cache/opencode/packages/@brainervirus/workit-opencode@latest` lags the registry, doctor fails with the exact cache path to delete so the next launch re-resolves.
-8. Agent-facing behavior rules ship in the distributed surfaces: the invariant bootstrap (injected on OpenCode, Pi, Cursor, and Codex), the method skills (copied to every host), and adapter messages. This file documents this repository's development contract; a rule that lives only here never reaches installed workit instances.
+8. Agent-facing behavior rules ship in the distributed surfaces: the invariant bootstrap (injected on OpenCode, Pi, Cursor, Codex, and Claude Code), the method skills (copied to every host), and adapter messages. This file documents this repository's development contract; a rule that lives only here never reaches installed workit instances.
 
 ### Where a rule lives
 

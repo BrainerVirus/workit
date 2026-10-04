@@ -25,14 +25,19 @@ for (const pkg of [
   "workit-cursor",
   "workit-codex",
   "workit-pi",
+  "workit-claude-code",
 ]) {
   const file = resolve(root, `packages/${pkg}/package.json`);
   const data = JSON.parse(readFileSync(file, "utf8"));
-  const deps = data.dependencies;
-  if (!deps) continue;
-  for (const name of Object.keys(deps)) {
-    if (name.startsWith("@brainervirus/")) deps[name] = `^${core.version}`;
-  }
+  // devDependencies too: the Claude Code plugin bundles core and the CLI into
+  // dist/, so they are build-time only, but a published manifest must still
+  // never carry workspace:*.
+  const groups = [data.dependencies, data.devDependencies].filter(Boolean);
+  if (groups.length === 0) continue;
+  for (const deps of groups)
+    for (const name of Object.keys(deps)) {
+      if (name.startsWith("@brainervirus/")) deps[name] = `^${core.version}`;
+    }
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 }
 // The root marketplace index carries no release version; only the package
@@ -40,6 +45,7 @@ for (const pkg of [
 for (const file of [
   resolve(root, "packages/workit-cursor/.cursor-plugin/plugin.json"),
   resolve(root, "packages/workit-codex/.codex-plugin/plugin.json"),
+  resolve(root, "packages/workit-claude-code/.claude-plugin/plugin.json"),
 ]) {
   const data = JSON.parse(readFileSync(file, "utf8"));
   data.version = core.version;

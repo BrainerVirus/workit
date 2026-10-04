@@ -1,0 +1,23 @@
+schema_version: "1.0"
+name: skill-triggers
+description: An independent-review request loads the plugin's review skill.
+tags: [skills]
+context:
+  scaffold_script: ../scaffold/git-repo.sh
+execution:
+  prompt: >-
+    Do an independent correctness and regression review of the latest commit
+    in this repository and report your findings.
+  max_turns: 12
+  allowed_tools: [Read, Grep, Glob, Bash, Skill]
+runs: 1
+graders:
+  - type: tool_used
+    name: review-skill-loaded
+    tool: Skill
+    input_match: "review"
+  - type: llm
+    name: finds-the-regression
+    criteria: >-
+      The review identifies that the latest commit changes add() to subtract
+      (a - b), which is a correctness regression.

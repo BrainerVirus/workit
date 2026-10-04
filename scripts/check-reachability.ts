@@ -26,6 +26,8 @@ const ENTRIES = [
   "packages/workit-cursor/hooks/session-start.ts",
   "packages/workit-codex/hooks/workit-hook.ts",
   "packages/workit-codex/scripts/launch-mcp.ts",
+  "packages/workit-claude-code/src/hook.ts", // Claude Code dist/workit-hook.js
+  "packages/workit-claude-code/src/run.ts", // Claude Code local-pin hook process
   "packages/workit-pi/extensions/workit.ts",
   "packages/workit-pi/src/worker.ts",
   "packages/workit-cli/src/main.ts", // workit-cli dist/index.js (wizards via dynamic import)

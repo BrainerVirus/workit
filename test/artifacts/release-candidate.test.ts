@@ -26,7 +26,8 @@ const CODEX = "@brainervirus/workit-codex";
 const PI = "@brainervirus/workit-pi";
 const CLI = "@brainervirus/workit-cli";
 
-const V1_PACKAGES = [CORE, MCP, CLI, OPENCODE, CURSOR, CODEX, PI];
+const CLAUDE_CODE = "@brainervirus/workit-claude-code";
+const V1_PACKAGES = [CORE, MCP, CLI, OPENCODE, CURSOR, CODEX, PI, CLAUDE_CODE];
 
 const packedFiles = () => {
   const files: string[] = [];
@@ -147,6 +148,7 @@ test("release analysis treats every v1 package path as product code", () => {
     "workit-cursor",
     "workit-codex",
     "workit-pi",
+    "workit-claude-code",
   ]);
 });
 

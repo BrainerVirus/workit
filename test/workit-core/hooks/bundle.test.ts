@@ -9,6 +9,7 @@ const HOOK_ENTRIES = [
   "packages/workit-codex/hooks/workit-hook.ts",
   "packages/workit-cursor/hooks/workit-hook.ts",
   "packages/workit-core/src/hooks/run.ts",
+  "packages/workit-claude-code/src/hook.ts",
 ];
 // Minified bytes. The design target is 300 KB; today's floor is the task
 // engine plus zod that compact task context needs (~585 KB), so this pins the

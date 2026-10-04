@@ -1,7 +1,7 @@
 # Workit
 
 Multi-platform Workit workflow support for Cursor, OpenCode, Codex CLI/desktop,
-Pi, and the CLI. The hosts share one task contract and eight operation families
+Pi, Claude Code, and the CLI. The hosts share one task contract and eight operation families
 while adapting authority and lifecycle behavior to the native surfaces each
 host documents.
 
@@ -17,6 +17,7 @@ completion; a local commit does not prove a remote push.
 | OpenCode    | Native plugin with fourteen method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
 | Cursor      | MCP transport, one native hook dispatcher, one contract rule, and fourteen skills  |
 | Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and fourteen skills |
+| Claude Code | Native plugin: session/per-turn task context hooks, branch policy on git shell commands, fourteen skills, and verifier/reviewer/implementer agents |
 | Pi          | Native npm extension with nine tools (eight shared families plus external action), fourteen skills, and session continuity |
 | Shared MCP  | Low-level transport for the eight core operation families                       |
 | Shared core | Task, policy, evidence, finding, decision, worker, writer, and continuity state |
@@ -25,7 +26,7 @@ completion; a local commit does not prove a remote push.
 ## Install
 
 Requires **Node.js 24 or newer**. The wizard detects your hosts, configures the
-OpenCode, Cursor, Codex and Pi installations you pick, and writes your global config and optional project files:
+OpenCode, Cursor, Codex, Pi and Claude Code installations you pick, and writes your global config and optional project files:
 
 ```bash
 npx @brainervirus/workit-cli init
@@ -168,6 +169,71 @@ workit writer acquire --actor <session-id>   # bind a writer to this session
 
 Requires Node.js 24+ and Codex CLI or desktop. The hook honors exactly the
 bound session and nothing else.
+
+</details>
+
+<details>
+<summary><strong>Claude Code</strong> — plugin (latest published, or pinned to a checkout)</summary>
+
+**Latest published.** The repository root is a Claude Code marketplace
+(`.claude-plugin/marketplace.json`) whose entry installs the published
+`@brainervirus/workit-claude-code` npm package. Select Claude Code in the
+wizard, or install natively:
+
+```bash
+claude plugin marketplace add BrainerVirus/workit
+claude plugin install workit@workit
+# later: refresh the marketplace, then update (Claude auto-update is off by default)
+claude plugin marketplace update workit && claude plugin update workit@workit
+```
+
+`workit doctor` warns (`claude_plugin`) when a newer plugin version is
+published than the one installed. `workit uninstall` previews and runs the
+native `claude plugin uninstall workit@<marketplace> --scope <scope>` for each
+Workit install that applies where you run it: user scope, plus project/local
+scope installs of the current project (run from that project).
+
+**Local pin to a checkout.** Load the package straight from this repository;
+hooks and `workit` on the Bash tool then run the TypeScript sources with Bun,
+so edits apply without rebuilding the plugin. Only the generated skills need a
+build step:
+
+```bash
+bun install
+bun packages/workit-claude-code/scripts/build.ts --skills-only   # generate skills/
+claude --plugin-dir "$PWD/packages/workit-claude-code"           # one session
+# every session: export it from your shell profile instead
+export CLAUDE_CODE_PLUGIN_DIRS="$HOME/path/to/workit/packages/workit-claude-code"
+```
+
+Disable the marketplace install while pinning (`claude plugin disable
+workit@workit`) so the two copies do not both load. A pinned checkout needs
+Bun on `PATH`; an installed plugin needs only Node.js 24+.
+
+The plugin ships:
+
+- hooks: `SessionStart` (startup/resume/clear/compact/fork) injects the Workit
+  contract and task context and exports `WORKIT_HOST`/`WORKIT_SESSION_ID` to
+  the session's shell; `UserPromptSubmit` re-injects task context only when it
+  changed since it was last injected; `PreToolUse` on `Bash`/`PowerShell`
+  `git *` commands denies protected or non-compliant branch operations with a
+  structured `permissionDecision: "deny"` (Claude Code 2.1.288 shows it as
+  `PreToolUse:Bash hook error: <reason>`; it never answers `allow`, so your
+  permission prompts stay in charge); `SubagentStart` tells the `implementer`
+  it works in its own worktree and other subagents that they are read-only.
+  No other events are registered;
+- fail-open: if the hook runtime cannot start (no Bun for a pin, a missing or
+  unloadable `dist/`), the hook answers nothing and prints one
+  `[workit] Claude Code hook unavailable: …` line, and Claude runs as if Workit
+  were not installed;
+- skills: the fourteen method skills, namespaced as `/workit:<name>`
+  (`/workit:review`, `/workit:plan`, …);
+- agents: `verifier` and `reviewer` (read-only) and `implementer`
+  (`isolation: worktree`);
+- `workit` on the Bash tool's `PATH` (the plugin `bin/`).
+
+No MCP server is registered: Claude has a shell, and tool schemas cost
+resident context. To opt in, add `workit-mcp` to your own Claude settings.
 
 </details>
 
@@ -394,6 +460,21 @@ native arbitrary-question receipt or attested writer delegation.
 </details>
 
 <details>
+<summary><strong>Claude Code</strong></summary>
+
+Claude Code runs one hook process per event (`node bin/workit-hook.mjs`, exec
+form, no shell) through the shared host-hook protocol. Branch policy denies use
+`permissionDecision: "deny"` with the unblock hint in the reason; Workit never
+emits `allow`. `PreCompact` cannot inject context, so the task context is
+restored by `SessionStart` with `source: "compact"` (no `PreCompact` hook is
+registered). `SubagentStart` can only add context, never block or bind: the
+worktree `implementer` is told it may edit and commit in its own worktree after
+switching to a policy-compliant branch (Claude names worktree branches itself),
+and every other subagent is observed as read-only/agent-guided.
+
+</details>
+
+<details>
 <summary><strong>Pi</strong></summary>
 
 Pi loads `@brainervirus/workit-pi` through its native package manager and reads
@@ -581,7 +662,7 @@ blocks publication on missing deterministic or live evidence. The 90-run live ba
 requires explicit authorization; see `docs/workit-v1/qualification.md`.
 
 Published bundles are built with Bun and run on Node. The Cursor, OpenCode,
-Codex, and Pi package builds copy the fourteen canonical skills from `packages/workit-core`; no
+Codex, Pi, and Claude Code package builds copy the fourteen canonical skills from `packages/workit-core`; no
 host-specific skill forks are maintained.
 
 ## Repository layout
@@ -595,7 +676,9 @@ workit/
 │   ├── workit-cursor/      # Cursor MCP, hooks, rule, and skills
 │   ├── workit-codex/       # Codex CLI/desktop MCP, hooks, and skills
 │   ├── workit-pi/          # Pi native extension, bundled core, and skills
+│   ├── workit-claude-code/ # Claude Code plugin: hooks, agents, generated skills
 │   └── workit-cli/         # CLI setup wizard
 ├── .cursor-plugin/         # Marketplace metadata
+├── .claude-plugin/         # Claude Code marketplace (npm-sourced plugin entry)
 └── test/                   # repository verification
 ```
