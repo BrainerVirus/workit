@@ -377,7 +377,17 @@ test("Given writers killed with SIGKILL mid-append, Then the log never corrupts 
   expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => events[0].seq + index));
   const current = new TaskStore(root).readTask(task.id);
   if (!current.ok) throw new Error(current.error);
-  expect(new TaskStore(root).mutateTask(task.id, current.data.revision, identity).ok).toBe(true);
+  let after = new TaskStore(root).mutateTask(task.id, current.data.revision, identity);
+  // A writer killed while writing the lock file leaves it unreadable, which
+  // S1 treats as a lock being written until its TTL: retryable busy, never
+  // damage. Age it past the TTL and the next write reclaims it.
+  if (!after.ok && after.code === "busy") {
+    const lock = path.join(taskDirOf(root, task.id), "lock");
+    const old = new Date(Date.now() - 15 * 60_000);
+    utimesSync(lock, old, old);
+    after = new TaskStore(root).mutateTask(task.id, current.data.revision, identity);
+  }
+  expect(after.ok, after.ok ? "" : `${after.code}: ${after.error}`).toBe(true);
 }, 60_000);
 
 test("updates that edit the record in place are still recorded", () => {
