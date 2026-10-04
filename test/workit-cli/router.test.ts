@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { OPERATION_FAMILIES } from "@/packages/workit-core/src/core/task-contract";
 import { main, parseGlobals } from "@/packages/workit-cli/src/main";
 import { emit, fail, type EnvelopeCode, type Io } from "@/packages/workit-cli/src/output";
+import { lockPathFor } from "@/packages/workit-core/src/core/store-lock";
 import { TASK_FAMILY_NAMES, VERBS } from "@/packages/workit-cli/src/verbs/registry";
 
 // S9a router (design §2.0 / §5): the verb table, the shared envelope and exit
@@ -321,11 +322,13 @@ test("under --json every verb's stdout is exactly one JSON document, error paths
     const home = path.join(root, "home");
     const cwd = path.join(root, "work");
     mkdirSync(home, { recursive: true });
-    mkdirSync(path.join(cwd, ".workit"), { recursive: true });
+    mkdirSync(cwd, { recursive: true });
     spawnSync("git", ["init", "-q"], { cwd });
     // An unverifiable lock makes `doctor --fix-lock --force` (no --yes) refuse.
+    const lock = lockPathFor(cwd);
+    mkdirSync(path.dirname(lock), { recursive: true });
     writeFileSync(
-      path.join(cwd, ".workit", "metadata.lock"),
+      lock,
       JSON.stringify({ pid: 1, processStart: null, host: "elsewhere", nonce: "n" }),
     );
     const env = Object.fromEntries(

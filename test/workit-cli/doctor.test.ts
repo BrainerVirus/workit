@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { localLockHost } from "@/packages/workit-core/src/core/store-lock";
+import { localLockHost, lockPathFor } from "@/packages/workit-core/src/core/store-lock";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DoctorReport } from "@/packages/workit-cli/src/admin/doctor";
@@ -68,6 +68,9 @@ test("workit doctor (text) prints per-check lines and no JSON to stdout", () => 
   expect(text.stdout).toMatch(/stale_pin/);
 });
 
+/** The store directory holding a checkout lock (`<store>/checkouts/<slug>/metadata.lock`). */
+const storeOf = (lockPath: string) => path.dirname(path.dirname(path.dirname(lockPath)));
+
 const deadPid = (): number =>
   Number(
     spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], {
@@ -76,7 +79,7 @@ const deadPid = (): number =>
   );
 
 test("Given a stale lock left by a dead pid, When workit doctor runs, Then it warns and names --fix-lock", () => {
-  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  const lockPath = lockPathFor(fixture.cwd);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   writeFileSync(
     lockPath,
@@ -90,12 +93,12 @@ test("Given a stale lock left by a dead pid, When workit doctor runs, Then it wa
     expect(check?.detail).toContain("is not running");
     expect(existsSync(lockPath)).toBe(true);
   } finally {
-    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+    rmSync(storeOf(lockPath), { recursive: true, force: true });
   }
 });
 
 test("Given a stale lock and an abandoned reclaim guard, When workit doctor --fix-lock runs, Then both are cleared", () => {
-  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  const lockPath = lockPathFor(fixture.cwd);
   mkdirSync(`${lockPath}.reclaim`, { recursive: true });
   utimesSync(`${lockPath}.reclaim`, new Date(0), new Date(0));
   writeFileSync(
@@ -110,12 +113,12 @@ test("Given a stale lock and an abandoned reclaim guard, When workit doctor --fi
     expect(existsSync(`${lockPath}.reclaim`)).toBe(false);
     expect(result.stdout).toMatch(/ok {3}workspace_lock — no metadata lock held/);
   } finally {
-    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+    rmSync(storeOf(lockPath), { recursive: true, force: true });
   }
 });
 
 test("Given a lock held by a live process, When workit doctor --fix-lock runs, Then the lock is kept", () => {
-  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  const lockPath = lockPathFor(fixture.cwd);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   const bytes = JSON.stringify({
     pid: process.pid,
@@ -130,13 +133,14 @@ test("Given a lock held by a live process, When workit doctor --fix-lock runs, T
     expect(report.fixLock.cleared).toBe(false);
     expect(readFileSync(lockPath, "utf8")).toBe(bytes);
   } finally {
-    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+    rmSync(storeOf(lockPath), { recursive: true, force: true });
   }
 });
 
 test("Given WORKFLOW_WORKSPACE_ROOT points at another checkout, When workit doctor --fix-lock runs, Then it clears that checkout's stale lock", () => {
   const other = path.join(fixture.root, "other-workspace");
-  const lockPath = path.join(other, ".workit", "metadata.lock");
+  mkdirSync(other, { recursive: true });
+  const lockPath = lockPathFor(other);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   writeFileSync(
     lockPath,
@@ -154,7 +158,7 @@ test("Given WORKFLOW_WORKSPACE_ROOT points at another checkout, When workit doct
 });
 
 test("Given a lock whose owner cannot be verified, When workit doctor --fix-lock --force runs without --yes or a TTY, Then it refuses and keeps the lock; with --yes it clears it", () => {
-  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  const lockPath = lockPathFor(fixture.cwd);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   const bytes = JSON.stringify({ pid: 1, processStart: null, host: "elsewhere", nonce: "n" });
   writeFileSync(lockPath, bytes);
@@ -168,12 +172,12 @@ test("Given a lock whose owner cannot be verified, When workit doctor --fix-lock
     expect(forced.stdout).toContain("fix-lock: cleared lock");
     expect(existsSync(lockPath)).toBe(false);
   } finally {
-    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+    rmSync(storeOf(lockPath), { recursive: true, force: true });
   }
 });
 
 test("Given an unverifiable lock that has blocked writes for over 30s, When workit doctor runs, Then it warns with the exact force command; a fresh one passes", () => {
-  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  const lockPath = lockPathFor(fixture.cwd);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   writeFileSync(
     lockPath,
@@ -190,6 +194,6 @@ test("Given an unverifiable lock that has blocked writes for over 30s, When work
       fix: "workit doctor --fix-lock --force --yes",
     });
   } finally {
-    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+    rmSync(storeOf(lockPath), { recursive: true, force: true });
   }
 });

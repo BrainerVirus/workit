@@ -2,14 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  TaskStore,
-  WorkitCore,
-  canonicalJson,
-  sha256,
-  success,
-  type OperationContext,
-} from "@/packages/workit-core/src/core";
+import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import { assessment, caller, scope, taskStartRequest } from "./task-fixtures";
 
 const root = () => mkdtempSync(join(tmpdir(), "workit-defaults-"));
@@ -19,13 +12,6 @@ const context = (checkout: string): OperationContext => ({
   capabilities: [],
   constraints: [],
   now: "2026-01-01T00:00:00Z",
-  nativeRecovery: ({ writer }) =>
-    success(null, null, {
-      state: "accounted_for" as const,
-      pid: 0,
-      processStart: null,
-      ownerDigest: writer ? sha256(canonicalJson(writer)) : null,
-    }),
 });
 
 const start = (checkout: string, request: unknown = taskStartRequest()) => {

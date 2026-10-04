@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
+import path from "node:path";
+import { checkRoot } from "@brainervirus/workit-core/src/check-config";
+import { sameDirectoryIdentity } from "@brainervirus/workit-core/src/core/task-store";
 import {
   OPERATION_FAMILIES,
   approvedExternalAction,
@@ -47,9 +50,19 @@ import { canonicalJson, type Result } from "@brainervirus/workit-core/src/core/t
 
 export const TASK_FAMILIES = OPERATION_FAMILIES;
 
-/** The Workit store root for a CLI command: explicit root, WORKFLOW_WORKSPACE_ROOT, then cwd. */
-export const workspaceRootFor = (deps: { root?: string; cwd?: string } = {}): string =>
-  deps.root ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? deps.cwd ?? process.cwd();
+/**
+ * The checkout root for a CLI command: explicit root, WORKFLOW_WORKSPACE_ROOT,
+ * then the worktree top of cwd (cwd outside git), so every verb run anywhere
+ * in a checkout shares its workspace record and implicit task.
+ */
+export const workspaceRootFor = (deps: { root?: string; cwd?: string } = {}): string => {
+  const explicit = deps.root || process.env.WORKFLOW_WORKSPACE_ROOT;
+  if (explicit) return explicit;
+  const cwd = deps.cwd ?? process.cwd();
+  const top = checkRoot(cwd);
+  // Keep the caller's spelling when cwd is the top itself.
+  return sameDirectoryIdentity(top, path.resolve(cwd)) ? cwd : top;
+};
 export const TASK_ACTIONS = {
   task: ["start", "list", "inspect", "revise", "progress", "pause", "resume", "close"],
   policy: ["assess", "preview", "explain"],
@@ -58,7 +71,6 @@ export const TASK_ACTIONS = {
   decision: ["record", "revoke"],
   worker: ["assign", "report", "cancel"],
   writer: ["acquire", "release"],
-  // state.recover is not exposed: no shipped host supplies native recovery authority.
   state: ["export", "import"],
 } as const satisfies Record<OperationFamily, readonly string[]>;
 
@@ -73,7 +85,6 @@ export type TaskCliDeps = {
   capabilities?: Capability[];
   constraints?: Constraint[];
   now?: OperationContext["now"];
-  nativeRecovery?: OperationContext["nativeRecovery"];
   stdinIsTTY?: () => boolean;
   confirm?: () => Promise<boolean>;
   afterExport?: () => void;
@@ -326,7 +337,6 @@ const contextFor = (
   capabilities: deps.capabilities ?? [],
   constraints: deps.constraints ?? [],
   now: deps.now ?? (() => new Date().toISOString()),
-  nativeRecovery: deps.nativeRecovery,
 });
 
 const CONSENT_ACTIONS = new Set([

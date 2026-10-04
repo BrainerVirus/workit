@@ -15,6 +15,7 @@ import {
   type PushOutcome,
 } from "@brainervirus/workit-core/src/git/ops";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 import { connect, forgeFail, parseFlags, usage } from "./forge-common";
 
@@ -103,6 +104,7 @@ async function commit(argv: string[], io: Io): Promise<number> {
     env: io.env,
   });
   if (!result.ok) return forgeFail(io, result);
+  await ensureImplicitTask(io);
   return emit(io, ok(result.data), (data: CommitOutcome) => [
     `${data.branch} ${short(data.sha)} ${data.message.split("\n", 1)[0]} (${data.files.length} file${data.files.length === 1 ? "" : "s"})`,
     ...(data.leftDirty ? [`${data.leftDirty} change(s) left uncommitted`] : []),

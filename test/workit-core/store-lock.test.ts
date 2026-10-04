@@ -12,6 +12,7 @@ import {
 import { hostname, tmpdir } from "node:os";
 import {
   localLockHost,
+  lockPathFor,
   parseProcStatStart,
   processStartOf,
 } from "@/packages/workit-core/src/core/store-lock";
@@ -41,7 +42,13 @@ const startedStore = (options?: { lockTimeoutMs?: number }) => {
     intent: { objective: "lock test", scope: scope(), authorityRefs: [ref()] },
   });
   if (!created.ok) throw new Error(created.error);
-  return { store, task: created.data, lockPath: join(store.root, ".workit", "metadata.lock") };
+  // A task write takes the task's lock; workspace writes take the checkout's.
+  return {
+    store,
+    task: created.data,
+    lockPath: join(store.root, ".workit", "tasks", created.data.id, "lock"),
+    checkoutLock: lockPathFor(store.root),
+  };
 };
 
 const processStart = processStartOf;
@@ -154,13 +161,13 @@ test("Given an abandoned reclaim guard older than the TTL, When a write runs, Th
 
 test("Given a corrupt task record, When a write runs, Then recovery_required still surfaces", () => {
   const { store, task } = startedStore();
-  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
-  writeFileSync(file, "{broken");
+  const file = join(store.root, ".workit", "tasks", task.id, "events.jsonl");
+  writeFileSync(file, "{broken}\n{broken");
   expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
     ok: false,
     code: "recovery_required",
   });
-  expect(readFileSync(file, "utf8")).toBe("{broken");
+  expect(readFileSync(file, "utf8")).toBe("{broken}\n{broken");
 });
 
 const storeModule = resolve(import.meta.dir, "../../packages/workit-core/src/core/task-store.ts");
@@ -293,7 +300,7 @@ test("Given an in-process host with the default budget, When a live holder keeps
 });
 
 test("Given doctor --fix-lock is preempted while a writer reclaims the same stale lock, Then the two never hold the lock at once", async () => {
-  const { store, task, lockPath } = startedStore();
+  const { store, checkoutLock: lockPath } = startedStore();
   writeLock(lockPath, { pid: deadPid(), processStart: null, host: localLockHost(), nonce: "x" });
   const run = (script: string) =>
     new Promise<string>((done) => {
@@ -316,9 +323,9 @@ test("Given doctor --fix-lock is preempted while a writer reclaims the same stal
   const writer = (label: string, holdMs: number) => `
     const { TaskStore } = await import(${JSON.stringify(storeModule)});
     const s = new TaskStore(${JSON.stringify(store.root)}, { lockTimeoutMs: 5000 });
-    const t = s.readTask(${JSON.stringify(task.id)});
+    const w = s.readWorkspace();
     let span = [0, 0];
-    const r = s.mutateTask(t.data.id, t.data.revision, (x) => {
+    const r = s.mutateWorkspace(w.data.revision, (x) => {
       span[0] = Date.now();
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${holdMs});
       span[1] = Date.now();
@@ -388,7 +395,7 @@ for (const simulateWindows of [false, true])
     `Given a read-only .workit and no lock holder${simulateWindows ? " (simulated Windows)" : ""}, When a write runs, Then it fails fast with storage_error and a permissions hint`,
     () => {
       const { store, task } = startedStore({ lockTimeoutMs: 2_000 });
-      const workit = join(store.root, ".workit");
+      const workit = join(store.root, ".workit", "tasks", task.id);
       const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
       chmodSync(workit, 0o555);
       try {

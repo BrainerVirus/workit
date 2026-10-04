@@ -1166,16 +1166,6 @@ const stateOperations = {
     bundle: exportBundleSchema,
     authorityRefs: z.array(refSchema),
   }),
-  recover: operation({
-    action: z.literal("recover"),
-    taskId: id.optional(),
-    expectedWorkspaceRevision: revision.optional(),
-    target: z.enum(["task", "workspace"]),
-    expectedBytes: digest,
-    snapshotDigest: digest,
-    reason: text,
-    authorityRefs: z.array(refSchema),
-  }),
 };
 
 export const operationSchemas = {
@@ -1191,16 +1181,25 @@ export const operationSchemas = {
 export type OperationRequest = z.infer<(typeof operationSchemas)[OperationFamily]>;
 
 /**
- * Schemas advertised to hosts. `state.recover` needs host-supplied native
- * recovery authority (`OperationContext.nativeRecovery`), which no shipped
- * host provides, so advertising it only sends agents into a guaranteed
- * permission_denied. parseOperation still accepts it for embedders that do
- * supply that authority.
+ * Schemas advertised to hosts. Every `taskId` is optional there: an operation
+ * without one applies to the implicit task of the caller's branch (D3); the
+ * engine fills it in before parsing against `operationSchemas`.
  */
-const { recover: _unadvertisedRecover, ...advertisedStateOperations } = stateOperations;
+const withImplicitTask = (options: Record<string, z.ZodObject>) =>
+  Object.values(options).map((option) =>
+    "taskId" in option.shape ? option.extend({ taskId: id.optional() }) : option,
+  );
+const advertised = (options: Record<string, z.ZodObject>) =>
+  z.discriminatedUnion("action", withImplicitTask(options) as any);
 export const advertisedOperationSchemas = {
-  ...operationSchemas,
-  state: z.discriminatedUnion("action", Object.values(advertisedStateOperations) as any),
+  task: advertised(taskOperations),
+  policy: advertised(policyOperations),
+  evidence: advertised(evidenceOperations),
+  finding: advertised(findingOperations),
+  decision: advertised(decisionOperations),
+  worker: advertised(workerOperations),
+  writer: advertised(writerOperations),
+  state: advertised(stateOperations),
 } as const;
 export type TaskStartRequest = z.infer<typeof taskOperations.start>;
 

@@ -15,8 +15,10 @@ const HOOK_ENTRIES = [
 // engine plus zod that compact task context needs (~585 KB), so this pins the
 // current size as a regression ceiling until that graph is split. S9b raised
 // it by 10 KB: close gates now evaluate CLI-observed checks (worktree tree key
-// from git/rev.ts, named-check config from check-config.ts).
-const BUDGET = 630_000;
+// from git/rev.ts, named-check config from check-config.ts). S15 raised it by
+// 20 KB: the append-only task event store (store/: log, patch, reduce, paths)
+// replaces whole-record snapshots and recovery copies.
+const BUDGET = 650_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {
