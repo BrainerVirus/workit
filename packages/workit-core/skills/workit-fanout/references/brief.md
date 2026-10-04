@@ -39,11 +39,12 @@ STANDING: conventional commits; no comments that restate code; ask nothing, reco
 
 ## Worker rules (paste into the brief when the host has no implementer agent)
 
-1. First command: `workit git branch <branch>` (the worktree may start on a
-   name that breaks branch policy).
+1. First command: `workit git branch <branch> --base <base>` (the worktree may
+   start on a name that breaks branch policy).
 2. Decide ambiguities yourself and record them:
    `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`.
    Stop only for an irreversible action, a security-sensitive one, or a side
    effect outside the worktree.
-3. Commit with `workit git commit`; push only if the brief says so.
+3. Commit with `workit git commit -m "<msg>" -- <paths in SCOPE>`; push only if
+   the brief says so.
 4. Never record a verdict on your own work.

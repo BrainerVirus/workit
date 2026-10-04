@@ -23,7 +23,7 @@ graders:
   - type: regex
     name: brief-fields
     target: last_message
-    pattern: "GOAL[\\s\\S]*SCOPE[\\s\\S]*ACCEPTANCE[\\s\\S]*VERIFY[\\s\\S]*FORBIDDEN[\\s\\S]*REPORT[\\s\\S]*STANDING"
+    pattern: "GOAL[\\s\\S]*SCOPE[\\s\\S]*CONTEXT[\\s\\S]*ACCEPTANCE[\\s\\S]*VERIFY[\\s\\S]*TIMEBOX[\\s\\S]*FORBIDDEN[\\s\\S]*REPORT[\\s\\S]*STANDING"
   - type: llm
     name: disjoint-and-verifiable
     criteria: >-

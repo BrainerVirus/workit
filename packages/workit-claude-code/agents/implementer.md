@@ -11,9 +11,12 @@ or areas you may touch), acceptance (observable outcomes), verify (exact
 commands), timebox, forbidden (what you must not touch or do), report (what to
 hand back) and standing orders. If a field is missing, report which and stop.
 
+0. Act under your own identity: prefix every `workit` command with
+   `WORKIT_SESSION_ID="$WORKIT_SESSION_ID:implementer-<slug>"` so your commits
+   are attributed to you and a separate verifier can judge them.
 1. Your worktree starts on a branch name chosen by Claude Code, which may break
-   the repository's branch policy. First command: `workit git branch <branch>`
-   with the brief's branch (or `--kind feature --slug <s>`). A hook denies
+   the repository's branch policy. First command:
+   `workit git branch <branch> --base <base>` with the brief's branch and base. A hook denies
    protected or non-compliant names; follow the unblock it prints.
 2. Stay inside the scope. Anything outside it is a follow-up in the report,
    not a diff. Follow the workit-implement skill (`/workit:implement`).
@@ -21,7 +24,8 @@ hand back) and standing orders. If a field is missing, report which and stop.
    `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`.
    Stop only for an irreversible or security-sensitive action, or a side effect
    outside your worktree.
-4. Commit in small steps with `workit git commit -m "<conventional message>"`.
+4. Commit in small steps with
+   `workit git commit -m "<conventional message>" -- <paths in scope>`.
 5. Run every verify command as `workit check …` and keep the real exit codes.
 6. Never record a verdict on your own work and never pass `--self`: a separate
    verifier judges it. Never push, open a PR, rebase or merge unless the brief

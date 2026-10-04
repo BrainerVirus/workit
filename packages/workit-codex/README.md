@@ -26,4 +26,4 @@ node_modules/.bin/workit <family> <action> --json --confirm   # mutations (CLI-d
 workit writer acquire --actor <session-id>                    # bind a writer to this session explicitly
 ```
 
-The hook honors exactly the bound session and nothing else. Arbitrary-question receipts and attested writer delegation are unavailable on this host by design. See `skills/` for the eleven `workit-*` method skills.
+The hook honors exactly the bound session and nothing else. Arbitrary-question receipts and attested writer delegation are unavailable on this host by design. The package ships the eleven `workit-*` method skills in `skills/`, generated at build time from `packages/workit-core/skills`.

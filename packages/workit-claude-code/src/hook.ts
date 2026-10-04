@@ -28,7 +28,9 @@ export const CLAUDE_ADDENDUM =
   "(workit-shape is /workit:shape). Run workit verbs with the `workit` CLI on the Bash " +
   "tool (`workit --help`); run `workit ci wait` in the background. Agents: `implementer` " +
   "builds one brief in an isolated worktree and never records a verdict; `verifier` and " +
-  "`reviewer` are read-only non-authors that record `workit ledger verdict`.";
+  "`reviewer` are read-only non-authors that record `workit ledger verdict`. Subagents " +
+  "share this session's WORKIT_SESSION_ID, so the plugin's agents run workit as " +
+  '`WORKIT_SESSION_ID="$WORKIT_SESSION_ID:<role>"`.';
 
 const adapter: HostAdapter = { ...claudeCodeAdapter, addendum: () => CLAUDE_ADDENDUM };
 type Payload = Record<string, unknown>;

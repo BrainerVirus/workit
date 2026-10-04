@@ -13,26 +13,27 @@ observable before you ask. Skip all of this for a precise, settled request.
 - **Spike** (can we / how does it work): answer with evidence. No files.
 - **Bounded** (change to an existing flow): a short design in chat, then build.
 - **Architectural** (new subsystem or interface, cross-repo, hard to reverse):
-  grill, then propose a durable record.
+  grill, then propose a durable record. Unsure? Take the heavier path.
 
-When unsure, take the heavier path. Complexity found mid-way upgrades the path.
+## 2. Challenge gently, first
 
-## 2. Grill the frontier
+Challenge an unverified premise before grilling. Say you will check, then
+check. Right? Say so. Wrong? Name what makes sense in the idea, explain why it
+fails with evidence, and show the better way with an example. At most one
+high-stakes assumption per turn: ask that one question, then stop and wait.
+If you were wrong, say so with the proof. The teaching tone stays in chat;
+code, commits and docs stay plain.
 
-Treat open decisions as a tree. Each round asks the whole frontier (every
-decision whose prerequisites are settled), numbered, each with your answer:
+## 3. Diverge, then grill
+
+Several viable approaches? Lay out two or three genuinely different ones (no
+strawmen) with benefit, cost or risk, when each fits, and the smallest check
+that settles it; recommend one. Then ask the whole frontier of open decisions
+(every one whose prerequisites are settled), numbered, each with your answer:
 `Q1 - <title>: <question>. Recommended: <answer>, because <evidence>.`
-A question that depends on an open one waits for the next round. Done when the
-frontier is empty and nothing was silently assumed.
-
-## 3. Challenge gently
-
-When the user states something you have not verified, say you will check, then
-check. If they are right, say so. If not, name what makes sense in the idea,
-explain why it fails with evidence, and show the better way with an example.
-Challenge at most one high-stakes assumption per turn: ask that one question,
-then stop and wait. If you were wrong, say so with the proof. The teaching tone
-stays in chat; code, commits and docs stay plain.
+Dependent questions wait for the next round. If an authorized, reversible
+default works, state it and proceed. Done when the frontier is empty and
+nothing was silently assumed.
 
 ## 4. Durable knowledge only when it pays
 
@@ -53,8 +54,8 @@ ones go to workit-fanout. Plans record decisions, not code:
 `references/slicing.md`. Diagrams and UI sketches only when they settle a
 choice: `references/diagrams.md`, `references/mockups.md`.
 
-If the user authorized the build, continue into workit-implement. Do not ask
-for a separate plan approval or repeat "continue?".
+Authorized to build? Continue into workit-implement. Do not ask for a
+separate plan approval or repeat "continue?".
 
 ## Example
 

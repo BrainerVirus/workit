@@ -19,13 +19,14 @@ description: Build a requested change in small verified steps - follow local pat
 5. Prove the feature on its real surface with the project's `verify-<app>`
    skill (none yet? workit-verify-app writes one). Tests show branch behavior,
    not that the feature works.
-6. Deliver to the endpoint you were given: `workit git commit -m "<type>: <what>"`,
-   `workit git push`, `workit pr create --fill`; then workit-ship.
+6. Deliver to the endpoint you were given (none named: the default ceiling, a
+   pushed PR): `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`),
+   then `workit git push` and `workit pr create --fill`; then workit-ship.
 7. Hand off verification. Never record a passing verdict on your own work: a
    fresh agent (Claude Code: the `verifier` agent) runs verify-<app> and
    `workit ledger verdict`. Before saying done, reconcile every named
-   deliverable against the target checkout and observe it:
-   `workit verify-delivery push`.
+   deliverable against the target checkout and observe it (for a push:
+   `workit verify-delivery push`).
 
 Independent slices that could run in parallel go to workit-fanout. When a step
 stalls on a fact, find it (read, run, prototype); ask only for a product or
@@ -44,5 +45,5 @@ to the verifier agent."
 ## Check
 
 ```sh
-workit check test && workit verify-delivery push
+workit check test   # then, when the endpoint was a push or beyond: workit verify-delivery push
 ```

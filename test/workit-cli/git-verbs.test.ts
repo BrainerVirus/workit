@@ -259,6 +259,35 @@ test("git commit: the session goes into a Workit-Session trailer and an observed
   expect(bad.code).toBe(2);
 });
 
+// Claude Code subagents share the lead's WORKIT_SESSION_ID (one SessionStart
+// export). The plugin agents therefore act as `<session>:<role>`; this pins
+// that the convention gives author != verifier (D18) on the real verbs.
+test("Given an implementer subagent's commit, When a verifier subagent records a verdict under its role-scoped session, Then it is accepted and the implementer's own verdict is refused", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/slice");
+  repo.write("s.txt", "s\n");
+  const implementer = { ...process.env, WORKIT_SESSION_ID: "lead-1:implementer-slice" };
+  const verifier = { ...process.env, WORKIT_SESSION_ID: "lead-1:verifier" };
+  expect(
+    (await run(["git", "commit", "-m", "feat: slice", "--", "s.txt"], repo.cwd, implementer)).code,
+  ).toBe(0);
+  const own = await run(
+    ["ledger", "verdict", "verified", "--how", "ran it"],
+    repo.cwd,
+    implementer,
+  );
+  expect(own.code).toBe(3);
+  expect(own.stderr).toContain("author_verdict");
+  const independent = await run(
+    ["ledger", "verdict", "tests-verified", "--kind", "unit", "--how", "workit check test exit 0"],
+    repo.cwd,
+    verifier,
+  );
+  expect(independent.code, independent.stderr).toBe(0);
+  const check = await run(["ledger", "check", "--json"], repo.cwd, verifier);
+  expect(check.json().data.accepted.accepted).toBe(true);
+});
+
 test("git commit: a protected branch is refused (exit 3) with the branch command", async () => {
   const repo = setup();
   repo.write("a.txt", "a\n");

@@ -15,9 +15,10 @@ says exactly how, then proves it once.
    justfile, Dockerfile and compose files, framework config, existing e2e
    (Playwright, Cypress), the README's run section, `.env.example`. Classify:
    CLI, web UI, HTTP API, library, or several.
-2. **Write the skill** from `references/template.md` where this host finds
-   project skills (Claude Code `.claude/skills/`, Cursor `.cursor/skills/`,
-   Codex, OpenCode and Pi `.agents/skills/`; an existing skills dir wins):
+2. **Write the skill** from `references/template.md` in the directory where
+   this host reads project skills (Claude Code `.claude/skills/`, Cursor
+   `.cursor/skills/`; other hosts: the directory their docs name). If the repo
+   already has a project skills directory, use it:
    - **Launch:** one command, its ready signal (log line, port, exit 0), a timeout.
    - **Doctor:** each precondition and its fix (deps, env vars, ports, services).
    - **Drive:** how to exercise it: CLI invocations, `curl` against routes, a
@@ -29,9 +30,15 @@ says exactly how, then proves it once.
 3. **Prove it end-to-end once:** launch, drive one feature, capture evidence,
    clean up. Fix the skill until that run is clean. A generated skill that was
    never run is a guess; do not hand it off.
-4. **Make the driver a named check** when it is cheap and deterministic: add
-   `"verify": "<driver command>"` to the `checks` in `workit.checks.json`, so
-   `workit check verify` records it (it then joins the verification gate).
+4. **Make the driver a named check** when it is cheap and deterministic. A
+   named check is one command without shell syntax (put pipes and setup in a
+   script). Add `"verify": "<driver>"` to `checks` in `workit.checks.json`; if
+   the file does not exist yet, first copy in every check the repo already runs
+   (test, lint, typecheck), because the file replaces the detected defaults.
+   `workit check verify` then records it, and it joins the verification gate
+   unless `gates.verification` names the checks explicitly. Until then,
+   `workit check --name verify-<app> -- <driver>` is ad-hoc: evidence for a
+   verdict, never a gate.
 
 ## Maintain
 

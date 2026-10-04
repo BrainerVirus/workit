@@ -1,6 +1,6 @@
 ---
 name: workit-continue
-description: Keep work on track across interruptions and sessions - sort new input, checkpoint, hand off with a resume brief, and pick up by verifying inherited claims. Use for resume, pick up, handoff, new session, interruption, change of plan.
+description: Keep work on track across interruptions and sessions - sort new input, checkpoint, hand off with a resume brief, and pick up by verifying inherited claims. Use for resume, pick up, handoff, new session, interruption, change of direction.
 ---
 
 # Continue without losing the thread
@@ -18,7 +18,7 @@ description: Keep work on track across interruptions and sessions - sort new inp
 ## Checkpoint and hand off
 
 ```sh
-workit git commit -m "wip: <state>"     # nothing lives only in your context
+workit git commit -m "wip: <state>" --all   # nothing lives only in your context
 workit handoff --note "<state in one line>" --next "<next command>" --record
 ```
 
@@ -49,5 +49,5 @@ next `workit check test`. Re-ran it: exit 0. The brief says PR #42 is open:
 ## Check
 
 ```sh
-workit handoff --json   # a next command is present and the checks are fresh
+workit handoff   # read: "next command" is set and no check is listed as stale
 ```

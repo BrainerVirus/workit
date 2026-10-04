@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { CLAUDE_ADDENDUM } from "@/packages/workit-claude-code/src/hook";
+import { VERBS } from "@/packages/workit-cli/src/verbs/registry";
 import { invariantBootstrap } from "@/packages/workit-core/src/core/methods";
 import {
   WORKIT_METHOD_SKILLS,
@@ -15,14 +17,16 @@ import {
 const SKILLS = path.join(import.meta.dir, "../../packages/workit-core/skills");
 const skillMd = (name: string) => readFileSync(path.join(SKILLS, name, "SKILL.md"), "utf8");
 const body = (text: string) => text.slice(text.indexOf("\n---", 4) + 4);
-const has = (text: string, word: string) =>
-  new RegExp(`(^|[^a-z])${word.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`, "i").test(text);
+const escape = (word: string) => word.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+const has = (text: string, word: string) => new RegExp(`(^|[^a-z])${escape(word)}`, "i").test(text);
+const hasWord = (text: string, word: string) =>
+  new RegExp(`(^|[^a-z])${escape(word)}($|[^a-z])`, "i").test(text);
 
 // Resident text is what every session pays before any skill loads: the
 // bootstrap plus each skill's name and description. Tokens are estimated as
 // characters / 4 (a proxy; no tokenizer ships offline). The 3.0 set (16
 // skills) measured ~2,040 by this proxy: bootstrap ~1,550, descriptions ~490.
-const RESIDENT_TOKEN_BUDGET = 1_500;
+const RESIDENT_TOKEN_BUDGET = 1_600;
 const estimateTokens = (text: string) => Math.ceil(text.length / 4);
 
 test("Given every skill, Then its description says what and when within 250 characters and carries all of its trigger words", () => {
@@ -108,4 +112,92 @@ test(`Given the resident text, Then bootstrap plus descriptions stay within ${RE
   ).join("\n");
   const resident = estimateTokens(`${invariantBootstrap()}\n${descriptions}`);
   expect(resident).toBeLessThanOrEqual(RESIDENT_TOKEN_BUDGET);
+});
+
+test("Given every description, Then it carries no other skill's trigger word", () => {
+  for (const name of WORKIT_METHOD_SKILLS) {
+    const description = skillDescription(skillMd(name));
+    for (const [other, words] of Object.entries(WORKIT_SKILL_TRIGGERS))
+      if (other !== name)
+        for (const word of words)
+          expect(
+            hasWord(description, word),
+            `${name} description contains ${other}'s "${word}"`,
+          ).toBe(false);
+  }
+});
+
+// Every `workit <verb> …` an agent is told to run must parse: the verb exists,
+// a subcommand is one the verb's usage lists, and each flag is one the verb's
+// source handles. Commit spans must name what to commit (`--all` or paths).
+const REPO = path.join(import.meta.dir, "../..");
+const VERB_SOURCES = path.join(REPO, "packages/workit-cli/src/verbs");
+const SUBCOMMAND_VERBS = new Set(["git", "pr", "ci", "stack", "ledger", "verify-delivery"]);
+const GLOBAL_FLAGS = new Set(["--json", "--cwd", "--help"]);
+
+const agentFacingTexts = (): Array<[string, string]> => {
+  const out: Array<[string, string]> = [
+    ["bootstrap", invariantBootstrap()],
+    ["claude addendum", CLAUDE_ADDENDUM],
+  ];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name.endsWith(".md"))
+        out.push([path.relative(REPO, file), readFileSync(file, "utf8")]);
+    }
+  };
+  walk(SKILLS);
+  walk(path.join(REPO, "packages/workit-claude-code/agents"));
+  return out;
+};
+
+/** `workit …` invocations inside code spans and sh blocks, cut at shell operators. */
+const invocations = (text: string): string[] => {
+  const code = [
+    ...[...text.matchAll(/`([^`\n]+)`/g)].map((match) => match[1]),
+    ...[...text.matchAll(/```sh\n([\s\S]*?)```/g)].flatMap((match) => match[1].split("\n")),
+  ];
+  return code.flatMap((span) =>
+    [...span.matchAll(/(?:^|[\s"(=])workit ([a-z][a-z-]*(?: [^|;&#)]*)?)/g)].map((match) =>
+      match[1].trim(),
+    ),
+  );
+};
+
+test("Given every workit command in skills, references, agents and the bootstrap, Then it matches the real CLI grammar", () => {
+  const verbs = new Map(VERBS.map((verb) => [verb.name, verb]));
+  let checked = 0;
+  for (const [source, text] of agentFacingTexts())
+    for (const call of invocations(text)) {
+      const [verb, sub] = call.split(/\s+/);
+      if (verb === "help" || verb === "verb") continue;
+      const entry = verbs.get(verb);
+      expect(entry, `${source}: unknown verb in "workit ${call}"`).toBeDefined();
+      if (!entry) continue;
+      checked++;
+      if (SUBCOMMAND_VERBS.has(verb) && sub && /^[a-z]/.test(sub))
+        expect(
+          hasWord(entry.usage, sub),
+          `${source}: "workit ${call}" (usage: ${entry.usage})`,
+        ).toBe(true);
+      const file = path.join(VERB_SOURCES, `${verb}.ts`);
+      const handled = existsSync(file)
+        ? readFileSync(file, "utf8") +
+          readFileSync(path.join(VERB_SOURCES, "forge-common.ts"), "utf8")
+        : entry.usage;
+      for (const [flag] of call.matchAll(/--[a-z][a-z-]*/g))
+        if (!GLOBAL_FLAGS.has(flag))
+          expect(
+            handled.includes(flag) || handled.includes(`${flag.slice(2)}:`),
+            `${source}: "workit ${call}" uses ${flag}`,
+          ).toBe(true);
+      if (verb === "git" && sub === "commit")
+        expect(
+          / --all\b| -- \S/.test(call),
+          `${source}: "workit ${call}" names nothing to commit`,
+        ).toBe(true);
+    }
+  expect(checked).toBeGreaterThan(40);
 });

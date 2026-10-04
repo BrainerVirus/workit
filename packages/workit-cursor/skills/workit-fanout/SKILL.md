@@ -22,21 +22,23 @@ ceremony; do it yourself.
    directives decay across resumes. Template: `references/brief.md`.
 4. **Spawn all workers in one message**, in the background, each in its own
    worktree (Claude Code: the `implementer` agent; elsewhere
-   `git worktree add ../<repo>-wt/<slug> -b <branch> origin/<base>`). The first
-   command a worker runs is `workit git branch <branch>`.
-5. **Judge liveness by side effects only:** new commits, pushes, PR and check
-   changes (`workit stack status`, `workit pr status`). No progress past the
-   timebox means stuck: replace the worker with a fresh one carrying the
-   consolidated brief (original, later directives, its last report, its
-   branch). Replace at most twice, then re-slice or report the gap. Never
-   chain resumes.
+   `git worktree add --detach ../<repo>-wt/<slug> origin/<base>`). The first
+   command a worker runs is `workit git branch <branch> --base <base>`.
+5. **Judge liveness by side effects only:** new commits and pushes
+   (`git log <branch>`), PR and check changes (`workit pr status --branch <b>`).
+   No progress past the timebox means stuck. Stop the old worker and observe
+   that it exited (a timeout is not proof), then replace it with a fresh one in
+   a fresh worktree that continues from the branch head, carrying the
+   consolidated brief (original, later directives, its last report). Never two
+   live workers on one branch. Replace at most twice, then re-slice or report
+   the gap. Never chain resumes.
 6. **Verify each slice independently.** A fresh agent that did not write it
    (Claude Code: the `verifier` agent) runs VERIFY and verify-<app>, then
    `workit ledger verdict <result> --branch <b> --how "<evidence>"`. A worker's
    report is a pointer, never evidence.
-7. **Fan in.** Read `workit ledger list --type verdict` and
-   `workit stack status`; restack with `workit stack sync`. Only you touch
-   topology: workers never rebase, retarget or merge. Then workit-ship.
+7. **Fan in.** `workit ledger check --branch <b>` for each slice; restack
+   stacked slices with `workit stack sync`. Only you touch topology: workers
+   never rebase, retarget or merge. Then workit-ship.
 
 ## Example
 
@@ -50,5 +52,5 @@ counts; SCOPE: `src/routes/usage.ts`, `test/usage.test.ts`; VERIFY:
 ## Check
 
 ```sh
-workit ledger list --type verdict   # one accepted, independent verdict per slice branch
+workit ledger check --branch <b>   # per slice: accepted (current, passing, independent)
 ```

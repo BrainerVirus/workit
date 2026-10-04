@@ -1,6 +1,6 @@
 ---
 name: workit-ship
-description: Drive pushed work to its endpoint - open or stack PRs, fix red CI, answer review threads, land verified PRs when granted. Use for ship, open a PR, babysit, CI failing, checks red, address comments, stack, merge, land.
+description: Drive pushed work to its endpoint - open or stack PRs, fix red CI, answer PR threads, land verified PRs when granted. Use for ship, open a PR, babysit, CI failing, checks red, address comments, stack, merge, land.
 ---
 
 # Ship to the endpoint
@@ -16,7 +16,9 @@ merge: Stop at PR-ready unless the user set merge as the endpoint.
    one `workit pr create --base <parent> --fill` per branch, then
    `workit stack sync`. Finish the whole stack before babysitting any PR.
 2. **Read state.** `workit pr status --json` and follow its `next`, in order:
-   conflicts, behind base, review threads, CI.
+   conflicts, behind base, threads, CI. `MARK_READY` (draft): mark it ready
+   when the endpoint is PR-ready. `REVIEW` with nothing else left means a human
+   approval is pending: that is the stop point unless merge is granted.
 3. **Conflicts or behind base.** Rebase onto the base and
    `workit git push --force-with-lease` (the CLI computes the lease); inside a
    stack use `workit stack sync`. Only the stack owner rewrites topology.
@@ -43,5 +45,5 @@ Good: "`ci / test` failed on a8f3: `expected 3, got 2` in stack.test.ts
 ## Check
 
 ```sh
-workit pr status --json   # next is READY, or MERGED when merge was the endpoint
+workit pr status --json   # next is READY or REVIEW (approval pending); MERGED when merge was the endpoint
 ```

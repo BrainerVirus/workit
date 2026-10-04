@@ -1,6 +1,6 @@
 ---
 name: workit-bdd
-description: Turn requirements into Given/When/Then scenarios, agree the test seam, and build test-first in vertical RED/GREEN slices. Use for BDD, TDD, acceptance criteria, scenarios, Given/When/Then, write a test first, regression test.
+description: Turn requirements into Given/When/Then scenarios, agree the test seam, and work test-first in vertical RED/GREEN slices. Use for BDD, TDD, acceptance criteria, scenarios, Given/When/Then, write a test first.
 ---
 
 # Behavior first: Given/When/Then
@@ -21,7 +21,9 @@ description: Turn requirements into Given/When/Then scenarios, agree the test se
    then take the next scenario. Any edit makes the observation stale; re-run
    before you claim it. A recorded "tests pass" is a note, and an ad-hoc
    `workit check -- <cmd>` never satisfies the gate: only the configured
-   `test` check does (no `test` configured? add it to `workit.checks.json`).
+   `test` check does. No `test` detected? Create `workit.checks.json`, copying
+   in every check the repo already runs: once it exists it replaces the
+   detected defaults.
 5. **Mock only at system boundaries:** network, clock, randomness, other
    processes, sometimes the filesystem. Never the unit or its own
    collaborators; use the real thing or an in-memory adapter behind a port.

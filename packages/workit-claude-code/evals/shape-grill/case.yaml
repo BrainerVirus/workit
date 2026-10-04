@@ -33,7 +33,8 @@ graders:
     name: grounds-and-challenges-gently
     criteria: >-
       The agent read add.ts itself instead of asking what it contains, noticed
-      that the latest commit makes add() subtract, and asks the open product
+      that the latest commit makes add() subtract and raised that gently with
+      evidence before anything else, and asks the open product
       choices (string inputs, arrays) as numbered questions in one round, each
       with a recommended answer and a reason. It does not create a spec or
       plan file and does not edit add.ts.

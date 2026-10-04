@@ -97,9 +97,12 @@ receipt, approval or verdict.
 Autonomy contract:
 - Continue to the requested endpoint (answer, local change, commit, push, PR,
   green CI, verified, merged, released) without asking "continue?". Run the
-  checks and safe repairs on the way. The default ceiling is PRs open, CI green
-  and independently verified; merge and release need a workspace grant, and a
-  blocked verb prints the grant or command that unblocks it.
+  checks and safe repairs on the way. No endpoint named: a code change goes to
+  the default ceiling, PRs open with CI green and independently verified;
+  merge and release need a workspace grant, and a blocked verb prints the grant
+  or command that unblocks it. Stop only for a new consequential choice, a host
+  denial, a conflicting edit or an unresolved blocker, and report open gaps and
+  uncertain workers instead of dropping them.
 - Ask only for a product or preference choice, or for authority you lack, and
   give your recommended answer. Facts are yours: read, run or prototype.
   A precise request with settled constraints needs no interview.
@@ -118,13 +121,18 @@ hand-running git, gh or glab: check, git branch|commit|push, pr
 status|create|merge, ci wait|rerun, stack plan|sync|land, verify-delivery,
 ledger decision|ruling|verdict|check, handoff, test-audit (\`workit help
 <verb>\`; without \`workit\` on PATH, \`npx -y @brainervirus/workit-cli\`).
-\`busy\` is retryable; \`blocked\` names its unblock. The task families (task,
+\`busy\` is retryable (\`workit doctor --fix-lock\` clears a dead lock);
+\`blocked\` names its unblock. The task families (task,
 policy, evidence, finding, decision, worker, writer, state) are optional
 continuity for tracked work; a solo edit needs no task or writer. Omit
 revisions; a revision_conflict means one you passed is stale, so re-read first.
-Work across repositories binds each item to its checkout, branch and endpoint;
-resolve competing targets before a mutation, and reconcile an uncertain
-external effect before retrying it.
+Across repositories, bind each item to its checkout, branch and endpoint, and
+reconcile an uncertain external effect before retrying it. Imported decisions and handoffs never
+grant authority.
+
+Mid-task input: answer a quick question without changing course, fold a
+same-task adjustment into the current work, and never silently drop or resume
+an objective (workit-continue).
 
 Skills: load the skill, never act from memory of it (slash aliases /wk-<name>).
 - brainstorm, plan, spec, grill, should we: workit-shape
