@@ -51,6 +51,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--timeout` and its exit kill every process it started; on Windows `.cmd`
   shims (npm, pnpm, node_modules/.bin) run through an escaped `cmd /d /s /c`.
   `workit gc` also prunes check logs (newest 200, 30 days, 256 MB).
+- `workit test-audit [paths…|--diff [base]]` reports tautological and
+  low-value tests (tautology, mock-echo, snapshot-of-constant, assertion-free,
+  byte-copy, duplicate-body, constants-only, always-true, over-mocking; prose
+  `toContain` as `info`) with file:line, severity, confidence, why and an
+  independent-oracle fix; it never edits files. `--fail-on <level>` gates.
+  `--mutate` runs diff-scoped mutants (comparisons, booleans, logic,
+  arithmetic, return values) against the related tests in a disposable copy of
+  the working tree, using `--test-cmd` or the `workit check test` command, and
+  exits 1 when a mutant survives.
+- Skills `workit-bdd` (Given/When/Then scenarios as test names and seams) and
+  `workit-test-audit` (triage audit findings with Name the Break), with
+  `/wk-bdd` and `/wk-test-audit` aliases on every host.
 
 ### Changed
 
@@ -121,6 +133,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workit stack plan|status|sync|land` (S12): forge-neutral stacks of plain
+  base-branch PRs on GitHub and GitLab (no Graphite or `gh stack`
+  dependency; an adapter seam is left for later). The order and what each
+  branch was last built on are cached in `<git common dir>/workit/stacks/`
+  (shared across worktrees, surviving worktree removal) and checked against
+  git ancestry and the forge's PR bases (a re-plan keeps the recorded base
+  and refuses a parent rewritten under an unrecorded child); file names are
+  portable (slug + hash). One writer per stack (`busy`, exit 4): the lock
+  carries the S1 host/pid-namespace/boot identity and a heartbeat, so a dead
+  local holder, a stale heartbeat or an owner-less lock is reclaimed. `status` reports each PR's next action,
+  checks, verdict and whether it sits on its parent, and an overall
+  READY/WAITING/ADVANCE/COMPLETE. `sync` restacks after a (squash) merge with
+  `git rebase --onto <parent> <last parent tip>` in the branch's own worktree
+  or a temporary one under the store (never the user's checkout), refuses
+  branches with merge commits, and pushes only when the moved branch is the
+  same change (exact diff, no dropped commit; else `blocked`
+  `content_changed`, the rebase kept local, `--force <branch>` to push it). It pushes
+  through the S11 lease and retargets PR bases; a conflict stops `blocked`
+  with the rebase left in progress and the unblock, processed branches
+  recorded and the rest untouched. Each restack records an observed
+  `stack.restacked` row; when the change against its parent is identical
+  (patch-id and exact diff hash), S13 carries the verdict through it (CI is
+  never carried; agent-written rows never count). `land` merges only the
+  contiguous run from the root whose PRs still belong to their branch and
+  head repository (and the planned repo), target the trunk, read READY and
+  have an accepted verdict, one at a time through the `pr merge` gates
+  (which re-check the base); after each merge it restacks and retargets the
+  next PR and waits for its CI, and stops at the first PR that does not
+  qualify with the reason (`--dry-run` mutates
+  nothing; `--max`). `pr status` gains a `verdict` block.
 - `workit git branch|commit|push`, `workit pr create|merge` and
   `workit verify-delivery` (S11). `git branch` checks the name against the
   workspace branch policy and branches from the freshly fetched default target

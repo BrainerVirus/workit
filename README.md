@@ -14,11 +14,11 @@ completion; a local commit does not prove a remote push.
 
 | Package     | Purpose                                                                         |
 | ----------- | ------------------------------------------------------------------------------- |
-| OpenCode    | Native plugin with fourteen method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
-| Cursor      | MCP transport, one native hook dispatcher, one contract rule, and fourteen skills  |
-| Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and fourteen skills |
-| Claude Code | Native plugin: session/per-turn task context hooks, branch policy on git shell commands, fourteen skills, and verifier/reviewer/implementer agents |
-| Pi          | Native npm extension with nine tools (eight shared families plus external action), fourteen skills, and session continuity |
+| OpenCode    | Native plugin with sixteen method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
+| Cursor      | MCP transport, one native hook dispatcher, one contract rule, and sixteen skills  |
+| Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and sixteen skills |
+| Claude Code | Native plugin: session/per-turn task context hooks, branch policy on git shell commands, sixteen skills, and verifier/reviewer/implementer agents |
+| Pi          | Native npm extension with nine tools (eight shared families plus external action), sixteen skills, and session continuity |
 | Shared MCP  | Low-level transport for the eight core operation families                       |
 | Shared core | Task, policy, evidence, finding, decision, worker, writer, and continuity state |
 | CLI         | Setup wizard (`workit`)                                                         |
@@ -100,7 +100,7 @@ Do not pin into pnpm dlx or `_npx` cache paths — those break when the cache is
 cleared.
 
 Requires OpenCode 2.0.18+ and Node.js 24+. The plugin uses the OpenCode V2
-plugin API (`setup()`) with ten native tools, fourteen method skills and
+plugin API (`setup()`) with ten native tools, sixteen method skills and
 `wk-*` commands, question receipts, and direct-child delegation. Workit 3.0
 removed the OpenCode 1.x (V1 `server()`) adapter; stay on Workit 2.x for an
 OpenCode 1.x host. The published plugin is a self-contained Node bundle (no
@@ -125,7 +125,7 @@ upgrading OpenCode to 2.0.18+ use `"plugins": ["@brainervirus/workit-opencode"]`
 <summary><strong>Cursor</strong> — plugin, MCP transport, and hooks</summary>
 
 Run the wizard and select Cursor: it registers the plugin, the MCP server, the
-session hook, the contract rule, and the fourteen skills.
+session hook, the contract rule, and the sixteen skills.
 
 Or add the published launcher to the Cursor MCP config:
 
@@ -238,7 +238,7 @@ The plugin ships:
   unloadable `dist/`), the hook answers nothing and prints one
   `[workit] Claude Code hook unavailable: …` line, and Claude runs as if Workit
   were not installed;
-- skills: the fourteen method skills, namespaced as `/workit:<name>`
+- skills: the sixteen method skills, namespaced as `/workit:<name>`
   (`/workit:review`, `/workit:plan`, …);
 - agents: `verifier` and `reviewer` (read-only) and `implementer`
   (`isolation: worktree`);
@@ -296,6 +296,10 @@ workit git push [--set-upstream] [--force-with-lease]  # exact SHA, remote tip v
 workit pr create (--title <t> | --fill) [--base <b>] [--draft]  # head bound to the pushed SHA
 workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
+workit stack plan [<bottom> … <top>]  # record a base-branch chain (default: the current branch's)
+workit stack status      # per PR: next, checks, verdict, on parent; READY|WAITING|ADVANCE|COMPLETE
+workit stack sync [--local] [--dry-run] [--force <branch>]  # restack after a merge, lease push, retarget PR bases
+workit stack land [--dry-run] [--max <n>]  # merge the contiguous verified run from the root
 workit check test        # run a configured check and record CLI-observed evidence
 workit check --name test -- bun test  # same, if argv is exactly the configured command
 workit uninstall         # remove host registrations (keeps ~/.config/workit)
@@ -346,6 +350,35 @@ carries the head SHA, so a head that moved is refused. `--delete-branch`
 never deletes a protected branch, the base or the default target.
 `verify-delivery` answers "did it land?" from the remote, never from local
 state.
+
+`stack` manages plain base-branch chains (root PR on the trunk, each child PR
+on its parent branch) on GitHub and GitLab; it needs neither Graphite nor
+`gh stack`. The order is cached in `<git common dir>/workit/stacks/`, so every
+worktree shares it and it outlives a removed worktree, and one command at a
+time may change a stack (a second one answers `busy`; a holder that stopped
+heartbeating, or a dead process on this machine, is reclaimed). `stack sync`
+restacks each remaining branch onto its parent after a merge
+(`git rebase --onto`; squash merges always need this) in the worktree that
+has it checked out, or in a temporary worktree under the store, never moving
+your checkout. Before anything is pushed the moved branch must be the same
+change (exact diff against its base, no commit dropped); otherwise it is
+`blocked` with `content_changed`, the rebased branch stays local, and only
+`--force <branch>` pushes it. The check compares the commits actually rebased
+(remembered across a conflict) with the result, so your own new commits on a
+child are fine. A long rebase never loses the stack lock to another command. Branches with merge commits are refused (a plain rebase
+would drop their resolutions). It pushes through `git push`'s lease and
+retargets the PR, and a conflict stops it with the rebase left in progress:
+resolve, `git rebase --continue`, then `workit stack sync`. `--local` skips
+the forge and so cannot see squash merges. When a restacked branch carries
+the same change (same patch-id and exact diff), its verdict carries; CI
+always runs again. `stack land` merges only the contiguous run from the root
+whose PRs still belong to their branch in this repository, target the trunk,
+read READY and have an accepted verdict, one at a time through `pr merge`'s
+gates. After each merge it moves the next PR onto the trunk and waits for its
+CI, and it stops at the first PR that does not qualify with the reason
+(`no_verdict`, `not_ready`, `pr_mismatch`, `grant_required` = verified and
+ready but not allowed to merge, …).
+`--dry-run` changes nothing. `pr status` also reports the head's verdict.
 
 Merging needs no extra configuration today: the host's permission prompt is
 the limit. To limit a workspace, add `"autonomy"` to its entry in
@@ -399,9 +432,10 @@ pins. Re-run the preview after resolving a failure rather than blindly retrying.
 
 - Eight shared `workit_*` operation families: task, policy, evidence, finding,
   decision, worker, writer, and state.
-- Fourteen canonical method skills: behavioral TDD, challenge, debug, handoff,
+- Sixteen canonical method skills: behavioral TDD, challenge, debug, handoff,
   implement, plan, review, babysit, blast-radius, deslop (policy-gated before
-  pull requests), diagram, mockup, green-run, and steer.
+  pull requests), diagram, mockup, green-run, steer, bdd (Given/When/Then
+  scenarios as test names and seams) and test-audit (`workit test-audit`).
 - A `<workit-contract>` bootstrap marker carrying shared invariants.
 - Host-native capability reporting that never fabricates authority, receipts,
   delegation tokens, or cross-process identity.
@@ -668,7 +702,7 @@ blocks publication on missing deterministic or live evidence. The 90-run live ba
 requires explicit authorization; see `docs/workit-v1/qualification.md`.
 
 Published bundles are built with Bun and run on Node. The Cursor, OpenCode,
-Codex, Pi, and Claude Code package builds copy the fourteen canonical skills from `packages/workit-core`; no
+Codex, Pi, and Claude Code package builds copy the sixteen canonical skills from `packages/workit-core`; no
 host-specific skill forks are maintained.
 
 ## Repository layout

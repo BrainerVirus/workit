@@ -19,7 +19,7 @@ import {
 import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+import { actorFromEnv, checkVerdicts, readLedger } from "@brainervirus/workit-core/src/ledger";
 import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
 import { emit, fail, ok, type Io } from "../output";
 import {
@@ -62,7 +62,39 @@ async function status(argv: string[], io: Io): Promise<number> {
     identity: connected.data.identity,
   });
   if (!report.ok) return forgeFail(io, report);
-  return emit(io, ok(report.data.doc), renderStatus);
+  const doc = report.data.doc;
+  return emit(io, ok({ ...doc, verdict: verdictBlock(io.cwd, doc.head.branch) }), (data) => {
+    const lines = renderStatus(data);
+    // `next:` stays the last line.
+    lines.splice(
+      lines.length - 1,
+      0,
+      data.verdict
+        ? `verdict: ${data.verdict.accepted ? `accepted (${data.verdict.basis})` : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
+        : "verdict: unknown (ledger unreadable)",
+    );
+    return lines;
+  });
+}
+
+/**
+ * S12: the S13 verdict for the PR's head branch (fresh, carried through a
+ * rebase or restack, or stale), read-only. Null when the ledger is unreadable.
+ */
+function verdictBlock(cwd: string, branch: string) {
+  const ledger = readLedger(cwd);
+  if (!ledger.ok) return null;
+  const check = checkVerdicts(cwd, branch, ledger.value.rows);
+  return {
+    accepted: check.accepted.accepted,
+    basis: check.current.basis,
+    reasons: check.accepted.reasons as string[],
+    head: check.head,
+    verdictId:
+      check.accepted.accepted && typeof check.accepted.verdict?.id === "string"
+        ? check.accepted.verdict.id
+        : null,
+  };
 }
 
 async function create(argv: string[], io: Io): Promise<number> {

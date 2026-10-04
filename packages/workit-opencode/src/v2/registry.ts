@@ -63,7 +63,7 @@ const parseFrontmatter = (
 };
 
 /**
- * Register the 14 packaged method skills with exact ids, paths,
+ * Register the packaged method skills with exact ids, paths,
  * descriptions, and content. A user skill with the same id is never replaced.
  *
  * The host runs transform callbacks when it (re)builds its catalog, not
@@ -103,7 +103,7 @@ export const registerSkills = async (ctx: SkillContext): Promise<ReadonlySet<str
 };
 
 /**
- * Register the 14 collision-safe `wk-*` aliases. A user command with the same
+ * Register the collision-safe `wk-*` aliases. A user command with the same
  * name is preserved untouched. Invocations forward the original prompt
  * (attachments, arguments, and delivery) through `session.prompt`.
  */

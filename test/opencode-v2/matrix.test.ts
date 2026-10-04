@@ -290,7 +290,7 @@ harnessTest(
     expect(toolText(call)).toContain('"ok": true');
     const offered = offeredTools(lane.harness.stubLog());
     for (const name of WORKIT_TOOL_NAMES) expect(offered, name).toContain(name);
-    // A user-defined command survives alongside the 14 Workit aliases.
+    // A user-defined command survives alongside the Workit aliases.
     const commands = dataOf(await lane.harness.op("command.list")).map((entry) => entry.name);
     expect(commands).toContain("wk-user");
     // The V1-shaped source file is normalized in memory only.

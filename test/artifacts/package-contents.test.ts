@@ -234,6 +234,9 @@ test("packed runtime JS resolves only declared dependencies (RR-08)", () => {
         const spec = m[1];
         if (spec.startsWith("node:") || nodeBuiltins.has(spec)) continue;
         if (spec.startsWith(".") || spec.startsWith("/")) continue;
+        // @babel/parser (bundled into the CLI) has `... from 'some-module'`
+        // inside an error-message template, not an import.
+        if (spec === "some-module") continue;
         found.add(spec);
       }
       const undeclared = [...found].filter((s) => !declared.has(s));

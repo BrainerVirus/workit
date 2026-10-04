@@ -2,10 +2,8 @@
 // exports `run(argv, io): Promise<number>`, so `workit --version`/`help` load
 // nothing but this file and the router, and no verb pays for ink/react.
 //
-// The S9b–S13 verbs were pre-registered against stub modules that answer
-// `not_implemented`, and `planned` keeps them out of `workit help`. A later
-// slice replaces its own verbs/<verb>.ts and deletes only its entry's
-// `planned` line here.
+// A verb registered ahead of its slice sets `planned` (kept out of
+// `workit help`) and answers `not_implemented`; S12 implemented the last one.
 import type { Verb } from "../output";
 
 export type VerbGroup = "setup" | "task" | "delivery";
@@ -141,9 +139,10 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "stack",
     group: "delivery",
-    usage: "workit stack plan|sync|land [--json]",
-    summary: "Plan, restack and land a stack of PRs",
-    planned: "S12",
+    usage:
+      "workit stack plan [<bottom> … <top>] | status | sync [--local] | land [--dry-run] [--max <n>] [--json]",
+    summary:
+      "Plan, restack (lease push + retarget) and land a base-branch stack of PRs, root first",
     load: () => import("./stack"),
   },
   {
@@ -153,6 +152,15 @@ export const VERBS: readonly VerbEntry[] = [
     summary:
       "Record and query decisions, rulings and SHA-keyed verdicts (patch-id carry-over across rebases)",
     load: () => import("./ledger"),
+  },
+  {
+    name: "test-audit",
+    group: "delivery",
+    usage:
+      "workit test-audit [paths…] [--diff [base]] [--rule <ids>] [--min-severity <level>] [--fail-on <level>] [--mutate [--test-cmd <cmd {files}>] [--max-mutants <n>] [--budget <s>]] [--json]",
+    summary:
+      "Flag tautological and low-value tests with a suggested independent oracle; --mutate checks changed lines with diff-scoped mutation",
+    load: () => import("./test-audit"),
   },
   {
     name: "handoff",

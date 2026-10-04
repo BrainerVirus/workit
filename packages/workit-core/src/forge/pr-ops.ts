@@ -241,6 +241,11 @@ export type MergeInput = {
   method: MergeMethod;
   deleteBranch: boolean;
   actor: LedgerActor;
+  /**
+   * Stack landing (S12): refuse unless the PR still targets this base and
+   * comes from this branch, re-checked right before the merge call.
+   */
+  expect?: { base: string; branch: string };
 };
 
 export type MergeOutcome = {
@@ -266,7 +271,8 @@ export type MergeRefusal = {
     | "head_mismatch"
     | "already_merged"
     | "closed"
-    | "protected_branch";
+    | "protected_branch"
+    | "base_mismatch";
   next?: string;
   blockers?: string[];
   verdict?: Pick<VerdictCheck, "head" | "accepted" | "authors">;
@@ -340,6 +346,12 @@ export async function mergePullRequest(
       { reason: "not_ready", next: doc.next, blockers: doc.blockers },
     );
 
+  if (input.expect && (doc.base !== input.expect.base || doc.head.branch !== input.expect.branch))
+    return refuse(
+      `base_mismatch: ${label} is ${doc.head.branch} -> ${doc.base}, expected ${input.expect.branch} -> ${input.expect.base}`,
+      "workit stack sync  # retarget it, then land again",
+      { reason: "base_mismatch" },
+    );
   const branch = doc.head.branch;
   const head = doc.head.sha;
   // --delete-branch never deletes a protected branch, the base, or the

@@ -1,8 +1,8 @@
 {
   "name": "@brainervirus/workit-opencode",
-  "version": "2.7.0",
+  "version": "2.9.0",
   "private": false,
-  "description": "Workit OpenCode plugin — native tools, adaptive policy, and fourteen method skills",
+  "description": "Workit OpenCode plugin — native tools, adaptive policy, and sixteen method skills",
   "keywords": [
     "agentic-coding",
     "ai-agents",

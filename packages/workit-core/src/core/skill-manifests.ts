@@ -16,6 +16,8 @@ export const WORKIT_METHOD_SKILLS = [
   "workit-mockup",
   "workit-green-run",
   "workit-steer",
+  "workit-bdd",
+  "workit-test-audit",
 ] as const;
 
 /** wk- slash aliases (one per skill): alias → method skill. An alias routes
@@ -35,6 +37,8 @@ export const WORKIT_SKILL_ALIASES = {
   "wk-mockup": "workit-mockup",
   "wk-green-run": "workit-green-run",
   "wk-steer": "workit-steer",
+  "wk-bdd": "workit-bdd",
+  "wk-test-audit": "workit-test-audit",
 } as const;
 
 export const skillManifestNames = (root: string): string[] =>
