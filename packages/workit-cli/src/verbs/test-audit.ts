@@ -23,6 +23,7 @@ import {
 } from "../test-audit/audit";
 import { BaselineFailed, runMutation, type MutationReport } from "../test-audit/mutate";
 import type { Level, RuleId } from "../test-audit/rules";
+import { CHECKS_FILE, loadCheckConfig } from "@brainervirus/workit-core/src/check-config";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE =
@@ -109,25 +110,30 @@ function parse(argv: string[]): Options | string {
   return options;
 }
 
-/** `--test-cmd`, then `.workit/checks.json` `checks.test`, then the repo's runner. */
-function testCommand(repo: string, given: string | null): string | null {
-  if (given) return given;
-  const checks = path.join(repo, ".workit", "checks.json");
-  if (existsSync(checks)) {
-    try {
-      const configured = JSON.parse(readFileSync(checks, "utf8"))?.checks?.test;
-      if (typeof configured === "string" && configured.trim()) return configured;
-    } catch {
-      // unreadable config: fall through to detection
-    }
-  }
+const quote = (arg: string): string =>
+  /^[\w./@:=+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
+
+/**
+ * The command each mutant runs, and where. `--test-cmd` runs from the
+ * current directory; a `test` check in workit.checks.json (what `workit check
+ * test` runs) runs whole, from the repository top; otherwise the repo's
+ * runner is scoped to the related test files.
+ */
+function testCommand(repo: string, cwd: string, given: string | null) {
+  if (given) return { command: given, cwd };
+  const config = loadCheckConfig(repo);
+  const configured =
+    config.source === CHECKS_FILE
+      ? config.checks.find((check) => check.name === "test")
+      : undefined;
+  if (configured) return { command: configured.argv.map(quote).join(" "), cwd: config.root };
   if (existsSync(path.join(repo, "bun.lock")) || existsSync(path.join(repo, "bun.lockb")))
-    return "bun test {files}";
+    return { command: "bun test {files}", cwd: repo };
   try {
     const pkg = JSON.parse(readFileSync(path.join(repo, "package.json"), "utf8"));
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (deps.vitest) return "npx vitest run {files}";
-    if (deps.jest) return "npx jest {files}";
+    if (deps.vitest) return { command: "npx vitest run {files}", cwd: repo };
+    if (deps.jest) return { command: "npx jest {files}", cwd: repo };
   } catch {
     // no package.json
   }
@@ -230,22 +236,22 @@ export async function run(argv: string[], io: Io): Promise<number> {
 
   let mutation: MutationReport | null = null;
   if (options.mutate && repo && base && changed) {
-    const command = testCommand(repo, options.testCmd);
-    if (!command)
+    const runner = testCommand(repo, io.cwd, options.testCmd);
+    if (!runner)
       return emit(
         io,
         fail("unavailable", "no test command for --mutate", {
           unblock:
-            'workit test-audit --mutate --test-cmd "<runner> {files}" (or set checks.test in .workit/checks.json)',
+            'workit test-audit --mutate --test-cmd "<runner> {files}" (or configure checks.test in workit.checks.json)',
         }),
       );
     try {
       mutation = await runMutation({
         repo,
-        cwd: io.cwd,
+        cwd: runner.cwd,
         base,
         changed,
-        command,
+        command: runner.command,
         maxMutants: options.maxMutants,
         budgetMs: options.budgetS * 1000,
         timeoutMs: options.timeoutS === null ? null : options.timeoutS * 1000,

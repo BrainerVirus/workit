@@ -162,6 +162,18 @@ test("the mutation copy is its own git repo on the same branch with the same dir
   expect(readFileSync(seen, "utf8")).toBe(`${status}feature\n`);
 });
 
+test("without --test-cmd, --mutate runs the configured `workit check test` command", () => {
+  const { repo, tmp } = fixture();
+  writeFileSync(path.join(repo, "workit.checks.json"), '{ "checks": { "test": "bun test" } }\n');
+  const run = cli(repo, tmp, ["--mutate", "--diff", "main", "--json"]);
+  const mutation = JSON.parse(run.stdout).data.mutation;
+  expect([mutation.command, mutation.counts.killed, mutation.counts.survived]).toEqual([
+    "bun test",
+    1,
+    1,
+  ]);
+});
+
 test("--mutate with no related tests reports no-tests instead of running", () => {
   const { repo, tmp } = fixture();
   rmSync(path.join(repo, "test", "age.test.ts"));
