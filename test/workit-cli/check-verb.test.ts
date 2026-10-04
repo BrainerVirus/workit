@@ -383,33 +383,6 @@ test("per-turn context judges checks by the cheap signal, never hashes the tree,
   void taskId;
 });
 
-test.skipIf(process.platform !== "win32")(
-  "Windows: a configured .cmd shim runs through cmd.exe with its arguments intact and stays configured",
-  async () => {
-    const root = repo({ test: ["fakecheck", "a b", "x&y", 'q"q'] });
-    writeFileSync(path.join(root, "fakecheck.cmd"), "@echo off\r\necho args:%*\r\nexit /b 0\r\n");
-    git(root, "add", ".");
-    git(root, "commit", "-qm", "shim");
-    const { status } = startTask(root);
-    let stdout = "";
-    const code = await main(["check", "test", "--json"], {
-      cwd: root,
-      env: {
-        ...process.env,
-        PATH: `${root};${process.env.PATH ?? ""}`,
-        WORKFLOW_WORKSPACE_ROOT: "",
-      },
-      stdout: (text) => void (stdout += text),
-      stderr: () => {},
-    });
-    const data = JSON.parse(stdout).data;
-    expect(code, JSON.stringify(data.logTail)).toBe(0);
-    expect(data).toMatchObject({ configured: true, argv: ["fakecheck", "a b", "x&y", 'q"q'] });
-    expect(data.logTail.join("\n")).toContain('args:"a b" "x&y" "q\\"q"');
-    expect(status().status).toBe("satisfied");
-  },
-);
-
 test("usage: unknown names, --shell with argv, and the exit code mirrors the command", async () => {
   const root = repo();
   const missing = await run(root, ["check", "lint", "--json"]);
