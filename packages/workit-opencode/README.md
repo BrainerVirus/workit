@@ -35,8 +35,8 @@ plugin is a self-contained Node bundle; its default export is a dual entry
 
 - **Eight native operation tools** — `workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, and `workit_state`.
 - **Read-only context and init tools** — `workit_context` accepts `{ "kind": "git" }` and the existing PR/YouTrack/changelog/release/affected context fields; `workit_init_apply` keeps confirmed configuration initialization.
-- **Fourteen policy-selected method skills** — challenge, behavioral TDD, review, plan, implement, debug, handoff,
-  babysit, blast-radius, deslop, diagram, mockup, green-run, and steer.
+- **Sixteen policy-selected method skills** — challenge, behavioral TDD, review, plan, implement, debug, handoff,
+  babysit, blast-radius, deslop, diagram, mockup, green-run, steer, bdd, and test-audit.
 - **Native lifecycle hooks** — host-observed question receipts, direct-child task workers, compact task bootstrap/restoration, and known-surface writer checks.
 
 ## Host-native behavior

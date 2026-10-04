@@ -168,7 +168,8 @@ target result; a local commit alone is not evidence of a requested remote push.
 Skill routing: slash aliases /wk-* load on demand. Use workit-steer for a
 substantial interruption or change of direction, workit-deslop when relevant
 to a PR-ready endpoint, workit-green-run for failing CI, workit-blast-radius
-when impact is uncertain, and workit-challenge for genuinely open consequential
-choices. Load workit-plan when dependencies or handoff need durable next actions.
+when impact is uncertain, workit-challenge for genuinely open consequential
+choices, workit-bdd to turn acceptance criteria into Given/When/Then tests, and
+workit-test-audit to check tests for tautologies. Load workit-plan when dependencies or handoff need durable next actions.
 Load the skill; never act from memory of it.
 `.trim();
