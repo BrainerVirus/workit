@@ -450,6 +450,23 @@ test("pr merge --delete-branch: a develop -> main release PR under gitflow is re
   expect(writes(runner.calls)).toEqual([]);
 });
 
+test("pr merge --delete-branch: a fork PR whose head branch is named like the base is refused (the base is never deleted)", async () => {
+  const forkRelease = fixture("github/pr-passing.json")
+    .replaceAll('"headRefName": "feature/x"', '"headRefName": "Release"')
+    .replaceAll('"baseRefName": "main"', '"baseRefName": "release"');
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    "GET repos/o/r/branches/release": fixture("github/branch-main.json"),
+    "GET repos/o/r/rules/branches/release": fixture("github/rules-main.json"),
+    [GH_STATUS]: forkRelease,
+    "PUT repos/o/r/pulls/12/merge": "{}",
+  });
+  const result = await run(["pr", "merge", "--pr", "12", "--delete-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("is the PR base");
+  expect(writes(runner.calls)).toEqual([]);
+});
+
 test("pr merge --delete-branch (GitLab): a fast-forward promotion from the default target is refused, case-insensitively", async () => {
   const { repo, runner } = setup("gitlab", {
     ...gitlabBase(),

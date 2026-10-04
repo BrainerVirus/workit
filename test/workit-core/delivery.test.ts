@@ -232,14 +232,14 @@ test("deleteRemoteBranch deletes only while the remote tip is the expected one",
   expect(repo.remoteTip("feature/a")).toBe(theirs);
   expect(deleteRemoteBranch(repo.cwd, "origin", "feature/a", theirs)).toEqual({ ok: true });
   expect(repo.remoteTip("feature/a")).toBeNull();
-  // A protected branch is never deleted, whatever the lease says.
-  expect(
-    deleteRemoteBranch(repo.cwd, "origin", "main", repo.git("rev-parse", "main")),
-  ).toMatchObject({
+  // A protected branch (gitflow default: develop) is never deleted, whatever the lease says.
+  repo.git("push", "-q", "origin", "main:refs/heads/develop");
+  const develop = repo.remoteTip("develop") as string;
+  expect(deleteRemoteBranch(repo.cwd, "origin", "develop", develop)).toMatchObject({
     ok: false,
     lease: false,
   });
-  expect(repo.remoteTip("main")).not.toBeNull();
+  expect(repo.remoteTip("develop")).toBe(develop);
   expect(deleteRemoteBranch(repo.cwd, "--upload-pack=x", "feature/a", theirs)).toMatchObject({
     ok: false,
     lease: false,

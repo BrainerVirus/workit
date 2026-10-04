@@ -72,16 +72,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index, the named paths or `--all`, and writes a `Workit-Session:` trailer
   plus an observed `commit.recorded` ledger row for S13's author check.
   `git push` refuses protected branches, checks the forge account (S10
-  credential), pushes the exact SHA, forces only with `--force-with-lease`
-  against the tip workit last recorded (`--expect` after review), and records
-  `push.verified` only when the remote tip equals the local SHA. `pr create`
+  credential), pushes the exact SHA (no follow-tags, no submodule pushes),
+  forces only with `--force-with-lease` leased on workit's own last
+  `push.verified` tip (never the tracking ref; otherwise `--expect`), plus
+  `--force-if-includes` semantics, and records `push.verified` only when the
+  remote tip equals the local SHA. `pr create`
   binds the pushed SHA, reuses an open PR/MR, post-verifies the forge head and
   records `pr.created`. `pr merge` needs `pr status` READY, an accepted
   independent verdict for that head (unless the workspace grants
   `merge: true`) and the merge grant; it merges with the forge's head-SHA
-  guard, deletes the branch under a lease and records `pr.merged`.
+  guard, deletes the branch under a lease (never a protected branch, the base
+  or the default target) and records `pr.merged`.
   `verify-delivery push|pr|merge|release` observes the remote (branch tip,
-  PR head, merged state and merge commit on the base, tag and npm version)
+  PR head, merged state and merge commit on the base, tag and npm version,
+  with the published gitHead required to match any expected commit; package
+  specs must be npm names with exact semver)
   and exits 1 when it did not land. Autonomy grants are read from the
   workspace's `autonomy` entry in user config (`requireGrant`); an absent
   grant falls back to the host's own permission until S16. The PR body issue
