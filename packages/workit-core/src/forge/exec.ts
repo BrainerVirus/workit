@@ -179,3 +179,43 @@ export function apiText(
   if (run.status !== 0) return cliFailure(bin, apiHost, run, what, timeoutMs);
   return { ok: true, data: run.stdout };
 }
+
+/**
+ * A forge write (create, merge, retarget). Like apiJson, plus: an HTTP 409 or
+ * a head-moved/SHA-mismatch message is `blocked` (`head_moved`), and 405/406/
+ * 422 refusals are `blocked` with the forge's own reason, so a refused
+ * mutation never reads as a transient failure.
+ */
+export function apiWrite<T>(
+  runner: ForgeRunner,
+  bin: CliBin,
+  apiHost: string,
+  args: readonly string[],
+  what: string,
+  timeoutMs: number = FORGE_TIMEOUTS.api,
+): ForgeResult<T> {
+  const run = runner(bin, args, { timeoutMs });
+  if (run.status !== 0) {
+    const text = redactText(`${run.stderr}\n${run.stdout}`).trim();
+    const reason = (text.split(/\r?\n/u).find((value) => value.trim()) ?? "").slice(0, 200);
+    if (
+      !run.missing &&
+      !run.timedOut &&
+      /\b409\b|head branch was modified|sha does not match|sha.*mismatch/iu.test(text)
+    )
+      return failure(
+        "blocked",
+        `head_moved: ${what} refused because the head changed (${reason})`,
+        "workit pr status  # re-check the new head, then verify it again",
+      );
+    if (!run.missing && !run.timedOut && /\b(405|406|422)\b/u.test(text))
+      return failure("blocked", `${what} refused by the forge: ${reason}`);
+    return cliFailure(bin, apiHost, run, what, timeoutMs);
+  }
+  if (!run.stdout.trim()) return { ok: true, data: {} as T };
+  try {
+    return { ok: true, data: JSON.parse(run.stdout) as T };
+  } catch {
+    return failure("failed", `${bin} api ${what} returned invalid JSON`);
+  }
+}

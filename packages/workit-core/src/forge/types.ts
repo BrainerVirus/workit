@@ -119,6 +119,27 @@ export type Identity = {
   note?: string;
 };
 
+export type MergeMethod = "squash" | "merge" | "rebase";
+
+/** What `workit pr create` asks the forge for (S11). */
+export type CreatePrInput = {
+  /** Source branch in the push (head) repository. */
+  head: string;
+  /** owner/name (GitHub) or group/project (GitLab) of the push repository. */
+  headRepo: string;
+  /** GitLab: the push project id (MRs from a fork are opened from it). */
+  headProjectId: number | null;
+  base: string;
+  title: string;
+  body: string;
+  draft: boolean;
+};
+
+export type MergeResult = {
+  /** The merge (or squash/rebase tip) commit the forge reported, when it did. */
+  mergeSha: string | null;
+};
+
 /** A repository as the forge sees it: id and the repo it was forked from. */
 export type RepoInfo = { id: number | null; parent: string | null };
 
@@ -133,4 +154,13 @@ export interface Forge {
   prStatus(n: number): ForgeResult<ForgePrStatus>;
   jobLogTail(job: JobRef, lines: number): ForgeResult<string[]>;
   rerun(target: RerunTarget): ForgeResult<void>;
+  /** Open a PR/MR; `headSha` is the head the forge reports right after creation. */
+  createPr(input: CreatePrInput): ForgeResult<PrRef>;
+  /**
+   * Merge with the head guard: the forge refuses (`blocked`, head_moved) when
+   * the PR head is no longer `sha`.
+   */
+  merge(n: number, options: { sha: string; method: MergeMethod }): ForgeResult<MergeResult>;
+  /** Retarget a PR/MR to another base branch (S12 stacks). */
+  updateBase(n: number, base: string): ForgeResult<void>;
 }
