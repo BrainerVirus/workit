@@ -472,6 +472,12 @@ test("partial platform failure propagates nonzero + Failed entry; healthy platfo
   try {
     // fake dev checkout: opencode present, cursor absent
     mkdirSync(path.join(dev, "packages"), { recursive: true });
+    // A source checkout's OpenCode skills are the canonical core ones.
+    cpSync(
+      path.join(repoRoot, "packages/workit-core/skills"),
+      path.join(dev, "packages/workit-core/skills"),
+      { recursive: true },
+    );
     cpSync(
       path.join(repoRoot, "packages/workit-opencode"),
       path.join(dev, "packages/workit-opencode"),
