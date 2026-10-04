@@ -2,8 +2,20 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
 import { readConfig } from "@/packages/workit-core/src/core/config";
+
+import {
+  executeInitApply,
+  initApplyRuntime,
+} from "@/packages/workit-opencode/src/shared/init-apply";
+
+// The OpenCode V2 adapter calls the shared executor directly (v2/plugin.ts).
+const createRepoTools = (runtime = initApplyRuntime) => ({
+  workit_init_apply: {
+    execute: async (args: unknown, context: { directory: string }) =>
+      executeInitApply(args as never, context.directory, runtime),
+  },
+});
 
 test("init_apply writes config.json with guided values", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-config-tools-"));
@@ -23,7 +35,7 @@ test("init_apply writes config.json with guided values", async () => {
       },
       { directory: dir, worktree: dir } as never,
     );
-    const out = JSON.parse(raw as string);
+    const out = JSON.parse(raw);
     expect(out.ok).toBe(true);
     const cfg = readConfig();
     expect(cfg.locale).toBe("es-CL");

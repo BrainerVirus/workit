@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { claudeWorkitInstalls } from "@/packages/workit-core/src/core/host-install";
+import { claudeWorkitInstalls } from "@/packages/workit-cli/src/admin/host-install";
 import { fixture, tempRoot, withProtectedMain } from "@/test/workit-core/hooks/hook-fixtures";
 import {
   extractTarball,

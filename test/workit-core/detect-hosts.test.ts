@@ -6,7 +6,7 @@ import {
   detectHosts,
   emptyDetection,
   preselectedPlatforms,
-} from "@/packages/workit-core/src/core/detect-hosts";
+} from "@/packages/workit-cli/src/admin/detect-hosts";
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 

@@ -18,7 +18,7 @@ const moduleDir = (): string => {
 /**
  * Resolve the workit-opencode package root from both layouts. Source modules
  * live one or two levels under the package (`src/plugin.ts`,
- * `src/v1/server.ts`); the bundle lives in `dist/`. The nearest ancestor with
+ * `src/v2/plugin.ts`); the bundle lives in `dist/`. The nearest ancestor with
  * a package.json wins, so a relative `import.meta.url` change from moving a
  * source file can never silently point assets at the wrong directory.
  */

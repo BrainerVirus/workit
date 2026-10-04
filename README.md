@@ -14,11 +14,11 @@ completion; a local commit does not prove a remote push.
 
 | Package     | Purpose                                                                         |
 | ----------- | ------------------------------------------------------------------------------- |
-| OpenCode    | Native plugin with fourteen method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
-| Cursor      | MCP transport, one native hook dispatcher, one contract rule, and fourteen skills  |
-| Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and fourteen skills |
-| Claude Code | Native plugin: session/per-turn task context hooks, branch policy on git shell commands, fourteen skills, and verifier/reviewer/implementer agents |
-| Pi          | Native npm extension with nine tools (eight shared families plus external action), fourteen skills, and session continuity |
+| OpenCode    | Native plugin with sixteen method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
+| Cursor      | MCP transport, one native hook dispatcher, one contract rule, and sixteen skills  |
+| Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and sixteen skills |
+| Claude Code | Native plugin: session/per-turn task context hooks, branch policy on git shell commands, sixteen skills, and verifier/reviewer/implementer agents |
+| Pi          | Native npm extension with nine tools (eight shared families plus external action), sixteen skills, and session continuity |
 | Shared MCP  | Low-level transport for the eight core operation families                       |
 | Shared core | Task, policy, evidence, finding, decision, worker, writer, and continuity state |
 | CLI         | Setup wizard (`workit`)                                                         |
@@ -80,8 +80,6 @@ Older configs load unchanged: a `timezone` in the global `config.json`, and
 `defaultMention`, `greetings` or `greetingCutoff` in `youtrack.json`, are
 ignored.
 
-`workit cutover` is for migrating legacy installations.
-
 Manual setup per tool:
 
 <details>
@@ -92,7 +90,7 @@ Run the wizard and select OpenCode, or add the plugin to `opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@brainervirus/workit-opencode"]
+  "plugins": ["@brainervirus/workit-opencode"]
 }
 ```
 
@@ -101,11 +99,25 @@ checkout/dev install may pin `file://…/packages/workit-opencode/…` instead.
 Do not pin into pnpm dlx or `_npx` cache paths — those break when the cache is
 cleared.
 
-Requires OpenCode 1.18.30+ and Node.js 24+. One dual-entry artifact carries
-`server()` for V1 and `setup()` for OpenCode 2.0.3 with the same ten native
-tools, fourteen method skills and `wk-*` commands, question receipts, and
-direct-child delegation. The published plugin is a self-contained Node bundle
-(no runtime `@opencode-ai/plugin` or `@opencode/plugin` dependency).
+Requires OpenCode 2.0.18+ and Node.js 24+. The plugin uses the OpenCode V2
+plugin API (`setup()`) with ten native tools, sixteen method skills and
+`wk-*` commands, question receipts, and direct-child delegation. Workit 3.0
+removed the OpenCode 1.x (V1 `server()`) adapter; stay on Workit 2.x for an
+OpenCode 1.x host. The published plugin is a self-contained Node bundle (no
+runtime `@opencode/plugin` dependency).
+
+**OpenCode 1.x: stay on Workit 2.x.** OpenCode 1.x reads the V1 `plugin` key
+and can only load the V1 `server()` entry, which Workit 3 removed. Pin the 2.x
+line there:
+
+```json
+{ "plugin": ["@brainervirus/workit-opencode@2"] }
+```
+
+OpenCode 2.x reads `plugins` (and still normalizes a `plugin` key), so after
+upgrading OpenCode to 2.0.18+ use `"plugins": ["@brainervirus/workit-opencode"]`.
+`workit doctor` fails `opencode_version` on a 1.x CLI with this fix, and
+`workit upgrade` warns before applying.
 
 </details>
 
@@ -113,7 +125,7 @@ direct-child delegation. The published plugin is a self-contained Node bundle
 <summary><strong>Cursor</strong> — plugin, MCP transport, and hooks</summary>
 
 Run the wizard and select Cursor: it registers the plugin, the MCP server, the
-session hook, the contract rule, and the fourteen skills.
+session hook, the contract rule, and the sixteen skills.
 
 Or add the published launcher to the Cursor MCP config:
 
@@ -226,7 +238,7 @@ The plugin ships:
   unloadable `dist/`), the hook answers nothing and prints one
   `[workit] Claude Code hook unavailable: …` line, and Claude runs as if Workit
   were not installed;
-- skills: the fourteen method skills, namespaced as `/workit:<name>`
+- skills: the sixteen method skills, namespaced as `/workit:<name>`
   (`/workit:review`, `/workit:plan`, …);
 - agents: `verifier` and `reviewer` (read-only) and `implementer`
   (`isolation: worktree`);
@@ -387,12 +399,6 @@ local-dist install is behind the current runtime, or when OpenCode's
 frozen `@latest` package cache lags published `workit-opencode`, with the
 exact repair step; Cursor canonical `@latest` installs never fail on
 version metadata.
-
-```bash
-workit cutover preview [--hosts <hosts>] [--json]
-workit cutover apply   [--hosts <hosts>] [--resolution k=v] [--confirm]
-workit cutover rollback preview|apply <backupId> [--json] [--confirm]
-```
 
 </details>
 
@@ -569,7 +575,7 @@ when managed coordination or outcome reconciliation is unnecessary. Inspect the
 target checkout's conventions first; native permissions apply. There is no need
 to start a Workit task just to commit, and a local commit does not require PR
 readiness or task-closure paperwork. Never switch execution paths to evade a
-denial or retry an uncertain managed effect. OpenCode V1 and V2 use native
+denial or retry an uncertain managed effect. OpenCode uses native
 host tools for mutations; Workit exposes read-only `workit_context` and shared
 coordination tools, with no managed external-action executor. See the
 [action reliability specification](docs/adaptive-workit/reliability-spec.md).
@@ -696,7 +702,7 @@ blocks publication on missing deterministic or live evidence. The 90-run live ba
 requires explicit authorization; see `docs/workit-v1/qualification.md`.
 
 Published bundles are built with Bun and run on Node. The Cursor, OpenCode,
-Codex, Pi, and Claude Code package builds copy the fourteen canonical skills from `packages/workit-core`; no
+Codex, Pi, and Claude Code package builds copy the sixteen canonical skills from `packages/workit-core`; no
 host-specific skill forks are maintained.
 
 ## Repository layout

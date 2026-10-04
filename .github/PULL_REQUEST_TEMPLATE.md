@@ -6,7 +6,7 @@
 
 - [ ] Applicable tests, typecheck, lint, formatting and isolated release-candidate checks pass. With an active local host pin, run these directly instead of root `check`/`build`.
 - [ ] README/spec/plan describe the shipped behavior and current checkpoints.
-- [ ] Behavior is verified for the affected OpenCode V1/V2, Cursor, Codex, Pi and CLI surfaces; native limitations are explicit.
+- [ ] Behavior is verified for the affected OpenCode, Cursor, Codex, Pi and CLI surfaces; native limitations are explicit.
 
 ## Checklist
 

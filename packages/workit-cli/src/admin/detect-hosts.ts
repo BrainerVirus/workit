@@ -1,10 +1,7 @@
 // Host presence detection uses actual CLI executables or supported desktop app
 // locations; configuration directories alone never count as installation.
 // Existing registrations reuse uninstall planning so the two paths agree.
-import { readdirSync } from "node:fs";
 import os from "node:os";
-import path from "node:path";
-import { commandOnPath } from "./doctor";
 import { planUninstall, type UninstallPaths } from "./uninstall";
 import {
   findHostExecutable,
@@ -28,7 +25,7 @@ export type DetectHostsOptions = UninstallPaths;
 const HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi", "claude-code"];
 
 /** Hosts the setup wizard configures through their native install paths. */
-export const WIZARD_HOSTS: HostId[] = [...HOSTS];
+const WIZARD_HOSTS: HostId[] = [...HOSTS];
 
 /** Detected hosts the wizard can preselect (presence ∩ wizard-managed). */
 export function preselectedPlatforms(detection: Record<HostId, HostDetection>): string[] {
@@ -72,44 +69,3 @@ export function detectHosts(options: DetectHostsOptions = {}): Record<HostId, Ho
   }
   return found;
 }
-
-/**
- * CLI lookup beyond ambient PATH: version-manager shims (fnm multishells,
- * nvm, asdf) and ~/.local/bin vanish from bare non-interactive PATHs, so a
- * tool installed under one is still present. Presence-only statSync reads —
- * never a subprocess probe.
- */
-export function cliFound(name: string, env: NodeJS.ProcessEnv, home: string): boolean {
-  if (commandOnPath(name, env)) return true;
-  const extra = managerBinDirs(home);
-  if (extra.length === 0) return false;
-  return commandOnPath(name, {
-    ...env,
-    PATH: [...(env.PATH ?? "").split(path.delimiter), ...extra].join(path.delimiter),
-  });
-}
-
-const managerBinDirs = (home: string): string[] => {
-  const dirs = [path.join(home, ".local", "bin"), path.join(home, ".asdf", "shims")];
-  // One-level layouts: fnm node-versions/<v>/installation/bin, nvm node/<v>/bin.
-  const versioned: Array<[base: string, tail: string]> = [
-    [path.join(home, ".local", "share", "fnm", "node-versions"), path.join("installation", "bin")],
-    [path.join(home, ".nvm", "versions", "node"), "bin"],
-  ];
-  for (const [base, tail] of versioned) {
-    let entries: Array<{ name: string; isDirectory: () => boolean }>;
-    try {
-      entries = readdirSync(base, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      try {
-        if (entry.isDirectory()) dirs.push(path.join(base, entry.name, tail));
-      } catch {
-        /* keep scanning */
-      }
-    }
-  }
-  return dirs;
-};

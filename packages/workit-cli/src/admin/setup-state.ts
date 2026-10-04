@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { isConfigObject, resolveConfigDir } from "./config";
-import { readWorkspacesResult } from "./workspaces";
+import { isConfigObject, resolveConfigDir } from "@brainervirus/workit-core/src/core/config";
+import { readWorkspacesResult } from "@brainervirus/workit-core/src/core/workspaces";
 
 // WZ-06: typed setup-state reader distinguishing missing from malformed
 // configuration. Purely read-only — nothing here ever writes; Apply decision
@@ -21,7 +21,7 @@ export type SetupState = {
   workspaces: FileState;
 };
 
-export const classifySetupFile = (dir: string, name: string): FileState => {
+const classifySetupFile = (dir: string, name: string): FileState => {
   const file = path.join(dir, name);
   let raw: string;
   try {

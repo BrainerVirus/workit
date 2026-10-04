@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
-import { server as plugin } from "@/packages/workit-opencode/src/index";
+import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permissions";
 import { enforceNativeWriter } from "@/packages/workit-pi/src/tools";
 import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
 import { handleCursorHook } from "@/packages/workit-cursor/hooks/workit-hook";
@@ -58,20 +58,9 @@ const startTask = (root: string, host: OperationContext["caller"]["host"]) => {
 
 // Each adapter returns its denial reason, or null when the command passes.
 const opencodeDenial = async (root: string, command: string): Promise<string | null> => {
-  const hooks = await plugin({
-    directory: root,
-    worktree: root,
-    serverUrl: new URL("http://localhost"),
-  } as never);
-  try {
-    await hooks["tool.execute.before"]?.(
-      { tool: "bash", sessionID: "lead", callID: command },
-      { args: { command } },
-    );
-    return null;
-  } catch (error) {
-    return String(error);
-  }
+  const event = { action: "shell", resources: [command], effect: "allow", message: undefined };
+  evaluateShellPermission(root, event);
+  return event.effect === "deny" ? String(event.message) : null;
 };
 
 const piDenial = (root: string, command: string): string | null => {

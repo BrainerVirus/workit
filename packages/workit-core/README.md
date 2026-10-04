@@ -30,7 +30,8 @@ Adapters map host-native surfaces to `src/core/`; they never re-implement core l
 ## Exports
 
 - Main entry: `./src/core.ts`.
-- Subpath exports: `./src/*.ts` (e.g. `@brainervirus/workit-core/src/core/doctor`), plus `./package.json`.
+- Subpath exports: `./src/*.ts` (e.g. `@brainervirus/workit-core/src/core/task-store`), plus `./package.json`.
+- Setup, doctor, upgrade, uninstall and host-install code lives in `@brainervirus/workit-cli` (`src/admin/`), not here, so host hooks and plugins never bundle it.
 
 ## Package scripts
 

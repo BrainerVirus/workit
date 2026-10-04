@@ -147,7 +147,7 @@ test(
         "bash",
         [
           "-c",
-          `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
+          `bun "${path.join(fixture.stub, "packages/workit-cli/scripts/doctor-check.ts")}" cursor`,
         ],
         {
           env: installEnv(fixture.home, fixture.stub),
@@ -188,7 +188,7 @@ test(
         "bash",
         [
           "-c",
-          `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
+          `bun "${path.join(fixture.stub, "packages/workit-cli/scripts/doctor-check.ts")}" cursor`,
         ],
         {
           env: installEnv(fixture.home, fixture.stub),
@@ -219,45 +219,56 @@ function flockAvailable(): boolean {
 // Stub monorepo (scripts copied in, tiny tree) so sync-runtime + the install
 // script run without network or a full-repo rsync; HOME points into tmp so no
 // real ~/.config/opencode is touched. The installer imports the shared
-// registration helper from src/core, so the stub must mirror it (doctor-check
-// pulls the same core modules).
+// registration helper and doctor-check from the CLI admin sources, which
+// import core by its package name, so the stub mirrors both packages and the
+// workspace link.
+const STUB_CORE_FILES = [
+  "config.ts",
+  "boundary.ts",
+  "logger.ts",
+  "workspaces.ts",
+  "support-matrix.ts",
+  "skill-manifests.ts",
+  "package-root.ts",
+  "safe-write.ts",
+  "task-contract.ts",
+  "store-lock.ts",
+  "runtime-identity.ts",
+];
+const STUB_ADMIN_FILES = ["registration.ts", "doctor.ts", "host-install.ts"];
+
 function copyCoreSources(stub: string) {
-  mkdirSync(path.join(stub, "node_modules"), { recursive: true });
+  mkdirSync(path.join(stub, "node_modules", "@brainervirus"), { recursive: true });
   symlinkSync(
     path.join(repoRoot, "node_modules", "zod"),
     path.join(stub, "node_modules", "zod"),
     "dir",
   );
-  for (const name of [
-    "registration.ts",
-    "doctor.ts",
-    "doctor-check.ts",
-    "config.ts",
-    "boundary.ts",
-    "logger.ts",
-    "workspaces.ts",
-    "support-matrix.ts",
-    "skill-manifests.ts",
-    "package-root.ts",
-    "config-conversion.ts",
-    "cutover.ts",
-    "legacy-ownership.ts",
-    "safe-write.ts",
-    "task-contract.ts",
-    "store-lock.ts",
-    "runtime-identity.ts",
-    "host-install.ts",
-  ]) {
-    const src =
-      name === "doctor-check.ts"
-        ? path.join(repoRoot, "packages/workit-core/scripts/doctor-check.ts")
-        : path.join(repoRoot, "packages/workit-core/src/core", name);
-    const dest =
-      name === "doctor-check.ts"
-        ? path.join(stub, "packages/workit-core/scripts/doctor-check.ts")
-        : path.join(stub, "packages/workit-core/src/core", name);
-    cpSync(src, dest);
-  }
+  symlinkSync(
+    path.join(stub, "packages/workit-core"),
+    path.join(stub, "node_modules", "@brainervirus", "workit-core"),
+    "dir",
+  );
+  mkdirSync(path.join(stub, "packages/workit-cli/src/admin"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-cli/scripts"), { recursive: true });
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/package.json"),
+    path.join(stub, "packages/workit-core/package.json"),
+  );
+  for (const name of STUB_CORE_FILES)
+    cpSync(
+      path.join(repoRoot, "packages/workit-core/src/core", name),
+      path.join(stub, "packages/workit-core/src/core", name),
+    );
+  for (const name of STUB_ADMIN_FILES)
+    cpSync(
+      path.join(repoRoot, "packages/workit-cli/src/admin", name),
+      path.join(stub, "packages/workit-cli/src/admin", name),
+    );
+  cpSync(
+    path.join(repoRoot, "packages/workit-cli/scripts/doctor-check.ts"),
+    path.join(stub, "packages/workit-cli/scripts/doctor-check.ts"),
+  );
 }
 
 function makeStub(pluginTs: string) {

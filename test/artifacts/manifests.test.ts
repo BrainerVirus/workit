@@ -169,7 +169,7 @@ test(
     // The canonical constant itself must stay the exact reviewed selector — a
     // bump to the shared constant alone would otherwise dodge the --package= scan
     // above.
-    expect(read("packages/workit-core/src/core/registration.ts")).toContain(
+    expect(read("packages/workit-cli/src/admin/registration.ts")).toContain(
       `CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest"`,
     );
 
@@ -341,7 +341,8 @@ test(
     expect(pkg.main).toBe("./dist/plugin.js");
     expect(Object.values(pkg.exports)).toContain("./dist/plugin.js");
     expect(pkg.dependencies?.["@opencode-ai/plugin"]).toBeUndefined();
-    expect(pkg.devDependencies?.["@opencode-ai/plugin"]).toBe(SUPPORT_MATRIX.opencode.current);
+    expect(pkg.devDependencies?.["@opencode-ai/plugin"]).toBeUndefined();
+    expect(pkg.devDependencies?.["@opencode/plugin"]).toBe(SUPPORT_MATRIX.opencode.current);
     expect(pkg.engines?.node).toBe(`>=${SUPPORT_MATRIX.node.minimum}`);
   },
   { timeout: 60_000 },
@@ -392,7 +393,7 @@ test(
   () => {
     const lock = read("bun.lock");
     expect(lock).toContain(`"@types/bun": "${SUPPORT_MATRIX.bun}"`);
-    expect(lock).toContain(`"@opencode-ai/plugin": "${SUPPORT_MATRIX.opencode.current}"`);
+    expect(lock).toContain(`"@opencode/plugin": "${SUPPORT_MATRIX.opencode.current}"`);
   },
   { timeout: 60_000 },
 );

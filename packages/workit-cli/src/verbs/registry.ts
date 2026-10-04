@@ -50,7 +50,7 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "upgrade",
     group: "setup",
-    usage: "workit upgrade [--hosts=a,b|none] [--cli] [--apply --confirm] [--json]",
+    usage: "workit upgrade [--hosts=a,b|none] [--cli] [--preview | --apply --confirm] [--json]",
     summary: "Preview upgrades (--apply --confirm to apply)",
     load: () => import("./upgrade"),
   },
@@ -83,13 +83,6 @@ export const VERBS: readonly VerbEntry[] = [
     usage: "workit uninstall",
     summary: "Remove workit host registrations interactively (~/.config/workit is kept)",
     load: () => import("./uninstall"),
-  },
-  {
-    name: "cutover",
-    group: "setup",
-    usage: "workit cutover preview|apply|rollback ...",
-    summary: "Preview-first v1 cutover and rollback (apply requires --confirm)",
-    load: () => import("./cutover"),
   },
   ...TASK_FAMILY_NAMES.map(family),
   {

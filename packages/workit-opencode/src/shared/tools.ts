@@ -8,8 +8,7 @@ import {
 
 /** One V2 tool registration: exact name, description, and JSON Schema input.
  * The catalog is shared by every non-SDK V2 surface (and future hosts) so the
- * 10 names and shapes cannot drift per adapter; V1 keeps its Zod-typed
- * registrations until its support window ends. */
+ * 10 names and shapes cannot drift per adapter. */
 export type WorkitToolSpec = {
   name: string;
   description: string;

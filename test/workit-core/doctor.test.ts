@@ -22,25 +22,13 @@ import {
   runDoctor,
   type DoctorCheck,
   type DoctorReport,
-} from "@/packages/workit-core/src/core/doctor";
-import { OPENCODE_NPM_PIN } from "@/packages/workit-core/src/core/registration";
-import type { SessionObservation } from "@/packages/workit-core/src/core/cutover";
+} from "@/packages/workit-cli/src/admin/doctor";
+import { OPENCODE_NPM_PIN } from "@/packages/workit-cli/src/admin/registration";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import { readVcsConfig } from "@/packages/workit-core/src/core/vcs-config";
-import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
+import { readSetupState } from "@/packages/workit-cli/src/admin/setup-state";
 import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
 import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
-import {
-  applyCutover,
-  previewCutover,
-  writeGenerationState,
-} from "@/packages/workit-core/src/core/cutover";
-import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
-import {
-  installV1Skills,
-  makeCutoverFixture,
-  removeLegacySkills,
-} from "@/test/shared/helpers/cutover-fixture";
 
 // The offline doctor engine (DG-07/DG-08, CA-09): one fixture tree, one broken
 // surface at a time, assert the typed check + nonzero exitCode, then repair the
@@ -51,9 +39,7 @@ const check = (report: DoctorReport, id: string): DoctorCheck =>
 
 const fixture = makeDoctorFixture();
 
-const run = (
-  overrides: { env?: NodeJS.ProcessEnv; cwd?: string; sessions?: SessionObservation[] } = {},
-) =>
+const run = (overrides: { env?: NodeJS.ProcessEnv; cwd?: string } = {}) =>
   runDoctor({
     host: "cli",
     home: fixture.home,
@@ -62,7 +48,6 @@ const run = (
     dev: fixture.dev,
     cwd: overrides.cwd ?? fixture.cwd,
     env: overrides.env,
-    sessions: overrides.sessions,
   });
 
 // Installer mode (DG-09/AR-11): the installers enforce an explicit required set
@@ -774,7 +759,7 @@ test("detects an out-of-matrix opencode SDK pin as mixed versions", () => {
         ...original,
         dependencies: {
           ...original.dependencies,
-          "@opencode-ai/plugin": "0.9.0",
+          "@opencode/plugin": "0.9.0",
         },
       }),
     );
@@ -1625,111 +1610,6 @@ test("installer downgrades optional parity checks to warnings, not failures", ()
   expect(check(runInstaller(), "versions").status).toBe("pass");
 });
 
-test("reports mixed_generation when legacy and v1 cursor skills coexist", () => {
-  mkdirSync(path.join(fixture.pluginDir, "skills", "wk-init"), { recursive: true });
-  writeFileSync(path.join(fixture.pluginDir, "skills", "wk-init", "SKILL.md"), "# legacy\n");
-  installV1Skills(fixture.pluginDir);
-  try {
-    const report = run();
-    const mixed = check(report, "mixed_generation");
-    expect(mixed.status).toBe("warn");
-    expect(mixed.detail).toContain("cursor");
-  } finally {
-    for (const skill of WORKIT_METHOD_SKILLS) {
-      rmSync(path.join(fixture.pluginDir, "skills", skill), { recursive: true, force: true });
-    }
-  }
-  expect(check(run(), "mixed_generation").status).toBe("pass");
-});
-
-test("reports legacy_component when v1 target still has legacy host assets", () => {
-  writeGenerationState(fixture.configDir, { target: "v1" });
-  try {
-    const report = run();
-    const legacy = check(report, "legacy_component");
-    expect(legacy.status).toBe("fail");
-    expect(legacy.detail).toMatch(/legacy components remain/i);
-  } finally {
-    writeGenerationState(fixture.configDir, { target: "legacy" });
-  }
-  expect(check(run(), "legacy_component").status).toBe("pass");
-});
-
-test("reports missing_v1_component when v1 target lacks v1 host assets", () => {
-  writeGenerationState(fixture.configDir, { target: "v1" });
-  try {
-    const report = run();
-    const missing = check(report, "missing_v1_component");
-    expect(missing.status).toBe("fail");
-    expect(missing.detail).toMatch(/missing v1 components/i);
-  } finally {
-    writeGenerationState(fixture.configDir, { target: "legacy" });
-  }
-  expect(check(run(), "missing_v1_component").status).toBe("pass");
-});
-
-test("reports active_old_session when active or unknown sessions are observed", () => {
-  const report = run({
-    sessions: [
-      { host: "opencode", handle: "ses_live", state: "active" },
-      { host: "cursor", handle: "ses_x", state: "unknown" },
-    ],
-  });
-  const session = check(report, "active_old_session");
-  expect(session.status).toBe("warn");
-  expect(session.detail).toContain("ses_live");
-  expect(check(run(), "active_old_session").status).toBe("pass");
-});
-
-test("reports managed_content_conflict when managed bytes drift from cutover receipt", () => {
-  const fx = makeCutoverFixture();
-  try {
-    removeLegacySkills(fx.pluginDir);
-    installV1Skills(fx.pluginDir);
-    const paths = {
-      home: fx.home,
-      configDir: fx.configDir,
-      stateDir: fx.stateDir,
-      archiveDir: path.join(fx.root, "archive"),
-      dev: fx.dev,
-      workspace: fx.workspace,
-      opencodeConfig: fx.opencodeConfig,
-      cursorSettings: fx.cursorSettings,
-      cursorMcp: fx.cursorMcp,
-      cursorPluginDir: fx.pluginDir,
-      sessions: [{ host: "opencode" as const, handle: "ses_old", state: "stopped" as const }],
-    };
-    const applied = applyCutover(
-      previewCutover(paths, ["cursor"]),
-      {
-        approve: true,
-        hosts: ["cursor"],
-        resolutions: { legacyWorkflowMode: "fresh-v1-task", "branchPolicy.allowed": "feature/*" },
-      },
-      paths,
-    );
-    expect(applied.ok).toBe(true);
-    writeConfig(fx.cursorMcp, readFileSync(fx.cursorMcp, "utf8") + "\n");
-    const report = runDoctor({
-      host: "cli",
-      home: fx.home,
-      configDir: fx.configDir,
-      stateDir: fx.stateDir,
-      dev: fx.dev,
-      cwd: fx.workspace,
-      opencodeConfig: fx.opencodeConfig,
-      cursorSettings: fx.cursorSettings,
-      cursorMcp: fx.cursorMcp,
-      cursorPluginDir: fx.pluginDir,
-    });
-    const conflict = check(report, "managed_content_conflict");
-    expect(conflict.status).toBe("fail");
-    expect(conflict.detail).toMatch(/drifted since cutover/i);
-  } finally {
-    fx.cleanup();
-  }
-});
-
 test(
   "AR-14: negative fixtures never leak raw git usage/fatal dumps into the suite output",
   () => {
@@ -1973,5 +1853,53 @@ test("doctor uses the default GitHub API host when the SSH alias has no host con
     if (previous === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
     else process.env.WORKFLOW_VCS_CONFIG = previous;
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Workit 3 ships only the OpenCode V2 plugin entry: an OpenCode 1.x CLI fails
+// with the pin-to-2.x / upgrade fix; 2.x passes; no CLI skips.
+test.skipIf(process.platform === "win32")(
+  "opencode_version fails an OpenCode 1.x host with the stay-on-2.x fix",
+  () => {
+    const bin = binDirWithRuntimes(fixture.root);
+    const opencode = path.join(bin, "opencode");
+    const withVersion = (version: string) => {
+      writeFileSync(opencode, `#!/bin/sh\necho "${version}"\n`, { mode: 0o755 });
+      return check(run({ env: { ...process.env, PATH: bin } }), "opencode_version");
+    };
+    try {
+      const old = withVersion("1.18.34");
+      expect(old.status).toBe("fail");
+      expect(old.detail).toContain(
+        `older than the supported minimum ${SUPPORT_MATRIX.opencode.minimum}`,
+      );
+      expect(old.fix).toContain('"@brainervirus/workit-opencode@2"');
+      expect(old.fix).toContain('"plugin" array');
+      expect(withVersion("opencode v2.0.21").status).toBe("pass");
+    } finally {
+      rmSync(opencode, { force: true });
+    }
+    expect(check(run({ env: { ...process.env, PATH: bin } }), "opencode_version").status).toBe(
+      "pass",
+    );
+  },
+  { timeout: 60_000 },
+);
+
+test("doctor reads Workit pins from both the `plugins` (2.x) and `plugin` keys", () => {
+  const original = readFileSync(fixture.opencodeConfig, "utf8");
+  const checkoutPin = `file://${fixture.dev}/packages/workit-opencode`;
+  try {
+    writeConfig(fixture.opencodeConfig, JSON.stringify({ plugins: [checkoutPin, "other"] }));
+    expect(check(run(), "stale_pin").status).toBe("pass");
+    expect(check(run(), "duplicate_registration").status).toBe("pass");
+
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugins: [checkoutPin], plugin: [OPENCODE_NPM_PIN] }),
+    );
+    expect(check(run(), "duplicate_registration").status).toBe("fail");
+  } finally {
+    writeConfig(fixture.opencodeConfig, original);
   }
 });

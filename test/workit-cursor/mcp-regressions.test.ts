@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   CURSOR_HOOK_RUN_COMMAND,
   CURSOR_PRETOOLUSE_MATCHER,
-} from "@/packages/workit-core/src/core/registration";
+} from "@/packages/workit-cli/src/admin/registration";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 

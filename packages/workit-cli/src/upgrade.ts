@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdtempSync,
+  rmSync,
   readFileSync,
   mkdirSync,
   copyFileSync,
@@ -11,16 +13,18 @@ import {
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { isWorkitPlugin } from "@brainervirus/workit-core/src/core/registration";
-import { readSetupState } from "@brainervirus/workit-core/src/core/setup-state";
-import { type HostId } from "@brainervirus/workit-core/src/core/detect-hosts";
+import { isWorkitPlugin } from "./admin/registration";
+import { readSetupState } from "./admin/setup-state";
+import { type HostId } from "./admin/detect-hosts";
 import {
   hostCommand,
   planHostInstall,
   runHostCommand,
   type HostInstallCommand,
-} from "@brainervirus/workit-core/src/core/host-install";
-import { applySetupPreview, type SetupPreview } from "@brainervirus/workit-core/src/core/setup";
+} from "./admin/host-install";
+import { applySetupPreview, type SetupPreview } from "./admin/setup";
+import { OPENCODE_V1_FIX } from "./admin/doctor";
+import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 
 const HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
@@ -47,6 +51,8 @@ export type UpgradePlan = {
   configDigests: Record<string, string>;
   cli?: { latest: string; root: string };
   migrations: { id: string; file: string; description: string }[];
+  /** Advisories that do not block the upgrade (e.g. an OpenCode 1.x host). */
+  warnings?: string[];
 };
 
 const upgradePaths = (deps: UpgradeDeps) => {
@@ -266,6 +272,30 @@ export function previewUpgrade(hosts: HostId[] = HOSTS, deps: UpgradeDeps = {}):
         description: "Remove ignored Workit trustedPaths; native host permissions remain unchanged",
       });
     const installedSources = sources(paths, run, hosts);
+    // Workit 3 ships only the OpenCode V2 plugin entry: warn before an upgrade
+    // leaves a 1.x host with a plugin it cannot load. Unknown versions stay quiet.
+    if (installedSources.some((source) => source.host === "opencode")) {
+      // Like the doctor probe: OpenCode logs under its XDG data dir even for
+      // --version, so a preview must point those dirs at a throwaway place.
+      const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-upgrade-opencode-"));
+      let probe: CommandResult;
+      try {
+        probe = runner({
+          ...deps,
+          env: {
+            ...deps.env,
+            XDG_DATA_HOME: path.join(scratch, "data"),
+            XDG_STATE_HOME: path.join(scratch, "state"),
+            XDG_CACHE_HOME: path.join(scratch, "cache"),
+          },
+        })("opencode", ["--version"]);
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+      const installed = probe.status === 0 ? probe.stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
+      if (installed && !versionAtLeast(installed, SUPPORT_MATRIX.opencode.minimum))
+        (plan.warnings ??= []).push(`opencode ${installed}: ${OPENCODE_V1_FIX}`);
+    }
     for (const host of ["opencode", "pi"] as const) {
       if (
         new Set(
@@ -504,13 +534,19 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   const flags = new Set(argv);
   const unknown = argv.filter(
     (arg) =>
-      !["--apply", "--confirm", "--json", "--cli"].includes(arg) && !arg.startsWith("--hosts="),
+      !["--apply", "--confirm", "--json", "--cli", "--preview"].includes(arg) &&
+      !arg.startsWith("--hosts="),
   );
   const hostFlag = argv.find((arg) => arg.startsWith("--hosts="))?.slice(8);
   const raw = hostFlag === "none" ? [] : (hostFlag?.split(",") ?? HOSTS);
-  if (unknown.length || raw.some((host) => !HOSTS.includes(host as HostId))) {
+  // `--preview` names the default mode explicitly; it cannot be combined with --apply.
+  if (
+    unknown.length ||
+    raw.some((host) => !HOSTS.includes(host as HostId)) ||
+    (flags.has("--preview") && flags.has("--apply"))
+  ) {
     out.write(
-      "Usage: workit upgrade [--hosts=opencode,cursor,codex,pi|none] [--cli] [--apply --confirm] [--json]\n",
+      "Usage: workit upgrade [--hosts=opencode,cursor,codex,pi|none] [--cli] [--preview | --apply --confirm] [--json]\n",
     );
     return 2;
   }
@@ -552,6 +588,7 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     out.write("Apply requires --confirm after reviewing the upgrade preview.\n");
     return 2;
   }
+  for (const warning of plan.warnings ?? []) out.write(`warning: ${warning}\n`);
   const result = applyUpgrade(plan, deps);
   out.write(JSON.stringify(result, null, 2) + "\n");
   return result.ok ? 0 : 1;

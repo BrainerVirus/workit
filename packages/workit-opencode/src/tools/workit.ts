@@ -1,12 +1,8 @@
-import { tool } from "@opencode-ai/plugin";
 import {
   WorkitCore,
   TaskStore,
   canonicalJson,
   failure,
-  advertisedOperationSchemas,
-  OPERATION_SCHEMA_DEPTH,
-  canonicalFieldsDescription,
   parseOperation,
   sha256,
   success,
@@ -30,7 +26,7 @@ type SessionLookup = {
 
 type SessionInfo = { id?: string; parentID?: string; directory?: string };
 
-export const sessionParent = (session: unknown): string | undefined | null => {
+const sessionParent = (session: unknown): string | undefined | null => {
   if (typeof session !== "object" || session === null) return null;
   if (!Object.prototype.hasOwnProperty.call(session, "parentID")) return undefined;
   const parentID = (session as SessionInfo).parentID;
@@ -108,17 +104,13 @@ const purposeForQuestion = (question: Question): Receipt["purpose"] | undefined 
   return undefined;
 };
 
-/** Host-only receipt queue. Writers are the native question after-hook and
- * the question.asked/question.replied session events (opencode delivers
- * answers out-of-band, so the after-hook alone never sees them). */
+/** Host-only receipt queue. The OpenCode V2 adapter announces each native
+ * question at `tool.execute.before` (recordRequest) and mints its receipt from
+ * the completed question result at `tool.execute.after` (record). */
 export class NativeReceiptStore {
   #receipts = new Map<string, Receipt[]>();
   #observations = new WeakSet();
   #reservations = new WeakMap<object, Receipt>();
-  #pending = new Map<
-    string,
-    { sessionID: string; callID: string; questions: unknown; sequence: number }
-  >();
   // Call IDs stay recorded until this host receipt store is unloaded.
   #callSequences = new Map<string, number>();
   #seenCalls = new Set<string>();
@@ -141,53 +133,14 @@ export class NativeReceiptStore {
     if (!this.#callSequences.has(key)) this.#callSequences.set(key, sequence);
   }
 
-  /** Stash an asked native question until its out-of-band reply arrives. */
-  recordRequest(requestID: string, sessionID: string, callID: string, questions: unknown): void {
+  /** Order an asked native question by when it was asked, not answered. */
+  recordRequest(requestID: string, sessionID: string, callID: string): void {
     if (typeof requestID !== "string" || !requestID) return;
     const key = this.callKey(sessionID, callID);
-    let sequence = this.#callSequences.get(key);
-    if (sequence === undefined) {
-      sequence = ++this.#sequence;
-      this.rememberSequence(key, sequence);
-    }
-    this.#pending.set(requestID, { sessionID, callID, questions, sequence });
-    if (this.#pending.size > 16) {
-      const oldest = this.#pending.keys().next();
-      if (!oldest.done) this.#pending.delete(oldest.value);
-    }
+    if (!this.#callSequences.has(key)) this.rememberSequence(key, ++this.#sequence);
   }
 
-  /** Drop a stashed question whose reply will never arrive. */
-  recordRejected(requestID: string): void {
-    this.#pending.delete(requestID);
-  }
-
-  /**
-   * Mint a receipt from an out-of-band question reply. Returns false when the
-   * stashed question is missing or the reply does not select exactly one
-   * presented Workit option — never throws, so event delivery keeps flowing.
-   */
-  recordReply(requestID: string, sessionID: string, answers: unknown): boolean {
-    const pending = this.#pending.get(requestID);
-    this.#pending.delete(requestID);
-    if (!pending || pending.sessionID !== sessionID) return false;
-    if (!Array.isArray(answers) || answers.length !== 1) return false;
-    return this.mint(
-      pending.sessionID,
-      pending.callID,
-      pending.questions,
-      answers,
-      pending.sequence,
-    );
-  }
-
-  private mint(
-    sessionID: string,
-    callID: string,
-    questions: unknown,
-    answers: unknown,
-    sequence?: number,
-  ): boolean {
+  private mint(sessionID: string, callID: string, questions: unknown, answers: unknown): boolean {
     const answer =
       Array.isArray(answers) &&
       answers.length === 1 &&
@@ -215,7 +168,7 @@ export class NativeReceiptStore {
     if (!decisionPurpose) return false;
     const key = this.callKey(sessionID, callID);
     if (this.#seenCalls.has(key)) return true;
-    const receiptSequence = sequence ?? this.#callSequences.get(key) ?? ++this.#sequence;
+    const receiptSequence = this.#callSequences.get(key) ?? ++this.#sequence;
     this.rememberSequence(key, receiptSequence);
     this.#seenCalls.add(key);
     const content = decisionContent(
@@ -356,82 +309,6 @@ export class NativeReceiptStore {
   }
 }
 
-const MAX_OPERATION_OBJECT_DEPTH = OPERATION_SCHEMA_DEPTH;
-
-const schemaDef = (schema: any): Record<string, any> => schema?.def ?? schema?._def ?? {};
-
-const shallowSchema = (schema: any, field: string): any => {
-  const def = schemaDef(schema);
-  if (def.type === "optional")
-    return tool.schema
-      .any()
-      .optional()
-      .describe(`Canonical nested value for ${field}; Workit validates it.`);
-  if (def.type === "nullable")
-    return tool.schema.any().describe(`Canonical nested value for ${field}; Workit validates it.`);
-  if (def.type === "array" && schemaDef(def.element).type !== "object")
-    return tool.schema.array(shallowSchema(def.element, field));
-  if (def.type === "object" || def.type === "array" || def.type === "union") {
-    // Same canonical-fields wording as the shared JSON projector; the field
-    // path is kept when the collapsed shape names nothing.
-    const fields = Object.keys(schemaDef(schema).shape ?? {});
-    const description =
-      fields.length > 0
-        ? canonicalFieldsDescription(fields)
-        : `Canonical nested value for ${field}; Workit validates it.`;
-    return tool.schema.any().describe(description);
-  }
-  return schema;
-};
-
-const boundedSchema = (schema: any, depth: number, field: string): any => {
-  const def = schemaDef(schema);
-  if (def.type === "object") {
-    const canonicalShape = def.shape ?? {};
-    const shape = Object.fromEntries(
-      Object.entries(canonicalShape).map(([key, child]) => [
-        key,
-        depth >= MAX_OPERATION_OBJECT_DEPTH
-          ? shallowSchema(child, `${field}.${key}`)
-          : boundedSchema(child, depth + 1, `${field}.${key}`),
-      ]),
-    );
-    const description =
-      depth >= MAX_OPERATION_OBJECT_DEPTH ? canonicalFieldsDescription(schema) : undefined;
-    const object = tool.schema.object(shape).strict();
-    return description ? object.describe(description) : object;
-  }
-  if (def.type === "array") return tool.schema.array(boundedSchema(def.element, depth, field));
-  if (def.type === "union")
-    return tool.schema.union(
-      def.options.map((option: any) => boundedSchema(option, depth, field)) as [any, any, ...any[]],
-    );
-  if (def.type === "optional") return boundedSchema(def.innerType, depth, field).optional();
-  if (def.type === "nullable") return boundedSchema(def.innerType, depth, field).nullable();
-  return schema;
-};
-
-const operationShapeFor = (family: OperationFamily): Record<string, any> => {
-  const options = (
-    advertisedOperationSchemas[family] as unknown as {
-      options: Array<{ shape: Record<string, any> }>;
-    }
-  ).options;
-  const keys = new Set(options.flatMap((option) => Object.keys(option.shape)));
-  const shape: Record<string, any> = {};
-  for (const key of keys) {
-    const schemas = options.map((option) => option.shape[key]).filter(Boolean);
-    const schema =
-      schemas.length === 1 ? schemas[0] : tool.schema.union(schemas as [any, any, ...any[]]);
-    const bounded = boundedSchema(schema, 0, key);
-    shape[key] =
-      options.every((option) => key in option.shape) && !schema.isOptional()
-        ? bounded
-        : bounded.optional();
-  }
-  return shape;
-};
-
 const output = (value: unknown): string => JSON.stringify(value, null, 2);
 
 const sessionData = async (client: SessionLookup | undefined, sessionID: string) => {
@@ -449,7 +326,6 @@ const sessionData = async (client: SessionLookup | undefined, sessionID: string)
 
 import { sameWorkspace } from "../shared/session";
 import { decisionContent } from "../shared/decision-content";
-export { sameWorkspace };
 
 const hostRef = (handle: string) => ({ kind: "host" as const, host: "opencode" as const, handle });
 
@@ -626,6 +502,13 @@ const workerIdFor = (
   return matches.length === 1 ? matches[0].id : null;
 };
 
+/** A host-native tool body. OpenCode V2 advertises the input schema from
+ * `shared/tools.ts`; this object only carries the execution. */
+export type NativeTool = {
+  description: string;
+  execute: (args: any, context: { directory: string; sessionID: string }) => Promise<string>;
+};
+
 export type WorkitToolOptions = {
   client?: SessionLookup;
   receipts?: NativeReceiptStore;
@@ -636,94 +519,92 @@ export const createWorkitTools = ({
   client,
   receipts = new NativeReceiptStore(),
   directChildren = new Map<string, string>(),
-}: WorkitToolOptions = {}) => {
-  const make = (family: OperationFamily) =>
-    tool({
-      description: `Workit ${family} operations backed by the shared task contract.`,
-      args: operationShapeFor(family),
-      execute: async (args, context) => {
-        const parsed = parseOperation(family, args);
-        if (!parsed.ok) return output(parsed);
-        if (!client)
-          return output(
-            failure("permission_denied", "OpenCode native session observation unavailable"),
-          );
-        const data = await sessionData(client, context.sessionID);
-        if (data === null || !sameWorkspace(context.directory, data.directory ?? ""))
-          return output(failure("permission_denied", "OpenCode session observation unavailable"));
-        const parentID = sessionParent(data);
-        if (parentID === null)
-          return output(failure("permission_denied", "OpenCode session parentage is malformed"));
-        const store = new TaskStore(context.directory);
-        const workerId = workerIdFor(store, context.sessionID, data, directChildren);
-        if (parentID !== undefined && workerId === null)
-          return output(
-            failure("permission_denied", "OpenCode child session has no validated Workit worker"),
-          );
-        const operationContext: OperationContext = {
-          root: context.directory,
-          caller: { host: "opencode", actor: context.sessionID },
-          capabilities: opencodeCapabilities(),
-          constraints: [],
-          now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-          workerId,
-          nativeAuthority: nativeAuthority(receipts, context.sessionID),
-          nativeWorker: nativeWorkerFor(directChildren, context.sessionID),
+}: WorkitToolOptions = {}): Record<string, NativeTool> => {
+  const make = (family: OperationFamily): NativeTool => ({
+    description: `Workit ${family} operations backed by the shared task contract.`,
+    execute: async (args, context) => {
+      const parsed = parseOperation(family, args);
+      if (!parsed.ok) return output(parsed);
+      if (!client)
+        return output(
+          failure("permission_denied", "OpenCode native session observation unavailable"),
+        );
+      const data = await sessionData(client, context.sessionID);
+      if (data === null || !sameWorkspace(context.directory, data.directory ?? ""))
+        return output(failure("permission_denied", "OpenCode session observation unavailable"));
+      const parentID = sessionParent(data);
+      if (parentID === null)
+        return output(failure("permission_denied", "OpenCode session parentage is malformed"));
+      const store = new TaskStore(context.directory);
+      const workerId = workerIdFor(store, context.sessionID, data, directChildren);
+      if (parentID !== undefined && workerId === null)
+        return output(
+          failure("permission_denied", "OpenCode child session has no validated Workit worker"),
+        );
+      const operationContext: OperationContext = {
+        root: context.directory,
+        caller: { host: "opencode", actor: context.sessionID },
+        capabilities: opencodeCapabilities(),
+        constraints: [],
+        now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+        workerId,
+        nativeAuthority: nativeAuthority(receipts, context.sessionID),
+        nativeWorker: nativeWorkerFor(directChildren, context.sessionID),
+      };
+      const core = new WorkitCore(store, operationContext);
+      let result: Result<unknown>;
+      if (family === "decision" && (args as { action?: string }).action === "record") {
+        const decision = parsed.data as {
+          response: string;
+          purpose: Receipt["decisionPurpose"];
+          binding: { presented: string; approvedContent: string; displayed?: string };
         };
-        const core = new WorkitCore(store, operationContext);
-        let result: Result<unknown>;
-        if (family === "decision" && (args as { action?: string }).action === "record") {
-          const decision = parsed.data as {
-            response: string;
-            purpose: Receipt["decisionPurpose"];
-            binding: { presented: string; approvedContent: string; displayed?: string };
-          };
-          // Stated choices settle without a native receipt: the user's words
-          // are the authority. Core restricts them to non-mutating purposes;
-          // action approvals always mint a receipt-shaped question first.
-          if (decision.response === "stated") {
-            result = core.observeDecision(parsed.data, undefined);
-            return output(result);
-          }
-          const budgetIssue = workitBindingQuestionIssue([
-            decisionContent(
-              decision.purpose,
-              decision.binding.presented,
-              decision.binding.approvedContent,
-            ),
-          ]);
-          if (budgetIssue) return output(failure("invalid_input", budgetIssue));
-          const expectation: ReceiptExpectation = {
-            selectedLabel: decision.response,
-            decisionPurpose: decision.purpose,
-            contentDigest: sha256(
-              canonicalJson(
-                decisionContent(
-                  decision.purpose,
-                  decision.binding.presented,
-                  decision.binding.approvedContent,
-                ),
+        // Stated choices settle without a native receipt: the user's words
+        // are the authority. Core restricts them to non-mutating purposes;
+        // action approvals always mint a receipt-shaped question first.
+        if (decision.response === "stated") {
+          result = core.observeDecision(parsed.data, undefined);
+          return output(result);
+        }
+        const budgetIssue = workitBindingQuestionIssue([
+          decisionContent(
+            decision.purpose,
+            decision.binding.presented,
+            decision.binding.approvedContent,
+          ),
+        ]);
+        if (budgetIssue) return output(failure("invalid_input", budgetIssue));
+        const expectation: ReceiptExpectation = {
+          selectedLabel: decision.response,
+          decisionPurpose: decision.purpose,
+          contentDigest: sha256(
+            canonicalJson(
+              decisionContent(
+                decision.purpose,
+                decision.binding.presented,
+                decision.binding.approvedContent,
               ),
             ),
-            question: decision.binding.presented,
-          };
-          // The rejected option description is presentation text; only an
-          // approved answer binds the approved content bytes.
-          if (decision.response === "approved")
-            expectation.selectedDescription = decision.binding.approvedContent;
-          const observed = receipts.reserve(context.sessionID, "decision", expectation);
-          if (!observed.ok) return output(failure("permission_denied", observed.error));
-          result = core.observeDecision(parsed.data, observed.observation);
-          if (result.ok) {
-            receipts.commit(observed.observation);
-          }
-        } else {
-          const run = core[family] as unknown as (request: unknown) => Result<unknown>;
-          result = run.call(core, parsed.data);
+          ),
+          question: decision.binding.presented,
+        };
+        // The rejected option description is presentation text; only an
+        // approved answer binds the approved content bytes.
+        if (decision.response === "approved")
+          expectation.selectedDescription = decision.binding.approvedContent;
+        const observed = receipts.reserve(context.sessionID, "decision", expectation);
+        if (!observed.ok) return output(failure("permission_denied", observed.error));
+        result = core.observeDecision(parsed.data, observed.observation);
+        if (result.ok) {
+          receipts.commit(observed.observation);
         }
-        return output(result);
-      },
-    });
+      } else {
+        const run = core[family] as unknown as (request: unknown) => Result<unknown>;
+        result = run.call(core, parsed.data);
+      }
+      return output(result);
+    },
+  });
   const tools = Object.fromEntries(
     (
       ["task", "policy", "evidence", "finding", "decision", "worker", "writer", "state"] as const
@@ -733,51 +614,6 @@ export const createWorkitTools = ({
     ...tools,
     workit_context: createContextTool(),
   };
-};
-
-export const observeQuestion = (
-  receipts: NativeReceiptStore,
-  input: { tool: string; sessionID: string; callID: string; args?: unknown },
-  outputValue: { metadata?: unknown },
-): void => {
-  if (input.tool === "question") receipts.record(input, outputValue);
-};
-
-/**
- * Native question replies arrive as session events, not tool output. Stash
- * asked questions by request id and mint receipts on reply; anything
- * unrecognized is ignored so event delivery never breaks.
- */
-export const observeQuestionEvent = (
-  receipts: NativeReceiptStore,
-  event: { type: string; properties?: unknown },
-): void => {
-  const properties =
-    event.properties !== null && typeof event.properties === "object"
-      ? (event.properties as {
-          id?: unknown;
-          sessionID?: unknown;
-          questions?: unknown;
-          requestID?: unknown;
-          answers?: unknown;
-          tool?: { callID?: unknown };
-        })
-      : null;
-  if (!properties) return;
-  if (event.type === "question.asked") {
-    if (typeof properties.id !== "string" || typeof properties.sessionID !== "string") return;
-    const callID =
-      typeof properties.tool?.callID === "string" ? properties.tool.callID : properties.id;
-    receipts.recordRequest(properties.id, properties.sessionID, callID, properties.questions);
-    return;
-  }
-  if (event.type === "question.rejected") {
-    if (typeof properties.requestID === "string") receipts.recordRejected(properties.requestID);
-    return;
-  }
-  if (event.type !== "question.replied") return;
-  if (typeof properties.requestID !== "string" || typeof properties.sessionID !== "string") return;
-  receipts.recordReply(properties.requestID, properties.sessionID, properties.answers);
 };
 
 export type { Receipt };

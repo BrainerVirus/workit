@@ -3,9 +3,8 @@ import Ajv2020 from "ajv/dist/2020";
 import { WORKIT_TOOL_CATALOG } from "@/packages/workit-opencode/src/shared/tools";
 import { createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
 
-test("V1 and V2 publish the same flat, read-only context arguments", () => {
+test("the context tool publishes flat, read-only arguments", () => {
   const tools = createWorkitTools() as any;
-  const v1 = tools.workit_context.args;
   const v2 = WORKIT_TOOL_CATALOG.find((tool) => tool.name === "workit_context")?.input;
   expect(v2).toBeDefined();
   const args = {
@@ -14,7 +13,6 @@ test("V1 and V2 publish the same flat, read-only context arguments", () => {
     operation: "git.commit",
     payload: { message: "must not be available" },
   };
-  expect(Object.keys(v1).toSorted()).toEqual(Object.keys((v2 as any).properties).toSorted());
   expect(tools).not.toHaveProperty("workit_external_action");
   const validate = new Ajv2020({ strict: false }).compile(v2 as any);
   expect(validate({ kind: "affected", range: "HEAD~1...HEAD" })).toBe(true);

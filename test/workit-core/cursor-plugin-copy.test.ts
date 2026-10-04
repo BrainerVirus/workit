@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { copyPluginDir } from "@/packages/workit-core/src/core/setup";
+import { copyPluginDir } from "@/packages/workit-cli/src/admin/setup";
 
 const tempDir = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const clean = (dir: string) => rmSync(dir, { recursive: true, force: true });

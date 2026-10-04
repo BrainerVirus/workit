@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { configDir, isConfigObject } from "./config";
 import { writeFileExclusive } from "./safe-write";
-import { applyWorkspaceBranchPolicy } from "./setup";
+import { applyWorkspaceBranchPolicy } from "./workspace-branch-policy";
 import { youTrackTokenCreateUrl } from "./youtrack";
 
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";

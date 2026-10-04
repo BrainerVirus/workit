@@ -4,7 +4,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
 
 Workit plugin for Claude Code: task context on session start and per turn,
-branch policy on `git` shell commands, fourteen method skills (`/workit:<name>`),
+branch policy on `git` shell commands, sixteen method skills (`/workit:<name>`),
 and `verifier`, `reviewer` and `implementer` agents.
 
 ## Install

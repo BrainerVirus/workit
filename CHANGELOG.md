@@ -13,6 +13,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed (breaking, 3.0)
+
+- **OpenCode V1 (`server()`) adapter.** `@brainervirus/workit-opencode` now
+  exports only the V2 plugin definition `{ id: "workit", setup }` and requires
+  OpenCode 2.0.18+ (support-matrix floor; was 1.18.30). The `@opencode-ai/plugin`
+  SDK pin is gone. *Migration:* on OpenCode 1.x stay on Workit 2.x by pinning
+  `"plugin": ["@brainervirus/workit-opencode@2"]` (the V1 key); after upgrading
+  OpenCode use `"plugins": ["@brainervirus/workit-opencode"]` (2.x still
+  normalizes `plugin`). `workit doctor` now fails a 1.x CLI with
+  `opencode_version`, and `workit upgrade` warns before applying.
+- **`workit cutover`** (preview/apply/rollback of legacy workflow-toolkit
+  installs) and its core modules (`cutover.ts`, `legacy-ownership.ts`,
+  `config-conversion.ts`). *Migration:* migrate a legacy install with Workit
+  2.x first, or reinstall with `workit init`.
+- **Doctor check ids** `mixed_generation`, `legacy_component`,
+  `missing_v1_component`, `active_old_session` and `managed_content_conflict`
+  (cutover-only state), and the `WORKFLOW_TOOLKIT_SESSIONS` input. Consumers of
+  `workit doctor --json` must stop expecting them.
+- **Core deep imports of admin code.** `@brainervirus/workit-core` no longer
+  ships `src/core/{setup,doctor,host-install,uninstall,registration,
+  detect-hosts,setup-state}.ts` or `scripts/doctor-check.ts`; they live in
+  `@brainervirus/workit-cli` (`src/admin/`, `scripts/doctor-check.ts`), so host
+  hooks and plugins no longer bundle them (OpenCode plugin bundle about 28%
+  smaller). Use the `workit` CLI instead of deep imports.
+
 ### Added
 
 - `workit check <name>` / `workit check [--name <n>] -- <cmd…>` runs a check
@@ -64,6 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit uninstall` now also removes Workit pins from the OpenCode 2.x
+  `plugins` key (it only cleaned the V1-era `plugin` key, so a 2.x
+  registration, including a checkout directory pin, survived uninstall).
 - `.workit/recovery/` no longer grows without bound: each task or workspace
   record keeps its newest three recovery copies. `workit gc` (`--dry-run`,
   `--json`) prunes copies left by older versions, removes stale temp files, and

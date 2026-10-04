@@ -31,6 +31,7 @@ const ENTRIES = [
   "packages/workit-pi/extensions/workit.ts",
   "packages/workit-pi/src/worker.ts",
   "packages/workit-cli/src/main.ts", // workit-cli dist/index.js (wizards via dynamic import)
+  "packages/workit-cli/scripts/doctor-check.ts", // install-*.sh post-install doctor
   ...ts("scripts"),
   ...ts("packages/workit-core/scripts"),
   ...readdirSync(rel("packages"))

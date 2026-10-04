@@ -50,7 +50,7 @@ fi
 # The check reads only workit-owned files, so a healthy install is byte-untouched;
 # a registry-unreachable comparison reports registry_unreachable, never stale
 # (CA-04) — no false stale_install and no install failure.
-if bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" cursor --stale; then
+if bun "$ROOT/packages/workit-cli/scripts/doctor-check.ts" cursor --stale; then
   :
 elif [ $? -eq 2 ]; then
   echo "workit: stale Cursor plugin install detected — self-healing (refresh + canonical re-registration)" >&2
@@ -70,7 +70,7 @@ if [ -d "$SKILLS_DIR" ]; then
 fi
 
 PLUGIN_DIR="$HOME/.cursor/plugins/local/workit"
-REGISTRATION_TS="$ROOT/packages/workit-core/src/core/registration.ts"
+REGISTRATION_TS="$ROOT/packages/workit-cli/src/admin/registration.ts"
 CURSOR_SETTINGS="$HOME/.cursor/settings.json" CURSOR_MCP="$HOME/.cursor/mcp.json" PLUGIN_DIR="$PLUGIN_DIR" REGISTRATION_TS="$REGISTRATION_TS" LOCAL_DIST="$LOCAL_DIST" bun -e '
 import fs from "node:fs";
 import path from "node:path";
@@ -120,7 +120,7 @@ if (localDist) {
 '
 
 # DG-09: verify the just-written Cursor registration with the shared offline doctor.
-if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" cursor; then
+if ! bun "$ROOT/packages/workit-cli/scripts/doctor-check.ts" cursor; then
   echo "FATAL: post-install doctor found an unhealthy Cursor registration" >&2
   exit 1
 fi
@@ -140,6 +140,5 @@ if [ -d "$LEGACY_PLUGIN_DIR" ] && [ "$LEGACY_PLUGIN_DIR" != "$PLUGIN_DIR" ]; the
 fi
 
 echo "Cursor plugin installed + auto-sync enabled (sessionStart)."
-echo "Generation switches require an explicit cutover preview/apply — install alone is not a cutover."
 echo "Share: $SHARE"
 ls "$HOME/.cursor/plugins/local/workit/skills" | grep '^wk-' || true
