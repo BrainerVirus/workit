@@ -11,8 +11,8 @@ import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
 import { initApply } from "@brainervirus/workit-core/src/core/init";
 import { legacyScriptResult, output, requireConfirmed, type RepoRuntime } from "./repo-result";
 
-/** The core initApply call in RunResult shape, shared so the V1 repo-tool
- * runtime and the V2 adapter run the identical confirmed action. */
+/** The core initApply call in RunResult shape (the runtime is injectable so
+ * tests can observe the confirmed action without touching config). */
 export const initApplyRuntime: RepoRuntime = {
   initApply: (root, action, env) => {
     const out = initApply({ action, confirmed: true, env });
@@ -51,8 +51,8 @@ export type InitApplyArgs = {
   include_open_source?: boolean;
 };
 
-/** Host-neutral body of `workit_init_apply`, shared by the V1 tool wrapper and
- * the V2 adapter so the confirmed-action semantics cannot drift per host. */
+/** Host-neutral body of `workit_init_apply`, so the confirmed-action
+ * semantics live in one place. */
 export const executeInitApply = (
   args: InitApplyArgs,
   directory: string,

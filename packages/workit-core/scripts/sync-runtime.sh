@@ -153,19 +153,6 @@ fi
 # Remove broken TLA live-loader if present (OpenCode ignored it; /wk-* vanished)
 rm -f "${OPENCODE_PLUGINS}/workflow-toolkit.ts"
 
-# Ensure OpenCode has plugin peer dep
-PKG="${HOME}/.config/opencode/package.json"
-if [ -f "$PKG" ]; then
-  PKG_PATH="$PKG" "$BUN_BIN" -e '
-import fs from "node:fs";
-const path = process.env.PKG_PATH!;
-const data = JSON.parse(fs.readFileSync(path, "utf8"));
-data.dependencies = data.dependencies ?? {};
-data.dependencies["@opencode-ai/plugin"] = data.dependencies["@opencode-ai/plugin"] ?? "1.18.30";
-fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
-' || true
-fi
-
 # Drop bun package cache so old github/file installs cannot shadow file:// plugin.ts
 rm -rf "${HOME}/.cache/opencode/packages/workflow-toolkit-opencode@"* 2>/dev/null || true
 

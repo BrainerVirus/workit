@@ -82,7 +82,7 @@ test("opencode tarball ships one bundled dist entry and no commands, templates o
   // unresolved `@opencode-ai/plugin` import to resolve at load time.
   const pluginJs = readTarballFile(tarball, "dist/plugin.js");
   expect(pluginJs, "dist/plugin.js").not.toMatch(
-    /(?:from\s+|import\s*\(\s*)\s*["']@opencode-ai\/plugin["']/,
+    /(?:from\s+|import\s*\(\s*)\s*["']@opencode(?:-ai)?\/plugin["']/,
   );
 });
 

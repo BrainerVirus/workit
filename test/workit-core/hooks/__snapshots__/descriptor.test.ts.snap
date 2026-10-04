@@ -1223,7 +1223,7 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
       "task": "session-bound",
     },
     "docs": [
-      "https://opencode.ai/docs/plugins/",
+      "https://opencode.ai/v2/docs/build/plugins/",
     ],
     "events": {
       "compact.pre": {
@@ -1294,7 +1294,7 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
       "worktreeIsolation": "undocumented",
     },
     "transport": "in-process-plugin",
-    "verifiedAgainst": "@opencode-ai/plugin 1.18.30",
+    "verifiedAgainst": "@opencode/plugin 2.0.18",
   },
   "unobserved": [
     {

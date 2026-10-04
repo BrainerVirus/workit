@@ -29,7 +29,6 @@ import { readVcsConfig } from "@/packages/workit-core/src/core/vcs-config";
 import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
 import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
 import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
-import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 
 // The offline doctor engine (DG-07/DG-08, CA-09): one fixture tree, one broken
 // surface at a time, assert the typed check + nonzero exitCode, then repair the
@@ -760,7 +759,7 @@ test("detects an out-of-matrix opencode SDK pin as mixed versions", () => {
         ...original,
         dependencies: {
           ...original.dependencies,
-          "@opencode-ai/plugin": "0.9.0",
+          "@opencode/plugin": "0.9.0",
         },
       }),
     );

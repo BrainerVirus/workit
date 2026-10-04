@@ -90,7 +90,7 @@ Run the wizard and select OpenCode, or add the plugin to `opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@brainervirus/workit-opencode"]
+  "plugins": ["@brainervirus/workit-opencode"]
 }
 ```
 
@@ -99,11 +99,12 @@ checkout/dev install may pin `file://…/packages/workit-opencode/…` instead.
 Do not pin into pnpm dlx or `_npx` cache paths — those break when the cache is
 cleared.
 
-Requires OpenCode 1.18.30+ and Node.js 24+. One dual-entry artifact carries
-`server()` for V1 and `setup()` for OpenCode 2.0.3 with the same ten native
-tools, fourteen method skills and `wk-*` commands, question receipts, and
-direct-child delegation. The published plugin is a self-contained Node bundle
-(no runtime `@opencode-ai/plugin` or `@opencode/plugin` dependency).
+Requires OpenCode 2.0.18+ and Node.js 24+. The plugin uses the OpenCode V2
+plugin API (`setup()`) with ten native tools, fourteen method skills and
+`wk-*` commands, question receipts, and direct-child delegation. Workit 3.0
+removed the OpenCode 1.x (V1 `server()`) adapter; stay on Workit 2.x for an
+OpenCode 1.x host. The published plugin is a self-contained Node bundle (no
+runtime `@opencode/plugin` dependency).
 
 </details>
 
@@ -510,7 +511,7 @@ when managed coordination or outcome reconciliation is unnecessary. Inspect the
 target checkout's conventions first; native permissions apply. There is no need
 to start a Workit task just to commit, and a local commit does not require PR
 readiness or task-closure paperwork. Never switch execution paths to evade a
-denial or retry an uncertain managed effect. OpenCode V1 and V2 use native
+denial or retry an uncertain managed effect. OpenCode uses native
 host tools for mutations; Workit exposes read-only `workit_context` and shared
 coordination tools, with no managed external-action executor. See the
 [action reliability specification](docs/adaptive-workit/reliability-spec.md).

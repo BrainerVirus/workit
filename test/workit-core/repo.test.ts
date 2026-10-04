@@ -2,10 +2,26 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
 import type { RepoRuntime } from "@/packages/workit-opencode/src/shared/repo-result";
 import { initApplyData } from "@/packages/workit-core/src/core/init";
 import { PLUGIN_ROOT } from "@/packages/workit-core/src/core/scripts";
+import { WORKIT_TOOL_CATALOG } from "@/packages/workit-opencode/src/shared/tools";
+
+import {
+  executeInitApply,
+  initApplyRuntime,
+} from "@/packages/workit-opencode/src/shared/init-apply";
+
+// The OpenCode V2 adapter calls the shared executor directly (v2/plugin.ts).
+const createRepoTools = (runtime = initApplyRuntime) => ({
+  workit_init_apply: {
+    execute: async (args: unknown, context: { directory: string }) =>
+      executeInitApply(args as never, context.directory, runtime),
+  },
+});
+
+const initApplyInput = WORKIT_TOOL_CATALOG.find((tool) => tool.name === "workit_init_apply")!
+  .input as { properties: Record<string, any> };
 
 // Isolate from the developer's global config: tests assume gitflow semantics
 // (PRESETS.gitflow in src/core/config.ts), like CI with no global config.
@@ -51,11 +67,9 @@ const runtime: RepoRuntime = {
 };
 
 test(
-  "OpenCode V1 repo tools expose only init_apply without workspace override",
+  "OpenCode init_apply exposes no workspace override",
   () => {
-    const tools = createRepoTools(runtime);
-    expect(Object.keys(tools)).toEqual(["workit_init_apply"]);
-    expect("workspace_root" in tools.workit_init_apply.args).toBe(false);
+    expect("workspace_root" in initApplyInput.properties).toBe(false);
   },
   { timeout: 60_000 },
 );
@@ -65,11 +79,11 @@ test(
   async () => {
     initApplyCalls.length = 0;
     const tools = createRepoTools(runtime);
-    const raw = await tools.workit_init_apply.execute(
-      { confirmed: false } as never,
-      { directory: "/repo", worktree: "/repo" } as never,
-    );
-    expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
+    const raw = await tools.workit_init_apply.execute({ confirmed: false }, {
+      directory: "/repo",
+      worktree: "/repo",
+    } as never);
+    expect(JSON.parse(raw).error).toBe("confirmed: true required");
     expect(initApplyCalls.length).toBe(0);
   },
   { timeout: 60_000 },
@@ -92,7 +106,7 @@ test(
         directory: root,
         worktree: root,
       } as never);
-      expect(JSON.parse(raw as string)).toEqual({
+      expect(JSON.parse(raw)).toEqual({
         ok: false,
         data: { stdout: JSON.stringify({ ok: false }), stderr: "", exitCode: 0 },
         error: "legacy operation reported failure",
@@ -120,8 +134,7 @@ test(
 test(
   "OpenCode init omits obsolete MCP dependency installation",
   () => {
-    const action = createRepoTools(runtime).workit_init_apply.args.action;
-    expect(action.safeParse("npm_install").success).toBe(false);
+    expect(initApplyInput.properties.action.enum).not.toContain("npm_install");
 
     const config = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-init-"));
     try {
@@ -148,10 +161,10 @@ test(
       const context = { directory: dir, worktree: dir } as never;
 
       const accepted = JSON.parse(
-        (await tools.workit_init_apply.execute(
+        await tools.workit_init_apply.execute(
           { confirmed: true, action: "config", locale: "es-419" },
           context,
-        )) as string,
+        ),
       );
       expect(accepted.ok).toBe(true);
       expect(JSON.parse(readFileSync(path.join(dir, "config.json"), "utf8"))).toMatchObject({
@@ -159,10 +172,10 @@ test(
       });
 
       const rejected = JSON.parse(
-        (await tools.workit_init_apply.execute(
+        await tools.workit_init_apply.execute(
           { confirmed: true, action: "config", locale: "es_cl" },
           context,
-        )) as string,
+        ),
       );
       expect(rejected.ok).toBe(false);
       expect(String(rejected.error)).toContain("invalid locale");

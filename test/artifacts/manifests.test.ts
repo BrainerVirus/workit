@@ -341,7 +341,8 @@ test(
     expect(pkg.main).toBe("./dist/plugin.js");
     expect(Object.values(pkg.exports)).toContain("./dist/plugin.js");
     expect(pkg.dependencies?.["@opencode-ai/plugin"]).toBeUndefined();
-    expect(pkg.devDependencies?.["@opencode-ai/plugin"]).toBe(SUPPORT_MATRIX.opencode.current);
+    expect(pkg.devDependencies?.["@opencode-ai/plugin"]).toBeUndefined();
+    expect(pkg.devDependencies?.["@opencode/plugin"]).toBe(SUPPORT_MATRIX.opencode.current);
     expect(pkg.engines?.node).toBe(`>=${SUPPORT_MATRIX.node.minimum}`);
   },
   { timeout: 60_000 },
@@ -392,7 +393,7 @@ test(
   () => {
     const lock = read("bun.lock");
     expect(lock).toContain(`"@types/bun": "${SUPPORT_MATRIX.bun}"`);
-    expect(lock).toContain(`"@opencode-ai/plugin": "${SUPPORT_MATRIX.opencode.current}"`);
+    expect(lock).toContain(`"@opencode/plugin": "${SUPPORT_MATRIX.opencode.current}"`);
   },
   { timeout: 60_000 },
 );

@@ -7,10 +7,10 @@
 export const SUPPORT_MATRIX = {
   bun: "1.4.1",
   node: { minimum: "24", current: "24.20.0" },
-  // The object-form dual entry (server() + setup()) only loads from
-  // 1.18.29+; the supported floor is 1.18.30 so no host can pass doctor while
-  // being unable to load the entry shape.
-  opencode: { minimum: "1.18.30", current: "1.18.34" },
+  // OpenCode V2 plugin API only: the entry exports `setup()` (Workit 3.0
+  // retired the V1 `server()` adapter), so 1.x hosts cannot load it. 2.0.18 is
+  // the `@opencode/plugin` contract the adapter is built and tested against.
+  opencode: { minimum: "2.0.18", current: "2.0.18" },
   // Codex is a qualification host, not a runtime dependency: the CLI version
   // below is the one live qualification evidence covers. The doctor warns when
   // an installed CLI drifts ahead so a fresh install never silently outruns

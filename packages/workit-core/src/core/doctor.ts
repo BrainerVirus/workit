@@ -343,12 +343,12 @@ const checkVersions = (res: Resolved): DoctorCheck => {
   }
   const opencodePkg = readJson(path.join(res.dev, "packages/workit-opencode/package.json"));
   const sdk =
-    opencodePkg?.dependencies?.["@opencode-ai/plugin"] ??
-    opencodePkg?.devDependencies?.["@opencode-ai/plugin"];
+    opencodePkg?.dependencies?.["@opencode/plugin"] ??
+    opencodePkg?.devDependencies?.["@opencode/plugin"];
   const sdkVersion = typeof sdk === "string" ? (sdk.match(/^\d+(?:\.\d+){0,2}/) ?? [])[0] : null;
   if (sdkVersion && !semverAtLeast(sdkVersion, SUPPORT_MATRIX.opencode.minimum)) {
     problems.push(
-      `@opencode-ai/plugin ${sdk} is older than the supported minimum ${SUPPORT_MATRIX.opencode.minimum}`,
+      `@opencode/plugin ${sdk} is older than the supported minimum ${SUPPORT_MATRIX.opencode.minimum}`,
     );
   }
   if (problems.length === 0) {

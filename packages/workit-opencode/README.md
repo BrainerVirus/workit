@@ -12,24 +12,25 @@ OpenCode plugin for Workit — optional coordination, policy, delegation, handof
 // opencode.json / opencode.jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@brainervirus/workit-opencode"]
+  "plugins": ["@brainervirus/workit-opencode"]
 }
 ```
 
-OpenCode V2 uses `"plugins"`; V1 uses `"plugin"`.
+OpenCode 2.x reads `"plugins"` and still normalizes the older `"plugin"` key.
 
-Local dev variant (absolute path to this repo; use `plugins` on V2):
+Local dev variant (absolute path to this repo):
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///path/to/workit/packages/workit-opencode"]
+  "plugins": ["file:///path/to/workit/packages/workit-opencode"]
 }
 ```
 
-Requirements: OpenCode 1.18.30+ (V1) or 2.0.18+ (V2), Node ≥ 24. The published
-plugin is a self-contained Node bundle; its default export is a dual entry
-(`server()` for V1, `setup()` for V2), so the same pin works on both hosts.
+Requirements: OpenCode 2.0.18+, Node ≥ 24. The published plugin is a
+self-contained Node bundle whose default export is the V2 plugin definition
+(`{ id: "workit", setup }`). Workit 3.0 removed the OpenCode 1.x `server()`
+adapter; OpenCode 1.x hosts must stay on Workit 2.x.
 
 ## What it provides
 
@@ -45,7 +46,7 @@ plugin is a self-contained Node bundle; its default export is a dual entry
 - **Delegation** — native `task` workers are direct-child-only; nested or uncertain lineage is denied (`delegation_lineage_denied`).
 - **Continuity** — compact task context carries the newest decisions and bounded redacted choice summaries, injected once on session start and once after compaction; unobservable shell surfaces are labeled `agent_guided`.
 
-Workit does not register `workit_external_action` on either OpenCode version.
+Workit does not register `workit_external_action` on OpenCode.
 Use native tools for mutations under the host permissions and target conventions;
 no Workit task, writer or decision is needed merely to run an ordinary command.
 Old action/decision history is preserved. Inspect and reconcile any uncertain
@@ -60,9 +61,9 @@ before retrying them.
 
 ## Bundle / runtime model
 
-The build bundles the `@opencode-ai/plugin` (V1) and `@opencode/plugin` (V2) SDK surfaces used by the adapters into `dist/plugin.js`, so the published plugin has **no** runtime dependency on either SDK (both stay development/build-only pins). The plugin loads through its real package entry `dist/plugin.js`; only the fourteen method skills ship under `assets/`.
+The build bundles the `@opencode/plugin` SDK surface used by the adapter into `dist/plugin.js`, so the published plugin has **no** runtime dependency on the SDK (it stays a development/build-only pin). The plugin loads through its real package entry `dist/plugin.js`; only the fourteen method skills ship under `assets/`.
 
-The V2 entry registers the same ten tools with `codemode: false`, the fourteen
+The plugin registers ten tools with `codemode: false`, the fourteen
 skills and up to fourteen `wk-*` commands. Existing user skills and commands
 are preserved; an alias is added only when its Workit skill is registered. It
 also provides question receipts for `decision.record`, direct-child subagent

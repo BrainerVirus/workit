@@ -157,25 +157,15 @@ test(
 
       const mod = await import(pathToFileURL(entry).href);
       expect(typeof mod.default).toBe("object");
-      expect(typeof mod.default.server).toBe("function");
+      // V2 only: the retired V1 `server()` entry must not come back.
+      expect(Object.keys(mod.default).toSorted()).toEqual(["id", "setup"]);
       expect(mod.default.id).toBe("workit");
       expect(typeof mod.default.setup).toBe("function");
 
-      // Asset resolution must survive bundling: V1 config and V2 skill
-      // registration point at the installed package's packaged skills.
+      // Asset resolution must survive bundling: V2 skill registration points
+      // at the installed package's packaged skills.
       const packageDir = path.join(install, "node_modules", OPENCODE);
       const skillsPath = path.join(packageDir, "assets", "skills");
-      const v1Hooks = await mod.default.server({
-        directory: packageDir,
-        worktree: packageDir,
-        serverUrl: new URL("http://localhost"),
-      });
-      const v1Config: Record<string, any> = {};
-      await v1Hooks.config?.(v1Config);
-      // tmpdir prefixes differ by platform symlink layout (/var vs
-      // /private/var on macOS): compare the resolved paths on both sides.
-      expect(realpathSync(v1Config.skills.paths[0])).toBe(realpathSync(skillsPath));
-      expect(existsSync(v1Config.skills.paths[0])).toBe(true);
 
       const skills: Array<{ id: string; path: string; content: string }> = [];
       const commands: Array<{ name: string }> = [];
