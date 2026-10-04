@@ -1,7 +1,5 @@
 # /wk-bdd
 
-Load and apply the bundled `workit-bdd` skill to turn the requirement into Given/When/Then scenarios, agreed seams and test names.
-
-Write scenarios first, test at the highest agreed seam, run each slice RED then GREEN with `workit check test` (workit-behavioral-tdd), mock only at system boundaries, and take expected values from the scenario.
+Load and apply the bundled `workit-bdd` skill. Turn requirements into Given/When/Then scenarios, agree the test seam, and build test-first in vertical RED/GREEN slices. Use for BDD, TDD, acceptance criteria, scenarios, Given/When/Then, write a test first, regression test.
 
 Extra context: $ARGUMENTS

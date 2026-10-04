@@ -25,9 +25,10 @@ type Sink = { write(chunk: string): unknown };
 /** Session-start addendum: how the shared contract's names map onto this plugin. */
 export const CLAUDE_ADDENDUM =
   "Claude Code: the workit-<name> skills are this plugin's /workit:<name> skills " +
-  "(workit-steer is /workit:steer). Run Workit operations with the `workit` CLI on the " +
-  "Bash tool (`workit --help`). The plugin's verifier and reviewer agents are read-only; " +
-  "its implementer agent works in an isolated worktree.";
+  "(workit-shape is /workit:shape). Run workit verbs with the `workit` CLI on the Bash " +
+  "tool (`workit --help`); run `workit ci wait` in the background. Agents: `implementer` " +
+  "builds one brief in an isolated worktree and never records a verdict; `verifier` and " +
+  "`reviewer` are read-only non-authors that record `workit ledger verdict`.";
 
 const adapter: HostAdapter = { ...claudeCodeAdapter, addendum: () => CLAUDE_ADDENDUM };
 type Payload = Record<string, unknown>;

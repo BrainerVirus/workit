@@ -444,11 +444,11 @@ rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor
     path.join(cursorPkg, "dist/cursor-session-start.js"),
     "#!/usr/bin/env node\n// hook bundle\n",
   );
-  mkdirSync(path.join(stub, "packages/workit-opencode/assets/skills/workit-plan"), {
+  mkdirSync(path.join(stub, "packages/workit-opencode/assets/skills/workit-shape"), {
     recursive: true,
   });
   writeFileSync(
-    path.join(stub, "packages/workit-opencode/assets/skills/workit-plan/SKILL.md"),
+    path.join(stub, "packages/workit-opencode/assets/skills/workit-shape/SKILL.md"),
     "# skill\n",
   );
   const pluginDir = path.join(home, ".cursor/plugins/local/workit");

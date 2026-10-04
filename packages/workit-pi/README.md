@@ -3,7 +3,7 @@
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
 
-Workit native extension for Pi (stock 0.85.1 package contract) — eight core-backed operation tools, sixteen method skills, session/compaction continuity, and a coordinator that supervises fresh reviewer/investigator processes plus explicitly scoped implementers.
+Workit native extension for Pi (stock 0.85.1 package contract) — eight core-backed operation tools, eleven method skills, session/compaction continuity, and a coordinator that supervises fresh reviewer/investigator processes plus explicitly scoped implementers.
 
 ## Requirements
 

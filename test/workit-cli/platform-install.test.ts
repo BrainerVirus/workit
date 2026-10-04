@@ -195,7 +195,7 @@ test("Cursor refresh staging failure keeps the prior live install and returns Fa
   const dev = tempDir("workit-install-atomic-dev-");
   const source = path.join(dev, "packages", "workit-cursor");
   const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
-  const skill = path.join("skills", "workit-plan", "SKILL.md");
+  const skill = path.join("skills", "workit-shape", "SKILL.md");
   const sourceSkill = path.join(source, skill);
   try {
     mkdirSync(path.dirname(source), { recursive: true });
@@ -344,7 +344,7 @@ test("legacy Cursor identity and registration survive a failed replacement (CA-0
   const dev = tempDir("workit-migrate-fail-dev-");
   const source = path.join(dev, "packages", "workit-cursor");
   const legacyDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
-  const legacySkill = path.join("skills", "workit-plan", "SKILL.md");
+  const legacySkill = path.join("skills", "workit-shape", "SKILL.md");
   const sourceSkill = path.join(source, legacySkill);
   try {
     mkdirSync(path.dirname(source), { recursive: true });
@@ -353,7 +353,7 @@ test("legacy Cursor identity and registration survive a failed replacement (CA-0
       filter: (src) => !src.split(path.sep).includes("node_modules"),
     });
     // Legacy install + registration present.
-    mkdirSync(path.join(legacyDir, "skills", "workit-plan"), { recursive: true });
+    mkdirSync(path.join(legacyDir, "skills", "workit-shape"), { recursive: true });
     writeFileSync(path.join(legacyDir, legacySkill), "# legacy\n");
     mkdirSync(path.join(home, ".cursor"), { recursive: true });
     writeFileSync(

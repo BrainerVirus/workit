@@ -1,48 +1,48 @@
 ---
 name: workit-implement
-description: Use when implementing requested code changes in a repository. Follow its rules and host permissions; use Workit tracking and delegation only when continuity or coordination helps.
+description: Build a requested change in small verified steps - follow local patterns, run real checks with workit check, prove it on the running app, hand verification to a non-author. Use for implement, build, add a feature, make the change, code it.
 ---
 
-# Implement within authority
+# Implement and prove it works
 
-Implement within the user request and native host permissions. A task record and
-writer ownership are optional coordination tools. Assignment never expands the
-request, and a timeout is not proof that a worker stopped.
+## Steps
 
-## Method
+1. Read before writing: the files you will touch, their callers, and one
+   neighbour that already does something similar. Copy its patterns, names and
+   error handling. Repo rules (AGENTS.md, CLAUDE.md, lint config) win.
+2. On the default branch? Branch first: `workit git branch --kind feature --slug <s>`.
+3. Small steps that each leave the tree green. Behavior change: write the
+   acceptance as Given/When/Then and see a test fail first (workit-bdd).
+   Mechanical change: the existing checks are enough.
+4. Run the real checks: `workit check test` (and `lint`, `typecheck` when the
+   repo has them). A recorded "tests pass" is a note; an observed run counts.
+5. Prove the feature on its real surface with the project's `verify-<app>`
+   skill (none yet? workit-verify-app writes one). Tests show branch behavior,
+   not that the feature works.
+6. Deliver to the endpoint you were given: `workit git commit -m "<type>: <what>"`,
+   `workit git push`, `workit pr create --fill`; then workit-ship.
+7. Hand off verification. Never record a passing verdict on your own work: a
+   fresh agent (Claude Code: the `verifier` agent) runs verify-<app> and
+   `workit ledger verdict`. Before saying done, reconcile every named
+   deliverable against the target checkout and observe it:
+   `workit verify-delivery push`.
 
-1. Inspect the repository, relevant rules, host capabilities, and current work.
-   Inspect task state only when this work is already tracked.
-2. If a helper is useful, assign one bounded objective with allowed paths,
-   applicable requirements, evidence needed, and a stopping condition. Helpers
-   cannot change scope, record binding decisions, close or pause the task, assign
-   helpers, or resolve blockers for the lead.
-3. Use writer ownership only when another Workit actor may mutate the same
-   checkout; release it when coordination ends. Cancellation remains uncertain
-   until process exit or explicit recovery.
-4. Reconcile helper reports and run the checks appropriate to the requested
-   outcome. If delegation is unavailable, continue inline when useful.
-5. Before a cross-repo mutation, resolve the actual checkout, branch and remote
-   from the request and current context. Ask only if competing plausible targets
-   remain unresolved. Branch, commit, direct push, PR-ready, merge and release
-   are distinct endpoints; perform only the authorized one under target rules.
-   Before saying done, reconcile every named deliverable against that checkout
-   and verify the requested result. For a push, observe the destination remote
-   ref and confirm it contains the delivered commit; report drift or missing
-   items as blockers instead of treating local success as remote delivery.
+Independent slices that could run in parallel go to workit-fanout. When a step
+stalls on a fact, find it (read, run, prototype); ask only for a product or
+preference choice, with your recommended answer.
 
-Do not edit Workit metadata directly, create nested helper trees, widen paths, or
-create a second lifecycle. Read-only investigation and bounded reports do not
-grant product-write ownership.
+## Example
 
-Do not request writer ownership for a solo edit. If a concurrent Workit writer
-cannot be fenced, stop only the conflicting managed writes; ordinary writes still
-follow the native host permission and sandbox.
+Bad: "Done - added the --since flag, tests pass." (no check ran this turn; the
+flag was never invoked)
 
-## Common mistakes
+Good: "Added `--since`. measured: `workit check test` exit 0;
+`mytool log --since 2d` printed 3 entries against the fixture repo. inferred:
+the GitLab path behaves the same (shared parser, not run). Verification handed
+to the verifier agent."
 
-| Mistake                                        | Correction                                          |
-| ---------------------------------------------- | --------------------------------------------------- |
-| "The helper timed out, so the writer is free"  | Observe exit or perform explicit recovery.          |
-| Letting a helper approve its own exception     | Return the decision to the lead/user.               |
-| Running a build while another writer is active | Treat builds and tests that mutate state as writes. |
+## Check
+
+```sh
+workit check test && workit verify-delivery push
+```

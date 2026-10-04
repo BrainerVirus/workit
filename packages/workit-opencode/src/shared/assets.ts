@@ -34,5 +34,15 @@ export const packageRoot = (): string => {
   return path.resolve(dir, "..");
 };
 
-/** The deterministic packaged assets root (method skills). */
-export const assetsRoot = (): string => path.join(packageRoot(), "assets");
+/**
+ * The method skills directory. A built or installed package has its generated
+ * copy in `assets/skills`; a source checkout loaded as a local pin has no
+ * copy (it is git-ignored), so it reads the canonical
+ * `packages/workit-core/skills` beside it, which the build would copy anyway.
+ */
+export const skillsRoot = (): string => {
+  const packaged = path.join(packageRoot(), "assets", "skills");
+  if (existsSync(packaged)) return packaged;
+  const canonical = path.resolve(packageRoot(), "..", "workit-core", "skills");
+  return existsSync(canonical) ? canonical : packaged;
+};

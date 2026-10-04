@@ -158,22 +158,17 @@ test("Pi registers wk- slash aliases that expand the bundled skill commands", as
   const pi = makePi();
   await extension(pi as any);
   for (const [alias, skill] of [
-    ["wk-challenge", "workit-challenge"],
-    ["wk-babysit", "workit-babysit"],
+    ["wk-shape", "workit-shape"],
     ["wk-implement", "workit-implement"],
-    ["wk-plan", "workit-plan"],
-    ["wk-debug", "workit-debug"],
     ["wk-review", "workit-review"],
-    ["wk-handoff", "workit-handoff"],
-    ["wk-tdd", "workit-behavioral-tdd"],
-    ["wk-blast-radius", "workit-blast-radius"],
-    ["wk-deslop", "workit-deslop"],
-    ["wk-diagram", "workit-diagram"],
-    ["wk-mockup", "workit-mockup"],
-    ["wk-green-run", "workit-green-run"],
-    ["wk-steer", "workit-steer"],
+    ["wk-debug", "workit-debug"],
+    ["wk-ship", "workit-ship"],
+    ["wk-continue", "workit-continue"],
     ["wk-bdd", "workit-bdd"],
     ["wk-test-audit", "workit-test-audit"],
+    ["wk-deslop", "workit-deslop"],
+    ["wk-fanout", "workit-fanout"],
+    ["wk-verify-app", "workit-verify-app"],
   ]) {
     const command = pi.commands.find((entry: any) => entry.name === alias);
     expect(command, alias).toBeDefined();

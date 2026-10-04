@@ -1,0 +1,36 @@
+schema_version: "1.0"
+name: verify-app-generation
+description: >-
+  A verification-setup request loads verify-app, which inspects the repo,
+  writes a project-local verify-<app> skill with launch/drive/evidence
+  sections, and proves it once by running the real CLI.
+tags: [skills, verify-app]
+context:
+  scaffold_script: ../scaffold/cli-app.sh
+execution:
+  prompt: >-
+    Set up verification for this app so an agent can prove a feature works on
+    the running app, not just with unit tests. Create the project's verify
+    skill and prove it once.
+  max_turns: 20
+  allowed_tools: [Read, Grep, Glob, Bash, Write, Edit, Skill]
+runs: 1
+graders:
+  - type: tool_used
+    name: verify-app-skill-loaded
+    tool: Skill
+    input_match: "verify-app"
+  - type: file_exists
+    name: verify-skill-written
+    path: ".claude/skills/verify-*/SKILL.md"
+  - type: tool_used
+    name: drove-the-real-cli
+    tool: Bash
+    input_match: "greet"
+  - type: llm
+    name: complete-and-proven
+    criteria: >-
+      The generated SKILL.md has Launch (or says none is needed for a CLI),
+      Drive with a concrete `node bin/greet.js <name>` invocation and its
+      literal expected output, Evidence, Cleanup and a feature map, and the
+      agent actually ran the driver once and reports its observed output.

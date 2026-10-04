@@ -1,55 +1,45 @@
 ---
 name: workit-review
-description: Use when policy requires fresh-context review of a candidate or when an independent correctness and regression check is requested
+description: Independent review of a diff, branch or PR - spec fidelity and standards as separate axes, test quality, blast radius - recorded as a non-author verdict. Use for review, code review, check this PR or MR, is this safe, blast radius.
 ---
 
-# Review a candidate
+# Review independently
 
-Review the real candidate in a stable context. A review is evidence about the
-current candidate, not an author's success summary.
+Review the candidate, never the author's summary of it. A session that wrote a
+commit on the branch cannot record a passing verdict: if that is you, hand the
+review to a fresh agent (Claude Code: the `reviewer` or `verifier` agent).
 
+1. Pin the candidate: `git rev-parse HEAD`, the base, `git diff <base>...HEAD`;
+   for a PR, `workit pr status --json` (checks, unresolved threads).
+2. Find the intent: acceptance criteria, spec, PR body, and the recorded
+   choices (`workit ledger list --type decision`).
+3. Judge two axes separately, never merged or re-ranked:
+   - **Spec:** does the diff do what the acceptance says? Missing, creep or
+     wrong; quote the line.
+   - **Standards:** repo rules first, then a smell baseline (unclear name, long
+     function, duplicated logic, leaky abstraction). Judgment only; lint owns nits.
+4. **Tests:** `workit test-audit --diff`. Would each new test fail if the
+   behavior broke? Triage with workit-test-audit.
+5. **Blast radius:** for each touched contract, caller, config or migration,
+   state the one fact it is safe because of and run the proof. Anything
+   unproven is labeled UNPROVEN, never assumed safe: `references/impact.md`.
+6. Each finding: file:line, severity (blocker, major, minor, nit), evidence
+   (hunk, test or command output), concrete fix. Introduced issues get fixed;
+   pre-existing ones become follow-ups; inconclusive ones escalate.
+7. Record the verdict:
+   `workit ledger verdict verified|failed|blocked --kind review --how "<what you ran and read>"`.
+   Same-session review is labeled `--self` and never counts as independent.
 
-## Method
+## Example
 
-1. Pin or identify the candidate revision before reading conclusions. Inspect the
-   task objective, scope, constraints, accepted decisions, changed files, and
-   actual checks through shared `task`, `evidence`, and `policy` operations.
-2. Examine intent, correctness, regression risk, security or data consequences,
-   and project standards. Use the actual diff and check output; do not infer
-   evidence from a claim.
-3. Record each concern as a `finding` claim with its affected scope and candidate.
-   Investigate it: reproduce or trace the consequence, then fix in scope, dismiss
-   with evidence, defer with a reason, or ask the user about a real tradeoff.
-4. Reconcile conclusions when the candidate changes. Run one substantive review
-   and targeted rechecks; do not cycle reviewers indefinitely.
+Bad: "Error handling could be improved." (no place, no consequence, no proof)
 
-If the required independent context is unavailable, record the review method as
-`unavailable` and preserve the gap. Same-session self-review is not independent
-review and must not be relabeled as verified.
+Good: "blocker - src/pay.ts:88: `catch {}` swallows the gateway's 402, so the
+order is marked paid. Repro: `workit check -- bun test pay.test.ts -t declined`
+fails with this diff. Fix: rethrow `PaymentDeclined`."
 
-Use shared `evidence` and `finding` operations. Do not create a parallel review
-lifecycle, universal review panel, or direct metadata files.
+## Check
 
-## Two axes, pinned
-
-Pin the fixed point first (`git diff <base>...HEAD` plus log); review that
-candidate only. Judge on two axes, never merged or reranked:
-
-- **Standards:** repo standards plus a smell baseline (mysterious name, long
-  method, duplicated logic, refused bequest, and kin); repo rules override
-  the baseline; judgement calls only, never tooling-enforced nits.
-- **Spec:** does the diff implement the originating spec/requirement
-  faithfully — missing, creep, or wrong, quoting the spec line.
-
-Every finding needs proof: the changed hunk, a failing/passing test ref, or
-a before/after. Causal disposition decides the outcome: introduced or
-worsened behavior gets fixed; pre-existing issues become follow-ups;
-inconclusive claims escalate, never silently pass.
-
-## Common mistakes
-
-| Mistake | Correction |
-| --- | --- |
-| Reviewing the summary instead of the candidate | Start from the stable candidate and real refs. |
-| Treating every comment as a defect | Investigate the claim and consequence first. |
-| Calling self-review independent | Preserve an unavailable capability gap. |
+```sh
+workit ledger check --pr <n>   # accepted only when current, passing and independent
+```

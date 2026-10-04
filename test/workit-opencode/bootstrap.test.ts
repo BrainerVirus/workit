@@ -23,8 +23,8 @@ describe("session bootstrap", () => {
 
   test("bootstrap keeps task tracking optional for explicit objectives", () => {
     const bootstrap = getWorkitBootstrap() ?? "";
-    expect(bootstrap.toLowerCase()).toContain("ordinary investigation");
-    expect(bootstrap.toLowerCase()).toContain("explicit tracked objective");
+    expect(bootstrap).toMatch(/optional\s+continuity for tracked work/);
+    expect(bootstrap).toMatch(/a solo edit needs no task or writer/);
     expect(bootstrap.toLowerCase()).not.toContain("task.start");
     expect(bootstrap.toLowerCase()).not.toContain("policy.assess");
   });

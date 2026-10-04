@@ -98,7 +98,7 @@ test("given SessionStart source compact, context is restored with the Claude add
   expect(context).toContain("<workit-contract>");
   expect(context).toContain("<workit-task-context>");
   expect(context).toContain("restore after compaction");
-  expect(context).toContain("/workit:steer");
+  expect(context).toContain("/workit:shape");
   expect(readFileSync(envFile, "utf8")).toBe(
     "export WORKIT_HOST=claude_code\nexport WORKIT_SESSION_ID='claude-session-1'\n",
   );

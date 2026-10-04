@@ -1,0 +1,33 @@
+schema_version: "1.0"
+name: fanout-brief
+description: >-
+  A parallelization request loads the fanout skill and produces complete worker
+  briefs (all template fields, disjoint file scopes) without spawning workers.
+tags: [skills, fanout]
+context:
+  scaffold_script: ../scaffold/git-repo.sh
+execution:
+  prompt: >-
+    I want to parallelize two independent changes with parallel agents: add a
+    mul.ts module exporting mul(a, b), and add a README.md describing add().
+    Do not spawn any agents and do not edit files: write the worker brief for
+    each one exactly as you would hand it to a worker, then stop.
+  max_turns: 8
+  allowed_tools: [Read, Grep, Glob, Bash, Skill]
+runs: 1
+graders:
+  - type: tool_used
+    name: fanout-skill-loaded
+    tool: Skill
+    input_match: "fanout"
+  - type: regex
+    name: brief-fields
+    target: last_message
+    pattern: "GOAL[\\s\\S]*SCOPE[\\s\\S]*ACCEPTANCE[\\s\\S]*VERIFY[\\s\\S]*FORBIDDEN[\\s\\S]*REPORT[\\s\\S]*STANDING"
+  - type: llm
+    name: disjoint-and-verifiable
+    criteria: >-
+      There are two briefs. Their SCOPE file lists do not overlap (mul.ts and
+      its test vs README.md), each ACCEPTANCE is written as Given/When/Then,
+      each VERIFY names an exact command, each names its own branch, and each
+      says a separate verifier (not the worker) judges the result.
