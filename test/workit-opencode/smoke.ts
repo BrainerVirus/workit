@@ -35,6 +35,7 @@ test("OpenCode plugin registers native tools without Cursor assets", async () =>
     await hooks.config?.(config);
     expect(Object.keys(config.command ?? {}).toSorted()).toEqual([
       "wk-babysit",
+      "wk-bdd",
       "wk-blast-radius",
       "wk-challenge",
       "wk-debug",
@@ -48,6 +49,7 @@ test("OpenCode plugin registers native tools without Cursor assets", async () =>
       "wk-review",
       "wk-steer",
       "wk-tdd",
+      "wk-test-audit",
     ]);
     expect(config.skills.paths).toEqual([
       path.resolve(import.meta.dir, "../../packages/workit-opencode/assets/skills"),

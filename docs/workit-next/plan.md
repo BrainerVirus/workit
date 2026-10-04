@@ -53,3 +53,9 @@ Refined slicing (S8a, S9a–S9b, S10–S18, waves and acceptance) lives in [`des
 Focused tests for the changed behavior (Given/When/Then names), `bun run lint`, `format:check`,
 `typecheck`, and knip. Root `bun test` runs in the worktree under Node 24. An independent review
 subagent checks each PR before it is marked ready. CI must be green. Merge only on explicit user OK.
+
+## Follow-up backlog (from reviews)
+- test-audit recall: tautologies via imported test helpers, `[...xs].sort`, for-push expected arrays; precision: format templates interpolating exported constants → low, cross-export parity tests, `vi.mock` of interactive prompt modules (PR #184 re-review).
+- OpenCode V2 docker harness: run the opt-in workflow on main once it exists (label `opencode-v2`).
+- ci rerun / pr merge: autonomy grants enforcement lands in S16 (`requireGrant` seam).
+- Effect 4 in the CLI I/O layer (S23) once stable.

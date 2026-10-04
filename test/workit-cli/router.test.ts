@@ -310,6 +310,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   stack: [["plan"]],
   ledger: [["list"]],
   handoff: [[], ["--task"]],
+  "test-audit": [["--bogus"], ["--diff", "no-such-base"]],
 };
 
 test("under --json every verb's stdout is exactly one JSON document, error paths included", () => {

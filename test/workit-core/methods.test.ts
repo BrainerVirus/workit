@@ -190,6 +190,8 @@ test("bootstrap routes moment-based skill loads by name", () => {
     "workit-blast-radius",
     "workit-challenge",
     "workit-plan",
+    "workit-bdd",
+    "workit-test-audit",
   ])
     expect(bootstrap).toContain(skill);
   expect(bootstrap).not.toContain("## Method");
@@ -295,7 +297,7 @@ test("method skills impose no task-start preamble and do not wait for policy sel
 test("method manifest matches the canonical skill directories", () => {
   // Pinned on purpose: a skill-set change (adding or dropping a skill from
   // both the manifest and the directory) must update this count.
-  expect(WORKIT_METHOD_SKILLS).toHaveLength(14);
+  expect(WORKIT_METHOD_SKILLS).toHaveLength(16);
   expect(
     skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
   ).toEqual([...WORKIT_METHOD_SKILLS].toSorted());
