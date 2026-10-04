@@ -1,7 +1,7 @@
 {
   "name": "workit",
   "displayName": "Workit",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "description": "Workflow rails for agentic coding: task context on every session, branch policy on shell commands, and the workit method skills",
   "author": {
     "name": "BrainerVirus"
