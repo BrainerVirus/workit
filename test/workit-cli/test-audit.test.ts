@@ -143,7 +143,8 @@ test("Given a test whose expected value is computed by the code under test, Then
 });`);
   expect(finding).toMatchObject({
     rule: "tautology",
-    severity: "high",
+    severity: "medium",
+    confidence: "medium",
     file: "test/calc.test.ts",
     line: 5,
     test: "total",
@@ -152,14 +153,143 @@ test("Given a test whose expected value is computed by the code under test, Then
   expect(finding.suggestion).toContain("literal");
 });
 
-test("tautology: an expected value computed by another function of the unit's module is flagged", () => {
-  const findings = audit(`test("renders the date", () => {
-  const day = new Date(0);
-  expect(render(day)).toBe(formatDate(day));
+// Recall: tautologies the audit must catch (red) next to the independent
+// oracles it must leave alone (green). The SUT module exports TAX and GREETING.
+const SUT = `import { expect, test } from "vitest";
+import { add, total, names, adults, withTax, greet, TAX, GREETING } from "../src/calc";
+const sum = (a, b) => a + b;
+const expectedTotal = (xs) => xs.reduce((s, i) => s + i.price, 0);
+`;
+const RECALL: [string, string][] = [
+  ["local helper mirrors the unit", `expect(add(2, 3)).toBe(sum(2, 3));`],
+  [
+    "helper over a list",
+    `const items = [{ price: 1 }]; expect(total(items)).toBe(expectedTotal(items));`,
+  ],
+  ["SUT constant in arithmetic", `expect(withTax(100)).toBe(100 * (1 + TAX));`],
+  [
+    "map re-derivation",
+    `const xs = [{ name: "a" }]; expect(names(xs)).toEqual(xs.map((x) => x.name));`,
+  ],
+  [
+    "filter re-derivation",
+    `const xs = [{ age: 30 }]; expect(adults(xs)).toEqual(xs.filter((x) => x.age >= 18));`,
+  ],
+  ["template with a SUT constant", 'expect(greet("bob")).toBe(`${GREETING}, bob`);'],
+  ["same call bound to expected", `const expected = add(2, 3); expect(add(2, 3)).toBe(expected);`],
+  ["want = a + b", `const a = 2, b = 3; const want = a + b; expect(add(a, b)).toBe(want);`],
+  [
+    "require(node:assert)",
+    `const xs = [{ name: "a" }]; require("node:assert").deepEqual(names(xs), xs.map((x) => x.name));`,
+  ],
+];
+const PRECISION: [string, string][] = [
+  ["literal", `expect(add(2, 3)).toBe(5);`],
+  ["metamorphic", `expect(add(2, 3)).toBe(add(3, 2));`],
+  ["input interpolated in a template", 'const id = "x1"; expect(greet(id)).toBe(`hello, ${id}`);'],
+  [
+    "string concatenation of inputs",
+    `const a = "x", b = "y"; expect(greet(a + b)).toBe(a + b + "!");`,
+  ],
+  [
+    "path.join oracle",
+    `const dir = "/tmp/w"; expect(greet(dir)).toBe(path.join(dir, "greeting.txt"));`,
+  ],
+  ["sync/async parity", `expect(await names([])).toEqual(adults([]));`],
+  [
+    "value from an earlier step",
+    `const first = add(1, 1); add(2, 2); expect(add(1, 1)).toBe(first);`,
+  ],
+  [
+    "sorting a SUT constant to compare",
+    `expect([...names([])].sort()).toEqual([...TAX_LIST].sort());`,
+  ],
+];
+
+for (const [name, body] of RECALL)
+  test(`tautology recall: ${name}`, () => {
+    const file = "test/calc.test.ts";
+    const rules = auditParsed(
+      parseSource(`${SUT}test("t", async () => { ${body} });\n`, file),
+      file,
+    );
+    expect(rules.findings.map((finding) => finding.rule)).toEqual(["tautology"]);
+  });
+
+for (const [name, body] of PRECISION)
+  test(`tautology precision: ${name} is not flagged`, () => {
+    const file = "test/calc.test.ts";
+    const source = `import path from "node:path";\n${SUT}test("t", async () => { ${body} });\n`;
+    expect(auditParsed(parseSource(source, file), file).findings).toEqual([]);
+  });
+
+test("node:test hooks, skipped tests and assert.fail guards are not findings", () => {
+  expect(
+    rulesIn(`test.before(() => { setup(); });
+test.afterEach(() => { cleanup(); });
+test.skip("later", () => {});
+test("opt-out", { skip: "windows only" }, () => {});
+test("guards", async () => {
+  try { await parse("{"); assert.fail("must throw"); } catch (error) { assert.ok(error); }
+  assert(false || parse("x"), "unreachable");
+});`),
+  ).toEqual([]);
+});
+
+test("mock-echo: a rejection propagated from a mock is not an echo", () => {
+  expect(
+    rulesIn(`test("propagates", async () => {
+  const error = new Error("boom");
+  const load = mock(async () => { throw error; });
+  load.mockRejectedValue(error);
+  await expect(render(load)).rejects.toBe(error);
+});`),
+  ).toEqual([]);
+});
+
+test("byte-copy needs real file reads; same-named helpers on two inputs are not copies", () => {
+  expect(
+    rulesIn(`test("deferred and open count alike", () => {
+  expect(countTasksFromContent(deferred)).toEqual(countTasksFromContent(open));
+});`),
+  ).toEqual([]);
+});
+
+test("prose-contains is info: hidden unless --min-severity info", () => {
+  const [finding] = audit(`test("readme", () => {
+  expect(render("help")).toContain("Run the setup wizard once before you start any task in a repo");
 });`);
-  expect(findings.map((finding) => [finding.rule, finding.confidence])).toEqual([
-    ["tautology", "medium"],
+  expect([finding.rule, finding.severity]).toEqual(["prose-contains", "info"]);
+});
+
+test("high severity is reserved for high-confidence findings", () => {
+  const findings =
+    audit(`test("a", () => { const items = [1]; expect(total(items)).toBe(items.reduce((s, i) => s + i, 0)); });
+test("b", () => { expect(true).toBe(true); });`);
+  expect(findings.map((finding) => [finding.rule, finding.severity, finding.confidence])).toEqual([
+    ["tautology", "medium", "medium"],
+    ["always-true", "high", "high"],
   ]);
+});
+
+test("duplicate-body: bodies that read describe-scoped state, or differ only inside strings, are not duplicates", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wk-test-audit-dup2-"));
+  try {
+    const file = path.join(dir, "x.test.ts");
+    writeFileSync(
+      file,
+      `${HEADER}describe("fish", () => { let installer; beforeEach(() => { installer = 1; });
+  test("installs", () => { expect(render(installer)).toBe("installed once"); }); });
+describe("zsh", () => { let installer; beforeEach(() => { installer = 2; });
+  test("installs", () => { expect(render(installer)).toBe("installed once"); }); });
+test("empty", () => { expect(parse("")).toEqual({ value: "", kind: "none" }); });
+test("blank", () => { expect(parse("   ")).toEqual({ value: "", kind: "none" }); });
+`,
+    );
+    expect(auditFiles([file], (name) => path.basename(name)).findings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("tautology: self-comparison is flagged, but re-reading after an action and metamorphic checks are not", () => {

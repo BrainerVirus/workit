@@ -8,7 +8,7 @@
 //
 // Findings are advice; nothing is edited or deleted. `--fail-on <level>` and
 // `--mutate` (a surviving mutant) exit 1, so either can be an opt-in gate.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   auditFiles,
@@ -23,7 +23,7 @@ import {
 } from "../test-audit/audit";
 import { BaselineFailed, runMutation, type MutationReport } from "../test-audit/mutate";
 import type { Level, RuleId } from "../test-audit/rules";
-import { CHECKS_FILE, loadCheckConfig } from "@brainervirus/workit-core/src/check-config";
+import { loadCheckConfig } from "@brainervirus/workit-core/src/check-config";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE =
@@ -43,7 +43,7 @@ type Options = {
   timeoutS: number | null;
 };
 
-const LEVELS: Level[] = ["high", "medium", "low"];
+const LEVELS: Level[] = ["high", "medium", "low", "info"];
 const VALUE_FLAGS = new Set([
   "--rule",
   "--min-severity",
@@ -91,7 +91,7 @@ function parse(argv: string[]): Options | string {
           return `unknown rule ${unknown.join(", ")} (rules: ${ruleIds.join(", ")})`;
         options.rules = new Set(ids as RuleId[]);
       } else if (flag === "--min-severity" || flag === "--fail-on") {
-        if (!LEVELS.includes(value as Level)) return `${flag} must be high, medium or low`;
+        if (!LEVELS.includes(value as Level)) return `${flag} must be high, medium, low or info`;
         if (flag === "--fail-on") options.failOn = value as Level;
         else options.minSeverity = value as Level;
       } else if (flag === "--test-cmd") options.testCmd = value;
@@ -114,33 +114,25 @@ const quote = (arg: string): string =>
   /^[\w./@:=+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
 
 /**
- * The command each mutant runs, and where. `--test-cmd` runs from the
- * current directory; a `test` check in workit.checks.json (what `workit check
- * test` runs) runs whole, from the repository top; otherwise the repo's
- * runner is scoped to the related test files.
+ * The command each mutant runs, and where. `--test-cmd` runs from the current
+ * directory (`{files}` expands to the related test files). Otherwise the
+ * `test` check that `workit check test` would run (workit.checks.json, else
+ * the detected default) runs whole, from the repository top.
  */
 function testCommand(repo: string, cwd: string, given: string | null) {
   if (given) return { command: given, cwd };
   const config = loadCheckConfig(repo);
-  const configured =
-    config.source === CHECKS_FILE
-      ? config.checks.find((check) => check.name === "test")
-      : undefined;
-  if (configured) return { command: configured.argv.map(quote).join(" "), cwd: config.root };
-  if (existsSync(path.join(repo, "bun.lock")) || existsSync(path.join(repo, "bun.lockb")))
-    return { command: "bun test {files}", cwd: repo };
-  try {
-    const pkg = JSON.parse(readFileSync(path.join(repo, "package.json"), "utf8"));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (deps.vitest) return { command: "npx vitest run {files}", cwd: repo };
-    if (deps.jest) return { command: "npx jest {files}", cwd: repo };
-  } catch {
-    // no package.json
-  }
-  return null;
+  const check = config.error ? undefined : config.checks.find((entry) => entry.name === "test");
+  return check ? { command: check.argv.map(quote).join(" "), cwd: config.root } : null;
 }
 
-type Data = AuditReport & { root: string; base: string | null; mutation: MutationReport | null };
+type Data = AuditReport & {
+  root: string;
+  base: string | null;
+  /** Findings below --min-severity (prose-contains is `info` by default). */
+  hidden: number;
+  mutation: MutationReport | null;
+};
 
 function human(data: Data): string[] {
   const lines: string[] = [];
@@ -159,7 +151,8 @@ function human(data: Data): string[] {
   const { high, medium, low } = data.summary.bySeverity;
   lines.push(
     `test-audit: ${data.findings.length} finding(s) in ${data.files} file(s), ${data.tests} test(s), ${data.durationMs} ms` +
-      (data.findings.length ? ` — high ${high}, medium ${medium}, low ${low}; ${rules}` : ""),
+      (data.findings.length ? ` — high ${high}, medium ${medium}, low ${low}; ${rules}` : "") +
+      (data.hidden ? `; ${data.hidden} below --min-severity hidden` : ""),
   );
   const mutation = data.mutation;
   if (mutation) {
@@ -167,6 +160,7 @@ function human(data: Data): string[] {
       lines.push(
         `SURVIVED #${mutant.id} ${mutant.file}:${mutant.line}  ${mutant.original} -> ${mutant.replacement || "(removed)"}  (tests: ${mutant.tests.join(", ") || "whole command"})`,
       );
+    for (const warning of mutation.warnings) lines.push(`note: ${warning}`);
     const { killed, survived, timeout, skipped } = mutation.counts;
     lines.push(
       `mutation: ${mutation.mutants.length} mutant(s) vs ${mutation.base.slice(0, 12)} — killed ${killed}, timeout ${timeout}, survived ${survived}, no tests ${mutation.counts["no-tests"]}, skipped ${skipped}; score ${mutation.score ?? "n/a"}%; ${mutation.durationMs} ms`,
@@ -222,13 +216,13 @@ export async function run(argv: string[], io: Io): Promise<number> {
 
   const report = auditFiles(files, display);
   const floor = LEVELS.indexOf(options.minSeverity);
-  report.findings = report.findings.filter(
-    (finding) =>
-      LEVELS.indexOf(finding.severity) <= floor &&
-      (!options.rules || options.rules.has(finding.rule)),
+  const selected = report.findings.filter(
+    (finding) => !options.rules || options.rules.has(finding.rule),
   );
+  report.findings = selected.filter((finding) => LEVELS.indexOf(finding.severity) <= floor);
+  const hidden = selected.length - report.findings.length;
   report.summary.byRule = {};
-  report.summary.bySeverity = { high: 0, medium: 0, low: 0 };
+  report.summary.bySeverity = { high: 0, medium: 0, low: 0, info: 0 };
   for (const finding of report.findings) {
     report.summary.byRule[finding.rule] = (report.summary.byRule[finding.rule] ?? 0) + 1;
     report.summary.bySeverity[finding.severity] += 1;
@@ -242,7 +236,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         io,
         fail("unavailable", "no test command for --mutate", {
           unblock:
-            'workit test-audit --mutate --test-cmd "<runner> {files}" (or configure checks.test in workit.checks.json)',
+            'workit test-audit --mutate --test-cmd "<runner> {files}" (or configure a `test` check in workit.checks.json)',
         }),
       );
     try {
@@ -271,7 +265,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
   }
 
-  const data: Data = { root: io.cwd, base, ...report, mutation };
+  const data: Data = { root: io.cwd, base, ...report, hidden, mutation };
   const gate = options.failOn ? LEVELS.indexOf(options.failOn) : -1;
   const blocking = report.findings.filter((finding) => LEVELS.indexOf(finding.severity) <= gate);
   const problems = [

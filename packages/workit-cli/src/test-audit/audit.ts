@@ -21,7 +21,11 @@ const SKIP_DIRS = new Set(["node_modules", "dist", "build", "coverage", ".git", 
 export const toPosix = (file: string): string => file.split(path.sep).join("/");
 
 export function git(cwd: string, args: string[]): { ok: boolean; stdout: string } {
-  const run = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const run = spawnSync("git", ["-c", "core.quotepath=off", ...args], {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
   return { ok: run.status === 0, stdout: run.stdout ?? "" };
 }
 
@@ -59,25 +63,26 @@ export function resolveBase(cwd: string, base: string | null): string | null {
   return null;
 }
 
-/** Changed files (tracked vs `base`, plus untracked) with changed line numbers. */
+/**
+ * Changed files (tracked vs `base`, plus untracked) with changed line numbers.
+ * Paths come from `-z` listings (no quoting, any bytes); hunks are read per
+ * file, so no path is ever parsed out of a diff header.
+ */
 export function changedLines(cwd: string, base: string): Map<string, Set<number> | "all"> {
   const root = git(cwd, ["rev-parse", "--show-toplevel"]).stdout.trim();
   const changed = new Map<string, Set<number> | "all">();
-  const diff = git(root, ["diff", "-U0", "--no-color", "--no-ext-diff", "--diff-filter=AMR", base]);
-  let current: Set<number> | null = null;
-  for (const line of diff.stdout.split("\n")) {
-    if (line.startsWith("+++ ")) {
-      const target = line.slice(4).replace(/^b\//, "");
-      current = target === "/dev/null" ? null : new Set<number>();
-      if (current) changed.set(path.join(root, target), current);
-      continue;
-    }
-    const hunk = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(line);
-    if (hunk && current) {
+  const names = git(root, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=AM", base]);
+  for (const file of names.stdout.split("\0").filter(Boolean)) {
+    const lines = new Set<number>();
+    const diff = git(root, ["diff", "-U0", "--no-color", "--no-ext-diff", base, "--", file]);
+    for (const line of diff.stdout.split("\n")) {
+      const hunk = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (!hunk) continue;
       const start = Number(hunk[1]);
       const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
-      for (let offset = 0; offset < count; offset += 1) current.add(start + offset);
+      for (let offset = 0; offset < count; offset += 1) lines.add(start + offset);
     }
+    changed.set(path.join(root, file), lines);
   }
   const untracked = git(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
   for (const file of untracked.stdout.split("\0").filter(Boolean))
@@ -97,7 +102,7 @@ export type AuditReport = {
   durationMs: number;
 };
 
-const SEVERITY_ORDER: Record<Level, number> = { high: 0, medium: 1, low: 2 };
+const SEVERITY_ORDER: Record<Level, number> = { high: 0, medium: 1, low: 2, info: 3 };
 
 /** Audit test files given as absolute paths; `display` makes paths relative. */
 export function auditFiles(files: string[], display: (file: string) => string): AuditReport {
@@ -150,7 +155,7 @@ export function auditFiles(files: string[], display: (file: string) => string): 
       a.line - b.line,
   );
   const byRule: Partial<Record<RuleId, number>> = {};
-  const bySeverity: Record<Level, number> = { high: 0, medium: 0, low: 0 };
+  const bySeverity: Record<Level, number> = { high: 0, medium: 0, low: 0, info: 0 };
   for (const finding of findings) {
     byRule[finding.rule] = (byRule[finding.rule] ?? 0) + 1;
     bySeverity[finding.severity] += 1;

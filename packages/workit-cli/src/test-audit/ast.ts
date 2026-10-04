@@ -86,11 +86,14 @@ export const find = (root: Node, match: (node: Node) => boolean): Node[] => {
 
 export const textOf = (source: string, node: Node): string => source.slice(node.start, node.end);
 
-/** Source text with whitespace and trailing commas removed, for comparisons. */
+// String and template literals are kept verbatim; only code whitespace goes.
+const TOKENS = /'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`|\s+|,(?=\s*[)\]}])/g;
+
+/** Source text without code whitespace and trailing commas, for comparisons. */
 export const normalized = (source: string, node: Node): string =>
-  textOf(source, node)
-    .replace(/\s+/g, "")
-    .replace(/,(?=[)\]}])/g, "");
+  textOf(source, node).replace(TOKENS, (token) =>
+    token.startsWith("'") || token.startsWith('"') || token.startsWith("`") ? token : "",
+  );
 
 /** `a.b.c` for identifier/member chains, null for anything computed. */
 export function calleeName(node: Node | null | undefined): string | null {

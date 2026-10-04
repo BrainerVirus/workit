@@ -3,7 +3,10 @@
 // return value on a changed source line, and the related tests run against
 // it. Every mutant is written into a disposable copy of the working tree, so
 // the user's sources are never modified: a crash or SIGKILL leaves at most a
-// stale temp directory, which the next run removes.
+// stale temp directory, which the next run removes. Symlinked sources are
+// materialized as regular files in the copy, and a mutant is only ever
+// written (temp file + rename) to a regular file whose real path is inside
+// the copy.
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
@@ -14,7 +17,9 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
   copyFileSync,
@@ -38,6 +43,8 @@ type MutantResult = Mutant & {
   status: "killed" | "survived" | "timeout" | "no-tests" | "skipped";
   durationMs: number;
   tests: string[];
+  /** Why a mutant was skipped (budget, or an unsafe write target). */
+  reason?: string;
 };
 
 export type MutationReport = {
@@ -48,6 +55,8 @@ export type MutationReport = {
   counts: Record<MutantResult["status"], number>;
   score: number | null;
   durationMs: number;
+  /** Things the caller should know about how the tests ran. */
+  warnings: string[];
 };
 
 const NOT_SOURCE = /(?:^|\/)(?:test|tests|__tests__|__mocks__|fixtures?|node_modules|dist)\//;
@@ -74,7 +83,7 @@ const isStringy = (node: Node): boolean =>
   node.type === "StringLiteral" || node.type === "TemplateLiteral";
 
 /** All single-edit mutants on the given lines of one file. */
-function mutantsFor(
+export function mutantsFor(
   source: string,
   file: string,
   lines: Set<number> | "all",
@@ -180,20 +189,38 @@ const alive = (pid: number): boolean => {
   }
 };
 
-/** Remove temp copies left behind by runs that were killed. */
+/**
+ * Remove temp copies left behind by killed runs: only `workit-mutate-*`
+ * directories this user owns whose recorded process is gone. Anything that
+ * cannot be read or removed (another user's, EACCES) is left alone.
+ */
 export function removeStaleCopies(tmp = os.tmpdir()): number {
   let removed = 0;
-  for (const name of existsSync(tmp) ? readdirSync(tmp) : []) {
+  let names: string[] = [];
+  try {
+    names = readdirSync(tmp);
+  } catch {
+    return 0;
+  }
+  const uid = process.getuid?.();
+  for (const name of names) {
     if (!name.startsWith(TEMP_PREFIX)) continue;
     const dir = path.join(tmp, name);
     try {
+      const stat = lstatSync(dir);
+      if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid)) continue;
       const pid = Number(readFileSync(path.join(dir, PID_FILE), "utf8"));
       if (Number.isInteger(pid) && pid > 0 && alive(pid)) continue;
-    } catch {
-      // no pid file: a copy interrupted while being created
+    } catch (error) {
+      // A copy interrupted before its pid file exists is still ours to remove.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue;
     }
-    rmSync(dir, { recursive: true, force: true });
-    removed += 1;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      // not removable: leave it
+    }
   }
   return removed;
 }
@@ -210,6 +237,12 @@ function linkNodeModules(origin: string, target: string, repo: string, copy: str
     const to = path.join(target, entry.name);
     if (entry.name.startsWith("@") && entry.isDirectory()) {
       linkNodeModules(from, to, repo, copy);
+      continue;
+    }
+    // Tool caches (.cache, .vite, .vitest…) get fresh dirs so runs in the copy
+    // never write into the original install.
+    if (entry.name.startsWith(".") && entry.name !== ".bin" && entry.isDirectory()) {
+      mkdirSync(to, { recursive: true });
       continue;
     }
     if (entry.isSymbolicLink()) {
@@ -231,6 +264,56 @@ function linkNodeModules(origin: string, target: string, repo: string, copy: str
     }
     symlinkSync(from, to, entry.isDirectory() ? "junction" : "file");
   }
+}
+
+const inside = (root: string, file: string): boolean => {
+  const relative = path.relative(root, file);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+};
+
+/**
+ * A symlink in the working tree. One that resolves inside the repository is
+ * re-pointed at the copy's own file; one that leaves the repository (or
+ * dangles) becomes a regular file holding the target's bytes, so a mutant
+ * written there can never reach the original target.
+ */
+function copySymlink(repo: string, tree: string, from: string, to: string) {
+  let real: string | null = null;
+  try {
+    real = realpathSync(from);
+  } catch {
+    real = null;
+  }
+  const realRepo = realpathSync(repo);
+  if (real && inside(realRepo, real)) {
+    symlinkSync(
+      path.relative(path.dirname(to), path.join(tree, path.relative(realRepo, real))),
+      to,
+    );
+    return;
+  }
+  if (real && statSync(real).isFile()) copyFileSync(real, to);
+  else symlinkSync(readlinkSync(from), to); // a directory or dangling link: never a write target
+}
+
+/**
+ * A mutant may only replace a regular file whose real location is inside
+ * the copy. Writes go to a temp file in the same directory and are renamed
+ * over the target, so even a symlink would be replaced, not followed.
+ */
+function writeInside(copy: string, file: string, content: string): boolean {
+  const target = path.join(copy, file);
+  try {
+    const stat = lstatSync(target);
+    if (!stat.isFile() || !inside(realpathSync(copy), realpathSync(path.dirname(target))))
+      return false;
+  } catch {
+    return false;
+  }
+  const temp = `${target}.workit-mutant-${process.pid}`;
+  writeFileSync(temp, content);
+  renameSync(temp, target);
+  return true;
 }
 
 /**
@@ -265,7 +348,7 @@ function copyWorkingTree(repo: string): { dir: string; tree: string } {
     }
     const to = path.join(tree, relative);
     mkdirSync(path.dirname(to), { recursive: true });
-    if (stat.isSymbolicLink()) symlinkSync(readlinkSync(from), to);
+    if (stat.isSymbolicLink()) copySymlink(repo, tree, from, to);
     else if (stat.isFile()) copyFileSync(from, to);
     let parent = path.dirname(relative);
     while (parent !== "." && !dirs.has(parent)) {
@@ -393,7 +476,7 @@ export async function runMutation(options: MutateOptions): Promise<MutationRepor
     return shellQuote(relative.startsWith(".") ? relative : `./${relative}`);
   };
   const commandFor = (tests: string[]) =>
-    options.command.replace("{files}", tests.map(asArg).join(" "));
+    options.command.replaceAll("{files}", () => tests.map(asArg).join(" "));
 
   const results: MutantResult[] = [];
   const counts: MutationReport["counts"] = {
@@ -429,8 +512,15 @@ export async function runMutation(options: MutateOptions): Promise<MutationRepor
   removeStaleCopies();
   const { dir: copyDir, tree: copy } = copyWorkingTree(repo);
   const copyCwd = path.join(copy, cwdRelative);
+  // The mutated file in the copy, restored before anything else on exit.
+  let current: { file: string; original: string } | null = null;
+  const restore = () => {
+    if (current) writeInside(copy, current.file, current.original);
+    current = null;
+  };
   const cleanup = () => {
     for (const child of active) killTree(child);
+    restore();
     rmSync(copyDir, { recursive: true, force: true });
   };
   const onSignal = (signal: NodeJS.Signals) => {
@@ -461,15 +551,24 @@ export async function runMutation(options: MutateOptions): Promise<MutationRepor
         performance.now() - started > options.budgetMs
       ) {
         budgetLeft = false;
-        record({ ...mutant, status: "skipped", durationMs: 0, tests });
+        record({ ...mutant, status: "skipped", durationMs: 0, tests, reason: "budget" });
         continue;
       }
-      const target = path.join(copy, mutant.file);
-      const original = readFileSync(target, "utf8");
-      writeFileSync(
-        target,
-        original.slice(0, mutant.start) + mutant.replacement + original.slice(mutant.end),
-      );
+      const original = readFileSync(path.join(copy, mutant.file), "utf8");
+      const mutated =
+        original.slice(0, mutant.start) + mutant.replacement + original.slice(mutant.end);
+      current = { file: mutant.file, original };
+      if (!writeInside(copy, mutant.file, mutated)) {
+        current = null;
+        record({
+          ...mutant,
+          status: "skipped",
+          durationMs: 0,
+          tests,
+          reason: "unsafe write target",
+        });
+        continue;
+      }
       try {
         const run = await runCommand(commandFor(tests), copyCwd, timeoutMs, {
           ...options.env,
@@ -481,7 +580,7 @@ export async function runMutation(options: MutateOptions): Promise<MutationRepor
           `#${mutant.id} ${mutant.file}:${mutant.line} ${mutant.original} -> ${mutant.replacement || "(removed)"}: ${status}`,
         );
       } finally {
-        writeFileSync(target, original);
+        restore();
       }
     }
     return finish(options, baseline.durationMs, results, counts, started);
@@ -510,5 +609,8 @@ function finish(
     score:
       decided === 0 ? null : Math.round(((counts.killed + counts.timeout) / decided) * 1000) / 10,
     durationMs: Math.round(performance.now() - started),
+    warnings: [
+      "tests ran with your environment (HOME, credentials, network); node_modules packages are shared with this checkout",
+    ],
   };
 }
