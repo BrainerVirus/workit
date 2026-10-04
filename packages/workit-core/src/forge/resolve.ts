@@ -21,6 +21,7 @@ import {
   remoteNames,
   type DerivedForge,
   type ForgeHosts,
+  type SshConfig,
 } from "../git/rev";
 import { FORGE_TIMEOUTS, systemRunner, type ForgeRunner } from "./exec";
 import { createGitHubForge } from "./github";
@@ -59,6 +60,8 @@ export type ResolveOptions = {
   runner?: ForgeRunner;
   /** Clock for the deadline (tests use a virtual one). */
   now?: () => number;
+  /** ssh_config for Host aliases (default: the user's ~/.ssh/config). */
+  sshConfig?: string | SshConfig;
 };
 
 const configuredHosts = (): ForgeHosts => {
@@ -91,7 +94,7 @@ export function resolveForge(
     );
   }
   const hosts = configuredHosts();
-  const pushed = pushForge(cwd, { branch: options.branch, hosts });
+  const pushed = pushForge(cwd, { branch: options.branch, hosts, sshConfig: options.sshConfig });
   if (!pushed.ok) return failure(pushed.code, pushed.error, pushed.unblock);
   const conflict = forgeConflict(pushed.forge, workspace?.vcs?.provider);
   if (conflict) return failure("blocked", conflict.error, conflict.unblock);
@@ -181,7 +184,7 @@ export function resolveForge(
   const remotes = remoteNames(cwd);
   const repoOfRemote = (name: string): string | null => {
     const url = pushUrl(cwd, name);
-    const other = url ? deriveForge(url, { hosts }) : null;
+    const other = url ? deriveForge(url, { hosts, sshConfig: options.sshConfig }) : null;
     return other && other.kind === kind && other.apiHost === apiHost ? other.repo : null;
   };
   const upstream =

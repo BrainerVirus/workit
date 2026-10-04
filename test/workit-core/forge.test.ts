@@ -787,30 +787,21 @@ describe("S10 forge resolution and identity", () => {
 
     // An ~/.ssh/config alias that resolves to github.com gets the token.
     const alias = repoFor("github");
-    const home = mkdtempSync(path.join(os.tmpdir(), "wk-ssh-home-"));
-    mkdirSync(path.join(home, ".ssh"));
-    writeFileSync(
-      path.join(home, ".ssh", "config"),
-      "Host github-work.com\n  HostName github.com\n",
-    );
-    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-    process.env.HOME = home;
-    process.env.USERPROFILE = home;
     try {
       alias.git("remote", "set-url", "--push", "origin", "git@github-work.com:o/r.git");
       writeWorkspace(alias, { provider: "github", tokenFile });
-      const { resolved, calls } = connect(alias, githubRoutes());
-      expect(resolved).toMatchObject({
-        credential: "workspace_token_file",
-        forge: { apiHost: "github.com" },
+      const aliasRunner = replayRunner(githubRoutes(), alias.subs);
+      const resolved = resolveForge(alias.cwd, {
+        runner: aliasRunner,
+        sshConfig: "Host github-work.com\n  HostName github.com\n",
       });
-      expect(calls.length).toBeGreaterThan(0);
-      expect(calls.every((call) => call.token === "ghp_workPatValue")).toBe(true);
+      expect(resolved).toMatchObject({
+        ok: true,
+        data: { credential: "workspace_token_file", forge: { apiHost: "github.com" } },
+      });
+      expect(aliasRunner.calls.length).toBeGreaterThan(0);
+      expect(aliasRunner.calls.every((call) => call.token === "ghp_workPatValue")).toBe(true);
     } finally {
-      for (const [key, value] of Object.entries(saved))
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      rmSync(home, { recursive: true, force: true });
       rmSync(tokenFile, { force: true });
     }
   });
