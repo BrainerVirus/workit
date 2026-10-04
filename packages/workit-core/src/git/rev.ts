@@ -130,8 +130,8 @@ child.on("exit", (code) => {
 
 const WATCHDOG_TIMEOUT_EXIT = 124;
 
-/** A network git call under the process-group watchdog (see WATCHDOG). */
-const gitNetwork = (cwd: string, args: string[], timeoutMs: number): GitRun => {
+/** A network git call (push, fetch, ls-remote) under the process-group watchdog (see WATCHDOG). */
+export const gitNetwork = (cwd: string, args: string[], timeoutMs: number): GitRun => {
   const invocation = networkGitInvocation(cwd, args, timeoutMs);
   const result = spawnSync(process.execPath, ["-e", WATCHDOG], {
     cwd,
@@ -351,11 +351,25 @@ export function remoteTip(
   branch: string,
   options: { timeoutMs?: number } = {},
 ): RemoteTipResult {
-  if (!safeArg(remote) || !safeArg(branch))
+  if (!safeArg(branch))
     return { ok: false, code: "invalid_input", error: "remote and branch must not start with -" };
+  return remoteRefTip(cwd, remote, `refs/heads/${branch}`, options);
+}
+
+/**
+ * The commit a full remote ref points at (`refs/heads/x`, `refs/tags/v1`); an
+ * annotated tag resolves to the commit it peels to. Same contract as remoteTip.
+ */
+export function remoteRefTip(
+  cwd: string,
+  remote: string,
+  ref: string,
+  options: { timeoutMs?: number } = {},
+): RemoteTipResult {
+  if (!safeArg(remote) || !safeArg(ref))
+    return { ok: false, code: "invalid_input", error: "remote and ref must not start with -" };
   const timeoutMs = options.timeoutMs ?? GIT_TIMEOUTS.network;
-  const ref = `refs/heads/${branch}`;
-  const listed = gitNetwork(cwd, ["ls-remote", remote, ref], timeoutMs);
+  const listed = gitNetwork(cwd, ["ls-remote", remote, ref, `${ref}^{}`], timeoutMs);
   if (!listed.ok)
     return {
       ok: false,
@@ -364,11 +378,14 @@ export function remoteTip(
         ? `git ls-remote ${redactRemote(remote)} timed out after ${timeoutMs} ms`
         : `git ls-remote ${redactRemote(remote)} failed (unreachable or not authorized)`,
     };
+  let direct: string | null = null;
   for (const row of listed.stdout.split(/\r?\n/u)) {
     const [sha, name] = row.split(/\s+/u);
-    if (name === ref && sha) return { ok: true, sha };
+    if (!sha) continue;
+    if (name === `${ref}^{}`) return { ok: true, sha };
+    if (name === ref) direct = sha;
   }
-  return { ok: true, sha: null };
+  return { ok: true, sha: direct };
 }
 
 export type FetchResult =

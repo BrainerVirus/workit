@@ -62,7 +62,7 @@ export type VerdictSurface = (typeof VERDICT_SURFACES)[number];
 export type Observer = "agent_asserted" | "workit_cli";
 
 /** Row types written by the CLI's own PR verbs (S10/S11); the only PR→branch source. */
-export const PR_ROW_TYPES: ReadonlySet<string> = new Set(["pr.created", "pr.status"]);
+export const PR_ROW_TYPES: ReadonlySet<string> = new Set(["pr.created", "pr.status", "pr.merged"]);
 
 /** Who wrote a row. Unverified: the environment says so (D18). */
 export type LedgerActor = { host: string; session: string | null; agentId: string | null };
@@ -1155,6 +1155,22 @@ export function summarizeRow(row: ReadRow): RowSummary {
       break;
     case "handoff":
       summary = `next: ${text("next")}${text("note") ? ` (note: ${text("note")})` : ""}`;
+      break;
+    case "commit.recorded":
+      summary = `${(row.head ?? "?").slice(0, 12)} ${text("subject")}${row.actor.session ? "" : " (no session)"}`;
+      break;
+    case "push.verified":
+    case "push.noop":
+      summary = `${text("remote")} ${(str(row.previous) ?? "(new)").slice(0, 12)} -> ${(row.head ?? "?").slice(0, 12)}${row.forced === true ? " (force-with-lease)" : ""}`;
+      break;
+    case "pr.created":
+      summary = `#${row.pr ?? "?"} -> ${text("base")} at ${(row.head ?? "?").slice(0, 12)}${row.created === false ? " (existing)" : ""}`;
+      break;
+    case "pr.merged":
+      summary = `#${row.pr ?? "?"} ${text("method")} at ${(row.head ?? "?").slice(0, 12)}${text("mergeSha") ? ` -> ${text("mergeSha").slice(0, 12)}` : ""}`;
+      break;
+    case "delivery.verified":
+      summary = `${text("expect")} delivered at ${(row.head ?? "?").slice(0, 12)}`;
       break;
     default:
       summary = text("what") || text("name") || row.type;

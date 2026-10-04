@@ -257,7 +257,7 @@ export function selectPr(
     return failure(
       "not_found",
       `no ${noun} for branch ${branch} from ${resolved.headRepo} in ${resolved.forge.repo}`,
-      "push the branch and open one (workit pr create, S11), or pass --pr <n>",
+      "workit git push && workit pr create --fill  # or pass --pr <n>",
     );
   }
   return success(found.data.number);

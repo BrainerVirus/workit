@@ -57,6 +57,7 @@ import {
 import { normalizeChainSteps } from "./authority";
 import { resolveInside, run as coreRun } from "../core";
 import { hostingApiHostMatches, vcsCliIdentity, vcsConfig } from "./vcs-config";
+import { deleteRemoteBranch } from "../git/ops";
 import { assertProductWriteAllowed, currentWriterOwnsTask } from "./workers";
 import { sameDirectoryIdentity, TaskStore } from "./task-store";
 
@@ -2128,15 +2129,9 @@ export const executeConcreteExternalAction = async (
           outcome: "not_started",
         });
       const branch = request.payload.branch;
-      const result = run(root, [
-        "push",
-        `--force-with-lease=refs/heads/${branch}:${approvedTip}`,
-        "--delete",
-        target,
-        branch,
-      ]);
-      if (result.exitCode === 0) return success(null, null, { branch, deletedTip: approvedTip });
-      return /stale info|cannot lock ref|fetch first|non-fast-forward/i.test(result.stderr)
+      const result = deleteRemoteBranch(root, target, branch, approvedTip);
+      if (result.ok) return success(null, null, { branch, deletedTip: approvedTip });
+      return result.lease
         ? failure("capability_unavailable", "remote branch tip changed before deletion", {
             outcome: "not_started",
           })
