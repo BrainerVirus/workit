@@ -372,9 +372,10 @@ test("existing user skills and commands are never replaced", async () => {
       existingSkills: [{ id: "workit-debug" }],
       existingCommands: [{ name: "wk-debug" }],
     });
-    expect(skills).toHaveLength(13);
+    // Every packaged skill but the user's colliding one.
+    expect(skills).toHaveLength(WORKIT_METHOD_SKILLS.length - 1);
     expect(skills.some((skill) => skill.id === "workit-debug")).toBe(false);
-    expect(commands).toHaveLength(13);
+    expect(commands).toHaveLength(WORKIT_METHOD_SKILLS.length - 1);
     expect(commands.some((command) => command.name === "wk-debug")).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -389,7 +390,7 @@ test("a Workit alias is omitted when its skill id belongs to a user skill", asyn
     });
     expect(skills.some((skill) => skill.id === "workit-debug")).toBe(false);
     expect(commands.some((command) => command.name === "wk-debug")).toBe(false);
-    expect(commands).toHaveLength(13);
+    expect(commands).toHaveLength(WORKIT_METHOD_SKILLS.length - 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

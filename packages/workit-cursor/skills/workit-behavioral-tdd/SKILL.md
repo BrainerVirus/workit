@@ -39,6 +39,8 @@ Use this method when assessment selects the `testing` dimension.
   ghost loops (assert inside a possibly-empty loop), smoke-only renders,
   type-only or CSS-class coupling. If the test still passes when every
   imported function returns undefined, rewrite the assertion or delete it.
+  `workit test-audit --diff` flags these; triage them with workit-test-audit.
+  Turning acceptance criteria into scenarios and seams is workit-bdd.
 
 Run RED/GREEN through `workit check`, which records the observed result on the
 current task; shared `evidence` operations are for notes and non-test evidence.

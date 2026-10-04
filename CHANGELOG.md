@@ -73,6 +73,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--timeout` and its exit kill every process it started; on Windows `.cmd`
   shims (npm, pnpm, node_modules/.bin) run through an escaped `cmd /d /s /c`.
   `workit gc` also prunes check logs (newest 200, 30 days, 256 MB).
+- `workit test-audit [paths…|--diff [base]]` reports tautological and
+  low-value tests (tautology, mock-echo, snapshot-of-constant, assertion-free,
+  byte-copy, duplicate-body, constants-only, always-true, over-mocking; prose
+  `toContain` as `info`) with file:line, severity, confidence, why and an
+  independent-oracle fix; it never edits files. `--fail-on <level>` gates.
+  `--mutate` runs diff-scoped mutants (comparisons, booleans, logic,
+  arithmetic, return values) against the related tests in a disposable copy of
+  the working tree, using `--test-cmd` or the `workit check test` command, and
+  exits 1 when a mutant survives.
+- Skills `workit-bdd` (Given/When/Then scenarios as test names and seams) and
+  `workit-test-audit` (triage audit findings with Name the Break), with
+  `/wk-bdd` and `/wk-test-audit` aliases on every host.
 
 ### Changed
 
