@@ -11,7 +11,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { redactSecrets } from "./core/logger";
 import { redactText } from "./forge/redact";
 
 // ---------------------------------------------------------------------------
@@ -23,16 +22,13 @@ export const TAIL_LINES = 80;
 const MAX_LINE_CHARS = 400;
 
 /**
- * Mask secrets and strip terminal escapes from captured output: the forge
+ * Mask secrets and strip terminal escapes from captured output with the forge
  * redaction (tokens, key=value and quoted secrets, URL credentials, private
- * keys, signed URLs, credential-looking base64), plus the logger's patterns.
+ * keys, signed URLs, credential-looking base64). The logger's redaction is not
+ * used: it rewrites Windows backslashes and home paths, which would alter the
+ * observed output.
  */
-export function redactLog(text: string): string {
-  return redactText(text)
-    .split("\n")
-    .map((line) => redactSecrets(line))
-    .join("\n");
-}
+export const redactLog = (text: string): string => redactText(text);
 
 /** The last `lines` non-empty lines, each cut to a bounded width. */
 export function tailLines(text: string, lines: number = TAIL_LINES): string[] {

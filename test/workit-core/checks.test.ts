@@ -120,6 +120,8 @@ test("redactLog masks tokens, key=value secrets, URL credentials and escapes", (
   );
   expect(out).toContain("FAIL");
   expect(out).not.toContain("\u001b");
+  // Observed output is otherwise kept as is (no path rewriting).
+  expect(redactLog('at C:\\repo\\src\\a.ts:1 "q\\"q"')).toBe('at C:\\repo\\src\\a.ts:1 "q\\"q"');
   for (const secret of ["ghp_abcdefghij", "hunter2", "abcdefghijklmnop", "MIIabc"])
     expect(out).not.toContain(secret);
 });
