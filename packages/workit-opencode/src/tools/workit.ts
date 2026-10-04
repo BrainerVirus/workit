@@ -4,7 +4,7 @@ import {
   TaskStore,
   canonicalJson,
   failure,
-  operationSchemas,
+  advertisedOperationSchemas,
   OPERATION_SCHEMA_DEPTH,
   canonicalFieldsDescription,
   parseOperation,
@@ -413,7 +413,7 @@ const boundedSchema = (schema: any, depth: number, field: string): any => {
 
 const operationShapeFor = (family: OperationFamily): Record<string, any> => {
   const options = (
-    operationSchemas[family] as unknown as {
+    advertisedOperationSchemas[family] as unknown as {
       options: Array<{ shape: Record<string, any> }>;
     }
   ).options;
