@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -337,6 +338,35 @@ test("given trunk moved and the branch was not rebased, patchId is unchanged", (
   git(root, "checkout", "-q", "main");
   commit(root, "trunk.txt", "trunk only\n", "trunk moves");
   expect(patchId(root, "main", "feature/y")).toBe(before);
+});
+
+test("worktreeTree sees a same-size rewrite that only git's racy-entry check can catch", () => {
+  // Racy git: an index entry whose mtime is not older than the index file is
+  // re-hashed, because the stat data cannot prove it unchanged. Git builds
+  // without nanosecond timestamps (macOS) hit this whenever a file is
+  // rewritten within the second it was committed. Pin that case: only
+  // second-granular mtime and size are compared, and the file, its index
+  // entry and the index all share one timestamp. Without the fix, the
+  // temporary index copy got a fresh mtime and the edit read as clean.
+  const root = repo();
+  git(root, "config", "core.checkStat", "minimal");
+  const file = path.join(root, "a.ts");
+  const stamp = new Date("2020-01-01T00:00:00Z");
+  writeFileSync(file, "export const a = 1;\n");
+  utimesSync(file, stamp, stamp);
+  git(root, "add", "a.ts");
+  git(root, "commit", "-qm", "base");
+  const index = path.join(root, ".git", "index");
+  utimesSync(index, stamp, stamp);
+  const clean = worktreeTree(root)!;
+  expect(clean.dirty).toBe(false);
+
+  writeFileSync(file, "export const a = 2;\n"); // same size
+  utimesSync(file, stamp, stamp); // same whole-second mtime
+  utimesSync(index, stamp, stamp); // unchanged by worktreeTree; pinned for clarity
+  const edited = worktreeTree(root)!;
+  expect(edited.dirty).toBe(true);
+  expect(edited.tree).not.toBe(clean.tree);
 });
 
 test("worktreeTree records oversized untracked files by stat instead of hashing them", () => {
