@@ -393,9 +393,10 @@ pins. Re-run the preview after resolving a failure rather than blindly retrying.
 
 - Eight shared `workit_*` operation families: task, policy, evidence, finding,
   decision, worker, writer, and state.
-- Fourteen canonical method skills: behavioral TDD, challenge, debug, handoff,
+- Sixteen canonical method skills: behavioral TDD, challenge, debug, handoff,
   implement, plan, review, babysit, blast-radius, deslop (policy-gated before
-  pull requests), diagram, mockup, green-run, and steer.
+  pull requests), diagram, mockup, green-run, steer, bdd (Given/When/Then
+  scenarios as test names and seams) and test-audit (`workit test-audit`).
 - A `<workit-contract>` bootstrap marker carrying shared invariants.
 - Host-native capability reporting that never fabricates authority, receipts,
   delegation tokens, or cross-process identity.

@@ -1,0 +1,1221 @@
+// Static rules for `workit test-audit`. Each rule reads one parsed test file
+// and reports low-value tests: assertions that pass by construction or do not
+// depend on the code under test. Findings are advice for a human or agent to
+// triage (remove, or replace with a behavioral test against an independent
+// oracle); nothing here edits a file.
+import { builtinModules } from "node:module";
+import path from "node:path";
+import {
+  calleeName,
+  find,
+  isFunction,
+  isLiteralValue,
+  lineOf,
+  normalized,
+  rootIdentifier,
+  textOf,
+  unwrap,
+  walk,
+  type Node,
+  type Parsed,
+} from "./ast";
+
+export const RULES = {
+  tautology:
+    "Expected value is computed the way the code computes it, so it passes by construction",
+  "mock-echo": "Asserts the value a mock was configured to return",
+  "snapshot-of-constant": "Snapshots a literal or imported constant",
+  "assertion-free": "Test body makes no assertion",
+  "prose-contains": "Asserts a long prose fragment with toContain/toMatch",
+  "byte-copy": "Compares two file reads: tests a copy step, not behavior",
+  "duplicate-body": "Test body is identical to another test",
+  "constants-only": "Test file imports only constants from the code under test",
+  "always-true": "Actual value is a literal: the assertion never depends on the code",
+  "over-mocking": "Mocks the unit under test or many internal modules",
+} as const;
+
+export type RuleId = keyof typeof RULES;
+/** `info` findings are hidden unless `--min-severity info`. */
+export type Level = "high" | "medium" | "low" | "info";
+
+export type Finding = {
+  rule: RuleId;
+  severity: Level;
+  confidence: Level;
+  file: string;
+  line: number;
+  test: string | null;
+  why: string;
+  suggestion: string;
+  snippet: string;
+};
+
+export type TestCase = { name: string; line: number; call: Node; fn: Node };
+
+type Assertion = {
+  node: Node;
+  matcher: string;
+  actual: Node | null;
+  expected: Node | null;
+  /** `.not` in the chain: the assertion claims a difference. */
+  negated?: boolean;
+  /** `.rejects` / `.resolves` in the chain. */
+  settled?: "rejects" | "resolves";
+};
+
+const TEST_CALLEES = new Set(["test", "it", "specify", "Deno.test"]);
+// `test.todo` has no body; node:test hooks (`test.before`, `it.afterEach`) are setup.
+const NOT_TESTS = new Set([
+  "todo",
+  "skip",
+  "before",
+  "after",
+  "beforeEach",
+  "afterEach",
+  "beforeAll",
+  "afterAll",
+]);
+const EQUALITY = new Set([
+  "toBe",
+  "toEqual",
+  "toStrictEqual",
+  "toMatchObject",
+  "toBeCloseTo",
+  "equal",
+  "equals",
+  "eql",
+  "strictEqual",
+  "deepEqual",
+  "deepStrictEqual",
+  "same",
+]);
+const SNAPSHOT = new Set(["toMatchSnapshot", "toMatchInlineSnapshot", "toMatchFileSnapshot"]);
+const CHAI_WORDS = new Set(["to", "be", "been", "is", "that", "which", "and", "has", "have"]);
+const CHAI_WORDS_2 = new Set(["with", "at", "of", "same", "deep", "not", "resolves", "rejects"]);
+const ASSERT_LIKE = /expect|assert|should|^(?:check|verify|ensure|must)/i;
+
+const FRAMEWORK =
+  /^(?:bun:test|vitest|@jest\/globals|node:test|node:assert(?:\/strict)?|assert|chai|@testing-library\/.*)$/;
+const NON_UNIT = /(?:^|\/)(?:test|tests|__tests__|helpers?|fixtures?|support|mocks?)(?:\/|$)/;
+const BUILTINS = new Set(builtinModules);
+
+/** An import from the code under test, not a framework, builtin or test helper. */
+const isUnitSpecifier = (spec: string): boolean =>
+  !FRAMEWORK.test(spec) &&
+  !spec.startsWith("node:") &&
+  !spec.startsWith("bun:") &&
+  !BUILTINS.has(spec) &&
+  !NON_UNIT.test(spec);
+
+/** Root identifier of a test call: `test`, `it.only`, `test.each([...])`. */
+function testCallee(call: Node): boolean {
+  let callee: Node = call.callee;
+  if (callee.type === "CallExpression") callee = callee.callee; // test.each(table)(name, fn)
+  const name = calleeName(callee);
+  if (!name) return false;
+  const [head, ...rest] = name.split(".");
+  if (rest.some((part) => NOT_TESTS.has(part))) return false;
+  return TEST_CALLEES.has(name) || TEST_CALLEES.has(head);
+}
+
+const testName = (source: string, node: Node | undefined): string => {
+  if (!node) return "<anonymous>";
+  if (node.type === "StringLiteral") return node.value;
+  if (node.type === "TemplateLiteral") return textOf(source, node).slice(1, -1);
+  return textOf(source, node);
+};
+
+function collectTests(parsed: Parsed): TestCase[] {
+  const tests: TestCase[] = [];
+  walk(parsed.program, (node) => {
+    if (node.type !== "CallExpression" || !testCallee(node)) return;
+    const fn = node.arguments.findLast((arg: Node) => isFunction(arg));
+    if (!fn) return;
+    // node:test `{ skip: … }` / `{ todo: … }` options: the body never runs as a test.
+    const options = (node.arguments as Node[]).find((arg) => arg.type === "ObjectExpression");
+    const skipped = (options?.properties as Node[] | undefined)?.some(
+      (property) =>
+        property.type === "ObjectProperty" &&
+        property.key.type === "Identifier" &&
+        (property.key.name === "skip" || property.key.name === "todo") &&
+        !(property.value.type === "BooleanLiteral" && !property.value.value),
+    );
+    if (skipped) return;
+    tests.push({
+      name: testName(parsed.source, node.arguments[0]),
+      line: lineOf(node),
+      call: node,
+      fn,
+    });
+    return false; // nested test() inside a test is unusual; keep the outer one
+  });
+  return tests;
+}
+
+const isRequiredAssert = (node: Node): boolean =>
+  node.type === "CallExpression" &&
+  calleeName(node.callee) === "require" &&
+  node.arguments[0]?.type === "StringLiteral" &&
+  /^(?:node:)?assert(?:\/strict)?$/.test(node.arguments[0].value);
+
+function assertionOf(node: Node): Assertion | null {
+  if (node.type !== "CallExpression") return null;
+  const callee = node.callee;
+  // assert(x), assert.equal(a, b), t.assert.equal(a, b), require("node:assert").equal(a, b)
+  const name = isRequiredAssert(callee)
+    ? "assert"
+    : callee.type === "MemberExpression" && !callee.computed && isRequiredAssert(callee.object)
+      ? `assert.${callee.property.name}`
+      : calleeName(callee);
+  if (name === "assert" || name === "assert.ok" || name?.endsWith(".assert.ok"))
+    return { node, matcher: "ok", actual: node.arguments[0] ?? null, expected: null };
+  if (name && /(?:^|\.)assert\.\w+$/.test(name))
+    return {
+      node,
+      matcher: name.slice(name.lastIndexOf(".") + 1),
+      actual: node.arguments[0] ?? null,
+      expected: node.arguments[1] ?? null,
+    };
+  if (callee.type !== "MemberExpression" || callee.computed) return null;
+  const matcher = callee.property.name as string;
+  let object: Node = callee.object;
+  let negated = false;
+  let settled: Assertion["settled"];
+  while (
+    object.type === "MemberExpression" &&
+    !object.computed &&
+    (CHAI_WORDS.has(object.property.name) || CHAI_WORDS_2.has(object.property.name))
+  ) {
+    const word: string = object.property.name;
+    if (word === "not") negated = !negated;
+    if (word === "rejects" || word === "resolves") settled = word;
+    object = object.object;
+  }
+  if (object.type !== "CallExpression") return null;
+  const root = calleeName(object.callee);
+  if (root !== "expect" && root !== "expect.soft" && root !== "chai.expect") return null;
+  return {
+    node,
+    matcher,
+    actual: object.arguments[0] ?? null,
+    expected: node.arguments[0] ?? null,
+    negated,
+    settled,
+  };
+}
+
+const isEquality = (assertion: Assertion): boolean =>
+  EQUALITY.has(assertion.matcher) && !assertion.negated;
+
+// Each rule scans the same test bodies; parse their assertions once.
+const assertionCache = new WeakMap<Node, Assertion[]>();
+const assertionsIn = (root: Node): Assertion[] => {
+  let cached = assertionCache.get(root);
+  if (!cached) {
+    cached = find(root, (node) => node.type === "CallExpression")
+      .map(assertionOf)
+      .filter((entry): entry is Assertion => entry !== null);
+    assertionCache.set(root, cached);
+  }
+  return cached;
+};
+
+/** `const name = init` bindings in a scope (shadowing ignored on purpose). */
+function constBindings(root: Node): Map<string, Node> {
+  const bindings = new Map<string, Node>();
+  walk(root, (node) => {
+    if (node.type === "VariableDeclarator" && node.id.type === "Identifier" && node.init)
+      bindings.set(node.id.name, node.init);
+  });
+  return bindings;
+}
+
+const resolve = (node: Node | null, bindings: Map<string, Node>): Node | null => {
+  const value = unwrap(node);
+  if (value?.type === "Identifier" && bindings.has(value.name))
+    return unwrap(bindings.get(value.name));
+  return value;
+};
+
+const callsIn = (node: Node): Node[] =>
+  find(node, (child) => child.type === "CallExpression" || child.type === "NewExpression");
+
+const identifiersIn = (node: Node): Set<string> =>
+  new Set(find(node, (child) => child.type === "Identifier").map((child) => child.name as string));
+
+const ARITHMETIC = new Set(["+", "-", "*", "/", "%", "**"]);
+// Collection and string transforms that restate an implementation when the
+// expected value applies them to the unit's own input.
+const DERIVING = new Set([
+  "map",
+  "filter",
+  "reduce",
+  "reduceRight",
+  "flatMap",
+  "flat",
+  "slice",
+  "join",
+  "concat",
+  "sort",
+  "toSorted",
+  "reverse",
+  "toReversed",
+  "toUpperCase",
+  "toLowerCase",
+  "replace",
+  "replaceAll",
+  "split",
+  "padStart",
+  "padEnd",
+  "repeat",
+  "substring",
+]);
+// Globals and namespaces are tools for building a value, not unit inputs.
+const GLOBALS = new Set([
+  "undefined",
+  "NaN",
+  "Infinity",
+  "globalThis",
+  "JSON",
+  "Math",
+  "Object",
+  "Array",
+  "String",
+  "Number",
+  "Boolean",
+  "Symbol",
+  "BigInt",
+  "Date",
+  "RegExp",
+  "Map",
+  "Set",
+  "WeakMap",
+  "Promise",
+  "Error",
+  "TypeError",
+  "Buffer",
+  "URL",
+  "console",
+  "process",
+  "require",
+  "module",
+  "__dirname",
+  "__filename",
+  "setTimeout",
+  "clearTimeout",
+  "structuredClone",
+  "expect",
+  "test",
+  "it",
+  "describe",
+  "assert",
+  "Bun",
+]);
+
+/** `a + "x"` builds a string; only numeric `+` restates arithmetic. */
+const isStringBuild = (node: Node): boolean =>
+  node.type === "BinaryExpression" &&
+  node.operator === "+" &&
+  [node.left, node.right].some(
+    (side: Node) =>
+      side.type === "StringLiteral" || side.type === "TemplateLiteral" || isStringBuild(side),
+  );
+
+/**
+ * Whether an arithmetic expression is about numbers. `-`, `*`, `/` always
+ * are; `+` only with a numeric leaf, since `a + b` also concatenates strings.
+ */
+function isNumeric(node: Node, bindings: Map<string, Node>, depth = 0): boolean {
+  const value = unwrap(node);
+  if (!value || depth > 8) return false;
+  if (value.type === "NumericLiteral") return true;
+  if (value.type === "UnaryExpression") return isNumeric(value.argument, bindings, depth + 1);
+  if (value.type === "Identifier") {
+    const bound = bindings.get(value.name);
+    return bound ? isNumeric(bound, bindings, depth + 1) : false;
+  }
+  if (value.type === "MemberExpression" && !value.computed) return value.property.name === "length";
+  if (value.type === "BinaryExpression" && ARITHMETIC.has(value.operator))
+    return (
+      value.operator !== "+" ||
+      isNumeric(value.left, bindings, depth + 1) ||
+      isNumeric(value.right, bindings, depth + 1)
+    );
+  return false;
+}
+
+/**
+ * The expected value is itself a computation over the unit's inputs:
+ * `add(a, b)` expected as `a + b`, `total(items)` as `items.reduce(...)`,
+ * `names(xs)` as `xs.map(...)`. Only the top-level expression counts; an
+ * expected object or path built from inputs is a spec-level fact.
+ */
+function rederives(
+  expected: Node,
+  inputs: Set<string>,
+  literalArgs: string[],
+  source: string,
+  bindings: Map<string, Node>,
+) {
+  const node = unwrap(expected);
+  if (!node) return false;
+  const usesInputs = (child: Node) => [...identifiersIn(child)].some((name) => inputs.has(name));
+  if (
+    node.type === "BinaryExpression" &&
+    ARITHMETIC.has(node.operator) &&
+    !isStringBuild(node) &&
+    isNumeric(node, bindings)
+  ) {
+    if (usesInputs(node)) return true;
+    // add(2, 3) expected as 2 + 3: the same literals combined again.
+    const leaves = new Set(
+      find(node, (child) => child.type === "NumericLiteral").map((child) =>
+        normalized(source, child),
+      ),
+    );
+    return literalArgs.length > 1 && literalArgs.every((arg) => leaves.has(arg));
+  }
+  if (
+    (node.type === "CallExpression" || node.type === "OptionalCallExpression") &&
+    (node.callee.type === "MemberExpression" || node.callee.type === "OptionalMemberExpression") &&
+    !node.callee.computed &&
+    DERIVING.has(node.callee.property.name)
+  )
+    return inputs.has(rootIdentifier(node.callee) ?? "");
+  return false;
+}
+
+/**
+ * Arithmetic, a template with interpolations, or a deriving method call on a
+ * value (not on a module or global namespace: `path.join(dir, NAME)` builds a
+ * path, it does not restate the unit).
+ */
+const isComputation = (node: Node, namespace: (name: string) => boolean): boolean =>
+  (node.type === "BinaryExpression" && ARITHMETIC.has(node.operator)) ||
+  (node.type === "TemplateLiteral" && node.expressions.length > 0) ||
+  ((node.type === "CallExpression" || node.type === "OptionalCallExpression") &&
+    node.callee.type === "MemberExpression" &&
+    !node.callee.computed &&
+    DERIVING.has(node.callee.property.name) &&
+    !namespace(rootIdentifier(node.callee) ?? ""));
+
+// Formatting calls rebuild output; ordering calls (sort, slice) only normalize.
+const FORMATTING = new Set([
+  "join",
+  "concat",
+  "replace",
+  "replaceAll",
+  "toUpperCase",
+  "toLowerCase",
+  "trim",
+]);
+
+/** Arithmetic, interpolation or string formatting: a value rebuilt by formula. */
+const isFormula = (node: Node, namespace: (name: string) => boolean): boolean =>
+  isComputation(node, namespace) &&
+  (node.type !== "CallExpression" || FORMATTING.has(node.callee.property.name));
+
+/** The value a local helper returns, when it is one expression. */
+function helperResult(fn: Node | undefined): Node | null {
+  if (!fn || !isFunction(fn)) return null;
+  if (fn.body.type !== "BlockStatement") return unwrap(fn.body);
+  const statements = fn.body.body as Node[];
+  const last = statements.at(-1);
+  return last?.type === "ReturnStatement" && last.argument ? unwrap(last.argument) : null;
+}
+
+type Context = {
+  parsed: Parsed;
+  file: string;
+  fileBindings: Map<string, Node>;
+  imports: Map<string, string>; // local name -> module specifier
+  /** Module specifier when `name` is imported from the code under test. */
+  unitModule: (name: string | null) => string | null;
+  mocks: Map<string, Node[]>; // file-level mock name -> configured returns
+  /** Top-level functions declared in the test file (local helpers). */
+  helpers: Map<string, Node>;
+  /** The file uses fast-check or similar generators. */
+  propertyBased: boolean;
+};
+
+type Emit = (finding: Omit<Finding, "file" | "line" | "snippet">, node: Node) => void;
+
+const snippetOf = (source: string, node: Node): string => {
+  const text = textOf(source, node).replace(/\s+/g, " ").trim();
+  return text.length > 160 ? `${text.slice(0, 157)}...` : text;
+};
+
+const ORACLE =
+  "Use an independent oracle: a known-good literal from a worked example, the spec or an external contract. Name the Break: which wrong implementation must make this fail?";
+
+const EFFECTFUL = new Set([
+  "CallExpression",
+  "NewExpression",
+  "AwaitExpression",
+  "YieldExpression",
+  "UpdateExpression",
+  "AssignmentExpression",
+]);
+
+/** Index of the top-level statement of `fn`'s body that contains `node`. */
+function statementIndex(fn: Node, node: Node): number {
+  if (fn.body.type !== "BlockStatement") return -1;
+  return (fn.body.body as Node[]).findIndex(
+    (statement) => statement.start <= node.start && node.end <= statement.end,
+  );
+}
+
+const ORACLE_NAME = /^(?:expected|want|oracle)/i;
+
+function checkTautology(ctx: Context, test: TestCase, bindings: Map<string, Node>, emit: Emit) {
+  const { source } = ctx.parsed;
+  for (const assertion of assertionsIn(test.fn)) {
+    if (!isEquality(assertion) || !assertion.actual || !assertion.expected) continue;
+    const rawActual = unwrap(assertion.actual)!;
+    const rawExpected = unwrap(assertion.expected)!;
+    // A literal expected value is the independent oracle; literal arithmetic
+    // (add(2, 3) expected as 2 + 3) is still checked below.
+    const literalSum = rawExpected.type === "BinaryExpression";
+    if (isLiteralValue(rawActual) || (isLiteralValue(rawExpected) && !literalSum)) continue;
+    const base = { rule: "tautology" as const, test: test.name };
+    const report = (confidence: Level, why: string, suggestion = ORACLE) =>
+      emit({ ...base, severity: "high", confidence, why, suggestion }, assertion.node);
+    // expect(x).toBe(x). Calls are left alone: f() === f() checks determinism
+    // and a value read before an action checks that the action changed nothing.
+    if (
+      normalized(source, rawActual) === normalized(source, rawExpected) &&
+      find(rawActual, (node) => EFFECTFUL.has(node.type)).length === 0
+    ) {
+      report(
+        "high",
+        `Actual and expected are the same expression (\`${snippetOf(source, rawActual)}\`): the value is asserted equal to itself.`,
+      );
+      continue;
+    }
+    const actual = resolve(assertion.actual, bindings);
+    const expected = resolve(assertion.expected, bindings);
+    if (!actual || !expected || (isLiteralValue(expected) && !literalSum)) continue;
+    const namespace = (name: string) =>
+      GLOBALS.has(name) || (ctx.imports.has(name) && ctx.unitModule(name) === null);
+    // `const expected = f(x); expect(f(x)).toBe(expected)`: the same call on
+    // both sides. Only when the binding is named as the oracle or sits right
+    // before the assertion; a read separated by an action is a before/after check.
+    if (
+      rawExpected.type === "Identifier" &&
+      expected.type === "CallExpression" &&
+      ctx.unitModule(rootIdentifier(expected.callee)) !== null &&
+      normalized(source, expected) === normalized(source, rawActual)
+    ) {
+      const declaredAt = statementIndex(test.fn, bindings.get(rawExpected.name)!);
+      const adjacent =
+        declaredAt >= 0 && statementIndex(test.fn, assertion.node) - declaredAt === 1;
+      if (ORACLE_NAME.test(rawExpected.name) || adjacent)
+        report(
+          ORACLE_NAME.test(rawExpected.name) ? "high" : "medium",
+          `\`${rawExpected.name}\` is computed by the same call as the actual value (\`${snippetOf(source, rawActual)}\`), so the assertion cannot fail.`,
+        );
+      continue;
+    }
+    const unit = callsIn(actual).find(
+      (call) => call.type === "CallExpression" && ctx.unitModule(rootIdentifier(call.callee)),
+    );
+    if (!unit) continue;
+    const module = ctx.unitModule(rootIdentifier(unit.callee))!;
+    const inline = rawExpected.type !== "Identifier" || ORACLE_NAME.test(rawExpected.name);
+    const unitArgs = (unit.arguments as Node[]).map((arg) => normalized(source, arg)).join(",");
+    // A local helper that recomputes the result from the same arguments.
+    if (inline && expected.type === "CallExpression" && expected.callee.type === "Identifier") {
+      const helper = helperResult(ctx.helpers.get(expected.callee.name));
+      const args = (expected.arguments as Node[]).map((arg) => normalized(source, arg)).join(",");
+      if (helper && isComputation(helper, namespace) && args === unitArgs && args !== "") {
+        report(
+          "medium",
+          `Expected value comes from the local helper \`${expected.callee.name}\`, which recomputes \`${snippetOf(source, helper)}\` from the same arguments: it mirrors the implementation.`,
+        );
+        continue;
+      }
+    }
+    // The expectation is rebuilt from the module's own constants or functions
+    // (`100 * (1 + TAX)`, `\`${GREETING}, bob\``).
+    if (inline && isFormula(expected, namespace)) {
+      const borrowed = find(
+        expected,
+        (node) => node.type === "Identifier" && ctx.unitModule(node.name) === module,
+      ).map((node) => node.name as string);
+      if (borrowed.length > 0) {
+        report(
+          "medium",
+          `Expected value \`${snippetOf(source, expected)}\` is rebuilt from ${[...new Set(borrowed)].map((name) => `\`${name}\``).join(", ")} of the module under test: it reproduces the implementation's own formula.`,
+        );
+        continue;
+      }
+    }
+    const inputs = new Set<string>();
+    const literalArgs: string[] = [];
+    for (const arg of unit.arguments as Node[]) {
+      if (isFunction(arg)) continue;
+      for (const name of identifiersIn(arg))
+        if (!ctx.imports.has(name) && !GLOBALS.has(name)) inputs.add(name);
+      if (arg.type === "NumericLiteral") literalArgs.push(normalized(source, arg));
+    }
+    // Property-based tests compute expectations from generated inputs on purpose.
+    if (!ctx.propertyBased && rederives(expected, inputs, literalArgs, source, bindings))
+      report(
+        "medium",
+        `Expected value \`${snippetOf(source, expected)}\` re-derives the result from the inputs passed to \`${calleeName(unit.callee) ?? "the unit"}\`: it restates the implementation, so it passes by construction.`,
+        `Replace the computed expectation with a literal worked out by hand or from the spec (e.g. \`expect(${snippetOf(source, rawActual)}).toBe(<literal>)\`). Name the Break: which wrong implementation must make this fail?`,
+      );
+  }
+}
+
+const MOCK_FACTORY = /^(?:vi|jest)\.fn$|^mock$|^mock\.fn$|^jest\.fn$/;
+const SPY_FACTORY = /^(?:vi\.|jest\.)?spyOn$|^mock\.method$/;
+const MOCK_RETURN = /^mock(?:Resolved|Rejected)?(?:Return)?Value(?:Once)?$/;
+
+/** The value an implementation function returns, if it is a single expression. */
+function returnedBy(fn: Node | undefined): Node | null {
+  if (!fn || !isFunction(fn)) return null;
+  if (fn.body.type !== "BlockStatement") return fn.body;
+  const statements = fn.body.body as Node[];
+  const last = statements.at(-1);
+  return statements.length === 1 && last?.type === "ReturnStatement" ? last.argument : null;
+}
+
+/** Mock name (or `obj.method` for spies) -> configured return values. */
+function collectMocks(
+  root: Node,
+  into: Map<string, Node[]> = new Map(),
+  skipTests = false,
+): Map<string, Node[]> {
+  // Walk a chain `factory(impl).mockReturnValue(x)` from the outer call in.
+  const configure = (declared: string | null, init: Node) => {
+    const values: (Node | null)[] = [];
+    const names: string[] = [];
+    let node: Node | null = unwrap(init);
+    while (node?.type === "CallExpression") {
+      const callee: Node = node.callee;
+      const method =
+        callee.type === "MemberExpression" && !callee.computed ? callee.property.name : null;
+      if (method && MOCK_RETURN.test(method)) values.push(node.arguments[0] ?? null);
+      else if (method === "mockImplementation" || method === "mockImplementationOnce")
+        values.push(returnedBy(node.arguments[0]));
+      else {
+        const name = calleeName(callee) ?? "";
+        if (MOCK_FACTORY.test(name)) {
+          values.push(returnedBy(node.arguments[0]));
+          if (declared) names.push(declared);
+          break;
+        }
+        if (SPY_FACTORY.test(name)) {
+          const target = calleeName(node.arguments[0]);
+          const key = node.arguments[1];
+          if (target && key?.type === "StringLiteral") names.push(`${target}.${key.value}`);
+          if (declared) names.push(declared);
+          values.push(returnedBy(node.arguments[2]));
+          break;
+        }
+      }
+      if (callee.type !== "MemberExpression") break;
+      const object: Node = callee.object;
+      if (object.type === "Identifier" && into.has(object.name)) {
+        names.push(object.name);
+        break;
+      }
+      node = object;
+    }
+    for (const name of names) {
+      const list = into.get(name) ?? [];
+      for (const value of values) if (value) list.push(value);
+      into.set(name, list);
+    }
+  };
+  walk(root, (node) => {
+    // File-level collection leaves each test's own mocks to that test.
+    if (skipTests && node.type === "CallExpression" && testCallee(node)) return false;
+    if (node.type === "VariableDeclarator" && node.id.type === "Identifier" && node.init)
+      configure(node.id.name, node.init);
+    else if (node.type === "ExpressionStatement" && node.expression.type === "CallExpression")
+      configure(null, node.expression);
+  });
+  return into;
+}
+
+function checkMockEcho(ctx: Context, test: TestCase, bindings: Map<string, Node>, emit: Emit) {
+  const { source } = ctx.parsed;
+  const mocks = collectMocks(test.fn, new Map(ctx.mocks));
+  if (mocks.size === 0) return;
+  for (const assertion of assertionsIn(test.fn)) {
+    if (!isEquality(assertion) || !assertion.actual || !assertion.expected) continue;
+    // `.rejects.toBe(error)` checks that the unit propagates a failure.
+    if (assertion.settled === "rejects") continue;
+    const actual = resolve(assertion.actual, bindings);
+    const expectedText = normalized(source, unwrap(assertion.expected)!);
+    const expectedResolved = normalized(source, resolve(assertion.expected, bindings)!);
+    if (actual?.type === "CallExpression") {
+      const callee = calleeName(actual.callee);
+      if (callee && mocks.has(callee)) {
+        emit(
+          {
+            rule: "mock-echo",
+            test: test.name,
+            severity: "high",
+            confidence: "high",
+            why: `Calls the mock \`${callee}\` directly and asserts its result: the code under test never runs.`,
+            suggestion:
+              "Call the real unit with the mock injected at the boundary, and assert the unit's own observable output.",
+          },
+          assertion.node,
+        );
+        continue;
+      }
+    }
+    for (const [name, values] of mocks) {
+      const echoed = values.find((value) => {
+        if (isLiteralValue(value) && value.type !== "ObjectExpression") return false;
+        const text = normalized(source, value);
+        return text === expectedText || text === expectedResolved;
+      });
+      if (!echoed) continue;
+      emit(
+        {
+          rule: "mock-echo",
+          test: test.name,
+          // Routing and fallback tests legitimately check pass-through.
+          severity: "low",
+          confidence: "low",
+          why: `Expected value \`${snippetOf(source, echoed)}\` is exactly what mock \`${name}\` returns: the test proves pass-through at most.`,
+          suggestion:
+            "Assert what the unit adds (a transformation, a decision, a side effect), with an expected value written independently of the mock setup.",
+        },
+        assertion.node,
+      );
+      break;
+    }
+  }
+}
+
+const isConstantRef = (node: Node | null, ctx: Context, bindings: Map<string, Node>): boolean => {
+  const value = unwrap(node);
+  if (!value) return false;
+  if (isLiteralValue(value)) return true;
+  if (value.type === "Identifier") {
+    if (ctx.imports.has(value.name)) return /^[A-Z][A-Z0-9_]*$/.test(value.name);
+    const bound = bindings.get(value.name);
+    return bound ? isLiteralValue(bound) : false;
+  }
+  if (value.type === "MemberExpression") return isConstantRef(value.object, ctx, bindings);
+  return false;
+};
+
+function checkSnapshots(ctx: Context, test: TestCase, bindings: Map<string, Node>, emit: Emit) {
+  for (const assertion of assertionsIn(test.fn)) {
+    if (!SNAPSHOT.has(assertion.matcher) || !isConstantRef(assertion.actual, ctx, bindings))
+      continue;
+    emit(
+      {
+        rule: "snapshot-of-constant",
+        test: test.name,
+        severity: "medium",
+        confidence: "high",
+        why: "The snapshot records a literal or an imported constant: it only re-states the constant and changes whenever the constant does.",
+        suggestion:
+          "Snapshot the output of the code that consumes the constant, or delete the test if the constant has no behavior of its own.",
+      },
+      assertion.node,
+    );
+  }
+}
+
+const isFalsyLiteral = (node: Node | null): boolean => {
+  const value = unwrap(node);
+  return (
+    !!value &&
+    ((value.type === "BooleanLiteral" && !value.value) ||
+      (value.type === "NumericLiteral" && value.value === 0) ||
+      value.type === "NullLiteral" ||
+      (value.type === "StringLiteral" && value.value === ""))
+  );
+};
+
+function checkAlwaysTrue(ctx: Context, test: TestCase, emit: Emit) {
+  for (const assertion of assertionsIn(test.fn)) {
+    if (SNAPSHOT.has(assertion.matcher) || !isLiteralValue(assertion.actual)) continue;
+    // assert.fail("unreachable") and assert(false, "...") are guards, not checks.
+    if (assertion.matcher === "fail" || assertion.matcher === "unreachable") continue;
+    if (assertion.matcher === "ok" && isFalsyLiteral(assertion.actual)) continue;
+    // expect("x").toBe(subject) style inversions still exercise the code.
+    if (assertion.expected && !isLiteralValue(assertion.expected)) continue;
+    emit(
+      {
+        rule: "always-true",
+        test: test.name,
+        severity: "high",
+        confidence: "high",
+        why: `The actual value \`${snippetOf(ctx.parsed.source, assertion.actual!)}\` is a literal, so the outcome is fixed when the test is written.`,
+        suggestion: "Assert on a value produced by the code under test, or delete the assertion.",
+      },
+      assertion.node,
+    );
+  }
+}
+
+// Calls that throw on failure act as the test's assertion.
+const THROWING_CHECKS = /^(?:execFileSync|execSync)$/;
+
+/** Whether a call asserts by itself: a matcher, an assert-named helper, a throwing check. */
+function assertingCall(call: Node, helpers: Set<string>): boolean {
+  if (assertionOf(call)) return true;
+  const name = calleeName(call.callee) ?? "";
+  const last = name.slice(name.lastIndexOf(".") + 1);
+  return (
+    ASSERT_LIKE.test(last) ||
+    ASSERT_LIKE.test(name.split(".")[0]) ||
+    THROWING_CHECKS.test(last) ||
+    helpers.has(name)
+  );
+}
+
+/** Local functions that assert, directly or through another asserting helper. */
+function assertingHelpers(program: Node): Set<string> {
+  const bodies = new Map<string, Node[]>();
+  walk(program, (node) => {
+    let name: string | null = null;
+    let fn: Node | null = null;
+    if (node.type === "FunctionDeclaration" && node.id) [name, fn] = [node.id.name, node];
+    else if (
+      node.type === "VariableDeclarator" &&
+      node.id.type === "Identifier" &&
+      isFunction(node.init)
+    )
+      [name, fn] = [node.id.name, node.init];
+    if (!name || !fn) return;
+    bodies.set(
+      name,
+      find(fn, (child) => child.type === "CallExpression"),
+    );
+    return false; // searched once; nested helpers inside helpers are rare
+  });
+  const helpers = new Set<string>();
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [name, calls] of bodies)
+      if (!helpers.has(name) && calls.some((call) => assertingCall(call, helpers))) {
+        helpers.add(name);
+        changed = true;
+      }
+  }
+  return helpers;
+}
+
+// Sequential node:test steps named for setup work are not meant to assert.
+const SETUP_STEP = /^(?:setup|teardown|cleanup|before|after)\b/i;
+
+function checkAssertionFree(ctx: Context, test: TestCase, helpers: Set<string>, emit: Emit) {
+  if (SETUP_STEP.test(test.name)) return;
+  const calls = find(test.fn.body, (node) => node.type === "CallExpression");
+  const context: string | null =
+    test.fn.params[0]?.type === "Identifier" ? test.fn.params[0].name : null;
+  const asserts = calls.some((call) => {
+    if (assertingCall(call, helpers)) return true;
+    const root = rootIdentifier(call.callee) ?? "";
+    // t.skip()/t.todo()/t.test() on the node:test context, RuleTester-style runners.
+    return (context !== null && root === context) || /tester$/i.test(root);
+  });
+  if (asserts) return;
+  // "does not throw" tests make not-throwing their assertion.
+  const noThrow = /\b(?:not|never|without|no)\s+(?:throw|crash)|tolerat/i.test(test.name);
+  // A call into a test helper or third-party tool may assert inside.
+  const opaque = calls.some((call) => {
+    const spec = ctx.imports.get(rootIdentifier(call.callee) ?? "");
+    return (
+      spec !== undefined &&
+      ctx.unitModule(rootIdentifier(call.callee)) === null &&
+      !BUILTINS.has(spec.replace(/^node:/, ""))
+    );
+  });
+  const weak = opaque || noThrow;
+  emit(
+    {
+      rule: "assertion-free",
+      test: test.name,
+      severity: weak ? "low" : "medium",
+      confidence: weak ? "low" : "high",
+      why: opaque
+        ? "The test makes no assertion of its own; it relies on a helper it calls to fail."
+        : "The test makes no assertion: it passes as long as nothing throws.",
+      suggestion:
+        "Assert the observable result (return value, output, state change) against an expected value, or delete the test.",
+    },
+    test.call,
+  );
+}
+
+const PROSE_MATCHERS = new Set([
+  "toContain",
+  "toMatch",
+  "toInclude",
+  "include",
+  "contain",
+  "match",
+]);
+
+function proseOf(node: Node | null): string | null {
+  const value = unwrap(node);
+  if (!value) return null;
+  if (value.type === "StringLiteral") return value.value;
+  if (value.type === "TemplateLiteral" && value.expressions.length === 0)
+    return value.quasis.map((quasi: Node) => quasi.value.cooked).join("");
+  if (value.type === "RegExpLiteral") return value.pattern.replace(/\\s[+*]?/g, " ");
+  return null;
+}
+
+function checkProse(ctx: Context, test: TestCase, emit: Emit) {
+  for (const assertion of assertionsIn(test.fn)) {
+    if (!PROSE_MATCHERS.has(assertion.matcher)) continue;
+    const prose = proseOf(assertion.expected);
+    if (!prose || prose.length < 40 || prose.trim().split(/\s+/).length < 6) continue;
+    const docs = /\.md\b|SKILL|README|readme|skillText|docs?\b/.test(
+      textOf(ctx.parsed.source, assertion.actual ?? assertion.node),
+    );
+    emit(
+      {
+        rule: "prose-contains",
+        test: test.name,
+        severity: "info",
+        confidence: docs ? "high" : "medium",
+        why: `Asserts a ${prose.length}-character prose fragment${docs ? " of documentation" : ""}: a wording edit fails it without any behavior change.`,
+        suggestion:
+          "Assert the behavior the text drives (a parsed field, an exit code, a routed decision), or a short stable token; drop doc-wording checks.",
+      },
+      assertion.node,
+    );
+  }
+}
+
+const RUNS_CODE =
+  /^(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork|main|run)$|^Bun\.spawn/;
+const FS_READ = /^(?:readFileSync|readFile)$/;
+const BUN_READ = /^(?:text|bytes|arrayBuffer|json)$/;
+
+/** The first call on this side that reads a file: fs reads or `Bun.file(p).text()`. */
+const readCall = (node: Node): Node | undefined =>
+  callsIn(node).find((call) => {
+    if (call.type !== "CallExpression") return false;
+    const callee: Node = call.callee;
+    if (callee.type === "Identifier") return FS_READ.test(callee.name);
+    if (callee.type !== "MemberExpression" || callee.computed) return false;
+    const name: string = callee.property.name;
+    if (FS_READ.test(name)) return true;
+    return (
+      BUN_READ.test(name) &&
+      callee.object.type === "CallExpression" &&
+      calleeName(callee.object.callee) === "Bun.file"
+    );
+  });
+
+function checkByteCopy(ctx: Context, test: TestCase, bindings: Map<string, Node>, emit: Emit) {
+  const { source } = ctx.parsed;
+  // A copy made by code the test runs (an installer, a backup) is behavior.
+  const runsUnit = callsIn(test.fn.body).some((call) => {
+    if (readCall(call)) return false;
+    const root = rootIdentifier(call.callee) ?? "";
+    const spec = ctx.imports.get(root);
+    const last = (calleeName(call.callee) ?? "").split(".").at(-1) ?? "";
+    // Code under test, a test helper that runs it, or a process launch.
+    return (
+      (spec !== undefined && !BUILTINS.has(spec.replace(/^node:/, ""))) ||
+      ctx.helpers.has(root) ||
+      RUNS_CODE.test(calleeName(call.callee) ?? "") ||
+      /^(?:run|exec|spawn|fork|install|build|generate|render)/i.test(last)
+    );
+  });
+  if (runsUnit) return;
+  for (const assertion of assertionsIn(test.fn)) {
+    if (!isEquality(assertion) || !assertion.actual || !assertion.expected) continue;
+    const actual = resolve(assertion.actual, bindings);
+    const expected = resolve(assertion.expected, bindings);
+    if (!actual || !expected) continue;
+    const left = readCall(actual);
+    const right = readCall(expected);
+    // The same read before and after an action checks that nothing changed.
+    if (!left || !right || normalized(source, left) === normalized(source, right)) continue;
+    const args = (call: Node) =>
+      (call.arguments as Node[]).map((arg) => normalized(source, arg)).join(",");
+    if (args(left) === args(right)) continue;
+    emit(
+      {
+        rule: "byte-copy",
+        test: test.name,
+        severity: "medium",
+        confidence: "medium",
+        why: `Compares the contents of two different sources (\`${snippetOf(source, left)}\` vs \`${snippetOf(source, right)}\`): it proves a copy is identical, which tests a copy step rather than behavior.`,
+        suggestion:
+          "Generate the copy from one source at build time and delete this test, or assert the behavior of the consumer that reads the copy.",
+      },
+      assertion.node,
+    );
+  }
+}
+
+function checkConstantsOnly(ctx: Context, emit: Emit) {
+  const { program, source } = ctx.parsed;
+  const unitImports = (program.body as Node[]).filter(
+    (node) =>
+      node.type === "ImportDeclaration" &&
+      node.importKind !== "type" &&
+      isUnitSpecifier(node.source.value),
+  );
+  if (unitImports.length === 0) return;
+  const names = unitImports.flatMap((node) =>
+    (node.specifiers as Node[]).filter((spec) => spec.importKind !== "type"),
+  );
+  if (names.length === 0) return;
+  const constantsOnly = names.every(
+    (spec) => spec.type === "ImportSpecifier" && /^[A-Z][A-Z0-9_]*$/.test(spec.local.name),
+  );
+  // A test that spawns a process or calls fetch exercises behavior anyway.
+  if (!constantsOnly || /\bspawn|\bexec|\bfetch\(|Bun\.spawn/.test(source)) return;
+  emit(
+    {
+      rule: "constants-only",
+      test: null,
+      severity: "medium",
+      confidence: "medium",
+      why: `Imports only constants (${names.map((spec) => spec.local.name).join(", ")}) from the code under test: no behavior is exercised.`,
+      suggestion:
+        "Test the code that consumes these constants through its public interface, or delete the file if it only restates them.",
+    },
+    unitImports[0],
+  );
+}
+
+const MODULE_MOCK = /^(?:vi|jest)\.(?:mock|doMock)$|^mock\.module$/;
+
+function checkOverMocking(ctx: Context, emit: Emit) {
+  const { program } = ctx.parsed;
+  const unit = path
+    .basename(ctx.file)
+    .replace(/\.(?:[cm]?[jt]sx?)$/, "")
+    .replace(/\.(?:test|spec)$/, "");
+  const mocked = find(
+    program,
+    (node) =>
+      node.type === "CallExpression" &&
+      MODULE_MOCK.test(calleeName(node.callee) ?? "") &&
+      node.arguments[0]?.type === "StringLiteral",
+  );
+  const internal = mocked.filter((call) => /^(?:\.|@\/|~\/)/.test(call.arguments[0].value));
+  for (const call of mocked) {
+    const spec: string = call.arguments[0].value;
+    const base = path
+      .basename(spec.replace(/\/index(?:\.[cm]?[jt]sx?)?$/, ""))
+      .replace(/\.(?:[cm]?[jt]sx?)$/, "");
+    if (base === unit)
+      emit(
+        {
+          rule: "over-mocking",
+          test: null,
+          severity: "high",
+          confidence: "high",
+          why: `Mocks \`${spec}\`, the module this file tests: assertions then check the mock, not the unit.`,
+          suggestion:
+            "Run the real unit and mock only its system boundaries (network, clock, randomness, process).",
+        },
+        call,
+      );
+  }
+  if (internal.length >= 3)
+    emit(
+      {
+        rule: "over-mocking",
+        test: null,
+        severity: "medium",
+        confidence: "medium",
+        why: `Mocks ${internal.length} internal modules: the test is coupled to the implementation's collaborators and breaks on refactors.`,
+        suggestion:
+          "Test at a higher seam with real collaborators; mock only at system boundaries.",
+      },
+      internal[0],
+    );
+}
+
+/** Lines suppressed by `workit-test-audit-ignore [rule…]` comments. */
+function suppressions(parsed: Parsed): {
+  file: Set<string> | null;
+  lines: Map<number, Set<string> | null>;
+} {
+  const lines = new Map<number, Set<string> | null>();
+  let file: Set<string> | null = null;
+  for (const comment of parsed.comments) {
+    const match = /workit-test-audit-ignore(-file)?(?:\s+([\w\s,-]+))?/.exec(comment.value);
+    if (!match) continue;
+    const rules = match[2]
+      ? new Set(match[2].split(/[\s,]+/).filter((rule) => rule in RULES))
+      : null;
+    const set = rules && rules.size > 0 ? rules : null;
+    if (match[1]) file = set ?? new Set(Object.keys(RULES));
+    else {
+      lines.set(comment.loc.start.line, set);
+      lines.set(comment.loc.end.line + 1, set);
+    }
+  }
+  return { file, lines };
+}
+
+/** Local name -> module for ESM imports and top-level `require()` bindings. */
+function importBindings(program: Node): Map<string, string> {
+  const imports = new Map<string, string>();
+  for (const node of program.body as Node[]) {
+    if (node.type === "ImportDeclaration")
+      for (const spec of node.specifiers as Node[]) imports.set(spec.local.name, node.source.value);
+    if (node.type !== "VariableDeclaration") continue;
+    for (const declarator of node.declarations as Node[]) {
+      let init = unwrap(declarator.init);
+      // require("x").y
+      while (init?.type === "MemberExpression") init = init.object;
+      if (
+        init?.type !== "CallExpression" ||
+        calleeName(init.callee) !== "require" ||
+        init.arguments[0]?.type !== "StringLiteral"
+      )
+        continue;
+      const spec: string = init.arguments[0].value;
+      for (const id of find(declarator.id, (child) => child.type === "Identifier"))
+        imports.set(id.name, spec);
+    }
+  }
+  return imports;
+}
+
+/** Top-level `function f` and `const f = () => …` declarations. */
+function localFunctions(program: Node): Map<string, Node> {
+  const functions = new Map<string, Node>();
+  for (const statement of program.body as Node[]) {
+    const node = statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (node?.type === "FunctionDeclaration" && node.id) functions.set(node.id.name, node);
+    if (node?.type === "VariableDeclaration")
+      for (const declarator of node.declarations as Node[])
+        if (declarator.id.type === "Identifier" && isFunction(declarator.init))
+          functions.set(declarator.id.name, declarator.init);
+  }
+  return functions;
+}
+
+export type FileAudit = { findings: Finding[]; tests: TestCase[]; bodies: Map<string, TestCase> };
+
+export function auditParsed(parsed: Parsed, file: string): Omit<FileAudit, "bodies"> {
+  const findings: Finding[] = [];
+  const muted = suppressions(parsed);
+  const emit: Emit = (raw, node) => {
+    // High severity is reserved for high-confidence findings.
+    const finding =
+      raw.severity === "high" && raw.confidence !== "high"
+        ? { ...raw, severity: "medium" as const }
+        : raw;
+    const line = lineOf(node);
+    if (muted.file?.has(finding.rule)) return;
+    if (muted.lines.has(line)) {
+      const rules = muted.lines.get(line);
+      if (!rules || rules.has(finding.rule)) return;
+    }
+    findings.push({ ...finding, file, line, snippet: snippetOf(parsed.source, node) });
+  };
+  const imports = importBindings(parsed.program);
+  // Top-level bindings only; each test adds its own body's bindings.
+  const fileBindings = new Map<string, Node>();
+  for (const statement of parsed.program.body as Node[]) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type === "VariableDeclaration")
+      for (const [name, init] of constBindings(declaration)) fileBindings.set(name, init);
+  }
+  const unitModule = (name: string | null) => {
+    const spec = name ? imports.get(name) : undefined;
+    return spec && isUnitSpecifier(spec) ? spec : null;
+  };
+  const ctx: Context = {
+    parsed,
+    file,
+    fileBindings,
+    imports,
+    unitModule,
+    mocks: collectMocks(parsed.program, new Map(), true),
+    helpers: localFunctions(parsed.program),
+    propertyBased: [...imports.values()].some((spec) => /fast-check|jsverify|testcheck/.test(spec)),
+  };
+  const tests = collectTests(parsed);
+  const helpers = assertingHelpers(parsed.program);
+  for (const test of tests) {
+    const bindings = new Map([...fileBindings, ...constBindings(test.fn)]);
+    checkTautology(ctx, test, bindings, emit);
+    checkMockEcho(ctx, test, bindings, emit);
+    checkSnapshots(ctx, test, bindings, emit);
+    checkAlwaysTrue(ctx, test, emit);
+    checkAssertionFree(ctx, test, helpers, emit);
+    checkProse(ctx, test, emit);
+    checkByteCopy(ctx, test, bindings, emit);
+  }
+  if (tests.length > 0) {
+    checkConstantsOnly(ctx, emit);
+    checkOverMocking(ctx, emit);
+  }
+  return { findings, tests };
+}
+
+/** Identifiers a node reads but does not declare (property names excluded). */
+function freeIdentifiers(root: Node): Set<string> {
+  const used = new Set<string>();
+  const declared = new Set<string>();
+  const declare = (pattern: Node | null | undefined) => {
+    if (pattern)
+      for (const id of find(pattern, (node) => node.type === "Identifier")) declared.add(id.name);
+  };
+  walk(root, (node, parent) => {
+    if (node.type === "VariableDeclarator") declare(node.id);
+    else if (isFunction(node)) {
+      for (const param of node.params as Node[]) declare(param);
+      if (node.id) declare(node.id);
+    } else if (node.type === "CatchClause") declare(node.param);
+    else if (node.type === "Identifier") {
+      const property =
+        (parent?.type === "MemberExpression" || parent?.type === "OptionalMemberExpression") &&
+        parent.property === node &&
+        !parent.computed;
+      const key = parent?.type === "ObjectProperty" && parent.key === node && !parent.computed;
+      if (!property && !key) used.add(node.name);
+    }
+  });
+  return new Set([...used].filter((name) => !declared.has(name)));
+}
+
+/**
+ * Duplicate-check key: the normalized body plus where each free identifier
+ * comes from (module for imports, source text for top-level helpers). A body
+ * that reads describe-scoped state (`installer` set in a beforeEach) depends on
+ * its context, and parametrized tests (`test.each`, `%s` names) differ by
+ * their rows, so neither is ever a duplicate.
+ */
+export const bodyKey = (parsed: Parsed, test: TestCase): string | null => {
+  if (test.call.callee.type === "CallExpression" || /%[sdifjoO#]|\$\{/.test(test.name)) return null;
+  const body = normalized(parsed.source, test.fn.body);
+  if (body.length < 40) return null;
+  const imports = importBindings(parsed.program);
+  const topLevel = new Map<string, string>();
+  for (const node of parsed.program.body as Node[]) {
+    const declaration = node.type === "ExportNamedDeclaration" ? node.declaration : node;
+    if (declaration?.type === "FunctionDeclaration" && declaration.id)
+      topLevel.set(declaration.id.name, normalized(parsed.source, declaration));
+    if (declaration?.type === "VariableDeclaration")
+      for (const declarator of declaration.declarations as Node[])
+        if (declarator.id.type === "Identifier")
+          topLevel.set(declarator.id.name, normalized(parsed.source, declarator));
+  }
+  const origins: string[] = [];
+  for (const name of [...freeIdentifiers(test.fn)].toSorted()) {
+    if (GLOBALS.has(name)) continue;
+    const origin = imports.get(name) ?? topLevel.get(name);
+    if (origin === undefined) return null;
+    origins.push(`${name}=${origin}`);
+  }
+  return `${body}|${origins.join(",")}`;
+};

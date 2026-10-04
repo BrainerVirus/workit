@@ -162,6 +162,15 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./ledger"),
   },
   {
+    name: "test-audit",
+    group: "delivery",
+    usage:
+      "workit test-audit [paths…] [--diff [base]] [--rule <ids>] [--min-severity <level>] [--fail-on <level>] [--mutate [--test-cmd <cmd {files}>] [--max-mutants <n>] [--budget <s>]] [--json]",
+    summary:
+      "Flag tautological and low-value tests with a suggested independent oracle; --mutate checks changed lines with diff-scoped mutation",
+    load: () => import("./test-audit"),
+  },
+  {
     name: "handoff",
     group: "delivery",
     usage: "workit handoff [--note <t>] [--next <t>] [--record] | workit handoff --task <id>",
