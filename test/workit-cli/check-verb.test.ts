@@ -320,6 +320,13 @@ test("usage: unknown names, --shell with argv, and the exit code mirrors the com
   expect(slow.code).toBe(4);
   expect(slow.json().data).toMatchObject({ timedOut: true });
   expect((await run(root, ["check", "--json"])).code).toBe(2);
+  // A detached HEAD is still keyed to its worktree tree.
+  git(root, "checkout", "-q", "--detach");
+  const detached = await run(root, ["check", "test", "--json"]);
+  expect(detached.json().data).toMatchObject({
+    configured: true,
+    tree: git(root, "rev-parse", "HEAD^{tree}"),
+  });
 });
 
 test("concurrent checks on one task all record (omitted revisions retry, never revision_conflict)", async () => {

@@ -34,6 +34,7 @@ import {
   storeLog,
   tailLines,
 } from "@brainervirus/workit-core/src/checks";
+import { worktreeTree } from "@brainervirus/workit-core/src/git/rev";
 import {
   MAX_LINE_BYTES,
   actorFromEnv,
@@ -302,7 +303,13 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const relCwd = posix(path.relative(top, runCwd));
   const configured = !options.shell && matchesNamedCheck(config, name, command, relCwd);
   const actor = actorFromEnv(io.env);
-  const key: CodeKey = codeKey(io.cwd, { base: options.base });
+  const branchKey: CodeKey = codeKey(io.cwd, { base: options.base });
+  // codeKey keys the tree only on a checked-out branch; a detached HEAD is
+  // still a worktree whose state the run observed.
+  const detached = branchKey.tree === null ? worktreeTree(io.cwd) : null;
+  const key: CodeKey = detached
+    ? { ...branchKey, tree: detached.key, dirty: detached.dirty }
+    : branchKey;
 
   const result = await runCheckCommand(command, {
     cwd: runCwd,
