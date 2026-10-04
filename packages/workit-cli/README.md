@@ -29,6 +29,7 @@ workit doctor --json     # machine-readable report
 workit <family> <action> [--payload <json|@file|->] [--task <id>] [--revision <uuid>] [--workspace-revision <uuid|null>] [--view full] [--actor <id>] [--confirm] [--json]
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--task <id>] [--json]   # preview or run one approved external action
 workit handoff --task <id> [--json]                   # export task state and compact destination context
+workit check <name> | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--json] -- <cmd…>   # run a check, record CLI-observed evidence (exit = the command's)
 workit uninstall                           # remove host registrations (keeps ~/.config/workit)
 workit                                     # help
 ```

@@ -541,20 +541,78 @@ export const candidateSchema = z
       });
   });
 export type Candidate = z.infer<typeof candidateSchema>;
-export const evidenceSchema = z
+/**
+ * What `workit check` observed (design §2.1 S9, §2.2). Only the CLI's
+ * observing path writes it (WorkitCore.observeCheck); the agent-facing
+ * `evidence.record` operation rejects it. A task that holds one lists
+ * `evidence.*.data.observation` in `critical`, so an older reader fails
+ * closed instead of reading the check without it.
+ */
+export const checkObservationSchema = z
   .object({
-    kind: z.enum(["check", "review", "investigation", "artifact"]),
-    claim: text,
-    requirementIds: z.array(digest),
-    beforeCandidateId: nullableDigest.optional(),
-    candidateId: nullableDigest.optional(),
-    result: z.enum(["passed", "failed", "missing", "skipped"]),
-    summary: text,
-    refs: z.array(refSchema),
-    exitCode: safeInteger.nullable(),
-    reviewContext: refSchema.nullable(),
+    observer: z.literal("workit_cli"),
+    /** The check name (`--name` or `workit check <name>`); null for an unnamed ad-hoc run. */
+    name: nonEmpty.nullable(),
+    /** The name is configured and argv is exactly its configured command, run from the repo top. */
+    configured: z.boolean(),
+    argv: z.array(text).min(1),
+    shell: z.boolean(),
+    /** Working directory relative to the repository top (posix), `.` at the top. */
+    cwd: nonEmpty,
+    exitCode: safeInteger,
+    durationMs: safeInteger.min(0),
+    timedOut: z.boolean(),
+    head: text.nullable(),
+    /** Worktree tree key before the run; evidence is fresh while the tree key is unchanged. */
+    tree: text.nullable(),
+    dirty: z.boolean().nullable(),
+    /** Cheap stat-cached worktree signal before the run (per-turn freshness; see worktreeSignal). */
+    signal: text.nullable(),
+    /** Tree key after the run; differs from `tree` when the command changed the worktree. */
+    treeAfter: text.nullable(),
+    /** The command changed the worktree: the evidence is stale (fail safe). */
+    modifiedWorktree: z.boolean(),
+    base: text.nullable(),
+    patchId: text.nullable(),
+    /** A minimal environment fingerprint: platform, arch and allowlisted variables. */
+    environment: z
+      .object({
+        platform: nonEmpty,
+        arch: nonEmpty,
+        vars: z.record(nonEmpty, text.nullable()),
+      })
+      .strict(),
+    logDigest: text.nullable(),
+    logRef: text.nullable(),
+    logTail: z.array(text).max(40),
+    ledgerRowId: text.nullable(),
+    /** Set only when a host hook later attests the run (design §2.1 attestation). */
+    attestation: z
+      .object({ host: nonEmpty, session: text.nullable(), agentId: text.nullable() })
+      .strict()
+      .nullable(),
   })
   .strict();
+export type CheckObservation = z.infer<typeof checkObservationSchema>;
+/** The record path a task lists in `critical` once it stores a check observation. */
+export const CHECK_OBSERVATION_PATH = "evidence.*.data.observation";
+const evidenceFields = {
+  kind: z.enum(["check", "review", "investigation", "artifact"]),
+  claim: text,
+  requirementIds: z.array(digest),
+  beforeCandidateId: nullableDigest.optional(),
+  candidateId: nullableDigest.optional(),
+  result: z.enum(["passed", "failed", "missing", "skipped"]),
+  summary: text,
+  refs: z.array(refSchema),
+  exitCode: safeInteger.nullable(),
+  reviewContext: refSchema.nullable(),
+};
+export const evidenceSchema = z
+  .object({ ...evidenceFields, observation: checkObservationSchema.optional() })
+  .strict();
+/** Evidence as an agent may submit it: no CLI observation. */
+const reportedEvidenceSchema = z.object(evidenceFields).strict();
 export type Evidence = z.infer<typeof evidenceSchema>;
 export const evidenceEvaluationSchema = z
   .object({
@@ -1015,7 +1073,7 @@ const evidenceOperations = {
     action: z.literal("record"),
     ...taskId,
     expectedRevision: revision.optional(),
-    evidence: evidenceSchema,
+    evidence: reportedEvidenceSchema,
   }),
 };
 const findingOperations = {
