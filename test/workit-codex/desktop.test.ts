@@ -9,6 +9,7 @@ import {
 } from "@/packages/workit-codex/scripts/launch-mcp";
 import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
+import { workspaceFileOf } from "../workit-core/store-files";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const initializedRoot = () => {
@@ -117,7 +118,7 @@ test("Codex MCP provider keeps caller identity empty on both surfaces", async ()
     }),
   ).toContain("workit-codex-workspace-");
   const mismatchedRoot = initializedRoot();
-  const workspacePath = path.join(mismatchedRoot, ".workit", "workspace.json");
+  const workspacePath = workspaceFileOf(mismatchedRoot);
   const workspace = JSON.parse(readFileSync(workspacePath, "utf8"));
   workspace.root = path.join(mismatchedRoot, "different-root");
   writeFileSync(workspacePath, `${JSON.stringify(workspace)}\n`);

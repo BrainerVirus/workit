@@ -332,9 +332,6 @@ test("MCP publishes every core action in every family without a second action ta
   const families = new Map<string, Set<string>>();
   for (const fixture of operationCorpus()) {
     const action = String((fixture.input as { action: string }).action);
-    // state.recover parses but is not advertised: no shipped host supplies
-    // native recovery authority.
-    if (fixture.family === "state" && action === "recover") continue;
     const actions = families.get(fixture.family) ?? new Set<string>();
     actions.add(action);
     families.set(fixture.family, actions);

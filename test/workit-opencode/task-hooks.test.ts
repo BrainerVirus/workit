@@ -1211,7 +1211,7 @@ test("worker context names the worker identity for self-references", async () =>
       handle: "child",
       workerId: first.data.id,
     });
-    rmSync(join(root, ".workit", "index.json"));
+    rmSync(join(root, ".workit", "task-index.json"));
     expect(JSON.parse(workerContextFor(root, "child", "coord", directChildren)!).workerId).toBe(
       first.data.id,
     );

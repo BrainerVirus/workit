@@ -40,6 +40,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { GIT_TIMEOUTS, currentBranch, headSha, patchId, worktreeTree } from "./git/rev";
+import { resolveStore } from "./store/paths";
 
 export const LEDGER_VERSION = 1;
 /** The largest row (including its newline) that one append may carry. */
@@ -254,29 +255,22 @@ export function diffHash(cwd: string, base: string, head: string): string | null
 
 export type StoreRoot = { root: string; shared: boolean };
 
-const NOT_A_REPO = /not a git repository \(or any (of the parent directories|parent up to)/u;
-
 /**
  * Where workit state lives for `cwd`: `<git common dir>/workit` (shared by all
  * worktrees of the repo), or `<cwd>/.workit` only when git reports that `cwd`
- * is not inside a repository. A broken repository, a missing git binary or a
- * refused (dubious-ownership) repository is `unavailable`.
+ * is not inside a repository (or git is not installed). A broken repository
+ * or a refused (dubious-ownership) repository is `unavailable`. The task
+ * store resolves the same way (store/paths.ts).
  */
 export function storeRoot(cwd: string): LedgerResult<StoreRoot> {
-  const run = gitRun(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  const common = run.stdout.trim();
-  if (run.ok && common)
-    return {
-      ok: true,
-      value: { root: path.join(path.resolve(cwd, common), "workit"), shared: true },
-    };
-  if (!run.ok && NOT_A_REPO.test(run.stderr))
-    return { ok: true, value: { root: path.join(path.resolve(cwd), ".workit"), shared: false } };
-  return err(
-    "unavailable",
-    `cannot locate the workit store: git rev-parse failed (${run.stderr.trim().split("\n")[0] || "no output"})`,
-    "fix the repository (git status should work here) or run from a non-git directory",
-  );
+  const location = resolveStore(path.resolve(cwd));
+  if (location instanceof Error)
+    return err(
+      "unavailable",
+      location.message.replace(/; fix the repository.*$/u, ""),
+      "fix the repository (git status should work here) or run from a non-git directory",
+    );
+  return { ok: true, value: { root: location.dir, shared: location.shared } };
 }
 
 export function ledgerPath(cwd: string): LedgerResult<string> {

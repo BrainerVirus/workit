@@ -8,7 +8,6 @@ import {
   WorkitCore,
   failure,
   standingReceiptFor,
-  sha256,
   success,
   type Assessment,
   type NativeAuthorityVerifier,
@@ -357,51 +356,6 @@ test("Given a changed import source, When the import omits revisions, Then the s
     error: expect.stringContaining("source task export changed"),
   });
   expect(imports).toBe(1);
-});
-
-test("Given a workspace write during state.recover with omitted revisions, When recovery commits, Then it stays a single compare-and-swap attempt", () => {
-  const { root, store, taskId } = started();
-  const core = new WorkitCore(store, {
-    ...context(root),
-    nativeRecovery: () =>
-      success(null, null, {
-        state: "accounted_for" as const,
-        pid: 0,
-        processStart: null,
-        ownerDigest: null,
-      }),
-  });
-  const task = store.readTask(taskId);
-  if (!task.ok) throw new Error(task.error);
-  expect(
-    store.mutateTask(taskId, task.data.revision, (value, mutation) =>
-      success(mutation.revision, null, value),
-    ).ok,
-  ).toBe(true);
-  const candidates = store.recoveryCandidates();
-  if (!candidates.ok) throw new Error(candidates.error);
-  const candidate = candidates.data.find((item) => item.target === "task");
-  if (!candidate) throw new Error("missing recovery snapshot");
-  writeFileSync(join(root, ".workit", "tasks", `${taskId}.json`), "{broken");
-  let recoveries = 0;
-  const original = store.recoverTask.bind(store);
-  store.recoverTask = (...args: Parameters<TaskStore["recoverTask"]>) => {
-    recoveries += 1;
-    startOther(root);
-    return original(...args);
-  };
-  const result = core.state({
-    schemaVersion: 1,
-    action: "recover",
-    taskId,
-    target: "task",
-    expectedBytes: sha256("{broken"),
-    snapshotDigest: candidate.digest,
-    reason: "crash recovery",
-    authorityRefs: [],
-  });
-  expect(result).toMatchObject({ ok: false, code: "revision_conflict" });
-  expect(recoveries).toBe(1);
 });
 
 const receiptVerifier = (calls: unknown[]): NativeAuthorityVerifier => ({

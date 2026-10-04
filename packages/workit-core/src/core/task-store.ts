@@ -1,14 +1,39 @@
-import { createHash, randomUUID } from "node:crypto";
+// The task store (design §4.1; D3, D13, D17).
+//
+// Layout under the store directory (`<git common dir>/workit`, or
+// `<root>/.workit` outside git; see store/paths.ts):
+//
+//   store.json                       format marker (a newer format fails closed)
+//   checkouts/<slug>/workspace.json  this checkout's workspace record
+//   checkouts/<slug>/metadata.lock   checkout lock: workspace writes, task
+//                                    creation and managed external actions
+//   tasks/<id>/events.jsonl          the task's append-only event log
+//   tasks/<id>/snapshot.json         rebuildable cache of the reduced state
+//   tasks/<id>/lock                  task lock: one append at a time
+//   task-index.json                  rebuildable listing cache for hooks
+//   blobs/candidates/<sha256>.json   stored candidates, written once by content
+//   legacy/<slug>/v2/                backup of a migrated 2.x `.workit` store
+//
+// Each task mutation appends one event holding a structural patch of the
+// record, so state grows with the change, never with full-file copies, and
+// there is no recovery directory: the log is the history. `workit gc` folds
+// old events into a checkpoint. A checkout's work belongs to an implicit task
+// keyed by its branch (detached HEAD: by worktree; outside git: by directory);
+// the first mutation creates it.
+//
+// A 2.x store in `<root>/.workit` is migrated on first use (idempotent, under
+// the checkout lock, backup kept). The migrated `.workit/workspace.json` is
+// replaced by a marker that 2.x readers reject with an upgrade message.
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import path from "node:path";
-import * as z from "zod";
-import { packageRoot } from "./package-root";
 import {
   acquireFileLockSync,
   type FileLockSyncHandle,
   type FileLockSyncAcquireOptions,
 } from "@openclaw/fs-safe/file-lock";
+import { packageRoot } from "./package-root";
 import {
   SCHEMA_VERSION,
   canonicalJson,
@@ -18,14 +43,12 @@ import {
   newRevision,
   parseStoredRecord,
   provenanceSchema,
-  refSchema,
   sha256,
   success,
   taskRecordSchema,
   workspaceRecordSchema,
   type Id,
   type Intent,
-  type Ref,
   type Provenance,
   type Result,
   type Revision,
@@ -35,38 +58,80 @@ import {
 } from "./task-contract";
 import {
   classifyLockOwner,
+  clearAbandonedReclaimGuard,
   defaultLockTimeout,
   localLockHost,
-  clearAbandonedReclaimGuard,
-  parseMetadataLock,
   parseMetadataLockOrNull,
   processStartOf,
-  sameMetadataLock,
   type MetadataLock,
 } from "./store-lock";
+import {
+  EVENT_VERSION,
+  LogDamage,
+  appendEvent,
+  isTransientWindowsError,
+  readLog,
+  replaceFile,
+  retryTransient,
+  type EventActor,
+  type LogRead,
+  type StoreEvent,
+} from "../store/event-log";
+import { diff } from "../store/patch";
+import {
+  checkoutSlug,
+  resolveStore,
+  resolveTaskKey,
+  type StoreLocation,
+  type TaskKey,
+} from "../store/paths";
+import {
+  OPENING_TYPES,
+  encodeOps,
+  encodeRecord,
+  eventType,
+  reduce,
+  type BlobStore,
+  type LegacyOrigin,
+  type ReducedTask,
+} from "../store/reduce";
 
-export type { MetadataLock } from "./store-lock";
-/** Recovery copies kept per record (task or workspace); older copies are pruned. */
-export const RECOVERY_COPIES_PER_RECORD = 3;
-/** A temp file older than this was left by a crashed writer. */
+import { reportMigration } from "../store/notes";
+
+export type { TaskKey } from "../store/paths";
+
+/** The store format this runtime writes; a newer marker fails closed. */
+export const STORE_FORMAT = 3;
+/** The runtime version 2.x readers are told to upgrade to. */
+const STORE_MIN_RUNTIME = "3.0.0";
+/** A snapshot is written after this many events since the last one. */
+export const SNAPSHOT_EVERY = 32;
+/** `gc` compacts a log longer than this many events ... */
+export const COMPACT_ABOVE = 200;
+/** ... and keeps this many recent events after the checkpoint. */
+export const COMPACT_KEEP = 50;
+/** An append that leaves the log larger than this compacts it on the spot. */
+export const AUTO_COMPACT_BYTES = 2 * 1024 * 1024;
+/** readV2Workspace's answer for a 3.x marker at `.workit/workspace.json`. */
+const TOMBSTONE = Symbol("tombstone");
+/** A temp file or unreferenced blob older than this was left by a crashed writer. */
 const STALE_TEMPORARY_MS = 60 * 60_000;
-const RECOVERY_NAME = /^(task|workspace)\.([^.]+)\.([0-9a-f]{64})\.json$/;
+
 export type GarbageReport = {
   dryRun: boolean;
-  recovery: { removed: number; removedBytes: number; kept: number };
+  compacted: { tasks: Id[]; eventsFolded: number; bytesBefore: number; bytesAfter: number };
+  blobs: { removed: number; removedBytes: number; kept: number };
   temporary: { removed: number };
-  candidates: {
-    removed: number;
-    tasks: Id[];
-    skippedActive: Id[];
-    skippedClosed: Id[];
-    failed: Id[];
-  };
+  /** A 2.x `.workit/recovery` directory left by migration (deleted only with pruneRecovery). */
+  legacyRecovery: { path: string; files: number; bytes: number; removed: boolean } | null;
+  failed: Id[];
 };
 export type TaskStoreOptions = {
   /** Total time a mutation retries a lock held by a live writer before `busy`
    * (default: `defaultLockTimeout()`, short for in-process hosts). */
   lockTimeoutMs?: number;
+  /** Who the events are attributed to (default: WORKIT_HOST/WORKIT_SESSION_ID/WORKIT_AGENT_ID). */
+  actor?: EventActor;
 };
 
 export type MutationContext = { now: Utc; revision: Revision };
@@ -96,36 +161,18 @@ export type ImportInput = {
   workspaceId?: Id;
   now?: Utc;
 };
-export type RecoveryInput = {
-  expectedBytes: string;
-  snapshotDigest: string;
-  reason: string;
-  authorityRefs: Ref[];
-  expectedWorkspaceRevision: Revision;
-  processEvidence: (
-    lock: MetadataLock | null,
-    writer: WorkspaceRecord["writer"],
-  ) => Result<ProcessEvidence>;
+export type ImplicitInput = {
+  provenance: Provenance;
+  /** Objective for a task this call creates (default: names the branch). */
+  objective?: string;
+  now?: Utc;
+  /** False: only find the task, never create it. */
+  create?: boolean;
 };
-export type ProcessEvidence = {
-  state: "stopped" | "accounted_for";
-  pid: number;
-  processStart: string | null;
-  ownerDigest: string | null;
-};
-const processEvidenceSchema = z
-  .object({
-    state: z.enum(["stopped", "accounted_for"]),
-    pid: z.number().int().nonnegative(),
-    processStart: z.string().nullable(),
-    ownerDigest: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .nullable(),
-  })
-  .strict();
-/** One task's listing facts, kept in `.workit/index.json` so per-turn host
- * hooks can find a session's task without parsing every full record. */
+export type ImplicitTask = { task: TaskRecord; created: boolean; key: TaskKey };
+
+/** One task's listing facts, kept in `task-index.json` so per-turn host
+ * hooks can find a session's task without replaying every log. */
 export type TaskIndexEntry = {
   id: Id;
   revision: Revision;
@@ -137,10 +184,20 @@ export type TaskIndexEntry = {
   progress: { summary: string; nextAction: string | null };
   /** Host sessions bound to the task: the intent session (workerId null) and worker sessions. */
   sessions: { host: string; handle: string; workerId: Id | null }[];
-  /** Stat signature of the task file the entry was derived from. */
+  /** The checkout workspace the task belongs to. */
+  workspaceId: Id;
+  /** The implicit-task key (branch) the task is bound to, if any. */
+  key: string | null;
+  branch: string | null;
+  /** Migrated from a 2.x store. */
+  legacy: boolean;
+  /** Stat signature of the task's event log the entry was derived from. */
   file: string;
 };
-const INDEX_VERSION = 1;
+const INDEX_VERSION = 2;
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 const hostSession = (value: unknown): { host: string; handle: string } | null =>
   isObject(value) &&
   value.kind === "host" &&
@@ -148,7 +205,12 @@ const hostSession = (value: unknown): { host: string; handle: string } | null =>
   typeof value.handle === "string"
     ? { host: value.host, handle: value.handle }
     : null;
-const indexEntry = (task: TaskRecord, file: string): TaskIndexEntry => {
+const indexEntry = (
+  task: TaskRecord,
+  key: TaskKey | null,
+  legacy: boolean,
+  file: string,
+): TaskIndexEntry => {
   const sessions: TaskIndexEntry["sessions"] = [];
   const intent = hostSession(task.intent.provenance.session);
   if (intent) sessions.push({ ...intent, workerId: null });
@@ -166,12 +228,16 @@ const indexEntry = (task: TaskRecord, file: string): TaskIndexEntry => {
     source: { host: task.intent.provenance.host, kind: task.intent.provenance.kind },
     progress: { summary: task.progress.summary, nextAction: task.progress.nextAction },
     sessions,
+    workspaceId: task.workspaceId,
+    key: key?.key ?? null,
+    branch: key?.branch ?? null,
+    legacy,
     file,
   };
 };
-/** Cheap change detector. Atomic replacement can reuse inodes and file
- * timestamps are often only jiffy-granular, so a signature alone may repeat
- * across rapid rewrites; see `racySignature`. */
+
+/** Cheap change detector for a file. An append-only log changes size on
+ * every write; see `racySignature` for the timestamp-granularity caveat. */
 export const fileSignature = (file: string): string | null => {
   try {
     const stat = fs.statSync(file, { bigint: true });
@@ -191,17 +257,11 @@ export const racySignature = (signature: string): boolean => {
   return BigInt(Date.now()) * 1_000_000n - changed < RACY_WINDOW_NS;
 };
 
-export type RecoveryCandidate = {
-  target: "task" | "workspace";
-  path: string;
-  digest: string;
-};
-
 const now = (): Utc => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
 let cachedRuntimeVersion: string | null = null;
 /** Version of the package that hosts this runtime; recorded with state so a
- * bug report can identify the writer version without reading raw .workit. */
+ * bug report can identify the writer version without reading raw state. */
 export const runtimeVersion = (): string => {
   if (cachedRuntimeVersion === null) {
     try {
@@ -235,14 +295,8 @@ const isNewerVersion = (candidate: string, current: string): boolean => {
   }
   return false;
 };
-const jsonBytes = (value: unknown): string => `${canonicalJson(value)}\n`;
-const digestBytes = (value: string | Buffer): string =>
-  createHash("sha256").update(value).digest("hex");
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
 const validId = (value: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
-const validDigest = (value: string): boolean => /^[0-9a-f]{64}$/.test(value);
 export const sameDirectoryIdentity = (left: string, right: string): boolean => {
   if (!path.isAbsolute(left) || !path.isAbsolute(right)) return false;
   const normalizedLeft = path.resolve(left);
@@ -270,171 +324,287 @@ export const sameDirectoryIdentity = (left: string, right: string): boolean => {
     return false;
   }
 };
-type LockSnapshot = { raw: string; data: MetadataLock };
-const TRANSIENT_WINDOWS_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
-/** Windows briefly refuses to replace or open a file that another process is
- * reading or renaming at that instant. That is contention, not damage: retry
- * for about a second before surfacing the error. */
-const isTransientWindowsError = (error: unknown): boolean => {
-  if (process.platform !== "win32") return false;
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && TRANSIENT_WINDOWS_CODES.has(code);
-};
-const retryTransient = <T>(run: () => T): T => {
-  if (process.platform !== "win32") return run();
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return run();
-    } catch (error) {
-      if (attempt >= 20 || !isTransientWindowsError(error)) throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 * (attempt + 1));
-    }
-  }
-};
+
 const externalActionLockRoots = new AsyncLocalStorage<ReadonlySet<string>>();
-/** Roots whose metadata lock this process holds; waiting on them can only time out. */
+/** Locks this process holds; waiting on them can only time out. */
 const heldInProcess = new Map<string, number>();
-const holdRoot = (root: string) => heldInProcess.set(root, (heldInProcess.get(root) ?? 0) + 1);
-const dropRoot = (root: string) => {
-  const count = (heldInProcess.get(root) ?? 1) - 1;
-  if (count > 0) heldInProcess.set(root, count);
-  else heldInProcess.delete(root);
+const hold = (lock: string) => heldInProcess.set(lock, (heldInProcess.get(lock) ?? 0) + 1);
+const drop = (lock: string) => {
+  const count = (heldInProcess.get(lock) ?? 1) - 1;
+  if (count > 0) heldInProcess.set(lock, count);
+  else heldInProcess.delete(lock);
 };
 
-/** Drop earlier copies of a repeated candidate ID; content is identical by ID. */
-const dedupeCandidates = (candidates: TaskRecord["candidates"]): TaskRecord["candidates"] => {
-  const last = new Map(candidates.map((candidate, index) => [candidate.id, index]));
-  return candidates.filter((candidate, index) => last.get(candidate.id) === index);
+const envActor = (): EventActor => {
+  const value = (key: string) => process.env[key]?.trim() || null;
+  return {
+    host: value("WORKIT_HOST") ?? "runtime",
+    session: value("WORKIT_SESSION_ID"),
+    agentId: value("WORKIT_AGENT_ID"),
+  };
+};
+
+/** The reduced, validated state of one task plus where its log stands. */
+type Loaded = {
+  record: TaskRecord;
+  key: TaskKey | null;
+  legacy: LegacyOrigin | null;
+  seq: number;
+  lastId: string;
+  lastStart: number;
+  end: number;
+  size: number;
+  /** Seq the current snapshot was taken at (0: none). */
+  snapshotSeq: number;
+};
+
+type Snapshot = {
+  v: 1;
+  task: Id;
+  seq: number;
+  lastId: string;
+  lastStart: number;
+  end: number;
+  key: TaskKey | null;
+  legacy: LegacyOrigin | null;
+  record: unknown;
 };
 
 export class TaskStore {
+  /** The checkout root this store serves (git operations run here). */
   readonly root: string;
   private readonly lockTimeoutMs: number;
+  private readonly actor: EventActor;
+  private located: StoreLocation | Error | undefined;
+  private migrationChecked = false;
 
   constructor(root: string, options: TaskStoreOptions = {}) {
     this.root = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
     this.lockTimeoutMs = options.lockTimeoutMs ?? defaultLockTimeout();
+    this.actor = options.actor ?? envActor();
   }
+
+  /** Where this checkout's store lives. */
+  location(): Result<StoreLocation> {
+    // A directory that became a repository (`git init`) moves to the git store.
+    if (
+      this.located !== undefined &&
+      !(this.located instanceof Error) &&
+      !this.located.shared &&
+      fs.existsSync(path.join(this.root, ".git"))
+    ) {
+      this.located = undefined;
+      this.migrationChecked = false;
+    }
+    if (this.located === undefined) this.located = resolveStore(this.root);
+    return this.located instanceof Error
+      ? failure("storage_error", this.located.message, { path: this.root })
+      : success(null, null, this.located);
+  }
+
+  /** The implicit-task key of this checkout right now. */
+  currentKey(): Result<TaskKey> {
+    const location = this.location();
+    if (!location.ok) return location;
+    return success(null, null, resolveTaskKey(this.root, location.data));
+  }
+
+  // -------------------------------------------------------------------------
+  // reads
 
   readTask(taskId: Id): Result<TaskRecord> {
     if (!validId(taskId)) return failure("invalid_input", "task ID is invalid", { taskId });
-    const result = this.readRecord<TaskRecord>(
-      path.join(this.tasksDir, `${taskId}.json`),
-      taskRecordSchema,
-    );
-    if (!result.exists) return failure("not_found", "task not found", { taskId });
-    if (result.result.ok && result.result.data.id !== taskId)
-      return failure("recovery_required", "task filename and record ID differ", { taskId });
-    if (result.result.ok) {
-      const workspace = this.readWorkspace();
-      if (!workspace.ok) return workspace;
-      if (!workspace.data || result.result.data.workspaceId !== workspace.data.id)
-        return failure("recovery_required", "task workspace binding is invalid", { taskId });
-    }
-    return result.result;
-  }
-
-  listTasks(): Result<TaskRecord[]> {
-    if (!fs.existsSync(this.tasksDir)) return success(null, null, []);
-    let names: string[];
-    try {
-      names = fs.readdirSync(this.tasksDir).filter((name) => name.endsWith(".json"));
-    } catch (error) {
-      return failure("storage_error", `unable to list tasks: ${String(error)}`, {
-        path: this.tasksDir,
-      });
-    }
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    const loaded = this.load(taskId);
+    if (!loaded.ok) return loaded;
+    if (!loaded.data) return failure("not_found", "task not found", { taskId });
     const workspace = this.readWorkspace();
     if (!workspace.ok) return workspace;
-    if (!workspace.data)
-      return failure("recovery_required", "task workspace binding is invalid", {
-        path: this.workspacePath,
-      });
+    const bound = this.bindingError(loaded.data.record, workspace.data);
+    return bound ?? success(null, null, loaded.data.record);
+  }
+
+  /** This checkout's tasks (oldest id first). */
+  listTasks(): Result<TaskRecord[]> {
+    const listed = this.listTaskIndex();
+    if (!listed.ok) return listed;
     const tasks: TaskRecord[] = [];
-    for (const name of names.toSorted()) {
-      const item = this.readRecord<TaskRecord>(path.join(this.tasksDir, name), taskRecordSchema);
-      if (!item.exists) continue;
-      if (!item.result.ok) return item.result;
-      if (!validId(name.slice(0, -5)) || item.result.data.id !== name.slice(0, -5))
-        return failure("recovery_required", "task filename and record ID differ", { path: name });
-      if (item.result.data.workspaceId !== workspace.data.id)
-        return failure("recovery_required", "task workspace binding is invalid", { path: name });
-      tasks.push(item.result.data);
+    for (const entry of listed.data.toSorted((left, right) => left.id.localeCompare(right.id))) {
+      const loaded = this.load(entry.id);
+      if (!loaded.ok) return loaded;
+      if (loaded.data) tasks.push(loaded.data.record);
     }
     return success(null, null, tasks);
   }
 
-  /**
-   * List tasks from `.workit/index.json` without parsing full records. Each
-   * entry is checked against its task file's stat signature; missing, stale,
-   * or corrupt entries are rebuilt from the full (validated) record and the
-   * index is rewritten best-effort. Errors match `listTasks()`.
-   */
+  /** Listing facts for this checkout's tasks, from the index cache. */
   listTaskIndex(): Result<TaskIndexEntry[]> {
-    if (!fs.existsSync(this.tasksDir)) return success(null, null, []);
-    let names: string[];
-    try {
-      names = fs.readdirSync(this.tasksDir).filter((name) => name.endsWith(".json"));
-    } catch (error) {
-      return failure("storage_error", `unable to list tasks: ${String(error)}`, {
-        path: this.tasksDir,
-      });
-    }
+    const all = this.listStoreIndex();
+    if (!all.ok) return all;
     const workspace = this.readWorkspace();
     if (!workspace.ok) return workspace;
-    if (!workspace.data)
-      return failure("recovery_required", "task workspace binding is invalid", {
-        path: this.workspacePath,
+    if (!workspace.data) return success(null, null, []);
+    const id = workspace.data.id;
+    return success(
+      null,
+      null,
+      all.data.filter((entry) => entry.workspaceId === id),
+    );
+  }
+
+  /**
+   * Listing facts for every task in the store (all checkouts). Each cached
+   * entry is checked against its log's stat signature; changed or missing
+   * entries are rebuilt from the log and the index is rewritten best-effort.
+   */
+  listStoreIndex(): Result<TaskIndexEntry[]> {
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    const tasksDir = this.paths().tasks;
+    let names: string[];
+    try {
+      names = fs.existsSync(tasksDir)
+        ? fs.readdirSync(tasksDir).filter((name) => validId(name))
+        : [];
+    } catch (error) {
+      return failure("storage_error", `unable to list tasks: ${String(error)}`, {
+        path: tasksDir,
       });
-    const stored = this.readIndex(workspace.data.id);
+    }
+    const stored = this.readIndex();
     const entries: TaskIndexEntry[] = [];
     let changed = Object.keys(stored).length !== names.length;
     for (const name of names.toSorted()) {
-      const file = path.join(this.tasksDir, name);
-      const signature = fileSignature(file);
+      const signature = fileSignature(this.eventsPath(name));
       if (signature === null) {
         changed = true;
         continue;
       }
-      const cached = stored[name.slice(0, -5)];
+      const cached = stored[name];
       if (cached && cached.file === signature && !racySignature(signature)) {
         entries.push(cached);
         continue;
       }
-      const item = this.readRecord<TaskRecord>(file, taskRecordSchema);
-      if (!item.exists) continue;
-      if (!item.result.ok) return item.result;
-      if (!validId(name.slice(0, -5)) || item.result.data.id !== name.slice(0, -5))
-        return failure("recovery_required", "task filename and record ID differ", { path: name });
-      if (item.result.data.workspaceId !== workspace.data.id)
-        return failure("recovery_required", "task workspace binding is invalid", { path: name });
-      const entry = indexEntry(item.result.data, signature);
+      const loaded = this.load(name);
+      if (!loaded.ok) return loaded;
+      if (!loaded.data) continue;
+      const entry = indexEntry(
+        loaded.data.record,
+        loaded.data.key,
+        loaded.data.legacy !== null,
+        signature,
+      );
       if (!cached || canonicalJson(cached) !== canonicalJson(entry)) changed = true;
       entries.push(entry);
     }
-    if (changed) this.writeIndex(workspace.data.id, entries);
+    if (changed) this.writeIndex(entries);
     return success(null, null, entries);
   }
 
   readWorkspace(): Result<WorkspaceRecord | null> {
-    const item = this.readRecord<WorkspaceRecord>(this.workspacePath, workspaceRecordSchema);
-    if (!item.exists) return success(null, null, null);
-    if (
-      item.result.ok &&
-      item.result.data.root !== this.root &&
-      !sameDirectoryIdentity(item.result.data.root, this.root)
-    )
-      return failure("recovery_required", "workspace root binding is invalid", {
-        path: this.workspacePath,
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    const file = this.paths().workspace;
+    let bytes: string;
+    try {
+      bytes = retryTransient(() => fs.readFileSync(file, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return success(null, null, null);
+      return failure("recovery_required", `workspace record cannot be read: ${String(error)}`, {
+        path: file,
       });
-    return item.result;
+    }
+    const parsed = this.parseRecord<WorkspaceRecord>(bytes, workspaceRecordSchema, "workspace");
+    if (!parsed.ok) return parsed;
+    if (parsed.data.root !== this.root && !sameDirectoryIdentity(parsed.data.root, this.root))
+      return failure("recovery_required", "workspace root binding is invalid", { path: file });
+    return parsed;
   }
+
+  /**
+   * The open task bound to this checkout's implicit key (branch, detached
+   * worktree, or directory), created when `create` is not false and there is
+   * none. A task bound to the key from another checkout of the same repo
+   * (e.g. a removed worktree) is moved to this checkout.
+   */
+  implicitTask(input: ImplicitInput): Result<ImplicitTask | null> {
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    const key = this.currentKey();
+    if (!key.ok) return key;
+    const found = this.openTaskForKey(key.data.key);
+    if (!found.ok) return found;
+    const workspace = this.readWorkspace();
+    if (!workspace.ok) return workspace;
+    if (found.data && workspace.data && found.data.workspaceId === workspace.data.id) {
+      const task = this.readTask(found.data.id);
+      return task.ok
+        ? success(task.revision, null, { task: task.data, created: false, key: key.data })
+        : task;
+    }
+    if (!found.data && input.create === false) return success(null, null, null);
+    return this.withLock<ImplicitTask | null>(this.paths().checkoutLock, () => {
+      const again = this.openTaskForKey(key.data.key);
+      if (!again.ok) return again;
+      if (again.data) {
+        const moved = this.bindLocked(again.data.id, key.data, input.now);
+        return moved.ok
+          ? success(moved.data.revision, null, { task: moved.data, created: false, key: key.data })
+          : moved;
+      }
+      if (input.create === false) return success(null, null, null);
+      const label =
+        key.data.kind === "branch"
+          ? `branch ${key.data.branch}`
+          : key.data.kind === "detached"
+            ? "a detached HEAD"
+            : path.basename(this.root) || this.root;
+      const intent: Intent = {
+        objective: input.objective?.trim() || `Work on ${label}`,
+        scope: { description: `the checkout (${label})`, paths: ["."], exclusions: [] },
+        authorityRefs: [],
+      };
+      const created = this.createLocked(
+        { intent, provenance: input.provenance, expectedWorkspaceRevision: null, now: input.now },
+        false,
+        key.data,
+        false,
+      );
+      return created.ok
+        ? success(created.data.revision, null, { task: created.data, created: true, key: key.data })
+        : created;
+    });
+  }
+
+  /** Bind task `taskId` (any checkout, not closed) to this checkout's implicit key. */
+  adoptTask(taskId: Id): Result<TaskRecord> {
+    if (!validId(taskId)) return failure("invalid_input", "task ID is invalid", { taskId });
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    const key = this.currentKey();
+    if (!key.ok) return key;
+    return this.withLock(this.paths().checkoutLock, () => {
+      const holder = this.openTaskForKey(key.data.key);
+      if (!holder.ok) return holder;
+      if (holder.data && holder.data.id !== taskId)
+        return failure(
+          "invalid_transition",
+          `${key.data.key} already has open task ${holder.data.id}; close it before adopting another`,
+          { taskId: holder.data.id },
+        );
+      return this.bindLocked(taskId, key.data);
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // writes
 
   create(
     input: CreateInput | Intent,
     provenance?: Provenance,
     expectedWorkspaceRevision?: Revision | null,
-  ) {
+  ): Result<TaskRecord> {
     const value: CreateInput =
       "intent" in input
         ? input
@@ -443,109 +613,15 @@ export class TaskStore {
             provenance: provenance!,
             expectedWorkspaceRevision: expectedWorkspaceRevision ?? null,
           };
-    return this.withLock<TaskRecord>(() => {
-      const current = this.readWorkspace();
-      if (!current.ok) return current;
-      if (
-        current.data
-          ? value.expectedWorkspaceRevision !== current.data.revision
-          : value.expectedWorkspaceRevision !== null
-      ) {
-        return failure(
-          "revision_conflict",
-          "workspace revision does not match; omit expectedWorkspaceRevision to use the current record",
-          {
-            expectedWorkspaceRevision: value.expectedWorkspaceRevision,
-            actualWorkspaceRevision: current.data?.revision ?? null,
-          },
-        );
-      }
-      if (!value.provenance) return failure("invalid_input", "provenance is required");
-      if (
-        !intentSchema.safeParse(value.intent).success ||
-        !provenanceSchema.safeParse(value.provenance).success
-      )
-        return failure("invalid_input", "task intent or provenance is invalid");
-      const previousWorkspaceBytes = current.data ? this.snapshotBytes(this.workspacePath) : null;
-      if (current.data && !previousWorkspaceBytes)
-        return failure("storage_error", "workspace snapshot disappeared during creation");
-      const workspace: WorkspaceRecord = current.data
-        ? {
-            ...current.data,
-            revision: newRevision(),
-            root: this.root,
-            runtime: stampNew(current.data),
-          }
-        : {
-            schemaVersion: SCHEMA_VERSION,
-            id: newId(),
-            revision: newRevision(),
-            root: this.root,
-            runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
-            writer: null,
-          };
-      const timestamp = value.now ?? now();
-      const task: TaskRecord = {
-        schemaVersion: SCHEMA_VERSION,
-        id: newId(),
-        workspaceId: workspace.id,
-        revision: newRevision(),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        origin: null,
-        intent: {
-          id: newId(),
-          recordedAt: timestamp,
-          provenance: value.provenance,
-          data: value.intent,
-        },
-        constraints: [],
-        status: "active",
-        closure: null,
-        progress: { summary: "", nextAction: null, blockers: [] },
-        runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
-        assessments: [],
-        policy: null,
-        policyChanges: [],
-        candidates: [],
-        evidence: [],
-        decisions: [],
-        findings: [],
-        workers: [],
-      };
-      const writtenWorkspace = this.replaceSnapshot(
-        this.workspacePath,
-        workspace,
-        previousWorkspaceBytes,
-      );
-      if (!writtenWorkspace.ok) return writtenWorkspace;
-      const writtenTask = this.replaceSnapshot(this.taskPath(task.id), task, null);
-      if (!writtenTask.ok) {
-        if (current.data && previousWorkspaceBytes) {
-          const restored = this.replaceSnapshot(
-            this.workspacePath,
-            current.data,
-            this.snapshotBytes(this.workspacePath),
-          );
-          if (!restored.ok)
-            return failure(
-              "external_outcome_unknown",
-              "task creation failed and workspace restoration is uncertain",
-              { operation: "create", outcome: "unknown" },
-            );
-        }
-        return failure(
-          "external_outcome_unknown",
-          "workspace created but task write is uncertain",
-          { operation: "create", outcome: "unknown" },
-        );
-      }
-      return success(task.revision, workspace.revision, task);
-    });
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    return this.withLock(this.paths().checkoutLock, () => this.createLocked(value, true, null));
   }
 
   importTask(input: ImportInput): Result<TaskRecord> {
-    return this.withLock<TaskRecord>(() => {
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    return this.withLock<TaskRecord>(this.paths().checkoutLock, () => {
       const current = this.readWorkspace();
       if (!current.ok) return current;
       const origin = input.task.origin;
@@ -592,25 +668,8 @@ export class TaskStore {
             actualWorkspaceRevision: current.data?.revision ?? null,
           },
         );
-      const previousWorkspaceBytes = current.data ? this.snapshotBytes(this.workspacePath) : null;
-      if (current.data && !previousWorkspaceBytes)
-        return failure("storage_error", "workspace snapshot disappeared during import");
       const timestamp = input.now ?? now();
-      const workspace: WorkspaceRecord = current.data
-        ? {
-            ...current.data,
-            revision: newRevision(),
-            root: this.root,
-            runtime: stampNew(current.data),
-          }
-        : {
-            schemaVersion: SCHEMA_VERSION,
-            id: input.workspaceId ?? newId(),
-            revision: newRevision(),
-            root: this.root,
-            runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
-            writer: null,
-          };
+      const workspace = this.nextWorkspace(current.data, input.workspaceId);
       const task = {
         ...input.task,
         workspaceId: workspace.id,
@@ -625,38 +684,9 @@ export class TaskStore {
       const validTask = taskRecordSchema.safeParse(task);
       if (!validTask.success)
         return failure("invalid_input", "imported task does not satisfy its schema");
-      const writtenWorkspace = this.replaceSnapshot(
-        this.workspacePath,
-        workspace,
-        previousWorkspaceBytes,
-      );
-      if (!writtenWorkspace.ok) return writtenWorkspace;
-      const writtenTask = this.replaceSnapshot(this.taskPath(task.id), validTask.data, null);
-      if (!writtenTask.ok) {
-        if (current.data && previousWorkspaceBytes) {
-          const restored = this.replaceSnapshot(
-            this.workspacePath,
-            current.data,
-            this.snapshotBytes(this.workspacePath),
-          );
-          if (!restored.ok)
-            return failure(
-              "external_outcome_unknown",
-              "import failed and workspace restoration is uncertain",
-              { operation: "import", outcome: "unknown" },
-            );
-        }
-        return failure(
-          "external_outcome_unknown",
-          `workspace created but task import is uncertain: ${writtenTask.error}`,
-          {
-            operation: "import",
-            outcome: "unknown",
-            path: writtenTask.details.path,
-          },
-        );
-      }
-      return success(validTask.data.revision, workspace.revision, validTask.data);
+      return this.writeNewTask(current.data, workspace, validTask.data, "task.imported", null, {
+        operation: "import",
+      });
     });
   }
 
@@ -666,48 +696,39 @@ export class TaskStore {
     update: TaskMutation,
     timestamp?: Utc,
   ): Result<TaskRecord> {
-    return this.withLock(() => {
-      const current = this.readTask(taskId);
-      if (!current.ok) return current;
-      if (current.data.revision !== expected) return this.conflict(expected, current.data.revision);
-      const previousBytes = this.snapshotBytes(this.taskPath(taskId));
-      if (!previousBytes)
-        return failure("storage_error", "task snapshot disappeared during mutation");
+    if (!validId(taskId)) return failure("invalid_input", "task ID is invalid", { taskId });
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    return this.withLock(this.taskLockPath(taskId), () => {
+      const loaded = this.loadBound(taskId);
+      if (!loaded.ok) return loaded;
+      if (loaded.data.record.revision !== expected)
+        return this.conflict(expected, loaded.data.record.revision);
       const context = { now: timestamp ?? now(), revision: newRevision() };
       let changed: Result<TaskRecord>;
       try {
-        changed = update(current.data, Object.freeze({ ...context }));
+        // A copy: updates may edit in place, and the patch diffs against the original.
+        changed = update(structuredClone(loaded.data.record), Object.freeze({ ...context }));
       } catch (error) {
         return failure("storage_error", `task mutation failed: ${String(error)}`);
       }
       if (!changed.ok) return changed;
-      const record = {
-        ...changed.data,
-        id: taskId,
-        workspaceId: current.data.workspaceId,
-        createdAt: current.data.createdAt,
-        revision: context.revision,
-        updatedAt: context.now,
-        runtime: stampNew(current.data),
-      };
-      const valid = taskRecordSchema.safeParse(record);
-      if (!valid.success)
-        return failure("invalid_input", "task mutation produced an invalid record");
-      const written = this.replaceSnapshot(this.taskPath(taskId), valid.data, previousBytes);
-      return written.ok ? success(valid.data.revision, null, valid.data) : written;
+      const valid = this.nextTask(loaded.data.record, changed.data, context);
+      if (!valid) return failure("invalid_input", "task mutation produced an invalid record");
+      const written = this.appendPatch(loaded.data, valid);
+      return written.ok ? success(valid.revision, null, valid) : written;
     });
   }
 
   mutateWorkspace(expected: Revision, update: WorkspaceMutation): Result<WorkspaceRecord> {
-    return this.withLock(() => {
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    return this.withLock(this.paths().checkoutLock, () => {
       const current = this.readWorkspace();
       if (!current.ok) return current;
       if (!current.data) return failure("not_found", "workspace not found");
       if (current.data.revision !== expected)
         return this.workspaceConflict(expected, current.data.revision);
-      const previousBytes = this.snapshotBytes(this.workspacePath);
-      if (!previousBytes)
-        return failure("storage_error", "workspace snapshot disappeared during mutation");
       const context = { now: now(), revision: newRevision() };
       let changed: Result<WorkspaceRecord>;
       try {
@@ -716,333 +737,1277 @@ export class TaskStore {
         return failure("storage_error", `workspace mutation failed: ${String(error)}`);
       }
       if (!changed.ok) return changed;
-      const record = {
+      const valid = workspaceRecordSchema.safeParse({
         ...changed.data,
         id: current.data.id,
         root: this.root,
         revision: context.revision,
         runtime: stampNew(current.data),
-      };
-      const valid = workspaceRecordSchema.safeParse(record);
+      });
       if (!valid.success)
         return failure("invalid_input", "workspace mutation produced an invalid record");
-      const written = this.replaceSnapshot(this.workspacePath, valid.data, previousBytes);
+      const written = this.writeWorkspace(valid.data);
       return written.ok ? success(valid.data.revision, valid.data.revision, valid.data) : written;
     });
   }
 
   mutateTaskAndWorkspace(input: CoupledMutation): Result<CoupledSnapshot> {
-    return this.withLock(() => {
-      const task = this.readTask(input.taskId);
-      if (!task.ok) return task;
-      const workspace = this.readWorkspace();
-      if (!workspace.ok) return workspace;
-      if (!workspace.data) return failure("not_found", "workspace not found");
-      const expected = input.expectedRevision;
-      if (!expected) return failure("invalid_input", "task revision is required");
-      if (task.data.revision !== expected) return this.conflict(expected, task.data.revision);
-      if (workspace.data.revision !== input.expectedWorkspaceRevision)
-        return this.workspaceConflict(input.expectedWorkspaceRevision, workspace.data.revision);
-      const previousWorkspaceBytes = this.snapshotBytes(this.workspacePath);
-      const previousTaskBytes = this.snapshotBytes(this.taskPath(input.taskId));
-      if (!previousWorkspaceBytes || !previousTaskBytes)
-        return failure("storage_error", "snapshot disappeared during coupled mutation");
-      const workspaceContext = { now: input.now ?? now(), revision: newRevision() };
-      let changedWorkspace: Result<WorkspaceRecord>;
+    if (!validId(input.taskId))
+      return failure("invalid_input", "task ID is invalid", { taskId: input.taskId });
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    return this.withLock(this.paths().checkoutLock, () =>
+      this.withLock(this.taskLockPath(input.taskId), () => {
+        const task = this.loadBound(input.taskId);
+        if (!task.ok) return task;
+        const workspace = this.readWorkspace();
+        if (!workspace.ok) return workspace;
+        if (!workspace.data) return failure("not_found", "workspace not found");
+        const expected = input.expectedRevision;
+        if (!expected) return failure("invalid_input", "task revision is required");
+        if (task.data.record.revision !== expected)
+          return this.conflict(expected, task.data.record.revision);
+        if (workspace.data.revision !== input.expectedWorkspaceRevision)
+          return this.workspaceConflict(input.expectedWorkspaceRevision, workspace.data.revision);
+        const workspaceContext = { now: input.now ?? now(), revision: newRevision() };
+        let changedWorkspace: Result<WorkspaceRecord>;
+        try {
+          changedWorkspace = input.workspace(
+            workspace.data,
+            Object.freeze({ ...workspaceContext }),
+          );
+        } catch (error) {
+          return failure("storage_error", `workspace mutation failed: ${String(error)}`);
+        }
+        if (!changedWorkspace.ok) return changedWorkspace;
+        const nextWorkspace = workspaceRecordSchema.safeParse({
+          ...changedWorkspace.data,
+          id: workspace.data.id,
+          root: this.root,
+          revision: workspaceContext.revision,
+          runtime: stampNew(workspace.data),
+        });
+        if (!nextWorkspace.success)
+          return failure("invalid_input", "workspace mutation produced an invalid record");
+        const reserved = this.writeWorkspace(nextWorkspace.data);
+        if (!reserved.ok) return reserved;
+        const uncertain = (message: string) => {
+          this.markUncertain(nextWorkspace.data);
+          return failure("external_outcome_unknown", message, {
+            operation: "coupled_mutation",
+            outcome: "unknown",
+          });
+        };
+        const taskContext = { now: input.now ?? now(), revision: newRevision() };
+        let changedTask: Result<TaskRecord>;
+        try {
+          changedTask = input.task(
+            structuredClone(task.data.record),
+            Object.freeze({ ...taskContext }),
+          );
+        } catch (error) {
+          return uncertain(`workspace reserved but task mutation threw: ${String(error)}`);
+        }
+        if (!changedTask.ok) return uncertain("workspace reserved but task update is uncertain");
+        const nextTask = this.nextTask(task.data.record, changedTask.data, taskContext);
+        if (!nextTask) return uncertain("workspace reserved but task update is uncertain");
+        const written = this.appendPatch(task.data, nextTask);
+        if (!written.ok) return uncertain("workspace reserved but task append is uncertain");
+        return success(nextTask.revision, nextWorkspace.data.revision, {
+          task: nextTask,
+          workspace: nextWorkspace.data,
+        });
+      }),
+    );
+  }
+
+  /** Hold this checkout's lock across a managed effect. */
+  async withExternalActionLock<T>(
+    operation: () => Promise<Result<T>>,
+    reentrant = false,
+  ): Promise<Result<T>> {
+    const activeRoots = externalActionLockRoots.getStore();
+    if (
+      activeRoots &&
+      [...activeRoots].some((root) => root === this.root || sameDirectoryIdentity(root, this.root))
+    )
+      return operation();
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    const lockPath = this.paths().checkoutLock;
+    try {
+      this.initializeStorage();
+    } catch (error) {
+      return failure("storage_error", `unable to initialize store: ${String(error)}`, {
+        path: this.paths().dir,
+      });
+    }
+    let handle: FileLockSyncHandle;
+    try {
+      const options = this.lockOptions(lockPath);
+      handle = this.acquire(lockPath, {
+        ...options,
+        payload: () => ({ ...options.payload(), externalAction: true }),
+      });
+    } catch (error) {
+      return this.lockFailure(lockPath, error);
+    }
+    hold(lockPath);
+    let result: Result<T>;
+    try {
+      if (!handle.verifyStillHeld())
+        result = failure("recovery_required", "metadata lock was compromised", { path: lockPath });
+      else {
+        try {
+          const run = () => operation();
+          result = await (reentrant
+            ? externalActionLockRoots.run(new Set([...(activeRoots ?? []), this.root]), run)
+            : run());
+        } catch {
+          result = failure("external_outcome_unknown", "external action outcome is unknown", {
+            outcome: "unknown",
+          });
+        }
+        try {
+          if (!handle.verifyStillHeld())
+            result = failure("external_outcome_unknown", "metadata lock was compromised", {
+              outcome: "unknown",
+              path: lockPath,
+            });
+        } catch {
+          result = failure("external_outcome_unknown", "metadata lock could not be verified", {
+            outcome: "unknown",
+            path: lockPath,
+          });
+        }
+      }
+    } catch {
+      result = failure("external_outcome_unknown", "external action lock operation failed", {
+        outcome: "unknown",
+        path: lockPath,
+      });
+    }
+    drop(lockPath);
+    try {
+      retryTransient(() => handle.release());
+    } catch (error) {
+      const released = this.lockFailure(lockPath, error);
+      const releaseError = released.ok ? "metadata lock release failed" : released.error;
+      return result.ok
+        ? failure(
+            "external_outcome_unknown",
+            "external action metadata lock release is uncertain",
+            {
+              outcome: "unknown",
+              path: lockPath,
+            },
+          )
+        : failure("recovery_required", `${result.error}; ${releaseError}`, result.details);
+    }
+    return result;
+  }
+
+  /**
+   * `workit gc`: compact long task logs into a checkpoint plus their most
+   * recent events (the latest state is never lost), remove unreferenced
+   * candidate blobs and temp files left by crashed writers, and report a 2.x
+   * `.workit/recovery` directory left behind by migration (removed only with
+   * `pruneRecovery`). A dry run is read-only.
+   */
+  collectGarbage(
+    options: { dryRun?: boolean; pruneRecovery?: boolean; compactAbove?: number } = {},
+  ): Result<GarbageReport> {
+    const dryRun = options.dryRun === true;
+    const compactAbove = options.compactAbove ?? COMPACT_ABOVE;
+    const report: GarbageReport = {
+      dryRun,
+      compacted: { tasks: [], eventsFolded: 0, bytesBefore: 0, bytesAfter: 0 },
+      blobs: { removed: 0, removedBytes: 0, kept: 0 },
+      temporary: { removed: 0 },
+      legacyRecovery: null,
+      failed: [],
+    };
+    const ready = this.ready();
+    if (!ready.ok) return ready;
+    const dirs = this.paths();
+    const recovery = path.join(this.root, ".workit", "recovery");
+    if (fs.existsSync(recovery)) {
+      let files = 0;
+      let bytes = 0;
       try {
-        changedWorkspace = input.workspace(workspace.data, Object.freeze({ ...workspaceContext }));
-      } catch (error) {
-        return failure("storage_error", `workspace mutation failed: ${String(error)}`);
-      }
-      if (!changedWorkspace.ok) return changedWorkspace;
-      const nextWorkspace = workspaceRecordSchema.safeParse({
-        ...changedWorkspace.data,
-        id: workspace.data.id,
-        root: this.root,
-        revision: workspaceContext.revision,
-        runtime: stampNew(workspace.data),
-      });
-      if (!nextWorkspace.success)
-        return failure("invalid_input", "workspace mutation produced an invalid record");
-      const reserved = this.replaceSnapshot(
-        this.workspacePath,
-        nextWorkspace.data,
-        previousWorkspaceBytes,
-      );
-      if (!reserved.ok) return reserved;
-      const taskContext = { now: input.now ?? now(), revision: newRevision() };
-      let changedTask: Result<TaskRecord>;
+        for (const name of fs.readdirSync(recovery)) {
+          const stat = fs.lstatSync(path.join(recovery, name));
+          if (!stat.isFile()) continue;
+          files += 1;
+          bytes += stat.size;
+        }
+      } catch {}
+      const remove = options.pruneRecovery === true && !dryRun;
+      if (remove) fs.rmSync(recovery, { recursive: true, force: true });
+      report.legacyRecovery = { path: recovery, files, bytes, removed: remove };
+    }
+    if (!fs.existsSync(dirs.tasks)) return success(null, null, report);
+    const references = new Set<string>();
+    const names = fs.readdirSync(dirs.tasks).filter((name) => validId(name));
+    for (const name of names) {
+      const file = this.eventsPath(name);
+      let size = 0;
       try {
-        changedTask = input.task(task.data, Object.freeze({ ...taskContext }));
+        size = fs.statSync(file).size;
+      } catch {
+        continue;
+      }
+      const lines = this.countEvents(file);
+      if (lines > compactAbove) {
+        if (dryRun) {
+          report.compacted.tasks.push(name);
+          report.compacted.eventsFolded += lines - COMPACT_KEEP;
+          report.compacted.bytesBefore += size;
+        } else {
+          const compacted = this.withLock(this.taskLockPath(name), () => this.compact(name));
+          if (!compacted.ok) report.failed.push(name);
+          else {
+            report.compacted.tasks.push(name);
+            report.compacted.eventsFolded += compacted.data.folded;
+            report.compacted.bytesBefore += size;
+            report.compacted.bytesAfter += compacted.data.bytes;
+          }
+        }
+      }
+      try {
+        for (const match of fs.readFileSync(file, "utf8").matchAll(/"\$blob":"([0-9a-f]{64})"/g))
+          references.add(match[1]);
+      } catch {}
+    }
+    const nowMs = Date.now();
+    if (fs.existsSync(dirs.blobs))
+      for (const name of fs.readdirSync(dirs.blobs)) {
+        const digest = name.replace(/\.json$/, "");
+        const file = path.join(dirs.blobs, name);
+        let stat: fs.Stats;
+        try {
+          stat = fs.lstatSync(file);
+        } catch {
+          continue;
+        }
+        if (references.has(digest) || nowMs - stat.mtimeMs <= STALE_TEMPORARY_MS) {
+          report.blobs.kept += 1;
+          continue;
+        }
+        report.blobs.removed += 1;
+        report.blobs.removedBytes += stat.size;
+        if (!dryRun) fs.rmSync(file, { force: true });
+      }
+    const temporaryDirs = [
+      dirs.dir,
+      dirs.tasks,
+      dirs.blobs,
+      dirs.checkout,
+      ...names.map((name) => path.join(dirs.tasks, name)),
+    ];
+    for (const directory of temporaryDirs) {
+      if (!fs.existsSync(directory)) continue;
+      for (const name of fs.readdirSync(directory)) {
+        if (!name.endsWith(".tmp") && !name.endsWith(".probe")) continue;
+        const file = path.join(directory, name);
+        try {
+          const stat = fs.lstatSync(file);
+          if (!stat.isFile() || nowMs - stat.mtimeMs <= STALE_TEMPORARY_MS) continue;
+        } catch {
+          continue;
+        }
+        report.temporary.removed += 1;
+        if (!dryRun) fs.rmSync(file, { force: true });
+      }
+    }
+    return success(null, null, report);
+  }
+
+  // -------------------------------------------------------------------------
+  // internals: layout
+
+  private paths() {
+    const location = this.location();
+    // Callers go through ready(), which fails first when the store is unresolved.
+    const dir = location.ok ? location.data.dir : path.join(this.root, ".workit");
+    const checkout = path.join(dir, "checkouts", checkoutSlug(this.root));
+    return {
+      dir,
+      shared: location.ok ? location.data.shared : false,
+      marker: path.join(dir, "store.json"),
+      checkout,
+      workspace: path.join(checkout, "workspace.json"),
+      checkoutLock: path.join(checkout, "metadata.lock"),
+      tasks: path.join(dir, "tasks"),
+      index: path.join(dir, "task-index.json"),
+      blobs: path.join(dir, "blobs", "candidates"),
+      legacy: path.join(dir, "legacy", checkoutSlug(this.root), "v2"),
+      v2: path.join(this.root, ".workit"),
+    };
+  }
+  private eventsPath(taskId: Id) {
+    return path.join(this.paths().tasks, taskId, "events.jsonl");
+  }
+  private snapshotPath(taskId: Id) {
+    return path.join(this.paths().tasks, taskId, "snapshot.json");
+  }
+  private taskLockPath(taskId: Id) {
+    return path.join(this.paths().tasks, taskId, "lock");
+  }
+
+  /** The store resolves, its format is readable, and any 2.x store here is migrated. */
+  private ready(): Result<null> {
+    const location = this.location();
+    if (!location.ok) return location;
+    if (this.migrationChecked) return success(null, null, null);
+    const dirs = this.paths();
+    try {
+      const marker = JSON.parse(fs.readFileSync(dirs.marker, "utf8")) as { version?: unknown };
+      if (typeof marker.version === "number" && marker.version > STORE_FORMAT)
+        return failure(
+          "recovery_required",
+          `the workit store at ${dirs.dir} has format ${marker.version}; upgrade Workit to use it`,
+          { path: dirs.marker },
+        );
+    } catch {}
+    const moved = this.adoptLocalStore();
+    if (!moved.ok) return moved;
+    const migrated = this.migrateV2();
+    if (!migrated.ok) return migrated;
+    this.migrationChecked = true;
+    return success(null, null, null);
+  }
+
+  private blobStore(): BlobStore {
+    const dir = this.paths().blobs;
+    return {
+      read: (digest) => {
+        try {
+          return JSON.parse(fs.readFileSync(path.join(dir, `${digest}.json`), "utf8"));
+        } catch (error) {
+          throw new LogDamage(
+            `stored candidate ${digest} is missing or unreadable: ${String(error)}`,
+          );
+        }
+      },
+      write: (digest, value) => {
+        const file = path.join(dir, `${digest}.json`);
+        if (fs.existsSync(file)) return;
+        fs.mkdirSync(dir, { recursive: true });
+        replaceFile(file, JSON.stringify(value), true);
+      },
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // internals: task logs
+
+  /** Reduce a task's log (from its snapshot when that matches); null when absent. */
+  private load(taskId: Id): Result<Loaded | null> {
+    try {
+      const loaded = this.loadOrThrow(taskId);
+      if (!loaded) return success(null, null, null);
+      const parsed = this.parseTask(loaded.state.record, taskId);
+      if (!parsed.ok) return parsed;
+      return success(null, null, {
+        record: parsed.data,
+        key: loaded.state.key,
+        legacy: loaded.state.legacy,
+        seq: loaded.seq,
+        lastId: loaded.lastId,
+        lastStart: loaded.lastStart,
+        end: loaded.end,
+        size: loaded.size,
+        snapshotSeq: loaded.snapshotSeq,
+      });
+    } catch (error) {
+      if (error instanceof LogDamage)
+        return failure(
+          "recovery_required",
+          error.upgrade ? error.message : `task ${taskId} log is damaged: ${error.message}`,
+          { taskId, path: this.eventsPath(taskId) },
+        );
+      return failure("recovery_required", `task ${taskId} cannot be read: ${String(error)}`, {
+        taskId,
+      });
+    }
+  }
+
+  private loadOrThrow(taskId: Id) {
+    const blobs = this.blobStore();
+    const file = this.eventsPath(taskId);
+    const snapshot = this.readSnapshot(taskId);
+    if (snapshot) {
+      try {
+        const tail = readLog(file, snapshot.lastStart, snapshot.seq);
+        const first = tail?.events[0];
+        // The snapshot names the event it was taken after: same seq, same id.
+        if (tail && first && first.id === snapshot.lastId) {
+          let state: ReducedTask | null = {
+            record: snapshot.record as Record<string, unknown>,
+            key: snapshot.key,
+            legacy: snapshot.legacy,
+          };
+          for (const event of tail.events.slice(1)) state = reduce(state, event, blobs);
+          return this.loadedFrom(state!, tail, snapshot.seq);
+        }
       } catch (error) {
-        this.markUncertain(nextWorkspace.data);
-        return failure(
-          "external_outcome_unknown",
-          `workspace reserved but task mutation threw: ${String(error)}`,
-          { operation: "coupled_mutation", outcome: "unknown" },
-        );
+        if (error instanceof LogDamage && error.upgrade) throw error;
+        // Any other mismatch: fall back to a full replay.
       }
-      if (!changedTask.ok) {
-        this.markUncertain(nextWorkspace.data);
-        return failure(
-          "external_outcome_unknown",
-          "workspace reserved but task update is uncertain",
-          { operation: "coupled_mutation", outcome: "unknown" },
-        );
-      }
-      const nextTask = taskRecordSchema.safeParse({
-        ...changedTask.data,
-        id: input.taskId,
-        workspaceId: task.data.workspaceId,
-        createdAt: task.data.createdAt,
-        revision: taskContext.revision,
-        updatedAt: taskContext.now,
-        runtime: stampNew(task.data),
-      });
-      if (!nextTask.success) {
-        this.markUncertain(nextWorkspace.data);
-        return failure(
-          "external_outcome_unknown",
-          "workspace reserved but task update is uncertain",
-          { operation: "coupled_mutation", outcome: "unknown" },
-        );
-      }
-      const written = this.replaceSnapshot(
-        this.taskPath(input.taskId),
-        nextTask.data,
-        previousTaskBytes,
+    }
+    const log = readLog(file, 0, null);
+    if (!log || log.events.length === 0) {
+      if (log && log.size > 0) throw new LogDamage("the log holds no complete event");
+      return null;
+    }
+    if (!OPENING_TYPES.has(log.events[0].type))
+      throw new LogDamage(`the log starts with ${log.events[0].type}, not an opening event`);
+    let state: ReducedTask | null = null;
+    for (const event of log.events) state = reduce(state, event, blobs);
+    return this.loadedFrom(state!, log, 0);
+  }
+
+  private loadedFrom(state: ReducedTask, log: LogRead, snapshotSeq: number) {
+    const last = log.events.at(-1)!;
+    return {
+      state,
+      seq: last.seq,
+      lastId: last.id,
+      lastStart: log.lastStart,
+      end: log.end,
+      size: log.size,
+      snapshotSeq,
+    };
+  }
+
+  private readSnapshot(taskId: Id): Snapshot | null {
+    try {
+      const value = JSON.parse(fs.readFileSync(this.snapshotPath(taskId), "utf8")) as unknown;
+      if (
+        !isObject(value) ||
+        value.v !== 1 ||
+        value.task !== taskId ||
+        typeof value.seq !== "number" ||
+        typeof value.lastId !== "string" ||
+        typeof value.lastStart !== "number" ||
+        typeof value.end !== "number" ||
+        !isObject(value.record)
+      )
+        return null;
+      return value as Snapshot;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeSnapshot(taskId: Id, loaded: Omit<Loaded, "size" | "snapshotSeq">) {
+    const snapshot: Snapshot = {
+      v: 1,
+      task: taskId,
+      seq: loaded.seq,
+      lastId: loaded.lastId,
+      lastStart: loaded.lastStart,
+      end: loaded.end,
+      key: loaded.key,
+      legacy: loaded.legacy,
+      record: loaded.record,
+    };
+    try {
+      // A cache: a lost or torn snapshot only costs a replay.
+      replaceFile(this.snapshotPath(taskId), JSON.stringify(snapshot), false);
+    } catch {}
+  }
+
+  /** The task when it exists and belongs to this checkout. */
+  private loadBound(taskId: Id): Result<Loaded> {
+    const loaded = this.load(taskId);
+    if (!loaded.ok) return loaded;
+    if (!loaded.data) return failure("not_found", "task not found", { taskId });
+    const workspace = this.readWorkspace();
+    if (!workspace.ok) return workspace;
+    const bound = this.bindingError(loaded.data.record, workspace.data);
+    return bound ?? success(null, null, loaded.data);
+  }
+
+  private bindingError(task: TaskRecord, workspace: WorkspaceRecord | null): Result<never> | null {
+    if (workspace && task.workspaceId === workspace.id) return null;
+    return failure(
+      "not_found",
+      `task ${task.id} belongs to another checkout of this repository; run there, or move it here with \`workit task adopt ${task.id}\``,
+      { taskId: task.id },
+    );
+  }
+
+  private nextTask(
+    current: TaskRecord,
+    changed: TaskRecord,
+    context: MutationContext,
+  ): TaskRecord | null {
+    const valid = taskRecordSchema.safeParse({
+      ...changed,
+      id: current.id,
+      workspaceId: current.workspaceId,
+      createdAt: current.createdAt,
+      revision: context.revision,
+      updatedAt: context.now,
+      runtime: stampNew(current),
+    });
+    return valid.success ? valid.data : null;
+  }
+
+  private event(taskId: Id, seq: number, type: string, data: Record<string, unknown>): StoreEvent {
+    return {
+      v: EVENT_VERSION,
+      seq,
+      at: new Date().toISOString(),
+      id: newId(),
+      task: taskId,
+      actor: this.actor,
+      type,
+      data,
+    };
+  }
+
+  /** Append the patch from `loaded` to `next` (under the task lock). */
+  private appendPatch(
+    loaded: Loaded,
+    next: TaskRecord,
+    extra: { key?: TaskKey | null } = {},
+  ): Result<null> {
+    const taskId = next.id;
+    try {
+      const blobs = this.blobStore();
+      const before = loaded.record as unknown as Record<string, unknown>;
+      const after = next as unknown as Record<string, unknown>;
+      const ops = encodeOps(diff(before, after), blobs);
+      const event = this.event(
+        taskId,
+        loaded.seq + 1,
+        "key" in extra ? "task.bound" : eventType(before, after),
+        { ops, ...extra },
       );
-      if (!written.ok) {
-        this.markUncertain(nextWorkspace.data);
-        return failure(
-          "external_outcome_unknown",
-          "workspace reserved but task replacement is uncertain",
-          { operation: "coupled_mutation", outcome: "unknown" },
-        );
-      }
-      return success(nextTask.data.revision, nextWorkspace.data.revision, {
-        task: nextTask.data,
-        workspace: nextWorkspace.data,
+      const start = appendEvent(this.eventsPath(taskId), event, loaded.end);
+      const end = start + Buffer.byteLength(`${JSON.stringify(event)}\n`);
+      const key = "key" in extra ? (extra.key ?? null) : loaded.key;
+      const state = {
+        record: next,
+        key,
+        legacy: loaded.legacy,
+        seq: event.seq,
+        lastId: event.id,
+        lastStart: start,
+        end,
+      };
+      if (
+        event.seq - loaded.snapshotSeq >= SNAPSHOT_EVERY ||
+        next.status !== loaded.record.status ||
+        loaded.snapshotSeq === 0
+      )
+        this.writeSnapshot(taskId, state);
+      // Bounded without a gc run: a log past the watermark folds itself.
+      if (end > AUTO_COMPACT_BYTES) this.compact(taskId);
+      this.indexTask(next, key, loaded.legacy !== null);
+      return success(null, null, null);
+    } catch (error) {
+      return failure("storage_error", `task append failed: ${String(error)}`, {
+        path: this.eventsPath(taskId),
       });
+    }
+  }
+
+  /** Write a new task's opening event. */
+  private openTask(
+    record: TaskRecord,
+    type: string,
+    key: TaskKey | null,
+    legacy: LegacyOrigin | null = null,
+  ) {
+    const dir = path.join(this.paths().tasks, record.id);
+    fs.mkdirSync(dir, { recursive: true });
+    const blobs = this.blobStore();
+    const event = this.event(record.id, 1, type, {
+      record: encodeRecord(record, blobs),
+      key,
+      ...(legacy ? { legacy } : {}),
+    });
+    const file = this.eventsPath(record.id);
+    const existing = readLog(file, 0, null);
+    if (existing && existing.events.length > 0)
+      throw new Error(`task ${record.id} already has a log`);
+    appendEvent(file, event, 0);
+    this.indexTask(record, key, legacy !== null);
+  }
+
+  /** Compact a task log (under its lock): checkpoint + the last COMPACT_KEEP events. */
+  private compact(taskId: Id): Result<{ folded: number; bytes: number }> {
+    try {
+      const file = this.eventsPath(taskId);
+      const log = readLog(file, 0, null);
+      if (!log || log.events.length <= COMPACT_KEEP + 1)
+        return success(null, null, { folded: 0, bytes: log?.size ?? 0 });
+      const blobs = this.blobStore();
+      const cut = log.events.length - COMPACT_KEEP;
+      let state: ReducedTask | null = null;
+      for (const event of log.events.slice(0, cut)) state = reduce(state, event, blobs);
+      const folded = log.events[cut - 1];
+      const checkpoint: StoreEvent = {
+        ...this.event(taskId, folded.seq, "task.checkpoint", {
+          record: encodeRecord(state!.record, blobs),
+          key: state!.key,
+          ...(state!.legacy ? { legacy: state!.legacy } : {}),
+          folded: { from: log.events[0].seq, to: folded.seq },
+        }),
+      };
+      const lines = [checkpoint, ...log.events.slice(cut)].map((event) => JSON.stringify(event));
+      const bytes = `${lines.join("\n")}\n`;
+      replaceFile(file, bytes, true);
+      // Re-anchor the snapshot on the rewritten log.
+      try {
+        fs.rmSync(this.snapshotPath(taskId), { force: true });
+      } catch {}
+      const reloaded = this.load(taskId);
+      if (reloaded.ok && reloaded.data) this.writeSnapshot(taskId, reloaded.data);
+      return success(null, null, { folded: cut, bytes: Buffer.byteLength(bytes) });
+    } catch (error) {
+      return failure("storage_error", `compaction failed: ${String(error)}`, { taskId });
+    }
+  }
+
+  private countEvents(file: string): number {
+    try {
+      const bytes = fs.readFileSync(file);
+      let count = 0;
+      for (let index = bytes.indexOf(0x0a); index >= 0; index = bytes.indexOf(0x0a, index + 1))
+        count += 1;
+      return count;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** The open task bound to `key` anywhere in the store (newest first). */
+  private openTaskForKey(key: string): Result<TaskIndexEntry | null> {
+    const all = this.listStoreIndex();
+    if (!all.ok) return all;
+    const bound = all.data
+      .filter((entry) => entry.key === key && entry.status !== "closed")
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return success(null, null, bound[0] ?? null);
+  }
+
+  /** Bind `taskId` to `key` and this checkout (under the checkout lock). */
+  private bindLocked(taskId: Id, key: TaskKey, timestamp?: Utc): Result<TaskRecord> {
+    const current = this.readWorkspace();
+    if (!current.ok) return current;
+    let workspace = current.data;
+    if (!workspace) {
+      workspace = this.nextWorkspace(null);
+      const written = this.writeWorkspace(workspace);
+      if (!written.ok) return written;
+    }
+    const target = workspace;
+    return this.withLock(this.taskLockPath(taskId), () => {
+      const loaded = this.load(taskId);
+      if (!loaded.ok) return loaded;
+      if (!loaded.data) return failure("not_found", "task not found", { taskId });
+      if (loaded.data.record.status === "closed")
+        return failure("invalid_transition", "a closed task cannot be adopted", { taskId });
+      if (loaded.data.record.workspaceId === target.id && loaded.data.key?.key === key.key)
+        return success(loaded.data.record.revision, null, loaded.data.record);
+      const next = taskRecordSchema.safeParse({
+        ...loaded.data.record,
+        workspaceId: target.id,
+        revision: newRevision(),
+        updatedAt: timestamp ?? now(),
+        runtime: stampNew(loaded.data.record),
+      });
+      if (!next.success) return failure("invalid_input", "rebound task is invalid");
+      const written = this.appendPatch(loaded.data, next.data, { key });
+      return written.ok ? success(next.data.revision, null, next.data) : written;
     });
   }
 
-  recoveryCandidates(): Result<RecoveryCandidate[]> {
-    if (!fs.existsSync(this.recoveryDir)) return success(null, null, []);
-    try {
-      const candidates: RecoveryCandidate[] = [];
-      for (const name of fs.readdirSync(this.recoveryDir)) {
-        const match = RECOVERY_NAME.exec(name);
-        if (match)
-          candidates.push({
-            target: match[1] as "task" | "workspace",
-            path: path.join(this.recoveryDir, name),
-            digest: match[3],
-          });
-      }
-      return success(null, null, candidates);
-    } catch (error) {
-      return failure("storage_error", `unable to list recovery: ${String(error)}`, {
-        path: this.recoveryDir,
-      });
-    }
+  /** Release a task's implicit key (under the checkout lock). */
+  private unbindLocked(taskId: Id): Result<null> {
+    return this.withLock(this.taskLockPath(taskId), () => {
+      const loaded = this.load(taskId);
+      if (!loaded.ok) return loaded;
+      if (!loaded.data || loaded.data.key === null) return success(null, null, null);
+      return this.appendPatch(loaded.data, loaded.data.record, { key: null });
+    });
   }
 
-  recoverTask(taskId: Id, input: RecoveryInput): Result<TaskRecord> {
-    return this.recover("task", taskId, input);
-  }
-
-  recoverWorkspace(input: RecoveryInput): Result<WorkspaceRecord> {
-    return this.recover("workspace", null, input);
-  }
-
-  private recover(
-    target: "task" | "workspace",
-    taskId: Id | null,
-    input: RecoveryInput,
-  ): Result<any> {
-    if (taskId !== null && !validId(taskId))
-      return failure("invalid_input", "task ID is invalid", { taskId });
+  /** Create a task (under the checkout lock), bound to `key`, or with
+   * `bindCurrent` to the checkout's current key. */
+  private createLocked(
+    value: CreateInput,
+    bindCurrent: boolean,
+    key: TaskKey | null,
+    checkRevision = true,
+  ): Result<TaskRecord> {
+    const current = this.readWorkspace();
+    if (!current.ok) return current;
     if (
-      !input.reason ||
-      !Array.isArray(input.authorityRefs) ||
-      typeof input.processEvidence !== "function" ||
-      !validDigest(input.expectedBytes) ||
-      !validDigest(input.snapshotDigest)
+      checkRevision &&
+      (current.data
+        ? value.expectedWorkspaceRevision !== current.data.revision
+        : value.expectedWorkspaceRevision !== null)
     )
-      return failure("invalid_input", "recovery authority is invalid");
-    if (input.authorityRefs.some((ref) => !refSchema.safeParse(ref).success))
-      return failure("invalid_input", "recovery references are invalid");
-    try {
-      const workspace = this.readWorkspace();
-      if (!workspace.ok && target === "task") return workspace;
-      const workspaceValue = workspace.ok ? workspace.data : null;
-      if (workspaceValue && workspaceValue.revision !== input.expectedWorkspaceRevision)
-        return this.conflict(input.expectedWorkspaceRevision, workspaceValue.revision);
-      const file = target === "workspace" ? this.workspacePath : this.taskPath(taskId!);
-      const currentBytes = this.snapshotBytes(file);
-      if (!currentBytes) return failure("not_found", "snapshot not found");
-      if (digestBytes(currentBytes) !== input.expectedBytes)
-        return failure("revision_conflict", "snapshot bytes do not match expected bytes");
-      let selectedBytes = currentBytes;
-      if (digestBytes(currentBytes) !== input.snapshotDigest) {
-        const candidate = this.findRecovery(target, taskId, input.snapshotDigest, workspaceValue);
-        if (!candidate)
-          return failure("recovery_required", "validated recovery snapshot not found");
-        selectedBytes = candidate;
-      }
-      const selectedRecord =
-        target === "workspace"
-          ? this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema, "rewrite")
-          : this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema, "rewrite");
-      if (!selectedRecord.ok) return selectedRecord;
-      if (target === "workspace") {
-        const parsed = selectedRecord as Result<WorkspaceRecord>;
-        if (!parsed.ok || parsed.data.root !== this.root)
-          return failure("recovery_required", "workspace recovery binding is invalid");
-      } else {
-        const parsed = selectedRecord as Result<TaskRecord>;
-        if (
-          !parsed.ok ||
-          parsed.data.id !== taskId ||
-          !workspaceValue ||
-          parsed.data.workspaceId !== workspaceValue.id
-        )
-          return failure("recovery_required", "task recovery binding is invalid");
-      }
-      const lock = this.readLockSnapshot();
-      if (!lock.ok) return lock;
-      const writer =
-        target === "workspace"
-          ? (selectedRecord.data as WorkspaceRecord).writer
-          : (workspaceValue?.writer ?? null);
-      const evidence = this.processEvidence(input, lock.data?.data ?? null, writer);
-      if (!evidence.ok) return evidence;
-      if (
-        lock.data &&
-        (evidence.data.pid !== lock.data.data.pid ||
-          evidence.data.processStart !== lock.data.data.processStart)
-      )
-        return failure("recovery_required", "process evidence does not match metadata lock");
-      if (
-        writer &&
-        (evidence.data.state !== "accounted_for" ||
-          evidence.data.ownerDigest !== sha256(canonicalJson(writer)))
-      )
-        return failure("recovery_required", "workspace writer is not accounted for");
-      const recoveryGate = { reclaimed: false };
-      const result = this.withLock<any>(
-        (handle) => {
-          if (lock.data && !recoveryGate.reclaimed)
-            return failure("recovery_required", "metadata lock changed during recovery", {
-              path: this.lockPath,
-            });
-          if (!handle.verifyStillHeld())
-            return failure("recovery_required", "metadata lock was compromised", {
-              path: this.lockPath,
-            });
-          const reacquiredBytes = this.snapshotBytes(file);
-          if (!reacquiredBytes)
-            return failure("recovery_required", "snapshot disappeared during recovery");
-          if (digestBytes(reacquiredBytes) !== input.expectedBytes)
-            return failure("revision_conflict", "snapshot changed during recovery");
-          if (target === "task") {
-            const currentWorkspace = this.readWorkspace();
-            if (!currentWorkspace.ok || !currentWorkspace.data)
-              return failure("recovery_required", "workspace changed during recovery");
-            if (currentWorkspace.data.revision !== input.expectedWorkspaceRevision)
-              return this.conflict(input.expectedWorkspaceRevision, currentWorkspace.data.revision);
-          }
-          if (target === "workspace") {
-            const parsed = this.parseBytes<WorkspaceRecord>(
-              selectedBytes,
-              workspaceRecordSchema,
-              "rewrite",
-            );
-            if (!parsed.ok) return parsed;
-            const value = { ...parsed.data, revision: newRevision(), writer: null };
-            const replaced = this.replaceSnapshot(file, value, reacquiredBytes);
-            return replaced.ok ? success(value.revision, value.revision, value) : replaced;
-          }
-          const parsed = this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema, "rewrite");
-          if (!parsed.ok) return parsed;
-          const value = {
-            ...parsed.data,
-            revision: newRevision(),
-            updatedAt: now(),
-            status: parsed.data.status === "active" ? "paused" : parsed.data.status,
-          } as TaskRecord;
-          const replaced = this.replaceSnapshot(file, value, reacquiredBytes);
-          return replaced.ok ? success(value.revision, null, value) : replaced;
+      return failure(
+        "revision_conflict",
+        "workspace revision does not match; omit expectedWorkspaceRevision to use the current record",
+        {
+          expectedWorkspaceRevision: value.expectedWorkspaceRevision,
+          actualWorkspaceRevision: current.data?.revision ?? null,
         },
-        this.recoveryLockOptions(lock.data, evidence.data, recoveryGate),
-        "recovery_required",
       );
-      return result;
-    } catch (error) {
-      return failure("recovery_required", `recovery protocol failed: ${String(error)}`);
+    if (!value.provenance) return failure("invalid_input", "provenance is required");
+    if (
+      !intentSchema.safeParse(value.intent).success ||
+      !provenanceSchema.safeParse(value.provenance).success
+    )
+      return failure("invalid_input", "task intent or provenance is invalid");
+    // An explicitly started task takes the branch over: the task that held
+    // its key stays open, unbound (listed by `workit task status --all`).
+    let binding = key;
+    if (bindCurrent) {
+      const currentKey = this.currentKey();
+      if (currentKey.ok) {
+        const holder = this.openTaskForKey(currentKey.data.key);
+        if (!holder.ok) return holder;
+        if (holder.data) {
+          const released = this.unbindLocked(holder.data.id);
+          if (!released.ok) return released;
+        }
+        binding = currentKey.data;
+      }
     }
+    const workspace = this.nextWorkspace(current.data);
+    const timestamp = value.now ?? now();
+    const task: TaskRecord = {
+      schemaVersion: SCHEMA_VERSION,
+      id: newId(),
+      workspaceId: workspace.id,
+      revision: newRevision(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      origin: null,
+      intent: {
+        id: newId(),
+        recordedAt: timestamp,
+        provenance: value.provenance,
+        data: value.intent,
+      },
+      constraints: [],
+      status: "active",
+      closure: null,
+      progress: { summary: "", nextAction: null, blockers: [] },
+      runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
+      assessments: [],
+      policy: null,
+      policyChanges: [],
+      candidates: [],
+      evidence: [],
+      decisions: [],
+      findings: [],
+      workers: [],
+    };
+    return this.writeNewTask(current.data, workspace, task, "task.opened", binding, {
+      operation: "create",
+    });
   }
 
-  private processEvidence(
-    input: RecoveryInput,
-    lock: MetadataLock | null,
-    writer: WorkspaceRecord["writer"],
-  ): Result<ProcessEvidence> {
-    const lockCopy = lock ? this.deepFreeze(structuredClone(lock)) : null;
-    const writerCopy = writer ? this.deepFreeze(structuredClone(writer)) : null;
-    const lockDigest = lockCopy ? sha256(canonicalJson(lockCopy)) : null;
-    const writerDigest = writerCopy ? sha256(canonicalJson(writerCopy)) : null;
+  private nextWorkspace(current: WorkspaceRecord | null, id?: Id): WorkspaceRecord {
+    return current
+      ? { ...current, revision: newRevision(), root: this.root, runtime: stampNew(current) }
+      : {
+          schemaVersion: SCHEMA_VERSION,
+          id: id ?? newId(),
+          revision: newRevision(),
+          root: this.root,
+          runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
+          writer: null,
+        };
+  }
+
+  /** Write the workspace, then the task's opening event; undo the workspace on failure. */
+  private writeNewTask(
+    previous: WorkspaceRecord | null,
+    workspace: WorkspaceRecord,
+    task: TaskRecord,
+    type: string,
+    key: TaskKey | null,
+    details: { operation: string },
+  ): Result<TaskRecord> {
+    const written = this.writeWorkspace(workspace);
+    if (!written.ok) return written;
     try {
-      const result = input.processEvidence(lockCopy, writerCopy);
-      if (lockCopy && sha256(canonicalJson(lockCopy)) !== lockDigest)
-        return failure("recovery_required", "process evidence mutated lock identity");
-      if (writerCopy && sha256(canonicalJson(writerCopy)) !== writerDigest)
-        return failure("recovery_required", "process evidence mutated writer identity");
-      if (!result.ok) return result;
-      const parsed = processEvidenceSchema.safeParse(result.data);
-      return parsed.success
-        ? success(null, null, parsed.data)
-        : failure("recovery_required", "process evidence is invalid");
+      this.openTask(task, type, key);
     } catch (error) {
-      return failure("recovery_required", `process evidence failed: ${String(error)}`);
+      if (previous) {
+        const restored = this.writeWorkspace(previous);
+        if (!restored.ok)
+          return failure(
+            "external_outcome_unknown",
+            `task ${details.operation} failed and workspace restoration is uncertain`,
+            { ...details, outcome: "unknown" },
+          );
+      }
+      return failure(
+        "external_outcome_unknown",
+        `workspace written but the task log is uncertain: ${String(error)}`,
+        { ...details, outcome: "unknown" },
+      );
     }
+    return success(task.revision, workspace.revision, task);
   }
 
-  private deepFreeze<T>(value: T): T {
-    if (value && typeof value === "object") {
-      for (const child of Object.values(value as Record<string, unknown>)) this.deepFreeze(child);
-      Object.freeze(value);
-    }
-    return value;
-  }
-
-  private readLockSnapshot(): Result<LockSnapshot | null> {
+  private writeWorkspace(record: WorkspaceRecord): Result<null> {
+    const file = this.paths().workspace;
     try {
-      const stat = fs.lstatSync(this.lockPath);
-      if (!stat.isFile() || stat.isSymbolicLink())
-        return failure("recovery_required", "metadata lock is not a regular file", {
-          path: this.lockPath,
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      replaceFile(file, `${canonicalJson(record)}\n`, true);
+      return success(null, null, null);
+    } catch (error) {
+      return failure("storage_error", `workspace write failed: ${String(error)}`, { path: file });
+    }
+  }
+
+  private markUncertain(workspace: WorkspaceRecord) {
+    if (!workspace.writer || workspace.writer.state === "uncertain") return;
+    this.writeWorkspace({
+      ...workspace,
+      writer: { ...workspace.writer, state: "uncertain" as const },
+      revision: newRevision(),
+      runtime: stampNew(workspace),
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // internals: index cache
+
+  private readIndex(): Record<string, TaskIndexEntry> {
+    try {
+      const value = JSON.parse(fs.readFileSync(this.paths().index, "utf8")) as unknown;
+      if (!isObject(value) || value.version !== INDEX_VERSION || !isObject(value.tasks)) return {};
+      const tasks: Record<string, TaskIndexEntry> = {};
+      for (const [id, entry] of Object.entries(value.tasks))
+        if (
+          isObject(entry) &&
+          entry.id === id &&
+          typeof entry.file === "string" &&
+          typeof entry.status === "string" &&
+          typeof entry.updatedAt === "string" &&
+          typeof entry.workspaceId === "string" &&
+          Array.isArray(entry.sessions) &&
+          isObject(entry.progress) &&
+          isObject(entry.source)
+        )
+          tasks[id] = entry as TaskIndexEntry;
+      return tasks;
+    } catch {
+      return {};
+    }
+  }
+
+  /** The index is a disposable cache: write it atomically, never fail the caller. */
+  private writeIndex(entries: TaskIndexEntry[]) {
+    try {
+      fs.mkdirSync(this.paths().tasks, { recursive: true });
+      replaceFile(
+        this.paths().index,
+        JSON.stringify({
+          version: INDEX_VERSION,
+          tasks: Object.fromEntries(entries.map((entry) => [entry.id, entry])),
+        }),
+        false,
+      );
+    } catch {}
+  }
+
+  private indexTask(task: TaskRecord, key: TaskKey | null, legacy: boolean) {
+    try {
+      const signature = fileSignature(this.eventsPath(task.id));
+      if (signature === null) return;
+      const tasks = this.readIndex();
+      tasks[task.id] = indexEntry(task, key, legacy, signature);
+      this.writeIndex(Object.values(tasks));
+    } catch {
+      // A stale index entry is repaired by the next listing.
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // internals: record parsing
+
+  private parseTask(record: Record<string, unknown>, taskId: Id): Result<TaskRecord> {
+    const parsed = this.parseValue<TaskRecord>(record, taskRecordSchema, "task");
+    if (!parsed.ok) return { ...parsed, details: { ...parsed.details, taskId } };
+    if (parsed.data.id !== taskId)
+      return failure("recovery_required", "task log and record ID differ", { taskId });
+    return parsed;
+  }
+
+  private parseRecord<T>(
+    bytes: string,
+    schema: typeof taskRecordSchema | typeof workspaceRecordSchema,
+    label: string,
+  ): Result<T> {
+    let value: unknown;
+    try {
+      value = JSON.parse(bytes);
+    } catch {
+      return failure("recovery_required", `${label} record JSON is corrupt`);
+    }
+    return this.parseValue<T>(value, schema, label);
+  }
+
+  private parseValue<T>(
+    value: unknown,
+    schema: typeof taskRecordSchema | typeof workspaceRecordSchema,
+    label: string,
+  ): Result<T> {
+    if (isObject(value) && "schemaVersion" in value && value.schemaVersion !== SCHEMA_VERSION)
+      return failure("unsupported_version", `unsupported ${label} schema version`);
+    const parsed = parseStoredRecord(schema, value);
+    if (parsed.success) return success(null, null, parsed.data as T);
+    const writerVersion =
+      isObject(value) && isObject(value.runtime) ? value.runtime.updatedWith : null;
+    if (parsed.critical.length > 0)
+      return failure(
+        "recovery_required",
+        `${label} record requires fields this Workit cannot read (${parsed.critical.join(", ")}); upgrade Workit before mutating this checkout`,
+      );
+    if (typeof writerVersion === "string" && isNewerVersion(writerVersion, runtimeVersion()))
+      return failure(
+        "recovery_required",
+        `${label} record was written by workit ${writerVersion}; upgrade Workit before mutating this checkout`,
+      );
+    return failure("recovery_required", `${label} record does not satisfy its schema`);
+  }
+
+  private conflict(expected: Revision, actual: Revision): Result<never> {
+    return failure(
+      "revision_conflict",
+      "snapshot revision does not match; omit expectedRevision to use the current record",
+      { expectedRevision: expected, actualRevision: actual },
+    );
+  }
+
+  private workspaceConflict(expected: Revision, actual: Revision): Result<never> {
+    return failure(
+      "revision_conflict",
+      "workspace revision does not match; omit expectedWorkspaceRevision to use the current record",
+      { expectedWorkspaceRevision: expected, actualWorkspaceRevision: actual },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // internals: 2.x migration
+
+  /**
+   * Migrate a 2.x store in `<root>/.workit` (tasks/*.json + workspace.json)
+   * into this store, once, under the checkout lock:
+   *   1. copy the 2.x files to legacy/<slug>/v2/ (backup; existing copies kept);
+   *   2. each task becomes tasks/<id>/events.jsonl with one `migrated.from_v2`
+   *      event holding the whole record (same id and revision; unbound);
+   *   3. the workspace record moves to checkouts/<slug>/workspace.json;
+   *   4. the 2.x task files and index are removed;
+   *   5. `.workit/workspace.json` becomes a marker that 2.x readers reject.
+   * Re-running after a crash at any step finishes the job; `.workit/recovery`
+   * is left in place (`workit gc` reports it).
+   */
+  private migrateV2(): Result<null> {
+    const dirs = this.paths();
+    const v2Workspace = path.join(dirs.v2, "workspace.json");
+    const v2Tasks = path.join(dirs.v2, "tasks");
+    const listV2Tasks = () => {
+      try {
+        return fs
+          .readdirSync(v2Tasks)
+          .filter((name) => name.endsWith(".json") && validId(name.slice(0, -5)))
+          .filter((name) => !this.isStub(path.join(v2Tasks, name)));
+      } catch {
+        return [];
+      }
+    };
+    // Only a 2.x workspace record marks a store to migrate; once migrated it
+    // is the 3.x marker.
+    const raw = this.readV2Workspace(v2Workspace);
+    if (raw === null || raw === TOMBSTONE) {
+      if (raw === null && !dirs.shared) this.writeTombstoneIfMissing();
+      return success(null, null, null);
+    }
+    return this.withLock(dirs.checkoutLock, () => {
+      const workspace = this.readV2Workspace(v2Workspace);
+      if (workspace === null || workspace === TOMBSTONE) return success(null, null, null);
+      const files = listV2Tasks();
+      let parsedWorkspace: WorkspaceRecord | null = null;
+      {
+        const parsed = this.parseRecord<WorkspaceRecord>(
+          workspace.bytes,
+          workspaceRecordSchema,
+          "2.x workspace",
+        );
+        if (!parsed.ok)
+          return failure(
+            "recovery_required",
+            `cannot migrate the 2.x store at ${dirs.v2}: ${parsed.error}; move it aside to start fresh`,
+            { path: v2Workspace },
+          );
+        parsedWorkspace = parsed.data;
+      }
+      try {
+        fs.mkdirSync(dirs.legacy, { recursive: true });
+        for (const name of ["workspace.json", "index.json"]) {
+          const source = path.join(dirs.v2, name);
+          const target = path.join(dirs.legacy, name);
+          if (fs.existsSync(source) && !fs.existsSync(target)) fs.copyFileSync(source, target);
+        }
+        if (files.length) fs.mkdirSync(path.join(dirs.legacy, "tasks"), { recursive: true });
+        for (const name of files) {
+          const target = path.join(dirs.legacy, "tasks", name);
+          if (!fs.existsSync(target)) fs.copyFileSync(path.join(v2Tasks, name), target);
+        }
+      } catch (error) {
+        return failure("storage_error", `cannot back up the 2.x store: ${String(error)}`, {
+          path: dirs.legacy,
         });
-      const raw = fs.readFileSync(this.lockPath, "utf8");
-      return success(null, null, { raw, data: parseMetadataLock(raw) });
-    } catch (error: any) {
-      if (error?.code === "ENOENT") return success(null, null, null);
-      return failure("recovery_required", `metadata lock is invalid: ${String(error)}`, {
-        path: this.lockPath,
+      }
+      let migrated = 0;
+      let skipped = 0;
+      for (const name of files) {
+        const id = name.slice(0, -5);
+        if (fs.existsSync(this.eventsPath(id))) {
+          skipped += 1;
+          continue;
+        }
+        const bytes = fs.readFileSync(path.join(v2Tasks, name), "utf8");
+        const parsed = this.parseRecord<TaskRecord>(bytes, taskRecordSchema, "2.x task");
+        if (!parsed.ok || parsed.data.id !== id)
+          return failure(
+            "recovery_required",
+            `cannot migrate 2.x task ${id}: ${parsed.ok ? "file name and record ID differ" : parsed.error}; move ${path.join(v2Tasks, name)} aside to continue`,
+            { path: path.join(v2Tasks, name) },
+          );
+        try {
+          this.openTask(parsed.data, "migrated.from_v2", null, {
+            path: path.join(dirs.legacy, "tasks", name),
+            digest: sha256(bytes),
+          });
+        } catch (error) {
+          return failure("storage_error", `cannot migrate 2.x task ${id}: ${String(error)}`);
+        }
+        migrated += 1;
+      }
+      let workspaceMoved = false;
+      if (parsedWorkspace && !fs.existsSync(dirs.workspace)) {
+        const written = this.writeWorkspace({ ...parsedWorkspace, root: this.root });
+        if (!written.ok) return written;
+        workspaceMoved = true;
+      }
+      try {
+        // Each 2.x task file becomes a marker too, so a 2.x reader asked for
+        // that task by id also fails closed with the upgrade message.
+        for (const name of files)
+          replaceFile(path.join(v2Tasks, name), this.stubFor(name.slice(0, -5)), false);
+        fs.rmSync(path.join(dirs.v2, "index.json"), { force: true });
+        this.writeTombstone(parsedWorkspace);
+      } catch (error) {
+        return failure("storage_error", `cannot finish the 2.x migration: ${String(error)}`, {
+          path: dirs.v2,
+        });
+      }
+      reportMigration({
+        from: dirs.v2,
+        to: dirs.dir,
+        backup: dirs.legacy,
+        tasks: migrated,
+        skipped,
+        workspace: workspaceMoved,
       });
+      return success(null, null, null);
+    });
+  }
+
+  /**
+   * A 3.x store kept in `<root>/.workit` while the directory was not a git
+   * repository moves into the git store once it is one: task logs, checkout
+   * records, blobs and (when the git store has none) the ledger. Entries the
+   * git store already has are left in place. The local marker is renamed so
+   * this runs once.
+   */
+  private adoptLocalStore(): Result<null> {
+    const dirs = this.paths();
+    const marker = path.join(dirs.v2, "store.json");
+    if (!dirs.shared || !fs.existsSync(marker)) return success(null, null, null);
+    return this.withLock(dirs.checkoutLock, () => {
+      if (!fs.existsSync(marker)) return success(null, null, null);
+      let tasks = 0;
+      try {
+        // Move what the git store lacks; merge directories both have.
+        const merge = (from: string, to: string) => {
+          if (!fs.existsSync(to)) {
+            fs.mkdirSync(path.dirname(to), { recursive: true });
+            try {
+              fs.renameSync(from, to);
+            } catch {
+              fs.cpSync(from, to, { recursive: true, errorOnExist: true, force: false });
+              fs.rmSync(from, { recursive: true, force: true });
+            }
+            return;
+          }
+          if (fs.lstatSync(from).isDirectory() && fs.lstatSync(to).isDirectory())
+            for (const name of fs.readdirSync(from))
+              merge(path.join(from, name), path.join(to, name));
+        };
+        for (const sub of ["tasks", "checkouts", "blobs", "legacy"]) {
+          const from = path.join(dirs.v2, sub);
+          if (!fs.existsSync(from)) continue;
+          if (sub === "tasks")
+            for (const name of fs.readdirSync(from))
+              if (validId(name) && !fs.existsSync(path.join(dirs.dir, sub, name))) tasks += 1;
+          merge(from, path.join(dirs.dir, sub));
+        }
+        const ledger = path.join(dirs.v2, "ledger");
+        if (fs.existsSync(ledger) && !fs.existsSync(path.join(dirs.dir, "ledger")))
+          merge(ledger, path.join(dirs.dir, "ledger"));
+        fs.rmSync(path.join(dirs.v2, "task-index.json"), { force: true });
+        fs.renameSync(marker, path.join(dirs.v2, "store.moved.json"));
+      } catch (error) {
+        return failure(
+          "storage_error",
+          `cannot move ${dirs.v2} into ${dirs.dir}: ${String(error)}`,
+          {
+            path: dirs.v2,
+          },
+        );
+      }
+      reportMigration({
+        from: dirs.v2,
+        to: dirs.dir,
+        backup: dirs.v2,
+        tasks,
+        skipped: 0,
+        workspace: false,
+      });
+      return success(null, null, null);
+    });
+  }
+
+  /** The 2.x workspace bytes, TOMBSTONE for a 3.x marker, or null when absent. */
+  private readV2Workspace(file: string): { bytes: string } | typeof TOMBSTONE | null {
+    let bytes: string;
+    try {
+      bytes = fs.readFileSync(file, "utf8");
+    } catch {
+      return null;
+    }
+    try {
+      const value = JSON.parse(bytes) as unknown;
+      if (isObject(value) && isObject(value.store) && value.store.format === "workit-store")
+        return TOMBSTONE;
+    } catch {}
+    return { bytes };
+  }
+
+  /**
+   * `<root>/.workit/workspace.json` as a marker 2.x readers fail closed on:
+   * its `store` field is declared critical, and runtimes that predate the
+   * critical rule reject it as written by a newer Workit.
+   */
+  private writeTombstone(previous: WorkspaceRecord | null) {
+    const dirs = this.paths();
+    const version = isNewerVersion(runtimeVersion(), STORE_MIN_RUNTIME)
+      ? runtimeVersion()
+      : STORE_MIN_RUNTIME;
+    const marker = {
+      schemaVersion: SCHEMA_VERSION,
+      id: previous?.id ?? newId(),
+      revision: newRevision(),
+      root: this.root,
+      runtime: { createdWith: version, updatedWith: version },
+      writer: null,
+      store: {
+        format: "workit-store",
+        version: STORE_FORMAT,
+        path: dirs.dir,
+        note: `workit ${STORE_MIN_RUNTIME}+ keeps task state in ${dirs.dir}; upgrade Workit`,
+      },
+      critical: ["store"],
+    };
+    fs.mkdirSync(dirs.v2, { recursive: true });
+    replaceFile(path.join(dirs.v2, "workspace.json"), `${JSON.stringify(marker, null, 2)}\n`, true);
+  }
+
+  /** The marker that replaces a migrated 2.x task file. */
+  private stubFor(taskId: Id): string {
+    const version = isNewerVersion(runtimeVersion(), STORE_MIN_RUNTIME)
+      ? runtimeVersion()
+      : STORE_MIN_RUNTIME;
+    return `${JSON.stringify({
+      schemaVersion: SCHEMA_VERSION,
+      id: taskId,
+      runtime: { createdWith: version, updatedWith: version },
+      store: { format: "workit-store", version: STORE_FORMAT, path: this.paths().dir },
+      critical: ["store"],
+    })}\n`;
+  }
+
+  private isStub(file: string): boolean {
+    try {
+      const value = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+      return isObject(value) && isObject(value.store) && value.store.format === "workit-store";
+    } catch {
+      return false;
+    }
+  }
+
+  private writeTombstoneIfMissing() {
+    try {
+      if (!fs.existsSync(this.paths().dir)) return;
+      if (fs.existsSync(path.join(this.paths().v2, "workspace.json"))) return;
+      this.writeTombstone(null);
+    } catch {}
+  }
+
+  // -------------------------------------------------------------------------
+  // internals: locks
+
+  private initializeStorage() {
+    const dirs = this.paths();
+    retryTransient(() => fs.mkdirSync(dirs.checkout, { recursive: true }));
+    retryTransient(() => fs.mkdirSync(dirs.tasks, { recursive: true }));
+    if (!fs.existsSync(dirs.marker))
+      replaceFile(
+        dirs.marker,
+        `${JSON.stringify({ format: "workit-store", version: STORE_FORMAT, createdWith: runtimeVersion() })}\n`,
+        false,
+      );
+    if (!dirs.shared) {
+      // Outside git the store sits in the checkout: keep it out of any VCS.
+      const ignore = path.join(dirs.dir, ".gitignore");
+      let current: string | null = null;
+      try {
+        current = fs.readFileSync(ignore, "utf8");
+      } catch {}
+      if (current !== "*\n") retryTransient(() => fs.writeFileSync(ignore, "*\n"));
+      this.writeTombstoneIfMissing();
     }
   }
 
   /**
-   * Mutation lock: a holder that is gone (dead pid, reused pid, or a foreign or
-   * unreadable lock past its TTL) is reclaimed; a live holder is waited on
-   * briefly and then reported as retryable `busy`.
+   * Lock options: a holder that is gone (dead pid, reused pid, or a foreign
+   * or unreadable lock past its TTL) is reclaimed; a live holder is waited
+   * on briefly and then reported as retryable `busy`.
    */
-  private metadataLockOptions(): FileLockSyncAcquireOptions<MetadataLock> {
-    const inProcess = heldInProcess.has(this.root);
+  private lockOptions(lockPath: string): FileLockSyncAcquireOptions<MetadataLock> & {
+    payload: () => MetadataLock;
+  } {
+    const inProcess = heldInProcess.has(lockPath);
     return {
-      lockPath: this.lockPath,
+      lockPath,
       staleMs: Number.MAX_SAFE_INTEGER,
       timeoutMs: inProcess ? 0 : this.lockTimeoutMs,
       retry: inProcess
@@ -1052,7 +2017,7 @@ export class TaskStore {
       shouldReclaim: ({ payload, nowMs }) => {
         let ageMs: number | null = null;
         try {
-          ageMs = nowMs - fs.lstatSync(this.lockPath).mtimeMs;
+          ageMs = nowMs - fs.lstatSync(lockPath).mtimeMs;
         } catch {}
         return classifyLockOwner(payload, ageMs).state === "stale";
       },
@@ -1069,34 +2034,34 @@ export class TaskStore {
     };
   }
 
-  private acquireMetadataLock(
+  private acquire(
+    lockPath: string,
     options: FileLockSyncAcquireOptions<MetadataLock>,
   ): FileLockSyncHandle {
-    clearAbandonedReclaimGuard(this.lockPath);
+    clearAbandonedReclaimGuard(lockPath);
     // One budget for the whole acquisition: a lost reclaim race retries with
     // the remaining time, never a fresh timeout.
     const deadline = Date.now() + (options.timeoutMs ?? 0);
     while (true) {
       try {
-        return acquireFileLockSync(this.workspacePath, {
+        return acquireFileLockSync(lockPath, {
           ...options,
           timeoutMs: Math.max(0, deadline - Date.now()),
         });
       } catch (error) {
-        // Losing a reclaim race to another process, or Windows refusing the
-        // lock file while another process opens or deletes it, is contention.
         const code = (error as { code?: unknown })?.code;
         if (
           (code !== "file_lock_stale" && !isTransientWindowsError(error)) ||
           Date.now() >= deadline
         )
           throw error;
-        // Windows also denies the create while a just-released lock is still
-        // pending delete, and that entry is already invisible to lstat. So a
-        // denial with no visible holder is told apart by probing whether the
-        // directory accepts a new file: if it does not, this is a permission
-        // problem (read-only attribute, ACL) and fails fast.
-        if (code !== "file_lock_stale" && !this.lockHolderPresent() && !this.lockDirWritable())
+        // A Windows denial with no visible holder and a directory that
+        // refuses new files is a permission problem: fail fast.
+        if (
+          code !== "file_lock_stale" &&
+          !this.lockHolderPresent(lockPath) &&
+          !this.lockDirWritable(lockPath)
+        )
           throw error;
         if (code !== "file_lock_stale")
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
@@ -1104,188 +2069,52 @@ export class TaskStore {
     }
   }
 
-  private externalActionLockOptions(): FileLockSyncAcquireOptions<MetadataLock> {
-    const options = this.metadataLockOptions();
-    return { ...options, payload: () => ({ ...options.payload(), externalAction: true }) };
-  }
-
-  /** Hold the workspace metadata lock across a managed effect in this checkout. */
-  async withExternalActionLock<T>(
-    operation: () => Promise<Result<T>>,
-    reentrant = false,
-  ): Promise<Result<T>> {
-    const activeRoots = externalActionLockRoots.getStore();
-    if (
-      activeRoots &&
-      [...activeRoots].some((root) => root === this.root || sameDirectoryIdentity(root, this.root))
-    )
-      return operation();
+  private withLock<T>(lockPath: string, operation: () => Result<T>): Result<T> {
     try {
-      this.initializeMutationStorage();
+      this.initializeStorage();
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     } catch (error) {
       return failure("storage_error", `unable to initialize store: ${String(error)}`, {
-        path: this.workitDir,
+        path: this.paths().dir,
       });
     }
     let handle: FileLockSyncHandle;
     try {
-      handle = this.acquireMetadataLock(this.externalActionLockOptions());
+      handle = this.acquire(lockPath, this.lockOptions(lockPath));
     } catch (error) {
-      return this.lockFailure(error);
+      return this.lockFailure(lockPath, error);
     }
-    holdRoot(this.root);
+    hold(lockPath);
     let result: Result<T>;
     try {
       if (!handle.verifyStillHeld())
-        result = failure("recovery_required", "metadata lock was compromised", {
-          path: this.lockPath,
-        });
+        result = failure("recovery_required", "metadata lock was compromised", { path: lockPath });
       else {
         try {
-          const run = () => operation();
-          result = await (reentrant
-            ? externalActionLockRoots.run(new Set([...(activeRoots ?? []), this.root]), run)
-            : run());
-        } catch {
-          result = failure("external_outcome_unknown", "external action outcome is unknown", {
-            outcome: "unknown",
-          });
-        }
-        try {
-          if (!handle.verifyStillHeld())
-            result = failure("external_outcome_unknown", "metadata lock was compromised", {
-              outcome: "unknown",
-              path: this.lockPath,
-            });
-        } catch {
-          result = failure("external_outcome_unknown", "metadata lock could not be verified", {
-            outcome: "unknown",
-            path: this.lockPath,
-          });
+          result = operation();
+        } catch (error) {
+          result = failure("storage_error", `mutation failed: ${String(error)}`);
         }
       }
-    } catch {
-      result = failure("external_outcome_unknown", "external action lock operation failed", {
-        outcome: "unknown",
-        path: this.lockPath,
-      });
+    } catch (error) {
+      result = this.lockFailure(lockPath, error);
     }
-    dropRoot(this.root);
+    drop(lockPath);
     try {
       retryTransient(() => handle.release());
     } catch (error) {
-      const released = this.lockFailure(error);
+      const released = this.lockFailure(lockPath, error);
       const releaseError = released.ok ? "metadata lock release failed" : released.error;
-      return result.ok
-        ? failure(
-            "external_outcome_unknown",
-            "external action metadata lock release is uncertain",
-            {
-              outcome: "unknown",
-              path: this.lockPath,
-            },
-          )
+      result = result.ok
+        ? released
         : failure("recovery_required", `${result.error}; ${releaseError}`, result.details);
     }
     return result;
   }
 
-  private recoveryLockOptions(
-    observed: LockSnapshot | null,
-    evidence: ProcessEvidence,
-    gate: { reclaimed: boolean },
-  ): FileLockSyncAcquireOptions<MetadataLock> {
-    const options = this.metadataLockOptions();
-    options.timeoutMs = 0;
-    options.retry = { retries: 0 };
-    options.parsePayload = parseMetadataLock;
-    options.staleRecovery = "remove-if-unchanged";
-    options.shouldReclaim = ({ payload }) =>
-      Boolean(
-        observed &&
-        sameMetadataLock(payload, observed.data) &&
-        (evidence.state === "stopped" || evidence.state === "accounted_for"),
-      );
-    options.shouldRemoveStaleLock = ({ raw, payload }) => {
-      if (!observed || raw !== observed.raw || !sameMetadataLock(payload, observed.data))
-        return false;
-      gate.reclaimed = true;
-      return true;
-    };
-    return options;
-  }
-
-  private markUncertain(workspace: WorkspaceRecord) {
-    if (!workspace.writer || workspace.writer.state === "uncertain") return;
-    const value = {
-      ...workspace,
-      writer: { ...workspace.writer, state: "uncertain" as const },
-      revision: newRevision(),
-      runtime: stampNew(workspace),
-    };
-    this.replaceSnapshot(this.workspacePath, value, workspace);
-  }
-
-  private withLock<T>(
-    operation: (handle: FileLockSyncHandle) => Result<T>,
-    options: FileLockSyncAcquireOptions<MetadataLock> = this.metadataLockOptions(),
-    contention: "busy" | "recovery_required" = "busy",
-  ): Result<T> {
-    try {
-      this.initializeMutationStorage();
-    } catch (error) {
-      return failure("storage_error", `unable to initialize store: ${String(error)}`, {
-        path: this.workitDir,
-      });
-    }
-    let handle: FileLockSyncHandle | undefined;
-    let result: Result<T> = failure(
-      "storage_error",
-      "metadata lock operation did not produce a result",
-    );
-    try {
-      handle = this.acquireMetadataLock(options);
-    } catch (error) {
-      result = this.lockFailure(error, contention);
-    }
-    if (handle) holdRoot(this.root);
-    if (handle) {
-      try {
-        if (!handle.verifyStillHeld())
-          result = failure("recovery_required", "metadata lock was compromised", {
-            path: this.lockPath,
-          });
-        else {
-          try {
-            result = operation(handle);
-          } catch (error) {
-            result = failure("storage_error", `mutation failed: ${String(error)}`);
-          }
-        }
-      } catch (error) {
-        result = this.lockFailure(error);
-      }
-    }
-    if (handle) {
-      dropRoot(this.root);
-      try {
-        retryTransient(() => handle.release());
-      } catch (error) {
-        const releaseFailure = this.lockFailure(error);
-        const releaseError = releaseFailure.ok
-          ? "metadata lock release failed"
-          : releaseFailure.error;
-        result = result.ok
-          ? releaseFailure
-          : failure("recovery_required", `${result.error}; ${releaseError}`, result.details);
-      }
-    }
-    return result;
-  }
-
   /** Whether the lock's directory accepts a new file right now. */
-  private lockDirWritable(): boolean {
-    const probe = `${this.lockPath}.${process.pid}.${randomUUID()}.probe`;
+  private lockDirWritable(lockPath: string): boolean {
+    const probe = `${lockPath}.${process.pid}.${randomUUID()}.probe`;
     try {
       fs.closeSync(fs.openSync(probe, "wx", 0o600));
     } catch {
@@ -1298,29 +2127,30 @@ export class TaskStore {
   }
 
   /** A lock file (or an entry Windows is still tearing down) exists. */
-  private lockHolderPresent(): boolean {
+  private lockHolderPresent(lockPath: string): boolean {
     try {
-      fs.lstatSync(this.lockPath);
+      fs.lstatSync(lockPath);
       return true;
     } catch (error) {
       return (error as { code?: unknown } | null)?.code !== "ENOENT";
     }
   }
 
-  private lockFailure(
-    error: unknown,
-    contention: "busy" | "recovery_required" = "busy",
-  ): Result<never> {
+  private lockFailure(lockPath: string, error: unknown): Result<never> {
     const value = error as { code?: unknown; message?: unknown };
     const code = typeof value?.code === "string" ? value.code : "";
     // A sharing-class denial is contention only when someone holds the lock.
-    if (isTransientWindowsError(error) && !this.lockHolderPresent() && !this.lockDirWritable())
+    if (
+      isTransientWindowsError(error) &&
+      !this.lockHolderPresent(lockPath) &&
+      !this.lockDirWritable(lockPath)
+    )
       return failure(
         "storage_error",
-        `cannot create the workspace metadata lock (${code}); no other Workit call holds it`,
+        `cannot create the workit lock (${code}); no other Workit call holds it`,
         {
-          path: this.lockPath,
-          guidance: `Check permissions and the read-only attribute on ${path.dirname(this.lockPath)}.`,
+          path: lockPath,
+          guidance: `Check permissions and the read-only attribute on ${path.dirname(lockPath)}.`,
         },
       );
     if (
@@ -1331,489 +2161,32 @@ export class TaskStore {
     ) {
       let lock: MetadataLock | null = null;
       try {
-        lock = parseMetadataLockOrNull(fs.readFileSync(this.lockPath, "utf8"));
+        lock = parseMetadataLockOrNull(fs.readFileSync(lockPath, "utf8"));
       } catch {}
       if (lock?.externalAction)
         return failure("writer_conflict", "workspace is reserved by a managed external action", {
           outcome: "not_started",
-          path: this.lockPath,
+          path: lockPath,
         });
-      if (contention === "busy")
-        return failure(
-          "busy",
-          `workspace metadata lock is held by another Workit call${lock ? ` (pid ${lock.pid} on ${lock.host})` : ""}; retry shortly`,
-          {
-            outcome: "not_started",
-            path: this.lockPath,
-            guidance:
-              "Retry the same call. If it stays busy, run `workit doctor --fix-lock` to clear a lock left by a dead process.",
-          },
-        );
+      return failure(
+        "busy",
+        `workit lock is held by another Workit call${lock ? ` (pid ${lock.pid} on ${lock.host})` : ""}; retry shortly`,
+        {
+          outcome: "not_started",
+          path: lockPath,
+          guidance:
+            "Retry the same call. If it stays busy, run `workit doctor --fix-lock` to clear a lock left by a dead process.",
+        },
+      );
     }
     const recovery =
-      code === "EEXIST" ||
-      code === "file_lock_timeout" ||
-      code === "file_lock_stale" ||
       code === "metadata_lock_invalid" ||
       code === "not-file" ||
       /metadata lock|file lock|reclaim/i.test(String(value?.message ?? error));
     return failure(
       recovery ? "recovery_required" : "storage_error",
-      `metadata lock operation failed: ${String(error)}`,
-      { path: this.lockPath },
+      `lock operation failed: ${String(error)}`,
+      { path: lockPath },
     );
-  }
-
-  private initializeMutationStorage() {
-    retryTransient(() => fs.mkdirSync(this.tasksDir, { recursive: true }));
-    retryTransient(() => fs.mkdirSync(this.recoveryDir, { recursive: true }));
-    // Rewriting an unchanged .gitignore on every call makes concurrent
-    // writers collide on it (Windows sharing violations); write it only when
-    // it is missing or different.
-    let current: string | null = null;
-    try {
-      current = retryTransient(() => fs.readFileSync(this.gitignorePath, "utf8"));
-    } catch {}
-    if (current !== "*\n") retryTransient(() => fs.writeFileSync(this.gitignorePath, "*\n"));
-  }
-
-  private replaceSnapshot(file: string, value: unknown, previous: unknown): Result<any> {
-    let temporary: string | undefined;
-    try {
-      if (Buffer.isBuffer(previous)) this.saveRecovery(file, previous);
-      else if (previous !== null && typeof previous === "object")
-        this.saveRecovery(file, jsonBytes(previous));
-      else if (typeof previous === "string") this.saveRecovery(file, previous);
-      temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-      const fd = fs.openSync(temporary, "wx", 0o600);
-      try {
-        fs.writeSync(fd, jsonBytes(value));
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-      retryTransient(() => fs.renameSync(temporary!, file));
-      temporary = undefined;
-      this.fsyncDirectory(path.dirname(file));
-      if (path.dirname(file) === this.tasksDir) this.indexTaskWrite(file, value as TaskRecord);
-      return success(null, null, value);
-    } catch (error) {
-      return failure("storage_error", `snapshot replacement failed: ${String(error)}`, {
-        path: file,
-      });
-    } finally {
-      if (temporary)
-        try {
-          fs.unlinkSync(temporary);
-        } catch {}
-    }
-  }
-
-  private readIndex(workspaceId: Id): Record<string, TaskIndexEntry> {
-    try {
-      const value = JSON.parse(fs.readFileSync(this.indexPath, "utf8")) as unknown;
-      if (
-        !isObject(value) ||
-        value.version !== INDEX_VERSION ||
-        value.workspaceId !== workspaceId ||
-        !isObject(value.tasks)
-      )
-        return {};
-      const tasks: Record<string, TaskIndexEntry> = {};
-      for (const [id, entry] of Object.entries(value.tasks))
-        if (
-          isObject(entry) &&
-          entry.id === id &&
-          typeof entry.file === "string" &&
-          typeof entry.status === "string" &&
-          typeof entry.updatedAt === "string" &&
-          Array.isArray(entry.sessions) &&
-          isObject(entry.progress) &&
-          isObject(entry.source)
-        )
-          tasks[id] = entry as TaskIndexEntry;
-      return tasks;
-    } catch {
-      return {};
-    }
-  }
-
-  /** The index is a disposable cache: write it atomically, never fail the caller. */
-  private writeIndex(workspaceId: Id, entries: TaskIndexEntry[]) {
-    const temporary = `${this.indexPath}.${process.pid}.${randomUUID()}.tmp`;
-    try {
-      fs.writeFileSync(
-        temporary,
-        JSON.stringify({
-          version: INDEX_VERSION,
-          workspaceId,
-          tasks: Object.fromEntries(entries.map((entry) => [entry.id, entry])),
-        }),
-        { mode: 0o600, flag: "wx" },
-      );
-      retryTransient(() => fs.renameSync(temporary, this.indexPath));
-    } catch {
-      try {
-        fs.unlinkSync(temporary);
-      } catch {}
-    }
-  }
-
-  private indexTaskWrite(file: string, task: TaskRecord) {
-    try {
-      const signature = fileSignature(file);
-      if (signature === null) return;
-      const tasks = this.readIndex(task.workspaceId);
-      tasks[task.id] = indexEntry(task, signature);
-      this.writeIndex(task.workspaceId, Object.values(tasks));
-    } catch {
-      // A stale index entry is repaired by the next listTaskIndex().
-    }
-  }
-
-  private saveRecovery(file: string, bytes: string | Buffer) {
-    const target = path.basename(file) === "workspace.json" ? "workspace" : "task";
-    const id = target === "task" ? path.basename(file, ".json") : "workspace";
-    const destination = path.join(this.recoveryDir, `${target}.${id}.${digestBytes(bytes)}.json`);
-    if (fs.existsSync(destination)) {
-      if (digestBytes(retryTransient(() => fs.readFileSync(destination))) !== digestBytes(bytes))
-        throw new Error("recovery copy already exists with different bytes");
-      // Re-saved bytes are the newest copy again for pruning purposes.
-      const stamp = new Date();
-      retryTransient(() => fs.utimesSync(destination, stamp, stamp));
-      this.pruneRecovery(`${target}.${id}.`, destination);
-      return;
-    }
-    let temporary: string | undefined;
-    try {
-      temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
-      const fd = fs.openSync(temporary, "wx", 0o600);
-      try {
-        fs.writeSync(fd, bytes as any);
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-      retryTransient(() => fs.renameSync(temporary!, destination));
-      temporary = undefined;
-      this.fsyncDirectory(this.recoveryDir);
-      this.pruneRecovery(`${target}.${id}.`, destination);
-    } finally {
-      if (temporary)
-        try {
-          fs.unlinkSync(temporary);
-        } catch {}
-    }
-  }
-
-  /**
-   * Keep the newest RECOVERY_COPIES_PER_RECORD copies of one record (always
-   * including `keep`, the copy just written). Pruning is best-effort: a
-   * failure never fails the mutation that triggered it.
-   */
-  private pruneRecovery(prefix: string, keep: string) {
-    try {
-      const copies = this.recoveryCopies(prefix);
-      const surplus = this.surplusCopies(copies, path.basename(keep));
-      for (const copy of surplus) fs.rmSync(copy.path, { force: true });
-    } catch {}
-  }
-
-  private recoveryCopies(
-    prefix = "",
-  ): { name: string; path: string; group: string; mtimeNs: bigint }[] {
-    if (!fs.existsSync(this.recoveryDir)) return [];
-    const copies = [];
-    for (const name of fs.readdirSync(this.recoveryDir)) {
-      if (!name.startsWith(prefix)) continue;
-      const match = RECOVERY_NAME.exec(name);
-      if (!match) continue;
-      const file = path.join(this.recoveryDir, name);
-      try {
-        const stat = fs.lstatSync(file, { bigint: true });
-        if (!stat.isFile()) continue;
-        copies.push({ name, path: file, group: `${match[1]}.${match[2]}`, mtimeNs: stat.mtimeNs });
-      } catch {}
-    }
-    return copies;
-  }
-
-  /** Copies of one record beyond the cap, oldest first out; `keep` is never surplus. */
-  private surplusCopies<T extends { name: string; mtimeNs: bigint }>(copies: T[], keep?: string) {
-    const ordered = copies.toSorted((left, right) =>
-      left.name === keep
-        ? -1
-        : right.name === keep
-          ? 1
-          : left.mtimeNs === right.mtimeNs
-            ? left.name.localeCompare(right.name)
-            : left.mtimeNs > right.mtimeNs
-              ? -1
-              : 1,
-    );
-    return ordered.slice(RECOVERY_COPIES_PER_RECORD);
-  }
-
-  /**
-   * `workit gc`: prune recovery copies beyond the per-record cap, remove temp
-   * files left by crashed writers, and collapse duplicate stored candidates in
-   * paused tasks. Live records (tasks/*.json, workspace.json) are never
-   * deleted; candidate dedupe keeps every candidate ID and the latest position.
-   * Closed tasks are history and are never rewritten. A dry run is read-only:
-   * no lock, no directory creation, no .gitignore rewrite.
-   */
-  collectGarbage(options: { dryRun?: boolean } = {}): Result<GarbageReport> {
-    const dryRun = options.dryRun === true;
-    const report: GarbageReport = {
-      dryRun,
-      recovery: { removed: 0, removedBytes: 0, kept: 0 },
-      temporary: { removed: 0 },
-      candidates: { removed: 0, tasks: [], skippedActive: [], skippedClosed: [], failed: [] },
-    };
-    if (!fs.existsSync(this.workitDir)) return success(null, null, report);
-    const sweep = (): Result<null> => {
-      try {
-        const groups = new Map<string, ReturnType<TaskStore["recoveryCopies"]>>();
-        for (const copy of this.recoveryCopies())
-          groups.set(copy.group, [...(groups.get(copy.group) ?? []), copy]);
-        for (const copies of groups.values()) {
-          const surplus = this.surplusCopies(copies);
-          report.recovery.kept += copies.length - surplus.length;
-          for (const copy of surplus) {
-            report.recovery.removed += 1;
-            try {
-              report.recovery.removedBytes += fs.statSync(copy.path).size;
-            } catch {}
-            if (!dryRun) fs.rmSync(copy.path, { force: true });
-          }
-        }
-        const nowMs = Date.now();
-        for (const directory of [this.recoveryDir, this.tasksDir, this.workitDir]) {
-          if (!fs.existsSync(directory)) continue;
-          for (const name of fs.readdirSync(directory)) {
-            if (!name.endsWith(".tmp") && !name.endsWith(".probe")) continue;
-            const file = path.join(directory, name);
-            const stat = fs.lstatSync(file);
-            if (!stat.isFile() || nowMs - stat.mtimeMs <= STALE_TEMPORARY_MS) continue;
-            report.temporary.removed += 1;
-            if (!dryRun) fs.rmSync(file, { force: true });
-          }
-        }
-        return success(null, null, null);
-      } catch (error) {
-        return failure("storage_error", `garbage collection failed: ${String(error)}`, {
-          path: this.recoveryDir,
-        });
-      }
-    };
-    // withLock initializes storage (mkdir, .gitignore); a dry run must not.
-    const pruned = dryRun ? sweep() : this.withLock<null>(sweep);
-    if (!pruned.ok) return pruned;
-    const tasks = this.listTasks();
-    if (!tasks.ok) return tasks;
-    for (const task of tasks.data) {
-      const deduped = dedupeCandidates(task.candidates);
-      const removed = task.candidates.length - deduped.length;
-      if (removed === 0) continue;
-      // An active task belongs to a live session; rewriting it would bump the
-      // revision under that session's feet.
-      if (task.status === "active") {
-        report.candidates.skippedActive.push(task.id);
-        continue;
-      }
-      // Closed records are immutable history (docs/workit-v1/contracts.md).
-      if (task.status === "closed") {
-        report.candidates.skippedClosed.push(task.id);
-        continue;
-      }
-      if (!dryRun) {
-        const written = this.mutateTask(task.id, task.revision, (current) =>
-          success(current.revision, null, {
-            ...current,
-            candidates: dedupeCandidates(current.candidates),
-          }),
-        );
-        if (!written.ok) {
-          report.candidates.failed.push(task.id);
-          continue;
-        }
-      }
-      report.candidates.removed += removed;
-      report.candidates.tasks.push(task.id);
-    }
-    return success(null, null, report);
-  }
-
-  private findRecovery(
-    target: "task" | "workspace",
-    taskId: Id | null,
-    digest: string,
-    workspace: WorkspaceRecord | null,
-  ): Buffer | null {
-    if (!fs.existsSync(this.recoveryDir)) return null;
-    const workspaceId = workspace?.id ?? this.trustedWorkspaceId();
-    if (target === "workspace" && !workspaceId) return null;
-    const candidates = this.recoveryCandidates();
-    if (!candidates.ok) return null;
-    for (const candidate of candidates.data) {
-      if (candidate.target !== target || candidate.digest !== digest) continue;
-      try {
-        if (!fs.lstatSync(candidate.path).isFile()) continue;
-        const bytes = fs.readFileSync(candidate.path);
-        if (digestBytes(bytes) !== digest) continue;
-        if (target === "workspace") {
-          const parsed = this.parseBytes<WorkspaceRecord>(bytes, workspaceRecordSchema);
-          if (parsed.ok && parsed.data.id === workspaceId && parsed.data.root === this.root)
-            return bytes;
-        } else {
-          const parsed = this.parseBytes<TaskRecord>(bytes, taskRecordSchema);
-          if (parsed.ok && parsed.data.id === taskId && parsed.data.workspaceId === workspace?.id)
-            return bytes;
-        }
-      } catch {}
-    }
-    return null;
-  }
-
-  private fsyncDirectory(directory: string) {
-    try {
-      const fd = fs.openSync(directory, "r");
-      try {
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-    } catch (error) {
-      // Windows rejects fsync on a directory handle; the rename is the durable step there.
-      if (process.platform !== "win32") throw error;
-    }
-  }
-
-  private trustedWorkspaceId(): Id | null {
-    if (!fs.existsSync(this.tasksDir)) return null;
-    const ids = new Set<Id>();
-    try {
-      for (const name of fs.readdirSync(this.tasksDir)) {
-        if (!name.endsWith(".json") || !validId(name.slice(0, -5))) return null;
-        const parsed = this.parseBytes<TaskRecord>(
-          fs.readFileSync(path.join(this.tasksDir, name)),
-          taskRecordSchema,
-        );
-        if (!parsed.ok || parsed.data.id !== name.slice(0, -5)) return null;
-        ids.add(parsed.data.workspaceId);
-      }
-    } catch {
-      return null;
-    }
-    return ids.size === 1 ? [...ids][0] : null;
-  }
-
-  private snapshotBytes(file: string): Buffer | null {
-    try {
-      return retryTransient(() => fs.readFileSync(file));
-    } catch {
-      return null;
-    }
-  }
-
-  private readRecord<T>(file: string, schema: z.ZodType) {
-    try {
-      const bytes = retryTransient(() => fs.readFileSync(file, "utf8"));
-      return { exists: true, result: this.parseBytes<T>(bytes, schema) };
-    } catch (error: any) {
-      if (error?.code === "ENOENT")
-        return { exists: false, result: success(null, null, null as T) };
-      return {
-        exists: true,
-        result: failure("recovery_required", `snapshot cannot be read: ${String(error)}`, {
-          path: file,
-        }),
-      };
-    }
-  }
-
-  /** `rewrite` refuses a record that only parses after dropping unknown keys:
-   * recovery copies a snapshot back verbatim and must not lose its fields. */
-  private parseBytes<T>(
-    bytes: string | Buffer,
-    schema: z.ZodType,
-    mode: "read" | "rewrite" = "read",
-  ): Result<T> {
-    let value: unknown;
-    try {
-      value = JSON.parse(typeof bytes === "string" ? bytes : bytes.toString("utf8"));
-    } catch {
-      return failure("recovery_required", "snapshot JSON is corrupt");
-    }
-    if (isObject(value) && "schemaVersion" in value && value.schemaVersion !== SCHEMA_VERSION)
-      return failure("unsupported_version", "unsupported snapshot schema version");
-    const parsed = parseStoredRecord(schema, value);
-    if (parsed.success && (mode === "read" || parsed.stripped.length === 0))
-      return success(null, null, parsed.data as T);
-    const writerVersion =
-      isObject(value) && isObject((value as { runtime?: unknown }).runtime)
-        ? (value as { runtime: { updatedWith?: unknown } }).runtime.updatedWith
-        : null;
-    const upgrade = `upgrade Workit before ${parsed.success ? "recovering" : "mutating"} this checkout`;
-    if (parsed.success)
-      return failure(
-        "recovery_required",
-        `snapshot carries fields this Workit cannot preserve (${parsed.stripped.join(", ")}); ${upgrade}`,
-      );
-    if (parsed.critical.length > 0)
-      return failure(
-        "recovery_required",
-        `snapshot requires fields this Workit cannot read (${parsed.critical.join(", ")}); ${upgrade}`,
-      );
-    if (typeof writerVersion === "string" && isNewerVersion(writerVersion, runtimeVersion()))
-      return failure(
-        "recovery_required",
-        `snapshot was written by workit ${writerVersion}; upgrade Workit before mutating this checkout`,
-      );
-    return failure("recovery_required", "snapshot does not satisfy its schema");
-  }
-
-  private conflict(expected: Revision, actual: Revision): Result<never> {
-    return failure(
-      "revision_conflict",
-      "snapshot revision does not match; omit expectedRevision to use the current record",
-      {
-        expectedRevision: expected,
-        actualRevision: actual,
-      },
-    );
-  }
-
-  private workspaceConflict(expected: Revision, actual: Revision): Result<never> {
-    return failure(
-      "revision_conflict",
-      "workspace revision does not match; omit expectedWorkspaceRevision to use the current record",
-      { expectedWorkspaceRevision: expected, actualWorkspaceRevision: actual },
-    );
-  }
-
-  private taskPath(taskId: Id) {
-    return path.join(this.tasksDir, `${taskId}.json`);
-  }
-  private get workitDir() {
-    return path.join(this.root, ".workit");
-  }
-  private get tasksDir() {
-    return path.join(this.workitDir, "tasks");
-  }
-  private get recoveryDir() {
-    return path.join(this.workitDir, "recovery");
-  }
-  private get workspacePath() {
-    return path.join(this.workitDir, "workspace.json");
-  }
-  private get indexPath() {
-    return path.join(this.workitDir, "index.json");
-  }
-  private get lockPath() {
-    return path.join(this.workitDir, "metadata.lock");
-  }
-  private get gitignorePath() {
-    return path.join(this.workitDir, ".gitignore");
   }
 }

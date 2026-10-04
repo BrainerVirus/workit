@@ -14,6 +14,7 @@ import {
 import { fileSignature, racySignature } from "@/packages/workit-core/src/core/task-store";
 import * as evaluation from "@/packages/workit-core/src/core/task-evaluation";
 import { compactContextFor, unfinishedTaskOfferFor } from "@/packages/workit-opencode/src/runtime";
+import { eventsFileOf, rawRecordOf, rewriteTaskLog, storeDirOf } from "./store-files";
 import { assessment, ref, scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const withRoot = (run: (root: string) => void) => {
@@ -43,7 +44,7 @@ const start = (root: string, actor: string, objective: string) => {
   return started.data as { id: string; revision: string };
 };
 
-const indexPath = (root: string) => join(root, ".workit", "index.json");
+const indexPath = (root: string) => join(storeDirOf(root), "task-index.json");
 
 test("task writes maintain the index without a listing pass", () => {
   withRoot((root) => {
@@ -88,20 +89,19 @@ test("Given the index is missing or corrupt, Then listing rebuilds it from the r
 test("index entries follow records changed outside the index (older writers)", () => {
   withRoot((root) => {
     const task = start(root, "lead", "original objective");
-    const file = join(root, ".workit", "tasks", `${task.id}.json`);
-    const record = JSON.parse(readFileSync(file, "utf8"));
-    record.progress.summary = "written by an older runtime";
-    writeFileSync(file, `${JSON.stringify(record)}\n`);
+    const record = rawRecordOf(root, task.id);
+    record.progress.summary = "written by another runtime";
+    rewriteTaskLog(root, task.id, record);
     const listed = new TaskStore(root).listTaskIndex();
     if (!listed.ok) throw new Error(listed.error);
-    expect(listed.data[0].progress.summary).toBe("written by an older runtime");
+    expect(listed.data[0].progress.summary).toBe("written by another runtime");
   });
 });
 
 test("index listing reports invalid records like listTasks", () => {
   withRoot((root) => {
     const task = start(root, "lead", "will break");
-    writeFileSync(join(root, ".workit", "tasks", `${task.id}.json`), "{broken");
+    writeFileSync(eventsFileOf(root, task.id), "{broken}\n");
     const store = new TaskStore(root);
     const listed = store.listTaskIndex();
     expect(listed.ok).toBe(false);

@@ -33,6 +33,7 @@ import {
   type VerdictCheck,
 } from "@brainervirus/workit-core/src/ledger";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
+import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE =
@@ -215,35 +216,44 @@ export async function run(argv: string[], io: Io): Promise<number> {
     ...(values.supersedes ? { supersedes: values.supersedes } : {}),
   };
 
+  // A recording on the checked-out branch creates its implicit task (D3).
+  const recorded = async <T>(result: LedgerResult<T>): Promise<LedgerResult<T>> => {
+    if (result.ok) await ensureImplicitTask(io, target.value ?? null);
+    return result;
+  };
   if (sub === "decision")
     return fromResult(
       io,
-      recordDecision(context, { what: text, why: values.why, refs: values.ref }),
+      await recorded(recordDecision(context, { what: text, why: values.why, refs: values.ref })),
       (row) => `recorded decision ${row.id}`,
     );
   if (sub === "ruling")
     return fromResult(
       io,
-      recordRuling(context, {
-        what: text,
-        why: values.why,
-        costIfWrong: values["cost-if-wrong"],
-        refs: values.ref,
-      }),
+      await recorded(
+        recordRuling(context, {
+          what: text,
+          why: values.why,
+          costIfWrong: values["cost-if-wrong"],
+          refs: values.ref,
+        }),
+      ),
       (row) => `recorded ruling ${row.id}`,
     );
   if (rest.length !== 1)
     return usage(io, `ledger verdict takes one result: ${VERDICT_RESULTS.join("|")}`);
   return fromResult(
     io,
-    recordVerdict(context, {
-      result: rest[0],
-      kind: values.kind,
-      how: values.how,
-      surface: values.surface ?? null,
-      self: values.self === true,
-      evidenceRefs: values.evidence,
-    }),
+    await recorded(
+      recordVerdict(context, {
+        result: rest[0],
+        kind: values.kind,
+        how: values.how,
+        surface: values.surface ?? null,
+        self: values.self === true,
+        evidenceRefs: values.evidence,
+      }),
+    ),
     (row) =>
       `recorded verdict ${row.id}: ${row.result} [${row.kind}] for ${row.branch} @ ${(row.head ?? "").slice(0, 12)}${row.self ? ` (self${row.selfReason === "no_session" ? ": WORKIT_SESSION_ID unset" : ""}; never accepted)` : ""}`,
   );

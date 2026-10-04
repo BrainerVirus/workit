@@ -285,15 +285,6 @@ export const operationCorpus = (): Array<{ family: OperationFamily; input: Opera
       },
       authorityRefs: [],
     }),
-    operation("recover", {
-      taskId,
-      expectedWorkspaceRevision: revision,
-      target: "task",
-      expectedBytes: digest,
-      snapshotDigest: digest,
-      reason: "x",
-      authorityRefs: [],
-    }),
   ].map((input) => ({ family: "state" as const, input })),
 ];
 

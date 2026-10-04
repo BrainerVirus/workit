@@ -157,8 +157,7 @@ test(
     const piAi = path.join(repoRoot, "node_modules/@earendil-works/pi-ai/dist/index.js");
     writeFileSync(
       fakeProvider,
-      `import { readFileSync } from "node:fs";
-import { createAssistantMessageEventStream } from ${JSON.stringify(piAi)};
+      `import { createAssistantMessageEventStream } from ${JSON.stringify(piAi)};
 let turns = 0;
 export default (pi) => pi.registerProvider("workit-test", {
   api: "openai-completions", apiKey: "offline", baseUrl: "http://offline.invalid",
@@ -178,10 +177,8 @@ export default (pi) => pi.registerProvider("workit-test", {
         stream.push({ type: "done", reason: "stop", message: output }); stream.end(); return;
       }
       const call = { type: "toolCall", id: "offline-report", name: "workit_worker", arguments: {} };
-      const task = JSON.parse(readFileSync(process.cwd() + "/.workit/tasks/" + process.env.WORKIT_PI_TASK_ID + ".json", "utf8"));
-      const workspace = JSON.parse(readFileSync(process.cwd() + "/.workit/workspace.json", "utf8"));
+      // Omitted revisions use the current records (the store is not a file to read).
       call.arguments = { schemaVersion: 1, action: "report", taskId: process.env.WORKIT_PI_TASK_ID, workerId: process.env.WORKIT_PI_WORKER_ID,
-        expectedRevision: task.revision, expectedWorkspaceRevision: workspace.revision,
         report: { outcome: "completed", summary: "offline reviewer", evidenceIds: [], findingIds: [] } };
       output.content.push(call); output.stopReason = "toolUse";
       stream.push({ type: "start", partial: output }); stream.push({ type: "toolcall_start", contentIndex: 0, partial: output });

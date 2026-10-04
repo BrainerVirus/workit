@@ -16,6 +16,7 @@ import {
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import { SIGNAL_TTL_MS, sessionCompactContext } from "@/packages/workit-core/src/hooks/context";
 import { evaluateEvidence } from "@/packages/workit-core/src/core/task-evaluation";
+import { rawRecordOf, rewriteTaskLog } from "../workit-core/store-files";
 import {
   assessment,
   caller,
@@ -79,7 +80,8 @@ const startTask = (root: string) => {
     constraints: [],
     now: () => new Date().toISOString(),
   });
-  const started = core.task(taskStartRequest());
+  // The workspace may already exist (an implicit task): use its current revision.
+  const started = core.task(taskStartRequest({ expectedWorkspaceRevision: undefined }));
   if (!started.ok) throw new Error(started.error);
   const taskId = (started.data as { id: string }).id;
   const assessed = core.policy({
@@ -225,11 +227,10 @@ test("G `workit check -- true` while `test` is configured, T the testing require
 
   // Only the CLI's own observation counts: the same entry imported from
   // another checkout is history, not evidence here.
-  const file = path.join(root, ".workit", "tasks", `${taskId}.json`);
-  const stored = JSON.parse(readFileSync(file, "utf8"));
+  const stored = rawRecordOf(root, taskId);
   for (const entry of stored.evidence)
     if (entry.data.observation) entry.provenance = { ...entry.provenance, kind: "imported" };
-  writeFileSync(file, JSON.stringify(stored));
+  rewriteTaskLog(root, taskId, stored);
   expect(status().status).toBe("unsatisfied");
 });
 
@@ -282,27 +283,48 @@ test("G an agent-recorded `evidence.record {kind:check,result:passed}`, T it doe
   expect(status().status).toBe("unsatisfied");
 });
 
-test("without a task, a check still lands in the ledger; with nothing configured or detected an ad-hoc check never satisfies the gate", async () => {
+test("G a fresh branch with no task, W check runs, T a task bound to the branch exists and the run is in the ledger; with nothing configured or detected an ad-hoc check never satisfies the gate", async () => {
   const bare = repo(null);
-  const ledgerOnly = await run(bare, ["check", "--json", "--", "true"]);
-  expect(ledgerOnly.code).toBe(0);
-  expect(ledgerOnly.json().data).toMatchObject({
-    task: null,
-    evidenceId: null,
-    taskNote: expect.stringContaining("ledger only"),
+  const first = await run(bare, ["check", "--json", "--", "true"]);
+  expect(first.code).toBe(0);
+  expect(first.json().data).toMatchObject({
+    task: { id: expect.any(String), created: true },
+    evidenceId: expect.any(String),
   });
+  const implicitId = first.json().data.task.id;
+  // The store lives in the git common dir, not in the checkout.
   expect(existsSync(path.join(bare, ".workit"))).toBe(false);
+  const bound = new TaskStore(bare).implicitTask({
+    provenance: {
+      kind: "agent_reported",
+      host: "workit_cli",
+      session: null,
+      workerId: null,
+      receipts: [],
+    },
+    create: false,
+  });
+  expect(bound).toMatchObject({
+    ok: true,
+    data: { created: false, key: { key: "feature/x", branch: "feature/x" } },
+  });
+  expect(bound.ok && bound.data?.task.id).toBe(implicitId);
+  // The next run on the branch reuses it.
+  expect((await run(bare, ["check", "--json", "--", "true"])).json().data.task).toEqual({
+    id: implicitId,
+    created: false,
+  });
   const rows = readLedger(bare);
   if (!rows.ok) throw new Error(rows.error);
-  expect(rows.value.rows).toEqual([
-    expect.objectContaining({
-      type: "check",
-      observer: "workit_cli",
-      name: null,
-      result: "passed",
-    }),
-  ]);
+  const row = expect.objectContaining({
+    type: "check",
+    observer: "workit_cli",
+    name: null,
+    result: "passed",
+  });
+  expect(rows.value.rows).toEqual([row, row]);
 
+  // An explicitly started task takes the branch over from the implicit one.
   const { status } = startTask(bare);
   expect((await run(bare, ["check", "--json", "--", "true"])).code).toBe(0);
   expect(status()).toMatchObject({
@@ -456,9 +478,7 @@ test("an older reader that does not know the observation fails closed instead of
   const root = repo();
   const { taskId } = startTask(root);
   expect((await run(root, ["check", "test", "--json"])).code).toBe(0);
-  const record = JSON.parse(
-    readFileSync(path.join(root, ".workit", "tasks", `${taskId}.json`), "utf8"),
-  );
+  const record = rawRecordOf(root, taskId);
   // The reader before S9b: same task schema, evidence without `observation`.
   const older = taskRecordSchema.extend({
     evidence: z.array(entrySchema(evidenceSchema.omit({ observation: true }))),

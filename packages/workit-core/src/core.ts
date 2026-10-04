@@ -61,12 +61,7 @@ export type {
   Result as ContractResult,
 } from "./core/task-contract";
 export { TaskStore, runtimeVersion } from "./core/task-store";
-export type {
-  MetadataLock,
-  ProcessEvidence,
-  RecoveryInput,
-  TaskIndexEntry,
-} from "./core/task-store";
+export type { TaskIndexEntry } from "./core/task-store";
 export { compactTaskContext, reconcileResume } from "./core/task-context";
 export type {
   CompactTaskContext,

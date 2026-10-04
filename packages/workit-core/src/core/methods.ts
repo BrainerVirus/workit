@@ -106,7 +106,10 @@ PR readiness, a fresh review, or post-commit assessment/closure paperwork.
 
 For tracked work, inspect its current state and use the shared operations for
 task, policy, evidence, finding, decision, worker, writer, and state changes.
-Start a record once for an explicit tracked objective; assess or reassess only
+Each branch has one implicit task: an operation without taskId applies to it,
+and the first recording (a note, check, finding or evidence) creates it, so you
+never manage task ids. Start a record only for an explicit tracked objective;
+assess or reassess only
 when policy selection or changed evidence/constraints requires it. Omitted
 expectedRevision and expectedWorkspaceRevision use current values; explicit
 values are still concurrency-checked, so never copy revisions between calls.

@@ -51,6 +51,34 @@ export const currentTaskEntry = (
 };
 
 /**
+ * The open task bound to this checkout's branch (its implicit task, D3),
+ * unless a host conversation other than this one is bound to it: someone
+ * else's conversation is only ever offered, never injected. Sessions of the
+ * CLI (`workit_cli`, which creates implicit tasks) are tooling, not
+ * conversations.
+ */
+const implicitTaskEntry = (
+  store: TaskStore,
+  entries: TaskIndexEntry[],
+  session: SessionHandle,
+): TaskIndexEntry | null => {
+  const open = entries.filter(
+    (entry) =>
+      entry.key !== null &&
+      entry.status !== "closed" &&
+      !entry.sessions.some(
+        (item) =>
+          item.host !== "workit_cli" &&
+          !(item.host === session.host && item.handle === session.handle),
+      ),
+  );
+  if (open.length === 0) return null;
+  const key = store.currentKey();
+  if (!key.ok) return null;
+  return open.filter((entry) => entry.key === key.data.key).toSorted(newestFirst)[0] ?? null;
+};
+
+/**
  * History offer for open tasks not bound to `session` (and not `excludeTaskId`,
  * the task already shown), built from the task index. Task text is quoted and
  * stripped of angle brackets; null when none.
@@ -109,7 +137,9 @@ const recentSignal = (root: string): string | null => {
 const cache = new Map<string, CachedContext>();
 
 /**
- * Compact context for `session`'s current task, for per-turn host injection.
+ * Compact context for `session`'s current task (the task bound to the
+ * session, else the implicit task of the checkout's branch), for per-turn
+ * host injection.
  *
  * Reads the task index (no full-record parse for unrelated tasks), never
  * captures a candidate, and reuses the previous result while the task and
@@ -124,7 +154,9 @@ export function sessionCompactContext(
 ): string | null {
   const listed = store.listTaskIndex();
   if (!listed.ok) return null;
-  const entry = currentTaskEntry(listed.data, session, selection);
+  const entry =
+    currentTaskEntry(listed.data, session, selection) ??
+    implicitTaskEntry(store, listed.data, session);
   return entry ? entryCompactContext(store, entry, session, context) : null;
 }
 
@@ -209,7 +241,9 @@ export const sessionContextText = (
     const store = new TaskStore(input.cwd);
     const listed = store.listTaskIndex();
     if (!listed.ok) throw new Error(listed.error);
-    const entry = currentTaskEntry(listed.data, session, descriptor.context.task);
+    const entry =
+      currentTaskEntry(listed.data, session, descriptor.context.task) ??
+      implicitTaskEntry(store, listed.data, session);
     const text = entry
       ? entryCompactContext(store, entry, session, hookOperationContext(input, descriptor))
       : null;

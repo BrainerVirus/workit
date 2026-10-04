@@ -39,6 +39,7 @@ import {
   type Utc,
   type Provenance,
   type Worker,
+  type OperationFamily,
   type WorkspaceRecord,
   taskRecordSchema,
 } from "./task-contract";
@@ -62,7 +63,7 @@ import {
 } from "./authority";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { verifyStandingApproval } from "./auto-approval";
-import { TaskStore, type MetadataLock, type ProcessEvidence } from "./task-store";
+import { TaskStore } from "./task-store";
 import { defaultLockTimeout } from "./store-lock";
 import {
   compactTaskContext,
@@ -108,12 +109,6 @@ export type OperationContext = {
   now: Utc | (() => Utc);
   nativeAuthority?: NativeAuthorityVerifier;
   nativeWorker?: NativeWorkerVerifier;
-  nativeRecovery?: (input: {
-    lock: MetadataLock | null;
-    writer: WorkspaceRecord["writer"];
-    reason: string;
-    authorityRefs: Ref[];
-  }) => Result<ProcessEvidence>;
   workerId?: string | null;
 };
 
@@ -466,6 +461,40 @@ const refsWithinScope = (refs: Ref[], scope: Scope): boolean =>
       bindingCovers(scope, { description: "", paths: [ref.path], exclusions: [] }),
   );
 
+/** Actions that take a taskId; without one they apply to the implicit task. */
+const TASK_SCOPED_ACTIONS: ReadonlySet<string> = new Set([
+  "task.inspect",
+  "task.revise",
+  "task.progress",
+  "task.pause",
+  "task.resume",
+  "task.close",
+  "policy.assess",
+  "policy.preview",
+  "policy.explain",
+  "evidence.record",
+  "finding.record",
+  "finding.resolve",
+  "decision.record",
+  "decision.revoke",
+  "worker.assign",
+  "worker.report",
+  "worker.cancel",
+  "writer.acquire",
+  "writer.release",
+  "state.export",
+]);
+/** Recording actions that create the implicit task on first use. */
+const CREATING_ACTIONS: ReadonlySet<string> = new Set([
+  "task.revise",
+  "task.progress",
+  "policy.assess",
+  "evidence.record",
+  "finding.record",
+  "decision.record",
+  "worker.assign",
+  "writer.acquire",
+]);
 /** Commit attempts for a call whose revisions the engine filled (see retryFilledRevisions). */
 const REVISION_RETRY_ATTEMPTS = 8;
 const retryPause = new Int32Array(new SharedArrayBuffer(4));
@@ -820,6 +849,36 @@ export class WorkitCore {
     return retryFilledRevisions(filledRevisions(request), run);
   }
 
+  /**
+   * A task-scoped request without a `taskId` applies to the implicit task of
+   * this checkout's branch (D3). Recording actions create that task on first
+   * use; reads and lifecycle actions only look it up. Helpers never create.
+   */
+  private implicitTask(family: OperationFamily, request: unknown): Result<unknown> {
+    if (typeof request !== "object" || request === null || Array.isArray(request))
+      return success(null, null, request);
+    const value = request as { action?: unknown; taskId?: unknown };
+    if (value.taskId !== undefined || typeof value.action !== "string")
+      return success(null, null, request);
+    const action = `${family}.${value.action}`;
+    if (!TASK_SCOPED_ACTIONS.has(action)) return success(null, null, request);
+    const root = this.contextRootError();
+    if (!root.ok) return root;
+    const create = CREATING_ACTIONS.has(action) && (this.context.workerId ?? null) === null;
+    const found = this.store.implicitTask({
+      provenance: provenance(this.context),
+      create,
+      now: trustedNow(this.context),
+    });
+    if (!found.ok) return found;
+    if (!found.data)
+      return failure(
+        "not_found",
+        'no task for this branch yet; pass taskId, or record something first (`workit task start "<objective>"`, a note, a check) to create it',
+      );
+    return success(null, null, { ...request, taskId: found.data.task.id });
+  }
+
   private helperEntry(
     task: TaskRecord,
     requireSession = false,
@@ -859,10 +918,12 @@ export class WorkitCore {
   }
 
   state(request: unknown): Result<ExportBundle | TaskSummary | TaskRecord | WorkspaceRecord> {
-    // Recovery is an operator CAS over snapshot bytes; only import retries.
-    return (request as { action?: unknown } | null)?.action === "import"
-      ? this.retryOmittedRevisions(request, () => this.stateOnce(request))
-      : this.stateOnce(request);
+    const resolved = this.implicitTask("state", request);
+    if (!resolved.ok) return resolved;
+    const value = resolved.data;
+    return (value as { action?: unknown } | null)?.action === "import"
+      ? this.retryOmittedRevisions(value, () => this.stateOnce(value))
+      : this.stateOnce(value);
   }
 
   private stateOnce(
@@ -932,47 +993,14 @@ export class WorkitCore {
       if (!imported.ok) return imported;
       return this.summary(imported.data);
     }
-    if (!this.context.nativeRecovery)
-      return failure("permission_denied", "native recovery authority is unavailable");
-    const processEvidence = (
-      lock: MetadataLock | null,
-      writer: WorkspaceRecord["writer"],
-    ): Result<ProcessEvidence> =>
-      this.context.nativeRecovery!({
-        lock,
-        writer,
-        reason: input.reason,
-        authorityRefs: input.authorityRefs,
-      });
-    if (input.target === "workspace")
-      return this.store.recoverWorkspace({
-        expectedBytes: input.expectedBytes,
-        snapshotDigest: input.snapshotDigest,
-        reason: input.reason,
-        authorityRefs: input.authorityRefs,
-        expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-        processEvidence,
-      });
-    const workspace = this.store.readWorkspace();
-    if (!workspace.ok) return workspace;
-    if (!workspace.data) return failure("not_found", "workspace not found");
-    this.fillRevisions(input, undefined, workspace.data);
-    if (input.target === "workspace" && input.taskId !== undefined)
-      return failure("invalid_input", "workspace recovery takes no task ID");
-    if (input.target === "task" && input.taskId === undefined)
-      return failure("invalid_input", "task recovery requires a task ID");
-    return this.store.recoverTask(input.taskId, {
-      expectedBytes: input.expectedBytes,
-      snapshotDigest: input.snapshotDigest,
-      reason: input.reason,
-      authorityRefs: input.authorityRefs,
-      expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-      processEvidence,
-    });
+    return failure("invalid_input", "unknown state action");
   }
 
   task(request: unknown): Result<TaskSummary | TaskListItem[] | TaskView> {
-    return this.retryOmittedRevisions(request, () => this.taskOnce(request));
+    const resolved = this.implicitTask("task", request);
+    if (!resolved.ok) return resolved;
+    const value = resolved.data;
+    return this.retryOmittedRevisions(value, () => this.taskOnce(value));
   }
 
   private taskOnce(request: unknown): Result<TaskSummary | TaskListItem[] | TaskView> {
@@ -1083,7 +1111,10 @@ export class WorkitCore {
   }
 
   policy(request: unknown): Result<Policy | null> {
-    return this.retryOmittedRevisions(request, () => this.policyOnce(request));
+    const resolved = this.implicitTask("policy", request);
+    if (!resolved.ok) return resolved;
+    const value = resolved.data;
+    return this.retryOmittedRevisions(value, () => this.policyOnce(value));
   }
 
   private policyOnce(request: unknown): Result<Policy | null> {
@@ -1139,7 +1170,10 @@ export class WorkitCore {
   }
 
   evidence(request: unknown): Result<Entry<Evidence>> {
-    return this.retryOmittedRevisions(request, () => this.evidenceOnce(request));
+    const resolved = this.implicitTask("evidence", request);
+    if (!resolved.ok) return resolved;
+    const value = resolved.data;
+    return this.retryOmittedRevisions(value, () => this.evidenceOnce(value));
   }
 
   private evidenceOnce(request: unknown): Result<Entry<Evidence>> {
@@ -1339,11 +1373,13 @@ export class WorkitCore {
   }
 
   decision(request: unknown): Result<Entry<Decision>> {
-    return this.recordDecision(request);
+    const resolved = this.implicitTask("decision", request);
+    return resolved.ok ? this.recordDecision(resolved.data) : resolved;
   }
 
   observeDecision(request: unknown, observation: unknown): Result<Entry<Decision>> {
-    return this.recordDecision(request, observation, true);
+    const resolved = this.implicitTask("decision", request);
+    return resolved.ok ? this.recordDecision(resolved.data, observation, true) : resolved;
   }
 
   /**
@@ -1353,7 +1389,8 @@ export class WorkitCore {
    * removal, which fails the next reserve closed.
    */
   observeStandingDecision(request: unknown): Result<Entry<Decision>> {
-    return this.recordDecision(request, undefined, true, true);
+    const resolved = this.implicitTask("decision", request);
+    return resolved.ok ? this.recordDecision(resolved.data, undefined, true, true) : resolved;
   }
 
   /**
@@ -1576,7 +1613,10 @@ export class WorkitCore {
   }
 
   finding(request: unknown): Result<Entry<Finding>> {
-    return this.retryOmittedRevisions(request, () => this.findingOnce(request));
+    const resolved = this.implicitTask("finding", request);
+    if (!resolved.ok) return resolved;
+    const value = resolved.data;
+    return this.retryOmittedRevisions(value, () => this.findingOnce(value));
   }
 
   private findingOnce(request: unknown): Result<Entry<Finding>> {
@@ -1749,7 +1789,10 @@ export class WorkitCore {
   }
 
   worker(request: unknown): Result<Entry<Worker>> {
-    return this.retryOmittedRevisions(request, () => this.workerOnce(request));
+    const resolved = this.implicitTask("worker", request);
+    if (!resolved.ok) return resolved;
+    const value = resolved.data;
+    return this.retryOmittedRevisions(value, () => this.workerOnce(value));
   }
 
   private workerOnce(request: unknown): Result<Entry<Worker>> {
@@ -2188,7 +2231,10 @@ export class WorkitCore {
   }
 
   writer(request: unknown): Result<WorkspaceRecord> {
-    return this.retryOmittedRevisions(request, () => this.writerOnce(request));
+    const resolved = this.implicitTask("writer", request);
+    if (!resolved.ok) return resolved;
+    const value = resolved.data;
+    return this.retryOmittedRevisions(value, () => this.writerOnce(value));
   }
 
   private writerOnce(request: unknown): Result<WorkspaceRecord> {

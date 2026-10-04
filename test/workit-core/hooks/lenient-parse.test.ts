@@ -15,6 +15,7 @@ import {
 import { commandText } from "@/packages/workit-core/src/hooks/hosts/fields";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { fixture, startTask, tempRoot, withProtectedMain } from "./hook-fixtures";
+import { eventsFileOf, eventsOf, rawRecordOf, rewriteTaskLog } from "../store-files";
 
 // Keys a newer host release might add; none of them may change a decision.
 const FUTURE = {
@@ -98,20 +99,24 @@ test("a broken Codex payload passes through with a stderr diagnostic instead of 
   }
 });
 
-const taskFile = (root: string, id: string) => path.join(root, ".workit", "tasks", `${id}.json`);
+// A task's on-disk record is its event log; these replace it with one
+// opening event (as another runtime might leave it) and replay it raw.
+const writeRecord = (root: string, id: string, record: unknown): string => {
+  rewriteTaskLog(root, id, record);
+  return readFileSync(eventsFileOf(root, id), "utf8");
+};
 
 test("stored records with keys from a newer runtime stay readable; writes stay strict", () => {
   const root = tempRoot();
   try {
     const id = startTask(root, { host: "codex_cli", actor: "reader" });
-    const file = taskFile(root, id);
-    const record = JSON.parse(readFileSync(file, "utf8"));
+    const record = rawRecordOf(root, id);
     // New fields at the top level, inside an entry, and inside nested data.
     record.futureTopLevel = { anything: 1 };
     record.intent.futureEntryField = "x";
     record.intent.data.scope.futureScopeField = ["y"];
     record.progress.futureProgress = null;
-    writeFileSync(file, JSON.stringify(record));
+    writeRecord(root, id, record);
 
     const store = new TaskStore(root);
     const read = store.readTask(id);
@@ -141,9 +146,12 @@ test("stored records with keys from a newer runtime stay readable; writes stay s
       reason: "tolerance check",
     });
     expect(paused.ok).toBe(true);
-    const written = JSON.parse(readFileSync(file, "utf8"));
-    expect(written).not.toHaveProperty("futureTopLevel");
-    expect(taskRecordSchema.safeParse(written).success).toBe(true);
+    // The write is a patch of the keys this reader can name: the newer
+    // runtime's keys stay in the log, untouched and unread.
+    const written = rawRecordOf(root, id);
+    expect(written.status).toBe("paused");
+    expect(written.futureTopLevel).toEqual({ anything: 1 });
+    expect(JSON.stringify(eventsOf(root, id).at(-1)?.data.ops)).not.toContain("future");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -153,7 +161,7 @@ test("reader tolerance strips only unknown keys; real violations still fail", ()
   const root = tempRoot();
   try {
     const id = startTask(root, { host: "codex_cli", actor: "reader" });
-    const record = JSON.parse(readFileSync(taskFile(root, id), "utf8"));
+    const record = rawRecordOf(root, id);
     expect(taskRecordSchema.safeParse({ ...record, extra: 1 }).success).toBe(false);
     expect(parseStoredRecord(taskRecordSchema, { ...record, extra: 1 }).success).toBe(true);
     // An unknown key next to a wrong type is still a schema failure.
@@ -165,7 +173,7 @@ test("reader tolerance strips only unknown keys; real violations still fail", ()
     parseStoredRecord(taskRecordSchema, input);
     expect(input.extra).toBe(1);
     // The store reports a corrupt record as before.
-    writeFileSync(taskFile(root, id), JSON.stringify({ ...record, extra: 1, revision: 7 }));
+    writeRecord(root, id, { ...record, extra: 1, revision: 7 });
     const read = new TaskStore(root).readTask(id);
     expect(read.ok).toBe(false);
     expect(!read.ok && read.code).toBe("recovery_required");
@@ -273,16 +281,15 @@ test("a field the writer declares critical makes an older reader fail closed and
   const root = tempRoot();
   try {
     const id = startTask(root, { host: "codex_cli", actor: "reader" });
-    const file = taskFile(root, id);
-    const record = JSON.parse(readFileSync(file, "utf8"));
-    const write = (value: unknown) => writeFileSync(file, JSON.stringify(value));
+    const file = eventsFileOf(root, id);
+    const record = rawRecordOf(root, id);
+    const write = (value: unknown) => writeRecord(root, id, value);
     // Ignorable: an undeclared field is dropped and the record reads.
     write({ ...record, ignorable: 1, critical: ["evidence.*.data.observer"] });
     expect(new TaskStore(root).readTask(id).ok).toBe(true);
     // Critical: the declared path (here nested under an entry) cannot be dropped.
     record.intent.data.mustUnderstand = { mode: "strict" };
-    const bytes = JSON.stringify({ ...record, critical: ["intent.data.mustUnderstand"] });
-    writeFileSync(file, bytes);
+    const bytes = write({ ...record, critical: ["intent.data.mustUnderstand"] });
     const store = new TaskStore(root);
     const read = store.readTask(id);
     expect(read).toMatchObject({ ok: false, code: "recovery_required" });
@@ -364,18 +371,14 @@ test("a critical path declared with an array index covers every element", () => 
   const root = tempRoot();
   try {
     const id = startTask(root, { host: "codex_cli", actor: "reader" });
-    const file = taskFile(root, id);
-    const record = JSON.parse(readFileSync(file, "utf8"));
+    const record = rawRecordOf(root, id);
     record.intent.data.authorityRefs = [
       { kind: "external", url: "https://example.com/a", future: true },
     ];
-    writeFileSync(file, JSON.stringify(record));
+    writeRecord(root, id, record);
     // Undeclared, the unknown key inside the array element is ignorable.
     expect(new TaskStore(root).readTask(id).ok).toBe(true);
-    writeFileSync(
-      file,
-      JSON.stringify({ ...record, critical: ["intent.data.authorityRefs.0.future"] }),
-    );
+    writeRecord(root, id, { ...record, critical: ["intent.data.authorityRefs.0.future"] });
     const read = new TaskStore(root).readTask(id);
     expect(read).toMatchObject({ ok: false, code: "recovery_required" });
     expect(!read.ok && read.error).toContain("intent.data.authorityRefs.*.future");
