@@ -60,6 +60,7 @@ import {
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { verifyStandingApproval } from "./auto-approval";
 import { TaskStore, type MetadataLock, type ProcessEvidence } from "./task-store";
+import { defaultLockTimeout } from "./store-lock";
 import {
   compactTaskContext,
   exportDigest,
@@ -452,6 +453,54 @@ const refsWithinScope = (refs: Ref[], scope: Scope): boolean =>
       bindingCovers(scope, { description: "", paths: [ref.path], exclusions: [] }),
   );
 
+/** Commit attempts for a call whose revisions the engine filled (see retryFilledRevisions). */
+const REVISION_RETRY_ATTEMPTS = 8;
+const retryPause = new Int32Array(new SharedArrayBuffer(4));
+/** Which revisions the caller left for the engine to fill from its own read. */
+type FilledRevisions = { task: boolean; workspace: boolean };
+const filledRevisions = (request: unknown): FilledRevisions => {
+  const value = (typeof request === "object" && request !== null ? request : {}) as {
+    expectedRevision?: unknown;
+    expectedWorkspaceRevision?: unknown;
+  };
+  return {
+    task: value.expectedRevision === undefined,
+    workspace: value.expectedWorkspaceRevision === undefined,
+  };
+};
+/**
+ * A store compare-and-swap rejection (it carries the actual revision) on a
+ * revision the engine filled. A conflict on a caller-supplied revision, or a
+ * semantic conflict such as a changed import source, is never retried.
+ */
+const filledConflict = (result: Result<unknown>, filled: FilledRevisions): boolean =>
+  !result.ok &&
+  result.code === "revision_conflict" &&
+  (("actualRevision" in result.details && filled.task) ||
+    ("actualWorkspaceRevision" in result.details && filled.workspace));
+/**
+ * Re-run `run` while it loses a compare-and-swap race on an engine-filled
+ * revision. Each attempt commits at most once and a CAS rejection commits
+ * nothing, so a success is applied exactly once. Attempts stop at
+ * REVISION_RETRY_ATTEMPTS or once the lock budget has elapsed — so blocking
+ * stays within about twice that budget — and end as retryable busy.
+ */
+const retryFilledRevisions = <T>(filled: FilledRevisions, run: () => Result<T>): Result<T> => {
+  if (!filled.task && !filled.workspace) return run();
+  let result = run();
+  // The deadline starts after the first attempt, so a slow first lock wait
+  // still leaves at least one retry.
+  const deadline = Date.now() + defaultLockTimeout();
+  for (let attempt = 1; filledConflict(result, filled); attempt += 1) {
+    if (attempt >= REVISION_RETRY_ATTEMPTS || Date.now() >= deadline)
+      return failure("busy", "records kept changing under concurrent writers; retry the call");
+    // Jittered backoff de-synchronizes writers that lost the same race.
+    Atomics.wait(retryPause, 0, 0, Math.floor(Math.random() * 4 * attempt) + 1);
+    result = run();
+  }
+  return result;
+};
+
 const trustedNow = (context: OperationContext): Utc =>
   typeof context.now === "function" ? context.now() : context.now;
 
@@ -747,6 +796,17 @@ export class WorkitCore {
       input.expectedWorkspaceRevision = workspace ? workspace.revision : null;
   }
 
+  /**
+   * A revision the caller omitted is not a compare-and-swap request: when
+   * another writer commits between this call's read and its locked commit,
+   * re-run the whole operation — fresh read, policy, requirement and
+   * candidate checks, then commit — so a re-check that now fails returns that
+   * failure. Caller-supplied revisions stay strict CAS.
+   */
+  private retryOmittedRevisions<T>(request: unknown, run: () => Result<T>): Result<T> {
+    return retryFilledRevisions(filledRevisions(request), run);
+  }
+
   private helperEntry(
     task: TaskRecord,
     requireSession = false,
@@ -786,6 +846,15 @@ export class WorkitCore {
   }
 
   state(request: unknown): Result<ExportBundle | TaskSummary | TaskRecord | WorkspaceRecord> {
+    // Recovery is an operator CAS over snapshot bytes; only import retries.
+    return (request as { action?: unknown } | null)?.action === "import"
+      ? this.retryOmittedRevisions(request, () => this.stateOnce(request))
+      : this.stateOnce(request);
+  }
+
+  private stateOnce(
+    request: unknown,
+  ): Result<ExportBundle | TaskSummary | TaskRecord | WorkspaceRecord> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     if ((this.context.workerId ?? null) !== null)
@@ -890,6 +959,10 @@ export class WorkitCore {
   }
 
   task(request: unknown): Result<TaskSummary | TaskListItem[] | TaskView> {
+    return this.retryOmittedRevisions(request, () => this.taskOnce(request));
+  }
+
+  private taskOnce(request: unknown): Result<TaskSummary | TaskListItem[] | TaskView> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("task", request);
@@ -997,6 +1070,10 @@ export class WorkitCore {
   }
 
   policy(request: unknown): Result<Policy | null> {
+    return this.retryOmittedRevisions(request, () => this.policyOnce(request));
+  }
+
+  private policyOnce(request: unknown): Result<Policy | null> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("policy", request);
@@ -1049,6 +1126,10 @@ export class WorkitCore {
   }
 
   evidence(request: unknown): Result<Entry<Evidence>> {
+    return this.retryOmittedRevisions(request, () => this.evidenceOnce(request));
+  }
+
+  private evidenceOnce(request: unknown): Result<Entry<Evidence>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("evidence", request);
@@ -1176,6 +1257,36 @@ export class WorkitCore {
     return this.recordDecision(request, undefined, true, true);
   }
 
+  /**
+   * Commit a task mutation whose update re-validates everything it depends on
+   * under the lock. Decisions use this instead of a whole-operation retry
+   * because a native receipt is retired before the commit and cannot be
+   * verified twice: a CAS loss on an engine-filled revision re-reads the
+   * record, repeats `recheck` against it and retries the commit; the update's
+   * in-lock receipt check keeps a receipt from being consumed twice.
+   */
+  private commitTask(
+    taskId: string,
+    expected: string,
+    filled: boolean,
+    recheck: (fresh: TaskRecord) => Result<unknown>,
+    update: Parameters<TaskStore["mutateTask"]>[2],
+  ): Result<TaskRecord> {
+    let revision = expected;
+    let first = true;
+    return retryFilledRevisions({ task: filled, workspace: false }, () => {
+      if (!first) {
+        const fresh = this.store.readTask(taskId);
+        if (!fresh.ok) return fresh;
+        const checked = recheck(fresh.data);
+        if (!checked.ok) return checked;
+        revision = fresh.data.revision;
+      }
+      first = false;
+      return this.store.mutateTask(taskId, revision, update, trustedNow(this.context));
+    });
+  }
+
   private recordDecision(
     request: unknown,
     nativeObservation?: unknown,
@@ -1214,6 +1325,7 @@ export class WorkitCore {
     if (!task.ok) return task;
     if ((this.context.workerId ?? null) !== null)
       return failure("permission_denied", "helpers cannot record or revoke decisions");
+    const filled = input.expectedRevision === undefined;
     this.fillRevisions(input, task.data);
     if (input.action === "record") {
       if (task.data.status === "closed")
@@ -1269,10 +1381,31 @@ export class WorkitCore {
       const nativeProvenance = native?.ok ? retireNativeAuthority(native.data) : null;
       if (native?.ok && !nativeProvenance)
         return failure("permission_denied", "native decision authority was retired");
-      const changed = this.store.mutateTask(
+      // A retry repeats the pre-lock checks that depend on the task record and
+      // records the provenance of the standing re-verification it passed;
+      // closure, receipt reuse, content and requirements are re-checked in the lock.
+      let standingProvenance = standingApproval?.ok === true ? standingApproval.data : null;
+      const recheck = (fresh: TaskRecord): Result<unknown> => {
+        if (fresh.status === "closed")
+          return failure("invalid_transition", "closed task cannot record a decision");
+        if (!standingProvenance) return success(null, null, null);
+        const again = verifyStandingApproval(
+          this.store.root,
+          fresh,
+          this.context.caller,
+          input.binding,
+        );
+        if (again.ok) standingProvenance = again.data;
+        return again;
+      };
+      const changed = this.commitTask(
         task.data.id,
         input.expectedRevision,
+        filled,
+        recheck,
         (current, mutation) => {
+          if (current.status === "closed")
+            return failure("invalid_transition", "closed task cannot record a decision");
           const latestContent = verifyDecisionContent(this.store, input.binding);
           if (!latestContent.ok) return latestContent;
           const known = new Set(current.policy?.requirements.map((item) => item.id) ?? []);
@@ -1293,9 +1426,7 @@ export class WorkitCore {
             id: newId(),
             recordedAt: mutation.now,
             provenance:
-              standingApproval?.ok === true
-                ? standingApproval.data
-                : (nativeProvenance ?? provenance(this.context, "agent_reported")),
+              standingProvenance ?? nativeProvenance ?? provenance(this.context, "agent_reported"),
             data,
           };
           return success(mutation.revision, null, {
@@ -1303,7 +1434,6 @@ export class WorkitCore {
             decisions: [...current.decisions, entry],
           });
         },
-        trustedNow(this.context),
       );
       if (!changed.ok) return changed;
       return success(changed.data.revision, null, changed.data.decisions.at(-1)!);
@@ -1315,9 +1445,11 @@ export class WorkitCore {
     if (decision.data.revoked) return failure("invalid_transition", "decision is already revoked");
     if (decision.data.consumption)
       return failure("permission_denied", "consumed decision cannot be revoked");
-    const changed = this.store.mutateTask(
+    const changed = this.commitTask(
       task.data.id,
       input.expectedRevision,
+      filled,
+      () => success(null, null, null),
       (current, mutation) => {
         const entry = current.decisions.find((candidate) => candidate.id === input.decisionId);
         if (!entry) return failure("not_found", "decision not found");
@@ -1336,7 +1468,6 @@ export class WorkitCore {
           ),
         });
       },
-      trustedNow(this.context),
     );
     if (!changed.ok) return changed;
     const entry = changed.data.decisions.find((candidate) => candidate.id === input.decisionId);
@@ -1346,6 +1477,10 @@ export class WorkitCore {
   }
 
   finding(request: unknown): Result<Entry<Finding>> {
+    return this.retryOmittedRevisions(request, () => this.findingOnce(request));
+  }
+
+  private findingOnce(request: unknown): Result<Entry<Finding>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("finding", request);
@@ -1515,6 +1650,10 @@ export class WorkitCore {
   }
 
   worker(request: unknown): Result<Entry<Worker>> {
+    return this.retryOmittedRevisions(request, () => this.workerOnce(request));
+  }
+
+  private workerOnce(request: unknown): Result<Entry<Worker>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("worker", request);
@@ -1950,6 +2089,10 @@ export class WorkitCore {
   }
 
   writer(request: unknown): Result<WorkspaceRecord> {
+    return this.retryOmittedRevisions(request, () => this.writerOnce(request));
+  }
+
+  private writerOnce(request: unknown): Result<WorkspaceRecord> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("writer", request);
