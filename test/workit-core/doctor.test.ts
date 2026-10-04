@@ -1885,3 +1885,21 @@ test.skipIf(process.platform === "win32")(
   },
   { timeout: 60_000 },
 );
+
+test("doctor reads Workit pins from both the `plugins` (2.x) and `plugin` keys", () => {
+  const original = readFileSync(fixture.opencodeConfig, "utf8");
+  const checkoutPin = `file://${fixture.dev}/packages/workit-opencode`;
+  try {
+    writeConfig(fixture.opencodeConfig, JSON.stringify({ plugins: [checkoutPin, "other"] }));
+    expect(check(run(), "stale_pin").status).toBe("pass");
+    expect(check(run(), "duplicate_registration").status).toBe("pass");
+
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugins: [checkoutPin], plugin: [OPENCODE_NPM_PIN] }),
+    );
+    expect(check(run(), "duplicate_registration").status).toBe("fail");
+  } finally {
+    writeConfig(fixture.opencodeConfig, original);
+  }
+});
