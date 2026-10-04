@@ -19,6 +19,7 @@ import {
   ref,
   scope,
   taskStartRequest,
+  writeTestCheck,
 } from "./task-fixtures";
 
 const context = (root: string, actor = "test"): OperationContext => ({
@@ -52,6 +53,7 @@ const behavioralSignals = (): Assessment["signals"] => ({
 });
 
 const startAndAssess = (root: string, signals: Parameters<typeof assess>[2], actor = "test") => {
+  writeTestCheck(root);
   const store = new TaskStore(root);
   const core = new WorkitCore(store, context(root, actor));
   const started = core.task(taskStartRequest());

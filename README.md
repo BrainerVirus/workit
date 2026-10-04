@@ -227,17 +227,20 @@ hint. `next` also reports review, draft, merge-queue and other merge
 blockers; only required checks gate. `pr status` never moves a ref, and
 every forge and git network call has a timeout.
 
-`workit check` runs the command (no shell unless `--shell "<cmd>"`), streams
-its output, and records the exit code, duration, HEAD, worktree tree key and
+`workit check` runs the command (no shell unless `--shell "<cmd>"`; on
+Windows `.cmd` shims run through an escaped `cmd /d /s /c`), streams its
+output, and records the exit code, duration, HEAD, worktree tree key and
 patch-id as `observer: workit_cli` evidence in the run ledger and in the
-current task. The exit code is the command's. Close-time testing and
-verification gates accept only these observed checks (or an approved
-limitation); an agent-recorded "tests pass" is a note. When the repo
-configures named checks (`workit.checks.json`, committed:
-`{"checks":{"test":"bun test"}}`, else the `test`/`lint`/`typecheck`/`check`
-package.json scripts run as `<pm> run <script>`), a gate binds to them and an
-ad-hoc `workit check -- true` never satisfies it. A check is stale once the
-worktree changes.
+current task. The exit code is the command's; `--timeout` kills the whole
+process tree. Close-time testing and verification gates accept only a fresh
+passing run of a configured check (or an approved limitation); an
+agent-recorded "tests pass" is a note and an ad-hoc `workit check -- <cmd>`
+never satisfies a gate. Configured checks come from a committed
+`workit.checks.json` (`{"checks":{"test":"bun test"},"gates":{"testing":"test"}}`),
+else detected defaults (package.json `test`/`lint`/`typecheck`/`check` as
+`<pm> run <script>`, `go test ./...`, `cargo test`, `pytest`, `make test`).
+`testing` binds to `test`. A check is stale once the worktree changes, or if
+the check itself changed it.
 
 The packed CLI is a self-contained Node bundle; Node.js 24+ is required.
 

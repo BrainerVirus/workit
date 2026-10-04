@@ -86,7 +86,9 @@ import {
 import {
   captureCandidate,
   checkPin,
-  currentTreeOf,
+  signalFreshness,
+  treeFreshness,
+  type Freshness,
   evaluateClosure,
   evaluateEvidence,
   evaluateRequirements,
@@ -1224,7 +1226,7 @@ export class WorkitCore {
               evaluateEvidence(
                 withEntry,
                 currentCandidate.data,
-                currentTreeOf(this.store.root),
+                treeFreshness(this.store.root),
               ).map((item) => [item.evidenceId, item.status]),
             );
             const verified = withEntry.evidence.some((item) =>
@@ -1651,7 +1653,7 @@ export class WorkitCore {
     if (input.disposition === "fixed") {
       const current = captureCandidate(this.store.root, task.data.intent.data.scope, environment());
       if (!current.ok) return current;
-      const evaluations = evaluateEvidence(task.data, current.data, currentTreeOf(this.store.root));
+      const evaluations = evaluateEvidence(task.data, current.data, treeFreshness(this.store.root));
       const verified = evidence.some((entry) => {
         const evaluation = evaluations.find((item) => item.evidenceId === entry.id);
         return (
@@ -2553,7 +2555,7 @@ export class WorkitCore {
     if (!current.ok) return current;
     const evaluationWorkspace =
       task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;
-    const tree = currentTreeOf(this.store.root);
+    const tree = treeFreshness(this.store.root);
     const requirements = evaluateRequirements(
       task,
       evaluationWorkspace,
@@ -2586,19 +2588,24 @@ export class WorkitCore {
    * judged against the last recorded candidate, and live staleness is
    * detected by evidence, close, resume, and full inspection, which capture.
    */
-  compactContext(taskId: string): Result<string> {
+  compactContext(taskId: string, freshness?: Freshness): Result<string> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const task = this.store.readTask(taskId);
     if (!task.ok) return task;
     const helper = this.helperTaskGuard(task.data, true);
     if (!helper.ok) return helper;
-    const view = this.view(task.data, false);
+    // Per-turn path: the cheap worktree signal, never the object-writing tree hash.
+    const view = this.view(task.data, false, freshness ?? signalFreshness(this.store.root));
     if (!view.ok) return view;
     return success(view.revision, view.workspaceRevision, compactTaskContext(view.data));
   }
 
-  private view(task: TaskRecord, capture = true): Result<TaskView> {
+  private view(
+    task: TaskRecord,
+    capture = true,
+    freshness: Freshness = treeFreshness(this.store.root),
+  ): Result<TaskView> {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace;
     if (!workspace.data) return failure("not_found", "workspace not found");
@@ -2611,7 +2618,7 @@ export class WorkitCore {
     if (!current.ok) return current;
     const evaluationWorkspace =
       task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;
-    const tree = currentTreeOf(this.store.root);
+    const tree = freshness;
     const requirements = evaluateRequirements(
       task,
       evaluationWorkspace,
@@ -2898,7 +2905,7 @@ export class WorkitCore {
       withCandidate.id === task.data.candidates.at(-1)?.id
         ? task.data
         : { ...task.data, candidates: [...task.data.candidates, withCandidate] };
-    const tree = currentTreeOf(this.store.root);
+    const tree = treeFreshness(this.store.root);
     const requirements = evaluateRequirements(
       taskForView,
       workspace.data,

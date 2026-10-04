@@ -296,6 +296,52 @@ export function worktreeTree(
   }
 }
 
+/**
+ * A cheap worktree freshness signal for per-turn paths: sha256 over HEAD and
+ * the path, size and mtime of every entry `git status` reports (untracked
+ * files listed one by one). Git answers from its stat cache and, with
+ * GIT_OPTIONAL_LOCKS=0, never refreshes the index, and nothing is written to
+ * the object store (unlike worktreeTree). Equal signals mean "probably
+ * unchanged"; a content edit that keeps a dirty file's size and mtime is not
+ * seen, so gates that decide (close, inspect) use worktreeTree instead.
+ * Null outside a repository.
+ */
+export function worktreeSignal(cwd: string, options: { timeoutMs?: number } = {}): string | null {
+  const top = line(git(cwd, ["rev-parse", "--show-toplevel"]));
+  if (!top) return null;
+  const status = git(
+    top,
+    [
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--no-renames",
+      "--ignore-submodules=dirty",
+    ],
+    {
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      timeoutMs: options.timeoutMs ?? GIT_TIMEOUTS.worktree,
+    },
+  );
+  if (!status.ok) return null;
+  const hash = createHash("sha256");
+  hash.update(`${headSha(top) ?? "unborn"}\0`);
+  for (const entry of status.stdout.split("\0")) {
+    if (entry.length < 4) continue;
+    const file = entry.slice(3);
+    let stat = "-";
+    try {
+      const info = fs.lstatSync(path.join(top, file), { bigint: true });
+      stat = `${info.size}:${info.mtimeNs}`;
+    } catch {
+      // Deleted: the status code alone records it.
+    }
+    hash.update(`${entry.slice(0, 2)}\0${file}\0${stat}\0`);
+  }
+  return `sig:${hash.digest("hex")}`;
+}
+
 /** The best common ancestor of two revisions, or null. */
 export function mergeBase(cwd: string, a: string, b: string): string | null {
   if (!safeArg(a) || !safeArg(b)) return null;

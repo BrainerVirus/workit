@@ -14,6 +14,8 @@ import {
   taskRecordSchema,
 } from "@/packages/workit-core/src/core/task-contract";
 import { readLedger } from "@/packages/workit-core/src/ledger";
+import { sessionCompactContext } from "@/packages/workit-core/src/hooks/context";
+import { evaluateEvidence } from "@/packages/workit-core/src/core/task-evaluation";
 import {
   assessment,
   caller,
@@ -165,7 +167,10 @@ test("G `workit check -- bun test` exiting 1, T failing evidence with exit code,
   expect(task.data.critical).toContain(CHECK_OBSERVATION_PATH);
   expect(status()).toMatchObject({ status: "unsatisfied" });
   expect(data.stillUnsatisfied).toEqual([
-    expect.objectContaining({ ruleId: "behavioral-verification", unblock: "workit check test" }),
+    expect.objectContaining({
+      ruleId: "behavioral-verification",
+      unblock: expect.stringMatching(/^(workit|npx -y @brainervirus\/workit-cli@\S+) check test$/),
+    }),
   ]);
 
   const rows = readLedger(root);
@@ -277,7 +282,7 @@ test("G an agent-recorded `evidence.record {kind:check,result:passed}`, T it doe
   expect(status().status).toBe("unsatisfied");
 });
 
-test("without a task, a check still lands in the ledger; with no configured checks an observed check satisfies the ad-hoc gate", async () => {
+test("without a task, a check still lands in the ledger; with nothing configured or detected an ad-hoc check never satisfies the gate", async () => {
   const bare = repo(null);
   const ledgerOnly = await run(bare, ["check", "--json", "--", "true"]);
   expect(ledgerOnly.code).toBe(0);
@@ -299,10 +304,111 @@ test("without a task, a check still lands in the ledger; with no configured chec
   ]);
 
   const { status } = startTask(bare);
-  expect(status().status).toBe("unsatisfied");
   expect((await run(bare, ["check", "--json", "--", "true"])).code).toBe(0);
-  expect(status()).toMatchObject({ status: "satisfied" });
+  expect(status()).toMatchObject({
+    status: "unsatisfied",
+    reason: expect.stringContaining(
+      'add workit.checks.json (committed, so it shows in the diff), e.g. {"checks":{"test":',
+    ),
+  });
+  // --shell runs are never configured, even with a matching name.
+  writeFileSync(
+    path.join(bare, "workit.checks.json"),
+    JSON.stringify({ checks: { test: ["true"] } }),
+  );
+  const shell = await run(bare, ["check", "--json", "--shell", "--name", "test", "--", "true"]);
+  expect(shell.json().data).toMatchObject({ configured: false });
+  expect(status().status).toBe("unsatisfied");
+  expect((await run(bare, ["check", "test", "--json"])).json().data.configured).toBe(true);
+  expect(status().status).toBe("satisfied");
 });
+
+test("a forged configured observation whose argv is not the configured command does not satisfy", async () => {
+  const root = repo();
+  const { store, taskId, status } = startTask(root);
+  const cli = new WorkitCore(store, {
+    root,
+    caller: caller({ actor: "cli" }),
+    capabilities: [],
+    constraints: [],
+    now: () => new Date().toISOString(),
+  });
+  const tree = git(root, "rev-parse", "HEAD^{tree}");
+  expect(
+    cli.observeCheck({
+      taskId,
+      observation: checkObservation({ name: "test", configured: true, argv: ["true"], tree }),
+    }).ok,
+  ).toBe(true);
+  expect(status()).toMatchObject({
+    status: "unsatisfied",
+    reason: expect.stringContaining("ad-hoc checks do not satisfy"),
+  });
+});
+
+test("a check that changes the worktree reports modifiedWorktree and leaves stale evidence", async () => {
+  const root = repo({ test: [BUN, "-e", "require('fs').writeFileSync('out.txt', 'x')"] });
+  const { status } = startTask(root);
+  const result = await run(root, ["check", "test", "--json"]);
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({ configured: true, modifiedWorktree: true });
+  expect(status()).toMatchObject({
+    status: "unsatisfied",
+    reason: expect.stringContaining("stale"),
+  });
+});
+
+test("per-turn context judges checks by the cheap signal, never hashes the tree, and its cache sees edits", async () => {
+  const root = repo();
+  const { store, taskId } = startTask(root);
+  expect((await run(root, ["check", "test", "--json"])).code).toBe(0);
+  const session = { host: "workit_cli", handle: "agent" };
+  const context = {
+    root,
+    caller: caller({ actor: "agent" }),
+    capabilities: [],
+    constraints: [],
+    now: () => new Date().toISOString(),
+  };
+  const objects = () => git(root, "count-objects", "-v");
+  const before = objects();
+  const fresh = sessionCompactContext(store, session, context, "session-bound");
+  expect(fresh).not.toBeNull();
+  expect(fresh).not.toContain("stale evidence");
+  writeFileSync(path.join(root, "a.txt"), "edited\n");
+  const stale = sessionCompactContext(store, session, context, "session-bound");
+  expect(stale).toContain("stale evidence");
+  // No blob was written for the edited file by the per-turn path.
+  expect(objects()).toBe(before);
+  void taskId;
+});
+
+test.skipIf(process.platform !== "win32")(
+  "Windows: a configured .cmd shim runs through cmd.exe with its arguments intact and stays configured",
+  async () => {
+    const root = repo({ test: ["fakecheck", "a b", "x&y", 'q"q'] });
+    writeFileSync(path.join(root, "fakecheck.cmd"), "@echo off\r\necho args:%*\r\nexit /b 0\r\n");
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "shim");
+    const { status } = startTask(root);
+    let stdout = "";
+    const code = await main(["check", "test", "--json"], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${root};${process.env.PATH ?? ""}`,
+        WORKFLOW_WORKSPACE_ROOT: "",
+      },
+      stdout: (text) => void (stdout += text),
+      stderr: () => {},
+    });
+    const data = JSON.parse(stdout).data;
+    expect(code, JSON.stringify(data.logTail)).toBe(0);
+    expect(data).toMatchObject({ configured: true, argv: ["fakecheck", "a b", "x&y", 'q"q'] });
+    expect(data.logTail.join("\n")).toContain('args:"a b" "x&y" "q\\"q"');
+    expect(status().status).toBe("satisfied");
+  },
+);
 
 test("usage: unknown names, --shell with argv, and the exit code mirrors the command", async () => {
   const root = repo();
@@ -388,4 +494,31 @@ test("an older reader that does not know the observation fails closed instead of
     success: true,
     stripped: [],
   });
+});
+
+test("observed-check freshness: tree vs signal modes, modified worktree, and a closed task keeps its record", () => {
+  const entry = (overrides: Partial<ReturnType<typeof checkObservation>> = {}) => ({
+    id: "e",
+    recordedAt: "2026-01-01T00:00:00Z",
+    provenance: { kind: "host_observed", host: "workit_cli" },
+    data: {
+      kind: "check",
+      result: "passed",
+      requirementIds: [],
+      observation: checkObservation({ tree: "t1", signal: "s1", ...overrides }),
+    },
+  });
+  const task = (status: string, item = entry()) =>
+    ({ status, evidence: [item], candidates: [], policy: null }) as never;
+  const tree = (value: string) => ({ mode: "tree" as const, current: () => value });
+  const signal = (value: string) => ({ mode: "signal" as const, current: () => value });
+  expect(evaluateEvidence(task("active"), null, tree("t1"))[0].status).toBe("passed");
+  expect(evaluateEvidence(task("active"), null, tree("t2"))[0].status).toBe("stale");
+  expect(evaluateEvidence(task("active"), null, signal("s1"))[0].status).toBe("passed");
+  expect(evaluateEvidence(task("active"), null, signal("t1"))[0].status).toBe("stale");
+  expect(evaluateEvidence(task("active"), null)[0].status).toBe("stale");
+  expect(
+    evaluateEvidence(task("active", entry({ modifiedWorktree: true })), null, tree("t1"))[0].status,
+  ).toBe("stale");
+  expect(evaluateEvidence(task("closed"), null, tree("t2"))[0].status).toBe("passed");
 });

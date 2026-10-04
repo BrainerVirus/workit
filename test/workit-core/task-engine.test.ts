@@ -31,6 +31,7 @@ import {
   ref,
   scope,
   taskStartRequest,
+  writeTestCheck,
 } from "./task-fixtures";
 
 const context = (root: string): OperationContext => ({
@@ -645,6 +646,7 @@ test.each(["workit_cli", "opencode", "cursor", "codex_cli", "codex_desktop", "pi
     const root = mkdtempSync(join(tmpdir(), "workit-self-review-"));
     try {
       writeFileSync(join(root, "a.ts"), "before");
+      writeTestCheck(root);
       const store = new TaskStore(root);
       const core = new WorkitCore(store, { ...context(root), caller: caller({ host }) });
       const started = core.task(taskStartRequest());
@@ -906,6 +908,7 @@ test("review evidence uses the trusted caller session and requires an independen
 
 test("summary and full inspection recapture candidates so scoped freshness agrees", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-freshness-"));
+  writeTestCheck(root);
   const src = join(root, "src");
   mkdirSync(src, { recursive: true });
   writeFileSync(join(src, "a.ts"), "initial");

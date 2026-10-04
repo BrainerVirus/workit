@@ -566,8 +566,22 @@ export const checkObservationSchema = z
     /** Worktree tree key before the run; evidence is fresh while the tree key is unchanged. */
     tree: text.nullable(),
     dirty: z.boolean().nullable(),
+    /** Cheap stat-cached worktree signal before the run (per-turn freshness; see worktreeSignal). */
+    signal: text.nullable(),
+    /** Tree key after the run; differs from `tree` when the command changed the worktree. */
+    treeAfter: text.nullable(),
+    /** The command changed the worktree: the evidence is stale (fail safe). */
+    modifiedWorktree: z.boolean(),
     base: text.nullable(),
     patchId: text.nullable(),
+    /** A minimal environment fingerprint: platform, arch and allowlisted variables. */
+    environment: z
+      .object({
+        platform: nonEmpty,
+        arch: nonEmpty,
+        vars: z.record(nonEmpty, text.nullable()),
+      })
+      .strict(),
     logDigest: text.nullable(),
     logRef: text.nullable(),
     logTail: z.array(text).max(40),

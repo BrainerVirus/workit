@@ -17,20 +17,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `workit check <name>` / `workit check [--name <n>] -- <cmd…>` runs a check
   and records what the CLI observed (exit code, duration, argv, HEAD, worktree
-  tree key, patch-id, a redacted bounded log blob and tail) as
-  `observer: workit_cli` evidence in the run ledger and the current task. The
-  exit code is the command's. Named checks come from a committed
-  `workit.checks.json`, else package.json scripts.
+  tree key before and after, patch-id, a minimal environment fingerprint, a
+  redacted bounded log blob and tail) as `observer: workit_cli` evidence in the
+  run ledger and the current task. The exit code is the command's. Named checks
+  come from a committed `workit.checks.json` (with optional `gates`), else
+  detected defaults: package.json scripts, `go test ./...`, `cargo test`,
+  `pytest`, `make test`. On POSIX the command runs in its own process group, so
+  `--timeout` and its exit kill every process it started; on Windows `.cmd`
+  shims (npm, pnpm, node_modules/.bin) run through an escaped `cmd /d /s /c`.
+  `workit gc` also prunes check logs (newest 200, 30 days, 256 MB).
 
 ### Changed
 
-- Close-time testing and verification gates accept only fresh, passing,
-  CLI-observed checks (or an approved limitation). Agent-recorded check
-  evidence stays recordable as a note but no longer satisfies them, and
-  RED-first does not apply to observed checks. When named checks are
-  configured, only a run of the gate's named check with its configured argv
-  counts. A task holding an observed check lists the observation as a
-  critical field, so older Workit readers fail closed on it.
+- Close-time testing and verification gates accept only a fresh, passing,
+  CLI-observed run of a configured check (or an approved limitation): `testing`
+  binds to `test` (or `gates.testing`), `verification` to the configured
+  checks. Agent-recorded checks stay recordable as notes but no longer satisfy
+  them, ad-hoc `workit check -- <cmd>` runs never do, and RED-first no longer
+  applies. A check that changes the worktree is stale. Per-turn host context
+  judges freshness from a cheap stat-cached signal and never hashes the tree.
+  A task holding an observed check lists the observation as a critical field,
+  so older Workit readers fail closed on it.
+- **Migration for in-flight tasks:** a task whose testing or verification gate
+  was satisfied by agent-recorded checks reads unsatisfied after upgrading.
+  Run the repo's configured check with `workit check test` (or `npx -y
+  @brainervirus/workit-cli check test`), adding `workit.checks.json` when
+  nothing is detected, or record an approved limitation where the requirement
+  allows one.
 
 - OpenCode V1/V2 remove managed external mutations and proposal/approval
   orchestration. Native host tools execute effects; strict read-only

@@ -27,12 +27,15 @@ import {
 } from "./task-contract";
 import { verifyDecisionContentAtRoot } from "./authority";
 import {
+  CHECKS_FILE,
+  checkCommand,
   gateCheckNames,
   loadCheckConfig,
   matchesNamedCheck,
   type CheckConfig,
 } from "../check-config";
-import { worktreeTree } from "../git/rev";
+import { worktreeSignal, worktreeTree } from "../git/rev";
+import { runtimeVersion } from "./task-store";
 
 export type CandidateEnvironment =
   | readonly (string | { name: string; value?: string | null })[]
@@ -327,14 +330,30 @@ const evidenceScopes = (task: TaskRecord, ids: string[]): Scope[] =>
     .filter((requirement) => ids.includes(requirement.id))
     .map((requirement) => requirement.scope);
 
-/** The current worktree tree key for `root`, computed at most once (null outside git). */
-export const currentTreeOf = (root: string): (() => string | null) => {
-  let key: string | null | undefined;
+/**
+ * How observed checks are judged fresh (§2.2). `tree`: the exact worktree tree
+ * key (worktreeTree hashes changed files into the object store, so it is only
+ * for paths that decide: close, inspect, evidence). `signal`: the cheap
+ * stat-cached worktreeSignal for per-turn context, which writes nothing.
+ * `current` is computed at most once and is null outside git.
+ */
+export type Freshness = { mode: "tree" | "signal"; current: () => string | null };
+
+const memo = (compute: () => string | null): (() => string | null) => {
+  let value: string | null | undefined;
   return () => {
-    if (key === undefined) key = worktreeTree(root)?.key ?? null;
-    return key;
+    if (value === undefined) value = compute();
+    return value;
   };
 };
+export const treeFreshness = (root: string): Freshness => ({
+  mode: "tree",
+  current: memo(() => worktreeTree(root)?.key ?? null),
+});
+export const signalFreshness = (root: string): Freshness => ({
+  mode: "signal",
+  current: memo(() => worktreeSignal(root)),
+});
 
 /** Evidence the workit CLI itself observed (`workit check`), as opposed to an agent's report. */
 export const isObservedCheck = (entry: Entry<Evidence>): boolean =>
@@ -345,13 +364,15 @@ export const isObservedCheck = (entry: Entry<Evidence>): boolean =>
 
 /**
  * Evidence status against the current state. Observed checks keyed to a tree
- * are fresh while the worktree tree key is unchanged (§2.2); a closed task
- * keeps their recorded status. Without `currentTree` they read stale.
+ * are fresh while the worktree is unchanged (§2.2), judged by `freshness`
+ * (exact tree key, or the cheap signal on per-turn paths); a check that
+ * changed the worktree itself is stale (fail safe), and a closed task keeps
+ * the recorded status. Without `freshness` they read stale.
  */
 export function evaluateEvidence(
   task: TaskRecord,
   candidate: Candidate | null,
-  currentTree?: () => string | null,
+  freshness?: Freshness,
 ): EvidenceEvaluation[] {
   const current = candidate ?? task.candidates.at(-1) ?? null;
   return task.evidence.map((entry) => {
@@ -362,17 +383,27 @@ export function evaluateEvidence(
         status: "failed" as const,
         reason: "failed evidence remains historical",
       };
-    const observedTree = isObservedCheck(entry) ? (evidence.observation?.tree ?? null) : null;
-    if (observedTree !== null) {
+    const observation = isObservedCheck(entry) ? evidence.observation : undefined;
+    if (observation && observation.tree !== null) {
       if (task.status === "closed")
         return { evidenceId: entry.id, status: evidence.result, reason: "recorded before close" };
-      return observedTree === currentTree?.()
-        ? { evidenceId: entry.id, status: evidence.result, reason: "worktree tree is unchanged" }
-        : {
-            evidenceId: entry.id,
-            status: "stale" as const,
-            reason: "the worktree changed since the check ran",
-          };
+      if (observation.modifiedWorktree)
+        return {
+          evidenceId: entry.id,
+          status: "stale" as const,
+          reason: "the check changed the worktree while it ran; ignore or clean its outputs",
+        };
+      const recorded = freshness?.mode === "signal" ? observation.signal : observation.tree;
+      if (recorded !== null && freshness && recorded === freshness.current())
+        return { evidenceId: entry.id, status: evidence.result, reason: "worktree is unchanged" };
+      return {
+        evidenceId: entry.id,
+        status: "stale" as const,
+        reason:
+          freshness?.mode === "signal"
+            ? "the worktree may have changed since the check ran (quick signal; inspect re-checks exactly)"
+            : "the worktree changed since the check ran",
+      };
     }
     if (evidence.kind === "check" || evidence.kind === "review") {
       if (!evidence.beforeCandidateId || !evidence.candidateId)
@@ -550,11 +581,11 @@ const observedGate = (requirement: Requirement): boolean =>
 type GateResult = { satisfied: string[]; considered: string[]; reason: string };
 
 /**
- * A close gate over CLI-observed checks. When the repo configures named
- * checks, only a fresh passing run of a gate's named check whose argv is
- * still its configured command satisfies it; when it configures none, any
- * fresh passing observed check does (an ad-hoc requirement). Agent-reported
- * checks are notes and never count. A broken check config fails closed.
+ * A close gate over CLI-observed checks. Only a fresh passing run of one of
+ * the gate's named checks whose argv is still its configured command
+ * satisfies it; ad-hoc runs never do, and with no named check for the gate
+ * the reason says how to configure one. Agent-reported checks are notes and
+ * never count. A broken check config fails closed.
  */
 function evaluateObservedGate(
   task: TaskRecord,
@@ -577,21 +608,28 @@ function evaluateObservedGate(
     );
   };
   const considered = observed.map((entry) => entry.id);
-  const run = names.length ? `workit check ${names[0]}` : "workit check -- <command>";
+  const run = checkCommand(names[0] ?? "<name>", runtimeVersion());
   if (config.error)
     return {
       satisfied: [],
       considered,
       reason: `check config is invalid (${config.error}); fix it, then run ${run}`,
     };
-  const satisfied = fresh.filter((entry) => names.length === 0 || named(entry));
+  if (!names.length)
+    return {
+      satisfied: [],
+      considered,
+      reason:
+        requirement.dimension === "testing" && config.checks.length
+          ? `no \`test\` check is configured; add one (or gates.testing) to ${CHECKS_FILE}, then run ${checkCommand("test", runtimeVersion())}`
+          : `no checks are configured or detected; add ${CHECKS_FILE} (committed, so it shows in the diff), e.g. {"checks":{"test":"<your test command>"}}, then run ${checkCommand("test", runtimeVersion())}`,
+    };
+  const satisfied = fresh.filter(named);
   if (satisfied.length)
     return {
       satisfied: satisfied.map((entry) => entry.id),
       considered,
-      reason: names.length
-        ? `a fresh passing configured check (${names.join("|")}) was observed by workit check`
-        : "a fresh passing check was observed by workit check (no checks are configured)",
+      reason: `a fresh passing configured check (${names.join("|")}) was observed by workit check`,
     };
   const reported = task.evidence.some(
     (entry) =>
@@ -618,9 +656,9 @@ export function evaluateRequirements(
   candidate: Candidate | null,
   checkoutRoot: string,
   _caller?: Caller,
-  currentTree: () => string | null = currentTreeOf(checkoutRoot),
+  freshness: Freshness = treeFreshness(checkoutRoot),
 ) {
-  const evidence = evaluateEvidence(task, candidate, currentTree);
+  const evidence = evaluateEvidence(task, candidate, freshness);
   const statuses = new Map(evidence.map((item) => [item.evidenceId, item.status]));
   let checkConfig: CheckConfig | undefined;
   const configFor = (): CheckConfig => (checkConfig ??= loadCheckConfig(checkoutRoot));

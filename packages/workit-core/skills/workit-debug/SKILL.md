@@ -19,7 +19,8 @@ established root cause.
    inferences, and unknowns with references; trace the failing value and all
    relevant callers before editing.
 3. State the root-cause hypothesis and the smallest in-scope fix. Write a focused
-   regression at the boundary when practical, then run RED and GREEN checks.
+   regression at the boundary when practical, then run RED and GREEN through
+   `workit check <name>` so the results are observed, not reported.
 4. Acquire writer authority through `writer` before mutation. Reconcile the
    candidate, evidence, and findings after the change; investigate sibling paths
    and stale conclusions rather than assuming the first patch worked.

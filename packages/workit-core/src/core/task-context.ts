@@ -13,7 +13,7 @@ import {
   type TaskView,
   type Utc,
 } from "./task-contract";
-import { captureCandidate, currentTreeOf, evaluateEvidence } from "./task-evaluation";
+import { captureCandidate, evaluateEvidence, treeFreshness } from "./task-evaluation";
 import { selectMethods, type SelectedMethod } from "./methods";
 import type { NativeWorkerObservation } from "./workers";
 
@@ -42,7 +42,7 @@ export function reconcileResume(
   const staleEvidenceIds = evaluateEvidence(
     view.task,
     candidate.data,
-    currentTreeOf(view.workspace.root),
+    treeFreshness(view.workspace.root),
   )
     .filter((entry) => entry.status === "stale")
     .map((entry) => entry.evidenceId);

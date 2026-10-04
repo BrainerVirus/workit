@@ -13,9 +13,11 @@
 //   writer's task, or the only active task). Attestation stays null until a
 //   host hook attests the run.
 // - It is *configured* only when the name is in the check config
-//   (workit.checks.json, else package.json scripts) and argv is exactly that
-//   name's command, run from the repo top. Only configured runs satisfy gates
-//   that bind to named checks; `workit check -- true` never does.
+//   (workit.checks.json, else detected ecosystem defaults) and argv is exactly
+//   that name's command, run from the repo top; --shell runs never are. Only
+//   configured runs satisfy gates; `workit check -- true` never does.
+// - The tree key is taken before and after the run: a command that changed
+//   the worktree leaves stale evidence (`modifiedWorktree`).
 // - Exit code: the command's own (4 on --timeout, 2 on usage). When the
 //   command passed but the evidence could not be recorded, the recording
 //   error's code (busy 4, unavailable 5) so a green run is never mistaken for
@@ -23,18 +25,23 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  CHECKS_FILE,
+  checkCommand,
   checkRoot,
+  gateCheckNames,
   loadCheckConfig,
   matchesNamedCheck,
   type CheckConfig,
 } from "@brainervirus/workit-core/src/check-config";
 import {
   TAIL_LINES,
+  redactLog,
   runCheckCommand,
   storeLog,
   tailLines,
 } from "@brainervirus/workit-core/src/checks";
-import { worktreeTree } from "@brainervirus/workit-core/src/git/rev";
+import { worktreeSignal, worktreeTree } from "@brainervirus/workit-core/src/git/rev";
+import pkg from "../../package.json" with { type: "json" };
 import {
   MAX_LINE_BYTES,
   actorFromEnv,
@@ -240,6 +247,19 @@ async function recordInTask(
   return outcome;
 }
 
+/** Environment variables that change how checks run; recorded by name and value. */
+const FINGERPRINT_VARS = ["CI", "NODE_ENV", "npm_config_script_shell", "NODE_OPTIONS", "SHELL"];
+
+/** A minimal environment fingerprint for the observation (values redacted, bounded). */
+function environmentFingerprint(env: NodeJS.ProcessEnv) {
+  const vars: Record<string, string | null> = {};
+  for (const name of FINGERPRINT_VARS) {
+    const value = env[name];
+    vars[name] = value === undefined ? null : redactLog(value).slice(0, 200);
+  }
+  return { platform: process.platform, arch: process.arch, vars };
+}
+
 /** A ledger row stays under MAX_LINE_BYTES: long argv entries are cut. */
 function boundedArgv(argv: readonly string[]): { argv: string[]; truncated: boolean } {
   let cut = argv.map((item) => (item.length > 200 ? `${item.slice(0, 200)}…` : item));
@@ -310,6 +330,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const key: CodeKey = detached
     ? { ...branchKey, tree: detached.key, dirty: detached.dirty }
     : branchKey;
+  const signal = key.tree === null ? null : worktreeSignal(io.cwd);
 
   const result = await runCheckCommand(command, {
     cwd: runCwd,
@@ -319,6 +340,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
     onStdout: io.json ? io.stderr : io.stdout,
     onStderr: io.stderr,
   });
+  // Fail safe: a command that changed the worktree leaves stale evidence.
+  const treeAfter = key.tree === null ? null : (worktreeTree(io.cwd)?.key ?? null);
+  const modifiedWorktree = key.tree !== null && treeAfter !== key.tree;
   const store = storeRoot(io.cwd);
   const blob = store.ok ? storeLog(store.value.root, result.log) : null;
   const tail = tailLines(result.log, TAIL_LINES);
@@ -361,8 +385,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
     head: key.head,
     tree: key.tree,
     dirty: key.dirty,
+    signal,
+    treeAfter,
+    modifiedWorktree,
     base: key.base,
     patchId: key.patchId,
+    environment: environmentFingerprint(io.env),
     logDigest: blob?.digest ?? null,
     logRef: blob?.ref ?? null,
     logTail: tailLines(result.log, RECORD_TAIL_LINES).map((line) =>
@@ -372,10 +400,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
     attestation: null,
   };
   const unblockFor = (dimension: string): string => {
-    if (config.error) return `fix ${config.source}, then workit check <name>`;
-    const names = config.checks.map((item) => item.name);
-    if (!names.length) return "workit check -- <test command>";
-    return `workit check ${dimension === "testing" && names.includes("test") ? "test" : names[0]}`;
+    const version = (pkg as { version: string }).version;
+    if (config.error) return `fix ${CHECKS_FILE}, then ${checkCommand("<name>", version)}`;
+    const names = gateCheckNames(config, dimension);
+    return names.length
+      ? checkCommand(names[0], version)
+      : `add ${CHECKS_FILE} (e.g. {"checks":{"test":"<your test command>"}}), then ${checkCommand("test", version)}`;
   };
   const storeDir = taskStoreRoot(io, top);
   const task: TaskOutcome = storeDir
@@ -403,6 +433,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     head: key.head,
     tree: key.tree,
     dirty: key.dirty,
+    modifiedWorktree,
     base: key.base,
     patchId: key.patchId,
     logDigest: observation.logDigest,
