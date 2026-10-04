@@ -38,7 +38,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     const { compacted, blobs, legacyRecovery } = data;
     return [
       `workit gc${data.dryRun ? " (dry run)" : ""}`,
-      `task logs: ${verb} compact ${compacted.tasks.length} (${compacted.eventsFolded} events folded${data.dryRun ? "" : `, ${megabytes(compacted.bytesBefore)} → ${megabytes(compacted.bytesAfter)} MB`})${data.failed.length ? `; failed ${data.failed.join(", ")}` : ""}`,
+      `task logs: ${verb} compact ${compacted.tasks.length} (${compacted.eventsFolded} events folded${data.dryRun ? "" : `, ${megabytes(compacted.bytesBefore)} → ${megabytes(compacted.bytesAfter)} MB`})${data.retried.length ? `; changed meanwhile, next run: ${data.retried.join(", ")}` : ""}${data.failed.length ? `; failed ${data.failed.join(", ")}` : ""}`,
       `candidate blobs: ${verb} remove ${blobs.removed} (${megabytes(blobs.removedBytes)} MB), kept ${blobs.kept}`,
       `temporary files: ${verb} remove ${data.temporary.removed}`,
       ...(legacyRecovery

@@ -56,9 +56,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same checkout). Implicit-task creation is serialized per key across the
   store; with duplicate open tasks on a key the oldest is used and `workit
   task status` names the others with a close command. During a rebase the key
-  is the branch being rebased; after `git branch -m` `task status` offers the
-  exact `workit task adopt` command. reftable repositories and bare
-  repositories resolve through git.
+  is the branch being rebased; a task follows its branch through `git branch
+  -m` (a branch created later under the old name starts a fresh task). reftable repositories and bare
+  repositories resolve through git. While a 2.x store waits to migrate, every
+  per-turn host context (hooks, OpenCode, Pi) shows `workit migration pending —
+  run \`workit task status\``. `workit gc` reports a log another writer
+  compacted meanwhile as `retried` (picked up by the next run), not `failed`.
 
 ### Added
 

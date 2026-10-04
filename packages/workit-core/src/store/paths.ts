@@ -33,6 +33,8 @@ export type TaskKey = {
   kind: "branch" | "detached" | "dir";
   /** The branch name when HEAD is attached. */
   branch: string | null;
+  /** When a task was bound to this key (stored with the binding). */
+  boundAt?: string;
 };
 
 const NOT_A_REPO = /not a git repository \(or any (of the parent directories|parent up to)/u;
@@ -288,24 +290,65 @@ export function checkoutRootOf(root: string, location?: StoreLocation | Error): 
   }
 }
 
-/** Branches renamed to `branch`, from the reflogs ("Branch: renamed refs/heads/a to refs/heads/b"). */
-export function renamedFrom(location: StoreLocation, branch: string): string[] {
-  const logs = [
-    ...(location.git ? [path.join(location.git.gitDir, "logs", "HEAD")] : []),
-    path.join(path.dirname(location.dir), "logs", "refs", "heads", ...branch.split("/")),
-  ];
-  const names = new Set<string>();
-  for (const file of logs) {
+export type BranchRename = { from: string; to: string; /** Unix seconds. */ at: number };
+
+/**
+ * Branch renames recorded in the reflogs ("Branch: renamed refs/heads/a to
+ * refs/heads/b"): every branch log in the common dir, plus this worktree's
+ * HEAD log. Oldest first.
+ */
+export function branchRenames(location: StoreLocation): BranchRename[] {
+  if (!location.shared) return [];
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries)
+      if (entry.isDirectory()) walk(path.join(dir, entry.name));
+      else files.push(path.join(dir, entry.name));
+  };
+  walk(path.join(path.dirname(location.dir), "logs", "refs", "heads"));
+  if (location.git) files.push(path.join(location.git.gitDir, "logs", "HEAD"));
+  const seen = new Set<string>();
+  const renames: BranchRename[] = [];
+  for (const file of files) {
     let text = "";
     try {
       text = fs.readFileSync(file, "utf8");
     } catch {
       continue;
     }
-    for (const match of text.matchAll(/Branch: renamed refs\/heads\/(\S+) to refs\/heads\/(\S+)/gu))
-      if (match[2] === branch) names.add(match[1]);
+    for (const match of text.matchAll(
+      / (\d+) [+-]\d{4}\tBranch: renamed refs\/heads\/(\S+) to refs\/heads\/(\S+)/gu,
+    )) {
+      const rename = { from: match[2], to: match[3], at: Number(match[1]) };
+      const id = `${rename.at}\0${rename.from}\0${rename.to}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      renames.push(rename);
+    }
   }
-  return [...names];
+  return renames.toSorted((left, right) => left.at - right.at);
+}
+
+/**
+ * The key a task bound to `key` at `boundAt` (ISO time) follows to: a branch
+ * renamed after the task was bound takes its task along, so a new branch
+ * created later under the old name does not inherit it.
+ */
+export function followRenames(key: string, boundAt: string, renames: BranchRename[]): string {
+  let current = key;
+  let since = Math.floor(Date.parse(boundAt) / 1000);
+  for (const rename of renames)
+    if (rename.from === current && rename.at >= since) {
+      current = rename.to;
+      since = rename.at;
+    }
+  return current;
 }
 
 /**

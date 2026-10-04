@@ -16,6 +16,14 @@ import {
 import { capabilitiesFor, type HostDescriptor } from "./descriptor";
 import type { HookInput } from "./protocol";
 
+/**
+ * Shown on every per-turn path while the checkout's 2.x store waits for the
+ * CLI to migrate it (hooks never migrate), instead of silently no context.
+ */
+export const MIGRATION_PENDING_NOTE = "workit migration pending — run `workit task status`";
+const migrationPending = (result: { ok: boolean; code?: string; error?: string }): boolean =>
+  !result.ok && result.code === "needs_input" && (result.error ?? "").startsWith(MIGRATION_PENDING);
+
 /** A native host session, e.g. `{ host: "opencode", handle: sessionID }`. */
 export type SessionHandle = { host: string; handle: string };
 
@@ -159,7 +167,7 @@ export function sessionCompactContext(
   selection: HostDescriptor["context"]["task"] = "session-bound",
 ): string | null {
   const listed = store.listTaskIndex();
-  if (!listed.ok) return null;
+  if (!listed.ok) return migrationPending(listed) ? MIGRATION_PENDING_NOTE : null;
   const entry =
     currentTaskEntry(listed.data, session, selection) ??
     implicitTaskEntry(store, listed.data, session);
@@ -247,8 +255,8 @@ export const sessionContextText = (
     const store = new TaskStore(input.cwd);
     const listed = store.listTaskIndex();
     // Hooks never migrate (hot path, possibly a live 2.x writer): say how.
-    if (!listed.ok && listed.code === "needs_input" && listed.error.startsWith(MIGRATION_PENDING))
-      return `<workit-contract>\n${invariantBootstrap()}\n[workit: ${listed.error}]${options.addendum ? `\n${options.addendum}` : ""}\n</workit-contract>`;
+    if (migrationPending(listed))
+      return `<workit-contract>\n${invariantBootstrap()}\n${MIGRATION_PENDING_NOTE}${options.addendum ? `\n${options.addendum}` : ""}\n</workit-contract>`;
     if (!listed.ok) throw new Error(listed.error);
     const entry =
       currentTaskEntry(listed.data, session, descriptor.context.task) ??
@@ -273,6 +281,7 @@ export const turnContextText = (input: HookInput, descriptor: HostDescriptor): s
       hookOperationContext(input, descriptor),
       descriptor.context.task,
     );
+    if (text === MIGRATION_PENDING_NOTE) return text;
     return text ? `<workit-task-context>${text}</workit-task-context>` : null;
   } catch {
     return null;

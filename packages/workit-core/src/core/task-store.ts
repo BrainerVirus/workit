@@ -81,7 +81,8 @@ import { diff } from "../store/patch";
 import {
   checkoutRootOf,
   checkoutSlug,
-  renamedFrom,
+  branchRenames,
+  followRenames,
   resolveStore,
   resolveTaskKey,
   type StoreLocation,
@@ -129,6 +130,8 @@ export type GarbageReport = {
   temporary: { removed: number };
   /** A 2.x `.workit/recovery` directory left by migration (deleted only with pruneRecovery). */
   legacyRecovery: { path: string; files: number; bytes: number; removed: boolean } | null;
+  /** Logs another writer changed mid-compaction: left for the next run (benign). */
+  retried: Id[];
   failed: Id[];
 };
 export type TaskStoreOptions = {
@@ -197,12 +200,14 @@ export type TaskIndexEntry = {
   /** The implicit-task key (branch) the task is bound to, if any. */
   key: string | null;
   branch: string | null;
+  /** When the task was bound to `key`. */
+  boundAt: string | null;
   /** Migrated from a 2.x store. */
   legacy: boolean;
   /** Stat signature of the task's event log the entry was derived from. */
   file: string;
 };
-const INDEX_VERSION = 2;
+const INDEX_VERSION = 3;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -239,6 +244,7 @@ const indexEntry = (
     workspaceId: task.workspaceId,
     key: key?.key ?? null,
     branch: key?.branch ?? null,
+    boundAt: key?.boundAt ?? null,
     legacy,
     file,
   };
@@ -558,7 +564,12 @@ export class TaskStore {
     if (!found.ok) return found;
     const workspace = this.readWorkspace();
     if (!workspace.ok) return workspace;
-    if (found.data && workspace.data && found.data.workspaceId === workspace.data.id) {
+    if (
+      found.data &&
+      workspace.data &&
+      found.data.workspaceId === workspace.data.id &&
+      (found.data.key === key.data.key || input.create === false)
+    ) {
       const task = this.readTask(found.data.id);
       return task.ok
         ? success(task.revision, null, { task: task.data, created: false, key: key.data })
@@ -636,23 +647,14 @@ export class TaskStore {
 
   /**
    * What `workit task status` reports about the current key: every open task
-   * bound to it (more than one is a duplicate; the oldest is the one used),
-   * and open tasks bound to a branch that was renamed to this one.
+   * bound to it (more than one is a duplicate; the oldest is the one used).
    */
-  keyReport(): Result<{ key: TaskKey; bound: TaskIndexEntry[]; renamed: TaskIndexEntry[] }> {
+  keyReport(): Result<{ key: TaskKey; bound: TaskIndexEntry[] }> {
     const key = this.currentKey();
     if (!key.ok) return key;
-    const all = this.listStoreIndex();
-    if (!all.ok) return all;
-    const open = all.data.filter((entry) => entry.status !== "closed").toSorted(oldestFirst);
-    const location = this.location();
-    const previous =
-      location.ok && key.data.branch ? renamedFrom(location.data, key.data.branch) : [];
-    return success(null, null, {
-      key: key.data,
-      bound: open.filter((entry) => entry.key === key.data.key),
-      renamed: open.filter((entry) => entry.key !== null && previous.includes(entry.key)),
-    });
+    const bound = this.openTasksForKey(key.data.key);
+    if (!bound.ok) return bound;
+    return success(null, null, { key: key.data, bound: bound.data });
   }
 
   // -------------------------------------------------------------------------
@@ -987,6 +989,7 @@ export class TaskStore {
       blobs: { removed: 0, removedBytes: 0, kept: 0 },
       temporary: { removed: 0 },
       legacyRecovery: null,
+      retried: [],
       failed: [],
     };
     const ready = this.ready(!dryRun);
@@ -1026,7 +1029,8 @@ export class TaskStore {
           report.compacted.bytesBefore += size;
         } else {
           const compacted = this.compact(name);
-          if (!compacted.ok) report.failed.push(name);
+          if (!compacted.ok)
+            (compacted.code === "busy" ? report.retried : report.failed).push(name);
           else {
             report.compacted.tasks.push(name);
             report.compacted.eventsFolded += compacted.data.folded;
@@ -1384,6 +1388,8 @@ export class TaskStore {
       const after = next as unknown as Record<string, unknown>;
       const ops = encodeOps(diff(before, after), blobs);
       const { type, ...data } = extra;
+      if (data.key)
+        data.key = { ...data.key, boundAt: data.key.boundAt ?? new Date().toISOString() };
       const event = this.event(
         taskId,
         loaded.seq + 1,
@@ -1392,7 +1398,7 @@ export class TaskStore {
       );
       const start = appendEvent(this.eventsPath(taskId), event, loaded.end);
       const end = start + Buffer.byteLength(`${JSON.stringify(event)}\n`);
-      const key = "key" in extra ? (extra.key ?? null) : loaded.key;
+      const key = "key" in data ? (data.key ?? null) : loaded.key;
       const state = {
         record: next,
         key,
@@ -1430,9 +1436,10 @@ export class TaskStore {
     const dir = path.join(this.paths().tasks, record.id);
     fs.mkdirSync(dir, { recursive: true });
     const blobs = this.blobStore();
+    const bound = key ? { ...key, boundAt: key.boundAt ?? new Date().toISOString() } : null;
     const event = this.event(record.id, 1, type, {
       record: encodeRecord(record, blobs),
-      key,
+      key: bound,
       ...(legacy ? { legacy } : {}),
     });
     const file = this.eventsPath(record.id);
@@ -1440,7 +1447,7 @@ export class TaskStore {
     if (existing && existing.events.length > 0)
       throw new Error(`task ${record.id} already has a log`);
     appendEvent(file, event, 0);
-    this.indexTask(record, key, legacy !== null);
+    this.indexTask(record, bound, legacy !== null);
   }
 
   /** Fold the logs that writes marked past AUTO_COMPACT_BYTES (best effort). */
@@ -1481,7 +1488,10 @@ export class TaskStore {
       return this.withLock(this.taskLockPath(taskId), () => {
         // The log must still hold the events read above (another compaction
         // or a rewrite means start over next time).
-        const latest = readLog(file, log.lastStart, last.seq);
+        let latest: LogRead | null = null;
+        try {
+          latest = readLog(file, log.lastStart, last.seq);
+        } catch {}
         if (!latest || latest.events[0]?.id !== last.id)
           return failure("busy", "the task log changed during compaction; retry", { taskId });
         const appended = fs.readFileSync(file).subarray(log.end, latest.end);
@@ -1512,15 +1522,35 @@ export class TaskStore {
     }
   }
 
-  /** The open task bound to `key` anywhere in the store; with duplicates
-   * (e.g. from a 2.x-era race), deterministically the oldest. */
-  private openTaskForKey(key: string): Result<TaskIndexEntry | null> {
+  /**
+   * Open tasks bound to `key` anywhere in the store, oldest first (with
+   * duplicates, e.g. from a 2.x-era race, the oldest is the one used). A
+   * task follows its branch through `git branch -m`: it counts for the new
+   * name, and a branch created later under the old name starts fresh.
+   */
+  private openTasksForKey(key: string): Result<TaskIndexEntry[]> {
     const all = this.listStoreIndex();
     if (!all.ok) return all;
-    const bound = all.data
-      .filter((entry) => entry.key === key && entry.status !== "closed")
-      .toSorted(oldestFirst);
-    return success(null, null, bound[0] ?? null);
+    const location = this.location();
+    const renames = location.ok ? branchRenames(location.data) : [];
+    return success(
+      null,
+      null,
+      all.data
+        .filter((entry) => entry.key !== null && entry.status !== "closed")
+        .filter(
+          (entry) =>
+            (renames.length
+              ? followRenames(entry.key!, entry.boundAt ?? entry.createdAt, renames)
+              : entry.key) === key,
+        )
+        .toSorted(oldestFirst),
+    );
+  }
+
+  private openTaskForKey(key: string): Result<TaskIndexEntry | null> {
+    const bound = this.openTasksForKey(key);
+    return bound.ok ? success(null, null, bound.data[0] ?? null) : bound;
   }
 
   /** Serialize implicit-task binding for one key across the whole store. */

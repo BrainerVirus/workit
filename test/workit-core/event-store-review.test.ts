@@ -30,6 +30,13 @@ import {
 import { resolveStore, resolveTaskKey } from "@/packages/workit-core/src/store/paths";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
 import { caller, ref, scope, taskStartRequest } from "./task-fixtures";
+import {
+  MIGRATION_PENDING_NOTE,
+  sessionCompactContext,
+  turnContextText,
+} from "@/packages/workit-core/src/hooks/context";
+import { CLAUDE_CODE_DESCRIPTOR } from "@/packages/workit-core/src/hooks";
+import { compactContextFor } from "@/packages/workit-opencode/src/runtime";
 import { eventsOf, storeDirOf } from "./store-files";
 
 const dirs: string[] = [];
@@ -401,19 +408,55 @@ test("during a rebase (detached HEAD) the key is the branch being rebased", () =
   expect(before.ok && during.ok && before.data.key).toBe(during.ok ? during.data.key : "");
 });
 
-test("after a branch rename, task status offers the exact adopt command; closed tasks are never reused", async () => {
+test("after git branch -m the task follows the new name; a new branch with the old name starts fresh", async () => {
   const root = repo("feature/old");
   const old = new TaskStore(root).implicitTask({ provenance, create: true });
   if (!old.ok || !old.data) throw new Error("setup");
   git(root, "branch", "-m", "feature/new");
   const status = await cli(root, ["task", "status", "--json"]);
   expect(status.json().data).toMatchObject({
-    task: null,
-    notes: [
-      { id: old.data.task.id, kind: "renamed", hint: `workit task adopt ${old.data.task.id}` },
-    ],
+    key: { key: "feature/new" },
+    task: { id: old.data.task.id },
   });
+  // The first write on the renamed branch stores the new binding.
+  expect(new TaskStore(root).implicitTask({ provenance, create: true })).toMatchObject({
+    ok: true,
+    data: { created: false, task: { id: old.data.task.id } },
+  });
+  expect(eventsOf(root, old.data.task.id).at(-1)).toMatchObject({
+    type: "task.bound",
+    data: { key: { key: "feature/new" } },
+  });
+  // Reflog times have one-second resolution: a branch created in the same
+  // second as the rename is indistinguishable from the renamed task's own.
+  Bun.sleepSync(1100);
+  git(root, "checkout", "-q", "-b", "feature/old");
+  expect(new TaskStore(root).implicitTask({ provenance, create: false })).toEqual(
+    success(null, null, null),
+  );
+  const fresh = new TaskStore(root).implicitTask({ provenance, create: true });
+  expect(fresh).toMatchObject({ ok: true, data: { created: true } });
+  expect(fresh.ok && fresh.data?.task.id).not.toBe(old.data.task.id);
+  // Adopting the old task onto the old name later binds it there for good
+  // (the binding is newer than the rename).
+  expect((await cli(root, ["task", "close", "--outcome", "stopped", "--confirm"])).code).toBe(0);
   expect((await cli(root, ["task", "adopt", old.data.task.id])).code).toBe(0);
+  expect(new TaskStore(root).implicitTask({ provenance, create: false })).toMatchObject({
+    ok: true,
+    data: { task: { id: old.data.task.id } },
+  });
+  // ...and the renamed branch no longer claims it.
+  git(root, "checkout", "-q", "feature/new");
+  expect(new TaskStore(root).implicitTask({ provenance, create: false })).toEqual(
+    success(null, null, null),
+  );
+});
+
+test("a task follows a rename and back", async () => {
+  const root = repo("feature/x");
+  const old = new TaskStore(root).implicitTask({ provenance, create: true });
+  if (!old.ok || !old.data) throw new Error("setup");
+  git(root, "branch", "-m", "feature/y");
   expect(new TaskStore(root).implicitTask({ provenance, create: false })).toMatchObject({
     ok: true,
     data: { task: { id: old.data.task.id } },
@@ -502,4 +545,100 @@ test("an append between building a checkpoint and swapping it is carried over", 
     data: { progress: { summary: "raced" } },
   });
   expect(eventsOf(root, id).at(-1)?.seq).toBe(122);
+});
+
+// ---------------------------------------------------------------------------
+// per-turn paths and the stub compare-and-swap
+
+test("while a 2.x store waits for migration, every per-turn path shows the one-line note", () => {
+  const root = tempDir("wk-s15r-note-");
+  v2Fixture(root, 1);
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for("workit.migrationReporter")];
+  const session = { host: "claude_code", handle: "s1" };
+  const context = {
+    root,
+    caller: { host: "claude_code" as const, actor: "s1" },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  };
+  expect(sessionCompactContext(new TaskStore(root), session, context)).toBe(MIGRATION_PENDING_NOTE);
+  expect(compactContextFor(root, "s1")).toBe(MIGRATION_PENDING_NOTE);
+  const input = {
+    host: "claude_code" as const,
+    cwd: root,
+    session: { id: "s1", agentId: null, agentType: null, parentId: null },
+    permissionMode: null,
+    transcriptPath: null,
+    event: { kind: "prompt.submit" as const, prompt: "go" },
+  };
+  expect(turnContextText(input as never, CLAUDE_CODE_DESCRIPTOR)).toBe(MIGRATION_PENDING_NOTE);
+  expect(MIGRATION_PENDING_NOTE).toBe("workit migration pending — run `workit task status`");
+  // Nothing was migrated by those reads.
+  expect(existsSync(path.join(root, ".workit", "workspace.json"))).toBe(true);
+  expect(readFileSync(path.join(root, ".workit", "workspace.json"), "utf8")).not.toContain(
+    "workit-store",
+  );
+});
+
+test("a 2.x write that slips in between migrating a task and stubbing its file is never stubbed over", () => {
+  const root = repo("feature/cas");
+  const [id] = v2Fixture(root, 1);
+  const store = new TaskStore(root, { migrateOnRead: true });
+  const internals = store as unknown as { openTask: (...args: unknown[]) => unknown };
+  const openTask = internals.openTask.bind(store);
+  internals.openTask = (...args) => {
+    const result = openTask(...args);
+    // A 2.x writer that ignores the lock rewrites the file right after.
+    v2Write(root, id, "slipped past the lock");
+    return result;
+  };
+  expect(store.listTaskIndex()).toMatchObject({ ok: false, code: "busy" });
+  const file = readFileSync(path.join(root, ".workit", "tasks", `${id}.json`), "utf8");
+  expect(file).toContain("slipped past the lock");
+  expect(file).not.toContain("workit-store");
+  const again = new TaskStore(root, { migrateOnRead: true }).readTask(id);
+  expect(again).toMatchObject({
+    ok: true,
+    data: { progress: { summary: "slipped past the lock" } },
+  });
+});
+
+test("gc reports a log another compaction rewrote meanwhile as retried, not failed", () => {
+  const root = tempDir("wk-s15r-retry-");
+  const store = new TaskStore(root);
+  const created = store.implicitTask({ provenance, create: true });
+  if (!created.ok || !created.data) throw new Error("setup");
+  const id = created.data.task.id;
+  let revision = created.data.task.revision;
+  for (let index = 0; index < 120; index += 1) {
+    const written = store.mutateTask(id, revision, (current) =>
+      success(null, null, {
+        ...current,
+        progress: { summary: `n${index}`, nextAction: null, blockers: [] },
+      }),
+    );
+    if (!written.ok) throw new Error(written.error);
+    revision = written.data.revision;
+  }
+  const internals = store as unknown as {
+    withLock: (lockPath: string, operation: () => unknown) => unknown;
+  };
+  const withLock = internals.withLock.bind(store);
+  let raced = false;
+  internals.withLock = (lockPath, operation) => {
+    if (!raced && lockPath.endsWith(`${id}${path.sep}lock`)) {
+      raced = true;
+      expect(new TaskStore(root).collectGarbage({ compactAbove: 100 }).ok).toBe(true);
+    }
+    return withLock(lockPath, operation);
+  };
+  expect(store.collectGarbage({ compactAbove: 100 })).toMatchObject({
+    ok: true,
+    data: { retried: [id], failed: [] },
+  });
+  expect(new TaskStore(root).readTask(id)).toMatchObject({
+    ok: true,
+    data: { progress: { summary: "n119" } },
+  });
 });
