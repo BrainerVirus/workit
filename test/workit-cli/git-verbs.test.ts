@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -358,6 +359,30 @@ test("verify-delivery: given a local-only commit, then it is NOT delivered (exit
   expect(never.stderr).toContain("does not exist on");
   expect((await run(["verify-delivery", "push", "--sha", "zz"], repo.cwd)).code).toBe(2);
 });
+
+// POSIX shell hook in the bare remote.
+test.skipIf(process.platform === "win32")(
+  "git push: given a remote that does not end up at the pushed SHA, then push_unverified (exit 1), not delivered",
+  async () => {
+    const repo = setup();
+    const base = repo.git("rev-parse", "main");
+    await feature(repo);
+    // A server-side hook moves the branch back after accepting the push.
+    const hooks = path.join(repo.root, "bare-hooks");
+    mkdirSync(hooks);
+    writeFileSync(
+      path.join(hooks, "post-receive"),
+      `#!/bin/sh\ngit update-ref refs/heads/feature/a ${base}\n`,
+      { mode: 0o755 },
+    );
+    spawnSync("git", ["config", "core.hooksPath", hooks], { cwd: repo.bare });
+    const result = await run(["git", "push", "--json"], repo.cwd);
+    expect(result.code).toBe(1);
+    expect(result.json().error).toContain("push_unverified");
+    expect(result.json().unblock).toBe("workit verify-delivery push");
+    expect(rows(repo.cwd, "push.verified")).toHaveLength(0);
+  },
+);
 
 test("git push: a rewrite needs --force-with-lease; plain --force is refused", async () => {
   const repo = setup();
