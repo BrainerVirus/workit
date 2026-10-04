@@ -10,8 +10,10 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readlinkSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -395,7 +397,24 @@ const checkOpencodeVersion = (res: Resolved): DoctorCheck => {
       status: "pass",
       detail: "opencode CLI not on PATH — skipping version check",
     };
-  const raw = versionOf("opencode", res.env, 5_000);
+  // OpenCode writes a log under its data dir even for --version: point its XDG
+  // dirs at a throwaway directory so the doctor never writes into the home.
+  const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-doctor-opencode-"));
+  let raw: string | null;
+  try {
+    raw = versionOf(
+      "opencode",
+      {
+        ...res.env,
+        XDG_DATA_HOME: path.join(scratch, "data"),
+        XDG_STATE_HOME: path.join(scratch, "state"),
+        XDG_CACHE_HOME: path.join(scratch, "cache"),
+      },
+      5_000,
+    );
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
   const installed = raw ? ((raw.match(/\d+\.\d+\.\d+/) ?? [])[0] ?? null) : null;
   if (installed === null)
     return {
