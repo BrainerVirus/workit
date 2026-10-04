@@ -1,4 +1,4 @@
-// Shared plumbing for the forge verbs (`pr status`, `ci wait`, `ci rerun`):
+// Shared plumbing for the forge verbs (`pr`, `ci`, `git push`, `verify-delivery`):
 // flag parsing, forge resolution + identity check, envelope mapping, and the
 // human rendering of a PR status document.
 import type { ForgeRunner } from "@brainervirus/workit-core/src/forge/exec";
@@ -9,15 +9,18 @@ import {
   type ResolvedForge,
 } from "@brainervirus/workit-core/src/forge/resolve";
 import type { ForgeResult } from "@brainervirus/workit-core/src/forge/types";
+import type { NpmRunner } from "@brainervirus/workit-core/src/forge/verify";
 import { emit, fail, type Io } from "../output";
 
-/** Test seams: a recorded-fixture runner and a virtual clock. */
+/** Test seams: a recorded-fixture runner, a virtual clock and a fake npm. */
 export const forgeDeps: {
   runner: ForgeRunner | undefined;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
+  npm: NpmRunner | undefined;
 } = {
   runner: undefined,
+  npm: undefined,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
 };

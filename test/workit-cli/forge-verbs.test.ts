@@ -118,7 +118,7 @@ test("pr status --json returns the status document in the shared envelope", asyn
   expect(human.stdout).toEndWith("next: RESOLVE_THREADS\n");
 });
 
-test("pr usage errors exit 2; create/merge are planned for S11", async () => {
+test("pr usage errors exit 2", async () => {
   const { repo } = setup();
   expect((await run(["pr", "status", "--pr", "abc", "--json"], repo.cwd)).json()).toMatchObject({
     ok: false,
@@ -127,9 +127,6 @@ test("pr usage errors exit 2; create/merge are planned for S11", async () => {
   });
   expect((await run(["pr", "status", "--bogus"], repo.cwd)).code).toBe(2);
   expect((await run(["pr"], repo.cwd)).code).toBe(2);
-  const create = await run(["pr", "create", "--json"], repo.cwd);
-  expect(create.code).toBe(2);
-  expect(create.json()).toMatchObject({ code: "not_implemented", data: { slice: "S11" } });
 });
 
 test("ci wait: a flaky check that turns green exits 0 after a backoff poll", async () => {
