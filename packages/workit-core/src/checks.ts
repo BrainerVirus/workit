@@ -203,7 +203,9 @@ export function planSpawn(
         return false;
       }
     });
+  // Windows names are case-insensitive; an exact upper-case key wins over a duplicate.
   const env = (name: string): string | undefined =>
+    options.env[name] ??
     Object.entries(options.env).find(([key]) => key.toUpperCase() === name)?.[1];
   const exts = (env("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
   const command = argv[0];
@@ -260,6 +262,7 @@ export function runCheckCommand(argv: readonly string[], options: RunOptions): P
     let timedOut = false;
     let drain: NodeJS.Timeout | null = null;
     let child: ReturnType<typeof spawn>;
+    let timer: NodeJS.Timeout | null = null;
     const killTree = () => {
       if (!child?.pid) return;
       if (windows)
@@ -328,13 +331,11 @@ export function runCheckCommand(argv: readonly string[], options: RunOptions): P
         forwarders.set(name, handler);
         process.on(name, handler);
       }
-    const timer =
-      options.timeoutMs && options.timeoutMs > 0
-        ? setTimeout(() => {
-            timedOut = true;
-            killTree();
-          }, options.timeoutMs)
-        : null;
+    if (options.timeoutMs && options.timeoutMs > 0)
+      timer = setTimeout(() => {
+        timedOut = true;
+        killTree();
+      }, options.timeoutMs);
     const forward = (
       name: string,
       stream: NodeJS.ReadableStream | null,

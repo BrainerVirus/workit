@@ -26,11 +26,11 @@ test.skipIf(process.platform !== "win32")(
     );
     // The argv is the configured one; only the spawn changes.
     expect(matchesNamedCheck(loadCheckConfig(root), "test", argv, ".")).toBe(true);
-    const run = await runCheckCommand(argv, {
-      cwd: root,
-      env: { ...process.env, PATH: `${root};${process.env.PATH ?? ""}` },
-    });
-    expect(run.spawnError).toBeNull();
+    const env = { ...process.env };
+    const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+    env[pathKey] = `${root};${env[pathKey] ?? ""}`;
+    const run = await runCheckCommand(argv, { cwd: root, env });
+    expect(run.spawnError, run.log).toBeNull();
     expect(run.exitCode).toBe(3);
     expect(run.log).toContain('args:"a b" "x&y" "q\\"q"');
   },

@@ -147,6 +147,10 @@ test("runCheckCommand streams output, keeps only the newest bytes, and mirrors t
   expect(tailLines(big.log, 1)).toEqual(["last line"]);
   const missing = await runCheckCommand(["workit-no-such-binary-xyz"], { cwd: os.tmpdir() });
   expect(missing).toMatchObject({ exitCode: 127, spawnError: "ENOENT" });
+  // A spawn that throws synchronously (invalid argument) also settles as 127.
+  const invalid = await runCheckCommand(["bad\0name"], { cwd: os.tmpdir(), timeoutMs: 1000 });
+  expect(invalid.exitCode).toBe(127);
+  expect(invalid.spawnError).toBeString();
 });
 
 test("ecosystem defaults: go, cargo, pytest and a Makefile test target are named `test` checks", () => {
