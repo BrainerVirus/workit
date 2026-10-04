@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `.workit/recovery/` no longer grows without bound: each task or workspace
+  record keeps its newest three recovery copies. `workit gc` (`--dry-run`,
+  `--json`) prunes copies left by older versions, removes stale temp files, and
+  collapses duplicate stored candidates in paused tasks (closed tasks are never
+  rewritten); `--dry-run` is read-only.
+- `state.recover` is no longer advertised in host tool schemas or the CLI: it
+  requires native recovery authority that no shipped host supplies, so it could
+  only return `permission_denied`.
 - A `.workit/metadata.lock` left by a dead process (or a reused pid, or a
   foreign-host/namespace lock past its TTL) no longer bricks the store: the next
   write reclaims it. Locks carry the pid namespace and boot id so a container
