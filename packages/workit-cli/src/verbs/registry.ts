@@ -112,17 +112,17 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "pr",
     group: "delivery",
-    usage: "workit pr status|create|merge [--pr <n>] [--json]",
-    summary: "Read PR/MR state (checks, threads, behind-base, next) or create/merge it",
-    planned: "S10/S11",
+    usage: "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]",
+    summary:
+      "Read PR/MR state: checks with failing log tails, unresolved threads, behind-base, next action",
     load: () => import("./pr"),
   },
   {
     name: "ci",
     group: "delivery",
-    usage: "workit ci wait|rerun [--pr <n>] [--json]",
-    summary: "Wait for CI on the current head or rerun failed jobs once",
-    planned: "S10",
+    usage:
+      "workit ci wait [--pr <n>] [--head <sha>] [--timeout 20m] | ci rerun [--failed | --check <name>…] --reason flake|infra [--force]",
+    summary: "Wait for CI on the PR head (exit 0/1/3/4), or rerun failed jobs once per head",
     load: () => import("./ci"),
   },
   {

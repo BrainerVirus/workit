@@ -1,0 +1,69 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 12,
+        "url": "https://github.com/o/r/pull/12",
+        "state": "OPEN",
+        "isDraft": true,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "DRAFT",
+        "baseRefName": "main",
+        "baseRefOid": "{{BASE}}",
+        "headRefName": "feature/x",
+        "headRefOid": "{{HEAD}}",
+        "reviewDecision": null,
+        "reviewThreads": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          },
+          "nodes": []
+        },
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "{{HEAD}}",
+                "statusCheckRollup": {
+                  "state": "FAILURE",
+                  "contexts": {
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": "NA"
+                    },
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "fast checks",
+                        "status": "IN_PROGRESS",
+                        "conclusion": null,
+                        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/101",
+                        "databaseId": 101,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 1,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        },
+                        "isRequired": true
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "isInMergeQueue": false,
+        "baseRef": {
+          "target": {
+            "oid": "{{BASE}}"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "id": 542136460,
+  "iid": 12,
+  "project_id": 34675721,
+  "title": "feat: x",
+  "state": "opened",
+  "merged_at": null,
+  "closed_at": null,
+  "target_branch": "main",
+  "source_branch": "feature/x",
+  "source_project_id": 34675721,
+  "target_project_id": 34675721,
+  "draft": false,
+  "work_in_progress": false,
+  "merge_status": "can_be_merged",
+  "detailed_merge_status": "not_approved",
+  "sha": "{{HEAD}}",
+  "merge_commit_sha": null,
+  "squash_commit_sha": null,
+  "reference": "!12",
+  "web_url": "https://gitlab.com/group/project/-/merge_requests/12",
+  "squash": true,
+  "has_conflicts": false,
+  "blocking_discussions_resolved": false,
+  "head_pipeline": {
+    "id": 2909499411,
+    "iid": 1537,
+    "project_id": 34675721,
+    "sha": "{{HEAD}}",
+    "ref": "feature/x",
+    "status": "failed",
+    "source": "merge_request_event",
+    "web_url": "https://gitlab.com/group/project/-/pipelines/2909499411"
+  },
+  "diff_refs": {
+    "base_sha": "{{BASE}}",
+    "head_sha": "{{HEAD}}",
+    "start_sha": "{{BASE}}"
+  },
+  "diverged_commits_count": 3
+}

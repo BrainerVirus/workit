@@ -1,0 +1,149 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 12,
+        "url": "https://github.com/o/r/pull/12",
+        "state": "OPEN",
+        "isDraft": false,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "BLOCKED",
+        "baseRefName": "main",
+        "baseRefOid": "{{BASE}}",
+        "headRefName": "feature/x",
+        "headRefOid": "{{HEAD}}",
+        "reviewDecision": "REVIEW_REQUIRED",
+        "reviewThreads": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          },
+          "nodes": [
+            {
+              "id": "PRRT_1",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "src/a.ts",
+              "line": 10,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": {
+                      "login": "reviewer",
+                      "__typename": "User"
+                    },
+                    "body": "Please handle the empty case here before merging.",
+                    "url": "https://github.com/o/r/pull/12#discussion_r1"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_2",
+              "isResolved": true,
+              "isOutdated": false,
+              "path": "src/b.ts",
+              "line": 3,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": {
+                      "login": "reviewer",
+                      "__typename": "User"
+                    },
+                    "body": "Nit: rename.",
+                    "url": "https://github.com/o/r/pull/12#discussion_r2"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "{{HEAD}}",
+                "statusCheckRollup": {
+                  "state": "FAILURE",
+                  "contexts": {
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": "NA"
+                    },
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "fast checks",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/101",
+                        "databaseId": 101,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 1,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        },
+                        "isRequired": true
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "test (ubuntu-latest)",
+                        "status": "COMPLETED",
+                        "conclusion": "FAILURE",
+                        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/102",
+                        "databaseId": 102,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 1,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        },
+                        "isRequired": true
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "release",
+                        "status": "COMPLETED",
+                        "conclusion": "SKIPPED",
+                        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/103",
+                        "databaseId": 103,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 1,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        },
+                        "isRequired": false
+                      },
+                      {
+                        "__typename": "StatusContext",
+                        "context": "license/cla",
+                        "state": "SUCCESS",
+                        "targetUrl": "https://cla.example/o/r/12",
+                        "isRequired": false
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "isInMergeQueue": false,
+        "baseRef": {
+          "target": {
+            "oid": "{{BASE}}"
+          }
+        }
+      }
+    }
+  }
+}

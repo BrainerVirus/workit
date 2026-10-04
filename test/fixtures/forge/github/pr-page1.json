@@ -1,0 +1,106 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 12,
+        "url": "https://github.com/o/r/pull/12",
+        "state": "OPEN",
+        "isDraft": false,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "BLOCKED",
+        "baseRefName": "main",
+        "baseRefOid": "{{BASE}}",
+        "headRefName": "feature/x",
+        "headRefOid": "{{HEAD}}",
+        "reviewDecision": "REVIEW_REQUIRED",
+        "reviewThreads": {
+          "pageInfo": {
+            "hasNextPage": true,
+            "endCursor": "T1"
+          },
+          "nodes": [
+            {
+              "id": "PRRT_3",
+              "isResolved": true,
+              "isOutdated": false,
+              "path": "src/c.ts",
+              "line": 1,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": {
+                      "login": "reviewer",
+                      "__typename": "User"
+                    },
+                    "body": "ok",
+                    "url": "https://github.com/o/r/pull/12#discussion_r3"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "{{HEAD}}",
+                "statusCheckRollup": {
+                  "state": "FAILURE",
+                  "contexts": {
+                    "pageInfo": {
+                      "hasNextPage": true,
+                      "endCursor": "C1"
+                    },
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "fast checks",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/101",
+                        "databaseId": 101,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 1,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        },
+                        "isRequired": true
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "test (ubuntu-latest)",
+                        "status": "COMPLETED",
+                        "conclusion": "FAILURE",
+                        "detailsUrl": "https://github.com/o/r/actions/runs/1/job/102",
+                        "databaseId": 102,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 1,
+                            "workflow": {
+                              "name": "CI"
+                            }
+                          }
+                        },
+                        "isRequired": true
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "isInMergeQueue": false,
+        "baseRef": {
+          "target": {
+            "oid": "{{BASE}}"
+          }
+        }
+      }
+    }
+  }
+}

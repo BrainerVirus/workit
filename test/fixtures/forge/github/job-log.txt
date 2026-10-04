@@ -1,0 +1,45 @@
+2026-10-03T22:14:31.4100878Z (skip) creates logs with restrictive permissions
+2026-10-03T22:14:31.4101638Z (skip) resolveStateDir > falls back to ~/.local/state on Linux
+2026-10-03T22:14:31.4102978Z (skip) merge matches exact target and source SHA on both hosts
+2026-10-03T22:14:31.4104052Z (skip) resolvePrBranchContext yields the branch-exclusive range against the configured target
+2026-10-03T22:14:31.4105523Z (skip) pr-ready-context reports repository, commits, files, template and VCS sections (auto branch-exclusive range)
+2026-10-03T22:14:31.4106829Z (skip) pr-ready-context with an explicit range skips the branch-exclusive fields
+2026-10-03T22:14:31.4107903Z (skip) pr-ready-context refuses protected branches
+2026-10-03T22:14:31.4109569Z (skip) Given a lock whose pid now belongs to a different process, When a write runs, Then the lock is reclaimed and the write succeeds
+2026-10-03T22:14:31.4111425Z (skip) Given a lock written by an older Workit without namespace identity, When a write runs, Then it is treated as foreign until its TTL
+2026-10-03T22:14:31.4113513Z (skip) Given a plain-hostname lock naming live pid 1 with a mismatched start time (a container's lock), When a write runs, Then it stays busy and is not reclaimed
+2026-10-03T22:14:31.4115616Z (skip) Given a lock from the same host and pid namespace but an earlier boot, When a write runs, Then it is reclaimed immediately
+2026-10-03T22:14:31.4116979Z (skip) merged PR style reads the configured push host and full GitLab subgroup path
+2026-10-03T22:14:31.4118023Z (skip) GitLab style lookup does not fall back to account-wide merge requests
+2026-10-03T22:14:31.4119016Z (skip) pr-ready-context.sh: VCS Config section reports workspace + provider
+2026-10-03T22:14:31.4120178Z (skip) pr-ready-context.sh: malformed vcs.json reports unreadable instead of silent defaults (RL-01)
+2026-10-03T22:14:31.4121131Z (skip) pr-ready-context.sh uses the workspace target branch
+2026-10-03T22:14:31.4122323Z (skip) PR context base_ref and prCreate target agree for the same workspace (RL-03)
+2026-10-03T22:14:31.4123132Z (skip) bundled YouTrack scripts honor XDG_CONFIG_HOME
+2026-10-03T22:14:31.4123501Z 
+2026-10-03T22:14:31.4123509Z 
+2026-10-03T22:14:31.4123644Z 1 tests failed:
+2026-10-03T22:14:31.4124627Z (fail) Given three processes each making 40 writes to one task, When they contend, Then none returns recovery_required [4847.43ms]
+2026-10-03T22:14:31.4125398Z 
+2026-10-03T22:14:31.4125508Z  912 pass
+2026-10-03T22:14:31.4125773Z  22 skip
+2026-10-03T22:14:31.4126027Z  1 fail
+2026-10-03T22:14:31.4126346Z  5 snapshots, 5370 expect() calls
+2026-10-03T22:14:31.4126820Z Ran 935 tests across 93 files. [440.39s]
+2026-10-03T22:14:31.5283636Z ##[error]Process completed with exit code 1.
+2026-10-03T22:14:31.5551175Z Post job cleanup.
+2026-10-03T22:14:31.8348264Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-03T22:14:31.8728975Z git version 2.55.0.windows.5
+2026-10-03T22:14:31.8819230Z Temporarily overriding HOME='D:\a\_temp\4eb21d01-a501-4eba-9875-18f84e3bf202' before making global git config changes
+2026-10-03T22:14:31.8820739Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-03T22:14:31.8832830Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\workit\workit
+2026-10-03T22:14:31.9232905Z Removing SSH command configuration
+2026-10-03T22:14:31.9247687Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-03T22:14:31.9605130Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-03T22:14:32.5785238Z Removing HTTP extra header
+2026-10-03T22:14:32.5798740Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-03T22:14:32.6197603Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-03T22:14:33.2730455Z Removing includeIf entries pointing to credentials config files
+2026-10-03T22:14:33.2741184Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-03T22:14:33.3121164Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-03T22:14:33.9807825Z Cleaning up orphan processes
