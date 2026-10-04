@@ -141,6 +141,17 @@ describe("publishChanged", () => {
       r.cleanup();
     }
   });
+  test("a lockfile change republishes every package that inlines third-party code", () => {
+    const r = repo();
+    try {
+      r.change("bun.lock", "{}\n");
+      expect(changedPackages(r.root, "v0.8.10")).toEqual(
+        RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-core"),
+      );
+    } finally {
+      r.cleanup();
+    }
+  });
   test("a publish failure does not stop the others; failures throw at the end with a summary", () => {
     const r = repo();
     try {

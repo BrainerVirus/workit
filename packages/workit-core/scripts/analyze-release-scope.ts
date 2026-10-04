@@ -29,18 +29,23 @@ type ReleasePackage = (typeof RELEASE_PACKAGES)[number];
  * against the build entries' metafiles by
  * test/workit-core/bundled-sources.test.ts.
  */
-const CORE = "packages/workit-core/";
-const MCP_SRC = "packages/workit-mcp/src/";
-// The bundled CLI also inlines its package.json (`workit --version`).
+const CORE = "packages/workit-core/"; // sources, skills, templates and package.json
+// Cursor and Codex inline the MCP transport and its declared dependencies.
+const MCP = ["packages/workit-mcp/src/", "packages/workit-mcp/package.json"];
+// The bundled CLI inlines its sources, package.json (`workit --version`) and
+// its third-party dependencies.
 const CLI = ["packages/workit-cli/src/", "packages/workit-cli/package.json"];
+// Third-party code (zod, the MCP SDK, ink/react) is inlined at the version
+// the lockfile resolves, so a lockfile change can change every bundle.
+const LOCK = "bun.lock";
 export const BUNDLED_SOURCES: Partial<Record<ReleasePackage, readonly string[]>> = {
-  "workit-mcp": [CORE],
-  "workit-cli": [CORE],
-  "workit-opencode": [CORE],
-  "workit-cursor": [CORE, MCP_SRC],
-  "workit-codex": [CORE, MCP_SRC],
-  "workit-pi": [CORE],
-  "workit-claude-code": [CORE, ...CLI],
+  "workit-mcp": [CORE, LOCK],
+  "workit-cli": [CORE, LOCK],
+  "workit-opencode": [CORE, LOCK],
+  "workit-cursor": [CORE, ...MCP, LOCK],
+  "workit-codex": [CORE, ...MCP, LOCK],
+  "workit-pi": [CORE, LOCK],
+  "workit-claude-code": [CORE, ...CLI, LOCK],
 };
 
 /** Every repository path whose change alters `pkg`'s published payload. */
@@ -116,7 +121,7 @@ export function analyzeReleaseScope(root = process.cwd()): {
     const subject = (message.split("\n")[0] ?? "").trim();
     if (RELEASE_SYNC.test(subject)) continue;
     const touched = files.filter((f) =>
-      RELEASE_PACKAGES.some((p) => f.startsWith(`packages/${p}/`)),
+      RELEASE_PACKAGES.some((p) => payloadPaths(p).some((prefix) => f.startsWith(prefix))),
     );
     if (touched.length === 0) continue;
     const lvl = subjectLevel(message);
