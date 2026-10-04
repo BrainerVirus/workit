@@ -758,3 +758,34 @@ test("handoff and list label superseded, ignored and self rows", () => {
   )?.labels;
   expect(verdictLabels).toEqual(["self"]);
 });
+
+test("lock release never moves a lock it does not own, even when the token changes under it", () => {
+  const root = repo();
+  const file = value(ledgerPath(root));
+  const lock = `${file}.lock`;
+  mkdirSync(path.dirname(file), { recursive: true });
+  const rename = fs.renameSync;
+  const mine = ledgerLock.acquire(lock)!;
+
+  // Wrong token: refused before touching the lock (no rename window).
+  const spy = spyOn(fs, "renameSync");
+  try {
+    expect(ledgerLock.release(lock, "someone-else")).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+  }
+
+  // Our token passes the first read, but a takeover lands before the rename:
+  // the renamed lock is someone else's, so it goes back untouched.
+  const race = spyOn(fs, "renameSync").mockImplementation((from: fs.PathLike, to: fs.PathLike) => {
+    if (String(from) === lock) writeFileSync(path.join(lock, "owner"), "other-holder");
+    rename(from, to);
+  });
+  try {
+    expect(ledgerLock.release(lock, mine)).toBe(false);
+  } finally {
+    race.mockRestore();
+  }
+  expect(ledgerLock.token(lock)).toBe("other-holder");
+});
