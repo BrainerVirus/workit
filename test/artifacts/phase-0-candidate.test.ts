@@ -274,6 +274,10 @@ test(
         path.join(REPO_ROOT, "packages/workit-cli/src/logic.ts"),
         path.join(install, "logic.ts"),
       );
+      // logic.ts re-exports the CLI-only setup module (src/admin since 3.0).
+      cpSync(path.join(REPO_ROOT, "packages/workit-cli/src/admin"), path.join(install, "admin"), {
+        recursive: true,
+      });
       writeFileSync(path.join(install, "runner.ts"), SCAFFOLD_RUNNER, "utf8");
 
       const cfg = path.join(home, ".config", "workflow-toolkit");

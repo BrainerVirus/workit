@@ -47,10 +47,10 @@ test("default report aggregates the deterministic candidate and an isolated doct
   // and the workspace_lock check (pass with no metadata lock).
   expect(report.doctor).toEqual({
     ok: false,
-    passed: 21,
+    passed: 16,
     warned: 0,
     failed: 1,
-    total: 22,
+    total: 17,
     fixes: 1,
   });
   expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -80,10 +80,10 @@ test("report doctor counts are exact against a controlled isolated fixture", () 
     // and the workspace_lock check (pass with no metadata lock).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 21,
+      passed: 16,
       warned: 0,
       failed: 1,
-      total: 22,
+      total: 17,
       fixes: 1,
     });
   } finally {
