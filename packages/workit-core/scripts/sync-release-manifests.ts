@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const SYNC_MANIFEST_PATHS = [
+export const SYNC_MANIFEST_PATHS = [
   "package.json",
   "packages/workit-core/package.json",
   "packages/workit-mcp/package.json",

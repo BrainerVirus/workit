@@ -2,10 +2,15 @@
 // generated skills, and the source/dist resolution of the local pin.
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
+import {
+  SYNC_MANIFEST_PATHS,
+  syncManifests,
+} from "@/packages/workit-core/scripts/sync-release-manifests";
 import { installedPlugin, PLUGIN_DIR } from "./plugin-helpers";
 
 const REPO = path.resolve(PLUGIN_DIR, "..", "..");
@@ -24,13 +29,31 @@ const frontmatter = (file: string): Record<string, string> => {
   );
 };
 
-test("the plugin manifest tracks the released version and the canonical repository", () => {
+test("the plugin manifest is versioned with its package and kept in lockstep by the release sync", () => {
   const manifest = json(path.join(PLUGIN_DIR, ".claude-plugin", "plugin.json"));
   const pkg = json(path.join(PLUGIN_DIR, "package.json"));
-  const core = json(path.join(REPO, "packages", "workit-core", "package.json"));
+  // Claude reads the version from plugin.json; npm from package.json.
+  expect(manifest.version).toBe(pkg.version);
+  // Not compared with the current release: a branch cut before the latest
+  // release legitimately carries the previous version until the
+  // post-release manifest sync, which owns both files.
+  const synced = [
+    "packages/workit-claude-code/package.json",
+    "packages/workit-claude-code/.claude-plugin/plugin.json",
+  ];
+  for (const rel of synced) expect(SYNC_MANIFEST_PATHS, rel).toContain(rel);
+  const tree = mkdtempSync(path.join(tmpdir(), "workit-claude-sync-"));
+  try {
+    for (const rel of SYNC_MANIFEST_PATHS) {
+      mkdirSync(path.dirname(path.join(tree, rel)), { recursive: true });
+      cpSync(path.join(REPO, rel), path.join(tree, rel));
+    }
+    syncManifests(tree, "v99.0.0");
+    for (const rel of synced) expect(json(path.join(tree, rel)).version, rel).toBe("99.0.0");
+  } finally {
+    rmSync(tree, { recursive: true, force: true });
+  }
   expect(manifest.name).toBe("workit");
-  expect(manifest.version).toBe(core.version);
-  expect(pkg.version).toBe(core.version);
   expect(manifest.repository).toBe("https://github.com/BrainerVirus/workit");
   // Default component scan: no path overrides that could drift from the layout.
   for (const key of ["hooks", "skills", "agents", "commands", "mcpServers"])
