@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-cli",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "private": false,
   "description": "Workit CLI — setup wizard, doctor, and task control for agentic coding workflows",
   "keywords": [
@@ -37,6 +37,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@babel/parser": "7.29.9",
     "@brainervirus/workit-core": "workspace:*",
     "@brainervirus/workit-cursor": "workspace:*",
     "@brainervirus/workit-opencode": "workspace:*",

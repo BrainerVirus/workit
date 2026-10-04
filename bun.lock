@@ -48,6 +48,7 @@
         "workit": "./dist/index.js",
       },
       "dependencies": {
+        "@babel/parser": "7.29.9",
         "@brainervirus/workit-core": "workspace:*",
         "@brainervirus/workit-cursor": "workspace:*",
         "@brainervirus/workit-opencode": "workspace:*",
