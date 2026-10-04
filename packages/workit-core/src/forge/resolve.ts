@@ -106,6 +106,24 @@ export function resolveForge(
   let credential: CredentialSource = "cli_login";
   const tokenFile = (workspace?.vcs as { tokenFile?: unknown } | undefined)?.tokenFile;
   if (typeof tokenFile === "string" && tokenFile.trim()) {
+    // A stored token goes only to the host it is for: the public forge (also
+    // reached through an ~/.ssh/config alias) or a host configured
+    // explicitly (vcs.json github.host/gitlab.host, workspace vcs.host).
+    // A host merely *named* like a forge (github.evil.com) never gets it.
+    const workspaceHost = (workspace?.vcs as { host?: unknown } | undefined)?.host;
+    const explicit =
+      typeof workspaceHost === "string" &&
+      workspaceHost
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//u, "")
+        .replace(/\/.*$/u, "") === apiHost;
+    if (derived.via === "host_name" && !explicit)
+      return failure(
+        "blocked",
+        `token_host_unverified: push host ${derived.host} only looks like ${kind}; workspace ${workspace?.name ?? "?"} vcs.tokenFile is not sent to it`,
+        `if ${apiHost} is your ${kind} server, set ${kind}.host in ~/.config/workit/vcs.json (or vcs.host for the workspace); otherwise fix the push remote`,
+      );
     try {
       token = fs.readFileSync(tokenFile.trim(), "utf8").trim();
     } catch {

@@ -38,6 +38,8 @@ type GlMr = {
     sha: string;
     /** Merged-results / merge-train pipelines run on a merge ref; this is the MR head. */
     source_sha?: string | null;
+    /** `refs/merge-requests/<iid>/merge` (merged results) or `/train` (merge train). */
+    ref?: string;
     project_id: number;
     status: string;
     web_url?: string;
@@ -205,6 +207,20 @@ export function createGitLabForge(options: {
     return success({ items, truncated: true });
   };
 
+  /** True when merge commit `sha` (in project `scope`) has `head` as a parent. */
+  const mergeCommitTests = (scope: number, sha: string, head: string): boolean => {
+    const commit = apiJson<{ parent_ids?: string[] }>(
+      runner,
+      "glab",
+      apiHost,
+      api(`projects/${scope}/repository/commits/${sha}`),
+      `commit ${sha.slice(0, 12)}`,
+    );
+    return (
+      commit.ok && Array.isArray(commit.data.parent_ids) && commit.data.parent_ids.includes(head)
+    );
+  };
+
   /** The current tip of the target branch (diff_refs.base_sha is the merge base). */
   const baseTip = (branch: string): string | null => {
     const tip = apiJson<{ commit?: { id?: string } }>(
@@ -306,9 +322,18 @@ export function createGitLabForge(options: {
       const pipeline = value.head_pipeline ?? null;
       const open = value.state === "opened";
       // Merged-results and merge-train pipelines run on a merge ref whose sha
-      // is not the MR head; source_sha names the head they test.
+      // is a merge commit, not the MR head. They test the current head when
+      // source_sha says so or, when the response has no source_sha, when the
+      // merge commit's parents include the head (GET …/repository/commits/:sha).
       const current =
-        pipeline !== null && (pipeline.sha === value.sha || pipeline.source_sha === value.sha);
+        pipeline !== null &&
+        (pipeline.sha === value.sha ||
+          pipeline.source_sha === value.sha ||
+          (!pipeline.source_sha &&
+            new RegExp(`^refs/merge-requests/${value.iid}/(?:merge|train)$`, "u").test(
+              pipeline.ref ?? "",
+            ) &&
+            mergeCommitTests(pipeline.project_id, pipeline.sha, value.sha)));
       if (pipeline && current) {
         const scope = String(pipeline.project_id);
         const jobs = pages(

@@ -40,6 +40,25 @@ const ASSIGNMENT = new RegExp(
 
 const BEARER = /\b(bearer\s+)[A-Za-z0-9._~+/-]{12,}=*/giu;
 
+// A quoted value may contain spaces: password: "correct horse battery".
+const QUOTED_ASSIGNMENT = new RegExp(
+  String.raw`(?<![A-Za-z0-9])(["']?${KEY}["']?\s*[:=]\s*)(["'])([^"'\n]*[^\s"'][^"'\n]*)\2`,
+  "giu",
+);
+
+// ~/.netrc: `machine h login u password p` (also split across lines).
+const NETRC = /\b((?:machine|login)\s+\S+\s+(?:login\s+\S+\s+)?password\s+)\S+/giu;
+
+// Secrets passed as CLI flags: sshpass -p X, mysql -pX / -p X.
+const FLAG_SECRETS: readonly RegExp[] = [
+  /\b(sshpass\s+-p\s*)\S+/gu,
+  /\b(mysql(?:dump|admin|import|show)?\b[^\n]*?\s-p)(?!\s|$)\S+/gu,
+];
+
+// Signed-URL and query-string credentials (Azure SAS `sig=`, `token=`, …).
+const QUERY_SECRET =
+  /([?&;](?:sig|signature|token|access_token|api_key|apikey|key|password|secret|client_secret|X-Amz-Signature|X-Goog-Signature)=)[^&\s#"']+/giu;
+
 // A key block from BEGIN to END, or to the end of the text when truncated.
 const PRIVATE_KEY =
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|$)/gu;
@@ -75,6 +94,12 @@ export function redactText(value: string): string {
   for (const pattern of TOKEN_PATTERNS) out = out.replace(pattern, R);
   out = out.replace(CURL_USER, `$1$2${R}$2`);
   out = out.replace(BEARER, `$1${R}`);
+  out = out.replace(QUOTED_ASSIGNMENT, (match, lead: string, quote: string, secret: string) =>
+    secret.startsWith(R) ? match : `${lead}${quote}${R}${quote}`,
+  );
+  out = out.replace(NETRC, `$1${R}`);
+  for (const pattern of FLAG_SECRETS) out = out.replace(pattern, `$1${R}`);
+  out = out.replace(QUERY_SECRET, `$1${R}`);
   out = out.replace(
     ASSIGNMENT,
     (match, lead: string, scheme: string | undefined, secret: string) =>
@@ -124,7 +149,15 @@ export function logTail(text: string, lines: number): string[] {
   const cleaned = text
     .replace(GITLAB_SECTION, "")
     .split(/\r?\n/u)
-    .map((raw) => stripAnsi(raw).replace(LINE_NOISE, "").replace(/\r/gu, ""));
+    // A bare \r rewrites the line in a terminal (progress bars): keep what
+    // was finally shown.
+    .map(
+      (raw) =>
+        stripAnsi(raw)
+          .split("\r")
+          .findLast((part) => part.trim()) ?? "",
+    )
+    .map((raw) => raw.replace(LINE_NOISE, ""));
   // Redact the whole text so a secret spanning lines (a private key) goes.
   const all = redactText(cleaned.join("\n")).split("\n");
   let end = all.length;

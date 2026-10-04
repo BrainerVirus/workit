@@ -355,6 +355,46 @@ describe("S10 pr status", () => {
     expect(waitVerdict(doc, { elapsedMs: 10 * 60_000 }).state).toBe("waiting");
   });
 
+  test("a merged-results pipeline without source_sha counts when its merge commit's parent is the MR head", () => {
+    const repo = repoFor("gitlab");
+    // Shape per the GitLab MR API: head_pipeline on refs/merge-requests/:iid/merge, no source_sha.
+    const mr = JSON.parse(gitlabMr());
+    Object.assign(mr.head_pipeline, { sha: "d".repeat(40), ref: "refs/merge-requests/12/merge" });
+    const routes = gitlabRoutes(JSON.stringify(mr));
+    routes[`GET projects/34675721/repository/commits/${"d".repeat(40)}`] = JSON.stringify({
+      id: "d".repeat(40),
+      parent_ids: [repo.base, repo.head],
+    });
+    expect(statusOf(repo, routes).checks.state).toBe("failing");
+    // A merge commit of some other head is stale: pending.
+    routes[`GET projects/34675721/repository/commits/${"d".repeat(40)}`] = JSON.stringify({
+      id: "d".repeat(40),
+      parent_ids: [repo.base, "e".repeat(40)],
+    });
+    expect(statusOf(repo, routes).checks).toMatchObject({
+      state: "pending",
+      pending: ["pipeline"],
+    });
+  });
+
+  test("on an unprotected branch every check gates and the blocker reads checks_failing", () => {
+    const repo = repoFor("github");
+    const pr = JSON.parse(fixture("github/pr-failing-thread.json"));
+    for (const node of pr.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup
+      .contexts.nodes)
+      node.isRequired = false;
+    pr.data.repository.pullRequest.reviewThreads.nodes = [];
+    const routes = githubRoutes();
+    routes[GH_STATUS] = JSON.stringify(pr);
+    routes["GET repos/o/r/branches/main"] = JSON.stringify({ name: "main", protected: false });
+    const doc = statusOf(repo, routes);
+    expect(doc.checks.state).toBe("failing");
+    expect(doc.blockers[0]).toBe("checks_failing");
+    expect(statusOf(repoFor("github"), githubRoutes()).blockers).toContain(
+      "required_checks_failing",
+    );
+  });
+
   test("a GitLab merged-results pipeline (source_sha = MR head) counts, and a failed pipeline is a floor", () => {
     const repo = repoFor("gitlab");
     const mr = JSON.parse(gitlabMr({ detailed_merge_status: "ci_must_pass" }));
@@ -732,6 +772,49 @@ describe("S10 forge resolution and identity", () => {
     rmSync(tokenFile);
   });
 
+  test("a tokenFile token is sent only to a verified host, never to a look-alike (github.evil.com)", () => {
+    const tokenFile = path.join(configDir, "work.token");
+    writeFileSync(tokenFile, "ghp_workPatValue\n");
+    const evil = repoFor("github");
+    evil.git("remote", "set-url", "--push", "origin", "https://github.evil.com/o/r.git");
+    writeWorkspace(evil, { provider: "github", tokenFile });
+    const runner = replayRunner({});
+    const blocked = resolveForge(evil.cwd, { runner });
+    expect(blocked).toMatchObject({ ok: false, code: "blocked" });
+    expect(!blocked.ok && blocked.error).toStartWith("token_host_unverified:");
+    expect(runner.calls).toEqual([]);
+    expect(JSON.stringify(blocked)).not.toContain("ghp_workPatValue");
+
+    // An ~/.ssh/config alias that resolves to github.com gets the token.
+    const alias = repoFor("github");
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-ssh-home-"));
+    mkdirSync(path.join(home, ".ssh"));
+    writeFileSync(
+      path.join(home, ".ssh", "config"),
+      "Host github-work.com\n  HostName github.com\n",
+    );
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    try {
+      alias.git("remote", "set-url", "--push", "origin", "git@github-work.com:o/r.git");
+      writeWorkspace(alias, { provider: "github", tokenFile });
+      const { resolved, calls } = connect(alias, githubRoutes());
+      expect(resolved).toMatchObject({
+        credential: "workspace_token_file",
+        forge: { apiHost: "github.com" },
+      });
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls.every((call) => call.token === "ghp_workPatValue")).toBe(true);
+    } finally {
+      for (const [key, value] of Object.entries(saved))
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      rmSync(home, { recursive: true, force: true });
+      rmSync(tokenFile, { force: true });
+    }
+  });
+
   test("an app/Actions token that cannot read /user passes read verbs with a note", () => {
     const repo = repoFor("github");
     const routes = githubRoutes();
@@ -972,6 +1055,16 @@ describe("S10 redaction and verdicts", () => {
     ],
     ["ansi-split token", `ghp_\u001b[0m${a(36)}`, a(36)],
     ["bearer", `Authorization: Bearer ${a(4, "abcdef")}`, a(4, "abcdef")],
+    ["quoted value with spaces", 'password: "correct horse battery"', "correct horse"],
+    ["netrc", "machine api.github.com login bot password s3cr3tv4lue", "s3cr3tv4lue"],
+    ["netrc multiline", "login bot\npassword multiline_secret", "multiline_secret"],
+    [
+      "azure sas sig",
+      "https://a.blob.core.windows.net/c/f?sv=2022-11-02&sig=AbCdEf%2Bgh%3D&se=2026",
+      "AbCdEf",
+    ],
+    ["sshpass -p", "sshpass -p hunter22 ssh host", "hunter22"],
+    ["mysql -p", "mysql -u root -pSuperSecret db", "SuperSecret"],
   ];
   for (const [label, input, secret] of REDACTION_CASES)
     test(`redacts ${label}`, () => {
@@ -987,6 +1080,8 @@ describe("S10 redaction and verdicts", () => {
       "HEAD is now at 209cdeb890ea6b264f50fa34ef6f160549b7dd8b fix(core): x",
       "error: expect(received).toEqual(expected)",
       "(fail) Given three processes each making 40 writes",
+      "password reset email sent",
+      "mysql -u root -p db",
     ])
       expect(redactText(keep)).toBe(keep);
   });
@@ -1002,6 +1097,10 @@ describe("S10 redaction and verdicts", () => {
     ].join("\n");
     expect(logTail(keylog, 4).join("\n")).not.toMatch(/MIIEow/u);
     expect(shortBody(`use token ghp_${a(36, "z")} please`)).toBe("use token [REDACTED] please");
+  });
+
+  test("a bare carriage return keeps what the terminal finally showed", () => {
+    expect(logTail("10%\r50%\r100% done\nerror: x\r\n", 5)).toEqual(["100% done", "error: x"]);
   });
 
   test("the log view leads with the region around the first real error, then the end", () => {

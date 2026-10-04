@@ -100,10 +100,16 @@ export const MAX_LOG_TAILS = 5;
  * names any; otherwise every check (an unprotected or unreadable branch is
  * treated conservatively).
  */
-export function gatingChecks(status: ForgePrStatus): ForgeCheck[] {
+export function gatingChecks(status: ForgePrStatus): {
+  checks: ForgeCheck[];
+  /** True when branch protection decides which checks gate. */
+  protected: boolean;
+} {
   const required = status.checks.filter((check) => check.required === true);
   const protectionNamesChecks = (status.requiredContexts?.length ?? 0) > 0;
-  return required.length > 0 || protectionNamesChecks ? required : status.checks;
+  return required.length > 0 || protectionNamesChecks
+    ? { checks: required, protected: true }
+    : { checks: status.checks, protected: false };
 }
 
 export function missingRequired(status: ForgePrStatus): string[] | null {
@@ -140,6 +146,8 @@ export type NextInput = {
   reviewDecision: string | null;
   threads: number;
   checks: ChecksState;
+  /** Branch protection names the gating checks (else every check gates). */
+  checksRequired?: boolean;
 };
 
 /** The ordered merge blockers; the first one is `next`. */
@@ -152,7 +160,11 @@ export function blockersOf(input: NextInput): Array<{ next: NextAction; reason: 
   if (input.rebaseRequired) out.push({ next: "REBASE", reason: "behind_base_required" });
   if (input.threads > 0 || ms === "discussions_not_resolved")
     out.push({ next: "RESOLVE_THREADS", reason: "unresolved_threads" });
-  if (input.checks === "failing") out.push({ next: "FIX_CI", reason: "required_checks_failing" });
+  if (input.checks === "failing")
+    out.push({
+      next: "FIX_CI",
+      reason: input.checksRequired ? "required_checks_failing" : "checks_failing",
+    });
   else if (
     input.checks === "pending" ||
     ms === "ci_still_running" ||
@@ -201,7 +213,6 @@ export function computeBehindBase(
   ] as const) {
     if (hasCommit(cwd, sha)) continue;
     const fetched = fetchRefs(cwd, remote, [sha], options);
-    if (!fetched.ok && fetched.code === "busy") return failure("busy", fetched.error, "retry");
     if (!fetched.ok && remote !== remotes.base) fetchRefs(cwd, remotes.base, [sha], options);
     if (!hasCommit(cwd, sha))
       return success({
@@ -302,7 +313,7 @@ export function buildStatusDoc(
     if (!counted.ok) return counted;
     behindBase = counted.data;
   }
-  const state = checksState(gating, missing);
+  const state = checksState(gating.checks, missing);
   const blockers = blockersOf({
     forge: forge.kind,
     state: status.state,
@@ -315,6 +326,7 @@ export function buildStatusDoc(
     reviewDecision: status.reviewDecision,
     threads: status.threads.length,
     checks: state,
+    checksRequired: gating.protected,
   });
   return success({
     forge: forge.kind,

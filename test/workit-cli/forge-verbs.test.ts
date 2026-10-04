@@ -266,6 +266,45 @@ test("an identity mismatch blocks every forge verb with exit 3", async () => {
   expect(runner.calls.some((call) => call.method === "POST")).toBe(false);
 });
 
+test("ci rerun is blocked when the account cannot be verified (403 on /user); reads pass with a note", async () => {
+  const { repo, runner } = setup();
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "w",
+          glob: `${repo.root.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "github", account: "octo" },
+        },
+      ],
+    }),
+  );
+  Object.assign(forgeDeps, {
+    runner: (
+      bin: "gh" | "glab",
+      args: readonly string[],
+      options: { timeoutMs: number; token?: string },
+    ) => {
+      if (args.join(" ") === "auth token --hostname github.com --user octo")
+        return { status: 0, stdout: "ghs_appToken\n", stderr: "", timedOut: false, missing: false };
+      if (args.join(" ") === "api user")
+        return replyError("gh: Resource not accessible by integration (HTTP 403)");
+      return runner(bin, args, options);
+    },
+  });
+  const read = await run(["pr", "status", "--json", "--log-lines", "0"], repo.cwd);
+  expect(read.code).toBe(0);
+  expect(read.json().data.identity).toMatchObject({
+    login: null,
+    note: expect.stringContaining("not checked"),
+  });
+  const rerun = await run(["ci", "rerun", "--reason", "flake", "--json"], repo.cwd);
+  expect(rerun.code).toBe(3);
+  expect(rerun.json().error).toStartWith("identity_unverified:");
+  expect(runner.calls.some((call) => call.method === "POST")).toBe(false);
+});
+
 test("Given gh missing, Then exit 5 with an install hint", async () => {
   const repo = makeForgeRepo("github");
   repos.push(repo);

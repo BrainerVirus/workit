@@ -185,6 +185,19 @@ async function rerun(argv: string[], io: Io): Promise<number> {
   const connected = connect(io, flags.values.branch);
   if (!connected.ok) return forgeFail(io, connected);
   const resolved = connected.data;
+  // A mutation needs a verified account: a credential that cannot read /user
+  // passes reads with a note, but never a rerun when an account is configured.
+  if (resolved.expectedAccount && resolved.identity.login === null)
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `identity_unverified: the credential cannot prove it is ${resolved.expectedAccount} (${resolved.identity.note ?? "no /user access"})`,
+        {
+          unblock: `use a credential for ${resolved.expectedAccount} that can read /user (vcs.tokenFile or ${resolved.forge.kind === "github" ? "gh" : "glab"} auth login --hostname ${resolved.forge.apiHost})`,
+        },
+      ),
+    );
   const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
   if (!number.ok) return forgeFail(io, number);
   const status = resolved.forge.prStatus(number.data);
