@@ -286,8 +286,10 @@ workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 workit stack plan [<bottom> … <top>]  # record a base-branch chain (default: the current branch's)
 workit stack status      # per PR: next, checks, verdict, on parent; READY|WAITING|ADVANCE|COMPLETE
-workit stack sync [--local] [--dry-run] [--force]  # restack after a merge, lease push, retarget PR bases
+workit stack sync [--local] [--dry-run] [--force <branch>]  # restack after a merge, lease push, retarget PR bases
 workit stack land [--dry-run] [--max <n>]  # merge the contiguous verified run from the root
+workit check test        # run a configured check and record CLI-observed evidence
+workit check --name test -- bun test  # same, if argv is exactly the configured command
 workit uninstall         # remove host registrations (keeps ~/.config/workit)
 ```
 
@@ -300,6 +302,21 @@ that is not the workspace `vcs.account` is `blocked` (exit 3) with a login
 hint. `next` also reports review, draft, merge-queue and other merge
 blockers; only required checks gate. `pr status` never moves a ref, and
 every forge and git network call has a timeout.
+
+`workit check` runs the command (no shell unless `--shell "<cmd>"`; on
+Windows `.cmd` shims run through an escaped `cmd /d /s /c`), streams its
+output, and records the exit code, duration, HEAD, worktree tree key and
+patch-id as `observer: workit_cli` evidence in the run ledger and in the
+current task. The exit code is the command's; `--timeout` kills the whole
+process tree. Close-time testing and verification gates accept only a fresh
+passing run of a configured check (or an approved limitation); an
+agent-recorded "tests pass" is a note and an ad-hoc `workit check -- <cmd>`
+never satisfies a gate. Configured checks come from a committed
+`workit.checks.json` (`{"checks":{"test":"bun test"},"gates":{"testing":"test"}}`),
+else detected defaults (package.json `test`/`lint`/`typecheck`/`check` as
+`<pm> run <script>`, `go test ./...`, `cargo test`, `pytest`, `make test`).
+`testing` binds to `test`. A check is stale once the worktree changes, or if
+the check itself changed it.
 
 The delivery verbs do the mechanical part of shipping and record what they
 observed in the run ledger. `git branch` and `git commit` apply the workspace
