@@ -26,7 +26,7 @@ type CommandDefinition = {
 
 type SkillContext = {
   skill: {
-    list: () => Promise<{ data?: ReadonlyArray<{ id: string }> }>;
+    list: () => Promise<{ data?: ReadonlyArray<{ id: string; path?: string }> }>;
     transform: (
       fn: (editor: {
         list: () => ReadonlyArray<{ id: string }>;
@@ -65,17 +65,30 @@ const parseFrontmatter = (
 /**
  * Register the 14 packaged method skills with exact ids, paths,
  * descriptions, and content. A user skill with the same id is never replaced.
+ *
+ * The host runs transform callbacks when it (re)builds its catalog, not
+ * necessarily inside `transform()`, so the returned set — which gates the
+ * `wk-*` aliases — is decided eagerly from the packaged files and the user
+ * skills the host already lists, never from callback side effects.
  */
 export const registerSkills = async (ctx: SkillContext): Promise<ReadonlySet<string>> => {
   const skillsDir = path.join(assetsRoot(), "skills");
   if (!existsSync(skillsDir)) return new Set();
-  const registered = new Set<string>();
+  const listed = await ctx.skill.list().catch(() => ({ data: [] }));
+  const own = (skill: { path?: string }) =>
+    typeof skill.path === "string" && path.resolve(skill.path).startsWith(skillsDir + path.sep);
+  const userSkills = new Set(
+    (listed?.data ?? []).filter((skill) => !own(skill)).map((skill) => skill.id),
+  );
+  const packaged = new Map<string, string>();
+  for (const id of WORKIT_METHOD_SKILLS) {
+    const file = path.join(skillsDir, id, "SKILL.md");
+    if (!userSkills.has(id) && existsSync(file)) packaged.set(id, file);
+  }
   await ctx.skill.transform((editor) => {
     const existing = new Set(editor.list().map((skill) => skill.id));
-    for (const id of WORKIT_METHOD_SKILLS) {
+    for (const [id, file] of packaged) {
       if (existing.has(id)) continue;
-      const file = path.join(skillsDir, id, "SKILL.md");
-      if (!existsSync(file)) continue;
       const parsed = parseFrontmatter(readFileSync(file, "utf8"));
       editor.add({
         id,
@@ -84,10 +97,9 @@ export const registerSkills = async (ctx: SkillContext): Promise<ReadonlySet<str
         path: file,
         content: parsed.body,
       });
-      registered.add(id);
     }
   });
-  return registered;
+  return new Set(packaged.keys());
 };
 
 /**

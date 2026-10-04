@@ -8,6 +8,7 @@ import definition from "@/packages/workit-opencode/src/v2/plugin";
 import { normalizeQuestionAnswers } from "@/packages/workit-opencode/src/v2/receipts";
 import { scope, taskStartRequest } from "../workit-core/task-fixtures";
 import { injectAgentContext } from "@/packages/workit-opencode/src/v2/injection";
+import { registerCommands, registerSkills } from "@/packages/workit-opencode/src/v2/registry";
 import {
   WORKIT_METHOD_SKILLS,
   WORKIT_SKILL_ALIASES,
@@ -900,4 +901,45 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// OpenCode runs transform callbacks when it builds its catalog, not inside
+// `transform()` (seen on 2.0.18/2.0.21: the wk-* aliases were missing from
+// /api/command). Alias registration must not depend on callback timing.
+test("wk-* aliases register even when the host defers transform callbacks", async () => {
+  const deferred: Array<() => void> = [];
+  const skills: Array<{ id: string }> = [];
+  const commands: string[] = [];
+  const ctx = {
+    skill: {
+      list: async () => ({ data: [{ id: "workit-review" }] }),
+      transform: async (fn: (editor: any) => void) => {
+        deferred.push(() =>
+          fn({ list: () => [{ id: "workit-review" }], add: (s: { id: string }) => skills.push(s) }),
+        );
+      },
+    },
+    command: {
+      list: async () => ({ data: [{ name: "init" }] }),
+      transform: async (fn: (editor: any) => void) => {
+        deferred.push(() => fn({ add: (c: { name: string }) => commands.push(c.name) }));
+      },
+    },
+    session: { prompt: async () => {} },
+  };
+  const registered = await registerSkills(ctx);
+  await registerCommands(ctx, registered);
+  expect(commands).toEqual([]); // nothing ran yet: the host has not built its catalog
+  // Catalogs build independently: the command catalog may build first.
+  for (const run of deferred.toReversed()) run();
+  const aliasesFor = (skill: string) =>
+    Object.entries(WORKIT_SKILL_ALIASES)
+      .filter(([, target]) => target === skill)
+      .map(([alias]) => alias);
+  expect(skills.map((s) => s.id).toSorted()).toEqual(
+    WORKIT_METHOD_SKILLS.filter((id) => id !== "workit-review").toSorted(),
+  );
+  for (const [alias, skill] of Object.entries(WORKIT_SKILL_ALIASES))
+    expect(commands.includes(alias), alias).toBe(skill !== "workit-review");
+  expect(aliasesFor("workit-review").every((alias) => !commands.includes(alias))).toBe(true);
 });

@@ -8,14 +8,22 @@
  * briefly removes the probe plugin (restored immediately after).
  */
 
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect } from "bun:test";
 import { copyFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { boot, dispose, dockerAvailable, ensureImages, type Harness } from "./harness";
+import {
+  boot,
+  dispose,
+  dockerAvailable,
+  ensureImages,
+  harnessTest,
+  HARNESS_ENABLED,
+  type Harness,
+} from "./harness";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ENABLED = process.env.WORKIT_V2_HARNESS === "1";
+const ENABLED = HARNESS_ENABLED;
 let h: Harness | null = null;
 let skipped = "";
 
@@ -101,103 +109,119 @@ const waitForToolRunning = async (id: string, marker: string): Promise<void> => 
   }
 };
 
-test("concurrent subagent launches interleave with unique event ids", async () => {
-  if (!h) return;
-  const beforeIds = new Set(
-    lines(h.probeLog())
+harnessTest(
+  "concurrent subagent launches interleave with unique event ids",
+  async () => {
+    if (!h) return;
+    const beforeIds = new Set(
+      lines(h.probeLog())
+        .filter((e) => e.ev === "event" && typeof e.id === "string")
+        .map((e) => e.id as string),
+    );
+    const id = await sessionWithModel("stub-subagent2");
+    await prompt(id, "spawn two");
+    const msgs = await waitIdle(id, 120_000);
+    const calls = msgs
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .filter((c) => c.type === "tool" && c.name === "subagent");
+    expect(calls.map((c): string => c.id).toSorted()).toEqual(["call_1", "call_2"]);
+    for (const c of calls) expect(c.state.status).toBe("completed");
+    const all = await need().api("GET", "/api/session");
+    const kids = (all.data as any[]).filter((s) => s.parentID === id);
+    expect(kids.length).toBe(2);
+    // No event id may repeat or go missing across the interleaved run.
+    const windowIds = lines(need().probeLog())
       .filter((e) => e.ev === "event" && typeof e.id === "string")
-      .map((e) => e.id as string),
-  );
-  const id = await sessionWithModel("stub-subagent2");
-  await prompt(id, "spawn two");
-  const msgs = await waitIdle(id, 120_000);
-  const calls = msgs
-    .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
-    .filter((c) => c.type === "tool" && c.name === "subagent");
-  expect(calls.map((c): string => c.id).toSorted()).toEqual(["call_1", "call_2"]);
-  for (const c of calls) expect(c.state.status).toBe("completed");
-  const all = await need().api("GET", "/api/session");
-  const kids = (all.data as any[]).filter((s) => s.parentID === id);
-  expect(kids.length).toBe(2);
-  // No event id may repeat or go missing across the interleaved run.
-  const windowIds = lines(need().probeLog())
-    .filter((e) => e.ev === "event" && typeof e.id === "string")
-    .map((e) => e.id as string)
-    .filter((evt) => !beforeIds.has(evt));
-  expect(windowIds.length).toBeGreaterThan(0);
-  expect(new Set(windowIds).size).toBe(windowIds.length);
-}, 240_000);
+      .map((e) => e.id as string)
+      .filter((evt) => !beforeIds.has(evt));
+    expect(windowIds.length).toBeGreaterThan(0);
+    expect(new Set(windowIds).size).toBe(windowIds.length);
+  },
+  240_000,
+);
 
-test("interrupt mid-flight aborts without forging terminal states", async () => {
-  if (!h) return;
-  const id = await sessionWithModel("stub-slow");
-  await prompt(id, "go slow");
-  await waitForToolRunning(id, "sleep 20");
-  const intr = await need().api("POST", `/api/session/${id}/interrupt`, {});
-  expect(intr).toMatchObject({ interrupted: true });
-  const msgs = await waitIdle(id);
-  const idle = msgs.find((m) => m.type === "idle");
-  expect(idle.outcome).toBe("interrupted");
-  const call = msgs
-    .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
-    .find((c) => c.type === "tool" && c.name === "shell");
-  expect(call.executed).toBe(false);
-  expect(call.state.status).toBe("error");
-  expect(call.state.error).toMatchObject({ type: "aborted" });
-  const got = await need().api("GET", `/api/session/${id}`);
-  expect(got.data).toMatchObject({ id, outcome: "interrupted" });
-}, 240_000);
+harnessTest(
+  "interrupt mid-flight aborts without forging terminal states",
+  async () => {
+    if (!h) return;
+    const id = await sessionWithModel("stub-slow");
+    await prompt(id, "go slow");
+    await waitForToolRunning(id, "sleep 20");
+    const intr = await need().api("POST", `/api/session/${id}/interrupt`, {});
+    expect(intr).toMatchObject({ interrupted: true });
+    const msgs = await waitIdle(id);
+    const idle = msgs.find((m) => m.type === "idle");
+    expect(idle.outcome).toBe("interrupted");
+    const call = msgs
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .find((c) => c.type === "tool" && c.name === "shell");
+    expect(call.executed).toBe(false);
+    expect(call.state.status).toBe("error");
+    expect(call.state.error).toMatchObject({ type: "aborted" });
+    const got = await need().api("GET", `/api/session/${id}`);
+    expect(got.data).toMatchObject({ id, outcome: "interrupted" });
+  },
+  240_000,
+);
 
-test("bounded session.get reconciliation exposes the terminal outcome", async () => {
-  if (!h) return;
-  const id = await sessionWithModel("stub-text");
-  await prompt(id, "hi");
-  await waitIdle(id);
-  // A fixed small poll budget suffices; the route returns id, model,
-  // outcome, cost, tokens, time, and location — no event stream needed.
-  let polls = 0;
-  let got: any = null;
-  for (let i = 0; i < 5; i++) {
-    polls += 1;
-    got = await need().api("GET", `/api/session/${id}`);
-    if (got?.data?.outcome) break;
-  }
-  expect(polls).toBeLessThanOrEqual(5);
-  expect(got.data).toMatchObject({
-    id,
-    model: { id: "stub-text", providerID: "stub" },
-    location: { directory: "/workspace/work" },
-  });
-  expect(typeof got.data.outcome).toBe("string");
-  expect(got.data.time).toMatchObject({ created: expect.any(Number) });
-}, 180_000);
+harnessTest(
+  "bounded session.get reconciliation exposes the terminal outcome",
+  async () => {
+    if (!h) return;
+    const id = await sessionWithModel("stub-text");
+    await prompt(id, "hi");
+    await waitIdle(id);
+    // A fixed small poll budget suffices; the route returns id, model,
+    // outcome, cost, tokens, time, and location — no event stream needed.
+    let polls = 0;
+    let got: any = null;
+    for (let i = 0; i < 5; i++) {
+      polls += 1;
+      got = await need().api("GET", `/api/session/${id}`);
+      if (got?.data?.outcome) break;
+    }
+    expect(polls).toBeLessThanOrEqual(5);
+    expect(got.data).toMatchObject({
+      id,
+      model: { id: "stub-text", providerID: "stub" },
+      location: { directory: "/workspace/work" },
+    });
+    expect(typeof got.data.outcome).toBe("string");
+    expect(got.data.time).toMatchObject({ created: expect.any(Number) });
+  },
+  180_000,
+);
 
-test("unload mid-run cleans up and polling still reconciles", async () => {
-  if (!h) return;
-  const cleanupsBefore = lines(h.probeLog()).filter((e) => e.ev === "cleanup").length;
-  const setupsBefore = lines(h.probeLog()).filter((e) => e.ev === "setup").length;
-  const id = await sessionWithModel("stub-slow");
-  await prompt(id, "go slow");
-  await waitForToolRunning(id, "sleep 20");
-  rmSync(path.join(need().workdir, ".opencode", "plugins", "v2probe", "index.js"));
-  const t0 = Date.now();
-  for (;;) {
-    if (lines(need().probeLog()).filter((e) => e.ev === "cleanup").length > cleanupsBefore) break;
-    if (Date.now() - t0 > 60_000) throw new Error("cleanup never ran");
-    await Bun.sleep(2000);
-  }
-  // Subscription is dead from here on: terminal state must still reconcile
-  // through polling alone.
-  const msgs = await waitIdle(id, 120_000);
-  expect(msgs.at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" });
-  copyFileSync(
-    path.join(HERE, "probe-plugin", "index.js"),
-    path.join(need().workdir, ".opencode", "plugins", "v2probe", "index.js"),
-  );
-  const t1 = Date.now();
-  for (;;) {
-    if (lines(need().probeLog()).filter((e) => e.ev === "setup").length > setupsBefore) break;
-    if (Date.now() - t1 > 60_000) throw new Error("plugin never reloaded");
-    await Bun.sleep(2000);
-  }
-}, 300_000);
+harnessTest(
+  "unload mid-run cleans up and polling still reconciles",
+  async () => {
+    if (!h) return;
+    const cleanupsBefore = lines(h.probeLog()).filter((e) => e.ev === "cleanup").length;
+    const setupsBefore = lines(h.probeLog()).filter((e) => e.ev === "setup").length;
+    const id = await sessionWithModel("stub-slow");
+    await prompt(id, "go slow");
+    await waitForToolRunning(id, "sleep 20");
+    rmSync(path.join(need().workdir, ".opencode", "plugins", "v2probe", "index.js"));
+    const t0 = Date.now();
+    for (;;) {
+      if (lines(need().probeLog()).filter((e) => e.ev === "cleanup").length > cleanupsBefore) break;
+      if (Date.now() - t0 > 60_000) throw new Error("cleanup never ran");
+      await Bun.sleep(2000);
+    }
+    // Subscription is dead from here on: terminal state must still reconcile
+    // through polling alone.
+    const msgs = await waitIdle(id, 120_000);
+    expect(msgs.at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" });
+    copyFileSync(
+      path.join(HERE, "probe-plugin", "index.js"),
+      path.join(need().workdir, ".opencode", "plugins", "v2probe", "index.js"),
+    );
+    const t1 = Date.now();
+    for (;;) {
+      if (lines(need().probeLog()).filter((e) => e.ev === "setup").length > setupsBefore) break;
+      if (Date.now() - t1 > 60_000) throw new Error("plugin never reloaded");
+      await Bun.sleep(2000);
+    }
+  },
+  300_000,
+);

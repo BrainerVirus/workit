@@ -10,10 +10,11 @@
  * - host-mounted log dir so probe/stub/server logs are plain files.
  *
  * Run: `WORKIT_V2_HARNESS=1 bun test test/opencode-v2/contract.test.ts`
- * Without the opt-in the suite passes silently (docker-gated, like the
- * platform guards elsewhere in this repo).
+ * Without the opt-in every harness test is reported as skipped (never as a
+ * silent pass); CI runs them in the opt-in `opencode-v2 harness` job.
  */
 
+import { test } from "bun:test";
 import { $ } from "bun";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,8 +25,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const V2_IMAGE =
   "ghcr.io/anomalyco/opencode@sha256:aa0e5ac93543f24c99dfcc72a6ea7df335faec131dafc16f7607a2c7d3173d28";
-export const V1_IMAGE =
-  "ghcr.io/anomalyco/opencode@sha256:412b37a894bb937a0d5d6a1860789b9fd7d34a109334bec98a3f6ecf812bb442";
 const BUN_IMAGE =
   "oven/bun@sha256:1d653098bf847813e26adb2435f932b7cfa3c132a7e25dd5216dbb1f67dbd118";
 
@@ -43,8 +42,6 @@ export type Harness = {
     body?: unknown,
     voidOk?: boolean,
   ) => Promise<any>;
-  /** Run a command in the server container's workdir (V1 lane driver). */
-  exec: (args: string[]) => Promise<string>;
   serverLog: () => string;
   probeLog: () => string;
   stubLog: () => string;
@@ -74,7 +71,7 @@ const imagePresent = async (ref: string): Promise<boolean> => {
 };
 
 export const ensureImages = async (): Promise<void> => {
-  for (const ref of [V2_IMAGE, V1_IMAGE, BUN_IMAGE]) {
+  for (const ref of [V2_IMAGE, BUN_IMAGE]) {
     if (await imagePresent(ref)) continue;
     await $`docker pull ${ref}`;
   }
@@ -135,7 +132,7 @@ export const boot = async (): Promise<Harness> => {
  * installs the artifact, writes the config, and asserts file bytes around the
  * run. Probe plugin is not installed. */
 export const bootLane = async (
-  options: Pick<BootLaneOptions, "image" | "root" | "home" | "work" | "logDir" | "driver">,
+  options: Pick<BootLaneOptions, "image" | "root" | "home" | "work" | "logDir">,
 ): Promise<Harness> => startContainer(options);
 
 export type BootLaneOptions = {
@@ -144,15 +141,12 @@ export type BootLaneOptions = {
   home: string;
   work: string;
   logDir: string;
-  /** The V1 image has no `opencode api` driver: skip the V2 HTTP boot waits
-   * and drive the lane through `exec` instead. */
-  driver?: "v2" | "v1";
 };
 
 const STUB_URL = "http://stub:8000/v1";
 
 const startContainer = async (options: BootLaneOptions): Promise<Harness> => {
-  const { image, root, home, work, logDir, driver = "v2" } = options;
+  const { image, root, home, work, logDir } = options;
   const suffix = Math.random().toString(36).slice(2, 8);
   const net = `v2harness-${process.pid}-${suffix}`;
   const stub = `v2harness-stub-${process.pid}-${suffix}`;
@@ -225,6 +219,12 @@ const startContainer = async (options: BootLaneOptions): Promise<Harness> => {
     return JSON.parse(out.slice(start));
   };
 
+  // OpenCode 2.0.x has no `/api/health` route (404); the HTML app shell
+  // answers `/health`. A JSON answer from the catalog route proves the API
+  // service itself is up.
+  const serviceHealthy = async (): Promise<boolean> =>
+    (await cli(["api", "GET", "/api/model"])).trim().startsWith("{");
+
   // The first CLI call spawns the background service; calls racing the
   // spawn return empty output with exit 0. Retry transient empties bounded.
   // Some routes (model switch, replies, rules) succeed with an empty body:
@@ -245,7 +245,7 @@ const startContainer = async (options: BootLaneOptions): Promise<Harness> => {
       if (out.indexOf("{") >= 0) return parseJson(out);
       if (voidOk && out === "" && failed === null) {
         try {
-          await cli(["api", "GET", "/api/health"]);
+          if (!(await serviceHealthy())) throw new Error("service not answering");
           return null;
         } catch {
           // service not answering yet; keep retrying below
@@ -308,34 +308,30 @@ const startContainer = async (options: BootLaneOptions): Promise<Harness> => {
   };
 
   // Boot: the in-container V2 CLI auto-starts exactly one background service;
-  // wait for it, then for the stub model to appear in the catalog. The V1
-  // image has no `api` command, so its lanes skip this and drive `run`.
-  if (driver === "v2") {
-    await waitFor(
-      async () => {
-        try {
-          await cli(["api", "GET", "/api/health"]);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      60_000,
-      "service health",
-    );
-    await waitFor(
-      async () => {
-        try {
-          const r = await api("GET", "/api/model");
-          return Array.isArray(r.data) && r.data.some((m: any) => m.id === "stub-model");
-        } catch {
-          return false;
-        }
-      },
-      90_000,
-      "stub-model in catalog",
-    );
-  }
+  // wait for it, then for the stub model to appear in the catalog.
+  await waitFor(
+    async () => {
+      try {
+        return await serviceHealthy();
+      } catch {
+        return false;
+      }
+    },
+    60_000,
+    "service health",
+  );
+  await waitFor(
+    async () => {
+      try {
+        const r = await api("GET", "/api/model");
+        return Array.isArray(r.data) && r.data.some((m: any) => m.id === "stub-model");
+      } catch {
+        return false;
+      }
+    },
+    90_000,
+    "stub-model in catalog",
+  );
 
   const h: Harness = {
     root,
@@ -346,7 +342,6 @@ const startContainer = async (options: BootLaneOptions): Promise<Harness> => {
     logDir,
     api,
     op,
-    exec: (args: string[]) => execServer(args),
     serverLog,
     probeLog,
     stubLog,
@@ -364,3 +359,9 @@ export const dispose = async (h: Harness): Promise<void> => {
     // root-owned crumbs may survive a failed helper wipe; never fail teardown
   }
 };
+
+/** Docker harness suites are opt-in (`WORKIT_V2_HARNESS=1`). Without the
+ * opt-in they register as skipped so the run reports it, instead of passing. */
+export const HARNESS_ENABLED = process.env.WORKIT_V2_HARNESS === "1";
+export const harnessTest: typeof test = HARNESS_ENABLED ? test : test.skip;
+if (!HARNESS_ENABLED) console.info("opencode-v2 docker suites skipped (WORKIT_V2_HARNESS unset)");
