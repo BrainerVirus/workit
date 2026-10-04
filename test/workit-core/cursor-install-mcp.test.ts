@@ -9,7 +9,7 @@ import {
   buildSetupPreview,
   type SetupPreviewInput,
   type SetupResult,
-} from "@/packages/workit-core/src/core/setup";
+} from "@/packages/workit-cli/src/admin/setup";
 import { isolatedEnv } from "@/test/shared/helpers/packages";
 
 // PT-10 + cursor cwd semantics: the SHIPPED plugin manifest stays

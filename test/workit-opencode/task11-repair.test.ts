@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runDoctor } from "@/packages/workit-core/src/core/doctor";
+import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { binDirWithRuntimes } from "@/test/shared/helpers/doctor-fixture";
 import { NativeReceiptStore } from "@/packages/workit-opencode/src/tools/workit";
 

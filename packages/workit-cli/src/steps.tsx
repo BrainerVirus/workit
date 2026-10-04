@@ -47,7 +47,7 @@ import {
   preselectedPlatforms,
   type HostDetection,
   type HostId,
-} from "@brainervirus/workit-core/src/core/detect-hosts.ts";
+} from "./admin/detect-hosts";
 import { LOCALE_LANGUAGE_MAP, SearchSelect } from "./search-select";
 
 const PLATFORM_LABELS: { label: string; value: HostId }[] = [

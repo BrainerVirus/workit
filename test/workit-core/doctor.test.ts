@@ -22,11 +22,11 @@ import {
   runDoctor,
   type DoctorCheck,
   type DoctorReport,
-} from "@/packages/workit-core/src/core/doctor";
-import { OPENCODE_NPM_PIN } from "@/packages/workit-core/src/core/registration";
+} from "@/packages/workit-cli/src/admin/doctor";
+import { OPENCODE_NPM_PIN } from "@/packages/workit-cli/src/admin/registration";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import { readVcsConfig } from "@/packages/workit-core/src/core/vcs-config";
-import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
+import { readSetupState } from "@/packages/workit-cli/src/admin/setup-state";
 import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
 import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
 

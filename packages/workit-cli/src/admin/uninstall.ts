@@ -33,7 +33,7 @@ export type UninstallAction =
       cwd: string | null;
     };
 
-export type UninstallHostPlan = {
+type UninstallHostPlan = {
   host: UninstallHost;
   installed: boolean;
   actions: UninstallAction[];
@@ -43,9 +43,9 @@ export type UninstallPlan = {
   hosts: UninstallHostPlan[];
 };
 
-export type UninstallResultStatus = "removed" | "skipped" | "failed";
+type UninstallResultStatus = "removed" | "skipped" | "failed";
 
-export type UninstallResultEntry = {
+type UninstallResultEntry = {
   host: UninstallHost;
   path: string;
   status: UninstallResultStatus;

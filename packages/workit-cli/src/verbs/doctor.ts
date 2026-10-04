@@ -3,7 +3,7 @@
 // `--fix-lock` clears a stale .workit metadata lock first, so the report
 // reflects the cleaned state.
 import { createInterface } from "node:readline/promises";
-import { runDoctor } from "@brainervirus/workit-core/src/core/doctor";
+import { runDoctor } from "../admin/doctor";
 import {
   clearStaleMetadataLock,
   inspectMetadataLock,

@@ -8,8 +8,8 @@ import {
   buildSetupPreview,
   resolveOpenCodePin,
   type SetupPreviewInput,
-} from "@/packages/workit-core/src/core/setup";
-import { OPENCODE_NPM_PIN } from "@/packages/workit-core/src/core/registration";
+} from "@/packages/workit-cli/src/admin/setup";
+import { OPENCODE_NPM_PIN } from "@/packages/workit-cli/src/admin/registration";
 import { isolatedEnv } from "@/test/shared/helpers/packages";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");

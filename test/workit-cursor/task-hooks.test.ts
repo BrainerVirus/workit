@@ -4,7 +4,7 @@ import path from "node:path";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
-import { CURSOR_PRETOOLUSE_MATCHER } from "@/packages/workit-core/src/core/registration";
+import { CURSOR_PRETOOLUSE_MATCHER } from "@/packages/workit-cli/src/admin/registration";
 import { caller, taskStartRequest } from "@/test/workit-core/task-fixtures";
 import {
   CURSOR_WRITE_TOOL_NAMES,

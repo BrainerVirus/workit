@@ -169,7 +169,7 @@ test(
     // The canonical constant itself must stay the exact reviewed selector — a
     // bump to the shared constant alone would otherwise dodge the --package= scan
     // above.
-    expect(read("packages/workit-core/src/core/registration.ts")).toContain(
+    expect(read("packages/workit-cli/src/admin/registration.ts")).toContain(
       `CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest"`,
     );
 

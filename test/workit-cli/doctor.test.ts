@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync 
 import { localLockHost } from "@/packages/workit-core/src/core/store-lock";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DoctorReport } from "@/packages/workit-core/src/core/doctor";
+import type { DoctorReport } from "@/packages/workit-cli/src/admin/doctor";
 import { makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
 
 // `workit doctor` and `workit doctor --json` (DG-07): JSON parses, the report's

@@ -11,16 +11,16 @@ import {
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { isWorkitPlugin } from "@brainervirus/workit-core/src/core/registration";
-import { readSetupState } from "@brainervirus/workit-core/src/core/setup-state";
-import { type HostId } from "@brainervirus/workit-core/src/core/detect-hosts";
+import { isWorkitPlugin } from "./admin/registration";
+import { readSetupState } from "./admin/setup-state";
+import { type HostId } from "./admin/detect-hosts";
 import {
   hostCommand,
   planHostInstall,
   runHostCommand,
   type HostInstallCommand,
-} from "@brainervirus/workit-core/src/core/host-install";
-import { applySetupPreview, type SetupPreview } from "@brainervirus/workit-core/src/core/setup";
+} from "./admin/host-install";
+import { applySetupPreview, type SetupPreview } from "./admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 
 const HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];

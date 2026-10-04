@@ -18,12 +18,15 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SUPPORT_MATRIX } from "./support-matrix";
-import { inspectMetadataLock } from "./store-lock";
-import { bundleHashOfFile, isEphemeralCachePath } from "./runtime-identity";
-import { EVENT } from "./boundary";
-import { getDiagnosticLogger, isConfigObject } from "./config";
-import { packageRoot } from "./package-root";
+import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
+import { inspectMetadataLock } from "@brainervirus/workit-core/src/core/store-lock";
+import {
+  bundleHashOfFile,
+  isEphemeralCachePath,
+} from "@brainervirus/workit-core/src/core/runtime-identity";
+import { EVENT } from "@brainervirus/workit-core/src/core/boundary";
+import { getDiagnosticLogger, isConfigObject } from "@brainervirus/workit-core/src/core/config";
+import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
   OPENCODE_NPM_PIN,
@@ -32,21 +35,27 @@ import {
   cursorMcpServerEntry,
   isWorkitPlugin,
 } from "./registration";
-import { readWorkspacesResult, resolveWorkspaceFrom } from "./workspaces";
+import {
+  readWorkspacesResult,
+  resolveWorkspaceFrom,
+} from "@brainervirus/workit-core/src/core/workspaces";
 import {
   CLAUDE_MARKETPLACE_NAME,
   claudeWorkitInstalls,
   type ClaudeWorkitInstall,
 } from "./host-install";
-import { validateCursorSkills, WORKIT_METHOD_SKILLS } from "./skill-manifests";
+import {
+  validateCursorSkills,
+  WORKIT_METHOD_SKILLS,
+} from "@brainervirus/workit-core/src/core/skill-manifests";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
 // import the YouTrack/VCS stack just to label a credential state.
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 
-export type DoctorHost = "cli" | "opencode" | "cursor";
+type DoctorHost = "cli" | "opencode" | "cursor";
 
-export type DoctorCheckId =
+type DoctorCheckId =
   | "runtime"
   | "versions"
   | "codex_pin"
@@ -66,7 +75,7 @@ export type DoctorCheckId =
   | "gitlab_identity"
   | "log_writable";
 
-export type DoctorCheckStatus = "pass" | "warn" | "fail";
+type DoctorCheckStatus = "pass" | "warn" | "fail";
 
 export type DoctorCheck = {
   id: DoctorCheckId;
@@ -76,9 +85,9 @@ export type DoctorCheck = {
   fix?: string;
 };
 
-export type DoctorFix = { id: DoctorCheckId; fix: string };
+type DoctorFix = { id: DoctorCheckId; fix: string };
 
-export type DoctorSummary = {
+type DoctorSummary = {
   passed: number;
   warned: number;
   failed: number;
@@ -215,7 +224,7 @@ const pluginEntries = (cfg: Record<string, any> | null): string[] => {
   ];
 };
 
-export const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
+const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
   const dirs = (env.PATH ?? process.env.PATH ?? "").split(path.delimiter);
   // win32 executables carry an .exe suffix (bun.exe, git.exe), so probe both
   // names — statSync with the bare name would never find them.

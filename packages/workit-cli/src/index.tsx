@@ -10,15 +10,15 @@ import {
   buildSetupPreview,
   setupCompletionGuidance,
   type SetupResult,
-} from "@brainervirus/workit-core/src/core/setup.ts";
-import { detectHosts } from "@brainervirus/workit-core/src/core/detect-hosts.ts";
-import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state";
+} from "./admin/setup";
+import { detectHosts } from "./admin/detect-hosts";
+import { readSetupState, type SetupState } from "./admin/setup-state";
 import {
   applyUninstall,
   planUninstall,
   type UninstallHost,
   type UninstallPlan,
-} from "@brainervirus/workit-core/src/core/uninstall";
+} from "./admin/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
 import { logger } from "./diagnostics";
 

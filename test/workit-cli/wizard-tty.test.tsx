@@ -19,7 +19,7 @@ import {
   type WizardScreen,
 } from "../../packages/workit-cli/src/wizard-state";
 import type { BranchPreset, ToolkitConfig } from "../../packages/workit-core/src/core/config";
-import { emptyDetection } from "../../packages/workit-core/src/core/detect-hosts";
+import { emptyDetection } from "../../packages/workit-cli/src/admin/detect-hosts";
 import { SearchSelect, LOCALE_LANGUAGE_MAP } from "../../packages/workit-cli/src/search-select";
 
 const ENTER = "\r";

@@ -20,11 +20,8 @@ import {
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
 import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
 import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write.ts";
-import {
-  applyWorkspaceBranchPolicy,
-  TOKEN_PLACEHOLDER,
-  type VcsProvider,
-} from "@brainervirus/workit-core/src/core/setup.ts";
+import { TOKEN_PLACEHOLDER, type VcsProvider } from "./admin/setup";
+import { applyWorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspace-branch-policy.ts";
 import type { WorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspaces.ts";
 
 export function validateLocale(locale: string): string | null {
@@ -618,11 +615,8 @@ export function writeWorkspaces(
 }
 
 // ---------------------------------------------------------------------------
-// Setup preview + apply moved to the shared core (Task 14):
-// @brainervirus/workit-core/src/core/setup.ts owns buildSetupPreview /
-// applySetupPreview / SetupResult so the same authoritative flow runs in the
-// bundled CLI, the host adapters, and the extracted-package tests. The CLI
-// re-exports them for backward compatibility.
+// Setup preview + apply live in ./admin/setup.ts (CLI-only since 3.0, so host
+// hooks and plugins never bundle them); re-exported for the wizard modules.
 // ---------------------------------------------------------------------------
 export {
   TOKEN_PLACEHOLDER,
@@ -630,7 +624,7 @@ export {
   buildSetupPreview,
   type SetupPreviewInput,
   type SetupMutation,
-} from "@brainervirus/workit-core/src/core/setup.ts";
+} from "./admin/setup";
 export type { VcsProvider };
 
 // CA-06: the wizard's branch-policy apply routes through the same shared

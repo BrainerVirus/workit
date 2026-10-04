@@ -38,7 +38,7 @@ mkdir -p "$(dirname "$CONFIG")"
 
 # Merge/dedupe registrations via the shared core helper (RR-06): one dev pin,
 # no legacy/current duplicates, unrelated user settings preserved.
-CONFIG_PATH="$CONFIG" PIN_PATH="$PIN" REGISTRATION_TS="$ROOT/packages/workit-core/src/core/registration.ts" bun -e '
+CONFIG_PATH="$CONFIG" PIN_PATH="$PIN" REGISTRATION_TS="$ROOT/packages/workit-cli/src/admin/registration.ts" bun -e '
 import fs from "node:fs";
 const { mergeOpenCodeConfig } = await import(process.env.REGISTRATION_TS!);
 const path = process.env.CONFIG_PATH!;
@@ -71,7 +71,7 @@ if [ ! -s "$PLUGIN_ENTRY" ]; then
 fi
 
 # DG-09: verify the just-written registration with the shared offline doctor.
-if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" opencode; then
+if ! bun "$ROOT/packages/workit-cli/scripts/doctor-check.ts" opencode; then
   echo "FATAL: post-install doctor found an unhealthy OpenCode registration" >&2
   exit 1
 fi

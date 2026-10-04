@@ -9,7 +9,7 @@ import { renderInk } from "../shared/helpers/ink-tty";
 import { applyWizardBranchPolicy } from "../../packages/workit-cli/src/logic";
 import type { SetupValues } from "../../packages/workit-cli/src/wizard-state";
 import { initApplyData } from "../../packages/workit-core/src/core/init";
-import { emptyDetection } from "../../packages/workit-core/src/core/detect-hosts";
+import { emptyDetection } from "../../packages/workit-cli/src/admin/detect-hosts";
 
 // Task 5 (CA-06): the CLI wizard's branch-policy apply must write byte-identical
 // bytes to the host init action (branch_policy) on the same fixture. The Wizard
