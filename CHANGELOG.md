@@ -13,7 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `workit check <name>` / `workit check [--name <n>] -- <cmd…>` runs a check
+  and records what the CLI observed (exit code, duration, argv, HEAD, worktree
+  tree key, patch-id, a redacted bounded log blob and tail) as
+  `observer: workit_cli` evidence in the run ledger and the current task. The
+  exit code is the command's. Named checks come from a committed
+  `workit.checks.json`, else package.json scripts.
+
 ### Changed
+
+- Close-time testing and verification gates accept only fresh, passing,
+  CLI-observed checks (or an approved limitation). Agent-recorded check
+  evidence stays recordable as a note but no longer satisfies them, and
+  RED-first does not apply to observed checks. When named checks are
+  configured, only a run of the gate's named check with its configured argv
+  counts. A task holding an observed check lists the observation as a
+  critical field, so older Workit readers fail closed on it.
 
 - OpenCode V1/V2 remove managed external mutations and proposal/approval
   orchestration. Native host tools execute effects; strict read-only

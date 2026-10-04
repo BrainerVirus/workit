@@ -1,5 +1,6 @@
 import type {
   Caller,
+  CheckObservation,
   OperationRequest,
   Scope,
   Assessment,
@@ -57,6 +58,30 @@ export const taskStartRequest = (overrides: Partial<TaskStartRequest> = {}): Tas
     scope: scope(),
     authorityRefs: [ref()],
   },
+  ...overrides,
+});
+
+/** What `workit check` would record; outside git (`tree: null`) it binds to the candidate. */
+export const checkObservation = (overrides: Partial<CheckObservation> = {}): CheckObservation => ({
+  observer: "workit_cli",
+  name: null,
+  configured: false,
+  argv: ["true"],
+  shell: false,
+  cwd: ".",
+  exitCode: 0,
+  durationMs: 1,
+  timedOut: false,
+  head: null,
+  tree: null,
+  dirty: null,
+  base: null,
+  patchId: null,
+  logDigest: null,
+  logRef: null,
+  logTail: [],
+  ledgerRowId: null,
+  attestation: null,
   ...overrides,
 });
 

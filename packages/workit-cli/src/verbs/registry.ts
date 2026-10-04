@@ -104,9 +104,10 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "check",
     group: "delivery",
-    usage: "workit check <name> | workit check [--name <n>] -- <cmd…>",
-    summary: "Run a configured or ad-hoc check and record CLI-observed evidence",
-    planned: "S9b",
+    usage:
+      "workit check <name> | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] -- <cmd…>",
+    summary:
+      "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's)",
     load: () => import("./check"),
   },
   {

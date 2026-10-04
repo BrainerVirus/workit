@@ -13,7 +13,7 @@ import {
   type TaskView,
   type Utc,
 } from "./task-contract";
-import { captureCandidate, evaluateEvidence } from "./task-evaluation";
+import { captureCandidate, currentTreeOf, evaluateEvidence } from "./task-evaluation";
 import { selectMethods, type SelectedMethod } from "./methods";
 import type { NativeWorkerObservation } from "./workers";
 
@@ -39,7 +39,11 @@ export function reconcileResume(
     return failure("permission_denied", "worker observations require native host verification");
   const candidate = captureCandidate(view.workspace.root, view.task.intent.data.scope, []);
   if (!candidate.ok) return candidate;
-  const staleEvidenceIds = evaluateEvidence(view.task, candidate.data)
+  const staleEvidenceIds = evaluateEvidence(
+    view.task,
+    candidate.data,
+    currentTreeOf(view.workspace.root),
+  )
     .filter((entry) => entry.status === "stale")
     .map((entry) => entry.evidenceId);
   const blockers = [...view.task.progress.blockers];

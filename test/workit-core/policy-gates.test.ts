@@ -12,7 +12,14 @@ import {
   type OperationContext,
 } from "@/packages/workit-core/src/core";
 import { METHODS } from "@/packages/workit-core/src/core/methods";
-import { assessment, caller, ref, scope, taskStartRequest } from "./task-fixtures";
+import {
+  assessment,
+  caller,
+  checkObservation,
+  ref,
+  scope,
+  taskStartRequest,
+} from "./task-fixtures";
 
 const context = (root: string, actor = "test"): OperationContext => ({
   root,
@@ -134,8 +141,10 @@ test("close ignores dependent_action gates", () => {
     writeFileSync(join(root, "a.ts"), "before");
     const { store, core, taskId } = startAndAssess(root, mechanicalSignals());
     const policy = policyOf(store, taskId);
+    // Close-time verification takes a CLI-observed check; review stays agent-recorded.
+    expect(core.observeCheck({ taskId, observation: checkObservation() }).ok).toBe(true);
     for (const requirement of policy.requirements.filter(
-      (item) => item.ruleId !== "pre-pr-cleanup",
+      (item) => item.ruleId !== "pre-pr-cleanup" && item.dimension === "review",
     )) {
       expect(
         core.evidence({
@@ -241,57 +250,7 @@ test("kind mismatches name the expected evidence", () => {
   }
 });
 
-test("RED-first yields to prior baselines but still gates fresh claims", () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-red-scope-"));
-  try {
-    writeFileSync(join(root, "a.ts"), "before");
-    const behavioral = behavioralSignals;
-    const { store, core, taskId } = startAndAssess(root, behavioral());
-    const policy = policyOf(store, taskId);
-    const testing = policy.requirements.find((item) => item.dimension === "testing")!;
-    const record = (kind: "check", result: "passed" | "failed", claim: string) =>
-      core.evidence({
-        schemaVersion: 1,
-        action: "record",
-        taskId,
-        evidence: {
-          kind,
-          claim,
-          requirementIds: [testing.id],
-          result,
-          summary: claim,
-          refs: [],
-          exitCode: result === "passed" ? 0 : 1,
-          reviewContext: null,
-        },
-      });
-    expect(record("check", "passed", "green alone").ok).toBe(true);
-    const alone = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
-    expect(alone).toMatchObject({
-      ok: true,
-      data: {
-        requirements: expect.arrayContaining([
-          expect.objectContaining({ requirementId: testing.id, status: "unsatisfied" }),
-        ]),
-      },
-    });
-    writeFileSync(join(root, "a.ts"), "after");
-    expect(record("check", "passed", "green on new candidate").ok).toBe(true);
-    const based = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
-    expect(based).toMatchObject({
-      ok: true,
-      data: {
-        requirements: expect.arrayContaining([
-          expect.objectContaining({ requirementId: testing.id, status: "satisfied" }),
-        ]),
-      },
-    });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("classic RED then GREEN still satisfies testing requirements", () => {
+test("agent-reported RED then GREEN is a note: it never satisfies a close testing gate", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-red-classic-"));
   try {
     writeFileSync(join(root, "a.ts"), "before");
@@ -315,16 +274,23 @@ test("classic RED then GREEN still satisfies testing requirements", () => {
         },
       });
     expect(record("failed", "red first").ok).toBe(true);
-    expect(record("passed", "green after red").ok).toBe(true);
-    const view = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
-    expect(view).toMatchObject({
-      ok: true,
-      data: {
-        requirements: expect.arrayContaining([
-          expect.objectContaining({ requirementId: testing.id, status: "satisfied" }),
-        ]),
-      },
+    expect(record("passed", "tests pass").ok).toBe(true);
+    writeFileSync(join(root, "a.ts"), "after");
+    expect(record("passed", "green on new candidate").ok).toBe(true);
+    const testingOf = () => {
+      const view = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+      if (!view.ok) throw new Error(view.error);
+      return (view.data as { requirements: Array<{ requirementId: string }> }).requirements.find(
+        (item) => item.requirementId === testing.id,
+      );
+    };
+    expect(testingOf()).toMatchObject({
+      status: "unsatisfied",
+      reason: expect.stringContaining("agent-reported checks are notes"),
     });
+    // A CLI-observed passing check satisfies it without a recorded RED.
+    expect(core.observeCheck({ taskId, observation: checkObservation() }).ok).toBe(true);
+    expect(testingOf()).toMatchObject({ status: "satisfied" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

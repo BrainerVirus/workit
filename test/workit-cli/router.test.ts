@@ -154,9 +154,8 @@ test("help, version and per-verb usage answer through the envelope", async () =>
   expect((await run([])).stdout).toContain("Usage: workit <command>");
 });
 
-test("planned S9b–S12 verbs answer not_implemented with exit 2", async () => {
+test("planned S11–S12 verbs answer not_implemented with exit 2", async () => {
   for (const [verb, slice] of [
-    ["check", "S9b"],
     ["git", "S11"],
     ["verify-delivery", "S11"],
     ["stack", "S12"],

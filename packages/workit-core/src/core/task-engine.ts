@@ -1,7 +1,9 @@
 import { realpathSync } from "node:fs";
 import {
+  CHECK_OBSERVATION_PATH,
   POLICY_VERSION,
   canonicalJson,
+  checkObservationSchema,
   failure,
   decisionDigest,
   exportBundleSchema,
@@ -18,6 +20,7 @@ import {
   type Candidate,
   type Capability,
   type Caller,
+  type CheckObservation,
   type Constraint,
   type Decision,
   type Entry,
@@ -83,6 +86,7 @@ import {
 import {
   captureCandidate,
   checkPin,
+  currentTreeOf,
   evaluateClosure,
   evaluateEvidence,
   evaluateRequirements,
@@ -109,6 +113,13 @@ export type OperationContext = {
     authorityRefs: Ref[];
   }) => Result<ProcessEvidence>;
   workerId?: string | null;
+};
+
+export type ObserveCheckRequest = {
+  taskId: string;
+  /** Omit to retry over concurrent writers (S2b); a value is strict compare-and-swap. */
+  expectedRevision?: string;
+  observation: CheckObservation;
 };
 
 const provenance = (
@@ -1210,10 +1221,11 @@ export class WorkitCore {
             // dispositions never auto-reopen.
             const withEntry = { ...current, candidates, evidence: [...current.evidence, entry] };
             const statuses = new Map(
-              evaluateEvidence(withEntry, currentCandidate.data).map((item) => [
-                item.evidenceId,
-                item.status,
-              ]),
+              evaluateEvidence(
+                withEntry,
+                currentCandidate.data,
+                currentTreeOf(this.store.root),
+              ).map((item) => [item.evidenceId, item.status]),
             );
             const verified = withEntry.evidence.some((item) =>
               findingVerificationPasses(finding.data.candidateId, {
@@ -1231,6 +1243,91 @@ export class WorkitCore {
               ? finding
               : { ...finding, data: { ...finding.data, disposition: "open", resolution: null } };
           }),
+        });
+      },
+      trustedNow(this.context),
+    );
+    if (!changed.ok) return changed;
+    return success(changed.data.revision, null, changed.data.evidence.at(-1)!);
+  }
+
+  /**
+   * Record a check the CLI itself ran and observed (`workit check`, design
+   * §2.1 S9). Host-only, like observeDecision: the caller must be the workit
+   * CLI (never a helper), and agents reach evidence only through
+   * `evidence.record`, which stays agent_reported and cannot carry an
+   * observation. The entry is `host_observed` by `workit_cli`, keyed to the
+   * worktree tree in the observation, and the task lists the observation
+   * path as critical so an older reader fails closed instead of dropping it.
+   * Outside git (no tree key) it is bound to the current candidate instead.
+   */
+  observeCheck(request: ObserveCheckRequest): Result<Entry<Evidence>> {
+    return this.retryOmittedRevisions(request, () => this.observeCheckOnce(request));
+  }
+
+  private observeCheckOnce(request: ObserveCheckRequest): Result<Entry<Evidence>> {
+    const root = this.contextRootError();
+    if (!root.ok) return root;
+    if (this.context.caller.host !== "workit_cli" || (this.context.workerId ?? null) !== null)
+      return failure("permission_denied", "only the workit CLI records observed checks");
+    const observation = checkObservationSchema.safeParse(request?.observation);
+    if (!observation.success)
+      return failure("invalid_input", "check observation is invalid", {
+        fields: observation.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          reason: issue.message,
+        })),
+      });
+    const task = this.store.readTask(request.taskId);
+    if (!task.ok) return task;
+    if (task.data.status === "closed")
+      return failure("invalid_transition", "closed task cannot record evidence");
+    const observed: CheckObservation = observation.data;
+    let candidate: Candidate | null = null;
+    if (observed.tree === null) {
+      const captured = captureCandidate(
+        this.store.root,
+        task.data.intent.data.scope,
+        environment(),
+      );
+      if (!captured.ok) return captured;
+      candidate = captured.data;
+    }
+    const label = observed.name ?? observed.argv.join(" ");
+    const data: Evidence = {
+      kind: "check",
+      claim: `workit check ${label}`.slice(0, 500),
+      requirementIds: [],
+      ...(candidate ? { beforeCandidateId: candidate.id, candidateId: candidate.id } : {}),
+      result: observed.exitCode === 0 ? "passed" : "failed",
+      summary: `${observed.configured ? "configured" : "ad-hoc"} check exited ${observed.exitCode}${observed.timedOut ? " (timed out)" : ""} in ${observed.durationMs} ms`,
+      refs: [],
+      exitCode: observed.exitCode,
+      reviewContext: null,
+      observation: observed,
+    };
+    const changed = this.store.mutateTask(
+      task.data.id,
+      request.expectedRevision ?? task.data.revision,
+      (current, mutation) => {
+        const candidates =
+          candidate === null || current.candidates.some((item) => item.id === candidate.id)
+            ? current.candidates
+            : [...current.candidates, candidate];
+        const critical = [...new Set([...(current.critical ?? []), CHECK_OBSERVATION_PATH])];
+        return success(mutation.revision, null, {
+          ...current,
+          critical,
+          candidates,
+          evidence: [
+            ...current.evidence,
+            {
+              id: newId(),
+              recordedAt: mutation.now,
+              provenance: provenance(this.context, "host_observed"),
+              data,
+            },
+          ],
         });
       },
       trustedNow(this.context),
@@ -1554,7 +1651,7 @@ export class WorkitCore {
     if (input.disposition === "fixed") {
       const current = captureCandidate(this.store.root, task.data.intent.data.scope, environment());
       if (!current.ok) return current;
-      const evaluations = evaluateEvidence(task.data, current.data);
+      const evaluations = evaluateEvidence(task.data, current.data, currentTreeOf(this.store.root));
       const verified = evidence.some((entry) => {
         const evaluation = evaluations.find((item) => item.evidenceId === entry.id);
         return (
@@ -2456,6 +2553,7 @@ export class WorkitCore {
     if (!current.ok) return current;
     const evaluationWorkspace =
       task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;
+    const tree = currentTreeOf(this.store.root);
     const requirements = evaluateRequirements(
       task,
       evaluationWorkspace,
@@ -2463,6 +2561,7 @@ export class WorkitCore {
       current.data,
       this.store.root,
       this.context.caller,
+      tree,
     );
     return success(task.revision, workspace.data.revision, {
       id: task.id,
@@ -2512,6 +2611,7 @@ export class WorkitCore {
     if (!current.ok) return current;
     const evaluationWorkspace =
       task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;
+    const tree = currentTreeOf(this.store.root);
     const requirements = evaluateRequirements(
       task,
       evaluationWorkspace,
@@ -2519,13 +2619,14 @@ export class WorkitCore {
       current.data,
       this.store.root,
       this.context.caller,
+      tree,
     );
     return success(task.revision, workspace.data.revision, {
       task,
       workspace: evaluationWorkspace,
       capabilities: this.context.capabilities,
       requirements,
-      evidence: evaluateEvidence(task, current.data),
+      evidence: evaluateEvidence(task, current.data, tree),
     });
   }
 
@@ -2797,6 +2898,7 @@ export class WorkitCore {
       withCandidate.id === task.data.candidates.at(-1)?.id
         ? task.data
         : { ...task.data, candidates: [...task.data.candidates, withCandidate] };
+    const tree = currentTreeOf(this.store.root);
     const requirements = evaluateRequirements(
       taskForView,
       workspace.data,
@@ -2804,13 +2906,14 @@ export class WorkitCore {
       withCandidate,
       this.store.root,
       this.context.caller,
+      tree,
     );
     const view = {
       task: taskForView,
       workspace: workspace.data,
       capabilities: this.context.capabilities,
       requirements,
-      evidence: evaluateEvidence(taskForView, withCandidate),
+      evidence: evaluateEvidence(taskForView, withCandidate, tree),
     } satisfies TaskView;
     const closure = evaluateClosure(input.outcome, view);
     if (!closure.ok) return closure;

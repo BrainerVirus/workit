@@ -212,6 +212,8 @@ workit handoff --task <id> [--json]
 workit pr status [--pr <n>] [--json]  # checks + failing log tails, open threads, behind-base, next action
 workit ci wait [--timeout 20m] [--json]  # exit 0 green, 1 red, 4 still pending at the timeout
 workit ci rerun --failed --reason flake|infra [--force]  # once per PR head without --force
+workit check test        # run a configured check and record CLI-observed evidence
+workit check --name test -- bun test  # same, if argv is exactly the configured command
 workit uninstall         # remove host registrations (keeps ~/.config/workit)
 ```
 
@@ -224,6 +226,18 @@ that is not the workspace `vcs.account` is `blocked` (exit 3) with a login
 hint. `next` also reports review, draft, merge-queue and other merge
 blockers; only required checks gate. `pr status` never moves a ref, and
 every forge and git network call has a timeout.
+
+`workit check` runs the command (no shell unless `--shell "<cmd>"`), streams
+its output, and records the exit code, duration, HEAD, worktree tree key and
+patch-id as `observer: workit_cli` evidence in the run ledger and in the
+current task. The exit code is the command's. Close-time testing and
+verification gates accept only these observed checks (or an approved
+limitation); an agent-recorded "tests pass" is a note. When the repo
+configures named checks (`workit.checks.json`, committed:
+`{"checks":{"test":"bun test"}}`, else the `test`/`lint`/`typecheck`/`check`
+package.json scripts run as `<pm> run <script>`), a gate binds to them and an
+ad-hoc `workit check -- true` never satisfies it. A check is stale once the
+worktree changes.
 
 The packed CLI is a self-contained Node bundle; Node.js 24+ is required.
 

@@ -14,6 +14,8 @@ import {
   type Capability,
   type Caller,
   type Decision,
+  type Entry,
+  type Evidence,
   type EvidenceEvaluation,
   type Outcome,
   type Requirement,
@@ -24,6 +26,13 @@ import {
   type WorkspaceRecord,
 } from "./task-contract";
 import { verifyDecisionContentAtRoot } from "./authority";
+import {
+  gateCheckNames,
+  loadCheckConfig,
+  matchesNamedCheck,
+  type CheckConfig,
+} from "../check-config";
+import { worktreeTree } from "../git/rev";
 
 export type CandidateEnvironment =
   | readonly (string | { name: string; value?: string | null })[]
@@ -318,9 +327,31 @@ const evidenceScopes = (task: TaskRecord, ids: string[]): Scope[] =>
     .filter((requirement) => ids.includes(requirement.id))
     .map((requirement) => requirement.scope);
 
+/** The current worktree tree key for `root`, computed at most once (null outside git). */
+export const currentTreeOf = (root: string): (() => string | null) => {
+  let key: string | null | undefined;
+  return () => {
+    if (key === undefined) key = worktreeTree(root)?.key ?? null;
+    return key;
+  };
+};
+
+/** Evidence the workit CLI itself observed (`workit check`), as opposed to an agent's report. */
+export const isObservedCheck = (entry: Entry<Evidence>): boolean =>
+  entry.data.kind === "check" &&
+  entry.data.observation?.observer === "workit_cli" &&
+  entry.provenance?.kind === "host_observed" &&
+  entry.provenance.host === "workit_cli";
+
+/**
+ * Evidence status against the current state. Observed checks keyed to a tree
+ * are fresh while the worktree tree key is unchanged (§2.2); a closed task
+ * keeps their recorded status. Without `currentTree` they read stale.
+ */
 export function evaluateEvidence(
   task: TaskRecord,
   candidate: Candidate | null,
+  currentTree?: () => string | null,
 ): EvidenceEvaluation[] {
   const current = candidate ?? task.candidates.at(-1) ?? null;
   return task.evidence.map((entry) => {
@@ -331,6 +362,18 @@ export function evaluateEvidence(
         status: "failed" as const,
         reason: "failed evidence remains historical",
       };
+    const observedTree = isObservedCheck(entry) ? (evidence.observation?.tree ?? null) : null;
+    if (observedTree !== null) {
+      if (task.status === "closed")
+        return { evidenceId: entry.id, status: evidence.result, reason: "recorded before close" };
+      return observedTree === currentTree?.()
+        ? { evidenceId: entry.id, status: evidence.result, reason: "worktree tree is unchanged" }
+        : {
+            evidenceId: entry.id,
+            status: "stale" as const,
+            reason: "the worktree changed since the check ran",
+          };
+    }
     if (evidence.kind === "check" || evidence.kind === "review") {
       if (!evidence.beforeCandidateId || !evidence.candidateId)
         return {
@@ -499,6 +542,75 @@ const expectedKinds = (dimension: Requirement["dimension"], ruleId?: string): st
   return "worker report";
 };
 
+/** Close-time testing/verification gates accept only CLI-observed checks (D5, D14). */
+const observedGate = (requirement: Requirement): boolean =>
+  (requirement.dimension === "testing" || requirement.dimension === "verification") &&
+  requirement.before === "close";
+
+type GateResult = { satisfied: string[]; considered: string[]; reason: string };
+
+/**
+ * A close gate over CLI-observed checks. When the repo configures named
+ * checks, only a fresh passing run of a gate's named check whose argv is
+ * still its configured command satisfies it; when it configures none, any
+ * fresh passing observed check does (an ad-hoc requirement). Agent-reported
+ * checks are notes and never count. A broken check config fails closed.
+ */
+function evaluateObservedGate(
+  task: TaskRecord,
+  requirement: Requirement,
+  statuses: Map<string, EvidenceEvaluation["status"]>,
+  config: CheckConfig,
+): GateResult {
+  const names = gateCheckNames(config, requirement.dimension);
+  const observed = task.evidence.filter(isObservedCheck);
+  const fresh = observed.filter(
+    (entry) => statuses.get(entry.id) === "passed" && entry.data.observation?.exitCode === 0,
+  );
+  const named = (entry: Entry<Evidence>): boolean => {
+    const observation = entry.data.observation!;
+    return (
+      observation.configured &&
+      !observation.shell &&
+      names.includes(observation.name ?? "") &&
+      matchesNamedCheck(config, observation.name, observation.argv, observation.cwd)
+    );
+  };
+  const considered = observed.map((entry) => entry.id);
+  const run = names.length ? `workit check ${names[0]}` : "workit check -- <command>";
+  if (config.error)
+    return {
+      satisfied: [],
+      considered,
+      reason: `check config is invalid (${config.error}); fix it, then run ${run}`,
+    };
+  const satisfied = fresh.filter((entry) => names.length === 0 || named(entry));
+  if (satisfied.length)
+    return {
+      satisfied: satisfied.map((entry) => entry.id),
+      considered,
+      reason: names.length
+        ? `a fresh passing configured check (${names.join("|")}) was observed by workit check`
+        : "a fresh passing check was observed by workit check (no checks are configured)",
+    };
+  const reported = task.evidence.some(
+    (entry) =>
+      entry.data.kind === "check" &&
+      !isObservedCheck(entry) &&
+      entry.data.requirementIds.includes(requirement.id),
+  );
+  const reason = fresh.length
+    ? `ad-hoc checks do not satisfy a configured gate; run ${run}`
+    : observed.some((entry) => statuses.get(entry.id) === "stale")
+      ? `observed checks are stale (the worktree changed); run ${run}`
+      : observed.some((entry) => statuses.get(entry.id) === "failed")
+        ? `the observed check failed; fix it and run ${run}`
+        : reported
+          ? `agent-reported checks are notes, not evidence; run ${run}`
+          : `no CLI-observed check (needs kind:check observed by workit check); run ${run}`;
+  return { satisfied: [], considered, reason };
+}
+
 export function evaluateRequirements(
   task: TaskRecord,
   workspace: WorkspaceRecord,
@@ -506,8 +618,12 @@ export function evaluateRequirements(
   candidate: Candidate | null,
   checkoutRoot: string,
   _caller?: Caller,
+  currentTree: () => string | null = currentTreeOf(checkoutRoot),
 ) {
-  const evidence = evaluateEvidence(task, candidate);
+  const evidence = evaluateEvidence(task, candidate, currentTree);
+  const statuses = new Map(evidence.map((item) => [item.evidenceId, item.status]));
+  let checkConfig: CheckConfig | undefined;
+  const configFor = (): CheckConfig => (checkConfig ??= loadCheckConfig(checkoutRoot));
   if (task.policy && task.policy.policyVersion !== POLICY_VERSION)
     return task.policy.requirements.map((requirement) => ({
       requirementId: requirement.id,
@@ -517,10 +633,23 @@ export function evaluateRequirements(
       reason: "stored policy version is unsupported; reassessment is required",
     }));
   return (task.policy?.requirements ?? []).map((requirement) => {
+    const gate = observedGate(requirement)
+      ? evaluateObservedGate(task, requirement, statuses, configFor())
+      : null;
+    if (gate?.satisfied.length)
+      return {
+        requirementId: requirement.id,
+        status: "satisfied" as const,
+        evidenceIds: gate.satisfied,
+        decisionIds: [],
+        reason: gate.reason,
+      };
     const related = task.evidence
       .map((entry, index) => ({ entry, evaluation: evidence[index] }))
       .filter(({ entry }) => entry.data.requirementIds.includes(requirement.id));
     const passed = related.filter(({ entry, evaluation }) => {
+      // A gated requirement was decided above: reported checks are only notes.
+      if (gate) return false;
       if (
         !evidenceMatchesRequirement(
           evaluation.status,
@@ -659,6 +788,14 @@ export function evaluateRequirements(
         capability.assurance === "unavailable" &&
         (capability.name === requirement.dimension || capability.surface === requirement.dimension),
     );
+    if (gate)
+      return {
+        requirementId: requirement.id,
+        status: unavailable ? ("unavailable" as const) : ("unsatisfied" as const),
+        evidenceIds: [...new Set([...gate.considered, ...related.map(({ entry }) => entry.id)])],
+        decisionIds: [],
+        reason: unavailable ? "required capability is unavailable" : gate.reason,
+      };
     if (!unavailable && related.length > 0 && !passed.length)
       return {
         requirementId: requirement.id,
