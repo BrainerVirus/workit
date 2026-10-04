@@ -89,6 +89,12 @@ export type StackEntry = {
   patchId: string | null;
   /** Set once its PR merged (or its tip reached the trunk); skipped afterwards. */
   merged: { pr: number | null; mergeSha: string | null; at: string } | null;
+  /**
+   * A restack begun but not yet verified and pushed: the change as it was
+   * (`from..tip`) and the base it is moving onto. Survives a conflict or a
+   * content_changed stop, so the next sync compares against the original.
+   */
+  pendingRestack?: { from: string; tip: string; onto: string } | null;
 };
 
 export type StackFile = {
@@ -140,15 +146,18 @@ export type StackAdapter = {
 export const stackDeps: {
   pushPlan: (cwd: string, branch: string) => ForgeResult<PushPlan>;
   adapter: StackAdapter;
+  /** Bound on one restack (hooks such as post-rewrite run inside it). */
+  rebaseTimeoutMs: number;
 } = {
   pushPlan: (cwd, branch) => pushPreflight(cwd, { branch }),
   adapter: { name: "git", restack: (cwd, input) => gitRestack(cwd, input) },
+  rebaseTimeoutMs: Number(process.env.WORKIT_STACK_REBASE_TIMEOUT_MS) || 10 * 60_000,
 };
 
 // ---------------------------------------------------------------------------
 // git plumbing
 
-type GitRun = { ok: boolean; stdout: string; stderr: string };
+type GitRun = { ok: boolean; stdout: string; stderr: string; timedOut: boolean };
 
 const gitRun = (cwd: string, args: string[], timeoutMs: number = GIT_TIMEOUTS.local): GitRun => {
   const run = spawnSync("git", args, {
@@ -167,10 +176,12 @@ const gitRun = (cwd: string, args: string[], timeoutMs: number = GIT_TIMEOUTS.lo
       LANGUAGE: "C",
     },
   });
+  const failure: NodeJS.ErrnoException | undefined = run.error;
   return {
     ok: run.status === 0,
     stdout: run.stdout ?? "",
     stderr: run.error ? String(run.error.message) : (run.stderr ?? ""),
+    timedOut: failure?.code === "ETIMEDOUT",
   };
 };
 
@@ -231,7 +242,7 @@ const trackedDirt = (dir: string): boolean => {
 
 export type RestackOutcome =
   | { ok: true; head: string }
-  | { ok: false; conflict: boolean; worktree: string; error: string };
+  | { ok: false; conflict: boolean; timedOut?: boolean; worktree: string; error: string };
 
 /** Where sync checks out branches nobody has checked out (never the user's checkout). */
 const scratchDir = (cwd: string): string | null => {
@@ -277,9 +288,18 @@ function gitRestack(
       input.onto,
       input.from,
     ],
-    GIT_TIMEOUTS.worktree,
+    stackDeps.rebaseTimeoutMs,
   );
   if (!run.ok) {
+    // Killed at the bound: the rebase stopped mid-way, which is not a conflict.
+    if (run.timedOut)
+      return {
+        ok: false,
+        conflict: false,
+        timedOut: true,
+        worktree: dir,
+        error: `git rebase did not finish within ${stackDeps.rebaseTimeoutMs} ms`,
+      };
     if (rebaseInProgress(dir))
       return { ok: false, conflict: true, worktree: dir, error: firstLine(run) };
     if (!owner) gitRun(cwd, ["worktree", "remove", "--force", dir]);
@@ -372,6 +392,18 @@ function parseStack(raw: unknown): StackFile | null {
       lastParentHead: str(item.lastParentHead),
       patchId: str(item.patchId),
       merged,
+      ...(isRecord(item.pendingRestack) &&
+      str(item.pendingRestack.from) &&
+      str(item.pendingRestack.tip) &&
+      str(item.pendingRestack.onto)
+        ? {
+            pendingRestack: {
+              from: str(item.pendingRestack.from) as string,
+              tip: str(item.pendingRestack.tip) as string,
+              onto: str(item.pendingRestack.onto) as string,
+            },
+          }
+        : {}),
     });
   }
   return {
@@ -538,9 +570,18 @@ export function stackLockStale(raw: string | null, age: number | null): boolean 
     payload = null;
   }
   if (payload === null) return age !== null && age > OWNERLESS_STALE_MS;
-  if (age !== null && age > HEARTBEAT_STALE_MS) return true;
-  return classifyLockOwner(payload, age).state === "stale";
+  const owner = classifyLockOwner(payload, age);
+  // A verifiably live holder on this machine is never stale, however old its
+  // heartbeat (a long synchronous rebase cannot heartbeat).
+  if (owner.state === "live") return false;
+  if (owner.state === "stale") return true;
+  // Another host or pid namespace: only its heartbeat can tell.
+  return age !== null && age > HEARTBEAT_STALE_MS;
 }
+
+/** Touch the held stack lock's owner file (called between git/forge steps). */
+let activeBeat: (() => void) | null = null;
+export const touchStackLock = (): void => activeBeat?.();
 
 function takeLock(lock: string): LockOwner | null {
   try {
@@ -637,18 +678,22 @@ export async function withStackLock<T>(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   const held = owner;
-  const beat = setInterval(() => {
+  const touch = () => {
     try {
       const now = new Date();
       fs.utimesSync(path.join(lock, OWNER), now, now);
     } catch {
       // lost the lock; the release below is a no-op then
     }
-  }, HEARTBEAT_MS);
+  };
+  const beat = setInterval(touch, HEARTBEAT_MS);
   beat.unref?.();
+  const previous = activeBeat;
+  activeBeat = touch;
   try {
     return await fn();
   } finally {
+    activeBeat = previous;
     clearInterval(beat);
     releaseLock(lock, held);
   }
@@ -786,7 +831,8 @@ export function planStack(
         // replays only this branch's own commits.
         builtOn = before.lastParentHead;
       else {
-        const old = oldParentVersion(cwd, parent, parentSha, tip);
+        const old =
+          oldParentVersion(cwd, parent, parentSha, tip) ?? oldParentLookalike(cwd, parentSha, tip);
         if (old)
           return stackFail(
             "blocked",
@@ -795,6 +841,9 @@ export function planStack(
             { branch, parent, oldParentTip: old },
           );
         builtOn = mergeBase(cwd, parentSha, tip) ?? parentSha;
+        notes.push(
+          `${branch} is not on ${parent} and has no recorded base; sync will replay every commit since their merge base ${builtOn.slice(0, 12)}`,
+        );
       }
     }
     let pr = before?.pr ?? null;
@@ -812,6 +861,7 @@ export function planStack(
       } else if (!found.ok) notes.push(`${branch}: PR lookup failed (${found.error})`);
     }
     entries.push({
+      ...(before?.pendingRestack ? { pendingRestack: before.pendingRestack } : {}),
       branch,
       parent,
       pr,
@@ -882,6 +932,55 @@ function oldParentVersion(
     if (isAncestor(cwd, sha, child) && !isAncestor(cwd, sha, parentSha)) return sha;
   }
   return null;
+}
+
+type CommitKey = { sha: string; subject: string; patch: string | null };
+
+/** Non-merge commits of `range`, oldest first, with their stable patch-ids. */
+function commitKeys(cwd: string, range: string): CommitKey[] {
+  const log = gitRun(cwd, ["log", "--reverse", "--no-merges", "--format=%H%x00%s", range]);
+  if (!log.ok) return [];
+  const patches = new Map<string, string>();
+  const diff = gitRun(cwd, ["log", "--no-merges", "-p", "--format=commit %H", range]);
+  if (diff.ok && diff.stdout.trim()) {
+    const ids = spawnSync("git", ["patch-id", "--stable"], {
+      cwd,
+      input: diff.stdout,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    for (const line of (ids.stdout ?? "").split("\n")) {
+      const [patch, sha] = line.trim().split(/\s+/u);
+      if (patch && sha) patches.set(sha, patch);
+    }
+  }
+  return log.stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [sha, subject = ""] = line.split("\0");
+      return { sha, subject, patch: patches.get(sha) ?? null };
+    });
+}
+
+/**
+ * Without a reflog (expired, fresh clone): commits of `child` since its merge
+ * base with the parent that look like the parent's own (same patch-id or same
+ * subject as a commit the parent now has instead). The newest such commit is
+ * where the old parent version ended.
+ */
+function oldParentLookalike(cwd: string, parentSha: string, child: string): string | null {
+  const base = mergeBase(cwd, parentSha, child);
+  if (!base) return null;
+  const parentCommits = commitKeys(cwd, `${base}..${parentSha}`);
+  if (parentCommits.length === 0) return null;
+  const patches = new Set(parentCommits.map((commit) => commit.patch).filter(Boolean));
+  const subjects = new Set(parentCommits.map((commit) => commit.subject).filter(Boolean));
+  let last: string | null = null;
+  for (const commit of commitKeys(cwd, `${base}..${child}`))
+    if ((commit.patch && patches.has(commit.patch)) || subjects.has(commit.subject))
+      last = commit.sha;
+  return last;
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,8 +1264,8 @@ export type SyncOptions = {
   dryRun: boolean;
   /** Process only the first N unmerged branches (land moves just the new root). */
   limit?: number;
-  /** Push a restack whose content changed (after a resolved conflict); never used by land. */
-  force?: boolean;
+  /** Branches whose changed restack may be pushed anyway; never used by land. */
+  force?: ReadonlySet<string>;
 };
 
 export type SyncStep = {
@@ -1325,6 +1424,7 @@ export function syncStack(
     if (entry.merged) continue;
     if (options.limit !== undefined && processed >= options.limit) break;
     processed += 1;
+    touchStackLock();
     const tip = branchTip(cwd, entry.branch);
     if (!tip)
       return stackFail(
@@ -1353,21 +1453,25 @@ export function syncStack(
       };
       newTip = null;
     } else if (!isAncestor(cwd, parentTip, tip)) {
+      const pending = entry.pendingRestack ?? null;
       const from =
-        entry.lastParentHead && isAncestor(cwd, entry.lastParentHead, tip)
-          ? entry.lastParentHead
-          : (mergeBase(cwd, entry.lastParentHead ?? parentTip, tip) ?? parentTip);
+        pending && isAncestor(cwd, pending.onto, tip)
+          ? pending.onto
+          : entry.lastParentHead && isAncestor(cwd, entry.lastParentHead, tip)
+            ? entry.lastParentHead
+            : (mergeBase(cwd, entry.lastParentHead ?? parentTip, tip) ?? parentTip);
       if (options.dryRun) {
         step.restack = { from, onto: parentTip, head: null, carried: null };
         newTip = null;
       } else {
+        touchStackLock();
         // A plain rebase linearizes merges and drops their resolutions.
         const merges = gitRun(cwd, ["rev-list", "--merges", `${from}..${tip}`]);
         if (!merges.ok || merges.stdout.trim())
           return stackFail(
             "blocked",
             `merge_commits: ${entry.branch} has merge commits since ${from.slice(0, 12)}; restacking would drop what they resolved`,
-            `git rebase --rebase-merges --onto ${parentTip} ${from} ${entry.branch}  # check the result, then: workit stack sync --force`,
+            `git rebase --rebase-merges --onto ${parentTip} ${from} ${entry.branch}  # check the result, then: workit stack sync`,
             {
               branch: entry.branch,
               merges: merges.stdout.trim().split("\n").filter(Boolean),
@@ -1389,13 +1493,33 @@ export function syncStack(
             `commit or stash the changes in ${owner}, then workit stack sync`,
             { branch: entry.branch, worktree: owner, progress: outcome },
           );
+        // Record what is being moved before moving it: a conflict or a
+        // timeout leaves this in the stack file for the next sync to check.
+        entry.pendingRestack = pending
+          ? { ...pending, onto: parentTip }
+          : { from, tip, onto: parentTip };
+        const recorded = writeStack(cwd, stack);
+        if (!recorded.ok) return recorded;
         const rebased = stackDeps.adapter.restack(cwd, {
           branch: entry.branch,
           onto: parentTip,
           from,
         });
+        touchStackLock();
         if (!rebased.ok) {
           outcome.steps.push(step);
+          if (rebased.timedOut)
+            return stackFail(
+              "failed",
+              `timed_out: restacking ${entry.branch} onto ${parent.name}: ${rebased.error}`,
+              `finish or abort the rebase in ${rebased.worktree} (git rebase --continue | --abort), then workit stack sync  # slow hooks: raise WORKIT_STACK_REBASE_TIMEOUT_MS`,
+              {
+                reason: "timed_out",
+                branch: entry.branch,
+                worktree: rebased.worktree,
+                progress: outcome,
+              },
+            );
           return rebased.conflict
             ? stackFail(
                 "blocked",
@@ -1418,60 +1542,78 @@ export function syncStack(
       }
     }
     if (!options.dryRun && newTip) {
-      // The change was moved onto a new base (now, or by a rebase the user
-      // finished after a conflict). Before anything is pushed, the moved
-      // change must be the same change: same exact diff against its base and
-      // no commit dropped. Otherwise nothing is pushed and the stack keeps
-      // its record, so the next sync checks again.
+      // Content safety: what was moved must arrive as the same change. The
+      // comparison is between the commits actually rebased (`from..tip`, as
+      // recorded before the rebase, even across a conflict) and the result
+      // on the new base: the exact diff, and no commit dropped as empty or
+      // already applied. Otherwise nothing is pushed and the record stays.
+      const check =
+        entry.pendingRestack && parentTip && isAncestor(cwd, parentTip, newTip)
+          ? entry.pendingRestack
+          : null;
+      let forced = false;
+      if (check && parentTip) {
+        const before = {
+          d: diffHash(cwd, check.from, check.tip),
+          commits: commitCount(cwd, check.from, check.tip),
+        };
+        const after = {
+          d: diffHash(cwd, parentTip, newTip),
+          commits: commitCount(cwd, parentTip, newTip),
+        };
+        const sameContent = before.d !== null && before.d === after.d;
+        const dropped = Math.max(0, before.commits - after.commits);
+        if (!sameContent || dropped > 0) {
+          if (!options.force?.has(entry.branch)) {
+            outcome.steps.push(step);
+            const written = writeStack(cwd, stack);
+            if (!written.ok) return written;
+            return stackFail(
+              "blocked",
+              `content_changed: ${entry.branch} on ${parent.name} is not the same change it was on ${check.from.slice(0, 12)}${dropped ? ` (${dropped} commit${dropped === 1 ? "" : "s"} dropped as empty or already applied)` : ""}; nothing was pushed`,
+              `inspect: git range-diff ${check.from}..${check.tip} ${parentTip}..${newTip}  # if intended: workit stack sync --force ${entry.branch}; to undo: git branch -f ${entry.branch} ${check.tip}`,
+              {
+                reason: "content_changed",
+                branch: entry.branch,
+                before: {
+                  base: check.from,
+                  head: check.tip,
+                  commits: before.commits,
+                  stat: shortStat(cwd, check.from, check.tip),
+                },
+                after: {
+                  base: parentTip,
+                  head: newTip,
+                  commits: after.commits,
+                  stat: shortStat(cwd, parentTip, newTip),
+                },
+                dropped,
+                progress: outcome,
+              },
+            );
+          }
+          forced = true;
+        }
+        entry.pendingRestack = null;
+      }
+      // Verdict carry (S13): the last verified head vs the new one, each
+      // against its own base. Equal only for the same patch and exact diff.
       const moved =
         entry.lastHead !== null &&
         entry.lastHead !== newTip &&
         entry.lastParentHead !== null &&
         parentTip !== null &&
         parentTip !== entry.lastParentHead;
-      if (moved) {
+      if (moved && parentTip) {
         const fromBase = entry.lastParentHead as string;
         const fromHead = entry.lastHead as string;
-        const onto = parentTip;
         const before = {
           p: patchId(cwd, fromBase, fromHead),
           d: diffHash(cwd, fromBase, fromHead),
-          commits: commitCount(cwd, fromBase, fromHead),
         };
-        const after = {
-          p: patchId(cwd, onto, newTip),
-          d: diffHash(cwd, onto, newTip),
-          commits: commitCount(cwd, onto, newTip),
-        };
-        const sameContent = before.d !== null && before.d === after.d;
-        const dropped = Math.max(0, before.commits - after.commits);
-        if ((!sameContent || dropped > 0) && !options.force) {
-          outcome.steps.push(step);
-          return stackFail(
-            "blocked",
-            `content_changed: ${entry.branch} on ${parent.name} is not the same change it was on ${fromBase.slice(0, 12)}${dropped ? ` (${dropped} commit${dropped === 1 ? "" : "s"} dropped as empty or already applied)` : ""}; nothing was pushed`,
-            `inspect: git range-diff ${fromBase}..${fromHead} ${onto}..${newTip}  # if intended: workit stack sync --force; to undo: git branch -f ${entry.branch} ${fromHead}`,
-            {
-              reason: "content_changed",
-              branch: entry.branch,
-              before: {
-                base: fromBase,
-                head: fromHead,
-                commits: before.commits,
-                stat: shortStat(cwd, fromBase, fromHead),
-              },
-              after: {
-                base: onto,
-                head: newTip,
-                commits: after.commits,
-                stat: shortStat(cwd, onto, newTip),
-              },
-              dropped,
-              progress: outcome,
-            },
-          );
-        }
-        const equal = sameContent && dropped === 0 && before.p !== null && before.p === after.p;
+        const after = { p: patchId(cwd, parentTip, newTip), d: diffHash(cwd, parentTip, newTip) };
+        const equal =
+          before.d !== null && before.d === after.d && before.p !== null && before.p === after.p;
         appendObserved(cwd, {
           type: "stack.restacked",
           actor,
@@ -1480,17 +1622,19 @@ export function syncStack(
           head: newTip,
           fromHead,
           fromBase,
-          toBase: onto,
+          toBase: parentTip,
           patchId: after.p,
           diffHash: after.d,
           patchEqual: equal,
-          forced: !sameContent || dropped > 0,
+          forced,
         });
         if (step.restack) step.restack.carried = equal;
-        else step.restack = { from: fromBase, onto, head: newTip, carried: equal };
+        else step.restack = { from: fromBase, onto: parentTip, head: newTip, carried: equal };
       }
       if (options.publish) {
+        touchStackLock();
         const pushed = pushBranch(cwd, actor, entry.branch, entry.lastHead ?? tip);
+        touchStackLock();
         if (!pushed.ok) {
           outcome.steps.push(step);
           return { ...pushed, data: { ...pushed.data, progress: outcome } };
@@ -1591,6 +1735,7 @@ async function awaitChecks(
 ): Promise<ForgeResult<PrStatusDoc>> {
   let waited = 0;
   for (let poll = 0; ; poll += 1) {
+    touchStackLock();
     const doc = statusDoc(ctx, pr);
     if (!doc.ok) return doc;
     const verdict = waitVerdict(doc.data, { head, elapsedMs: waited });
@@ -1653,6 +1798,7 @@ export async function landStack(
   const simulated = new Set<string>();
   let justRestacked = new Set(outcome.restacked);
   for (;;) {
+    touchStackLock();
     const entry = stack.branches.find(
       (candidate) => !candidate.merged && !simulated.has(candidate.branch),
     );

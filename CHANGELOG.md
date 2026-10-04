@@ -109,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or a temporary one under the store (never the user's checkout), refuses
   branches with merge commits, and pushes only when the moved branch is the
   same change (exact diff, no dropped commit; else `blocked`
-  `content_changed`, the rebase kept local, `--force` to push). It pushes
+  `content_changed`, the rebase kept local, `--force <branch>` to push it). It pushes
   through the S11 lease and retargets PR bases; a conflict stops `blocked`
   with the rebase left in progress and the unblock, processed branches
   recorded and the rest untouched. Each restack records an observed

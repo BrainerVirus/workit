@@ -351,7 +351,9 @@ has it checked out, or in a temporary worktree under the store, never moving
 your checkout. Before anything is pushed the moved branch must be the same
 change (exact diff against its base, no commit dropped); otherwise it is
 `blocked` with `content_changed`, the rebased branch stays local, and only
-`--force` pushes it. Branches with merge commits are refused (a plain rebase
+`--force <branch>` pushes it. The check compares the commits actually rebased
+(remembered across a conflict) with the result, so your own new commits on a
+child are fine. A long rebase never loses the stack lock to another command. Branches with merge commits are refused (a plain rebase
 would drop their resolutions). It pushes through `git push`'s lease and
 retargets the PR, and a conflict stops it with the rebase left in progress:
 resolve, `git rebase --continue`, then `workit stack sync`. `--local` skips

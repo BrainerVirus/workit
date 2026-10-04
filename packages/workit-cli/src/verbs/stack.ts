@@ -39,7 +39,8 @@ import {
 
 const PLAN_USAGE = "workit stack plan [--name <n>] [--trunk <b>] [<bottom> … <top>] [--json]";
 const STATUS_USAGE = "workit stack status [--name <n>] [--json]";
-const SYNC_USAGE = "workit stack sync [--name <n>] [--local] [--dry-run] [--force] [--json]";
+const SYNC_USAGE =
+  "workit stack sync [--name <n>] [--local] [--dry-run] [--force <branch>]… [--json]";
 const LAND_USAGE =
   "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--timeout 20m] [--interval 30s] [--json]";
 const USAGE = "workit stack plan|status|sync|land ... (workit help stack)";
@@ -156,13 +157,24 @@ async function sync(argv: string[], io: Io): Promise<number> {
     name: "value",
     local: "boolean",
     "dry-run": "boolean",
-    force: "boolean",
+    force: "list",
   });
   if (typeof flags === "string") return usage(io, flags, SYNC_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, SYNC_USAGE);
   const selected = selectStack(io.cwd, flags.values.name ?? null);
   if (!selected.ok) return stackFailed(io, selected);
+  // --force names the branch whose changed restack may be pushed; never all.
+  const force = new Set(flags.lists.force ?? []);
+  const unknown = [...force].filter(
+    (branch) => !selected.data.branches.some((entry) => entry.branch === branch),
+  );
+  if (unknown.length)
+    return usage(
+      io,
+      `--force ${unknown[0]}: not a branch of stack ${selected.data.name}`,
+      SYNC_USAGE,
+    );
   const local = flags.booleans.has("local");
   let ctx = null;
   if (!local) {
@@ -187,7 +199,7 @@ async function sync(argv: string[], io: Io): Promise<number> {
       {
         publish: !local,
         dryRun: flags.booleans.has("dry-run"),
-        force: flags.booleans.has("force"),
+        force,
       },
       actorFromEnv(io.env),
     );
@@ -269,7 +281,8 @@ async function land(argv: string[], io: Io): Promise<number> {
 }
 
 export async function run(argv: string[], io: Io): Promise<number> {
-  const [sub, ...rest] = argv;
+  // `--json` is global; it may come before the subcommand.
+  const [sub, ...rest] = argv.filter((arg) => arg !== "--json");
   if (sub === "plan") return plan(rest, io);
   if (sub === "status") return status(rest, io);
   if (sub === "sync") return sync(rest, io);

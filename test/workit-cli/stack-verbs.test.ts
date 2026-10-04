@@ -24,13 +24,15 @@ import {
   stacksDir,
   writeStack,
 } from "@/packages/workit-core/src/stack";
-import { localLockHost } from "@/packages/workit-core/src/core/store-lock";
+import { localLockHost, processStartOf } from "@/packages/workit-core/src/core/store-lock";
 import { makeStackForge, type StackForge } from "@/test/shared/helpers/stack-forge";
 
 // S12 `workit stack plan|status|sync|land` over a real bare remote and a
 // stateful fake gh/glab (squash merges really land in the bare repo).
 
 setDefaultTimeout(120_000);
+
+const MAIN = path.resolve(import.meta.dir, "..", "..", "packages", "workit-cli", "src", "main.ts");
 
 let configDir = "";
 const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
@@ -349,8 +351,12 @@ test("stack sync: a restack conflict stops blocked with the rebase-continue unbl
   const plannedBy = new Map(
     planned.stack.branches.map((entry: { branch: string }) => [entry.branch, entry]),
   );
-  for (const branch of ["feature/b", "feature/c", "feature/d"])
+  for (const branch of ["feature/c", "feature/d"])
     expect(byBranch.get(branch) as unknown).toEqual(plannedBy.get(branch));
+  // The branch being moved keeps its last verified state plus what is moving.
+  const { pendingRestack, ...recordedB } = byBranch.get("feature/b") as Record<string, unknown>;
+  expect(recordedB).toEqual(plannedBy.get("feature/b") as Record<string, unknown>);
+  expect(pendingRestack).toMatchObject({ tip: planned.stack.branches[1].lastHead });
   expect(forge.writes).toEqual(["merge 11 (external)"]);
 
   // The rebase ran in a temporary worktree under the store, never in the
@@ -379,7 +385,14 @@ test("stack sync: a restack conflict stops blocked with the rebase-continue unbl
   expect(changed.json().unblock).toContain("workit stack sync --force");
   expect(forge.tip("feature/b")).toBe(oldRemoteB);
   // Pushed only when forced on purpose.
-  const resumed = await run(["stack", "sync", "--force", "--json"], forge.cwd);
+  // Only a named branch can be forced; a bare --force is a usage error.
+  expect((await run(["stack", "sync", "--force", "--json"], forge.cwd)).code).toBe(2);
+  expect((await run(["stack", "sync", "--force", "feature/zz", "--json"], forge.cwd)).code).toBe(2);
+  // Forcing another branch does not cover feature/b.
+  const other = await run(["stack", "sync", "--force", "feature/c", "--json"], forge.cwd);
+  expect(other.json()).toMatchObject({ data: { reason: "content_changed", branch: "feature/b" } });
+  expect(forge.tip("feature/b")).toBe(oldRemoteB);
+  const resumed = await run(["stack", "sync", "--force", "feature/b", "--json"], forge.cwd);
   expect(resumed.code, resumed.stderr + resumed.stdout).toBe(0);
   expect(resumed.json().data.steps[0]).toMatchObject({
     branch: "feature/b",
@@ -734,7 +747,7 @@ test("verdict carry: only CLI-observed, patch-equal restack rows carry; an agent
   });
 });
 
-test("stack sync: a whitespace-only change (equal patch-id, different exact diff) is refused, and when forced its verdict does not carry", async () => {
+test("stack sync: a whitespace-only change since the verdict (equal patch-id, different exact diff) is pushed as rebased, but its verdict does not carry", async () => {
   const forge = setup("github", undefined, ["feature/a", "feature/b"]);
   await run(["stack", "plan", "feature/a", "feature/b", "--json"], forge.cwd);
   await verdict(forge, "feature/b");
@@ -743,15 +756,90 @@ test("stack sync: a whitespace-only change (equal patch-id, different exact diff
     forge.git("commit", "-q", "-a", "--amend", "--no-edit");
   });
   forge.mergeExternally(11);
-  const refused = await run(["stack", "sync", "--json"], forge.cwd);
-  expect(refused.code).toBe(3);
-  expect(refused.json().data.reason).toBe("content_changed");
-  const forced = await run(["stack", "sync", "--force", "--json"], forge.cwd);
-  expect(forced.code, forced.stderr + forced.stdout).toBe(0);
+  const synced = await run(["stack", "sync", "--json"], forge.cwd);
+  expect(synced.code, synced.stderr + synced.stdout).toBe(0);
   const restacked = rows(forge.cwd, "stack.restacked").find((row) => row.branch === "feature/b");
-  expect(restacked).toMatchObject({ patchEqual: false, forced: true });
+  expect(restacked).toMatchObject({ patchEqual: false, forced: false });
   const check = await run(["ledger", "check", "--branch", "feature/b", "--json"], forge.cwd);
   expect(check.json().data).toMatchObject({ accepted: { accepted: false } });
+});
+
+test("stack sync: commits added on a child since the last sync are rebased with it after the parent's squash merge, without --force", async () => {
+  const forge = setup("github", undefined, ["feature/a", "feature/b"]);
+  await run(["stack", "plan", "feature/a", "feature/b", "--json"], forge.cwd);
+  onBranch(forge, "feature/b", () => {
+    writeFileSync(path.join(forge.cwd, "b2.txt"), "more\n");
+    forge.git("add", "-A");
+    forge.git("commit", "-q", "-m", "feat: b more");
+  });
+  forge.mergeExternally(11);
+  const synced = await run(["stack", "sync", "--json"], forge.cwd);
+  expect(synced.code, synced.stderr + synced.stdout).toBe(0);
+  expect(
+    isAncestor(forge.bare, forge.tip("main") as string, forge.tip("feature/b") as string),
+  ).toBe(true);
+  expect(forge.git("show", "feature/b:b2.txt")).toBe("more");
+  expect(forge.git("rev-list", "--count", "main..feature/b").length).toBeGreaterThan(0);
+  expect(forge.tip("feature/b")).toBe(forge.git("rev-parse", "feature/b"));
+});
+
+test("stack plan: a parent rewritten under its child is detected without a reflog (expired / fresh clone)", async () => {
+  const forge = setup("github", undefined, ["feature/a", "feature/b"]);
+  const oldA = forge.git("rev-parse", "feature/a");
+  onBranch(forge, "feature/a", () => {
+    writeFileSync(path.join(forge.cwd, "a.txt"), "a amended\n");
+    forge.git("commit", "-q", "-a", "--amend", "--no-edit");
+  });
+  forge.git("reflog", "expire", "--expire=now", "--all");
+  expect(forge.git("reflog", "show", "feature/a")).toBe("");
+  const refused = await run(["stack", "plan", "feature/a", "feature/b", "--json"], forge.cwd);
+  expect(refused.code).toBe(3);
+  expect(refused.json().error).toContain("parent_rewritten");
+  expect(refused.json().unblock).toContain(`git rebase --onto feature/a ${oldA} feature/b`);
+});
+
+test("stack lock: a live holder on this machine is never stale, however old its heartbeat", async () => {
+  const forge = setup("github");
+  await plan(forge);
+  const lock = lockOf(forge);
+  holdLock(lock, { ...owner(process.pid), processStart: processStartOf(process.pid) }, 10 * 60_000);
+  const busy = await run(["stack", "sync", "--local", "--json"], forge.cwd);
+  expect(busy.code).toBe(4);
+  expect(existsSync(lock)).toBe(true);
+});
+
+const hook = (forge: StackForge, name: string, seconds: number) =>
+  writeFileSync(path.join(forge.hooks, name), `#!/bin/sh\nsleep ${seconds}\n`, { mode: 0o755 });
+
+test("stack sync: while another process is inside a slow rebase (post-rewrite hook), a second sync is busy", async () => {
+  const forge = setup("github", undefined, ["feature/a", "feature/b"]);
+  await run(["stack", "plan", "feature/a", "feature/b", "--json"], forge.cwd);
+  forge.commitElsewhere("main", "other.txt", "x\n");
+  hook(forge, "post-rewrite", 6);
+  const lock = lockOf(forge);
+  const child = Bun.spawn(["bun", MAIN, "--cwd", forge.cwd, "stack", "sync", "--local", "--json"], {
+    env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: configDir },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  for (let waited = 0; !existsSync(lock) && waited < 30_000; waited += 100)
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  const second = await run(["stack", "sync", "--local", "--json"], forge.cwd);
+  expect(second.code, second.stdout).toBe(4);
+  expect(await child.exited).toBe(0);
+});
+
+test("stack sync: a rebase that outlives the bound reports timed_out, not a conflict", async () => {
+  const forge = setup("github", undefined, ["feature/a", "feature/b"]);
+  await run(["stack", "plan", "feature/a", "feature/b", "--json"], forge.cwd);
+  forge.commitElsewhere("main", "other.txt", "x\n");
+  hook(forge, "post-rewrite", 5);
+  stackDeps.rebaseTimeoutMs = 1_000;
+  const result = await run(["stack", "sync", "--local", "--json"], forge.cwd);
+  expect(result.code).toBe(1);
+  expect(result.json()).toMatchObject({ code: "failed", data: { reason: "timed_out" } });
+  expect(result.json().error).toContain("timed_out");
+  expect(result.json().data.conflict).toBeUndefined();
 });
 
 test("stack file names are portable: case-distinct names never collide and reserved device names are never a file name", () => {
