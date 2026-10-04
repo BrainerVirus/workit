@@ -2,7 +2,7 @@
 // (`detailed_merge_status`, `has_conflicts`, `head_pipeline`), pipeline jobs,
 // job traces, discussions, and pipeline/job retry.
 import { apiJson, apiText, FORGE_TIMEOUTS, type ForgeRunner } from "./exec";
-import { logTail, shortBody } from "./redact";
+import { logTail, redactText, shortBody } from "./redact";
 import {
   failure,
   success,
@@ -32,7 +32,31 @@ type GlMr = {
   source_branch: string;
   sha: string;
   diff_refs?: { base_sha?: string | null } | null;
-  head_pipeline?: { id: number; sha: string; project_id: number; status: string } | null;
+  source_project_id?: number;
+  head_pipeline?: {
+    id: number;
+    sha: string;
+    /** Merged-results / merge-train pipelines run on a merge ref; this is the MR head. */
+    source_sha?: string | null;
+    project_id: number;
+    status: string;
+    web_url?: string;
+  } | null;
+};
+
+type GlBridge = {
+  id: number;
+  name: string;
+  stage: string;
+  status: string;
+  allow_failure?: boolean;
+  web_url?: string;
+  downstream_pipeline?: {
+    id: number;
+    status: string;
+    project_id?: number;
+    web_url?: string;
+  } | null;
 };
 
 type GlJob = {
@@ -73,26 +97,72 @@ const PENDING = new Set([
   "scheduled",
 ]);
 
+const stateOf = (status: string, allowFailure: boolean): ForgeCheck["state"] => {
+  const failed = status === "failed" || status === "canceled";
+  return PENDING.has(status)
+    ? "pending"
+    : failed
+      ? allowFailure
+        ? "passing"
+        : "failing"
+      : status === "success"
+        ? "passing"
+        : "skipped";
+};
+
+/** A trigger/bridge job: its state is the downstream pipeline's. */
+export function checkFromBridge(bridge: GlBridge, pipelineId: number, scope: string): ForgeCheck {
+  const status = bridge.downstream_pipeline?.status ?? bridge.status;
+  const allow = bridge.allow_failure === true;
+  const failed = status === "failed" || status === "canceled";
+  return {
+    name: `${bridge.stage} / ${bridge.name}`,
+    context: bridge.name,
+    state: stateOf(status, allow),
+    conclusion: failed && allow ? "allowed_failure" : `downstream_${status}`,
+    url: safeUrl(bridge.downstream_pipeline?.web_url ?? bridge.web_url ?? null),
+    runId: pipelineId,
+    // Not a log-bearing job; rerun it on the downstream pipeline.
+    jobId: null,
+    scope,
+    required: !allow,
+  };
+}
+
 export function checkFromJob(job: GlJob, pipelineId: number, scope: string): ForgeCheck {
   const failed = job.status === "failed" || job.status === "canceled";
   return {
     name: `${job.stage} / ${job.name}`,
-    state: PENDING.has(job.status)
-      ? "pending"
-      : failed
-        ? job.allow_failure
-          ? "passing"
-          : "failing"
-        : job.status === "success"
-          ? "passing"
-          : "skipped",
+    context: job.name,
+    state: stateOf(job.status, job.allow_failure === true),
     conclusion: failed && job.allow_failure ? "allowed_failure" : job.status,
-    url: job.web_url ?? null,
+    url: safeUrl(job.web_url ?? null),
     runId: pipelineId,
     jobId: job.id,
     scope,
+    // Every job that may not fail gates the pipeline, which gates the MR.
+    required: job.allow_failure !== true,
   };
 }
+
+/** A pipeline-level check when no job explains the pipeline's state. */
+const pipelineCheck = (
+  state: ForgeCheck["state"],
+  conclusion: string,
+  pipeline: { id: number; project_id: number; web_url?: string } | null,
+): ForgeCheck => ({
+  name: "pipeline",
+  context: "pipeline",
+  state,
+  conclusion,
+  url: safeUrl(pipeline?.web_url ?? null),
+  runId: pipeline?.id ?? null,
+  jobId: null,
+  scope: pipeline ? String(pipeline.project_id) : null,
+  required: true,
+});
+
+const safeUrl = (value: string | null): string | null => (value ? redactText(value) : null);
 
 const isBot = (author: GlUser): boolean =>
   author?.bot === true || /(?:^project_\d+_bot|bot$|\[bot\]$)/iu.test(author?.username ?? "");
@@ -135,6 +205,18 @@ export function createGitLabForge(options: {
     return success({ items, truncated: true });
   };
 
+  /** The current tip of the target branch (diff_refs.base_sha is the merge base). */
+  const baseTip = (branch: string): string | null => {
+    const tip = apiJson<{ commit?: { id?: string } }>(
+      runner,
+      "glab",
+      apiHost,
+      api(`${project}/repository/branches/${encodeURIComponent(branch)}`),
+      `branch ${branch}`,
+    );
+    return tip.ok && typeof tip.data.commit?.id === "string" ? tip.data.commit.id : null;
+  };
+
   return {
     kind: "gitlab",
     apiHost,
@@ -142,6 +224,14 @@ export function createGitLabForge(options: {
 
     identity(expected) {
       const user = apiJson<{ username?: unknown }>(runner, "glab", apiHost, api("user"), "user");
+      // CI job tokens cannot read /user; reads still work, so skip the check.
+      if (!user.ok && user.code === "failed" && /\b403\b|forbidden/iu.test(user.error))
+        return success({
+          login: null,
+          expected,
+          matches: null,
+          note: "the credential cannot read /user (job or project token); identity not checked",
+        });
       if (!user.ok) return user;
       const login = typeof user.data.username === "string" ? user.data.username : "";
       if (!login) return failure("failed", "glab api user returned no username");
@@ -152,7 +242,22 @@ export function createGitLabForge(options: {
       });
     },
 
-    findPr(head) {
+    repoInfo(target) {
+      const info = apiJson<{ id?: number; forked_from_project?: { path_with_namespace?: string } }>(
+        runner,
+        "glab",
+        apiHost,
+        api(`projects/${encodeURIComponent(target)}`),
+        `project ${target}`,
+      );
+      if (!info.ok) return info;
+      return success({
+        id: typeof info.data.id === "number" ? info.data.id : null,
+        parent: info.data.forked_from_project?.path_with_namespace ?? null,
+      });
+    },
+
+    findPr(head, match) {
       const list = apiJson<GlMr[]>(
         runner,
         "glab",
@@ -164,7 +269,14 @@ export function createGitLabForge(options: {
       );
       if (!list.ok) return list;
       if (!Array.isArray(list.data)) return failure("failed", "merge request list is not a list");
-      const matches = list.data.filter((mr) => mr.source_branch === head);
+      // Same-named branches in other forks are not ours: match the source
+      // project or the exact head sha.
+      const matches = list.data.filter(
+        (mr) =>
+          mr.source_branch === head &&
+          ((match.projectId !== null && mr.source_project_id === match.projectId) ||
+            (match.sha !== null && mr.sha === match.sha)),
+      );
       const pick = matches.find((mr) => mr.state === "opened") ?? matches[0];
       return success(
         pick
@@ -173,6 +285,7 @@ export function createGitLabForge(options: {
               url: pick.web_url,
               state: mrState(pick.state),
               headBranch: pick.source_branch,
+              headSha: pick.sha ?? null,
             }
           : null,
       );
@@ -191,16 +304,41 @@ export function createGitLabForge(options: {
       let truncated = false;
       let checks: ForgeCheck[] = [];
       const pipeline = value.head_pipeline ?? null;
-      // A pipeline for an older head says nothing about the current one.
-      if (pipeline && pipeline.sha === value.sha) {
+      const open = value.state === "opened";
+      // Merged-results and merge-train pipelines run on a merge ref whose sha
+      // is not the MR head; source_sha names the head they test.
+      const current =
+        pipeline !== null && (pipeline.sha === value.sha || pipeline.source_sha === value.sha);
+      if (pipeline && current) {
         const scope = String(pipeline.project_id);
         const jobs = pages(
           `projects/${scope}/pipelines/${pipeline.id}/jobs`,
           `pipeline ${pipeline.id} jobs`,
         );
         if (!jobs.ok) return jobs;
-        truncated ||= jobs.data.truncated;
-        checks = (jobs.data.items as GlJob[]).map((job) => checkFromJob(job, pipeline.id, scope));
+        const bridges = pages(
+          `projects/${scope}/pipelines/${pipeline.id}/bridges`,
+          `pipeline ${pipeline.id} bridges`,
+        );
+        if (!bridges.ok) return bridges;
+        truncated ||= jobs.data.truncated || bridges.data.truncated;
+        checks = [
+          ...(jobs.data.items as GlJob[]).map((job) => checkFromJob(job, pipeline.id, scope)),
+          ...(bridges.data.items as GlBridge[]).map((bridge) =>
+            checkFromBridge(bridge, pipeline.id, scope),
+          ),
+        ];
+        // The pipeline status is a floor: a failed pipeline is never green,
+        // and a running one is never done, whatever the visible jobs say.
+        const pipelineState = stateOf(pipeline.status, false);
+        if (pipelineState === "failing" && !checks.some((check) => check.state === "failing"))
+          checks.push(pipelineCheck("failing", pipeline.status, pipeline));
+        if (pipelineState === "pending" && !checks.some((check) => check.state === "pending"))
+          checks.push(pipelineCheck("pending", pipeline.status, pipeline));
+      } else if (open && pipeline) {
+        // The head pipeline belongs to an older head: CI for this head has
+        // not reported yet. Pending, never "no checks".
+        checks = [pipelineCheck("pending", "awaiting_pipeline_for_head", null)];
       }
       const discussions = pages(
         `${project}/merge_requests/${iid}/discussions`,
@@ -221,7 +359,7 @@ export function createGitLabForge(options: {
             author: note.author?.username ?? null,
             isBot: isBot(note.author),
             outdated: false,
-            url: `${value.web_url}#note_${note.id}`,
+            url: safeUrl(`${value.web_url}#note_${note.id}`),
             body: shortBody(note.body ?? ""),
           };
         });
@@ -233,7 +371,7 @@ export function createGitLabForge(options: {
         state: mrState(value.state),
         draft: value.draft ?? value.work_in_progress ?? false,
         base: value.target_branch,
-        baseSha: value.diff_refs?.base_sha ?? null,
+        baseSha: open ? baseTip(value.target_branch) : null,
         head: { branch: value.source_branch, sha: value.sha },
         mergeable: conflicts ? "no" : UNSETTLED.has(detailed) ? "unknown" : "yes",
         conflicts,
@@ -244,7 +382,11 @@ export function createGitLabForge(options: {
             : detailed === "requested_changes"
               ? "changes_requested"
               : null,
+        mergeState: detailed,
+        inMergeQueue: false,
         checks,
+        // GitLab gates on the whole pipeline (jobs that may not fail).
+        requiredContexts: [],
         threads,
         truncated,
       };

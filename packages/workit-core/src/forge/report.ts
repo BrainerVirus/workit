@@ -1,9 +1,9 @@
 // `workit pr status` / `ci wait` / `ci rerun` logic (design §2.1, S10): one
-// forge-neutral status document, the pstack `next` priority, the CI-wait
-// verdict, and rerun planning with the rerun-once rule.
+// forge-neutral status document, the `next` priority, the CI-wait verdict,
+// and rerun planning with the rerun-once rule.
 import { aheadBehind, currentBranch, fetchRefs, hasCommit, headSha, resolveRef } from "../git/rev";
 import type { ResolvedForge } from "./resolve";
-import { rerunCounts, recordReruns, type RerunRow } from "./reruns";
+import { rerunCounts, recordReruns, withRerunLock, type RerunRow } from "./reruns";
 import {
   failure,
   success,
@@ -15,15 +15,24 @@ import {
   type RerunTarget,
 } from "./types";
 
+/**
+ * What to do next, in priority order: conflicts > required rebase > threads
+ * > CI > review > draft > merge queue > other merge blockers > READY.
+ */
 export type NextAction =
+  | "MERGED"
+  | "CLOSED"
   | "RESOLVE_CONFLICTS"
   | "REBASE"
   | "RESOLVE_THREADS"
   | "FIX_CI"
   | "WAITING_CI"
-  | "READY"
-  | "MERGED"
-  | "CLOSED";
+  | "ADDRESS_REVIEW"
+  | "REVIEW"
+  | "MARK_READY"
+  | "IN_MERGE_QUEUE"
+  | "NOT_MERGEABLE"
+  | "READY";
 
 export type FailingCheck = {
   name: string;
@@ -31,6 +40,8 @@ export type FailingCheck = {
   runId: number | null;
   jobId: number | null;
   conclusion: string | null;
+  /** Required by branch protection; an optional failure does not block the merge. */
+  required: boolean | null;
   logTail: string[];
   logError?: string;
   rerunsOnHead: number;
@@ -41,7 +52,7 @@ export type BehindBase = {
   ahead: number | null;
   baseSha: string | null;
   upToDate: boolean | null;
-  /** Why the counts are null (fetch failed, head not available locally). */
+  /** Why the counts are null (fetch failed, commit not available). */
   error?: string;
 };
 
@@ -50,6 +61,8 @@ export type ChecksState = "failing" | "pending" | "passing" | "none";
 export type PrStatusDoc = {
   forge: "github" | "gitlab";
   repo: string;
+  /** The push repository when it is a fork of `repo`. */
+  headRepo: string | null;
   number: number;
   url: string;
   state: PrState;
@@ -57,16 +70,24 @@ export type PrStatusDoc = {
   base: string;
   head: { branch: string; sha: string; localSha: string | null; pushed: boolean | null };
   mergeable: "yes" | "no" | "unknown";
+  mergeState: string | null;
   conflicts: boolean;
   rebaseRequired: boolean;
+  inMergeQueue: boolean;
   behindBase: BehindBase | null;
   checks: {
+    /** Over the checks that gate the merge (required ones when protection names them). */
     state: ChecksState;
     failing: FailingCheck[];
     pending: string[];
     passing: number;
+    /** Required contexts that have not reported on this head; null when unknown. */
+    missingRequired: string[] | null;
   };
   reviews: { decision: string | null; unresolvedThreads: ForgeThread[] };
+  /** Every reason the PR cannot merge right now (empty when READY). */
+  blockers: string[];
+  identity: { login: string | null; credential: string; note?: string } | null;
   truncated: boolean;
   next: NextAction;
 };
@@ -74,57 +95,132 @@ export type PrStatusDoc = {
 /** Failing checks whose log tail is fetched; the rest list without a tail. */
 export const MAX_LOG_TAILS = 5;
 
-export function checksState(checks: readonly ForgeCheck[]): ChecksState {
+/**
+ * The checks that gate the merge: the required ones when branch protection
+ * names any; otherwise every check (an unprotected or unreadable branch is
+ * treated conservatively).
+ */
+export function gatingChecks(status: ForgePrStatus): ForgeCheck[] {
+  const required = status.checks.filter((check) => check.required === true);
+  const protectionNamesChecks = (status.requiredContexts?.length ?? 0) > 0;
+  return required.length > 0 || protectionNamesChecks ? required : status.checks;
+}
+
+export function missingRequired(status: ForgePrStatus): string[] | null {
+  if (status.requiredContexts === null) return null;
+  const seen = new Set(status.checks.map((check) => check.context));
+  return status.requiredContexts.filter((context) => !seen.has(context));
+}
+
+export function checksState(
+  checks: readonly ForgeCheck[],
+  missing: readonly string[] | null = [],
+): ChecksState {
   if (checks.some((check) => check.state === "failing")) return "failing";
-  if (checks.some((check) => check.state === "pending")) return "pending";
+  if (checks.some((check) => check.state === "pending") || (missing?.length ?? 0) > 0)
+    return "pending";
   return checks.length > 0 ? "passing" : "none";
 }
 
-/** pstack priority: conflicts > required rebase > threads > CI. */
-export function nextAction(status: {
+// GitLab detailed_merge_status values that mean "mergeable now".
+const GITLAB_MERGEABLE = new Set(["mergeable"]);
+// GitHub mergeStateStatus values that allow a merge (UNSTABLE: only
+// non-required checks fail; HAS_HOOKS: pre-receive hooks will run).
+const GITHUB_MERGEABLE = new Set(["clean", "unstable", "has_hooks"]);
+
+export type NextInput = {
+  forge: "github" | "gitlab";
   state: PrState;
+  draft: boolean;
   conflicts: boolean;
   rebaseRequired: boolean;
+  mergeable: "yes" | "no" | "unknown";
+  mergeState: string | null;
+  inMergeQueue: boolean;
+  reviewDecision: string | null;
   threads: number;
   checks: ChecksState;
-}): NextAction {
-  if (status.state === "merged") return "MERGED";
-  if (status.state === "closed") return "CLOSED";
-  if (status.conflicts) return "RESOLVE_CONFLICTS";
-  if (status.rebaseRequired) return "REBASE";
-  if (status.threads > 0) return "RESOLVE_THREADS";
-  if (status.checks === "failing") return "FIX_CI";
-  if (status.checks === "pending") return "WAITING_CI";
-  return "READY";
+};
+
+/** The ordered merge blockers; the first one is `next`. */
+export function blockersOf(input: NextInput): Array<{ next: NextAction; reason: string }> {
+  if (input.state === "merged") return [{ next: "MERGED", reason: "merged" }];
+  if (input.state === "closed") return [{ next: "CLOSED", reason: "closed" }];
+  const out: Array<{ next: NextAction; reason: string }> = [];
+  const ms = input.mergeState ?? "";
+  if (input.conflicts) out.push({ next: "RESOLVE_CONFLICTS", reason: "conflicts" });
+  if (input.rebaseRequired) out.push({ next: "REBASE", reason: "behind_base_required" });
+  if (input.threads > 0 || ms === "discussions_not_resolved")
+    out.push({ next: "RESOLVE_THREADS", reason: "unresolved_threads" });
+  if (input.checks === "failing") out.push({ next: "FIX_CI", reason: "required_checks_failing" });
+  else if (
+    input.checks === "pending" ||
+    ms === "ci_still_running" ||
+    (ms === "ci_must_pass" && input.checks !== "passing")
+  )
+    out.push({ next: "WAITING_CI", reason: "checks_pending" });
+  if (input.reviewDecision === "changes_requested" || ms === "requested_changes")
+    out.push({ next: "ADDRESS_REVIEW", reason: "changes_requested" });
+  else if (input.reviewDecision === "review_required" || ms === "not_approved")
+    out.push({ next: "REVIEW", reason: "review_required" });
+  if (input.draft || ms === "draft" || ms === "draft_status")
+    out.push({ next: "MARK_READY", reason: "draft" });
+  if (input.inMergeQueue) out.push({ next: "IN_MERGE_QUEUE", reason: "in_merge_queue" });
+  if (out.length === 0) {
+    const allowed = input.forge === "github" ? GITHUB_MERGEABLE.has(ms) : GITLAB_MERGEABLE.has(ms);
+    if (input.mergeable === "unknown")
+      out.push({ next: "NOT_MERGEABLE", reason: "mergeability_unknown" });
+    else if (!allowed)
+      out.push({ next: "NOT_MERGEABLE", reason: `merge_state_${ms || "unknown"}` });
+  }
+  return out;
 }
 
-/** Observe `base` on the push remote and count head against it, locally. */
+export function nextAction(input: NextInput): NextAction {
+  return blockersOf(input)[0]?.next ?? "READY";
+}
+
+/**
+ * Count head against the base tip the API reported, locally. A pure read:
+ * missing commits are fetched by id (no destination ref, no FETCH_HEAD), so
+ * no ref in the shared repository moves.
+ */
 export function computeBehindBase(
   cwd: string,
-  remote: string,
-  base: string,
-  head: { branch: string; sha: string },
-): BehindBase {
-  const tracking = `refs/remotes/${remote}/${base}`;
-  const fetched = fetchRefs(cwd, remote, [`+refs/heads/${base}:${tracking}`]);
+  remotes: { base: string; head: string },
+  baseSha: string | null,
+  headSha_: string,
+  options: { timeoutMs?: number } = {},
+): ForgeResult<BehindBase> {
   const empty = { behind: null, ahead: null, upToDate: null };
-  if (!fetched.ok) return { ...empty, baseSha: null, error: fetched.error };
-  const baseSha = resolveRef(cwd, tracking);
-  if (!baseSha) return { ...empty, baseSha: null, error: `${tracking} did not resolve` };
-  // The PR head may not be local (`--pr` for someone else's branch): fetch it
-  // without creating a ref. A fork head is not on this remote.
-  if (!hasCommit(cwd, head.sha)) fetchRefs(cwd, remote, [`refs/heads/${head.branch}`]);
-  const counts = hasCommit(cwd, head.sha) ? aheadBehind(cwd, baseSha, head.sha) : null;
-  if (!counts)
-    return { ...empty, baseSha, error: `head ${head.sha.slice(0, 12)} is not available locally` };
-  return { ...counts, baseSha };
+  if (!baseSha)
+    return success({ ...empty, baseSha: null, error: "the forge reported no base tip" });
+  for (const [sha, remote] of [
+    [baseSha, remotes.base],
+    [headSha_, remotes.head],
+  ] as const) {
+    if (hasCommit(cwd, sha)) continue;
+    const fetched = fetchRefs(cwd, remote, [sha], options);
+    if (!fetched.ok && fetched.code === "busy") return failure("busy", fetched.error, "retry");
+    if (!fetched.ok && remote !== remotes.base) fetchRefs(cwd, remotes.base, [sha], options);
+    if (!hasCommit(cwd, sha))
+      return success({
+        ...empty,
+        baseSha,
+        error: fetched.ok ? `${sha.slice(0, 12)} is not available locally` : fetched.error,
+      });
+  }
+  const counts = aheadBehind(cwd, baseSha, headSha_);
+  return success(
+    counts ? { ...counts, baseSha } : { ...empty, baseSha, error: "ahead/behind did not resolve" },
+  );
 }
 
 export type ReportOptions = {
   pr?: number | null;
   branch?: string | null;
   logLines?: number;
-  /** Skip the base fetch and ahead/behind count (ci wait polls). */
+  /** Skip the behind-base count (ci wait polls). */
   behind?: boolean;
 };
 
@@ -138,13 +234,18 @@ export function selectPr(
   const branch = options.branch ?? currentBranch(cwd);
   if (!branch)
     return failure("invalid_input", "HEAD is detached; pass --pr <n> or --branch <name>");
-  const found = resolved.forge.findPr(branch);
+  const localSha = resolveRef(cwd, `refs/heads/${branch}`);
+  const found = resolved.forge.findPr(branch, {
+    owner: resolved.headRepo.split("/")[0] ?? null,
+    projectId: resolved.headProjectId,
+    sha: localSha,
+  });
   if (!found.ok) return found;
   if (!found.data) {
     const noun = resolved.forge.kind === "github" ? "pull request" : "merge request";
     return failure(
       "not_found",
-      `no ${noun} for branch ${branch} in ${resolved.forge.repo}`,
+      `no ${noun} for branch ${branch} from ${resolved.headRepo} in ${resolved.forge.repo}`,
       "push the branch and open one (workit pr create, S11), or pass --pr <n>",
     );
   }
@@ -155,10 +256,17 @@ export function buildStatusDoc(
   cwd: string,
   resolved: ResolvedForge,
   status: ForgePrStatus,
-  options: { logLines: number; behind: boolean },
-): PrStatusDoc {
+  options: {
+    logLines: number;
+    behind: boolean;
+    behindTimeoutMs?: number;
+    identity?: PrStatusDoc["identity"];
+  },
+): ForgeResult<PrStatusDoc> {
   const { forge } = resolved;
   const reruns = rerunCounts(cwd, { repo: forge.repo, pr: status.number, head: status.head.sha });
+  const gating = gatingChecks(status);
+  const missing = missingRequired(status);
   const failing = status.checks.filter((check) => check.state === "failing");
   const failingDocs = failing.map((check, index): FailingCheck => {
     const doc: FailingCheck = {
@@ -167,6 +275,7 @@ export function buildStatusDoc(
       runId: check.runId,
       jobId: check.jobId,
       conclusion: check.conclusion,
+      required: check.required,
       logTail: [],
       rerunsOnHead: reruns.get(check.name) ?? 0,
     };
@@ -181,10 +290,36 @@ export function buildStatusDoc(
     currentBranch(cwd) === status.head.branch
       ? headSha(cwd)
       : resolveRef(cwd, `refs/heads/${status.head.branch}`);
-  const state = checksState(status.checks);
-  return {
+  let behindBase: BehindBase | null = null;
+  if (options.behind && status.state === "open") {
+    const counted = computeBehindBase(
+      cwd,
+      { base: resolved.baseRemote, head: resolved.remote },
+      status.baseSha,
+      status.head.sha,
+      options.behindTimeoutMs === undefined ? {} : { timeoutMs: options.behindTimeoutMs },
+    );
+    if (!counted.ok) return counted;
+    behindBase = counted.data;
+  }
+  const state = checksState(gating, missing);
+  const blockers = blockersOf({
+    forge: forge.kind,
+    state: status.state,
+    draft: status.draft,
+    conflicts: status.conflicts,
+    rebaseRequired: status.rebaseRequired,
+    mergeable: status.mergeable,
+    mergeState: status.mergeState,
+    inMergeQueue: status.inMergeQueue,
+    reviewDecision: status.reviewDecision,
+    threads: status.threads.length,
+    checks: state,
+  });
+  return success({
     forge: forge.kind,
     repo: forge.repo,
+    headRepo: resolved.fork ? resolved.headRepo : null,
     number: status.number,
     url: status.url,
     state: status.state,
@@ -197,12 +332,11 @@ export function buildStatusDoc(
       pushed: local === null ? null : local === status.head.sha,
     },
     mergeable: status.mergeable,
+    mergeState: status.mergeState,
     conflicts: status.conflicts,
     rebaseRequired: status.rebaseRequired,
-    behindBase:
-      options.behind && status.state === "open"
-        ? computeBehindBase(cwd, resolved.remote, status.base, status.head)
-        : null,
+    inMergeQueue: status.inMergeQueue,
+    behindBase,
     checks: {
       state,
       failing: failingDocs,
@@ -210,24 +344,21 @@ export function buildStatusDoc(
         .filter((check) => check.state === "pending")
         .map((check) => check.name),
       passing: status.checks.filter((check) => check.state === "passing").length,
+      missingRequired: missing,
     },
     reviews: { decision: status.reviewDecision, unresolvedThreads: status.threads },
+    blockers: status.state === "open" ? blockers.map((blocker) => blocker.reason) : [],
+    identity: options.identity ?? null,
     truncated: status.truncated,
-    next: nextAction({
-      state: status.state,
-      conflicts: status.conflicts,
-      rebaseRequired: status.rebaseRequired,
-      threads: status.threads.length,
-      checks: state,
-    }),
-  };
+    next: blockers[0]?.next ?? "READY",
+  });
 }
 
 /** Select, read and document one PR/MR. */
 export function prStatusReport(
   cwd: string,
   resolved: ResolvedForge,
-  options: ReportOptions = {},
+  options: ReportOptions & { identity?: PrStatusDoc["identity"] } = {},
 ): ForgeResult<{ doc: PrStatusDoc; raw: ForgePrStatus }> {
   const number = selectPr(cwd, resolved, options);
   if (!number.ok) return number;
@@ -236,8 +367,10 @@ export function prStatusReport(
   const doc = buildStatusDoc(cwd, resolved, status.data, {
     logLines: options.logLines ?? 60,
     behind: options.behind ?? true,
+    identity: options.identity,
   });
-  return success({ doc, raw: status.data });
+  if (!doc.ok) return doc;
+  return success({ doc: doc.data, raw: status.data });
 }
 
 // ---------------------------------------------------------------------------
@@ -247,35 +380,42 @@ export type WaitState = "ready" | "waiting" | "failed" | "blocked";
 
 export type WaitVerdict = { state: WaitState; reason: string; unblock?: string };
 
-/** Checks never appeared: after this grace a PR without CI reads ready. */
+/** Checks never appeared: after this grace a PR known to need none reads ready. */
 export const NO_CHECKS_GRACE_MS = 90_000;
 
+/**
+ * CI verdict for the PR head. Only gating checks count; a closed or merged
+ * PR is never "ready". No checks at all is ready only after the grace and
+ * only when the forge says nothing is required.
+ */
 export function waitVerdict(
   doc: PrStatusDoc,
   options: { head?: string | null; elapsedMs: number; noChecksGraceMs?: number },
 ): WaitVerdict {
+  if (doc.state !== "open")
+    return {
+      state: "blocked",
+      reason: `pr_${doc.state}`,
+      unblock: `the ${doc.forge === "github" ? "PR" : "MR"} is ${doc.state}; nothing to wait for`,
+    };
   if (options.head && !doc.head.sha.startsWith(options.head))
-    return doc.state === "open"
-      ? { state: "waiting", reason: "head_mismatch" }
-      : {
-          state: "blocked",
-          reason: `pr_${doc.state}`,
-          unblock: "the PR head can no longer change",
-        };
+    return { state: "waiting", reason: "head_mismatch" };
   const checks = doc.checks.state;
   if (checks === "failing") return { state: "failed", reason: "checks_failing" };
-  if (checks === "pending")
-    return doc.state === "open"
-      ? { state: "waiting", reason: "checks_pending" }
-      : { state: "blocked", reason: `pr_${doc.state}` };
+  if (checks === "pending") return { state: "waiting", reason: "checks_pending" };
   if (checks === "passing") return { state: "ready", reason: "checks_passing" };
-  if (doc.state === "open" && doc.conflicts)
+  if (doc.conflicts)
     return {
       state: "blocked",
       reason: "conflicts",
       unblock: `rebase onto ${doc.base} and push; CI does not run on a conflicting PR`,
     };
-  if (doc.state === "open" && options.elapsedMs < (options.noChecksGraceMs ?? NO_CHECKS_GRACE_MS))
+  const ciRequired =
+    doc.checks.missingRequired === null ||
+    doc.mergeState === "ci_must_pass" ||
+    doc.mergeState === "ci_still_running";
+  if (ciRequired) return { state: "waiting", reason: "no_checks_yet" };
+  if (options.elapsedMs < (options.noChecksGraceMs ?? NO_CHECKS_GRACE_MS))
     return { state: "waiting", reason: "no_checks_yet" };
   return { state: "ready", reason: "no_checks" };
 }
@@ -386,9 +526,23 @@ export function executeRerun(
     return failure("blocked", `${status.state} PR: CI cannot be rerun`, "nothing to do");
   const plan = planRerun(status, options);
   if (!plan.ok) return plan;
+  const locked = withRerunLock(cwd, () => rerunLocked(cwd, resolved, status, plan.data, options));
+  return (
+    locked ??
+    failure("busy", "another ci rerun is in progress for this repository", "retry in a moment")
+  );
+}
+
+function rerunLocked(
+  cwd: string,
+  resolved: ResolvedForge,
+  status: ForgePrStatus,
+  plan: RerunPlan,
+  options: { failed: boolean; names: readonly string[]; reason: string; force: boolean },
+): ForgeResult<RerunOutcome> {
   const { forge } = resolved;
   const counts = rerunCounts(cwd, { repo: forge.repo, pr: status.number, head: status.head.sha });
-  const repeated = plan.data.checks.filter((check) => (counts.get(check.name) ?? 0) > 0);
+  const repeated = plan.checks.filter((check) => (counts.get(check.name) ?? 0) > 0);
   if (repeated.length && !options.force)
     return failure(
       "blocked",
@@ -396,7 +550,7 @@ export function executeRerun(
       "treat it as a real failure and fix it; if it is a confirmed flake, rerun with --force",
     );
   const accepted: ForgeCheck[] = [];
-  for (const target of plan.data.targets) {
+  for (const target of plan.targets) {
     const done = forge.rerun(target);
     if (!done.ok) {
       recordAccepted(cwd, resolved, status, accepted, options);
@@ -409,7 +563,7 @@ export function executeRerun(
       );
     }
     accepted.push(
-      ...plan.data.checks.filter((check) =>
+      ...plan.checks.filter((check) =>
         target.kind === "failed_in_run"
           ? check.runId === target.runId
           : check.jobId === target.jobId,
@@ -423,7 +577,7 @@ export function executeRerun(
     reason: options.reason,
     forced: options.force,
     rerun: accepted.map((check) => ({ name: check.name, runId: check.runId, jobId: check.jobId })),
-    skipped: plan.data.skipped,
+    skipped: plan.skipped,
     recorded,
   });
 }

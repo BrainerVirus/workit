@@ -25,7 +25,11 @@ export type CliRun = {
 export type ForgeRunner = (
   bin: CliBin,
   args: readonly string[],
-  options: { timeoutMs: number },
+  options: {
+    timeoutMs: number;
+    /** Credential for this call (GH_TOKEN / GITLAB_TOKEN); never logged. */
+    token?: string;
+  },
 ) => CliRun;
 
 /** Default per-call bounds (ms). */
@@ -72,9 +76,14 @@ export function systemRunner(
   return (bin, args, options) => {
     const exe = findExecutable(bin, env);
     if (!exe) return { status: null, stdout: "", stderr: "", timedOut: false, missing: true };
+    const token = options.token
+      ? kind === "github"
+        ? { GH_TOKEN: options.token, GH_ENTERPRISE_TOKEN: options.token }
+        : { GITLAB_TOKEN: options.token }
+      : {};
     const result = spawnSync(exe, [...args], {
       encoding: "utf8",
-      env: childEnv,
+      env: { ...childEnv, ...token },
       maxBuffer: MAX_BUFFER,
       timeout: options.timeoutMs,
       killSignal: "SIGKILL",

@@ -47,7 +47,8 @@
                               "name": "CI"
                             }
                           }
-                        }
+                        },
+                        "isRequired": true
                       }
                     ]
                   }
@@ -55,6 +56,12 @@
               }
             }
           ]
+        },
+        "isInMergeQueue": false,
+        "baseRef": {
+          "target": {
+            "oid": "{{BASE}}"
+          }
         }
       }
     }

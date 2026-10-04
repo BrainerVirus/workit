@@ -1,7 +1,7 @@
 // GitHub adapter: `gh api graphql` for PR state, checks and review threads,
-// `gh api` REST for job logs and reruns (design §2.0 GitHub endpoints).
-import { apiJson, apiText, FORGE_TIMEOUTS, type ForgeRunner } from "./exec";
-import { logTail, shortBody } from "./redact";
+// `gh api` REST for required checks, job logs and reruns (design §2.0).
+import { apiJson, apiText, cliFailure, FORGE_TIMEOUTS, type ForgeRunner } from "./exec";
+import { logTail, redactText, shortBody } from "./redact";
 import {
   failure,
   success,
@@ -17,15 +17,16 @@ import {
 /** Page cap for review threads and check contexts (100 per page). */
 export const GITHUB_MAX_PAGES = 10;
 
-const PR_FIELDS = `number url state isDraft mergeable mergeStateStatus baseRefName baseRefOid headRefName headRefOid reviewDecision`;
+const PR_FIELDS = `number url state isDraft isInMergeQueue mergeable mergeStateStatus baseRefName baseRefOid baseRef { target { oid } } headRefName headRefOid reviewDecision`;
 
 const THREADS = `reviewThreads(first: 100, after: $threads) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first: 1) { nodes { author { login __typename } body url } } } }`;
 
-const CONTEXTS = `contexts(first: 100, after: $contexts) { pageInfo { hasNextPage endCursor } nodes { __typename ... on CheckRun { name status conclusion detailsUrl databaseId checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state targetUrl } } }`;
+// isRequired: only checks branch protection requires gate the merge.
+const CONTEXTS = `contexts(first: 100, after: $contexts) { pageInfo { hasNextPage endCursor } nodes { __typename ... on CheckRun { name status conclusion detailsUrl databaseId isRequired(pullRequestNumber: $number) checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) } } }`;
 
 export const PR_STATUS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $threads: String, $contexts: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PR_FIELDS} ${THREADS} commits(last: 1) { nodes { commit { oid statusCheckRollup { state ${CONTEXTS} } } } } } } }`;
 
-export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number url state headRefName headRepositoryOwner { login } } } } }`;
+export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number url state headRefName headRefOid headRepositoryOwner { login } } } } }`;
 
 type Page<T> = { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: T[] };
 
@@ -52,21 +53,31 @@ type GqlContext =
       conclusion: string | null;
       detailsUrl: string | null;
       databaseId: number | null;
+      isRequired?: boolean | null;
       checkSuite: {
         workflowRun: { databaseId: number; workflow: { name: string } | null } | null;
       } | null;
     }
-  | { __typename: "StatusContext"; context: string; state: string; targetUrl: string | null };
+  | {
+      __typename: "StatusContext";
+      context: string;
+      state: string;
+      targetUrl: string | null;
+      isRequired?: boolean | null;
+    };
 
 type GqlPr = {
   number: number;
   url: string;
   state: "OPEN" | "CLOSED" | "MERGED";
   isDraft: boolean;
+  isInMergeQueue?: boolean;
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   mergeStateStatus: string;
   baseRefName: string;
+  /** baseRefOid is the base at the PR's last sync; baseRef.target is the live tip. */
   baseRefOid: string | null;
+  baseRef?: { target: { oid: string } | null } | null;
   headRefName: string;
   headRefOid: string;
   reviewDecision: string | null;
@@ -96,11 +107,15 @@ const FAILING = new Set([
   "STARTUP_FAILURE",
 ]);
 
+const safeUrl = (value: string | null): string | null => (value ? redactText(value) : null);
+
 export function checkFromContext(node: GqlContext): ForgeCheck | null {
+  const required = node.isRequired ?? null;
   if (node.__typename === "StatusContext") {
     const state = node.state.toUpperCase();
     return {
       name: node.context,
+      context: node.context,
       state:
         state === "SUCCESS"
           ? "passing"
@@ -108,10 +123,11 @@ export function checkFromContext(node: GqlContext): ForgeCheck | null {
             ? "failing"
             : "pending",
       conclusion: state.toLowerCase(),
-      url: node.targetUrl,
+      url: safeUrl(node.targetUrl),
       runId: null,
       jobId: null,
       scope: null,
+      required,
     };
   }
   if (node.conclusion === "STALE") return null;
@@ -121,6 +137,7 @@ export function checkFromContext(node: GqlContext): ForgeCheck | null {
   const conclusion = node.conclusion?.toUpperCase() ?? null;
   return {
     name: workflow ? `${workflow} / ${node.name}` : node.name,
+    context: node.name,
     state: !completed
       ? "pending"
       : conclusion && FAILING.has(conclusion)
@@ -129,11 +146,12 @@ export function checkFromContext(node: GqlContext): ForgeCheck | null {
           ? "skipped"
           : "passing",
     conclusion: completed ? (conclusion?.toLowerCase() ?? null) : node.status.toLowerCase(),
-    url: node.detailsUrl,
+    url: safeUrl(node.detailsUrl),
     runId: run?.databaseId ?? null,
     // Only Actions check runs have a job log behind their database id.
     jobId: run ? (node.databaseId ?? null) : null,
     scope: null,
+    required,
   };
 }
 
@@ -156,10 +174,12 @@ function threadFrom(node: GqlThread): ForgeThread {
     author: first?.author?.login ?? null,
     isBot: first?.author?.__typename === "Bot",
     outdated: node.isOutdated,
-    url: first?.url ?? null,
+    url: safeUrl(first?.url ?? null),
     body: shortBody(first?.body ?? ""),
   };
 }
+
+const encodeRef = (ref: string): string => ref.split("/").map(encodeURIComponent).join("/");
 
 export function createGitHubForge(options: {
   apiHost: string;
@@ -170,6 +190,9 @@ export function createGitHubForge(options: {
   const { apiHost, repo, runner } = options;
   const maxPages = options.maxPages ?? GITHUB_MAX_PAGES;
   const [owner, name] = repo.split("/");
+
+  const rest = <T>(endpoint: string, what: string): ForgeResult<T> =>
+    apiJson<T>(runner, "gh", apiHost, ["api", endpoint], what);
 
   const graphql = <T>(
     query: string,
@@ -192,7 +215,7 @@ export function createGitHubForge(options: {
     );
     if (!response.ok) return response;
     if (response.data.errors?.length) {
-      const message = response.data.errors[0]?.message ?? "GraphQL error";
+      const message = redactText(response.data.errors[0]?.message ?? "GraphQL error").slice(0, 300);
       return /could not resolve to a (pullrequest|repository)/iu.test(message)
         ? failure("not_found", `${what}: ${message}`)
         : failure("failed", `${what}: ${message}`);
@@ -215,15 +238,63 @@ export function createGitHubForge(options: {
     return pr ? success(pr) : failure("not_found", `pull request #${number} was not found`);
   };
 
+  /**
+   * Contexts the base branch requires: classic branch protection (readable
+   * through the branch endpoint without admin) plus branch rulesets. Null
+   * when either source could not be read.
+   */
+  const requiredContexts = (base: string): string[] | null => {
+    const branch = rest<{
+      protected?: boolean;
+      protection?: {
+        required_status_checks?: { contexts?: string[]; checks?: Array<{ context?: string }> };
+      };
+    }>(`repos/${repo}/branches/${encodeRef(base)}`, `branch ${base}`);
+    const rules = rest<Array<{ type?: string; parameters?: Record<string, unknown> }>>(
+      `repos/${repo}/rules/branches/${encodeRef(base)}`,
+      `rules for ${base}`,
+    );
+    if (!branch.ok || !rules.ok || !Array.isArray(rules.data)) return null;
+    const contexts = new Set<string>();
+    const classic = branch.data.protection?.required_status_checks;
+    for (const context of classic?.contexts ?? []) contexts.add(context);
+    for (const check of classic?.checks ?? []) if (check.context) contexts.add(check.context);
+    for (const rule of rules.data)
+      if (rule.type === "required_status_checks") {
+        const listed = rule.parameters?.required_status_checks;
+        if (Array.isArray(listed))
+          for (const item of listed as Array<{ context?: unknown }>)
+            if (typeof item.context === "string") contexts.add(item.context);
+      }
+    return [...contexts];
+  };
+
   return {
     kind: "github",
     apiHost,
     repo,
 
     identity(expected) {
-      const user = apiJson<{ login?: unknown }>(runner, "gh", apiHost, ["api", "user"], "user");
-      if (!user.ok) return user;
-      const login = typeof user.data.login === "string" ? user.data.login : "";
+      const run = runner("gh", ["api", "user"], { timeoutMs: FORGE_TIMEOUTS.api });
+      if (run.status !== 0) {
+        // App/Actions installation tokens cannot read /user; the token is
+        // still valid for reads, so the check is skipped, not failed.
+        if (/HTTP 403|resource not accessible by integration/iu.test(run.stderr))
+          return success({
+            login: null,
+            expected,
+            matches: null,
+            note: "the credential cannot read /user (app or Actions token); identity not checked",
+          });
+        return cliFailure("gh", apiHost, run, "user", FORGE_TIMEOUTS.api);
+      }
+      let login = "";
+      try {
+        const user = JSON.parse(run.stdout) as { login?: unknown };
+        login = typeof user.login === "string" ? user.login : "";
+      } catch {
+        // handled below
+      }
       if (!login) return failure("failed", "gh api user returned no login");
       return success({
         login,
@@ -232,7 +303,19 @@ export function createGitHubForge(options: {
       });
     },
 
-    findPr(head) {
+    repoInfo(target) {
+      const info = rest<{ id?: number; fork?: boolean; parent?: { full_name?: string } }>(
+        `repos/${target}`,
+        `repository ${target}`,
+      );
+      if (!info.ok) return info;
+      return success({
+        id: typeof info.data.id === "number" ? info.data.id : null,
+        parent: info.data.fork && info.data.parent?.full_name ? info.data.parent.full_name : null,
+      });
+    },
+
+    findPr(head, match) {
       const data = graphql<{
         repository: {
           pullRequests: {
@@ -241,6 +324,7 @@ export function createGitHubForge(options: {
               url: string;
               state: string;
               headRefName: string;
+              headRefOid: string | null;
               headRepositoryOwner: { login: string } | null;
             }>;
           };
@@ -248,22 +332,23 @@ export function createGitHubForge(options: {
       }>(FIND_PR_QUERY, { owner, name, head }, `pull requests for ${head}`);
       if (!data.ok) return data;
       const nodes = data.data.repository?.pullRequests.nodes ?? [];
-      // Same-repo heads first (a fork can reuse the branch name), open first.
-      const ranked = nodes
-        .filter((node) => node.headRefName === head)
-        .toSorted(
-          (a, b) =>
-            Number(b.headRepositoryOwner?.login === owner) -
-              Number(a.headRepositoryOwner?.login === owner) ||
-            Number(b.state === "OPEN") - Number(a.state === "OPEN"),
-        );
-      const pick = ranked[0];
+      // A branch name alone proves nothing: anyone can open a PR from a
+      // same-named branch in their fork. The head owner or head sha must match.
+      const ours = nodes.filter(
+        (node) =>
+          node.headRefName === head &&
+          ((match.owner !== null &&
+            node.headRepositoryOwner?.login.toLowerCase() === match.owner.toLowerCase()) ||
+            (match.sha !== null && node.headRefOid === match.sha)),
+      );
+      const pick = ours.find((node) => node.state === "OPEN") ?? ours[0];
       if (!pick) return success(null);
       const ref: PrRef = {
         number: pick.number,
         url: pick.url,
         state: prState(pick.state),
         headBranch: pick.headRefName,
+        headSha: pick.headRefOid,
       };
       return success(ref);
     },
@@ -301,13 +386,14 @@ export function createGitHubForge(options: {
       const checks = latestPerName(
         contexts.map(checkFromContext).filter((check): check is ForgeCheck => check !== null),
       );
+      const open = pr.state === "OPEN";
       const status: ForgePrStatus = {
         number: pr.number,
         url: pr.url,
         state: prState(pr.state),
         draft: pr.isDraft,
         base: pr.baseRefName,
-        baseSha: pr.baseRefOid,
+        baseSha: pr.baseRef?.target?.oid ?? pr.baseRefOid,
         head: { branch: pr.headRefName, sha: pr.headRefOid },
         mergeable:
           pr.mergeable === "MERGEABLE" ? "yes" : pr.mergeable === "CONFLICTING" ? "no" : "unknown",
@@ -315,7 +401,10 @@ export function createGitHubForge(options: {
         // BEHIND: branch protection requires an up-to-date head and it is not.
         rebaseRequired: pr.mergeStateStatus === "BEHIND",
         reviewDecision: pr.reviewDecision?.toLowerCase() ?? null,
+        mergeState: pr.mergeStateStatus?.toLowerCase() ?? null,
+        inMergeQueue: pr.isInMergeQueue === true,
         checks,
+        requiredContexts: open ? requiredContexts(pr.baseRefName) : null,
         threads: threads.filter((node) => !node.isResolved).map(threadFrom),
         truncated: threadPage.hasNextPage || contextPage.hasNextPage,
       };

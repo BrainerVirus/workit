@@ -38,6 +38,12 @@
               }
             }
           ]
+        },
+        "isInMergeQueue": false,
+        "baseRef": {
+          "target": {
+            "oid": "{{BASE}}"
+          }
         }
       }
     }

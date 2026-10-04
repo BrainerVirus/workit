@@ -86,12 +86,27 @@ export const forgeFail = (
 export function connect(
   io: Io,
   branch?: string | null,
-): ForgeResult<ResolvedForge & { login: string }> {
-  const resolved = resolveForge(io.cwd, { branch, env: io.env, runner: forgeDeps.runner });
+): ForgeResult<ResolvedForge & { identity: NonNullable<PrStatusDoc["identity"]> }> {
+  const resolved = resolveForge(io.cwd, {
+    branch,
+    env: io.env,
+    runner: forgeDeps.runner,
+    now: forgeDeps.now,
+  });
   if (!resolved.ok) return resolved;
   const identity = checkIdentity(resolved.data);
   if (!identity.ok) return identity;
-  return { ok: true, data: { ...resolved.data, login: identity.data.login } };
+  return {
+    ok: true,
+    data: {
+      ...resolved.data,
+      identity: {
+        login: identity.data.login,
+        credential: resolved.data.credential,
+        ...(identity.data.note ? { note: identity.data.note } : {}),
+      },
+    },
+  };
 }
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 7) : "?");
@@ -99,7 +114,7 @@ const short = (sha: string | null): string => (sha ? sha.slice(0, 7) : "?");
 export function renderStatus(doc: PrStatusDoc): string[] {
   const noun = doc.forge === "github" ? `PR #${doc.number}` : `MR !${doc.number}`;
   const lines = [
-    `${noun} ${doc.state}${doc.draft ? " (draft)" : ""}: ${doc.head.branch} -> ${doc.base}  ${doc.url}`,
+    `${noun} ${doc.state}${doc.draft ? " (draft)" : ""}: ${doc.headRepo ? `${doc.headRepo}:` : ""}${doc.head.branch} -> ${doc.base}  ${doc.url}`,
   ];
   const local =
     doc.head.localSha === null
@@ -123,12 +138,16 @@ export function renderStatus(doc: PrStatusDoc): string[] {
   );
   for (const check of checks.failing) {
     lines.push(
-      `  x ${check.name} (${check.conclusion ?? "failed"})${check.rerunsOnHead ? ` [rerun ${check.rerunsOnHead}x on this head]` : ""}${check.url ? `  ${check.url}` : ""}`,
+      `  x ${check.name} (${check.conclusion ?? "failed"}${check.required === false ? ", optional" : ""})${check.rerunsOnHead ? ` [rerun ${check.rerunsOnHead}x on this head]` : ""}${check.url ? `  ${check.url}` : ""}`,
     );
     for (const value of check.logTail) lines.push(`      ${value}`);
     if (check.logError) lines.push(`      (log unavailable: ${check.logError})`);
   }
   if (checks.pending.length) lines.push(`  pending: ${checks.pending.join(", ")}`);
+  if (checks.missingRequired === null)
+    lines.push("  required checks: unknown (branch protection not readable)");
+  else if (checks.missingRequired.length)
+    lines.push(`  required, not reported yet: ${checks.missingRequired.join(", ")}`);
   const threads = doc.reviews.unresolvedThreads;
   lines.push(
     `reviews ${doc.reviews.decision ?? "none"} · ${threads.length} unresolved thread${threads.length === 1 ? "" : "s"}`,
@@ -138,6 +157,8 @@ export function renderStatus(doc: PrStatusDoc): string[] {
       `  - ${thread.path ? `${thread.path}${thread.line ? `:${thread.line}` : ""} ` : ""}@${thread.author ?? "?"}${thread.isBot ? " (bot)" : ""}: ${thread.body}`,
     );
   if (doc.truncated) lines.push("(lists truncated at the page cap)");
+  if (doc.blockers.length) lines.push(`blockers: ${doc.blockers.join(", ")}`);
+  if (doc.identity?.note) lines.push(`identity: ${doc.identity.note}`);
   lines.push(`next: ${doc.next}`);
   return lines;
 }

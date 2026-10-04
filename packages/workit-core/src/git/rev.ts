@@ -356,12 +356,13 @@ export function remoteTip(
 
 export type FetchResult =
   | { ok: true }
-  | { ok: false; code: "invalid_input" | "unavailable"; error: string };
+  | { ok: false; code: "invalid_input" | "unavailable" | "busy"; error: string };
 
 /**
- * `git fetch --no-tags <remote> <refspec…>` under the watchdog (no prompts,
- * bounded). Used to observe a base branch before counting ahead/behind; it
- * only moves remote-tracking refs and FETCH_HEAD, never a local branch.
+ * `git fetch --no-tags --no-recurse-submodules --no-write-fetch-head
+ * <remote> <refspec…>` under the watchdog (no prompts, bounded). Pass bare
+ * object ids (no `:dst`) for a pure read: the objects arrive, no ref moves.
+ * Contention on a repository lock is `busy`.
  */
 export function fetchRefs(
   cwd: string,
@@ -378,10 +379,24 @@ export function fetchRefs(
   const timeoutMs = options.timeoutMs ?? GIT_TIMEOUTS.network;
   const fetched = gitNetwork(
     cwd,
-    ["fetch", "--no-tags", "--quiet", remote, ...refspecs],
+    [
+      "fetch",
+      "--no-tags",
+      "--no-recurse-submodules",
+      "--no-write-fetch-head",
+      "--quiet",
+      remote,
+      ...refspecs,
+    ],
     timeoutMs,
   );
   if (fetched.ok) return { ok: true };
+  if (/\.lock'?:? File exists|unable to lock|another git process/iu.test(fetched.stderr))
+    return {
+      ok: false,
+      code: "busy",
+      error: `git fetch ${redactRemote(remote)}: the repository is locked by another git process`,
+    };
   return {
     ok: false,
     code: "unavailable",
@@ -389,6 +404,14 @@ export function fetchRefs(
       ? `git fetch ${redactRemote(remote)} timed out after ${timeoutMs} ms`
       : `git fetch ${redactRemote(remote)} failed (unreachable, not authorized, or ref missing)`,
   };
+}
+
+/** The configured remote names. */
+export function remoteNames(cwd: string): string[] {
+  return (git(cwd, ["remote"]).stdout ?? "")
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 /** The absolute git common dir (shared by every worktree), or null outside a repository. */
@@ -441,10 +464,7 @@ export function currentBranch(cwd: string): string | null {
  */
 export function pushRemoteName(cwd: string, branch?: string | null): string | null {
   const name = branch ?? currentBranch(cwd);
-  const remotes = (git(cwd, ["remote"]).stdout ?? "")
-    .split(/\r?\n/u)
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const remotes = remoteNames(cwd);
   const candidates = [
     name ? config(cwd, `branch.${name}.pushRemote`) : null,
     config(cwd, "remote.pushDefault"),

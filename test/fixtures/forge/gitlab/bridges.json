@@ -1,0 +1,16 @@
+[
+  {
+    "id": 16914440490,
+    "name": "deploy-docs",
+    "stage": "deploy",
+    "status": "success",
+    "allow_failure": false,
+    "web_url": "https://gitlab.com/group/project/-/jobs/16914440490",
+    "downstream_pipeline": {
+      "id": 2909499500,
+      "status": "success",
+      "project_id": 34675722,
+      "web_url": "https://gitlab.com/group/docs/-/pipelines/2909499500"
+    }
+  }
+]

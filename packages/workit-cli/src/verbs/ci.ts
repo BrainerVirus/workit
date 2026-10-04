@@ -35,6 +35,9 @@ const WAIT_USAGE =
 const RERUN_USAGE =
   "workit ci rerun [--pr <n> | --branch <b>] [--check <name>… | --failed] --reason flake|infra [--force] [--json]";
 
+/** Budget for a single poll when --timeout is shorter (e.g. --timeout 0). */
+const ONE_POLL_MS = 20_000;
+
 /** Consecutive failed polls tolerated before ci wait gives up. */
 const MAX_POLL_ERRORS = 3;
 
@@ -59,6 +62,7 @@ async function wait(argv: string[], io: Io): Promise<number> {
     return usage(io, "--timeout must be a duration up to 6h (20m, 90s)", WAIT_USAGE);
   if (intervalMs === null || intervalMs < 1000 || intervalMs > 600_000)
     return usage(io, "--interval must be between 1s and 10m", WAIT_USAGE);
+  if (pr && flags.values.branch) return usage(io, "pass --pr or --branch, not both", WAIT_USAGE);
   const head = flags.values.head ?? null;
   if (head !== null && !/^[0-9a-f]{7,64}$/u.test(head))
     return usage(io, "--head must be a commit sha (7-64 hex chars)", WAIT_USAGE);
@@ -70,6 +74,10 @@ async function wait(argv: string[], io: Io): Promise<number> {
   if (!number.ok) return forgeFail(io, number);
 
   const started = forgeDeps.now();
+  // One hard deadline for every API call, including the final status build.
+  // A zero or tiny --timeout still gets one complete poll.
+  const deadline = started + timeoutMs;
+  resolved.limits.deadline = started + Math.max(timeoutMs, ONE_POLL_MS);
   let polls = 0;
   let errors = 0;
   let status: ForgePrStatus | null = null;
@@ -82,14 +90,15 @@ async function wait(argv: string[], io: Io): Promise<number> {
       errors = 0;
       status = read.data;
       const doc = buildStatusDoc(io.cwd, resolved, status, { logLines: 0, behind: false });
-      verdict = waitVerdict(doc, { head, elapsedMs });
+      if (!doc.ok) return forgeFail(io, doc);
+      verdict = waitVerdict(doc.data, { head, elapsedMs });
       if (verdict.state !== "waiting") break;
     } else {
       errors += 1;
       if (read.code !== "unavailable" && read.code !== "failed") return forgeFail(io, read);
       if (errors >= MAX_POLL_ERRORS) return forgeFail(io, read, { polls });
     }
-    const remaining = timeoutMs - (forgeDeps.now() - started);
+    const remaining = deadline - forgeDeps.now();
     if (remaining <= 0) break;
     await forgeDeps.sleep(Math.min(pollDelay(intervalMs, polls - 1), remaining));
   }
@@ -99,11 +108,17 @@ async function wait(argv: string[], io: Io): Promise<number> {
       io,
       fail("unavailable", "no successful poll before the timeout", { data: { polls } }),
     );
-  // The final payload is the full status: failing logs and behind-base included.
-  const doc: PrStatusDoc = buildStatusDoc(io.cwd, resolved, status, {
-    logLines: verdict.state === "failed" ? 60 : 0,
-    behind: true,
+  // The final payload is the full status, built inside what is left of the
+  // deadline: log tails and the behind-base fetch are clamped (or skipped).
+  const left = deadline - forgeDeps.now();
+  const built = buildStatusDoc(io.cwd, resolved, status, {
+    logLines: verdict.state === "failed" && left > 0 ? 60 : 0,
+    behind: left >= 1000,
+    behindTimeoutMs: Math.max(1000, Math.min(15_000, left)),
+    identity: resolved.identity,
   });
+  if (!built.ok) return forgeFail(io, built);
+  const doc: PrStatusDoc = built.data;
   const data = {
     state: verdict.state,
     reason: verdict.reason,
@@ -156,6 +171,7 @@ async function rerun(argv: string[], io: Io): Promise<number> {
   const pr = positiveInt(flags.values.pr, "--pr");
   if (typeof pr === "string") return usage(io, pr, RERUN_USAGE);
   const names = flags.lists.check ?? [];
+  if (pr && flags.values.branch) return usage(io, "pass --pr or --branch, not both", RERUN_USAGE);
   if (names.length && flags.booleans.has("failed"))
     return usage(io, "pass --check or --failed, not both", RERUN_USAGE);
   const reason = flags.values.reason;

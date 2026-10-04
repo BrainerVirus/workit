@@ -10,7 +10,8 @@
             "headRefName": "feature/x",
             "headRepositoryOwner": {
               "login": "o"
-            }
+            },
+            "headRefOid": "0000000000000000000000000000000000000000"
           },
           {
             "number": 11,
@@ -19,7 +20,8 @@
             "headRefName": "feature/x",
             "headRepositoryOwner": {
               "login": "forker"
-            }
+            },
+            "headRefOid": "1111111111111111111111111111111111111111"
           },
           {
             "number": 12,
@@ -28,7 +30,8 @@
             "headRefName": "feature/x",
             "headRepositoryOwner": {
               "login": "o"
-            }
+            },
+            "headRefOid": "{{HEAD}}"
           }
         ]
       }

@@ -28,6 +28,7 @@ async function status(argv: string[], io: Io): Promise<number> {
     pr,
     branch: flags.values.branch ?? null,
     logLines: logLines ?? 60,
+    identity: connected.data.identity,
   });
   if (!report.ok) return forgeFail(io, report);
   return emit(io, ok(report.data.doc), renderStatus);

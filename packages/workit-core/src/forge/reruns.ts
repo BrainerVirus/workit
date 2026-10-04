@@ -81,3 +81,47 @@ export function recordReruns(cwd: string, rows: readonly RerunRow[]): boolean {
     return false;
   }
 }
+
+const LOCK_WAIT_MS = 2_000;
+const LOCK_STALE_MS = 60_000;
+
+const pause = (ms: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
+/**
+ * Run `fn` holding `<common>/workit/ci-reruns.lock` (atomic create). Two
+ * concurrent `ci rerun`s therefore cannot both pass the once-per-head check.
+ * A lock older than a minute is from a dead process and is taken over.
+ * Null when the lock stays held past the wait (the caller reports busy).
+ */
+export function withRerunLock<T>(cwd: string, fn: () => T): T | null {
+  const file = rerunLogPath(cwd);
+  if (!file) return fn();
+  const lock = `${file.slice(0, -".jsonl".length)}.lock`;
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  const until = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      fs.closeSync(fs.openSync(lock, "wx"));
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
+          fs.rmSync(lock, { force: true });
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() >= until) return null;
+      pause(50);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(lock, { force: true });
+  }
+}

@@ -67,7 +67,8 @@
                               "name": "CI"
                             }
                           }
-                        }
+                        },
+                        "isRequired": true
                       },
                       {
                         "__typename": "CheckRun",
@@ -83,7 +84,8 @@
                               "name": "CI"
                             }
                           }
-                        }
+                        },
+                        "isRequired": true
                       }
                     ]
                   }
@@ -91,6 +93,12 @@
               }
             }
           ]
+        },
+        "isInMergeQueue": false,
+        "baseRef": {
+          "target": {
+            "oid": "{{BASE}}"
+          }
         }
       }
     }

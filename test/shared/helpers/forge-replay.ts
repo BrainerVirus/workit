@@ -21,12 +21,14 @@ export const fixture = (name: string): string => readFileSync(path.join(FIXTURES
 
 export type Call = {
   bin: CliBin;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "CLI";
   endpoint: string;
   /** GraphQL variables (`-f`/`-F key=value`), query excluded. */
   vars: Record<string, string>;
   /** "status" | "find" for GraphQL calls. */
   op: string | null;
+  /** The per-call credential the runner was handed (tests assert on it). */
+  token: string | undefined;
 };
 
 export type Reply = string | CliRun | ((call: Call) => string | CliRun);
@@ -39,7 +41,9 @@ export const replyError = (stderr: string, status = 1): CliRun => ({
   missing: false,
 });
 
-const parseCall = (bin: CliBin, args: readonly string[]): Call => {
+const parseCall = (bin: CliBin, args: readonly string[], token?: string): Call => {
+  if (args[0] !== "api")
+    return { bin, method: "CLI", endpoint: args.join(" "), vars: {}, op: null, token };
   const rest = args.slice(1);
   let method: Call["method"] = "GET";
   const vars: Record<string, string> = {};
@@ -62,11 +66,12 @@ const parseCall = (bin: CliBin, args: readonly string[]): Call => {
     }
     if (!endpoint) endpoint = arg;
   }
-  return { bin, method, endpoint, vars, op };
+  return { bin, method, endpoint, vars, op, token };
 };
 
 /**
- * A runner over `routes`: keys are `GET <endpoint>`, `POST <endpoint>`, or
+ * A runner over `routes`: keys are `GET <endpoint>`, `POST <endpoint>`,
+ * `CLI <args>` (non-api commands such as `auth token …`), or
  * `graphql <op> <json vars>` (exact) — the first exact key wins, then a
  * `graphql <op>` catch-all. An unmatched call fails the test loudly.
  */
@@ -75,8 +80,12 @@ export function replayRunner(
   substitutions: Record<string, string> = {},
 ): ForgeRunner & { calls: Call[] } {
   const calls: Call[] = [];
-  const runner = (bin: CliBin, args: readonly string[]): CliRun => {
-    const call = parseCall(bin, args);
+  const runner = (
+    bin: CliBin,
+    args: readonly string[],
+    options: { timeoutMs: number; token?: string },
+  ): CliRun => {
+    const call = parseCall(bin, args, options.token);
     calls.push(call);
     const keys =
       call.endpoint === "graphql"

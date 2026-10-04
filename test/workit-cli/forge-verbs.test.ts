@@ -9,6 +9,7 @@ import {
   fixture,
   makeForgeRepo,
   replayRunner,
+  replyError,
   type ForgeRepo,
   type Reply,
 } from "@/test/shared/helpers/forge-replay";
@@ -49,6 +50,12 @@ const setup = (status: Reply = fixture("github/pr-failing-thread.json")) => {
   const runner = replayRunner(
     {
       "GET user": fixture("github/user.json"),
+      "GET repos/o/r": fixture("github/repo.json"),
+      "GET repos/o/r/branches/main": fixture("github/branch-main.json"),
+      "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
+      "CLI auth token --hostname github.com --user someone": replyError(
+        "no oauth token found for github.com account someone",
+      ),
       "graphql find": fixture("github/find-pr.json"),
       [STATUS]: status,
       "GET repos/o/r/actions/jobs/102/logs": fixture("github/job-log.txt"),
@@ -179,6 +186,38 @@ test("ci wait: checks still pending at the timeout exit 4 (pending) with determi
   expect(usage.code).toBe(2);
 });
 
+test("ci wait: a closed PR is blocked (exit 3), never ready; --pr with --branch is a usage error", async () => {
+  const closed = JSON.parse(fixture("github/pr-passing.json"));
+  closed.data.repository.pullRequest.state = "CLOSED";
+  const { repo } = setup(JSON.stringify(closed));
+  const result = await run(["ci", "wait", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json()).toMatchObject({
+    code: "blocked",
+    data: { state: "blocked", reason: "pr_closed" },
+  });
+  expect((await run(["ci", "wait", "--pr", "12", "--branch", "x"], repo.cwd)).code).toBe(2);
+  expect(
+    (await run(["ci", "rerun", "--pr", "12", "--branch", "x", "--reason", "flake"], repo.cwd)).code,
+  ).toBe(2);
+});
+
+test("ci wait: one hard deadline covers every call, including the final status build", async () => {
+  let statusCalls = 0;
+  const { repo, runner } = setup(() => {
+    statusCalls += 1;
+    clock += 70_000; // a slow API answer that overruns the 1m budget
+    return fixture("github/pr-pending.json");
+  });
+  const result = await run(["ci", "wait", "--timeout", "1m", "--json"], repo.cwd);
+  expect(result.code).toBe(4);
+  expect(result.json().data).toMatchObject({ state: "waiting", polls: 1 });
+  expect(statusCalls).toBe(1);
+  const afterPoll = runner.calls.findIndex((call) => call.op === "status");
+  // Nothing after the poll that overran: no log tails, no further API reads.
+  expect(runner.calls.slice(afterPoll + 1).filter((call) => call.method !== "CLI")).toEqual([]);
+});
+
 test("ci rerun: once per head, then blocked (exit 3) unless --force", async () => {
   const { repo, runner } = setup();
   const missing = await run(["ci", "rerun", "--failed", "--json"], repo.cwd);
@@ -221,7 +260,8 @@ test("an identity mismatch blocks every forge verb with exit 3", async () => {
   ]) {
     const result = await run([...argv, "--json"], repo.cwd);
     expect(result.code, argv.join(" ")).toBe(3);
-    expect(result.json().unblock).toBe("gh auth switch --hostname github.com --user someone");
+    expect(result.json().unblock).toStartWith("gh auth login --hostname github.com");
+    expect(result.stdout).not.toContain("auth switch");
   }
   expect(runner.calls.some((call) => call.method === "POST")).toBe(false);
 });

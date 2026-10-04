@@ -86,7 +86,8 @@
                               "name": "CI"
                             }
                           }
-                        }
+                        },
+                        "isRequired": true
                       },
                       {
                         "__typename": "CheckRun",
@@ -102,7 +103,8 @@
                               "name": "CI"
                             }
                           }
-                        }
+                        },
+                        "isRequired": true
                       },
                       {
                         "__typename": "CheckRun",
@@ -118,13 +120,15 @@
                               "name": "CI"
                             }
                           }
-                        }
+                        },
+                        "isRequired": false
                       },
                       {
                         "__typename": "StatusContext",
                         "context": "license/cla",
                         "state": "SUCCESS",
-                        "targetUrl": "https://cla.example/o/r/12"
+                        "targetUrl": "https://cla.example/o/r/12",
+                        "isRequired": false
                       }
                     ]
                   }
@@ -132,6 +136,12 @@
               }
             }
           ]
+        },
+        "isInMergeQueue": false,
+        "baseRef": {
+          "target": {
+            "oid": "{{BASE}}"
+          }
         }
       }
     }

@@ -216,9 +216,14 @@ workit uninstall         # remove host registrations (keeps ~/.config/workit)
 ```
 
 `pr status` and `ci` read GitHub through `gh api` and GitLab through
-`glab api`, pick the forge from the push remote host, and return `blocked`
-(exit 3) with the switch command when the `gh`/`glab` login is not the
-workspace `vcs.account`. Every forge and git network call has a timeout.
+`glab api`, pick the forge from the push remote host (PRs of a fork are
+looked up in its parent or `upstream`), and pass the workspace account's
+credential on every call (`vcs.tokenFile`, else `gh auth token --user
+<vcs.account>`) without switching the active `gh`/`glab` account. A login
+that is not the workspace `vcs.account` is `blocked` (exit 3) with a login
+hint. `next` also reports review, draft, merge-queue and other merge
+blockers; only required checks gate. `pr status` never moves a ref, and
+every forge and git network call has a timeout.
 
 The packed CLI is a self-contained Node bundle; Node.js 24+ is required.
 

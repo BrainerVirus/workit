@@ -7,7 +7,15 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { cliFailure, systemRunner } from "@/packages/workit-core/src/forge/exec";
@@ -76,6 +84,9 @@ const GL_PIPE = "projects/34675721/pipelines/2909499411";
 
 const githubRoutes = (pr = "github/pr-failing-thread.json"): Record<string, Reply> => ({
   "GET user": fixture("github/user.json"),
+  "GET repos/o/r": fixture("github/repo.json"),
+  "GET repos/o/r/branches/main": fixture("github/branch-main.json"),
+  "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
   "graphql find": fixture("github/find-pr.json"),
   [GH_STATUS]: fixture(pr),
   "GET repos/o/r/actions/jobs/102/logs": fixture("github/job-log.txt"),
@@ -88,6 +99,9 @@ const gitlabMr = (overrides: Record<string, unknown> = {}): string =>
 
 const gitlabRoutes = (mr: string = gitlabMr()): Record<string, Reply> => ({
   "GET user": fixture("gitlab/user.json"),
+  [`GET ${GL}`]: fixture("gitlab/project.json"),
+  [`GET ${GL}/repository/branches/main`]: fixture("gitlab/branch-main.json"),
+  [`GET ${GL_PIPE}/bridges?per_page=100&page=1`]: fixture("gitlab/bridges.json"),
   [`GET ${GL}/merge_requests?source_branch=feature%2Fx&order_by=created_at&sort=desc&per_page=20`]:
     fixture("gitlab/find-mr.json"),
   [`GET ${GL}/merge_requests/12`]: mr,
@@ -191,7 +205,7 @@ describe("S10 pr status", () => {
       jobId: 16914440402,
       conclusion: "failed",
     });
-    expect(docs[1].checks.passing).toBe(2);
+    expect(docs[1].checks.passing).toBe(3); // lint, allowed-failure audit, bridge
   });
 
   test("the current branch's PR is found: same-repo head over a fork, open over closed", () => {
@@ -201,17 +215,28 @@ describe("S10 pr status", () => {
     expect(report.ok).toBe(true);
     const find = calls.find((call) => call.op === "find");
     expect(find?.vars).toEqual({ owner: "o", name: "r", head: "feature/x" });
-    expect(resolved.forge.findPr("feature/x")).toEqual({
+    expect(resolved.forge.findPr("feature/x", { owner: "o", projectId: null, sha: null })).toEqual({
       ok: true,
       data: {
         number: 12,
         url: "https://github.com/o/r/pull/12",
         state: "open",
         headBranch: "feature/x",
+        headSha: repo.head,
       },
     });
+    // The forker's PR #11 matches neither owner nor sha.
+    expect(
+      resolved.forge.findPr("feature/x", { owner: "nobody", projectId: null, sha: repo.head }),
+    ).toMatchObject({ ok: true, data: { number: 12 } });
     const gitlab = repoFor("gitlab");
-    expect(connect(gitlab, gitlabRoutes()).resolved.forge.findPr("feature/x")).toMatchObject({
+    expect(
+      connect(gitlab, gitlabRoutes()).resolved.forge.findPr("feature/x", {
+        owner: null,
+        projectId: 34675721,
+        sha: null,
+      }),
+    ).toMatchObject({
       ok: true,
       data: { number: 12, state: "open" },
     });
@@ -226,7 +251,7 @@ describe("S10 pr status", () => {
     expect(prStatusReport(github.cwd, gh.resolved, {})).toEqual({
       ok: false,
       code: "not_found",
-      error: "no pull request for branch feature/x in o/r",
+      error: "no pull request for branch feature/x from o/r in o/r",
       unblock: "push the branch and open one (workit pr create, S11), or pass --pr <n>",
     });
     const gitlab = repoFor("gitlab");
@@ -238,7 +263,7 @@ describe("S10 pr status", () => {
     expect(prStatusReport(gitlab.cwd, gl.resolved, {})).toMatchObject({
       ok: false,
       code: "not_found",
-      error: "no merge request for branch feature/x in group/project",
+      error: "no merge request for branch feature/x from group/project in group/project",
     });
   });
 
@@ -265,7 +290,9 @@ describe("S10 pr status", () => {
     expect(doc).toMatchObject({ draft: true, next: "WAITING_CI" });
     expect(doc.checks).toMatchObject({ state: "pending", pending: ["CI / fast checks"] });
     const gitlab = repoFor("gitlab");
-    const routes = gitlabRoutes(gitlabMr({ draft: true, detailed_merge_status: "draft_status" }));
+    const draftMr = JSON.parse(gitlabMr({ draft: true, detailed_merge_status: "draft_status" }));
+    draftMr.head_pipeline.status = "running";
+    const routes = gitlabRoutes(JSON.stringify(draftMr));
     routes[`GET ${GL_PIPE}/jobs?per_page=100&page=1`] = JSON.stringify([
       { id: 1, name: "test", stage: "test", status: "running", allow_failure: false },
     ]);
@@ -319,12 +346,115 @@ describe("S10 pr status", () => {
     });
   });
 
-  test("a GitLab pipeline for an older head does not count for the current head", () => {
+  test("a GitLab pipeline for an older head reads pending for the current head, never none", () => {
     const repo = repoFor("gitlab");
     const mr = JSON.parse(gitlabMr());
     mr.head_pipeline.sha = "0".repeat(40);
     const doc = statusOf(repo, gitlabRoutes(JSON.stringify(mr)));
-    expect(doc.checks).toMatchObject({ state: "none", failing: [], pending: [] });
+    expect(doc.checks).toMatchObject({ state: "pending", failing: [], pending: ["pipeline"] });
+    expect(waitVerdict(doc, { elapsedMs: 10 * 60_000 }).state).toBe("waiting");
+  });
+
+  test("a GitLab merged-results pipeline (source_sha = MR head) counts, and a failed pipeline is a floor", () => {
+    const repo = repoFor("gitlab");
+    const mr = JSON.parse(gitlabMr({ detailed_merge_status: "ci_must_pass" }));
+    mr.head_pipeline.sha = "b".repeat(40);
+    mr.head_pipeline.source_sha = repo.head;
+    const routes = gitlabRoutes(JSON.stringify(mr));
+    // Only passing jobs are visible, but the pipeline itself failed.
+    routes[`GET ${GL_PIPE}/jobs?per_page=100&page=1`] = JSON.stringify([
+      { id: 1, name: "lint", stage: "check", status: "success" },
+    ]);
+    routes[`GET ${GL}/merge_requests/12/discussions?per_page=100&page=1`] = "[]";
+    const doc = statusOf(repo, routes);
+    expect(doc.checks.state).toBe("failing");
+    expect(doc.checks.failing.map((check) => check.name)).toEqual(["pipeline"]);
+    expect(doc.next).toBe("FIX_CI");
+    expect(waitVerdict(doc, { elapsedMs: 100_000 }).state).toBe("failed");
+  });
+
+  test("GitLab bridge (trigger) jobs carry the downstream pipeline's status", () => {
+    const repo = repoFor("gitlab");
+    const routes = gitlabRoutes();
+    const bridge = JSON.parse(fixture("gitlab/bridges.json"));
+    bridge[0].downstream_pipeline.status = "failed";
+    routes[`GET ${GL_PIPE}/bridges?per_page=100&page=1`] = JSON.stringify(bridge);
+    const doc = statusOf(repo, routes);
+    expect(doc.checks.failing.map((check) => [check.name, check.conclusion, check.jobId])).toEqual([
+      ["test / test", "failed", 16914440402],
+      ["deploy / deploy-docs", "downstream_failed", null],
+    ]);
+  });
+
+  test("merge blockers beyond CI keep a green PR from READY (draft, changes requested, BLOCKED)", () => {
+    const repo = repoFor("github");
+    const pr = JSON.parse(fixture("github/pr-passing.json"));
+    Object.assign(pr.data.repository.pullRequest, {
+      isDraft: true,
+      reviewDecision: "CHANGES_REQUESTED",
+      mergeStateStatus: "BLOCKED",
+    });
+    const routes = githubRoutes();
+    routes[GH_STATUS] = JSON.stringify(pr);
+    const doc = statusOf(repo, routes);
+    expect(doc.checks.state).toBe("passing");
+    expect(doc.blockers).toEqual(["changes_requested", "draft"]);
+    expect(doc.next).toBe("ADDRESS_REVIEW");
+    // No rollup and unreadable protection: never "ready" for lack of checks.
+    pr.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup = null;
+    routes[GH_STATUS] = JSON.stringify(pr);
+    routes["GET repos/o/r/rules/branches/main"] = replyError("gh: Not Found (HTTP 404)");
+    const bare = statusOf(repo, routes);
+    expect(bare.checks).toMatchObject({ state: "none", missingRequired: null });
+    expect(waitVerdict(bare, { elapsedMs: 100_000 })).toEqual({
+      state: "waiting",
+      reason: "no_checks_yet",
+    });
+  });
+
+  test("required checks gate; an optional failure is reported but does not block", () => {
+    const repo = repoFor("github");
+    const pr = JSON.parse(fixture("github/pr-passing.json"));
+    const contexts =
+      pr.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes;
+    contexts.push({
+      ...contexts[0],
+      name: "docs preview",
+      conclusion: "FAILURE",
+      databaseId: 109,
+      isRequired: false,
+    });
+    Object.assign(pr.data.repository.pullRequest, {
+      mergeStateStatus: "UNSTABLE",
+      reviewDecision: "APPROVED",
+    });
+    const routes = githubRoutes();
+    routes[GH_STATUS] = JSON.stringify(pr);
+    routes["GET repos/o/r/actions/jobs/109/logs"] = "x\n";
+    const doc = statusOf(repo, routes);
+    expect(doc.checks.state).toBe("passing");
+    expect(doc.checks.failing).toEqual([
+      expect.objectContaining({ name: "CI / docs preview", required: false }),
+    ]);
+    expect(doc.next).toBe("READY");
+    // A required context that never reported keeps CI pending.
+    contexts.splice(1, 1);
+    routes[GH_STATUS] = JSON.stringify(pr);
+    const missing = statusOf(repo, routes);
+    expect(missing.checks).toMatchObject({
+      state: "pending",
+      missingRequired: ["test (ubuntu-latest)"],
+    });
+    expect(missing.next).toBe("WAITING_CI");
+  });
+
+  test("pr status is a pure read: no ref in the repository moves", () => {
+    const repo = repoFor("github");
+    const refs = () => repo.git("for-each-ref", "--format=%(refname) %(objectname)");
+    const before = refs();
+    expect(statusOf(repo, githubRoutes()).behindBase).toMatchObject({ behind: 3 });
+    expect(refs()).toBe(before);
+    expect(repo.git("rev-parse", "--git-path", "FETCH_HEAD")).toBeTruthy();
   });
 });
 
@@ -373,7 +503,7 @@ describe("S10 pagination", () => {
     const { resolved } = connect(repo, routes);
     const status = resolved.forge.prStatus(12);
     if (!status.ok) throw new Error(status.error);
-    expect(status.data.checks).toHaveLength(104);
+    expect(status.data.checks).toHaveLength(105); // 104 jobs + 1 bridge
     expect(status.data.checks.filter((check) => check.state === "failing")).toHaveLength(1);
     expect(status.data.truncated).toBe(false);
     const capped = createGitLabForge({
@@ -493,6 +623,26 @@ describe("S10 ci rerun", () => {
     expect(calls.some((call) => call.method === "POST")).toBe(false);
   });
 
+  test("the once-per-head check runs under an atomic lock: a held lock is busy, a stale one is taken over", () => {
+    const repo = repoFor("github");
+    const { resolved, calls } = connect(repo, githubRoutes());
+    const status = resolved.forge.prStatus(12);
+    if (!status.ok) throw new Error(status.error);
+    const lock = rerunLogPath(repo.cwd)!.replace(/\.jsonl$/u, ".lock");
+    mkdirSync(path.dirname(lock), { recursive: true });
+    writeFileSync(lock, "");
+    const options = { failed: true, names: [], reason: "flake", force: false };
+    expect(executeRerun(repo.cwd, resolved, status.data, options)).toMatchObject({
+      ok: false,
+      code: "busy",
+    });
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+    const old = new Date(Date.now() - 5 * 60_000);
+    utimesSync(lock, old, old);
+    expect(executeRerun(repo.cwd, resolved, status.data, options).ok).toBe(true);
+    expect(existsSync(lock)).toBe(false);
+  });
+
   test("a forge refusal is reported and nothing is recorded", () => {
     const repo = repoFor("github");
     const routes = githubRoutes();
@@ -538,15 +688,122 @@ describe("S10 forge resolution and identity", () => {
     });
   });
 
-  test("an account mismatch is blocked with the exact switch command", () => {
+  test("the workspace account's token is passed per call; the active account is never switched", () => {
     const github = repoFor("github");
-    writeWorkspace(github, { provider: "github", account: "someone" });
-    expect(checkIdentity(connect(github, githubRoutes()).resolved)).toEqual({
-      ok: false,
-      code: "blocked",
-      error: "identity_mismatch: gh is authenticated as octo but workspace w expects someone",
-      unblock: "gh auth switch --hostname github.com --user someone",
+    writeWorkspace(github, { provider: "github", account: "octo" });
+    const routes = {
+      ...githubRoutes(),
+      "CLI auth token --hostname github.com --user octo": "gho_octoTokenFromKeyring\n",
+    };
+    const { resolved, calls } = connect(github, routes);
+    expect(resolved.credential).toBe("gh_account_token");
+    expect(checkIdentity(resolved)).toMatchObject({
+      ok: true,
+      data: { login: "octo", matches: true },
     });
+    const apiCalls = calls.filter((call) => call.method !== "CLI");
+    expect(apiCalls.length).toBeGreaterThan(0);
+    expect(apiCalls.every((call) => call.token === "gho_octoTokenFromKeyring")).toBe(true);
+    expect(calls.some((call) => call.endpoint.includes("switch"))).toBe(false);
+
+    // No login for the account: blocked with a login hint, not a switch.
+    writeWorkspace(github, { provider: "github", account: "someone" });
+    const none = resolveForge(github.cwd, {
+      runner: replayRunner({
+        ...githubRoutes(),
+        "CLI auth token --hostname github.com --user someone": replyError("no oauth token found"),
+      }),
+    });
+    expect(none).toMatchObject({ ok: false, code: "blocked" });
+    expect(!none.ok && none.unblock).toStartWith("gh auth login --hostname github.com");
+    expect(JSON.stringify(none)).not.toContain("auth switch");
+
+    // A workspace tokenFile wins, is never printed, and a mismatch names the file fix.
+    const tokenFile = path.join(configDir, "gh.token");
+    writeFileSync(tokenFile, "ghp_fileTokenValue\n");
+    writeWorkspace(github, { provider: "github", account: "someone", tokenFile });
+    const filed = connect(github, githubRoutes());
+    expect(filed.resolved.credential).toBe("workspace_token_file");
+    const mismatch = checkIdentity(filed.resolved);
+    expect(mismatch).toMatchObject({ ok: false, code: "blocked" });
+    expect(!mismatch.ok && mismatch.unblock).toContain("vcs.tokenFile");
+    expect(JSON.stringify(mismatch)).not.toContain("ghp_fileTokenValue");
+    expect(filed.calls.every((call) => call.token === "ghp_fileTokenValue")).toBe(true);
+    rmSync(tokenFile);
+  });
+
+  test("an app/Actions token that cannot read /user passes read verbs with a note", () => {
+    const repo = repoFor("github");
+    const routes = githubRoutes();
+    routes["GET user"] = replyError("gh: Resource not accessible by integration (HTTP 403)");
+    expect(checkIdentity(connect(repo, routes).resolved)).toMatchObject({
+      ok: true,
+      data: { login: null, matches: null, note: expect.stringContaining("identity not checked") },
+    });
+  });
+
+  test("a branch-name match from a stranger's fork is not our PR (M5)", () => {
+    const repo = repoFor("github");
+    const routes = githubRoutes();
+    routes["graphql find"] = JSON.stringify({
+      data: {
+        repository: {
+          pullRequests: {
+            nodes: [
+              {
+                number: 99,
+                url: "u",
+                state: "OPEN",
+                headRefName: "feature/x",
+                headRefOid: "2".repeat(40),
+                headRepositoryOwner: { login: "stranger" },
+              },
+            ],
+          },
+        },
+      },
+    });
+    const { resolved } = connect(repo, routes);
+    expect(prStatusReport(repo.cwd, resolved, {})).toMatchObject({ ok: false, code: "not_found" });
+  });
+
+  test("a fork push remote looks PRs up in the parent repository (M6)", () => {
+    const repo = repoFor("github");
+    repo.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    const routes: Record<string, Reply> = {
+      ...githubRoutes(),
+      "GET repos/me/r": JSON.stringify({ id: 7, fork: true, parent: { full_name: "o/r" } }),
+    };
+    const { resolved, calls } = connect(repo, routes);
+    expect(resolved).toMatchObject({ fork: true, headRepo: "me/r", forge: { repo: "o/r" } });
+    routes["graphql find"] = fixture("github/find-pr.json").replaceAll(
+      '"login": "o"',
+      '"login": "me"',
+    );
+    const forked = connect(repo, routes);
+    const report = prStatusReport(repo.cwd, forked.resolved, {});
+    expect(report.ok && report.data.doc).toMatchObject({
+      number: 12,
+      repo: "o/r",
+      headRepo: "me/r",
+    });
+    expect(calls.some((call) => call.endpoint === "repos/me/r")).toBe(true);
+    // An `upstream` remote names the base repo directly.
+    const up = repoFor("github");
+    up.git("remote", "add", "upstream", "https://github.com/o/r.git");
+    up.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    const viaUpstream = connect(up, {
+      ...routes,
+      "GET repos/me/r": JSON.stringify({ id: 7, fork: false }),
+    });
+    expect(viaUpstream.resolved).toMatchObject({
+      fork: true,
+      baseRemote: "upstream",
+      forge: { repo: "o/r" },
+    });
+  });
+
+  test("a GitLab account mismatch is blocked with a login hint", () => {
     const gitlab = repoFor("gitlab");
     writeWorkspace(gitlab, { provider: "gitlab", account: "Octo" });
     expect(checkIdentity(connect(gitlab, gitlabRoutes()).resolved)).toMatchObject({
@@ -557,7 +814,7 @@ describe("S10 forge resolution and identity", () => {
     expect(checkIdentity(connect(gitlab, gitlabRoutes()).resolved)).toMatchObject({
       ok: false,
       code: "blocked",
-      unblock: "glab auth login --hostname gitlab.com  # as cpincetti",
+      unblock: "glab auth login --hostname gitlab.com  # sign in as cpincetti",
     });
   });
 
@@ -577,8 +834,7 @@ describe("S10 forge resolution and identity", () => {
       const resolved = resolveForge(repo.cwd, {
         env: { ...process.env, PATH: empty, Path: empty },
       });
-      if (!resolved.ok) throw new Error(resolved.error);
-      expect(checkIdentity(resolved.data)).toEqual({
+      expect(resolved).toEqual({
         ok: false,
         code: "unavailable",
         error: "gh is not installed",
@@ -635,27 +891,163 @@ describe("S10 forge resolution and identity", () => {
 });
 
 describe("S10 redaction and verdicts", () => {
-  test("secrets in logs and comments are masked; bodies are capped at 300 chars", () => {
-    const gh = `ghp_${"Z9y8".repeat(9)}`;
-    const gl = `glpat-${"x".repeat(20)}`;
-    const text = [
-      `token=${gh}`,
-      `curl -H "Authorization: Bearer ${"abcdef".repeat(4)}" https://u:pw123456@example.com/x`,
-      `export GITLAB_TOKEN: ${gl}`,
-      "token validation failed for user",
-      "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----",
-    ].join("\n");
-    const out = redactText(text);
-    for (const secret of [gh, gl, "abcdef".repeat(4), "pw123456", "\nabc\n"])
+  // Every reviewer example; secrets are assembled at runtime so no literal
+  // token-shaped string sits in the repository.
+  const a = (n: number, c = "a") => c.repeat(n);
+  // Prefixes are joined at runtime so secret scanners see no token literal.
+  const GL_PAT = ["gl", "pat-"].join("");
+  const REDACTION_CASES: Array<[string, string, string]> = [
+    ["ghp", `token ghp_${a(36)}`, `ghp_${a(36)}`],
+    [
+      "ghs in url",
+      `https://x-access-token:ghs_${a(36, "B")}@github.com/o/r.git`,
+      `ghs_${a(36, "B")}`,
+    ],
+    ["github_pat", `github_pat_11ABCDEFG0${a(70, "x")}`, a(70, "x")],
+    ["glpat", `${GL_PAT}abcdEFGH1234ijkl5678`, "abcdEFGH1234ijkl5678"],
+    ["glrt", `glrt-t1_${a(20, "Z")}`, a(20, "Z")],
+    ["gldt", `gldt-${a(20, "q")}`, a(20, "q")],
+    [
+      "CI_JOB_TOKEN glcbt",
+      `CI_JOB_TOKEN=${["gl", "cbt-"].join("")}64_abcdefghijklmnopqrstu`,
+      "abcdefghijklmnopqrstu",
+    ],
+    ["aws id", `AKIA${"IOSFODNN7EXAMPLE"}`, "IOSFODNN7EXAMPLE"],
+    [
+      "aws secret env",
+      "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "wJalrXUtnFEMI",
+    ],
+    [
+      "aws secret yaml",
+      "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "wJalrXUtnFEMI",
+    ],
+    ["GH_TOKEN env", `GH_TOKEN=${a(5, "deadbeef")}`, "deadbeefdeadbeef"],
+    ["NPM_TOKEN env", "NPM_TOKEN=abcdef0123456789abcdef", "abcdef0123456789abcdef"],
+    ["DB_PASSWORD env", "DB_PASSWORD=hunter2hunter2", "hunter2hunter2"],
+    ["MY_API_KEY env", "MY_API_KEY=abcdef0123456789", "abcdef0123456789"],
+    ["DJANGO_SECRET_KEY env", "DJANGO_SECRET_KEY=abcdef0123456789xyz", "abcdef0123456789xyz"],
+    ["json access_token", '{"access_token": "abcdefghijklmnop1234"}', "abcdefghijklmnop1234"],
+    ["json password", '"password":"s3cr3tpassw0rd"', "s3cr3tpassw0rd"],
+    [
+      "jwt",
+      `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.${"dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"}`,
+      "dozjgNryP4J3",
+    ],
+    ["url user-only token", `https://ghp_${a(36, "c")}@github.com/o/r`, a(36, "c")],
+    [
+      "url oauth2",
+      `https://oauth2:${GL_PAT}abcdefghijklmnopqrst@gitlab.com/g/p.git`,
+      "abcdefghijklmnopqrst",
+    ],
+    ["url password with %40", "https://user:p%40ss@host/x", "p%40ss"],
+    ["url password with colon", "postgres://admin:pa:ss@db:5432/x", "pa:ss"],
+    ["basic auth header", "Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA"],
+    ["x-api-key header", "X-Api-Key: 0123456789abcdef0123", "0123456789abcdef0123"],
+    ["PRIVATE-TOKEN header", "PRIVATE-TOKEN: abcdefghijklmnop", "abcdefghijklmnop"],
+    ["curl -u", "curl -u admin:SuperSecret123 https://x", "SuperSecret123"],
+    [
+      "base64 blob",
+      "echo dXNlcjpnaHBfYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh | base64 -d",
+      "dXNlcjpnaHBf",
+    ],
+    ["slack webhook", `https://hooks.slack.com/services/T000/B000/${a(24, "X")}`, a(24, "X")],
+    ["google api key", `AIza${"SyA-1234567890abcdefghijklmnopqrstu"}`, "SyA-1234567890"],
+    ["stripe live", `sk_live_${a(24)}`, a(24)],
+    [
+      "azure AccountKey",
+      "DefaultEndpointsProtocol=https;AccountName=x;AccountKey=abc123def456ghi789==;",
+      "abc123def456ghi789",
+    ],
+    [
+      "private key",
+      "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END OPENSSH PRIVATE KEY-----",
+      "b3BlbnNzaC1rZXk",
+    ],
+    [
+      "truncated private key",
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAxyz",
+      "MIIEowIBAAKCAQEAxyz",
+    ],
+    ["ansi-split token", `ghp_\u001b[0m${a(36)}`, a(36)],
+    ["bearer", `Authorization: Bearer ${a(4, "abcdef")}`, a(4, "abcdef")],
+  ];
+  for (const [label, input, secret] of REDACTION_CASES)
+    test(`redacts ${label}`, () => {
+      const out = redactText(input);
       expect(out).not.toContain(secret);
-    expect(out).toContain("token validation failed for user");
-    expect(logTail(`a\n${gh}\n`, 5)).toEqual(["a", "[REDACTED]"]);
+      expect(out).toContain("[REDACTED");
+    });
+
+  test("ordinary log text, shas and prose survive redaction", () => {
+    for (const keep of [
+      "token validation failed for user",
+      "Author: reviewer",
+      "HEAD is now at 209cdeb890ea6b264f50fa34ef6f160549b7dd8b fix(core): x",
+      "error: expect(received).toEqual(expected)",
+      "(fail) Given three processes each making 40 writes",
+    ])
+      expect(redactText(keep)).toBe(keep);
+  });
+
+  test("a private key split across log lines is gone from the tail; secrets in comments too", () => {
+    const keylog = [
+      "start",
+      "-----BEGIN RSA PRIVATE KEY-----",
+      "MIIEowIBAAKCAQEAxyz",
+      "MIIEowIBAAKCAQEAabc",
+      "-----END RSA PRIVATE KEY-----",
+      "done",
+    ].join("\n");
+    expect(logTail(keylog, 4).join("\n")).not.toMatch(/MIIEow/u);
+    expect(shortBody(`use token ghp_${a(36, "z")} please`)).toBe("use token [REDACTED] please");
+  });
+
+  test("the log view leads with the region around the first real error, then the end", () => {
+    const log = [
+      ...Array.from({ length: 30 }, (_, i) => `(pass) case ${i} handles a failed reservation`),
+      "setup line",
+      "src/a.test.ts:",
+      "error: expect(received).toBe(expected)",
+      "Expected: 0",
+      "Received: 1",
+      ...Array.from({ length: 50 }, (_, i) => `noise ${i}`),
+      " 1 fail",
+      "##[error]Process completed with exit code 1.",
+      "Post job cleanup.",
+    ].join("\n");
+    const view = logTail(log, 12);
+    expect(view.length).toBeLessThanOrEqual(12);
+    expect(view.slice(0, 3)).toEqual([
+      "(pass) case 29 handles a failed reservation",
+      "setup line",
+      "src/a.test.ts:",
+    ]);
+    expect(view).toContain("error: expect(received).toBe(expected)");
+    expect(view).toContain("…");
+    expect(view.at(-1)).toBe("##[error]Process completed with exit code 1.");
+    expect(view).not.toContain("Post job cleanup.");
+  });
+
+  test("comment bodies are capped at 300 chars and flattened", () => {
     expect(shortBody("x".repeat(400))).toHaveLength(300);
     expect(shortBody("line one\n\n  line two")).toBe("line one line two");
   });
 
   test("next follows the pstack priority: conflicts > rebase > threads > CI", () => {
-    const base = { state: "open" as const, conflicts: false, rebaseRequired: false, threads: 0 };
+    const base = {
+      forge: "github" as const,
+      state: "open" as const,
+      draft: false,
+      conflicts: false,
+      rebaseRequired: false,
+      mergeable: "yes" as const,
+      mergeState: "clean",
+      inMergeQueue: false,
+      reviewDecision: null,
+      threads: 0,
+    };
     expect(
       nextAction({ ...base, conflicts: true, rebaseRequired: true, threads: 2, checks: "failing" }),
     ).toBe("RESOLVE_CONFLICTS");
@@ -670,6 +1062,23 @@ describe("S10 redaction and verdicts", () => {
       "MERGED",
     );
     expect(nextAction({ ...base, state: "closed", checks: "passing" })).toBe("CLOSED");
+    const green = { ...base, checks: "passing" as const };
+    expect(nextAction({ ...green, reviewDecision: "changes_requested", draft: true })).toBe(
+      "ADDRESS_REVIEW",
+    );
+    expect(nextAction({ ...green, reviewDecision: "review_required" })).toBe("REVIEW");
+    expect(nextAction({ ...green, draft: true })).toBe("MARK_READY");
+    expect(nextAction({ ...green, inMergeQueue: true })).toBe("IN_MERGE_QUEUE");
+    expect(nextAction({ ...green, mergeState: "blocked" })).toBe("NOT_MERGEABLE");
+    expect(nextAction({ ...green, mergeable: "unknown" })).toBe("NOT_MERGEABLE");
+    expect(nextAction({ ...green, mergeState: "unstable" })).toBe("READY");
+    const gl = { ...green, forge: "gitlab" as const };
+    expect(nextAction({ ...gl, mergeState: "mergeable" })).toBe("READY");
+    expect(nextAction({ ...gl, mergeState: "not_approved" })).toBe("REVIEW");
+    expect(nextAction({ ...gl, mergeState: "discussions_not_resolved" })).toBe("RESOLVE_THREADS");
+    expect(nextAction({ ...gl, checks: "none", mergeState: "ci_must_pass" })).toBe("WAITING_CI");
+    expect(nextAction({ ...gl, mergeState: "draft_status" })).toBe("MARK_READY");
+    expect(nextAction({ ...gl, mergeState: "jira_association_missing" })).toBe("NOT_MERGEABLE");
   });
 
   test("ci wait verdicts and the deterministic backoff", () => {
@@ -679,7 +1088,8 @@ describe("S10 redaction and verdicts", () => {
         conflicts: false,
         base: "main",
         head: { branch: "b", sha: "abc123", localSha: null, pushed: null },
-        checks: { state: checks, failing: [], pending: [], passing: 0 },
+        mergeState: "clean",
+        checks: { state: checks, failing: [], pending: [], passing: 0, missingRequired: [] },
         ...extra,
       }) as PrStatusDoc;
     expect(waitVerdict(doc("passing"), { elapsedMs: 0 })).toEqual({
@@ -698,6 +1108,13 @@ describe("S10 redaction and verdicts", () => {
       reason: "no_checks",
     });
     expect(waitVerdict(doc("none", { conflicts: true }), { elapsedMs: 0 }).state).toBe("blocked");
+    expect(waitVerdict(doc("passing", { state: "closed" }), { elapsedMs: 0 })).toMatchObject({
+      state: "blocked",
+      reason: "pr_closed",
+    });
+    expect(waitVerdict(doc("passing", { state: "merged" }), { elapsedMs: 0 }).state).toBe(
+      "blocked",
+    );
     expect([0, 1, 2, 3, 4, 5].map((poll) => pollDelay(30_000, poll))).toEqual([
       30_000, 45_000, 67_500, 101_250, 120_000, 120_000,
     ]);
