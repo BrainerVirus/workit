@@ -33,6 +33,11 @@ import {
   isWorkitPlugin,
 } from "./registration";
 import { readWorkspacesResult, resolveWorkspaceFrom } from "./workspaces";
+import {
+  CLAUDE_MARKETPLACE_NAME,
+  claudeWorkitInstalls,
+  type ClaudeWorkitInstall,
+} from "./host-install";
 import { validateCursorSkills, WORKIT_METHOD_SKILLS } from "./skill-manifests";
 import {
   classifyHostGeneration,
@@ -53,6 +58,7 @@ export type DoctorCheckId =
   | "runtime"
   | "versions"
   | "codex_pin"
+  | "claude_plugin"
   | "assets"
   | "launcher"
   | "utility"
@@ -1737,10 +1743,65 @@ const checkWorkspaceLock = (res: Resolved): DoctorCheck => {
   };
 };
 
+const CLAUDE_PLUGIN_PACKAGE = "@brainervirus/workit-claude-code";
+
+const versionBehind = (version: string, latest: string): boolean =>
+  version !== latest && semverAtLeast(latest, version);
+
+/**
+ * Claude Code installs the marketplace plugin as a snapshot of the published
+ * package (auto-update is off by default), so an install can lag the release.
+ * It warns only when a newer plugin version is actually published: a plugin
+ * older than this CLI is normal when no plugin payload changed since (the
+ * plugin is republished only when its own or its bundled sources change).
+ * The plugin keeps working; the fix is one native update. A `--plugin-dir`
+ * local pin is per-session, never recorded, and never checked here.
+ */
+const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
+  // Only installs Claude loads here: user scope, plus this project's.
+  const installs = claudeWorkitInstalls(res.home, res.env, res.cwd);
+  if (installs.length === 0)
+    return {
+      id: "claude_plugin",
+      status: "pass",
+      detail: "no Workit Claude Code plugin install recorded — skipping",
+    };
+  const fix = (install: ClaudeWorkitInstall) =>
+    `claude plugin marketplace update ${CLAUDE_MARKETPLACE_NAME} && ${
+      install.projectPath ? `cd ${JSON.stringify(install.projectPath)} && ` : ""
+    }claude plugin update ${install.id}${install.scope === "user" ? "" : ` --scope ${install.scope}`}`;
+  const latest = registryLatestVersion(res, CLAUDE_PLUGIN_PACKAGE);
+  const problems: string[] = [];
+  let repair: string | undefined;
+  for (const install of installs) {
+    const label = `${install.id} ${install.version ?? "(unknown version)"}${install.scope === "user" ? "" : ` (${install.scope} scope)`}`;
+    if (latest && install.version && versionBehind(install.version, latest)) {
+      problems.push(`stale_install: ${label} is behind published ${latest}`);
+      repair ??= fix(install);
+    }
+  }
+  const registryProbed = latest !== null && !res.env.WORKIT_DOCTOR_STALE_REGISTRY_VERSION;
+  if (problems.length === 0)
+    return {
+      id: "claude_plugin",
+      status: "pass",
+      detail: `Claude Code plugin ${installs.map((i) => `${i.id} ${i.version ?? "?"}`).join(", ")} is current`,
+      registryProbed,
+    };
+  return {
+    id: "claude_plugin",
+    status: "warn",
+    detail: problems.join("; "),
+    fix: repair,
+    registryProbed,
+  };
+};
+
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
   checkCodexPin,
+  checkClaudePlugin,
   checkAssets,
   checkLauncher,
   checkUtility,

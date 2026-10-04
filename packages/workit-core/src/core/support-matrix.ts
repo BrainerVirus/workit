@@ -16,5 +16,9 @@ export const SUPPORT_MATRIX = {
   // an installed CLI drifts ahead so a fresh install never silently outruns
   // the qualification pin.
   codex: { cli: "0.153.4", desktopPackage: "26.901.20858", bundledCodexCli: "0.153.0-alpha.5" },
+  // Claude Code is a qualification host too: CI runs `claude plugin validate
+  // --strict` with exactly this CLI, and the hook output schema fixture
+  // (test/fixtures/claude-code-schemas) was transcribed from this binary.
+  claudeCode: { cli: "2.1.288" },
   os: ["ubuntu-latest", "macos-latest", "windows-latest"],
 } as const;

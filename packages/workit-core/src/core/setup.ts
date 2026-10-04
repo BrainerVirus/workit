@@ -52,6 +52,8 @@ import { writeFileExclusive } from "./safe-write";
 import {
   isCodexWorkitInstalled,
   isPiWorkitInstalled,
+  isClaudeWorkitInstalled,
+  claudeConfigDir,
   planHostInstall,
   runHostInstall,
   type HostCommandRunner,
@@ -385,25 +387,27 @@ export function buildSetupPreview(
           mutations.push({ type: "install-adapter", platform, path: paths.cursorPluginDir });
           mutations.push({ type: "register-platform", platform, path: paths.cursorSettings });
           mutations.push({ type: "register-platform", platform, path: paths.cursorMcp });
-        } else if (platform === "codex" || platform === "pi") {
+        } else if (platform === "codex" || platform === "pi" || platform === "claude-code") {
           const commands = planHostInstall(platform, { home: paths.home, cwd: paths.cwd, env });
           if (commands.length > 0) {
             mutations.push({
               type: "install-host",
               platform,
               path:
-                platform === "codex"
-                  ? path.join(
-                      env.CODEX_HOME ?? path.join(paths.home, ".codex"),
-                      "plugins",
-                      "cache",
-                      "workflow-toolkit",
-                      "workit",
-                    )
-                  : path.join(
-                      env.PI_CODING_AGENT_DIR ?? path.join(paths.home, ".pi", "agent"),
-                      "settings.json",
-                    ),
+                platform === "claude-code"
+                  ? claudeInstallRecord(paths.home, env)
+                  : platform === "codex"
+                    ? path.join(
+                        env.CODEX_HOME ?? path.join(paths.home, ".codex"),
+                        "plugins",
+                        "cache",
+                        "workflow-toolkit",
+                        "workit",
+                      )
+                    : path.join(
+                        env.PI_CODING_AGENT_DIR ?? path.join(paths.home, ".pi", "agent"),
+                        "settings.json",
+                      ),
               commands,
             });
           }
@@ -445,6 +449,10 @@ export function buildSetupPreview(
 // ---------------------------------------------------------------------------
 // Apply (Task 14: WZ-09, WZ-10, WZ-13-WZ-15; CA-08, CA-13, CA-14, CA-31).
 // ---------------------------------------------------------------------------
+
+/** The Claude Code plugin registry a Workit install is recorded in. */
+const claudeInstallRecord = (home: string, env: NodeJS.ProcessEnv): string =>
+  path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json");
 
 export type Platform = "opencode" | "cursor";
 
@@ -1250,7 +1258,9 @@ export function applySetupPreview(
                   res.env.PI_CODING_AGENT_DIR ?? path.join(res.home, ".pi", "agent"),
                   "settings.json",
                 )
-              : "";
+              : mutation.platform === "claude-code"
+                ? claudeInstallRecord(res.home, res.env)
+                : "";
       if (mutation.path !== expectedPath) {
         entries.push({
           platform: mutation.platform,
@@ -1292,7 +1302,9 @@ export function applySetupPreview(
           ? isCodexWorkitInstalled(res.home, res.env)
           : mutation.platform === "pi"
             ? isPiWorkitInstalled(res.home, res.env)
-            : true;
+            : mutation.platform === "claude-code"
+              ? isClaudeWorkitInstalled(res.home, res.env, null)
+              : true;
       if (!verified) {
         entries.push({
           platform: mutation.platform,

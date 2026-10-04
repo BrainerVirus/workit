@@ -13,8 +13,10 @@ const manifestPaths = [
   "packages/workit-cursor/package.json",
   "packages/workit-codex/package.json",
   "packages/workit-pi/package.json",
+  "packages/workit-claude-code/package.json",
   "packages/workit-cursor/.cursor-plugin/plugin.json",
   "packages/workit-codex/.codex-plugin/plugin.json",
+  "packages/workit-claude-code/.claude-plugin/plugin.json",
 ];
 
 const fixtureRoot = (versions: Record<string, string>, name = "workflow-toolkit") => {
@@ -76,8 +78,10 @@ describe("syncManifests", () => {
         "packages/workit-cursor/package.json",
         "packages/workit-codex/package.json",
         "packages/workit-pi/package.json",
+        "packages/workit-claude-code/package.json",
         "packages/workit-cursor/.cursor-plugin/plugin.json",
         "packages/workit-codex/.codex-plugin/plugin.json",
+        "packages/workit-claude-code/.claude-plugin/plugin.json",
       ]);
       expect(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version).toBe(
         "0.8.9",

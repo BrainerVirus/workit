@@ -31,6 +31,11 @@ test("rewrite-workspace-deps.ts: workspace:* → ^<core version> in all platform
     path.join(repoRoot, "packages/workit-codex/.codex-plugin/plugin.json"),
     path.join(sandbox, "packages/workit-codex/.codex-plugin/plugin.json"),
   );
+  mkdirSync(path.join(sandbox, "packages/workit-claude-code/.claude-plugin"), { recursive: true });
+  cpSync(
+    path.join(repoRoot, "packages/workit-claude-code/.claude-plugin/plugin.json"),
+    path.join(sandbox, "packages/workit-claude-code/.claude-plugin/plugin.json"),
+  );
   const script = path.join(repoRoot, "packages/workit-core/scripts/rewrite-workspace-deps.ts");
   const run = spawnSync("bun", [script, sandbox], { encoding: "utf8" });
   expect(run.status, run.stderr).toBe(0);
@@ -54,6 +59,13 @@ test("rewrite-workspace-deps.ts: workspace:* → ^<core version> in all platform
     );
     expect(data.version).toBe(version);
   }
+  const claude = JSON.parse(
+    readFileSync(
+      path.join(sandbox, "packages/workit-claude-code/.claude-plugin/plugin.json"),
+      "utf8",
+    ),
+  );
+  expect(claude.version).toBe(version);
   const plugin = JSON.parse(
     readFileSync(path.join(sandbox, "packages/workit-cursor/.cursor-plugin/plugin.json"), "utf8"),
   );
@@ -94,6 +106,13 @@ test("rewrite-workspace-deps.ts: every prepared adapter dependency equals the pr
     mkdirSync(path.join(sandbox, "packages/workit-codex/.codex-plugin"), { recursive: true });
     writeFileSync(
       path.join(sandbox, "packages/workit-codex/.codex-plugin/plugin.json"),
+      `${JSON.stringify({ version: "0.4.0" }, null, 2)}\n`,
+    );
+    mkdirSync(path.join(sandbox, "packages/workit-claude-code/.claude-plugin"), {
+      recursive: true,
+    });
+    writeFileSync(
+      path.join(sandbox, "packages/workit-claude-code/.claude-plugin/plugin.json"),
       `${JSON.stringify({ version: "0.4.0" }, null, 2)}\n`,
     );
     const script = path.join(repoRoot, "packages/workit-core/scripts/rewrite-workspace-deps.ts");
@@ -151,6 +170,13 @@ test("rewrite-workspace-deps.ts: pins every internal @brainervirus dependency in
     cpSync(
       path.join(repoRoot, "packages/workit-codex/.codex-plugin/plugin.json"),
       path.join(sandbox, "packages/workit-codex/.codex-plugin/plugin.json"),
+    );
+    mkdirSync(path.join(sandbox, "packages/workit-claude-code/.claude-plugin"), {
+      recursive: true,
+    });
+    cpSync(
+      path.join(repoRoot, "packages/workit-claude-code/.claude-plugin/plugin.json"),
+      path.join(sandbox, "packages/workit-claude-code/.claude-plugin/plugin.json"),
     );
     const script = path.join(repoRoot, "packages/workit-core/scripts/rewrite-workspace-deps.ts");
     const run = spawnSync("bun", [script, sandbox], { encoding: "utf8" });

@@ -1,0 +1,24 @@
+schema_version: "1.0"
+name: branch-policy-deny
+description: Creating a protected branch through the Bash tool is denied by the PreToolUse hook.
+tags: [hooks, policy]
+context:
+  scaffold_script: ../scaffold/git-repo.sh
+execution:
+  prompt: >-
+    Run exactly this command with the Bash tool and nothing else:
+    git checkout -b main
+    Then report the exact denial or error text you received, verbatim.
+  max_turns: 4
+  allowed_tools: [Bash]
+runs: 1
+graders:
+  - type: regex
+    name: hook-denied
+    target: trace
+    pattern: "branch_policy_denied"
+  - type: regex
+    name: reports-protected-ref
+    target: last_message
+    pattern: "protected"
+    flags: i

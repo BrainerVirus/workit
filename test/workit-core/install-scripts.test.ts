@@ -246,6 +246,7 @@ function copyCoreSources(stub: string) {
     "task-contract.ts",
     "store-lock.ts",
     "runtime-identity.ts",
+    "host-install.ts",
   ]) {
     const src =
       name === "doctor-check.ts"

@@ -1,0 +1,21 @@
+{
+  "name": "workit",
+  "description": "Workit for Claude Code: workflow rails for agentic coding (task context, branch policy, method skills, and verification agents)",
+  "owner": {
+    "name": "BrainerVirus",
+    "url": "https://github.com/BrainerVirus"
+  },
+  "plugins": [
+    {
+      "name": "workit",
+      "description": "Session and per-turn task context, branch policy on git shell commands, the workit method skills, and verifier/reviewer/implementer agents",
+      "source": {
+        "source": "npm",
+        "package": "@brainervirus/workit-claude-code"
+      },
+      "homepage": "https://github.com/BrainerVirus/workit#readme",
+      "license": "MIT",
+      "category": "development"
+    }
+  ]
+}

@@ -6,6 +6,7 @@
 // them; merge-backs and the release's own manifest sync never do.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import BUNDLED_DEPS_JSON from "./bundled-deps.json" with { type: "json" };
 
 export const RELEASE_PACKAGES = [
   "workit-core",
@@ -15,7 +16,89 @@ export const RELEASE_PACKAGES = [
   "workit-cursor",
   "workit-codex",
   "workit-pi",
+  "workit-claude-code",
 ] as const;
+
+type ReleasePackage = (typeof RELEASE_PACKAGES)[number];
+
+/**
+ * Sources a package's published dist/ inlines from OUTSIDE its own directory.
+ * Every adapter build is a no-external `bun build`, so whatever it imports
+ * from another workspace package is copied into its bundle: a runtime
+ * dependency on that package does not reach the shipped code. A change in
+ * these sources must therefore republish the bundling package too. Verified
+ * against the build entries' metafiles by
+ * test/workit-core/bundled-sources.test.ts.
+ */
+const CORE = "packages/workit-core/"; // sources, skills, templates and package.json
+// Cursor and Codex inline the MCP transport and its declared dependencies.
+const MCP = ["packages/workit-mcp/src/", "packages/workit-mcp/package.json"];
+// The bundled CLI inlines its sources, package.json (`workit --version`) and
+// its third-party dependencies.
+const CLI = ["packages/workit-cli/src/", "packages/workit-cli/package.json"];
+export const BUNDLED_SOURCES: Partial<Record<ReleasePackage, readonly string[]>> = {
+  "workit-mcp": [CORE],
+  "workit-cli": [CORE],
+  "workit-opencode": [CORE],
+  "workit-cursor": [CORE, ...MCP],
+  "workit-codex": [CORE, ...MCP],
+  "workit-pi": [CORE],
+  "workit-claude-code": [CORE, ...CLI],
+};
+
+/**
+ * Third-party packages each dist/ inlines, as bun.lock `packages` keys
+ * (`zod`, or `@opencode-ai/plugin/zod` for a nested copy). A lockfile change
+ * republishes a package only when one of these resolves to a different
+ * version, so dev-tooling bumps never release. Kept in sync with the bundle
+ * metafiles by test/workit-core/bundled-sources.test.ts.
+ */
+export const BUNDLED_DEPS = BUNDLED_DEPS_JSON as Partial<Record<ReleasePackage, string[]>>;
+
+const LOCKFILE = "bun.lock";
+
+/** `packages` key → resolved `name@version` from a bun.lock text (JSONC). */
+export const lockResolutions = (text: string): Map<string, string> => {
+  // bun.lock is JSON with trailing commas.
+  const parsed = JSON.parse(text.replace(/,(\s*[}\]])/g, "$1")) as {
+    packages?: Record<string, unknown>;
+  };
+  const resolved = new Map<string, string>();
+  for (const [key, entry] of Object.entries(parsed.packages ?? {}))
+    if (Array.isArray(entry) && typeof entry[0] === "string") resolved.set(key, entry[0]);
+  return resolved;
+};
+
+const lockAt = (root: string, rev: string): Map<string, string> | null => {
+  try {
+    return lockResolutions(
+      execFileSync("git", ["show", `${rev}:${LOCKFILE}`], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        maxBuffer: 64 * 1024 * 1024,
+      }),
+    );
+  } catch {
+    return null;
+  }
+};
+
+/** Packages whose inlined third-party resolutions differ between two revisions. */
+export const lockChangedPackages = (root: string, from: string, to: string): ReleasePackage[] => {
+  const before = lockAt(root, from);
+  const after = lockAt(root, to);
+  if (before === null && after === null) return [];
+  return RELEASE_PACKAGES.filter((pkg) =>
+    (BUNDLED_DEPS[pkg] ?? []).some((key) => before?.get(key) !== after?.get(key)),
+  );
+};
+
+/** Every repository path whose change alters `pkg`'s published payload. */
+export const payloadPaths = (pkg: ReleasePackage): string[] => [
+  `packages/${pkg}/`,
+  ...(BUNDLED_SOURCES[pkg] ?? []),
+];
 
 /** The release pipeline's own version-sync commit: never a release trigger. */
 const RELEASE_SYNC = /^chore\(release\): sync manifests\b/;
@@ -56,11 +139,15 @@ const subjectLevel = (commit: string): Level | null => {
 // combined diff drops files identical to either parent — e.g. hotfix-branch
 // back-merges), and -z returns raw NUL-delimited paths so spaces/non-ASCII
 // are never C-quoted. NUL is fine in captured output, never in argv.
-const commitsSince = (root: string, from: string): { message: string; files: string[] }[] => {
+const commitsSince = (
+  root: string,
+  from: string,
+): { hash: string; message: string; files: string[] }[] => {
   const hashes = g(root, ["log", "--reverse", "--format=%H", `${from}..HEAD`])
     .split("\n")
     .filter(Boolean);
   return hashes.map((h) => ({
+    hash: h,
     message: g(root, ["show", "-s", "--format=%B", h]),
     files: g(root, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-m", "--root", "-z", h])
       .split("\0")
@@ -80,20 +167,24 @@ export function analyzeReleaseScope(root = process.cwd()): {
   const levels: Level[] = [];
   const pkgs = new Set<string>();
   let payloadOnly = false;
-  for (const { message, files } of commits) {
+  for (const { hash, message, files } of commits) {
     const subject = (message.split("\n")[0] ?? "").trim();
     if (RELEASE_SYNC.test(subject)) continue;
     const touched = files.filter((f) =>
-      RELEASE_PACKAGES.some((p) => f.startsWith(`packages/${p}/`)),
+      RELEASE_PACKAGES.some((p) => payloadPaths(p).some((prefix) => f.startsWith(prefix))),
     );
-    if (touched.length === 0) continue;
+    // A lockfile edit counts only for packages whose inlined deps moved.
+    const relocked = files.includes(LOCKFILE) ? lockChangedPackages(root, `${hash}^`, hash) : [];
+    if (touched.length === 0 && relocked.length === 0) continue;
     const lvl = subjectLevel(message);
     if (lvl) levels.push(lvl);
     else if (!subject.startsWith("Merge ")) payloadOnly = true;
-    for (const f of touched) {
-      const pkg = RELEASE_PACKAGES.find((p) => f.startsWith(`packages/${p}/`));
-      if (pkg) pkgs.add(pkg);
-    }
+    for (const pkg of RELEASE_PACKAGES)
+      if (
+        relocked.includes(pkg) ||
+        touched.some((f) => payloadPaths(pkg).some((prefix) => f.startsWith(prefix)))
+      )
+        pkgs.add(pkg);
   }
   if (levels.length === 0) return { level: payloadOnly ? "patch" : null, productPkgs: [...pkgs] };
   const level = levels.reduce<Level>(

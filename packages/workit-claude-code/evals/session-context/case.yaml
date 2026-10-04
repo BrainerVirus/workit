@@ -1,0 +1,24 @@
+schema_version: "1.0"
+name: session-context
+description: SessionStart injects the workit contract into a fresh session.
+tags: [hooks, context]
+context:
+  scaffold_script: ../scaffold/git-repo.sh
+execution:
+  prompt: >-
+    Without running any tools, tell me whether this session received workit
+    coordination context at startup. If it did, quote the exact name of the
+    XML-style tag that wraps it.
+  max_turns: 2
+  allowed_tools: []
+runs: 1
+graders:
+  - type: regex
+    name: contract-tag-quoted
+    target: last_message
+    pattern: "workit-contract"
+  - type: llm
+    name: answers-from-context
+    criteria: >-
+      The response states that workit context was received at session start
+      and names the wrapping tag (workit-contract) rather than guessing.
