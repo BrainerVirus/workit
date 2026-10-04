@@ -95,6 +95,12 @@ jobs:
           fi
           VERSION=$(node -p "require('./packages/workit-core/package.json').version")
           BRANCH="chore/manifest-sync-v${VERSION}"
+          # A later non-releasing main push re-runs this step while the
+          # previous sync PR is still open; that PR already carries the change.
+          if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
+            echo "${BRANCH} already exists; its sync PR is pending"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
