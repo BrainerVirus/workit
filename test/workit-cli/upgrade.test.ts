@@ -449,3 +449,18 @@ test("upgrade warns before applying when the OpenCode host is 1.x (Workit 3 is V
     f.cleanup();
   }
 });
+
+test("--preview is the explicit name of the default preview and refuses --apply", async () => {
+  const f = fixture();
+  try {
+    const out: string[] = [];
+    const deps = { ...f.deps, out: { write: (text: string) => out.push(text) } };
+    expect(await runUpgradeCommand(["--hosts=pi", "--preview"], deps)).toBe(0);
+    expect(JSON.parse(out.join("")).entries).toBeDefined();
+    out.length = 0;
+    expect(await runUpgradeCommand(["--preview", "--apply", "--confirm"], deps)).toBe(2);
+    expect(out.join("")).toContain("[--preview | --apply --confirm]");
+  } finally {
+    f.cleanup();
+  }
+});

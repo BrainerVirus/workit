@@ -62,16 +62,17 @@ export async function runInit() {
   const state = readSetupState();
   if (state.config.status === "malformed") {
     // CA-02: even this earliest exit opens on a clean screen so the blocked
-    // output never sits atop the npx banner.
-    process.stdout.write("\x1b[2J\x1b[H");
+    // output never sits atop the npx banner (terminals only: never write a
+    // control sequence into a pipe or log).
+    if (process.stdout.isTTY === true) process.stdout.write("\x1b[2J\x1b[H");
     printMalformedBlocked(state);
     process.exit(1);
   }
   // ponytail: no-TTY guard — piping/disabling stdin would hang render(); print
   // guidance and exit nonzero instead of silently pretending setup happened
   if (process.stdin.isTTY !== true) {
-    // CA-02: same clean-screen rule as the malformed guard above.
-    process.stdout.write("\x1b[2J\x1b[H");
+    // No clear-screen here: this is an error path for scripts and pipes, and
+    // the guidance must stay readable in their captured output.
     console.log("workit init requires an interactive terminal (TTY).");
     for (const line of setupCompletionGuidance()) console.log(line);
     process.exit(1);

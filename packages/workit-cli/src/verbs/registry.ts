@@ -52,7 +52,7 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "upgrade",
     group: "setup",
-    usage: "workit upgrade [--hosts=a,b|none] [--cli] [--apply --confirm] [--json]",
+    usage: "workit upgrade [--hosts=a,b|none] [--cli] [--preview | --apply --confirm] [--json]",
     summary: "Preview upgrades (--apply --confirm to apply)",
     load: () => import("./upgrade"),
   },

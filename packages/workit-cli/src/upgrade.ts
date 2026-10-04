@@ -516,13 +516,19 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   const flags = new Set(argv);
   const unknown = argv.filter(
     (arg) =>
-      !["--apply", "--confirm", "--json", "--cli"].includes(arg) && !arg.startsWith("--hosts="),
+      !["--apply", "--confirm", "--json", "--cli", "--preview"].includes(arg) &&
+      !arg.startsWith("--hosts="),
   );
   const hostFlag = argv.find((arg) => arg.startsWith("--hosts="))?.slice(8);
   const raw = hostFlag === "none" ? [] : (hostFlag?.split(",") ?? HOSTS);
-  if (unknown.length || raw.some((host) => !HOSTS.includes(host as HostId))) {
+  // `--preview` names the default mode explicitly; it cannot be combined with --apply.
+  if (
+    unknown.length ||
+    raw.some((host) => !HOSTS.includes(host as HostId)) ||
+    (flags.has("--preview") && flags.has("--apply"))
+  ) {
     out.write(
-      "Usage: workit upgrade [--hosts=opencode,cursor,codex,pi|none] [--cli] [--apply --confirm] [--json]\n",
+      "Usage: workit upgrade [--hosts=opencode,cursor,codex,pi|none] [--cli] [--preview | --apply --confirm] [--json]\n",
     );
     return 2;
   }

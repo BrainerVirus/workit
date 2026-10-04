@@ -344,10 +344,9 @@ test("malformed config exits pre-render: output starts with the clear sequence",
   expect(clean(chunks.join(""))).toContain("Apply blocked");
 });
 
-test("non-TTY stdin exits pre-render: guidance starts with the clear sequence", async () => {
+test("non-TTY stdin exits pre-render with plain guidance and no clear sequence", async () => {
   const { chunks, exitCode } = await driveRunInit([], { isTTY: false });
   expect(exitCode).toBe(1);
-  expect(chunks[0].startsWith(CLEAR)).toBe(true);
-  expect(clearCount(chunks.join(""))).toBe(1);
+  expect(clearCount(chunks.join(""))).toBe(0);
   expect(clean(chunks.join(""))).toContain("requires an interactive terminal");
 });

@@ -22,7 +22,7 @@ npx @brainervirus/workit-cli init
 
 ```bash
 workit init              # basic / advanced setup wizard
-workit upgrade [--hosts=opencode,cursor,codex,pi] [--cli] [--apply --confirm] [--json]
+workit upgrade [--hosts=opencode,cursor,codex,pi] [--cli] [--preview | --apply --confirm] [--json]
 workit launch <opencode|cursor|codex|pi> [--auto-upgrade] [-- host arguments]
 workit doctor            # offline installation health report
 workit doctor --json     # machine-readable report
