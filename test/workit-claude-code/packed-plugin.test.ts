@@ -20,6 +20,9 @@ import {
 import { runHook } from "./plugin-helpers";
 
 const PACKAGE = "@brainervirus/workit-claude-code";
+const TREE_VERSION = JSON.parse(
+  readFileSync(path.join(REPO_ROOT, "packages", "workit-core", "package.json"), "utf8"),
+).version as string;
 const cleanup: string[] = [];
 afterAll(() => {
   for (const dir of cleanup) rmSync(dir, { recursive: true, force: true });
@@ -71,7 +74,12 @@ test(
     const manifest = JSON.parse(
       readFileSync(path.join(pluginFromTarball(), ".claude-plugin", "plugin.json"), "utf8"),
     );
-    expect(manifest.version).toBe(pkg.version);
+    // The release-time rewrite (rewrite-workspace-deps.ts, which the pack
+    // sandbox runs too) mirrors the tree's core version into plugin.json, the
+    // version Claude reads. Derived from the tree, so a release on main can't
+    // break this; the plugin package.json lockstep is the manifest sync's job
+    // (plugin.test.ts).
+    expect(manifest.version).toBe(TREE_VERSION);
   },
   { timeout: 300_000 },
 );
@@ -138,9 +146,11 @@ test.skipIf(claude === null)(
     expect(installed.status, installed.stdout + installed.stderr).toBe(0);
     const installs = claudeWorkitInstalls(home, env);
     expect(installs).toHaveLength(1);
+    // Claude records the version plugin.json declares.
     expect(installs[0].version).toBe(
-      JSON.parse(readFileSync(path.join(plugin, "package.json"), "utf8")).version,
+      JSON.parse(readFileSync(path.join(plugin, ".claude-plugin", "plugin.json"), "utf8")).version,
     );
+    expect(installs[0].version).toBe(TREE_VERSION);
     expect(existsSync(path.join(installs[0].installPath, "dist", "workit-hook.js"))).toBe(true);
   },
   { timeout: 300_000 },
