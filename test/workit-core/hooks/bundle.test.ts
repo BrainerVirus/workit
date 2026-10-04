@@ -16,7 +16,7 @@ const HOOK_ENTRIES = [
 // current size as a regression ceiling until that graph is split.
 const BUDGET = 620_000;
 const FORBIDDEN =
-  /\/(doctor|setup|setup-state|cutover|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
+  /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {
   const out = mkdtempSync(path.join(tmpdir(), "workit-hook-bundle-"));

@@ -631,16 +631,6 @@ export {
   type SetupPreviewInput,
   type SetupMutation,
 } from "@brainervirus/workit-core/src/core/setup.ts";
-export {
-  previewCutover,
-  applyCutover,
-  resumeCutover,
-  previewRollback,
-  applyRollback,
-  type CutoverDecision,
-  type CutoverHost,
-  type CutoverPaths,
-} from "@brainervirus/workit-core/src/core/setup.ts";
 export type { VcsProvider };
 
 // CA-06: the wizard's branch-policy apply routes through the same shared

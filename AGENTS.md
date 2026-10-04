@@ -111,8 +111,7 @@ process around it.
 ## Workflow contract
 
 - Init always shows Codex and Pi with detection/configuration status and host-native
-  setup guidance; only OpenCode/Cursor are selectable for Apply. Cutover guidance
-  is secondary and explicitly for legacy migration.
+  setup guidance; only OpenCode/Cursor are selectable for Apply.
 
 - CLI init project hygiene is optional: `n` advances without project writes,
   including after revisiting an accepted project step. Search selectors retain

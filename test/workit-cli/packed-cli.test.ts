@@ -442,7 +442,7 @@ test("packed CLI ships completion guidance and hygiene templates", () => {
   }
 }, 120_000);
 
-test("packed CLI: help lists v1 task, action, handoff, cutover, and uninstall commands", () => {
+test("packed CLI: help lists task, action, handoff, and uninstall commands", () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-packedcli-help-");
   try {
@@ -460,7 +460,6 @@ test("packed CLI: help lists v1 task, action, handoff, cutover, and uninstall co
       "workit <family> <action> [options]",
       "workit action <operation> --payload <JSON>",
       "workit handoff --task <id>",
-      "workit cutover preview|apply|rollback ...",
       "workit uninstall",
     ]) {
       expect(help.stdout, command).toContain(command);

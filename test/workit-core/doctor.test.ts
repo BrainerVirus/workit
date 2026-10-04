@@ -24,23 +24,12 @@ import {
   type DoctorReport,
 } from "@/packages/workit-core/src/core/doctor";
 import { OPENCODE_NPM_PIN } from "@/packages/workit-core/src/core/registration";
-import type { SessionObservation } from "@/packages/workit-core/src/core/cutover";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import { readVcsConfig } from "@/packages/workit-core/src/core/vcs-config";
 import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
 import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
 import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
-import {
-  applyCutover,
-  previewCutover,
-  writeGenerationState,
-} from "@/packages/workit-core/src/core/cutover";
 import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
-import {
-  installV1Skills,
-  makeCutoverFixture,
-  removeLegacySkills,
-} from "@/test/shared/helpers/cutover-fixture";
 
 // The offline doctor engine (DG-07/DG-08, CA-09): one fixture tree, one broken
 // surface at a time, assert the typed check + nonzero exitCode, then repair the
@@ -51,9 +40,7 @@ const check = (report: DoctorReport, id: string): DoctorCheck =>
 
 const fixture = makeDoctorFixture();
 
-const run = (
-  overrides: { env?: NodeJS.ProcessEnv; cwd?: string; sessions?: SessionObservation[] } = {},
-) =>
+const run = (overrides: { env?: NodeJS.ProcessEnv; cwd?: string } = {}) =>
   runDoctor({
     host: "cli",
     home: fixture.home,
@@ -62,7 +49,6 @@ const run = (
     dev: fixture.dev,
     cwd: overrides.cwd ?? fixture.cwd,
     env: overrides.env,
-    sessions: overrides.sessions,
   });
 
 // Installer mode (DG-09/AR-11): the installers enforce an explicit required set
@@ -1623,111 +1609,6 @@ test("installer downgrades optional parity checks to warnings, not failures", ()
     writeConfig(opencodePkg, JSON.stringify(original));
   }
   expect(check(runInstaller(), "versions").status).toBe("pass");
-});
-
-test("reports mixed_generation when legacy and v1 cursor skills coexist", () => {
-  mkdirSync(path.join(fixture.pluginDir, "skills", "wk-init"), { recursive: true });
-  writeFileSync(path.join(fixture.pluginDir, "skills", "wk-init", "SKILL.md"), "# legacy\n");
-  installV1Skills(fixture.pluginDir);
-  try {
-    const report = run();
-    const mixed = check(report, "mixed_generation");
-    expect(mixed.status).toBe("warn");
-    expect(mixed.detail).toContain("cursor");
-  } finally {
-    for (const skill of WORKIT_METHOD_SKILLS) {
-      rmSync(path.join(fixture.pluginDir, "skills", skill), { recursive: true, force: true });
-    }
-  }
-  expect(check(run(), "mixed_generation").status).toBe("pass");
-});
-
-test("reports legacy_component when v1 target still has legacy host assets", () => {
-  writeGenerationState(fixture.configDir, { target: "v1" });
-  try {
-    const report = run();
-    const legacy = check(report, "legacy_component");
-    expect(legacy.status).toBe("fail");
-    expect(legacy.detail).toMatch(/legacy components remain/i);
-  } finally {
-    writeGenerationState(fixture.configDir, { target: "legacy" });
-  }
-  expect(check(run(), "legacy_component").status).toBe("pass");
-});
-
-test("reports missing_v1_component when v1 target lacks v1 host assets", () => {
-  writeGenerationState(fixture.configDir, { target: "v1" });
-  try {
-    const report = run();
-    const missing = check(report, "missing_v1_component");
-    expect(missing.status).toBe("fail");
-    expect(missing.detail).toMatch(/missing v1 components/i);
-  } finally {
-    writeGenerationState(fixture.configDir, { target: "legacy" });
-  }
-  expect(check(run(), "missing_v1_component").status).toBe("pass");
-});
-
-test("reports active_old_session when active or unknown sessions are observed", () => {
-  const report = run({
-    sessions: [
-      { host: "opencode", handle: "ses_live", state: "active" },
-      { host: "cursor", handle: "ses_x", state: "unknown" },
-    ],
-  });
-  const session = check(report, "active_old_session");
-  expect(session.status).toBe("warn");
-  expect(session.detail).toContain("ses_live");
-  expect(check(run(), "active_old_session").status).toBe("pass");
-});
-
-test("reports managed_content_conflict when managed bytes drift from cutover receipt", () => {
-  const fx = makeCutoverFixture();
-  try {
-    removeLegacySkills(fx.pluginDir);
-    installV1Skills(fx.pluginDir);
-    const paths = {
-      home: fx.home,
-      configDir: fx.configDir,
-      stateDir: fx.stateDir,
-      archiveDir: path.join(fx.root, "archive"),
-      dev: fx.dev,
-      workspace: fx.workspace,
-      opencodeConfig: fx.opencodeConfig,
-      cursorSettings: fx.cursorSettings,
-      cursorMcp: fx.cursorMcp,
-      cursorPluginDir: fx.pluginDir,
-      sessions: [{ host: "opencode" as const, handle: "ses_old", state: "stopped" as const }],
-    };
-    const applied = applyCutover(
-      previewCutover(paths, ["cursor"]),
-      {
-        approve: true,
-        hosts: ["cursor"],
-        resolutions: { legacyWorkflowMode: "fresh-v1-task", "branchPolicy.allowed": "feature/*" },
-      },
-      paths,
-    );
-    expect(applied.ok).toBe(true);
-    writeConfig(fx.cursorMcp, readFileSync(fx.cursorMcp, "utf8") + "\n");
-    const report = runDoctor({
-      host: "cli",
-      home: fx.home,
-      configDir: fx.configDir,
-      stateDir: fx.stateDir,
-      dev: fx.dev,
-      cwd: fx.workspace,
-      opencodeConfig: fx.opencodeConfig,
-      cursorSettings: fx.cursorSettings,
-      cursorMcp: fx.cursorMcp,
-      cursorPluginDir: fx.pluginDir,
-    });
-    const conflict = check(report, "managed_content_conflict");
-    expect(conflict.status).toBe("fail");
-    expect(conflict.detail).toMatch(/drifted since cutover/i);
-  } finally {
-    fx.cleanup();
-  }
 });
 
 test(

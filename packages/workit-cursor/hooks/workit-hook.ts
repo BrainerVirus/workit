@@ -1,4 +1,4 @@
-// Direct module imports keep the core barrel (setup, doctor, cutover) out of the hook bundle.
+// Direct module imports keep the core barrel (setup, doctor) out of the hook bundle.
 import { failure, success } from "@brainervirus/workit-core/src/core/task-contract";
 import { WorkitCore, type OperationContext } from "@brainervirus/workit-core/src/core/task-engine";
 import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";

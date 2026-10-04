@@ -29,7 +29,6 @@ workit doctor --json     # machine-readable report
 workit <family> <action> [--payload <json|@file|->] [--task <id>] [--revision <uuid>] [--workspace-revision <uuid|null>] [--view full] [--actor <id>] [--confirm] [--json]
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--task <id>] [--json]   # preview or run one approved external action
 workit handoff --task <id> [--json]                   # export task state and compact destination context
-workit cutover preview [--hosts ..] [--json] | apply [--hosts ..] [--resolution k=v] [--confirm] | rollback preview|apply <backupId> [--json] [--confirm]
 workit uninstall                           # remove host registrations (keeps ~/.config/workit)
 workit                                     # help
 ```
@@ -42,8 +41,7 @@ The platforms step lists all four supported hosts. Installed tools are selected
 initially; absent tools are disabled. Select all available, clear all, or pick
 individual hosts. Apply uses native Codex marketplace and Pi package commands,
 OpenCode registration, and a managed Cursor plugin copy. Existing explicit/local
-pins and unrelated host settings are preserved. Use `workit cutover` for legacy
-migration.
+pins and unrelated host settings are preserved.
 
 Advanced workspace edits preserve existing custom fields. Narrow globs win over
 broader matches independent of file order; equal-specificity ambiguity is

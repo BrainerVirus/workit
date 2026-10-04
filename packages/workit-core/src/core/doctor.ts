@@ -39,14 +39,6 @@ import {
   type ClaudeWorkitInstall,
 } from "./host-install";
 import { validateCursorSkills, WORKIT_METHOD_SKILLS } from "./skill-manifests";
-import {
-  classifyHostGeneration,
-  digestFile,
-  readCutoverReceipt,
-  readGenerationState,
-  type CutoverHost,
-  type SessionObservation,
-} from "./cutover";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
 // import the YouTrack/VCS stack just to label a credential state.
@@ -72,12 +64,7 @@ export type DoctorCheckId =
   | "credential_metadata"
   | "github_identity"
   | "gitlab_identity"
-  | "log_writable"
-  | "legacy_component"
-  | "mixed_generation"
-  | "active_old_session"
-  | "managed_content_conflict"
-  | "missing_v1_component";
+  | "log_writable";
 
 export type DoctorCheckStatus = "pass" | "warn" | "fail";
 
@@ -129,8 +116,6 @@ export type DoctorOptions = {
   env?: NodeJS.ProcessEnv;
   /** Installer run: only registration/config checks count toward exitCode. */
   installer?: boolean;
-  /** Observed host sessions used by generation-aware cutover checks. */
-  sessions?: SessionObservation[];
 };
 
 type Resolved = {
@@ -148,18 +133,6 @@ type Resolved = {
   cursorPluginDir: string;
   env: NodeJS.ProcessEnv;
   installer: boolean;
-  sessions: SessionObservation[];
-};
-
-const parseSessionsFromEnv = (env: NodeJS.ProcessEnv): SessionObservation[] => {
-  const raw = env.WORKFLOW_TOOLKIT_SESSIONS;
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as SessionObservation[]) : [];
-  } catch {
-    return [];
-  }
 };
 
 const findDevFromCwd = (cwd: string): string | null => {
@@ -203,7 +176,6 @@ const resolve = (options: DoctorOptions): Resolved => {
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
     env,
     installer: options.installer ?? false,
-    sessions: options.sessions ?? parseSessionsFromEnv(env),
   };
 };
 
@@ -428,19 +400,7 @@ const checkCodexPin = (res: Resolved): DoctorCheck => {
   };
 };
 
-const detectDevGeneration = (dev: string): "legacy" | "v1" =>
-  existsSync(path.join(dev, "packages/workit-opencode/assets/skills/workit-plan/SKILL.md"))
-    ? "v1"
-    : "legacy";
-
-const effectiveGeneration = (res: Resolved): "legacy" | "v1" => {
-  const configured = readGenerationState(res.configDir).target;
-  if (configured === "v1") return "v1";
-  if (res.dev && detectDevGeneration(res.dev) === "v1") return "v1";
-  return "legacy";
-};
-
-const assetPathsFor = (host: DoctorHost, dev: string, _generation: "legacy" | "v1"): string[] => {
+const assetPathsFor = (host: DoctorHost, dev: string): string[] => {
   const pkg = path.join(dev, "packages", `workit-${host}`);
   switch (host) {
     case "opencode":
@@ -465,10 +425,9 @@ const hostsFor = (host: DoctorHost): DoctorHost[] =>
 
 const checkAssets = (res: Resolved): DoctorCheck => {
   const dev = res.dev;
-  const generation = effectiveGeneration(res);
   const missing = dev
     ? hostsFor(res.host).flatMap((h) =>
-        assetPathsFor(h, dev, generation)
+        assetPathsFor(h, dev)
           .filter((p) => !existsSync(p))
           .map((p) => `${h}: ${p}`),
       )
@@ -1533,178 +1492,6 @@ const checkLogWritable = (res: Resolved): DoctorCheck => {
   }
 };
 
-const GENERATION_HOSTS: CutoverHost[] = ["opencode", "cursor", "codex", "pi"];
-
-const generationPaths = (res: Resolved) => ({
-  home: res.home,
-  configDir: res.configDir,
-  stateDir: res.stateDir,
-  dev: res.dev,
-  workspace: res.cwd,
-  opencodeConfig: res.opencodeConfig,
-  cursorSettings: res.cursorSettings,
-  cursorMcp: res.cursorMcp,
-  cursorPluginDir: res.cursorPluginDir,
-  piConfig: path.join(res.home, ".pi", "config.json"),
-  piSettings: path.join(
-    res.env.PI_CODING_AGENT_DIR ?? path.join(res.home, ".pi", "agent"),
-    "settings.json",
-  ),
-  sessions: res.sessions,
-});
-
-const checkMixedGeneration = (res: Resolved): DoctorCheck => {
-  const paths = generationPaths(res);
-  const mixed = GENERATION_HOSTS.filter((host) => classifyHostGeneration(host, paths) === "mixed");
-  const target = readGenerationState(res.configDir).target;
-  if (mixed.length === 0) {
-    return {
-      id: "mixed_generation",
-      status: "pass",
-      detail: "no mixed legacy/v1 components detected",
-    };
-  }
-  const detail = `mixed legacy and v1 components: ${mixed.join(", ")}`;
-  if (target === "v1") {
-    return {
-      id: "mixed_generation",
-      status: "fail",
-      detail,
-      fix: "Run the approved v1 cutover preview/apply or remove the conflicting generation",
-    };
-  }
-  return {
-    id: "mixed_generation",
-    status: "warn",
-    detail: `${detail} (legacy target — cutover required before v1 activation)`,
-    fix: "Preview cutover with `workit init` or the CLI cutover flow before activating v1",
-  };
-};
-
-const checkLegacyComponent = (res: Resolved): DoctorCheck => {
-  const target = readGenerationState(res.configDir).target;
-  if (target !== "v1") {
-    return {
-      id: "legacy_component",
-      status: "pass",
-      detail: "legacy target — 0.x components expected",
-    };
-  }
-  const paths = generationPaths(res);
-  const legacy = GENERATION_HOSTS.filter(
-    (host) => classifyHostGeneration(host, paths) === "legacy",
-  );
-  if (legacy.length === 0) {
-    return {
-      id: "legacy_component",
-      status: "pass",
-      detail: "no legacy-only host components on v1 target",
-    };
-  }
-  return {
-    id: "legacy_component",
-    status: "fail",
-    detail: `legacy components remain on: ${legacy.join(", ")}`,
-    fix: "Complete the approved cutover or rollback to legacy before mixing generations",
-  };
-};
-
-const checkMissingV1Component = (res: Resolved): DoctorCheck => {
-  const target = readGenerationState(res.configDir).target;
-  if (target !== "v1") {
-    return { id: "missing_v1_component", status: "pass", detail: "legacy target" };
-  }
-  const paths = generationPaths(res);
-  const missing = GENERATION_HOSTS.filter((host) => {
-    const gen = classifyHostGeneration(host, paths);
-    return gen === "none" || gen === "legacy";
-  });
-  if (missing.length === 0) {
-    return {
-      id: "missing_v1_component",
-      status: "pass",
-      detail: "v1 components present on selected hosts",
-    };
-  }
-  return {
-    id: "missing_v1_component",
-    status: "fail",
-    detail: `missing v1 components on: ${missing.join(", ")}`,
-    fix: "Re-run the cutover apply step or the host install script for the missing target",
-  };
-};
-
-const checkActiveOldSession = (res: Resolved): DoctorCheck => {
-  if (res.sessions.length === 0) {
-    return {
-      id: "active_old_session",
-      status: "pass",
-      detail: "no session observations supplied to doctor",
-    };
-  }
-  const blocking = res.sessions.filter((s) => s.state === "active" || s.state === "unknown");
-  if (blocking.length === 0) {
-    return {
-      id: "active_old_session",
-      status: "pass",
-      detail: "no active or unknown old sessions observed",
-    };
-  }
-  const detail = blocking.map((s) => `${s.host}:${s.handle} (${s.state})`).join(", ");
-  const target = readGenerationState(res.configDir).target;
-  if (target === "v1") {
-    return {
-      id: "active_old_session",
-      status: "fail",
-      detail: `active or unknown sessions block v1 activation: ${detail}`,
-      fix: "Stop or account for old sessions before cutover apply",
-    };
-  }
-  return {
-    id: "active_old_session",
-    status: "warn",
-    detail: `old sessions still observed: ${detail}`,
-    fix: "Stop old sessions before previewing or applying v1 cutover",
-  };
-};
-
-const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
-  const gen = readGenerationState(res.configDir);
-  if (!gen.cutover?.backupId) {
-    return {
-      id: "managed_content_conflict",
-      status: "pass",
-      detail: "no cutover receipt to compare",
-    };
-  }
-  const receipt = readCutoverReceipt(gen.cutover.backupId, res.stateDir);
-  if (!receipt) {
-    return {
-      id: "managed_content_conflict",
-      status: "fail",
-      detail: `cutover receipt missing for backup ${gen.cutover.backupId}`,
-      fix: "Re-run cutover apply or rollback to a known state",
-    };
-  }
-  const conflicts = receipt.managedFiles.filter((entry) => {
-    const current = digestFile(entry.path);
-    return current !== null && current !== entry.installedDigest;
-  });
-  if (conflicts.length === 0) {
-    return {
-      id: "managed_content_conflict",
-      status: "pass",
-      detail: "managed content matches cutover receipt",
-    };
-  }
-  return {
-    id: "managed_content_conflict",
-    status: "fail",
-    detail: `managed content drifted since cutover on: ${conflicts.map((c) => c.path).join(", ")}`,
-    fix: "Reconcile managed files with the cutover receipt or roll back before re-applying",
-  };
-};
-
 // The checkout's `.workit/metadata.lock`. Writes reclaim a stale lock by
 // themselves, so a stale lock is a warning with an explicit cleanup command.
 const BLOCKING_LOCK_WARN_MS = 30_000;
@@ -1815,11 +1602,6 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkGithubIdentity,
   checkGitLabIdentity,
   checkLogWritable,
-  checkMixedGeneration,
-  checkLegacyComponent,
-  checkMissingV1Component,
-  checkActiveOldSession,
-  checkManagedContentConflict,
 ];
 
 // AR-11/CA-40: the installer guarantees the selected host itself — runtime,

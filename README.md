@@ -80,8 +80,6 @@ Older configs load unchanged: a `timezone` in the global `config.json`, and
 `defaultMention`, `greetings` or `greetingCutoff` in `youtrack.json`, are
 ignored.
 
-`workit cutover` is for migrating legacy installations.
-
 Manual setup per tool:
 
 <details>
@@ -337,12 +335,6 @@ local-dist install is behind the current runtime, or when OpenCode's
 frozen `@latest` package cache lags published `workit-opencode`, with the
 exact repair step; Cursor canonical `@latest` installs never fail on
 version metadata.
-
-```bash
-workit cutover preview [--hosts <hosts>] [--json]
-workit cutover apply   [--hosts <hosts>] [--resolution k=v] [--confirm]
-workit cutover rollback preview|apply <backupId> [--json] [--confirm]
-```
 
 </details>
 

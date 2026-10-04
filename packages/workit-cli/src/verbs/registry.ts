@@ -86,13 +86,6 @@ export const VERBS: readonly VerbEntry[] = [
     summary: "Remove workit host registrations interactively (~/.config/workit is kept)",
     load: () => import("./uninstall"),
   },
-  {
-    name: "cutover",
-    group: "setup",
-    usage: "workit cutover preview|apply|rollback ...",
-    summary: "Preview-first v1 cutover and rollback (apply requires --confirm)",
-    load: () => import("./cutover"),
-  },
   ...TASK_FAMILY_NAMES.map(family),
   {
     name: "action",

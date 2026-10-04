@@ -25,4 +25,3 @@ if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" cli; then
 fi
 
 echo "Codex plugin installed at $PLUGIN_DIR"
-echo "Complete an explicit v1 cutover before treating this as a generation switch."

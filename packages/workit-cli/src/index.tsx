@@ -85,7 +85,7 @@ export async function runInit() {
   const instance = render(
     <Wizard
       // Live auto-detect: installed hosts preselect, registered ones are
-      // tagged, detected Codex/Pi point at cutover.
+      // tagged.
       detection={detectHosts()}
       onExit={(complete, values) => {
         exits.push({ complete, values });
