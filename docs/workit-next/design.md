@@ -288,9 +288,9 @@ workit ledger list  [--pr n] [--type verdict|decision|ruling|ci.rerun] [--json]
 workit ledger check --pr n   → {"valid":bool,"basis":"fresh|carried|stale|none","verdict":{…},"head":"…","patchId":"…"}
 workit handoff [--json]      → resume brief: branch/task/endpoint, checks vs current tree, open findings, rulings, stack position, pr next, one "next command"
 ```
-- Storage: `<store>/ledger.jsonl`, append-only, repo-wide. A row is `{v,seq,at,type,actor:{host,session,agentId,attested},pr?,branch,head,base,patchId,…}`, and a superseding row references the older `seq`.
+- Storage: `<store>/ledger/ledger.jsonl`, append-only, repo-wide, one O_APPEND write per row (≤4096 bytes; an advisory lock on network filesystems). A row is `{v,id,at,type,actor:{host,session,agentId},pr?,branch,head,base,patchId,diffHash,…}`. As built (S13), rows carry a random `id`, not a stored `seq`: a lock-free appender cannot allocate one, so `seq` is the row's position on read. A superseding row references the older row's `id`, and only a row of the same type from the same session may supersede it (D18).
 - A verdict is refused (`blocked`) when `actor.session` ∈ authors(branch), where authors = the sessions in `commit.recorded` + `task.opened`. `--self` records a `self` label that `merge:"verified"` does not accept.
-- Validity: `head == current head` → fresh. `patchId == current patchId` → carried. Otherwise stale (pstack).
+- Validity (D18): `head == current head` (verdicts on a dirty worktree are refused) → fresh. `patchId` **and** `diffHash` (sha256 of the exact, whitespace-sensitive `base...head` diff minus line positions) equal → carried. Otherwise stale. `ledger check` returns `current` (basis) and `accepted` (current, passing, independent, no current independent failure); merge gates read only `accepted`. `--pr` resolves only through the CLI's own PR rows or a fetched forge ref.
 - `handoff` replaces the export/import ceremony, because the store in the common dir is shared across worktrees. The existing `workit handoff --task` stays until S15.
 
 ### 2.2 How evidence is keyed

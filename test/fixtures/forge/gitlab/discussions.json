@@ -1,0 +1,139 @@
+[
+  {
+    "id": "80b1b6491fd4ed2fa4e0ca3c5a4e1bd2d6f6a001",
+    "individual_note": true,
+    "notes": [
+      {
+        "id": 1001,
+        "type": null,
+        "body": "Thanks for the contribution!",
+        "author": {
+          "id": 5,
+          "username": "gitlab-bot",
+          "name": "gitlab-bot",
+          "state": "active",
+          "locked": false,
+          "web_url": "https://gitlab.com/gitlab-bot"
+        },
+        "created_at": "2026-10-03T17:15:28.625Z",
+        "system": false,
+        "noteable_type": "MergeRequest",
+        "resolvable": false,
+        "noteable_iid": 12
+      }
+    ]
+  },
+  {
+    "id": "cd528e76aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "individual_note": true,
+    "notes": [
+      {
+        "id": 1002,
+        "type": null,
+        "body": "added 1 commit",
+        "author": {
+          "id": 5,
+          "username": "reviewer",
+          "name": "reviewer",
+          "state": "active",
+          "locked": false,
+          "web_url": "https://gitlab.com/reviewer"
+        },
+        "created_at": "2026-10-03T17:15:28.625Z",
+        "system": true,
+        "noteable_type": "MergeRequest",
+        "resolvable": false,
+        "noteable_iid": 12
+      }
+    ]
+  },
+  {
+    "id": "09560d7bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "individual_note": false,
+    "notes": [
+      {
+        "id": 1003,
+        "type": "DiffNote",
+        "body": "Please handle the empty case here before merging.",
+        "author": {
+          "id": 5,
+          "username": "reviewer",
+          "name": "reviewer",
+          "state": "active",
+          "locked": false,
+          "web_url": "https://gitlab.com/reviewer"
+        },
+        "created_at": "2026-10-03T17:15:28.625Z",
+        "system": false,
+        "noteable_type": "MergeRequest",
+        "resolvable": true,
+        "noteable_iid": 12,
+        "resolved": false,
+        "position": {
+          "base_sha": "{{BASE}}",
+          "start_sha": "{{BASE}}",
+          "head_sha": "{{HEAD}}",
+          "old_path": "src/a.ts",
+          "new_path": "src/a.ts",
+          "position_type": "text",
+          "old_line": null,
+          "new_line": 10
+        }
+      },
+      {
+        "id": 1004,
+        "type": null,
+        "body": "Will do",
+        "author": {
+          "id": 5,
+          "username": "octo",
+          "name": "octo",
+          "state": "active",
+          "locked": false,
+          "web_url": "https://gitlab.com/octo"
+        },
+        "created_at": "2026-10-03T17:15:28.625Z",
+        "system": false,
+        "noteable_type": "MergeRequest",
+        "resolvable": true,
+        "noteable_iid": 12,
+        "resolved": false
+      }
+    ]
+  },
+  {
+    "id": "ec6d95a5cccccccccccccccccccccccccccccccc",
+    "individual_note": false,
+    "notes": [
+      {
+        "id": 1005,
+        "type": "DiffNote",
+        "body": "Nit: rename.",
+        "author": {
+          "id": 5,
+          "username": "reviewer",
+          "name": "reviewer",
+          "state": "active",
+          "locked": false,
+          "web_url": "https://gitlab.com/reviewer"
+        },
+        "created_at": "2026-10-03T17:15:28.625Z",
+        "system": false,
+        "noteable_type": "MergeRequest",
+        "resolvable": true,
+        "noteable_iid": 12,
+        "resolved": true,
+        "position": {
+          "base_sha": "{{BASE}}",
+          "start_sha": "{{BASE}}",
+          "head_sha": "{{HEAD}}",
+          "old_path": "src/b.ts",
+          "new_path": "src/b.ts",
+          "position_type": "text",
+          "old_line": null,
+          "new_line": 3
+        }
+      }
+    ]
+  }
+]

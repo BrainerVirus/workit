@@ -215,6 +215,23 @@ export type WorktreeTree = {
 };
 
 /**
+ * Copy the index and keep its mtime. Git trusts an entry's cached stat only
+ * when the entry is older than the index file ("racy git"). An entry written
+ * in the same timestamp tick as the index is re-hashed instead. A plain copy
+ * stamps the index with the current time, so a same-size rewrite in that
+ * tick would read as clean. That is common on git builds that compare whole
+ * seconds (macOS). The copy's mtime is floored one microsecond below the
+ * original: an older index only makes more entries racy, which is the safe
+ * direction.
+ */
+const seedIndex = (from: string, to: string): void => {
+  fs.copyFileSync(from, to);
+  const { atimeNs, mtimeNs } = fs.statSync(from, { bigint: true });
+  const seconds = (ns: bigint): number => (Number(ns / 1000n) - 1) / 1e6;
+  fs.utimesSync(to, seconds(atimeNs), seconds(mtimeNs));
+};
+
+/**
  * The tree the worktree would commit right now, including unstaged and
  * untracked (non-ignored) files. Built in a throwaway index
  * (GIT_INDEX_FILE + `git add -A` + `git write-tree`), so the real index, HEAD
@@ -241,7 +258,7 @@ export function worktreeTree(
     const tempIndex = path.join(scratch, "index");
     // Seeding from the real index keeps git's stat cache, so `add -A` only
     // rehashes files that actually changed.
-    if (fs.existsSync(indexPath)) fs.copyFileSync(indexPath, tempIndex);
+    if (fs.existsSync(indexPath)) seedIndex(indexPath, tempIndex);
     const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
     const untracked = git(top, ["ls-files", "--others", "--exclude-standard", "-z"], {
       env,
@@ -354,6 +371,101 @@ export function remoteTip(
   return { ok: true, sha: null };
 }
 
+export type FetchResult =
+  | { ok: true }
+  | { ok: false; code: "invalid_input" | "unavailable" | "busy"; error: string };
+
+/**
+ * `git fetch --no-tags --no-recurse-submodules --no-write-fetch-head
+ * <remote> <refspec…>` under the watchdog (no prompts, bounded). Pass bare
+ * object ids (no `:dst`) for a pure read: the objects arrive, no ref moves.
+ * Contention on a repository lock is `busy`.
+ */
+export function fetchRefs(
+  cwd: string,
+  remote: string,
+  refspecs: readonly string[],
+  options: { timeoutMs?: number } = {},
+): FetchResult {
+  if (
+    !safeArg(remote) ||
+    refspecs.length === 0 ||
+    !refspecs.every((spec) => safeArg(spec.replace(/^\+/u, "")))
+  )
+    return { ok: false, code: "invalid_input", error: "remote and refspecs must not start with -" };
+  const timeoutMs = options.timeoutMs ?? GIT_TIMEOUTS.network;
+  const fetched = gitNetwork(
+    cwd,
+    [
+      "fetch",
+      "--no-tags",
+      "--no-recurse-submodules",
+      "--no-write-fetch-head",
+      "--quiet",
+      remote,
+      ...refspecs,
+    ],
+    timeoutMs,
+  );
+  if (fetched.ok) return { ok: true };
+  if (/\.lock'?:? File exists|unable to lock|another git process/iu.test(fetched.stderr))
+    return {
+      ok: false,
+      code: "busy",
+      error: `git fetch ${redactRemote(remote)}: the repository is locked by another git process`,
+    };
+  return {
+    ok: false,
+    code: "unavailable",
+    error: fetched.timedOut
+      ? `git fetch ${redactRemote(remote)} timed out after ${timeoutMs} ms`
+      : `git fetch ${redactRemote(remote)} failed (unreachable, not authorized, or ref missing)`,
+  };
+}
+
+/** The configured remote names. */
+export function remoteNames(cwd: string): string[] {
+  return (git(cwd, ["remote"]).stdout ?? "")
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+/** The absolute git common dir (shared by every worktree), or null outside a repository. */
+export function gitCommonDir(cwd: string): string | null {
+  return line(git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
+}
+
+/** True when `rev` names a commit present in the local object store. */
+export function hasCommit(cwd: string, rev: string): boolean {
+  if (!safeArg(rev)) return false;
+  return git(cwd, ["cat-file", "-e", `${rev}^{commit}`]).ok;
+}
+
+/** The commit a local ref (e.g. refs/remotes/origin/main) points at, or null. */
+export function resolveRef(cwd: string, ref: string): string | null {
+  if (!safeArg(ref)) return null;
+  return line(git(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]));
+}
+
+/**
+ * Commits `head` lacks from `base` (behind) and has on top of it (ahead), and
+ * whether `base` is already an ancestor of `head`. Null when either side
+ * does not resolve locally.
+ */
+export function aheadBehind(
+  cwd: string,
+  base: string,
+  head: string,
+): { ahead: number; behind: number; upToDate: boolean } | null {
+  if (!safeArg(base) || !safeArg(head)) return null;
+  const counted = line(git(cwd, ["rev-list", "--left-right", "--count", `${base}...${head}`]));
+  const match = counted ? /^(\d+)\s+(\d+)$/u.exec(counted) : null;
+  if (!match) return null;
+  const upToDate = git(cwd, ["merge-base", "--is-ancestor", base, head]).ok;
+  return { behind: Number(match[1]), ahead: Number(match[2]), upToDate };
+}
+
 const config = (cwd: string, key: string): string | null =>
   line(git(cwd, ["config", "--get", key]));
 
@@ -369,10 +481,7 @@ export function currentBranch(cwd: string): string | null {
  */
 export function pushRemoteName(cwd: string, branch?: string | null): string | null {
   const name = branch ?? currentBranch(cwd);
-  const remotes = (git(cwd, ["remote"]).stdout ?? "")
-    .split(/\r?\n/u)
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const remotes = remoteNames(cwd);
   const candidates = [
     name ? config(cwd, `branch.${name}.pushRemote`) : null,
     config(cwd, "remote.pushDefault"),

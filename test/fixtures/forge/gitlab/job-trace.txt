@@ -1,0 +1,25 @@
+[0KRunning with gitlab-runner 18.4.0 (139a0b62)[0;m
+[0K  on green-1.saas-linux-small-amd64.runners-manager.gitlab.com/default JLgUopmM, system ID: s_deaa2ca09de7[0;m
+section_start:1759511450:prepare_executor
+[0K[0K[36;1mPreparing the "docker+machine" executor[0;m[0;m
+section_end:1759511455:prepare_executor
+[0Ksection_start:1759511460:step_script
+[0K[0K[36;1mExecuting "step_script" stage of the job script[0;m[0;m
+[32;1m$ bun test[0;m
+bun test v1.3.0
+src/a.test.ts:
+(pass) parses input [0.41ms]
+(fail) handles the empty case [1.02ms]
+error: expect(received).toBe(expected)
+Expected: 0
+Received: undefined
+      at <anonymous> (src/a.test.ts:12:20)
+ 1 pass
+ 1 fail
+Ran 2 tests across 1 files. [18.00ms]
+section_end:1759511470:step_script
+[0Ksection_start:1759511470:cleanup_file_variables
+[0K[0K[36;1mCleaning up project directory and file based variables[0;m[0;m
+section_end:1759511471:cleanup_file_variables
+[0K[31;1mERROR: Job failed: exit code 1
+[0;m

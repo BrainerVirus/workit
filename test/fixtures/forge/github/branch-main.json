@@ -1,0 +1,21 @@
+{
+  "name": "main",
+  "protected": true,
+  "protection": {
+    "enabled": true,
+    "required_status_checks": {
+      "enforcement_level": "everyone",
+      "contexts": ["fast checks", "test (ubuntu-latest)"],
+      "checks": [
+        {
+          "context": "fast checks",
+          "app_id": 15368
+        },
+        {
+          "context": "test (ubuntu-latest)",
+          "app_id": 15368
+        }
+      ]
+    }
+  }
+}

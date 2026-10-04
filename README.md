@@ -275,8 +275,21 @@ workit gc [--dry-run]    # prune .workit/recovery to the newest 3 copies per rec
 workit <family> <action> [--payload <json|@file|->] [--task <id>] [--confirm] [--json]
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--json]
 workit handoff --task <id> [--json]
+workit pr status [--pr <n>] [--json]  # checks + failing log tails, open threads, behind-base, next action
+workit ci wait [--timeout 20m] [--json]  # exit 0 green, 1 red, 4 still pending at the timeout
+workit ci rerun --failed --reason flake|infra [--force]  # once per PR head without --force
 workit uninstall         # remove host registrations (keeps ~/.config/workit)
 ```
+
+`pr status` and `ci` read GitHub through `gh api` and GitLab through
+`glab api`, pick the forge from the push remote host (PRs of a fork are
+looked up in its parent or `upstream`), and pass the workspace account's
+credential on every call (`vcs.tokenFile`, else `gh auth token --user
+<vcs.account>`) without switching the active `gh`/`glab` account. A login
+that is not the workspace `vcs.account` is `blocked` (exit 3) with a login
+hint. `next` also reports review, draft, merge-queue and other merge
+blockers; only required checks gate. `pr status` never moves a ref, and
+every forge and git network call has a timeout.
 
 The packed CLI is a self-contained Node bundle; Node.js 24+ is required.
 
