@@ -7,36 +7,37 @@ description: Use when tests may be tautological, low-value or noisy, before trus
 
 A tautological test recomputes its expected value the way the code does, so it
 passes by construction and can never disagree with the code. Find those and
-other low-value tests, then remove or replace them. Never delete blind.
+other low-value tests and triage each one. The audit is advice: never delete
+or weaken a test to make it quiet.
 
 ## Method
 
-1. Run the static audit on the change (or on paths you were asked about):
+1. Run the audit on the change (or the paths you were asked about):
    `workit test-audit --diff --json` or `workit test-audit <paths> --json`.
-   Each finding has file:line, rule, why, and a suggested fix.
+   Each finding has file:line, rule, severity, confidence, why and a fix.
+   Prose checks are `info`; add `--min-severity info` to see them.
 2. Triage every finding with "Name the Break": which wrong production change
-   should make this test fail? Then pick one:
-   - Replace when the behavior matters but the oracle is wrong: assert the
-     public result against an independent oracle (a literal from a worked
-     example, the spec, an external contract).
-   - Remove when the test cannot fail for a real bug: `always-true`, a mock
-     asserted on its own return, a snapshot of a constant, a byte copy of a
-     generated file, a duplicate body.
-   - Keep with a reason when the value is an external protocol constant;
-     mark it `// workit-test-audit-ignore <rule> -- <reason>`.
-3. Prose `toContain` checks: assert what the text drives (a field, an exit
-   code, a decision) or a short stable token, not wording.
-4. Verify the replacements catch real breaks with diff-scoped mutation:
-   `workit test-audit --mutate --diff`. A surviving mutant names a change
-   no test notices; add the missing case, not a weaker assertion.
-5. Keep cleanup of untouched tests out of a feature diff; propose it as its
+   should make this test fail? Then choose one, and say which:
+   - Replace: keep the behavior, fix the oracle. Assert the public result
+     against an independent expected value (a literal from a worked example,
+     the spec, an external contract). Plant the bug you named, watch the new
+     test fail, then revert the plant.
+   - Keep with a reason: the value is an external contract or the finding is
+     wrong. Mark it `// workit-test-audit-ignore <rule> -- <reason>`.
+   - Remove: only `assertion-free` or `duplicate-body` tests, and only after
+     checking that no other test loses unique behavior with it.
+3. Check the replacements catch real breaks: `workit test-audit --mutate --diff`
+   (pass `--test-cmd "<runner> {files}"` to run only the related tests). A
+   surviving mutant names a change no test notices; add the missing case.
+4. Leave untouched tests outside the diff alone; propose that cleanup as its
    own change.
 
 ## Completion
 
-No high-severity findings remain on the diff, and no mutant survives on the
-changed lines (or each survivor is recorded as an accepted limitation):
+Every finding is triaged (replaced with a test that failed on a planted bug,
+kept with an ignore comment and reason, or removed as above) and the configured
+tests are green:
 
 ```sh
-workit test-audit --diff --fail-on high && workit test-audit --mutate --diff
+workit check test
 ```

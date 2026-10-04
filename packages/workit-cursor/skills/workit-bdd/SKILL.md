@@ -6,7 +6,8 @@ description: Use when turning a requirement, issue or acceptance criterion into 
 # Behavior first: Given/When/Then
 
 Write each acceptance criterion as Given/When/Then before any code, then let
-it name the test and pick the seam. A test reads like the spec it proves.
+it name the test and pick the seam. This skill shapes the scenarios; the
+RED/GREEN loop itself is workit-behavioral-tdd.
 
 ## Method
 
@@ -17,23 +18,25 @@ it name the test and pick the seam. A test reads like the spec it proves.
    observed through: a CLI verb, a public function, an HTTP route. Ideally one
    seam per feature. Write the seams down; do not test at an unagreed seam.
 3. Name the tests after the scenarios. The test name is the Given/When/Then
-   sentence; the body is arrange (Given), act (When), assert (Then).
+   sentence; the body is arrange (Given), act (When), assert (Then). Expected
+   values come from the scenario (a literal from a worked example or the
+   spec), never from the code.
 4. Use Gherkin only where the repo already does (`.feature` files with
    playwright-bdd, cucumber, jest-cucumber). Otherwise plain test names carry
    the scenario; do not add a BDD framework.
-5. Build in vertical tracer bullets: one scenario RED, the smallest change to
-   GREEN, then the next scenario. Never write all tests first.
+5. Build in vertical slices, one scenario at a time, with
+   workit-behavioral-tdd: run `workit check test` RED for the new scenario,
+   make the smallest change, run `workit check test` GREEN, then the next.
 6. Mock only at system boundaries: network, clock, randomness, other
-   processes, sometimes the filesystem. Never mock the unit or its internal
+   processes, sometimes the filesystem. Never the unit or its internal
    collaborators; use the real thing or an in-memory adapter behind a port.
-7. Expected values come from the scenario, never from the code: a literal from
-   a worked example, the spec or an external contract.
 
 ## Completion
 
-Every acceptance criterion maps to a named test at an agreed seam, each one
-was seen RED before GREEN, and the audit finds no tautologies:
+Every acceptance criterion maps to a named test at an agreed seam, each was
+seen RED then GREEN through `workit check test`, and the new tests have no
+tautologies:
 
 ```sh
-workit test-audit --diff --fail-on high
+workit test-audit --diff && workit check test
 ```
