@@ -292,8 +292,8 @@ test("G a fresh branch with no task, W check runs, T a task bound to the branch 
     evidenceId: expect.any(String),
   });
   const implicitId = first.json().data.task.id;
-  // The store lives in the git common dir, not in the checkout.
-  expect(existsSync(path.join(bare, ".workit"))).toBe(false);
+  // The store lives in the git common dir; the checkout only carries the 2.x marker.
+  expect(existsSync(path.join(bare, ".workit", "tasks"))).toBe(false);
   const bound = new TaskStore(bare).implicitTask({
     provenance: {
       kind: "agent_reported",

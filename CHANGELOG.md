@@ -36,15 +36,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   most recent events (the latest state is never lost) and removes
   unreferenced blobs; it reports a 2.x `.workit/recovery/` and deletes it only
   with `--prune-recovery --yes`.
-- **Migration:** on first use, a 2.x `.workit/` store (tasks and workspace
-  record) migrates into the new store once, under the checkout lock, with a
-  backup under `legacy/<checkout>/v2/` and a one-line note on stderr.
-  Migrated tasks keep their ids and contents (inspect output is unchanged) and
+- **Migration:** a 2.x `.workit/` store (tasks and workspace record)
+  migrates on the first CLI command or write in that checkout, under the
+  checkout lock and the 2.x store's own `metadata.lock` (a live 2.x writer
+  makes it `busy`; nothing is migrated under it), with a backup under
+  `legacy/<checkout>/v2/` and a one-line note on stderr. Per-turn hooks and
+  other reads never migrate; they say `run workit task status`. Tasks migrate
+  by content digest, so a 2.x write after an interrupted run is migrated as a
+  further event on the next run; each 2.x file is replaced by a marker only
+  while it still holds the migrated bytes. Migrated tasks keep their ids and
+  contents (inspect output is unchanged), join the checkout's workspace, and
   are not bound to a branch: list them with `workit task status --all`, bind
   one with `workit task adopt <id>`. `.workit/workspace.json` becomes a marker
-  whose critical `store` field makes 2.x runtimes fail closed with an upgrade
-  message instead of writing a second store. A plain directory whose
-  `.workit/` store later becomes a git repository moves it into the git store.
+  (written into every checkout 3.0 writes for, git-ignored) whose critical
+  `store` field makes 2.x runtimes fail closed with an upgrade message instead
+  of starting a second store. A plain directory's `.workit/` store moves into
+  the git store after `git init`.
+- A checkout is its worktree top level for every host (a subdirectory is the
+  same checkout). Implicit-task creation is serialized per key across the
+  store; with duplicate open tasks on a key the oldest is used and `workit
+  task status` names the others with a close command. During a rebase the key
+  is the branch being rebased; after `git branch -m` `task status` offers the
+  exact `workit task adopt` command. reftable repositories and bare
+  repositories resolve through git.
 
 ### Added
 

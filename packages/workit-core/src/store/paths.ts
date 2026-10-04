@@ -22,8 +22,10 @@ export type StoreLocation = {
   dir: string;
   /** True in a git repository (shared by its worktrees). */
   shared: boolean;
-  /** The worktree's own git dir and top level, when read from the filesystem. */
-  git?: { gitDir: string; top: string };
+  /** The worktree top level (null outside git, or in a bare repository). */
+  top: string | null;
+  /** The worktree's own git dir, when read from the filesystem. */
+  git?: { gitDir: string; top: string | null; reftable: boolean };
 };
 
 export type TaskKey = {
@@ -81,17 +83,43 @@ const DISCOVERY_ENV = [
   "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 ];
 
-type FastGit = { kind: "none" } | { kind: "repo"; common: string; gitDir: string; top: string };
+type FastGit =
+  | { kind: "none" }
+  | { kind: "repo"; common: string; gitDir: string; top: string | null; reftable: boolean };
+
+/** A directory that is itself a git dir (a bare repository, or inside `.git`). */
+const isGitDir = (dir: string): boolean => {
+  try {
+    return (
+      fs.statSync(path.join(dir, "HEAD")).isFile() &&
+      fs.statSync(path.join(dir, "objects")).isDirectory() &&
+      fs.statSync(path.join(dir, "refs")).isDirectory()
+    );
+  } catch {
+    return false;
+  }
+};
+
+const reftableRefs = (common: string): boolean => {
+  try {
+    return /^\s*refstorage\s*=\s*reftable\s*$/imu.test(
+      fs.readFileSync(path.join(common, "config"), "utf8"),
+    );
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Find the repository the way git does for the plain layouts, without
- * spawning git: walk up to the first `.git` (stopping at a filesystem
+ * spawning git: from the canonical path (symlinks resolved first, as git
+ * does), walk up to the first `.git` or git dir (stopping at a filesystem
  * boundary, like git), then follow a `.git` file and `commondir`. Null when
  * the layout is anything else, so the caller asks git.
  */
 function fastGit(root: string): FastGit | null {
   if (DISCOVERY_ENV.some((name) => process.env[name])) return null;
-  let dir = root;
+  let dir = real(root);
   let device: number | null = null;
   for (;;) {
     let stat: fs.Stats;
@@ -107,8 +135,10 @@ function fastGit(root: string): FastGit | null {
     try {
       entry = fs.statSync(dotGit);
     } catch {}
+    let gitDir: string | null = null;
+    let top: string | null = null;
     if (entry) {
-      let gitDir: string;
+      top = dir;
       if (entry.isDirectory()) gitDir = dotGit;
       else if (entry.isFile()) {
         let text = "";
@@ -122,6 +152,8 @@ function fastGit(root: string): FastGit | null {
         gitDir = path.resolve(dir, match[1].trim());
       } else return null;
       if (!fs.existsSync(path.join(gitDir, "HEAD"))) return null;
+    } else if (isGitDir(dir)) gitDir = dir;
+    if (gitDir) {
       let common = gitDir;
       try {
         common = path.resolve(
@@ -130,7 +162,13 @@ function fastGit(root: string): FastGit | null {
         );
       } catch {}
       if (!fs.existsSync(path.join(common, "objects"))) return null;
-      return { kind: "repo", common: real(common), gitDir: real(gitDir), top: real(dir) };
+      return {
+        kind: "repo",
+        common: real(common),
+        gitDir: real(gitDir),
+        top: top === null ? null : real(top),
+        reftable: reftableRefs(common),
+      };
     }
     const parent = path.dirname(dir);
     if (parent === dir) return { kind: "none" };
@@ -141,6 +179,9 @@ function fastGit(root: string): FastGit | null {
 /**
  * The store directory for a checkout root, or an error message when git
  * cannot answer for a directory that is (or may be) inside a repository.
+ * `top` is the worktree's top level (null for a bare repository or a git
+ * dir); a checkout is identified by it, so every subdirectory of a worktree
+ * is the same checkout.
  */
 export function resolveStore(root: string): StoreLocation | Error {
   root = path.resolve(root);
@@ -150,45 +191,119 @@ export function resolveStore(root: string): StoreLocation | Error {
   try {
     directory = fs.statSync(root).isDirectory();
   } catch {}
-  if (!directory) return { dir: path.join(root, ".workit"), shared: false };
+  if (!directory) return { dir: path.join(root, ".workit"), shared: false, top: null };
   const fast = fastGit(root);
-  if (fast?.kind === "none") return { dir: path.join(root, ".workit"), shared: false };
+  if (fast?.kind === "none") return { dir: path.join(root, ".workit"), shared: false, top: null };
   if (fast?.kind === "repo")
     return {
       dir: path.join(fast.common, "workit"),
       shared: true,
-      git: { gitDir: fast.gitDir, top: fast.top },
+      top: fast.top,
+      git: { gitDir: fast.gitDir, top: fast.top, reftable: fast.reftable },
     };
   const run = gitRun(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const common = run.stdout.trim();
-  if (run.ok && common)
-    return { dir: path.join(real(path.resolve(root, common)), "workit"), shared: true };
+  if (run.ok && common) {
+    const top = gitRun(root, ["rev-parse", "--path-format=absolute", "--show-toplevel"]);
+    return {
+      dir: path.join(real(path.resolve(root, common)), "workit"),
+      shared: true,
+      top: top.ok && top.stdout.trim() ? real(top.stdout.trim()) : null,
+    };
+  }
   if (run.missing || (!run.ok && NOT_A_REPO.test(run.stderr)))
-    return { dir: path.join(root, ".workit"), shared: false };
+    return { dir: path.join(root, ".workit"), shared: false, top: null };
   return new Error(
     `cannot locate the workit store: git rev-parse failed (${run.stderr.trim().split("\n")[0] || "no output"}); fix the repository (git status should work here)`,
   );
 }
 
+/** The branch a rebase in progress will update (HEAD is detached meanwhile). */
+const rebasingBranch = (gitDir: string): string | null => {
+  for (const state of ["rebase-merge", "rebase-apply"]) {
+    try {
+      const ref = fs.readFileSync(path.join(gitDir, state, "head-name"), "utf8").trim();
+      const match = /^refs\/heads\/(.+)$/u.exec(ref);
+      if (match) return match[1];
+    } catch {}
+  }
+  return null;
+};
+
 /** The implicit task key for `root` (see the module comment). */
 export function resolveTaskKey(root: string, location: StoreLocation): TaskKey {
   if (!location.shared) return { key: `dir-${shortHash(root)}`, kind: "dir", branch: null };
-  if (location.git) {
+  const branchKey = (name: string): TaskKey => ({ key: name, kind: "branch", branch: name });
+  // reftable keeps refs out of the filesystem; HEAD is a `refs/heads/.invalid` stub.
+  if (location.git && !location.git.reftable) {
     let head = "";
     try {
       head = fs.readFileSync(path.join(location.git.gitDir, "HEAD"), "utf8").trim();
     } catch {}
     const ref = /^ref: refs\/heads\/(.+)$/u.exec(head);
-    if (ref) return { key: ref[1], kind: "branch", branch: ref[1] };
-    if (/^[0-9a-f]{40,64}$/u.test(head))
-      return { key: `detached-${shortHash(location.git.top)}`, kind: "detached", branch: null };
+    if (ref && ref[1] !== ".invalid") return branchKey(ref[1]);
+    if (/^[0-9a-f]{40,64}$/u.test(head)) {
+      const rebasing = rebasingBranch(location.git.gitDir);
+      if (rebasing) return branchKey(rebasing);
+      return {
+        key: `detached-${shortHash(location.git.top ?? location.git.gitDir)}`,
+        kind: "detached",
+        branch: null,
+      };
+    }
   }
   const branch = gitRun(root, ["symbolic-ref", "-q", "--short", "HEAD"]);
   const name = branch.ok ? branch.stdout.trim() : "";
-  if (name) return { key: name, kind: "branch", branch: name };
+  if (name && name !== ".invalid") return branchKey(name);
+  const gitDir = gitRun(root, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+  if (gitDir.ok && gitDir.stdout.trim()) {
+    const rebasing = rebasingBranch(gitDir.stdout.trim());
+    if (rebasing) return branchKey(rebasing);
+  }
   const top = gitRun(root, ["rev-parse", "--path-format=absolute", "--show-toplevel"]);
   const worktree = top.ok && top.stdout.trim() ? top.stdout.trim() : root;
   return { key: `detached-${shortHash(real(worktree))}`, kind: "detached", branch: null };
+}
+
+/**
+ * The checkout a path belongs to: its worktree's top level in a git
+ * repository (so every subdirectory is the same checkout), else the path.
+ */
+export function checkoutRootOf(root: string, location?: StoreLocation | Error): string {
+  const resolved = path.resolve(root);
+  let canonical = resolved;
+  try {
+    canonical = fs.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+  const found = location ?? resolveStore(canonical);
+  if (found instanceof Error || !found.shared || !found.top) return canonical;
+  try {
+    return fs.realpathSync(found.top);
+  } catch {
+    return canonical;
+  }
+}
+
+/** Branches renamed to `branch`, from the reflogs ("Branch: renamed refs/heads/a to refs/heads/b"). */
+export function renamedFrom(location: StoreLocation, branch: string): string[] {
+  const logs = [
+    ...(location.git ? [path.join(location.git.gitDir, "logs", "HEAD")] : []),
+    path.join(path.dirname(location.dir), "logs", "refs", "heads", ...branch.split("/")),
+  ];
+  const names = new Set<string>();
+  for (const file of logs) {
+    let text = "";
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const match of text.matchAll(/Branch: renamed refs\/heads\/(\S+) to refs\/heads\/(\S+)/gu))
+      if (match[2] === branch) names.add(match[1]);
+  }
+  return [...names];
 }
 
 /**

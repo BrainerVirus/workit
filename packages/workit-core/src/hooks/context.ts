@@ -6,7 +6,13 @@ import { canonicalJson } from "../core/task-contract";
 import { isObservedCheck, type Freshness } from "../core/task-evaluation";
 import { worktreeSignal } from "../git/rev";
 import { WorkitCore, type OperationContext } from "../core/task-engine";
-import { fileSignature, racySignature, TaskStore, type TaskIndexEntry } from "../core/task-store";
+import {
+  fileSignature,
+  MIGRATION_PENDING,
+  racySignature,
+  TaskStore,
+  type TaskIndexEntry,
+} from "../core/task-store";
 import { capabilitiesFor, type HostDescriptor } from "./descriptor";
 import type { HookInput } from "./protocol";
 
@@ -240,6 +246,9 @@ export const sessionContextText = (
   try {
     const store = new TaskStore(input.cwd);
     const listed = store.listTaskIndex();
+    // Hooks never migrate (hot path, possibly a live 2.x writer): say how.
+    if (!listed.ok && listed.code === "needs_input" && listed.error.startsWith(MIGRATION_PENDING))
+      return `<workit-contract>\n${invariantBootstrap()}\n[workit: ${listed.error}]${options.addendum ? `\n${options.addendum}` : ""}\n</workit-contract>`;
     if (!listed.ok) throw new Error(listed.error);
     const entry =
       currentTaskEntry(listed.data, session, descriptor.context.task) ??

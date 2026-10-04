@@ -586,11 +586,13 @@ Every branch is one implicit task: the first note, check, ledger record or
 commit on a branch creates it, and every task operation without a `taskId`
 applies to it, so agents never manage ids. A detached HEAD is keyed by its
 worktree and a non-git directory by its path. An explicit `task start` takes
-the branch over; closing a task frees it. On first use, 3.0 migrates a 2.x
-`.workit/` store (tasks and workspace record) into the new store, keeps a
-backup under `legacy/`, prints one line, and replaces `.workit/workspace.json`
-with a marker that 2.x runtimes reject with an upgrade message instead of
-writing beside the new store. Migrated tasks keep their ids and are not bound
+the branch over; closing a task frees it. The first CLI command (or any
+write) in a checkout with a 2.x `.workit/` store migrates it into the new
+store, under the 2.x store's own lock (never while a 2.x writer holds it),
+keeps a backup under `legacy/`, and prints one line; host hooks never migrate
+and say to run `workit task status`. `.workit/workspace.json` becomes a
+marker, written into every checkout 3.0 writes for, that 2.x runtimes reject
+with an upgrade message instead of starting a second store. Migrated tasks keep their ids and are not bound
 to a branch: `workit task status --all` lists them and `workit task adopt <id>`
 binds one. New branch
 setup shows both the existing local base SHA and remote base SHA in its

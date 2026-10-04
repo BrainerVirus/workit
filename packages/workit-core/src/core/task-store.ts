@@ -25,7 +25,7 @@
 // the checkout lock, backup kept). The migrated `.workit/workspace.json` is
 // replaced by a marker that 2.x readers reject with an upgrade message.
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import path from "node:path";
 import {
@@ -79,7 +79,9 @@ import {
 } from "../store/event-log";
 import { diff } from "../store/patch";
 import {
+  checkoutRootOf,
   checkoutSlug,
+  renamedFrom,
   resolveStore,
   resolveTaskKey,
   type StoreLocation,
@@ -96,7 +98,10 @@ import {
   type ReducedTask,
 } from "../store/reduce";
 
-import { reportMigration } from "../store/notes";
+import { migrationReporterInstalled, reportMigration } from "../store/notes";
+
+/** Prefix of the `needs_input` error a read gets while a migration is pending. */
+export const MIGRATION_PENDING = "workit migration pending";
 
 export type { TaskKey } from "../store/paths";
 
@@ -132,6 +137,9 @@ export type TaskStoreOptions = {
   lockTimeoutMs?: number;
   /** Who the events are attributed to (default: WORKIT_HOST/WORKIT_SESSION_ID/WORKIT_AGENT_ID). */
   actor?: EventActor;
+  /** Migrate a pending 2.x store on reads too (default: only when a host
+   * installed a migration reporter, i.e. the CLI; writes always migrate). */
+  migrateOnRead?: boolean;
 };
 
 export type MutationContext = { now: Utc; revision: Revision };
@@ -258,6 +266,8 @@ export const racySignature = (signature: string): boolean => {
 };
 
 const now = (): Utc => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+const oldestFirst = (left: TaskIndexEntry, right: TaskIndexEntry): number =>
+  left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
 
 let cachedRuntimeVersion: string | null = null;
 /** Version of the package that hosts this runtime; recorded with state so a
@@ -371,17 +381,28 @@ type Snapshot = {
 };
 
 export class TaskStore {
-  /** The checkout root this store serves (git operations run here). */
+  /** The checkout this store serves: the worktree top level in a git
+   * repository (every subdirectory is the same checkout), else the
+   * directory. Git operations run here. */
   readonly root: string;
+  /** The directory the store was opened from (a 2.x store may live there). */
+  private readonly origin: string;
   private readonly lockTimeoutMs: number;
   private readonly actor: EventActor;
+  private readonly migrateOnRead: boolean | undefined;
   private located: StoreLocation | Error | undefined;
   private migrationChecked = false;
+  /** Task logs past AUTO_COMPACT_BYTES, folded after the writing lock is released. */
+  private readonly compactDue = new Set<Id>();
 
   constructor(root: string, options: TaskStoreOptions = {}) {
-    this.root = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
+    const resolved = path.resolve(root);
+    this.origin = fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
+    this.located = resolveStore(this.origin);
+    this.root = checkoutRootOf(this.origin, this.located);
     this.lockTimeoutMs = options.lockTimeoutMs ?? defaultLockTimeout();
     this.actor = options.actor ?? envActor();
+    this.migrateOnRead = options.migrateOnRead;
   }
 
   /** Where this checkout's store lives. */
@@ -529,7 +550,7 @@ export class TaskStore {
    * (e.g. a removed worktree) is moved to this checkout.
    */
   implicitTask(input: ImplicitInput): Result<ImplicitTask | null> {
-    const ready = this.ready();
+    const ready = this.ready(input.create !== false);
     if (!ready.ok) return ready;
     const key = this.currentKey();
     if (!key.ok) return key;
@@ -543,21 +564,35 @@ export class TaskStore {
         ? success(task.revision, null, { task: task.data, created: false, key: key.data })
         : task;
     }
-    if (!found.data && input.create === false) return success(null, null, null);
-    return this.withLock<ImplicitTask | null>(this.paths().checkoutLock, () => {
-      const again = this.openTaskForKey(key.data.key);
+    if (input.create === false) {
+      // A lookup never binds or moves anything.
+      if (!found.data) return success(null, null, null);
+      const loaded = this.load(found.data.id);
+      if (!loaded.ok) return loaded;
+      return loaded.data
+        ? success(null, null, { task: loaded.data.record, created: false, key: key.data })
+        : success(null, null, null);
+    }
+    return this.withLock<ImplicitTask | null>(this.paths().checkoutLock, () =>
+      this.withKeyLock(key.data.key, () => this.implicitLocked(input, key.data)),
+    );
+  }
+
+  /** Find, move or create the implicit task (under the checkout and key locks). */
+  private implicitLocked(input: ImplicitInput, key: TaskKey): Result<ImplicitTask | null> {
+    {
+      const again = this.openTaskForKey(key.key);
       if (!again.ok) return again;
       if (again.data) {
-        const moved = this.bindLocked(again.data.id, key.data, input.now);
+        const moved = this.bindLocked(again.data.id, key, input.now);
         return moved.ok
-          ? success(moved.data.revision, null, { task: moved.data, created: false, key: key.data })
+          ? success(moved.data.revision, null, { task: moved.data, created: false, key })
           : moved;
       }
-      if (input.create === false) return success(null, null, null);
       const label =
-        key.data.kind === "branch"
-          ? `branch ${key.data.branch}`
-          : key.data.kind === "detached"
+        key.kind === "branch"
+          ? `branch ${key.branch}`
+          : key.kind === "detached"
             ? "a detached HEAD"
             : path.basename(this.root) || this.root;
       const intent: Intent = {
@@ -568,32 +603,55 @@ export class TaskStore {
       const created = this.createLocked(
         { intent, provenance: input.provenance, expectedWorkspaceRevision: null, now: input.now },
         false,
-        key.data,
+        key,
         false,
       );
       return created.ok
-        ? success(created.data.revision, null, { task: created.data, created: true, key: key.data })
+        ? success(created.data.revision, null, { task: created.data, created: true, key })
         : created;
-    });
+    }
   }
 
   /** Bind task `taskId` (any checkout, not closed) to this checkout's implicit key. */
   adoptTask(taskId: Id): Result<TaskRecord> {
     if (!validId(taskId)) return failure("invalid_input", "task ID is invalid", { taskId });
-    const ready = this.ready();
+    const ready = this.ready(true);
     if (!ready.ok) return ready;
     const key = this.currentKey();
     if (!key.ok) return key;
-    return this.withLock(this.paths().checkoutLock, () => {
-      const holder = this.openTaskForKey(key.data.key);
-      if (!holder.ok) return holder;
-      if (holder.data && holder.data.id !== taskId)
-        return failure(
-          "invalid_transition",
-          `${key.data.key} already has open task ${holder.data.id}; close it before adopting another`,
-          { taskId: holder.data.id },
-        );
-      return this.bindLocked(taskId, key.data);
+    return this.withLock(this.paths().checkoutLock, () =>
+      this.withKeyLock(key.data.key, () => {
+        const holder = this.openTaskForKey(key.data.key);
+        if (!holder.ok) return holder;
+        if (holder.data && holder.data.id !== taskId)
+          return failure(
+            "invalid_transition",
+            `${key.data.key} already has open task ${holder.data.id}; close it (\`workit task close\`) before adopting another`,
+            { taskId: holder.data.id },
+          );
+        return this.bindLocked(taskId, key.data);
+      }),
+    );
+  }
+
+  /**
+   * What `workit task status` reports about the current key: every open task
+   * bound to it (more than one is a duplicate; the oldest is the one used),
+   * and open tasks bound to a branch that was renamed to this one.
+   */
+  keyReport(): Result<{ key: TaskKey; bound: TaskIndexEntry[]; renamed: TaskIndexEntry[] }> {
+    const key = this.currentKey();
+    if (!key.ok) return key;
+    const all = this.listStoreIndex();
+    if (!all.ok) return all;
+    const open = all.data.filter((entry) => entry.status !== "closed").toSorted(oldestFirst);
+    const location = this.location();
+    const previous =
+      location.ok && key.data.branch ? renamedFrom(location.data, key.data.branch) : [];
+    return success(null, null, {
+      key: key.data,
+      bound: open.filter((entry) => entry.key === key.data.key),
+      renamed: open.filter((entry) => entry.key !== null && previous.includes(entry.key)),
     });
   }
 
@@ -613,13 +671,13 @@ export class TaskStore {
             provenance: provenance!,
             expectedWorkspaceRevision: expectedWorkspaceRevision ?? null,
           };
-    const ready = this.ready();
+    const ready = this.ready(true);
     if (!ready.ok) return ready;
     return this.withLock(this.paths().checkoutLock, () => this.createLocked(value, true, null));
   }
 
   importTask(input: ImportInput): Result<TaskRecord> {
-    const ready = this.ready();
+    const ready = this.ready(true);
     if (!ready.ok) return ready;
     return this.withLock<TaskRecord>(this.paths().checkoutLock, () => {
       const current = this.readWorkspace();
@@ -697,9 +755,9 @@ export class TaskStore {
     timestamp?: Utc,
   ): Result<TaskRecord> {
     if (!validId(taskId)) return failure("invalid_input", "task ID is invalid", { taskId });
-    const ready = this.ready();
+    const ready = this.ready(true);
     if (!ready.ok) return ready;
-    return this.withLock(this.taskLockPath(taskId), () => {
+    const result = this.withLock(this.taskLockPath(taskId), () => {
       const loaded = this.loadBound(taskId);
       if (!loaded.ok) return loaded;
       if (loaded.data.record.revision !== expected)
@@ -718,10 +776,12 @@ export class TaskStore {
       const written = this.appendPatch(loaded.data, valid);
       return written.ok ? success(valid.revision, null, valid) : written;
     });
+    this.compactPending();
+    return result;
   }
 
   mutateWorkspace(expected: Revision, update: WorkspaceMutation): Result<WorkspaceRecord> {
-    const ready = this.ready();
+    const ready = this.ready(true);
     if (!ready.ok) return ready;
     return this.withLock(this.paths().checkoutLock, () => {
       const current = this.readWorkspace();
@@ -754,9 +814,9 @@ export class TaskStore {
   mutateTaskAndWorkspace(input: CoupledMutation): Result<CoupledSnapshot> {
     if (!validId(input.taskId))
       return failure("invalid_input", "task ID is invalid", { taskId: input.taskId });
-    const ready = this.ready();
+    const ready = this.ready(true);
     if (!ready.ok) return ready;
-    return this.withLock(this.paths().checkoutLock, () =>
+    const result = this.withLock(this.paths().checkoutLock, () =>
       this.withLock(this.taskLockPath(input.taskId), () => {
         const task = this.loadBound(input.taskId);
         if (!task.ok) return task;
@@ -819,6 +879,8 @@ export class TaskStore {
         });
       }),
     );
+    this.compactPending();
+    return result;
   }
 
   /** Hold this checkout's lock across a managed effect. */
@@ -832,7 +894,7 @@ export class TaskStore {
       [...activeRoots].some((root) => root === this.root || sameDirectoryIdentity(root, this.root))
     )
       return operation();
-    const ready = this.ready();
+    const ready = this.ready(true);
     if (!ready.ok) return ready;
     const lockPath = this.paths().checkoutLock;
     try {
@@ -927,7 +989,7 @@ export class TaskStore {
       legacyRecovery: null,
       failed: [],
     };
-    const ready = this.ready();
+    const ready = this.ready(!dryRun);
     if (!ready.ok) return ready;
     const dirs = this.paths();
     const recovery = path.join(this.root, ".workit", "recovery");
@@ -947,7 +1009,6 @@ export class TaskStore {
       report.legacyRecovery = { path: recovery, files, bytes, removed: remove };
     }
     if (!fs.existsSync(dirs.tasks)) return success(null, null, report);
-    const references = new Set<string>();
     const names = fs.readdirSync(dirs.tasks).filter((name) => validId(name));
     for (const name of names) {
       const file = this.eventsPath(name);
@@ -964,7 +1025,7 @@ export class TaskStore {
           report.compacted.eventsFolded += lines - COMPACT_KEEP;
           report.compacted.bytesBefore += size;
         } else {
-          const compacted = this.withLock(this.taskLockPath(name), () => this.compact(name));
+          const compacted = this.compact(name);
           if (!compacted.ok) report.failed.push(name);
           else {
             report.compacted.tasks.push(name);
@@ -974,30 +1035,41 @@ export class TaskStore {
           }
         }
       }
-      try {
-        for (const match of fs.readFileSync(file, "utf8").matchAll(/"\$blob":"([0-9a-f]{64})"/g))
-          references.add(match[1]);
-      } catch {}
     }
     const nowMs = Date.now();
-    if (fs.existsSync(dirs.blobs))
-      for (const name of fs.readdirSync(dirs.blobs)) {
-        const digest = name.replace(/\.json$/, "");
-        const file = path.join(dirs.blobs, name);
-        let stat: fs.Stats;
+    // Blobs go only when unreferenced and older than the grace period, under
+    // the store's gc lock (one sweep at a time).
+    const sweep = (): Result<null> => {
+      const references = new Set<string>();
+      for (const name of names)
         try {
-          stat = fs.lstatSync(file);
-        } catch {
-          continue;
+          for (const match of fs
+            .readFileSync(this.eventsPath(name), "utf8")
+            .matchAll(/"\$blob":"([0-9a-f]{64})"/g))
+            references.add(match[1]);
+        } catch {}
+      if (fs.existsSync(dirs.blobs))
+        for (const name of fs.readdirSync(dirs.blobs)) {
+          const digest = name.replace(/\.json$/, "");
+          const file = path.join(dirs.blobs, name);
+          let stat: fs.Stats;
+          try {
+            stat = fs.lstatSync(file);
+          } catch {
+            continue;
+          }
+          if (references.has(digest) || nowMs - stat.mtimeMs <= STALE_TEMPORARY_MS) {
+            report.blobs.kept += 1;
+            continue;
+          }
+          report.blobs.removed += 1;
+          report.blobs.removedBytes += stat.size;
+          if (!dryRun) fs.rmSync(file, { force: true });
         }
-        if (references.has(digest) || nowMs - stat.mtimeMs <= STALE_TEMPORARY_MS) {
-          report.blobs.kept += 1;
-          continue;
-        }
-        report.blobs.removed += 1;
-        report.blobs.removedBytes += stat.size;
-        if (!dryRun) fs.rmSync(file, { force: true });
-      }
+      return success(null, null, null);
+    };
+    const swept = dryRun ? sweep() : this.withLock(path.join(dirs.dir, "gc.lock"), sweep);
+    if (!swept.ok) return swept;
     const temporaryDirs = [
       dirs.dir,
       dirs.tasks,
@@ -1056,7 +1128,13 @@ export class TaskStore {
   }
 
   /** The store resolves, its format is readable, and any 2.x store here is migrated. */
-  private ready(): Result<null> {
+  /**
+   * The store resolves and its format is readable. A pending migration (a
+   * 2.x store, or a pre-git 3.x store) runs on writes, and on reads only for
+   * a host that can tell the user (the CLI); other reads, e.g. per-turn
+   * hooks, get a `needs_input` naming the command that migrates.
+   */
+  private ready(write = false): Result<null> {
     const location = this.location();
     if (!location.ok) return location;
     if (this.migrationChecked) return success(null, null, null);
@@ -1070,11 +1148,27 @@ export class TaskStore {
           { path: dirs.marker },
         );
     } catch {}
+    // Reads made by the migration itself see the store as ready.
+    this.migrationChecked = true;
+    const settled = this.settleMigrations(write);
+    if (!settled.ok) this.migrationChecked = false;
+    return settled;
+  }
+
+  private settleMigrations(write: boolean): Result<null> {
     const moved = this.adoptLocalStore();
     if (!moved.ok) return moved;
-    const migrated = this.migrateV2();
-    if (!migrated.ok) return migrated;
-    this.migrationChecked = true;
+    const pending = this.pendingMigrations();
+    if (pending.length > 0 && !write && !(this.migrateOnRead ?? migrationReporterInstalled()))
+      return failure(
+        "needs_input",
+        `${MIGRATION_PENDING}: the task store at ${pending[0]} has not been migrated yet; run \`workit task status\` to migrate it`,
+        { path: pending[0], guidance: "workit task status" },
+      );
+    for (const v2 of this.v2Dirs()) {
+      const migrated = this.migrateV2(v2);
+      if (!migrated.ok) return migrated;
+    }
     return success(null, null, null);
   }
 
@@ -1092,7 +1186,15 @@ export class TaskStore {
       },
       write: (digest, value) => {
         const file = path.join(dir, `${digest}.json`);
-        if (fs.existsSync(file)) return;
+        if (fs.existsSync(file)) {
+          // A reused blob is fresh again: gc spares blobs younger than its
+          // grace period, so one about to be referenced is never collected.
+          const stamp = new Date();
+          try {
+            fs.utimesSync(file, stamp, stamp);
+            return;
+          } catch {}
+        }
         fs.mkdirSync(dir, { recursive: true });
         replaceFile(file, JSON.stringify(value), true);
       },
@@ -1273,7 +1375,7 @@ export class TaskStore {
   private appendPatch(
     loaded: Loaded,
     next: TaskRecord,
-    extra: { key?: TaskKey | null } = {},
+    extra: { key?: TaskKey | null; type?: string; legacy?: LegacyOrigin } = {},
   ): Result<null> {
     const taskId = next.id;
     try {
@@ -1281,11 +1383,12 @@ export class TaskStore {
       const before = loaded.record as unknown as Record<string, unknown>;
       const after = next as unknown as Record<string, unknown>;
       const ops = encodeOps(diff(before, after), blobs);
+      const { type, ...data } = extra;
       const event = this.event(
         taskId,
         loaded.seq + 1,
-        "key" in extra ? "task.bound" : eventType(before, after),
-        { ops, ...extra },
+        type ?? ("key" in extra ? "task.bound" : eventType(before, after)),
+        { ops, ...data },
       );
       const start = appendEvent(this.eventsPath(taskId), event, loaded.end);
       const end = start + Buffer.byteLength(`${JSON.stringify(event)}\n`);
@@ -1293,7 +1396,7 @@ export class TaskStore {
       const state = {
         record: next,
         key,
-        legacy: loaded.legacy,
+        legacy: extra.legacy ?? loaded.legacy,
         seq: event.seq,
         lastId: event.id,
         lastStart: start,
@@ -1305,9 +1408,10 @@ export class TaskStore {
         loaded.snapshotSeq === 0
       )
         this.writeSnapshot(taskId, state);
-      // Bounded without a gc run: a log past the watermark folds itself.
-      if (end > AUTO_COMPACT_BYTES) this.compact(taskId);
-      this.indexTask(next, key, loaded.legacy !== null);
+      // Bounded without a gc run: a log past the watermark is folded once
+      // this write releases its lock (see compactDue).
+      if (end > AUTO_COMPACT_BYTES) this.compactDue.add(taskId);
+      this.indexTask(next, key, (extra.legacy ?? loaded.legacy) !== null);
       return success(null, null, null);
     } catch (error) {
       return failure("storage_error", `task append failed: ${String(error)}`, {
@@ -1339,7 +1443,20 @@ export class TaskStore {
     this.indexTask(record, key, legacy !== null);
   }
 
-  /** Compact a task log (under its lock): checkpoint + the last COMPACT_KEEP events. */
+  /** Fold the logs that writes marked past AUTO_COMPACT_BYTES (best effort). */
+  private compactPending() {
+    for (const taskId of this.compactDue) {
+      this.compactDue.delete(taskId);
+      this.compact(taskId);
+    }
+  }
+
+  /**
+   * Compact a task log to a checkpoint + its last COMPACT_KEEP events. The
+   * checkpoint is built without the lock; the task lock is held only to
+   * check that the log still holds the events it was built from, carry over
+   * events appended meanwhile, and swap the file.
+   */
   private compact(taskId: Id): Result<{ folded: number; bytes: number }> {
     try {
       const file = this.eventsPath(taskId);
@@ -1359,16 +1476,25 @@ export class TaskStore {
           folded: { from: log.events[0].seq, to: folded.seq },
         }),
       };
-      const lines = [checkpoint, ...log.events.slice(cut)].map((event) => JSON.stringify(event));
-      const bytes = `${lines.join("\n")}\n`;
-      replaceFile(file, bytes, true);
-      // Re-anchor the snapshot on the rewritten log.
-      try {
-        fs.rmSync(this.snapshotPath(taskId), { force: true });
-      } catch {}
-      const reloaded = this.load(taskId);
-      if (reloaded.ok && reloaded.data) this.writeSnapshot(taskId, reloaded.data);
-      return success(null, null, { folded: cut, bytes: Buffer.byteLength(bytes) });
+      const prefix = `${[checkpoint, ...log.events.slice(cut)].map((event) => JSON.stringify(event)).join("\n")}\n`;
+      const last = log.events.at(-1)!;
+      return this.withLock(this.taskLockPath(taskId), () => {
+        // The log must still hold the events read above (another compaction
+        // or a rewrite means start over next time).
+        const latest = readLog(file, log.lastStart, last.seq);
+        if (!latest || latest.events[0]?.id !== last.id)
+          return failure("busy", "the task log changed during compaction; retry", { taskId });
+        const appended = fs.readFileSync(file).subarray(log.end, latest.end);
+        const bytes = Buffer.concat([Buffer.from(prefix, "utf8"), appended]);
+        replaceFile(file, bytes.toString("utf8"), true);
+        // Re-anchor the snapshot on the rewritten log.
+        try {
+          fs.rmSync(this.snapshotPath(taskId), { force: true });
+        } catch {}
+        const reloaded = this.load(taskId);
+        if (reloaded.ok && reloaded.data) this.writeSnapshot(taskId, reloaded.data);
+        return success(null, null, { folded: cut, bytes: bytes.length });
+      });
     } catch (error) {
       return failure("storage_error", `compaction failed: ${String(error)}`, { taskId });
     }
@@ -1386,14 +1512,21 @@ export class TaskStore {
     }
   }
 
-  /** The open task bound to `key` anywhere in the store (newest first). */
+  /** The open task bound to `key` anywhere in the store; with duplicates
+   * (e.g. from a 2.x-era race), deterministically the oldest. */
   private openTaskForKey(key: string): Result<TaskIndexEntry | null> {
     const all = this.listStoreIndex();
     if (!all.ok) return all;
     const bound = all.data
       .filter((entry) => entry.key === key && entry.status !== "closed")
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      .toSorted(oldestFirst);
     return success(null, null, bound[0] ?? null);
+  }
+
+  /** Serialize implicit-task binding for one key across the whole store. */
+  private withKeyLock<T>(key: string, operation: () => Result<T>): Result<T> {
+    const digest = createHash("sha256").update(key).digest("hex").slice(0, 32);
+    return this.withLock(path.join(this.paths().dir, "keys", `${digest}.lock`), operation);
   }
 
   /** Bind `taskId` to `key` and this checkout (under the checkout lock). */
@@ -1470,19 +1603,29 @@ export class TaskStore {
       return failure("invalid_input", "task intent or provenance is invalid");
     // An explicitly started task takes the branch over: the task that held
     // its key stays open, unbound (listed by `workit task status --all`).
-    let binding = key;
     if (bindCurrent) {
       const currentKey = this.currentKey();
-      if (currentKey.ok) {
-        const holder = this.openTaskForKey(currentKey.data.key);
-        if (!holder.ok) return holder;
-        if (holder.data) {
-          const released = this.unbindLocked(holder.data.id);
-          if (!released.ok) return released;
-        }
-        binding = currentKey.data;
-      }
+      if (currentKey.ok)
+        return this.withKeyLock(currentKey.data.key, () => {
+          const holder = this.openTaskForKey(currentKey.data.key);
+          if (!holder.ok) return holder;
+          if (holder.data) {
+            const released = this.unbindLocked(holder.data.id);
+            if (!released.ok) return released;
+          }
+          return this.newTask(value, current.data, currentKey.data);
+        });
     }
+    return this.newTask(value, current.data, key);
+  }
+
+  /** Write a new task, bound to `binding` (under the checkout lock). */
+  private newTask(
+    value: CreateInput,
+    previous: WorkspaceRecord | null,
+    binding: TaskKey | null,
+  ): Result<TaskRecord> {
+    const current = { data: previous };
     const workspace = this.nextWorkspace(current.data);
     const timestamp = value.now ?? now();
     const task: TaskRecord = {
@@ -1706,129 +1849,168 @@ export class TaskStore {
   // -------------------------------------------------------------------------
   // internals: 2.x migration
 
+  /** 2.x stores this checkout may have: `<top>/.workit`, and `<dir>/.workit`
+   * when the store was opened from a subdirectory. */
+  private v2Dirs(): string[] {
+    return [...new Set([this.root, this.origin])].map((dir) => path.join(dir, ".workit"));
+  }
+
+  /** 2.x stores waiting to migrate into this checkout. (A pre-git 3.x
+   * store is this runtime's own data and moves on any access.) */
+  private pendingMigrations(): string[] {
+    return this.v2Dirs().filter((dir) => {
+      const raw = this.readV2Workspace(path.join(dir, "workspace.json"));
+      return raw !== null && raw !== TOMBSTONE;
+    });
+  }
+
   /**
-   * Migrate a 2.x store in `<root>/.workit` (tasks/*.json + workspace.json)
-   * into this store, once, under the checkout lock:
-   *   1. copy the 2.x files to legacy/<slug>/v2/ (backup; existing copies kept);
-   *   2. each task becomes tasks/<id>/events.jsonl with one `migrated.from_v2`
-   *      event holding the whole record (same id and revision; unbound);
-   *   3. the workspace record moves to checkouts/<slug>/workspace.json;
-   *   4. the 2.x task files and index are removed;
-   *   5. `.workit/workspace.json` becomes a marker that 2.x readers reject.
-   * Re-running after a crash at any step finishes the job; `.workit/recovery`
-   * is left in place (`workit gc` reports it).
+   * Migrate the 2.x store in `v2` (tasks/*.json + workspace.json) into this
+   * store, under the checkout lock and the 2.x store's own metadata lock (S1
+   * identity and reclaim rules), so a live 2.x writer is never migrated
+   * under: its lock makes this `busy` and nothing changes.
+   *   1. back up the 2.x files to legacy/<checkout>/v2/ (refreshed each run);
+   *   2. each task file is migrated by content: a new task becomes
+   *      tasks/<id>/events.jsonl with one `migrated.from_v2` event holding the
+   *      whole record and the file's digest; a task already migrated from
+   *      other bytes (a 2.x write after an interrupted run) gets the
+   *      difference appended as another `migrated.from_v2` event;
+   *   3. the tasks join this checkout's workspace (the existing 3.x record,
+   *      else the 2.x one, so nothing migrated is hidden);
+   *   4. each task file is replaced by a marker only while its digest still
+   *      matches what was migrated (compare-and-swap under the 2.x lock);
+   *   5. `.workit/workspace.json` becomes the marker last, so an interrupted
+   *      run is finished by the next one.
+   * `.workit/recovery` is left in place (`workit gc` reports it).
    */
-  private migrateV2(): Result<null> {
+  private migrateV2(v2: string): Result<null> {
     const dirs = this.paths();
-    const v2Workspace = path.join(dirs.v2, "workspace.json");
-    const v2Tasks = path.join(dirs.v2, "tasks");
-    const listV2Tasks = () => {
-      try {
-        return fs
-          .readdirSync(v2Tasks)
-          .filter((name) => name.endsWith(".json") && validId(name.slice(0, -5)))
-          .filter((name) => !this.isStub(path.join(v2Tasks, name)));
-      } catch {
-        return [];
-      }
-    };
-    // Only a 2.x workspace record marks a store to migrate; once migrated it
-    // is the 3.x marker.
+    const v2Workspace = path.join(v2, "workspace.json");
+    const v2Tasks = path.join(v2, "tasks");
+    const legacy = path.join(dirs.dir, "legacy", checkoutSlug(path.dirname(v2)), "v2");
     const raw = this.readV2Workspace(v2Workspace);
-    if (raw === null || raw === TOMBSTONE) {
-      if (raw === null && !dirs.shared) this.writeTombstoneIfMissing();
-      return success(null, null, null);
-    }
-    return this.withLock(dirs.checkoutLock, () => {
-      const workspace = this.readV2Workspace(v2Workspace);
-      if (workspace === null || workspace === TOMBSTONE) return success(null, null, null);
-      const files = listV2Tasks();
-      let parsedWorkspace: WorkspaceRecord | null = null;
-      {
-        const parsed = this.parseRecord<WorkspaceRecord>(
+    if (raw === null || raw === TOMBSTONE) return success(null, null, null);
+    return this.withLock(dirs.checkoutLock, () =>
+      this.withLock(path.join(v2, "metadata.lock"), () => {
+        const workspace = this.readV2Workspace(v2Workspace);
+        if (workspace === null || workspace === TOMBSTONE) return success(null, null, null);
+        const parsedWorkspace = this.parseRecord<WorkspaceRecord>(
           workspace.bytes,
           workspaceRecordSchema,
           "2.x workspace",
         );
-        if (!parsed.ok)
+        if (!parsedWorkspace.ok)
           return failure(
             "recovery_required",
-            `cannot migrate the 2.x store at ${dirs.v2}: ${parsed.error}; move it aside to start fresh`,
+            `cannot migrate the 2.x store at ${v2}: ${parsedWorkspace.error}; move it aside to start fresh`,
             { path: v2Workspace },
           );
-        parsedWorkspace = parsed.data;
-      }
-      try {
-        fs.mkdirSync(dirs.legacy, { recursive: true });
-        for (const name of ["workspace.json", "index.json"]) {
-          const source = path.join(dirs.v2, name);
-          const target = path.join(dirs.legacy, name);
-          if (fs.existsSync(source) && !fs.existsSync(target)) fs.copyFileSync(source, target);
-        }
-        if (files.length) fs.mkdirSync(path.join(dirs.legacy, "tasks"), { recursive: true });
-        for (const name of files) {
-          const target = path.join(dirs.legacy, "tasks", name);
-          if (!fs.existsSync(target)) fs.copyFileSync(path.join(v2Tasks, name), target);
-        }
-      } catch (error) {
-        return failure("storage_error", `cannot back up the 2.x store: ${String(error)}`, {
-          path: dirs.legacy,
-        });
-      }
-      let migrated = 0;
-      let skipped = 0;
-      for (const name of files) {
-        const id = name.slice(0, -5);
-        if (fs.existsSync(this.eventsPath(id))) {
-          skipped += 1;
-          continue;
-        }
-        const bytes = fs.readFileSync(path.join(v2Tasks, name), "utf8");
-        const parsed = this.parseRecord<TaskRecord>(bytes, taskRecordSchema, "2.x task");
-        if (!parsed.ok || parsed.data.id !== id)
-          return failure(
-            "recovery_required",
-            `cannot migrate 2.x task ${id}: ${parsed.ok ? "file name and record ID differ" : parsed.error}; move ${path.join(v2Tasks, name)} aside to continue`,
-            { path: path.join(v2Tasks, name) },
-          );
+        let files: string[] = [];
         try {
-          this.openTask(parsed.data, "migrated.from_v2", null, {
-            path: path.join(dirs.legacy, "tasks", name),
-            digest: sha256(bytes),
-          });
-        } catch (error) {
-          return failure("storage_error", `cannot migrate 2.x task ${id}: ${String(error)}`);
+          files = fs
+            .readdirSync(v2Tasks)
+            .filter((name) => name.endsWith(".json") && validId(name.slice(0, -5)))
+            .filter((name) => !this.isStub(path.join(v2Tasks, name)));
+        } catch {}
+        const current = this.readWorkspace();
+        if (!current.ok) return current;
+        let workspaceMoved = false;
+        let target = current.data;
+        if (!target) {
+          target = { ...parsedWorkspace.data, root: this.root };
+          const written = this.writeWorkspace(target);
+          if (!written.ok) return written;
+          workspaceMoved = true;
         }
-        migrated += 1;
-      }
-      let workspaceMoved = false;
-      if (parsedWorkspace && !fs.existsSync(dirs.workspace)) {
-        const written = this.writeWorkspace({ ...parsedWorkspace, root: this.root });
-        if (!written.ok) return written;
-        workspaceMoved = true;
-      }
-      try {
-        // Each 2.x task file becomes a marker too, so a 2.x reader asked for
-        // that task by id also fails closed with the upgrade message.
-        for (const name of files)
-          replaceFile(path.join(v2Tasks, name), this.stubFor(name.slice(0, -5)), false);
-        fs.rmSync(path.join(dirs.v2, "index.json"), { force: true });
-        this.writeTombstone(parsedWorkspace);
-      } catch (error) {
-        return failure("storage_error", `cannot finish the 2.x migration: ${String(error)}`, {
-          path: dirs.v2,
+        let migrated = 0;
+        let skipped = 0;
+        const done = new Map<string, string>();
+        try {
+          fs.mkdirSync(path.join(legacy, "tasks"), { recursive: true });
+          for (const name of ["workspace.json", "index.json"])
+            if (fs.existsSync(path.join(v2, name)))
+              fs.copyFileSync(path.join(v2, name), path.join(legacy, name));
+          for (const name of files) {
+            const id = name.slice(0, -5);
+            const file = path.join(v2Tasks, name);
+            const bytes = fs.readFileSync(file, "utf8");
+            const digest = sha256(bytes);
+            fs.writeFileSync(path.join(legacy, "tasks", name), bytes);
+            const parsed = this.parseRecord<TaskRecord>(bytes, taskRecordSchema, "2.x task");
+            if (!parsed.ok || parsed.data.id !== id)
+              return failure(
+                "recovery_required",
+                `cannot migrate 2.x task ${id}: ${parsed.ok ? "file name and record ID differ" : parsed.error}; move ${file} aside to continue`,
+                { path: file },
+              );
+            const record = { ...parsed.data, workspaceId: target.id };
+            const origin = { path: path.join(legacy, "tasks", name), digest };
+            if (!fs.existsSync(this.eventsPath(id))) {
+              this.openTask(record, "migrated.from_v2", null, origin);
+              migrated += 1;
+            } else {
+              const resynced = this.withLock(this.taskLockPath(id), () => {
+                const loaded = this.load(id);
+                if (!loaded.ok) return loaded;
+                if (!loaded.data) return failure("not_found", "task not found", { taskId: id });
+                if (loaded.data.legacy?.digest === digest) return success(null, null, false);
+                const appended = this.appendPatch(loaded.data, record, {
+                  type: "migrated.from_v2",
+                  legacy: origin,
+                });
+                return appended.ok ? success(null, null, true) : appended;
+              });
+              if (!resynced.ok) return resynced;
+              if (resynced.data) migrated += 1;
+              else skipped += 1;
+            }
+            done.set(name, digest);
+          }
+        } catch (error) {
+          return failure(
+            "storage_error",
+            `cannot migrate the 2.x store at ${v2}: ${String(error)}`,
+            {
+              path: v2,
+            },
+          );
+        }
+        try {
+          // Compare-and-swap: replace a 2.x task file by a marker (so a 2.x
+          // reader asked for it by id fails closed) only if it still holds
+          // the bytes just migrated; otherwise leave the store unfinished so
+          // the next run migrates the change.
+          let complete = true;
+          for (const [name, digest] of done) {
+            const file = path.join(v2Tasks, name);
+            if (sha256(fs.readFileSync(file, "utf8")) !== digest) {
+              complete = false;
+              continue;
+            }
+            replaceFile(file, this.stubFor(name.slice(0, -5)), false);
+          }
+          if (!complete)
+            return failure("busy", `the 2.x store at ${v2} changed during migration; retry`, {
+              path: v2,
+            });
+          fs.rmSync(path.join(v2, "index.json"), { force: true });
+          this.writeTombstone(v2, target.id);
+        } catch (error) {
+          return failure("storage_error", `cannot finish the 2.x migration: ${String(error)}`, {
+            path: v2,
+          });
+        }
+        reportMigration({
+          from: v2,
+          to: dirs.dir,
+          backup: legacy,
+          tasks: migrated,
+          skipped,
+          workspace: workspaceMoved,
         });
-      }
-      reportMigration({
-        from: dirs.v2,
-        to: dirs.dir,
-        backup: dirs.legacy,
-        tasks: migrated,
-        skipped,
-        workspace: workspaceMoved,
-      });
-      return success(null, null, null);
-    });
+        return success(null, null, null);
+      }),
+    );
   }
 
   /**
@@ -1917,16 +2099,16 @@ export class TaskStore {
    * its `store` field is declared critical, and runtimes that predate the
    * critical rule reject it as written by a newer Workit.
    */
-  private writeTombstone(previous: WorkspaceRecord | null) {
+  private writeTombstone(v2: string, workspaceId: Id | null) {
     const dirs = this.paths();
     const version = isNewerVersion(runtimeVersion(), STORE_MIN_RUNTIME)
       ? runtimeVersion()
       : STORE_MIN_RUNTIME;
     const marker = {
       schemaVersion: SCHEMA_VERSION,
-      id: previous?.id ?? newId(),
+      id: workspaceId ?? newId(),
       revision: newRevision(),
-      root: this.root,
+      root: path.dirname(v2),
       runtime: { createdWith: version, updatedWith: version },
       writer: null,
       store: {
@@ -1937,8 +2119,11 @@ export class TaskStore {
       },
       critical: ["store"],
     };
-    fs.mkdirSync(dirs.v2, { recursive: true });
-    replaceFile(path.join(dirs.v2, "workspace.json"), `${JSON.stringify(marker, null, 2)}\n`, true);
+    fs.mkdirSync(v2, { recursive: true });
+    // Keep the marker directory out of version control.
+    const ignore = path.join(v2, ".gitignore");
+    if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, "*\n");
+    replaceFile(path.join(v2, "workspace.json"), `${JSON.stringify(marker, null, 2)}\n`, true);
   }
 
   /** The marker that replaces a migrated 2.x task file. */
@@ -1964,11 +2149,21 @@ export class TaskStore {
     }
   }
 
+  /**
+   * Every checkout this runtime writes for carries the marker at
+   * `<top>/.workit/workspace.json`, so a 2.x runtime never starts a second,
+   * divergent store there (it fails closed with the upgrade message).
+   */
   private writeTombstoneIfMissing() {
     try {
-      if (!fs.existsSync(this.paths().dir)) return;
-      if (fs.existsSync(path.join(this.paths().v2, "workspace.json"))) return;
-      this.writeTombstone(null);
+      const v2 = path.join(this.root, ".workit");
+      if (fs.existsSync(path.join(v2, "workspace.json"))) return;
+      let id: Id | null = null;
+      try {
+        id =
+          (JSON.parse(fs.readFileSync(this.paths().workspace, "utf8")) as { id?: Id }).id ?? null;
+      } catch {}
+      this.writeTombstone(v2, id);
     } catch {}
   }
 
@@ -1993,8 +2188,8 @@ export class TaskStore {
         current = fs.readFileSync(ignore, "utf8");
       } catch {}
       if (current !== "*\n") retryTransient(() => fs.writeFileSync(ignore, "*\n"));
-      this.writeTombstoneIfMissing();
     }
+    this.writeTombstoneIfMissing();
   }
 
   /**

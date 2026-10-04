@@ -149,8 +149,12 @@ test("Given two worktrees of one repo, Then they share the store root and get di
   expect(other.key.key).toBe("feature/b");
   expect(storeDirOf(second)).toBe(storeDirOf(root));
   expect(storeDirOf(root)).toBe(path.join(root, ".git", "workit"));
-  expect(existsSync(path.join(root, ".workit"))).toBe(false);
-  expect(existsSync(path.join(second, ".workit"))).toBe(false);
+  // Each checkout only carries the marker that makes 2.x readers fail closed.
+  for (const dir of [root, second])
+    expect(readdirSync(path.join(dir, ".workit")).toSorted()).toEqual([
+      ".gitignore",
+      "workspace.json",
+    ]);
   // Each checkout lists its own tasks; the store lists both.
   const listed = new TaskStore(root).listTaskIndex();
   expect(listed.ok && listed.data.map((entry) => entry.id)).toEqual([first.task.id]);
@@ -581,7 +585,7 @@ test("Given a 2.x .workit store with tasks and recovery copies, When 3.0 runs tw
   expect(marker.runtime.updatedWith).toBe("3.0.0");
 });
 
-test("Given a 2.x store in a git checkout, Then it migrates into the git common dir and other worktrees see it", () => {
+test("Given a 2.x store in a git checkout, Then it migrates into the git common dir and other worktrees see it", async () => {
   const root = repo();
   const core = coreFor(root);
   const started = core.task(taskStartRequest({ expectedWorkspaceRevision: undefined }));
@@ -596,6 +600,11 @@ test("Given a 2.x store in a git checkout, Then it migrates into the git common 
   mkdirSync(path.join(root, ".workit", "tasks"), { recursive: true });
   writeFileSync(path.join(root, ".workit", "workspace.json"), canonicalJson(workspace.data));
   writeFileSync(path.join(root, ".workit", "tasks", `${id}.json`), canonicalJson(record.data));
+  // Reads outside the CLI never migrate; they name the command that does.
+  const pending = new TaskStore(root, { migrateOnRead: false }).listTaskIndex();
+  expect(pending).toMatchObject({ ok: false, code: "needs_input" });
+  expect(!pending.ok && pending.error).toContain("workit task status");
+  expect((await cli(root, ["task", "status"])).stderr).toContain("workit: migrated 1 task");
   expect(inspectAll(root, [id])).toEqual(expected);
   expect(existsSync(eventsFileOf(root, id))).toBe(true);
   expect(eventsFileOf(root, id).startsWith(path.join(root, ".git", "workit"))).toBe(true);

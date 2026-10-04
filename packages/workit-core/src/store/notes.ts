@@ -23,3 +23,7 @@ export const reportMigration = (report: MigrationReport): void => {
     if (typeof reporter === "function") reporter(report);
   } catch {}
 };
+
+/** Whether a host installed a reporter (it can tell the user about a migration). */
+export const migrationReporterInstalled = (): boolean =>
+  typeof (globalThis as Record<symbol, unknown>)[SLOT] === "function";

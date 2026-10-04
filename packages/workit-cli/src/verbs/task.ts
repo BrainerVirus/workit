@@ -145,9 +145,41 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
     const found = store.implicitTask({ provenance, create: false });
     if (!found.ok) return engineFailure(io, found);
+    // Duplicates bound to this key (the oldest is used) and tasks of a branch
+    // renamed to this one: each with the exact command that settles it.
+    const report = store.keyReport();
+    const notes: Array<{
+      id: string;
+      kind: "duplicate" | "renamed";
+      key: string | null;
+      hint: string;
+    }> = [];
+    if (report.ok) {
+      for (const entry of report.data.bound.slice(1))
+        notes.push({
+          id: entry.id,
+          kind: "duplicate",
+          key: entry.key,
+          hint: `workit task close --task ${entry.id} --payload '{"outcome":"stopped","summary":"duplicate"}' --confirm`,
+        });
+      if (!found.data)
+        for (const entry of report.data.renamed)
+          notes.push({
+            id: entry.id,
+            kind: "renamed",
+            key: entry.key,
+            hint: `workit task adopt ${entry.id}`,
+          });
+    }
+    const noteLines = notes.map((note) =>
+      note.kind === "duplicate"
+        ? `duplicate open task ${note.id} on ${note.key} (not used); close it: ${note.hint}`
+        : `task ${note.id} tracked ${note.key}, renamed to ${where}; take it over: ${note.hint}`,
+    );
     if (!found.data)
-      return emit(io, ok({ key: key.data, task: null }), () => [
+      return emit(io, ok({ key: key.data, task: null, notes }), () => [
         `no task for ${where} yet; it is created by the first note, check or recording (or: workit task start "<objective>")`,
+        ...noteLines,
       ]);
     const summary = core.task({
       schemaVersion: 1,
@@ -157,11 +189,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
     });
     if (!summary.ok) return engineFailure(io, summary);
     const task = found.data.task;
-    return emit(io, ok({ key: key.data, task: summary.data }), () => [
+    return emit(io, ok({ key: key.data, task: summary.data, notes }), () => [
       `${task.id} ${task.status} — ${task.intent.data.objective} (${where})`,
       ...(task.progress.summary ? [`progress: ${task.progress.summary}`] : []),
       ...(task.progress.nextAction ? [`next: ${task.progress.nextAction}`] : []),
       `evidence ${task.evidence.length} · findings ${task.findings.filter((item) => item.data.disposition === "open").length} open · decisions ${task.decisions.length}`,
+      ...noteLines,
     ]);
   }
 
