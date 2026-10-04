@@ -1131,6 +1131,19 @@ export const operationSchemas = {
   state: z.discriminatedUnion("action", Object.values(stateOperations) as any),
 } as const;
 export type OperationRequest = z.infer<(typeof operationSchemas)[OperationFamily]>;
+
+/**
+ * Schemas advertised to hosts. `state.recover` needs host-supplied native
+ * recovery authority (`OperationContext.nativeRecovery`), which no shipped
+ * host provides, so advertising it only sends agents into a guaranteed
+ * permission_denied. parseOperation still accepts it for embedders that do
+ * supply that authority.
+ */
+const { recover: _unadvertisedRecover, ...advertisedStateOperations } = stateOperations;
+export const advertisedOperationSchemas = {
+  ...operationSchemas,
+  state: z.discriminatedUnion("action", Object.values(advertisedStateOperations) as any),
+} as const;
 export type TaskStartRequest = z.infer<typeof taskOperations.start>;
 
 const compiledOperationSchemas = Object.fromEntries(
@@ -1234,7 +1247,7 @@ export function parseOperation(family: OperationFamily, input: unknown): Result<
 }
 
 export function operationJsonSchema(family: OperationFamily): z.core.JSONSchema.BaseSchema {
-  return z.toJSONSchema(operationSchemas[family], { target: "draft-2020-12" });
+  return z.toJSONSchema(advertisedOperationSchemas[family], { target: "draft-2020-12" });
 }
 
 /**
