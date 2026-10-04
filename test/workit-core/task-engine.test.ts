@@ -24,7 +24,15 @@ import {
   success,
   type OperationContext,
 } from "@/packages/workit-core/src/core";
-import { assessment, caller, ref, scope, taskStartRequest } from "./task-fixtures";
+import {
+  assessment,
+  caller,
+  checkObservation,
+  ref,
+  scope,
+  taskStartRequest,
+  writeTestCheck,
+} from "./task-fixtures";
 
 const context = (root: string): OperationContext => ({
   root,
@@ -638,6 +646,7 @@ test.each(["workit_cli", "opencode", "cursor", "codex_cli", "codex_desktop", "pi
     const root = mkdtempSync(join(tmpdir(), "workit-self-review-"));
     try {
       writeFileSync(join(root, "a.ts"), "before");
+      writeTestCheck(root);
       const store = new TaskStore(root);
       const core = new WorkitCore(store, { ...context(root), caller: caller({ host }) });
       const started = core.task(taskStartRequest());
@@ -659,8 +668,12 @@ test.each(["workit_cli", "opencode", "cursor", "codex_cli", "codex_desktop", "pi
       const task = store.readTask(taskId);
       if (!task.ok || !task.data.policy) throw new Error("policy missing");
       const review = task.data.policy.requirements.find((item) => item.ruleId === "self-review")!;
+      // Close-time verification takes a check the workit CLI observed.
+      const cli = new WorkitCore(store, context(root));
       const record = () => {
+        expect(cli.observeCheck({ taskId, observation: checkObservation() }).ok).toBe(true);
         for (const requirement of task.data.policy!.requirements) {
+          if (requirement.dimension !== "review") continue;
           expect(
             core.evidence({
               schemaVersion: 1,
@@ -895,6 +908,7 @@ test("review evidence uses the trusted caller session and requires an independen
 
 test("summary and full inspection recapture candidates so scoped freshness agrees", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-freshness-"));
+  writeTestCheck(root);
   const src = join(root, "src");
   mkdirSync(src, { recursive: true });
   writeFileSync(join(src, "a.ts"), "initial");
@@ -933,23 +947,10 @@ test("summary and full inspection recapture candidates so scoped freshness agree
   const candidate = captureCandidate(root, task.data.intent.data.scope, []);
   expect(candidate.ok).toBe(true);
   if (!candidate.ok) throw new Error(candidate.error);
-  const evidence = core.evidence({
-    schemaVersion: 1,
-    action: "record",
+  const evidence = core.observeCheck({
     taskId,
     expectedRevision: task.data.revision,
-    evidence: {
-      kind: "check",
-      claim: "verification passed",
-      requirementIds: [verification.id],
-      beforeCandidateId: candidate.data.id,
-      candidateId: candidate.data.id,
-      result: "passed",
-      summary: "passed",
-      refs: [],
-      exitCode: 0,
-      reviewContext: null,
-    },
+    observation: checkObservation(),
   });
   expect(evidence.ok).toBe(true);
   if (!evidence.ok) throw new Error(evidence.error);
