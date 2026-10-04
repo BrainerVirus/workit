@@ -4,7 +4,12 @@
 // package so release logs answer "what shipped?" without leaving the terminal.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { latestTag, RELEASE_PACKAGES } from "./analyze-release-scope";
+import {
+  latestTag,
+  lockChangedPackages,
+  payloadPaths,
+  RELEASE_PACKAGES,
+} from "./analyze-release-scope";
 
 const git = (root: string, args: string[]): string =>
   execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -12,8 +17,13 @@ const git = (root: string, args: string[]): string =>
 export function changedPackages(root: string, fromTag: string): string[] {
   // Committed state only: <tag>..HEAD, never the working tree — unreviewed
   // local edits must not decide what ships.
+  // Plus packages whose inlined third-party deps resolve differently in the
+  // lockfile (BUNDLED_DEPS); a dev-tooling-only lockfile bump changes none.
+  const relocked = new Set<string>(lockChangedPackages(root, fromTag, "HEAD"));
   return RELEASE_PACKAGES.filter((pkg) => {
-    const out = git(root, ["diff", "--name-only", `${fromTag}..HEAD`, "--", `packages/${pkg}`]);
+    if (relocked.has(pkg)) return true;
+    // Own directory plus any sources bundled into its dist/ (BUNDLED_SOURCES).
+    const out = git(root, ["diff", "--name-only", `${fromTag}..HEAD`, "--", ...payloadPaths(pkg)]);
     return out !== "";
   });
 }
@@ -38,20 +48,15 @@ export function publishChanged(opts: {
       execFileSync(cmd, args, { cwd: o.cwd, encoding: "utf8", stdio: "inherit" }));
   const tag =
     opts.fromTag !== undefined ? (opts.fromTag === "" ? null : opts.fromTag) : latestTag(root);
-  if (tag === null) {
-    // First-ever release: everything ships.
-    const published: string[] = [];
-    for (const pkg of RELEASE_PACKAGES) {
-      const cwd = resolve(root, "packages", pkg);
-      if (!dryRun) run("npm", ["publish", "--access", "public"], { cwd });
-      published.push(pkg);
-      console.log(`published ${pkg} @ ${cwd}`);
-    }
-    return { published, skipped: [], tag: null };
-  }
-  const changed = new Set(changedPackages(root, tag));
+  // First-ever release: everything ships.
+  const changed =
+    tag === null ? new Set<string>(RELEASE_PACKAGES) : new Set(changedPackages(root, tag));
   const published: string[] = [];
   const skipped: string[] = [];
+  const failed: Array<{ pkg: string; error: string }> = [];
+  // Every changed package is attempted even after a failure: one package that
+  // cannot publish (e.g. a first publish of a new npm name the token does not
+  // cover) must not leave the others unreleased. Failures throw at the end.
   for (const pkg of RELEASE_PACKAGES) {
     if (!changed.has(pkg)) {
       skipped.push(pkg);
@@ -62,11 +67,18 @@ export function publishChanged(opts: {
     try {
       if (!dryRun) run("npm", ["publish", "--access", "public"], { cwd });
     } catch (e) {
-      console.log(`publish failed ${pkg}: ${e instanceof Error ? e.message : String(e)}`);
-      throw e;
+      const error = e instanceof Error ? e.message : String(e);
+      failed.push({ pkg, error });
+      console.log(`publish failed ${pkg}: ${error}`);
+      continue;
     }
     published.push(pkg);
     console.log(`published ${pkg} @ ${cwd}`);
+  }
+  if (failed.length > 0) {
+    const summary = `publish failed for ${failed.length} package(s): ${failed.map((f) => f.pkg).join(", ")}; published: ${published.join(", ") || "none"}. A first publish of a new @brainervirus package needs an npm token allowed to create packages in the scope.`;
+    console.log(summary);
+    throw new Error(summary);
   }
   return { published, skipped, tag };
 }

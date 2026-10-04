@@ -38,7 +38,8 @@ const CURSOR = "@brainervirus/workit-cursor";
 const CODEX = "@brainervirus/workit-codex";
 const PI = "@brainervirus/workit-pi";
 const CLI = "@brainervirus/workit-cli";
-const V1_PACKAGES = [CORE, MCP, CLI, OPENCODE, CURSOR, CODEX, PI];
+const CLAUDE_CODE = "@brainervirus/workit-claude-code";
+const V1_PACKAGES = [CORE, MCP, CLI, OPENCODE, CURSOR, CODEX, PI, CLAUDE_CODE];
 
 // The isolated npm-install gate fetches third-party runtime deps (ink/react/
 // @inkjs/ui) from the public registry, so an offline/registry-outage CI run

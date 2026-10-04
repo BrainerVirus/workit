@@ -32,6 +32,7 @@ module.exports = {
     ["@semantic-release/npm", { pkgRoot: "packages/workit-cursor", npmPublish: false }],
     ["@semantic-release/npm", { pkgRoot: "packages/workit-codex", npmPublish: false }],
     ["@semantic-release/npm", { pkgRoot: "packages/workit-pi", npmPublish: false }],
+    ["@semantic-release/npm", { pkgRoot: "packages/workit-claude-code", npmPublish: false }],
     // AR-02/RR-01: prepare-time rewrite AFTER version bumps (unchanged).
     [
       "@semantic-release/exec",

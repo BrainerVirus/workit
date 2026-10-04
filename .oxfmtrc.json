@@ -7,6 +7,8 @@
     ".cursor-plugin/**",
     "**/.cursor-plugin/**",
     "**/.codex-plugin/**",
+    ".claude-plugin/**",
+    "**/.claude-plugin/**",
     "packages/workit-cursor/mcp.json"
   ]
 }

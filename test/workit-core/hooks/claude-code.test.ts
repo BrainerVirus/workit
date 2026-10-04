@@ -165,3 +165,35 @@ test("Claude renders context, per-turn context, and silent events in its native 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("Claude SubagentStart keys its text on agent_type: only the worktree implementer may write", () => {
+  const root = tempRoot();
+  try {
+    const text = (agent_type: string) =>
+      JSON.stringify(
+        dispatchHook(
+          claudeCodeAdapter,
+          fixture("claude-code", "subagent-start", root, { agent_type }),
+          {},
+        ).json,
+      );
+    expect(text("workit:implementer")).toContain("working in its own git worktree");
+    expect(text("workit:implementer")).not.toContain("read-only");
+    expect(text("workit:reviewer")).toContain("read-only/agent-guided");
+    expect(text("general-purpose")).toContain("read-only/agent-guided");
+    expect(text("implementer")).toContain("read-only/agent-guided");
+    expect(text("acme:implementer")).toContain("read-only/agent-guided");
+    // Other hosts keep their text whatever the agent type is called.
+    const codex = JSON.stringify(
+      dispatchHook(
+        codexAdapter,
+        fixture("codex", "subagent-start", root, { agent_type: "implementer" }),
+        {},
+      ).json,
+    );
+    expect(codex).toContain("read-only/agent-guided");
+    expect(codex).not.toContain("worktree");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
