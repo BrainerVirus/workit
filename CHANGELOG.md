@@ -73,9 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plus an observed `commit.recorded` ledger row for S13's author check.
   `git push` refuses protected branches, checks the forge account (S10
   credential), pushes the exact SHA (no follow-tags, no submodule pushes),
-  forces only with `--force-with-lease` leased on workit's own last
-  `push.verified` tip (never the tracking ref; otherwise `--expect`), plus
-  `--force-if-includes` semantics, and records `push.verified` only when the
+  forces only with `--force-with-lease` leased on workit's own last real
+  push (`push.verified` with `pushed: true`; no-op pushes are `push.noop`;
+  never the tracking ref; otherwise `--expect`), plus `--force-if-includes`
+  semantics even with `--expect` unless `--overwrite-unintegrated`, and records `push.verified` only when the
   remote tip equals the local SHA. `pr create`
   binds the pushed SHA, reuses an open PR/MR, post-verifies the forge head and
   records `pr.created`. `pr merge` needs `pr status` READY, an accepted

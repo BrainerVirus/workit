@@ -238,10 +238,12 @@ in changes you did not name. Commits carry a `Workit-Session:` trailer and a
 `commit.recorded` row, so the authoring session cannot verify its own work.
 `git push` never pushes a protected branch and succeeds only when the remote
 tip equals the local SHA afterwards. It forces only with
-`--force-with-lease`, leased on the tip workit itself last pushed, never on
-a tracking ref a plain `git fetch` may have moved. Without that record it
-needs `--expect <sha>`. Without `--expect`, the remote tip must also be in
-the branch's history or reflog (`--force-if-includes`). `pr create` requires the branch to be pushed and checks
+`--force-with-lease`, leased on the tip workit itself last pushed (a no-op
+push is recorded as `push.noop` and never counts), never on a tracking ref a
+plain `git fetch` may have moved. Without that record it needs
+`--expect <sha>`. In both cases the remote tip must be in the branch's
+history or reflog (`--force-if-includes`); only `--overwrite-unintegrated`
+drops commits you never had. `pr create` requires the branch to be pushed and checks
 that the forge reports that SHA as the PR head. `pr merge` merges only when
 `pr status` reads READY, an independent verdict is accepted for that head
 (`workit ledger check`), and the workspace allows merging. The merge call

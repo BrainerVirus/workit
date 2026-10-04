@@ -417,8 +417,9 @@ export function pushPreflight(
 }
 
 /**
- * The remote tip workit last observed for `branch`: the newest `push.verified`
- * row only. The remote-tracking ref is never a lease (a plain `git fetch`
+ * The remote tip workit last pushed for `branch`: the newest `push.verified`
+ * row where workit actually moved the ref (`pushed: true`). A no-op push only
+ * observed someone's tip (`push.noop`) and is never a lease anchor. The remote-tracking ref is never a lease (a plain `git fetch`
  * moves it to someone else's tip, which would make the force overwrite
  * them). `undefined` means workit has no record.
  */
@@ -429,6 +430,7 @@ export function recordedRemoteTip(cwd: string, plan: PushPlan): string | undefin
       const row = ledger.value.rows[index];
       if (
         row.type === "push.verified" &&
+        row.pushed === true &&
         row.branch === plan.branch &&
         row.observer === "workit_cli" &&
         row.head
@@ -470,6 +472,8 @@ export function executePush(
   plan: PushPlan,
   input: {
     forceWithLease?: boolean;
+    /** Allow a lease on a remote tip local history never contained (drops those commits). */
+    overwriteUnintegrated?: boolean;
     expect?: string | null;
     setUpstream?: boolean;
     actor: LedgerActor;
@@ -493,7 +497,7 @@ export function executePush(
         return failure(
           "blocked",
           `lease_unknown: workit has no recorded push of ${plan.branch}, so it cannot tell whose commits ${plan.remote}/${plan.branch} (${before.sha.slice(0, 12)}) holds`,
-          `${integrate}  # or, after reviewing that tip: workit git push --force-with-lease --expect <sha you reviewed>`,
+          `${integrate}  # or, after reviewing that tip: workit git push --force-with-lease --expect <sha you reviewed> (--overwrite-unintegrated only to drop commits you never had)`,
         );
       const expected = recorded ?? null;
       if (before.sha !== expected)
@@ -502,11 +506,15 @@ export function executePush(
           `lease_mismatch: ${plan.remote}/${plan.branch} is at ${before.sha?.slice(0, 12) ?? "(absent)"} but ${explicit ? "--expect names" : "workit last recorded"} ${expected?.slice(0, 12) ?? "(absent)"}; someone else pushed`,
           integrate,
         );
-      if (!explicit && before.sha !== null && !includesRemoteTip(cwd, plan.branch, before.sha))
+      if (
+        !input.overwriteUnintegrated &&
+        before.sha !== null &&
+        !includesRemoteTip(cwd, plan.branch, before.sha)
+      )
         return failure(
           "blocked",
           `lease_not_integrated: ${plan.remote}/${plan.branch} (${before.sha.slice(0, 12)}) was never part of local ${plan.branch}; forcing would drop it`,
-          integrate,
+          `${integrate}  # or, to drop those commits on purpose: workit git push --force-with-lease --expect ${before.sha} --overwrite-unintegrated`,
         );
       args.push(`--force-with-lease=refs/heads/${plan.branch}:${expected ?? ""}`);
       forced = true;
@@ -551,14 +559,16 @@ export function executePush(
       git(cwd, ["config", `branch.${plan.branch}.remote`, plan.remote]).ok &&
       git(cwd, ["config", `branch.${plan.branch}.merge`, `refs/heads/${plan.branch}`]).ok;
   }
+  // Only a push that moved the ref is a lease anchor; a no-op merely observed it.
   const row = appendObserved(cwd, {
-    type: "push.verified",
+    type: pushed ? "push.verified" : "push.noop",
     actor: input.actor,
     branch: plan.branch,
     head: plan.sha,
     remote: plan.remote,
     url: plan.url,
     previous: before.sha,
+    pushed,
     forced,
   });
   return success({

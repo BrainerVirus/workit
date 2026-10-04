@@ -1160,6 +1160,7 @@ export function summarizeRow(row: ReadRow): RowSummary {
       summary = `${(row.head ?? "?").slice(0, 12)} ${text("subject")}${row.actor.session ? "" : " (no session)"}`;
       break;
     case "push.verified":
+    case "push.noop":
       summary = `${text("remote")} ${(str(row.previous) ?? "(new)").slice(0, 12)} -> ${(row.head ?? "?").slice(0, 12)}${row.forced === true ? " (force-with-lease)" : ""}`;
       break;
     case "pr.created":

@@ -577,7 +577,6 @@ test("verify-delivery released: package specs that are not an npm name and semve
     "@scope/p@1.0.0|x",
     "pkg@1.0.0 --registry=http://evil",
     'pkg@"1.0.0"',
-    "Pkg@1.0.0",
     "pkg@^1.0.0",
     "pkg@%PATH%",
   ]) {

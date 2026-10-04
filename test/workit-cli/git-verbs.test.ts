@@ -6,7 +6,7 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
-import { readLedger } from "@/packages/workit-core/src/ledger";
+import { appendObserved, readLedger } from "@/packages/workit-core/src/ledger";
 import { fixture, replayRunner, replyError } from "@/test/shared/helpers/forge-replay";
 import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remote";
 
@@ -419,11 +419,68 @@ test("git push: --force-with-lease refuses when someone else pushed since workit
   );
   expect(result.json().unblock).not.toContain(theirs);
   expect(repo.remoteTip("feature/a")).toBe(theirs);
-  // After review, an explicit --expect is the lease.
-  const explicit = await run(["git", "push", "--force-with-lease", "--expect", theirs], repo.cwd);
-  expect(explicit.code).toBe(0);
+  // An explicit --expect still has to be integrated locally...
+  const explicit = await run(
+    ["git", "push", "--force-with-lease", "--expect", theirs, "--json"],
+    repo.cwd,
+  );
+  expect(explicit.code).toBe(3);
+  expect(explicit.json().error).toContain("lease_not_integrated");
+  expect(explicit.json().unblock).toContain("--overwrite-unintegrated");
+  expect(repo.remoteTip("feature/a")).toBe(theirs);
+  // ...unless dropping their commits is stated explicitly.
+  const overwrite = await run(
+    ["git", "push", "--force-with-lease", "--expect", theirs, "--overwrite-unintegrated"],
+    repo.cwd,
+  );
+  expect(overwrite.code).toBe(0);
   expect(repo.remoteTip("feature/a")).toBe(repo.git("rev-parse", "HEAD"));
   expect((await run(["git", "push", "--expect", theirs], repo.cwd)).code).toBe(2);
+  expect((await run(["git", "push", "--overwrite-unintegrated"], repo.cwd)).code).toBe(2);
+});
+
+test("git push: a no-op push of someone else's tip is push.noop and never becomes the lease (reviewer B2)", async () => {
+  const repo = setup();
+  await feature(repo);
+  expect((await run(["git", "push"], repo.cwd)).code).toBe(0);
+  const mine = repo.git("rev-parse", "HEAD");
+  const theirs = repo.pushFromElsewhere("feature/a");
+  // Look at their tip locally and "push" it: nothing moves on the remote.
+  repo.git("fetch", "-q", "origin");
+  repo.git("reset", "-q", "--hard", theirs);
+  const noop = await run(["git", "push", "--json"], repo.cwd);
+  expect(noop.code).toBe(0);
+  expect(noop.json().data).toMatchObject({ pushed: false, sha: theirs });
+  expect(rows(repo.cwd, "push.noop").at(-1)).toMatchObject({ head: theirs, pushed: false });
+  // Back to my work, rewrite it, and force: the lease is still my last real push.
+  repo.git("reset", "-q", "--hard", mine);
+  repo.git("commit", "-q", "--amend", "-m", "feat: rewritten");
+  const result = await run(["git", "push", "--force-with-lease", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("lease_mismatch");
+  expect(repo.remoteTip("feature/a")).toBe(theirs);
+});
+
+test("git push: a push.verified row without pushed:true (written before no-ops were split out) is not a lease anchor", async () => {
+  const repo = setup();
+  await feature(repo);
+  repo.git("push", "-q", "origin", "feature/a");
+  const theirs = repo.pushFromElsewhere("feature/a");
+  appendObserved(repo.cwd, {
+    type: "push.verified",
+    actor: { host: "cli", session: null, agentId: null },
+    branch: "feature/a",
+    head: theirs,
+    forced: false,
+  });
+  repo.git("fetch", "-q", "origin");
+  repo.git("reset", "-q", "--hard", theirs);
+  repo.git("reset", "-q", "--hard", "HEAD@{1}");
+  repo.git("commit", "-q", "--amend", "-m", "feat: rewritten");
+  const result = await run(["git", "push", "--force-with-lease", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("lease_unknown");
+  expect(repo.remoteTip("feature/a")).toBe(theirs);
 });
 
 test("git push: given a stale-but-fetched tracking ref and no workit record, then --force-with-lease is lease_unknown (never overwrites)", async () => {

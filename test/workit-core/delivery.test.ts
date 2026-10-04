@@ -292,6 +292,8 @@ test("commit lint and package specs", () => {
   expect(parsePackageSpec("pkg@2")).toBeNull();
   expect(parsePackageSpec("--registry")).toBeNull();
   expect(parsePackageSpec("pkg@1.0.0&calc")).toBeNull();
+  // Legacy upper-case names are looked up, not refused.
+  expect(parsePackageSpec("JSONStream@1.3.5")).toEqual({ name: "JSONStream", version: "1.3.5" });
   expect(parsePackageSpec("pkg@1.0.0-rc.1+build.5")).toEqual({
     name: "pkg",
     version: "1.0.0-rc.1+build.5",

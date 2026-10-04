@@ -22,7 +22,7 @@ const BRANCH_USAGE =
   "workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--carry] [--json]";
 const COMMIT_USAGE = "workit git commit -m <msg> [--all | [--] <paths…>] [--json]";
 const PUSH_USAGE =
-  "workit git push [--set-upstream] [--force-with-lease [--expect <sha>]] [--json]";
+  "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--json]";
 const USAGE = "workit git branch|commit|push ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
@@ -124,6 +124,7 @@ async function push(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(normalized, {
     "set-upstream": "boolean",
     "force-with-lease": "boolean",
+    "overwrite-unintegrated": "boolean",
     expect: "value",
   });
   if (typeof flags === "string") return usage(io, flags, PUSH_USAGE);
@@ -134,8 +135,15 @@ async function push(argv: string[], io: Io): Promise<number> {
       PUSH_USAGE,
     );
   const expect = flags.values.expect ?? null;
-  if (expect !== null && !flags.booleans.has("force-with-lease"))
-    return usage(io, "--expect only applies with --force-with-lease", PUSH_USAGE);
+  if (
+    (expect !== null || flags.booleans.has("overwrite-unintegrated")) &&
+    !flags.booleans.has("force-with-lease")
+  )
+    return usage(
+      io,
+      "--expect and --overwrite-unintegrated only apply with --force-with-lease",
+      PUSH_USAGE,
+    );
   if (expect !== null && !/^[0-9a-f]{40,64}$/u.test(expect))
     return usage(io, "--expect must be a full commit sha", PUSH_USAGE);
 
@@ -155,6 +163,7 @@ async function push(argv: string[], io: Io): Promise<number> {
     );
   const result = executePush(io.cwd, plan.data, {
     forceWithLease: flags.booleans.has("force-with-lease"),
+    overwriteUnintegrated: flags.booleans.has("overwrite-unintegrated"),
     expect,
     setUpstream: flags.booleans.has("set-upstream"),
     actor: actorFromEnv(io.env),

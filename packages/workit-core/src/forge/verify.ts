@@ -66,9 +66,11 @@ export type NpmRunner = (args: readonly string[]) => {
   stderr: string;
 };
 
-// npm package names (lower-case, URL-safe, optional @scope/) and semver.
+// npm package names (URL-safe, optional @scope/) and semver.
 // Both are checked before npm runs, so no argument can carry shell syntax.
-const NPM_NAME = /^(?:@[a-z0-9~][a-z0-9-._~]*\/)?[a-z0-9~][a-z0-9-._~]*$/u;
+// Upper case is accepted: legacy packages (published before the lower-case
+// rule) are still installable, and this only looks them up.
+const NPM_NAME = /^(?:@[A-Za-z0-9~][A-Za-z0-9-._~]*\/)?[A-Za-z0-9~][A-Za-z0-9-._~]*$/u;
 const SEMVER =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const SAFE_ARG = /^[0-9A-Za-z@/._~+-]+$/u;
@@ -79,17 +81,23 @@ export const systemNpm: NpmRunner = (args) => {
   // shell has nothing to interpret; anything else is refused before spawning.
   if (!args.every((arg) => SAFE_ARG.test(arg)))
     return { status: 2, stdout: "", stderr: "refused: unsafe npm argument" };
-  const win = process.platform === "win32";
-  const exe = win ? (findExecutable("npm.cmd", process.env) ?? "npm.cmd") : "npm";
-  const result = spawnSync(win ? `"${exe}"` : exe, [...args], {
-    encoding: "utf8",
+  const options = {
+    encoding: "utf8" as const,
     timeout: 30_000,
-    killSignal: "SIGKILL",
+    killSignal: "SIGKILL" as const,
     env: { ...process.env, NO_UPDATE_NOTIFIER: "1", npm_config_update_notifier: "false" },
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: win,
-  });
+    stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+  };
+  // On Windows one pre-validated command string goes to cmd (no args array
+  // with shell: true, which is deprecated as DEP0190).
+  const found = process.platform === "win32" ? findExecutable("npm.cmd", process.env) : null;
+  // A path cmd would expand (%VAR%, !VAR!, ^, ") falls back to PATH lookup.
+  const npmCmd = found && !/["%!^]/u.test(found) ? `"${found}"` : "npm.cmd";
+  const result =
+    process.platform === "win32"
+      ? spawnSync(`${npmCmd} ${args.join(" ")}`, { ...options, shell: true })
+      : spawnSync("npm", [...args], options);
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 };
 
