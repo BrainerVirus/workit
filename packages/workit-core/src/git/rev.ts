@@ -215,6 +215,23 @@ export type WorktreeTree = {
 };
 
 /**
+ * Copy the index and keep its mtime. Git trusts an entry's cached stat only
+ * when the entry is older than the index file ("racy git"). An entry written
+ * in the same timestamp tick as the index is re-hashed instead. A plain copy
+ * stamps the index with the current time, so a same-size rewrite in that
+ * tick would read as clean. That is common on git builds that compare whole
+ * seconds (macOS). The copy's mtime is floored one microsecond below the
+ * original: an older index only makes more entries racy, which is the safe
+ * direction.
+ */
+const seedIndex = (from: string, to: string): void => {
+  fs.copyFileSync(from, to);
+  const { atimeNs, mtimeNs } = fs.statSync(from, { bigint: true });
+  const seconds = (ns: bigint): number => (Number(ns / 1000n) - 1) / 1e6;
+  fs.utimesSync(to, seconds(atimeNs), seconds(mtimeNs));
+};
+
+/**
  * The tree the worktree would commit right now, including unstaged and
  * untracked (non-ignored) files. Built in a throwaway index
  * (GIT_INDEX_FILE + `git add -A` + `git write-tree`), so the real index, HEAD
@@ -241,7 +258,7 @@ export function worktreeTree(
     const tempIndex = path.join(scratch, "index");
     // Seeding from the real index keeps git's stat cache, so `add -A` only
     // rehashes files that actually changed.
-    if (fs.existsSync(indexPath)) fs.copyFileSync(indexPath, tempIndex);
+    if (fs.existsSync(indexPath)) seedIndex(indexPath, tempIndex);
     const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
     const untracked = git(top, ["ls-files", "--others", "--exclude-standard", "-z"], {
       env,
