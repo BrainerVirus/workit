@@ -943,3 +943,26 @@ test("wk-* aliases register even when the host defers transform callbacks", asyn
     expect(commands.includes(alias), alias).toBe(skill !== "workit-review");
   expect(aliasesFor("workit-review").every((alias) => !commands.includes(alias))).toBe(true);
 });
+
+// V2 lineage gate (v2/plugin.ts workerIdFor): a persisted running worker bound
+// to this child session is not enough — the child must also be a direct child
+// the lifecycle observed launching from that coordinator. A child that merely
+// claims the coordinator as parent stays denied.
+test("a child session with a persisted worker but no observed direct launch is denied", async () => {
+  const root = repository();
+  try {
+    const started = coordinatorCore(root).task(
+      taskStartRequest({
+        intent: { objective: "lineage probe", scope: scope({ paths: ["."] }), authorityRefs: [] },
+      }),
+    );
+    if (!started.ok) throw new Error(started.error);
+    runningWorker(root, (started.data as { id: string }).id, "reviewer", "child-session");
+    const { call } = await harness(root, { sessions: { "child-session": { parentID: "coord" } } });
+    const result = await call("workit_task", { schemaVersion: 1, action: "list" }, "child-session");
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("no validated Workit worker");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -26,6 +26,7 @@ import {
   harnessTest,
   HARNESS_ENABLED,
   V2_IMAGE,
+  V2_IMAGE_VERSION,
   type Harness,
 } from "./harness";
 
@@ -106,14 +107,14 @@ const waitIdle = async (id: string, timeoutMs = 90_000): Promise<any[]> => {
 };
 
 harnessTest(
-  "probe plugin loads with the pinned 2.0.18 context shape",
+  `probe plugin loads with the pinned ${V2_IMAGE_VERSION} context shape`,
   async () => {
     if (!h) return;
     const id = await sessionWithModel("stub-text");
     await prompt(id, "hi");
     await waitIdle(id);
     const evs = lines(h.probeLog());
-    expect(evs.some((e) => e.ev === "setup" && e.version === "2.0.18")).toBe(true);
+    expect(evs.some((e) => e.ev === "setup" && e.version === V2_IMAGE_VERSION)).toBe(true);
     const keys = evs.find((e) => e.ev === "ctx.keys")?.keys as string[];
     expect(keys).toContain("tool");
     expect(keys).toContain("event");

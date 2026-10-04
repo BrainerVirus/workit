@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdtempSync,
+  rmSync,
   readFileSync,
   mkdirSync,
   copyFileSync,
@@ -273,7 +275,23 @@ export function previewUpgrade(hosts: HostId[] = HOSTS, deps: UpgradeDeps = {}):
     // Workit 3 ships only the OpenCode V2 plugin entry: warn before an upgrade
     // leaves a 1.x host with a plugin it cannot load. Unknown versions stay quiet.
     if (installedSources.some((source) => source.host === "opencode")) {
-      const probe = run("opencode", ["--version"]);
+      // Like the doctor probe: OpenCode logs under its XDG data dir even for
+      // --version, so a preview must point those dirs at a throwaway place.
+      const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-upgrade-opencode-"));
+      let probe: CommandResult;
+      try {
+        probe = runner({
+          ...deps,
+          env: {
+            ...deps.env,
+            XDG_DATA_HOME: path.join(scratch, "data"),
+            XDG_STATE_HOME: path.join(scratch, "state"),
+            XDG_CACHE_HOME: path.join(scratch, "cache"),
+          },
+        })("opencode", ["--version"]);
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
       const installed = probe.status === 0 ? probe.stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
       if (installed && !versionAtLeast(installed, SUPPORT_MATRIX.opencode.minimum))
         (plan.warnings ??= []).push(`opencode ${installed}: ${OPENCODE_V1_FIX}`);

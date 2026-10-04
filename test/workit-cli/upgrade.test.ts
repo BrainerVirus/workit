@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -464,3 +464,33 @@ test("--preview is the explicit name of the default preview and refuses --apply"
     f.cleanup();
   }
 });
+
+// The real probe (no injected runner) points OpenCode's XDG data/state/cache
+// dirs at a throwaway directory, so a preview never writes OpenCode's log
+// into the home it inspects.
+test.skipIf(process.platform === "win32")(
+  "the opencode version probe never writes into the inspected home",
+  () => {
+    const f = fixture();
+    try {
+      const bin = path.join(f.home, "fake-bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(
+        path.join(bin, "opencode"),
+        '#!/bin/sh\nmkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/log"\n' +
+          'echo probe > "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/log/opencode.log"\n' +
+          "echo 1.18.34\n",
+        { mode: 0o755 },
+      );
+      const plan = previewUpgrade(["opencode"], {
+        home: f.home,
+        env: { PATH: `${bin}${path.delimiter}/usr/bin${path.delimiter}/bin` },
+        activeHosts: () => [],
+      });
+      expect(plan.warnings?.[0]).toContain("opencode 1.18.34");
+      expect(existsSync(path.join(f.home, ".local/share/opencode"))).toBe(false);
+    } finally {
+      f.cleanup();
+    }
+  },
+);

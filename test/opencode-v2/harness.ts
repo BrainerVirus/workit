@@ -15,6 +15,7 @@
  */
 
 import { test } from "bun:test";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import { $ } from "bun";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +24,9 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
+/** The OpenCode version the pinned V2 image runs: the support-matrix
+ * `current` pin (keep the digest below and the matrix in step). */
+export const V2_IMAGE_VERSION = SUPPORT_MATRIX.opencode.current;
 export const V2_IMAGE =
   "ghcr.io/anomalyco/opencode@sha256:aa0e5ac93543f24c99dfcc72a6ea7df335faec131dafc16f7607a2c7d3173d28";
 const BUN_IMAGE =

@@ -378,9 +378,6 @@ const checkVersions = (res: Resolved): DoctorCheck => {
   };
 };
 
-// The Codex CLI is a qualification host, not a runtime dependency: evidence
-// covers exactly SUPPORT_MATRIX.codex.cli. A drifted install keeps working,
-// but warns so a fresh install never silently outruns the qualification pin.
 /** Repair text for an OpenCode 1.x host: Workit 3 ships only the V2
  * `setup()` plugin entry, so a 1.x host needs the 2.x plugin line. */
 export const OPENCODE_V1_FIX = `OpenCode < ${SUPPORT_MATRIX.opencode.minimum} cannot load Workit 3 (V2 plugin API only): upgrade OpenCode to ${SUPPORT_MATRIX.opencode.minimum}+, or stay on Workit 2.x by pinning "@brainervirus/workit-opencode@2" in the opencode.json "plugin" array`;
@@ -437,6 +434,9 @@ const checkOpencodeVersion = (res: Resolved): DoctorCheck => {
   };
 };
 
+// The Codex CLI is a qualification host, not a runtime dependency: evidence
+// covers exactly SUPPORT_MATRIX.codex.cli. A drifted install keeps working,
+// but warns so a fresh install never silently outruns the qualification pin.
 const checkCodexPin = (res: Resolved): DoctorCheck => {
   const qualified = SUPPORT_MATRIX.codex.cli;
   if (!commandOnPath("codex", res.env))
