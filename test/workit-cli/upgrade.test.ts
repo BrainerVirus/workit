@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -398,7 +398,10 @@ test("OpenCode unsupported scoped update is visible and never falls back to upda
       }),
     ).toBe(0);
     expect(output).toContain("preserved");
-    expect(f.calls.filter((call) => call[0] === "opencode")).toEqual([["opencode", "--version"]]);
+    // Only version probes and the launch itself; never a plugin update.
+    const opencodeCalls = f.calls.filter((call) => call[0] === "opencode");
+    expect(opencodeCalls.at(-1)).toEqual(["opencode", "--version"]);
+    expect(opencodeCalls.every((call) => call.join(" ") === "opencode --version")).toBe(true);
   } finally {
     f.cleanup();
   }
@@ -418,3 +421,76 @@ test("conflicting Workit registrations stop upgrade without changing either sour
     f.cleanup();
   }
 });
+
+test("upgrade warns before applying when the OpenCode host is 1.x (Workit 3 is V2-only)", async () => {
+  const f = fixture();
+  try {
+    const run = (command: string, args: string[]) =>
+      command === "opencode" && args[0] === "--version"
+        ? { status: 0, stdout: "1.18.34\n" }
+        : f.deps.run(command, args);
+    const plan = previewUpgrade(["opencode"], { ...f.deps, run });
+    expect(plan.warnings?.[0]).toContain("opencode 1.18.34");
+    expect(plan.warnings?.[0]).toContain('"@brainervirus/workit-opencode@2"');
+    const out: string[] = [];
+    await runUpgradeCommand(["--hosts=opencode", "--apply", "--confirm"], {
+      ...f.deps,
+      run,
+      out: { write: (text: string) => out.push(text) },
+    });
+    expect(out[0]).toStartWith("warning: opencode 1.18.34");
+
+    const current = (command: string, args: string[]) =>
+      command === "opencode"
+        ? { status: 0, stdout: "opencode v2.0.21\n" }
+        : f.deps.run(command, args);
+    expect(previewUpgrade(["opencode"], { ...f.deps, run: current }).warnings).toBeUndefined();
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("--preview is the explicit name of the default preview and refuses --apply", async () => {
+  const f = fixture();
+  try {
+    const out: string[] = [];
+    const deps = { ...f.deps, out: { write: (text: string) => out.push(text) } };
+    expect(await runUpgradeCommand(["--hosts=pi", "--preview"], deps)).toBe(0);
+    expect(JSON.parse(out.join("")).entries).toBeDefined();
+    out.length = 0;
+    expect(await runUpgradeCommand(["--preview", "--apply", "--confirm"], deps)).toBe(2);
+    expect(out.join("")).toContain("[--preview | --apply --confirm]");
+  } finally {
+    f.cleanup();
+  }
+});
+
+// The real probe (no injected runner) points OpenCode's XDG data/state/cache
+// dirs at a throwaway directory, so a preview never writes OpenCode's log
+// into the home it inspects.
+test.skipIf(process.platform === "win32")(
+  "the opencode version probe never writes into the inspected home",
+  () => {
+    const f = fixture();
+    try {
+      const bin = path.join(f.home, "fake-bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(
+        path.join(bin, "opencode"),
+        '#!/bin/sh\nmkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/log"\n' +
+          'echo probe > "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/log/opencode.log"\n' +
+          "echo 1.18.34\n",
+        { mode: 0o755 },
+      );
+      const plan = previewUpgrade(["opencode"], {
+        home: f.home,
+        env: { PATH: `${bin}${path.delimiter}/usr/bin${path.delimiter}/bin` },
+        activeHosts: () => [],
+      });
+      expect(plan.warnings?.[0]).toContain("opencode 1.18.34");
+      expect(existsSync(path.join(f.home, ".local/share/opencode"))).toBe(false);
+    } finally {
+      f.cleanup();
+    }
+  },
+);

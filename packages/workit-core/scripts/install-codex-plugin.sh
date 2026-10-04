@@ -19,10 +19,9 @@ fi
 mkdir -p "$PLUGIN_DIR"
 rsync -a --delete "$SOURCE/packages/workit-codex/" "$PLUGIN_DIR/"
 
-if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" cli; then
+if ! bun "$ROOT/packages/workit-cli/scripts/doctor-check.ts" cli; then
   echo "FATAL: post-install doctor found problems after Codex plugin sync" >&2
   exit 1
 fi
 
 echo "Codex plugin installed at $PLUGIN_DIR"
-echo "Complete an explicit v1 cutover before treating this as a generation switch."

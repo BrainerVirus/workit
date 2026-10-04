@@ -8,7 +8,7 @@
 // registry-unreachable comparison warns as registry_unreachable and is NOT
 // stale (CA-04): no false stale_install and no install failure. Other check
 // failures are left to the post-install gate.
-import { runDoctor } from "../src/core/doctor";
+import { runDoctor } from "../src/admin/doctor";
 
 const hostArg = process.argv[2];
 const host = hostArg === "cursor" ? "cursor" : hostArg === "cli" ? "cli" : "opencode";

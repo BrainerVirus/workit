@@ -12,7 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import * as fsMod from "node:fs";
-import { applyUninstall, planUninstall } from "@/packages/workit-core/src/core/uninstall";
+import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 
 // Uninstall planning/apply tests run ONLY on temp fixture homes (D-07): every
 // home/config path is injected, no default may resolve to the real HOME, and
@@ -385,4 +385,34 @@ test("plan-vs-applied parity: every planned action yields exactly one entry", ()
   expect(result.entries.map((e) => e.host)).toEqual(
     plan.hosts.flatMap((h) => h.actions.map(() => h.host)),
   );
+});
+
+// OpenCode 2.x reads `plugins`; the V1-era `plugin` key is still normalized and
+// is what setup writes when no `plugins` key exists. Uninstall cleans both,
+// including a checkout directory pin (the live local-dev shape).
+test("uninstall removes Workit pins from both the `plugins` and `plugin` keys", () => {
+  const f = fixture();
+  try {
+    const checkoutPin = "file:///home/dev/workflow-toolkit/packages/workit-opencode";
+    f.writeJson(f.opencodeConfig, {
+      plugins: [checkoutPin, "@brainervirus/opencode-commandcode"],
+      plugin: ["@brainervirus/workit-opencode@2", "@other/pkg"],
+      model: "keep",
+    });
+    const plan = planUninstall(f);
+    expect(plan.hosts.find((h) => h.host === "opencode")?.installed).toBe(true);
+    applyUninstall(plan, f);
+    const oc = JSON.parse(readFileSync(f.opencodeConfig, "utf8"));
+    expect(oc).toEqual({
+      plugins: ["@brainervirus/opencode-commandcode"],
+      plugin: ["@other/pkg"],
+      model: "keep",
+    });
+
+    f.writeJson(f.opencodeConfig, { plugins: "@brainervirus/workit-opencode" });
+    applyUninstall(planUninstall(f), f);
+    expect(JSON.parse(readFileSync(f.opencodeConfig, "utf8"))).toEqual({});
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });

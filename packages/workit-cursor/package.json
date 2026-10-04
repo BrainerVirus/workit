@@ -1,8 +1,8 @@
 {
   "name": "@brainervirus/workit-cursor",
-  "version": "2.8.0",
+  "version": "3.0.0",
   "private": false,
-  "description": "Workit Cursor plugin — shared MCP transport, native hooks, and fourteen method skills",
+  "description": "Workit Cursor plugin — shared MCP transport, native hooks, and sixteen method skills",
   "keywords": [
     "agentic-coding",
     "ai-agents",

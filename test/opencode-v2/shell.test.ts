@@ -3,10 +3,12 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { TaskStore, WorkitCore, success } from "@/packages/workit-core/src/core";
 import definition from "@/packages/workit-opencode/src/v2/plugin";
 import { normalizeQuestionAnswers } from "@/packages/workit-opencode/src/v2/receipts";
-import { taskStartRequest } from "../workit-core/task-fixtures";
+import { scope, taskStartRequest } from "../workit-core/task-fixtures";
+import { injectAgentContext } from "@/packages/workit-opencode/src/v2/injection";
+import { registerCommands, registerSkills } from "@/packages/workit-opencode/src/v2/registry";
 import {
   WORKIT_METHOD_SKILLS,
   WORKIT_SKILL_ALIASES,
@@ -459,7 +461,7 @@ test("question results mint one consume-once decision receipt", async () => {
     });
     const taskId = inspected.data.task.id as string;
     const workspaceId = inspected.data.workspace.id as string;
-    const scope = inspected.data.task.intent.data.scope;
+    const taskScope = inspected.data.task.intent.data.scope;
     const presented = "Workit decision: design — approve the probe?";
     const approved = "Approve the probe.";
     await hooks.get("execute.after")!({
@@ -478,7 +480,7 @@ test("question results mint one consume-once decision receipt", async () => {
       binding: {
         taskId,
         workspaceId,
-        scope,
+        scope: taskScope,
         presented,
         approvedContent: approved,
         contentRefs: [],
@@ -703,6 +705,264 @@ test("context injects the bootstrap and task context, compaction appends without
     await compaction(event);
     expect(compacting.some((part) => part.text.includes("<workit-task-context>"))).toBe(true);
     expect(event.result).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Ported from the retired V1 suites (S18): direct-child worker context,
+// rejected native decisions, and per-output compaction dedupe on the V2 path.
+
+const decisionTask = async (call: (name: string, input: unknown) => Promise<any>) => {
+  const intent = {
+    objective: "decision probe",
+    scope: { description: "probe", paths: ["docs"], exclusions: [] },
+    authorityRefs: [],
+  };
+  await call("workit_task", { schemaVersion: 1, action: "start", intent });
+  const listed = await call("workit_task", { schemaVersion: 1, action: "list" });
+  const inspected = await call("workit_task", {
+    schemaVersion: 1,
+    action: "inspect",
+    taskId: listed.data[0].id,
+    view: "full",
+  });
+  return {
+    taskId: inspected.data.task.id as string,
+    workspaceId: inspected.data.workspace.id as string,
+    scope: inspected.data.task.intent.data.scope,
+  };
+};
+
+test("a rejected native Workit decision records exactly and host-observed", async () => {
+  const root = repository();
+  try {
+    const { hooks, call } = await harness(root);
+    const { taskId, workspaceId, scope: taskScope } = await decisionTask(call);
+    const presented = "Workit decision: design — approve the design?";
+    const approved = "Design v1";
+    await hooks.get("execute.after")!({
+      tool: "question",
+      sessionID: "ses_v2",
+      id: "call_rejected",
+      input: workitQuestion(presented, approved),
+      status: "completed",
+      result: { metadata: { answers: { q0: "rejected" } } },
+    });
+    const record = {
+      schemaVersion: 1,
+      action: "record",
+      taskId,
+      purpose: "design",
+      binding: {
+        taskId,
+        workspaceId,
+        scope: taskScope,
+        presented,
+        approvedContent: approved,
+        contentRefs: [],
+      },
+      requirementIds: [],
+    };
+    // An approval claim cannot ride on the rejected answer.
+    const claimedApproval = await call("workit_decision", { ...record, response: "approved" });
+    expect(claimedApproval.ok).toBe(false);
+    const rejected = await call("workit_decision", { ...record, response: "rejected" });
+    expect(rejected.ok, JSON.stringify(rejected)).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("each distinct compaction output receives task context exactly once", async () => {
+  const root = repository();
+  try {
+    const { sessionHooks, call } = await harness(root);
+    await decisionTask(call);
+    const compaction = sessionHooks.get("compaction")!;
+    const count = (system: Array<{ text: string }>) =>
+      system.filter((part) => part.text.includes("<workit-task-context>")).length;
+    const first: Array<{ type: string; text: string }> = [];
+    const second: Array<{ type: string; text: string }> = [];
+    await compaction({ sessionID: "ses_v2", system: first });
+    await compaction({ sessionID: "ses_v2", system: first });
+    await compaction({ sessionID: "ses_v2", system: second });
+    expect(count(first)).toBe(1);
+    expect(count(second)).toBe(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const coordinatorCore = (root: string, nativeWorker = false) =>
+  new WorkitCore(new TaskStore(root), {
+    root,
+    caller: { host: "opencode", actor: "coord" },
+    capabilities: [],
+    constraints: [],
+    now: () => "2026-01-01T00:00:00Z",
+    ...(nativeWorker
+      ? {
+          nativeWorker: {
+            verifyWorker: ({ expected, caller }: any) =>
+              success(null, null, {
+                kind: "host_observed",
+                host: caller.host,
+                session: expected.session,
+                workerId: expected.workerId,
+                receipts: [{ kind: "host", host: caller.host, handle: "native-worker" }],
+              }),
+          },
+        }
+      : {}),
+  } as never);
+
+const runningWorker = (
+  root: string,
+  taskId: string,
+  role: "reviewer" | "implementer",
+  session: string,
+) => {
+  const store = new TaskStore(root);
+  const revisions = () => {
+    const task = store.readTask(taskId);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+    return { task: task.data.revision, workspace: workspace.data.revision };
+  };
+  let current = revisions();
+  const assigned = coordinatorCore(root).worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId,
+    expectedRevision: current.task,
+    expectedWorkspaceRevision: current.workspace,
+    assignment: {
+      role,
+      objective: "inspect the assigned area",
+      scope: scope({ paths: [role === "reviewer" ? "review" : "src"] }),
+      decisionIds: [],
+      requirementIds: [],
+      candidateId: null,
+      stoppingCondition: "report the result",
+    },
+  });
+  if (!assigned.ok) throw new Error(assigned.error);
+  current = revisions();
+  const observed = coordinatorCore(root, true).observeWorkerLifecycle({
+    taskId,
+    workerId: (assigned.data as { id: string }).id,
+    expectedRevision: current.task,
+    expectedWorkspaceRevision: current.workspace,
+    state: "running",
+    session: { kind: "host", host: "opencode", handle: session },
+    observation: { event: "worker-started" },
+  });
+  if (!observed.ok) throw new Error(observed.error);
+};
+
+test("direct-child reviewer and implementer contexts are exact and lineage-bound", () => {
+  const root = repository();
+  try {
+    const started = coordinatorCore(root).task(
+      taskStartRequest({
+        intent: { objective: "worker probe", scope: scope({ paths: ["."] }), authorityRefs: [] },
+      }),
+    );
+    if (!started.ok) throw new Error(started.error);
+    const taskId = (started.data as { id: string }).id;
+    runningWorker(root, taskId, "reviewer", "reviewer-session");
+    runningWorker(root, taskId, "implementer", "implementer-session");
+    const children = new Map([
+      ["reviewer-session", "coord"],
+      ["implementer-session", "coord"],
+    ]);
+    const contextFor = (id: string, parentID: string) => {
+      const system: Array<{ type: string; text: string }> = [];
+      injectAgentContext(root, { id, parentID, directory: root }, children, system);
+      return system.map((part) => part.text).join("\n");
+    };
+
+    const reviewer = contextFor("reviewer-session", "coord");
+    expect(reviewer).toContain("<workit-worker-context>");
+    expect(reviewer).toContain('"role":"reviewer"');
+    expect(reviewer).toContain('"readOnly":true');
+    expect(reviewer).not.toContain("<workit-contract>");
+
+    const implementer = contextFor("implementer-session", "coord");
+    expect(implementer).toContain("<workit-worker-context>");
+    expect(implementer).toContain('"role":"implementer"');
+    expect(implementer).toContain('"readOnly":false');
+    expect(implementer).toContain('"paths":["src"]');
+
+    // A child whose observed parent is not its recorded coordinator gets none.
+    const mismatched = contextFor("reviewer-session", "other-coordinator");
+    expect(mismatched).not.toContain("<workit-worker-context>");
+    expect(mismatched).not.toContain('"role":"reviewer"');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// OpenCode runs transform callbacks when it builds its catalog, not inside
+// `transform()` (seen on 2.0.18/2.0.21: the wk-* aliases were missing from
+// /api/command). Alias registration must not depend on callback timing.
+test("wk-* aliases register even when the host defers transform callbacks", async () => {
+  const deferred: Array<() => void> = [];
+  const skills: Array<{ id: string }> = [];
+  const commands: string[] = [];
+  const ctx = {
+    skill: {
+      list: async () => ({ data: [{ id: "workit-review" }] }),
+      transform: async (fn: (editor: any) => void) => {
+        deferred.push(() =>
+          fn({ list: () => [{ id: "workit-review" }], add: (s: { id: string }) => skills.push(s) }),
+        );
+      },
+    },
+    command: {
+      list: async () => ({ data: [{ name: "init" }] }),
+      transform: async (fn: (editor: any) => void) => {
+        deferred.push(() => fn({ add: (c: { name: string }) => commands.push(c.name) }));
+      },
+    },
+    session: { prompt: async () => {} },
+  };
+  const registered = await registerSkills(ctx);
+  await registerCommands(ctx, registered);
+  expect(commands).toEqual([]); // nothing ran yet: the host has not built its catalog
+  // Catalogs build independently: the command catalog may build first.
+  for (const run of deferred.toReversed()) run();
+  const aliasesFor = (skill: string) =>
+    Object.entries(WORKIT_SKILL_ALIASES)
+      .filter(([, target]) => target === skill)
+      .map(([alias]) => alias);
+  expect(skills.map((s) => s.id).toSorted()).toEqual(
+    WORKIT_METHOD_SKILLS.filter((id) => id !== "workit-review").toSorted(),
+  );
+  for (const [alias, skill] of Object.entries(WORKIT_SKILL_ALIASES))
+    expect(commands.includes(alias), alias).toBe(skill !== "workit-review");
+  expect(aliasesFor("workit-review").every((alias) => !commands.includes(alias))).toBe(true);
+});
+
+// V2 lineage gate (v2/plugin.ts workerIdFor): a persisted running worker bound
+// to this child session is not enough — the child must also be a direct child
+// the lifecycle observed launching from that coordinator. A child that merely
+// claims the coordinator as parent stays denied.
+test("a child session with a persisted worker but no observed direct launch is denied", async () => {
+  const root = repository();
+  try {
+    const started = coordinatorCore(root).task(
+      taskStartRequest({
+        intent: { objective: "lineage probe", scope: scope({ paths: ["."] }), authorityRefs: [] },
+      }),
+    );
+    if (!started.ok) throw new Error(started.error);
+    runningWorker(root, (started.data as { id: string }).id, "reviewer", "child-session");
+    const { call } = await harness(root, { sessions: { "child-session": { parentID: "coord" } } });
+    const result = await call("workit_task", { schemaVersion: 1, action: "list" }, "child-session");
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("no validated Workit worker");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

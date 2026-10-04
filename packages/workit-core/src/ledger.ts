@@ -841,6 +841,47 @@ function effectiveOf(rows: readonly ReadRow[], authors: Set<string>): ReadRow | 
   return effective;
 }
 
+/**
+ * Stacked branches (S12): a verdict keyed against the trunk cannot carry
+ * through a restack after its parent was squash-merged, because the
+ * trunk-relative diff loses the parent's change. `workit stack sync` observes
+ * each restack itself and records `stack.restacked` with `patchEqual` when
+ * the change relative to the parent is identical (same patch-id AND same
+ * exact diff hash, D18). A verdict carries when such observed rows link its
+ * head to the current head.
+ */
+function restackCarries(
+  rows: readonly ReadRow[],
+  branch: string,
+  from: string | null,
+  to: string | null,
+): boolean {
+  if (!from || !to) return false;
+  const edges = new Map<string, string[]>();
+  for (const row of rows)
+    if (
+      row.type === "stack.restacked" &&
+      row.observer === "workit_cli" &&
+      row.branch === branch &&
+      row.patchEqual === true &&
+      typeof row.fromHead === "string" &&
+      row.head
+    )
+      edges.set(row.fromHead, [...(edges.get(row.fromHead) ?? []), row.head]);
+  const seen = new Set<string>([from]);
+  const queue = [from];
+  while (queue.length) {
+    const next = queue.shift() as string;
+    if (next === to) return true;
+    for (const target of edges.get(next) ?? [])
+      if (!seen.has(target)) {
+        seen.add(target);
+        queue.push(target);
+      }
+  }
+  return false;
+}
+
 /** Current and accepted verdicts for `branch`, after carry-over (D18). */
 export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRow[]): VerdictCheck {
   const head = branchHead(cwd, branch);
@@ -866,7 +907,8 @@ export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRo
   for (const [kind, list] of byKind) {
     const row = effectiveOf(list, authors);
     if (!row) continue;
-    const basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
+    let basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
+    if (basis === "stale" && restackCarries(rows, branch, row.head, head)) basis = "carried";
     const current = basis !== "stale";
     const independence = independenceReasons(row, authors);
     const reasons: RejectReason[] = [

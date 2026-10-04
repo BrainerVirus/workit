@@ -1,7 +1,3 @@
-import { readFileSync } from "node:fs";
-
-import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
-import type { Logger } from "@brainervirus/workit-core/src/core/logger";
 import { TaskStore } from "@brainervirus/workit-core/src/core";
 import { sessionCompactContext, unfinishedTaskOffer } from "@brainervirus/workit-core/hooks";
 
@@ -70,17 +66,4 @@ export const workerContextFor = (
     return null;
   }
   return null;
-};
-
-export const loadProvenance = (logger: Logger, pkgUrl: string | URL): Record<string, string> => {
-  try {
-    const pkg = JSON.parse(readFileSync(pkgUrl, "utf8")) as { name?: string; version?: string };
-    return {
-      name: String(pkg.name ?? "workit-opencode"),
-      version: String(pkg.version ?? "unknown"),
-    };
-  } catch (err) {
-    logger.warn(EVENT.provenance, errorDetail(err));
-    return { name: "workit-opencode", version: "unknown" };
-  }
 };

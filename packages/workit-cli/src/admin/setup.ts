@@ -17,26 +17,23 @@ import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
-  configDir,
   mergePreset,
   readConfigFromDir,
   resolveConfigDir,
   type BranchPreset,
   type ToolkitConfig,
-} from "./config";
-import { detectBranchPolicy } from "./branch-policy";
+} from "@brainervirus/workit-core/src/core/config";
 import { readSetupState, type SetupState } from "./setup-state";
 import {
   readWorkspacesResult,
-  resolveWorkspaceFrom,
   validateWorkspacesDocument,
   validateWorkspaceGlob,
   workspacesRevision,
   type WorkspaceConfig,
-} from "./workspaces";
-import { GITIGNORE_ENTRIES } from "./gitignore";
-import { planHygieneFiles } from "./hygiene";
-import { packageRoot } from "./package-root";
+} from "@brainervirus/workit-core/src/core/workspaces";
+import { GITIGNORE_ENTRIES } from "@brainervirus/workit-core/src/core/gitignore";
+import { planHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
+import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   cursorMcpServerEntry,
   CURSOR_RUNTIME_PACKAGE,
@@ -48,7 +45,7 @@ import {
   OPENCODE_NPM_PIN,
 } from "./registration";
 import { runDoctor, type DoctorReport } from "./doctor";
-import { writeFileExclusive } from "./safe-write";
+import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write";
 import {
   isCodexWorkitInstalled,
   isPiWorkitInstalled,
@@ -120,7 +117,7 @@ export type SetupMutation =
   // generic merge — it is its own reviewed mutation.
   | { type: "set-token-path"; path: string; key: string; value: string };
 
-export type SetupOverride = {
+type SetupOverride = {
   envKey: string;
   affects: string;
   value: string;
@@ -158,7 +155,7 @@ const VCS_OVERRIDES: { envKey: string; affects: string }[] = [
 
 const SETUP_OVERRIDES = [...YT_OVERRIDES, ...VCS_OVERRIDES];
 
-export const activeSetupOverrides = (env: NodeJS.ProcessEnv = process.env): SetupOverride[] => {
+const activeSetupOverrides = (env: NodeJS.ProcessEnv = process.env): SetupOverride[] => {
   const overrides: SetupOverride[] = [];
   for (const { envKey, affects } of SETUP_OVERRIDES) {
     const value = env[envKey];
@@ -454,11 +451,11 @@ export function buildSetupPreview(
 const claudeInstallRecord = (home: string, env: NodeJS.ProcessEnv): string =>
   path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json");
 
-export type Platform = "opencode" | "cursor";
+type Platform = "opencode" | "cursor";
 
 export type SetupResultStatus = "Installed" | "Configured" | "Skipped" | "Failed";
 
-export type SetupResultEntry = {
+type SetupResultEntry = {
   platform: HostId | "core";
   file: string;
   status: SetupResultStatus;
@@ -852,7 +849,7 @@ function adapterRoot(
 }
 
 /** True when the adapter root is a monorepo checkout (dev pin), not a packed node_modules install. */
-export const isDevOpenCodeAdapterRoot = (root: string, dev: string | null | undefined): boolean => {
+const isDevOpenCodeAdapterRoot = (root: string, dev: string | null | undefined): boolean => {
   if (dev) return true;
   const norm = root.replaceAll("\\", "/");
   return /\/packages\/workit-opencode\/?$/.test(norm);
@@ -1453,130 +1450,3 @@ export const setupCompletionGuidance = (): string[] => [
 // through this proposal→write path, so the written bytes are identical. The
 // write is idempotent: a matching entry is reported already-configured without
 // touching the file; an existing entry is updated; otherwise appended.
-export function applyWorkspaceBranchPolicy(opts: {
-  workspace_root: string;
-  env?: NodeJS.ProcessEnv;
-}): Record<string, any> {
-  const { workspace_root, env = process.env } = opts;
-  const dir = path.join(env.WORKFLOW_TOOLKIT_CONFIG ?? configDir());
-  const {
-    status,
-    path: wsPath,
-    entries,
-    document,
-    revision,
-    error: workspacesError,
-  } = readWorkspacesResult(dir);
-  if (status === "malformed" || status === "invalid")
-    return { ok: false, error: workspacesError ?? `invalid workspaces.json: ${wsPath}` };
-  const detection = detectBranchPolicy(workspace_root);
-  const name = String(env.WORKFLOW_BP_NAME ?? path.basename(workspace_root));
-  const integration = (env.WORKFLOW_BP_INTEGRATION ?? detection.integration) as "pr" | "merge";
-  const policy = {
-    preset: detection.preset,
-    developBranch: env.WORKFLOW_BP_DEVELOP ?? detection.developBranch ?? undefined,
-    prefixes: detection.prefixes,
-    allowed: detection.allowed,
-    protected: detection.protected,
-    integration,
-  };
-  const glob = `${workspace_root.replace(/[\\/]+$/, "")}/**`;
-  if (!validateWorkspaceGlob(glob).ok)
-    return { ok: false, error: `invalid workspace glob: ${glob}` };
-  let existing: WorkspaceConfig | null;
-  try {
-    existing = resolveWorkspaceFrom(workspace_root, dir);
-  } catch (error) {
-    const selectedName = env.WORKFLOW_BP_NAME?.trim();
-    if (!selectedName)
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    try {
-      existing = resolveWorkspaceFrom(workspace_root, dir, selectedName);
-    } catch (selectionError) {
-      return {
-        ok: false,
-        error: selectionError instanceof Error ? selectionError.message : String(selectionError),
-      };
-    }
-  }
-  if (existing?.branchPolicy && isDeepStrictEqual(existing.branchPolicy, policy)) {
-    return {
-      ok: true,
-      status: "already-configured",
-      workspace: existing,
-      policy,
-      config_path: wsPath,
-    };
-  }
-  const next = existing
-    ? entries.map((w) => (w.name === existing?.name ? { ...w, branchPolicy: policy } : w))
-    : [...entries, { name, glob, branchPolicy: policy }];
-  if (!existing && entries.some((entry) => entry.name === name))
-    return { ok: false, error: `workspace name ${JSON.stringify(name)} is already configured` };
-  const proposed = validateWorkspacesDocument({ ...document, workspaces: next }, wsPath);
-  if (proposed.status !== "valid") return { ok: false, error: proposed.error };
-  if (workspacesRevision(readFileSafe(wsPath)) !== revision)
-    return {
-      ok: false,
-      error: `workspaces.json changed while applying the branch policy: ${wsPath}`,
-    };
-  mkdirSync(path.dirname(wsPath), { recursive: true });
-  const tmp = `${wsPath}.${process.pid}.tmp`;
-  try {
-    writeFileSync(tmp, JSON.stringify({ ...document, workspaces: next }, null, 2) + "\n", "utf8");
-    if (workspacesRevision(readFileSafe(wsPath)) !== revision) {
-      rmSync(tmp, { force: true });
-      return {
-        ok: false,
-        error: `workspaces.json changed while applying the branch policy: ${wsPath}`,
-      };
-    }
-    renameSync(tmp, wsPath);
-  } catch (error) {
-    try {
-      rmSync(tmp, { force: true });
-    } catch {}
-    return {
-      ok: false,
-      error: `failed to write ${wsPath}: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-  return {
-    ok: true,
-    status: existing ? "updated" : "configured",
-    workspace: existing
-      ? { ...existing, branchPolicy: policy }
-      : { name, glob, branchPolicy: policy },
-    policy,
-    config_path: wsPath,
-  };
-}
-
-export {
-  applyCutover,
-  applyRollback,
-  resumeCutover,
-  classifyHostGeneration,
-  readCutoverReceipt,
-  detectCursorLatest,
-  detectSourceLinkedOpenCode,
-  previewCutover,
-  previewRollback,
-  readGenerationState,
-  type CutoverDecision,
-  type CutoverHost,
-  type CutoverPaths,
-  type CutoverPlan,
-  type CutoverReceipt,
-  type GenerationState,
-  type RollbackPreview,
-} from "./cutover";
-export {
-  applyConversionConfig,
-  previewConversion,
-  redactConversionPreview,
-  type ConversionApplyResult,
-  type ConversionInput,
-  type ConversionMapping,
-  type ConversionPreview,
-} from "./config-conversion";

@@ -708,10 +708,11 @@ test("Given four processes writing without revisions, When they contend, Then no
       totals[code] = (totals[code] ?? 0) + count;
   expect(Object.keys(totals).filter((code) => code !== "ok" && code !== "busy")).toEqual([]);
   expect((totals.ok ?? 0) + (totals.busy ?? 0)).toBe(120);
-  // How often the store's in-process lock budget runs out (busy) depends on
-  // runner speed — a windows-latest run measured 74 ok / 46 busy — so this is
-  // a progress floor, not a throughput target.
-  expect(totals.ok ?? 0).toBeGreaterThanOrEqual(40);
+  // How often the store's in-process lock budget runs out (busy, which is
+  // retryable) depends on runner speed — windows-latest runs measured 74 and
+  // 36 ok of 120 — so the floor is only that writes make progress at all;
+  // the invariants are the ones above and below.
+  expect(totals.ok ?? 0).toBeGreaterThan(0);
   const task = store.readTask(taskId);
   if (!task.ok) throw new Error(task.error);
   const recorded = task.data.findings.map((entry) => entry.data.claim).toSorted();
@@ -719,6 +720,8 @@ test("Given four processes writing without revisions, When they contend, Then no
   // No lost update and no double apply: the record holds exactly the
   // findings the callers were told succeeded.
   expect(recorded).toEqual(reported);
+  // Every ok call is either one finding or one task start.
+  expect(recorded.length + runs.reduce((sum, run) => sum + run.starts, 0)).toBe(totals.ok ?? 0);
   const tasks = store.listTasks();
   if (!tasks.ok) throw new Error(tasks.error);
   expect(tasks.data.length).toBe(1 + runs.reduce((sum, run) => sum + run.starts, 0));

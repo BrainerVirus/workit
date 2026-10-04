@@ -4,8 +4,8 @@ import type { HostDescriptor } from "../descriptor";
 export const OPENCODE_DESCRIPTOR: HostDescriptor = {
   host: "opencode",
   label: "OpenCode",
-  verifiedAgainst: "@opencode-ai/plugin 1.18.30",
-  docs: ["https://opencode.ai/docs/plugins/"],
+  verifiedAgainst: "@opencode/plugin 2.0.18",
+  docs: ["https://opencode.ai/v2/docs/build/plugins/"],
   transport: "in-process-plugin",
   events: {
     // No separate start event: context is injected on every agent-loop call.

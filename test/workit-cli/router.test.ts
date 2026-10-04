@@ -146,30 +146,14 @@ test("help, version and per-verb usage answer through the envelope", async () =>
     VERBS.filter((entry) => !entry.planned).map((entry) => entry.name),
   );
 
-  // A planned verb is not advertised but still explains itself on request.
+  // Every verb explains itself on request; none is a stub any more.
+  expect(VERBS.filter((entry) => entry.planned)).toEqual([]);
   const usage = await run(["help", "stack"]);
   expect(usage.code).toBe(0);
-  expect(usage.stdout).toContain("usage: workit stack plan|sync|land");
-  expect(usage.stdout).toContain("(coming in S12)");
+  expect(usage.stdout).toContain("usage: workit stack plan");
+  expect(usage.stdout).not.toContain("coming in");
 
   expect((await run([])).stdout).toContain("Usage: workit <command>");
-});
-
-test("planned S12 verbs answer not_implemented with exit 2", async () => {
-  for (const [verb, slice] of [["stack", "S12"]] as const) {
-    expect(VERBS.find((entry) => entry.name === verb)?.planned).toBe(slice);
-    const result = await run([verb, "status", "--json"]);
-    expect(result.code, verb).toBe(2);
-    expect(JSON.parse(result.stdout)).toEqual({
-      ok: false,
-      code: "not_implemented",
-      data: { verb, subcommand: "status", slice },
-      error: `${verb} is not implemented yet (planned in ${slice})`,
-    });
-  }
-  const human = await run(["stack", "plan"]);
-  expect(human.stdout).toBe("");
-  expect(human.stderr).toContain("stack is not implemented yet (planned in S12)");
 });
 
 test("unknown commands and bad global flags are usage errors with an unblock hint", async () => {
@@ -202,15 +186,15 @@ test("global --json works before and after the command", async () => {
     expect(JSON.parse(result.stdout).data.verbs.length).toBeGreaterThan(0);
   }
   for (const argv of [
-    ["--json", "stack", "plan"],
-    ["stack", "plan", "--json"],
-    ["stack", "--json", "plan"],
+    ["--json", "stack", "frob"],
+    ["stack", "frob", "--json"],
+    ["stack", "--json", "frob"],
   ]) {
     const result = await run(argv);
     expect(result.code, argv.join(" ")).toBe(2);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      code: "not_implemented",
-      data: { verb: "stack", subcommand: "plan" },
+      code: "invalid_input",
+      error: 'unknown stack subcommand "frob"',
     });
   }
   // Existing verbs that parse --json themselves get it from either position.
@@ -309,7 +293,6 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   doctor: [["--fix-lock", "--force"]],
   gc: [["--dry-run"]],
   uninstall: [[]],
-  cutover: [[], ["bogus"]],
   task: [[], ["bogus"]],
   policy: [["bogus"]],
   evidence: [["bogus"]],

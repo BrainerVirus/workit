@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runDoctor } from "@/packages/workit-core/src/core/doctor";
+import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 import {
   extractTarball,

@@ -5,20 +5,20 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { detectHosts, preselectedPlatforms } from "@/packages/workit-core/src/core/detect-hosts";
-import { runDoctor } from "@/packages/workit-core/src/core/doctor";
+import { detectHosts, preselectedPlatforms } from "@/packages/workit-cli/src/admin/detect-hosts";
+import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import {
   claudeWorkitInstalls,
   isClaudeWorkitInstalled,
   planHostInstall,
   runHostInstall,
-} from "@/packages/workit-core/src/core/host-install";
-import { applySetupPreview, buildSetupPreview } from "@/packages/workit-core/src/core/setup";
+} from "@/packages/workit-cli/src/admin/host-install";
+import { applySetupPreview, buildSetupPreview } from "@/packages/workit-cli/src/admin/setup";
 import {
   applyUninstall,
   planUninstall,
   type UninstallAction,
-} from "@/packages/workit-core/src/core/uninstall";
+} from "@/packages/workit-cli/src/admin/uninstall";
 
 const temp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const executable = (file: string) => {

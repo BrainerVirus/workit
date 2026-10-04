@@ -13,7 +13,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Breaking
+### Removed (breaking, 3.0)
+
+- **OpenCode V1 (`server()`) adapter.** `@brainervirus/workit-opencode` now
+  exports only the V2 plugin definition `{ id: "workit", setup }` and requires
+  OpenCode 2.0.18+ (support-matrix floor; was 1.18.30). The `@opencode-ai/plugin`
+  SDK pin is gone. *Migration:* on OpenCode 1.x stay on Workit 2.x by pinning
+  `"plugin": ["@brainervirus/workit-opencode@2"]` (the V1 key); after upgrading
+  OpenCode use `"plugins": ["@brainervirus/workit-opencode"]` (2.x still
+  normalizes `plugin`). `workit doctor` now fails a 1.x CLI with
+  `opencode_version`, and `workit upgrade` warns before applying.
+- **`workit cutover`** (preview/apply/rollback of legacy workflow-toolkit
+  installs) and its core modules (`cutover.ts`, `legacy-ownership.ts`,
+  `config-conversion.ts`). *Migration:* migrate a legacy install with Workit
+  2.x first, or reinstall with `workit init`.
+- **Doctor check ids** `mixed_generation`, `legacy_component`,
+  `missing_v1_component`, `active_old_session` and `managed_content_conflict`
+  (cutover-only state), and the `WORKFLOW_TOOLKIT_SESSIONS` input. Consumers of
+  `workit doctor --json` must stop expecting them.
+- **Core deep imports of admin code.** `@brainervirus/workit-core` no longer
+  ships `src/core/{setup,doctor,host-install,uninstall,registration,
+  detect-hosts,setup-state}.ts` or `scripts/doctor-check.ts`; they live in
+  `@brainervirus/workit-cli` (`src/admin/`, `scripts/doctor-check.ts`), so host
+  hooks and plugins no longer bundle them (OpenCode plugin bundle about 28%
+  smaller). Use the `workit` CLI instead of deep imports.
+
+### Changed: task event store and implicit tasks
 
 - **Task event store and implicit tasks (3.0, D3/D13).** Task state moves from
   `<checkout>/.workit/` to `$(git rev-parse --git-common-dir)/workit/` (shared
@@ -114,6 +139,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit uninstall` now also removes Workit pins from the OpenCode 2.x
+  `plugins` key (it only cleaned the V1-era `plugin` key, so a 2.x
+  registration, including a checkout directory pin, survived uninstall).
 - `.workit/recovery/` no longer grows without bound: each task or workspace
   record keeps its newest three recovery copies. `workit gc` (`--dry-run`,
   `--json`) prunes copies left by older versions, removes stale temp files, and
@@ -155,6 +183,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workit stack plan|status|sync|land` (S12): forge-neutral stacks of plain
+  base-branch PRs on GitHub and GitLab (no Graphite or `gh stack`
+  dependency; an adapter seam is left for later). The order and what each
+  branch was last built on are cached in `<git common dir>/workit/stacks/`
+  (shared across worktrees, surviving worktree removal) and checked against
+  git ancestry and the forge's PR bases (a re-plan keeps the recorded base
+  and refuses a parent rewritten under an unrecorded child); file names are
+  portable (slug + hash). One writer per stack (`busy`, exit 4): the lock
+  carries the S1 host/pid-namespace/boot identity and a heartbeat, so a dead
+  local holder, a stale heartbeat or an owner-less lock is reclaimed. `status` reports each PR's next action,
+  checks, verdict and whether it sits on its parent, and an overall
+  READY/WAITING/ADVANCE/COMPLETE. `sync` restacks after a (squash) merge with
+  `git rebase --onto <parent> <last parent tip>` in the branch's own worktree
+  or a temporary one under the store (never the user's checkout), refuses
+  branches with merge commits, and pushes only when the moved branch is the
+  same change (exact diff, no dropped commit; else `blocked`
+  `content_changed`, the rebase kept local, `--force <branch>` to push it). It pushes
+  through the S11 lease and retargets PR bases; a conflict stops `blocked`
+  with the rebase left in progress and the unblock, processed branches
+  recorded and the rest untouched. Each restack records an observed
+  `stack.restacked` row; when the change against its parent is identical
+  (patch-id and exact diff hash), S13 carries the verdict through it (CI is
+  never carried; agent-written rows never count). `land` merges only the
+  contiguous run from the root whose PRs still belong to their branch and
+  head repository (and the planned repo), target the trunk, read READY and
+  have an accepted verdict, one at a time through the `pr merge` gates
+  (which re-check the base); after each merge it restacks and retargets the
+  next PR and waits for its CI, and stops at the first PR that does not
+  qualify with the reason (`--dry-run` mutates
+  nothing; `--max`). `pr status` gains a `verdict` block.
 - `workit git branch|commit|push`, `workit pr create|merge` and
   `workit verify-delivery` (S11). `git branch` checks the name against the
   workspace branch policy and branches from the freshly fetched default target

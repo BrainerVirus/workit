@@ -22,7 +22,7 @@ npx @brainervirus/workit-cli init
 
 ```bash
 workit init              # basic / advanced setup wizard
-workit upgrade [--hosts=opencode,cursor,codex,pi] [--cli] [--apply --confirm] [--json]
+workit upgrade [--hosts=opencode,cursor,codex,pi] [--cli] [--preview | --apply --confirm] [--json]
 workit launch <opencode|cursor|codex|pi> [--auto-upgrade] [-- host arguments]
 workit doctor            # offline installation health report
 workit doctor --json     # machine-readable report
@@ -30,7 +30,6 @@ workit <family> <action> [--payload <json|@file|->] [--task <id>] [--revision <u
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--task <id>] [--json]   # preview or run one approved external action
 workit handoff --task <id> [--json]                   # export task state and compact destination context
 workit check <name> | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--json] -- <cmd…>   # run a check, record CLI-observed evidence (exit = the command's)
-workit cutover preview [--hosts ..] [--json] | apply [--hosts ..] [--resolution k=v] [--confirm] | rollback preview|apply <backupId> [--json] [--confirm]
 workit uninstall                           # remove host registrations (keeps ~/.config/workit)
 workit                                     # help
 ```
@@ -43,8 +42,7 @@ The platforms step lists all four supported hosts. Installed tools are selected
 initially; absent tools are disabled. Select all available, clear all, or pick
 individual hosts. Apply uses native Codex marketplace and Pi package commands,
 OpenCode registration, and a managed Cursor plugin copy. Existing explicit/local
-pins and unrelated host settings are preserved. Use `workit cutover` for legacy
-migration.
+pins and unrelated host settings are preserved.
 
 Advanced workspace edits preserve existing custom fields. Narrow globs win over
 broader matches independent of file order; equal-specificity ambiguity is

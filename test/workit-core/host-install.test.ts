@@ -10,7 +10,7 @@ import {
   resolveWindowsShimEntry,
   runHostCommand,
   runHostInstall,
-} from "@/packages/workit-core/src/core/host-install";
+} from "@/packages/workit-cli/src/admin/host-install";
 
 const temp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const executable = (file: string) => {

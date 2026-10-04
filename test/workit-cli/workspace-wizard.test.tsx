@@ -16,7 +16,7 @@ import {
   buildSetupPreview,
   type SetupMutation,
   type SetupPreviewInput,
-} from "../../packages/workit-core/src/core/setup";
+} from "../../packages/workit-cli/src/admin/setup";
 import { setWorkspaceEditorValue } from "../../packages/workit-cli/src/logic";
 import {
   loadWorkspacesFrom,
@@ -27,7 +27,7 @@ import {
 } from "../../packages/workit-core/src/core/workspaces";
 import { isolatedEnv } from "../shared/helpers/packages";
 import type { ToolkitConfig } from "../../packages/workit-core/src/core/config";
-import { emptyDetection, type HostId } from "../../packages/workit-core/src/core/detect-hosts";
+import { emptyDetection, type HostId } from "../../packages/workit-cli/src/admin/detect-hosts";
 
 // Task 15 (WZ-12, WZ-16): the workspace draft supports current-project setup and
 // add/edit/remove, every accepted pattern shows a match preview produced by the

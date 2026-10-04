@@ -33,7 +33,7 @@ export type UninstallAction =
       cwd: string | null;
     };
 
-export type UninstallHostPlan = {
+type UninstallHostPlan = {
   host: UninstallHost;
   installed: boolean;
   actions: UninstallAction[];
@@ -43,9 +43,9 @@ export type UninstallPlan = {
   hosts: UninstallHostPlan[];
 };
 
-export type UninstallResultStatus = "removed" | "skipped" | "failed";
+type UninstallResultStatus = "removed" | "skipped" | "failed";
 
-export type UninstallResultEntry = {
+type UninstallResultEntry = {
   host: UninstallHost;
   path: string;
   status: UninstallResultStatus;
@@ -167,24 +167,27 @@ function cleanCursorSettings(
   return { next, changed };
 }
 
-// Inverse of mergeOpenCodeConfig's plugin registration: remove every workit
-// identity from the plugin list.
+// Inverse of the OpenCode plugin registration: remove every workit identity
+// from both plugin lists — OpenCode 2.x `plugins` and the V1-era `plugin` key
+// (still normalized by 2.x and used by setup when no `plugins` key exists).
 function cleanOpenCodeConfig(config: Record<string, unknown>): {
   next: Record<string, unknown>;
   changed: boolean;
 } {
   const next = { ...config };
   let changed = false;
-  if (Array.isArray(next.plugin)) {
-    const plugins = (next.plugin as unknown[]).map(String);
-    const kept = plugins.filter((p) => !isWorkitPlugin(p));
-    if (kept.length !== plugins.length) {
-      next.plugin = kept;
+  for (const key of ["plugins", "plugin"] as const) {
+    const value = next[key];
+    if (Array.isArray(value)) {
+      const kept = value.filter((p) => !isWorkitPlugin(p));
+      if (kept.length !== value.length) {
+        next[key] = kept;
+        changed = true;
+      }
+    } else if (typeof value === "string" && isWorkitPlugin(value)) {
+      delete next[key];
       changed = true;
     }
-  } else if (typeof next.plugin === "string" && isWorkitPlugin(next.plugin)) {
-    delete next.plugin;
-    changed = true;
   }
   return { next, changed };
 }

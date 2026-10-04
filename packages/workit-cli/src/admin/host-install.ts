@@ -92,9 +92,9 @@ const CODEX_MARKETPLACE_NAME = "workflow-toolkit";
 /** Claude Code reads the git-hosted marketplace at the repo root
  * (`.claude-plugin/marketplace.json`, name `workit`); its entry installs the
  * published npm package. */
-export const CLAUDE_MARKETPLACE_REPO = "BrainerVirus/workit";
+const CLAUDE_MARKETPLACE_REPO = "BrainerVirus/workit";
 export const CLAUDE_MARKETPLACE_NAME = "workit";
-export const CLAUDE_PLUGIN_ID = `workit@${CLAUDE_MARKETPLACE_NAME}`;
+const CLAUDE_PLUGIN_ID = `workit@${CLAUDE_MARKETPLACE_NAME}`;
 const validPackageVersion = (value: string): boolean =>
   value === "latest" || /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value);
 
@@ -234,7 +234,7 @@ export const isCodexWorkitInstalled = (
 export const claudeConfigDir = (home: string, env: NodeJS.ProcessEnv = process.env): string =>
   env.CLAUDE_CONFIG_DIR ?? path.join(home, ".claude");
 
-export type ClaudeInstallScope = "user" | "project" | "local";
+type ClaudeInstallScope = "user" | "project" | "local";
 
 export type ClaudeWorkitInstall = {
   id: string;

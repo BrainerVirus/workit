@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -22,8 +23,8 @@ import {
 
 // Task 14 packed gate: the CLI setup flow runs against EXTRACTED tarballs with
 // the repository node_modules unavailable. buildSetupPreview/applySetupPreview
-// are imported from the extracted @brainervirus/workit-core package and resolve
-// the adapter packages as node_modules siblings; the CLI binary is exercised as
+// are bundled into the extracted @brainervirus/workit-cli package (as the CLI
+// build does) and resolve the adapter packages as node_modules siblings; the CLI binary is exercised as
 // a subprocess for the non-interactive surface (help, non-TTY guidance, doctor).
 
 const CORE = "@brainervirus/workit-core";
@@ -101,10 +102,33 @@ type PackedSetup = {
   applySetupPreview: (preview: PackedPreview, opts: Record<string, unknown>) => PackedResult;
 };
 
+// Setup ships only inside the CLI bundle (admin code left core in 3.0), so
+// build that same module the way the CLI build does and load it from the
+// installed CLI package: its package root then resolves the adapter packages
+// as node_modules siblings, exactly like the packed `workit` binary.
 async function loadSetup(nm: string): Promise<PackedSetup> {
-  return (await import(
-    pathToFileURL(path.join(nm, CORE, "src/core/setup.ts")).href
-  )) as PackedSetup;
+  const cliDir = path.join(nm, CLI);
+  if (!existsSync(path.join(cliDir, "package.json"))) {
+    mkdirSync(cliDir, { recursive: true });
+    writeFileSync(path.join(cliDir, "package.json"), JSON.stringify({ name: CLI }));
+  }
+  const outfile = path.join(cliDir, "dist", "admin-setup.js");
+  const built = spawnSync(
+    "bun",
+    [
+      "build",
+      path.resolve(import.meta.dir, "../../packages/workit-cli/src/admin/setup.ts"),
+      "--target",
+      "node",
+      "--format",
+      "esm",
+      "--outfile",
+      outfile,
+    ],
+    { encoding: "utf8" },
+  );
+  if (built.status !== 0) throw new Error(built.stderr);
+  return (await import(pathToFileURL(outfile).href)) as PackedSetup;
 }
 
 function installPackedCore(nm: string, packs: ReturnType<typeof packWorkspacePackages>) {
@@ -442,7 +466,7 @@ test("packed CLI ships completion guidance and hygiene templates", () => {
   }
 }, 120_000);
 
-test("packed CLI: help lists v1 task, action, handoff, cutover, and uninstall commands", () => {
+test("packed CLI: help lists task, action, handoff, and uninstall commands", () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-packedcli-help-");
   try {
@@ -460,7 +484,6 @@ test("packed CLI: help lists v1 task, action, handoff, cutover, and uninstall co
       "workit <family> <action> [options]",
       "workit action <operation> --payload <JSON>",
       "workit handoff --task <id>",
-      "workit cutover preview|apply|rollback ...",
       "workit uninstall",
     ]) {
       expect(help.stdout, command).toContain(command);

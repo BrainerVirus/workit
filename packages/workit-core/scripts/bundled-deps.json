@@ -56,13 +56,7 @@
     "yoga-layout",
     "zod"
   ],
-  "workit-opencode": [
-    "@openclaw/fs-safe",
-    "@opencode-ai/plugin",
-    "@opencode-ai/plugin/zod",
-    "@opencode/plugin",
-    "zod"
-  ],
+  "workit-opencode": ["@openclaw/fs-safe", "@opencode/plugin", "zod"],
   "workit-cursor": [
     "@modelcontextprotocol/sdk",
     "@openclaw/fs-safe",

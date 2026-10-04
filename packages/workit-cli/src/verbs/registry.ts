@@ -2,10 +2,8 @@
 // exports `run(argv, io): Promise<number>`, so `workit --version`/`help` load
 // nothing but this file and the router, and no verb pays for ink/react.
 //
-// The S9b–S13 verbs were pre-registered against stub modules that answer
-// `not_implemented`, and `planned` keeps them out of `workit help`. A later
-// slice replaces its own verbs/<verb>.ts and deletes only its entry's
-// `planned` line here.
+// A verb registered ahead of its slice sets `planned` (kept out of
+// `workit help`) and answers `not_implemented`; S12 implemented the last one.
 import type { Verb } from "../output";
 
 export type VerbGroup = "setup" | "task" | "delivery";
@@ -58,7 +56,7 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "upgrade",
     group: "setup",
-    usage: "workit upgrade [--hosts=a,b|none] [--cli] [--apply --confirm] [--json]",
+    usage: "workit upgrade [--hosts=a,b|none] [--cli] [--preview | --apply --confirm] [--json]",
     summary: "Preview upgrades (--apply --confirm to apply)",
     load: () => import("./upgrade"),
   },
@@ -90,13 +88,6 @@ export const VERBS: readonly VerbEntry[] = [
     usage: "workit uninstall",
     summary: "Remove workit host registrations interactively (~/.config/workit is kept)",
     load: () => import("./uninstall"),
-  },
-  {
-    name: "cutover",
-    group: "setup",
-    usage: "workit cutover preview|apply|rollback ...",
-    summary: "Preview-first v1 cutover and rollback (apply requires --confirm)",
-    load: () => import("./cutover"),
   },
   ...TASK_FAMILY_NAMES.map(family),
   {
@@ -153,9 +144,10 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "stack",
     group: "delivery",
-    usage: "workit stack plan|sync|land [--json]",
-    summary: "Plan, restack and land a stack of PRs",
-    planned: "S12",
+    usage:
+      "workit stack plan [<bottom> … <top>] | status | sync [--local] | land [--dry-run] [--max <n>] [--json]",
+    summary:
+      "Plan, restack (lease push + retarget) and land a base-branch stack of PRs, root first",
     load: () => import("./stack"),
   },
   {

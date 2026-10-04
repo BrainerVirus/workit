@@ -111,7 +111,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
         : null;
     },
   });
-  // Reuse V1's native decision receipts and context reader.
+  // Native decision receipts and the read-only context reader.
   const nativeTools = createWorkitTools({
     receipts,
     directChildren: lifecycle.directChildren,
@@ -220,12 +220,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     if (event.tool === "question") {
       const sessionID = String(event.sessionID);
       const callID = String(event.id);
-      receipts.recordRequest(
-        callID,
-        sessionID,
-        callID,
-        (event.input as { questions?: unknown } | undefined)?.questions,
-      );
+      receipts.recordRequest(callID, sessionID, callID);
       return;
     }
     if (event.tool !== "subagent") return;

@@ -4,30 +4,8 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
-import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
-import { server as plugin } from "@/packages/workit-opencode/src/index";
-import {
-  NativeReceiptStore,
-  createWorkitTools,
-  observeQuestionEvent,
-} from "@/packages/workit-opencode/src/tools/workit";
-import { tool } from "@opencode-ai/plugin";
-
-const context = { directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") };
-const workitQuestion = (question: string, approvedContent: string) => ({
-  header: "Workit decision: design",
-  question,
-  options: [
-    { label: "approved", description: approvedContent },
-    { label: "rejected", description: "Reject this decision" },
-  ],
-});
-const schemaDepth = (value: unknown, depth = 0): number => {
-  if (Array.isArray(value))
-    return Math.max(depth, ...value.map((item) => schemaDepth(item, depth)));
-  if (typeof value !== "object" || value === null) return depth;
-  return Math.max(depth, ...Object.values(value).map((item) => schemaDepth(item, depth + 1)));
-};
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
+import { NativeReceiptStore, createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
 
 const decisionFixture = (actor: string) => {
   const root = mkdtempSync(join(tmpdir(), `workit-opencode-decision-${actor}-`));
@@ -72,115 +50,6 @@ const decisionFixture = (actor: string) => {
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 };
-
-test("out-of-band question replies mint consumable decision receipts", () => {
-  const receipts = new NativeReceiptStore();
-  observeQuestionEvent(receipts, {
-    type: "question.asked",
-    properties: {
-      id: "req-1",
-      sessionID: "lead",
-      questions: [workitQuestion("Ship it?", "ship-it-content")],
-      tool: { messageID: "m", callID: "call-1" },
-    },
-  });
-  expect(receipts.recordReply("req-1", "lead", [["approved"]])).toBe(true);
-  const consumed = receipts.consume("lead", "decision", {
-    question: "Ship it?",
-    selectedLabel: "approved",
-    selectedDescription: "ship-it-content",
-  });
-  expect(consumed.ok).toBe(true);
-});
-
-test("question event receipts reject mismatched or missing questions", () => {
-  const receipts = new NativeReceiptStore();
-  // Reply with no asked question mints nothing.
-  expect(receipts.recordReply("req-missing", "lead", [["approved"]])).toBe(false);
-  observeQuestionEvent(receipts, {
-    type: "question.asked",
-    properties: {
-      id: "req-2",
-      sessionID: "lead",
-      questions: [workitQuestion("Ship it?", "ship-it-content")],
-    },
-  });
-  // Wrong session, multiple answers, and unknown labels all fail closed.
-  expect(receipts.recordReply("req-2", "other", [["approved"]])).toBe(false);
-  observeQuestionEvent(receipts, {
-    type: "question.asked",
-    properties: {
-      id: "req-3",
-      sessionID: "lead",
-      questions: [workitQuestion("Ship it?", "ship-it-content")],
-    },
-  });
-  expect(receipts.recordReply("req-3", "lead", [["approved"], ["rejected"]])).toBe(false);
-  observeQuestionEvent(receipts, {
-    type: "question.asked",
-    properties: {
-      id: "req-4",
-      sessionID: "lead",
-      questions: [workitQuestion("Ship it?", "ship-it-content")],
-    },
-  });
-  expect(receipts.recordReply("req-4", "lead", [["maybe"]])).toBe(false);
-  // Non-Workit questions never mint.
-  observeQuestionEvent(receipts, {
-    type: "question.asked",
-    properties: {
-      id: "req-5",
-      sessionID: "lead",
-      questions: [
-        { header: "Other", question: "Huh?", options: [{ label: "a", description: "b" }] },
-      ],
-    },
-  });
-  expect(receipts.recordReply("req-5", "lead", [["a"]])).toBe(false);
-  // Rejected questions leave nothing to consume.
-  observeQuestionEvent(receipts, {
-    type: "question.asked",
-    properties: {
-      id: "req-6",
-      sessionID: "lead",
-      questions: [workitQuestion("Ship it?", "ship-it-content")],
-    },
-  });
-  observeQuestionEvent(receipts, { type: "question.rejected", properties: { requestID: "req-6" } });
-  expect(receipts.recordReply("req-6", "lead", [["approved"]])).toBe(false);
-  expect(receipts.consume("lead", "decision").ok).toBe(false);
-});
-
-test("receipt failures name the receipt-shaped question contract", () => {
-  const receipts = new NativeReceiptStore();
-  const missing = receipts.consume("lead", "decision");
-  expect(missing.ok).toBe(false);
-  if (missing.ok) throw new Error("expected failure");
-  expect(missing.error).toContain("Workit decision: <purpose>");
-  expect(missing.error).toContain("approved/rejected");
-  observeQuestionEvent(receipts, {
-    type: "question.asked",
-    properties: {
-      id: "req-shape",
-      sessionID: "lead",
-      questions: [workitQuestion("Ship it?", "ship-it-content")],
-    },
-  });
-  expect(receipts.recordReply("req-shape", "lead", [["approved"]])).toBe(true);
-  const mismatched = receipts.consume("lead", "decision", { question: "Something else?" });
-  expect(mismatched.ok).toBe(false);
-  if (mismatched.ok) throw new Error("expected failure");
-  expect(mismatched.error).toContain("Workit decision: <purpose>");
-  expect(mismatched.error).toContain("approved/rejected");
-});
-
-test("plugin question events never break event delivery", async () => {
-  const hooks = await plugin(context as never);
-  await hooks.event?.({ event: { type: "question.replied", properties: {} } } as never);
-  await hooks.event?.({
-    event: { type: "question.asked", properties: { id: 42, sessionID: "lead" } },
-  } as never);
-});
 
 test("OpenCode context.read returns Git context without approval or Workit writes", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-context-read-"));
@@ -420,23 +289,6 @@ test("OpenCode YouTrack context rejects spec and plan paths outside the workspac
   }
 });
 
-test("advertised native operation schemas stay within OpenCode provider depth limits", async () => {
-  const hooks = await plugin(context as never);
-  for (const [name, definition] of Object.entries(hooks.tool ?? {})) {
-    if (name === "workit_context") continue;
-    const schema = tool.schema.toJSONSchema(tool.schema.object(definition.args), {
-      target: "draft-2020-12",
-    });
-    expect(schemaDepth(schema), name).toBeLessThanOrEqual(10);
-    // Host-owned init tool: same depth budget, different envelope from the
-    // eight schemaVersion/action operation families.
-    if (name === "workit_init_apply") continue;
-    const properties = (schema as { properties?: Record<string, unknown> }).properties ?? {};
-    expect(properties.schemaVersion, name).toBeDefined();
-    expect(properties.action, name).toBeDefined();
-  }
-});
-
 test("native receipts reject unrelated questions and are consumed once per purpose", () => {
   const receipts = new NativeReceiptStore();
   receipts.record(
@@ -577,24 +429,6 @@ test("native receipts reject a matching-purpose answer with different content", 
   ).toBe(true);
 });
 
-test("OpenCode refuses oversized decision questions before displaying them", async () => {
-  const hooks = (await plugin(context as never)) as any;
-  const question = {
-    header: "Workit decision: design",
-    question: "x".repeat(400),
-    options: [
-      { label: "approved", description: "short" },
-      { label: "rejected", description: "Reject this decision" },
-    ],
-  };
-  expect(() =>
-    hooks["tool.execute.before"](
-      { tool: "question", sessionID: "decision-session", callID: "decision-call" },
-      { args: { questions: [question] } },
-    ),
-  ).toThrow(/present the item/);
-});
-
 test("oversized decision bindings fail closed at record time", async () => {
   const fixture = decisionFixture("oversize");
   try {
@@ -649,17 +483,26 @@ test("oversized decision bindings fail closed at record time", async () => {
 
 test("receipt near misses identify the mismatched binding", () => {
   const receipts = new NativeReceiptStore();
-  receipts.recordRequest("req-near", "sess-near", "call-near", [
+  receipts.recordRequest("call-near", "sess-near", "call-near");
+  receipts.record(
     {
-      header: "Workit decision: design",
-      question: "Workit decision: design — Approve the plan shown above?",
-      options: [
-        { label: "approved", description: "Plan A" },
-        { label: "rejected", description: "Reject this decision" },
-      ],
+      sessionID: "sess-near",
+      callID: "call-near",
+      args: {
+        questions: [
+          {
+            header: "Workit decision: design",
+            question: "Workit decision: design — Approve the plan shown above?",
+            options: [
+              { label: "approved", description: "Plan A" },
+              { label: "rejected", description: "Reject this decision" },
+            ],
+          },
+        ],
+      },
     },
-  ]);
-  expect(receipts.recordReply("req-near", "sess-near", [["approved"]])).toBe(true);
+    { metadata: { answers: [["approved"]] } },
+  );
   const consumed = receipts.consume("sess-near", "decision", {
     selectedLabel: "approved",
     decisionPurpose: "design",
@@ -702,178 +545,5 @@ test("stated design choices need no receipt and never authorize an action", asyn
     expect(JSON.parse(typeof action === "string" ? action : action.output).ok).toBe(false);
   } finally {
     fixture.cleanup();
-  }
-});
-
-test("native operation arguments cannot supply caller or provenance", async () => {
-  const hooks = await plugin({
-    directory: "/repo",
-    worktree: "/repo",
-    serverUrl: new URL("http://localhost"),
-    client: {
-      session: { get: async () => ({ data: { id: "native-session", directory: "/repo" } }) },
-    },
-  } as never);
-  const raw = await hooks.tool?.workit_task.execute(
-    {
-      schemaVersion: 1,
-      action: "list",
-      caller: { host: "workit_cli", actor: "forged" },
-      provenance: { kind: "host_observed" },
-    },
-    { directory: "/repo", sessionID: "native-session" } as never,
-  );
-  expect(JSON.parse(raw as string)).toMatchObject({ ok: false, code: "invalid_input" });
-});
-
-test("valid nested operation arguments reach the shared core outcome", async () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-opencode-nested-"));
-  const directRoot = mkdtempSync(join(tmpdir(), "workit-opencode-nested-direct-"));
-  try {
-    const request = taskStartRequest({
-      intent: {
-        objective: "nested objective",
-        scope: { description: "source", paths: ["src"], exclusions: ["dist"] },
-        authorityRefs: [{ kind: "external", url: "https://example.test/reference" }],
-      },
-    });
-    const direct = new WorkitCore(new TaskStore(directRoot), {
-      root: directRoot,
-      caller: { host: "opencode", actor: "lead" },
-      capabilities: [],
-      constraints: [],
-      now: () => "2026-01-01T00:00:00Z",
-    }).task(request);
-    const hooks = await plugin({
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-      client: { session: { get: async () => ({ data: { id: "lead", directory: root } }) } },
-    } as never);
-    const raw = await hooks.tool?.workit_task.execute(request, {
-      directory: root,
-      sessionID: "lead",
-    } as never);
-    const native = JSON.parse(raw as string);
-    expect(native.ok).toBe(direct.ok);
-    expect(native.data).toMatchObject({ objective: "nested objective", status: "active" });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(directRoot, { recursive: true, force: true });
-  }
-});
-
-test("malformed nested operation arguments remain invalid_input", async () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-opencode-malformed-"));
-  try {
-    const hooks = await plugin({
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-      client: { session: { get: async () => ({ data: { id: "lead", directory: root } }) } },
-    } as never);
-    const raw = await hooks.tool?.workit_task.execute(
-      {
-        ...taskStartRequest(),
-        intent: {
-          ...taskStartRequest().intent,
-          scope: { ...taskStartRequest().intent.scope, paths: [42] },
-        },
-      },
-      { directory: root, sessionID: "lead" } as never,
-    );
-    expect(JSON.parse(raw as string)).toMatchObject({ ok: false, code: "invalid_input" });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("the decision tool consumes only the matching native question receipt", async () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-opencode-decision-"));
-  try {
-    const store = new TaskStore(root);
-    const core = new WorkitCore(store, {
-      root,
-      caller: { host: "opencode", actor: "lead" },
-      capabilities: [],
-      constraints: [],
-      now: () => "2026-01-01T00:00:00Z",
-    });
-    const started = core.task(taskStartRequest());
-    expect(started.ok).toBe(true);
-    if (!started.ok) throw new Error(started.error);
-    const task = store.readTask((started.data as { id: string }).id);
-    const workspace = store.readWorkspace();
-    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("decision fixture missing");
-    const hooks = await plugin({
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-      client: { session: { get: async () => ({ data: { id: "lead", directory: root } }) } },
-    } as never);
-    await hooks["tool.execute.after"]?.(
-      {
-        tool: "question",
-        sessionID: "lead",
-        callID: "decision-question",
-        args: {
-          questions: [
-            {
-              header: "Workit decision: design",
-              question: "Approve this design?",
-              options: [
-                { label: "approved", description: "the design" },
-                { label: "rejected", description: "Reject this decision" },
-              ],
-            },
-          ],
-        },
-      },
-      { title: "Decision", output: "approved", metadata: { answers: [["approved"]] } },
-    );
-    const raw = await hooks.tool?.workit_decision.execute(
-      {
-        schemaVersion: 1,
-        action: "record",
-        taskId: task.data.id,
-        expectedRevision: task.data.revision,
-        purpose: "design",
-        binding: {
-          taskId: task.data.id,
-          workspaceId: workspace.data.id,
-          scope: scope(),
-          presented: "Approve this design?",
-          approvedContent: "the design",
-          contentRefs: [],
-        },
-        response: "approved",
-        requirementIds: [],
-      },
-      { directory: root, sessionID: "lead" } as never,
-    );
-    expect(JSON.parse(raw as string).ok).toBe(true);
-    const replay = await hooks.tool?.workit_decision.execute(
-      {
-        schemaVersion: 1,
-        action: "record",
-        taskId: task.data.id,
-        expectedRevision: task.data.revision,
-        purpose: "design",
-        binding: {
-          taskId: task.data.id,
-          workspaceId: workspace.data.id,
-          scope: scope(),
-          presented: "Approve this design?",
-          approvedContent: "the design",
-          contentRefs: [],
-        },
-        response: "approved",
-        requirementIds: [],
-      },
-      { directory: root, sessionID: "lead" } as never,
-    );
-    expect(JSON.parse(replay as string)).toMatchObject({ ok: false, code: "permission_denied" });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });

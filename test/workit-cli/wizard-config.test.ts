@@ -20,7 +20,7 @@ import {
   readConfigFromDir,
   type ToolkitConfig,
 } from "@/packages/workit-core/src/core/config";
-import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
+import { readSetupState } from "@/packages/workit-cli/src/admin/setup-state";
 import { planHygieneFiles, ensureHygieneFiles } from "@/packages/workit-core/src/core/hygiene";
 import {
   buildSetupPreview,
@@ -46,7 +46,7 @@ import {
   preselectedPlatforms,
   type HostDetection,
   type HostId,
-} from "@/packages/workit-core/src/core/detect-hosts";
+} from "@/packages/workit-cli/src/admin/detect-hosts";
 import { REPO_ROOT } from "@/test/shared/helpers/packages";
 import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
 
