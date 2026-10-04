@@ -234,7 +234,26 @@ export const isCodexWorkitInstalled = (
 export const claudeConfigDir = (home: string, env: NodeJS.ProcessEnv = process.env): string =>
   env.CLAUDE_CONFIG_DIR ?? path.join(home, ".claude");
 
-export type ClaudeWorkitInstall = { id: string; version: string | null; installPath: string };
+export type ClaudeInstallScope = "user" | "project" | "local";
+
+export type ClaudeWorkitInstall = {
+  id: string;
+  version: string | null;
+  installPath: string;
+  scope: ClaudeInstallScope;
+  /** The project a project/local-scope install belongs to; null for user scope. */
+  projectPath: string | null;
+};
+
+const CLAUDE_SCOPES = new Set<string>(["user", "project", "local"]);
+
+/** A project/local install applies to `cwd` when cwd is inside its project. */
+const appliesTo = (install: ClaudeWorkitInstall, cwd: string | null): boolean => {
+  if (install.scope === "user") return true;
+  if (cwd === null || install.projectPath === null) return false;
+  const relative = path.relative(path.resolve(install.projectPath), path.resolve(cwd));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+};
 
 const isCanonicalClaudePlugin = (root: string): boolean => {
   try {
@@ -257,11 +276,14 @@ const isCanonicalClaudePlugin = (root: string): boolean => {
  * (`<config>/plugins/installed_plugins.json`, v2: `{plugins: {"name@market":
  * [{installPath, version}]}}`). Only entries whose install directory carries
  * the canonical Workit manifest count, whatever marketplace they came from.
- * A `--plugin-dir` local pin is per-session and never appears here.
+ * Only installs that apply here count: user scope always, project/local
+ * scope only when `cwd` is inside the recorded project (`cwd: null` keeps
+ * user scope only). A `--plugin-dir` pin is per-session and never recorded.
  */
 export const claudeWorkitInstalls = (
   home: string,
   env: NodeJS.ProcessEnv = process.env,
+  cwd: string | null = process.cwd(),
 ): ClaudeWorkitInstall[] => {
   const file = path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json");
   let registry: unknown;
@@ -276,26 +298,40 @@ export const claudeWorkitInstalls = (
   const found: ClaudeWorkitInstall[] = [];
   for (const [id, entries] of Object.entries(plugins as Record<string, unknown>)) {
     if (!id.startsWith("workit@") || !Array.isArray(entries)) continue;
-    for (const entry of entries as Array<{ installPath?: unknown; version?: unknown }>) {
+    for (const entry of entries as Array<{
+      installPath?: unknown;
+      version?: unknown;
+      scope?: unknown;
+      projectPath?: unknown;
+    }>) {
       if (typeof entry?.installPath !== "string" || !isCanonicalClaudePlugin(entry.installPath))
         continue;
-      found.push({
+      // Older registries omit scope; Claude's default install scope is user.
+      const scope = entry.scope === undefined ? "user" : String(entry.scope);
+      if (!CLAUDE_SCOPES.has(scope)) continue; // e.g. managed: not ours to change
+      const install: ClaudeWorkitInstall = {
         id,
         installPath: entry.installPath,
         version:
           typeof entry.version === "string" && /^\d+\.\d+\.\d+/.test(entry.version)
             ? entry.version
             : null,
-      });
+        scope: scope as ClaudeInstallScope,
+        projectPath:
+          scope !== "user" && typeof entry.projectPath === "string" ? entry.projectPath : null,
+      };
+      if (appliesTo(install, cwd)) found.push(install);
     }
   }
   return found;
 };
 
+/** A Workit install Claude Code loads for this user (any project). */
 export const isClaudeWorkitInstalled = (
   home: string,
   env: NodeJS.ProcessEnv = process.env,
-): boolean => claudeWorkitInstalls(home, env).length > 0;
+  cwd: string | null = process.cwd(),
+): boolean => claudeWorkitInstalls(home, env, cwd).length > 0;
 
 export function installedHostApp(
   host: HostId,
@@ -371,7 +407,7 @@ export function planHostInstall(
     ];
   }
   if (host === "claude-code") {
-    if (!upgrading && isClaudeWorkitInstalled(home, env)) return [];
+    if (!upgrading && isClaudeWorkitInstalled(home, env, null)) return [];
     const base = hostCommand("claude", [], { home, cwd, env });
     return [
       nodePrerequisite({ home, cwd, env }),

@@ -1303,7 +1303,7 @@ export function applySetupPreview(
           : mutation.platform === "pi"
             ? isPiWorkitInstalled(res.home, res.env)
             : mutation.platform === "claude-code"
-              ? isClaudeWorkitInstalled(res.home, res.env)
+              ? isClaudeWorkitInstalled(res.home, res.env, null)
               : true;
       if (!verified) {
         entries.push({

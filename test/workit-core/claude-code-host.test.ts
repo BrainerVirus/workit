@@ -14,7 +14,11 @@ import {
   runHostInstall,
 } from "@/packages/workit-core/src/core/host-install";
 import { applySetupPreview, buildSetupPreview } from "@/packages/workit-core/src/core/setup";
-import { applyUninstall, planUninstall } from "@/packages/workit-core/src/core/uninstall";
+import {
+  applyUninstall,
+  planUninstall,
+  type UninstallAction,
+} from "@/packages/workit-core/src/core/uninstall";
 
 const temp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const executable = (file: string) => {
@@ -29,7 +33,14 @@ const CORE_VERSION = JSON.parse(
 /** Record a Claude Code plugin install the way `claude plugin install` does (2.1.288). */
 const recordInstall = (
   configDir: string,
-  options: { id?: string; version?: string; name?: string; repository?: string } = {},
+  options: {
+    id?: string;
+    version?: string;
+    name?: string;
+    repository?: string;
+    scope?: "user" | "project" | "local";
+    projectPath?: string;
+  } = {},
 ) => {
   const id = options.id ?? "workit@workit";
   const version = options.version ?? "2.1.5";
@@ -53,7 +64,16 @@ const recordInstall = (
     path.join(configDir, "plugins", "installed_plugins.json"),
     JSON.stringify({
       version: 2,
-      plugins: { [id]: [{ scope: "user", installPath, version }] },
+      plugins: {
+        [id]: [
+          {
+            scope: options.scope ?? "user",
+            ...(options.projectPath ? { projectPath: options.projectPath } : {}),
+            installPath,
+            version,
+          },
+        ],
+      },
     }),
   );
   return installPath;
@@ -251,8 +271,9 @@ test("uninstall previews a native `claude plugin uninstall` per Workit install a
       expect.objectContaining({
         kind: "host-command",
         command: "claude",
-        args: ["plugin", "uninstall", "workit@workit"],
-        detail: "claude plugin uninstall workit@workit",
+        args: ["plugin", "uninstall", "workit@workit", "--scope", "user"],
+        cwd: null,
+        detail: "claude plugin uninstall workit@workit --scope user",
       }),
     ]);
     const ran: string[][] = [];
@@ -266,7 +287,7 @@ test("uninstall previews a native `claude plugin uninstall` per Workit install a
         return { exitCode: 0, stdout: "", stderr: "" };
       },
     });
-    expect(ran).toEqual([["plugin", "uninstall", "workit@workit"]]);
+    expect(ran).toEqual([["plugin", "uninstall", "workit@workit", "--scope", "user"]]);
     expect(result.entries).toEqual([
       expect.objectContaining({ host: "claude-code", status: "removed" }),
     ]);
@@ -299,6 +320,73 @@ test("uninstall previews a native `claude plugin uninstall` per Workit install a
     });
     expect(refused.ok).toBe(false);
     expect(refused.entries[0].detail).toContain("refusing unreviewed host command");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("project and local installs count only inside their project, and uninstall from it with --scope", () => {
+  const home = temp("workit-claude-scope-");
+  try {
+    const project = path.join(home, "repo");
+    const other = path.join(home, "elsewhere");
+    mkdirSync(path.join(project, "src"), { recursive: true });
+    mkdirSync(other, { recursive: true });
+    const env = { HOME: home };
+    recordInstall(path.join(home, ".claude"), { scope: "project", projectPath: project });
+    // Outside the project (and with no project at all) nothing applies.
+    expect(isClaudeWorkitInstalled(home, env, other)).toBe(false);
+    expect(isClaudeWorkitInstalled(home, env, null)).toBe(false);
+    expect(claudeWorkitInstalls(home, env, path.join(project, "src"))).toEqual([
+      expect.objectContaining({ scope: "project", projectPath: project }),
+    ]);
+    // Setup installs user scope, so a project-only install does not satisfy it.
+    expect(planUninstall({ home, env, cwd: other }).hosts.at(-1)?.actions).toEqual([]);
+    const plan = planUninstall({ home, env, cwd: project });
+    const claude = plan.hosts.find((h) => h.host === "claude-code")!;
+    expect(claude.actions).toEqual([
+      expect.objectContaining({
+        args: ["plugin", "uninstall", "workit@workit", "--scope", "project"],
+        cwd: project,
+      }),
+    ]);
+    const steps: Array<{ args: string[]; cwd?: string }> = [];
+    const applied = applyUninstall(
+      { hosts: [claude] },
+      {
+        home,
+        env,
+        runHostCommand: (step) => {
+          steps.push({ args: step.args, cwd: step.cwd });
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      },
+    );
+    expect(applied.ok).toBe(true);
+    expect(steps).toEqual([
+      { args: ["plugin", "uninstall", "workit@workit", "--scope", "project"], cwd: project },
+    ]);
+    const reviewedAction = claude.actions[0] as Extract<UninstallAction, { kind: "host-command" }>;
+    // A project-scope action without its project, or a user-scope one with a
+    // cwd, is not the reviewed shape.
+    for (const action of [
+      { ...reviewedAction, cwd: null },
+      { ...reviewedAction, args: ["plugin", "uninstall", "workit@workit", "--scope", "user"] },
+      {
+        ...claude.actions[0],
+        args: ["plugin", "uninstall", "workit@workit", "--scope", "managed"],
+      },
+    ]) {
+      const refused = applyUninstall(
+        { hosts: [{ ...claude, actions: [action] }] },
+        {
+          home,
+          env,
+          runHostCommand: () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        },
+      );
+      expect(refused.entries[0].status, JSON.stringify(action.args)).toBe("failed");
+    }
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

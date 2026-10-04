@@ -33,7 +33,11 @@ import {
   isWorkitPlugin,
 } from "./registration";
 import { readWorkspacesResult, resolveWorkspaceFrom } from "./workspaces";
-import { CLAUDE_MARKETPLACE_NAME, claudeWorkitInstalls } from "./host-install";
+import {
+  CLAUDE_MARKETPLACE_NAME,
+  claudeWorkitInstalls,
+  type ClaudeWorkitInstall,
+} from "./host-install";
 import { validateCursorSkills, WORKIT_METHOD_SKILLS } from "./skill-manifests";
 import {
   classifyHostGeneration,
@@ -1754,23 +1758,26 @@ const versionBehind = (version: string, latest: string): boolean =>
  * local pin is per-session, never recorded, and never checked here.
  */
 const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
-  const installs = claudeWorkitInstalls(res.home, res.env);
+  // Only installs Claude loads here: user scope, plus this project's.
+  const installs = claudeWorkitInstalls(res.home, res.env, res.cwd);
   if (installs.length === 0)
     return {
       id: "claude_plugin",
       status: "pass",
       detail: "no Workit Claude Code plugin install recorded — skipping",
     };
-  const fix = (id: string) =>
-    `claude plugin marketplace update ${CLAUDE_MARKETPLACE_NAME} && claude plugin update ${id}`;
+  const fix = (install: ClaudeWorkitInstall) =>
+    `claude plugin marketplace update ${CLAUDE_MARKETPLACE_NAME} && ${
+      install.projectPath ? `cd ${JSON.stringify(install.projectPath)} && ` : ""
+    }claude plugin update ${install.id}${install.scope === "user" ? "" : ` --scope ${install.scope}`}`;
   const latest = registryLatestVersion(res, CLAUDE_PLUGIN_PACKAGE);
   const problems: string[] = [];
   let repair: string | undefined;
   for (const install of installs) {
-    const label = `${install.id} ${install.version ?? "(unknown version)"}`;
+    const label = `${install.id} ${install.version ?? "(unknown version)"}${install.scope === "user" ? "" : ` (${install.scope} scope)`}`;
     if (latest && install.version && versionBehind(install.version, latest)) {
       problems.push(`stale_install: ${label} is behind published ${latest}`);
-      repair ??= fix(install.id);
+      repair ??= fix(install);
     }
   }
   const registryProbed = latest !== null && !res.env.WORKIT_DOCTOR_STALE_REGISTRY_VERSION;

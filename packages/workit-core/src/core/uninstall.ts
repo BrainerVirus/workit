@@ -23,7 +23,15 @@ export type UninstallAction =
   | { kind: "edit-json-remove"; path: string; detail: string }
   | { kind: "remove-dir"; path: string; detail: string }
   /** A host-native uninstall (Claude Code owns its plugin cache and registry). */
-  | { kind: "host-command"; path: string; detail: string; command: "claude"; args: string[] };
+  | {
+      kind: "host-command";
+      path: string;
+      detail: string;
+      command: "claude";
+      args: string[];
+      /** The project a project/local-scope uninstall must run from; null for user scope. */
+      cwd: string | null;
+    };
 
 export type UninstallHostPlan = {
   host: UninstallHost;
@@ -59,6 +67,8 @@ export type UninstallPaths = {
   cursorPluginDir?: string;
   /** Injectable host-command runner for host-native uninstall actions. */
   runHostCommand?: HostCommandRunner;
+  /** Project directory for Claude Code project/local-scope installs (default: process cwd). */
+  cwd?: string;
 };
 
 type ResolvedUninstall = {
@@ -331,19 +341,28 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
       : [],
   };
 
-  // Claude Code: one native `claude plugin uninstall <id>` per recorded
-  // Workit install (any marketplace). A --plugin-dir pin is never recorded.
+  // Claude Code: one native `claude plugin uninstall <id> --scope <scope>`
+  // per recorded Workit install that applies here (user scope, plus this
+  // project's project/local scope, run from that project). A --plugin-dir
+  // pin is never recorded.
   const home = paths.home ?? paths.env?.HOME ?? os.homedir();
-  const claudeInstalls = claudeWorkitInstalls(home, paths.env ?? process.env);
+  const claudeInstalls = claudeWorkitInstalls(
+    home,
+    paths.env ?? process.env,
+    paths.cwd ?? process.cwd(),
+  );
   const claude: UninstallHostPlan = {
     host: "claude-code",
     installed: claudeInstalls.length > 0,
     actions: claudeInstalls.map((install) => ({
       kind: "host-command" as const,
       path: install.installPath,
-      detail: `claude plugin uninstall ${install.id}`,
+      detail: `claude plugin uninstall ${install.id} --scope ${install.scope}${
+        install.projectPath ? ` (in ${install.projectPath})` : ""
+      }`,
       command: "claude" as const,
-      args: ["plugin", "uninstall", install.id],
+      args: ["plugin", "uninstall", install.id, "--scope", install.scope],
+      cwd: install.projectPath,
     })),
   };
 
@@ -424,13 +443,18 @@ const applyClaudeUninstall = (
   action: Extract<UninstallAction, { kind: "host-command" }>,
   paths: UninstallPaths,
 ): { status: UninstallResultStatus; detail?: string } => {
-  const [verb, sub, id, ...rest] = action.args;
+  const [verb, sub, id, flag, scope, ...rest] = action.args;
+  const projectScoped = scope === "project" || scope === "local";
   if (
     action.command !== "claude" ||
     verb !== "plugin" ||
     sub !== "uninstall" ||
     !CLAUDE_PLUGIN_ID.test(id ?? "") ||
-    rest.length > 0
+    flag !== "--scope" ||
+    !(scope === "user" || projectScoped) ||
+    rest.length > 0 ||
+    // user scope runs anywhere; project/local only from their project.
+    (projectScoped ? typeof action.cwd !== "string" : action.cwd !== null)
   )
     return {
       status: "failed",
@@ -438,15 +462,24 @@ const applyClaudeUninstall = (
     };
   const home = paths.home ?? paths.env?.HOME ?? os.homedir();
   const env = paths.env ?? process.env;
-  if (!claudeWorkitInstalls(home, env).some((install) => install.id === id))
-    return { status: "skipped", detail: `${id} is no longer installed` };
+  const recorded = claudeWorkitInstalls(home, env, action.cwd).some(
+    (install) =>
+      install.id === id &&
+      install.scope === scope &&
+      (install.projectPath === null
+        ? action.cwd === null
+        : path.resolve(install.projectPath) === path.resolve(action.cwd ?? "")),
+  );
+  if (!recorded)
+    return { status: "skipped", detail: `${id} (${scope} scope) is no longer installed` };
   const executable = findHostExecutable("claude", { home, env });
   if (!executable && !paths.runHostCommand)
     return { status: "failed", detail: "claude executable was not found on PATH" };
   const step = {
     command: executable ?? "claude",
     args: action.args,
-    purpose: `Uninstall the Workit Claude Code plugin ${id}`,
+    ...(action.cwd === null ? {} : { cwd: action.cwd }),
+    purpose: `Uninstall the Workit Claude Code plugin ${id} (${scope} scope)`,
   };
   const result = paths.runHostCommand
     ? paths.runHostCommand(step)

@@ -189,7 +189,9 @@ claude plugin marketplace update workit && claude plugin update workit@workit
 
 `workit doctor` warns (`claude_plugin`) when a newer plugin version is
 published than the one installed. `workit uninstall` previews and runs the
-native `claude plugin uninstall workit@<marketplace>` for each Workit install.
+native `claude plugin uninstall workit@<marketplace> --scope <scope>` for each
+Workit install that applies where you run it: user scope, plus project/local
+scope installs of the current project (run from that project).
 
 **Local pin to a checkout.** Load the package straight from this repository;
 hooks and `workit` on the Bash tool then run the TypeScript sources with Bun,
