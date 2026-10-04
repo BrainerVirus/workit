@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { redactSecrets } from "./core/logger";
+import { redactText } from "./forge/redact";
 
 // ---------------------------------------------------------------------------
 // bounded, redacted capture
@@ -20,28 +21,13 @@ export const MAX_LOG_BYTES = 2 * 1024 * 1024;
 export const TAIL_LINES = 80;
 const MAX_LINE_CHARS = 400;
 
-// Token formats that are secrets wherever they appear (on top of the
-// logger's key=value, bearer and URL-query patterns).
-const TOKEN_PATTERNS: readonly RegExp[] = [
-  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/gu,
-  /\bgl[a-z]{1,8}-[A-Za-z0-9_-]{16,}/gu,
-  /\bnpm_[A-Za-z0-9]{30,}/gu,
-  /\bxox[abposr]-[A-Za-z0-9-]{10,}/gu,
-  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/gu,
-  /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}/gu,
-  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/gu,
-];
-const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/giu;
-const PRIVATE_KEY =
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/gu;
-const ANSI = new RegExp(String.raw`\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007`, "gu");
-
-/** Mask secrets and strip terminal escapes from captured output. */
+/**
+ * Mask secrets and strip terminal escapes from captured output: the forge
+ * redaction (tokens, key=value and quoted secrets, URL credentials, private
+ * keys, signed URLs, credential-looking base64), plus the logger's patterns.
+ */
 export function redactLog(text: string): string {
-  let out = text.replace(ANSI, "").replace(PRIVATE_KEY, "[REDACTED PRIVATE KEY]");
-  for (const pattern of TOKEN_PATTERNS) out = out.replace(pattern, "[REDACTED]");
-  out = out.replace(URL_USERINFO, "$1[REDACTED]@");
-  return out
+  return redactText(text)
     .split("\n")
     .map((line) => redactSecrets(line))
     .join("\n");
