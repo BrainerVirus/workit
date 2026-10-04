@@ -5,21 +5,13 @@ import { pathToFileURL } from "node:url";
 import { hostingApiHostMatches, vcsCliIdentity, vcsConfig } from "./vcs-config";
 export { hostingApiHostMatches } from "./vcs-config";
 import { resolveBranchPolicyFor } from "./branch";
+import { buildBody, parseGhIssue, parseGhRepo } from "../forge/pr-body";
 
 // Port of scripts/pr-create.sh — build MR/PR body issue linking + create via glab/gh.
 // Hosted creation is enabled (decision ae03c569): every create path pre-binds
 // the approved source SHA through WORKIT_EXPECTED_* and the shared executor
 // post-verifies the provider PR head before reporting success. The residual
 // non-atomic source-SHA race is accepted.
-function parseGhRepo(remote: string): string | null {
-  remote = (remote || "").trim().replace(/\/+$/, "");
-  if (!remote) return null;
-  if (remote.endsWith(".git")) remote = remote.slice(0, -4);
-  if (remote.includes(":")) remote = remote.split(":").pop() ?? ""; // drop git@host part (scp-style URL)
-  const parts = remote.split("/").filter(Boolean);
-  return parts.length >= 2 ? parts.slice(-2).join("/") : null;
-}
-
 const remoteRepoPath = (
   remote: string,
 ): { host: string; path: string; protocol: string } | null => {
@@ -62,68 +54,6 @@ const cliRepository = (
   if (provider === "github") return `${host}/${parsed.path}`;
   return host === "gitlab.com" ? parsed.path : `https://${host}/${parsed.path}`;
 };
-
-function parseGhIssue(value: string): string {
-  const m = /issues\/(\d+)/.exec(value);
-  return m ? m[1] : String(value).trim().replace(/^#/, "");
-}
-
-// RL-03/CA-25/AR-08: a branch-derived numeric issue id must be a bare number at
-// a segment or dash boundary — and never part of a date segment. Year-first
-// (feature/2024-01-15/x) and day-first (feature/15-01-2024/x) dates are both
-// skipped — a complete date anywhere in a segment (release-2024-01-15,
-// v2-2024-01-15-fix) — so no date digit ever closes an issue. Deliberate
-// numeric issue branches (feature/42-title, feature/2024-fix) keep linking.
-function deriveGhIssueFromBranch(branch: string): string {
-  for (const segment of branch.split("/")) {
-    if (/^\d{4}-\d/.test(segment)) continue; // year-first date-like segment (incl. year-month)
-    if (/\d{4}-\d{1,2}-\d{1,2}/.test(segment)) continue; // complete year-first date anywhere
-    if (/\d{1,2}-\d{1,2}-\d{4}/.test(segment)) continue; // complete day-first date anywhere
-    const m = /(?:^|-)(\d+)(?:-|$)/.exec(segment);
-    if (m) return m[1];
-  }
-  return "";
-}
-
-function buildBody(
-  body: string,
-  branch: string,
-  linkIssues: boolean,
-  baseUrl: string,
-  ytIssue: string,
-  ghLinkOnPr: boolean,
-  ghIssue: string,
-  ghRelation: string,
-  ghRepo: string | null,
-): string {
-  let line: string | null = null;
-  if (linkIssues) {
-    let issue = ytIssue;
-    if (!issue && branch) {
-      // anchored prefix + \b boundary, 3+ digits so version-like tokens (POSTGRES-16, HTTP-3) never link
-      const m = /(?:^|\/|-)([A-Z]{2,}-\d{3,})\b/.exec(branch);
-      if (m) issue = m[1];
-    }
-    if (issue && baseUrl) line = `Related to: ${baseUrl.replace(/\/+$/, "")}/issue/${issue}`;
-  } else if (ghLinkOnPr) {
-    let issue = parseGhIssue(ghIssue);
-    if (!issue && branch) {
-      // pure-number issue id (feature/42-title -> 42); digits must be followed by a dash or end-of-string
-      // so version tokens (release/1.2.3, backport/8.0.1, lodash-4.17.21, 2024.1) never link
-      issue = deriveGhIssueFromBranch(branch);
-    }
-    if (issue) {
-      if (ghRelation === "related") {
-        line = `Related to #${issue}`;
-        if (ghRepo) line += ` — https://github.com/${ghRepo}/issues/${issue}`;
-      } else {
-        line = `Closes #${issue}`;
-      }
-    }
-  }
-  if (line === null) return body;
-  return body ? `${body}\n\n${line}` : line;
-}
 
 const truthy = (v: string | undefined): boolean =>
   ["1", "true", "yes"].includes(String(v ?? "").toLowerCase());
@@ -714,4 +644,5 @@ export function mergePr(
   };
 }
 
+// Moved to forge/pr-body.ts (S11); re-exported for the managed action path until S16.
 export { buildBody, parseGhRepo, parseGhIssue };

@@ -252,7 +252,7 @@ describe("S10 pr status", () => {
       ok: false,
       code: "not_found",
       error: "no pull request for branch feature/x from o/r in o/r",
-      unblock: "push the branch and open one (workit pr create, S11), or pass --pr <n>",
+      unblock: "workit git push && workit pr create --fill  # or pass --pr <n>",
     });
     const gitlab = repoFor("gitlab");
     const routes = gitlabRoutes();
