@@ -13,6 +13,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Task event store and implicit tasks (3.0, D3/D13).** Task state moves from
+  `<checkout>/.workit/` to `$(git rev-parse --git-common-dir)/workit/` (shared
+  by all worktrees, kept across worktree removal and `git clean`; non-git
+  directories keep `<dir>/.workit/`). Each task is an append-only
+  `tasks/<id>/events.jsonl` of structural patches plus a rebuildable
+  `snapshot.json`: state grows with the change, not with full-record copies,
+  a crash leaves at most a torn last line that the next write truncates, and
+  stored candidates are content-addressed blobs. The `.workit/recovery/`
+  mechanism and `state.recover` are removed.
+- Every branch is one implicit task (detached HEAD: per worktree; non-git:
+  per directory). `workit check`, `workit ledger` records, `workit git commit`
+  and any task operation without a `taskId` (CLI, MCP, host tools) apply to
+  it and create it on first use; host tool schemas make `taskId` optional. An
+  explicit `task start` takes the branch over; closing frees it. Per-turn host
+  context falls back to the branch's task when no session-bound task applies.
+- New `workit task status [--all] | start "<objective>" | note "<text>"
+  [--next] [--objective] | close [--outcome] | adopt <id>`.
+- `workit gc` now compacts long task logs into a checkpoint plus their 50
+  most recent events (the latest state is never lost) and removes
+  unreferenced blobs; it reports a 2.x `.workit/recovery/` and deletes it only
+  with `--prune-recovery --yes`.
+- **Migration:** on first use, a 2.x `.workit/` store (tasks and workspace
+  record) migrates into the new store once, under the checkout lock, with a
+  backup under `legacy/<checkout>/v2/` and a one-line note on stderr.
+  Migrated tasks keep their ids and contents (inspect output is unchanged) and
+  are not bound to a branch: list them with `workit task status --all`, bind
+  one with `workit task adopt <id>`. `.workit/workspace.json` becomes a marker
+  whose critical `store` field makes 2.x runtimes fail closed with an upgrade
+  message instead of writing a second store. A plain directory whose
+  `.workit/` store later becomes a git repository moves it into the git store.
+
 ### Added
 
 - `workit check <name>` / `workit check [--name <n>] -- <cmd…>` runs a check
