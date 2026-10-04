@@ -355,21 +355,39 @@ test("Given writers killed with SIGKILL mid-append, Then the log never corrupts 
     for (let index = 0; ; index += 1) {
       const current = store.readTask(${JSON.stringify(task.id)});
       if (!current.ok) { console.error(current.error); process.exit(3); }
-      store.mutateTask(current.data.id, current.data.revision, (value) => ({
+      const written = store.mutateTask(current.data.id, current.data.revision, (value) => ({
         ok: true, revision: null, workspaceRevision: null,
         data: { ...value, progress: { summary: big + index, nextAction: null, blockers: [] } },
       }));
+      if (written.ok) process.stdout.write("w\\n");
     }
   `;
+  const lock = path.join(taskDirOf(root, task.id), "lock");
+  // A writer killed while writing the lock file leaves it unreadable, which
+  // S1 treats as being written until its TTL (retryable busy, never damage);
+  // let that TTL pass between rounds.
+  const ageLock = () => {
+    if (!existsSync(lock)) return;
+    const old = new Date(Date.now() - 15 * 60_000);
+    utimesSync(lock, old, old);
+  };
   for (let round = 0; round < 6; round += 1) {
-    const children = [0, 1].map(() =>
-      spawn(process.execPath, ["-e", script], { stdio: ["ignore", "ignore", "pipe"] }),
-    );
-    await new Promise((done) => setTimeout(done, 150 + round * 40));
+    let writes = 0;
+    const children = [0, 1].map(() => {
+      const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+      child.stdout.on("data", (chunk: Buffer) => (writes += String(chunk).split("w").length - 1));
+      return child;
+    });
+    // Kill mid-stream: once writes are landing (startup speed varies by
+    // runner), after a random extra delay.
+    const until = Date.now() + 15_000;
+    while (writes < 2 && Date.now() < until) await new Promise((done) => setTimeout(done, 10));
+    await new Promise((done) => setTimeout(done, Math.floor(Math.random() * 60)));
     for (const child of children) child.kill("SIGKILL");
     await Promise.all(children.map((child) => new Promise((done) => child.on("close", done))));
     const read = new TaskStore(root).readTask(task.id);
     expect(read.ok, read.ok ? "" : read.error).toBe(true);
+    ageLock();
   }
   const events = eventsOf(root, task.id);
   expect(events.length).toBeGreaterThan(2);
@@ -377,16 +395,7 @@ test("Given writers killed with SIGKILL mid-append, Then the log never corrupts 
   expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => events[0].seq + index));
   const current = new TaskStore(root).readTask(task.id);
   if (!current.ok) throw new Error(current.error);
-  let after = new TaskStore(root).mutateTask(task.id, current.data.revision, identity);
-  // A writer killed while writing the lock file leaves it unreadable, which
-  // S1 treats as a lock being written until its TTL: retryable busy, never
-  // damage. Age it past the TTL and the next write reclaims it.
-  if (!after.ok && after.code === "busy") {
-    const lock = path.join(taskDirOf(root, task.id), "lock");
-    const old = new Date(Date.now() - 15 * 60_000);
-    utimesSync(lock, old, old);
-    after = new TaskStore(root).mutateTask(task.id, current.data.revision, identity);
-  }
+  const after = new TaskStore(root).mutateTask(task.id, current.data.revision, identity);
   expect(after.ok, after.ok ? "" : `${after.code}: ${after.error}`).toBe(true);
 }, 60_000);
 
