@@ -147,9 +147,10 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "stack",
     group: "delivery",
-    usage: "workit stack plan|sync|land [--json]",
-    summary: "Plan, restack and land a stack of PRs",
-    planned: "S12",
+    usage:
+      "workit stack plan [<bottom> … <top>] | status | sync [--local] | land [--dry-run] [--max <n>] [--json]",
+    summary:
+      "Plan, restack (lease push + retarget) and land a base-branch stack of PRs, root first",
     load: () => import("./stack"),
   },
   {

@@ -146,19 +146,16 @@ test("help, version and per-verb usage answer through the envelope", async () =>
   );
 
   // A planned verb is not advertised but still explains itself on request.
-  const usage = await run(["help", "stack"]);
+  const usage = await run(["help", "check"]);
   expect(usage.code).toBe(0);
-  expect(usage.stdout).toContain("usage: workit stack plan|sync|land");
-  expect(usage.stdout).toContain("(coming in S12)");
+  expect(usage.stdout).toContain("usage: workit check");
+  expect(usage.stdout).toContain("(coming in S9b)");
 
   expect((await run([])).stdout).toContain("Usage: workit <command>");
 });
 
-test("planned S9b–S12 verbs answer not_implemented with exit 2", async () => {
-  for (const [verb, slice] of [
-    ["check", "S9b"],
-    ["stack", "S12"],
-  ] as const) {
+test("planned S9b verbs answer not_implemented with exit 2", async () => {
+  for (const [verb, slice] of [["check", "S9b"]] as const) {
     expect(VERBS.find((entry) => entry.name === verb)?.planned).toBe(slice);
     const result = await run([verb, "status", "--json"]);
     expect(result.code, verb).toBe(2);
@@ -169,9 +166,9 @@ test("planned S9b–S12 verbs answer not_implemented with exit 2", async () => {
       error: `${verb} is not implemented yet (planned in ${slice})`,
     });
   }
-  const human = await run(["stack", "plan"]);
+  const human = await run(["check", "plan"]);
   expect(human.stdout).toBe("");
-  expect(human.stderr).toContain("stack is not implemented yet (planned in S12)");
+  expect(human.stderr).toContain("check is not implemented yet (planned in S9b)");
 });
 
 test("unknown commands and bad global flags are usage errors with an unblock hint", async () => {
@@ -204,15 +201,15 @@ test("global --json works before and after the command", async () => {
     expect(JSON.parse(result.stdout).data.verbs.length).toBeGreaterThan(0);
   }
   for (const argv of [
-    ["--json", "stack", "plan"],
-    ["stack", "plan", "--json"],
-    ["stack", "--json", "plan"],
+    ["--json", "check", "plan"],
+    ["check", "plan", "--json"],
+    ["check", "--json", "plan"],
   ]) {
     const result = await run(argv);
     expect(result.code, argv.join(" ")).toBe(2);
     expect(JSON.parse(result.stdout)).toMatchObject({
       code: "not_implemented",
-      data: { verb: "stack", subcommand: "plan" },
+      data: { verb: "check", subcommand: "plan" },
     });
   }
   // Existing verbs that parse --json themselves get it from either position.
