@@ -184,7 +184,9 @@ test("Given a competing write on every attempt, When the caller omitted revision
     const elapsed = performance.now() - begin;
     expect(result).toMatchObject({ ok: false, code: "busy" });
     expect(probe.attempts()).toBe(8);
-    expect(elapsed).toBeLessThan(2_000);
+    // The attempt cap, not the 10 s lock budget, ended the retries; wall time
+    // stays runner-independent (slow Windows runners took ~2.7 s here).
+    expect(elapsed).toBeLessThan(10_000);
   } finally {
     setDefaultLockTimeout(budget);
   }
