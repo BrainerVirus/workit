@@ -1855,3 +1855,33 @@ test("doctor uses the default GitHub API host when the SSH alias has no host con
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Workit 3 ships only the OpenCode V2 plugin entry: an OpenCode 1.x CLI fails
+// with the pin-to-2.x / upgrade fix; 2.x passes; no CLI skips.
+test.skipIf(process.platform === "win32")(
+  "opencode_version fails an OpenCode 1.x host with the stay-on-2.x fix",
+  () => {
+    const bin = binDirWithRuntimes(fixture.root);
+    const opencode = path.join(bin, "opencode");
+    const withVersion = (version: string) => {
+      writeFileSync(opencode, `#!/bin/sh\necho "${version}"\n`, { mode: 0o755 });
+      return check(run({ env: { ...process.env, PATH: bin } }), "opencode_version");
+    };
+    try {
+      const old = withVersion("1.18.34");
+      expect(old.status).toBe("fail");
+      expect(old.detail).toContain(
+        `older than the supported minimum ${SUPPORT_MATRIX.opencode.minimum}`,
+      );
+      expect(old.fix).toContain('"@brainervirus/workit-opencode@2"');
+      expect(old.fix).toContain('"plugin" array');
+      expect(withVersion("opencode v2.0.21").status).toBe("pass");
+    } finally {
+      rmSync(opencode, { force: true });
+    }
+    expect(check(run({ env: { ...process.env, PATH: bin } }), "opencode_version").status).toBe(
+      "pass",
+    );
+  },
+  { timeout: 60_000 },
+);

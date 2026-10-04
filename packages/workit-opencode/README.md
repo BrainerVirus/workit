@@ -30,7 +30,9 @@ Local dev variant (absolute path to this repo):
 Requirements: OpenCode 2.0.18+, Node ≥ 24. The published plugin is a
 self-contained Node bundle whose default export is the V2 plugin definition
 (`{ id: "workit", setup }`). Workit 3.0 removed the OpenCode 1.x `server()`
-adapter; OpenCode 1.x hosts must stay on Workit 2.x.
+adapter; OpenCode 1.x hosts must stay on Workit 2.x by pinning
+`"plugin": ["@brainervirus/workit-opencode@2"]` (the V1 key) until they upgrade
+OpenCode.
 
 ## What it provides
 

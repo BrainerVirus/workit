@@ -59,6 +59,7 @@ type DoctorCheckId =
   | "runtime"
   | "versions"
   | "codex_pin"
+  | "opencode_version"
   | "claude_plugin"
   | "assets"
   | "launcher"
@@ -245,8 +246,8 @@ const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
   return false;
 };
 
-const versionOf = (bin: string, env: NodeJS.ProcessEnv): string | null => {
-  const r = spawnSync(bin, ["--version"], { encoding: "utf8", env });
+const versionOf = (bin: string, env: NodeJS.ProcessEnv, timeout?: number): string | null => {
+  const r = spawnSync(bin, ["--version"], { encoding: "utf8", env, timeout });
   if (r.error) return null;
   return (r.stdout ?? "").trim();
 };
@@ -378,6 +379,45 @@ const checkVersions = (res: Resolved): DoctorCheck => {
 // The Codex CLI is a qualification host, not a runtime dependency: evidence
 // covers exactly SUPPORT_MATRIX.codex.cli. A drifted install keeps working,
 // but warns so a fresh install never silently outruns the qualification pin.
+/** Repair text for an OpenCode 1.x host: Workit 3 ships only the V2
+ * `setup()` plugin entry, so a 1.x host needs the 2.x plugin line. */
+export const OPENCODE_V1_FIX = `OpenCode < ${SUPPORT_MATRIX.opencode.minimum} cannot load Workit 3 (V2 plugin API only): upgrade OpenCode to ${SUPPORT_MATRIX.opencode.minimum}+, or stay on Workit 2.x by pinning "@brainervirus/workit-opencode@2" in the opencode.json "plugin" array`;
+
+/**
+ * The installed OpenCode CLI must speak the V2 plugin API (Workit 3 retired
+ * the V1 `server()` entry). Bounded probe; an absent CLI is not an error.
+ */
+const checkOpencodeVersion = (res: Resolved): DoctorCheck => {
+  const minimum = SUPPORT_MATRIX.opencode.minimum;
+  if (!commandOnPath("opencode", res.env))
+    return {
+      id: "opencode_version",
+      status: "pass",
+      detail: "opencode CLI not on PATH — skipping version check",
+    };
+  const raw = versionOf("opencode", res.env, 5_000);
+  const installed = raw ? ((raw.match(/\d+\.\d+\.\d+/) ?? [])[0] ?? null) : null;
+  if (installed === null)
+    return {
+      id: "opencode_version",
+      status: "warn",
+      detail: `could not read the installed opencode version — Workit needs OpenCode ${minimum}+`,
+      fix: OPENCODE_V1_FIX,
+    };
+  if (semverAtLeast(installed, minimum))
+    return {
+      id: "opencode_version",
+      status: "pass",
+      detail: `opencode ${installed} supports the V2 plugin API (minimum ${minimum})`,
+    };
+  return {
+    id: "opencode_version",
+    status: "fail",
+    detail: `opencode ${installed} is older than the supported minimum ${minimum}`,
+    fix: OPENCODE_V1_FIX,
+  };
+};
+
 const checkCodexPin = (res: Resolved): DoctorCheck => {
   const qualified = SUPPORT_MATRIX.codex.cli;
   if (!commandOnPath("codex", res.env))
@@ -1597,6 +1637,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
   checkCodexPin,
+  checkOpencodeVersion,
   checkClaudePlugin,
   checkAssets,
   checkLauncher,

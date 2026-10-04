@@ -106,6 +106,19 @@ removed the OpenCode 1.x (V1 `server()`) adapter; stay on Workit 2.x for an
 OpenCode 1.x host. The published plugin is a self-contained Node bundle (no
 runtime `@opencode/plugin` dependency).
 
+**OpenCode 1.x: stay on Workit 2.x.** OpenCode 1.x reads the V1 `plugin` key
+and can only load the V1 `server()` entry, which Workit 3 removed. Pin the 2.x
+line there:
+
+```json
+{ "plugin": ["@brainervirus/workit-opencode@2"] }
+```
+
+OpenCode 2.x reads `plugins` (and still normalizes a `plugin` key), so after
+upgrading OpenCode to 2.0.18+ use `"plugins": ["@brainervirus/workit-opencode"]`.
+`workit doctor` fails `opencode_version` on a 1.x CLI with this fix, and
+`workit upgrade` warns before applying.
+
 </details>
 
 <details>

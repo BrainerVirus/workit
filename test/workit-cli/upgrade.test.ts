@@ -398,7 +398,10 @@ test("OpenCode unsupported scoped update is visible and never falls back to upda
       }),
     ).toBe(0);
     expect(output).toContain("preserved");
-    expect(f.calls.filter((call) => call[0] === "opencode")).toEqual([["opencode", "--version"]]);
+    // Only version probes and the launch itself; never a plugin update.
+    const opencodeCalls = f.calls.filter((call) => call[0] === "opencode");
+    expect(opencodeCalls.at(-1)).toEqual(["opencode", "--version"]);
+    expect(opencodeCalls.every((call) => call.join(" ") === "opencode --version")).toBe(true);
   } finally {
     f.cleanup();
   }
@@ -414,6 +417,34 @@ test("conflicting Workit registrations stop upgrade without changing either sour
     expect(plan.blocked[0]).toContain("conflicting Workit registrations");
     expect(applyUpgrade(plan, f.deps).ok).toBe(false);
     expect(JSON.parse(readFileSync(f.host, "utf8")).plugins).toEqual(pins);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("upgrade warns before applying when the OpenCode host is 1.x (Workit 3 is V2-only)", async () => {
+  const f = fixture();
+  try {
+    const run = (command: string, args: string[]) =>
+      command === "opencode" && args[0] === "--version"
+        ? { status: 0, stdout: "1.18.34\n" }
+        : f.deps.run(command, args);
+    const plan = previewUpgrade(["opencode"], { ...f.deps, run });
+    expect(plan.warnings?.[0]).toContain("opencode 1.18.34");
+    expect(plan.warnings?.[0]).toContain('"@brainervirus/workit-opencode@2"');
+    const out: string[] = [];
+    await runUpgradeCommand(["--hosts=opencode", "--apply", "--confirm"], {
+      ...f.deps,
+      run,
+      out: { write: (text: string) => out.push(text) },
+    });
+    expect(out[0]).toStartWith("warning: opencode 1.18.34");
+
+    const current = (command: string, args: string[]) =>
+      command === "opencode"
+        ? { status: 0, stdout: "opencode v2.0.21\n" }
+        : f.deps.run(command, args);
+    expect(previewUpgrade(["opencode"], { ...f.deps, run: current }).warnings).toBeUndefined();
   } finally {
     f.cleanup();
   }

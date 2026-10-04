@@ -21,6 +21,8 @@ import {
   type HostInstallCommand,
 } from "./admin/host-install";
 import { applySetupPreview, type SetupPreview } from "./admin/setup";
+import { OPENCODE_V1_FIX } from "./admin/doctor";
+import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 
 const HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
@@ -47,6 +49,8 @@ export type UpgradePlan = {
   configDigests: Record<string, string>;
   cli?: { latest: string; root: string };
   migrations: { id: string; file: string; description: string }[];
+  /** Advisories that do not block the upgrade (e.g. an OpenCode 1.x host). */
+  warnings?: string[];
 };
 
 const upgradePaths = (deps: UpgradeDeps) => {
@@ -266,6 +270,14 @@ export function previewUpgrade(hosts: HostId[] = HOSTS, deps: UpgradeDeps = {}):
         description: "Remove ignored Workit trustedPaths; native host permissions remain unchanged",
       });
     const installedSources = sources(paths, run, hosts);
+    // Workit 3 ships only the OpenCode V2 plugin entry: warn before an upgrade
+    // leaves a 1.x host with a plugin it cannot load. Unknown versions stay quiet.
+    if (installedSources.some((source) => source.host === "opencode")) {
+      const probe = run("opencode", ["--version"]);
+      const installed = probe.status === 0 ? probe.stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
+      if (installed && !versionAtLeast(installed, SUPPORT_MATRIX.opencode.minimum))
+        (plan.warnings ??= []).push(`opencode ${installed}: ${OPENCODE_V1_FIX}`);
+    }
     for (const host of ["opencode", "pi"] as const) {
       if (
         new Set(
@@ -552,6 +564,7 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     out.write("Apply requires --confirm after reviewing the upgrade preview.\n");
     return 2;
   }
+  for (const warning of plan.warnings ?? []) out.write(`warning: ${warning}\n`);
   const result = applyUpgrade(plan, deps);
   out.write(JSON.stringify(result, null, 2) + "\n");
   return result.ok ? 0 : 1;
