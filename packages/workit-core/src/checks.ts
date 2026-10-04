@@ -68,16 +68,26 @@ const PEM_END = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/u;
 const BATCH_BYTES = 64 * 1024;
 const MAX_PENDING = 64 * 1024;
 
+/** Lines that can belong to a PEM body: base64 (or blank), or an RFC 1421 encapsulated header. */
+const PEM_BODY = /^(?:[A-Za-z0-9+/=]*|(?:Proc-Type|DEK-Info|Comment): .*)\s*$/u;
+/** Suppression bounds for a key whose END never appears (truncated output). */
+const MAX_KEY_LINES = 4096;
+const MAX_KEY_BYTES = 256 * 1024;
+
 /**
  * Redacts output as it streams, before anything is bounded: complete lines
  * are redacted in batches, and a private key block is replaced as a whole
  * while its BEGIN line is still in view, so trimming the log to its newest
- * bytes can never cut a key loose from its header. A line longer than 64 KB
- * is treated as complete.
+ * bytes can never cut a key loose from its header. Key state spans the merged
+ * stdout+stderr log: while a key is open, base64-looking lines from either
+ * stream are dropped. The key ends at its END line, at the first non-base64
+ * line from the stream that began it, or after MAX_KEY_LINES/MAX_KEY_BYTES, so
+ * a key without an END never swallows the rest of the log. Non-key lines from
+ * the other stream pass through. A line longer than 64 KB is treated as complete.
  */
 export class StreamRedactor {
   private pending = new Map<string, string>();
-  private inKey = new Set<string>();
+  private key: { stream: string; lines: number; bytes: number } | null = null;
   private batch: string[] = [];
   private batchBytes = 0;
   constructor(private readonly sink: (text: string) => void) {}
@@ -99,14 +109,24 @@ export class StreamRedactor {
     this.flush();
   }
   private line(stream: string, line: string): void {
-    if (this.inKey.has(stream)) {
-      if (PEM_END.test(line)) this.inKey.delete(stream);
-      return;
+    if (this.key) {
+      if (PEM_END.test(line)) {
+        this.key = null;
+        return;
+      }
+      const body = PEM_BODY.test(line);
+      if (body) {
+        this.key.lines += 1;
+        this.key.bytes += line.length;
+        if (this.key.lines > MAX_KEY_LINES || this.key.bytes > MAX_KEY_BYTES) this.key = null;
+        return;
+      }
+      if (stream === this.key.stream) this.key = null;
     }
-    if (PEM_BEGIN.test(line)) {
-      const tail = line.slice(line.search(PEM_BEGIN));
-      if (!PEM_END.test(tail)) this.inKey.add(stream);
-      this.push(`${line.slice(0, line.search(PEM_BEGIN))}[REDACTED PRIVATE KEY]\n`);
+    const begin = line.search(PEM_BEGIN);
+    if (begin >= 0) {
+      if (!PEM_END.test(line.slice(begin))) this.key = { stream, lines: 0, bytes: 0 };
+      this.push(`${line.slice(0, begin)}[REDACTED PRIVATE KEY]\n`);
       return;
     }
     this.push(line);

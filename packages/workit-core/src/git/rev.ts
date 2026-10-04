@@ -297,14 +297,16 @@ export function worktreeTree(
 }
 
 /**
- * A cheap worktree freshness signal for per-turn paths: sha256 over HEAD and
- * the path, size and mtime of every entry `git status` reports (untracked
- * files listed one by one). Git answers from its stat cache and, with
- * GIT_OPTIONAL_LOCKS=0, never refreshes the index, and nothing is written to
- * the object store (unlike worktreeTree). Equal signals mean "probably
- * unchanged"; a content edit that keeps a dirty file's size and mtime is not
- * seen, so gates that decide (close, inspect) use worktreeTree instead.
- * Null outside a repository.
+ * A cheap worktree freshness signal for per-turn paths: sha256 over HEAD and,
+ * for every entry `git status` reports (untracked files listed one by one),
+ * its path, lstat mode, size and mtime. A directory entry (a submodule or an
+ * untracked nested repository) also contributes its own HEAD, so moving a
+ * submodule or committing in a nested repo changes the signal. Git answers
+ * from its stat cache and, with GIT_OPTIONAL_LOCKS=0, never refreshes the
+ * index, and nothing is written to the object store (unlike worktreeTree).
+ * Equal signals mean "probably unchanged": an edit to an already-dirty file
+ * that keeps its mode, size and mtime is not seen, so gates that decide
+ * (close, inspect) use worktreeTree. Null outside a repository.
  */
 export function worktreeSignal(cwd: string, options: { timeoutMs?: number } = {}): string | null {
   const top = line(git(cwd, ["rev-parse", "--show-toplevel"]));
@@ -330,10 +332,12 @@ export function worktreeSignal(cwd: string, options: { timeoutMs?: number } = {}
   for (const entry of status.stdout.split("\0")) {
     if (entry.length < 4) continue;
     const file = entry.slice(3);
+    const absolute = path.join(top, file);
     let stat = "-";
     try {
-      const info = fs.lstatSync(path.join(top, file), { bigint: true });
-      stat = `${info.size}:${info.mtimeNs}`;
+      const info = fs.lstatSync(absolute, { bigint: true });
+      stat = `${info.mode.toString(8)}:${info.size}:${info.mtimeNs}`;
+      if (info.isDirectory()) stat += `:${headSha(absolute) ?? "-"}`;
     } catch {
       // Deleted: the status code alone records it.
     }

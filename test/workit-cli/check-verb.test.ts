@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -14,7 +14,7 @@ import {
   taskRecordSchema,
 } from "@/packages/workit-core/src/core/task-contract";
 import { readLedger } from "@/packages/workit-core/src/ledger";
-import { sessionCompactContext } from "@/packages/workit-core/src/hooks/context";
+import { SIGNAL_TTL_MS, sessionCompactContext } from "@/packages/workit-core/src/hooks/context";
 import { evaluateEvidence } from "@/packages/workit-core/src/core/task-evaluation";
 import {
   assessment,
@@ -358,10 +358,9 @@ test("a check that changes the worktree reports modifiedWorktree and leaves stal
   });
 });
 
-test("per-turn context judges checks by the cheap signal, never hashes the tree, and its cache sees edits", async () => {
+test("per-turn context judges checks by the cheap signal, never hashes the tree, and its cache sees edits after the signal TTL", async () => {
   const root = repo();
-  const { store, taskId } = startTask(root);
-  expect((await run(root, ["check", "test", "--json"])).code).toBe(0);
+  const { store } = startTask(root);
   const session = { host: "workit_cli", handle: "agent" };
   const context = {
     root,
@@ -370,17 +369,29 @@ test("per-turn context judges checks by the cheap signal, never hashes the tree,
     constraints: [],
     now: () => new Date().toISOString(),
   };
+  const turn = () => sessionCompactContext(store, session, context, "session-bound") ?? "";
+  // A check on a worktree that is already dirty.
+  writeFileSync(path.join(root, "a.txt"), "dirty before the check\n");
+  expect((await run(root, ["check", "test", "--json"])).code).toBe(0);
   const objects = () => git(root, "count-objects", "-v");
   const before = objects();
-  const fresh = sessionCompactContext(store, session, context, "session-bound");
-  expect(fresh).not.toBeNull();
-  expect(fresh).not.toContain("stale evidence");
-  writeFileSync(path.join(root, "a.txt"), "edited\n");
-  const stale = sessionCompactContext(store, session, context, "session-bound");
-  expect(stale).toContain("stale evidence");
+  let clock = Date.now() + 60_000;
+  setSystemTime(new Date(clock));
+  try {
+    expect(turn()).not.toContain("stale evidence");
+    // Re-edit the already-dirty file: `git status` still says " M a.txt".
+    writeFileSync(path.join(root, "a.txt"), "re-edited after the check, longer\n");
+    // Within the TTL the cached signal (and context) is reused…
+    expect(turn()).not.toContain("stale evidence");
+    // …and once it lapses the re-edit surfaces as stale.
+    clock += SIGNAL_TTL_MS + 1;
+    setSystemTime(new Date(clock));
+    expect(turn()).toContain("stale evidence");
+  } finally {
+    setSystemTime();
+  }
   // No blob was written for the edited file by the per-turn path.
   expect(objects()).toBe(before);
-  void taskId;
 });
 
 test("usage: unknown names, --shell with argv, and the exit code mirrors the command", async () => {

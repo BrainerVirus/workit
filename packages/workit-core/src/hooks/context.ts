@@ -3,7 +3,7 @@
 import path from "node:path";
 import { invariantBootstrap } from "../core/methods";
 import { canonicalJson } from "../core/task-contract";
-import { isObservedCheck, signalFreshness } from "../core/task-evaluation";
+import { isObservedCheck, type Freshness } from "../core/task-evaluation";
 import { worktreeSignal } from "../git/rev";
 import { WorkitCore, type OperationContext } from "../core/task-engine";
 import { fileSignature, racySignature, TaskStore, type TaskIndexEntry } from "../core/task-store";
@@ -91,6 +91,21 @@ type CachedContext = {
   value: string;
 };
 const CACHE_LIMIT = 64;
+
+/** How long a computed worktree signal is reused, so cache hits do not run `git status` each turn. */
+export const SIGNAL_TTL_MS = 1_500;
+const signals = new Map<string, { at: number; value: string | null }>();
+
+/** worktreeSignal for `root`, reused for SIGNAL_TTL_MS. */
+const recentSignal = (root: string): string | null => {
+  const now = Date.now();
+  const cached = signals.get(root);
+  if (cached && now - cached.at < SIGNAL_TTL_MS) return cached.value;
+  const value = worktreeSignal(root);
+  signals.set(root, { at: now, value });
+  if (signals.size > CACHE_LIMIT) signals.delete(signals.keys().next().value!);
+  return value;
+};
 const cache = new Map<string, CachedContext>();
 
 /**
@@ -138,12 +153,12 @@ function entryCompactContext(
     hit.filesKey !== null &&
     hit.filesKey === filesKey(hit.files) &&
     // Observed-check freshness changes with the worktree, not the revision.
-    (hit.signal === null || hit.signal === worktreeSignal(store.root))
+    (hit.signal === null || hit.signal === recentSignal(store.root))
   )
     return hit.value;
   const task = store.readTask(entry.id);
   if (!task.ok) return null;
-  const freshness = signalFreshness(store.root);
+  const freshness: Freshness = { mode: "signal", current: () => recentSignal(store.root) };
   const observed = task.data.evidence.some(isObservedCheck);
   const files = task.data.decisions.flatMap((decision) =>
     decision.data.binding.contentRefs.flatMap((ref) =>

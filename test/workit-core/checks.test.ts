@@ -9,7 +9,8 @@ import {
   splitCommand,
 } from "@/packages/workit-core/src/check-config";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, utimesSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, utimesSync } from "node:fs";
+import { worktreeSignal } from "@/packages/workit-core/src/git/rev";
 import {
   MAX_LOG_BYTES,
   StreamRedactor,
@@ -339,4 +340,110 @@ test("pruneCheckLogs keeps the newest logs within count, age and size caps", () 
   });
   expect(readdirSync(logs).toSorted()).toEqual(["0.log", "1.log"]);
   expect(pruneCheckLogs(root, { now, retention: { maxBytes: 15 } })).toMatchObject({ kept: 1 });
+});
+
+const gitIn = (cwd: string, ...args: string[]): string => {
+  const result = spawnSync("git", ["-c", "protocol.file.allow=always", ...args], {
+    cwd,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  return result.stdout.trim();
+};
+const gitRepo = (): string => {
+  const root = dir();
+  gitIn(root, "init", "-q", "-b", "main");
+  gitIn(root, "config", "user.email", "t@example.invalid");
+  gitIn(root, "config", "user.name", "T");
+  gitIn(root, "config", "commit.gpgsign", "false");
+  writeFileSync(path.join(root, "a.txt"), "one\n");
+  gitIn(root, "add", ".");
+  gitIn(root, "commit", "-qm", "base");
+  return root;
+};
+
+test("worktreeSignal sees re-edits of a dirty file, mode changes, nested-repo commits and submodule moves", () => {
+  const root = gitRepo();
+  const seen = new Set<string>();
+  const next = (label: string) => {
+    const value = worktreeSignal(root);
+    expect(value, label).toStartWith("sig:");
+    expect(seen.has(value!), label).toBe(false);
+    seen.add(value!);
+  };
+  next("clean");
+  writeFileSync(path.join(root, "a.txt"), "two\n!\n");
+  next("dirty");
+  // Re-edit the already-dirty file: status stays " M a.txt", size and mtime move.
+  writeFileSync(path.join(root, "a.txt"), "three\n");
+  next("re-edited");
+  if (process.platform !== "win32") {
+    chmodSync(path.join(root, "a.txt"), 0o755);
+    next("chmod +x on a dirty file");
+  }
+  // An untracked nested repository is listed as one directory entry.
+  const nested = path.join(root, "nested");
+  mkdirSync(nested);
+  gitIn(nested, "init", "-q", "-b", "main");
+  gitIn(nested, "config", "user.email", "t@example.invalid");
+  gitIn(nested, "config", "user.name", "T");
+  gitIn(nested, "config", "commit.gpgsign", "false");
+  gitIn(nested, "commit", "-q", "--allow-empty", "-m", "n1");
+  next("nested repo");
+  gitIn(nested, "commit", "-q", "--allow-empty", "-m", "n2");
+  next("nested repo commit");
+  // A submodule moved twice reads " M sub" both times; its HEAD tells them apart.
+  const upstream = gitRepo();
+  const first = gitIn(upstream, "rev-parse", "HEAD");
+  gitIn(upstream, "commit", "-q", "--allow-empty", "-m", "u2");
+  const second = gitIn(upstream, "rev-parse", "HEAD");
+  gitIn(upstream, "commit", "-q", "--allow-empty", "-m", "u3");
+  gitIn(root, "submodule", "add", "-q", upstream, "sub");
+  gitIn(root, "commit", "-qm", "add sub");
+  next("submodule recorded");
+  gitIn(path.join(root, "sub"), "checkout", "-q", first);
+  next("submodule moved");
+  gitIn(path.join(root, "sub"), "checkout", "-q", second);
+  next("submodule moved again");
+  // Unchanged state reads the same signal.
+  expect(worktreeSignal(root)).toBe([...seen].at(-1)!);
+});
+
+test("a key without END stops being suppressed at the first non-key line; key state spans both streams", () => {
+  const out: string[] = [];
+  const redactor = new StreamRedactor((text) => out.push(text));
+  redactor.write("stderr", "-----BEGIN RSA PRIVATE KEY-----\n");
+  redactor.write("stderr", "MIIEowIBAAKCAQEAzjHxV1e7PrivateKeyBody0000000000000\n");
+  // A base64-looking line on the other stream while the key is open is dropped…
+  redactor.write("stdout", "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2Nzg5MA==\n");
+  // …but ordinary output from the other stream still passes through.
+  redactor.write("stdout", "(pass) other stream keeps flowing\n");
+  redactor.write("stderr", "Proc-Type: 4,ENCRYPTED\n");
+  redactor.write("stderr", "e7PrivateKeyBody0000000000000000000000000000000000\n");
+  // Truncated: no END line; the next ordinary line from stderr ends the key.
+  redactor.write("stderr", "error: 3 tests failed\n(fail) the rest of the log survives\n");
+  // The key is closed: later base64-looking output is ordinary log again.
+  redactor.write("stderr", "deadbeef0123456789\n");
+  redactor.end();
+  const text = out.join("");
+  expect(text).toContain("[REDACTED PRIVATE KEY]");
+  expect(text).toContain("(pass) other stream keeps flowing");
+  expect(text).toContain("error: 3 tests failed");
+  expect(text).toContain("(fail) the rest of the log survives");
+  expect(text).toContain("deadbeef0123456789");
+  for (const secret of [
+    "MIIEowIBAAKCAQEAzjHx",
+    "QUJDREVGR0hJSktM",
+    "e7PrivateKeyBody",
+    "ENCRYPTED",
+  ])
+    expect(text).not.toContain(secret);
+  // A key with neither END nor a non-key line is bounded too.
+  const capped: string[] = [];
+  const bounded = new StreamRedactor((chunk) => capped.push(chunk));
+  bounded.write("stdout", "-----BEGIN PRIVATE KEY-----\n");
+  for (let index = 0; index < 5000; index += 1) bounded.write("stdout", "QUFBQUFB\n");
+  bounded.write("stdout", "after\n");
+  bounded.end();
+  expect(capped.join("")).toContain("after");
 });
