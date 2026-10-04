@@ -417,10 +417,12 @@ export function pushPreflight(
 }
 
 /**
- * The remote tip workit last recorded for `branch`: the newest `push.verified`
- * row, else the remote-tracking ref. `null` means "the branch did not exist".
+ * The remote tip workit last observed for `branch`: the newest `push.verified`
+ * row only. The remote-tracking ref is never a lease (a plain `git fetch`
+ * moves it to someone else's tip, which would make the force overwrite
+ * them). `undefined` means workit has no record.
  */
-export function recordedRemoteTip(cwd: string, plan: PushPlan): string | null {
+export function recordedRemoteTip(cwd: string, plan: PushPlan): string | undefined {
   const ledger = readLedger(cwd);
   if (ledger.ok)
     for (let index = ledger.value.rows.length - 1; index >= 0; index -= 1) {
@@ -433,7 +435,18 @@ export function recordedRemoteTip(cwd: string, plan: PushPlan): string | null {
       )
         return row.head;
     }
-  return resolveRef(cwd, `refs/remotes/${plan.remote}/${plan.branch}`);
+  return undefined;
+}
+
+/**
+ * `--force-if-includes` semantics: the remote tip was integrated locally, i.e.
+ * it is reachable from the local branch or appears in the branch's reflog
+ * (the commit was this branch's tip before a rebase/amend).
+ */
+function includesRemoteTip(cwd: string, branch: string, tip: string): boolean {
+  if (git(cwd, ["merge-base", "--is-ancestor", tip, `refs/heads/${branch}`]).ok) return true;
+  const reflog = git(cwd, ["reflog", "show", "--format=%H", `refs/heads/${branch}`, "--"]);
+  return reflog.ok && reflog.stdout.split("\n").some((line) => line.trim() === tip);
 }
 
 export type PushOutcome = {
@@ -468,19 +481,32 @@ export function executePush(
   let forced = false;
   let pushed = false;
   if (before.sha !== plan.sha) {
-    const args = ["push", "--porcelain"];
+    const args = ["push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no"];
     if (input.forceWithLease) {
-      const expected =
-        input.expect === undefined || input.expect === null
-          ? recordedRemoteTip(cwd, plan)
-          : input.expect;
-      if (expected !== null && !SHA.test(expected))
+      const explicit = input.expect !== undefined && input.expect !== null;
+      if (explicit && !SHA.test(input.expect as string))
         return failure("invalid_input", "--expect must be a full commit sha");
+      const integrate = `git fetch ${plan.remote} ${plan.branch} && git rebase ${plan.remote}/${plan.branch}  # or merge it; then: workit git push`;
+      const recorded = explicit ? (input.expect as string) : recordedRemoteTip(cwd, plan);
+      // A new branch needs no lease; otherwise workit must have recorded the tip.
+      if (recorded === undefined && before.sha !== null)
+        return failure(
+          "blocked",
+          `lease_unknown: workit has no recorded push of ${plan.branch}, so it cannot tell whose commits ${plan.remote}/${plan.branch} (${before.sha.slice(0, 12)}) holds`,
+          `${integrate}  # or, after reviewing that tip: workit git push --force-with-lease --expect <sha you reviewed>`,
+        );
+      const expected = recorded ?? null;
       if (before.sha !== expected)
         return failure(
           "blocked",
-          `lease_mismatch: ${plan.remote}/${plan.branch} is at ${before.sha?.slice(0, 12) ?? "(absent)"} but workit last recorded ${expected?.slice(0, 12) ?? "(absent)"}; someone else pushed`,
-          `git fetch ${plan.remote} ${plan.branch} && git log ${plan.remote}/${plan.branch}  # review, then: workit git push --force-with-lease --expect ${before.sha ?? "<sha>"}`,
+          `lease_mismatch: ${plan.remote}/${plan.branch} is at ${before.sha?.slice(0, 12) ?? "(absent)"} but ${explicit ? "--expect names" : "workit last recorded"} ${expected?.slice(0, 12) ?? "(absent)"}; someone else pushed`,
+          integrate,
+        );
+      if (!explicit && before.sha !== null && !includesRemoteTip(cwd, plan.branch, before.sha))
+        return failure(
+          "blocked",
+          `lease_not_integrated: ${plan.remote}/${plan.branch} (${before.sha.slice(0, 12)}) was never part of local ${plan.branch}; forcing would drop it`,
+          integrate,
         );
       args.push(`--force-with-lease=refs/heads/${plan.branch}:${expected ?? ""}`);
       forced = true;
@@ -494,7 +520,7 @@ export function executePush(
         return failure(
           "blocked",
           `lease_mismatch: ${plan.remote}/${plan.branch} moved while pushing`,
-          `git fetch ${plan.remote} ${plan.branch}  # review, then retry`,
+          `git fetch ${plan.remote} ${plan.branch} && git rebase ${plan.remote}/${plan.branch}  # or merge it; then: workit git push`,
         );
       if (/non-fast-forward|fetch first|\[rejected\]/iu.test(text))
         return failure(
@@ -563,9 +589,23 @@ export function deleteRemoteBranch(
 ): { ok: true } | { ok: false; lease: boolean; error: string } {
   if (target.startsWith("-") || branch.startsWith("-") || !SHA.test(expectedTip))
     return { ok: false, lease: false, error: "invalid branch deletion target" };
+  if (isProtectedTarget(cwd, branch))
+    return {
+      ok: false,
+      lease: false,
+      error: `${branch} is a protected branch; it is never deleted`,
+    };
   const run = gitNetwork(
     cwd,
-    ["push", `--force-with-lease=refs/heads/${branch}:${expectedTip}`, "--delete", target, branch],
+    [
+      "push",
+      "--no-follow-tags",
+      "--recurse-submodules=no",
+      `--force-with-lease=refs/heads/${branch}:${expectedTip}`,
+      "--delete",
+      target,
+      branch,
+    ],
     options.timeoutMs ?? PUSH_TIMEOUT_MS,
   );
   if (run.ok) return { ok: true };

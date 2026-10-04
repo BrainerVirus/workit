@@ -428,6 +428,41 @@ test("pr merge (GitLab): READY MR merges with sha= and squash; rebase is not a G
   });
 });
 
+test("pr merge --delete-branch: a develop -> main release PR under gitflow is refused before merging (develop is protected)", async () => {
+  const release = fixture("github/pr-passing.json").replaceAll(
+    '"headRefName": "feature/x"',
+    '"headRefName": "develop"',
+  );
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    [GH_STATUS]: release,
+    "PUT repos/o/r/pulls/12/merge": "{}",
+  });
+  writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
+  );
+  const result = await run(["pr", "merge", "--pr", "12", "--delete-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json()).toMatchObject({ data: { reason: "protected_branch" } });
+  expect(result.json().error).toContain("would delete develop");
+  expect(result.json().unblock).toContain("without --delete-branch");
+  expect(writes(runner.calls)).toEqual([]);
+});
+
+test("pr merge --delete-branch (GitLab): a fast-forward promotion from the default target is refused, case-insensitively", async () => {
+  const { repo, runner } = setup("gitlab", {
+    ...gitlabBase(),
+    [`GET ${GL}/merge_requests/12`]: gitlabMr({ source_branch: "Staging", target_branch: "main" }),
+    [`PUT ${GL}/merge_requests/12/merge`]: "{}",
+  });
+  workspace(repo, { vcs: { provider: "gitlab", defaultTargetBranch: "staging" } });
+  const result = await run(["pr", "merge", "--pr", "12", "--delete-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("is the default target branch");
+  expect(writes(runner.calls)).toEqual([]);
+});
+
 // ---------------------------------------------------------------------------
 // verify-delivery pr / released
 
@@ -483,4 +518,55 @@ test("verify-delivery released: the tag must be on the remote and the npm versio
     false,
     false,
   ]);
+});
+
+test("verify-delivery released: --sha without --tag must match the published gitHead; no gitHead is unverified, never delivered", async () => {
+  const { repo } = setup("github", githubBase());
+  let view: Record<string, unknown> = { version: "1.2.3", gitHead: repo.head };
+  forgeDeps.npm = () => ({ status: 0, stdout: JSON.stringify(view), stderr: "" });
+  const argv = [
+    "verify-delivery",
+    "release",
+    "--package",
+    "pkg@1.2.3",
+    "--sha",
+    repo.head,
+    "--json",
+  ];
+  expect((await run(argv, repo.cwd)).code).toBe(0);
+  view = { version: "1.2.3", gitHead: repo.base };
+  const other = await run(argv, repo.cwd);
+  expect(other.code).toBe(1);
+  expect(other.json().data.observations[1]).toMatchObject({ kind: "npm_git_head", ok: false });
+  view = { version: "1.2.3" };
+  const unverified = await run(argv, repo.cwd);
+  expect(unverified.code).toBe(1);
+  expect(unverified.json().data).toMatchObject({ delivered: false });
+  expect(unverified.json().error).toContain(
+    "unverified: pkg@1.2.3 was published without a gitHead",
+  );
+});
+
+test("verify-delivery released: package specs that are not an npm name and semver are refused before npm runs", async () => {
+  const { repo } = setup("github", githubBase());
+  let called = 0;
+  forgeDeps.npm = () => {
+    called += 1;
+    return { status: 0, stdout: "{}", stderr: "" };
+  };
+  for (const spec of [
+    "pkg;calc@1.0.0",
+    "pkg@1.0.0&calc",
+    "@scope/p@1.0.0|x",
+    "pkg@1.0.0 --registry=http://evil",
+    'pkg@"1.0.0"',
+    "Pkg@1.0.0",
+    "pkg@^1.0.0",
+    "pkg@%PATH%",
+  ]) {
+    const result = await run(["verify-delivery", "--package", spec, "--json"], repo.cwd);
+    expect(result.code, spec).toBe(2);
+  }
+  expect((await run(["verify-delivery", "--tag", "v1&calc", "--json"], repo.cwd)).code).toBe(2);
+  expect(called).toBe(0);
 });

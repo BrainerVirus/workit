@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -413,7 +413,11 @@ test("git push: --force-with-lease refuses when someone else pushed since workit
   const result = await run(["git", "push", "--force-with-lease", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().error).toContain("lease_mismatch");
-  expect(result.json().unblock).toContain(`--expect ${theirs}`);
+  // The hint integrates their work; it never suggests overwriting it.
+  expect(result.json().unblock).toContain(
+    "git fetch origin feature/a && git rebase origin/feature/a",
+  );
+  expect(result.json().unblock).not.toContain(theirs);
   expect(repo.remoteTip("feature/a")).toBe(theirs);
   // After review, an explicit --expect is the lease.
   const explicit = await run(["git", "push", "--force-with-lease", "--expect", theirs], repo.cwd);
@@ -421,6 +425,97 @@ test("git push: --force-with-lease refuses when someone else pushed since workit
   expect(repo.remoteTip("feature/a")).toBe(repo.git("rev-parse", "HEAD"));
   expect((await run(["git", "push", "--expect", theirs], repo.cwd)).code).toBe(2);
 });
+
+test("git push: given a stale-but-fetched tracking ref and no workit record, then --force-with-lease is lease_unknown (never overwrites)", async () => {
+  const repo = setup();
+  await feature(repo);
+  // Pushed outside workit: no push.verified row.
+  repo.git("push", "-q", "origin", "feature/a");
+  const theirs = repo.pushFromElsewhere("feature/a");
+  // A plain fetch moves origin/feature/a to their commit; it must not become the lease.
+  repo.git("fetch", "-q", "origin");
+  expect(repo.git("rev-parse", "origin/feature/a")).toBe(theirs);
+  repo.git("commit", "-q", "--amend", "-m", "feat: rewritten");
+  const result = await run(["git", "push", "--force-with-lease", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("lease_unknown");
+  expect(result.json().unblock).toContain("git rebase origin/feature/a");
+  expect(repo.remoteTip("feature/a")).toBe(theirs);
+});
+
+test("git push: a recorded tip that local history never contained is lease_not_integrated (--force-if-includes)", async () => {
+  const repo = setup();
+  await feature(repo);
+  expect((await run(["git", "push"], repo.cwd)).code).toBe(0);
+  const pushed = repo.git("rev-parse", "HEAD");
+  // Local branch replaced wholesale and its history forgotten.
+  repo.git("reset", "-q", "--hard", "main");
+  repo.git("reflog", "expire", "--expire=now", "--all");
+  repo.write("z.txt", "z\n");
+  repo.git("add", "-A");
+  repo.git("commit", "-qm", "feat: unrelated");
+  const result = await run(["git", "push", "--force-with-lease", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("lease_not_integrated");
+  expect(repo.remoteTip("feature/a")).toBe(pushed);
+});
+
+// The lease is enforced by the server-side compare, not only by workit's
+// pre-check: a ref that moves between ls-remote and the push is refused.
+test.skipIf(process.platform === "win32")(
+  "git push: given the remote ref moves after the pre-check, then the push is refused by the lease (never a blind force)",
+  async () => {
+    const repo = setup();
+    await feature(repo);
+    expect((await run(["git", "push"], repo.cwd)).code).toBe(0);
+    const mainTip = repo.remoteTip("main");
+    repo.git("commit", "-q", "--amend", "-m", "feat: rewritten");
+    // receive-pack wrapper: someone else's update lands just before our push is negotiated.
+    const wrapper = path.join(repo.root, "racing-receive-pack");
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\ngit --git-dir="$1" update-ref refs/heads/feature/a ${mainTip}\nexec git-receive-pack "$@"\n`,
+      { mode: 0o755 },
+    );
+    repo.git("config", "remote.origin.receivepack", wrapper);
+    const result = await run(["git", "push", "--force-with-lease", "--json"], repo.cwd);
+    expect(result.code).toBe(3);
+    expect(result.json().error).toContain("moved while pushing");
+    expect(repo.remoteTip("feature/a")).toBe(mainTip);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git commit: the repository's own pre-commit and commit-msg hooks run and can refuse",
+  async () => {
+    const repo = setup();
+    repo.git("switch", "-q", "-c", "feature/a");
+    const hooks = repo.git("config", "core.hooksPath");
+    writeFileSync(
+      path.join(hooks, "pre-commit"),
+      `#!/bin/sh\ntouch "${path.join(repo.root, "pre-commit-ran")}"\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(hooks, "commit-msg"),
+      '#!/bin/sh\nif grep -q WIP "$1"; then echo "commit-msg: no WIP commits" >&2; exit 1; fi\n',
+      { mode: 0o755 },
+    );
+    repo.write("a.txt", "a\n");
+    const head = repo.git("rev-parse", "HEAD");
+    const refused = await run(
+      ["git", "commit", "--json", "-m", "feat: WIP thing", "--", "a.txt"],
+      repo.cwd,
+    );
+    expect(refused.code).toBe(1);
+    expect(refused.json().error).toContain("commit-msg: no WIP commits");
+    expect(repo.git("rev-parse", "HEAD")).toBe(head);
+    const ok = await run(["git", "commit", "-m", "feat: real thing", "--", "a.txt"], repo.cwd);
+    expect(ok.code).toBe(0);
+    expect(existsSync(path.join(repo.root, "pre-commit-ran"))).toBe(true);
+    expect(rows(repo.cwd, "commit.recorded")).toHaveLength(1);
+  },
+);
 
 // ---------------------------------------------------------------------------
 // identity and grants (forge remote; nothing reaches the network)

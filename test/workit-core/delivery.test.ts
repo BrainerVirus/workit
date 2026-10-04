@@ -6,7 +6,7 @@ import { requireGrant, resolveAutonomy } from "@/packages/workit-core/src/autono
 import { buildBody, prBodyFor } from "@/packages/workit-core/src/forge/pr-body";
 import { createGitHubForge } from "@/packages/workit-core/src/forge/github";
 import { createGitLabForge } from "@/packages/workit-core/src/forge/gitlab";
-import { parsePackageSpec } from "@/packages/workit-core/src/forge/verify";
+import { parsePackageSpec, systemNpm } from "@/packages/workit-core/src/forge/verify";
 import { deleteRemoteBranch, lintCommitMessage } from "@/packages/workit-core/src/git/ops";
 import { remoteRefTip } from "@/packages/workit-core/src/git/rev";
 import { replayRunner, replyError } from "@/test/shared/helpers/forge-replay";
@@ -232,6 +232,14 @@ test("deleteRemoteBranch deletes only while the remote tip is the expected one",
   expect(repo.remoteTip("feature/a")).toBe(theirs);
   expect(deleteRemoteBranch(repo.cwd, "origin", "feature/a", theirs)).toEqual({ ok: true });
   expect(repo.remoteTip("feature/a")).toBeNull();
+  // A protected branch is never deleted, whatever the lease says.
+  expect(
+    deleteRemoteBranch(repo.cwd, "origin", "main", repo.git("rev-parse", "main")),
+  ).toMatchObject({
+    ok: false,
+    lease: false,
+  });
+  expect(repo.remoteTip("main")).not.toBeNull();
   expect(deleteRemoteBranch(repo.cwd, "--upload-pack=x", "feature/a", theirs)).toMatchObject({
     ok: false,
     lease: false,
@@ -281,6 +289,17 @@ test("commit lint and package specs", () => {
   }
   expect(parsePackageSpec("@scope/pkg@1.2.3")).toEqual({ name: "@scope/pkg", version: "1.2.3" });
   expect(parsePackageSpec("@scope/pkg")).toEqual({ name: "@scope/pkg", version: null });
-  expect(parsePackageSpec("pkg@2")).toEqual({ name: "pkg", version: "2" });
+  expect(parsePackageSpec("pkg@2")).toBeNull();
   expect(parsePackageSpec("--registry")).toBeNull();
+  expect(parsePackageSpec("pkg@1.0.0&calc")).toBeNull();
+  expect(parsePackageSpec("pkg@1.0.0-rc.1+build.5")).toEqual({
+    name: "pkg",
+    version: "1.0.0-rc.1+build.5",
+  });
+  // The runner itself refuses any argument with shell syntax, whatever the caller passed.
+  expect(systemNpm(["view", "pkg@1.0.0&calc"])).toEqual({
+    status: 2,
+    stdout: "",
+    stderr: "refused: unsafe npm argument",
+  });
 });

@@ -16,6 +16,8 @@
 // head that moves after the gates refuses instead of merging unverified code.
 // --delete-branch deletes with a lease on that same SHA.
 import { requireGrant } from "../autonomy";
+import { isProtectedTarget } from "../core/branch";
+import { vcsConfig } from "../core/vcs-config";
 import { deleteRemoteBranch } from "../git/ops";
 import { spawnSync } from "node:child_process";
 import { currentBranch, fetchRefs, GIT_TIMEOUTS, remoteRefTip, resolveRef } from "../git/rev";
@@ -263,7 +265,8 @@ export type MergeRefusal = {
     | "needs_verdict"
     | "head_mismatch"
     | "already_merged"
-    | "closed";
+    | "closed"
+    | "protected_branch";
   next?: string;
   blockers?: string[];
   verdict?: Pick<VerdictCheck, "head" | "accepted" | "authors">;
@@ -339,6 +342,28 @@ export async function mergePullRequest(
 
   const branch = doc.head.branch;
   const head = doc.head.sha;
+  // --delete-branch never deletes a protected branch, the base, or the
+  // default target (a develop -> main release PR must keep develop). Refused
+  // before merging, so the caller decides without a half-done delivery.
+  if (input.deleteBranch) {
+    const resolvedVcs = vcsConfig("resolve", cwd);
+    const defaultTarget =
+      resolvedVcs.ok === false ? null : String(resolvedVcs.defaultTargetBranch ?? "") || null;
+    const lower = branch.toLowerCase();
+    const reason = isProtectedTarget(cwd, branch)
+      ? "is protected by the workspace branch policy"
+      : lower === doc.base.toLowerCase()
+        ? "is the PR base"
+        : defaultTarget !== null && lower === defaultTarget.toLowerCase()
+          ? "is the default target branch"
+          : null;
+    if (reason)
+      return refuse(
+        `protected_branch: --delete-branch would delete ${branch}, which ${reason}; workit never deletes it`,
+        `workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --method ${input.method}  # without --delete-branch`,
+        { reason: "protected_branch" },
+      );
+  }
   let verdict: MergeOutcome["verdict"] = {
     required: grant.requireVerdict,
     accepted: false,

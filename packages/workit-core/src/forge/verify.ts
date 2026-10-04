@@ -13,6 +13,7 @@
 // Read-only on the repository (fetches by object id move no ref). A delivered
 // answer is appended to the ledger as an observed `delivery.verified` row.
 import { spawnSync } from "node:child_process";
+import { findExecutable } from "./exec";
 import {
   aheadBehind,
   currentBranch,
@@ -65,15 +66,29 @@ export type NpmRunner = (args: readonly string[]) => {
   stderr: string;
 };
 
+// npm package names (lower-case, URL-safe, optional @scope/) and semver.
+// Both are checked before npm runs, so no argument can carry shell syntax.
+const NPM_NAME = /^(?:@[a-z0-9~][a-z0-9-._~]*\/)?[a-z0-9~][a-z0-9-._~]*$/u;
+const SEMVER =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
+const SAFE_ARG = /^[0-9A-Za-z@/._~+-]+$/u;
+
 export const systemNpm: NpmRunner = (args) => {
-  const result = spawnSync("npm", [...args], {
+  // Windows ships npm as npm.cmd, which only runs through cmd.exe. Every
+  // argument is a fixed word or a validated name@semver (SAFE_ARG), so the
+  // shell has nothing to interpret; anything else is refused before spawning.
+  if (!args.every((arg) => SAFE_ARG.test(arg)))
+    return { status: 2, stdout: "", stderr: "refused: unsafe npm argument" };
+  const win = process.platform === "win32";
+  const exe = win ? (findExecutable("npm.cmd", process.env) ?? "npm.cmd") : "npm";
+  const result = spawnSync(win ? `"${exe}"` : exe, [...args], {
     encoding: "utf8",
     timeout: 30_000,
     killSignal: "SIGKILL",
     env: { ...process.env, NO_UPDATE_NOTIFIER: "1", npm_config_update_notifier: "false" },
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
-    shell: process.platform === "win32",
+    shell: win,
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 };
@@ -257,12 +272,18 @@ export function verifyMerged(
 }
 
 /** `@scope/name@1.2.3` → name + version (version may be absent). */
+/**
+ * `@scope/name@1.2.3` → name + version (version may be absent). Null unless
+ * the name follows npm's naming rules and the version is exact semver.
+ */
 export function parsePackageSpec(spec: string): { name: string; version: string | null } | null {
   const value = spec.trim();
-  if (!value || value.startsWith("-")) return null;
   const at = value.lastIndexOf("@");
-  if (at > 0) return { name: value.slice(0, at), version: value.slice(at + 1) || null };
-  return { name: value, version: null };
+  const name = at > 0 ? value.slice(0, at) : value;
+  const version = at > 0 ? value.slice(at + 1) : null;
+  if (!name || name.length > 214 || !NPM_NAME.test(name)) return null;
+  if (version !== null && !SEMVER.test(version)) return null;
+  return { name, version };
 }
 
 type NpmView = { version?: unknown; gitHead?: unknown };
@@ -284,10 +305,11 @@ export function verifyReleased(
 ): ForgeResult<DeliveryReport> {
   if (!input.tag && !input.pkg)
     return failure("invalid_input", "released needs --tag <tag> and/or --package <name[@version]>");
+  if (input.tag && (input.tag.startsWith("-") || !/^[0-9A-Za-z._/+-]+$/u.test(input.tag)))
+    return failure("invalid_input", "--tag must be a plain tag name");
   const observations: Observation[] = [];
   let tagSha: string | null = null;
   if (input.tag) {
-    if (input.tag.startsWith("-")) return failure("invalid_input", "--tag must not start with -");
     const remote = remoteNames(cwd).includes("origin") ? "origin" : pushRemoteName(cwd);
     if (!remote) return failure("not_found", "no remote is configured");
     const tip = remoteRefTip(cwd, remote, `refs/tags/${input.tag}`);
@@ -304,10 +326,19 @@ export function verifyReleased(
   }
   if (input.pkg) {
     const spec = parsePackageSpec(input.pkg);
-    if (!spec) return failure("invalid_input", "--package must be <name> or <name>@<version>");
+    if (!spec)
+      return failure(
+        "invalid_input",
+        "--package must be an npm package name, optionally @<semver> (e.g. @scope/pkg@1.2.3)",
+      );
     const version = spec.version ?? (input.tag ? input.tag.replace(/^v(?=\d)/u, "") : null);
     if (!version)
       return failure("invalid_input", "--package needs a version (<name>@<version>) or --tag");
+    if (!SEMVER.test(version))
+      return failure(
+        "invalid_input",
+        `${version} (from --tag) is not a semver version; pass <name>@<version>`,
+      );
     const viewed = npm(["view", `${spec.name}@${version}`, "version", "gitHead", "--json"]);
     if (
       viewed.status !== 0 &&
@@ -326,13 +357,21 @@ export function verifyReleased(
       ok: observedVersion === version,
       ...(observedVersion === version ? {} : { note: `${spec.name}@${version} is not published` }),
     });
+    // A commit expectation (the tag's commit, else --sha) must be proven by
+    // the published gitHead; a package without one is unverifiable, not ok.
     const gitHead = typeof observed?.gitHead === "string" ? observed.gitHead : null;
-    if (gitHead && tagSha)
+    const commit = tagSha ?? input.sha ?? null;
+    if (commit && observedVersion === version)
       observations.push({
         kind: "npm_git_head",
-        expected: tagSha,
+        expected: commit,
         observed: gitHead,
-        ok: gitHead === tagSha,
+        ok: gitHead !== null && gitHead.startsWith(commit),
+        ...(gitHead === null
+          ? { note: `unverified: ${spec.name}@${version} was published without a gitHead` }
+          : gitHead.startsWith(commit)
+            ? {}
+            : { note: `${spec.name}@${version} was published from ${short(gitHead)}` }),
       });
   }
   return success(
