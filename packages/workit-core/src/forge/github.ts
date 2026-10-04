@@ -1,6 +1,6 @@
 // GitHub adapter: `gh api graphql` for PR state, checks and review threads,
 // `gh api` REST for required checks, job logs and reruns (design §2.0).
-import { apiJson, apiText, cliFailure, FORGE_TIMEOUTS, type ForgeRunner } from "./exec";
+import { apiJson, apiText, apiWrite, cliFailure, FORGE_TIMEOUTS, type ForgeRunner } from "./exec";
 import { logTail, redactText, shortBody } from "./redact";
 import {
   failure,
@@ -441,6 +441,89 @@ export function createGitHubForge(options: {
         FORGE_TIMEOUTS.api,
       );
       return run.ok ? success(undefined) : run;
+    },
+
+    createPr(input) {
+      // Cross-repository PRs name the head as owner:branch.
+      const headOwner = input.headRepo.split("/")[0];
+      const head = input.headRepo === repo ? input.head : `${headOwner}:${input.head}`;
+      const created = apiWrite<{
+        number?: number;
+        html_url?: string;
+        state?: string;
+        merged?: boolean;
+        head?: { ref?: string; sha?: string };
+      }>(
+        runner,
+        "gh",
+        apiHost,
+        [
+          "api",
+          "-X",
+          "POST",
+          `repos/${repo}/pulls`,
+          "-f",
+          `title=${input.title}`,
+          "-f",
+          `head=${head}`,
+          "-f",
+          `base=${input.base}`,
+          "-f",
+          `body=${input.body}`,
+          "-F",
+          `draft=${input.draft ? "true" : "false"}`,
+        ],
+        `pull request for ${input.head}`,
+      );
+      if (!created.ok) return created;
+      const value = created.data;
+      if (typeof value.number !== "number" || typeof value.html_url !== "string")
+        return failure("failed", "gh api pulls returned no pull request number");
+      return success({
+        number: value.number,
+        url: value.html_url,
+        state: value.merged ? "merged" : value.state === "closed" ? "closed" : "open",
+        headBranch: value.head?.ref ?? input.head,
+        headSha: value.head?.sha ?? null,
+      });
+    },
+
+    merge(number, mergeOptions) {
+      // sha= is GitHub's atomic head guard: 409 when the head moved.
+      const merged = apiWrite<{ sha?: string; merged?: boolean; message?: string }>(
+        runner,
+        "gh",
+        apiHost,
+        [
+          "api",
+          "-X",
+          "PUT",
+          `repos/${repo}/pulls/${number}/merge`,
+          "-f",
+          `sha=${mergeOptions.sha}`,
+          "-f",
+          `merge_method=${mergeOptions.method}`,
+        ],
+        `merge of pull request #${number}`,
+      );
+      if (!merged.ok) return merged;
+      if (merged.data.merged === false)
+        return failure(
+          "blocked",
+          `merge of pull request #${number} refused: ${redactText(merged.data.message ?? "not merged").slice(0, 200)}`,
+        );
+      return success({ mergeSha: typeof merged.data.sha === "string" ? merged.data.sha : null });
+    },
+
+    updateBase(number, base) {
+      const updated = apiWrite<unknown>(
+        runner,
+        "gh",
+        apiHost,
+        ["api", "-X", "PATCH", `repos/${repo}/pulls/${number}`, "-f", `base=${base}`],
+        `retarget of pull request #${number}`,
+      );
+      return updated.ok ? success(undefined) : updated;
     },
   };
 }

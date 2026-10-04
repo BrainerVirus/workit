@@ -1,7 +1,7 @@
 // GitLab adapter: `glab api` REST only (design §2.0 GitLab endpoints): the MR
 // (`detailed_merge_status`, `has_conflicts`, `head_pipeline`), pipeline jobs,
 // job traces, discussions, and pipeline/job retry.
-import { apiJson, apiText, FORGE_TIMEOUTS, type ForgeRunner } from "./exec";
+import { apiJson, apiText, apiWrite, FORGE_TIMEOUTS, type ForgeRunner } from "./exec";
 import { logTail, redactText, shortBody } from "./redact";
 import {
   failure,
@@ -450,6 +450,107 @@ export function createGitLabForge(options: {
         FORGE_TIMEOUTS.api,
       );
       return run.ok ? success(undefined) : run;
+    },
+
+    createPr(input) {
+      // An MR from a fork is created in the source project and targets ours.
+      const fromFork = input.headRepo !== repo;
+      let source = project;
+      const extra: string[] = [];
+      if (fromFork) {
+        const target = apiJson<{ id?: number }>(
+          runner,
+          "glab",
+          apiHost,
+          api(project),
+          `project ${repo}`,
+        );
+        if (!target.ok) return target;
+        if (input.headProjectId === null || typeof target.data.id !== "number")
+          return failure(
+            "failed",
+            `cannot resolve the project ids for an MR from ${input.headRepo}`,
+          );
+        source = `projects/${input.headProjectId}`;
+        extra.push("-F", `target_project_id=${target.data.id}`);
+      }
+      const title =
+        input.draft && !/^draft:/iu.test(input.title) ? `Draft: ${input.title}` : input.title;
+      const created = apiWrite<GlMr>(
+        runner,
+        "glab",
+        apiHost,
+        [
+          "api",
+          "-X",
+          "POST",
+          `${source}/merge_requests`,
+          "-f",
+          `source_branch=${input.head}`,
+          "-f",
+          `target_branch=${input.base}`,
+          "-f",
+          `title=${title}`,
+          "-f",
+          `description=${input.body}`,
+          ...extra,
+        ],
+        `merge request for ${input.head}`,
+      );
+      if (!created.ok) return created;
+      const value = created.data;
+      if (typeof value.iid !== "number" || typeof value.web_url !== "string")
+        return failure("failed", "glab api merge_requests returned no merge request iid");
+      return success({
+        number: value.iid,
+        url: value.web_url,
+        state: mrState(value.state),
+        headBranch: value.source_branch ?? input.head,
+        headSha: value.sha ?? null,
+      });
+    },
+
+    merge(iid, mergeOptions) {
+      // GitLab's merge method is a project setting; squash is per request.
+      if (mergeOptions.method === "rebase")
+        return failure(
+          "invalid_input",
+          "GitLab merges with the project's merge method; pass --method squash or merge",
+        );
+      const merged = apiWrite<
+        GlMr & { merge_commit_sha?: string | null; squash_commit_sha?: string | null }
+      >(
+        runner,
+        "glab",
+        apiHost,
+        [
+          "api",
+          "-X",
+          "PUT",
+          `${project}/merge_requests/${iid}/merge`,
+          "-f",
+          `sha=${mergeOptions.sha}`,
+          "-F",
+          `squash=${mergeOptions.method === "squash" ? "true" : "false"}`,
+        ],
+        `merge of merge request !${iid}`,
+      );
+      if (!merged.ok) return merged;
+      const value = merged.data;
+      return success({
+        mergeSha: value.merge_commit_sha ?? value.squash_commit_sha ?? null,
+      });
+    },
+
+    updateBase(iid, base) {
+      const updated = apiWrite<unknown>(
+        runner,
+        "glab",
+        apiHost,
+        ["api", "-X", "PUT", `${project}/merge_requests/${iid}`, "-f", `target_branch=${base}`],
+        `retarget of merge request !${iid}`,
+      );
+      return updated.ok ? success(undefined) : updated;
     },
   };
 }

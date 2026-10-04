@@ -2,7 +2,7 @@
 // exports `run(argv, io): Promise<number>`, so `workit --version`/`help` load
 // nothing but this file and the router, and no verb pays for ink/react.
 //
-// The S9b–S13 verbs are pre-registered against stub modules that answer
+// The S9b–S13 verbs were pre-registered against stub modules that answer
 // `not_implemented`, and `planned` keeps them out of `workit help`. A later
 // slice replaces its own verbs/<verb>.ts and deletes only its entry's
 // `planned` line here.
@@ -112,9 +112,10 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "pr",
     group: "delivery",
-    usage: "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]",
+    usage:
+      "workit pr status [--pr <n>] | pr create [--base <b>] (--title <t> | --fill) [--draft] | pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch]",
     summary:
-      "Read PR/MR state: checks with failing log tails, unresolved threads, behind-base, next action",
+      "PR/MR state with failing log tails and next action; open a SHA-verified PR; merge only when READY, verified and granted",
     load: () => import("./pr"),
   },
   {
@@ -128,17 +129,19 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "git",
     group: "delivery",
-    usage: "workit git branch|commit|push ...",
-    summary: "Policy-checked branch, commit and push",
-    planned: "S11",
+    usage:
+      "workit git branch <name> [--base <b>] | git commit -m <msg> [--all | -- <paths…>] | git push [--set-upstream] [--force-with-lease]",
+    summary:
+      "Policy-checked branch and commit (Workit-Session trailer); push with a lease and a verified remote tip",
     load: () => import("./git"),
   },
   {
     name: "verify-delivery",
     group: "delivery",
-    usage: "workit verify-delivery push|pr|merge|release ...",
-    summary: "Confirm a push, PR head, merge or release landed",
-    planned: "S11",
+    usage:
+      "workit verify-delivery [push|pr|merge|release] [--pr <n> | --branch <b>] [--sha <s>] [--tag <t>] [--package <p>]",
+    summary:
+      "Observe that a push, PR head, merge or release really landed on the remote (exit 1 when not)",
     load: () => import("./verify-delivery"),
   },
   {

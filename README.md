@@ -212,6 +212,12 @@ workit handoff --task <id> [--json]
 workit pr status [--pr <n>] [--json]  # checks + failing log tails, open threads, behind-base, next action
 workit ci wait [--timeout 20m] [--json]  # exit 0 green, 1 red, 4 still pending at the timeout
 workit ci rerun --failed --reason flake|infra [--force]  # once per PR head without --force
+workit git branch feature/x [--base <b>]  # policy-checked name, from the fetched default target
+workit git commit -m "feat: x" -- <paths>  # convention-checked; --all to take every change
+workit git push [--set-upstream] [--force-with-lease]  # exact SHA, remote tip verified after
+workit pr create (--title <t> | --fill) [--base <b>] [--draft]  # head bound to the pushed SHA
+workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch]
+workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 workit uninstall         # remove host registrations (keeps ~/.config/workit)
 ```
 
@@ -224,6 +230,34 @@ that is not the workspace `vcs.account` is `blocked` (exit 3) with a login
 hint. `next` also reports review, draft, merge-queue and other merge
 blockers; only required checks gate. `pr status` never moves a ref, and
 every forge and git network call has a timeout.
+
+The delivery verbs do the mechanical part of shipping and record what they
+observed in the run ledger. `git branch` and `git commit` apply the workspace
+branch and commit policy, never commit to a protected branch, and never sweep
+in changes you did not name. Commits carry a `Workit-Session:` trailer and a
+`commit.recorded` row, so the authoring session cannot verify its own work.
+`git push` never pushes a protected branch and succeeds only when the remote
+tip equals the local SHA afterwards. It forces only with
+`--force-with-lease`, leased on the tip workit itself last pushed (a no-op
+push is recorded as `push.noop` and never counts), never on a tracking ref a
+plain `git fetch` may have moved. Without that record it needs
+`--expect <sha>`. In both cases the remote tip must be in the branch's
+history or reflog (`--force-if-includes`); only `--overwrite-unintegrated`
+drops commits you never had. `pr create` requires the branch to be pushed and checks
+that the forge reports that SHA as the PR head. `pr merge` merges only when
+`pr status` reads READY, an independent verdict is accepted for that head
+(`workit ledger check`), and the workspace allows merging. The merge call
+carries the head SHA, so a head that moved is refused. `--delete-branch`
+never deletes a protected branch, the base or the default target.
+`verify-delivery` answers "did it land?" from the remote, never from local
+state.
+
+Merging needs no extra configuration today: the host's permission prompt is
+the limit. To limit a workspace, add `"autonomy"` to its entry in
+`~/.config/workit/workspaces.json`:
+`{"push": true, "pr": true, "merge": false | "verified" | true, "release": false}`.
+`false` blocks the verb; `merge: true` also skips the verdict requirement.
+Grants require `vcs.account`.
 
 The packed CLI is a self-contained Node bundle; Node.js 24+ is required.
 
