@@ -372,16 +372,19 @@ test("Given writers killed with SIGKILL mid-append, Then the log never corrupts 
     utimesSync(lock, old, old);
   };
   for (let round = 0; round < 6; round += 1) {
-    let writes = 0;
+    const seen = { writes: 0 };
     const children = [0, 1].map(() => {
       const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] });
-      child.stdout.on("data", (chunk: Buffer) => (writes += String(chunk).split("w").length - 1));
+      child.stdout.on("data", (chunk: Buffer) => {
+        seen.writes += String(chunk).split("w").length - 1;
+      });
       return child;
     });
     // Kill mid-stream: once writes are landing (startup speed varies by
     // runner), after a random extra delay.
     const until = Date.now() + 15_000;
-    while (writes < 2 && Date.now() < until) await new Promise((done) => setTimeout(done, 10));
+    const landing = () => seen.writes >= 2 || Date.now() >= until;
+    while (!landing()) await new Promise((done) => setTimeout(done, 10));
     await new Promise((done) => setTimeout(done, Math.floor(Math.random() * 60)));
     for (const child of children) child.kill("SIGKILL");
     await Promise.all(children.map((child) => new Promise((done) => child.on("close", done))));
