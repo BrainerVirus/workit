@@ -279,6 +279,8 @@ export function checkoutRootOf(root: string, location?: StoreLocation | Error): 
   }
   const found = location ?? resolveStore(canonical);
   if (found instanceof Error || !found.shared || !found.top) return canonical;
+  // Keep the caller's spelling (e.g. a Windows short name) when it already is the top.
+  if (real(canonical) === found.top) return canonical;
   try {
     return fs.realpathSync(found.top);
   } catch {

@@ -63,7 +63,7 @@ import {
 } from "./authority";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { verifyStandingApproval } from "./auto-approval";
-import { TaskStore } from "./task-store";
+import { sameDirectoryIdentity, TaskStore } from "./task-store";
 import { checkoutRootOf } from "../store/paths";
 import { defaultLockTimeout } from "./store-lock";
 import {
@@ -809,7 +809,8 @@ export class WorkitCore {
     try {
       // The same checkout: any directory inside it resolves to its top level.
       realpathSync(this.context.root);
-      if (checkoutRootOf(this.context.root) !== this.store.root)
+      const root = checkoutRootOf(this.context.root);
+      if (root !== this.store.root && !sameDirectoryIdentity(root, this.store.root))
         return failure(
           "invalid_input",
           "operation context root does not match the task store root",
