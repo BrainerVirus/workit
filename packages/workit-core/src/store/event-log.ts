@@ -152,9 +152,19 @@ export const fsyncDirectory = (dir: string): void => {
 export function appendEvent(file: string, event: StoreEvent, validEnd: number): number {
   const line = Buffer.from(`${JSON.stringify(event)}\n`, "utf8");
   const created = !fs.existsSync(file);
+  // Cut a torn tail first, through a writable handle: an append-only handle
+  // cannot truncate on Windows.
+  if (!created && fs.statSync(file).size !== validEnd) {
+    const cut = fs.openSync(file, "r+");
+    try {
+      fs.ftruncateSync(cut, validEnd);
+      fs.fsyncSync(cut);
+    } finally {
+      fs.closeSync(cut);
+    }
+  }
   const fd = fs.openSync(file, "a", 0o600);
   try {
-    if (fs.fstatSync(fd).size !== validEnd) fs.ftruncateSync(fd, validEnd);
     let written = 0;
     while (written < line.length) written += fs.writeSync(fd, line, written, line.length - written);
     fs.fsyncSync(fd);

@@ -12,6 +12,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -42,7 +43,8 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 const tempDir = (prefix: string) => {
-  const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
+  // The native resolver expands Windows short names, as the store does.
+  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), prefix)));
   dirs.push(dir);
   return dir;
 };
@@ -418,7 +420,7 @@ test("stored candidates are content-addressed blobs, written once and collected 
   const orphan = path.join(blobs, `${"e".repeat(64)}.json`);
   writeFileSync(orphan, "{}");
   const old = new Date(Date.now() - 2 * 60 * 60_000);
-  spawnSync("touch", ["-d", old.toISOString(), orphan]);
+  utimesSync(orphan, old, old);
   expect(store.collectGarbage()).toMatchObject({ ok: true, data: { blobs: { removed: 1 } } });
   expect(readdirSync(blobs)).toHaveLength(1);
 });
@@ -673,7 +675,7 @@ test("the filesystem fast path finds the same store and key as git", () => {
   mkdirSync(subdir);
   const viaGit = (cwd: string) =>
     path.join(
-      realpathSync(git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")),
+      realpathSync.native(git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")),
       "workit",
     );
   for (const cwd of [root, linked, subdir]) {

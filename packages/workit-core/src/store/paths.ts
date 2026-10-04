@@ -63,9 +63,10 @@ const gitRun = (cwd: string, args: string[]): GitRun => {
 const shortHash = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 12);
 
+/** The canonical path (the native resolver also expands Windows 8.3 short names). */
 const real = (file: string): string => {
   try {
-    return fs.realpathSync(file);
+    return fs.realpathSync.native(file);
   } catch {
     return file;
   }
@@ -190,12 +191,18 @@ export function resolveTaskKey(root: string, location: StoreLocation): TaskKey {
   return { key: `detached-${shortHash(real(worktree))}`, kind: "detached", branch: null };
 }
 
-/** A filesystem-safe directory name for one checkout's records. */
+/**
+ * A filesystem-safe directory name for one checkout's records, from its
+ * canonical path, so every spelling of the same directory (symlinks, Windows
+ * short names, drive-letter case) maps to one checkout.
+ */
 export const checkoutSlug = (root: string): string => {
+  let canonical = real(root);
+  if (process.platform === "win32") canonical = canonical.toLowerCase();
   const base =
     path
-      .basename(root)
+      .basename(canonical)
       .replace(/[^A-Za-z0-9._-]/g, "_")
       .slice(0, 40) || "root";
-  return `${base}-${shortHash(root)}`;
+  return `${base}-${shortHash(canonical)}`;
 };
