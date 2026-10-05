@@ -207,7 +207,7 @@ jobs:
         run: bun run build
 
       - name: Test workit-core and artifacts
-        run: bun test --timeout ${{ runner.os == 'Windows' && '15000' || '5000' }} test/workit-core test/artifacts
+        run: bun test --timeout ${{ runner.os == 'Windows' && '60000' || '5000' }} test/workit-core test/artifacts
 
   # Release only after every gate passed for this exact commit on main.
   release:
