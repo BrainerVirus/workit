@@ -1,0 +1,8 @@
+# Actions are pinned to their major version tag (e.g. actions/checkout@v7) by
+# choice: readable, and they pick up fixes within the major. zizmor's default
+# requires full SHA pins; allow ref pins instead.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": ref-pin
