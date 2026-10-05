@@ -672,8 +672,11 @@ retain recursive inventory behavior.
 
 ### Autonomy grants (per workspace)
 
-Grants live only in your workspace entry in `~/.config/workit/workspaces.json`
-(never in repository files):
+Grants live only in your workspace entry in `$HOME/.config/workit/workspaces.json`
+(never in repository files). The `WORKFLOW_TOOLKIT_CONFIG`,
+`WORKFLOW_TOOLKIT_CONFIG_DIR` and `XDG_CONFIG_HOME` overrides redirect the rest
+of the config but never the grants: while one points elsewhere, grants resolve
+to the defaults below.
 
 ```json
 { "name": "personal", "glob": "/home/you/projects/personal/**",
@@ -693,18 +696,27 @@ path components. Equally specific matches require an explicit workspace name.
   `merge: true` merges without one.
 - `defaultEndpoint` (`commit` by default, or `pr`) is where an unnamed request
   stops; skills read it.
+- `release` is reserved: no verb consumes it yet, so it is not enforced.
 - Explicit grants require `vcs.account` for forge effects. Protected-branch
   pushes stay denied, and a host deny always wins.
 - A legacy `autoApprove: true | [classes]` is read once as grants (the merge
-  class becomes `merge: true`; branch and commit are dropped) and folded into
+  class becomes `merge: "verified"`, so a verdict is still required; branch and
+  commit are dropped) and folded into
   `autonomy` on the next `workit grant` write.
 
 Manage grants with `workit grant show|set|unset`. Raising a grant (or
 `defaultEndpoint` from `commit` to `pr`) requires you at an interactive terminal
-typing the workspace name to confirm; headless and agent shells (no TTY, or
-`CLAUDECODE`, `OPENCODE`, `CODEX_SANDBOX`, `CURSOR_AGENT` or `PI_CODING_AGENT`
-set) are refused with `blocked` and the command to run yourself. Lowering is
-always allowed, and each write keeps `workspaces.json.bak`.
+typing the workspace name to confirm; headless and agent shells (no TTY, or an
+agent marker such as `CLAUDECODE`, `OPENCODE`, `CURSOR_AGENT`, `PI_CODING_AGENT`,
+`AI_AGENT`, `AGENT` or any `CODEX_*` set) are refused with `blocked` and the
+command to run yourself. Lowering is always allowed, and each write keeps
+`workspaces.json.bak`.
+
+This follows the D18 trust model: it stops an honest agent from raising its own
+grants, not an adversarial one. A process that drives a pseudo-terminal, clears
+the agent markers or edits `workspaces.json` directly can get past it. The hard
+boundary is your host's permission prompt: deny or ask on `workit grant set` and
+on edits under `~/.config/workit`.
 
 Because grants are the real ceiling, allowlist only read verbs (for example
 `workit pr status` and `workit grant show`) in host permission configs.

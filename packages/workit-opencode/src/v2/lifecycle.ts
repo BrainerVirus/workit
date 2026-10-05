@@ -178,6 +178,15 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     )[0];
   };
 
+  /** The exact cancel call that releases a stuck launch (review L3). */
+  const unsettledLaunch = (coordinator: string): string => {
+    const workerId = dispatches.get(coordinator)?.workerId;
+    const cancel = workerId
+      ? `workit_worker {"action":"cancel","workerId":"${workerId}","reason":"launch not observed"}`
+      : 'workit_worker {"action":"cancel","workerId":"<id>","reason":"launch not observed"} for the stuck worker';
+    return `recovery_required: a previous native subagent launch is unsettled; wait for it to settle, or ${cancel} before launching again`;
+  };
+
   const prepareDispatch = (
     coordinator: string,
     callID: string,
@@ -445,10 +454,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     }
     if (inflight.has(coordinator)) {
       await reconcilePending(coordinator);
-      if (inflight.has(coordinator))
-        throw new Error(
-          "recovery_required: a previous fresh subagent launch is unsettled; wait for it to settle or reconcile its worker before launching again",
-        );
+      if (inflight.has(coordinator)) throw new Error(unsettledLaunch(coordinator));
     }
     inflight.set(coordinator, event.id);
     try {
@@ -465,9 +471,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
         return;
       }
       if (prepared === "unsettled") {
-        throw new Error(
-          "recovery_required: a previous native task launch is unsettled; wait for it to settle or reconcile its worker before launching again",
-        );
+        throw new Error(unsettledLaunch(coordinator));
       }
       if (prepared === "unbound") {
         throw new Error(

@@ -223,8 +223,6 @@ type ObserveWorkerLifecycleInput = NativeWorkerObservation & {
   authorityOwner: object;
   caller: Caller;
   now?: Utc;
-  /** Set only by commitWorkerDispatch for a reservation that produced no child. */
-  dispatch?: boolean;
 };
 
 const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<Worker>> => {
@@ -258,27 +256,30 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
     return failure("invalid_transition", "closed task cannot observe workers");
   if (task.data.status === "paused" && (input.state === "running" || input.state === "cancelling"))
     return failure("invalid_transition", "paused task cannot run a worker");
-  const notStarted = input.dispatch === true;
-  if (notStarted && entry.data.state === "stopped" && input.session === null)
-    return success(task.data.revision, workspace.data.revision, entry);
-  if (notStarted && (input.state !== "stopped" || input.session !== null))
-    return failure("invalid_input", "a never-dispatched worker stops with no session");
-  if (notStarted && entry.data.session !== null)
-    return failure("invalid_transition", "worker already has an observed session");
-  if (notStarted && !["dispatching", "cancelling"].includes(entry.data.state))
-    return failure("invalid_transition", "worker launch was not claimed");
+  // Compare-and-swap first: a stale observation (another process launched
+  // and observed this worker meanwhile) must not pass as a no-op below.
+  if (input.expectedRevision !== task.data.revision)
+    return failure("revision_conflict", "worker observation is stale; re-read the task", {
+      expectedRevision: input.expectedRevision,
+      actualRevision: task.data.revision,
+    });
   if (input.report && input.state !== "stopped")
     return failure("invalid_input", "worker reports require a stopped worker");
   if (
-    (input.state === "running" ||
-      input.state === "cancelling" ||
-      (input.state === "stopped" && !notStarted)) &&
+    (input.state === "running" || input.state === "cancelling" || input.state === "stopped") &&
     !input.session
   )
     return failure("invalid_input", "running worker observations require a session");
   if (entry.data.session && !sameValue(entry.data.session, input.session))
     return failure("permission_denied", "worker session does not match its assignment");
-  if (input.state !== "running" && entry.data.state === "assigned" && input.state !== "stopped")
+  // `unknown` from `assigned` records a launch whose outcome was never
+  // observed (its launcher died); the lead must cancel before a relaunch.
+  if (
+    entry.data.state === "assigned" &&
+    input.state !== "running" &&
+    input.state !== "stopped" &&
+    input.state !== "unknown"
+  )
     return failure("invalid_transition", "worker has not started");
   if (input.state === "running" && entry.data.state === "stopped")
     return failure("invalid_transition", "stopped worker cannot run again");
@@ -1687,16 +1688,14 @@ export class WorkitCore {
       return failure("permission_denied", "helpers cannot cancel or control workers");
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot cancel workers");
-    if (entry.data.state === "unknown")
-      return failure("recovery_required", "worker state requires recovery");
     if (entry.data.state === "stopped") {
       // Idempotent cancel: repeating a settled stop succeeds with the
       // current entry instead of failing the retry.
       const stopped = task.data.workers.find((candidate) => candidate.id === input.workerId)!;
       return success(task.data.revision, workspace.data.revision, stopped);
     }
-    // Lead-attested cancel is terminal for every live state: the lead saw
-    // the run end, so no host observation is awaited. A later live-child
+    // Lead-attested cancel is terminal for every live or unknown state: the lead
+    // saw the run end (or chose to abandon it), so no host observation is awaited. A later live-child
     // sighting against a stopped worker is a new anomaly for the host to
     // flag, not a reason to strand the worker short of stopped.
     const changed = this.store.mutateTaskAndWorkspace({
@@ -1758,7 +1757,6 @@ export class WorkitCore {
     if (!authority.ok) return authority;
     return applyWorkerLifecycle({
       ...input,
-      dispatch: false,
       store: this.store,
       authority: authority.data,
       authorityOwner: this.authorityOwner,

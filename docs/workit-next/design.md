@@ -410,7 +410,7 @@ Plugin subagents may ignore `hooks`/`mcpServers`/`permissionMode` frontmatter, s
 "autonomy": { "push": true, "pr": true, "merge": false | true | "verified", "release": false }
 ```
 - Defaults when absent: `{push:true, pr:true, merge:false, release:false}` (the D4 ceiling).
-- Legacy `autoApprove: true|[classes]` maps once (merge class → `true`); the `branch`/`commit` classes are dropped as local operations.
+- Legacy `autoApprove: true|[classes]` maps once (merge class → `"verified"`, so a verdict is still required); the `branch`/`commit` classes are dropped as local operations.
 - `resolveAutonomy(root): {workspace: string|null; grants: Grants; source: "autonomy"|"autoApprove"|"default"; accountConfigured: boolean}` in `core/autonomy.ts`.
 - `workit grant show|set <workspace> <verb>=<value>` requires a TTY (never MCP or headless). It writes through `safe-write.ts` with a backup.
 - Protected-branch pushes are always denied. The host permission prompt applies in addition.

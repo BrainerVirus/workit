@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type {
   ExtensionAPI,
@@ -21,6 +22,7 @@ import {
 import { piContext, unfinishedTaskOffer, workitContext } from "../src/context";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import { enforceToolPolicy, registerWorkitTools } from "../src/tools";
+import { abandonedLaunches, cancelHint, clearLaunch, recordLaunch } from "../src/launches";
 import {
   cancelWorker,
   cancelWorkerAssignment,
@@ -181,6 +183,31 @@ export default function extension(pi: ExtensionAPI): void {
         });
       }
     }
+    // A launch whose launcher died before observing the child: the worker may
+    // or may not be running, so it turns `unknown` and is never relaunched
+    // until the lead cancels it.
+    for (const attempt of abandonedLaunches(ctx.cwd)) {
+      const freshTask = store.readTask(attempt.taskId);
+      const workspace = store.readWorkspace();
+      if (!freshTask.ok || !workspace.ok || !workspace.data) continue;
+      const entry = freshTask.data.workers.find((candidate) => candidate.id === attempt.workerId);
+      if (entry?.data.state !== "assigned") {
+        clearLaunch(ctx.cwd, attempt.workerId);
+        continue;
+      }
+      const session = { kind: "host" as const, host: "pi" as const, handle: attempt.session };
+      const core = new WorkitCore(store, { ...piContext(ctx), nativeWorker: nativeLostWorker() });
+      const marked = core.observeWorkerLifecycle({
+        taskId: attempt.taskId,
+        workerId: attempt.workerId,
+        expectedRevision: freshTask.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        state: "unknown",
+        session,
+        observation: { lost: true, sessionId: attempt.session },
+      });
+      if (marked.ok) clearLaunch(ctx.cwd, attempt.workerId);
+    }
   };
 
   const persistUncertain = (
@@ -256,11 +283,17 @@ export default function extension(pi: ExtensionAPI): void {
         return failure("recovery_required", "worker process is not live in this session");
       return reconcileWorker(current);
     }
+    if (worker.data.state === "unknown")
+      return failure(
+        "recovery_required",
+        `worker ${worker.id} has an unobserved launch; ${cancelHint(worker.id)}`,
+      );
     if (worker.data.state !== "assigned")
       return failure("invalid_transition", "only an assigned worker can be launched");
     if (!request.prompt) return failure("invalid_input", "launch requires a prompt");
 
     let child: WorkerHandle | null = null;
+    let launchClaimed = false;
     const binding: WorkerLifecycleBinding = {
       core: new WorkitCore(store, {
         ...piContext(ctx),
@@ -270,7 +303,9 @@ export default function extension(pi: ExtensionAPI): void {
       workerId: worker.id,
       expectedRevision: task.revision,
       expectedWorkspaceRevision: workspace.revision,
-      sessionId: `pi-worker-${worker.id}`,
+      // Unique per launch: a second launcher's observation can never pass as
+      // the first one's session.
+      sessionId: `pi-worker-${worker.id}-${randomUUID().slice(0, 8)}`,
     };
     const childContext: OperationContext = {
       ...piContext(ctx),
@@ -290,7 +325,12 @@ export default function extension(pi: ExtensionAPI): void {
       prompt: request.prompt,
       onPrepare: (pending) => {
         child = pending;
-        return true;
+        launchClaimed = recordLaunch(ctx.cwd, {
+          taskId: task.id,
+          workerId: worker.id,
+          session: binding.sessionId,
+        });
+        return launchClaimed;
       },
       onSpawn: (spawned) => {
         child = spawned;
@@ -339,8 +379,17 @@ export default function extension(pi: ExtensionAPI): void {
       },
     });
     child = handle;
-    if (handle.state !== "running")
+    if (!launchClaimed)
+      return failure(
+        "recovery_required",
+        `another launch of worker ${worker.id} is in progress or was lost; if no Pi session is launching it, ${cancelHint(worker.id)}`,
+      );
+    if (handle.state !== "running") {
+      // No spawn attempt means no child can exist: the claim is released.
+      if (!handle.spawned) clearLaunch(ctx.cwd, worker.id);
       return failure("recovery_required", "worker launch was not observed");
+    }
+    clearLaunch(ctx.cwd, worker.id);
     const ready = await Promise.race([
       readyPromise,
       new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 10_000)),

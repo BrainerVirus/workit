@@ -4,31 +4,56 @@
 // checkout lease stands behind them.
 //
 // - Grants live only in the matched workspace entry of the user's
-//   `~/.config/workit/workspaces.json`:
+//   `$HOME/.config/workit/workspaces.json` (config-dir overrides never
+//   redirect them; see grantsDir):
 //     "autonomy": { "push": true, "pr": true, "merge": false | true | "verified",
 //                   "release": false, "rerun": true }
-//   never in a repo file, and an agent cannot raise them: `workit grant set`
-//   raises only from an interactive terminal (see verbs/grant.ts).
+//   never in a repo file. `workit grant set` raises only from an interactive
+//   terminal (see verbs/grant.ts). Threat model (D18): this stops an honest
+//   agent from raising its own ceiling by accident, not an adversarial one —
+//   a process that drives a pseudo-terminal or edits the file directly can
+//   still defeat it; the host's permission prompt is the hard boundary.
+// - `release` has no consuming verb yet; it is reserved, not enforced.
 // - Defaults (D4) when a kind is absent: push, pr and rerun are allowed;
 //   merge and release need an explicit grant. The default ceiling is a stack
 //   opened, CI green and independently verified: "verified, ready".
 // - `merge: "verified"` allows a merge only with an accepted independent
 //   verdict (S13); `merge: true` is the only way to merge without one.
 // - A legacy `autoApprove: true | [classes]` maps once to grants (its `merge`
-//   class becomes `merge: true`; `branch`/`commit` are local and dropped).
+//   class becomes `merge: "verified"`; `branch`/`commit` are local, dropped).
 // - Explicitly configured grants require an account (design §2.0 Identity):
 //   a workspace with grants but no `vcs.account` cannot push, open or merge
 //   through a forge, so a personal grant never rides a work credential.
 // - Protected-branch pushes stay denied by the git verbs, and the host
 //   permission prompt applies in addition: a host deny always wins.
 import { copyFileSync, existsSync } from "node:fs";
-import { configDir } from "./core/config";
+import os from "node:os";
+import path from "node:path";
+import { resolveConfigDir } from "./core/config";
 import { writeFileAtomic } from "./core/safe-write";
 import {
   readWorkspacesResult,
-  resolveRuntimeWorkspaceVcs,
+  resolveWorkspaceFrom,
   validateWorkspacesDocument,
 } from "./core/workspaces";
+
+/**
+ * Grants are read only from the user's real config directory,
+ * `$HOME/.config/workit` (D15). The WORKFLOW_TOOLKIT_CONFIG(_DIR) and
+ * XDG_CONFIG_HOME overrides that redirect the rest of the config never
+ * redirect grants: an agent could point them at a file it wrote. While an
+ * override points elsewhere, grants resolve to the D4 defaults.
+ */
+export const grantsDir = (): string =>
+  path.join(process.env.HOME || os.homedir(), ".config", "workit");
+
+/** Why grants fell back to the defaults, or null when the real file is used. */
+export const grantsOverride = (): string | null => {
+  const configured = path.resolve(resolveConfigDir());
+  return configured === path.resolve(grantsDir())
+    ? null
+    : `the config directory is redirected to ${configured} (WORKFLOW_TOOLKIT_CONFIG, WORKFLOW_TOOLKIT_CONFIG_DIR or XDG_CONFIG_HOME); grants are read only from ${path.join(grantsDir(), "workspaces.json")}, so the D4 defaults apply`;
+};
 
 export const GRANT_KINDS = ["push", "pr", "merge", "release", "rerun"] as const;
 export type GrantKind = (typeof GRANT_KINDS)[number];
@@ -67,6 +92,8 @@ export type Autonomy = {
   source: AutonomySource;
   accountConfigured: boolean;
   defaultEndpoint: DefaultEndpoint;
+  /** Set when the grants file was not read (see grantsOverride). */
+  note?: string;
 };
 
 export type GrantDecision =
@@ -100,11 +127,14 @@ const normalized = (kind: GrantKind, value: GrantValue): GrantValue =>
 
 /** Legacy `autoApprove` (≤4.x standing approvals) → grants, mapped once on read. */
 const fromAutoApprove = (value: unknown): Partial<Grants> | null => {
-  if (value === true) return { push: true, pr: true, merge: true };
+  // A standing merge approval maps to merge "verified": an accepted
+  // independent verdict is still required (S16 review L1).
+  if (value === true) return { push: true, pr: true, merge: "verified" };
   if (!Array.isArray(value)) return null;
   const grants: Partial<Grants> = {};
   for (const item of value as unknown[])
-    if (item === "push" || item === "pr" || item === "merge") grants[item] = true;
+    if (item === "push" || item === "pr") grants[item] = true;
+    else if (item === "merge") grants.merge = "verified";
   return Object.keys(grants).length > 0 ? grants : null;
 };
 
@@ -129,7 +159,22 @@ export function configuredGrants(entry: unknown): {
 
 /** The grants for the workspace `cwd` belongs to (read-only). */
 export function resolveAutonomy(cwd: string): Autonomy {
-  const workspace = resolveRuntimeWorkspaceVcs(cwd);
+  const override = grantsOverride();
+  if (override)
+    return {
+      workspace: null,
+      grants: { ...DEFAULT_GRANTS },
+      configured: [],
+      source: "default",
+      accountConfigured: false,
+      defaultEndpoint: DEFAULT_ENDPOINT,
+      note: override,
+    };
+  const workspace = resolveWorkspaceFrom(
+    cwd,
+    grantsDir(),
+    process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+  );
   const { grants, source } = configuredGrants(workspace);
   return {
     workspace: workspace?.name ?? null,
@@ -178,7 +223,7 @@ export function requireGrant(
       allowed: false,
       kind,
       reason: "grant_required",
-      error: `grant_required: ${kind} is not granted for ${workspace ? `workspace "${workspace}"` : "this checkout (no workspace matches it)"}${configured ? "" : " (the default ceiling stops at verified, ready)"}`,
+      error: `grant_required: ${kind} is not granted for ${workspace ? `workspace "${workspace}"` : "this checkout (no workspace matches it)"}${configured ? "" : " (the default ceiling stops at verified, ready)"}${autonomy.note ? `; ${autonomy.note}` : ""}`,
       unblock: workspace
         ? grantHint(workspace, kind)
         : "ask the user to add a workspace for this checkout (workit init → Workspaces), then: workit grant set <workspace> " +
@@ -236,7 +281,7 @@ export type GrantWrite =
 export function writeGrants(
   workspaceName: string,
   changes: readonly { kind: GrantKind; value: GrantValue | undefined }[],
-  dir: string = configDir(),
+  dir: string = grantsDir(),
   /** A new default endpoint; `null` removes it (back to `commit`). */
   endpoint?: DefaultEndpoint | null,
 ): GrantWrite {
@@ -259,14 +304,25 @@ export function writeGrants(
   for (const { kind, value } of changes)
     if (value === undefined) delete grants[kind];
     else grants[kind] = normalized(kind, value);
+  // Keys this version does not know stay as they are (S16 review L6).
+  const unknown = Object.fromEntries(
+    Object.entries(
+      entry.autonomy && typeof entry.autonomy === "object" && !Array.isArray(entry.autonomy)
+        ? (entry.autonomy as Record<string, unknown>)
+        : {},
+    ).filter(([key]) => !isGrantKind(key)),
+  );
   delete entry.autoApprove;
   if (endpoint === null || endpoint === DEFAULT_ENDPOINT) delete entry.defaultEndpoint;
   else if (endpoint) entry.defaultEndpoint = endpoint;
-  if (Object.keys(grants).length === 0) delete entry.autonomy;
-  else
-    entry.autonomy = Object.fromEntries(
+  const autonomy = {
+    ...unknown,
+    ...Object.fromEntries(
       GRANT_KINDS.filter((item) => grants[item] !== undefined).map((item) => [item, grants[item]]),
-    );
+    ),
+  };
+  if (Object.keys(autonomy).length === 0) delete entry.autonomy;
+  else entry.autonomy = autonomy;
   const validated = validateWorkspacesDocument(document, current.path);
   if (validated.status !== "valid")
     return { ok: false, code: "invalid_input", error: validated.error ?? "invalid result" };
@@ -300,7 +356,7 @@ export function writeGrants(
 }
 
 /** Every workspace's grants, for `workit grant show --all`. */
-export function listGrants(dir: string = configDir()): {
+export function listGrants(dir: string = grantsDir()): {
   path: string;
   workspaces: {
     name: string;

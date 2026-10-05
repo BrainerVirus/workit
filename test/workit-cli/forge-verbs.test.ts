@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,18 +22,16 @@ import {
 setDefaultTimeout(60_000);
 
 let configDir = "";
-const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+let configHome: ConfigHome;
 const original = { ...forgeDeps };
 let clock = 0;
 let delays: number[] = [];
 beforeAll(() => {
-  configDir = mkdtempSync(path.join(os.tmpdir(), "wk-forge-cli-config-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  configHome = useConfigHome("wk-forge-cli-config-");
+  configDir = configHome.configDir;
 });
 afterAll(() => {
-  if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-  rmSync(configDir, { recursive: true, force: true });
+  configHome.restore();
 });
 
 const repos: ForgeRepo[] = [];

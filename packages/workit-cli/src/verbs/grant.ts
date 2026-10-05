@@ -1,5 +1,5 @@
-// `workit grant` (design §4.2 S16; D4, D15): show and change the per-workspace
-// autonomy grants in ~/.config/workit/workspaces.json.
+// `workit grant` (design §4.2 S16; D4, D15, D18): show and change the
+// per-workspace autonomy grants in $HOME/.config/workit/workspaces.json.
 //
 //   workit grant show [<workspace>] [--all] [--json]
 //   workit grant set <workspace> <kind>=<true|false|verified> [<kind>=<value>…]
@@ -13,6 +13,12 @@
 // or agent-run call is refused with the command to hand to the user. Lowering
 // is always allowed, so an agent can tighten its own ceiling. Grants are never
 // read from a repository file, and no MCP or host tool can set them.
+//
+// Limit (D18): this keeps an honest agent from raising its own grants. It is
+// not a sandbox: an agent that allocates a pseudo-terminal, scrubs the agent
+// markers below or writes the file itself can get past it. The host's own
+// permission prompt (deny or ask on `workit grant set` and on edits under
+// ~/.config/workit) is the hard boundary.
 import { createInterface } from "node:readline/promises";
 import {
   DEFAULT_GRANTS,
@@ -33,7 +39,17 @@ const USAGE =
   "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint)";
 
 /** Agent hosts that export a marker into the shells they run (best effort). */
-const AGENT_ENV = ["CLAUDECODE", "OPENCODE", "CODEX_SANDBOX", "CURSOR_AGENT", "PI_CODING_AGENT"];
+const AGENT_ENV = [
+  "CLAUDECODE",
+  "OPENCODE",
+  "CURSOR_AGENT",
+  "PI_CODING_AGENT",
+  "AI_AGENT",
+  "AGENT",
+];
+const agentMarker = (env: NodeJS.ProcessEnv): string | undefined =>
+  AGENT_ENV.find((name) => env[name]) ??
+  Object.keys(env).find((name) => name.startsWith("CODEX_") && env[name]);
 
 export type GrantDeps = {
   /** True only for a person at a terminal: stdin and stdout are TTYs. */
@@ -70,7 +86,7 @@ const describe = (
 ): string[] => [
   ...GRANT_KINDS.map(
     (kind) =>
-      `  ${kind.padEnd(8)}${String(grants[kind]).padEnd(10)}${configured.includes(kind) ? "configured" : "default"}`,
+      `  ${kind.padEnd(8)}${String(grants[kind]).padEnd(10)}${configured.includes(kind) ? "configured" : "default"}${kind === "release" ? " (no consumer yet: reserved, not enforced)" : ""}`,
   ),
   `  default endpoint: ${endpoint} (an unnamed request stops at ${endpoint === "pr" ? "an opened PR" : "a local commit"})`,
 ];
@@ -101,11 +117,12 @@ function show(argv: string[], io: Io): number {
     return emit(io, fail("invalid_input", error instanceof Error ? error.message : String(error)));
   }
   return emit(io, ok(autonomy), (data) => [
+    ...(data.note ? [`note: ${data.note}`] : []),
     data.workspace
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
     ...describe(data.grants, data.configured, data.defaultEndpoint),
-    "merge/release beyond these needs the user: workit grant set <workspace> <kind>=<value>",
+    "raising a grant needs the user: workit grant set <workspace> <kind>=<value>",
   ]);
 }
 
@@ -148,7 +165,7 @@ async function change(
     raised.push({ kind: "defaultEndpoint", value: "pr" });
   if (raised.length > 0) {
     const command = `workit grant ${verb} ${workspace} ${specs.join(" ")}`;
-    const agent = AGENT_ENV.find((name) => io.env[name]);
+    const agent = agentMarker(io.env);
     if (!deps.interactive() || agent)
       return emit(
         io,

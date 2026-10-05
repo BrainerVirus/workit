@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,15 +19,13 @@ import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remot
 setDefaultTimeout(60_000);
 
 let configDir = "";
-const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+let configHome: ConfigHome;
 beforeAll(() => {
-  configDir = mkdtempSync(path.join(os.tmpdir(), "wk-delivery-config-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  configHome = useConfigHome("wk-delivery-config-");
+  configDir = configHome.configDir;
 });
 afterAll(() => {
-  if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-  rmSync(configDir, { recursive: true, force: true });
+  configHome.restore();
 });
 const repos: RemoteRepo[] = [];
 afterEach(() => {
@@ -456,4 +455,51 @@ test("commit lint and package specs", () => {
     stdout: "",
     stderr: "refused: unsafe npm argument",
   });
+});
+
+test("requireGrant: a redirected config dir never supplies grants (D15)", () => {
+  const forged = mkdtempSync(path.join(os.tmpdir(), "wk-forged-config-"));
+  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  try {
+    writeFileSync(
+      path.join(forged, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "w",
+            glob: "/**",
+            vcs: { provider: "github", account: "me" },
+            autonomy: { merge: true, release: true },
+          },
+        ],
+      }),
+    );
+    process.env.WORKFLOW_TOOLKIT_CONFIG = forged;
+    const decision = requireGrant(process.cwd(), "merge");
+    expect(decision).toMatchObject({ allowed: false, reason: "grant_required" });
+    expect(decision.allowed ? "" : decision.error).toContain("grants are read only from");
+    expect(resolveAutonomy(process.cwd())).toMatchObject({ source: "default", workspace: null });
+  } finally {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    rmSync(forged, { recursive: true, force: true });
+  }
+});
+
+test("resolveAutonomy: a legacy standing merge approval maps to merge verified, not true", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-legacy-merge-"));
+  try {
+    writeFileSync(
+      path.join(process.env.WORKFLOW_TOOLKIT_CONFIG!, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [{ name: "w", glob: `${root.replaceAll("\\", "/")}/**`, autoApprove: true }],
+      }),
+    );
+    expect(resolveAutonomy(root).grants.merge).toBe("verified");
+    expect(requireGrant(root, "merge")).toMatchObject({
+      allowed: false,
+      reason: "account_required",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

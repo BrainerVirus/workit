@@ -348,7 +348,9 @@ test("unproven subagent outcomes retain correlation until a late child is observ
           id: "call_2",
           input: {},
         }),
-      ).rejects.toThrow(/previous fresh subagent launch is unsettled/);
+      ).rejects.toThrow(
+        /previous native subagent launch is unsettled.*workit_worker \{"action":"cancel"/,
+      );
 
       value.sessions.set("ses_child1", {
         id: "ses_child1",

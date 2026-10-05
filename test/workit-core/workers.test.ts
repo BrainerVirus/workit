@@ -854,3 +854,79 @@ test("a lifecycle transition bumps the revision but a repeated identical observa
   expect(second.revision).toBe(first.revision);
   expect(second.workspaceRevision).toBe(first.workspaceRevision);
 });
+
+test("Given two launchers racing on one assigned worker, When both observe it running from the same assigned revision, Then only the first lands", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  if (!assigned.ok) throw new Error(assigned.error);
+  // Two processes: separate stores and cores over the same checkout, both
+  // holding the revisions they read before either launch was observed.
+  const second = new WorkitCore(
+    new TaskStore(lead.root),
+    context(lead.root, { nativeWorker: observationVerifier() }),
+  );
+  const first = observeRunning(
+    lead.core,
+    lead.task.id,
+    assigned.data.id,
+    assigned.revision!,
+    assigned.workspaceRevision!,
+    "pi-worker-a-1111",
+  );
+  expect(first).toMatchObject({ ok: true, data: { data: { state: "running" } } });
+  // A per-launch session handle: the second launcher's child is a mismatch.
+  const otherSession = observeRunning(
+    second,
+    lead.task.id,
+    assigned.data.id,
+    assigned.revision!,
+    assigned.workspaceRevision!,
+    "pi-worker-a-2222",
+  );
+  expect(otherSession).toMatchObject({ ok: false, code: "revision_conflict" });
+  // Even a replayed identical observation from the stale revision is not a
+  // silent no-op: compare-and-swap runs before the same-state shortcut.
+  const replay = observeRunning(
+    second,
+    lead.task.id,
+    assigned.data.id,
+    assigned.revision!,
+    assigned.workspaceRevision!,
+    "pi-worker-a-1111",
+  );
+  expect(replay).toMatchObject({ ok: false, code: "revision_conflict" });
+  const fresh = current(lead);
+  const mismatch = observeRunning(
+    second,
+    lead.task.id,
+    assigned.data.id,
+    fresh.task.revision,
+    fresh.workspace.revision,
+    "pi-worker-a-2222",
+  );
+  expect(mismatch).toMatchObject({ ok: false, code: "permission_denied" });
+});
+
+test("Given a launch whose outcome was never observed, When it is marked unknown, Then it cannot run until the lead cancels it", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  if (!assigned.ok) throw new Error(assigned.error);
+  const lost = lead.core.observeWorkerLifecycle({
+    taskId: lead.task.id,
+    workerId: assigned.data.id,
+    expectedRevision: assigned.revision!,
+    expectedWorkspaceRevision: assigned.workspaceRevision!,
+    state: "unknown",
+    session: { kind: "host", host: "workit_cli", handle: "pi-worker-a-3333" },
+    observation: { lost: true },
+  });
+  expect(lost).toMatchObject({ ok: true, data: { data: { state: "unknown" } } });
+  const cancelled = lead.core.worker({
+    schemaVersion: 1,
+    action: "cancel",
+    taskId: lead.task.id,
+    workerId: assigned.data.id,
+    reason: "launch outcome unknown",
+  });
+  expect(cancelled).toMatchObject({ ok: true, data: { data: { state: "stopped" } } });
+});

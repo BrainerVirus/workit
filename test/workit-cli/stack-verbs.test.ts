@@ -1,15 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
-import os from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -35,17 +27,15 @@ setDefaultTimeout(120_000);
 const MAIN = path.resolve(import.meta.dir, "..", "..", "packages", "workit-cli", "src", "main.ts");
 
 let configDir = "";
-const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+let configHome: ConfigHome;
 const original = { ...forgeDeps };
 const originalStack = { ...stackDeps };
 beforeAll(() => {
-  configDir = mkdtempSync(path.join(os.tmpdir(), "wk-stack-config-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  configHome = useConfigHome("wk-stack-config-");
+  configDir = configHome.configDir;
 });
 afterAll(() => {
-  if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-  rmSync(configDir, { recursive: true, force: true });
+  configHome.restore();
 });
 
 const forges: StackForge[] = [];

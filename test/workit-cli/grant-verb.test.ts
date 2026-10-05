@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,15 +11,13 @@ import { runGrant, type GrantDeps } from "@/packages/workit-cli/src/verbs/grant"
 
 let configDir = "";
 let checkout = "";
-const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+let configHome: ConfigHome;
 beforeAll(() => {
-  configDir = mkdtempSync(path.join(os.tmpdir(), "wk-grant-config-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  configHome = useConfigHome("wk-grant-config-");
+  configDir = configHome.configDir;
 });
 afterAll(() => {
-  if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-  rmSync(configDir, { recursive: true, force: true });
+  configHome.restore();
 });
 
 const file = () => path.join(configDir, "workspaces.json");
@@ -190,10 +189,24 @@ test("grant set: a legacy autoApprove is folded into autonomy on write", async (
   const shown = await run(["show"], headless);
   expect(shown.json().data).toMatchObject({
     source: "autoApprove",
-    grants: { push: true, merge: true },
+    // A standing merge approval keeps the verdict gate (review L1).
+    grants: { push: true, merge: "verified" },
   });
   const result = await run(["set", "w", "pr=false"], headless);
   expect(result.code).toBe(0);
   expect(entry().autoApprove).toBeUndefined();
-  expect(entry().autonomy).toEqual({ push: true, pr: false, merge: true });
+  expect(entry().autonomy).toEqual({ push: true, pr: false, merge: "verified" });
+});
+
+test("grant set: autonomy keys this version does not know are preserved", async () => {
+  writeWorkspace({ autonomy: { push: true, deploy: "staging" } });
+  const result = await run(["set", "w", "pr=false"], headless);
+  expect(result.code).toBe(0);
+  expect(entry().autonomy).toEqual({ deploy: "staging", push: true, pr: false });
+});
+
+test("grant show --json carries defaultEndpoint", async () => {
+  writeWorkspace({ defaultEndpoint: "pr" });
+  const shown = await run(["show"], headless);
+  expect(shown.json().data.defaultEndpoint).toBe("pr");
 });

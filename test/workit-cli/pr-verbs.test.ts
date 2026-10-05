@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -23,16 +23,14 @@ import {
 setDefaultTimeout(60_000);
 
 let configDir = "";
-const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+let configHome: ConfigHome;
 const original = { ...forgeDeps };
 beforeAll(() => {
-  configDir = mkdtempSync(path.join(os.tmpdir(), "wk-pr-config-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  configHome = useConfigHome("wk-pr-config-");
+  configDir = configHome.configDir;
 });
 afterAll(() => {
-  if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-  rmSync(configDir, { recursive: true, force: true });
+  configHome.restore();
 });
 
 const repos: ForgeRepo[] = [];
@@ -297,6 +295,38 @@ test("pr merge: given a workspace without the merge grant, then grant_required n
     data: { reason: "grant_required" },
   });
   expect(result.json().unblock).toContain("workit grant set w merge=verified");
+});
+
+test("pr merge: grants written to a redirected config dir (WORKFLOW_TOOLKIT_CONFIG_DIR=./x) are ignored and merge is denied", async () => {
+  const { repo, runner } = setup("github", {
+    ...mergeRoutes("github/pr-passing.json"),
+    "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
+  });
+  // The real user config has no merge grant; an agent writes one elsewhere
+  // and points the config override at it.
+  workspace(repo, { vcs: { provider: "github", account: "octo" } });
+  // Outside the checkout so the verdict stays on a clean tree.
+  const forged = path.join(configHome.home, "x");
+  mkdirSync(forged, { recursive: true });
+  for (const name of ["workspaces.json", "config.json"])
+    writeFileSync(path.join(forged, name), readFileSync(path.join(configDir, name), "utf8"));
+  const forgedEntry = JSON.parse(readFileSync(path.join(forged, "workspaces.json"), "utf8"));
+  forgedEntry.workspaces[0].autonomy = { merge: true };
+  writeFileSync(path.join(forged, "workspaces.json"), JSON.stringify(forgedEntry));
+  await verdict(repo);
+  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = forged;
+  try {
+    const result = await run(["pr", "merge", "--json"], repo.cwd);
+    expect(result.code).toBe(3);
+    expect(result.json()).toMatchObject({ code: "blocked", data: { reason: "grant_required" } });
+    expect(result.json().error).toContain("grants are read only from");
+    expect(writes(runner.calls)).toEqual([]);
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+  }
 });
 
 test("pr merge: a PR that is not READY is refused with its next action", async () => {
