@@ -1,6 +1,6 @@
 // S15 (design §4.1; D3, D13, D17): the append-only task event store, the
 // implicit task per branch/worktree, and the 2.x migration.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import {
   appendFileSync,
@@ -38,6 +38,10 @@ import { resolveStore, resolveTaskKey } from "@/packages/workit-core/src/store/p
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
 import { caller, ref, scope, taskStartRequest } from "./task-fixtures";
 import { eventsFileOf, eventsOf, storeDirOf, taskDirOf, workspaceFileOf } from "./store-files";
+
+// Compaction and multi-process tests fsync heavily; slow Windows runners took
+// 15-16 s against the default 15 s budget.
+setDefaultTimeout(60_000);
 
 const dirs: string[] = [];
 afterEach(() => {

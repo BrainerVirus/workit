@@ -1,6 +1,6 @@
 // S15 review (#186): migration never loses 2.x writes, one checkout per
 // worktree, one implicit task per key, and the git layouts the store must read.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import {
   cpSync,
@@ -38,6 +38,10 @@ import {
 import { CLAUDE_CODE_DESCRIPTOR } from "@/packages/workit-core/src/hooks";
 import { compactContextFor } from "@/packages/workit-opencode/src/runtime";
 import { eventsOf, storeDirOf } from "./store-files";
+
+// Compaction and multi-process tests fsync heavily; slow Windows runners took
+// 15-16 s against the default 15 s budget.
+setDefaultTimeout(60_000);
 
 const dirs: string[] = [];
 afterEach(() => {
