@@ -299,9 +299,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   finding: [["bogus"]],
   decision: [["bogus"]],
   worker: [["bogus"]],
-  writer: [["bogus"]],
   state: [["bogus"]],
-  action: [[], ["--help"], ["git.commit", "--payload"]],
   check: [["test"]],
   pr: [["status"]],
   ci: [["wait"]],
@@ -311,6 +309,9 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   ledger: [["list"]],
   handoff: [[], ["--task"]],
   "test-audit": [["--bogus"], ["--diff", "no-such-base"]],
+  grant: [["bogus"], ["set"], ["set", "w", "merge=verified"]],
+  youtrack: [[], ["note"]],
+  changelog: [[], ["apply"]],
 };
 
 test("under --json every verb's stdout is exactly one JSON document, error paths included", () => {

@@ -20,9 +20,7 @@ test("Cursor hook capabilities are honest about documented surfaces", () => {
   expect(cursorCapabilities({ preToolUse: true })).toContainEqual(
     expect.objectContaining({ name: "known_product_writes", assurance: "unavailable" }),
   );
-  expect(cursorCapabilities()).toContainEqual(
-    expect.objectContaining({ name: "interactive_decision", assurance: "agent_guided" }),
-  );
+  expect(cursorCapabilities().some((item) => item.name === "interactive_decision")).toBe(false);
   expect(cursorCapabilities({ preToolUse: false, beforeShellExecution: false })).toContainEqual(
     expect.objectContaining({ name: "arbitrary_shell_write", assurance: "unavailable" }),
   );
@@ -250,7 +248,8 @@ test("active native subagents allow read-only roles and deny unavailable impleme
     }),
   ).toMatchObject({
     permission: "deny",
-    agent_message: "Cursor implementer delegation is unavailable without attested writer identity",
+    agent_message:
+      "Cursor implementer delegation is unavailable: subagent writes are not attributable to the worker",
   });
   const task = new TaskStore(root).listTasks();
   expect(task.ok).toBe(true);

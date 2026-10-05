@@ -10,7 +10,6 @@ export const OPERATION_FAMILIES = [
   "finding",
   "decision",
   "worker",
-  "writer",
   "state",
 ] as const;
 export type OperationFamily = (typeof OPERATION_FAMILIES)[number];
@@ -145,19 +144,6 @@ export const refSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ kind: z.literal("host"), host: hostSchema, handle: nonEmpty }).strict(),
   z.object({ kind: z.literal("external"), url: text.url() }).strict(),
-  // Standing auto-approval receipt: authorizes without a live question while
-  // the referenced workspace rule covers the operation class. Verified live
-  // at reserve time against current config; dropped on export/import (a rule
-  // from another machine must never authorize here). Scalar-only shape keeps
-  // advertised operation schemas within provider depth limits.
-  z
-    .object({
-      kind: z.literal("standing"),
-      workspace: nonEmpty,
-      class: nonEmpty,
-      configDigest: nullableDigest,
-    })
-    .strict(),
 ]);
 export type Ref = z.infer<typeof refSchema>;
 
@@ -274,7 +260,6 @@ export const provenanceSchema = z
     host: hostSchema,
     session: refSchema.nullable(),
     workerId: nullableId,
-    receipts: z.array(refSchema),
   })
   .strict();
 export type Provenance = z.infer<typeof provenanceSchema>;
@@ -622,6 +607,13 @@ export const evidenceEvaluationSchema = z
   })
   .strict();
 export type EvidenceEvaluation = z.infer<typeof evidenceEvaluationSchema>;
+/**
+ * A durable decision record (D2, D18): agent-asserted like every other
+ * recording. It satisfies `decisions` requirements and accepted limitations;
+ * it never authorizes an external effect — autonomy grants and the host's
+ * own permission prompt do that. Legacy keys (`approvedContent`, `displayed`,
+ * `standing`, `consumption`) are dropped on read (D17).
+ */
 export const decisionSchema = z
   .object({
     purpose: z.enum(["design", "action", "limitation", "preference"]),
@@ -631,53 +623,18 @@ export const decisionSchema = z
         workspaceId: id,
         scope: scopeSchema,
         presented: text,
-        approvedContent: text,
-        displayed: text.optional(),
         contentRefs: z.array(refSchema),
         statedChoice: z.object({ ref: text, text: text }).strict().optional(),
-        standing: z.object({ workspace: nonEmpty, class: nonEmpty }).strict().optional(),
       })
       .strict(),
     digest,
     response: z.enum(["approved", "rejected", "stated"]),
     requirementIds: z.array(digest),
     revoked: z.object({ at: utc, reason: text }).strict().nullable(),
-    consumption: z
-      .object({
-        state: z.enum(["reserved", "consumed", "uncertain"]),
-        at: utc,
-        actionRef: refSchema,
-        /** Historical identifier only; never interpreted as native authority. */
-        historicalActionId: text.optional(),
-      })
-      .strict()
-      .nullable(),
   })
   .strict();
 export type Decision = z.infer<typeof decisionSchema>;
 
-/** Show-before-ask guard: binding questions are single-sentence and never
- * carry the artifact, descriptor, or payload body in the question UI. */
-export const BINDING_QUESTION_BUDGET = 300;
-const bindingQuestionHeader = /^Workit decision: (design|action|limitation|preference)$/;
-export const workitBindingQuestionIssue = (questions: unknown): string | null => {
-  if (!Array.isArray(questions) || questions.length !== 1) return null;
-  const question = questions[0] as { header?: unknown; question?: unknown; options?: unknown };
-  if (!question || typeof question !== "object") return null;
-  if (typeof question.header !== "string" || !bindingQuestionHeader.test(question.header.trim()))
-    return null;
-  const over = (label: string, value: string) =>
-    `invalid_input: ${label} is ${value.length} characters; Workit binding questions must stay within ${BINDING_QUESTION_BUDGET}. present the item in the conversation first, then ask a short scoped question.`;
-  if (typeof question.question === "string" && question.question.length > BINDING_QUESTION_BUDGET)
-    return over("the question text", question.question);
-  if (Array.isArray(question.options))
-    for (const option of question.options) {
-      const description = (option as { description?: unknown }).description;
-      if (typeof description === "string" && description.length > BINDING_QUESTION_BUDGET)
-        return over("an option description", description);
-    }
-  return null;
-};
 export const findingSchema = z
   .object({
     claim: text,
@@ -724,14 +681,6 @@ export const workerSchema = z
   })
   .strict();
 export type Worker = z.infer<typeof workerSchema>;
-export const ownerSchema = z
-  .object({
-    taskId: id,
-    workerId: nullableId,
-    session: z.object({ kind: z.literal("host"), host: hostSchema, handle: nonEmpty }).strict(),
-  })
-  .strict();
-export type Owner = z.infer<typeof ownerSchema>;
 export const closureSchema = z
   .object({
     outcome: outcomeSchema,
@@ -742,37 +691,6 @@ export const closureSchema = z
   })
   .strict();
 export type Closure = z.infer<typeof closureSchema>;
-export const actionProgressSchema = z
-  .object({
-    decisionId: id,
-    steps: z.array(nonEmpty),
-    completedSteps: z.array(nonEmpty),
-  })
-  .strict()
-  .check((ctx) => {
-    const { steps, completedSteps } = ctx.value;
-    const valid =
-      new Set(steps).size === steps.length &&
-      new Set(completedSteps).size === completedSteps.length &&
-      completedSteps.every((step, index) => steps[index] === step);
-    if (!valid)
-      ctx.issues.push({
-        code: "custom",
-        input: ctx.value,
-        message: "completed action steps must be a unique prefix of approved steps",
-        path: ["completedSteps"],
-      });
-  });
-export type ActionProgress = z.infer<typeof actionProgressSchema>;
-export const actionProgressListSchema = z.array(actionProgressSchema).check((ctx) => {
-  if (new Set(ctx.value.map((progress) => progress.decisionId)).size !== ctx.value.length)
-    ctx.issues.push({
-      code: "custom",
-      input: ctx.value,
-      message: "action progress decision ids must be unique",
-      path: ["decisionId"],
-    });
-});
 export const runtimeSchema = z
   .object({
     createdWith: text.nullable(),
@@ -802,7 +720,6 @@ export const taskRecordSchema = z
     candidates: z.array(candidateSchema),
     evidence: z.array(entrySchema(evidenceSchema)),
     decisions: z.array(entrySchema(decisionSchema)),
-    actionProgress: actionProgressListSchema.optional(),
     findings: z.array(entrySchema(findingSchema)),
     workers: z.array(entrySchema(workerSchema)),
     /** Paths a reader must understand; see parseStoredRecord. */
@@ -917,10 +834,6 @@ export const workspaceRecordSchema = z
     revision,
     root: nonEmpty,
     runtime: runtimeSchema.optional(),
-    writer: z
-      .object({ state: z.enum(["held", "uncertain"]), owner: ownerSchema, acquiredAt: utc })
-      .strict()
-      .nullable(),
     /** Paths a reader must understand; see parseStoredRecord. */
     critical: z.array(nonEmpty).optional(),
   })
@@ -970,7 +883,6 @@ export const taskSummarySchema = z
     progress: progressSchema,
     policy: policySchema.nullable(),
     requirements: z.array(requirementEvaluationSchema),
-    writer: workspaceRecordSchema.shape.writer,
   })
   .strict();
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
@@ -1046,7 +958,6 @@ const taskOperations = {
     ...taskId,
     ...revisions,
     expectedWorkspaceRevision: revision.optional(),
-    authorityRefs: z.array(refSchema).optional(),
   }),
   close: operation({
     action: z.literal("close"),
@@ -1141,30 +1052,12 @@ const workerOperations = {
     reason: text,
   }),
 };
-const writerOperations = {
-  acquire: operation({
-    action: z.literal("acquire"),
-    ...taskId,
-    expectedRevision: revision.optional(),
-    expectedWorkspaceRevision: revision.optional(),
-    workerId: nullableId.optional(),
-    reason: text.optional(),
-  }),
-  release: operation({
-    action: z.literal("release"),
-    ...taskId,
-    expectedRevision: revision.optional(),
-    expectedWorkspaceRevision: revision.optional(),
-    reason: text.optional(),
-  }),
-};
 const stateOperations = {
   export: operation({ action: z.literal("export"), ...taskId }),
   import: operation({
     action: z.literal("import"),
     expectedWorkspaceRevision: revision.nullable().optional(),
     bundle: exportBundleSchema,
-    authorityRefs: z.array(refSchema),
   }),
 };
 
@@ -1175,7 +1068,6 @@ export const operationSchemas = {
   finding: z.discriminatedUnion("action", Object.values(findingOperations) as any),
   decision: z.discriminatedUnion("action", Object.values(decisionOperations) as any),
   worker: z.discriminatedUnion("action", Object.values(workerOperations) as any),
-  writer: z.discriminatedUnion("action", Object.values(writerOperations) as any),
   state: z.discriminatedUnion("action", Object.values(stateOperations) as any),
 } as const;
 export type OperationRequest = z.infer<(typeof operationSchemas)[OperationFamily]>;
@@ -1198,7 +1090,6 @@ export const advertisedOperationSchemas = {
   finding: advertised(findingOperations),
   decision: advertised(decisionOperations),
   worker: advertised(workerOperations),
-  writer: advertised(writerOperations),
   state: advertised(stateOperations),
 } as const;
 export type TaskStartRequest = z.infer<typeof taskOperations.start>;
@@ -1222,7 +1113,6 @@ export type ErrorCode =
   | "permission_denied"
   | "capability_unavailable"
   | "requirements_unsatisfied"
-  | "writer_conflict"
   /** Retryable: another live Workit call holds the checkout's metadata lock. */
   | "busy"
   | "recovery_required"
@@ -1237,16 +1127,9 @@ export type ErrorDetails = {
   actualWorkspaceRevision?: Revision | null;
   requirementIds?: Digest[];
   capability?: string;
-  owner?: Owner;
   path?: string;
   operation?: string;
   outcome?: "not_started" | "pending" | "unknown";
-  /** Present when a native approval must be asked from a concise proposal. */
-  proposal?: {
-    presented: string;
-    approvedContent: string;
-    descriptorDigest: string;
-  };
   guidance?: string;
   /** Structured remedy for unsatisfied requirements: rule, reason, and
    * satisfaction text instead of opaque requirement hashes alone. */
@@ -1505,12 +1388,7 @@ const compareNullableText = (left: string | null, right: string | null): number 
 const compareBooleanNullable = (left: boolean | null, right: boolean | null): number =>
   left === right ? 0 : left === null ? -1 : right === null ? 1 : Number(left) - Number(right);
 export function decisionDigest(input: Omit<Decision, "digest"> | Decision): Digest {
-  const {
-    digest: _ignored,
-    revoked: _revoked,
-    consumption: _consumption,
-    ...value
-  } = input as Decision;
+  const { digest: _ignored, revoked: _revoked, ...value } = input as Decision;
   return sha256(value);
 }
 export function candidateDigest(input: Candidate): Digest {

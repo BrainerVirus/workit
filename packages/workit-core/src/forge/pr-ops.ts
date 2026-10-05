@@ -15,7 +15,7 @@
 // The merge call carries the head SHA (GitHub `sha=`, GitLab `sha=`), so a
 // head that moves after the gates refuses instead of merging unverified code.
 // --delete-branch deletes with a lease on that same SHA.
-import { requireGrant } from "../autonomy";
+import { requireGrant, type AutonomySource } from "../autonomy";
 import { isProtectedTarget } from "../core/branch";
 import { vcsConfig } from "../core/vcs-config";
 import { deleteRemoteBranch } from "../git/ops";
@@ -257,7 +257,7 @@ export type MergeOutcome = {
   method: MergeMethod;
   mergeSha: string | null;
   verdict: { required: boolean; accepted: boolean; verdictId: string | null };
-  grant: { source: "autonomy" | "host_authority" };
+  grant: { source: AutonomySource };
   deletedBranch: boolean | { error: string };
   recorded: { id: string } | { error: string };
 };

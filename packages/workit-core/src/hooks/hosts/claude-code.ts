@@ -61,14 +61,6 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
   perEventCost: "low",
   capabilities: [
     {
-      name: "interactive_decision",
-      surface: "AskUserQuestion",
-      refs: ["AskUserQuestion"],
-      requires: [],
-      assurance: "agent_guided",
-      reason: "Claude Code hooks expose no native question answer receipt",
-    },
-    {
       name: "known_product_writes",
       surface: "PreToolUse",
       refs: ["PreToolUse"],

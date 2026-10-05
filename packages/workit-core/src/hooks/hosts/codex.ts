@@ -78,14 +78,6 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
   perEventCost: "low",
   capabilities: [
     {
-      name: "interactive_decision",
-      surface: "Question",
-      refs: ["Question"],
-      requires: [],
-      assurance: "agent_guided",
-      reason: "Codex hooks expose no native arbitrary-question answer receipt",
-    },
-    {
       name: "known_product_writes",
       surface: "PreToolUse",
       refs: ["PreToolUse"],
@@ -111,7 +103,7 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
       requires: ["event:subagent.start", "event:subagent.stop"],
       observed: ["subagent.start", "subagent.stop"],
       assurance: "agent_guided",
-      reason: "Codex reports stable child identities, but cannot block creation or bind a writer",
+      reason: "Codex reports stable child identities, but cannot block creation",
       unavailableReason: "Codex subagent lifecycle hooks are untrusted or incomplete",
     },
     {
@@ -292,7 +284,6 @@ export const codexAdapter: HostAdapter = {
     };
   },
   render,
-  // Without a session id there is no actor to bind a writer to.
   addendum: (input) =>
-    `<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run workit verbs with the workit CLI on the shell (node_modules/.bin/workit, or npx -y @brainervirus/workit-cli): check, git branch|commit|push, pr, ci, stack, ledger, handoff; task-family mutations take --json --confirm${input.session.id ? `; bind the writer to this session with node_modules/.bin/workit writer acquire --task <id> --revision <rev> --actor ${input.session.id} --confirm` : ""}. A verifier or reviewer records workit ledger verdict under a session the lead assigns (WORKIT_SESSION_ID=<lead>-v<n>), never the author's. Merge and release need a workspace grant; a question answer is not host permission.</workit-codex-mutations>`,
+    `<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run workit verbs with the workit CLI on the shell (node_modules/.bin/workit, or npx -y @brainervirus/workit-cli): check, git branch|commit|push, pr, ci, stack, ledger, handoff; task-family mutations take --json${input.session.id ? ` --actor ${input.session.id}` : ""}. A verifier or reviewer records workit ledger verdict under a session the lead assigns (WORKIT_SESSION_ID=<lead>-v<n>), never the author's. Merge and release need a workspace grant (workit grant show); a question answer is not host permission.</workit-codex-mutations>`,
 };

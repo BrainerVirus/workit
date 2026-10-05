@@ -56,13 +56,15 @@ test("Codex MCP capabilities are conservative and surface detection is diagnosti
       (item) => item.name === "known_product_writes",
     ),
   ).toMatchObject({ assurance: "unavailable" });
-  expect(codexCapabilities("codex_desktop", { preToolUse: true })[1].refs).toEqual([
-    { kind: "host", host: "codex_desktop", handle: "PreToolUse" },
-  ]);
+  expect(
+    codexCapabilities("codex_desktop", { preToolUse: true }).find(
+      (item) => item.name === "known_product_writes",
+    )?.refs,
+  ).toEqual([{ kind: "host", host: "codex_desktop", handle: "PreToolUse" }]);
 });
 
 test("shared MCP families remain the sole Codex tool surface", async () => {
-  expect(OPERATION_FAMILIES).toHaveLength(8);
+  expect(OPERATION_FAMILIES).toHaveLength(7);
   expect(OPERATION_FAMILIES).toEqual([
     "task",
     "policy",
@@ -70,7 +72,6 @@ test("shared MCP families remain the sole Codex tool surface", async () => {
     "finding",
     "decision",
     "worker",
-    "writer",
     "state",
   ]);
 });

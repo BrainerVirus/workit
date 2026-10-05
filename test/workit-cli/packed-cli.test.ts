@@ -466,7 +466,7 @@ test("packed CLI ships completion guidance and hygiene templates", () => {
   }
 }, 120_000);
 
-test("packed CLI: help lists task, action, handoff, and uninstall commands", () => {
+test("packed CLI: help lists task, grant, handoff, and uninstall commands", () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-packedcli-help-");
   try {
@@ -482,13 +482,14 @@ test("packed CLI: help lists task, action, handoff, and uninstall commands", () 
     expect(help.status, help.stderr).toBe(0);
     for (const command of [
       "workit <family> <action> [options]",
-      "workit action <operation> --payload <JSON>",
+      "workit grant show [<workspace>] [--all]",
       "workit handoff --task <id>",
       "workit uninstall",
     ]) {
       expect(help.stdout, command).toContain(command);
     }
     expect(help.stdout).not.toContain("workit flow");
+    expect(help.stdout).not.toContain("workit action");
     expect(help.stderr).toBe("");
   } finally {
     rmSync(install, { recursive: true, force: true });

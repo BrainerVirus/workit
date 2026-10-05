@@ -4,19 +4,6 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
 {
   "capabilities": [
     {
-      "assurance": "agent_guided",
-      "name": "interactive_decision",
-      "reason": "Claude Code hooks expose no native question answer receipt",
-      "refs": [
-        {
-          "handle": "AskUserQuestion",
-          "host": "claude_code",
-          "kind": "host",
-        },
-      ],
-      "surface": "AskUserQuestion",
-    },
-    {
       "assurance": "unavailable",
       "name": "known_product_writes",
       "reason": "file writes are host-policy; Claude Code permissions govern them",
@@ -89,16 +76,6 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
   ],
   "descriptor": {
     "capabilities": [
-      {
-        "assurance": "agent_guided",
-        "name": "interactive_decision",
-        "reason": "Claude Code hooks expose no native question answer receipt",
-        "refs": [
-          "AskUserQuestion",
-        ],
-        "requires": [],
-        "surface": "AskUserQuestion",
-      },
       {
         "assurance": "unavailable",
         "name": "known_product_writes",
@@ -252,19 +229,6 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
   },
   "unobserved": [
     {
-      "assurance": "agent_guided",
-      "name": "interactive_decision",
-      "reason": "Claude Code hooks expose no native question answer receipt",
-      "refs": [
-        {
-          "handle": "AskUserQuestion",
-          "host": "claude_code",
-          "kind": "host",
-        },
-      ],
-      "surface": "AskUserQuestion",
-    },
-    {
       "assurance": "unavailable",
       "name": "known_product_writes",
       "reason": "file writes are host-policy; Claude Code permissions govern them",
@@ -342,19 +306,6 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
 {
   "capabilities": [
     {
-      "assurance": "agent_guided",
-      "name": "interactive_decision",
-      "reason": "Codex hooks expose no native arbitrary-question answer receipt",
-      "refs": [
-        {
-          "handle": "Question",
-          "host": "codex_cli",
-          "kind": "host",
-        },
-      ],
-      "surface": "Question",
-    },
-    {
       "assurance": "unavailable",
       "name": "known_product_writes",
       "reason": "file writes are host-policy; PreToolUse allows write tools",
@@ -383,7 +334,7 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
     {
       "assurance": "agent_guided",
       "name": "native_subagents",
-      "reason": "Codex reports stable child identities, but cannot block creation or bind a writer",
+      "reason": "Codex reports stable child identities, but cannot block creation",
       "refs": [
         {
           "handle": "SubagentStart",
@@ -441,16 +392,6 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
   "descriptor": {
     "capabilities": [
       {
-        "assurance": "agent_guided",
-        "name": "interactive_decision",
-        "reason": "Codex hooks expose no native arbitrary-question answer receipt",
-        "refs": [
-          "Question",
-        ],
-        "requires": [],
-        "surface": "Question",
-      },
-      {
         "assurance": "unavailable",
         "name": "known_product_writes",
         "reason": "file writes are host-policy; PreToolUse allows write tools",
@@ -483,7 +424,7 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
           "subagent.start",
           "subagent.stop",
         ],
-        "reason": "Codex reports stable child identities, but cannot block creation or bind a writer",
+        "reason": "Codex reports stable child identities, but cannot block creation",
         "refs": [
           "SubagentStart",
           "SubagentStop",
@@ -619,19 +560,6 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
   },
   "unobserved": [
     {
-      "assurance": "agent_guided",
-      "name": "interactive_decision",
-      "reason": "Codex hooks expose no native arbitrary-question answer receipt",
-      "refs": [
-        {
-          "handle": "Question",
-          "host": "codex_cli",
-          "kind": "host",
-        },
-      ],
-      "surface": "Question",
-    },
-    {
       "assurance": "unavailable",
       "name": "known_product_writes",
       "reason": "file writes are host-policy; PreToolUse allows write tools",
@@ -721,19 +649,6 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
 exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
 {
   "capabilities": [
-    {
-      "assurance": "agent_guided",
-      "name": "interactive_decision",
-      "reason": "Cursor does not expose AskQuestion answers to Workit hooks or MCP",
-      "refs": [
-        {
-          "handle": "AskQuestion",
-          "host": "cursor",
-          "kind": "host",
-        },
-      ],
-      "surface": "AskQuestion",
-    },
     {
       "assurance": "unavailable",
       "name": "known_product_writes",
@@ -825,16 +740,6 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
   ],
   "descriptor": {
     "capabilities": [
-      {
-        "assurance": "agent_guided",
-        "name": "interactive_decision",
-        "reason": "Cursor does not expose AskQuestion answers to Workit hooks or MCP",
-        "refs": [
-          "AskQuestion",
-        ],
-        "requires": [],
-        "surface": "AskQuestion",
-      },
       {
         "assurance": "unavailable",
         "name": "known_product_writes",
@@ -1006,19 +911,6 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
   },
   "unobserved": [
     {
-      "assurance": "agent_guided",
-      "name": "interactive_decision",
-      "reason": "Cursor does not expose AskQuestion answers to Workit hooks or MCP",
-      "refs": [
-        {
-          "handle": "AskQuestion",
-          "host": "cursor",
-          "kind": "host",
-        },
-      ],
-      "surface": "AskQuestion",
-    },
-    {
       "assurance": "unavailable",
       "name": "known_product_writes",
       "reason": "file writes are host-policy; the Cursor hook no longer gates write tools or shell commands",
@@ -1114,19 +1006,6 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
 {
   "capabilities": [
     {
-      "assurance": "enforced",
-      "name": "interactive_decision",
-      "reason": "native question answers are observed by tool.execute.after and consumed once",
-      "refs": [
-        {
-          "handle": "question",
-          "host": "opencode",
-          "kind": "host",
-        },
-      ],
-      "surface": "question",
-    },
-    {
       "assurance": "unavailable",
       "name": "known_product_writes",
       "reason": "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
@@ -1168,18 +1047,6 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
   ],
   "descriptor": {
     "capabilities": [
-      {
-        "assurance": "enforced",
-        "name": "interactive_decision",
-        "reason": "native question answers are observed by tool.execute.after and consumed once",
-        "refs": [
-          "question",
-        ],
-        "requires": [
-          "interaction.questions",
-        ],
-        "surface": "question",
-      },
       {
         "assurance": "unavailable",
         "name": "known_product_writes",
@@ -1298,19 +1165,6 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
   },
   "unobserved": [
     {
-      "assurance": "enforced",
-      "name": "interactive_decision",
-      "reason": "native question answers are observed by tool.execute.after and consumed once",
-      "refs": [
-        {
-          "handle": "question",
-          "host": "opencode",
-          "kind": "host",
-        },
-      ],
-      "surface": "question",
-    },
-    {
       "assurance": "unavailable",
       "name": "known_product_writes",
       "reason": "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
@@ -1370,19 +1224,6 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
       "surface": "write/edit tool_call",
     },
     {
-      "assurance": "enforced",
-      "name": "interactive_decision",
-      "reason": "Pi supplies a native confirmation receipt when dialog UI is available.",
-      "refs": [
-        {
-          "handle": "ui.confirm",
-          "host": "pi",
-          "kind": "host",
-        },
-      ],
-      "surface": "ui.confirm",
-    },
-    {
       "assurance": "agent_guided",
       "name": "arbitrary_shell_write",
       "reason": "Pi extensions do not sandbox arbitrary shell commands.",
@@ -1422,22 +1263,6 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
           "interaction.writeBoundary",
         ],
         "surface": "write/edit tool_call",
-      },
-      {
-        "assurance": "enforced",
-        "name": "interactive_decision",
-        "observed": [
-          "ui",
-        ],
-        "reason": "Pi supplies a native confirmation receipt when dialog UI is available.",
-        "refs": [
-          "ui.confirm",
-        ],
-        "requires": [
-          "interaction.questions",
-        ],
-        "surface": "ui.confirm",
-        "unavailableReason": "Pi is running without dialog UI, so required decisions need user input.",
       },
       {
         "assurance": "agent_guided",
@@ -1555,19 +1380,6 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
         },
       ],
       "surface": "write/edit tool_call",
-    },
-    {
-      "assurance": "unavailable",
-      "name": "interactive_decision",
-      "reason": "Pi is running without dialog UI, so required decisions need user input.",
-      "refs": [
-        {
-          "handle": "ui.confirm",
-          "host": "pi",
-          "kind": "host",
-        },
-      ],
-      "surface": "ui.confirm",
     },
     {
       "assurance": "agent_guided",

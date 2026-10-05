@@ -30,7 +30,6 @@ const provenance = {
   host: "workit_cli" as const,
   session: null,
   workerId: null,
-  receipts: [],
 };
 const identity = (task: TaskRecord) => success(task.revision, null, task);
 
@@ -65,7 +64,12 @@ const writeLock = (lockPath: string, payload: Record<string, unknown>) =>
 
 test("Given a lock held by a dead pid, When a write runs, Then the lock is reclaimed and the write succeeds", () => {
   const { store, task, lockPath } = startedStore();
-  writeLock(lockPath, { pid: deadPid(), processStart: "1", host: localLockHost(), nonce: "dead" });
+  writeLock(lockPath, {
+    pid: deadPid(),
+    processStart: "1",
+    host: localLockHost(),
+    nonce: "dead",
+  });
   const result = store.mutateTask(task.id, task.revision, identity);
   expect(result.ok).toBe(true);
   expect(existsSync(lockPath)).toBe(false);
@@ -88,7 +92,12 @@ test.skipIf(process.platform !== "linux")(
 
 test("Given a lock from another host older than the TTL, When a write runs, Then the lock is reclaimed and the write succeeds", () => {
   const { store, task, lockPath } = startedStore();
-  writeLock(lockPath, { pid: 999999, processStart: "old", host: "another-host", nonce: "x" });
+  writeLock(lockPath, {
+    pid: 999999,
+    processStart: "old",
+    host: "another-host",
+    nonce: "x",
+  });
   utimesSync(lockPath, new Date(0), new Date(0));
   expect(store.mutateTask(task.id, task.revision, identity).ok).toBe(true);
 });
@@ -266,8 +275,15 @@ test.skipIf(process.platform !== "linux")(
   "Given a lock written by an older Workit without namespace identity, When a write runs, Then it is treated as foreign until its TTL",
   () => {
     const { store, task, lockPath } = startedStore({ lockTimeoutMs: 150 });
-    writeLock(lockPath, { pid: deadPid(), processStart: null, host: hostname(), nonce: "legacy" });
-    expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({ code: "busy" });
+    writeLock(lockPath, {
+      pid: deadPid(),
+      processStart: null,
+      host: hostname(),
+      nonce: "legacy",
+    });
+    expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
+      code: "busy",
+    });
     utimesSync(lockPath, new Date(0), new Date(0));
     expect(store.mutateTask(task.id, task.revision, identity).ok).toBe(true);
   },
@@ -292,7 +308,9 @@ test("Given an in-process host with the default budget, When a live holder keeps
       nonce: "x",
     });
     const started = performance.now();
-    expect(fresh.mutateTask(task.id, task.revision, identity)).toMatchObject({ code: "busy" });
+    expect(fresh.mutateTask(task.id, task.revision, identity)).toMatchObject({
+      code: "busy",
+    });
     expect(performance.now() - started).toBeLessThan(1_000);
   } finally {
     holder.kill("SIGKILL");
@@ -301,10 +319,17 @@ test("Given an in-process host with the default budget, When a live holder keeps
 
 test("Given doctor --fix-lock is preempted while a writer reclaims the same stale lock, Then the two never hold the lock at once", async () => {
   const { store, checkoutLock: lockPath } = startedStore();
-  writeLock(lockPath, { pid: deadPid(), processStart: null, host: localLockHost(), nonce: "x" });
+  writeLock(lockPath, {
+    pid: deadPid(),
+    processStart: null,
+    host: localLockHost(),
+    nonce: "x",
+  });
   const run = (script: string) =>
     new Promise<string>((done) => {
-      const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(process.execPath, ["-e", script], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       let out = "";
       child.stdout.on("data", (chunk) => (out += chunk));
       child.on("close", () => done(out));
@@ -407,7 +432,9 @@ for (const simulateWindows of [false, true])
         expect(result).toMatchObject({ ok: false, code: "storage_error" });
         if (simulateWindows)
           expect(result).toMatchObject({
-            details: { guidance: expect.stringContaining("read-only attribute") },
+            details: {
+              guidance: expect.stringContaining("read-only attribute"),
+            },
           });
         expect(elapsed).toBeLessThan(1_000);
       } finally {

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,15 +19,13 @@ import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remot
 setDefaultTimeout(60_000);
 
 let configDir = "";
-const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+let configHome: ConfigHome;
 beforeAll(() => {
-  configDir = mkdtempSync(path.join(os.tmpdir(), "wk-delivery-config-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  configHome = useConfigHome("wk-delivery-config-");
+  configDir = configHome.configDir;
 });
 afterAll(() => {
-  if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-  rmSync(configDir, { recursive: true, force: true });
+  configHome.restore();
 });
 const repos: RemoteRepo[] = [];
 afterEach(() => {
@@ -42,29 +41,62 @@ const workspaceAt = (root: string, entry: Record<string, unknown>) =>
     }),
   );
 
-test("requireGrant: absent grants fall back to host authority; explicit values are honored", () => {
+test("requireGrant: defaults apply when nothing is configured; explicit values are honored", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-grant-"));
   const cwd = path.join(root, "repo");
   try {
-    // No workspace at all: host authority, and a merge still needs a verdict.
-    expect(requireGrant(cwd, "merge")).toEqual({
-      allowed: true,
-      kind: "merge",
-      source: "host_authority",
-      requireVerdict: true,
+    // No workspace at all: the D4 defaults. push/pr/rerun allowed, merge/release asked.
+    for (const kind of ["push", "pr", "rerun"] as const)
+      expect(requireGrant(cwd, kind)).toEqual({
+        allowed: true,
+        kind,
+        source: "default",
+        requireVerdict: false,
+        workspace: null,
+      });
+    for (const kind of ["merge", "release"] as const)
+      expect(requireGrant(cwd, kind)).toMatchObject({
+        allowed: false,
+        kind,
+        reason: "grant_required",
+        workspace: null,
+      });
+    expect(resolveAutonomy(cwd)).toMatchObject({
       workspace: null,
+      grants: {
+        push: true,
+        pr: true,
+        merge: false,
+        release: false,
+        rerun: true,
+      },
+      configured: [],
+      source: "default",
     });
-    expect(requireGrant(cwd, "push")).toMatchObject({ allowed: true, requireVerdict: false });
 
     workspaceAt(root, {
       vcs: { provider: "github", account: "me" },
-      autonomy: { push: true, pr: true, merge: "verified", release: false, bogus: 1 },
+      autonomy: {
+        push: true,
+        pr: true,
+        merge: "verified",
+        release: false,
+        bogus: 1,
+      },
     });
     expect(resolveAutonomy(cwd)).toEqual({
       workspace: "w",
-      grants: { push: true, pr: true, merge: "verified", release: false },
+      grants: {
+        push: true,
+        pr: true,
+        merge: "verified",
+        release: false,
+        rerun: true,
+      },
+      configured: ["push", "pr", "merge", "release"],
       source: "autonomy",
       accountConfigured: true,
+      defaultEndpoint: "commit",
     });
     expect(requireGrant(cwd, "merge")).toMatchObject({
       allowed: true,
@@ -75,19 +107,96 @@ test("requireGrant: absent grants fall back to host authority; explicit values a
       allowed: false,
       reason: "grant_required",
     });
+    // rerun is not configured: allowed by default.
+    expect(requireGrant(cwd, "rerun")).toMatchObject({
+      allowed: true,
+      source: "default",
+    });
 
-    workspaceAt(root, { vcs: { provider: "github", account: "me" }, autonomy: { merge: true } });
-    expect(requireGrant(cwd, "merge")).toMatchObject({ allowed: true, requireVerdict: false });
-    // Only merge is configured; push falls back to host authority.
-    expect(requireGrant(cwd, "push")).toMatchObject({ allowed: true, source: "host_authority" });
+    workspaceAt(root, {
+      vcs: { provider: "github", account: "me" },
+      autonomy: { merge: true },
+    });
+    expect(requireGrant(cwd, "merge")).toMatchObject({
+      allowed: true,
+      requireVerdict: false,
+    });
+    // Only merge is configured; push falls back to the default.
+    expect(requireGrant(cwd, "push")).toMatchObject({
+      allowed: true,
+      source: "default",
+    });
 
     // Grants without an account: forge effects are blocked, local ones are not.
-    workspaceAt(root, { vcs: { provider: "github" }, autonomy: { push: true } });
-    expect(requireGrant(cwd, "push")).toMatchObject({ allowed: false, reason: "account_required" });
-    expect(requireGrant(cwd, "push", { forge: false })).toMatchObject({ allowed: true });
+    workspaceAt(root, {
+      vcs: { provider: "github" },
+      autonomy: { push: true },
+    });
+    expect(requireGrant(cwd, "push")).toMatchObject({
+      allowed: false,
+      reason: "account_required",
+    });
+    expect(requireGrant(cwd, "push", { forge: false })).toMatchObject({
+      allowed: true,
+    });
 
     writeFileSync(path.join(configDir, "workspaces.json"), "{not json");
-    expect(requireGrant(cwd, "pr")).toMatchObject({ allowed: false, reason: "config_invalid" });
+    expect(requireGrant(cwd, "pr")).toMatchObject({
+      allowed: false,
+      reason: "config_invalid",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveAutonomy: a legacy autoApprove list maps the listed forge classes to grants", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-grant-"));
+  const cwd = path.join(root, "repo");
+  try {
+    workspaceAt(root, {
+      vcs: { provider: "github", account: "me" },
+      autoApprove: ["push", "pr"],
+    });
+    const autonomy = resolveAutonomy(cwd);
+    expect(autonomy).toMatchObject({ workspace: "w", source: "autoApprove" });
+    expect(autonomy.grants).toMatchObject({
+      push: true,
+      pr: true,
+      merge: false,
+    });
+    expect(autonomy.configured).toEqual(["push", "pr"]);
+    expect(requireGrant(cwd, "push")).toMatchObject({
+      allowed: true,
+      source: "autoApprove",
+    });
+    expect(requireGrant(cwd, "merge")).toMatchObject({
+      allowed: false,
+      reason: "grant_required",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("requireGrant: a workspace without a merge grant denies merge with a grant-set unblock", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-grant-"));
+  const cwd = path.join(root, "repo");
+  try {
+    workspaceAt(root, {
+      vcs: { provider: "github", account: "me" },
+      autonomy: { push: true, pr: true },
+    });
+    const decision = requireGrant(cwd, "merge");
+    expect(decision).toMatchObject({
+      allowed: false,
+      kind: "merge",
+      reason: "grant_required",
+      workspace: "w",
+    });
+    if (decision.allowed) throw new Error("expected a denial");
+    expect(decision.unblock).toContain("workit grant set");
+    expect(decision.unblock).toContain("w merge=verified");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -101,10 +210,17 @@ test("GitHub createPr/merge/updateBase send the documented REST calls; a fork he
       state: "open",
       head: { ref: "feature/x", sha: "a".repeat(40) },
     }),
-    "PUT repos/o/r/pulls/5/merge": JSON.stringify({ sha: "b".repeat(40), merged: true }),
+    "PUT repos/o/r/pulls/5/merge": JSON.stringify({
+      sha: "b".repeat(40),
+      merged: true,
+    }),
     "PATCH repos/o/r/pulls/5": "{}",
   });
-  const forge = createGitHubForge({ apiHost: "github.com", repo: "o/r", runner });
+  const forge = createGitHubForge({
+    apiHost: "github.com",
+    repo: "o/r",
+    runner,
+  });
   const created = forge.createPr({
     head: "feature/x",
     headRepo: "forker/r",
@@ -135,9 +251,15 @@ test("GitHub createPr/merge/updateBase send the documented REST calls; a fork he
     ok: true,
     data: { mergeSha: "b".repeat(40) },
   });
-  expect(runner.calls[1]?.vars).toEqual({ sha: "a".repeat(40), merge_method: "rebase" });
+  expect(runner.calls[1]?.vars).toEqual({
+    sha: "a".repeat(40),
+    merge_method: "rebase",
+  });
   expect(forge.updateBase(5, "develop")).toEqual({ ok: true, data: undefined });
-  expect(runner.calls[2]).toMatchObject({ method: "PATCH", vars: { base: "develop" } });
+  expect(runner.calls[2]).toMatchObject({
+    method: "PATCH",
+    vars: { base: "develop" },
+  });
 });
 
 test("forge writes: 409 is head_moved, 405/422 are forge refusals, auth is unavailable", () => {
@@ -145,7 +267,10 @@ test("forge writes: 409 is head_moved, 405/422 are forge refusals, auth is unava
     createGitHubForge({
       apiHost: "github.com",
       repo: "o/r",
-      runner: replayRunner({ "PUT repos/o/r/pulls/5/merge": reply, "POST repos/o/r/pulls": reply }),
+      runner: replayRunner({
+        "PUT repos/o/r/pulls/5/merge": reply,
+        "POST repos/o/r/pulls": reply,
+      }),
     });
   const moved = forgeWith(replyError("gh: Head branch was modified. (HTTP 409)")).merge(5, {
     sha: "a".repeat(40),
@@ -192,7 +317,11 @@ test("GitLab createPr from a fork posts to the source project with target_projec
     }),
     "PUT projects/group%2Fproject/merge_requests/3": "{}",
   });
-  const forge = createGitLabForge({ apiHost: "gitlab.com", repo: "group/project", runner });
+  const forge = createGitLabForge({
+    apiHost: "gitlab.com",
+    repo: "group/project",
+    runner,
+  });
   const created = forge.createPr({
     head: "feature/x",
     headRepo: "me/project",
@@ -202,7 +331,10 @@ test("GitLab createPr from a fork posts to the source project with target_projec
     body: "b",
     draft: true,
   });
-  expect(created).toMatchObject({ ok: true, data: { number: 3, headSha: "c".repeat(40) } });
+  expect(created).toMatchObject({
+    ok: true,
+    data: { number: 3, headSha: "c".repeat(40) },
+  });
   expect(runner.calls[1]?.vars).toEqual({
     source_branch: "feature/x",
     target_branch: "main",
@@ -230,7 +362,9 @@ test("deleteRemoteBranch deletes only while the remote tip is the expected one",
     error: "the remote branch tip changed before deletion",
   });
   expect(repo.remoteTip("feature/a")).toBe(theirs);
-  expect(deleteRemoteBranch(repo.cwd, "origin", "feature/a", theirs)).toEqual({ ok: true });
+  expect(deleteRemoteBranch(repo.cwd, "origin", "feature/a", theirs)).toEqual({
+    ok: true,
+  });
   expect(repo.remoteTip("feature/a")).toBeNull();
   // A protected branch (gitflow default: develop) is never deleted, whatever the lease says.
   repo.git("push", "-q", "origin", "main:refs/heads/develop");
@@ -252,8 +386,14 @@ test("remoteRefTip peels annotated tags and reports a missing ref as null", () =
   const head = repo.git("rev-parse", "HEAD");
   repo.git("tag", "-a", "v1.0.0", "-m", "release");
   repo.git("push", "-q", "origin", "v1.0.0");
-  expect(remoteRefTip(repo.cwd, "origin", "refs/tags/v1.0.0")).toEqual({ ok: true, sha: head });
-  expect(remoteRefTip(repo.cwd, "origin", "refs/tags/v9")).toEqual({ ok: true, sha: null });
+  expect(remoteRefTip(repo.cwd, "origin", "refs/tags/v1.0.0")).toEqual({
+    ok: true,
+    sha: head,
+  });
+  expect(remoteRefTip(repo.cwd, "origin", "refs/tags/v9")).toEqual({
+    ok: true,
+    sha: null,
+  });
   expect(remoteRefTip(repo.cwd, "origin", "-x")).toMatchObject({
     ok: false,
     code: "invalid_input",
@@ -282,18 +422,29 @@ test("PR body: issue linking follows the workspace (GitHub link_on_pr derives th
 test("commit lint and package specs", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-lint-"));
   try {
-    expect(lintCommitMessage(root, "feat(cli): add verbs")).toEqual({ ok: true });
+    expect(lintCommitMessage(root, "feat(cli): add verbs")).toEqual({
+      ok: true,
+    });
     expect(lintCommitMessage(root, "add verbs")).toMatchObject({ ok: false });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-  expect(parsePackageSpec("@scope/pkg@1.2.3")).toEqual({ name: "@scope/pkg", version: "1.2.3" });
-  expect(parsePackageSpec("@scope/pkg")).toEqual({ name: "@scope/pkg", version: null });
+  expect(parsePackageSpec("@scope/pkg@1.2.3")).toEqual({
+    name: "@scope/pkg",
+    version: "1.2.3",
+  });
+  expect(parsePackageSpec("@scope/pkg")).toEqual({
+    name: "@scope/pkg",
+    version: null,
+  });
   expect(parsePackageSpec("pkg@2")).toBeNull();
   expect(parsePackageSpec("--registry")).toBeNull();
   expect(parsePackageSpec("pkg@1.0.0&calc")).toBeNull();
   // Legacy upper-case names are looked up, not refused.
-  expect(parsePackageSpec("JSONStream@1.3.5")).toEqual({ name: "JSONStream", version: "1.3.5" });
+  expect(parsePackageSpec("JSONStream@1.3.5")).toEqual({
+    name: "JSONStream",
+    version: "1.3.5",
+  });
   expect(parsePackageSpec("pkg@1.0.0-rc.1+build.5")).toEqual({
     name: "pkg",
     version: "1.0.0-rc.1+build.5",
@@ -304,4 +455,51 @@ test("commit lint and package specs", () => {
     stdout: "",
     stderr: "refused: unsafe npm argument",
   });
+});
+
+test("requireGrant: a redirected config dir never supplies grants (D15)", () => {
+  const forged = mkdtempSync(path.join(os.tmpdir(), "wk-forged-config-"));
+  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  try {
+    writeFileSync(
+      path.join(forged, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "w",
+            glob: "/**",
+            vcs: { provider: "github", account: "me" },
+            autonomy: { merge: true, release: true },
+          },
+        ],
+      }),
+    );
+    process.env.WORKFLOW_TOOLKIT_CONFIG = forged;
+    const decision = requireGrant(process.cwd(), "merge");
+    expect(decision).toMatchObject({ allowed: false, reason: "grant_required" });
+    expect(decision.allowed ? "" : decision.error).toContain("grants are read only from");
+    expect(resolveAutonomy(process.cwd())).toMatchObject({ source: "default", workspace: null });
+  } finally {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    rmSync(forged, { recursive: true, force: true });
+  }
+});
+
+test("resolveAutonomy: a legacy standing merge approval maps to merge verified, not true", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-legacy-merge-"));
+  try {
+    writeFileSync(
+      path.join(process.env.WORKFLOW_TOOLKIT_CONFIG!, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [{ name: "w", glob: `${root.replaceAll("\\", "/")}/**`, autoApprove: true }],
+      }),
+    );
+    expect(resolveAutonomy(root).grants.merge).toBe("verified");
+    expect(requireGrant(root, "merge")).toMatchObject({
+      allowed: false,
+      reason: "account_required",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

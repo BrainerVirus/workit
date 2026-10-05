@@ -48,7 +48,9 @@ test("a task starts active and inspection is read-only", () => {
   const store = new TaskStore(root);
   const core = new WorkitCore(store, context(root));
   const started = core.task(
-    taskStartRequest({ intent: { objective: "x", scope: scope(), authorityRefs: [ref()] } }),
+    taskStartRequest({
+      intent: { objective: "x", scope: scope(), authorityRefs: [ref()] },
+    }),
   );
   expect(started.ok).toBe(true);
   if (!started.ok) throw new Error(started.error);
@@ -91,14 +93,12 @@ test("task history search matches summaries and decisions, orders and limits rea
       workspaceId: saved.data.workspaceId,
       scope: scope(),
       presented: "Retain the violet history marker",
-      approvedContent: "Violet marker",
       contentRefs: [],
     },
     digest: "a".repeat(64),
     response: "stated" as const,
     requirementIds: [],
     revoked: null,
-    consumption: null,
   };
   const amended = store.mutateTask(newerId, saved.data.revision, (task) =>
     success(task.revision, null, {
@@ -113,7 +113,6 @@ test("task history search matches summaries and decisions, orders and limits rea
             host: "workit_cli",
             session: null,
             workerId: null,
-            receipts: [],
           },
           data: decision,
         },
@@ -238,7 +237,6 @@ test("lifecycle pauses, resumes, and stops without reopening", () => {
     taskId: task.data[0].id,
     expectedRevision: pausedTask.data.revision,
     expectedWorkspaceRevision: pausedWorkspace.data.revision,
-    authorityRefs: [ref()],
   });
   expect(resumed.ok).toBe(true);
   const activeTask = store.readTask(task.data[0].id);
@@ -268,7 +266,6 @@ test("lifecycle pauses, resumes, and stops without reopening", () => {
       taskId: closed.data.id,
       expectedRevision: closed.data.revision,
       expectedWorkspaceRevision: activeWorkspace.data.revision,
-      authorityRefs: [],
     }),
   ).toMatchObject({ ok: false, code: "invalid_transition" });
 });
@@ -289,7 +286,11 @@ test("candidate capture preserves executable and symlink metadata without follow
         // Windows has no executable bit; chmod leaves captured mode false there.
         executable: process.platform !== "win32",
       }),
-      expect.objectContaining({ path: "escape", kind: "symlink", executable: null }),
+      expect.objectContaining({
+        path: "escape",
+        kind: "symlink",
+        executable: null,
+      }),
     ]),
   );
 });
@@ -327,7 +328,10 @@ test("Git candidate capture ignores excluded trees while retaining tracked and r
   );
   expect(candidate.data.completeness).toBe("known");
   const subdirectory = captureCandidate(root, scope({ paths: ["src"] }), []);
-  expect(subdirectory).toMatchObject({ ok: true, data: { files: [{ path: "src/app.ts" }] } });
+  expect(subdirectory).toMatchObject({
+    ok: true,
+    data: { files: [{ path: "src/app.ts" }] },
+  });
 });
 
 test("Git candidate capture includes untracked non-ignored source files", () => {
@@ -470,7 +474,11 @@ test("candidate inventory retains staged deletions as absent entries", () => {
   if (!candidate.ok) throw new Error(candidate.error);
   expect(candidate.data.files).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ path: "removed.txt", kind: "absent", digest: null }),
+      expect.objectContaining({
+        path: "removed.txt",
+        kind: "absent",
+        digest: null,
+      }),
     ]),
   );
 });
@@ -493,7 +501,10 @@ test("evidence freshness checks each referenced requirement scope independently"
     candidates: [before.data],
     policy: {
       requirements: [
-        { id: firstRequirement, scope: scope({ paths: ["src"], exclusions: ["src/generated"] }) },
+        {
+          id: firstRequirement,
+          scope: scope({ paths: ["src"], exclusions: ["src/generated"] }),
+        },
         { id: secondRequirement, scope: scope({ paths: ["src/generated"] }) },
       ],
     },
@@ -510,7 +521,9 @@ test("evidence freshness checks each referenced requirement scope independently"
       },
     ],
   } as any;
-  expect(evaluateEvidence(task, after.data)[0]).toMatchObject({ status: "stale" });
+  expect(evaluateEvidence(task, after.data)[0]).toMatchObject({
+    status: "stale",
+  });
 });
 
 test("relevant environment changes stale evidence regardless of file scope", () => {
@@ -529,7 +542,9 @@ test("relevant environment changes stale evidence regardless of file scope", () 
   const requirementId = "4".repeat(64);
   const task = {
     candidates: [before.data],
-    policy: { requirements: [{ id: requirementId, scope: scope({ paths: ["src"] }) }] },
+    policy: {
+      requirements: [{ id: requirementId, scope: scope({ paths: ["src"] }) }],
+    },
     evidence: [
       {
         id: "5".repeat(16),
@@ -543,11 +558,16 @@ test("relevant environment changes stale evidence regardless of file scope", () 
       },
     ],
   } as any;
-  expect(evaluateEvidence(task, after.data)[0]).toMatchObject({ status: "stale" });
+  expect(evaluateEvidence(task, after.data)[0]).toMatchObject({
+    status: "stale",
+  });
   const unknown = captureCandidate(root, scope({ paths: ["src"] }), [
     { name: "RUNTIME", value: null },
   ]);
-  expect(unknown).toMatchObject({ ok: true, data: { completeness: "uncertain" } });
+  expect(unknown).toMatchObject({
+    ok: true,
+    data: { completeness: "uncertain" },
+  });
   if (!unknown.ok) throw new Error(unknown.error);
   const uncertainTask = {
     ...task,
@@ -563,7 +583,9 @@ test("relevant environment changes stale evidence regardless of file scope", () 
       },
     ],
   };
-  expect(evaluateEvidence(uncertainTask, after.data)[0]).toMatchObject({ status: "stale" });
+  expect(evaluateEvidence(uncertainTask, after.data)[0]).toMatchObject({
+    status: "stale",
+  });
 });
 
 test("engine mutations honor a fixed trusted clock", () => {
@@ -636,7 +658,10 @@ test("a context rooted at another checkout cannot read or mutate the store", () 
   const other = mkdtempSync(join(tmpdir(), "workit-other-"));
   const store = new TaskStore(root);
   const core = new WorkitCore(store, { ...context(other), root: other });
-  expect(core.task(taskStartRequest())).toMatchObject({ ok: false, code: "invalid_input" });
+  expect(core.task(taskStartRequest())).toMatchObject({
+    ok: false,
+    code: "invalid_input",
+  });
   expect(store.readWorkspace()).toEqual(success(null, null, null));
 });
 
@@ -648,7 +673,10 @@ test.each(["workit_cli", "opencode", "cursor", "codex_cli", "codex_desktop", "pi
       writeFileSync(join(root, "a.ts"), "before");
       writeTestCheck(root);
       const store = new TaskStore(root);
-      const core = new WorkitCore(store, { ...context(root), caller: caller({ host }) });
+      const core = new WorkitCore(store, {
+        ...context(root),
+        caller: caller({ host }),
+      });
       const started = core.task(taskStartRequest());
       if (!started.ok) throw new Error(started.error);
       const taskId = (started.data as { id: string }).id;
@@ -659,8 +687,18 @@ test.each(["workit_cli", "opencode", "cursor", "codex_cli", "codex_desktop", "pi
         assessment: assessment({
           signals: {
             ...assessment().signals,
-            approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
-            productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
+            approachUnknown: {
+              value: false,
+              basis: "inferred",
+              reason: "known",
+              refs: [],
+            },
+            productChoiceOpen: {
+              value: false,
+              basis: "inferred",
+              reason: "settled",
+              refs: [],
+            },
           },
         }),
       });
@@ -722,9 +760,15 @@ test.each(["workit_cli", "opencode", "cursor", "codex_cli", "codex_desktop", "pi
       inspect("satisfied");
       writeFileSync(join(root, "a.ts"), "after");
       inspect("unsatisfied");
-      expect(close()).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
+      expect(close()).toMatchObject({
+        ok: false,
+        code: "requirements_unsatisfied",
+      });
       record();
-      expect(close()).toMatchObject({ ok: true, data: { closure: { outcome: "verified" } } });
+      expect(close()).toMatchObject({
+        ok: true,
+        data: { closure: { outcome: "verified" } },
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -751,15 +795,30 @@ test("review evidence uses the trusted caller session and requires an independen
     assessment: assessment({
       signals: {
         ...assessment().signals,
-        approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
-        productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
+        approachUnknown: {
+          value: false,
+          basis: "inferred",
+          reason: "known",
+          refs: [],
+        },
+        productChoiceOpen: {
+          value: false,
+          basis: "inferred",
+          reason: "settled",
+          refs: [],
+        },
         behaviorChange: {
           value: true,
           basis: "observed",
           reason: "behavior changed",
           refs: [ref()],
         },
-        mechanicalLowRisk: { value: false, basis: "inferred", reason: "behavioral", refs: [] },
+        mechanicalLowRisk: {
+          value: false,
+          basis: "inferred",
+          reason: "behavioral",
+          refs: [],
+        },
       },
     }),
   });
@@ -841,21 +900,37 @@ test("review evidence uses the trusted caller session and requires an independen
       },
     }).ok,
   ).toBe(true);
-  const view = reviewer.task({ schemaVersion: 1, action: "inspect", taskId, view: "full" });
+  const view = reviewer.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId,
+    view: "full",
+  });
   expect(view).toMatchObject({
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: reviewRequirement.id, status: "satisfied" }),
+        expect.objectContaining({
+          requirementId: reviewRequirement.id,
+          status: "satisfied",
+        }),
       ]),
     },
   });
-  const leadView = lead.task({ schemaVersion: 1, action: "inspect", taskId, view: "full" });
+  const leadView = lead.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId,
+    view: "full",
+  });
   expect(leadView).toMatchObject({
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: reviewRequirement.id, status: "satisfied" }),
+        expect.objectContaining({
+          requirementId: reviewRequirement.id,
+          status: "satisfied",
+        }),
       ]),
     },
   });
@@ -877,7 +952,11 @@ test("review evidence uses the trusted caller session and requires an independen
       summary: "forged",
       refs: [],
       exitCode: 0,
-      reviewContext: { kind: "host", host: "workit_cli", handle: "not-reviewer" },
+      reviewContext: {
+        kind: "host",
+        host: "workit_cli",
+        handle: "not-reviewer",
+      },
     },
   });
   expect(forged).toMatchObject({ ok: false, code: "invalid_input" });
@@ -892,7 +971,11 @@ test("review evidence uses the trusted caller session and requires an independen
       taskId,
       evidence: {
         ...recorded.data.data,
-        reviewContext: { kind: "host", host: "workit_cli", handle: "independent" },
+        reviewContext: {
+          kind: "host",
+          host: "workit_cli",
+          handle: "independent",
+        },
       },
     }).ok,
   ).toBe(true);
@@ -900,7 +983,10 @@ test("review evidence uses the trusted caller session and requires an independen
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: reviewRequirement.id, status: "satisfied" }),
+        expect.objectContaining({
+          requirementId: reviewRequirement.id,
+          status: "satisfied",
+        }),
       ]),
     },
   });
@@ -954,33 +1040,62 @@ test("summary and full inspection recapture candidates so scoped freshness agree
   });
   expect(evidence.ok).toBe(true);
   if (!evidence.ok) throw new Error(evidence.error);
-  const unchanged = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+  const unchanged = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId,
+    view: "summary",
+  });
   expect(unchanged).toMatchObject({
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: verification.id, status: "satisfied" }),
+        expect.objectContaining({
+          requirementId: verification.id,
+          status: "satisfied",
+        }),
       ]),
     },
   });
   writeFileSync(join(root, "unrelated.txt"), "ignored");
-  const unrelated = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "full" });
+  const unrelated = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId,
+    view: "full",
+  });
   expect(unrelated).toMatchObject({
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: verification.id, status: "satisfied" }),
+        expect.objectContaining({
+          requirementId: verification.id,
+          status: "satisfied",
+        }),
       ]),
     },
   });
   writeFileSync(join(src, "a.ts"), "changed");
-  const summary = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
-  const full = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "full" });
+  const summary = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId,
+    view: "summary",
+  });
+  const full = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId,
+    view: "full",
+  });
   expect(summary).toMatchObject({
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: verification.id, status: "unsatisfied" }),
+        expect.objectContaining({
+          requirementId: verification.id,
+          status: "unsatisfied",
+        }),
       ]),
     },
   });
@@ -988,7 +1103,10 @@ test("summary and full inspection recapture candidates so scoped freshness agree
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: verification.id, status: "unsatisfied" }),
+        expect.objectContaining({
+          requirementId: verification.id,
+          status: "unsatisfied",
+        }),
       ]),
     },
   });
@@ -1135,7 +1253,10 @@ const resolveFixed = (
     evidenceIds: [evidenceId],
     decisionIds: [],
   });
-  expect(resolved).toMatchObject({ ok: true, data: { data: { disposition: "fixed" } } });
+  expect(resolved).toMatchObject({
+    ok: true,
+    data: { data: { disposition: "fixed" } },
+  });
 };
 
 const findingDisposition = (store: TaskStore, taskId: string, findingId: string) => {
@@ -1307,7 +1428,10 @@ test("policy preview is pure and closure requires every applicable evidence type
     assessment: assessment(),
   });
   expect(preview.ok).toBe(true);
-  expect(store.readTask(task.data[0].id)).toMatchObject({ ok: true, data: task.data[0] });
+  expect(store.readTask(task.data[0].id)).toMatchObject({
+    ok: true,
+    data: task.data[0],
+  });
   const assessed = core.policy({
     schemaVersion: 1,
     action: "assess",
@@ -1392,15 +1516,16 @@ test("an applicable approved limitation satisfies only its permitted requirement
       workspaceId: workspace.data.id,
       scope: task.data.intent.data.scope,
       presented: "accept",
-      approvedContent: "accept",
       contentRefs: [],
     },
     response: "approved" as const,
     requirementIds: [requirement.id],
     revoked: null,
-    consumption: null,
   };
-  const decision = { ...decisionBase, digest: decisionDigest(decisionBase) } as any;
+  const decision = {
+    ...decisionBase,
+    digest: decisionDigest(decisionBase),
+  } as any;
   const changed = store.mutateTask(task.data.id, task.data.revision, (current, mutation) =>
     success(mutation.revision, null, {
       ...current,
@@ -1414,7 +1539,6 @@ test("an applicable approved limitation satisfies only its permitted requirement
             host: "workit_cli",
             session: null,
             workerId: null,
-            receipts: [],
           },
           data: decision,
         },
@@ -1434,7 +1558,10 @@ test("an applicable approved limitation satisfies only its permitted requirement
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: requirement.id, status: "accepted_limitation" }),
+        expect.objectContaining({
+          requirementId: requirement.id,
+          status: "accepted_limitation",
+        }),
       ]),
     },
   });
@@ -1478,13 +1605,11 @@ test("a limitation excluding part of a requirement scope cannot bypass that requ
       workspaceId: workspace.data.id,
       scope: scope({ exclusions: ["secret"] }),
       presented: "accept",
-      approvedContent: "accept",
       contentRefs: [],
     },
     response: "approved" as const,
     requirementIds: [requirement.id],
     revoked: null,
-    consumption: null,
   };
   const decision = { ...base, digest: decisionDigest(base) } as any;
   const changed = store.mutateTask(taskId, assessedTask.data.revision, (current, mutation) =>
@@ -1500,7 +1625,6 @@ test("a limitation excluding part of a requirement scope cannot bypass that requ
             host: "workit_cli",
             session: null,
             workerId: null,
-            receipts: [],
           },
           data: decision,
         },
@@ -1508,12 +1632,20 @@ test("a limitation excluding part of a requirement scope cannot bypass that requ
     }),
   );
   expect(changed.ok).toBe(true);
-  const view = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "full" });
+  const view = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId,
+    view: "full",
+  });
   expect(view).toMatchObject({
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: requirement.id, status: "unsatisfied" }),
+        expect.objectContaining({
+          requirementId: requirement.id,
+          status: "unsatisfied",
+        }),
       ]),
     },
   });
@@ -1530,10 +1662,30 @@ test("a passing repository check does not satisfy an untested behavior requireme
   const behavior = assessment({
     signals: {
       ...assessment().signals,
-      approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
-      productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
-      behaviorChange: { value: true, basis: "observed", reason: "behavior", refs: [ref()] },
-      mechanicalLowRisk: { value: false, basis: "inferred", reason: "not mechanical", refs: [] },
+      approachUnknown: {
+        value: false,
+        basis: "inferred",
+        reason: "known",
+        refs: [],
+      },
+      productChoiceOpen: {
+        value: false,
+        basis: "inferred",
+        reason: "settled",
+        refs: [],
+      },
+      behaviorChange: {
+        value: true,
+        basis: "observed",
+        reason: "behavior",
+        refs: [ref()],
+      },
+      mechanicalLowRisk: {
+        value: false,
+        basis: "inferred",
+        reason: "not mechanical",
+        refs: [],
+      },
     },
   });
   const assessed = core.policy({
@@ -1666,7 +1818,10 @@ test("a dismissed finding stays dismissed without a tree move", () => {
     evidenceIds: [(basis.data as { id: string }).id],
     decisionIds: [],
   });
-  expect(dismissed).toMatchObject({ ok: true, data: { data: { disposition: "dismissed" } } });
+  expect(dismissed).toMatchObject({
+    ok: true,
+    data: { data: { disposition: "dismissed" } },
+  });
   task = store.readTask(taskId);
   if (!task.ok) throw new Error(task.error);
   const noted = core.evidence({

@@ -31,7 +31,6 @@ const observationVerifier = (): NativeWorkerVerifier => ({
       host: actualCaller.host,
       session: expected.session,
       workerId: expected.workerId,
-      receipts: [{ kind: "host", host: actualCaller.host, handle: "native-event" }],
     }),
 });
 
@@ -99,7 +98,10 @@ const current = (lead: ReturnType<typeof active>) => {
 const helperCore = (lead: ReturnType<typeof active>, workerId: string) =>
   new WorkitCore(
     lead.store,
-    context(lead.root, { workerId, caller: caller({ actor: "worker-session" }) }),
+    context(lead.root, {
+      workerId,
+      caller: caller({ actor: "worker-session" }),
+    }),
   );
 
 test("a pinned helper defaults its evidence binding to the pin", () => {
@@ -156,19 +158,39 @@ test("a pinned helper defaults its evidence binding to the pin", () => {
 
 test("findingVerificationPasses unifies the fixed-finding predicate", () => {
   expect(
-    findingVerificationPasses(null, { kind: "check", candidateId: "c1", status: "passed" }),
+    findingVerificationPasses(null, {
+      kind: "check",
+      candidateId: "c1",
+      status: "passed",
+    }),
   ).toBe(true);
   expect(
-    findingVerificationPasses("c1", { kind: "review", candidateId: "c1", status: "passed" }),
+    findingVerificationPasses("c1", {
+      kind: "review",
+      candidateId: "c1",
+      status: "passed",
+    }),
   ).toBe(true);
   expect(
-    findingVerificationPasses("c1", { kind: "check", candidateId: "c2", status: "passed" }),
+    findingVerificationPasses("c1", {
+      kind: "check",
+      candidateId: "c2",
+      status: "passed",
+    }),
   ).toBe(true);
   expect(
-    findingVerificationPasses(null, { kind: "artifact", candidateId: null, status: "passed" }),
+    findingVerificationPasses(null, {
+      kind: "artifact",
+      candidateId: null,
+      status: "passed",
+    }),
   ).toBe(false);
   expect(
-    findingVerificationPasses(null, { kind: "check", candidateId: null, status: "failed" }),
+    findingVerificationPasses(null, {
+      kind: "check",
+      candidateId: null,
+      status: "failed",
+    }),
   ).toBe(false);
 });
 

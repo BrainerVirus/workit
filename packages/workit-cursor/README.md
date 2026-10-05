@@ -45,13 +45,13 @@ npx @brainervirus/workit-cli init
 
 ## What it provides
 
-- MCP server exposing exactly the eight shared operation families: `workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, and `workit_state`.
+- MCP server exposing the seven shared operation families: `workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, and `workit_state` (read-only for unattested callers; mutations run through `node_modules/.bin/workit <family> <action> --json [--actor <session-id>]`).
 - One bounded native hook executable for session context, recognized product-write and shell interception, and native subagent lifecycle observations.
 - Eleven canonical `workit-*` method skills and the `workit-contract` rule.
 
 ## Host limitations
 
-Cursor maps shared Workit operations through the shared MCP transport. AskQuestion remains policy-only (`agent_guided`), session start and compaction are non-blocking, and arbitrary shell writes, Tab edits, and exact subagent stop identity are unavailable. Known Write/Edit/Delete targets are enforced only when the documented Cursor hook inputs prove them. Native subagent delegation is read-only for reviewer/investigator assignments; implementer delegation is unavailable because Cursor exposes no attested writer identity or stable child-stop identity.
+Cursor maps shared Workit operations through the shared MCP transport. AskQuestion remains policy-only (`agent_guided`), session start and compaction are non-blocking, and arbitrary shell writes, Tab edits, and exact subagent stop identity are unavailable. Known Write/Edit/Delete targets are enforced only when the documented Cursor hook inputs prove them. Native subagent delegation is read-only for reviewer/investigator assignments; implementer delegation is unavailable because Cursor exposes no stable child-stop identity.
 
 ## Configuration
 
@@ -73,8 +73,8 @@ The runtime runs from `@latest` with `--prefer-online` and `--min-release-age=0`
 
 ## Capability boundaries
 
-- Authority-sensitive MCP mutations require an attested caller. A standalone or ordinary Cursor launch stays usable for read-only inspection and reports `capability_unavailable` for authority mutations.
-- Native hook enforcement is limited to documented inputs and blocking behavior. The plugin does not claim a `beforeMCPExecution` hook, cross-process receipts, delegation tokens, or automatic compaction restoration.
+- MCP is read-only for unattested callers: a standalone or ordinary Cursor launch stays usable for inspection and reports `capability_unavailable` for mutations, which run through the CLI instead.
+- Native hook enforcement is limited to documented inputs and blocking behavior. The plugin does not claim a `beforeMCPExecution` hook, delegation tokens, or automatic compaction restoration.
 
 ## Plugin layout
 

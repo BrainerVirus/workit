@@ -79,14 +79,6 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
   perEventCost: "npx-network",
   capabilities: [
     {
-      name: "interactive_decision",
-      surface: "AskQuestion",
-      refs: ["AskQuestion"],
-      requires: [],
-      assurance: "agent_guided",
-      reason: "Cursor does not expose AskQuestion answers to Workit hooks or MCP",
-    },
-    {
       name: "known_product_writes",
       surface: "preToolUse",
       refs: ["preToolUse"],

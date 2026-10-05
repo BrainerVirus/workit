@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -23,16 +23,14 @@ import {
 setDefaultTimeout(60_000);
 
 let configDir = "";
-const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+let configHome: ConfigHome;
 const original = { ...forgeDeps };
 beforeAll(() => {
-  configDir = mkdtempSync(path.join(os.tmpdir(), "wk-pr-config-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  configHome = useConfigHome("wk-pr-config-");
+  configDir = configHome.configDir;
 });
 afterAll(() => {
-  if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-  rmSync(configDir, { recursive: true, force: true });
+  configHome.restore();
 });
 
 const repos: ForgeRepo[] = [];
@@ -93,6 +91,7 @@ const githubBase = (): Record<string, Reply> => ({
   "GET repos/o/r": fixture("github/repo.json"),
   "GET repos/o/r/branches/main": fixture("github/branch-main.json"),
   "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
+  "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
 });
 
 const GL = "projects/group%2Fproject";
@@ -246,6 +245,14 @@ test("pr create: usage errors exit 2", async () => {
 // ---------------------------------------------------------------------------
 // pr merge
 
+// Merging needs an explicit grant (D4: the default ceiling stops at verified, ready).
+const grantMerge = (
+  repo: ForgeRepo,
+  provider: "github" | "gitlab" = "github",
+  vcs: Record<string, unknown> = {},
+) =>
+  workspace(repo, { vcs: { provider, account: "octo", ...vcs }, autonomy: { merge: "verified" } });
+
 const mergeRoutes = (
   status: string,
   merge: Reply = JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" }),
@@ -290,8 +297,72 @@ test("pr merge: given a workspace without the merge grant, then grant_required n
   expect(result.json().unblock).toContain("workit grant set w merge=verified");
 });
 
+test("pr merge: grants written to a redirected config dir (WORKFLOW_TOOLKIT_CONFIG_DIR=./x) are ignored and merge is denied", async () => {
+  const { repo, runner } = setup("github", {
+    ...mergeRoutes("github/pr-passing.json"),
+    "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
+  });
+  // The real user config has no merge grant; an agent writes one elsewhere
+  // and points the config override at it.
+  workspace(repo, { vcs: { provider: "github", account: "octo" } });
+  // Outside the checkout so the verdict stays on a clean tree.
+  const forged = path.join(configHome.home, "x");
+  mkdirSync(forged, { recursive: true });
+  for (const name of ["workspaces.json", "config.json"])
+    writeFileSync(path.join(forged, name), readFileSync(path.join(configDir, name), "utf8"));
+  const forgedEntry = JSON.parse(readFileSync(path.join(forged, "workspaces.json"), "utf8"));
+  forgedEntry.workspaces[0].autonomy = { merge: true };
+  writeFileSync(path.join(forged, "workspaces.json"), JSON.stringify(forgedEntry));
+  await verdict(repo);
+  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = forged;
+  try {
+    const result = await run(["pr", "merge", "--json"], repo.cwd);
+    expect(result.code).toBe(3);
+    expect(result.json()).toMatchObject({ code: "blocked", data: { reason: "grant_required" } });
+    expect(result.json().error).toContain("grants are read only from");
+    expect(writes(runner.calls)).toEqual([]);
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+  }
+});
+
+test("pr merge: HOME=<fake> with a forged grants file does not grant merge", async () => {
+  const { repo, runner } = setup("github", {
+    ...mergeRoutes("github/pr-passing.json"),
+    "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
+  });
+  workspace(repo, { vcs: { provider: "github", account: "octo" } });
+  // The agent fakes a home whose ~/.config/workit grants merge, and points
+  // both HOME and the config override at it.
+  const fake = path.join(configHome.home, "fake-home");
+  const forged = path.join(fake, ".config", "workit");
+  mkdirSync(forged, { recursive: true });
+  for (const name of ["workspaces.json", "config.json"])
+    writeFileSync(path.join(forged, name), readFileSync(path.join(configDir, name), "utf8"));
+  const forgedEntry = JSON.parse(readFileSync(path.join(forged, "workspaces.json"), "utf8"));
+  forgedEntry.workspaces[0].autonomy = { merge: true };
+  writeFileSync(path.join(forged, "workspaces.json"), JSON.stringify(forgedEntry));
+  await verdict(repo);
+  const saved = { HOME: process.env.HOME, CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG };
+  process.env.HOME = fake;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = forged;
+  try {
+    const result = await run(["pr", "merge", "--json"], repo.cwd);
+    expect(result.code).toBe(3);
+    expect(result.json()).toMatchObject({ code: "blocked", data: { reason: "grant_required" } });
+    expect(writes(runner.calls)).toEqual([]);
+  } finally {
+    process.env.HOME = saved.HOME;
+    process.env.WORKFLOW_TOOLKIT_CONFIG = saved.CONFIG;
+  }
+});
+
 test("pr merge: a PR that is not READY is refused with its next action", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-failing-thread.json"));
+  grantMerge(repo);
   await verdict(repo);
   const result = await run(["pr", "merge", "--json"], repo.cwd);
   expect(result.code).toBe(3);
@@ -301,6 +372,7 @@ test("pr merge: a PR that is not READY is refused with its next action", async (
 
 test("pr merge: given READY but no accepted verdict, then NEEDS_VERDICT; the author's own verdict does not count", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMerge(repo);
   const none = await run(["pr", "merge", "--json"], repo.cwd);
   expect(none.code).toBe(3);
   expect(none.json().error).toContain("NEEDS_VERDICT");
@@ -317,6 +389,7 @@ test("pr merge: given READY but no accepted verdict, then NEEDS_VERDICT; the aut
 
 test("pr merge: READY + accepted verdict merges with the head SHA guard and records pr.merged", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMerge(repo);
   await verdict(repo);
   const result = await run(["pr", "merge", "--method", "squash", "--json"], repo.cwd);
   expect(result.code).toBe(0);
@@ -327,7 +400,7 @@ test("pr merge: READY + accepted verdict merges with the head SHA guard and reco
     method: "squash",
     mergeSha: repo.base,
     verdict: { required: true, accepted: true },
-    grant: { source: "host_authority" },
+    grant: { source: "autonomy" },
     deletedBranch: false,
   });
   expect(writes(runner.calls)).toEqual([
@@ -363,6 +436,7 @@ test("pr merge: given the remote head advanced after the gates, then the forge's
       replyError("gh: Head branch was modified. Review and try the merge again. (HTTP 409)"),
     ),
   );
+  grantMerge(repo);
   await verdict(repo);
   const result = await run(["pr", "merge", "--json"], repo.cwd);
   expect(result.code).toBe(3);
@@ -372,6 +446,7 @@ test("pr merge: given the remote head advanced after the gates, then the forge's
 
 test("pr merge: a PR head that is not the verified local head is refused before merging", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMerge(repo);
   await verdict(repo);
   // The local branch moved on (the verdict was for the old head, which the PR still shows).
   writeFileSync(path.join(repo.cwd, "later.txt"), "later\n");
@@ -415,6 +490,7 @@ test("pr merge (GitLab): READY MR merges with sha= and squash; rebase is not a G
       return gitlabMr({ state: "merged", squash_commit_sha: "{{BASE}}" });
     },
   });
+  grantMerge(repo, "gitlab");
   await verdict(repo);
   const rebase = await run(["pr", "merge", "--method", "rebase", "--json"], repo.cwd);
   expect(rebase.code).toBe(2);
@@ -438,6 +514,7 @@ test("pr merge --delete-branch: a develop -> main release PR under gitflow is re
     [GH_STATUS]: release,
     "PUT repos/o/r/pulls/12/merge": "{}",
   });
+  grantMerge(repo);
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
@@ -461,6 +538,7 @@ test("pr merge --delete-branch: a fork PR whose head branch is named like the ba
     [GH_STATUS]: forkRelease,
     "PUT repos/o/r/pulls/12/merge": "{}",
   });
+  grantMerge(repo);
   const result = await run(["pr", "merge", "--pr", "12", "--delete-branch", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().error).toContain("is the PR base");
@@ -473,7 +551,7 @@ test("pr merge --delete-branch (GitLab): a fast-forward promotion from the defau
     [`GET ${GL}/merge_requests/12`]: gitlabMr({ source_branch: "Staging", target_branch: "main" }),
     [`PUT ${GL}/merge_requests/12/merge`]: "{}",
   });
-  workspace(repo, { vcs: { provider: "gitlab", defaultTargetBranch: "staging" } });
+  grantMerge(repo, "gitlab", { defaultTargetBranch: "staging" });
   const result = await run(["pr", "merge", "--pr", "12", "--delete-branch", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().error).toContain("is the default target branch");

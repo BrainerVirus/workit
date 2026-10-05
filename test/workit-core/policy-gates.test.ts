@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -41,15 +40,20 @@ const assess = (core: WorkitCore, taskId: string, signals: Assessment["signals"]
   return result;
 };
 
-const fileDigest = (root: string, path: string) =>
-  createHash("sha256")
-    .update(readFileSync(join(root, path)))
-    .digest("hex");
-
 const behavioralSignals = (): Assessment["signals"] => ({
   ...mechanicalSignals(),
-  behaviorChange: { value: true, basis: "observed", reason: "behavior", refs: [ref()] },
-  mechanicalLowRisk: { value: false, basis: "inferred", reason: "behavioral", refs: [] },
+  behaviorChange: {
+    value: true,
+    basis: "observed",
+    reason: "behavior",
+    refs: [ref()],
+  },
+  mechanicalLowRisk: {
+    value: false,
+    basis: "inferred",
+    reason: "behavioral",
+    refs: [],
+  },
 });
 
 const startAndAssess = (root: string, signals: Parameters<typeof assess>[2], actor = "test") => {
@@ -68,14 +72,49 @@ const startAndAssess = (root: string, signals: Parameters<typeof assess>[2], act
 };
 
 const mechanicalSignals = (): Assessment["signals"] => ({
-  approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
-  productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
-  behaviorChange: { value: false, basis: "inferred", reason: "mechanical", refs: [] },
-  mechanicalLowRisk: { value: true, basis: "inferred", reason: "mechanical", refs: [] },
-  durableAgreementNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
-  coordinationPlanNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
+  approachUnknown: {
+    value: false,
+    basis: "inferred",
+    reason: "known",
+    refs: [],
+  },
+  productChoiceOpen: {
+    value: false,
+    basis: "inferred",
+    reason: "settled",
+    refs: [],
+  },
+  behaviorChange: {
+    value: false,
+    basis: "inferred",
+    reason: "mechanical",
+    refs: [],
+  },
+  mechanicalLowRisk: {
+    value: true,
+    basis: "inferred",
+    reason: "mechanical",
+    refs: [],
+  },
+  durableAgreementNeeded: {
+    value: false,
+    basis: "inferred",
+    reason: "none",
+    refs: [],
+  },
+  coordinationPlanNeeded: {
+    value: false,
+    basis: "inferred",
+    reason: "none",
+    refs: [],
+  },
   helperUseful: { value: false, basis: "inferred", reason: "none", refs: [] },
-  testFirstPractical: { value: false, basis: "inferred", reason: "none", refs: [] },
+  testFirstPractical: {
+    value: false,
+    basis: "inferred",
+    reason: "none",
+    refs: [],
+  },
 });
 
 const policyOf = (store: TaskStore, taskId: string) => {
@@ -83,59 +122,6 @@ const policyOf = (store: TaskStore, taskId: string) => {
   if (!task.ok || !task.data.policy) throw new Error("policy missing");
   return task.data.policy;
 };
-
-test("before:write blocks writer.acquire until the spec lands", () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-write-gate-"));
-  try {
-    writeFileSync(join(root, "a.ts"), "before");
-    const { store, core, taskId, task, workspace } = startAndAssess(root, {
-      ...mechanicalSignals(),
-      durableAgreementNeeded: { value: true, basis: "inferred", reason: "spec needed", refs: [] },
-    });
-    const blocked = core.writer({
-      schemaVersion: 1,
-      action: "acquire",
-      taskId,
-      expectedRevision: task.revision,
-      expectedWorkspaceRevision: workspace.revision,
-      workerId: null,
-    });
-    expect(blocked).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
-    const policy = policyOf(store, taskId);
-    const spec = policy.requirements.find((item) => item.ruleId === "durable-spec")!;
-    writeFileSync(join(root, "docs-spec.md"), "spec\n");
-    const recorded = core.evidence({
-      schemaVersion: 1,
-      action: "record",
-      taskId,
-      evidence: {
-        kind: "artifact",
-        claim: "spec recorded",
-        requirementIds: [spec.id],
-        result: "passed",
-        summary: "spec written",
-        refs: [{ kind: "file", path: "docs-spec.md", digest: fileDigest(root, "docs-spec.md") }],
-        exitCode: 0,
-        reviewContext: null,
-      },
-    });
-    expect(recorded.ok).toBe(true);
-    const reacquired = store.readTask(taskId);
-    const reworkspace = store.readWorkspace();
-    if (!reacquired.ok || !reworkspace.ok || !reworkspace.data) throw new Error("state missing");
-    const fresh = core.writer({
-      schemaVersion: 1,
-      action: "acquire",
-      taskId,
-      expectedRevision: reacquired.data.revision,
-      expectedWorkspaceRevision: reworkspace.data.revision,
-      workerId: null,
-    });
-    expect(fresh).toMatchObject({ ok: true });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
 
 test("close ignores dependent_action gates", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-close-partition-"));
@@ -177,7 +163,10 @@ test("close ignores dependent_action gates", () => {
       summary: "mechanical change reviewed",
       decisionIds: [],
     });
-    expect(closed).toMatchObject({ ok: true, data: { closure: { outcome: "verified" } } });
+    expect(closed).toMatchObject({
+      ok: true,
+      data: { closure: { outcome: "verified" } },
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -207,7 +196,12 @@ test("kind mismatches name the expected evidence", () => {
         },
       }).ok,
     ).toBe(true);
-    const view = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+    const view = core.task({
+      schemaVersion: 1,
+      action: "inspect",
+      taskId,
+      view: "summary",
+    });
     expect(view).toMatchObject({
       ok: true,
       data: {
@@ -238,12 +232,20 @@ test("kind mismatches name the expected evidence", () => {
         },
       }).ok,
     ).toBe(true);
-    const after = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+    const after = core.task({
+      schemaVersion: 1,
+      action: "inspect",
+      taskId,
+      view: "summary",
+    });
     expect(after).toMatchObject({
       ok: true,
       data: {
         requirements: expect.arrayContaining([
-          expect.objectContaining({ requirementId: cleanup.id, status: "satisfied" }),
+          expect.objectContaining({
+            requirementId: cleanup.id,
+            status: "satisfied",
+          }),
         ]),
       },
     });
@@ -280,7 +282,12 @@ test("agent-reported RED then GREEN is a note: it never satisfies a close testin
     writeFileSync(join(root, "a.ts"), "after");
     expect(record("passed", "green on new candidate").ok).toBe(true);
     const testingOf = () => {
-      const view = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+      const view = core.task({
+        schemaVersion: 1,
+        action: "inspect",
+        taskId,
+        view: "summary",
+      });
       if (!view.ok) throw new Error(view.error);
       return (view.data as { requirements: Array<{ requirementId: string }> }).requirements.find(
         (item) => item.requirementId === testing.id,
@@ -324,7 +331,11 @@ test("the same reviewer session may re-verify the same requirement", () => {
           summary: "review passed",
           refs: [],
           exitCode: 0,
-          reviewContext: { kind: "host", host: "workit_cli", handle: "reviewer" },
+          reviewContext: {
+            kind: "host",
+            host: "workit_cli",
+            handle: "reviewer",
+          },
         },
       });
     const first = captureCandidate(root, scope(), []);
@@ -334,12 +345,20 @@ test("the same reviewer session may re-verify the same requirement", () => {
     const second = captureCandidate(root, scope(), []);
     if (!second.ok) throw new Error(second.error);
     expect(review(second.data.id).ok).toBe(true);
-    const view = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+    const view = core.task({
+      schemaVersion: 1,
+      action: "inspect",
+      taskId,
+      view: "summary",
+    });
     expect(view).toMatchObject({
       ok: true,
       data: {
         requirements: expect.arrayContaining([
-          expect.objectContaining({ requirementId: reviewRequirement.id, status: "satisfied" }),
+          expect.objectContaining({
+            requirementId: reviewRequirement.id,
+            status: "satisfied",
+          }),
         ]),
       },
     });
@@ -359,7 +378,11 @@ test("dead skill routes are gone and self-review is routed", () => {
     const selfReview = policy.requirements.find((item) => item.ruleId === "self-review")!;
     expect(
       selectMethods(
-        { policyVersion: "1.0.0", inputDigest: "0".repeat(64), requirements: policy.requirements },
+        {
+          policyVersion: "1.0.0",
+          inputDigest: "0".repeat(64),
+          requirements: policy.requirements,
+        },
         [],
       ).map((method) => method.id),
     ).toContain("workit-review");

@@ -52,7 +52,13 @@ const capability = (overrides: Partial<Capability> = {}): Capability => ({
 test("a fresh-context-review capability activates the review method", () => {
   const result = selectMethods(
     policy(requirement({ ruleId: "fresh-context-review", dimension: "review" })),
-    [capability({ name: "fresh-context-review", surface: "task", assurance: "agent_guided" })],
+    [
+      capability({
+        name: "fresh-context-review",
+        surface: "task",
+        assurance: "agent_guided",
+      }),
+    ],
   );
   expect(result).toMatchObject([{ id: "workit-review", assurance: "agent_guided" }]);
   const withoutCapability = selectMethods(
@@ -65,7 +71,10 @@ test("a fresh-context-review capability activates the review method", () => {
 test("mechanical work routes existing checks to implement and self-review to review", () => {
   const result = selectMethods(
     policy(
-      requirement({ ruleId: "mechanical-existing-checks", dimension: "verification" }),
+      requirement({
+        ruleId: "mechanical-existing-checks",
+        dimension: "verification",
+      }),
       requirement({ ruleId: "self-review", dimension: "review" }),
     ),
     [capability({ name: "review", surface: "review", assurance: "enforced" })],
@@ -80,7 +89,11 @@ test("behavior change selects BDD and fresh review independently", () => {
       requirement({ ruleId: "fresh-context-review", dimension: "review" }),
     ),
     [
-      capability({ name: "testing", surface: "testing", assurance: "enforced" }),
+      capability({
+        name: "testing",
+        surface: "testing",
+        assurance: "enforced",
+      }),
       capability({ name: "review", surface: "review", assurance: "enforced" }),
     ],
   );
@@ -126,7 +139,10 @@ test("unavailable independent review remains selected with unavailable assurance
       }),
     ],
   );
-  expect(review).toMatchObject({ id: "workit-review", assurance: "unavailable" });
+  expect(review).toMatchObject({
+    id: "workit-review",
+    assurance: "unavailable",
+  });
   expect(review.reason).toContain("no second context");
 });
 
@@ -135,7 +151,10 @@ test("missing independent review capability remains an unavailable gap", () => {
     policy(requirement({ ruleId: "fresh-context-review", dimension: "review" })),
     [],
   );
-  expect(review).toMatchObject({ id: "workit-review", assurance: "unavailable" });
+  expect(review).toMatchObject({
+    id: "workit-review",
+    assurance: "unavailable",
+  });
 });
 
 test("pre-pr-cleanup selects the deslop method", () => {
@@ -150,7 +169,10 @@ test("selection has stable registry order and no duplicate methods", () => {
   const selected = selectMethods(
     policy(
       requirement({ ruleId: "self-review", dimension: "review" }),
-      requirement({ ruleId: "mechanical-existing-checks", dimension: "verification" }),
+      requirement({
+        ruleId: "mechanical-existing-checks",
+        dimension: "verification",
+      }),
       requirement({ ruleId: "behavioral-verification", dimension: "testing" }),
       requirement({ ruleId: "fresh-context-review", dimension: "review" }),
       requirement({ ruleId: "helper-usefulness", dimension: "delegation" }),
@@ -175,25 +197,16 @@ test("bootstrap defers to native host authority and mandates no Workit preamble"
   const bootstrap = invariantBootstrap();
   expect(bootstrap).toMatch(/allow\/ask\/deny/);
   expect(bootstrap).toMatch(/evade a denial/);
-  expect(bootstrap).toMatch(/never fabricate a\s+receipt/);
+  expect(bootstrap).toMatch(/never fabricate an\s+approval or verdict/);
   expect(bootstrap).not.toContain("task.start then policy.assess");
   expect(bootstrap).not.toContain("## Method");
 });
 
 test("bootstrap names every shared operation family once, as optional continuity", () => {
   const bootstrap = invariantBootstrap();
-  for (const operation of [
-    "task",
-    "policy",
-    "evidence",
-    "finding",
-    "decision",
-    "worker",
-    "writer",
-    "state",
-  ])
+  for (const operation of ["task", "policy", "evidence", "finding", "decision", "worker", "state"])
     expect(bootstrap).toContain(operation);
-  expect(bootstrap).toMatch(/a solo edit needs no task or writer/);
+  expect(bootstrap).toMatch(/a solo edit needs no task\./);
 });
 
 test("continue and ship keep lifecycle and merge authority outside the skill", () => {
@@ -217,7 +230,9 @@ test("compact task context carries selected methods and refreshes with policy", 
       evidence: [],
       requirements: [],
     }) as unknown as TaskView;
-  const unassessed = JSON.parse(compactTaskContext(view(null))) as { methods: unknown };
+  const unassessed = JSON.parse(compactTaskContext(view(null))) as {
+    methods: unknown;
+  };
   expect(unassessed.methods).toEqual([]);
   const assessed = JSON.parse(
     compactTaskContext(

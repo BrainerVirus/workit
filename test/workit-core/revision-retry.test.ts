@@ -1,23 +1,14 @@
 import { expect, test } from "bun:test";
-import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-  TaskStore,
-  WorkitCore,
-  failure,
-  standingReceiptFor,
-  success,
-  type Assessment,
-  type NativeAuthorityVerifier,
-  type OperationContext,
-} from "@/packages/workit-core/src/core";
+import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import {
   defaultLockTimeout,
   setDefaultLockTimeout,
 } from "@/packages/workit-core/src/core/store-lock";
-import { assessment, caller, scope, taskStartRequest } from "./task-fixtures";
+import { caller, scope, taskStartRequest } from "./task-fixtures";
 
 // Engine revision retry (design §0 item 14): a revision the caller omitted is
 // not a compare-and-swap request, so losing the race to another writer on it
@@ -32,17 +23,6 @@ const context = (root: string): OperationContext => ({
   now: "2026-01-01T00:00:00Z",
 });
 
-const signals = (spec: boolean): Assessment["signals"] => ({
-  approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
-  productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
-  behaviorChange: { value: false, basis: "inferred", reason: "mechanical", refs: [] },
-  mechanicalLowRisk: { value: true, basis: "inferred", reason: "mechanical", refs: [] },
-  durableAgreementNeeded: { value: spec, basis: "inferred", reason: "spec", refs: [] },
-  coordinationPlanNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
-  helperUseful: { value: false, basis: "inferred", reason: "none", refs: [] },
-  testFirstPractical: { value: false, basis: "inferred", reason: "none", refs: [] },
-});
-
 const started = () => {
   const root = mkdtempSync(join(tmpdir(), "workit-retry-"));
   writeFileSync(join(root, "a.ts"), "before");
@@ -52,16 +32,6 @@ const started = () => {
   if (!result.ok) throw new Error(result.error);
   const taskId = (result.data as { id: string }).id;
   return { root, store, core, taskId };
-};
-
-const assess = (core: WorkitCore, taskId: string, spec: boolean) => {
-  const result = core.policy({
-    schemaVersion: 1,
-    action: "assess",
-    taskId,
-    assessment: assessment({ signals: signals(spec) }),
-  });
-  if (!result.ok) throw new Error(result.error);
 };
 
 const progress = (taskId: string, extra: Record<string, unknown> = {}) => ({
@@ -105,7 +75,9 @@ test("Given a competing write between read and commit, When the caller omitted r
     (call) => call === 1,
   );
   const result = core.task(
-    progress(taskId, { progress: { summary: "mine", nextAction: null, blockers: [] } }),
+    progress(taskId, {
+      progress: { summary: "mine", nextAction: null, blockers: [] },
+    }),
   );
   expect(result).toMatchObject({ ok: true });
   expect(probe.attempts()).toBe(2);
@@ -139,29 +111,12 @@ test("Given a stale explicit expectedRevision and no contention, When the call r
     () => false,
   );
   const result = core.task(
-    progress(taskId, { expectedRevision: "00000000-0000-4000-8000-000000000000" }),
+    progress(taskId, {
+      expectedRevision: "00000000-0000-4000-8000-000000000000",
+    }),
   );
   expect(result).toMatchObject({ ok: false, code: "revision_conflict" });
   expect(probe.attempts()).toBe(1);
-});
-
-test("Given a requirement that lands between attempts, When the retry re-checks policy, Then it returns the policy error, not a stale success", () => {
-  const { root, store, core, taskId } = started();
-  assess(core, taskId, false);
-  const competitor = new WorkitCore(new TaskStore(root), context(root));
-  const probe = interleave(
-    store,
-    // The competing reassessment adds a before:write durable-spec requirement.
-    () => assess(competitor, taskId, true),
-    (call) => call === 1,
-  );
-  const result = core.writer({ schemaVersion: 1, action: "acquire", taskId });
-  expect(result).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
-  // The gate is re-evaluated before any second commit attempt.
-  expect(probe.attempts()).toBe(1);
-  const workspace = store.readWorkspace();
-  if (!workspace.ok) throw new Error(workspace.error);
-  expect(workspace.data?.writer ?? null).toBeNull();
 });
 
 test("Given a competing write on every attempt, When the caller omitted revisions, Then the engine stops after a bounded number of attempts with busy", () => {
@@ -243,11 +198,15 @@ test("Given a first attempt slower than the lock budget, When it loses the race,
 const startOther = (root: string) => {
   const other = new WorkitCore(new TaskStore(root), context(root));
   expect(
-    other.task({ schemaVersion: 1, action: "start", intent: taskStartRequest().intent }).ok,
+    other.task({
+      schemaVersion: 1,
+      action: "start",
+      intent: taskStartRequest().intent,
+    }).ok,
   ).toBe(true);
 };
 
-test("Given an explicit current expectedRevision and an unrelated task start, When writer.acquire commits, Then the engine-filled workspace revision is retried and the call succeeds", () => {
+test("Given an explicit current expectedRevision and an unrelated task start, When a pause commits, Then the engine-filled workspace revision is retried and the call succeeds", () => {
   const { root, store, core, taskId } = started();
   const task = store.readTask(taskId);
   if (!task.ok) throw new Error(task.error);
@@ -256,17 +215,18 @@ test("Given an explicit current expectedRevision and an unrelated task start, Wh
     () => startOther(root),
     (call) => call === 1,
   );
-  const result = core.writer({
+  const result = core.task({
     schemaVersion: 1,
-    action: "acquire",
+    action: "pause",
     taskId,
+    reason: "coupled retry probe",
     expectedRevision: task.data.revision,
   });
   expect(result).toMatchObject({ ok: true });
   expect(probe.attempts()).toBe(2);
 });
 
-test("Given an explicit current expectedWorkspaceRevision and a competing task write, When writer.acquire commits, Then the engine-filled task revision is retried and the call succeeds", () => {
+test("Given an explicit current expectedWorkspaceRevision and a competing task write, When a pause commits, Then the engine-filled task revision is retried and the call succeeds", () => {
   const { root, store, core, taskId } = started();
   const workspace = store.readWorkspace();
   if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
@@ -278,17 +238,18 @@ test("Given an explicit current expectedWorkspaceRevision and a competing task w
     },
     (call) => call === 1,
   );
-  const result = core.writer({
+  const result = core.task({
     schemaVersion: 1,
-    action: "acquire",
+    action: "pause",
     taskId,
+    reason: "coupled retry probe",
     expectedWorkspaceRevision: workspace.data.revision,
   });
   expect(result).toMatchObject({ ok: true });
   expect(probe.attempts()).toBe(2);
 });
 
-test("Given an explicit expectedWorkspaceRevision that a task start invalidates, When writer.acquire commits, Then revision_conflict reports the workspace revisions without retry", () => {
+test("Given an explicit expectedWorkspaceRevision that a task start invalidates, When a pause commits, Then revision_conflict reports the workspace revisions without retry", () => {
   const { root, store, core, taskId } = started();
   const workspace = store.readWorkspace();
   if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
@@ -297,10 +258,11 @@ test("Given an explicit expectedWorkspaceRevision that a task start invalidates,
     () => startOther(root),
     (call) => call === 1,
   );
-  const result = core.writer({
+  const result = core.task({
     schemaVersion: 1,
-    action: "acquire",
+    action: "pause",
     taskId,
+    reason: "coupled retry probe",
     expectedWorkspaceRevision: workspace.data.revision,
   });
   expect(result).toMatchObject({
@@ -333,7 +295,6 @@ test("Given a changed import source, When the import omits revisions, Then the s
       schemaVersion: 1,
       action: "import",
       bundle: exportBundle(),
-      authorityRefs: [],
     }),
   ).toMatchObject({ ok: true });
   expect(source.core.task(progress(source.taskId)).ok).toBe(true);
@@ -348,7 +309,6 @@ test("Given a changed import source, When the import omits revisions, Then the s
     schemaVersion: 1,
     action: "import",
     bundle: changed,
-    authorityRefs: [],
   });
   expect(result).toMatchObject({
     ok: false,
@@ -356,66 +316,6 @@ test("Given a changed import source, When the import omits revisions, Then the s
     error: expect.stringContaining("source task export changed"),
   });
   expect(imports).toBe(1);
-});
-
-const receiptVerifier = (calls: unknown[]): NativeAuthorityVerifier => ({
-  verifyDecision: (input: Record<string, unknown>) => {
-    calls.push(input);
-    return success(null, null, {
-      kind: "host_observed" as const,
-      host: "workit_cli" as const,
-      session: { kind: "host" as const, host: "workit_cli" as const, handle: "test" },
-      workerId: null,
-      receipts: [{ kind: "host" as const, host: "workit_cli" as const, handle: "receipt-once" }],
-    });
-  },
-  verifyAction: () => failure("permission_denied", "not used"),
-});
-
-test("Given a competing write during a receipted decision, When the caller omitted revisions, Then the decision is recorded once and the receipt is not lost", () => {
-  const { root, store, taskId } = started();
-  const calls: unknown[] = [];
-  const core = new WorkitCore(store, { ...context(root), nativeAuthority: receiptVerifier(calls) });
-  const workspace = store.readWorkspace();
-  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
-  const task = store.readTask(taskId);
-  if (!task.ok) throw new Error(task.error);
-  const competitor = new WorkitCore(new TaskStore(root), context(root));
-  const probe = interleave(
-    store,
-    () => {
-      expect(competitor.task(progress(taskId)).ok).toBe(true);
-    },
-    (call) => call === 1,
-  );
-  const result = core.observeDecision(
-    {
-      schemaVersion: 1,
-      action: "record",
-      taskId,
-      purpose: "action",
-      binding: {
-        taskId,
-        workspaceId: workspace.data.id,
-        scope: task.data.intent.data.scope,
-        presented: "run the bounded action",
-        approvedContent: "run the bounded action",
-        contentRefs: [],
-      },
-      response: "approved",
-      requirementIds: [],
-    },
-    { kind: "decision" },
-  );
-  expect(result).toMatchObject({
-    ok: true,
-    data: { provenance: { kind: "host_observed", receipts: [{ handle: "receipt-once" }] } },
-  });
-  expect(probe.attempts()).toBe(2);
-  expect(calls.length).toBe(1);
-  const after = store.readTask(taskId);
-  if (!after.ok) throw new Error(after.error);
-  expect(after.data.decisions.length).toBe(1);
 });
 
 const closeTask = (root: string, taskId: string) => {
@@ -435,7 +335,11 @@ const closeTask = (root: string, taskId: string) => {
 const decisionRequest = (
   store: TaskStore,
   taskId: string,
-  overrides: { purpose?: string; response?: string; binding?: Record<string, unknown> } = {},
+  overrides: {
+    purpose?: string;
+    response?: string;
+    binding?: Record<string, unknown>;
+  } = {},
 ) => {
   const task = store.readTask(taskId);
   const workspace = store.readWorkspace();
@@ -450,7 +354,6 @@ const decisionRequest = (
       workspaceId: workspace.data.id,
       scope: task.data.intent.data.scope,
       presented: "run the bounded action",
-      approvedContent: "run the bounded action",
       contentRefs: [],
       ...overrides.binding,
     },
@@ -459,28 +362,48 @@ const decisionRequest = (
   };
 };
 
-for (const kind of ["receipted", "stated", "plain"] as const)
+test("Given a competing write during a decision, When the caller omitted revisions, Then the decision is recorded once", () => {
+  const { root, store, core, taskId } = started();
+  const request = decisionRequest(store, taskId);
+  const competitor = new WorkitCore(new TaskStore(root), context(root));
+  const probe = interleave(
+    store,
+    () => {
+      expect(competitor.task(progress(taskId)).ok).toBe(true);
+    },
+    (call) => call === 1,
+  );
+  const result = core.decision(request);
+  expect(result).toMatchObject({
+    ok: true,
+    data: { provenance: { kind: "agent_reported" } },
+  });
+  expect(probe.attempts()).toBe(2);
+  const after = store.readTask(taskId);
+  if (!after.ok) throw new Error(after.error);
+  expect(after.data.decisions.length).toBe(1);
+});
+
+for (const kind of ["stated", "plain"] as const)
   test(`Given the task closes between attempts, When a ${kind} decision retries, Then it is refused and nothing lands on the closed task`, () => {
     const { root, store, taskId } = started();
-    const core = new WorkitCore(store, { ...context(root), nativeAuthority: receiptVerifier([]) });
+    const core = new WorkitCore(store, context(root));
     const probe = interleave(
       store,
       () => closeTask(root, taskId),
       (call) => call === 1,
     );
-    const result =
-      kind === "receipted"
-        ? core.observeDecision(decisionRequest(store, taskId), { kind: "decision" })
-        : kind === "stated"
-          ? core.observeDecision(
-              decisionRequest(store, taskId, {
-                purpose: "design",
-                response: "stated",
-                binding: { statedChoice: { ref: "question-call-1", text: "take the second" } },
-              }),
-              undefined,
-            )
-          : core.decision(decisionRequest(store, taskId));
+    const result = core.decision(
+      kind === "stated"
+        ? decisionRequest(store, taskId, {
+            purpose: "design",
+            response: "stated",
+            binding: {
+              statedChoice: { ref: "question-call-1", text: "take the second" },
+            },
+          })
+        : decisionRequest(store, taskId),
+    );
     expect(result).toMatchObject({ ok: false, code: "invalid_transition" });
     expect(probe.attempts()).toBe(1);
     const after = store.readTask(taskId);
@@ -512,130 +435,14 @@ test("Given a retry whose re-read misses the closure, When the decision commits,
     if (commits === 1) spoof = true;
     return result;
   };
-  expect(core.decision(request)).toMatchObject({ ok: false, code: "invalid_transition" });
+  expect(core.decision(request)).toMatchObject({
+    ok: false,
+    code: "invalid_transition",
+  });
   expect(commits).toBe(2);
   const after = readTask(taskId);
   if (!after.ok) throw new Error(after.error);
   expect(after.data.decisions).toEqual([]);
-});
-
-const gitRepo = () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-retry-standing-"));
-  for (const args of [
-    ["init", "-q", "-b", "main"],
-    ["config", "user.email", "test@example.invalid"],
-    ["config", "user.name", "Workit Test"],
-  ])
-    spawnSync("git", args, { cwd: root });
-  writeFileSync(join(root, "base.txt"), "base\n");
-  spawnSync("git", ["add", "base.txt"], { cwd: root });
-  spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
-  return root;
-};
-
-const withStanding = (
-  run: (value: {
-    root: string;
-    configDir: string;
-    store: TaskStore;
-    core: WorkitCore;
-    taskId: string;
-  }) => void,
-) => {
-  const root = gitRepo();
-  const configDir = mkdtempSync(join(tmpdir(), "workit-retry-cfg-"));
-  const rule = (classes: string[]) =>
-    writeFileSync(
-      join(configDir, "workspaces.json"),
-      JSON.stringify({
-        workspaces: [
-          { name: "t", glob: `${root}/**`, autoApprove: classes, vcs: { provider: "github" } },
-        ],
-      }),
-    );
-  rule(["commit"]);
-  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = configDir;
-  try {
-    const store = new TaskStore(root);
-    const core = new WorkitCore(store, context(root));
-    const begun = core.task(taskStartRequest());
-    if (!begun.ok) throw new Error(begun.error);
-    const taskId = (begun.data as { id: string }).id;
-    expect(core.writer({ schemaVersion: 1, action: "acquire", taskId }).ok).toBe(true);
-    run({ root, configDir, store, core, taskId });
-  } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous;
-    rmSync(root, { recursive: true, force: true });
-    rmSync(configDir, { recursive: true, force: true });
-  }
-};
-
-const standingRequest = (store: TaskStore, taskId: string) =>
-  decisionRequest(store, taskId, {
-    binding: {
-      presented: "auto",
-      approvedContent: JSON.stringify({
-        operation: "git.commit",
-        payload: { message: "auto one", resolved: { branch: "main" } },
-      }),
-      standing: { workspace: "t", class: "commit" },
-    },
-  });
-
-test("Given the standing rule is removed between attempts, When a standing decision retries, Then it is re-verified and not recorded", () => {
-  withStanding(({ root, configDir, store, core, taskId }) => {
-    const competitor = new WorkitCore(new TaskStore(root), context(root));
-    const probe = interleave(
-      store,
-      () => {
-        expect(competitor.task(progress(taskId)).ok).toBe(true);
-        writeFileSync(join(configDir, "workspaces.json"), JSON.stringify({ workspaces: [] }));
-      },
-      (call) => call === 1,
-    );
-    const result = core.observeStandingDecision(standingRequest(store, taskId));
-    expect(result).toMatchObject({ ok: false, code: "permission_denied" });
-    expect(probe.attempts()).toBe(1);
-    const after = store.readTask(taskId);
-    if (!after.ok) throw new Error(after.error);
-    expect(after.data.decisions).toEqual([]);
-  });
-});
-
-test("Given the standing rule changes but stays live between attempts, When a standing decision retries, Then it records the re-verified provenance", () => {
-  withStanding(({ root, configDir, store, core, taskId }) => {
-    const competitor = new WorkitCore(new TaskStore(root), context(root));
-    const before = standingReceiptFor(root, "t", "commit");
-    const probe = interleave(
-      store,
-      () => {
-        expect(competitor.task(progress(taskId)).ok).toBe(true);
-        writeFileSync(
-          join(configDir, "workspaces.json"),
-          JSON.stringify({
-            workspaces: [
-              {
-                name: "t",
-                glob: `${root}/**`,
-                autoApprove: ["commit", "branch"],
-                vcs: { provider: "github" },
-              },
-            ],
-          }),
-        );
-      },
-      (call) => call === 1,
-    );
-    const result = core.observeStandingDecision(standingRequest(store, taskId));
-    expect(result).toMatchObject({ ok: true });
-    expect(probe.attempts()).toBe(2);
-    if (!result.ok) throw new Error(result.error);
-    const after = standingReceiptFor(root, "t", "commit");
-    expect(after.configDigest).not.toBe(before.configDigest);
-    expect(result.data.provenance.receipts).toEqual([after]);
-  });
 });
 
 const coreModule = resolve(import.meta.dir, "../../packages/workit-core/src/core.ts");
@@ -682,24 +489,26 @@ test("Given four processes writing without revisions, When they contend, Then no
   const runs = await Promise.all(
     ["p0", "p1", "p2", "p3"].map(
       (label) =>
-        new Promise<{ codes: Record<string, number>; claims: string[]; starts: number }>(
-          (done, fail) => {
-            const child = spawn(process.execPath, ["-e", writerScript(root, taskId, label, 30)], {
-              stdio: ["ignore", "pipe", "pipe"],
-            });
-            let out = "";
-            let err = "";
-            child.stdout.on("data", (chunk) => (out += chunk));
-            child.stderr.on("data", (chunk) => (err += chunk));
-            child.on("close", () => {
-              try {
-                done(JSON.parse(out));
-              } catch {
-                fail(new Error(`writer output: ${out} ${err}`));
-              }
-            });
-          },
-        ),
+        new Promise<{
+          codes: Record<string, number>;
+          claims: string[];
+          starts: number;
+        }>((done, fail) => {
+          const child = spawn(process.execPath, ["-e", writerScript(root, taskId, label, 30)], {
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          let out = "";
+          let err = "";
+          child.stdout.on("data", (chunk) => (out += chunk));
+          child.stderr.on("data", (chunk) => (err += chunk));
+          child.on("close", () => {
+            try {
+              done(JSON.parse(out));
+            } catch {
+              fail(new Error(`writer output: ${out} ${err}`));
+            }
+          });
+        }),
     ),
   );
   const totals: Record<string, number> = {};

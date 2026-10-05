@@ -1,15 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
-import os from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -35,17 +27,15 @@ setDefaultTimeout(120_000);
 const MAIN = path.resolve(import.meta.dir, "..", "..", "packages", "workit-cli", "src", "main.ts");
 
 let configDir = "";
-const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+let configHome: ConfigHome;
 const original = { ...forgeDeps };
 const originalStack = { ...stackDeps };
 beforeAll(() => {
-  configDir = mkdtempSync(path.join(os.tmpdir(), "wk-stack-config-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  configHome = useConfigHome("wk-stack-config-");
+  configDir = configHome.configDir;
 });
 afterAll(() => {
-  if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-  rmSync(configDir, { recursive: true, force: true });
+  configHome.restore();
 });
 
 const forges: StackForge[] = [];
@@ -187,7 +177,24 @@ test("stack land: given no merge grant, then nothing merges and it stops at veri
     landed: [],
     stoppedAt: { pr: 11, reason: "grant_required", ready: true },
   });
-  expect(result.json().data.stoppedAt.unblock).toContain('"merge"');
+  expect(result.json().data.stoppedAt.unblock).toContain("workit grant set w merge=verified");
+  expect(forge.writes).toEqual([]);
+  const human = await run(["stack", "land"], forge.cwd);
+  expect(human.stdout).toContain("grant_required (verified, ready)");
+});
+
+test("stack land: given a workspace without a merge grant (default ceiling), when the agent attempts a merge, then it is denied with the grant needed and the stack stops at verified, ready", async () => {
+  // No `merge` key at all: D4 defaults allow push/pr but stop before merging.
+  const forge = setup("github", { push: true, pr: true });
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({
+    landed: [],
+    stoppedAt: { pr: 11, reason: "grant_required", ready: true },
+  });
+  expect(result.json().data.stoppedAt.unblock).toContain("workit grant set w merge=verified");
   expect(forge.writes).toEqual([]);
   const human = await run(["stack", "land"], forge.cwd);
   expect(human.stdout).toContain("grant_required (verified, ready)");

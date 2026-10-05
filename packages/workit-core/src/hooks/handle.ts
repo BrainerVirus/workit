@@ -36,7 +36,7 @@ const subagentStartText = (
 ): string => {
   if (host === "claude_code" && event.agentType === CLAUDE_WORKTREE_IMPLEMENTER)
     return `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) working in its own git worktree: it may edit and commit there, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
-  const readOnly = `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) as read-only/agent-guided; writer delegation is unavailable.`;
+  const readOnly = `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) as read-only/agent-guided.`;
   if (
     host === "claude_code" &&
     event.agentType &&

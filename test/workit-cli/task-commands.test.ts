@@ -2,12 +2,9 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  runActionCommand,
-  runTaskCommand,
-  TASK_ACTIONS,
-  TASK_FAMILIES,
-} from "@/packages/workit-cli/src/task";
+import { runTaskCommand, TASK_ACTIONS, TASK_FAMILIES } from "@/packages/workit-cli/src/task";
+import { run as runChangelog } from "@/packages/workit-cli/src/verbs/changelog";
+import type { Io } from "@/packages/workit-cli/src/output";
 import { mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import {
@@ -16,9 +13,8 @@ import {
   runInIsolation,
   isolatedEnv,
 } from "@/test/shared/helpers/packages";
-import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { readExternalContext, TaskStore } from "@/packages/workit-core/src/core";
 import { eventsFileOf, rawRecordOf } from "../workit-core/store-files";
-import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const scope = { description: "checkout", paths: ["."], exclusions: [] };
@@ -40,7 +36,7 @@ async function* bytes(value: Uint8Array, split = 1): AsyncIterable<Uint8Array> {
     yield value.slice(offset, Math.min(value.length, offset + split));
 }
 
-test("the CLI exposes exactly the eight families and 24 actions", () => {
+test("the CLI exposes exactly the seven families and 21 actions", () => {
   expect(TASK_FAMILIES).toEqual([
     "task",
     "policy",
@@ -48,68 +44,12 @@ test("the CLI exposes exactly the eight families and 24 actions", () => {
     "finding",
     "decision",
     "worker",
-    "writer",
     "state",
   ]);
-  expect(Object.values(TASK_ACTIONS).flat()).toHaveLength(23);
+  expect(Object.values(TASK_ACTIONS).flat()).toHaveLength(21);
 });
 
-test("CLI external action previews its exact descriptor and refuses headless mutation", async () => {
-  const root = fixture();
-  try {
-    spawnSync("git", ["init", "-q"], { cwd: root });
-    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
-    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
-    writeFileSync(path.join(root, "tracked.txt"), "fixture\n");
-    spawnSync("git", ["add", "tracked.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
-    const preview = capture();
-    expect(
-      await runActionCommand(
-        [
-          "git.commit",
-          "--payload",
-          JSON.stringify({ message: "chore(test): commit" }),
-          "--preview",
-          "--json",
-        ],
-        {
-          cwd: root,
-          out: preview.out,
-          err: preview.err,
-          stdinIsTTY: () => false,
-        },
-      ),
-    ).toBe(0);
-    expect(JSON.parse(preview.read().stdout)).toMatchObject({
-      ok: true,
-      data: { operation: "git.commit" },
-    });
-    const denied = capture();
-    expect(
-      await runActionCommand(
-        [
-          "git.commit",
-          "--payload",
-          JSON.stringify({ message: "chore(test): commit" }),
-          "--confirm",
-          "--json",
-        ],
-        {
-          cwd: root,
-          out: denied.out,
-          err: denied.err,
-          stdinIsTTY: () => false,
-        },
-      ),
-    ).toBe(1);
-    expect(JSON.parse(denied.read().stdout)).toMatchObject({ ok: false, code: "needs_input" });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("CLI context.read returns Git context without confirmation or metadata writes", async () => {
+test("context read returns Git context without confirmation or metadata writes", async () => {
   const root = fixture();
   try {
     for (const args of [
@@ -122,14 +62,7 @@ test("CLI context.read returns Git context without confirmation or metadata writ
     spawnSync("git", ["add", "fixture.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
     const before = readFileSync(path.join(root, ".git/HEAD"), "utf8");
-    const out = capture();
-    expect(
-      await runActionCommand(
-        ["context.read", "--payload", JSON.stringify({ kind: "git" }), "--json"],
-        { cwd: root, out: out.out, err: out.err },
-      ),
-    ).toBe(0);
-    const value = JSON.parse(out.read().stdout);
+    const value = await readExternalContext(root, { kind: "git" });
     expect(value).toMatchObject({
       ok: true,
       data: { kind: "git", context: { workspace_root: root } },
@@ -140,7 +73,7 @@ test("CLI context.read returns Git context without confirmation or metadata writ
   }
 });
 
-test("CLI context.read rejects option-like ranges without creating files", async () => {
+test("context read rejects option-like ranges without creating files", async () => {
   const root = fixture();
   const injected = path.join(os.tmpdir(), `workit-cli-context-output-${process.pid}`);
   rmSync(injected, { force: true });
@@ -154,19 +87,9 @@ test("CLI context.read rejects option-like ranges without creating files", async
     writeFileSync(path.join(root, "fixture.txt"), "fixture\n");
     spawnSync("git", ["add", "fixture.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
-    const out = capture();
     expect(
-      await runActionCommand(
-        [
-          "context.read",
-          "--payload",
-          JSON.stringify({ kind: "changelog", range: `--output=${injected}` }),
-          "--json",
-        ],
-        { cwd: root, out: out.out, err: out.err },
-      ),
-    ).toBe(1);
-    expect(JSON.parse(out.read().stdout)).toMatchObject({ ok: false, code: "invalid_input" });
+      await readExternalContext(root, { kind: "changelog", range: `--output=${injected}` }),
+    ).toMatchObject({ ok: false, code: "invalid_input" });
     expect(existsSync(injected)).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -174,11 +97,9 @@ test("CLI context.read rejects option-like ranges without creating files", async
   }
 });
 
-test("CLI changelog.apply uses the writer for success regardless of scope", async () => {
-  const roots: string[] = [];
-  const setup = (assignedScope: { description: string; paths: string[]; exclusions: string[] }) => {
-    const root = fixture();
-    roots.push(root);
+test("workit changelog apply writes the changelog without a writer, task, or confirmation", async () => {
+  const root = fixture();
+  try {
     for (const args of [
       ["init", "-q"],
       ["config", "user.email", "test@example.invalid"],
@@ -188,420 +109,26 @@ test("CLI changelog.apply uses the writer for success regardless of scope", asyn
     writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n");
     spawnSync("git", ["add", "CHANGELOG.md"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
-    const store = new TaskStore(root);
-    const core = new WorkitCore(store, {
-      root,
-      caller: { host: "workit_cli", actor: "cli" },
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:00Z",
-    });
-    const started = core.task(
-      taskStartRequest({ intent: { ...taskStartRequest().intent, scope: assignedScope } }),
-    );
-    if (!started.ok) throw new Error(started.error);
-    const task = store.readTask((started.data as { id: string }).id);
-    const workspace = store.readWorkspace();
-    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
-    if (
-      !core.writer({
-        schemaVersion: 1,
-        action: "acquire",
-        taskId: task.data.id,
-        expectedRevision: task.data.revision,
-        expectedWorkspaceRevision: workspace.data.revision,
-        workerId: null,
-      }).ok
-    )
-      throw new Error("writer setup failed");
-    return root;
-  };
-  try {
-    const allowedRoot = setup(scope);
-    const successOut = capture();
-    expect(
-      await runActionCommand(
-        [
-          "changelog.apply",
-          "--payload",
-          JSON.stringify({ entries: [{ category: "Added", text: "CLI changelog action" }] }),
-          "--confirm",
-          "--json",
-        ],
-        {
-          cwd: allowedRoot,
-          actor: "cli",
-          out: successOut.out,
-          err: successOut.err,
-          stdinIsTTY: () => true,
-          confirm: async () => true,
-        },
-      ),
-    ).toBe(0);
-    expect(JSON.parse(successOut.read().stdout)).toMatchObject({ ok: true });
-    expect(readFileSync(path.join(allowedRoot, "CHANGELOG.md"), "utf8")).toContain(
-      "CLI changelog action",
-    );
-
-    const narrowRoot = setup({ description: "src only", paths: ["src"], exclusions: [] });
-    const narrowOut = capture();
-    expect(
-      await runActionCommand(
-        [
-          "changelog.apply",
-          "--payload",
-          JSON.stringify({ entries: [{ category: "Added", text: "narrow scope still applies" }] }),
-          "--confirm",
-          "--json",
-        ],
-        {
-          cwd: narrowRoot,
-          actor: "cli",
-          out: narrowOut.out,
-          err: narrowOut.err,
-          stdinIsTTY: () => true,
-          confirm: async () => true,
-        },
-      ),
-    ).toBe(0);
-    expect(JSON.parse(narrowOut.read().stdout)).toMatchObject({ ok: true });
-    expect(readFileSync(path.join(narrowRoot, "CHANGELOG.md"), "utf8")).toContain(
-      "narrow scope still applies",
-    );
-  } finally {
-    for (const root of roots) rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("CLI TTY route prints the concise question before confirmation", async () => {
-  const root = fixture();
-  try {
-    spawnSync("git", ["init", "-q"], { cwd: root });
-    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
-    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
-    writeFileSync(path.join(root, "tracked.txt"), "fixture\n");
-    spawnSync("git", ["add", "tracked.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
-    const store = new TaskStore(root);
-    const core = new WorkitCore(store, {
-      root,
-      caller: { host: "workit_cli", actor: "cli" },
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:00Z",
-    });
-    expect(core.task(taskStartRequest()).ok).toBe(true);
-    const started = store.listTasks();
-    const writerWorkspace = store.readWorkspace();
-    if (!started.ok || started.data.length !== 1 || !writerWorkspace.ok || !writerWorkspace.data)
-      throw new Error("writer state missing");
-    const writerTask = store.readTask(started.data[0].id);
-    if (!writerTask.ok) throw new Error("writer task missing");
-    expect(
-      core.writer({
-        schemaVersion: 1,
-        action: "acquire",
-        taskId: writerTask.data.id,
-        expectedRevision: writerTask.data.revision,
-        expectedWorkspaceRevision: writerWorkspace.data.revision,
-        workerId: null,
-      }),
-    ).toMatchObject({ ok: true });
-    writeFileSync(path.join(root, "change.txt"), "change\n");
-    spawnSync("git", ["add", "change.txt"], { cwd: root });
-    const out = capture();
-    expect(
-      await runActionCommand(
-        [
-          "git.commit",
-          "--payload",
-          JSON.stringify({ message: "chore(test): tty commit" }),
-          "--confirm",
-        ],
-        {
-          cwd: root,
-          actor: "cli",
-          out: out.out,
-          err: out.err,
-          stdinIsTTY: () => true,
-          confirm: async () => true,
-        },
-      ),
-    ).toBe(0);
-    expect(out.read().stdout).toContain("Workit decision: action");
-    expect(out.read().stdout).toContain("chore(test): tty commit");
-    expect(out.read().stdout).not.toContain('"operation":"git.commit"');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("CLI executes a plan-commit list once per listed message", async () => {
-  const root = fixture();
-  try {
-    spawnSync("git", ["init", "-q", "-b", "feature/plan"], { cwd: root });
-    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
-    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
-    writeFileSync(path.join(root, "base.txt"), "base\n");
-    spawnSync("git", ["add", "base.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
-    const store = new TaskStore(root);
-    const core = new WorkitCore(store, {
-      root,
-      caller: { host: "workit_cli", actor: "cli" },
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:00Z",
-    });
-    expect(core.task(taskStartRequest()).ok).toBe(true);
-    const started = store.listTasks();
-    const writerWorkspace = store.readWorkspace();
-    if (!started.ok || started.data.length !== 1 || !writerWorkspace.ok || !writerWorkspace.data)
-      throw new Error("writer state missing");
-    const writerTask = store.readTask(started.data[0].id);
-    if (!writerTask.ok) throw new Error("writer task missing");
-    expect(
-      core.writer({
-        schemaVersion: 1,
-        action: "acquire",
-        taskId: writerTask.data.id,
-        expectedRevision: writerTask.data.revision,
-        expectedWorkspaceRevision: writerWorkspace.data.revision,
-        workerId: null,
-      }),
-    ).toMatchObject({ ok: true });
-    const planOut = capture();
-    expect(
-      await runActionCommand(
-        [
-          "git.commit",
-          "--payload",
-          JSON.stringify({ plan_steps: ["chore(a): one"], plan_branch: "feature/plan" }),
-          "--confirm",
-        ],
-        {
-          cwd: root,
-          actor: "cli",
-          out: planOut.out,
-          err: planOut.err,
-          stdinIsTTY: () => true,
-          confirm: async () => true,
-        },
-      ),
-    ).toBe(0);
-    expect(planOut.read().stdout).toContain("plan_commits");
-
-    writeFileSync(path.join(root, "one.txt"), "one\n");
-    spawnSync("git", ["add", "one.txt"], { cwd: root });
-    let asked = 0;
-    const commitOut = capture();
-    expect(
-      await runActionCommand(
-        ["git.commit", "--payload", JSON.stringify({ message: "chore(a): one" }), "--confirm"],
-        {
-          cwd: root,
-          actor: "cli",
-          out: commitOut.out,
-          err: commitOut.err,
-          stdinIsTTY: () => true,
-          confirm: async () => {
-            asked += 1;
-            return true;
-          },
-        },
-      ),
-    ).toBe(0);
-    expect(asked).toBe(0);
-    expect(
-      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-    ).toBe("chore(a): one");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("CLI requires writer ownership and concise binding questions", async () => {
-  const root = fixture();
-  try {
-    spawnSync("git", ["init", "-q"], { cwd: root });
-    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
-    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
-    writeFileSync(path.join(root, "base.txt"), "base\n");
-    spawnSync("git", ["add", "base.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
-    writeFileSync(path.join(root, "change.txt"), "change\n");
-    spawnSync("git", ["add", "change.txt"], { cwd: root });
-    const store = new TaskStore(root);
-    const core = new WorkitCore(store, {
-      root,
-      caller: { host: "workit_cli", actor: "cli" },
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:00Z",
-    });
-    expect(core.task(taskStartRequest()).ok).toBe(true);
-    const started = store.listTasks();
-    const workspace = store.readWorkspace();
-    if (!started.ok || started.data.length !== 1 || !workspace.ok || !workspace.data)
-      throw new Error("state missing");
-    const task = store.readTask(started.data[0].id);
-    if (!task.ok) throw new Error("task missing");
-    const out = capture();
-    const code = await runActionCommand(
-      [
-        "git.commit",
-        "--payload",
-        JSON.stringify({ message: "chore(test): needs writer" }),
-        "--confirm",
-      ],
-      {
-        cwd: root,
-        actor: "cli",
-        out: out.out,
-        err: out.err,
-        stdinIsTTY: () => true,
-        confirm: async () => true,
-      },
-    );
-    expect(code).toBe(1);
-    expect(out.read().stderr).toContain("writer ownership");
-
-    const decisionOut = capture();
-    const long = `Approve ${"x".repeat(400)}`;
-    const decisionCode = await runTaskCommand(
-      [
-        "decision",
-        "record",
-        "--json",
-        "--payload",
-        JSON.stringify({
-          schemaVersion: 1,
-          action: "record",
-          taskId: task.data.id,
-          purpose: "design",
-          binding: {
-            taskId: task.data.id,
-            workspaceId: workspace.data.id,
-            scope: task.data.intent.data.scope,
-            presented: long,
-            approvedContent: long,
-            contentRefs: [],
-          },
-          response: "approved",
-          requirementIds: [],
-        }),
-      ],
-      { cwd: root, actor: "cli", out: decisionOut.out, err: decisionOut.err },
-    );
-    const parsed = JSON.parse(decisionOut.read().stdout);
-    expect(parsed).toMatchObject({ ok: false, code: "invalid_input" });
-    expect(String(parsed.error)).toContain("present the item");
-    expect(decisionCode).toBe(1);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("CLI checks writer ownership before proposing a branch deletion", async () => {
-  const root = fixture();
-  const configDir = fixture();
-  const tools = fixture();
-  const previous = {
-    PATH: process.env.PATH,
-    WORKFLOW_TOOLKIT_CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG,
-    WORKFLOW_VCS_CONFIG: process.env.WORKFLOW_VCS_CONFIG,
-  };
-  try {
-    spawnSync("git", ["init", "-q"], { cwd: root });
-    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
-    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
-    writeFileSync(path.join(root, "base.txt"), "base\n");
-    spawnSync("git", ["add", "base.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
-    spawnSync("git", ["branch", "feature/merged"], { cwd: root });
-    const tip = spawnSync("git", ["rev-parse", "refs/heads/feature/merged"], {
+    let stdout = "";
+    const io: Io = {
+      json: true,
       cwd: root,
-      encoding: "utf8",
-    }).stdout.trim();
-    spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], {
-      cwd: root,
-    });
-    writeFileSync(
-      path.join(configDir, "vcs.json"),
-      JSON.stringify({ provider: "github", github: { host: "github.com" } }),
+      env: {},
+      stdout: (text) => void (stdout += text),
+      stderr: () => {},
+    };
+    const entries = JSON.stringify([{ category: "Added", text: "CLI changelog verb" }]);
+    expect(await runChangelog(["apply", "--entries", entries, "--preview"], io)).toBe(0);
+    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).not.toContain(
+      "CLI changelog verb",
     );
-    writeFileSync(
-      path.join(configDir, "workspaces.json"),
-      JSON.stringify({
-        workspaces: [
-          { name: "target", glob: `${root}/**`, vcs: { provider: "github", account: "stub" } },
-        ],
-      }),
-    );
-    const branch = path.join(tools, "branch.json");
-    const prs = path.join(tools, "prs.json");
-    writeFileSync(branch, JSON.stringify({ object: { sha: tip } }));
-    writeFileSync(
-      prs,
-      JSON.stringify([
-        {
-          number: 123,
-          merged_at: "2026-01-01T00:00:00Z",
-          head: { ref: "feature/merged", sha: tip },
-        },
-      ]),
-    );
-    writeFileSync(
-      path.join(tools, "gh"),
-      `#!/bin/sh\nif [ "$1" = api ] && [ "$2" = user ]; then echo '{"login":"stub"}'; exit 0; fi\nif [ "$2" = repos/org/repo/git/ref/heads/feature/merged ]; then cat "${branch}"; exit 0; fi\ncat "${prs}"\n`,
-      { mode: 0o755 },
-    );
-    writeFileSync(
-      path.join(tools, "gh.cmd"),
-      `@echo off\r\nif "%1 %2"=="api user" (echo {"login":"stub"} & exit /b 0)\r\nif "%2"=="repos/org/repo/git/ref/heads/feature/merged" (type "${branch}" & exit /b 0)\r\ntype "${prs}"\r\nexit /b 0\r\n`,
-    );
-    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
-    process.env.WORKFLOW_VCS_CONFIG = path.join(configDir, "vcs.json");
-    process.env.PATH = `${tools}${path.delimiter}${previous.PATH ?? ""}`;
-    const actor = "cli-delete-writer";
-    const core = new WorkitCore(new TaskStore(root), {
-      root,
-      caller: { host: "workit_cli", actor },
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:00Z",
-    });
-    expect(core.task(taskStartRequest()).ok).toBe(true);
-    const output = capture();
-    let asked = 0;
-    const code = await runActionCommand(
-      [
-        "hosting.delete_branch",
-        "--payload",
-        JSON.stringify({ branch: "feature/merged" }),
-        "--confirm",
-      ],
-      {
-        cwd: root,
-        actor,
-        out: output.out,
-        err: output.err,
-        stdinIsTTY: () => true,
-        confirm: async () => {
-          asked += 1;
-          return true;
-        },
-      },
-    );
-    expect(code).toBe(1);
-    expect(output.read().stderr).toContain("writer ownership");
-    expect(asked).toBe(0);
+    stdout = "";
+    expect(await runChangelog(["apply", "--entries", entries], io)).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({ ok: true });
+    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toContain("CLI changelog verb");
+    expect(existsSync(path.join(root, ".workit"))).toBe(false);
   } finally {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    for (const dir of [root, configDir, tools]) rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -803,27 +330,26 @@ test("--json is order-independent for every parser failure", async () => {
   }
 });
 
-test("headless resume consent stays needs_input and malformed CLI input is nonzero", async () => {
+test("headless resume needs no consent, rejects legacy authorityRefs, and malformed CLI input is nonzero", async () => {
   const root = fixture();
   try {
-    const missingConsent = capture();
-    expect(
-      await runTaskCommand(
-        [
-          "task",
-          "resume",
-          "--task",
-          id,
-          "--payload",
-          JSON.stringify({ authorityRefs: [] }),
-          "--json",
-        ],
-        { cwd: root, out: missingConsent.out, err: missingConsent.err },
-      ),
-    ).toBe(1);
-    expect(JSON.parse(missingConsent.read().stdout)).toMatchObject({
-      ok: false,
-      code: "needs_input",
+    const resume = async (payload: Record<string, unknown>) => {
+      const stream = capture();
+      const code = await runTaskCommand(
+        ["task", "resume", "--task", id, "--payload", JSON.stringify(payload), "--json"],
+        { cwd: root, out: stream.out, err: stream.err },
+      );
+      return { code, value: JSON.parse(stream.read().stdout) };
+    };
+    // No consent step: a headless resume goes straight to the task lookup.
+    expect(await resume({})).toMatchObject({
+      code: 1,
+      value: { ok: false, code: "not_found" },
+    });
+    // task.resume no longer takes authorityRefs.
+    expect(await resume({ authorityRefs: [] })).toMatchObject({
+      code: 1,
+      value: { ok: false, code: "invalid_input" },
     });
 
     const malformed = capture();
@@ -940,175 +466,33 @@ test("packed task list runs on Node without a Bun runtime", () => {
   }
 }, 120_000);
 
-test("writer acquire --actor stamps the session handle a hook can match", async () => {
+test("--actor stamps the session handle a hook can match and --confirm is accepted and ignored", async () => {
   const root = fixture();
   try {
-    const store = new TaskStore(root);
-    const core = new WorkitCore(store, {
-      root,
-      caller: { host: "workit_cli", actor: "cli" },
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:00Z",
-    });
-    const started = core.task(taskStartRequest());
-    expect(started.ok).toBe(true);
-    if (!started.ok) throw new Error(started.error);
-    const taskId = (started.data as { id: string }).id;
-    const task = store.readTask(taskId);
-    const workspace = store.readWorkspace();
-    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
     const io = capture();
     const code = await runTaskCommand(
       [
-        "writer",
-        "acquire",
-        "--task",
-        taskId,
-        "--revision",
-        task.data.revision,
-        "--workspace-revision",
-        workspace.data.revision,
+        "task",
+        "start",
         "--payload",
-        JSON.stringify({ workerId: null }),
+        JSON.stringify({ expectedWorkspaceRevision: null, intent }),
         "--actor",
         "session-9",
         "--confirm",
         "--json",
       ],
-      { cwd: root, out: io.out, err: io.err, stdinIsTTY: () => false },
+      { cwd: root, out: io.out, err: io.err },
     );
     expect(code).toBe(0);
-    expect(JSON.parse(io.read().stdout)).toMatchObject({ ok: true });
-    const owner = store.readWorkspace();
-    expect(owner.ok && owner.data?.writer?.owner).toMatchObject({
-      taskId,
+    const started = JSON.parse(io.read().stdout);
+    expect(started).toMatchObject({ ok: true });
+    expect(rawRecordOf(root, started.data.id).intent.provenance).toEqual({
+      kind: "agent_reported",
+      host: "workit_cli",
+      session: { kind: "host", host: "workit_cli", handle: "session-9" },
       workerId: null,
-      session: { host: "workit_cli", handle: "session-9" },
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
-  }
-});
-
-const branchRepo = () => {
-  const root = fixture();
-  const remote = mkdtempSync(path.join(os.tmpdir(), "wk-task-cli-remote-"));
-  spawnSync("git", ["init", "-q", "--bare"], { cwd: remote });
-  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: root });
-  spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
-  spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
-  writeFileSync(path.join(root, "base.txt"), "base\n");
-  spawnSync("git", ["add", "base.txt"], { cwd: root });
-  spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
-  spawnSync("git", ["remote", "add", "origin", remote], { cwd: root });
-  spawnSync("git", ["push", "-q", "-u", "origin", "main"], { cwd: root });
-  spawnSync("git", ["branch", "develop"], { cwd: root });
-  spawnSync("git", ["push", "-q", "origin", "develop"], { cwd: root });
-  spawnSync("git", ["branch", "-D", "develop"], { cwd: root });
-  const store = new TaskStore(root);
-  const core = new WorkitCore(store, {
-    root,
-    caller: { host: "workit_cli", actor: "cli" },
-    capabilities: [],
-    constraints: [],
-    now: "2026-01-01T00:00:00Z",
-  });
-  expect(core.task(taskStartRequest()).ok).toBe(true);
-  const listed = store.listTasks();
-  if (!listed.ok || listed.data.length !== 1) throw new Error("task setup failed");
-  const task = store.readTask(listed.data[0].id);
-  const workspace = store.readWorkspace();
-  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("writer state missing");
-  expect(
-    core.writer({
-      schemaVersion: 1,
-      action: "acquire",
-      taskId: task.data.id,
-      expectedRevision: task.data.revision,
-      expectedWorkspaceRevision: workspace.data.revision,
-      workerId: null,
-    }).ok,
-  ).toBe(true);
-  return { root, remote };
-};
-
-test("CLI dirty branch setup names the stash and executes in one confirmation", async () => {
-  const { root, remote } = branchRepo();
-  try {
-    writeFileSync(path.join(root, "base.txt"), "wip\n");
-    const out = capture();
-    expect(
-      await runActionCommand(
-        [
-          "git.branch_setup",
-          "--payload",
-          JSON.stringify({ target_branch: "feature/cli-dirty" }),
-          "--confirm",
-        ],
-        {
-          cwd: root,
-          actor: "cli",
-          out: out.out,
-          err: out.err,
-          stdinIsTTY: () => true,
-          confirm: async () => true,
-        },
-      ),
-    ).toBe(0);
-    expect(out.read().stdout).toContain("Stash");
-    expect(
-      spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-    ).toBe("feature/cli-dirty");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
-
-test("CLI branch approval carries across unrelated current-HEAD moves", async () => {
-  const { root, remote } = branchRepo();
-  try {
-    let confirms = 0;
-    const out = capture();
-    const approvedBase = spawnSync("git", ["rev-parse", "refs/remotes/origin/main"], {
-      cwd: root,
-      encoding: "utf8",
-    }).stdout.trim();
-    expect(
-      await runActionCommand(
-        [
-          "git.branch_setup",
-          "--payload",
-          JSON.stringify({ target_branch: "feature/cli-carry" }),
-          "--confirm",
-        ],
-        {
-          cwd: root,
-          actor: "cli",
-          out: out.out,
-          err: out.err,
-          stdinIsTTY: () => true,
-          confirm: async () => {
-            confirms += 1;
-            spawnSync("git", ["checkout", "-qb", "feature/current"], { cwd: root });
-            writeFileSync(path.join(root, "later.txt"), "later\n");
-            spawnSync("git", ["add", "later.txt"], { cwd: root });
-            spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
-            return true;
-          },
-        },
-      ),
-    ).toBe(0);
-    expect(confirms).toBe(1);
-    expect(
-      spawnSync("git", ["rev-parse", "feature/cli-carry"], {
-        cwd: root,
-        encoding: "utf8",
-      }).stdout.trim(),
-    ).toBe(approvedBase);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
   }
 });

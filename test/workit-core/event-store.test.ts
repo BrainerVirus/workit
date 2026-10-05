@@ -76,7 +76,6 @@ const provenance: Provenance = {
   host: "workit_cli",
   session: { kind: "host", host: "workit_cli", handle: "cli" },
   workerId: null,
-  receipts: [],
 };
 const identity = (task: TaskRecord) => success(task.revision, null, task);
 const coreFor = (root: string) =>
@@ -87,7 +86,11 @@ const coreFor = (root: string) =>
     constraints: [],
     now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
   });
-const progress = (summary: string) => ({ summary, nextAction: null, blockers: [] });
+const progress = (summary: string) => ({
+  summary,
+  nextAction: null,
+  blockers: [],
+});
 const implicit = (root: string, create = true) => {
   const found = new TaskStore(root).implicitTask({ provenance, create });
   if (!found.ok) throw new Error(found.error);
@@ -98,7 +101,12 @@ const cli = async (cwd: string, argv: string[], env: Record<string, string> = {}
   let stderr = "";
   const code = await main(argv, {
     cwd,
-    env: { ...process.env, WORKIT_SESSION_ID: "s-agent", WORKFLOW_WORKSPACE_ROOT: "", ...env },
+    env: {
+      ...process.env,
+      WORKIT_SESSION_ID: "s-agent",
+      WORKFLOW_WORKSPACE_ROOT: "",
+      ...env,
+    },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   });
@@ -130,7 +138,10 @@ test("Given a fresh branch, When the agent records evidence, Then a task exists 
   expect(found).toMatchObject({
     created: false,
     key: { key: "feature/fresh", kind: "branch", branch: "feature/fresh" },
-    task: { status: "active", intent: { data: { objective: "Work on branch feature/fresh" } } },
+    task: {
+      status: "active",
+      intent: { data: { objective: "Work on branch feature/fresh" } },
+    },
   });
   expect(found!.task.evidence).toHaveLength(1);
   // Reads never create it.
@@ -168,7 +179,10 @@ test("Given two worktrees of one repo, Then they share the store root and get di
     [first.task.id, other.task.id].toSorted(),
   );
   // Idempotent per branch.
-  expect(implicit(root)).toMatchObject({ created: false, task: { id: first.task.id } });
+  expect(implicit(root)).toMatchObject({
+    created: false,
+    task: { id: first.task.id },
+  });
   // A removed worktree's branch task follows the branch to another checkout.
   git(root, "worktree", "remove", "--force", second);
   git(root, "checkout", "-q", "feature/b");
@@ -253,10 +267,16 @@ test("Given 1,000 writes to one task, Then the task dir holds events.jsonl + sna
   // gc folds old events into a checkpoint and keeps the recent ones.
   const before = store.readTask(task.id);
   const collected = store.collectGarbage();
-  expect(collected).toMatchObject({ ok: true, data: { compacted: { tasks: [task.id] } } });
+  expect(collected).toMatchObject({
+    ok: true,
+    data: { compacted: { tasks: [task.id] } },
+  });
   const events = eventsOf(root, task.id);
   expect(events).toHaveLength(COMPACT_KEEP + 1);
-  expect(events[0]).toMatchObject({ type: "task.checkpoint", seq: 1001 - COMPACT_KEEP });
+  expect(events[0]).toMatchObject({
+    type: "task.checkpoint",
+    seq: 1001 - COMPACT_KEEP,
+  });
   expect(statSync(eventsFileOf(root, task.id)).size).toBeLessThan(full / 5);
   expect(new TaskStore(root).readTask(task.id)).toEqual(before);
   rmSync(path.join(taskDirOf(root, task.id), "snapshot.json"));
@@ -306,7 +326,15 @@ test("a snapshot is a cache: written every SNAPSHOT_EVERY events, ignored when i
     task: task.id,
     actor: null,
     type: "task.noted",
-    data: { ops: [{ op: "set", path: ["progress", "summary"], value: "rewritten history" }] },
+    data: {
+      ops: [
+        {
+          op: "set",
+          path: ["progress", "summary"],
+          value: "rewritten history",
+        },
+      ],
+    },
   };
   writeFileSync(
     file,
@@ -379,7 +407,9 @@ test("Given writers killed with SIGKILL mid-append, Then the log never corrupts 
   for (let round = 0; round < 6; round += 1) {
     const seen = { writes: 0 };
     const children = [0, 1].map(() => {
-      const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(process.execPath, ["-e", script], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       child.stdout.on("data", (chunk: Buffer) => {
         seen.writes += String(chunk).split("w").length - 1;
       });
@@ -413,13 +443,19 @@ test("updates that edit the record in place are still recorded", () => {
   const task = implicit(root)!.task;
   const written = store.mutateTask(task.id, task.revision, (current) => {
     current.progress.summary = "edited in place";
-    current.progress.blockers.push({ reason: "r", dependentAction: "d", refs: [] });
+    current.progress.blockers.push({
+      reason: "r",
+      dependentAction: "d",
+      refs: [],
+    });
     return success(null, null, current);
   });
   expect(written.ok).toBe(true);
   expect(new TaskStore(root).readTask(task.id)).toMatchObject({
     ok: true,
-    data: { progress: { summary: "edited in place", blockers: [{ reason: "r" }] } },
+    data: {
+      progress: { summary: "edited in place", blockers: [{ reason: "r" }] },
+    },
   });
 });
 
@@ -435,7 +471,10 @@ test("stored candidates are content-addressed blobs, written once and collected 
   let revision = task.revision;
   for (let index = 0; index < 3; index += 1) {
     const written = store.mutateTask(task.id, revision, (current) =>
-      success(null, null, { ...current, candidates: [...current.candidates, candidate] } as never),
+      success(null, null, {
+        ...current,
+        candidates: [...current.candidates, candidate],
+      } as never),
     );
     if (!written.ok) throw new Error(written.error);
     revision = written.data.revision;
@@ -452,7 +491,10 @@ test("stored candidates are content-addressed blobs, written once and collected 
   writeFileSync(orphan, "{}");
   const old = new Date(Date.now() - 2 * 60 * 60_000);
   utimesSync(orphan, old, old);
-  expect(store.collectGarbage()).toMatchObject({ ok: true, data: { blobs: { removed: 1 } } });
+  expect(store.collectGarbage()).toMatchObject({
+    ok: true,
+    data: { blobs: { removed: 1 } },
+  });
   expect(readdirSync(blobs)).toHaveLength(1);
 });
 
@@ -480,8 +522,17 @@ test("reader tolerance: unknown events are ignored, a critical unknown event fai
 });
 
 test("structural patches round-trip", () => {
-  const before = { a: 1, list: [{ x: 1 }, { x: 2 }], nested: { keep: true, drop: 1 } };
-  const after = { a: 2, list: [{ x: 1 }, { x: 3 }, { x: 4 }], nested: { keep: true }, added: [1] };
+  const before = {
+    a: 1,
+    list: [{ x: 1 }, { x: 2 }],
+    nested: { keep: true, drop: 1 },
+  };
+  const after = {
+    a: 2,
+    list: [{ x: 1 }, { x: 3 }, { x: 4 }],
+    nested: { keep: true },
+    added: [1],
+  };
   const ops = diff(before, after);
   expect(apply(structuredClone(before), ops)).toEqual(after);
   expect(apply(structuredClone(after), diff(after, before))).toEqual(before);
@@ -519,8 +570,18 @@ const asV2Store = (root: string) => {
 const inspectAll = (root: string, ids: string[]) =>
   ids.map((taskId) => {
     const core = coreFor(root);
-    const summary = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
-    const full = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "full" });
+    const summary = core.task({
+      schemaVersion: 1,
+      action: "inspect",
+      taskId,
+      view: "summary",
+    });
+    const full = core.task({
+      schemaVersion: 1,
+      action: "inspect",
+      taskId,
+      view: "full",
+    });
     return { summary, full };
   });
 
@@ -539,8 +600,12 @@ test("Given a 2.x .workit store with tasks and recovery copies, When 3.0 runs tw
     ids.push((started.data as { id: string }).id);
   }
   expect(
-    core.task({ schemaVersion: 1, action: "progress", taskId: ids[1], progress: progress("half") })
-      .ok,
+    core.task({
+      schemaVersion: 1,
+      action: "progress",
+      taskId: ids[1],
+      progress: progress("half"),
+    }).ok,
   ).toBe(true);
   expect(
     core.task({
@@ -558,7 +623,11 @@ test("Given a 2.x .workit store with tasks and recovery copies, When 3.0 runs tw
   const status = await cli(root, ["task", "status", "--all", "--json"]);
   expect(status.code).toBe(0);
   expect(status.stderr).toContain("workit: migrated 3 tasks from");
-  const listed = status.json().data.tasks as Array<{ id: string; legacy: boolean; key: unknown }>;
+  const listed = status.json().data.tasks as Array<{
+    id: string;
+    legacy: boolean;
+    key: unknown;
+  }>;
   expect(listed.map((task) => task.id).toSorted()).toEqual([...ids].toSorted());
   expect(listed.every((task) => task.legacy && task.key === null)).toBe(true);
   expect(inspectAll(root, ids)).toEqual(expected);
@@ -587,17 +656,26 @@ test("Given a 2.x .workit store with tasks and recovery copies, When 3.0 runs tw
 
   // A legacy task is adopted onto the current key explicitly.
   const adopted = await cli(root, ["task", "adopt", ids[1], "--json"]);
-  expect(adopted.json()).toMatchObject({ ok: true, data: { task: { id: ids[1] } } });
+  expect(adopted.json()).toMatchObject({
+    ok: true,
+    data: { task: { id: ids[1] } },
+  });
   expect(implicit(root, false)!.task.id).toBe(ids[1]);
 
   // gc reports the recovery copies and removes them only when asked.
   const report = await cli(root, ["gc", "--json"]);
-  expect(report.json().data.legacyRecovery).toMatchObject({ files: 9, removed: false });
+  expect(report.json().data.legacyRecovery).toMatchObject({
+    files: 9,
+    removed: false,
+  });
   expect(existsSync(path.join(root, ".workit", "recovery"))).toBe(true);
   expect((await cli(root, ["gc", "--prune-recovery"])).code).toBe(3);
   expect(existsSync(path.join(root, ".workit", "recovery"))).toBe(true);
   const pruned = await cli(root, ["gc", "--prune-recovery", "--yes", "--json"]);
-  expect(pruned.json().data.legacyRecovery).toMatchObject({ files: 9, removed: true });
+  expect(pruned.json().data.legacyRecovery).toMatchObject({
+    files: 9,
+    removed: true,
+  });
   expect(existsSync(path.join(root, ".workit", "recovery"))).toBe(false);
 
   // A 2.x reader sees only the marker at .workit/workspace.json and fails
@@ -638,7 +716,10 @@ test("Given a 2.x store in a git checkout, Then it migrates into the git common 
   expect(existsSync(workspaceFileOf(root))).toBe(true);
   expect(
     JSON.parse(readFileSync(path.join(root, ".workit", "workspace.json"), "utf8")).store,
-  ).toMatchObject({ format: "workit-store", path: path.join(root, ".git", "workit") });
+  ).toMatchObject({
+    format: "workit-store",
+    path: path.join(root, ".git", "workit"),
+  });
 });
 
 test("a directory that becomes a git repository moves its store into the git common dir", () => {
@@ -646,7 +727,10 @@ test("a directory that becomes a git repository moves its store into the git com
   const store = new TaskStore(root);
   const task = implicit(root)!.task;
   git(root, "init", "-q");
-  expect(store.readTask(task.id)).toMatchObject({ ok: true, data: { id: task.id } });
+  expect(store.readTask(task.id)).toMatchObject({
+    ok: true,
+    data: { id: task.id },
+  });
   expect(existsSync(eventsFileOf(root, task.id))).toBe(true);
   expect(eventsFileOf(root, task.id).startsWith(path.join(root, ".git", "workit"))).toBe(true);
   expect(existsSync(path.join(root, ".workit", "store.moved.json"))).toBe(true);
@@ -669,19 +753,25 @@ test("workit task start|note|status|close: idempotent per branch, no ids needed"
   });
   const id = started.json().data.task.id;
   const again = await cli(root, ["task", "start", "Ship the parser", "--json"]);
-  expect(again.json()).toMatchObject({ ok: true, data: { created: false, task: { id } } });
+  expect(again.json()).toMatchObject({
+    ok: true,
+    data: { created: false, task: { id } },
+  });
   const noted = await cli(root, ["task", "note", "parser done", "--next", "write docs", "--json"]);
   expect(noted.json()).toMatchObject({
     ok: true,
-    data: { task: { id, progress: { summary: "parser done", nextAction: "write docs" } } },
+    data: {
+      task: {
+        id,
+        progress: { summary: "parser done", nextAction: "write docs" },
+      },
+    },
   });
   const status = await cli(root, ["task", "status"]);
   expect(status.stdout).toContain(id);
   expect(status.stdout).toContain("next: write docs");
-  // Closing needs consent, like the family close.
-  const refused = await cli(root, ["task", "close", "--outcome", "stopped", "--json"]);
-  expect(refused.code).not.toBe(0);
-  const closed = await cli(root, ["task", "close", "--outcome", "stopped", "--confirm", "--json"]);
+  // Closing asks for no consent ticket (D2).
+  const closed = await cli(root, ["task", "close", "--outcome", "stopped", "--json"]);
   expect(closed.code).toBe(0);
   expect((await cli(root, ["task", "status", "--json"])).json().data.task).toBeNull();
   // The closed task stays listed.
@@ -700,7 +790,9 @@ test("ledger and commit verbs create the branch's implicit task", async () => {
     "--json",
   ]);
   expect(recorded.code).toBe(0);
-  expect(implicit(root, false)).toMatchObject({ key: { key: "feature/ledger" } });
+  expect(implicit(root, false)).toMatchObject({
+    key: { key: "feature/ledger" },
+  });
 });
 
 test("the filesystem fast path finds the same store and key as git", () => {
@@ -720,7 +812,11 @@ test("the filesystem fast path finds the same store and key as git", () => {
     expect(fast.git).toBeDefined();
     expect(fast.dir).toBe(viaGit(cwd));
     const branch = git(cwd, "symbolic-ref", "--short", "HEAD");
-    expect(resolveTaskKey(cwd, fast)).toEqual({ key: branch, kind: "branch", branch });
+    expect(resolveTaskKey(cwd, fast)).toEqual({
+      key: branch,
+      kind: "branch",
+      branch,
+    });
     // Without the fast path (a GIT_* override) git answers the same.
     process.env.GIT_CEILING_DIRECTORIES = "/nonexistent";
     try {
@@ -745,7 +841,9 @@ test("the filesystem fast path finds the same store and key as git", () => {
   } finally {
     delete process.env.GIT_CEILING_DIRECTORIES;
   }
-  expect(resolveStore(tempDir("wk-s15-nogit-"))).toMatchObject({ shared: false });
+  expect(resolveStore(tempDir("wk-s15-nogit-"))).toMatchObject({
+    shared: false,
+  });
 });
 
 test("a log past the watermark compacts itself on append, without a gc run", () => {

@@ -112,7 +112,6 @@ export async function run(argv: string[], io: Io): Promise<number> {
     host: "workit_cli" as const,
     session: { kind: "host" as const, host: "workit_cli" as const, handle: actor },
     workerId: null,
-    receipts: [],
   };
   const key = store.currentKey();
   if (!key.ok) return emit(io, fail("unavailable", key.error));

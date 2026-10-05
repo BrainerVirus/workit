@@ -26,7 +26,7 @@ import {
 } from "@brainervirus/workit-core/src/core/boundary";
 import type { Host, Result } from "@brainervirus/workit-core/src/core/task-contract";
 import { redactSecrets } from "@brainervirus/workit-core/src/core/logger";
-import { readExternalContext } from "@brainervirus/workit-core/src/core/external-action-effects";
+import { readExternalContext } from "@brainervirus/workit-core/src/core/context-read";
 
 export type McpHost = Extract<Host, "cursor" | "codex_cli" | "codex_desktop">;
 export type NativeContextProvider = { current(): Promise<OperationContext> };
@@ -58,12 +58,7 @@ type ContextKind = (typeof CONTEXT_KINDS)[number];
 const CONTEXT_SELECTORS = ["range", "issueId"] as const;
 const safeCapability = (value: string, allowed: readonly string[]): string =>
   allowed.includes(value) ? value : "context";
-const TOOL_CAPABILITIES = [
-  ...CONTEXT_KINDS,
-  "workspace",
-  "native_caller_identity",
-  "external_action",
-];
+const TOOL_CAPABILITIES = [...CONTEXT_KINDS, "workspace", "native_caller_identity"];
 const VERSION = (() => {
   try {
     const packageJson = JSON.parse(
@@ -388,7 +383,7 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
             schemaVersion: 1,
             code: "capability_unavailable",
             error:
-              "native caller identity is unavailable; run the workit CLI for mutations: node_modules/.bin/workit <family> <action> --json --confirm (bind a writer with --actor <session-id>)",
+              "native caller identity is unavailable; run the workit CLI for mutations: node_modules/.bin/workit <family> <action> --json",
             details: { capability: "native_caller_identity", operation: family },
           },
           workspaceRoot,

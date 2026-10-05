@@ -93,27 +93,6 @@ test("check evidence auto-binds the captured candidate", () => {
   expect(entry.data.candidateId).toBe(entry.data.beforeCandidateId);
 });
 
-test("writer acquire omits the worker identity for the lead caller", () => {
-  const checkout = root();
-  const store = new TaskStore(checkout);
-  const core = new WorkitCore(store, context(checkout));
-  const { task } = start(checkout);
-  const acquired = core.writer({ schemaVersion: 1, action: "acquire", taskId: task.id });
-  expect(acquired.ok).toBe(true);
-  if (!acquired.ok) throw new Error(acquired.error);
-  const workspace = (
-    acquired.data as unknown as { writer: { owner: { workerId: string | null } } | null }
-  ).writer;
-  expect(workspace?.owner.workerId).toBeNull();
-  const released = core.writer({
-    schemaVersion: 1,
-    action: "release",
-    taskId: task.id,
-    reason: "defaults test done",
-  });
-  expect(released.ok).toBe(true);
-});
-
 test("worker assignment omits the candidate binding", () => {
   const checkout = root();
   const { core, task } = start(checkout);

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { mkdtempSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -8,9 +9,7 @@ import { createMcpServer } from "@/packages/workit-mcp/src/index";
 import { cursorCapabilities, cursorContextProvider } from "@/packages/workit-cursor/mcp/run-server";
 
 test("Cursor uses the shared MCP transport with truthful native capabilities", async () => {
-  expect(cursorCapabilities().find((item) => item.name === "interactive_decision")).toMatchObject({
-    assurance: "agent_guided",
-  });
+  expect(cursorCapabilities().some((item) => item.name === "interactive_decision")).toBe(false);
   expect(cursorCapabilities().find((item) => item.name === "arbitrary_shell_write")).toMatchObject({
     assurance: "unavailable",
   });
@@ -41,15 +40,8 @@ test("Cursor MCP refuses authority without a native caller identity", async () =
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   try {
     const authority = await client.callTool({
-      name: "workit_writer",
-      arguments: {
-        schemaVersion: 1,
-        action: "acquire",
-        taskId: "00000000-0000-4000-8000-000000000001",
-        expectedRevision: "00000000-0000-4000-8000-000000000001",
-        expectedWorkspaceRevision: "00000000-0000-4000-8000-000000000001",
-        workerId: null,
-      },
+      name: "workit_task",
+      arguments: taskStartRequest(),
     });
     expect(authority.structuredContent).toMatchObject({
       ok: false,

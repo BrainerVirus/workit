@@ -12,28 +12,22 @@ import {
   sha256,
   success,
   type NativeWorkerVerifier,
-  type NativeAuthorityVerifier,
   type OperationContext,
   type ExportBundle,
   type Ref,
   type TaskView,
 } from "@/packages/workit-core/src/core";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
-import { assessment, caller, ref, scope, taskStartRequest } from "./task-fixtures";
+import { assessment, caller, scope, taskStartRequest } from "./task-fixtures";
 
 const makeRoot = () => mkdtempSync(join(tmpdir(), "workit-continuity-repair-"));
-const makeContext = (
-  root: string,
-  nativeWorker?: NativeWorkerVerifier,
-  nativeAuthority?: NativeAuthorityVerifier,
-): OperationContext => ({
+const makeContext = (root: string, nativeWorker?: NativeWorkerVerifier): OperationContext => ({
   root,
   caller: caller(),
   capabilities: [],
   constraints: [],
   now: "2026-01-01T00:00:00Z",
   nativeWorker,
-  nativeAuthority,
 });
 const active = (nativeWorker?: NativeWorkerVerifier) => {
   const root = makeRoot();
@@ -72,7 +66,6 @@ test("raw caller-built host provenance cannot authorize resume reconciliation", 
     host: "workit_cli" as const,
     session: null,
     workerId,
-    receipts: [{ kind: "host" as const, host: "workit_cli" as const, handle: "forged" }],
   };
   expect(
     reconcileResume(
@@ -85,7 +78,7 @@ test("raw caller-built host provenance cannot authorize resume reconciliation", 
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
 
-test("imported resume requires destination assessment, reconciliation, and native approval", () => {
+test("imported resume requires destination assessment and reconciliation", () => {
   const source = active();
   const exported = source.core.state({
     schemaVersion: 1,
@@ -94,31 +87,14 @@ test("imported resume requires destination assessment, reconciliation, and nativ
   });
   expect(exported.ok).toBe(true);
   if (!exported.ok) throw new Error(exported.error);
-  const nativeAuthority: NativeAuthorityVerifier = {
-    verifyDecision: ({ caller: actualCaller }) =>
-      success(null, null, {
-        kind: "host_observed",
-        host: actualCaller.host,
-        session: { kind: "host", host: actualCaller.host, handle: actualCaller.actor },
-        workerId: null,
-        receipts: [{ kind: "host", host: actualCaller.host, handle: "native-resume" }],
-      }),
-    verifyAction: () => {
-      throw new Error("action authority is not used by resume approval");
-    },
-  };
   const destinationRoot = makeRoot();
   const destinationStore = new TaskStore(destinationRoot);
-  const destination = new WorkitCore(
-    destinationStore,
-    makeContext(destinationRoot, undefined, nativeAuthority),
-  );
+  const destination = new WorkitCore(destinationStore, makeContext(destinationRoot));
   const imported = destination.state({
     schemaVersion: 1,
     action: "import",
     expectedWorkspaceRevision: null,
     bundle: exported.data as any,
-    authorityRefs: [],
   });
   expect(imported.ok).toBe(true);
   if (!imported.ok) throw new Error(imported.error);
@@ -134,7 +110,6 @@ test("imported resume requires destination assessment, reconciliation, and nativ
       taskId: destinationTask.data.id,
       expectedRevision: destinationTask.data.revision,
       expectedWorkspaceRevision: destinationWorkspace.data.revision,
-      authorityRefs: [ref()],
     }),
   ).toMatchObject({ ok: false, code: "needs_input" });
   const assessed = destination.policy({
@@ -144,60 +119,63 @@ test("imported resume requires destination assessment, reconciliation, and nativ
     expectedRevision: destinationTask.data.revision,
     assessment: assessment({
       signals: {
-        approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
-        productChoiceOpen: { value: false, basis: "inferred", reason: "known", refs: [] },
-        behaviorChange: { value: false, basis: "inferred", reason: "mechanical", refs: [] },
-        mechanicalLowRisk: { value: false, basis: "inferred", reason: "not mechanical", refs: [] },
-        durableAgreementNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
-        coordinationPlanNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
-        helperUseful: { value: false, basis: "inferred", reason: "none", refs: [] },
-        testFirstPractical: { value: true, basis: "inferred", reason: "yes", refs: [] },
+        approachUnknown: {
+          value: false,
+          basis: "inferred",
+          reason: "known",
+          refs: [],
+        },
+        productChoiceOpen: {
+          value: false,
+          basis: "inferred",
+          reason: "known",
+          refs: [],
+        },
+        behaviorChange: {
+          value: false,
+          basis: "inferred",
+          reason: "mechanical",
+          refs: [],
+        },
+        mechanicalLowRisk: {
+          value: false,
+          basis: "inferred",
+          reason: "not mechanical",
+          refs: [],
+        },
+        durableAgreementNeeded: {
+          value: false,
+          basis: "inferred",
+          reason: "none",
+          refs: [],
+        },
+        coordinationPlanNeeded: {
+          value: false,
+          basis: "inferred",
+          reason: "none",
+          refs: [],
+        },
+        helperUseful: {
+          value: false,
+          basis: "inferred",
+          reason: "none",
+          refs: [],
+        },
+        testFirstPractical: {
+          value: true,
+          basis: "inferred",
+          reason: "yes",
+          refs: [],
+        },
       },
     }),
   });
   expect(assessed).toMatchObject({ ok: true });
   if (!assessed.ok) throw new Error(assessed.error);
-  const afterAssessment = destinationStore.readTask(destinationTask.data.id);
-  const afterAssessmentWorkspace = destinationStore.readWorkspace();
-  if (!afterAssessment.ok || !afterAssessmentWorkspace.ok || !afterAssessmentWorkspace.data)
-    throw new Error("assessed destination state missing");
-  expect(
-    destination.task({
-      schemaVersion: 1,
-      action: "resume",
-      taskId: afterAssessment.data.id,
-      expectedRevision: afterAssessment.data.revision,
-      expectedWorkspaceRevision: afterAssessmentWorkspace.data.revision,
-      authorityRefs: [ref()],
-    }),
-  ).toMatchObject({ ok: false });
-  const binding = {
-    taskId: afterAssessment.data.id,
-    workspaceId: afterAssessmentWorkspace.data.id,
-    scope: afterAssessment.data.intent.data.scope,
-    presented: "resume imported task",
-    approvedContent: "resume",
-    contentRefs: [],
-  };
-  const approved = destination.observeDecision(
-    {
-      schemaVersion: 1,
-      action: "record",
-      taskId: afterAssessment.data.id,
-      expectedRevision: afterAssessment.data.revision,
-      purpose: "design",
-      binding,
-      response: "approved",
-      requirementIds: [],
-    },
-    { kind: "resume-approval" },
-  );
-  expect(approved).toMatchObject({ ok: true });
-  if (!approved.ok) throw new Error(approved.error);
-  const currentTask = destinationStore.readTask(afterAssessment.data.id);
+  const currentTask = destinationStore.readTask(destinationTask.data.id);
   const currentWorkspace = destinationStore.readWorkspace();
   if (!currentTask.ok || !currentWorkspace.ok || !currentWorkspace.data)
-    throw new Error("approved destination state missing");
+    throw new Error("assessed destination state missing");
   const view = destination.task({
     schemaVersion: 1,
     action: "inspect",
@@ -214,7 +192,6 @@ test("imported resume requires destination assessment, reconciliation, and nativ
     taskId: currentTask.data.id,
     expectedRevision: currentTask.data.revision,
     expectedWorkspaceRevision: currentWorkspace.data.revision,
-    authorityRefs: [{ kind: "record", collection: "decisions", id: approved.data.id }],
   });
   expect(resumed).toMatchObject({ ok: true, data: { status: "active" } });
 });
@@ -227,10 +204,17 @@ test("export omits candidate environment values", () => {
   expect(candidate.ok).toBe(true);
   if (!candidate.ok) throw new Error(candidate.error);
   const changed = value.store.mutateTask(value.task.id, value.task.revision, (task, mutation) =>
-    success(mutation.revision, null, { ...task, candidates: [candidate.data] }),
+    success(mutation.revision, null, {
+      ...task,
+      candidates: [candidate.data],
+    }),
   );
   expect(changed.ok).toBe(true);
-  const exported = value.core.state({ schemaVersion: 1, action: "export", taskId: value.task.id });
+  const exported = value.core.state({
+    schemaVersion: 1,
+    action: "export",
+    taskId: value.task.id,
+  });
   expect(exported.ok).toBe(true);
   if (!exported.ok) throw new Error(exported.error);
   expect(JSON.stringify(exported.data)).not.toContain("TOP_SECRET_VALUE");
@@ -246,7 +230,6 @@ test("verified unknown observations remain a reconciliation blocker", () => {
         host: actualCaller.host,
         session: expected.session,
         workerId: expected.workerId,
-        receipts: [{ kind: "host", host: actualCaller.host, handle: "native" }],
       });
     },
   };
@@ -298,7 +281,10 @@ test("compact context is bounded, redacts approved text, and reports stale evide
     ...viewOf(value),
     task: {
       ...value.task,
-      intent: { ...value.task.intent, data: { ...value.task.intent.data, objective: secret } },
+      intent: {
+        ...value.task.intent,
+        data: { ...value.task.intent.data, objective: secret },
+      },
       progress: { ...value.task.progress, nextAction: "run checks" },
       decisions: [
         {
@@ -312,14 +298,12 @@ test("compact context is bounded, redacts approved text, and reports stale evide
               workspaceId: value.workspace.id,
               scope: scope(),
               presented: secret,
-              approvedContent: secret,
               contentRefs: [],
             },
             digest: sha256(secret),
             response: "approved",
             requirementIds: [],
             revoked: null,
-            consumption: null,
           },
         },
       ],
@@ -349,12 +333,21 @@ test("compact context enforces UTF-8 bounds and redacts credential-like text eve
       ...value.task,
       intent: {
         ...value.task.intent,
-        data: { ...value.task.intent.data, objective: `${sensitive} ${multibyte}` },
+        data: {
+          ...value.task.intent.data,
+          objective: `${sensitive} ${multibyte}`,
+        },
       },
       progress: {
         ...value.task.progress,
         nextAction: `${sensitive} ${multibyte}`,
-        blockers: [{ reason: `${sensitive} ${multibyte}`, dependentAction: "resume", refs }],
+        blockers: [
+          {
+            reason: `${sensitive} ${multibyte}`,
+            dependentAction: "resume",
+            refs,
+          },
+        ],
       },
       decisions: refs.map((contentRef, index) => ({
         id: randomUUID(),
@@ -367,18 +360,22 @@ test("compact context enforces UTF-8 bounds and redacts credential-like text eve
             workspaceId: value.workspace.id,
             scope: scope(),
             presented: `${sensitive}-${index}`,
-            approvedContent: `${sensitive}-${index}`,
             contentRefs: [contentRef],
           },
           digest: sha256(`${sensitive}-${index}`),
           response: "approved" as const,
           requirementIds: [],
           revoked: null,
-          consumption: null,
         },
       })),
     },
-    evidence: [{ evidenceId: "stale-ࠀ", status: "stale", reason: `${sensitive} ${multibyte}` }],
+    evidence: [
+      {
+        evidenceId: "stale-ࠀ",
+        status: "stale",
+        reason: `${sensitive} ${multibyte}`,
+      },
+    ],
   } as unknown as TaskView;
   const compact = compactTaskContext(view);
   expect(Buffer.byteLength(compact, "utf8")).toBeLessThanOrEqual(4096);
@@ -430,13 +427,10 @@ test("compact context keeps the newest decisions with deterministic ties and saf
         taskId: value.task.id,
         workspaceId: value.workspace.id,
         scope: scope(),
-        presented: "presented fallback",
-        approvedContent:
-          metadata.tag === "tie-b"
+        presented:
+          metadata.tag === "tie-b" || metadata.tag === "whole-second"
             ? choice
-            : metadata.tag === "whole-second"
-              ? choice
-              : "approved content",
+            : "presented fallback",
         ...(metadata.tag === "newest" || metadata.tag === "tie-a"
           ? { statedChoice: { ref: "choice", text: choice } }
           : {}),
@@ -446,7 +440,6 @@ test("compact context keeps the newest decisions with deterministic ties and saf
       response: "approved" as const,
       requirementIds: [],
       revoked: null,
-      consumption: null,
     },
   }));
   const view = {
@@ -458,7 +451,10 @@ test("compact context keeps the newest decisions with deterministic ties and saf
   const compact = compactTaskContext(view);
   expect(JSON.stringify(view.task.decisions)).toBe(before);
   expect(
-    compactTaskContext({ ...view, task: { ...view.task, decisions: [...decisions].toReversed() } }),
+    compactTaskContext({
+      ...view,
+      task: { ...view.task, decisions: [...decisions].toReversed() },
+    }),
   ).toBe(compact);
   const { decisions: compactDecisions } = JSON.parse(compact) as {
     decisions: { id: string; choice: string }[];
@@ -493,7 +489,6 @@ test("compact context inspects the full task when no actual choice is available"
         workspaceId: value.workspace.id,
         scope: scope(),
         presented: "Do you approve option A or option B?",
-        approvedContent: " \t ",
         statedChoice: { ref: "choice", text: "  " },
         contentRefs: [],
       },
@@ -501,14 +496,15 @@ test("compact context inspects the full task when no actual choice is available"
       response: "stated" as const,
       requirementIds: [],
       revoked: null,
-      consumption: null,
     },
   };
   const compact = compactTaskContext({
     ...viewOf(value),
     task: { ...value.task, decisions: [decision] },
   });
-  const { decisions } = JSON.parse(compact) as { decisions: { choice: string }[] };
+  const { decisions } = JSON.parse(compact) as {
+    decisions: { choice: string }[];
+  };
   expect(decisions[0]?.choice).toBe(
     `task.inspect taskId=${value.task.id} view=full; decision=${decision.id}`,
   );
@@ -524,7 +520,10 @@ test("compact context inspects the full task when no actual choice is available"
             data: {
               ...decision.data,
               response,
-              binding: { ...decision.data.binding, approvedContent: "Proceed with option A" },
+              binding: {
+                ...decision.data.binding,
+                presented: "Proceed with option A",
+              },
             },
           },
         ],
@@ -542,9 +541,16 @@ test("export omits host and external refs throughout portable history", () => {
   const evidenceId = randomUUID();
   const hostRefs: Ref[] = [
     { kind: "host", host: "workit_cli", handle: "HOST_SENTINEL_TOKEN" },
-    { kind: "external", url: "https://user:EXTERNAL_SENTINEL_TOKEN@example.test/ref" },
+    {
+      kind: "external",
+      url: "https://user:EXTERNAL_SENTINEL_TOKEN@example.test/ref",
+    },
   ];
-  const fileRef: Ref = { kind: "file", path: "historical.txt", digest: "a".repeat(64) };
+  const fileRef: Ref = {
+    kind: "file",
+    path: "historical.txt",
+    digest: "a".repeat(64),
+  };
   const recordRef: Ref = {
     kind: "record",
     collection: "evidence",
@@ -601,13 +607,11 @@ test("export omits host and external refs throughout portable history", () => {
       workspaceId: value.workspace.id,
       scope: scope(),
       presented: "decision",
-      approvedContent: "decision",
       contentRefs: refs,
     },
     response: "approved" as const,
     requirementIds: [],
     revoked: null,
-    consumption: null,
   };
   const finding = {
     id: randomUUID(),
@@ -626,7 +630,10 @@ test("export omits host and external refs throughout portable history", () => {
   const changed = value.store.mutateTask(value.task.id, value.task.revision, (task, mutation) =>
     success(mutation.revision, null, {
       ...task,
-      intent: { ...task.intent, data: { ...task.intent.data, authorityRefs: refs } },
+      intent: {
+        ...task.intent,
+        data: { ...task.intent.data, authorityRefs: refs },
+      },
       constraints: [constraint],
       assessments: [
         {
@@ -660,7 +667,11 @@ test("export omits host and external refs throughout portable history", () => {
     }),
   );
   expect(changed.ok).toBe(true);
-  const exported = value.core.state({ schemaVersion: 1, action: "export", taskId: value.task.id });
+  const exported = value.core.state({
+    schemaVersion: 1,
+    action: "export",
+    taskId: value.task.id,
+  });
   expect(exported.ok).toBe(true);
   if (!exported.ok) throw new Error(exported.error);
   const serialized = JSON.stringify(exported.data);
@@ -676,7 +687,6 @@ test("export omits host and external refs throughout portable history", () => {
     action: "import",
     expectedWorkspaceRevision: null,
     bundle: exported.data,
-    authorityRefs: [],
   });
   expect(imported).toMatchObject({ ok: true });
   if (!imported.ok) throw new Error(imported.error);
@@ -692,14 +702,30 @@ test("export omits host and external refs throughout portable history", () => {
 
 test("portable assessment state remains truthful and importable after host refs are removed", () => {
   const value = active();
-  const hostRef: Ref = { kind: "host", host: "workit_cli", handle: "HOST_ONLY" };
-  const fileRef: Ref = { kind: "file", path: "portable.txt", digest: "b".repeat(64) };
+  const hostRef: Ref = {
+    kind: "host",
+    host: "workit_cli",
+    handle: "HOST_ONLY",
+  };
+  const fileRef: Ref = {
+    kind: "file",
+    path: "portable.txt",
+    digest: "b".repeat(64),
+  };
   const base = assessment();
   const assessmentWithHostOnlyState = {
     ...base,
     facts: [
-      { statement: "host-only fact", basis: "observed" as const, refs: [hostRef] },
-      { statement: "mixed fact", basis: "observed" as const, refs: [hostRef, fileRef] },
+      {
+        statement: "host-only fact",
+        basis: "observed" as const,
+        refs: [hostRef],
+      },
+      {
+        statement: "mixed fact",
+        basis: "observed" as const,
+        refs: [hostRef, fileRef],
+      },
     ],
     signals: {
       ...base.signals,
@@ -719,7 +745,11 @@ test("portable assessment state remains truthful and importable after host refs 
     consequences: [
       {
         area: "security" as const,
-        fact: { statement: "host-only consequence", basis: "observed" as const, refs: [hostRef] },
+        fact: {
+          statement: "host-only consequence",
+          basis: "observed" as const,
+          refs: [hostRef],
+        },
       },
     ],
   };
@@ -738,13 +768,23 @@ test("portable assessment state remains truthful and importable after host refs 
   );
   expect(changed.ok).toBe(true);
 
-  const exported = value.core.state({ schemaVersion: 1, action: "export", taskId: value.task.id });
+  const exported = value.core.state({
+    schemaVersion: 1,
+    action: "export",
+    taskId: value.task.id,
+  });
   expect(exported).toMatchObject({ ok: true });
   if (!exported.ok) throw new Error(exported.error);
   const bundle = exported.data as ExportBundle;
   const portableAssessment = bundle.task.assessments[0].data;
-  expect(portableAssessment.facts[0]).toMatchObject({ basis: "unknown", refs: [] });
-  expect(portableAssessment.facts[1]).toMatchObject({ basis: "observed", refs: [fileRef] });
+  expect(portableAssessment.facts[0]).toMatchObject({
+    basis: "unknown",
+    refs: [],
+  });
+  expect(portableAssessment.facts[1]).toMatchObject({
+    basis: "observed",
+    refs: [fileRef],
+  });
   expect(portableAssessment.signals.behaviorChange).toMatchObject({
     value: "unknown",
     basis: "unknown",
@@ -756,7 +796,10 @@ test("portable assessment state remains truthful and importable after host refs 
     basis: "observed",
     refs: [fileRef],
   });
-  expect(portableAssessment.consequences[0].fact).toMatchObject({ basis: "unknown", refs: [] });
+  expect(portableAssessment.consequences[0].fact).toMatchObject({
+    basis: "unknown",
+    refs: [],
+  });
 
   const destinationRoot = makeRoot();
   const destination = new WorkitCore(new TaskStore(destinationRoot), makeContext(destinationRoot));
@@ -766,7 +809,6 @@ test("portable assessment state remains truthful and importable after host refs 
       action: "import",
       expectedWorkspaceRevision: null,
       bundle,
-      authorityRefs: [],
     }),
   ).toMatchObject({ ok: true });
 });

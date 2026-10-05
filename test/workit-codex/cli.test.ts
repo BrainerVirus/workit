@@ -530,22 +530,8 @@ test("any Codex session passes PreToolUse writes through", () => {
   const started = bound.task(taskStartRequest());
   expect(started.ok).toBe(true);
   if (!started.ok) throw new Error(started.error);
-  const id = (started.data as { id: string }).id;
-  const task = store.readTask(id);
-  const workspace = store.readWorkspace();
-  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
-  expect(
-    bound.writer({
-      schemaVersion: 1,
-      action: "acquire",
-      taskId: id,
-      expectedRevision: task.data.revision,
-      expectedWorkspaceRevision: workspace.data.revision,
-      workerId: null,
-    }).ok,
-  ).toBe(true);
-  // Owner session {workit_cli, session-1} and any other session both pass:
-  // file writes are host-policy, never hook-gated.
+  // The starting session {workit_cli, session-1} and any other session both
+  // pass: file writes are host-policy, never hook-gated.
   expectHostPermissionUnchanged(
     handleCodexHook(
       official(

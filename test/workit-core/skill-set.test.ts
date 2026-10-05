@@ -133,10 +133,18 @@ test("Given every description, Then it carries no other skill's trigger word", (
 // source handles. Commit spans must name what to commit (`--all` or paths).
 const REPO = path.join(import.meta.dir, "../..");
 const VERB_SOURCES = path.join(REPO, "packages/workit-cli/src/verbs");
-const SUBCOMMAND_VERBS = new Set(["git", "pr", "ci", "stack", "ledger", "verify-delivery"]);
+const SUBCOMMAND_VERBS = new Set([
+  "git",
+  "pr",
+  "ci",
+  "stack",
+  "ledger",
+  "verify-delivery",
+  "grant",
+]);
 const GLOBAL_FLAGS = new Set(["--json", "--cwd", "--help"]);
 // Verbs the skills already name ahead of their slice; drop each when it lands.
-const PLANNED_VERBS = new Set(["grant"]); // S16 (#193): workit grant show
+const PLANNED_VERBS = new Set<string>();
 
 const agentFacingTexts = (): Array<[string, string]> => {
   const out: Array<[string, string]> = [

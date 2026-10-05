@@ -300,7 +300,6 @@ test("G a fresh branch with no task, W check runs, T a task bound to the branch 
       host: "workit_cli",
       session: null,
       workerId: null,
-      receipts: [],
     },
     create: false,
   });

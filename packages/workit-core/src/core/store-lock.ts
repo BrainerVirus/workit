@@ -20,7 +20,6 @@ export type MetadataLock = {
   processStart: string | null;
   host: string;
   nonce: string;
-  externalAction?: true;
 };
 
 const metadataLockSchema = z
@@ -29,6 +28,7 @@ const metadataLockSchema = z
     processStart: z.string().nullable(),
     host: z.string().min(1),
     nonce: z.string().min(1),
+    /** Written by ≤4.x managed external actions; read and ignored (D17). */
     externalAction: z.literal(true).optional(),
   })
   .strict();

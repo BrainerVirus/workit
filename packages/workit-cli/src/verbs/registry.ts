@@ -27,7 +27,6 @@ export const TASK_FAMILY_NAMES = [
   "finding",
   "decision",
   "worker",
-  "writer",
   "state",
 ] as const;
 
@@ -89,14 +88,16 @@ export const VERBS: readonly VerbEntry[] = [
     summary: "Remove workit host registrations interactively (~/.config/workit is kept)",
     load: () => import("./uninstall"),
   },
-  ...TASK_FAMILY_NAMES.map(family),
   {
-    name: "action",
-    group: "task",
-    usage: "workit action <operation> --payload <JSON>",
-    summary: "Preview or run one approved external action (--help lists payloads)",
-    load: () => import("./action"),
+    name: "grant",
+    group: "setup",
+    usage:
+      "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… | grant unset <workspace> <kind>…",
+    summary:
+      "Show or change a workspace's autonomy grants (push, pr, merge, release, rerun) and default endpoint; raising needs the user at a terminal",
+    load: () => import("./grant"),
   },
+  ...TASK_FAMILY_NAMES.map(family),
   {
     name: "check",
     group: "delivery",
@@ -166,6 +167,22 @@ export const VERBS: readonly VerbEntry[] = [
     summary:
       "Flag tautological and low-value tests with a suggested independent oracle; --mutate checks changed lines with diff-scoped mutation",
     load: () => import("./test-audit"),
+  },
+  {
+    name: "youtrack",
+    group: "delivery",
+    usage:
+      "workit youtrack note <ISSUE> (--markdown <t> | --file <p>) [--minutes <n>] | youtrack time|meeting <ISSUE> --minutes <n> [--text <t>] [--date auto|YYYY-MM-DD]",
+    summary: "Post a YouTrack comment or log work time (host permission, no grant)",
+    load: () => import("./youtrack"),
+  },
+  {
+    name: "changelog",
+    group: "delivery",
+    usage:
+      "workit changelog apply (--entries <JSON|@file|-> | --normalize-only) [--path CHANGELOG.md] [--preview]",
+    summary: "Add entries under the Unreleased section of the changelog",
+    load: () => import("./changelog"),
   },
   {
     name: "handoff",

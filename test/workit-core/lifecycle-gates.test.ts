@@ -29,7 +29,6 @@ const observationVerifier = (): NativeWorkerVerifier => ({
       host: actualCaller.host,
       session: expected.session,
       workerId: expected.workerId,
-      receipts: [{ kind: "host", host: actualCaller.host, handle: "native-event" }],
     }),
 });
 
@@ -93,7 +92,12 @@ const observeRunning = (
   });
 
 const pause = (core: WorkitCore, taskId: string) => {
-  const task = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+  const task = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId,
+    view: "summary",
+  });
   if (!task.ok) throw new Error(task.error);
   return core.task({
     schemaVersion: 1,
@@ -134,7 +138,10 @@ test("single cancel stops a live unreported worker", () => {
       workerId: assigned.data.id,
       reason: "no longer needed",
     });
-    expect(cancelled).toMatchObject({ ok: true, data: { data: { state: "stopped" } } });
+    expect(cancelled).toMatchObject({
+      ok: true,
+      data: { data: { state: "stopped" } },
+    });
   } finally {
     rmSync(lead.root, { recursive: true, force: true });
   }
@@ -157,8 +164,14 @@ test("repeat cancel on a stopped worker is idempotent", () => {
         reason: "done",
       });
     };
-    expect(cancel()).toMatchObject({ ok: true, data: { data: { state: "stopped" } } });
-    expect(cancel()).toMatchObject({ ok: true, data: { data: { state: "stopped" } } });
+    expect(cancel()).toMatchObject({
+      ok: true,
+      data: { data: { state: "stopped" } },
+    });
+    expect(cancel()).toMatchObject({
+      ok: true,
+      data: { data: { state: "stopped" } },
+    });
   } finally {
     rmSync(lead.root, { recursive: true, force: true });
   }

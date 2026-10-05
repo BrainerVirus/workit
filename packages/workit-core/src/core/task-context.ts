@@ -109,7 +109,7 @@ const compactTimestamp = (value: Utc): string =>
   `${value.slice(0, 19)}.${value.slice(20, -1).padEnd(9, "0")}`;
 const compactDecisionChoice = (entry: TaskView["task"]["decisions"][number]): string | null => {
   const stated = entry.data.binding.statedChoice?.text;
-  const approved = entry.data.response === "approved" ? entry.data.binding.approvedContent : "";
+  const approved = entry.data.response === "approved" ? entry.data.binding.presented : "";
   const source = stated?.trim() || approved.trim() || null;
   return compactText(source, COMPACT_TEXT_BYTES);
 };

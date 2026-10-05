@@ -6,7 +6,6 @@ import {
   POLICY_VERSION,
   candidateDigest,
   candidateSchema,
-  decisionDigest,
   failure,
   scopeCovers as contractScopeCovers,
   success,
@@ -25,7 +24,6 @@ import {
   type TaskView,
   type WorkspaceRecord,
 } from "./task-contract";
-import { verifyDecisionContentAtRoot } from "./authority";
 import {
   CHECKS_FILE,
   checkCommand,
@@ -495,6 +493,69 @@ export const findingVerificationPasses = (
   evidence.status === "passed" &&
   (evidence.kind === "check" || evidence.kind === "review") &&
   ((findingCandidateId ?? null) === null || evidence.candidateId != null);
+/** A decision about a document stays current only while its bytes are unchanged. */
+export const verifyDecisionContentAtRoot = (
+  checkoutRoot: string,
+  binding: Decision["binding"],
+): Result<null> => {
+  let root: string;
+  try {
+    root = fs.realpathSync(checkoutRoot);
+  } catch {
+    return failure("permission_denied", "checkout root is unavailable");
+  }
+  for (const reference of binding.contentRefs) {
+    if (reference.kind !== "file") continue;
+    if (!reference.digest)
+      return failure("invalid_input", "document references require a byte digest");
+    const target = path.resolve(root, reference.path);
+    if (target !== root && !target.startsWith(`${root}${path.sep}`))
+      return failure(
+        "invalid_input",
+        "document reference escapes checkout; cite it as an external file:// reference instead",
+        {
+          fields: [
+            { path: "contentRefs.path", reason: `${reference.path} is outside the checkout` },
+          ],
+        },
+      );
+    try {
+      const below = path.relative(root, target);
+      let current = root;
+      for (const segment of below.split(path.sep)) {
+        if (!segment) continue;
+        current = path.join(current, segment);
+        const stat = fs.lstatSync(current);
+        const real = fs.realpathSync(current);
+        if (real !== root && !real.startsWith(`${root}${path.sep}`))
+          return failure(
+            "invalid_input",
+            "document reference escapes checkout; cite it as an external file:// reference instead",
+            {
+              fields: [
+                {
+                  path: "contentRefs.path",
+                  reason: `${reference.path} resolves outside the checkout`,
+                },
+              ],
+            },
+          );
+        if (stat.isSymbolicLink())
+          return failure("invalid_input", "document reference uses a symlink");
+        if (current === target && !stat.isFile())
+          return failure("invalid_input", "document reference is not a regular file");
+        if (current !== target && !stat.isDirectory())
+          return failure("invalid_input", "document reference ancestor is not a directory");
+      }
+      if (digestBytes(fs.readFileSync(target)) !== reference.digest)
+        return failure("permission_denied", "decision document bytes have changed");
+    } catch {
+      return failure("invalid_input", "decision document is unavailable");
+    }
+  }
+  return success(null, null, null);
+};
+
 const applicableDecision = (
   task: TaskRecord,
   workspace: WorkspaceRecord,
@@ -514,7 +575,6 @@ const applicableDecision = (
         decision.requirementIds.includes(requirement.id) &&
         decision.binding.scope &&
         scopeCovers(decision.binding.scope, requirement.scope) &&
-        decision.digest === decisionDigest(decision) &&
         (checkoutRoot
           ? verifyDecisionContentAtRoot(checkoutRoot, decision.binding).ok
           : decision.binding.contentRefs.every((reference) => reference.kind !== "file")),
@@ -537,7 +597,6 @@ const applicableRequirementDecision = (
         data.binding.workspaceId === workspace.id &&
         data.requirementIds.includes(requirement.id) &&
         scopeCovers(data.binding.scope, requirement.scope) &&
-        data.digest === decisionDigest(data) &&
         (checkoutRoot
           ? verifyDecisionContentAtRoot(checkoutRoot, data.binding).ok
           : data.binding.contentRefs.every((reference) => reference.kind !== "file")),
@@ -903,7 +962,6 @@ export function evaluateClosure(
             decision.purpose === "limitation" &&
             decision.response === "approved" &&
             decision.revoked === null &&
-            decision.digest === decisionDigest(decision) &&
             verifyDecisionContentAtRoot(view.workspace.root, decision.binding).ok &&
             decision.binding.taskId === view.task.id &&
             decision.binding.workspaceId === view.workspace.id &&

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
-import { NativeReceiptStore, createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
+import { createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
 
 const decisionFixture = (actor: string) => {
   const root = mkdtempSync(join(tmpdir(), `workit-opencode-decision-${actor}-`));
@@ -22,30 +22,14 @@ const decisionFixture = (actor: string) => {
   const task = store.readTask((started.data as { id: string }).id);
   const workspace = store.readWorkspace();
   if (!task.ok || !workspace.ok || !workspace.data) throw new Error("decision fixture failed");
-  const writer = core.writer({
-    schemaVersion: 1,
-    action: "acquire",
-    taskId: task.data.id,
-    expectedRevision: task.data.revision,
-    expectedWorkspaceRevision: workspace.data.revision,
-    workerId: null,
-  });
-  if (!writer.ok) throw new Error(writer.error);
-  const currentTask = store.readTask(task.data.id);
-  const currentWorkspace = store.readWorkspace();
-  if (!currentTask.ok || !currentWorkspace.ok || !currentWorkspace.data)
-    throw new Error("writer refresh failed");
-  const receipts = new NativeReceiptStore();
   const tools = createWorkitTools({
-    receipts,
     client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
   }) as any;
   return {
     root,
     actor,
-    task: currentTask.data,
-    workspace: currentWorkspace.data,
-    receipts,
+    task: task.data,
+    workspace: workspace.data,
     tools,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
@@ -289,229 +273,6 @@ test("OpenCode YouTrack context rejects spec and plan paths outside the workspac
   }
 });
 
-test("native receipts reject unrelated questions and are consumed once per purpose", () => {
-  const receipts = new NativeReceiptStore();
-  receipts.record(
-    {
-      sessionID: "s",
-      callID: "unrelated",
-      args: { questions: [{ question: "Which color?", options: ["blue"] }] },
-    },
-    { metadata: { answers: [["blue"]] } },
-  );
-  expect(receipts.consume("s", "decision").ok).toBe(false);
-
-  receipts.record(
-    {
-      sessionID: "s",
-      callID: "decision",
-      args: {
-        questions: [
-          {
-            header: "Workit decision: design",
-            question: "Approve this decision?",
-            options: [
-              { label: "approved", description: "Design" },
-              { label: "rejected", description: "Reject this decision" },
-            ],
-          },
-        ],
-      },
-    },
-    { metadata: { answers: [["approved"]] } },
-  );
-  expect(receipts.consume("s", "decision").ok).toBe(true);
-  expect(receipts.consume("s", "decision").ok).toBe(false);
-});
-
-test("native receipts retain exact call, label, and content bindings", () => {
-  const receipts = new NativeReceiptStore();
-  const input = {
-    sessionID: "bound-session",
-    callID: "bound-call",
-    args: {
-      questions: [
-        {
-          header: "Workit decision: design",
-          question: "Approve the scoped change?",
-          options: [
-            { label: "approved", description: "Design" },
-            { label: "rejected", description: "Reject this decision" },
-          ],
-        },
-      ],
-    },
-  };
-  receipts.record(input, { metadata: { answers: [["approved"]] } });
-  const digest = receipts.consume("bound-session", "decision");
-  expect(digest.ok).toBe(true);
-  if (!digest.ok) throw new Error(digest.error);
-  expect(digest.receipt.callID).toBe("bound-call");
-  expect(digest.receipt.selectedLabel).toBe("approved");
-  expect(digest.receipt.contentDigest).toMatch(/^[0-9a-f]{64}$/);
-
-  receipts.record(input, { metadata: { answers: [["approved"]] } });
-  expect(
-    receipts.consume("bound-session", "decision", {
-      callID: "different-call",
-      selectedLabel: "approved",
-      contentDigest: digest.receipt.contentDigest,
-    }).ok,
-  ).toBe(false);
-  expect(
-    receipts.consume("bound-session", "decision", {
-      callID: "bound-call",
-      selectedLabel: "approved",
-      contentDigest: digest.receipt.contentDigest,
-    }).ok,
-  ).toBe(false);
-});
-
-test("consumed native call IDs stay deduplicated for the receipt store lifetime", () => {
-  const receipts = new NativeReceiptStore();
-  const input = {
-    sessionID: "long-lived-session",
-    args: {
-      questions: [
-        {
-          header: "Workit decision: action",
-          question: "Workit decision: action — commit?",
-          options: [
-            { label: "approved", description: "Commit the change." },
-            { label: "rejected", description: "Reject this decision" },
-          ],
-        },
-      ],
-    },
-  };
-  for (let index = 0; index < 1025; index += 1) {
-    const callID = `native-call-${index}`;
-    receipts.record({ ...input, callID }, { metadata: { answers: [["approved"]] } });
-    if (!receipts.consume(input.sessionID, "decision", { callID }).ok)
-      throw new Error(`receipt ${callID} did not consume`);
-  }
-  receipts.record({ ...input, callID: "native-call-0" }, { metadata: { answers: [["approved"]] } });
-  expect(receipts.consume(input.sessionID, "decision", { callID: "native-call-0" }).ok).toBe(false);
-});
-
-test("native receipts reject a matching-purpose answer with different content", () => {
-  const receipts = new NativeReceiptStore();
-  receipts.record(
-    {
-      sessionID: "content-session",
-      callID: "content-call",
-      args: {
-        questions: [
-          {
-            header: "Workit decision: design",
-            question: "Approve the first scoped change?",
-            options: [
-              { label: "approved", description: "First change" },
-              { label: "rejected", description: "Reject this decision" },
-            ],
-          },
-        ],
-      },
-    },
-    { metadata: { answers: [["approved"]] } },
-  );
-  expect(
-    receipts.consume("content-session", "decision", {
-      selectedLabel: "approved",
-      question: "Approve a different scoped change?",
-    }).ok,
-  ).toBe(false);
-  expect(
-    receipts.consume("content-session", "decision", {
-      selectedLabel: "approved",
-      question: "Approve the first scoped change?",
-    }).ok,
-  ).toBe(true);
-});
-
-test("oversized decision bindings fail closed at record time", async () => {
-  const fixture = decisionFixture("oversize");
-  try {
-    const long = `Approve ${"x".repeat(400)}`;
-    fixture.receipts.record(
-      {
-        sessionID: fixture.actor,
-        callID: "oversize-question",
-        args: {
-          questions: [
-            {
-              header: "Workit decision: design",
-              question: long,
-              options: [
-                { label: "approved", description: long },
-                { label: "rejected", description: "Reject this decision" },
-              ],
-            },
-          ],
-        },
-      },
-      { metadata: { answers: [["approved"]] } },
-    );
-    const result = await fixture.tools.workit_decision.execute(
-      {
-        schemaVersion: 1,
-        action: "record",
-        taskId: fixture.task.id,
-        expectedRevision: fixture.task.revision,
-        purpose: "design",
-        binding: {
-          taskId: fixture.task.id,
-          workspaceId: fixture.workspace.id,
-          scope: fixture.task.intent.data.scope,
-          presented: long,
-          approvedContent: long,
-          contentRefs: [],
-        },
-        response: "approved",
-        requirementIds: [],
-      },
-      { directory: fixture.root, sessionID: fixture.actor },
-    );
-    expect(JSON.parse(typeof result === "string" ? result : result.output)).toMatchObject({
-      ok: false,
-      code: "invalid_input",
-    });
-  } finally {
-    fixture.cleanup();
-  }
-});
-
-test("receipt near misses identify the mismatched binding", () => {
-  const receipts = new NativeReceiptStore();
-  receipts.recordRequest("call-near", "sess-near", "call-near");
-  receipts.record(
-    {
-      sessionID: "sess-near",
-      callID: "call-near",
-      args: {
-        questions: [
-          {
-            header: "Workit decision: design",
-            question: "Workit decision: design — Approve the plan shown above?",
-            options: [
-              { label: "approved", description: "Plan A" },
-              { label: "rejected", description: "Reject this decision" },
-            ],
-          },
-        ],
-      },
-    },
-    { metadata: { answers: [["approved"]] } },
-  );
-  const consumed = receipts.consume("sess-near", "decision", {
-    selectedLabel: "approved",
-    decisionPurpose: "design",
-    selectedDescription: "Plan B",
-  });
-  expect(consumed.ok).toBe(false);
-  if (!consumed.ok) expect(consumed.error).toContain("description");
-});
-
 test("stated design choices need no receipt and never authorize an action", async () => {
   const fixture = decisionFixture("stated-choice");
   try {
@@ -528,7 +289,6 @@ test("stated design choices need no receipt and never authorize an action", asyn
             workspaceId: fixture.workspace.id,
             scope: fixture.task.intent.data.scope,
             presented: "Take the second approach?",
-            approvedContent: "Take the second approach.",
             contentRefs: [],
             statedChoice: { ref: callRef, text: "take the second one" },
           },

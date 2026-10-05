@@ -117,7 +117,22 @@ const workspaceConfigSchema = z
       })
       .passthrough()
       .optional(),
+    /** Legacy (≤4.x) standing approvals; read once as autonomy grants (autonomy.ts). */
     autoApprove: z.union([z.boolean(), z.array(nonBlank)]).optional(),
+    /** Where an unnamed request stops (skills read it); same rules as grants. */
+    defaultEndpoint: z.enum(["commit", "pr"]).optional(),
+    /** Autonomy grants (D15): only ever set here, by the user. */
+    autonomy: z
+      .object(
+        Object.fromEntries(
+          ["push", "pr", "merge", "release", "rerun"].map((kind) => [
+            kind,
+            z.union([z.boolean(), z.literal("verified")]).optional(),
+          ]),
+        ),
+      )
+      .passthrough()
+      .optional(),
     youtrack: z
       .object({ baseUrl: nonBlank.optional(), link_issues: z.boolean().optional() })
       .passthrough()

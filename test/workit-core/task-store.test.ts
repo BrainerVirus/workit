@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   existsSync,
   mkdtempSync,
-  realpathSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -31,7 +30,6 @@ const provenance = {
   host: "workit_cli" as const,
   session: null,
   workerId: null,
-  receipts: [],
 };
 
 const startedStore = () => {
@@ -70,76 +68,22 @@ test("workspace root binding accepts another path to the same directory", () => 
   }
 });
 
-test("external action lock is reentrant through another path to the same directory", async () => {
-  const root = fixtureRoot();
-  const alias = `${root}-alias`;
-  try {
-    const outerRoots =
-      process.platform === "win32" ? [root.toUpperCase(), realpathSync(root)] : [alias];
-    if (process.platform !== "win32") symlinkSync(root, alias, "dir");
-    const nestedStore = new TaskStore(root);
-    for (const outerRoot of new Set(outerRoots)) {
-      const result = await new TaskStore(outerRoot).withExternalActionLock(
-        () => nestedStore.withExternalActionLock(async () => success(null, null, "nested")),
-        true,
-      );
-      expect(result).toEqual(success(null, null, "nested"));
-    }
-  } finally {
-    if (process.platform !== "win32") rmSync(alias, { force: true });
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("external action lease holds TaskStore writer serialization through async effects", async () => {
-  const { store, task } = startedStore();
-  let enter!: () => void;
-  let resume!: () => void;
-  const entered = new Promise<void>((resolve) => (enter = resolve));
-  const paused = new Promise<void>((resolve) => (resume = resolve));
-  const lease = store.withExternalActionLock(async () => {
-    enter();
-    await paused;
-    return success(null, null, "settled");
-  });
-  await entered;
-  const workspace = store.readWorkspace();
-  expect(workspace).toMatchObject({ ok: true, data: { writer: null } });
-  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
-  const setWriter = (revision: string) =>
-    store.mutateWorkspace(revision, (current) =>
-      success(null, null, {
-        ...current,
-        writer: {
-          state: "held",
-          owner: {
-            taskId: task.id,
-            workerId: null,
-            session: { kind: "host", host: "workit_cli", handle: "target-writer" },
-          },
-          acquiredAt: "2026-01-01T00:00:00Z",
-        },
-      }),
-    );
-  const writer = setWriter(workspace.data.revision);
-  expect(writer.ok).toBe(false);
-  resume();
-  expect(await lease).toMatchObject({ ok: true, data: "settled" });
-  const unlocked = store.readWorkspace();
-  if (!unlocked.ok || !unlocked.data) throw new Error("workspace missing after lease");
-  expect(setWriter(unlocked.data.revision).ok).toBe(true);
-});
-
 const identity = (task: TaskRecord) => success(task.revision, null, task);
 
 test("creates snapshots atomically and writes the ignore file only on mutation", () => {
   const { store, task } = startedStore();
-  expect(store.readTask(task.id)).toMatchObject({ ok: true, data: { id: task.id } });
-  expect(store.readWorkspace()).toMatchObject({ ok: true, data: { id: task.workspaceId } });
+  expect(store.readTask(task.id)).toMatchObject({
+    ok: true,
+    data: { id: task.id },
+  });
+  expect(store.readWorkspace()).toMatchObject({
+    ok: true,
+    data: { id: task.workspaceId },
+  });
   expect(existsSync(join(store.root, ".workit", ".gitignore"))).toBe(true);
 });
 
-test("new tasks preserve the workspace identity and writer while advancing its CAS revision", () => {
+test("new tasks preserve the workspace identity while advancing its CAS revision", () => {
   const root = fixtureRoot();
   const store = new TaskStore(root);
   const first = store.create({
@@ -152,16 +96,6 @@ test("new tasks preserve the workspace identity and writer while advancing its C
   const before = store.readWorkspace();
   expect(before.ok).toBe(true);
   if (!before.ok || !before.data) throw new Error("workspace missing");
-  const writer = {
-    state: "held" as const,
-    owner: {
-      taskId: first.data.id,
-      workerId: null,
-      session: { kind: "host" as const, host: "workit_cli" as const, handle: "writer" },
-    },
-    acquiredAt: "2026-01-01T00:00:00Z",
-  };
-  writeFileSync(workspaceFileOf(store.root), `${JSON.stringify({ ...before.data, writer })}\n`);
   const second = store.create({
     expectedWorkspaceRevision: before.data.revision,
     provenance,
@@ -175,7 +109,6 @@ test("new tasks preserve the workspace identity and writer while advancing its C
   expect(second.data.workspaceId).toBe(before.data.id);
   expect(after.data.id).toBe(before.data.id);
   expect(after.data.revision).not.toBe(before.data.revision);
-  expect(after.data.writer).toEqual(writer);
   expect(store.listTasks()).toMatchObject({
     ok: true,
     data: expect.arrayContaining([
@@ -214,8 +147,13 @@ test("an unreadable event before the last line is damage: reported, never rewrit
   const file = eventsFileOf(store.root, task.id);
   const bytes = `{broken}\n${readFileSync(file, "utf8")}`;
   writeFileSync(file, bytes);
-  rmSync(join(store.root, ".workit", "tasks", task.id, "snapshot.json"), { force: true });
-  expect(store.readTask(task.id)).toMatchObject({ ok: false, code: "recovery_required" });
+  rmSync(join(store.root, ".workit", "tasks", task.id, "snapshot.json"), {
+    force: true,
+  });
+  expect(store.readTask(task.id)).toMatchObject({
+    ok: false,
+    code: "recovery_required",
+  });
   expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
     ok: false,
     code: "recovery_required",
@@ -228,7 +166,10 @@ test("unsupported snapshots stay inspectable and a leftover stale lock no longer
   const workspaceFile = workspaceFileOf(store.root);
   const workspaceBytes = readFileSync(workspaceFile, "utf8");
   writeFileSync(workspaceFile, JSON.stringify({ schemaVersion: 2 }));
-  expect(store.readWorkspace()).toMatchObject({ ok: false, code: "unsupported_version" });
+  expect(store.readWorkspace()).toMatchObject({
+    ok: false,
+    code: "unsupported_version",
+  });
   expect(readFileSync(workspaceFile, "utf8")).toBe(JSON.stringify({ schemaVersion: 2 }));
   writeFileSync(workspaceFile, workspaceBytes);
   const lockPath = join(store.root, ".workit", "tasks", task.id, "lock");
@@ -243,11 +184,13 @@ test("unsupported snapshots stay inspectable and a leftover stale lock no longer
   expect(store.readTask(task.id)).toMatchObject({ ok: true });
   expect(readFileSync(lockPath, "utf8")).toBe(lockBytes);
   // A foreign-host lock past its TTL has no provable owner: the write reclaims it.
-  expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({ ok: true });
+  expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
+    ok: true,
+  });
   expect(existsSync(lockPath)).toBe(false);
 });
 
-test("coupled mutation retains uncertain workspace ownership after task failure", () => {
+test("coupled mutation reports an unknown outcome when the task step throws", () => {
   const { store, task } = startedStore();
   const workspace = store.readWorkspace();
   expect(workspace.ok).toBe(true);
@@ -256,28 +199,12 @@ test("coupled mutation retains uncertain workspace ownership after task failure"
     taskId: task.id,
     expectedRevision: task.revision,
     expectedWorkspaceRevision: workspace.data.revision,
-    workspace: (current, context) =>
-      success(context.revision, context.revision, {
-        ...current,
-        writer: {
-          state: "held",
-          acquiredAt: context.now,
-          owner: {
-            taskId: task.id,
-            workerId: null,
-            session: { kind: "host", host: "workit_cli", handle: "test" },
-          },
-        },
-      }),
+    workspace: (current, context) => success(context.revision, context.revision, current),
     task: () => {
       throw new Error("simulated task failure");
     },
   });
   expect(result).toMatchObject({ ok: false, code: "external_outcome_unknown" });
-  expect(store.readWorkspace()).toMatchObject({
-    ok: true,
-    data: { writer: { state: "uncertain" } },
-  });
 });
 
 test("unknown fields in a logged record survive later appends; critical ones fail closed", () => {

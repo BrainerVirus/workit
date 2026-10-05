@@ -18,6 +18,7 @@ import {
   type WaitVerdict,
 } from "@brainervirus/workit-core/src/forge/report";
 import type { ForgePrStatus } from "@brainervirus/workit-core/src/forge/types";
+import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import { emit, fail, ok, type Io } from "../output";
 import {
   connect,
@@ -197,6 +198,12 @@ async function rerun(argv: string[], io: Io): Promise<number> {
           unblock: `use a credential for ${resolved.expectedAccount} that can read /user (vcs.tokenFile or ${resolved.forge.kind === "github" ? "gh" : "glab"} auth login --hostname ${resolved.forge.apiHost})`,
         },
       ),
+    );
+  const grant = requireGrant(io.cwd, "rerun");
+  if (!grant.allowed)
+    return emit(
+      io,
+      fail("blocked", grant.error, { unblock: grant.unblock, data: { reason: grant.reason } }),
     );
   const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
   if (!number.ok) return forgeFail(io, number);

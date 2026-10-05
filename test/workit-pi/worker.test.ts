@@ -5,20 +5,17 @@ import path from "node:path";
 import {
   TaskStore,
   WorkitCore,
-  failure,
   success,
   type OperationContext,
 } from "@/packages/workit-core/src/core";
 import {
   cancelWorker,
   advanceWorkerBinding,
-  commitWorkerNotStarted,
   consumeWorkerOutput,
   launchWorker,
   launchSupervisedWorker,
   nativeWorkerForEvidence,
   observeExit,
-  prepareWorkerLaunch,
   observeWorkerStart,
   reportWorker,
   reconcileWorker,
@@ -64,7 +61,8 @@ test("reviewer and investigator commands exclude write-capable Pi tools", () => 
     expect(tools).not.toContain("bash");
     expect(tools).not.toContain("write");
     expect(tools).not.toContain("edit");
-    expect(tools.filter((tool) => tool.startsWith("workit_"))).toHaveLength(8);
+    expect(tools.filter((tool) => tool.startsWith("workit_"))).toHaveLength(7);
+    expect(tools).not.toContain("workit_writer");
   }
 });
 
@@ -365,15 +363,13 @@ test("implementer process is bound before prompt and receives scoped environment
     },
   });
   expect(worker.state).toBe("running");
-  expect(sendWorkerPrompt(worker, "before writer")).toBe(false);
+  expect(sendWorkerPrompt(worker, "before ready")).toBe(false);
   consumeWorkerOutput(
     worker,
     JSON.stringify({ type: "workit_worker_ready", workerId: "worker-1", sessionId: "session-1" }) +
       "\n",
   );
-  expect(sendWorkerPrompt(worker, "before writer")).toBe(false);
-  worker.writerReady = true;
-  expect(sendWorkerPrompt(worker, "after writer")).toBe(true);
+  expect(sendWorkerPrompt(worker, "after ready")).toBe(true);
   expect(writes).toBe(2);
   expect(observedPid).toBe(9001);
   expect(observedEnv).toMatchObject({
@@ -384,7 +380,7 @@ test("implementer process is bound before prompt and receives scoped environment
   });
 });
 
-test("launch failure remains assigned and has no writer-ready state", () => {
+test("launch failure remains assigned", () => {
   const worker = launchWorker(assignment("implementer"), {
     runtime: runtime(),
     spawn: () => {
@@ -393,10 +389,10 @@ test("launch failure remains assigned and has no writer-ready state", () => {
   });
   expect(worker.state).toBe("assigned");
   expect(worker.child).toBeNull();
-  expect(worker.writerReady).toBe(false);
+  expect(worker.ready).toBe(false);
 });
 
-test("an asynchronous spawn error never grants readiness or a writer", () => {
+test("an asynchronous spawn error never grants readiness", () => {
   const listeners = new Map<string, (...args: unknown[]) => void>();
   const worker = launchWorker(assignment("implementer"), {
     runtime: runtime(),
@@ -412,7 +408,6 @@ test("an asynchronous spawn error never grants readiness or a writer", () => {
   listeners.get("error")?.(new Error("spawn failed after return"));
   expect(worker.state).toBe("assigned");
   expect(worker.ready).toBe(false);
-  expect(worker.writerReady).toBe(false);
 });
 
 test("report is not exit, and only observed exit reconciles", () => {
@@ -483,7 +478,6 @@ test("native start observation binds the exact assigned Pi session before work",
           host: "pi",
           session: expected.session,
           workerId: expected.workerId,
-          receipts: [{ kind: "host", host: "pi", handle: "pid:42" }],
         }),
     },
   };
@@ -533,7 +527,7 @@ test("native start observation binds the exact assigned Pi session before work",
   expect(observed.ok).toBe(true);
 });
 
-test("supervised implementer observes the child before acquiring writer or sending prompt", () => {
+test("supervised implementer observes the child before sending prompt", () => {
   const order: string[] = [];
   let writes = 0;
   const child = {
@@ -554,24 +548,9 @@ test("supervised implementer observes the child before acquiring writer or sendi
     kill: () => true,
   };
   const fakeCore = {
-    prepareWorkerDispatch: () => ({
-      ok: true,
-      schemaVersion: 1,
-      revision: "r",
-      workspaceRevision: "w",
-      data: {},
-    }),
-    commitWorkerDispatch: () => {
-      order.push("observe");
-      return { ok: true, schemaVersion: 1, revision: "r", workspaceRevision: "w", data: {} };
-    },
     observeWorkerLifecycle: () => {
       order.push("observe");
       return { ok: true, schemaVersion: 1, revision: "r", workspaceRevision: "w", data: {} };
-    },
-    writer: () => {
-      order.push("writer");
-      return { ok: true, schemaVersion: 1, revision: "r2", workspaceRevision: "w2", data: {} };
     },
   } as unknown as WorkitCore;
   const worker = launchSupervisedWorker(assignment("implementer"), {
@@ -594,129 +573,8 @@ test("supervised implementer observes the child before acquiring writer or sendi
     JSON.stringify({ type: "workit_worker_ready", workerId: "worker", sessionId: "session" }) +
       "\n",
   );
-  expect(order).toEqual(["observe", "writer", "prompt"]);
-  expect(order).toEqual(["observe", "writer", "prompt"]);
+  expect(order).toEqual(["observe", "prompt"]);
   expect(writes).toBe(1);
-});
-
-test("writer failure persists unknown before termination and reconciles only on observed exit", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-writer-failure-"));
-  const store = new TaskStore(root);
-  let child: import("@/packages/workit-pi/src/worker").WorkerHandle | null = null;
-  let stdoutListener: ((chunk?: string | Buffer) => void) | undefined;
-  let killed = 0;
-  const base: OperationContext = {
-    root,
-    caller: { host: "pi", actor: "coordinator" },
-    callerAttested: true,
-    capabilities: [],
-    constraints: [],
-    now: "2026-01-01T00:00:00Z",
-    nativeWorker: nativeWorkerForEvidence(() => child),
-  };
-  const core = new WorkitCore(store, base);
-  const started = core.task(taskStartRequest());
-  if (!started.ok) throw new Error(started.error);
-  const taskId = (started.data as { id: string }).id;
-  const initialTask = store.readTask(taskId);
-  const initialWorkspace = store.readWorkspace();
-  if (!initialTask.ok || !initialWorkspace.ok || !initialWorkspace.data)
-    throw new Error("missing fixture");
-  const assigned = core.worker({
-    schemaVersion: 1,
-    action: "assign",
-    taskId,
-    expectedRevision: initialTask.data.revision,
-    expectedWorkspaceRevision: initialWorkspace.data.revision,
-    assignment: assignment("implementer"),
-  });
-  if (!assigned.ok) throw new Error(assigned.error);
-  const task = store.readTask(taskId);
-  const workspace = store.readWorkspace();
-  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("missing assignment");
-  const binding = {
-    core,
-    taskId,
-    workerId: assigned.data.id,
-    expectedRevision: task.data.revision,
-    expectedWorkspaceRevision: workspace.data.revision,
-    sessionId: "writer-failure-session",
-  };
-  const writerCore = {
-    writer: () => failure("permission_denied", "writer rejected"),
-  } as unknown as WorkitCore;
-  const handle = launchSupervisedWorker(assignment("implementer"), {
-    runtime: runtime(root),
-    binding,
-    writerCore,
-    prompt: "must not be sent",
-    onPrepare: (pending) => {
-      child = pending;
-      return true;
-    },
-    onSpawn: (spawned) => {
-      child = spawned;
-      return true;
-    },
-    onUncertain: (uncertainHandle, _exit) => {
-      const freshTask = store.readTask(taskId);
-      const freshWorkspace = store.readWorkspace();
-      if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data) return false;
-      binding.expectedRevision = freshTask.data.revision;
-      binding.expectedWorkspaceRevision = freshWorkspace.data.revision;
-      const observed = core.observeWorkerLifecycle({
-        taskId,
-        workerId: assigned.data.id,
-        expectedRevision: binding.expectedRevision,
-        expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
-        state: "unknown",
-        session: { kind: "host", host: "pi", handle: binding.sessionId },
-        observation: { pid: uncertainHandle.pid, sessionId: binding.sessionId },
-      });
-      advanceWorkerBinding(binding, observed);
-      return observed.ok;
-    },
-    spawn: () => ({
-      pid: 813,
-      stdout: {
-        on: (event: string, listener: (chunk?: string | Buffer) => void) => {
-          if (event === "data") stdoutListener = listener;
-        },
-        setEncoding: () => undefined,
-      },
-      stderr: { on: () => undefined, setEncoding: () => undefined },
-      once: () => undefined,
-      stdin: {
-        write: (value: string) => {
-          expect(value).not.toContain('"type":"prompt"');
-          return true;
-        },
-        end: () => undefined,
-      },
-      kill: () => {
-        killed += 1;
-        return true;
-      },
-    }),
-  });
-  stdoutListener?.(
-    JSON.stringify({
-      type: "workit_worker_ready",
-      workerId: assigned.data.id,
-      sessionId: binding.sessionId,
-    }) + "\n",
-  );
-  expect(killed).toBe(1);
-  const uncertain = store.readTask(taskId);
-  expect(
-    uncertain.ok &&
-      uncertain.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
-  ).toBe("unknown");
-  observeExit(handle, 0);
-  const stopped = store.readTask(taskId);
-  expect(
-    stopped.ok && stopped.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
-  ).toBe("stopped");
 });
 
 test("core-backed supervisor refreshes revisions through report and observed exit", () => {
@@ -772,7 +630,6 @@ test("core-backed supervisor refreshes revisions through report and observed exi
   const handle = launchSupervisedWorker(assignment("implementer"), {
     runtime: runtime(root),
     binding,
-    writerCore: childCore,
     prompt: "implement",
     onPrepare: (pending) => {
       child = pending;
@@ -822,11 +679,9 @@ test("core-backed supervisor refreshes revisions through report and observed exi
     JSON.stringify({ type: "workit_worker_ready", workerId: assigned.data.id, sessionId }) + "\n",
   );
   const running = store.readTask(taskId);
-  const held = store.readWorkspace();
   expect(
     running.ok && running.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
   ).toBe("running");
-  expect(held.ok && held.data?.writer?.state).toBe("held");
   expect(prompt).toContain('"type":"prompt"');
   stdoutListener?.(
     JSON.stringify({
@@ -847,9 +702,7 @@ test("core-backed supervisor refreshes revisions through report and observed exi
       reportedTask.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
   ).toBe("running");
   observeExit(handle, 0);
-  const stoppedWorkspace = store.readWorkspace();
   const stoppedTask = store.readTask(taskId);
-  expect(stoppedWorkspace.ok && stoppedWorkspace.data?.writer).toBeNull();
   expect(
     stoppedTask.ok &&
       stoppedTask.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
@@ -924,8 +777,6 @@ test("supervised asynchronous spawn failure is persisted as unknown by core", ()
   expect(
     failed.ok && failed.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
   ).toBe("unknown");
-  const failedWorkspace = store.readWorkspace();
-  expect(failedWorkspace.ok && failedWorkspace.data?.writer).toBeNull();
 });
 
 const dispatchFixture = () => {
@@ -983,7 +834,7 @@ const dispatchFixture = () => {
   };
 };
 
-test("a prepared Pi launch that never spawned is cancelled as never started", async () => {
+test("a Pi launch withdrawn before spawn is cancelled locally and stays assigned", async () => {
   const fixture = dispatchFixture();
   const handle = launchWorker(assignment("reviewer"), {
     runtime: runtime(fixture.root),
@@ -992,8 +843,7 @@ test("a prepared Pi launch that never spawned is cancelled as never started", as
     sessionId: fixture.binding.sessionId,
     onPrepare: (pending) => {
       fixture.setChild(pending);
-      expect(prepareWorkerLaunch(fixture.binding, pending).ok).toBe(true);
-      // The coordinator withdrew the launch after the slot was claimed.
+      // The coordinator withdrew the launch before any process existed.
       return false;
     },
     spawn: () => {
@@ -1002,15 +852,17 @@ test("a prepared Pi launch that never spawned is cancelled as never started", as
   });
   expect(handle.spawned).toBe(false);
   expect(handle.child).toBeNull();
-  expect(fixture.state()).toMatchObject({ state: "dispatching", session: null });
+  expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
   expect(await cancelWorker(handle, { binding: fixture.binding })).toMatchObject({
     state: "stopped",
     observed: true,
   });
-  expect(fixture.state()).toMatchObject({ state: "stopped", session: null });
+  expect(handle.state).toBe("stopped");
+  // Nothing was dispatched, so nothing durable changes.
+  expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
 });
 
-test("a spawned Pi worker is never recorded as not started", async () => {
+test("a spawned Pi worker cancelled without an observed exit stays unresolved", async () => {
   const fixture = dispatchFixture();
   const handle = launchSupervisedWorker(assignment("reviewer"), {
     runtime: runtime(fixture.root),
@@ -1032,19 +884,17 @@ test("a spawned Pi worker is never recorded as not started", async () => {
     }),
   });
   expect(handle.state).toBe("running");
-  expect(handle.dispatch).toBeNull();
   expect(fixture.state()).toMatchObject({
     state: "running",
     session: { handle: "pi-dispatch-session" },
   });
-  expect(commitWorkerNotStarted(fixture.binding, handle).ok).toBe(false);
   expect(
     (await cancelWorker(handle, { binding: fixture.binding, graceMs: 1, killWaitMs: 1 })).state,
   ).toBe("unknown");
   expect(fixture.state().state).toBe("running");
 });
 
-test("a raced Pi spawn or a handle without a reservation stays unresolved", async () => {
+test("a raced Pi spawn stays unresolved", async () => {
   const fixture = dispatchFixture();
   const raced = launchWorker(assignment("reviewer"), {
     runtime: runtime(fixture.root),
@@ -1053,7 +903,7 @@ test("a raced Pi spawn or a handle without a reservation stays unresolved", asyn
     sessionId: fixture.binding.sessionId,
     onPrepare: (pending) => {
       fixture.setChild(pending);
-      return prepareWorkerLaunch(fixture.binding, pending).ok;
+      return true;
     },
     spawn: () => {
       throw new Error("spawn raced");
@@ -1065,20 +915,5 @@ test("a raced Pi spawn or a handle without a reservation stays unresolved", asyn
     state: "unknown",
     observed: false,
   });
-  expect(fixture.state()).toMatchObject({ state: "dispatching", session: null });
-
-  // A handle rebuilt after a restart holds no reservation and cannot recover either.
-  const reconstructed = launchWorker(assignment("reviewer"), {
-    runtime: runtime(fixture.root),
-    taskId: fixture.binding.taskId,
-    workerId: fixture.binding.workerId,
-    sessionId: fixture.binding.sessionId,
-    onPrepare: () => false,
-    spawn: () => {
-      throw new Error("must not spawn");
-    },
-  });
-  expect(reconstructed.dispatch).toBeNull();
-  expect((await cancelWorker(reconstructed, { binding: fixture.binding })).state).toBe("unknown");
-  expect(fixture.state()).toMatchObject({ state: "dispatching", session: null });
+  expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
 });

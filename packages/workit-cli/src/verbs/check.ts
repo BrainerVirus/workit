@@ -160,7 +160,6 @@ async function recordInTask(
         host: "workit_cli",
         session: { kind: "host", host: "workit_cli", handle: actor },
         workerId: null,
-        receipts: [],
       },
     });
     if (!found.ok || !found.data)

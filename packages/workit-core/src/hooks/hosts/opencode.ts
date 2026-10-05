@@ -41,14 +41,6 @@ export const OPENCODE_DESCRIPTOR: HostDescriptor = {
   perEventCost: "low",
   capabilities: [
     {
-      name: "interactive_decision",
-      surface: "question",
-      refs: ["question"],
-      requires: ["interaction.questions"],
-      assurance: "enforced",
-      reason: "native question answers are observed by tool.execute.after and consumed once",
-    },
-    {
       name: "known_product_writes",
       surface: "edit/shell",
       refs: ["permission.evaluate"],

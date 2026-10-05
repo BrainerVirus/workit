@@ -5,7 +5,6 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { TaskStore, WorkitCore, success } from "@/packages/workit-core/src/core";
 import definition from "@/packages/workit-opencode/src/v2/plugin";
-import { normalizeQuestionAnswers } from "@/packages/workit-opencode/src/v2/receipts";
 import { scope, taskStartRequest } from "../workit-core/task-fixtures";
 import { injectAgentContext } from "@/packages/workit-opencode/src/v2/injection";
 import { registerCommands, registerSkills } from "@/packages/workit-opencode/src/v2/registry";
@@ -14,7 +13,7 @@ import {
   WORKIT_SKILL_ALIASES,
 } from "@/packages/workit-core/src/core/skill-manifests";
 
-/** The exact 10 registered Workit tool names in registration order. */
+/** The exact 9 registered Workit tool names in registration order. */
 const TOOL_NAMES = [
   "workit_task",
   "workit_policy",
@@ -22,7 +21,6 @@ const TOOL_NAMES = [
   "workit_finding",
   "workit_decision",
   "workit_worker",
-  "workit_writer",
   "workit_state",
   "workit_context",
   "workit_init_apply",
@@ -171,7 +169,7 @@ test("the V2 definition carries the stable workit id and setup", () => {
   expect(typeof definition.setup).toBe("function");
 });
 
-test("setup registers the exact 10 tools with codemode off and object schemas", async () => {
+test("setup registers the exact 9 tools with codemode off and object schemas", async () => {
   const root = repository();
   try {
     const { registered, cleanup } = await harness(root);
@@ -424,86 +422,6 @@ test("cleanup aborts the event subscription", async () => {
   }
 });
 
-const workitQuestion = (presented: string, approved: string) => ({
-  questions: [
-    {
-      header: "Workit decision: design",
-      question: presented,
-      options: [
-        { label: "approved", description: approved },
-        { label: "rejected", description: "Reject this decision" },
-      ],
-    },
-  ],
-});
-
-test("ambiguous V2 question metadata is never normalized to approval", () => {
-  const answers = { q0: "approved", q1: "rejected" };
-  expect(normalizeQuestionAnswers(answers)).toBe(answers);
-});
-
-test("question results mint one consume-once decision receipt", async () => {
-  const root = repository();
-  try {
-    const { hooks, call } = await harness(root);
-    const intent = {
-      objective: "receipt probe",
-      scope: { description: "probe", paths: ["docs"], exclusions: [] },
-      authorityRefs: [],
-    };
-    await call("workit_task", { schemaVersion: 1, action: "start", intent });
-    const listed = await call("workit_task", { schemaVersion: 1, action: "list" });
-    const inspected = await call("workit_task", {
-      schemaVersion: 1,
-      action: "inspect",
-      taskId: listed.data[0].id,
-      view: "full",
-    });
-    const taskId = inspected.data.task.id as string;
-    const workspaceId = inspected.data.workspace.id as string;
-    const taskScope = inspected.data.task.intent.data.scope;
-    const presented = "Workit decision: design — approve the probe?";
-    const approved = "Approve the probe.";
-    await hooks.get("execute.after")!({
-      tool: "question",
-      sessionID: "ses_v2",
-      id: "call_q1",
-      input: workitQuestion(presented, approved),
-      status: "completed",
-      result: { metadata: { answers: { q0: "approved" } } },
-    });
-    const record = {
-      schemaVersion: 1,
-      action: "record",
-      taskId,
-      purpose: "design",
-      binding: {
-        taskId,
-        workspaceId,
-        scope: taskScope,
-        presented,
-        approvedContent: approved,
-        contentRefs: [],
-      },
-      response: "approved",
-      requirementIds: [],
-    };
-    const failed = await call("workit_decision", {
-      ...record,
-      expectedRevision: "00000000-0000-4000-8000-000000000000",
-    });
-    expect(failed).toMatchObject({ ok: false, code: "revision_conflict" });
-    const recorded = await call("workit_decision", record);
-    expect(recorded.ok).toBe(true);
-    // The receipt is consumed once: a replay finds nothing to bind.
-    const replay = await call("workit_decision", record);
-    expect(replay.ok).toBe(false);
-    expect(replay.code).toBe("permission_denied");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test("permission evaluate validates only literal noncompliant branch targets", async () => {
   const root = repository();
   const configDir = mkdtempSync(path.join(os.tmpdir(), "workit-v2-shell-config-"));
@@ -734,21 +652,11 @@ const decisionTask = async (call: (name: string, input: unknown) => Promise<any>
   };
 };
 
-test("a rejected native Workit decision records exactly and host-observed", async () => {
+test("workit_decision records an agent-asserted decision without a question", async () => {
   const root = repository();
   try {
-    const { hooks, call } = await harness(root);
+    const { call } = await harness(root);
     const { taskId, workspaceId, scope: taskScope } = await decisionTask(call);
-    const presented = "Workit decision: design — approve the design?";
-    const approved = "Design v1";
-    await hooks.get("execute.after")!({
-      tool: "question",
-      sessionID: "ses_v2",
-      id: "call_rejected",
-      input: workitQuestion(presented, approved),
-      status: "completed",
-      result: { metadata: { answers: { q0: "rejected" } } },
-    });
     const record = {
       schemaVersion: 1,
       action: "record",
@@ -758,15 +666,19 @@ test("a rejected native Workit decision records exactly and host-observed", asyn
         taskId,
         workspaceId,
         scope: taskScope,
-        presented,
-        approvedContent: approved,
+        presented: "Workit decision: design — approve the design?",
         contentRefs: [],
       },
       requirementIds: [],
     };
-    // An approval claim cannot ride on the rejected answer.
-    const claimedApproval = await call("workit_decision", { ...record, response: "approved" });
-    expect(claimedApproval.ok).toBe(false);
+    const failed = await call("workit_decision", {
+      ...record,
+      response: "approved",
+      expectedRevision: "00000000-0000-4000-8000-000000000000",
+    });
+    expect(failed).toMatchObject({ ok: false, code: "revision_conflict" });
+    const approved = await call("workit_decision", { ...record, response: "approved" });
+    expect(approved.ok, JSON.stringify(approved)).toBe(true);
     const rejected = await call("workit_decision", { ...record, response: "rejected" });
     expect(rejected.ok, JSON.stringify(rejected)).toBe(true);
   } finally {
@@ -810,7 +722,6 @@ const coordinatorCore = (root: string, nativeWorker = false) =>
                 host: caller.host,
                 session: expected.session,
                 workerId: expected.workerId,
-                receipts: [{ kind: "host", host: caller.host, handle: "native-worker" }],
               }),
           },
         }

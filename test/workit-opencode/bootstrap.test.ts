@@ -14,7 +14,6 @@ describe("session bootstrap", () => {
       "finding",
       "decision",
       "worker",
-      "writer",
       "state",
     ])
       expect(bootstrap).toContain(operation);
@@ -24,7 +23,7 @@ describe("session bootstrap", () => {
   test("bootstrap keeps task tracking optional for explicit objectives", () => {
     const bootstrap = getWorkitBootstrap() ?? "";
     expect(bootstrap).toMatch(/optional\s+continuity\s+for\s+tracked\s+work/);
-    expect(bootstrap).toMatch(/a\s+solo\s+edit\s+needs\s+no\s+task\s+or\s+writer/);
+    expect(bootstrap).toMatch(/a\s+solo\s+edit\s+needs\s+no\s+task\./);
     expect(bootstrap.toLowerCase()).not.toContain("task.start");
     expect(bootstrap.toLowerCase()).not.toContain("policy.assess");
   });
@@ -48,14 +47,12 @@ describe("stale-source markers", () => {
       pluginSourceFiles.some((file) => file.endsWith(path.join("workit-core", "src", "core.ts"))),
     ).toBe(true);
     expect(pluginSourceFiles.some((file) => file.endsWith("plugin.ts"))).toBe(true);
-    expect(pluginSourceFiles.some((file) => file.endsWith("external-action-effects.ts"))).toBe(
-      true,
-    );
+    expect(pluginSourceFiles.some((file) => file.endsWith("context-read.ts"))).toBe(true);
     expect(pluginSourceFiles.some((file) => file.endsWith(path.join("v2", "lifecycle.ts")))).toBe(
       true,
     );
     expect(pluginSourceFiles.some((file) => file.endsWith(path.join("v2", "receipts.ts")))).toBe(
-      true,
+      false,
     );
   });
 });
