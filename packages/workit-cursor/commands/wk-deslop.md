@@ -1,7 +1,5 @@
 # /wk-deslop
 
-Load and apply the bundled `workit-deslop` skill before opening a PR or after implementation.
-
-Remove AI slop from code and prose with a minimal diff: delete dead weight and filler, keep real symbol names and numbers, never refactor behavior.
+Load and apply the bundled `workit-deslop` skill. Remove AI slop before a PR - dead code, comments that restate the code, filler prose - with a minimal diff and identical behavior. Use for deslop, clean up, slop, tidy before PR, remove dead code, trim the PR body.
 
 Extra context: $ARGUMENTS

@@ -71,7 +71,7 @@ test(
     const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-invariants-"));
     try {
       const missingWorkitRepo = copyBuildFixture(path.join(fixture, "missing-workit"));
-      rmSync(path.join(missingWorkitRepo, "packages/workit-core/skills/workit-plan"), {
+      rmSync(path.join(missingWorkitRepo, "packages/workit-core/skills/workit-shape"), {
         recursive: true,
       });
       const missingWorkitBuild = buildCursor(
@@ -91,7 +91,7 @@ test(
         path.join(fixture, "extra-workit-output"),
       );
       expect([missingWorkitBuild.status, extraWorkitBuild.status]).toEqual([1, 1]);
-      expect(missingWorkitBuild.stderr).toContain("workit-plan");
+      expect(missingWorkitBuild.stderr).toContain("workit-shape");
       expect(extraWorkitBuild.stderr).toContain("not-canonical");
 
       const packs = packWorkspacePackages();
@@ -146,7 +146,7 @@ test(
       const opencode = runDoctor({ host: "opencode", home, cwd: fixture, env: isolatedEnv(home) });
       expect(opencode.checks.find((check) => check.id === "assets")?.status).toBe("warn");
 
-      for (const damaged of [path.join(plugin, "skills/workit-plan/SKILL.md")]) {
+      for (const damaged of [path.join(plugin, "skills/workit-shape/SKILL.md")]) {
         const contents = readFileSync(damaged);
         rmSync(damaged);
         const missing = runPackedDoctor();

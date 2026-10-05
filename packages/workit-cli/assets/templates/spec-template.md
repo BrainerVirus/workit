@@ -19,14 +19,15 @@ no durable agreement: `Spec: none (<reason>)`, no file.)
 
 ## Architecture
 
-<!-- May be `N/A (<reason>)` when the change has no flows or architecture. -->
-<!-- Otherwise REQUIRED: render a mermaid diagram (workit-diagram skill). -->
+<!-- Optional: only when a diagram argues a decision (workit-shape
+     references/diagrams.md); otherwise delete this section. -->
 ```mermaid
 flowchart TD
   A[Start] --> B[Step]
 ```
 
-<!-- REQUIRED if this spec touches UI: render an ASCII wireframe (workit-mockup skill). -->
+<!-- Optional: a UI choice still open gets an ASCII sketch (workit-shape
+     references/mockups.md). -->
 ```text
 ┌──────────────┐
 │ Header       │

@@ -1,31 +1,41 @@
 ---
 name: workit-deslop
-description: Use before opening a PR or after implementation to remove AI slop from code and prose
+description: Remove AI slop before a PR - dead code, comments that restate the code, filler prose - with a minimal diff and identical behavior. Use for deslop, clean up, slop, tidy before PR, remove dead code, trim the PR body.
 ---
 
 # Deslop code and prose
 
-Throughput without quality is slop. Clean it with a minimal diff — deslop
-never refactors behavior.
+Throughput without quality is slop. Deslop only removes; it never changes
+behavior. A change that wants new behavior is its own change.
 
+1. **Find it with tools first.** The repo's dead-code and lint tools on the
+   branch diff (for example `knip`, `ts-prune`, `vulture`, `cargo udeps`, or
+   the linter's unused rules), then read the diff:
+   `git diff <base>...HEAD`.
+2. **Code.** Delete unused helpers and exports, stub references, debug
+   leftovers (`[DEBUG-` tags, stray logs), and comments that restate the next
+   line. Keep comments that say *why* (a constraint, a workaround with its
+   link), license headers and tool directives.
+3. **Prose** (PR body, spec, docs): cut filler and hedging, keep real symbol
+   names and before-to-after numbers. One doc, one purpose.
+4. **Minimal diff.** Deslop removes lines; it never moves logic. A removed
+   validator that changes behavior is not deslop.
+5. **Re-run the checks** and report lines removed, not lines written. Nothing
+   to clean is a valid result: say what you checked ("0 removals; ran knip and
+   read the diff"). When a tracked task lists a `pre-pr-cleanup` requirement,
+   record this result as its evidence.
 
-## Method
+## Example
 
-1. Code: delete dead helpers, redundant validators, stub references, and
-   comments that restate the code. Comments die by default; keep one only
-   with proof of an unchangeable constraint, encoded structurally if cheap.
-2. Prose (PR body, spec, docs): cut filler, keep real symbol names and
-   before→after numbers. One doc, one purpose.
-3. Keep the diff minimal: deslop removes lines, never moves logic. If a
-   cleanup wants behavior change, it becomes its own tasked change.
+Bad: deleting `// retry: the gateway drops the first request after idle (#412)`
+because "comments die".
 
-## Completion
+Good: deleting `// increment the counter` above `count += 1`, an unused
+`formatLegacyDate` export reported by knip, and two hedging paragraphs from the
+PR body: "-34 lines, behavior unchanged, `workit check test` exit 0".
 
-A smaller diff with identical behavior and green checks. Report lines
-removed, not lines written.
+## Check
 
-Record passing check evidence linked to the `pre-pr-cleanup` requirement id
-from the current policy (`kind: check`, `result: passed`, summary naming what
-was removed). That requirement gates `hosting.pull_request` and close. If the
-change genuinely has nothing to clean, ask for an approved limitation
-decision instead of recording evidence that did not happen.
+```sh
+workit check test && git diff --stat <base>...HEAD
+```

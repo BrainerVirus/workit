@@ -375,7 +375,7 @@ test("dead skill routes are gone and self-review is routed", () => {
         },
         [],
       ).map((method) => method.id),
-    ).toContain("workit-behavioral-tdd");
+    ).toContain("workit-implement");
     void selfReview;
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -5,7 +5,9 @@ alwaysApply: true
 
 Workit is an optional coordinator, not a permission system. Ordinary questions,
 investigation, and reversible edits need no Workit task, assessment, writer,
-reviewer, or close call; follow Cursor's native permissions. Use one compact
+reviewer, or close call; follow Cursor's native permissions. When a step has one
+right answer, run the `workit` CLI verb for it (`workit check`, `workit git …`,
+`workit pr …`, `workit ledger …`). Use one compact
 Workit record when handoff, dependent steps, concurrent actors, or important
 decisions make durable continuity useful. Do not duplicate a shared task per
 host or merge distinct intents because their titles look similar.
@@ -22,5 +24,12 @@ shell writes and Tab edits are unavailable. Never invent a receipt, writer
 identity, or cross-process caller channel. For native subagents in tracked
 Workit work, begin the task payload with exactly one assigned role marker:
 `[workit-role: implementer]`, `[workit-role: reviewer]`, or
-`[workit-role: investigator]`. Cursor cannot safely attest an implementer
-writer, so Workit assignments here remain read-only.
+`[workit-role: investigator]`.
+
+Cursor cannot attest an implementer writer, so Workit never enforces a
+subagent's write scope here. Fanout writers (workit-fanout) are agent-guided:
+each runs in its own git worktree with a fixed brief, and its file scope is
+checked at fan-in with `git diff --name-only <base>...<branch>`, not enforced
+while it works. Verifiers and reviewers stay read-only and record
+`workit ledger verdict` under a session the lead assigns
+(`WORKIT_SESSION_ID=<lead>-v<n>` in the brief), never the author's.

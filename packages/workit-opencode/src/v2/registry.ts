@@ -4,7 +4,7 @@ import {
   WORKIT_METHOD_SKILLS,
   WORKIT_SKILL_ALIASES,
 } from "@brainervirus/workit-core/src/core/skill-manifests";
-import { assetsRoot } from "../shared/assets";
+import { skillsRoot } from "../shared/assets";
 
 type SkillDefinition = {
   id: string;
@@ -72,7 +72,7 @@ const parseFrontmatter = (
  * skills the host already lists, never from callback side effects.
  */
 export const registerSkills = async (ctx: SkillContext): Promise<ReadonlySet<string>> => {
-  const skillsDir = path.join(assetsRoot(), "skills");
+  const skillsDir = skillsRoot();
   if (!existsSync(skillsDir)) return new Set();
   const listed = await ctx.skill.list().catch(() => ({ data: [] }));
   const own = (skill: { path?: string }) =>

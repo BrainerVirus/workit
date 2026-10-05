@@ -259,6 +259,108 @@ test("git commit: the session goes into a Workit-Session trailer and an observed
   expect(bad.code).toBe(2);
 });
 
+// D18: a verifier must be a different session. `--as <role>` only mints a
+// distinct id per verifier; it never turns the author (or no session at all)
+// into an independent verifier. The lead hands each verifier its own session.
+test("Given the lead's commit, When the lead records with --as verifier, Then it is refused as the author, and with no session it is self", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/slice");
+  repo.write("s.txt", "s\n");
+  expect((await run(["git", "commit", "-m", "feat: slice", "--", "s.txt"], repo.cwd)).code).toBe(0);
+  const asVerifier = await run(
+    ["ledger", "verdict", "verified", "--how", "ran it", "--as", "verifier"],
+    repo.cwd,
+  );
+  expect(asVerifier.code).toBe(3);
+  expect(asVerifier.stderr).toContain("author_verdict");
+  expect(asVerifier.stderr).toContain("run the verifier as a separate session");
+  const bare = { ...process.env };
+  delete bare.WORKIT_SESSION_ID;
+  const anon = await run(
+    ["ledger", "verdict", "verified", "--how", "x", "--as", "verifier", "--json"],
+    repo.cwd,
+    bare,
+  );
+  expect(anon.code).toBe(0);
+  expect(anon.json().data).toMatchObject({ self: true, selfReason: "no_session" });
+  const check = await run(["ledger", "check", "--json"], repo.cwd);
+  expect(check.json().data.accepted.accepted).toBe(false);
+});
+
+test("Given the lead's commit, When a verifier the lead started with its own session records, Then it is accepted, and --as ids stay distinct per verifier", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/slice");
+  repo.write("s.txt", "s\n");
+  expect((await run(["git", "commit", "-m", "feat: slice", "--", "s.txt"], repo.cwd)).code).toBe(0);
+  const verifier = { ...process.env, WORKIT_SESSION_ID: "author-1-v1" };
+  const verify = () =>
+    run(
+      [
+        "ledger",
+        "verdict",
+        "tests-verified",
+        "--kind",
+        "unit",
+        "--how",
+        "check exit 0",
+        "--as",
+        "verifier",
+        "--json",
+      ],
+      repo.cwd,
+      verifier,
+    );
+  const first = await verify();
+  expect(first.code, first.stderr).toBe(0);
+  const second = await verify();
+  const sessions = [first, second].map((r) => r.json().data.actor.session as string);
+  expect(sessions[0]).toMatch(/^author-1-v1:verifier:[0-9a-f]{8}$/);
+  expect(sessions[1]).not.toBe(sessions[0]);
+  expect((await run(["ledger", "check", "--json"], repo.cwd)).json().data.accepted.accepted).toBe(
+    true,
+  );
+  // The Claude Code hook names a subagent's own session; --session uses it as is.
+  const hookNamed = await run(
+    [
+      "ledger",
+      "verdict",
+      "verified",
+      "--kind",
+      "review",
+      "--how",
+      "read the diff",
+      "--session",
+      "author-1:agent-7",
+    ],
+    repo.cwd,
+  );
+  expect(hookNamed.code, hookNamed.stderr).toBe(0);
+  expect(
+    (await run(["ledger", "verdict", "verified", "--how", "x", "--as", "Bad Role"], repo.cwd)).code,
+  ).toBe(2);
+});
+
+// workit-fanout resume mode: a replacement worker must not re-run
+// `workit git branch` (the branch exists) and cannot switch to the branch
+// while the dead worker's worktree still holds it.
+test("Given a stuck worker's worktree on its branch, When a replacement resumes, Then branch creation and switch fail until the old worktree is removed, and git switch then succeeds", async () => {
+  const repo = setup();
+  repo.git("branch", "feature/slice");
+  const old = path.join(repo.root, "wt-old");
+  const fresh = path.join(repo.root, "wt-new");
+  repo.git("worktree", "add", "-q", old, "feature/slice");
+  repo.git("worktree", "add", "-q", "--detach", fresh, "HEAD");
+  const again = await run(["git", "branch", "feature/slice", "--json"], fresh);
+  expect(again.code).toBe(1);
+  expect(again.json().error).toContain("branch_exists");
+  const held = spawnSync("git", ["switch", "feature/slice"], { cwd: fresh, encoding: "utf8" });
+  expect(held.status).not.toBe(0);
+  expect(held.stderr).toMatch(/already (used|checked out) by worktree/);
+  repo.git("worktree", "remove", "--force", old);
+  const resumed = spawnSync("git", ["switch", "feature/slice"], { cwd: fresh, encoding: "utf8" });
+  expect(resumed.status, resumed.stderr).toBe(0);
+});
+
 test("git commit: a protected branch is refused (exit 3) with the branch command", async () => {
   const repo = setup();
   repo.write("a.txt", "a\n");

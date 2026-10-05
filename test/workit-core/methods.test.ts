@@ -62,7 +62,7 @@ test("a fresh-context-review capability activates the review method", () => {
   expect(withoutCapability).toMatchObject([{ id: "workit-review", assurance: "unavailable" }]);
 });
 
-test("mechanical work routes checks to TDD and self-review to review", () => {
+test("mechanical work routes existing checks to implement and self-review to review", () => {
   const result = selectMethods(
     policy(
       requirement({ ruleId: "mechanical-existing-checks", dimension: "verification" }),
@@ -70,10 +70,10 @@ test("mechanical work routes checks to TDD and self-review to review", () => {
     ),
     [capability({ name: "review", surface: "review", assurance: "enforced" })],
   );
-  expect(result.map((method) => method.id)).toEqual(["workit-behavioral-tdd", "workit-review"]);
+  expect(result.map((method) => method.id)).toEqual(["workit-review", "workit-implement"]);
 });
 
-test("behavior change selects TDD and fresh review independently", () => {
+test("behavior change selects BDD and fresh review independently", () => {
   const result = selectMethods(
     policy(
       requirement({ ruleId: "behavioral-verification", dimension: "testing" }),
@@ -84,34 +84,34 @@ test("behavior change selects TDD and fresh review independently", () => {
       capability({ name: "review", surface: "review", assurance: "enforced" }),
     ],
   );
-  expect(result.map((method) => method.id)).toEqual(["workit-behavioral-tdd", "workit-review"]);
+  expect(result.map((method) => method.id)).toEqual(["workit-bdd", "workit-review"]);
 });
 
-test("challenge is selected without a plan", () => {
+test("an open product decision selects shape", () => {
   expect(
     selectMethods(
       policy(requirement({ ruleId: "product-decision", dimension: "decisions" })),
       [],
     ).map((method) => method.id),
-  ).toEqual(["workit-challenge"]);
+  ).toEqual(["workit-shape"]);
 });
 
-test("continuity selects a plan without requiring a spec", () => {
+test("continuity selects shape without requiring a spec", () => {
   expect(
     selectMethods(
       policy(requirement({ ruleId: "coordination-plan", dimension: "continuity" })),
       [],
     ).map((method) => method.id),
-  ).toEqual(["workit-plan"]);
+  ).toEqual(["workit-shape"]);
 });
 
-test("helper usefulness selects implementation without formal documents", () => {
+test("helper usefulness selects fanout without formal documents", () => {
   expect(
     selectMethods(
       policy(requirement({ ruleId: "helper-usefulness", dimension: "delegation" })),
       [],
     ).map((method) => method.id),
-  ).toEqual(["workit-implement"]);
+  ).toEqual(["workit-fanout"]);
 });
 
 test("unavailable independent review remains selected with unavailable assurance", () => {
@@ -160,11 +160,11 @@ test("selection has stable registry order and no duplicate methods", () => {
     [],
   );
   expect(selected.map((method) => method.id)).toEqual([
-    "workit-challenge",
-    "workit-behavioral-tdd",
+    "workit-shape",
+    "workit-bdd",
     "workit-review",
-    "workit-plan",
     "workit-implement",
+    "workit-fanout",
   ]);
   expect(new Set(selected.map((method) => method.id)).size).toBe(selected.length);
 });
@@ -175,29 +175,12 @@ test("bootstrap defers to native host authority and mandates no Workit preamble"
   const bootstrap = invariantBootstrap();
   expect(bootstrap).toMatch(/allow\/ask\/deny/);
   expect(bootstrap).toMatch(/evade a denial/);
+  expect(bootstrap).toMatch(/never fabricate a\s+receipt/);
   expect(bootstrap).not.toContain("task.start then policy.assess");
-  // Policy selects TDD and review; the bootstrap must not hard-wire them.
-  expect(bootstrap).not.toContain("workit-behavioral-tdd");
-  expect(bootstrap).not.toContain("workit-review");
-});
-
-test("bootstrap routes moment-based skill loads by name", () => {
-  const bootstrap = invariantBootstrap();
-  for (const skill of [
-    "workit-steer",
-    "workit-deslop",
-    "workit-green-run",
-    "workit-blast-radius",
-    "workit-challenge",
-    "workit-plan",
-    "workit-bdd",
-    "workit-test-audit",
-  ])
-    expect(bootstrap).toContain(skill);
   expect(bootstrap).not.toContain("## Method");
 });
 
-test("bootstrap names every shared operation family", () => {
+test("bootstrap names every shared operation family once, as optional continuity", () => {
   const bootstrap = invariantBootstrap();
   for (const operation of [
     "task",
@@ -210,14 +193,14 @@ test("bootstrap names every shared operation family", () => {
     "state",
   ])
     expect(bootstrap).toContain(operation);
+  expect(bootstrap).toMatch(/a solo edit needs no task or writer/);
 });
 
-test("steer, babysit and challenge keep lifecycle and merge authority outside the skill", () => {
-  const steer = skillText("workit-steer");
-  expect(steer).not.toContain("task.start");
-  expect(steer).not.toContain("policy.assess");
-  expect(skillText("workit-babysit")).toMatch(/does not authorize merge/);
-  expect(skillText("workit-challenge")).toMatch(/never fabricate a native permission/);
+test("continue and ship keep lifecycle and merge authority outside the skill", () => {
+  const resume = skillText("workit-continue");
+  expect(resume).not.toContain("task.start");
+  expect(resume).not.toContain("policy.assess");
+  expect(skillText("workit-ship")).toMatch(/does not authorize\s+merge/);
 });
 
 test("compact task context carries selected methods and refreshes with policy", () => {
@@ -242,7 +225,7 @@ test("compact task context carries selected methods and refreshes with policy", 
     ),
   ) as { methods: unknown };
   expect(assessed.methods).toEqual([
-    { id: "workit-challenge", assurance: "agent_guided", reason: "fixture requirement" },
+    { id: "workit-shape", assurance: "agent_guided", reason: "fixture requirement" },
   ]);
 });
 
@@ -255,30 +238,60 @@ const phrase = (text: string) =>
 test("agent-critical delivery rules stay stated", () => {
   const bootstrap = invariantBootstrap();
   const rules: Array<[string, string, string]> = [
-    ["bootstrap", bootstrap, "prefer native host Git/shell"],
+    // CLI-first replaced "prefer native host Git/shell": one right answer, one verb.
+    ["bootstrap", bootstrap, "if a step has one right answer, use the `workit` verb"],
     ["bootstrap", bootstrap, "A local-commit endpoint does not imply PR readiness"],
     ["bootstrap", bootstrap, "reconcile every requested item"],
     ["bootstrap", bootstrap, "a local commit alone is not evidence of a requested remote push"],
-    ["workit-babysit", skillText("workit-babysit"), "PR creation does not start babysitting"],
-    ["workit-babysit", skillText("workit-babysit"), "Stop at PR-ready"],
-    ["workit-steer", skillText("workit-steer"), "do not silently resume an old objective"],
-    ["workit-plan", skillText("workit-plan"), "Do not ask for a separate plan approval"],
+    ["bootstrap", bootstrap, "Continue to the requested endpoint"],
+    [
+      "bootstrap",
+      bootstrap,
+      "Ask only for a product or preference choice, or for authority you lack",
+    ],
+    ["bootstrap", bootstrap, "Label claims measured"],
+    ["bootstrap", bootstrap, "never record a passing verdict on work your session wrote"],
+    ["bootstrap", bootstrap, "resolve competing targets before a mutation"],
+    ["bootstrap", bootstrap, "never claim enforcement a host cannot provide"],
+    ["bootstrap", bootstrap, "A question answer is not host permission"],
+    [
+      "bootstrap",
+      bootstrap,
+      "No endpoint named: stop at a local commit on a policy-compliant branch",
+    ],
+    ["bootstrap", bootstrap, "never the default target"],
+    ["workit-ship", skillText("workit-ship"), "report that a rebase is needed and stop"],
+    ["workit-fanout", skillText("workit-fanout"), "any file outside it stops the fan-in"],
+    ["workit-fanout", skillText("workit-fanout"), "observe that it exited"],
+    ["workit-fanout", skillText("workit-fanout"), "drops its uncommitted changes"],
+    ["workit-fanout", skillText("workit-fanout"), "never chosen by the author"],
+    ["bootstrap", bootstrap, "The lead starts each verifier with its own session"],
+    ["workit-verify-app", skillText("workit-verify-app"), "never overwrite it"],
+    ["workit-ship", skillText("workit-ship"), "PR creation does not start babysitting"],
+    ["workit-ship", skillText("workit-ship"), "Stop at PR-ready"],
+    ["workit-ship", skillText("workit-ship"), 'stop at "verified, ready"'],
+    ["workit-continue", skillText("workit-continue"), "do not silently resume an old objective"],
+    ["workit-shape", skillText("workit-shape"), "Do not ask for a separate plan approval"],
+    ["workit-shape", skillText("workit-shape"), "ask that one question, then stop and wait"],
+    ["workit-shape", skillText("workit-shape"), "Propose a record (never create one silently)"],
     ["workit-implement", skillText("workit-implement"), "reconcile every named deliverable"],
     [
-      "workit-behavioral-tdd",
-      skillText("workit-behavioral-tdd"),
-      "Write one vertical RED slice that fails",
+      "workit-implement",
+      skillText("workit-implement"),
+      "Never record a passing verdict on your own work",
     ],
+    ["workit-review", skillText("workit-review"), "cannot record a passing verdict"],
+    ["workit-debug", skillText("workit-debug"), "Build the loop before any hypothesis"],
+    ["workit-bdd", skillText("workit-bdd"), "Write one vertical RED slice that fails"],
+    ["workit-bdd", skillText("workit-bdd"), 'A recorded "tests pass" is a note'],
     [
-      "workit-behavioral-tdd",
-      skillText("workit-behavioral-tdd"),
-      'a recorded "tests pass" is a note',
-    ],
-    [
-      "workit-behavioral-tdd",
-      skillText("workit-behavioral-tdd"),
+      "workit-bdd",
+      skillText("workit-bdd"),
       "ad-hoc `workit check -- <cmd>` never satisfies the gate",
     ],
+    ["workit-fanout", skillText("workit-fanout"), "refuse to spawn while a field is empty"],
+    ["workit-fanout", skillText("workit-fanout"), "Replace at most twice"],
+    ["workit-verify-app", skillText("workit-verify-app"), "Prove it end-to-end once"],
   ];
   for (const [source, text, rule] of rules)
     expect(text, `${source}: ${rule}`).toMatch(phrase(rule));
@@ -297,7 +310,7 @@ test("method skills impose no task-start preamble and do not wait for policy sel
 test("method manifest matches the canonical skill directories", () => {
   // Pinned on purpose: a skill-set change (adding or dropping a skill from
   // both the manifest and the directory) must update this count.
-  expect(WORKIT_METHOD_SKILLS).toHaveLength(16);
+  expect(WORKIT_METHOD_SKILLS).toHaveLength(11);
   expect(
     skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
   ).toEqual([...WORKIT_METHOD_SKILLS].toSorted());

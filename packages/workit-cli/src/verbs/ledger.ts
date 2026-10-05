@@ -4,7 +4,7 @@
 //   workit ledger ruling   "<what>" --why "<why>" --cost-if-wrong "<…>" [--ref …]
 //   workit ledger verdict  <result> --how "<method/evidence>" [--kind unit|live|perf|review]
 //                          [--pr n|--branch b] [--base <ref>] [--surface ui|cli|api]
-//                          [--evidence <ref>…] [--self]
+//                          [--evidence <ref>…] [--self] [--session <id> | --as <role>]
 //   workit ledger verdict  [<branch>]                 # current + accepted verdicts
 //   workit ledger list|show [--branch b] [--pr n] [--type t] [--last n]
 //   workit ledger check    [--pr n|--branch b]
@@ -12,9 +12,14 @@
 //
 // Every write accepts --supersedes <id> (same type, same session only), plus
 // --branch/--pr to key it. Verdicts are agent-asserted; the acting session is
-// WORKIT_SESSION_ID, and without one a verdict is recorded as self. `--pr`
+// WORKIT_SESSION_ID, and without one a verdict is recorded as self.
+// `--session <id>` names the acting session explicitly; `--as <role>` mints a
+// fresh one (`<session or host>:<role>:<random>`) for a verifier or reviewer
+// subagent that shares its lead's environment, so no two verifiers ever share
+// an id and none collides with the author's. `--pr`
 // must resolve to a branch through the CLI's own PR rows or a fetched forge
 // ref; it is never guessed from other rows.
+import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import {
   VERDICT_RESULTS,
@@ -54,6 +59,8 @@ const OPTIONS = {
   type: { type: "string" },
   last: { type: "string" },
   supersedes: { type: "string" },
+  session: { type: "string" },
+  as: { type: "string" },
   json: { type: "boolean" },
 } as const;
 
@@ -72,6 +79,38 @@ type Values = {
   type?: string;
   last?: string;
   supersedes?: string;
+  session?: string;
+  as?: string;
+};
+
+const SESSION_SAFE = /^[A-Za-z0-9_.:@/+-]{1,128}$/;
+const ROLE_SAFE = /^[a-z][a-z0-9-]{0,31}$/;
+
+type Acting = { actor: RecordContext["actor"]; derivedFrom?: string | null };
+
+/**
+ * The acting identity: --session, a fresh --as role id, else the environment.
+ * An --as id remembers the session it was derived from: with none it is self,
+ * and an author's derived id is refused like the author (D18).
+ */
+const actorFor = (io: Io, values: Values): Acting | Error => {
+  const actor = actorFromEnv(io.env);
+  if (values.session !== undefined && values.as !== undefined)
+    return new Error("pass --session or --as, not both");
+  if (values.session !== undefined) {
+    if (!SESSION_SAFE.test(values.session))
+      return new Error("--session must be 1-128 characters of [A-Za-z0-9_.:@/+-]");
+    return { actor: { ...actor, session: values.session } };
+  }
+  if (values.as !== undefined) {
+    if (!ROLE_SAFE.test(values.as)) return new Error("--as takes a lowercase role, e.g. verifier");
+    const prefix = (actor.session ?? actor.host).slice(0, 96);
+    return {
+      actor: { ...actor, session: `${prefix}:${values.as}:${randomBytes(4).toString("hex")}` },
+      derivedFrom: actor.session,
+    };
+  }
+  return { actor };
 };
 
 const positiveInt = (value: string | undefined, flag: string): number | undefined | Error => {
@@ -207,9 +246,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
 
   const target = targetBranch(io, rows, values.branch, pr);
   if (!target.ok) return failed(io, target);
+  const acting = actorFor(io, values);
+  if (acting instanceof Error) return usage(io, acting.message);
+  const { actor } = acting;
   const context: RecordContext = {
     cwd: io.cwd,
-    actor: actorFromEnv(io.env),
+    actor,
     branch: target.value,
     base: values.base ?? null,
     ...(pr === undefined ? {} : { pr }),
@@ -252,9 +294,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
         surface: values.surface ?? null,
         self: values.self === true,
         evidenceRefs: values.evidence,
+        ...("derivedFrom" in acting ? { derivedFrom: acting.derivedFrom } : {}),
       }),
     ),
     (row) =>
-      `recorded verdict ${row.id}: ${row.result} [${row.kind}] for ${row.branch} @ ${(row.head ?? "").slice(0, 12)}${row.self ? ` (self${row.selfReason === "no_session" ? ": WORKIT_SESSION_ID unset" : ""}; never accepted)` : ""}`,
+      `recorded verdict ${row.id}: ${row.result} [${row.kind}] for ${row.branch} @ ${(row.head ?? "").slice(0, 12)} as ${actor.session ?? "no session"}${row.self ? ` (self${row.selfReason === "no_session" ? ": WORKIT_SESSION_ID unset" : ""}; never accepted)` : ""}`,
   );
 }

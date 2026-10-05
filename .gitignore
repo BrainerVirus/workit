@@ -21,6 +21,11 @@ dist/
 *.log
 .cache/
 
-# workit-claude-code: generated plugin skills and bundled CLI assets (scripts/build.ts)
+# Generated host skill copies (each package's scripts/build.ts copies them from
+# packages/workit-core/skills). Cursor's skills/ and commands/ stay committed:
+# Cursor discovers the plugin from git (drift test: generated-copies.test.ts).
 packages/workit-claude-code/skills/
 packages/workit-claude-code/assets/
+packages/workit-codex/skills/
+packages/workit-pi/skills/
+packages/workit-opencode/assets/skills/

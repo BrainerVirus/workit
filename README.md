@@ -14,11 +14,11 @@ completion; a local commit does not prove a remote push.
 
 | Package     | Purpose                                                                         |
 | ----------- | ------------------------------------------------------------------------------- |
-| OpenCode    | Native plugin with sixteen method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
-| Cursor      | MCP transport, one native hook dispatcher, one contract rule, and sixteen skills  |
-| Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and sixteen skills |
-| Claude Code | Native plugin: session/per-turn task context hooks, branch policy on git shell commands, sixteen skills, and verifier/reviewer/implementer agents |
-| Pi          | Native npm extension with nine tools (eight shared families plus external action), sixteen skills, and session continuity |
+| OpenCode    | Native plugin with eleven method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
+| Cursor      | MCP transport, one native hook dispatcher, one contract rule, and eleven skills  |
+| Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and eleven skills |
+| Claude Code | Native plugin: session/per-turn task context hooks, branch policy on git shell commands, eleven skills, and verifier/reviewer/implementer agents |
+| Pi          | Native npm extension with nine tools (eight shared families plus external action), eleven skills, and session continuity |
 | Shared MCP  | Low-level transport for the eight core operation families                       |
 | Shared core | Task, policy, evidence, finding, decision, worker, writer, and continuity state |
 | CLI         | Setup wizard (`workit`)                                                         |
@@ -100,7 +100,7 @@ Do not pin into pnpm dlx or `_npx` cache paths — those break when the cache is
 cleared.
 
 Requires OpenCode 2.0.18+ and Node.js 24+. The plugin uses the OpenCode V2
-plugin API (`setup()`) with ten native tools, sixteen method skills and
+plugin API (`setup()`) with ten native tools, eleven method skills and
 `wk-*` commands, question receipts, and direct-child delegation. Workit 3.0
 removed the OpenCode 1.x (V1 `server()`) adapter; stay on Workit 2.x for an
 OpenCode 1.x host. The published plugin is a self-contained Node bundle (no
@@ -125,7 +125,7 @@ upgrading OpenCode to 2.0.18+ use `"plugins": ["@brainervirus/workit-opencode"]`
 <summary><strong>Cursor</strong> — plugin, MCP transport, and hooks</summary>
 
 Run the wizard and select Cursor: it registers the plugin, the MCP server, the
-session hook, the contract rule, and the sixteen skills.
+session hook, the contract rule, and the eleven skills.
 
 Or add the published launcher to the Cursor MCP config:
 
@@ -238,8 +238,8 @@ The plugin ships:
   unloadable `dist/`), the hook answers nothing and prints one
   `[workit] Claude Code hook unavailable: …` line, and Claude runs as if Workit
   were not installed;
-- skills: the sixteen method skills, namespaced as `/workit:<name>`
-  (`/workit:review`, `/workit:plan`, …);
+- skills: the eleven method skills, namespaced as `/workit:<name>`
+  (`/workit:review`, `/workit:shape`, …);
 - agents: `verifier` and `reviewer` (read-only) and `implementer`
   (`isolation: worktree`);
 - `workit` on the Bash tool's `PATH` (the plugin `bin/`).
@@ -433,14 +433,41 @@ failure stops the launch. Native startup hooks do not run competing installers.
 This does not migrate task history, change host permissions, or change package
 pins. Re-run the preview after resolving a failure rather than blindly retrying.
 
+## Upgrading to skill set v3
+
+Skill set v3 has eleven skills, down from sixteen. Each removed skill was merged
+into one of the new ones, and its `wk-*` alias was removed with it:
+
+| Old skill (alias) | Now |
+| --- | --- |
+| `workit-challenge` (`/wk-challenge`), `workit-plan` (`/wk-plan`), `workit-diagram` (`/wk-diagram`), `workit-mockup` (`/wk-mockup`) | `workit-shape` (`/wk-shape`); diagrams and mockups are references inside it |
+| `workit-behavioral-tdd` (`/wk-tdd`) | `workit-bdd` (`/wk-bdd`) |
+| `workit-blast-radius` (`/wk-blast-radius`) | `workit-review` (`/wk-review`) |
+| `workit-babysit` (`/wk-babysit`), `workit-green-run` (`/wk-green-run`) | `workit-ship` (`/wk-ship`) |
+| `workit-steer` (`/wk-steer`), `workit-handoff` (`/wk-handoff`) | `workit-continue` (`/wk-continue`) |
+| (new) | `workit-fanout` (`/wk-fanout`), `workit-verify-app` (`/wk-verify-app`) |
+
+On Claude Code the skills are `/workit:<name>` (for example `/workit:shape`).
+
+Verifiers and reviewers record `workit ledger verdict` under their own session.
+The lead starts each one with `WORKIT_SESSION_ID=<lead>-v<n>`; on Claude Code
+the SubagentStart hook names one. An author's session is always refused, and
+`--as <role>` only makes verifier ids distinct; it never makes the author
+independent.
+
+When you name no endpoint, the agent stops at a local commit. It pushes and
+opens a PR when you ask it to deliver, or when `workit grant show` reports
+`defaultEndpoint` `pr`.
+
 ## What it provides
 
 - Eight shared `workit_*` operation families: task, policy, evidence, finding,
   decision, worker, writer, and state.
-- Sixteen canonical method skills: behavioral TDD, challenge, debug, handoff,
-  implement, plan, review, babysit, blast-radius, deslop (policy-gated before
-  pull requests), diagram, mockup, green-run, steer, bdd (Given/When/Then
-  scenarios as test names and seams) and test-audit (`workit test-audit`).
+- Eleven canonical method skills: shape (brainstorm, grill, slice, durable
+  knowledge only when it pays), implement, review, debug, ship (PRs, stacks,
+  CI, landing), continue (interruptions and handoff), bdd, test-audit,
+  deslop, fanout (parallel workers with fixed briefs and independent
+  verifiers) and verify-app (generates a project `verify-<app>` skill).
 - A `<workit-contract>` bootstrap marker carrying shared invariants.
 - Host-native capability reporting that never fabricates authority, receipts,
   delegation tokens, or cross-process identity.
@@ -458,8 +485,8 @@ captured at closure and never projects the checkout's current writer onto
 history.
 
 Skills are reachable two ways: model-invoked automatically when the task fits,
-or explicitly via the available `wk-*` aliases (`/wk-challenge`, `/wk-babysit`,
-`/wk-implement`, `/wk-plan`, `/wk-debug`, and the rest) on OpenCode, Cursor, and
+or explicitly via the available `wk-*` aliases (`/wk-shape`, `/wk-implement`,
+`/wk-ship`, `/wk-fanout`, `/wk-debug`, and the rest) on OpenCode, Cursor, and
 Pi. On OpenCode, each alias asks the model to load its matching method skill;
 it does not chain to another alias, and a user skill with the same ID suppresses
 that Workit alias. Codex CLI has no slash path: invoke skills explicitly as
@@ -728,7 +755,7 @@ blocks publication on missing deterministic or live evidence. The 90-run live ba
 requires explicit authorization; see `docs/workit-v1/qualification.md`.
 
 Published bundles are built with Bun and run on Node. The Cursor, OpenCode,
-Codex, Pi, and Claude Code package builds copy the sixteen canonical skills from `packages/workit-core`; no
+Codex, Pi, and Claude Code package builds copy the eleven canonical skills from `packages/workit-core`; no
 host-specific skill forks are maintained.
 
 ## Repository layout

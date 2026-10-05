@@ -471,10 +471,15 @@ const checkCodexPin = (res: Resolved): DoctorCheck => {
 const assetPathsFor = (host: DoctorHost, dev: string): string[] => {
   const pkg = path.join(dev, "packages", `workit-${host}`);
   switch (host) {
-    case "opencode":
-      return WORKIT_METHOD_SKILLS.map((skill) =>
-        path.join(pkg, "assets", "skills", skill, "SKILL.md"),
-      );
+    case "opencode": {
+      // A source checkout has no generated assets/skills copy (git-ignored);
+      // the plugin then reads the canonical core skills, so check those.
+      const packaged = path.join(pkg, "assets", "skills");
+      const root = existsSync(packaged)
+        ? packaged
+        : path.join(dev, "packages", "workit-core", "skills");
+      return WORKIT_METHOD_SKILLS.map((skill) => path.join(root, skill, "SKILL.md"));
+    }
     case "cursor":
       return [
         path.join(pkg, "assets", "templates", "workit-contract.md"),

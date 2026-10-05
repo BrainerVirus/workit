@@ -58,8 +58,9 @@ test("opencode build fails loudly on damaged canonical skill source before copyi
     const cases: { name: string; damage: (repo: string) => void; names: string[] }[] = [
       {
         name: "workit-missing",
-        damage: (repo) => rmSync(path.join(workitSkills(repo), "workit-plan"), { recursive: true }),
-        names: ["workit-plan"],
+        damage: (repo) =>
+          rmSync(path.join(workitSkills(repo), "workit-shape"), { recursive: true }),
+        names: ["workit-shape"],
       },
     ];
 

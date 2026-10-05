@@ -1,40 +1,45 @@
 ---
 name: workit-debug
-description: Use when behavior is failing, surprising, contradictory, or regressed and the root cause is not established
+description: Find a root cause before patching - start from a red-capable deterministic repro, rank hypotheses, bisect regressions, fix at the root with a regression test. Use for bug, broken, failing, flaky, regression, error, why does.
 ---
 
-# Debug the root cause
+# Debug from a red loop
 
-Debugging is investigation, not a fast symptom patch. Use this method when
-assessment selects `root-cause-investigation` or behavior is failing without an
-established root cause.
+## Steps
 
+1. **Build the loop before any hypothesis.** One command that is red for the
+   user's exact symptom, deterministic, fast and runnable by you:
+   `workit check -- <repro>`. Shrink it until it fails in seconds. If the
+   symptom only shows on the running app, drive it with the project's
+   verify-<app> skill. No loop yet? Building it is the task; do not guess-patch.
+2. **Read the failure, not the summary:** the full error, the failing value,
+   and every caller on its path.
+3. **Rank three to five falsifiable hypotheses**, likeliest first. Test one at
+   a time with the loop or a tagged log line (`[DEBUG-<id>]`, removed at the
+   end with one grep). Keep a short hypothesis log so a dead idea stays dead.
+4. **Regression? Bisect it:** `git bisect start <bad> <good>` then
+   `git bisect run <repro>`. The first bad commit names the cause.
+5. **Fix at the root**, the one place every failing caller passes through.
+   Add a regression test at a seam that exercises the real bug pattern; if no
+   such seam exists, report that as a finding.
+6. **Stop rule:** after three dead hypotheses, write down what is measured and
+   what is inferred, widen the loop, or ask for the one fact only the user has.
 
-## Method
+Every shipped line traces to evidence from the loop. A "might help" retry or
+guard is a hypothesis, not a fix.
 
-1. Inspect task scope, caller authority, candidate identity, existing evidence,
-   findings, and worker/writer state with shared `task`, `policy`, `evidence`, and
-   `finding` operations.
-2. Reproduce the failure at a stable behavioral boundary. Record observed facts,
-   inferences, and unknowns with references; trace the failing value and all
-   relevant callers before editing.
-3. State the root-cause hypothesis and the smallest in-scope fix. Write a focused
-   regression at the boundary when practical, then run RED and GREEN through
-   `workit check <name>` so the results are observed, not reported.
-4. Acquire writer authority through `writer` before mutation. Reconcile the
-   candidate, evidence, and findings after the change; investigate sibling paths
-   and stale conclusions rather than assuming the first patch worked.
+## Example
 
-Respect the user's scope and native authority. For a deterministic failure, make
-one focused reproduction that exercises the affected boundary and add a
-regression check when practical. If no direct reproduction exists, gather the
-available evidence and state what remains uncertain instead of inventing a red
-loop or blocking unrelated work.
+Bad: "Probably a race; added a retry." (no repro, nothing measured)
 
-## Common mistakes
+Good: "Repro: `workit check -- bun test lock.test.ts -t stale` red 10/10.
+H1 dead pid not reclaimed - confirmed: `kill(pid, 0)` throws EPERM for another
+user's pid and we treated it as dead. Fix: EPERM means alive. Loop green 10/10;
+regression test pins the EPERM case."
 
-| Mistake                               | Correction                                             |
-| ------------------------------------- | ------------------------------------------------------ |
-| Patching the nearest stack frame      | Trace the input, callers, and shared cause.            |
-| Reproducing only after editing        | Capture the failure before mutation.                   |
-| Treating one passing command as proof | Verify the affected behavior and record real evidence. |
+## Check
+
+```sh
+workit check -- <repro>   # red before the fix, green after
+workit check test
+```
