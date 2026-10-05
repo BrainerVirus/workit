@@ -98,7 +98,6 @@ const decisionInput = (root: string) => {
       workspaceId: workspace.id,
       scope: task.intent.data.scope,
       presented: "Use the selected implementation approach?",
-      approvedContent: "Proceed with the implementation.",
       contentRefs: [],
     },
     response: "approved",
@@ -106,7 +105,7 @@ const decisionInput = (root: string) => {
   };
 };
 
-test("clean Pi package declares stock discovery and the eight families plus external action", async () => {
+test("clean Pi package declares stock discovery and the seven families plus read-only context", async () => {
   const manifest = JSON.parse(
     readFileSync(path.join(import.meta.dir, "../../packages/workit-pi/package.json"), "utf8"),
   );
@@ -126,9 +125,8 @@ test("clean Pi package declares stock discovery and the eight families plus exte
     "workit_finding",
     "workit_decision",
     "workit_worker",
-    "workit_writer",
     "workit_state",
-    "workit_external_action",
+    "workit_context",
   ]);
   expect(pi.tools.map((tool) => tool.name)).toContain("workit_worker_control");
   expect(pi.tools.every((tool) => tool.parameters.type === "object")).toBe(true);
@@ -185,7 +183,7 @@ test("Pi registers wk- slash aliases that expand the bundled skill commands", as
   }
 });
 
-test("Pi tool payloads use the shared parser and headless decisions need input", async () => {
+test("Pi tool payloads use the shared parser and headless decisions record without a prompt", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-tools-"));
   const pi = makePi();
   await extension(pi as any);
@@ -206,19 +204,11 @@ test("Pi tool payloads use the shared parser and headless decisions need input",
     undefined,
     context(root, false),
   );
-  expect(headless.details).toMatchObject({
-    ok: false,
-    code: "needs_input",
-    details: { capability: "interactive_decision" },
-  });
-  expect(
-    piCapabilities({ hasUI: false }).find((entry) => entry.name === "interactive_decision")
-      ?.assurance,
-  ).toBe("unavailable");
-  expect(
-    piCapabilities({ hasUI: true }).find((entry) => entry.name === "interactive_decision")
-      ?.assurance,
-  ).toBe("enforced");
+  expect(headless.details).toMatchObject({ ok: true, data: { data: { response: "approved" } } });
+  for (const hasUI of [false, true])
+    expect(piCapabilities({ hasUI }).map((entry) => entry.name)).not.toContain(
+      "interactive_decision",
+    );
 });
 
 test("Pi tools transport nested payloads and arrays intact", async () => {
@@ -323,19 +313,32 @@ test("Pi string decoding never masks the original contract failure", async () =>
   expect(bad.details).toMatchObject({ ok: false, code: "invalid_input" });
 });
 
-test("interactive Pi decisions use the native answer and reject untrusted writes", async () => {
+test("interactive Pi decisions record the stated response without confirming and reject untrusted writes", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-decision-"));
   const pi = makePi();
   await extension(pi as any);
   const decisionTool = pi.tools.find((tool) => tool.name === "workit_decision");
+  let prompts = 0;
+  const interactive = context(root, true);
+  interactive.ui = {
+    confirm: async () => {
+      prompts += 1;
+      return false;
+    },
+    select: async () => {
+      prompts += 1;
+      return "rejected";
+    },
+  };
   const result = await decisionTool.execute(
     "call",
     decisionInput(root),
     undefined,
     undefined,
-    context(root, true),
+    interactive,
   );
   expect(result.details).toMatchObject({ ok: true, data: { data: { response: "approved" } } });
+  expect(prompts).toBe(0);
 
   const taskTool = pi.tools.find((tool) => tool.name === "workit_task");
   const denied = await taskTool.execute(
@@ -348,301 +351,13 @@ test("interactive Pi decisions use the native answer and reject untrusted writes
   expect(denied.details).toMatchObject({ ok: false, code: "permission_denied" });
 });
 
-test("Pi optional actions use native UI and the exact resolved descriptor", async () => {
-  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-action-"));
-  try {
-    spawnSync("git", ["init", "-q"], { cwd: root });
-    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
-    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
-    const file = path.join(root, "tracked.txt");
-    writeFileSync(file, "fixture\n");
-    spawnSync("git", ["add", "tracked.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
-    const started = startedTask(root);
-    const writerTask = started.store.readTask(started.task.id);
-    const writerWorkspace = started.store.readWorkspace();
-    if (!writerTask.ok || !writerWorkspace.ok || !writerWorkspace.data)
-      throw new Error("writer state missing");
-    expect(
-      new WorkitCore(started.store, {
-        root,
-        caller: { host: "pi", actor: "pi-session" },
-        capabilities: [],
-        constraints: [],
-        now: "2026-01-01T00:00:00Z",
-      }).writer({
-        schemaVersion: 1,
-        action: "acquire",
-        taskId: writerTask.data.id,
-        expectedRevision: writerTask.data.revision,
-        expectedWorkspaceRevision: writerWorkspace.data.revision,
-        workerId: null,
-      }),
-    ).toMatchObject({ ok: true });
-    writeFileSync(path.join(root, "first-change.txt"), "first\n");
-    spawnSync("git", ["add", "first-change.txt"], { cwd: root });
-    let confirms = 0;
-    const actionContext = context(root, true);
-    actionContext.ui = {
-      confirm: async () => {
-        confirms += 1;
-        if (confirms === 1) {
-          writeFileSync(path.join(root, "drift.txt"), "drift\n");
-          spawnSync("git", ["add", "drift.txt"], { cwd: root });
-        }
-        return true;
-      },
-    };
-    const pi = makePi();
-    await extension(pi as any);
-    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
-    const result = await action.execute(
-      "native-action-call",
-      { operation: "git.commit", payload: { message: "chore(test): stage drift" } },
-      undefined,
-      undefined,
-      actionContext,
-    );
-    expect(result.details).toMatchObject({ ok: false, code: "capability_unavailable" });
-    expect(
-      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-    ).toBe("fixture");
-    const retry = await action.execute(
-      "native-action-retry",
-      { operation: "git.commit", payload: { message: "chore(test): stage drift" } },
-      undefined,
-      undefined,
-      actionContext,
-    );
-    expect(retry.details).toMatchObject({ ok: true });
-    expect(confirms).toBe(2);
-    expect(
-      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-    ).toBe("chore(test): stage drift");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("Pi executes a plan-commit list once per listed message", async () => {
-  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-plan-commits-"));
-  try {
-    for (const args of [
-      ["init", "-q", "-b", "feature/plan"],
-      ["config", "user.email", "test@example.invalid"],
-      ["config", "user.name", "Workit Test"],
-    ])
-      spawnSync("git", args, { cwd: root });
-    writeFileSync(path.join(root, "base.txt"), "base\n");
-    spawnSync("git", ["add", "base.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
-    const store = new TaskStore(root);
-    const core = () =>
-      new WorkitCore(store, {
-        root,
-        caller: { host: "pi", actor: "pi-session" },
-        callerAttested: true,
-        capabilities: [],
-        constraints: [],
-        now: "2026-01-01T00:00:00Z",
-      });
-    const started = core().task(taskStartRequest());
-    if (!started.ok) throw new Error(started.error);
-    const task = store.readTask((started.data as { id: string }).id);
-    const workspace = store.readWorkspace();
-    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
-    expect(
-      core().writer({
-        schemaVersion: 1,
-        action: "acquire",
-        taskId: task.data.id,
-        expectedRevision: task.data.revision,
-        expectedWorkspaceRevision: workspace.data.revision,
-        workerId: null,
-      }),
-    ).toMatchObject({ ok: true });
-    let confirms = 0;
-    const actionContext = context(root, true);
-    actionContext.ui = {
-      confirm: async () => {
-        confirms += 1;
-        return true;
-      },
-    };
-    const pi = makePi();
-    await extension(pi as any);
-    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
-    const plan = await action.execute(
-      "plan-list",
-      {
-        operation: "git.commit",
-        payload: { plan_steps: ["chore(a): one"], plan_branch: "feature/plan" },
-      },
-      undefined,
-      undefined,
-      actionContext,
-    );
-    expect(plan.details).toMatchObject({ ok: true, data: { plan_commits: 1 } });
-    expect(confirms).toBe(1);
-    writeFileSync(path.join(root, "one.txt"), "one\n");
-    spawnSync("git", ["add", "one.txt"], { cwd: root });
-    const commit = await action.execute(
-      "plan-commit",
-      { operation: "git.commit", payload: { message: "chore(a): one" } },
-      undefined,
-      undefined,
-      actionContext,
-    );
-    expect(commit.details).toMatchObject({ ok: true });
-    expect(confirms).toBe(1);
-    expect(
-      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-    ).toBe("chore(a): one");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("Pi requires writer ownership and concise binding questions", async () => {
-  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-writer-budget-"));
-  try {
-    for (const args of [
-      ["init", "-q"],
-      ["config", "user.email", "test@example.invalid"],
-      ["config", "user.name", "Workit Test"],
-    ])
-      spawnSync("git", args, { cwd: root });
-    writeFileSync(path.join(root, "base.txt"), "base\n");
-    spawnSync("git", ["add", "base.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
-    writeFileSync(path.join(root, "change.txt"), "change\n");
-    spawnSync("git", ["add", "change.txt"], { cwd: root });
-    const { task, workspace } = startedTask(root);
-    const pi = makePi();
-    await extension(pi as any);
-    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
-    const commit = await action.execute(
-      "writer-prereq",
-      { operation: "git.commit", payload: { message: "chore(test): needs writer" } },
-      undefined,
-      undefined,
-      context(root, true),
-    );
-    expect(commit.details).toMatchObject({ ok: false, code: "needs_input" });
-    expect(String(commit.details.error)).toContain("writer ownership");
-    const decision = pi.tools.find((tool) => tool.name === "workit_decision");
-    const long = `Approve ${"x".repeat(400)}`;
-    const recorded = await decision.execute(
-      "budget",
-      {
-        schemaVersion: 1,
-        action: "record",
-        taskId: task.id,
-        purpose: "design",
-        binding: {
-          taskId: task.id,
-          workspaceId: workspace.id,
-          scope: task.intent.data.scope,
-          presented: long,
-          approvedContent: long,
-          contentRefs: [],
-        },
-        response: "approved",
-        requirementIds: [],
-      },
-      undefined,
-      undefined,
-      context(root, true),
-    );
-    expect(recorded.details).toMatchObject({ ok: false, code: "invalid_input" });
-    expect(String(recorded.details.error)).toContain("present the item");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("Pi lets the resumed writer request a fresh external-action approval", async () => {
-  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-resumed-writer-"));
-  try {
-    for (const args of [
-      ["init", "-q"],
-      ["config", "user.email", "test@example.invalid"],
-      ["config", "user.name", "Workit Test"],
-    ])
-      spawnSync("git", args, { cwd: root });
-    writeFileSync(path.join(root, "base.txt"), "base\n");
-    spawnSync("git", ["add", "base.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
-    writeFileSync(path.join(root, "change.txt"), "change\n");
-    spawnSync("git", ["add", "change.txt"], { cwd: root });
-    const active = startedTask(root);
-    const creator = new WorkitCore(active.store, {
-      root,
-      caller: { host: "pi", actor: "pi-session" },
-      callerAttested: true,
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:01Z",
-    });
-    const second = creator.task(
-      taskStartRequest({
-        expectedWorkspaceRevision: active.workspace.revision,
-        intent: {
-          objective: "another active task",
-          scope: active.task.intent.data.scope,
-          authorityRefs: [],
-        },
-      }),
-    );
-    if (!second.ok) throw new Error(second.error);
-    const currentTask = active.store.readTask(active.task.id);
-    const currentWorkspace = active.store.readWorkspace();
-    if (!currentTask.ok || !currentWorkspace.ok || !currentWorkspace.data)
-      throw new Error("current state missing");
-    const resumed = new WorkitCore(active.store, {
-      root,
-      caller: { host: "pi", actor: "pi-resumed" },
-      callerAttested: true,
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:01Z",
-    });
-    expect(
-      resumed.writer({
-        schemaVersion: 1,
-        action: "acquire",
-        taskId: active.task.id,
-        expectedRevision: currentTask.data.revision,
-        expectedWorkspaceRevision: currentWorkspace.data.revision,
-        workerId: null,
-      }),
-    ).toMatchObject({ ok: true });
-    const pi = makePi();
-    await extension(pi as any);
-    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
-    const result = await action.execute(
-      "resumed-writer",
-      { operation: "git.commit", payload: { message: "chore(test): resumed writer" } },
-      undefined,
-      undefined,
-      context(root, true, true, "pi-resumed"),
-    );
-    expect(result.details).toMatchObject({ ok: true });
-    expect(
-      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-    ).toBe("chore(test): resumed writer");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("Pi child registration omits coordinator-only optional actions", async () => {
+test("Pi child registration omits the coordinator-only context reader", async () => {
   const previous = process.env.WORKIT_PI_WORKER_ID;
   process.env.WORKIT_PI_WORKER_ID = "worker-child";
   try {
     const pi = makePi();
     await extension(pi as any);
-    expect(pi.tools.map((tool) => tool.name)).not.toContain("workit_external_action");
+    expect(pi.tools.map((tool) => tool.name)).not.toContain("workit_context");
   } finally {
     if (previous === undefined) delete process.env.WORKIT_PI_WORKER_ID;
     else process.env.WORKIT_PI_WORKER_ID = previous;
@@ -687,7 +402,7 @@ test("Pi session context offers unfinished history once without writing task sta
   expect(store.readWorkspace()).toEqual(finalWorkspace);
 });
 
-test("Pi documentation context remains available headlessly without mutation approval", async () => {
+test("Pi documentation context remains available headlessly", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-docs-action-"));
   try {
     spawnSync("git", ["init", "-q"], { cwd: root });
@@ -698,10 +413,10 @@ test("Pi documentation context remains available headlessly without mutation app
     spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
     const pi = makePi();
     await extension(pi as any);
-    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const action = pi.tools.find((tool) => tool.name === "workit_context");
     const result = await action.execute(
       "docs-headless",
-      { operation: "context.read", payload: { kind: "changelog" } },
+      { kind: "changelog" },
       undefined,
       undefined,
       context(root, false),
@@ -712,7 +427,7 @@ test("Pi documentation context remains available headlessly without mutation app
   }
 });
 
-test("Pi context.read returns Git context headlessly without project trust or Workit writes", async () => {
+test("Pi workit_context returns Git context headlessly without project trust or Workit writes", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-context-read-"));
   try {
     for (const args of [
@@ -727,10 +442,10 @@ test("Pi context.read returns Git context headlessly without project trust or Wo
     const before = readFileSync(path.join(root, ".git/HEAD"), "utf8");
     const pi = makePi();
     await extension(pi as any);
-    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const action = pi.tools.find((tool) => tool.name === "workit_context");
     const result = await action.execute(
       "context-read",
-      { operation: "context.read", payload: { kind: "git" } },
+      { kind: "git" },
       undefined,
       undefined,
       context(root, false, false),
@@ -768,10 +483,10 @@ test("Pi affected-doc context passes edits through and public evidence captures 
 
     const pi = makePi();
     await extension(pi as any);
-    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const action = pi.tools.find((tool) => tool.name === "workit_context");
     const contextResult = await action.execute(
       "affected-docs",
-      { operation: "context.read", payload: { kind: "affected", range: "HEAD~1...HEAD" } },
+      { kind: "affected", range: "HEAD~1...HEAD" },
       undefined,
       undefined,
       context(root, false),
@@ -816,25 +531,6 @@ test("Pi affected-doc context passes edits through and public evidence captures 
     if (!beforeTask.ok) throw new Error(beforeTask.error);
     const beforeCandidate = beforeTask.data.candidates.at(-1);
     if (!beforeCandidate) throw new Error("pre-edit candidate missing");
-    const currentTask = active.store.readTask(active.task.id);
-    const currentWorkspace = active.store.readWorkspace();
-    if (!currentTask.ok || !currentWorkspace.ok || !currentWorkspace.data)
-      throw new Error("writer state missing");
-    const acquired = new WorkitCore(active.store, {
-      root,
-      caller: { host: "pi", actor: "pi-session" },
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:00Z",
-    }).writer({
-      schemaVersion: 1,
-      action: "acquire",
-      taskId: currentTask.data.id,
-      expectedRevision: currentTask.data.revision,
-      expectedWorkspaceRevision: currentWorkspace.data.revision,
-      workerId: null,
-    });
-    expect(acquired.ok).toBe(true);
     const before = readFileSync(doc, "utf8");
     const guard = pi.handlers.get("tool_call");
     expect(
@@ -1089,131 +785,5 @@ test("cancel without a live handle fails recovery_required instead of pretending
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
-  }
-});
-
-const branchRepo = (suffix: string) => {
-  const root = mkdtempSync(path.join(tmpdir(), `workit-pi-branch-${suffix}-`));
-  const remote = mkdtempSync(path.join(tmpdir(), `workit-pi-branch-remote-${suffix}-`));
-  spawnSync("git", ["init", "-q", "--bare"], { cwd: remote });
-  for (const args of [
-    ["init", "-q", "-b", "main"],
-    ["config", "user.email", "test@example.invalid"],
-    ["config", "user.name", "Workit Test"],
-  ])
-    spawnSync("git", args, { cwd: root });
-  writeFileSync(path.join(root, "base.txt"), "base\n");
-  spawnSync("git", ["add", "base.txt"], { cwd: root });
-  spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
-  spawnSync("git", ["remote", "add", "origin", remote], { cwd: root });
-  spawnSync("git", ["push", "-q", "-u", "origin", "main"], { cwd: root });
-  spawnSync("git", ["branch", "develop"], { cwd: root });
-  spawnSync("git", ["push", "-q", "origin", "develop"], { cwd: root });
-  spawnSync("git", ["branch", "-D", "develop"], { cwd: root });
-  const store = new TaskStore(root);
-  const core = () =>
-    new WorkitCore(store, {
-      root,
-      caller: { host: "pi", actor: "pi-session" },
-      callerAttested: true,
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:00Z",
-    });
-  const started = core().task(taskStartRequest());
-  if (!started.ok) throw new Error(started.error);
-  const task = store.readTask((started.data as { id: string }).id);
-  const workspace = store.readWorkspace();
-  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
-  expect(
-    core().writer({
-      schemaVersion: 1,
-      action: "acquire",
-      taskId: task.data.id,
-      expectedRevision: task.data.revision,
-      expectedWorkspaceRevision: workspace.data.revision,
-      workerId: null,
-    }),
-  ).toMatchObject({ ok: true });
-  return { root, remote };
-};
-
-test("Pi dirty branch setup confirms the stash and executes in one approval", async () => {
-  const { root, remote } = branchRepo("dirty");
-  try {
-    writeFileSync(path.join(root, "base.txt"), "wip\n");
-    writeFileSync(path.join(root, "notes.md"), "untracked\n");
-    let confirms = 0;
-    let asked = "";
-    const actionContext = context(root, true);
-    actionContext.ui = {
-      confirm: async (question: string) => {
-        confirms += 1;
-        asked = String(question);
-        return true;
-      },
-    };
-    const pi = makePi();
-    await extension(pi as any);
-    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
-    const result = await action.execute(
-      "pi-branch-dirty",
-      { operation: "git.branch_setup", payload: { target_branch: "feature/pi-dirty" } },
-      undefined,
-      undefined,
-      actionContext,
-    );
-    expect(result.details).toMatchObject({ ok: true });
-    expect(asked).toContain("Stash");
-    expect(confirms).toBe(1);
-    expect(
-      spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-    ).toBe("feature/pi-dirty");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
-
-test("Pi branch approval carries across unrelated current-HEAD moves", async () => {
-  const { root, remote } = branchRepo("carry");
-  try {
-    let confirms = 0;
-    const actionContext = context(root, true);
-    const approvedBase = spawnSync("git", ["rev-parse", "refs/remotes/origin/main"], {
-      cwd: root,
-      encoding: "utf8",
-    }).stdout.trim();
-    actionContext.ui = {
-      confirm: async () => {
-        confirms += 1;
-        spawnSync("git", ["checkout", "-qb", "feature/current"], { cwd: root });
-        writeFileSync(path.join(root, "later.txt"), "later\n");
-        spawnSync("git", ["add", "later.txt"], { cwd: root });
-        spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
-        return true;
-      },
-    };
-    const pi = makePi();
-    await extension(pi as any);
-    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
-    const result = await action.execute(
-      "pi-branch-carry",
-      { operation: "git.branch_setup", payload: { target_branch: "feature/pi-carry" } },
-      undefined,
-      undefined,
-      actionContext,
-    );
-    expect(result.details).toMatchObject({ ok: true });
-    expect(confirms).toBe(1);
-    expect(
-      spawnSync("git", ["rev-parse", "feature/pi-carry"], {
-        cwd: root,
-        encoding: "utf8",
-      }).stdout.trim(),
-    ).toBe(approvedBase);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
   }
 });

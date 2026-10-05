@@ -14,7 +14,6 @@ describe("session bootstrap", () => {
       "finding",
       "decision",
       "worker",
-      "writer",
       "state",
     ])
       expect(bootstrap).toContain(operation);
@@ -48,14 +47,12 @@ describe("stale-source markers", () => {
       pluginSourceFiles.some((file) => file.endsWith(path.join("workit-core", "src", "core.ts"))),
     ).toBe(true);
     expect(pluginSourceFiles.some((file) => file.endsWith("plugin.ts"))).toBe(true);
-    expect(pluginSourceFiles.some((file) => file.endsWith("external-action-effects.ts"))).toBe(
-      true,
-    );
+    expect(pluginSourceFiles.some((file) => file.endsWith("context-read.ts"))).toBe(true);
     expect(pluginSourceFiles.some((file) => file.endsWith(path.join("v2", "lifecycle.ts")))).toBe(
       true,
     );
     expect(pluginSourceFiles.some((file) => file.endsWith(path.join("v2", "receipts.ts")))).toBe(
-      true,
+      false,
     );
   });
 });

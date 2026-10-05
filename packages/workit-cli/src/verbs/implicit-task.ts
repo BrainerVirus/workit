@@ -22,7 +22,6 @@ export async function ensureImplicitTask(
         host: "workit_cli",
         session: { kind: "host", host: "workit_cli", handle: actor },
         workerId: null,
-        receipts: [],
       },
     });
     return found.ok && found.data ? { id: found.data.task.id, created: found.data.created } : null;

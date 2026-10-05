@@ -50,16 +50,6 @@ export const PI_DESCRIPTOR: HostDescriptor = {
         "Pi exposes a before-tool boundary for known built-in write tools; it enforces project trust while file targets stay host-policy.",
     },
     {
-      name: "interactive_decision",
-      surface: "ui.confirm",
-      refs: ["ui.confirm"],
-      requires: ["interaction.questions"],
-      observed: ["ui"],
-      assurance: "enforced",
-      reason: "Pi supplies a native confirmation receipt when dialog UI is available.",
-      unavailableReason: "Pi is running without dialog UI, so required decisions need user input.",
-    },
-    {
       name: "arbitrary_shell_write",
       surface: "bash",
       refs: ["tool_call"],

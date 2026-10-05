@@ -6,10 +6,7 @@ import { spawnSync } from "node:child_process";
 import {
   TaskStore,
   WorkitCore,
-  externalActionDescriptor,
-  externalActionHelp,
   parseOperation,
-  planCommitBinding,
   runtimeVersion,
 } from "@/packages/workit-core/src/core";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
@@ -41,7 +38,7 @@ const coreFor = (root: string) =>
     now: "2026-01-01T00:00:00Z",
   });
 
-test("close accepts omitted decisionIds and writer reason is symmetric", () => {
+test("close accepts omitted decisionIds and inspect/resume need only the task id", () => {
   const close = parseOperation("task", {
     schemaVersion: 1,
     action: "close",
@@ -50,19 +47,6 @@ test("close accepts omitted decisionIds and writer reason is symmetric", () => {
     summary: "done",
   });
   expect(close.ok).toBe(true);
-  const acquire = parseOperation("writer", {
-    schemaVersion: 1,
-    action: "acquire",
-    taskId: TASK_ID,
-    reason: "handoff",
-  });
-  expect(acquire.ok).toBe(true);
-  const release = parseOperation("writer", {
-    schemaVersion: 1,
-    action: "release",
-    taskId: TASK_ID,
-  });
-  expect(release.ok).toBe(true);
   expect(
     parseOperation("task", {
       schemaVersion: 1,
@@ -77,8 +61,6 @@ test("close accepts omitted decisionIds and writer reason is symmetric", () => {
       taskId: TASK_ID,
     }).ok,
   ).toBe(true);
-  expect(externalActionHelp).toContain("hosting.delete_branch {branch,cwd?}");
-  expect(externalActionHelp).toContain("cwd? for an action-time target repository");
 });
 
 test("ordinary paused tasks resume without imported-task authority refs", () => {
@@ -107,7 +89,10 @@ test("worker scope denials identify both conflicting scopes", () => {
     const core = coreFor(root);
     const started = core.task(
       taskStartRequest({
-        intent: { ...taskStartRequest().intent, scope: scope({ paths: ["src"] }) },
+        intent: {
+          ...taskStartRequest().intent,
+          scope: scope({ paths: ["src"] }),
+        },
       }),
     );
     if (!started.ok) throw new Error(started.error);
@@ -145,7 +130,10 @@ test("task list defaults to a bounded compact open-task projection", () => {
       const started = core.task(
         taskStartRequest({
           expectedWorkspaceRevision: undefined,
-          intent: { ...taskStartRequest().intent, objective: `closed ${index}` },
+          intent: {
+            ...taskStartRequest().intent,
+            objective: `closed ${index}`,
+          },
         }),
       );
       if (!started.ok) throw new Error(started.error);
@@ -167,16 +155,24 @@ test("task list defaults to a bounded compact open-task projection", () => {
     if (!active.ok) throw new Error(active.error);
 
     const open = core.task({ schemaVersion: 1, action: "list" });
-    expect(open).toMatchObject({ ok: true, data: [{ objective: "active", status: "active" }] });
+    expect(open).toMatchObject({
+      ok: true,
+      data: [{ objective: "active", status: "active" }],
+    });
     if (!open.ok || !Array.isArray(open.data)) throw new Error("task list failed");
     expect(open.data).toHaveLength(1);
     expect(open.data[0]).not.toHaveProperty("policy");
     expect(open.data[0]).not.toHaveProperty("requirements");
 
-    const history = core.task({ schemaVersion: 1, action: "list", status: "closed", limit: 5 });
+    const history = core.task({
+      schemaVersion: 1,
+      action: "list",
+      status: "closed",
+      limit: 5,
+    });
     if (!history.ok || !Array.isArray(history.data)) throw new Error("task history failed");
     expect(history.data).toHaveLength(5);
-    expect(history.data.every((item) => "writer" in item && item.writer === null)).toBe(true);
+    expect(history.data.every((item) => !("writer" in item))).toBe(true);
 
     const inspected = core.task({
       schemaVersion: 1,
@@ -184,7 +180,9 @@ test("task list defaults to a bounded compact open-task projection", () => {
       taskId: history.data[0].id,
       view: "summary",
     });
-    expect(inspected).toMatchObject({ ok: true, data: { status: "closed", writer: null } });
+    expect(inspected).toMatchObject({ ok: true, data: { status: "closed" } });
+    if (!inspected.ok) throw new Error(inspected.error);
+    expect(inspected.data).not.toHaveProperty("writer");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -322,11 +320,20 @@ test("pause keeps progress and stores the reason separately", () => {
         schemaVersion: 1,
         action: "progress",
         taskId,
-        progress: { summary: "work in progress", nextAction: "next step", blockers: [] },
+        progress: {
+          summary: "work in progress",
+          nextAction: "next step",
+          blockers: [],
+        },
       }).ok,
     ).toBe(true);
     expect(
-      core.task({ schemaVersion: 1, action: "pause", taskId, reason: "waiting for review" }).ok,
+      core.task({
+        schemaVersion: 1,
+        action: "pause",
+        taskId,
+        reason: "waiting for review",
+      }).ok,
     ).toBe(true);
     const paused = new TaskStore(root).readTask(taskId);
     if (!paused.ok) throw new Error(paused.error);
@@ -347,16 +354,28 @@ test("new and legacy records carry truthful runtime versions", () => {
     const taskId = (started.data as { id: string }).id;
     const version = runtimeVersion();
     expect(
-      (started.data as { runtime?: { createdWith?: string; updatedWith?: string } }).runtime,
+      (
+        started.data as {
+          runtime?: { createdWith?: string; updatedWith?: string };
+        }
+      ).runtime,
     ).toEqual({ createdWith: version, updatedWith: version });
     const workspace = new TaskStore(root).readWorkspace();
     if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
-    expect(workspace.data.runtime).toEqual({ createdWith: version, updatedWith: version });
+    expect(workspace.data.runtime).toEqual({
+      createdWith: version,
+      updatedWith: version,
+    });
 
     const raw = rawRecordOf(root, taskId);
     delete raw.runtime;
     rewriteTaskLog(root, taskId, raw);
-    const legacy = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+    const legacy = core.task({
+      schemaVersion: 1,
+      action: "inspect",
+      taskId,
+      view: "summary",
+    });
     expect(legacy.ok).toBe(true);
     expect(
       core.task({
@@ -367,21 +386,27 @@ test("new and legacy records carry truthful runtime versions", () => {
       }).ok,
     ).toBe(true);
     const stamped = rawRecordOf(root, taskId);
-    expect(stamped.runtime).toEqual({ createdWith: null, updatedWith: version });
+    expect(stamped.runtime).toEqual({
+      createdWith: null,
+      updatedWith: version,
+    });
 
     const workspaceFile = workspaceFileOf(root);
     const rawWorkspace = JSON.parse(readFileSync(workspaceFile, "utf8"));
     delete rawWorkspace.runtime;
     writeFileSync(workspaceFile, JSON.stringify(rawWorkspace));
-    const acquired = core.writer({
+    const paused = core.task({
       schemaVersion: 1,
-      action: "acquire",
+      action: "pause",
       taskId,
-      workerId: null,
+      reason: "stamp",
     });
-    expect(acquired.ok).toBe(true);
+    expect(paused.ok).toBe(true);
     const workspaceAfter = JSON.parse(readFileSync(workspaceFile, "utf8"));
-    expect(workspaceAfter.runtime).toEqual({ createdWith: null, updatedWith: version });
+    expect(workspaceAfter.runtime).toEqual({
+      createdWith: null,
+      updatedWith: version,
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -408,81 +433,6 @@ test("records written by a newer Workit stay readable, and ask for an upgrade on
       expect(task.code).toBe("recovery_required");
       expect(task.error).toContain("upgrade Workit");
     }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("plan commit bindings refuse branches other than the approved one", () => {
-  const root = gitRepo();
-  try {
-    const core = coreFor(root);
-    const started = core.task(taskStartRequest());
-    if (!started.ok) throw new Error(started.error);
-    const taskId = (started.data as { id: string }).id;
-    const store = new TaskStore(root);
-    const workspace = store.readWorkspace();
-    const task = store.readTask(taskId);
-    if (!workspace.ok || !workspace.data || !task.ok) throw new Error("state missing");
-    const planDescriptor = externalActionDescriptor("git.commit", {
-      plan_steps: ["chore(a): one"],
-      plan_branch: "feature/plan",
-      resolved: {
-        head: spawnSync("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.toString().trim(),
-        branch: "feature/plan",
-        steps: ["chore(a): one"],
-      },
-    });
-    const raw = rawRecordOf(root, taskId);
-    raw.decisions = [
-      {
-        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        recordedAt: "2026-01-01T00:00:00Z",
-        provenance: {
-          kind: "host_observed",
-          host: "workit_cli",
-          session: { kind: "host", host: "workit_cli", handle: "protocol-test" },
-          workerId: null,
-          receipts: [{ kind: "host", host: "workit_cli", handle: "call-1" }],
-        },
-        data: {
-          purpose: "action",
-          binding: {
-            taskId,
-            workspaceId: workspace.data.id,
-            scope: task.data.intent.data.scope,
-            presented: "Approve the listed plan commits.",
-            approvedContent: planDescriptor,
-            contentRefs: [],
-          },
-          digest: "b".repeat(64),
-          response: "approved",
-          requirementIds: [],
-          revoked: null,
-          consumption: null,
-        },
-      },
-    ];
-    rewriteTaskLog(root, taskId, raw);
-    const commitDescriptor = externalActionDescriptor("git.commit", {
-      message: "chore(a): one",
-      resolved: { head: "x", branch: "feature/plan", staged: "s", paths: ["x"] },
-    });
-    const mismatched = planCommitBinding(
-      new TaskStore(root),
-      "workit_cli",
-      "protocol-test",
-      commitDescriptor,
-    );
-    expect(mismatched).toBeNull();
-    spawnSync("git", ["checkout", "-q", "-b", "feature/plan"], { cwd: root });
-    const bound = planCommitBinding(
-      new TaskStore(root),
-      "workit_cli",
-      "protocol-test",
-      commitDescriptor,
-    );
-    expect(bound).toMatchObject({ step: "chore(a): one" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -129,7 +129,7 @@ test("session.created never consumes an assigned worker without a matching subag
   }
 });
 
-test("a fresh managed launch prepares the durable dispatching claim, then binds the observed child", async () => {
+test("a fresh managed launch correlates in memory, then binds the observed child", async () => {
   const value = fixture();
   try {
     await value.lifecycle.executeBefore({
@@ -138,10 +138,9 @@ test("a fresh managed launch prepares the durable dispatching claim, then binds 
       id: "call_1",
       input: { description: "child", prompt: "work", agent: "general" },
     });
-    expect(value.worker().data).toMatchObject({
-      state: "dispatching",
-      coordinator: { kind: "host", host: "opencode", handle: "coordinator" },
-    });
+    // The correlation is in memory only: no dispatching state is written.
+    expect(value.worker().data).toMatchObject({ state: "assigned", session: null });
+    expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
     value.sessions.set("ses_child1", {
       id: "ses_child1",
       parentID: "coordinator",
@@ -191,7 +190,7 @@ test("a resumed V2 coordinator claims its own assigned worker on an older task",
       id: "call_1",
       input: {},
     });
-    expect(value.worker().data.state).toBe("dispatching");
+    expect(value.worker().data.state).toBe("assigned");
     value.sessions.set("ses_child1", {
       id: "ses_child1",
       parentID: "coordinator",
@@ -261,7 +260,7 @@ test("concurrent fresh launches share one synchronous slot", async () => {
     });
     await first;
     await expect(second).rejects.toThrow(/unsettled/);
-    expect(value.worker().data.state).toBe("dispatching");
+    expect(value.worker().data.state).toBe("assigned");
   } finally {
     value.cleanup();
   }
@@ -340,7 +339,7 @@ test("unproven subagent outcomes retain correlation until a late child is observ
         input: {},
         ...outcome,
       });
-      expect(value.worker().data.state).toBe("dispatching");
+      expect(value.worker().data.state).toBe("assigned");
       expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
       await expect(
         value.lifecycle.executeBefore({
@@ -405,7 +404,7 @@ test("a reported child is retried and settled from session evidence", async () =
       input: {},
     });
     expect(value.worker().data.state).toBe("stopped");
-    expect(value.worker(1).data.state).toBe("dispatching");
+    expect(value.worker(1).data.state).toBe("assigned");
   } finally {
     value.cleanup();
   }
@@ -465,7 +464,7 @@ test("failed completion observation keeps its launch and report for retry", asyn
       evidenceIds: [],
       findingIds: [],
     });
-    expect(value.worker(1).data.state).toBe("dispatching");
+    expect(value.worker(1).data.state).toBe("assigned");
   } finally {
     value.cleanup();
   }
@@ -527,7 +526,7 @@ test("a direct child in another workspace is not bound to the task", async () =>
       status: "completed",
       result: { metadata: { sessionID: "ses_other_checkout" }, content: [] },
     });
-    expect(value.worker().data.state).toBe("dispatching");
+    expect(value.worker().data.state).toBe("assigned");
     expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
     expect(value.lifecycle.directChildren.has("ses_other_checkout")).toBe(false);
   } finally {
@@ -568,7 +567,7 @@ test("a lead-settled stop clears an ambiguous dispatch before the next launch", 
       id: "call_2",
       input: {},
     });
-    expect(value.worker(1).data.state).toBe("dispatching");
+    expect(value.worker(1).data.state).toBe("assigned");
     expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
   } finally {
     value.cleanup();
@@ -756,7 +755,7 @@ test("a second worker binds only after the first launch settles", async () => {
       id: "call_2",
       input: {},
     });
-    expect(value.worker(1).data.state).toBe("dispatching");
+    expect(value.worker(1).data.state).toBe("assigned");
   } finally {
     value.cleanup();
   }

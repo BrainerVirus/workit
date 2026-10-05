@@ -42,27 +42,9 @@ import {
   type OperationFamily,
   type WorkspaceRecord,
   taskRecordSchema,
+  scopeCovers as bindingCovers,
 } from "./task-contract";
-import {
-  bindingCovers,
-  applicableDecision,
-  storedDecisionApplicable,
-  reserveAction as reserveBoundedAction,
-  settleAction as settleBoundedAction,
-  reconcileAction as reconcileBoundedAction,
-  verifyNativeAction,
-  verifyNativeReconciliation,
-  verifyNativeDecision,
-  verifyDecisionContent,
-  retireNativeAuthority,
-  type ActionReservation,
-  type NativeAuthorityVerifier,
-  type ReserveActionInput,
-  type SettleActionInput,
-  type ReconcileActionInput,
-} from "./authority";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
-import { verifyStandingApproval } from "./auto-approval";
 import { sameDirectoryIdentity, TaskStore } from "./task-store";
 import { checkoutRootOf } from "../store/paths";
 import { defaultLockTimeout } from "./store-lock";
@@ -73,17 +55,11 @@ import {
   type ResumeReconciliation,
 } from "./task-context";
 import {
-  assertProductWriteAllowed,
   isUncertainWorker,
   workerBlocksTransition,
-  type CallerContext,
   type NativeWorkerObservation,
   type NativeWorkerVerification,
   type NativeWorkerVerifier,
-  type WorkerDispatch,
-  type WorkerDispatchCommit,
-  type WorkerDispatchRequest,
-  type WorkerDispatchStage,
 } from "./workers";
 import {
   captureCandidate,
@@ -96,6 +72,7 @@ import {
   evaluateRequirements,
   findingVerificationPasses,
   resolveBinding,
+  verifyDecisionContentAtRoot,
   type CandidateEnvironment,
 } from "./task-evaluation";
 
@@ -108,7 +85,6 @@ export type OperationContext = {
   capabilities: Capability[];
   constraints: Constraint[];
   now: Utc | (() => Utc);
-  nativeAuthority?: NativeAuthorityVerifier;
   nativeWorker?: NativeWorkerVerifier;
   workerId?: string | null;
 };
@@ -128,22 +104,8 @@ const provenance = (
   host: context.caller.host,
   session: { kind: "host" as const, host: context.caller.host, handle: context.caller.actor },
   workerId: context.workerId ?? null,
-  receipts: [],
 });
 const environment = (): CandidateEnvironment => [];
-/**
- * The operation a decision authorizes: canonical descriptors carry it as JSON,
- * legacy single-operation approvals are the bare operation string.
- */
-const decisionOperation = (approvedContent: string): string | null => {
-  try {
-    const parsed = JSON.parse(approvedContent) as { operation?: unknown };
-    if (typeof parsed?.operation === "string") return parsed.operation;
-  } catch {
-    // a bare operation string is not JSON
-  }
-  return /^[a-z][a-z_]*\.[a-z_]+$/.test(approvedContent) ? approvedContent : null;
-};
 const sameSession = (value: unknown, context: OperationContext): boolean =>
   typeof value === "object" &&
   value !== null &&
@@ -175,22 +137,6 @@ type WorkerAuthority = {
 type VerifiedWorker = object;
 const verifiedWorkers = new WeakMap<object, WorkerAuthority>();
 
-type DispatchReservation = {
-  owner: object;
-  store: TaskStore;
-  root: string;
-  caller: Caller;
-  taskId: string;
-  workspaceId: string;
-  workerId: string;
-};
-/**
- * Live launch reservations. Only this module can create one, only the adapter that
- * received it holds it, and a process restart loses it: a worker left `assigned`
- * with no session and no live reservation can never be resolved by inference.
- */
-const dispatchReservations = new WeakMap<object, DispatchReservation>();
-
 const sameValue = (left: unknown, right: unknown): boolean => {
   try {
     return canonicalJson(left) === canonicalJson(right);
@@ -210,65 +156,9 @@ const validNativeProvenance = (
     observed.kind === "host_observed" &&
     observed.host === caller.host &&
     observed.workerId === expected.workerId &&
-    sameValue(observed.session, expected.session) &&
-    observed.receipts.some((receipt) => receipt.kind === "host" && receipt.host === caller.host)
+    sameValue(observed.session, expected.session)
   );
 };
-
-/** A dispatch has no worker session yet, so it is bound to the attesting host session. */
-const validDispatchProvenance = (
-  value: unknown,
-  caller: Caller,
-  workerId: string,
-): value is Provenance => {
-  if (!provenanceSchema.safeParse(value).success) return false;
-  const observed = value as Provenance;
-  return (
-    observed.kind === "host_observed" &&
-    observed.host === caller.host &&
-    observed.workerId === workerId &&
-    observed.session?.kind === "host" &&
-    observed.session.host === caller.host &&
-    observed.session.handle === caller.actor &&
-    observed.receipts.some((receipt) => receipt.kind === "host" && receipt.host === caller.host)
-  );
-};
-
-const validResumeApproval = (
-  task: TaskRecord,
-  workspace: WorkspaceRecord,
-  authorityRefs: Ref[],
-  context: OperationContext,
-): boolean =>
-  authorityRefs.some((ref) => {
-    if (ref.kind !== "record" || ref.collection !== "decisions") return false;
-    const entry = task.decisions.find((candidate) => candidate.id === ref.id);
-    if (!entry || entry.provenance.kind !== "host_observed") return false;
-    if (
-      entry.provenance.host !== context.caller.host ||
-      !sameSession(entry.provenance.session, context) ||
-      !entry.provenance.receipts.some(
-        (receipt) => receipt.kind === "host" && receipt.host === context.caller.host,
-      )
-    )
-      return false;
-    const decision = entry.data;
-    if (
-      !["design", "action"].includes(decision.purpose) ||
-      decision.response !== "approved" ||
-      decision.revoked !== null ||
-      decision.binding.approvedContent !== "resume" ||
-      decision.binding.taskId !== task.id ||
-      decision.binding.workspaceId !== workspace.id ||
-      canonicalJson(decision.binding.scope) !== canonicalJson(task.intent.data.scope)
-    )
-      return false;
-    return (["design", "action"] as const).some((purpose) =>
-      applicableDecision(task, purpose, decision.binding, workspace.root).some(
-        (candidate) => candidate.digest === decision.digest,
-      ),
-    );
-  });
 
 const verifyNativeWorker = (
   verifier: NativeWorkerVerifier | undefined,
@@ -393,37 +283,34 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
   if (input.state === "running" && entry.data.state === "stopped")
     return failure("invalid_transition", "stopped worker cannot run again");
   const terminalCancel = entry.data.state === "cancelling" && input.state === "running";
+  // The first observation replaces the assigning provenance with the child's,
+  // so the assigning coordinator session is kept on the worker: a restarted
+  // host still attributes the running child to its coordinator.
+  const coordinator =
+    entry.data.coordinator ??
+    (entry.data.state === "assigned" && entry.provenance.session?.kind === "host"
+      ? entry.provenance.session
+      : undefined);
   const nextEntry = {
     ...entry,
     recordedAt: input.now ?? entry.recordedAt,
     provenance: authority.provenance,
     data: {
       ...entry.data,
+      ...(coordinator ? { coordinator } : {}),
       state: terminalCancel ? ("cancelling" as const) : input.state,
       session: input.session,
       report: entry.data.report ?? input.report ?? null,
     },
   } satisfies Entry<Worker>;
-  const shouldClear =
-    input.state === "stopped" &&
-    workspace.data.writer !== null &&
-    workspace.data.writer.owner.taskId === task.data.id &&
-    workspace.data.writer.owner.workerId === input.workerId;
-  const shouldUncertain =
-    input.state === "unknown" &&
-    workspace.data.writer !== null &&
-    workspace.data.writer.owner.taskId === task.data.id &&
-    workspace.data.writer.owner.workerId === input.workerId;
-  // A no-op observation (same state, same session, no writer side-effect)
+  // A no-op observation (same state, same session)
   // must not rewrite the entry: hosts observe on every session event, and a
   // revision bump per event livelocks worker sessions — each call would
   // invalidate the revision the previous call returned.
   if (
     entry.data.state === nextEntry.data.state &&
     sameValue(entry.data.session, input.session) &&
-    sameValue(entry.data.report, nextEntry.data.report) &&
-    !shouldClear &&
-    !shouldUncertain
+    sameValue(entry.data.report, nextEntry.data.report)
   )
     return success(task.data.revision, workspace.data.revision, entry);
   const changed = input.store.mutateTaskAndWorkspace({
@@ -431,15 +318,7 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
     expectedRevision: input.expectedRevision,
     expectedWorkspaceRevision: input.expectedWorkspaceRevision,
     now: input.now,
-    workspace: (current, mutation) =>
-      success(mutation.revision, mutation.revision, {
-        ...current,
-        writer: shouldClear
-          ? null
-          : shouldUncertain && current.writer
-            ? { ...current.writer, state: "uncertain" as const }
-            : current.writer,
-      }),
+    workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
     task: (current, mutation) =>
       success(mutation.revision, null, {
         ...current,
@@ -481,8 +360,6 @@ const TASK_SCOPED_ACTIONS: ReadonlySet<string> = new Set([
   "worker.assign",
   "worker.report",
   "worker.cancel",
-  "writer.acquire",
-  "writer.release",
   "state.export",
 ]);
 /** Recording actions that create the implicit task on first use. */
@@ -494,7 +371,6 @@ const CREATING_ACTIONS: ReadonlySet<string> = new Set([
   "finding.record",
   "decision.record",
   "worker.assign",
-  "writer.acquire",
 ]);
 /** Commit attempts for a call whose revisions the engine filled (see retryFilledRevisions). */
 const REVISION_RETRY_ATTEMPTS = 8;
@@ -580,7 +456,6 @@ const importedProvenance = (context: OperationContext): Provenance => ({
   host: context.caller.host,
   session: null,
   workerId: null,
-  receipts: [],
 });
 
 const portableTask = (task: TaskRecord): TaskRecord => {
@@ -606,21 +481,6 @@ const portableTask = (task: TaskRecord): TaskRecord => {
   };
   for (const entry of clone.assessments)
     demote(entry.data.facts, entry.data.signals, entry.data.consequences);
-  const sourceDecisions = new Map(task.decisions.map((entry) => [entry.id, entry]));
-  for (const entry of clone.decisions) {
-    const consumption = sourceDecisions.get(entry.id)?.data.consumption;
-    if (!consumption) continue;
-    entry.data.consumption = {
-      ...consumption,
-      state: consumption.state === "reserved" ? "uncertain" : consumption.state,
-      actionRef: { kind: "record", collection: "decisions", id: entry.id },
-      ...(consumption.historicalActionId
-        ? { historicalActionId: consumption.historicalActionId }
-        : consumption.actionRef.kind === "host"
-          ? { historicalActionId: consumption.actionRef.handle }
-          : {}),
-    };
-  }
   // Candidate metadata can contain environment-derived paths and digests. The destination
   // must recapture its own candidate instead of receiving source checkout material.
   clone.candidates = [];
@@ -725,10 +585,6 @@ const importedTask = (
         : null,
     },
   }));
-  const actionProgress = source.actionProgress?.map((entry) => ({
-    ...entry,
-    decisionId: ids.get(entry.decisionId) ?? entry.decisionId,
-  }));
   const task: TaskRecord = {
     ...source,
     id: newId(),
@@ -758,17 +614,9 @@ const importedTask = (
             taskId: "",
             workspaceId: destinationWorkspaceId,
           },
-          consumption: data.consumption
-            ? {
-                ...data.consumption,
-                state: data.consumption.state === "reserved" ? "uncertain" : data.consumption.state,
-                actionRef: { kind: "record", collection: "decisions", id: entry.id },
-              }
-            : null,
         },
       };
     }),
-    ...(actionProgress ? { actionProgress } : {}),
     findings,
     workers,
     candidates: [],
@@ -819,13 +667,6 @@ export class WorkitCore {
       return failure("invalid_input", "operation context root cannot be resolved");
     }
     return success(null, null, null);
-  }
-
-  private callerContext(): CallerContext {
-    return {
-      ...this.context.caller,
-      workerId: this.context.workerId ?? null,
-    };
   }
 
   /**
@@ -910,12 +751,7 @@ export class WorkitCore {
       : failure("permission_denied", "helpers cannot control task lifecycle or scope");
   }
 
-  private activeWorkerBlocker(
-    task: TaskRecord,
-    workspace: import("./task-contract").WorkspaceRecord,
-  ) {
-    if (workspace.writer)
-      return failure("recovery_required", "writer ownership must be released first");
+  private activeWorkerBlocker(task: TaskRecord) {
     if (task.workers.some((entry) => workerBlocksTransition("close", entry.data.state)))
       return failure("recovery_required", "worker state requires reconciliation");
     return null;
@@ -1083,7 +919,6 @@ export class WorkitCore {
           status: task.status,
           closure: task.closure,
           progress: task.progress,
-          writer: task.status === "closed" ? null : workspace.data!.writer,
           source: {
             host: task.intent.provenance.host,
             kind: task.intent.provenance.kind,
@@ -1381,29 +1216,10 @@ export class WorkitCore {
     return resolved.ok ? this.recordDecision(resolved.data) : resolved;
   }
 
-  observeDecision(request: unknown, observation: unknown): Result<Entry<Decision>> {
-    const resolved = this.implicitTask("decision", request);
-    return resolved.ok ? this.recordDecision(resolved.data, observation, true) : resolved;
-  }
-
-  /**
-   * Record a standing auto-approval: no live question, authorized by the
-   * workspace rule named in binding.standing while it covers the operation.
-   * Lead-only, task-scoped, verified live here — revocation is config
-   * removal, which fails the next reserve closed.
-   */
-  observeStandingDecision(request: unknown): Result<Entry<Decision>> {
-    const resolved = this.implicitTask("decision", request);
-    return resolved.ok ? this.recordDecision(resolved.data, undefined, true, true) : resolved;
-  }
-
   /**
    * Commit a task mutation whose update re-validates everything it depends on
-   * under the lock. Decisions use this instead of a whole-operation retry
-   * because a native receipt is retired before the commit and cannot be
-   * verified twice: a CAS loss on an engine-filled revision re-reads the
-   * record, repeats `recheck` against it and retries the commit; the update's
-   * in-lock receipt check keeps a receipt from being consumed twice.
+   * under the lock: a CAS loss on an engine-filled revision re-reads the
+   * record, repeats `recheck` against it and retries the commit.
    */
   private commitTask(
     taskId: string,
@@ -1427,40 +1243,20 @@ export class WorkitCore {
     });
   }
 
-  private recordDecision(
-    request: unknown,
-    nativeObservation?: unknown,
-    nativeRequired = false,
-    standing = false,
-  ): Result<Entry<Decision>> {
+  /**
+   * A decision is a durable, agent-asserted record (D2, D18). It satisfies
+   * `decisions` requirements and accepted limitations; it never authorizes an
+   * external effect, so no host attestation is minted or checked.
+   */
+  private recordDecision(request: unknown): Result<Entry<Decision>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("decision", request);
     if (!parsed.ok) return parsed;
     const input = parsed.data;
-    if (nativeRequired && input.action !== "record")
-      return failure(
-        "permission_denied",
-        "native observation is only valid for recording decisions",
-      );
-    // Stated choices carry user-settled decisions without a native receipt.
-    // They never authorize mutating actions; native verification is skipped
-    // and provenance stays agent-reported.
     const stated = input.action === "record" && input.response === "stated";
-    if (stated && input.purpose === "action")
-      return failure("permission_denied", "stated choices cannot authorize mutating actions");
     if (stated && !input.binding?.statedChoice)
       return failure("invalid_input", "stated choices require binding.statedChoice");
-    if (nativeRequired && nativeObservation === undefined && !stated && !standing)
-      return failure("permission_denied", "native decision observation is required");
-    if (
-      standing &&
-      (!input.binding?.standing || input.purpose !== "action" || input.response !== "approved")
-    )
-      return failure(
-        "invalid_input",
-        "standing approvals need an approved action binding with a standing rule",
-      );
     const task = this.store.readTask(input.taskId);
     if (!task.ok) return task;
     if ((this.context.workerId ?? null) !== null)
@@ -1474,8 +1270,8 @@ export class WorkitCore {
       if (!workspace.ok) return workspace;
       if (!workspace.data) return failure("not_found", "workspace not found");
       if (input.binding.taskId !== task.data.id || input.binding.workspaceId !== workspace.data.id)
-        return failure("permission_denied", "decision task or workspace binding is invalid");
-      const content = verifyDecisionContent(this.store, input.binding);
+        return failure("invalid_input", "decision task or workspace binding is invalid");
+      const content = verifyDecisionContentAtRoot(this.store.root, input.binding);
       if (!content.ok) return content;
       const knownRequirements = new Set(
         task.data.policy?.requirements.map((item) => item.id) ?? [],
@@ -1488,85 +1284,26 @@ export class WorkitCore {
         response: input.response,
         requirementIds: input.requirementIds,
         revoked: null,
-        consumption: null,
       } satisfies Omit<Decision, "digest">;
       const data: Decision = { ...base, digest: decisionDigest(base) };
-      const standingApproval =
-        standing && !stated
-          ? verifyStandingApproval(this.store.root, task.data, this.context.caller, input.binding)
-          : null;
-      if (standingApproval && !standingApproval.ok) return standingApproval;
-      const native =
-        nativeRequired && !stated && !standingApproval
-          ? verifyNativeDecision(
-              this.context.nativeAuthority,
-              {
-                observation: nativeObservation,
-                expected: {
-                  taskId: task.data.id,
-                  workspaceId: workspace.data.id,
-                  purpose: input.purpose,
-                  response: input.response,
-                  binding: input.binding,
-                  bindingBytes: canonicalJson(input.binding),
-                  digest: data.digest,
-                  requirementIds: [...input.requirementIds],
-                },
-                caller: this.context.caller,
-              },
-              { owner: this.authorityOwner, store: this.store, root: this.store.root },
-            )
-          : null;
-      if (native && !native.ok) return native;
-      const nativeProvenance = native?.ok ? retireNativeAuthority(native.data) : null;
-      if (native?.ok && !nativeProvenance)
-        return failure("permission_denied", "native decision authority was retired");
-      // A retry repeats the pre-lock checks that depend on the task record and
-      // records the provenance of the standing re-verification it passed;
-      // closure, receipt reuse, content and requirements are re-checked in the lock.
-      let standingProvenance = standingApproval?.ok === true ? standingApproval.data : null;
-      const recheck = (fresh: TaskRecord): Result<unknown> => {
-        if (fresh.status === "closed")
-          return failure("invalid_transition", "closed task cannot record a decision");
-        if (!standingProvenance) return success(null, null, null);
-        const again = verifyStandingApproval(
-          this.store.root,
-          fresh,
-          this.context.caller,
-          input.binding,
-        );
-        if (again.ok) standingProvenance = again.data;
-        return again;
-      };
       const changed = this.commitTask(
         task.data.id,
         input.expectedRevision,
         filled,
-        recheck,
+        (fresh) =>
+          fresh.status === "closed"
+            ? failure("invalid_transition", "closed task cannot record a decision")
+            : success(null, null, null),
         (current, mutation) => {
           if (current.status === "closed")
             return failure("invalid_transition", "closed task cannot record a decision");
-          const latestContent = verifyDecisionContent(this.store, input.binding);
-          if (!latestContent.ok) return latestContent;
           const known = new Set(current.policy?.requirements.map((item) => item.id) ?? []);
           if (input.requirementIds.some((id: string) => !known.has(id)))
             return failure("invalid_input", "decision references an unknown requirement");
-          if (
-            nativeProvenance &&
-            current.decisions.some((entry) =>
-              entry.provenance.receipts.some((existingReceipt) =>
-                nativeProvenance.receipts.some(
-                  (receipt) => canonicalJson(receipt) === canonicalJson(existingReceipt),
-                ),
-              ),
-            )
-          )
-            return failure("permission_denied", "native decision receipt was already consumed");
           const entry: Entry<Decision> = {
             id: newId(),
             recordedAt: mutation.now,
-            provenance:
-              standingProvenance ?? nativeProvenance ?? provenance(this.context, "agent_reported"),
+            provenance: provenance(this.context, "agent_reported"),
             data,
           };
           return success(mutation.revision, null, {
@@ -1583,8 +1320,6 @@ export class WorkitCore {
     if (!input.reason.trim())
       return failure("invalid_input", "decision revocation requires a reason");
     if (decision.data.revoked) return failure("invalid_transition", "decision is already revoked");
-    if (decision.data.consumption)
-      return failure("permission_denied", "consumed decision cannot be revoked");
     const changed = this.commitTask(
       task.data.id,
       input.expectedRevision,
@@ -1594,8 +1329,6 @@ export class WorkitCore {
         const entry = current.decisions.find((candidate) => candidate.id === input.decisionId);
         if (!entry) return failure("not_found", "decision not found");
         if (entry.data.revoked) return failure("invalid_transition", "decision is already revoked");
-        if (entry.data.consumption)
-          return failure("permission_denied", "consumed decision cannot be revoked");
         const data = {
           ...entry.data,
           revoked: { at: mutation.now, reason: input.reason },
@@ -1740,8 +1473,7 @@ export class WorkitCore {
           entry.data.purpose === "limitation" &&
           entry.data.response === "approved" &&
           entry.data.revoked === null &&
-          entry.data.digest === decisionDigest(entry.data) &&
-          verifyDecisionContent(this.store, entry.data.binding).ok &&
+          verifyDecisionContentAtRoot(this.store.root, entry.data.binding).ok &&
           entry.data.binding.taskId === task.data.id &&
           entry.data.binding.workspaceId === workspace.data!.id &&
           bindingCovers(entry.data.binding.scope, finding.data.scope) &&
@@ -1966,19 +1698,13 @@ export class WorkitCore {
     // Lead-attested cancel is terminal for every live state: the lead saw
     // the run end, so no host observation is awaited. A later live-child
     // sighting against a stopped worker is a new anomaly for the host to
-    // flag, not a reason to strand the worker short of stopped. A writer
-    // held by the cancelled worker dies with it; anything else would brick
-    // the checkout behind a stopped owner.
+    // flag, not a reason to strand the worker short of stopped.
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
       expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
-      workspace: (current, mutation) =>
-        success(mutation.revision, mutation.revision, {
-          ...current,
-          writer: current.writer?.owner.workerId === input.workerId ? null : current.writer,
-        }),
+      workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
       task: (current, mutation) =>
         success(mutation.revision, null, {
           ...current,
@@ -2041,542 +1767,6 @@ export class WorkitCore {
     });
   }
 
-  /** Host-only launch bookkeeping; no operation family exposes these two methods. */
-  private verifyDispatch(
-    stage: WorkerDispatchStage,
-    input: WorkerDispatchRequest,
-    workspaceId: string,
-  ): Result<Provenance> {
-    const verifier = this.context.nativeWorker?.verifyDispatch;
-    if (!verifier)
-      return failure("permission_denied", "native worker dispatch attestation is unavailable");
-    let result: Result<Provenance>;
-    try {
-      result = verifier({
-        observation: input.observation,
-        expected: {
-          taskId: input.taskId,
-          workspaceId,
-          workerId: input.workerId,
-          expectedRevision: input.expectedRevision,
-          expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-          stage,
-        },
-        caller: this.context.caller,
-      });
-    } catch (error) {
-      return failure("permission_denied", `native worker dispatch failed: ${String(error)}`);
-    }
-    if (!result.ok || !validDispatchProvenance(result.data, this.context.caller, input.workerId))
-      return failure("permission_denied", "worker dispatch was not attested by the host");
-    return result;
-  }
-
-  /**
-   * Claim the launch slot of an exactly-`assigned` worker before the host spawns it.
-   * The returned reservation is the only thing that can later record a truthful
-   * "never started" stop, so it stays in the adapter process and is never persisted.
-   */
-  prepareWorkerDispatch(input: WorkerDispatchRequest): Result<WorkerDispatch> {
-    const root = this.contextRootError();
-    if (!root.ok) return root;
-    if ((this.context.workerId ?? null) !== null)
-      return failure("permission_denied", "helpers cannot dispatch workers");
-    const task = this.store.readTask(input.taskId);
-    if (!task.ok) return task;
-    const workspace = this.store.readWorkspace();
-    if (!workspace.ok) return workspace;
-    if (!workspace.data) return failure("not_found", "workspace not found");
-    if (task.data.workspaceId !== workspace.data.id)
-      return failure("recovery_required", "worker workspace binding is invalid");
-    if (task.data.status !== "active")
-      return failure("invalid_transition", "paused or closed tasks cannot dispatch workers");
-    const entry = task.data.workers.find((candidate) => candidate.id === input.workerId);
-    if (!entry) return failure("not_found", "worker not found");
-    if (entry.data.state !== "assigned" || entry.data.session !== null)
-      return failure("invalid_transition", "worker is not awaiting dispatch");
-    const attested = this.verifyDispatch("prepare", input, workspace.data.id);
-    if (!attested.ok) return attested;
-    const changed = this.store.mutateTaskAndWorkspace({
-      taskId: task.data.id,
-      expectedRevision: input.expectedRevision,
-      expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-      now: trustedNow(this.context),
-      workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
-      task: (current, mutation) => {
-        const candidate = current.workers.find((item) => item.id === input.workerId);
-        if (!candidate) return failure("not_found", "worker not found");
-        if (candidate.data.state !== "assigned" || candidate.data.session !== null)
-          return failure("invalid_transition", "worker is not awaiting dispatch");
-        return success(mutation.revision, null, {
-          ...current,
-          workers: current.workers.map((item) =>
-            item.id === input.workerId
-              ? {
-                  ...item,
-                  recordedAt: mutation.now,
-                  provenance: attested.data,
-                  data: {
-                    ...item.data,
-                    state: "dispatching" as const,
-                    coordinator: {
-                      kind: "host" as const,
-                      host: this.context.caller.host,
-                      handle: this.context.caller.actor,
-                    },
-                  },
-                }
-              : item,
-          ),
-        });
-      },
-    });
-    if (!changed.ok) return changed;
-    const dispatch = {} as WorkerDispatch;
-    dispatchReservations.set(dispatch, {
-      owner: this.authorityOwner,
-      store: this.store,
-      root: this.store.root,
-      caller: this.context.caller,
-      taskId: task.data.id,
-      workspaceId: workspace.data.id,
-      workerId: input.workerId,
-    });
-    return success(changed.data.task.revision, changed.data.workspace.revision, dispatch);
-  }
-
-  /**
-   * Settle a live reservation exactly once: `started` binds the observed child session,
-   * `not_started` records a host-attested stop with no session. Whichever lands first
-   * consumes the reservation, so a launch and a cancellation cannot both win.
-   */
-  commitWorkerDispatch(input: WorkerDispatchCommit): Result<Entry<Worker>> {
-    const root = this.contextRootError();
-    if (!root.ok) return root;
-    if ((this.context.workerId ?? null) !== null)
-      return failure("permission_denied", "helpers cannot dispatch workers");
-    const reservation = dispatchReservations.get(input.dispatch);
-    if (
-      !reservation ||
-      reservation.owner !== this.authorityOwner ||
-      reservation.store !== this.store ||
-      reservation.root !== this.store.root ||
-      !sameValue(reservation.caller, this.context.caller) ||
-      reservation.taskId !== input.taskId ||
-      reservation.workerId !== input.workerId
-    )
-      return failure("permission_denied", "worker dispatch reservation is not live");
-    const workspace = this.store.readWorkspace();
-    if (!workspace.ok) return workspace;
-    if (!workspace.data) return failure("not_found", "workspace not found");
-    if (workspace.data.id !== reservation.workspaceId)
-      return failure("recovery_required", "worker workspace binding is invalid");
-    const observation: NativeWorkerObservation = {
-      taskId: input.taskId,
-      workerId: input.workerId,
-      expectedRevision: input.expectedRevision,
-      expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-      state: input.outcome === "started" ? "running" : "stopped",
-      session: input.session,
-      observation: input.observation,
-    };
-    let authority: VerifiedWorker;
-    if (input.outcome === "started") {
-      if (!input.session) return failure("invalid_input", "a started worker requires a session");
-      const verified = verifyNativeWorker(
-        this.context.nativeWorker,
-        {
-          observation: input.observation,
-          expected: { ...observation, workspaceId: workspace.data.id },
-          caller: this.context.caller,
-        },
-        {
-          owner: this.authorityOwner,
-          store: this.store,
-          root: this.store.root,
-          caller: this.context.caller,
-        },
-      );
-      if (!verified.ok) return verified;
-      authority = verified.data;
-    } else {
-      if (input.session !== null)
-        return failure("invalid_input", "a never-dispatched worker stops with no session");
-      const attested = this.verifyDispatch("not_started", input, workspace.data.id);
-      if (!attested.ok) return attested;
-      authority = {};
-      verifiedWorkers.set(authority, {
-        taskId: input.taskId,
-        workspaceId: workspace.data.id,
-        workerId: input.workerId,
-        expectedRevision: input.expectedRevision,
-        expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-        state: "stopped",
-        session: null,
-        report: null,
-        provenance: attested.data,
-        owner: this.authorityOwner,
-        store: this.store,
-        root: this.store.root,
-        caller: this.context.caller,
-      });
-    }
-    const applied = applyWorkerLifecycle({
-      ...observation,
-      dispatch: input.outcome === "not_started",
-      store: this.store,
-      authority,
-      authorityOwner: this.authorityOwner,
-      caller: this.context.caller,
-      now: trustedNow(this.context),
-    });
-    if (applied.ok) dispatchReservations.delete(input.dispatch);
-    return applied;
-  }
-
-  writer(request: unknown): Result<WorkspaceRecord> {
-    const resolved = this.implicitTask("writer", request);
-    if (!resolved.ok) return resolved;
-    const value = resolved.data;
-    return this.retryOmittedRevisions(value, () => this.writerOnce(value));
-  }
-
-  private writerOnce(request: unknown): Result<WorkspaceRecord> {
-    const root = this.contextRootError();
-    if (!root.ok) return root;
-    const parsed = parseOperation("writer", request);
-    if (!parsed.ok) return parsed;
-    const input = parsed.data;
-    const task = this.store.readTask(input.taskId);
-    if (!task.ok) return task;
-    const workspace = this.store.readWorkspace();
-    if (!workspace.ok) return workspace;
-    if (!workspace.data) return failure("not_found", "workspace not found");
-    if (task.data.status !== "active")
-      return failure("invalid_transition", "paused or closed tasks cannot own product writes");
-    this.fillRevisions(input, task.data, workspace.data);
-    const helperId = this.context.workerId ?? null;
-    if (input.action === "acquire") {
-      if (input.workerId === undefined) input.workerId = helperId;
-      if (input.workerId !== helperId)
-        return failure("permission_denied", "writer identity does not match the caller");
-      if (workspace.data.writer) {
-        if (workspace.data.writer.state === "uncertain")
-          return failure("recovery_required", "checkout writer requires recovery", {
-            owner: workspace.data.writer.owner,
-          });
-        const currentOwner = workspace.data.writer.owner;
-        if (currentOwner.workerId) {
-          const ownerWorker = task.data.workers.find(
-            (candidate) => candidate.id === currentOwner.workerId,
-          );
-          if (ownerWorker?.data.state === "cancelling" || ownerWorker?.data.state === "unknown")
-            return failure("recovery_required", "current worker has not stopped", {
-              owner: currentOwner,
-            });
-        }
-        // A lead-held writer transfers across lead sessions of the same
-        // checkout: restarts end the owning session, and per-write ownership
-        // checks keep concurrent sessions from both believing they hold it.
-        // Worker-held writers never transfer this way.
-        if (currentOwner.workerId !== null || helperId !== null)
-          return failure("writer_conflict", "checkout already has a writer", {
-            owner: currentOwner,
-          });
-      }
-      if (helperId !== null) {
-        const helper = this.helperEntry(task.data);
-        if (!helper.ok) return helper;
-        if (helper.data.data.assignment.role !== "implementer")
-          return failure("permission_denied", "only implementers can own product writes");
-        if (helper.data.data.state !== "running" || !helper.data.data.session)
-          return failure(
-            "permission_denied",
-            "writer ownership requires an observed running worker",
-          );
-        if (!sameSession(helper.data.data.session, this.context))
-          return failure("permission_denied", "worker session does not match the caller");
-      }
-      // Write-timed requirements gate acquisition, not just close: a spec
-      // gate is enforced where writes begin, never as advisory prose.
-      const gate = this.view(task.data);
-      if (gate.ok) {
-        const writeGates = (task.data.policy?.requirements ?? []).filter(
-          (requirement) =>
-            requirement.before === "write" &&
-            gate.data.requirements.some(
-              (evaluation) =>
-                evaluation.requirementId === requirement.id &&
-                (evaluation.status === "unsatisfied" || evaluation.status === "unavailable"),
-            ),
-        );
-        if (writeGates.length)
-          return failure(
-            "requirements_unsatisfied",
-            "writer ownership is gated by unsatisfied requirements; record their evidence or an approved limitation waiver first",
-            { requirementIds: writeGates.map((requirement) => requirement.id) },
-          );
-      }
-      const owner = {
-        taskId: task.data.id,
-        workerId: helperId,
-        session: {
-          kind: "host" as const,
-          host: this.context.caller.host,
-          handle: this.context.caller.actor,
-        },
-      };
-      const changed = this.store.mutateTaskAndWorkspace({
-        taskId: task.data.id,
-        expectedRevision: input.expectedRevision,
-        expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-        now: trustedNow(this.context),
-        workspace: (current, mutation) =>
-          success(mutation.revision, mutation.revision, {
-            ...current,
-            writer: { state: "held" as const, owner, acquiredAt: mutation.now },
-          }),
-        task: (current) => success(null, null, current),
-      });
-      if (!changed.ok) return changed;
-      return success(
-        changed.data.task.revision,
-        changed.data.workspace.revision,
-        changed.data.workspace,
-      );
-    }
-    const current = workspace.data.writer;
-    if (!current) return failure("permission_denied", "checkout has no writer owner");
-    if (current.state === "uncertain")
-      return failure("recovery_required", "checkout writer requires recovery", {
-        owner: current.owner,
-      });
-    if (
-      current.owner.taskId !== task.data.id ||
-      current.owner.workerId !== helperId ||
-      !sameSession(current.owner.session, this.context)
-    )
-      return failure("permission_denied", "only the current writer can release ownership");
-    if (helperId !== null) {
-      const helper = this.helperEntry(task.data);
-      if (!helper.ok) return helper;
-      if (helper.data.data.state !== "running")
-        return failure("recovery_required", "worker must be observed stopped before release");
-    }
-    const changed = this.store.mutateTaskAndWorkspace({
-      taskId: task.data.id,
-      expectedRevision: input.expectedRevision,
-      expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-      now: trustedNow(this.context),
-      workspace: (currentWorkspace, mutation) =>
-        success(mutation.revision, mutation.revision, { ...currentWorkspace, writer: null }),
-      task: (currentTask) => success(null, null, currentTask),
-    });
-    if (!changed.ok) return changed;
-    return success(
-      changed.data.task.revision,
-      changed.data.workspace.revision,
-      changed.data.workspace,
-    );
-  }
-
-  assertProductWriteAllowed(input: {
-    task: TaskRecord;
-    workspace: WorkspaceRecord;
-    paths: string[];
-  }) {
-    return assertProductWriteAllowed({ ...input, caller: this.callerContext(), store: this.store });
-  }
-
-  applicableDecision(
-    taskId: string,
-    purpose: Decision["purpose"],
-    binding: Decision["binding"],
-  ): Result<Entry<Decision>[]> {
-    const root = this.contextRootError();
-    if (!root.ok) return root;
-    const task = this.store.readTask(taskId);
-    if (!task.ok) return task;
-    const entries = storedDecisionApplicable(this.store, task.data, purpose, binding);
-    return success(task.data.revision, null, entries);
-  }
-
-  reserveAction(
-    input: Omit<
-      ReserveActionInput,
-      "store" | "native" | "authority" | "authorityOwner" | "authorityCaller"
-    > & { observation: unknown },
-  ): Result<ActionReservation> {
-    const root = this.contextRootError();
-    if (!root.ok) return root;
-    if ((this.context.workerId ?? null) !== null)
-      return failure("permission_denied", "helpers cannot reserve external actions");
-    if (input.observation === undefined)
-      return failure("invalid_input", "native action observation is required");
-    const task = this.store.readTask(input.taskId);
-    if (!task.ok) return task;
-    const workspace = this.store.readWorkspace();
-    if (!workspace.ok) return workspace;
-    if (!workspace.data) return failure("not_found", "workspace not found");
-    const decision = task.data.decisions.find((entry) => entry.id === input.decisionId);
-    if (!decision) return failure("not_found", "decision not found");
-    const authority = verifyNativeAction(
-      this.context.nativeAuthority,
-      {
-        observation: input.observation,
-        expected: {
-          taskId: task.data.id,
-          workspaceId: workspace.data.id,
-          decisionId: input.decisionId,
-          actionRef: input.actionRef,
-          taskRevision: input.expectedRevision,
-          workspaceRevision: input.expectedWorkspaceRevision,
-          outcome: "reserve",
-          decision: decision.data,
-        },
-        caller: this.context.caller,
-      },
-      { owner: this.authorityOwner, store: this.store, root: this.store.root },
-    );
-    if (!authority.ok) return authority;
-    const operation = decisionOperation(decision.data.binding.approvedContent);
-    if (operation) {
-      const view = this.view(task.data);
-      if (!view.ok) return view;
-      const evaluations = new Map(
-        view.data.requirements.map((entry) => [entry.requirementId, entry.status]),
-      );
-      const blocked = (view.data.task.policy?.requirements ?? []).filter(
-        (requirement) =>
-          requirement.dependentAction === operation &&
-          (evaluations.get(requirement.id) === "unsatisfied" ||
-            evaluations.get(requirement.id) === "unavailable"),
-      );
-      if (blocked.length)
-        return failure(
-          "requirements_unsatisfied",
-          `${operation} is gated by unsatisfied requirements; record their evidence or an approved limitation waiver first`,
-          { operation, requirementIds: blocked.map((requirement) => requirement.id) },
-        );
-    }
-    return reserveBoundedAction({
-      ...input,
-      store: this.store,
-      authority: authority.data,
-      authorityOwner: this.authorityOwner,
-      authorityCaller: this.context.caller,
-      native: { now: trustedNow(this.context) },
-    });
-  }
-
-  settleAction(
-    input: Omit<
-      SettleActionInput,
-      "store" | "native" | "authority" | "authorityOwner" | "authorityCaller"
-    > & { observation: unknown },
-  ): Result<Entry<Decision>> {
-    const root = this.contextRootError();
-    if (!root.ok) return root;
-    if ((this.context.workerId ?? null) !== null)
-      return failure("permission_denied", "helpers cannot settle external actions");
-    if (input.observation === undefined)
-      return failure("invalid_input", "native action observation is required");
-    const task = this.store.readTask(input.taskId);
-    if (!task.ok) return task;
-    const workspace = this.store.readWorkspace();
-    if (!workspace.ok) return workspace;
-    if (!workspace.data) return failure("not_found", "workspace not found");
-    const decision = task.data.decisions.find((entry) => entry.id === input.decisionId);
-    if (!decision) return failure("not_found", "decision not found");
-    const authority = verifyNativeAction(
-      this.context.nativeAuthority,
-      {
-        observation: input.observation,
-        expected: {
-          taskId: task.data.id,
-          workspaceId: workspace.data.id,
-          decisionId: input.decisionId,
-          actionRef: input.actionRef,
-          taskRevision: input.taskRevision,
-          workspaceRevision: input.workspaceRevision,
-          outcome: input.outcome,
-          decision: decision.data,
-        },
-        caller: this.context.caller,
-      },
-      { owner: this.authorityOwner, store: this.store, root: this.store.root },
-    );
-    if (!authority.ok) return authority;
-    return settleBoundedAction({
-      ...input,
-      store: this.store,
-      authority: authority.data,
-      authorityOwner: this.authorityOwner,
-      authorityCaller: this.context.caller,
-      native: { now: trustedNow(this.context) },
-    });
-  }
-
-  reconcileAction(
-    input: Omit<
-      ReconcileActionInput,
-      | "store"
-      | "native"
-      | "authority"
-      | "authorityOwner"
-      | "authorityCaller"
-      | "taskRevision"
-      | "workspaceRevision"
-    > & {
-      expectedRevision: string;
-      expectedWorkspaceRevision: string;
-      observation: unknown;
-    },
-  ): Result<Entry<Decision>> {
-    const root = this.contextRootError();
-    if (!root.ok) return root;
-    if ((this.context.workerId ?? null) !== null)
-      return failure("permission_denied", "helpers cannot reconcile external actions");
-    const task = this.store.readTask(input.taskId);
-    if (!task.ok) return task;
-    const workspace = this.store.readWorkspace();
-    if (!workspace.ok) return workspace;
-    if (!workspace.data) return failure("not_found", "workspace not found");
-    const decision = task.data.decisions.find((entry) => entry.id === input.decisionId);
-    if (!decision) return failure("not_found", "decision not found");
-    const authority = verifyNativeReconciliation(
-      this.context.nativeAuthority,
-      {
-        observation: input.observation,
-        expected: {
-          taskId: task.data.id,
-          workspaceId: workspace.data.id,
-          decisionId: input.decisionId,
-          actionRef: input.actionRef,
-          taskRevision: input.expectedRevision,
-          workspaceRevision: input.expectedWorkspaceRevision,
-          outcome: input.outcome,
-          evidenceDigest: input.evidenceDigest,
-          ...(input.step ? { step: input.step } : {}),
-          decision: decision.data,
-        },
-        caller: this.context.caller,
-      },
-      { owner: this.authorityOwner, store: this.store, root: this.store.root },
-    );
-    if (!authority.ok) return authority;
-    return reconcileBoundedAction({
-      ...input,
-      taskRevision: input.expectedRevision,
-      workspaceRevision: input.expectedWorkspaceRevision,
-      store: this.store,
-      authority: authority.data,
-      authorityOwner: this.authorityOwner,
-      authorityCaller: this.context.caller,
-      native: { now: trustedNow(this.context) },
-    });
-  }
-
   private resolve(task: TaskRecord, assessment: Assessment): Result<Policy> {
     return resolvePolicy({
       intent: task.intent.data,
@@ -2603,8 +1793,7 @@ export class WorkitCore {
       ? success(null, null, historical)
       : captureCandidate(this.store.root, task.intent.data.scope, environment());
     if (!current.ok) return current;
-    const evaluationWorkspace =
-      task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;
+    const evaluationWorkspace = workspace.data;
     const tree = treeFreshness(this.store.root);
     const requirements = evaluateRequirements(
       task,
@@ -2628,7 +1817,6 @@ export class WorkitCore {
       progress: task.progress,
       policy: task.policy,
       requirements,
-      writer: evaluationWorkspace.writer,
     });
   }
 
@@ -2666,8 +1854,7 @@ export class WorkitCore {
         ? captureCandidate(this.store.root, task.intent.data.scope, environment())
         : success<Candidate | null>(null, null, task.candidates.at(-1) ?? null);
     if (!current.ok) return current;
-    const evaluationWorkspace =
-      task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;
+    const evaluationWorkspace = workspace.data;
     const tree = freshness;
     const requirements = evaluateRequirements(
       task,
@@ -2833,16 +2020,9 @@ export class WorkitCore {
         )
       )
         return failure("recovery_required", "imported task requires resume reconciliation");
-      if (!validResumeApproval(task.data, workspace.data, input.authorityRefs ?? [], this.context))
-        return failure("permission_denied", "imported resume requires native destination approval");
       resumeCandidate = current.data.candidate;
     }
-    const blocker =
-      status === "paused"
-        ? workspace.data.writer
-          ? failure("recovery_required", "writer ownership must be released first")
-          : null
-        : this.activeWorkerBlocker(task.data, workspace.data);
+    const blocker = status === "paused" ? null : this.activeWorkerBlocker(task.data);
     if (blocker) return blocker;
     let pauseCandidate: import("./task-contract").Candidate | null = null;
     if (status === "paused") {
@@ -2909,7 +2089,7 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace;
     if (!workspace.data) return failure("not_found", "workspace not found");
-    const revisionBlocker = this.activeWorkerBlocker(task.data, workspace.data);
+    const revisionBlocker = this.activeWorkerBlocker(task.data);
     if (revisionBlocker) return revisionBlocker;
     this.fillRevisions(input, task.data, workspace.data);
     const changed = this.store.mutateTaskAndWorkspace({
@@ -2945,7 +2125,7 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace;
     if (!workspace.data) return failure("not_found", "workspace not found");
-    const blocker = this.activeWorkerBlocker(task.data, workspace.data);
+    const blocker = this.activeWorkerBlocker(task.data);
     if (blocker) return blocker;
     this.fillRevisions(input, task.data, workspace.data);
     const current = captureCandidate(this.store.root, task.data.intent.data.scope, environment());

@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import type {
   Assignment,
   NativeWorkerVerifier,
-  WorkerDispatch,
   WorkerReport,
   Worker,
   WorkitCore,
@@ -11,7 +10,6 @@ import type {
 import {
   OPERATION_FAMILIES,
   failure,
-  success,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
 import {
@@ -74,15 +72,12 @@ export type WorkerHandle = {
   pid: number | null;
   /** True once a spawn was attempted: after that, no child can be ruled out. */
   spawned: boolean;
-  /** Live launch reservation, held only while this handle has produced no child. */
-  dispatch: WorkerDispatch | null;
   state: WorkerState;
   report: WorkerReport | null;
   events: WorkerProtocolEvent[];
   stdoutBuffer: string;
   stderr: string;
   exit: ObservedExit | null;
-  writerReady: boolean;
   ready: boolean;
   protocolError: string | null;
   pendingPrompt?: string;
@@ -97,7 +92,6 @@ export type LaunchOptions = {
   taskId?: string;
   workerId?: string;
   sessionId?: string;
-  writerReady?: boolean;
   env?: NodeJS.ProcessEnv;
   spawn?: SpawnFn;
   /** Runs on the live handle before any spawn; a false result cancels the launch. */
@@ -127,9 +121,7 @@ export type WorkerLifecycleBinding = {
 export type SupervisedLaunchOptions = LaunchOptions & {
   binding: WorkerLifecycleBinding;
   prompt?: string;
-  writerCore?: WorkitCore;
   beforeExit?: (handle: WorkerHandle, exit: ObservedExit) => void;
-  onUncertain?: (handle: WorkerHandle, exit: ObservedExit) => boolean;
 };
 
 const advanceBinding = (binding: WorkerLifecycleBinding, result: Result<unknown>): boolean => {
@@ -214,14 +206,12 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     child: null,
     pid: null,
     spawned: false,
-    dispatch: null,
     state: "assigned",
     report: null,
     events: [],
     stdoutBuffer: "",
     stderr: "",
     exit: null,
-    writerReady: options.writerReady === true,
     ready: false,
     protocolError: null,
     pendingPrompt: options.pendingPrompt,
@@ -383,50 +373,10 @@ export const consumeWorkerOutput = (handle: WorkerHandle, chunk: string): void =
 
 export function sendWorkerPrompt(handle: WorkerHandle, prompt: string): boolean {
   if (!handle.child?.stdin || handle.state !== "running" || !handle.ready) return false;
-  if (handle.assignment.role === "implementer" && !handle.writerReady) return false;
   return handle.child.stdin.write(
     JSON.stringify({ id: "workit", type: "prompt", message: prompt }) + "\n",
   );
 }
-
-/** Claim the launch slot before the process exists; the handle keeps the reservation. */
-export const prepareWorkerLaunch = (
-  binding: WorkerLifecycleBinding,
-  handle: WorkerHandle,
-): Result<unknown> => {
-  const result = binding.core.prepareWorkerDispatch({
-    taskId: binding.taskId,
-    workerId: binding.workerId,
-    expectedRevision: binding.expectedRevision,
-    expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
-    observation: { stage: "prepare", sessionId: handle.sessionId },
-  });
-  advanceBinding(binding, result);
-  if (result.ok) handle.dispatch = result.data;
-  return result;
-};
-
-/** Only this handle can prove that its own reservation never produced a child. */
-export const commitWorkerNotStarted = (
-  binding: WorkerLifecycleBinding,
-  handle: WorkerHandle,
-): Result<unknown> => {
-  const dispatch = handle.dispatch;
-  if (!dispatch) return failure("recovery_required", "worker launch reservation is not live");
-  const result = binding.core.commitWorkerDispatch({
-    dispatch,
-    taskId: binding.taskId,
-    workerId: binding.workerId,
-    expectedRevision: binding.expectedRevision,
-    expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
-    outcome: "not_started",
-    session: null,
-    observation: { stage: "not_started", sessionId: handle.sessionId },
-  });
-  advanceBinding(binding, result);
-  if (result.ok) handle.dispatch = null;
-  return result;
-};
 
 export const observeWorkerStart = (
   binding: WorkerLifecycleBinding,
@@ -434,28 +384,15 @@ export const observeWorkerStart = (
 ): Result<unknown> => {
   const session = { kind: "host" as const, host: "pi" as const, handle: binding.sessionId };
   const observation = binding.observation ?? { pid: handle.pid, sessionId: handle.sessionId };
-  const dispatch = handle.dispatch;
-  const result = dispatch
-    ? binding.core.commitWorkerDispatch({
-        dispatch,
-        taskId: binding.taskId,
-        workerId: binding.workerId,
-        expectedRevision: binding.expectedRevision,
-        expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
-        outcome: "started",
-        session,
-        observation,
-      })
-    : binding.core.observeWorkerLifecycle({
-        taskId: binding.taskId,
-        workerId: binding.workerId,
-        expectedRevision: binding.expectedRevision,
-        expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
-        state: "running",
-        session,
-        observation,
-      });
-  if (dispatch && result.ok) handle.dispatch = null;
+  const result = binding.core.observeWorkerLifecycle({
+    taskId: binding.taskId,
+    workerId: binding.workerId,
+    expectedRevision: binding.expectedRevision,
+    expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
+    state: "running",
+    session,
+    observation,
+  });
   advanceBinding(binding, result);
   return result;
 };
@@ -482,22 +419,6 @@ export const observeWorkerExit = (
   advanceBinding(binding, result);
   return result;
 };
-
-const acquireWorkerWriter = (
-  core: WorkitCore,
-  taskId: string,
-  workerId: string,
-  expectedRevision: string,
-  expectedWorkspaceRevision: string,
-): Result<unknown> =>
-  core.writer({
-    schemaVersion: 1,
-    action: "acquire",
-    taskId,
-    workerId,
-    expectedRevision,
-    expectedWorkspaceRevision,
-  });
 
 export const reportWorker = (
   core: WorkitCore,
@@ -544,12 +465,8 @@ export const launchSupervisedWorker = (
     taskId: options.binding.taskId,
     workerId: options.binding.workerId,
     sessionId: options.binding.sessionId,
-    writerReady: assignment.role !== "implementer",
     pendingPrompt: options.prompt,
-    onPrepare: (pending) => {
-      if (options.onPrepare && !options.onPrepare(pending)) return false;
-      return prepareWorkerLaunch(options.binding, pending).ok;
-    },
+    onPrepare: (pending) => !options.onPrepare || options.onPrepare(pending),
     onSpawn: (spawned) => {
       if (options.onSpawn && !options.onSpawn(spawned)) return false;
       const observed = observeWorkerStart(options.binding, spawned);
@@ -568,32 +485,6 @@ export const launchSupervisedWorker = (
       options.onError?.(errored);
     },
     onReady: (readyHandle) => {
-      if (assignment.role === "implementer") {
-        const writer = acquireWorkerWriter(
-          options.writerCore ?? options.binding.core,
-          options.binding.taskId,
-          options.binding.workerId,
-          options.binding.expectedRevision,
-          options.binding.expectedWorkspaceRevision,
-        );
-        readyHandle.writerReady = writer.ok;
-        advanceBinding(options.binding, writer);
-        if (!writer.ok) {
-          readyHandle.protocolError = "worker writer acquisition failed";
-          readyHandle.pendingPrompt = undefined;
-          const uncertaintyPersisted = options.onUncertain?.(readyHandle, {
-            state: "unknown",
-            observed: false,
-            code: null,
-            signal: null,
-            stderr: readyHandle.stderr,
-          });
-          if (options.onUncertain && !uncertaintyPersisted)
-            readyHandle.protocolError = "worker uncertainty could not be persisted";
-          readyHandle.child?.kill("SIGTERM");
-          return;
-        }
-      }
       options.onReady?.(readyHandle);
     },
     onExit: (stopped, exit) => {
@@ -615,31 +506,6 @@ type DispatchEvidence = Pick<
 export const nativeWorkerForEvidence = (
   getHandle: () => DispatchEvidence | null,
 ): NativeWorkerVerifier => ({
-  verifyDispatch: ({ expected, caller, observation }) => {
-    const handle = getHandle();
-    const observed = observation as { stage?: unknown; sessionId?: unknown } | null;
-    if (
-      !handle ||
-      caller.host !== "pi" ||
-      expected.workerId !== handle.workerId ||
-      typeof observed !== "object" ||
-      observed === null ||
-      observed.stage !== expected.stage ||
-      observed.sessionId !== handle.sessionId ||
-      // A spawn attempt, a child object, or any observed exit all rule out "no child".
-      handle.spawned ||
-      handle.child !== null ||
-      handle.exit !== null
-    )
-      return failure("permission_denied", "Pi worker dispatch was not observed by the host");
-    return success(null, null, {
-      kind: "host_observed",
-      host: "pi",
-      session: { kind: "host", host: "pi", handle: caller.actor },
-      workerId: expected.workerId,
-      receipts: [{ kind: "host", host: "pi", handle: "dispatch:" + handle.sessionId }],
-    });
-  },
   verifyWorker: ({ expected, caller, observation }) => {
     const handle = getHandle();
     if (
@@ -664,7 +530,6 @@ export const nativeWorkerForEvidence = (
         host: "pi",
         session: expected.session,
         workerId: expected.workerId,
-        receipts: [{ kind: "host", host: "pi", handle: "pid:" + String(handle.pid ?? "unknown") }],
       },
     };
   },
@@ -692,7 +557,6 @@ export const nativeLostWorker = (): NativeWorkerVerifier => ({
         host: "pi",
         session: expected.session,
         workerId: expected.workerId,
-        receipts: [{ kind: "host", host: "pi", handle: "lost:" + expected.session.handle }],
       },
     };
   },
@@ -710,13 +574,7 @@ export async function cancelWorker(
   if (!handle.child) {
     // Only this handle can prove the child was never created; a spawn attempt or a
     // reconstructed handle after a restart cannot, and stays unresolved.
-    if (
-      handle.spawned ||
-      !handle.dispatch ||
-      !options.binding ||
-      !commitWorkerNotStarted(options.binding, handle).ok
-    )
-      return uncertain();
+    if (handle.spawned) return uncertain();
     handle.state = "stopped";
     handle.exit = {
       state: "stopped",

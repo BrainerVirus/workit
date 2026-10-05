@@ -3,6 +3,7 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:chil
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-process-"));
@@ -99,15 +100,8 @@ test("Node executable completes MCP initialize and tools/list with protocol-only
     expect(called.result.isError).not.toBe(true);
     expect(called.result.structuredContent).toMatchObject({ ok: true, schemaVersion: 1 });
     const authority = await request("tools/call", {
-      name: "workit_writer",
-      arguments: {
-        schemaVersion: 1,
-        action: "acquire",
-        taskId: "00000000-0000-4000-8000-000000000001",
-        expectedRevision: "00000000-0000-4000-8000-000000000001",
-        expectedWorkspaceRevision: "00000000-0000-4000-8000-000000000001",
-        workerId: null,
-      },
+      name: "workit_task",
+      arguments: taskStartRequest(),
     });
     expect(authority.result.structuredContent).toMatchObject({
       ok: false,

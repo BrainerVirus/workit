@@ -187,7 +187,24 @@ test("stack land: given no merge grant, then nothing merges and it stops at veri
     landed: [],
     stoppedAt: { pr: 11, reason: "grant_required", ready: true },
   });
-  expect(result.json().data.stoppedAt.unblock).toContain('"merge"');
+  expect(result.json().data.stoppedAt.unblock).toContain("workit grant set w merge=verified");
+  expect(forge.writes).toEqual([]);
+  const human = await run(["stack", "land"], forge.cwd);
+  expect(human.stdout).toContain("grant_required (verified, ready)");
+});
+
+test("stack land: given a workspace without a merge grant (default ceiling), when the agent attempts a merge, then it is denied with the grant needed and the stack stops at verified, ready", async () => {
+  // No `merge` key at all: D4 defaults allow push/pr but stop before merging.
+  const forge = setup("github", { push: true, pr: true });
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({
+    landed: [],
+    stoppedAt: { pr: 11, reason: "grant_required", ready: true },
+  });
+  expect(result.json().data.stoppedAt.unblock).toContain("workit grant set w merge=verified");
   expect(forge.writes).toEqual([]);
   const human = await run(["stack", "land"], forge.cwd);
   expect(human.stdout).toContain("grant_required (verified, ready)");

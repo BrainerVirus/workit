@@ -91,21 +91,20 @@ Workit is optional coordination and repository-policy tooling around the host,
 not a permission system or a mandatory workflow. Native host allow/ask/deny,
 sandbox, plan/read-only mode, and organization rules remain authoritative.
 Ordinary investigation, questions, non-Git work, and routine reversible edits
-need zero Workit task, assessment, or writer calls. Use one compact tracked
+need zero Workit task or assessment calls. Use one compact tracked
 record only when handoff, dependent steps, concurrent actors, or meaningful
 decisions make continuity useful; similar titles alone never merge tasks.
 
 For a routine user-authorized branch or commit, prefer native host Git/shell
 tools from the outset when managed coordination or outcome reconciliation is
 not needed. Inspect the actual target checkout and its configured conventions;
-use Workit's read-only context/policy tools when needed. Do not start a task,
-acquire a writer, or mint a decision receipt solely for a native Git action.
-Native permissions still apply. Never switch execution paths to evade a denial
-or repeat an uncertain managed effect. A local-commit endpoint does not imply
+use Workit's read-only context/policy tools when needed. Do not start a task
+solely for a native Git action. Native permissions still apply. Never switch
+execution paths to evade a denial or repeat an uncertain effect. A local-commit endpoint does not imply
 PR readiness, a fresh review, or post-commit assessment/closure paperwork.
 
 For tracked work, inspect its current state and use the shared operations for
-task, policy, evidence, finding, decision, worker, writer, and state changes.
+task, policy, evidence, finding, decision, worker, and state changes.
 Each branch has one implicit task: an operation without taskId applies to it,
 and the first recording (a note, check, finding or evidence) creates it, so you
 never manage task ids. Start a record only for an explicit tracked objective;
@@ -120,8 +119,7 @@ An omitted revision absorbs a concurrent write: Workit re-reads, re-checks
 policy, and reapplies the call, returning busy under persistent contention. A
 revision_conflict means a revision you passed is stale: re-read the record
 before deciding whether to retry.
-A solo edit does not need writer acquisition; use it when concurrent checkout
-writers need coordination. Record only observed facts and checks. Close-time
+Record only observed facts and checks. Close-time
 testing and verification gates accept only a configured check the CLI ran:
 \`workit check <name>\` (\`npx -y @brainervirus/workit-cli check <name>\` when
 \`workit\` is not on PATH); a recorded check result is a note and an ad-hoc
@@ -131,23 +129,23 @@ current candidate before recording completion.
 Workit validates domain policy against the actual action target, configured
 account, branch and commit conventions, protected refs, and current repository
 state. The task directory is coordination state, not a boundary on which
-repository may be changed. Use an action-time cwd target where a managed
-Git/hosting action supports it; a non-Git directory remains valid for OS work.
+repository may be changed; a non-Git directory remains valid for OS work.
 GitHub/GitLab use the active gh/glab CLI identity; YouTrack uses its own token.
 Preserve uncertain external outcomes and reconcile repository/provider state
-before retrying. Internal reservations prevent duplicate or ambiguous effects;
-they are not permission tickets for every edit.
+before retrying.
 
-On OpenCode V1 and V2, use native host tools for external mutations. Workit
-provides read-only workit_context; it has no managed external-action executor.
-Do not create proposals or request Workit approvals merely to invoke native
-tools. Old uncertain managed effects still require evidence before any retry.
-
-Use host-native authorization through the host's supported path. A native
-question receipt records an actual question interaction; it is not automatic
-host permission. Record a meaningful user choice once with provenance when
-future retrieval helps. Never fabricate a receipt, re-ask only to mint one, or
-let imported decisions grant authority. Never turn a host deny into allow or
+Authority is the host's own permission prompt plus the workspace autonomy
+grants (\`workit grant show\`). By default push, PR and CI rerun are granted and
+merge/release are not: deliver up to "verified, ready" and stop there with the
+grant needed. Only the user raises a grant, from their own terminal (\`workit
+grant set\`); never try to raise one, edit workspaces.json, or route around a
+grant_required. A request that names no endpoint stops at the workspace
+defaultEndpoint (a local commit unless the user set it to pr). Workit asks for
+no approval tickets: deliver
+through \`workit git push\`, \`workit pr create|merge\`, \`workit ci rerun\` and
+\`workit stack land\`, which check the grant. Record a meaningful user choice
+once as a decision when future retrieval helps; a decision never authorizes an
+effect. Never turn a host deny into allow or
 claim enforcement/evidence a host cannot provide. A precise request with settled
 constraints does not need an interview. Present genuine unresolved options with
 evidence and a recommendation, then continue toward the requested delivery

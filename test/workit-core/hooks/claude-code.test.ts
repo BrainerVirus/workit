@@ -116,7 +116,12 @@ test("given SessionStart source compact, additionalContext restores the task con
       {},
     );
     const output = (
-      result.json as { hookSpecificOutput: { hookEventName: string; additionalContext: string } }
+      result.json as {
+        hookSpecificOutput: {
+          hookEventName: string;
+          additionalContext: string;
+        };
+      }
     ).hookSpecificOutput;
     expect(output.hookEventName).toBe("SessionStart");
     expect(output.additionalContext).toContain("<workit-contract>");
@@ -140,7 +145,10 @@ test("Claude renders context, per-turn context, and silent events in its native 
     startTask(root, { host: "claude_code", actor: "claude-session-1" }, "per-turn task");
     const turn = (
       render("user-prompt-submit") as {
-        hookSpecificOutput: { hookEventName: string; additionalContext: string };
+        hookSpecificOutput: {
+          hookEventName: string;
+          additionalContext: string;
+        };
       }
     ).hookSpecificOutput;
     expect(turn.hookEventName).toBe("UserPromptSubmit");
@@ -150,7 +158,7 @@ test("Claude renders context, per-turn context, and silent events in its native 
       hookSpecificOutput: {
         hookEventName: "SubagentStart",
         additionalContext:
-          "Workit observed Claude Code subagent agent-1 (reviewer) as read-only/agent-guided; writer delegation is unavailable.",
+          "Workit observed Claude Code subagent agent-1 (reviewer) as read-only/agent-guided.",
       },
     });
     // PreCompact cannot inject context; its notice rides the common systemMessage field.

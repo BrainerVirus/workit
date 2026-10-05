@@ -5,8 +5,8 @@
 //
 //   store.json                       format marker (a newer format fails closed)
 //   checkouts/<slug>/workspace.json  this checkout's workspace record
-//   checkouts/<slug>/metadata.lock   checkout lock: workspace writes, task
-//                                    creation and managed external actions
+//   checkouts/<slug>/metadata.lock   checkout lock: workspace writes and task
+//                                    creation
 //   tasks/<id>/events.jsonl          the task's append-only event log
 //   tasks/<id>/snapshot.json         rebuildable cache of the reduced state
 //   tasks/<id>/lock                  task lock: one append at a time
@@ -24,7 +24,6 @@
 // A 2.x store in `<root>/.workit` is migrated on first use (idempotent, under
 // the checkout lock, backup kept). The migrated `.workit/workspace.json` is
 // replaced by a marker that 2.x readers reject with an upgrade message.
-import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import path from "node:path";
@@ -341,7 +340,6 @@ export const sameDirectoryIdentity = (left: string, right: string): boolean => {
   }
 };
 
-const externalActionLockRoots = new AsyncLocalStorage<ReadonlySet<string>>();
 /** Locks this process holds; waiting on them can only time out. */
 const heldInProcess = new Map<string, number>();
 const hold = (lock: string) => heldInProcess.set(lock, (heldInProcess.get(lock) ?? 0) + 1);
@@ -854,7 +852,6 @@ export class TaskStore {
         const reserved = this.writeWorkspace(nextWorkspace.data);
         if (!reserved.ok) return reserved;
         const uncertain = (message: string) => {
-          this.markUncertain(nextWorkspace.data);
           return failure("external_outcome_unknown", message, {
             operation: "coupled_mutation",
             outcome: "unknown",
@@ -882,92 +879,6 @@ export class TaskStore {
       }),
     );
     this.compactPending();
-    return result;
-  }
-
-  /** Hold this checkout's lock across a managed effect. */
-  async withExternalActionLock<T>(
-    operation: () => Promise<Result<T>>,
-    reentrant = false,
-  ): Promise<Result<T>> {
-    const activeRoots = externalActionLockRoots.getStore();
-    if (
-      activeRoots &&
-      [...activeRoots].some((root) => root === this.root || sameDirectoryIdentity(root, this.root))
-    )
-      return operation();
-    const ready = this.ready(true);
-    if (!ready.ok) return ready;
-    const lockPath = this.paths().checkoutLock;
-    try {
-      this.initializeStorage();
-    } catch (error) {
-      return failure("storage_error", `unable to initialize store: ${String(error)}`, {
-        path: this.paths().dir,
-      });
-    }
-    let handle: FileLockSyncHandle;
-    try {
-      const options = this.lockOptions(lockPath);
-      handle = this.acquire(lockPath, {
-        ...options,
-        payload: () => ({ ...options.payload(), externalAction: true }),
-      });
-    } catch (error) {
-      return this.lockFailure(lockPath, error);
-    }
-    hold(lockPath);
-    let result: Result<T>;
-    try {
-      if (!handle.verifyStillHeld())
-        result = failure("recovery_required", "metadata lock was compromised", { path: lockPath });
-      else {
-        try {
-          const run = () => operation();
-          result = await (reentrant
-            ? externalActionLockRoots.run(new Set([...(activeRoots ?? []), this.root]), run)
-            : run());
-        } catch {
-          result = failure("external_outcome_unknown", "external action outcome is unknown", {
-            outcome: "unknown",
-          });
-        }
-        try {
-          if (!handle.verifyStillHeld())
-            result = failure("external_outcome_unknown", "metadata lock was compromised", {
-              outcome: "unknown",
-              path: lockPath,
-            });
-        } catch {
-          result = failure("external_outcome_unknown", "metadata lock could not be verified", {
-            outcome: "unknown",
-            path: lockPath,
-          });
-        }
-      }
-    } catch {
-      result = failure("external_outcome_unknown", "external action lock operation failed", {
-        outcome: "unknown",
-        path: lockPath,
-      });
-    }
-    drop(lockPath);
-    try {
-      retryTransient(() => handle.release());
-    } catch (error) {
-      const released = this.lockFailure(lockPath, error);
-      const releaseError = released.ok ? "metadata lock release failed" : released.error;
-      return result.ok
-        ? failure(
-            "external_outcome_unknown",
-            "external action metadata lock release is uncertain",
-            {
-              outcome: "unknown",
-              path: lockPath,
-            },
-          )
-        : failure("recovery_required", `${result.error}; ${releaseError}`, result.details);
-    }
     return result;
   }
 
@@ -1700,7 +1611,6 @@ export class TaskStore {
           revision: newRevision(),
           root: this.root,
           runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
-          writer: null,
         };
   }
 
@@ -1745,16 +1655,6 @@ export class TaskStore {
     } catch (error) {
       return failure("storage_error", `workspace write failed: ${String(error)}`, { path: file });
     }
-  }
-
-  private markUncertain(workspace: WorkspaceRecord) {
-    if (!workspace.writer || workspace.writer.state === "uncertain") return;
-    this.writeWorkspace({
-      ...workspace,
-      writer: { ...workspace.writer, state: "uncertain" as const },
-      revision: newRevision(),
-      runtime: stampNew(workspace),
-    });
   }
 
   // -------------------------------------------------------------------------
@@ -2388,11 +2288,6 @@ export class TaskStore {
       try {
         lock = parseMetadataLockOrNull(fs.readFileSync(lockPath, "utf8"));
       } catch {}
-      if (lock?.externalAction)
-        return failure("writer_conflict", "workspace is reserved by a managed external action", {
-          outcome: "not_started",
-          path: lockPath,
-        });
       return failure(
         "busy",
         `workit lock is held by another Workit call${lock ? ` (pid ${lock.pid} on ${lock.host})` : ""}; retry shortly`,

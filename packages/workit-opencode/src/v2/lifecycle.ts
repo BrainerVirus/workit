@@ -2,16 +2,9 @@ import {
   TaskStore,
   WorkitCore,
   type TaskRecord,
-  type WorkerDispatch,
   type WorkspaceRecord,
 } from "@brainervirus/workit-core/src/core";
-import {
-  nativeDispatchFor,
-  nativeWorkerFor,
-  workerCoordinatorFor,
-  type DirectChildren,
-  type DispatchGeneration,
-} from "../tools/workit";
+import { nativeWorkerFor, workerCoordinatorFor, type DirectChildren } from "../tools/workit";
 import { sameWorkspace } from "../shared/session";
 
 /** V2 session facts the lifecycle binds to. `directory` is
@@ -49,10 +42,10 @@ type V2Event = {
   location?: { directory?: unknown };
 };
 
+/** One coordinator `subagent` call correlated with the worker it launches.
+ * In-memory only: a plugin restart loses it, and the worker stays `assigned`
+ * until the lead cancels or reassigns it. */
 type PreparedDispatch = {
-  generation: DispatchGeneration;
-  dispatch: WorkerDispatch;
-  core: WorkitCore;
   taskId: string;
   workerId: string;
   callID: string;
@@ -90,11 +83,10 @@ const contentText = (content: unknown): string => {
 };
 
 /**
- * V2 subagent lifecycle: direct-child lineage, one fresh launch per
- * coordinator, and durable dispatch claims settled only from host evidence.
- * The in-memory reservation correlates one `subagent` call with its observed
- * child; the durable `dispatching` claim lives in TaskStore and is settled by
- * `commitWorkerDispatch` from an observed session or a terminal read.
+ * V2 subagent lifecycle: direct-child lineage and one fresh launch per
+ * coordinator. The in-memory correlation binds one `subagent` call to the
+ * oldest assigned worker; the worker turns `running` only when its child
+ * session is observed as a direct child of the coordinator.
  */
 export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
   const { root } = deps;
@@ -141,10 +133,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
           entry.provenance.session?.kind === "host" &&
           entry.provenance.session.host === "opencode" &&
           entry.provenance.session.handle === coordinator,
-      ) ||
-      (workspace.writer?.owner.taskId === task.id &&
-        workspace.writer.owner.session.host === "opencode" &&
-        workspace.writer.owner.session.handle === coordinator));
+      ));
 
   const ownsActiveTask = (coordinator: string): boolean => {
     try {
@@ -216,32 +205,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     );
     const next = oldestOfSingleTask(eligible);
     if (!next) return "unbound";
-    const generation: DispatchGeneration = {
-      coordinator,
-      callID,
-      childCreated: false,
-      noChild: false,
-    };
-    const core = new WorkitCore(store, {
-      root,
-      caller: { host: "opencode", actor: coordinator },
-      capabilities: [],
-      constraints: [],
-      now,
-      nativeWorker: nativeDispatchFor(directChildren, coordinator, generation),
-    });
-    const prepared = core.prepareWorkerDispatch({
-      taskId: next.task.id,
-      workerId: next.entry.id,
-      expectedRevision: next.task.revision,
-      expectedWorkspaceRevision: workspace.data.revision,
-      observation: { stage: "prepare", sessionID: coordinator, callID },
-    });
-    if (!prepared.ok) return "unbound";
     dispatches.set(coordinator, {
-      generation,
-      dispatch: prepared.data,
-      core,
       taskId: next.task.id,
       workerId: next.entry.id,
       callID,
@@ -257,16 +221,22 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
   ): boolean => {
     const pending = dispatches.get(coordinator);
     if (!pending) return false;
-    pending.generation.childCreated = true;
     pending.childID = childID;
     const current = revisions(pending.taskId);
     if (!current) return false;
-    const committed = pending.core.commitWorkerDispatch({
+    const core = new WorkitCore(new TaskStore(root), {
+      root,
+      caller: { host: "opencode", actor: coordinator },
+      capabilities: [],
+      constraints: [],
+      now,
+      nativeWorker: nativeWorkerFor(directChildren, coordinator),
+    });
+    const committed = core.observeWorkerLifecycle({
       ...current,
-      dispatch: pending.dispatch,
       taskId: pending.taskId,
       workerId: pending.workerId,
-      outcome: "started",
+      state: "running",
       session: { kind: "host", host: "opencode", handle: childID },
       observation: { event: "running", sessionID: childID },
     });

@@ -93,6 +93,7 @@ const githubBase = (): Record<string, Reply> => ({
   "GET repos/o/r": fixture("github/repo.json"),
   "GET repos/o/r/branches/main": fixture("github/branch-main.json"),
   "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
+  "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
 });
 
 const GL = "projects/group%2Fproject";
@@ -246,6 +247,14 @@ test("pr create: usage errors exit 2", async () => {
 // ---------------------------------------------------------------------------
 // pr merge
 
+// Merging needs an explicit grant (D4: the default ceiling stops at verified, ready).
+const grantMerge = (
+  repo: ForgeRepo,
+  provider: "github" | "gitlab" = "github",
+  vcs: Record<string, unknown> = {},
+) =>
+  workspace(repo, { vcs: { provider, account: "octo", ...vcs }, autonomy: { merge: "verified" } });
+
 const mergeRoutes = (
   status: string,
   merge: Reply = JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" }),
@@ -292,6 +301,7 @@ test("pr merge: given a workspace without the merge grant, then grant_required n
 
 test("pr merge: a PR that is not READY is refused with its next action", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-failing-thread.json"));
+  grantMerge(repo);
   await verdict(repo);
   const result = await run(["pr", "merge", "--json"], repo.cwd);
   expect(result.code).toBe(3);
@@ -301,6 +311,7 @@ test("pr merge: a PR that is not READY is refused with its next action", async (
 
 test("pr merge: given READY but no accepted verdict, then NEEDS_VERDICT; the author's own verdict does not count", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMerge(repo);
   const none = await run(["pr", "merge", "--json"], repo.cwd);
   expect(none.code).toBe(3);
   expect(none.json().error).toContain("NEEDS_VERDICT");
@@ -317,6 +328,7 @@ test("pr merge: given READY but no accepted verdict, then NEEDS_VERDICT; the aut
 
 test("pr merge: READY + accepted verdict merges with the head SHA guard and records pr.merged", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMerge(repo);
   await verdict(repo);
   const result = await run(["pr", "merge", "--method", "squash", "--json"], repo.cwd);
   expect(result.code).toBe(0);
@@ -327,7 +339,7 @@ test("pr merge: READY + accepted verdict merges with the head SHA guard and reco
     method: "squash",
     mergeSha: repo.base,
     verdict: { required: true, accepted: true },
-    grant: { source: "host_authority" },
+    grant: { source: "autonomy" },
     deletedBranch: false,
   });
   expect(writes(runner.calls)).toEqual([
@@ -363,6 +375,7 @@ test("pr merge: given the remote head advanced after the gates, then the forge's
       replyError("gh: Head branch was modified. Review and try the merge again. (HTTP 409)"),
     ),
   );
+  grantMerge(repo);
   await verdict(repo);
   const result = await run(["pr", "merge", "--json"], repo.cwd);
   expect(result.code).toBe(3);
@@ -372,6 +385,7 @@ test("pr merge: given the remote head advanced after the gates, then the forge's
 
 test("pr merge: a PR head that is not the verified local head is refused before merging", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMerge(repo);
   await verdict(repo);
   // The local branch moved on (the verdict was for the old head, which the PR still shows).
   writeFileSync(path.join(repo.cwd, "later.txt"), "later\n");
@@ -415,6 +429,7 @@ test("pr merge (GitLab): READY MR merges with sha= and squash; rebase is not a G
       return gitlabMr({ state: "merged", squash_commit_sha: "{{BASE}}" });
     },
   });
+  grantMerge(repo, "gitlab");
   await verdict(repo);
   const rebase = await run(["pr", "merge", "--method", "rebase", "--json"], repo.cwd);
   expect(rebase.code).toBe(2);
@@ -438,6 +453,7 @@ test("pr merge --delete-branch: a develop -> main release PR under gitflow is re
     [GH_STATUS]: release,
     "PUT repos/o/r/pulls/12/merge": "{}",
   });
+  grantMerge(repo);
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
@@ -461,6 +477,7 @@ test("pr merge --delete-branch: a fork PR whose head branch is named like the ba
     [GH_STATUS]: forkRelease,
     "PUT repos/o/r/pulls/12/merge": "{}",
   });
+  grantMerge(repo);
   const result = await run(["pr", "merge", "--pr", "12", "--delete-branch", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().error).toContain("is the PR base");
@@ -473,7 +490,7 @@ test("pr merge --delete-branch (GitLab): a fast-forward promotion from the defau
     [`GET ${GL}/merge_requests/12`]: gitlabMr({ source_branch: "Staging", target_branch: "main" }),
     [`PUT ${GL}/merge_requests/12/merge`]: "{}",
   });
-  workspace(repo, { vcs: { provider: "gitlab", defaultTargetBranch: "staging" } });
+  grantMerge(repo, "gitlab", { defaultTargetBranch: "staging" });
   const result = await run(["pr", "merge", "--pr", "12", "--delete-branch", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().error).toContain("is the default target branch");

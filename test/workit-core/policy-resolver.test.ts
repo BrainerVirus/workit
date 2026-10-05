@@ -16,14 +16,54 @@ const input = (overrides: Partial<ResolverInput> = {}): ResolverInput => ({
   assessment: assessment({
     signals: {
       ...assessment().signals,
-      approachUnknown: { value: false, basis: "inferred", reason: "inspected", refs: [] },
-      productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
-      behaviorChange: { value: false, basis: "inferred", reason: "mechanical", refs: [] },
-      mechanicalLowRisk: { value: true, basis: "inferred", reason: "mechanical", refs: [] },
-      durableAgreementNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
-      coordinationPlanNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
-      helperUseful: { value: false, basis: "inferred", reason: "none", refs: [] },
-      testFirstPractical: { value: true, basis: "inferred", reason: "yes", refs: [] },
+      approachUnknown: {
+        value: false,
+        basis: "inferred",
+        reason: "inspected",
+        refs: [],
+      },
+      productChoiceOpen: {
+        value: false,
+        basis: "inferred",
+        reason: "settled",
+        refs: [],
+      },
+      behaviorChange: {
+        value: false,
+        basis: "inferred",
+        reason: "mechanical",
+        refs: [],
+      },
+      mechanicalLowRisk: {
+        value: true,
+        basis: "inferred",
+        reason: "mechanical",
+        refs: [],
+      },
+      durableAgreementNeeded: {
+        value: false,
+        basis: "inferred",
+        reason: "none",
+        refs: [],
+      },
+      coordinationPlanNeeded: {
+        value: false,
+        basis: "inferred",
+        reason: "none",
+        refs: [],
+      },
+      helperUseful: {
+        value: false,
+        basis: "inferred",
+        reason: "none",
+        refs: [],
+      },
+      testFirstPractical: {
+        value: true,
+        basis: "inferred",
+        reason: "yes",
+        refs: [],
+      },
     },
   }),
   constraints: [],
@@ -59,13 +99,11 @@ const decision = (
     workspaceId: id,
     scope: scope({ paths: ["src", "test"], exclusions: ["vendor"] }),
     presented: "accept this limitation",
-    approvedContent: "accept this limitation",
     contentRefs,
   },
   digest,
   requirementIds,
   revoked: null,
-  consumption: null,
 });
 
 test("mechanical work only requires relevant existing checks and self-review", () => {
@@ -77,7 +115,9 @@ test("mechanical work only requires relevant existing checks and self-review", (
 
 test("a broad behavior-preserving rename does not escalate by size", () => {
   const result = resolvePolicy(
-    input({ intent: { ...input().intent, scope: scope({ paths: ["src", "test"] }) } }),
+    input({
+      intent: { ...input().intent, scope: scope({ paths: ["src", "test"] }) },
+    }),
   );
   expect(rules(result)).toEqual(["mechanical-existing-checks", "self-review", "pre-pr-cleanup"]);
 });
@@ -105,7 +145,11 @@ test("security behavior changes require behavioral verification and fresh-contex
         consequences: [
           {
             area: "security",
-            fact: { statement: "authorization", basis: "observed", refs: [ref()] },
+            fact: {
+              statement: "authorization",
+              basis: "observed",
+              refs: [ref()],
+            },
           },
         ],
       }),
@@ -157,7 +201,14 @@ test("bounded behavior changes keep testing but do not force independent review"
       assessment: {
         ...changed.assessment,
         consequences: [
-          { area, fact: { statement: "affected boundary", basis: "inferred" as const, refs: [] } },
+          {
+            area,
+            fact: {
+              statement: "affected boundary",
+              basis: "inferred" as const,
+              refs: [],
+            },
+          },
         ],
       },
     };
@@ -343,11 +394,19 @@ test("preferences adjust only the permitted helper/review process", () => {
     assessment: assessment({
       ...input().assessment,
       consequences: [
-        { area: "security", fact: { statement: "authorization", basis: "inferred", refs: [] } },
+        {
+          area: "security",
+          fact: { statement: "authorization", basis: "inferred", refs: [] },
+        },
       ],
       signals: {
         ...input().assessment.signals,
-        approachUnknown: { value: "unknown", basis: "unknown", reason: "scope", refs: [] },
+        approachUnknown: {
+          value: "unknown",
+          basis: "unknown",
+          reason: "scope",
+          refs: [],
+        },
         productChoiceOpen: {
           value: true,
           basis: "inferred",
@@ -554,7 +613,11 @@ test("equivalent reordered inputs replay to identical policy bytes", () => {
   const b = data(
     resolvePolicy(
       input({
-        prior: { decisions: [reorderedDecision], findings: [], requirements: [] },
+        prior: {
+          decisions: [reorderedDecision],
+          findings: [],
+          requirements: [],
+        },
       }),
     ),
   );
@@ -563,7 +626,9 @@ test("equivalent reordered inputs replay to identical policy bytes", () => {
 
 test("malformed and unknown resolver input is rejected", () => {
   expect(
-    resolvePolicy({ ...input(), surprise: true } as ResolverInput & { surprise: boolean }),
+    resolvePolicy({ ...input(), surprise: true } as ResolverInput & {
+      surprise: boolean;
+    }),
   ).toMatchObject({ ok: false, code: "invalid_input" });
   expect(
     resolvePolicy({
@@ -572,7 +637,12 @@ test("malformed and unknown resolver input is rejected", () => {
         ...input().assessment,
         signals: {
           ...input().assessment.signals,
-          behaviorChange: { value: "unknown", basis: "observed", reason: "bad", refs: [] },
+          behaviorChange: {
+            value: "unknown",
+            basis: "observed",
+            reason: "bad",
+            refs: [],
+          },
         },
       },
     }),

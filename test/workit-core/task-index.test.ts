@@ -122,7 +122,11 @@ test("Given a task is updated, Then the next turn's context reflects it", () => 
       action: "progress",
       taskId: task.id,
       expectedRevision: task.revision,
-      progress: { summary: "halfway", nextAction: "write the tests", blockers: [] },
+      progress: {
+        summary: "halfway",
+        nextAction: "write the tests",
+        blockers: [],
+      },
     });
     if (!progressed.ok) throw new Error(progressed.error);
     expect(JSON.parse(compactContextFor(root, "turns")!).nextAction).toBe("write the tests");
@@ -167,14 +171,49 @@ test("history offers come from the index and exclude the current session", () =>
 });
 
 const behavioral = (): Assessment["signals"] => ({
-  approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
-  productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
-  behaviorChange: { value: true, basis: "observed", reason: "behavior", refs: [ref()] },
-  mechanicalLowRisk: { value: false, basis: "inferred", reason: "behavioral", refs: [] },
-  durableAgreementNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
-  coordinationPlanNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
+  approachUnknown: {
+    value: false,
+    basis: "inferred",
+    reason: "known",
+    refs: [],
+  },
+  productChoiceOpen: {
+    value: false,
+    basis: "inferred",
+    reason: "settled",
+    refs: [],
+  },
+  behaviorChange: {
+    value: true,
+    basis: "observed",
+    reason: "behavior",
+    refs: [ref()],
+  },
+  mechanicalLowRisk: {
+    value: false,
+    basis: "inferred",
+    reason: "behavioral",
+    refs: [],
+  },
+  durableAgreementNeeded: {
+    value: false,
+    basis: "inferred",
+    reason: "none",
+    refs: [],
+  },
+  coordinationPlanNeeded: {
+    value: false,
+    basis: "inferred",
+    reason: "none",
+    refs: [],
+  },
   helperUseful: { value: false, basis: "inferred", reason: "none", refs: [] },
-  testFirstPractical: { value: false, basis: "inferred", reason: "none", refs: [] },
+  testFirstPractical: {
+    value: false,
+    basis: "inferred",
+    reason: "none",
+    refs: [],
+  },
 });
 
 test("capture-free context matches full inspection when a passing baseline precedes GREEN", () => {
@@ -212,7 +251,12 @@ test("capture-free context matches full inspection when a passing baseline prece
     writeFileSync(join(root, "a.ts"), "after");
     expect(check("green on C2").ok).toBe(true);
 
-    const full = core.task({ schemaVersion: 1, action: "inspect", taskId: task.id, view: "full" });
+    const full = core.task({
+      schemaVersion: 1,
+      action: "inspect",
+      taskId: task.id,
+      view: "full",
+    });
     if (!full.ok) throw new Error(full.error);
     const fast = core.compactContext(task.id);
     if (!fast.ok) throw new Error(fast.error);
@@ -248,14 +292,12 @@ test("cached context invalidates when a cited decision document or the workspace
                 workspaceId: record.workspaceId,
                 scope: scope(),
                 presented: "design",
-                approvedContent: "design",
                 contentRefs: [{ kind: "file", path: "decision.md", digest: sha256("x") }],
               },
               digest: sha256("design"),
               response: "approved",
               requirementIds: [],
               revoked: null,
-              consumption: null,
             },
           },
         ],
@@ -316,14 +358,12 @@ test("a document changed within the racy window is never served from cache", () 
                 workspaceId: record.workspaceId,
                 scope: scope(),
                 presented: "design",
-                approvedContent: "design",
                 contentRefs: [{ kind: "file", path: "doc.md", digest: sha256("x") }],
               },
               digest: sha256("design"),
               response: "approved",
               requirementIds: [],
               revoked: null,
-              consumption: null,
             },
           },
         ],

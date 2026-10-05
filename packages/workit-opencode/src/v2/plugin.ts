@@ -17,18 +17,11 @@ import { capabilitiesFor, OPENCODE_DESCRIPTOR } from "@brainervirus/workit-core/
 import { executeInitApply, initApplyRuntime } from "../shared/init-apply";
 import { sameWorkspace } from "../shared/session";
 import { WORKIT_TOOL_CATALOG, workitFamilyOf } from "../shared/tools";
-import {
-  NativeReceiptStore,
-  createWorkitTools,
-  nativeAuthority,
-  nativeWorkerFor,
-  workerCoordinatorFor,
-  type DirectChildren,
-} from "../tools/workit";
+import { nativeWorkerFor, workerCoordinatorFor, type DirectChildren } from "../tools/workit";
+import { createContextTool } from "../tools/context";
 import { createV2Lifecycle } from "./lifecycle";
 import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from "./injection";
 import { evaluateShellPermission } from "./permissions";
-import { normalizeQuestionAnswers } from "./receipts";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
 
@@ -96,7 +89,6 @@ const setup = async (ctx: Context): Promise<() => void> => {
   const sourceMarker = markSourcesLoaded(pluginSourceFiles);
   let staleSourcesWarned = false;
   const historyOfferSessions = new Set<string>();
-  const receipts = new NativeReceiptStore();
   const lifecycle = createV2Lifecycle({
     root,
     getSession: async (sessionID) => {
@@ -111,44 +103,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
         : null;
     },
   });
-  // Native decision receipts and the read-only context reader.
-  const nativeTools = createWorkitTools({
-    receipts,
-    directChildren: lifecycle.directChildren,
-    client: {
-      session: {
-        get: async ({ path: { id } }: { path: { id: string } }) => {
-          const session = await sessionFacts(ctx, id);
-          if (!session) return {};
-          return {
-            data: {
-              id: session.id,
-              directory: session.directory,
-              ...(session.parentID !== undefined ? { parentID: session.parentID } : {}),
-            },
-          };
-        },
-      },
-    },
-  });
-  const nativeToolMap = nativeTools as unknown as Record<
-    "workit_decision" | "workit_context",
-    {
-      execute: (
-        args: unknown,
-        context: { directory: string; sessionID: string },
-      ) => Promise<unknown>;
-    }
-  >;
-  const executeNativeTool = async (
-    name: "workit_decision" | "workit_context",
-    input: unknown,
-    sessionID: string,
-  ): Promise<{ content: string }> => {
-    const hostTool = nativeToolMap[name];
-    const result = await hostTool.execute(input, { directory: root, sessionID });
-    return { content: typeof result === "string" ? result : JSON.stringify(result) };
-  };
+  const contextTool = createContextTool();
   const runFamily = (
     family: OperationFamily,
     input: unknown,
@@ -165,7 +120,6 @@ const setup = async (ctx: Context): Promise<() => void> => {
       constraints: [],
       now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
       workerId,
-      nativeAuthority: nativeAuthority(receipts, session.id),
       nativeWorker: nativeWorkerFor(lifecycle.directChildren, session.id),
     });
     const run = core[family] as unknown as (request: unknown) => unknown;
@@ -190,7 +144,9 @@ const setup = async (ctx: Context): Promise<() => void> => {
               ),
             );
           if (spec.name === "workit_context")
-            return executeNativeTool("workit_context", input, session.id);
+            return {
+              content: await contextTool.execute(input, { directory: root, sessionID: session.id }),
+            };
           const store = new TaskStore(root);
           const workerId = workerIdFor(
             store,
@@ -203,7 +159,6 @@ const setup = async (ctx: Context): Promise<() => void> => {
               failure("permission_denied", "OpenCode child session has no validated Workit worker"),
             );
           const family = workitFamilyOf(spec.name);
-          if (family === "decision") return executeNativeTool("workit_decision", input, session.id);
           if (family !== null)
             return resultContent(runFamily(family, input, session, store, workerId));
           if (spec.name === "workit_init_apply") {
@@ -217,12 +172,6 @@ const setup = async (ctx: Context): Promise<() => void> => {
     }
   });
   await ctx.tool.hook("execute.before", async (event) => {
-    if (event.tool === "question") {
-      const sessionID = String(event.sessionID);
-      const callID = String(event.id);
-      receipts.recordRequest(callID, sessionID, callID);
-      return;
-    }
     if (event.tool !== "subagent") return;
     await lifecycle.executeBefore({
       tool: event.tool,
@@ -232,19 +181,6 @@ const setup = async (ctx: Context): Promise<() => void> => {
     });
   });
   await ctx.tool.hook("execute.after", async (event) => {
-    if (event.tool === "question") {
-      if (event.status !== "completed") return;
-      const metadata = (event.result as { metadata?: unknown }).metadata;
-      const answers = (metadata as { answers?: unknown } | undefined)?.answers;
-      receipts.record(
-        { sessionID: String(event.sessionID), callID: String(event.id), args: event.input },
-        {
-          metadata:
-            metadata === undefined ? undefined : { answers: normalizeQuestionAnswers(answers) },
-        },
-      );
-      return;
-    }
     if (event.tool !== "subagent") return;
     await lifecycle.executeAfter({
       tool: event.tool,

@@ -87,11 +87,11 @@ test("cursor does not duplicate legacy flow registrations", () => {
   expect(server).not.toContain("flow-state");
 });
 
-test("Cursor publishes only the shared eight operation families", async () => {
+test("Cursor publishes only the shared seven operation families", async () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
   expect(server).toContain("runStdioServer");
   const { OPERATION_FAMILIES } = await import("@/packages/workit-core/src/core");
-  expect(OPERATION_FAMILIES).toHaveLength(8);
+  expect(OPERATION_FAMILIES).toHaveLength(7);
 });
 
 test("source markers report only files edited after process load", () => {

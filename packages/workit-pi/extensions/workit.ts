@@ -20,7 +20,7 @@ import {
 } from "@brainervirus/workit-core/src/core";
 import { piContext, unfinishedTaskOffer, workitContext } from "../src/context";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
-import { enforceNativeWriter, registerWorkitTools } from "../src/tools";
+import { enforceToolPolicy, registerWorkitTools } from "../src/tools";
 import {
   cancelWorker,
   cancelWorkerAssignment,
@@ -140,7 +140,7 @@ export default function extension(pi: ExtensionAPI): void {
   const workers = new Map<string, WorkerHandle>();
   const bindings = new Map<string, WorkerLifecycleBinding>();
   const childWorker = process.env.WORKIT_PI_WORKER_ID;
-  registerWorkitTools(pi, { allowExternalActions: !childWorker });
+  registerWorkitTools(pi, { allowContext: !childWorker });
 
   const reconcileLostWorkers = (ctx: ExtensionContext): void => {
     if (!ctx.isProjectTrusted() || process.env.WORKIT_PI_WORKER_ID) return;
@@ -287,7 +287,6 @@ export default function extension(pi: ExtensionAPI): void {
     const handle = launchSupervisedWorker(worker.data.assignment, {
       runtime: runtimeFor(ctx),
       binding,
-      writerCore: childCore,
       prompt: request.prompt,
       onPrepare: (pending) => {
         child = pending;
@@ -298,12 +297,9 @@ export default function extension(pi: ExtensionAPI): void {
         return true;
       },
       onReady: (ready) => {
-        resolveReady?.(
-          ready.ready && (worker.data.assignment.role !== "implementer" || ready.writerReady),
-        );
+        resolveReady?.(ready.ready);
       },
       onError: () => resolveReady?.(false),
-      onUncertain: (uncertain, exit) => persistUncertain(store, binding, uncertain, exit),
       onReport: (_reported, report) => {
         const freshTask = store.readTask(task.id);
         const freshWorkspace = store.readWorkspace();
@@ -337,7 +333,7 @@ export default function extension(pi: ExtensionAPI): void {
         }
       },
       onExit: (exited) => {
-        resolveReady?.(exited.ready && exited.writerReady);
+        resolveReady?.(exited.ready);
         workers.delete(exited.id);
         bindings.delete(worker.id);
       },
@@ -437,7 +433,7 @@ export default function extension(pi: ExtensionAPI): void {
     sessions.delete(ctx.sessionManager.getSessionId());
   });
   pi.on("session_compact_failed", () => undefined);
-  pi.on("tool_call", (event: ToolCallEvent, ctx) => enforceNativeWriter(event, ctx));
+  pi.on("tool_call", (event: ToolCallEvent, ctx) => enforceToolPolicy(event, ctx));
   pi.on("tool_result", (event: ToolResultEvent, ctx) => {
     if (childWorker && event.toolName === "workit_worker") {
       const details = event.details;

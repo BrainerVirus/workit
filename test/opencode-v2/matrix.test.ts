@@ -41,7 +41,6 @@ const WORKIT_TOOL_NAMES = [
   "workit_finding",
   "workit_decision",
   "workit_worker",
-  "workit_writer",
   "workit_state",
   "workit_context",
   "workit_init_apply",

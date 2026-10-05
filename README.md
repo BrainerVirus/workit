@@ -1,7 +1,7 @@
 # Workit
 
 Multi-platform Workit workflow support for Cursor, OpenCode, Codex CLI/desktop,
-Pi, Claude Code, and the CLI. The hosts share one task contract and eight operation families
+Pi, Claude Code, and the CLI. The hosts share one task contract and seven operation families
 while adapting authority and lifecycle behavior to the native surfaces each
 host documents.
 
@@ -14,13 +14,13 @@ completion; a local commit does not prove a remote push.
 
 | Package     | Purpose                                                                         |
 | ----------- | ------------------------------------------------------------------------------- |
-| OpenCode    | Native plugin with sixteen method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
+| OpenCode    | Native plugin with sixteen method skills, nine tools (seven shared families plus read-only context and init apply), and provider-safe schemas |
 | Cursor      | MCP transport, one native hook dispatcher, one contract rule, and sixteen skills  |
 | Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and sixteen skills |
 | Claude Code | Native plugin: session/per-turn task context hooks, branch policy on git shell commands, sixteen skills, and verifier/reviewer/implementer agents |
-| Pi          | Native npm extension with nine tools (eight shared families plus external action), sixteen skills, and session continuity |
-| Shared MCP  | Low-level transport for the eight core operation families                       |
-| Shared core | Task, policy, evidence, finding, decision, worker, writer, and continuity state |
+| Pi          | Native npm extension with eight tools (seven shared families plus read-only context), sixteen skills, and session continuity |
+| Shared MCP  | Low-level transport for the seven core operation families                       |
+| Shared core | Task, policy, evidence, finding, decision, worker, and continuity state         |
 | CLI         | Setup wizard (`workit`)                                                         |
 
 ## Install
@@ -67,10 +67,8 @@ YouTrack is optional and everything organization-specific comes from
   `youtrack.json` overrides it. YouTrack context reports the effective zone as
   `workTimezone: { timezone, source }` (`source` is `youtrack.json` or
   `process`). Resolved `youtrack.update` / `youtrack.meeting` /
-  `youtrack.time` actions (and `workit action --preview`) report
-  `workDate: { localDate, timezone, timezoneSource }` beside the approval
-  descriptor, never inside it, so an approval matches in any process
-  timezone. An explicit epoch `dateMs` is labelled with its UTC day.
+  `youtrack.time` actions (and the `workit youtrack` verbs) report
+  `workDate: { localDate, timezone, timezoneSource }`. An explicit epoch `dateMs` is labelled with its UTC day.
 - Workit adds no greeting or `@mention` to comments. The text comes from the
   editable `issue-update` template (`templates/issue-update.md` in the config
   directory overrides the bundled neutral one); placeholders Workit does not
@@ -101,7 +99,7 @@ cleared.
 
 Requires OpenCode 2.0.18+ and Node.js 24+. The plugin uses the OpenCode V2
 plugin API (`setup()`) with ten native tools, sixteen method skills and
-`wk-*` commands, question receipts, and direct-child delegation. Workit 3.0
+`wk-*` commands, and direct-child delegation. Workit 3.0
 removed the OpenCode 1.x (V1 `server()`) adapter; stay on Workit 2.x for an
 OpenCode 1.x host. The published plugin is a self-contained Node bundle (no
 runtime `@opencode/plugin` dependency).
@@ -171,12 +169,11 @@ The marketplace references the built npm package, so installation does not depen
 on unbuilt Git checkout artifacts. The plugin includes hooks and the shared MCP
 server. Native Codex permission and sandbox settings remain authoritative.
 
-Reads run over MCP; mutations run CLI-driven because caller-unattested MCP
-cannot attest effects:
+Reads run over MCP; mutations run CLI-driven because MCP is read-only for
+unattested callers:
 
 ```bash
-node_modules/.bin/workit <family> <action> --json --confirm
-workit writer acquire --actor <session-id>   # bind a writer to this session
+node_modules/.bin/workit <family> <action> --json [--actor <session-id>]
 ```
 
 Requires Node.js 24+ and Codex CLI or desktop. The hook honors exactly the
@@ -287,10 +284,15 @@ workit gc [--dry-run]    # compact long task logs, drop unreferenced blobs and o
 workit task status [--all]          # the current branch's task (no ids; --all: every task in the store)
 workit task start "<objective>"     # optional: name the branch's task (idempotent per branch)
 workit task note "<text>" [--next "<t>"]  # progress; creates the branch's task on first use
-workit task close [--outcome verified|limited|stopped] [--confirm]
+workit task close [--outcome verified|limited|stopped]
 workit task adopt <id>              # bind a migrated 2.x (or other checkout's) task to this branch
-workit <family> <action> [--payload <json|@file|->] [--task <id>] [--confirm] [--json]
-workit action <operation> --payload <JSON> [--preview] [--confirm] [--json]
+workit <family> <action> [--payload <json|@file|->] [--task <id>] [--actor <id>] [--json]
+workit grant show [<workspace>] [--all]  # effective autonomy grants and defaultEndpoint
+workit grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr]
+workit grant unset <workspace> <kind>…  # back to the default
+workit youtrack note <ISSUE> (--markdown <t>|--file <p>) [--minutes n] [--date auto|YYYY-MM-DD]
+workit youtrack time|meeting <ISSUE> --minutes n [--text t] [--date …]
+workit changelog apply (--entries <JSON|@file|->|--normalize-only) [--path CHANGELOG.md] [--preview]
 workit handoff --task <id> [--json]
 workit pr status [--pr <n>] [--json]  # checks + failing log tails, open threads, behind-base, next action
 workit ci wait [--timeout 20m] [--json]  # exit 0 green, 1 red, 4 still pending at the timeout
@@ -350,7 +352,7 @@ history or reflog (`--force-if-includes`); only `--overwrite-unintegrated`
 drops commits you never had. `pr create` requires the branch to be pushed and checks
 that the forge reports that SHA as the PR head. `pr merge` merges only when
 `pr status` reads READY, an independent verdict is accepted for that head
-(`workit ledger check`), and the workspace allows merging. The merge call
+(`workit ledger check`), and the workspace `merge` grant allows it. The merge call
 carries the head SHA, so a head that moved is refused. `--delete-branch`
 never deletes a protected branch, the base or the default target.
 `verify-delivery` answers "did it land?" from the remote, never from local
@@ -385,12 +387,10 @@ CI, and it stops at the first PR that does not qualify with the reason
 ready but not allowed to merge, …).
 `--dry-run` changes nothing. `pr status` also reports the head's verdict.
 
-Merging needs no extra configuration today: the host's permission prompt is
-the limit. To limit a workspace, add `"autonomy"` to its entry in
-`~/.config/workit/workspaces.json`:
-`{"push": true, "pr": true, "merge": false | "verified" | true, "release": false}`.
-`false` blocks the verb; `merge: true` also skips the verdict requirement.
-Grants require `vcs.account`.
+`git push`, `pr create`, `pr merge`/`stack land` and `ci rerun` check the
+workspace's push, pr, merge and rerun grants (see
+[Autonomy grants](#autonomy-grants-per-workspace)); `youtrack` and `changelog`
+verbs are gated by host permission only.
 
 The packed CLI is a self-contained Node bundle; Node.js 24+ is required.
 
@@ -408,6 +408,14 @@ version metadata.
 </details>
 
 ### Upgrades
+
+**Workit 5.0 (breaking).** The approval tickets chain (host question answers,
+Pi confirmations, CLI TTY confirmations), standing `autoApprove`, managed
+external actions (`workit action`, Pi's `workit_external_action`) and the
+checkout lease (its tool and CLI verb) are gone; authority is
+host permissions plus [autonomy grants](#autonomy-grants-per-workspace). A 4.x
+host reading a store record written by 5.0 reports "record was written by
+workit 5.x; upgrade Workit", so upgrade all hosts together.
 
 `workit upgrade` checks the selected Workit registrations, queries npm, and
 previews targeted updates and supported configuration migrations. Use
@@ -435,14 +443,15 @@ pins. Re-run the preview after resolving a failure rather than blindly retrying.
 
 ## What it provides
 
-- Eight shared `workit_*` operation families: task, policy, evidence, finding,
-  decision, worker, writer, and state.
+- Seven shared `workit_*` operation families: task, policy, evidence, finding,
+  decision, worker, and state. Decisions are agent-asserted durable records
+  that satisfy decision requirements; they never authorize an effect.
 - Sixteen canonical method skills: behavioral TDD, challenge, debug, handoff,
   implement, plan, review, babysit, blast-radius, deslop (policy-gated before
   pull requests), diagram, mockup, green-run, steer, bdd (Given/When/Then
   scenarios as test names and seams) and test-audit (`workit test-audit`).
 - A `<workit-contract>` bootstrap marker carrying shared invariants.
-- Host-native capability reporting that never fabricates authority, receipts,
+- Host-native capability reporting that never fabricates authority,
   delegation tokens, or cross-process identity.
 
 Mechanical tasks with a `self-review` requirement accept the lead's own fresh
@@ -454,8 +463,7 @@ other evidence recorders.
 returns a compact projection. Use `status: "closed"` or `status: "all"` with a
 `limit` of 1-50 for bounded history, then `task.inspect` for one task's details;
 omitting its `view` selects `summary`. Closed inspection uses the candidate
-captured at closure and never projects the checkout's current writer onto
-history.
+captured at closure.
 
 Skills are reachable two ways: model-invoked automatically when the task fits,
 or explicitly via the available `wk-*` aliases (`/wk-challenge`, `/wk-babysit`,
@@ -486,8 +494,9 @@ Cursor uses the shared MCP transport and one bounded native hook executable.
 AskQuestion is policy-only (`agent_guided`); session start and compaction are
 non-blocking; arbitrary shell writes, Tab edits, and stable subagent-stop
 identity are unavailable. Reviewer and investigator native delegation is
-read-only. Implementer delegation is unavailable because Cursor cannot attest
-writer identity or safely release a child writer. Cursor ships only
+read-only. Implementer delegation is unavailable because Cursor exposes no stable
+child-stop identity. MCP is read-only for unattested callers; mutations run
+through `node_modules/.bin/workit <family> <action> --json`. Cursor ships only
 `rules/workit-contract.mdc`, which documents the shared contract, exact
 workspace/session scope, read-only native delegation, and the surfaces Cursor
 cannot attest or block.
@@ -499,8 +508,8 @@ cannot attest or block.
 
 Codex CLI and desktop use the same shared transport and native hook bundle;
 their surface qualification remains separate. Codex hooks provide bounded
-known-write guardrails and read-only/agent-guided subagent observations, but no
-native arbitrary-question receipt or attested writer delegation.
+known-write guardrails and read-only/agent-guided subagent observations;
+mutations run through the CLI.
 
 </details>
 
@@ -524,17 +533,15 @@ and every other subagent is observed as read-only/agent-guided.
 
 Pi loads `@brainervirus/workit-pi` through its native package manager and reads
 the package's `pi.extensions` and `pi.skills` manifest entries. The extension
-uses Pi's native session identity, confirmation UI, and known write/edit tool
-boundary with the shared core. Headless required decisions return
-`needs_input`; arbitrary shell writes remain agent-guided because Pi extensions
+uses Pi's native session identity and known write/edit tool boundary with the
+shared core; Pi project trust still gates mutations. Arbitrary shell writes remain agent-guided because Pi extensions
 are not an OS sandbox. Its bundled coordinator can launch fresh stock-Pi
-reviewer/investigator processes and explicitly scoped implementers; writer
-ownership is acquired only after native process observation, and cancellation
-timeouts remain uncertain until an exit is observed. Pi also exposes one
+reviewer/investigator processes and explicitly scoped implementers (which
+no longer acquire a checkout lease); cancellation timeouts remain uncertain until an exit is observed. Pi also exposes one
 child-disabled `workit_worker_control` host-orchestration tool for
-launch/cancel/reconcile; the shared core surface remains the eight `workit_*`
-operation families (the orchestration tool is adapter-owned, not a ninth
-family).
+launch/cancel/reconcile; the shared core surface remains the seven `workit_*`
+operation families plus read-only `workit_context` (the orchestration tool is
+adapter-owned, not an eighth family).
 
 </details>
 
@@ -559,30 +566,26 @@ gate.
 ## Configuration and boundaries
 
 Host setup stays in the selected platform's native configuration. The shared
-MCP provider keeps read-only inspection usable without an attested caller and
-returns `capability_unavailable` for authority-sensitive mutations when the
-host cannot prove the caller boundary.
+MCP provider exposes the families present, keeps read-only inspection usable
+without an attested caller, and returns `capability_unavailable` for mutations
+from unattested callers.
 
-On Pi and the CLI, optional Git, hosting, YouTrack, and documentation effects use one-time
-approved action reservations and host-observed settlement on the existing
-host-owned effect surfaces. A concrete call must match the exact canonical
-operation/target/payload approved by the native host; prose or substring
-matches never authorize it. Missing credentials leave unrelated core work
-usable, while an uncertain remote outcome blocks blind retry. Pi
-uses native approval receipts; the CLI `workit action` route shows the exact
-descriptor and requires an interactive TTY confirmation. A headless CLI call
-(including `--confirm` without a TTY) returns `needs_input`, while the
-caller-unattested MCP surface keeps optional mutations unavailable. Time
-entries require a duration supplied or confirmed by the user.
+Authority for Git, forge, YouTrack and documentation effects is the host's own
+permission system plus the per-workspace
+[autonomy grants](#autonomy-grants-per-workspace). A host deny always wins, and
+Workit adds no consent prompts of its own: task pause/resume/close, worker
+cancel and state import run without one, and `--confirm` on task families is
+accepted and ignored. Missing credentials leave unrelated core work usable,
+while an uncertain remote outcome blocks blind retry.
 
 For routine authorized branch and commit work, use native host Git/shell tools
 when managed coordination or outcome reconciliation is unnecessary. Inspect the
 target checkout's conventions first; native permissions apply. There is no need
 to start a Workit task just to commit, and a local commit does not require PR
 readiness or task-closure paperwork. Never switch execution paths to evade a
-denial or retry an uncertain managed effect. OpenCode uses native
+denial or retry an uncertain effect. OpenCode uses native
 host tools for mutations; Workit exposes read-only `workit_context` and shared
-coordination tools, with no managed external-action executor. See the
+coordination tools. See the
 [action reliability specification](docs/adaptive-workit/reliability-spec.md).
 Newly assessed bounded behavior changes keep behavioral checks and self-review.
 Security, data, public-contract and operational consequences, the thorough
@@ -590,13 +593,7 @@ preference, and explicit project requirements still require stronger review;
 existing stored policies are not silently changed.
 
 The task directory holds coordination state; it need not be a Git repository.
-Git and hosting actions accept `cwd` in their payload to select any existing
-checkout for that action, with no prior registration or shared parent required.
-The canonical target, relevant Git/remote state, and effective `gh`/`glab`
-account are checked again before a remote effect. The coordinator owns the
-Workit writer; an independently held writer in the target checkout remains a
-real conflict, and managed actions hold that checkout's Workit metadata lock
-through effect settlement so a writer cannot acquire mid-action. A metadata
+A metadata
 lock whose owner is gone (dead or reused pid) is reclaimed by the next write.
 A lock records its host plus, on Linux, its pid namespace and boot id; a lock
 from another host, container namespace, boot, or an older Workit version cannot
@@ -607,7 +604,7 @@ blocked writes for over 30 s and prints `workit doctor --fix-lock --force --yes`
 plugins and the MCP server, 2 s in the CLI) and then returns the retryable
 `busy` code, never `recovery_required`. `workit doctor` warns about a stale
 lock and `workit doctor --fix-lock` clears it under the same reclaim guard
-writers use; `--force` (with `--yes` or an interactive confirmation) is the
+every write uses; `--force` (with `--yes` or an interactive confirmation) is the
 explicit escape hatch for a lock whose owner cannot be verified.
 
 Task state (3.0) lives in the git common directory, `.git/workit/` (shared by
@@ -628,41 +625,34 @@ applies to it, so agents never manage ids. A detached HEAD is keyed by its
 worktree and a non-git directory by its path. An explicit `task start` takes
 the branch over; closing a task frees it. The first CLI command (or any
 write) in a checkout with a 2.x `.workit/` store migrates it into the new
-store, under the 2.x store's own lock (never while a 2.x writer holds it),
+store, under the 2.x store's own lock (never while a 2.x process holds it),
 keeps a backup under `legacy/`, and prints one line; host hooks never migrate
 and say to run `workit task status`. `.workit/workspace.json` becomes a
 marker, written into every checkout 3.0 writes for, that 2.x runtimes reject
 with an upgrade message instead of starting a second store. Migrated tasks keep their ids and are not bound
 to a branch: `workit task status --all` lists them and `workit task adopt <id>`
 binds one. New branch
-setup shows both the existing local base SHA and remote base SHA in its
-approval, rechecks them, and creates only from an approved commit. Workit does
+setup shows both the existing local base SHA and remote base SHA, rechecks
+them, and creates only from that commit. Workit does
 not reject Git-valid branch names or user commit
 messages on formatting grounds. OS tasks can run from non-Git directories;
 Git-only actions report unavailable when no checkout is selected.
 
-Hosted merge rechecks the approved target immediately before the `gh`/`glab`
+Hosted merge rechecks the target immediately before the `gh`/`glab`
 merge call. Those APIs condition on the PR/MR source SHA but do not support an
 atomic target-branch condition, so a retarget after the recheck can still
 redirect the merge.
 
-Workit's hosted `hosting.pull_request` action pre-binds the approved source SHA
-and verifies the provider PR head before reporting success. The provider create
+`workit pr create` binds the pushed source SHA and verifies the provider PR head before reporting success. The provider create
 APIs accept a branch name, so a concurrent push could still create a request
 from a newer commit between the pre-check and the create call; that residual
 non-atomic source-SHA race is accepted (decision `ae03c569`).
 
-`hosting.delete_branch` deletes a remote branch only when its live tip exactly
-matches the head of a merged PR/MR. It binds the branch, remote and merged PR
-to an approved action and uses Git's server-side `--force-with-lease` to refuse
-a changed tip even after the last read; it never guesses from Git
-ancestry after a squash merge.
-
 Examples:
 
 - `context.read` with `{ "kind": "release", "range": "HEAD~1...HEAD" }`
-- comment-only `youtrack.update` with `{ "issueId": "ABC-1", "markdown": "..." }`
-- `changelog.apply` with `{ "entries": [{ "category": "Added", "text": "..." }] }`
+- `workit youtrack note ABC-1 --markdown "..."`
+- `workit changelog apply --entries '[{ "category": "Added", "text": "..." }]'`
 
 OpenCode exposes the read-only `workit_context` tool with a flat payload.
 Pi and the CLI expose the read-only `context.read` operation for `git`, `pr`, `youtrack`, `github_issue`, `gitlab_issue`,
@@ -671,11 +661,8 @@ same title/body/state triple through authenticated `gh` and `glab` (GitLab
 subgroups kept); they fail closed when the CLI is unavailable or not logged in.
 Release context includes a deterministic Markdown
 draft derived from the selected commits and changed files. Affected context
-identifies documentation files; an actual edit still uses the existing native
-editor (for example `changelog.apply`) with writer checks and host-observed
-evidence. The CLI can identify affected files but does not claim to edit them
-without its native action route. Context reads require no approval or writer
-and never change the checkout or Workit metadata. Cursor and Codex receive the
+identifies documentation files; an actual edit uses the host's native editor or
+`workit changelog apply`. Context reads require no approval and never change the checkout or Workit metadata. Cursor and Codex receive the
 same contexts as read-only MCP resources under `workit://context/{kind}`; the
 workspace always comes from the host-owned session context.
 
@@ -683,34 +670,44 @@ Candidate snapshots in Git workspaces use Git's ignore-aware file inventory, so
 ignored dependency/build trees are not recursively scanned; non-Git folders
 retain recursive inventory behavior.
 
-### Auto-approval (opt-in per workspace)
+### Autonomy grants (per workspace)
 
-Branch, commit, push, PR, and merge approvals can run without questions once a
-workspace opts in. Add `autoApprove` (action classes, or `true` for all five)
-and `vcs.account` (required for push) to the workspace entry in
-`~/.config/workit/workspaces.json` — absent means manual as before:
+Grants live only in your workspace entry in `~/.config/workit/workspaces.json`
+(never in repository files):
 
 ```json
 { "name": "personal", "glob": "/home/you/projects/personal/**",
   "vcs": { "provider": "github", "account": "you" },
-  "autoApprove": ["branch", "commit", "push", "pr", "merge"] }
+  "autonomy": { "push": true, "pr": true, "merge": "verified",
+                "release": false, "rerun": true },
+  "defaultEndpoint": "pr" }
 ```
 
 When workspace globs overlap, Workit selects the match with the most literal
 path components. Equally specific matches require an explicit workspace name.
 
-Each auto action still records a reservation with the exact binding; the
-standing rule is re-read live, so removing the flag restores questions
-immediately. A `git.commit` plan list (`plan_steps`/`plan_branch`) also
-records with no question and returns its commit count. Guardrails are code, not prose: protected branches never push,
-open PRs, or merge sources; push identity must match the area account;
-publish/release stay gated. Product decisions, waivers, and close outcomes
-still require a human.
+- Defaults: `push`, `pr` and `rerun` are allowed; `merge` and `release` need an
+  explicit grant. Without one the ceiling is: stack opened, CI green,
+  independently verified ("verified, ready").
+- `merge: "verified"` merges only with an accepted independent verdict;
+  `merge: true` merges without one.
+- `defaultEndpoint` (`commit` by default, or `pr`) is where an unnamed request
+  stops; skills read it.
+- Explicit grants require `vcs.account` for forge effects. Protected-branch
+  pushes stay denied, and a host deny always wins.
+- A legacy `autoApprove: true | [classes]` is read once as grants (the merge
+  class becomes `merge: true`; branch and commit are dropped) and folded into
+  `autonomy` on the next `workit grant` write.
 
-Plan lists accept commit-message strings plus typed `{ "branch": "name" }` and
-`{ "pr": true }` steps. A later commit with the same message or push of the
-same branch resolves its current Git target and is a new effect; retries of an
-uncertain local Git action reconcile the repository state before running again.
+Manage grants with `workit grant show|set|unset`. Raising a grant (or
+`defaultEndpoint` from `commit` to `pr`) requires you at an interactive terminal
+typing the workspace name to confirm; headless and agent shells (no TTY, or
+`CLAUDECODE`, `OPENCODE`, `CODEX_SANDBOX`, `CURSOR_AGENT` or `PI_CODING_AGENT`
+set) are refused with `blocked` and the command to run yourself. Lowering is
+always allowed, and each write keeps `workspaces.json.bak`.
+
+Because grants are the real ceiling, allowlist only read verbs (for example
+`workit pr status` and `workit grant show`) in host permission configs.
 
 ## Development
 

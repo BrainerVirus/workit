@@ -7,7 +7,7 @@ import {
   detectCommitFlavor,
   matchCommitFlavor,
 } from "@/packages/workit-core/src/core/commit-flavors";
-import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
+import { lintCommitMessage } from "@/packages/workit-core/src/git/ops";
 import { resolveCommitPolicy } from "@/packages/workit-core/src/core/config";
 import type { ToolkitConfig } from "@/packages/workit-core/src/core/config";
 
@@ -97,7 +97,7 @@ const withConfig = (preset: string, extra: Record<string, unknown>, run: () => v
   }
 };
 
-test("git.commit validates against the matched workspace flavor", () => {
+test("commit lint validates against the matched workspace flavor", () => {
   const root = repoWithStaged(["feat(a): seed"]);
   const dir = mkdtempSync(join(tmpdir(), "workit-commit-config-"));
   const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
@@ -109,23 +109,22 @@ test("git.commit validates against the matched workspace flavor", () => {
     writeFileSync(
       join(dir, "workspaces.json"),
       JSON.stringify({
-        workspaces: [{ name: "t", glob: `${root}/**`, commitPolicy: { preset: "gitmoji" } }],
+        workspaces: [
+          {
+            name: "t",
+            glob: `${root}/**`,
+            commitPolicy: { preset: "gitmoji" },
+          },
+        ],
       }),
     );
     process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
-    expect(
-      resolveExternalActionRequest(root, {
-        operation: "git.commit",
-        payload: { message: "✨ emoji wins here" },
-      }),
-    ).toMatchObject({ ok: true });
-    const other = resolveExternalActionRequest(root, {
-      operation: "git.commit",
-      payload: { message: "fix(auth): global flavor loses here" },
+    expect(lintCommitMessage(root, "✨ emoji wins here")).toMatchObject({
+      ok: true,
     });
+    const other = lintCommitMessage(root, "fix(auth): global flavor loses here");
     expect(other).toMatchObject({
       ok: false,
-      code: "permission_denied",
       error: expect.stringContaining("commit_style"),
     });
   } finally {
@@ -136,23 +135,16 @@ test("git.commit validates against the matched workspace flavor", () => {
   }
 });
 
-test("git.commit resolve rejects messages outside the configured flavor", () => {
+test("commit lint rejects messages outside the configured flavor", () => {
   const root = repoWithStaged(["feat(a): seed"]);
   try {
     withConfig("conventional", {}, () => {
-      const bad = resolveExternalActionRequest(root, {
-        operation: "git.commit",
-        payload: { message: "wip stuff" },
-      });
+      const bad = lintCommitMessage(root, "wip stuff");
       expect(bad).toMatchObject({
         ok: false,
-        code: "permission_denied",
         error: expect.stringContaining("commit_style"),
       });
-      const good = resolveExternalActionRequest(root, {
-        operation: "git.commit",
-        payload: { message: "fix(auth): handle empty input" },
-      });
+      const good = lintCommitMessage(root, "fix(auth): handle empty input");
       expect(good.ok).toBe(true);
     });
   } finally {
@@ -160,59 +152,32 @@ test("git.commit resolve rejects messages outside the configured flavor", () => 
   }
 });
 
-test("git.commit resolve honors ticket-prefix preset and custom patterns", () => {
+test("commit lint honors ticket-prefix preset and custom patterns", () => {
   const root = repoWithStaged(["TST-1 seed"]);
   try {
     withConfig("ticket-prefix", {}, () => {
-      expect(
-        resolveExternalActionRequest(root, {
-          operation: "git.commit",
-          payload: { message: "TST-123 rename column" },
-        }).ok,
-      ).toBe(true);
-      expect(
-        resolveExternalActionRequest(root, {
-          operation: "git.commit",
-          payload: { message: "feat(x): wrong flavor" },
-        }),
-      ).toMatchObject({ ok: false, code: "permission_denied" });
+      expect(lintCommitMessage(root, "TST-123 rename column").ok).toBe(true);
+      expect(lintCommitMessage(root, "feat(x): wrong flavor")).toMatchObject({
+        ok: false,
+      });
     });
     withConfig("custom", { pattern: "^JIRA-\\d+" }, () => {
-      expect(
-        resolveExternalActionRequest(root, {
-          operation: "git.commit",
-          payload: { message: "JIRA-9 done" },
-        }).ok,
-      ).toBe(true);
+      expect(lintCommitMessage(root, "JIRA-9 done").ok).toBe(true);
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("git.commit resolve auto-detects repo flavor with conventional fallback", () => {
+test("commit lint auto-detects repo flavor with conventional fallback", () => {
   const conventionalRoot = repoWithStaged(["feat(a): one", "fix(b): two", "chore(c): three"]);
   const mixedRoot = repoWithStaged(["feat(a): one", "random words", "another line", "✨ emoji"]);
   try {
     withConfig("auto", {}, () => {
-      expect(
-        resolveExternalActionRequest(conventionalRoot, {
-          operation: "git.commit",
-          payload: { message: "docs(d): detected" },
-        }).ok,
-      ).toBe(true);
-      expect(
-        resolveExternalActionRequest(conventionalRoot, {
-          operation: "git.commit",
-          payload: { message: "free words" },
-        }).ok,
-      ).toBe(true);
-      expect(
-        resolveExternalActionRequest(mixedRoot, {
-          operation: "git.commit",
-          payload: { message: "fix(e): fallback" },
-        }).ok,
-      ).toBe(true);
+      expect(lintCommitMessage(conventionalRoot, "docs(d): detected").ok).toBe(true);
+      // The lint holds `auto` to the detected history flavor.
+      expect(lintCommitMessage(conventionalRoot, "free words").ok).toBe(false);
+      expect(lintCommitMessage(mixedRoot, "fix(e): fallback").ok).toBe(true);
     });
   } finally {
     rmSync(conventionalRoot, { recursive: true, force: true });

@@ -236,6 +236,33 @@ test("ci rerun: once per head, then blocked (exit 3) unless --force", async () =
   expect(runner.calls.filter((call) => call.method === "POST")).toHaveLength(2);
 });
 
+test("ci rerun: an explicit rerun=false grant blocks it with the grant command and posts nothing", async () => {
+  const { repo, runner } = setup();
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "w",
+          glob: `${repo.root.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "github" },
+          autonomy: { rerun: false },
+        },
+      ],
+    }),
+  );
+  const result = await run(["ci", "rerun", "--failed", "--reason", "flake", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json()).toMatchObject({
+    ok: false,
+    code: "blocked",
+    error: 'grant_required: rerun is not granted for workspace "w"',
+    data: { reason: "grant_required" },
+  });
+  expect(result.json().unblock).toContain("workit grant set w rerun=true");
+  expect(runner.calls.some((call) => call.method === "POST")).toBe(false);
+});
+
 test("an identity mismatch blocks every forge verb with exit 3", async () => {
   const { repo, runner } = setup();
   writeFileSync(

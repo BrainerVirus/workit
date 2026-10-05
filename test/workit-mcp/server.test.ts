@@ -120,7 +120,7 @@ test("unattested MCP callers see only read-only actions", async () => {
   }
 });
 
-test("MCP exposes a read-only context resource without adding a ninth tool", async () => {
+test("MCP exposes a read-only context resource without adding an eighth tool", async () => {
   const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-context-"));
   spawnSync("git", ["init", "-q"], { cwd: workspaceRoot });
   spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: workspaceRoot });
@@ -133,7 +133,7 @@ test("MCP exposes a read-only context resource without adding a ninth tool", asy
   });
   try {
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(8);
+    expect(listed.tools).toHaveLength(7);
     const resources = await client.listResources();
     expect(resources.resources.map((resource) => resource.uri)).toContain("workit://context/git");
     expect(resources.resources.map((resource) => resource.uri)).toContain(

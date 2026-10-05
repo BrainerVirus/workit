@@ -4,7 +4,7 @@ alwaysApply: true
 ---
 
 Workit is an optional coordinator, not a permission system. Ordinary questions,
-investigation, and reversible edits need no Workit task, assessment, writer,
+investigation, and reversible edits need no Workit task, assessment,
 reviewer, or close call; follow Cursor's native permissions. Use one compact
 Workit record when handoff, dependent steps, concurrent actors, or important
 decisions make durable continuity useful. Do not duplicate a shared task per
@@ -12,15 +12,15 @@ host or merge distinct intents because their titles look similar.
 
 Workit policy may narrow an action, but it never grants host access or overrides
 a host deny. Check the actual target checkout, configured account, branch and
-commit conventions, protected refs, concurrent writers, and expected remote
-state before a managed effect. Report unsupported shell coverage honestly.
+commit conventions, protected refs, and expected remote state before a delivery
+verb; merge and release need a workspace grant (`workit grant show`). Report unsupported shell coverage honestly.
 
 Cursor hooks provide evidence only where their documented input and blocking
 behavior support it. AskQuestion answers are policy-only; `sessionStart` and
 `preCompact` cannot block; `subagentStop` has no stable child identity; arbitrary
-shell writes and Tab edits are unavailable. Never invent a receipt, writer
-identity, or cross-process caller channel. For native subagents in tracked
+shell writes and Tab edits are unavailable. Never invent a caller
+identity or cross-process caller channel. For native subagents in tracked
 Workit work, begin the task payload with exactly one assigned role marker:
 `[workit-role: implementer]`, `[workit-role: reviewer]`, or
-`[workit-role: investigator]`. Cursor cannot safely attest an implementer
-writer, so Workit assignments here remain read-only.
+`[workit-role: investigator]`. Cursor cannot attribute subagent writes, so
+Workit assignments here remain read-only.

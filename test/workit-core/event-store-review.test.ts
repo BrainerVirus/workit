@@ -70,7 +70,6 @@ const provenance: Provenance = {
   host: "workit_cli",
   session: { kind: "host", host: "workit_cli", handle: "cli" },
   workerId: null,
-  receipts: [],
 };
 const coreFor = (root: string, store = new TaskStore(root)) =>
   new WorkitCore(store, {
@@ -85,7 +84,11 @@ const cli = async (cwd: string, argv: string[]) => {
   let stderr = "";
   const code = await main(argv, {
     cwd,
-    env: { ...process.env, WORKIT_SESSION_ID: "s-agent", WORKFLOW_WORKSPACE_ROOT: "" },
+    env: {
+      ...process.env,
+      WORKIT_SESSION_ID: "s-agent",
+      WORKFLOW_WORKSPACE_ROOT: "",
+    },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   });
@@ -100,7 +103,11 @@ const v2Fixture = (root: string, count: number): string[] => {
     const started = core.task(
       taskStartRequest({
         expectedWorkspaceRevision: undefined,
-        intent: { objective: `task ${index}`, scope: scope(), authorityRefs: [ref()] },
+        intent: {
+          objective: `task ${index}`,
+          scope: scope(),
+          authorityRefs: [ref()],
+        },
       }),
     );
     if (!started.ok) throw new Error(started.error);
@@ -149,7 +156,10 @@ test("Given a migration interrupted after some tasks and a 2.x write to a migrat
   rmSync(path.join(root, ".workit"), { recursive: true, force: true });
   cpSync(pristine, path.join(root, ".workit"), { recursive: true });
   for (const id of ids.slice(4))
-    rmSync(path.join(storeDirOf(root), "tasks", id), { recursive: true, force: true });
+    rmSync(path.join(storeDirOf(root), "tasks", id), {
+      recursive: true,
+      force: true,
+    });
   // The 2.x runtime is still in charge of the checkout and writes.
   v2Write(root, ids[1], "written by 2.x after the interrupted run");
   const again = await cli(root, ["task", "status", "--all", "--json"]);
@@ -166,7 +176,9 @@ test("Given a migration interrupted after some tasks and a 2.x write to a migrat
   ]);
   for (const id of ids) expect(new TaskStore(root).readTask(id).ok).toBe(true);
   // The backup holds the latest 2.x bytes.
-  const backup = readdirSync(path.join(storeDirOf(root), "legacy"), { recursive: true })
+  const backup = readdirSync(path.join(storeDirOf(root), "legacy"), {
+    recursive: true,
+  })
     .map(String)
     .find((name) => name.endsWith(`${ids[1]}.json`))!;
   expect(readFileSync(path.join(storeDirOf(root), "legacy", backup), "utf8")).toContain(
@@ -226,7 +238,11 @@ test("a 2.x store created after 3.0 (e.g. after git clean) joins the checkout's 
   if (!workspace.ok || !workspace.data) throw new Error("workspace");
   // A 2.x runtime starts its own store with its own workspace id.
   rmSync(path.join(root, ".workit", "workspace.json"));
-  const record = { ...first.data.task, id: crypto.randomUUID(), workspaceId: crypto.randomUUID() };
+  const record = {
+    ...first.data.task,
+    id: crypto.randomUUID(),
+    workspaceId: crypto.randomUUID(),
+  };
   mkdirSync(path.join(root, ".workit", "tasks"), { recursive: true });
   writeFileSync(
     path.join(root, ".workit", "workspace.json"),
@@ -244,7 +260,10 @@ test("3.0 writes the 2.x marker into every git checkout it writes for", () => {
   const root = repo();
   new TaskStore(root).implicitTask({ provenance, create: true });
   const marker = JSON.parse(readFileSync(path.join(root, ".workit", "workspace.json"), "utf8"));
-  expect(marker).toMatchObject({ store: { format: "workit-store" }, critical: ["store"] });
+  expect(marker).toMatchObject({
+    store: { format: "workit-store" },
+    critical: ["store"],
+  });
   expect(readFileSync(path.join(root, ".workit", ".gitignore"), "utf8")).toBe("*\n");
   expect(git(root, "status", "--porcelain")).toBe("");
 });
@@ -327,7 +346,11 @@ test("duplicate open tasks on one key: the oldest is used and task status names 
   const first = new TaskStore(root).implicitTask({ provenance, create: true });
   if (!first.ok || !first.data) throw new Error("setup");
   // A duplicate as an older (2.x-era) race could leave it: same key, newer.
-  const copy = { ...first.data.task, id: crypto.randomUUID(), createdAt: "2099-01-01T00:00:00Z" };
+  const copy = {
+    ...first.data.task,
+    id: crypto.randomUUID(),
+    createdAt: "2099-01-01T00:00:00Z",
+  };
   const dir = path.join(storeDirOf(root), "tasks", copy.id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -404,7 +427,10 @@ test("during a rebase (detached HEAD) the key is the branch being rebased", () =
     "refs/heads/feature/rebase\n",
   );
   const during = new TaskStore(root).currentKey();
-  expect(during).toMatchObject({ ok: true, data: { key: "feature/rebase", kind: "branch" } });
+  expect(during).toMatchObject({
+    ok: true,
+    data: { key: "feature/rebase", kind: "branch" },
+  });
   expect(before.ok && during.ok && before.data.key).toBe(during.ok ? during.data.key : "");
 });
 
@@ -478,7 +504,10 @@ test("a reused blob is refreshed, so gc's grace period protects it", () => {
   let revision = task.data.task.revision;
   const push = () => {
     const written = store.mutateTask(task.data!.task.id, revision, (current) =>
-      success(null, null, { ...current, candidates: [...current.candidates, captured.data] }),
+      success(null, null, {
+        ...current,
+        candidates: [...current.candidates, captured.data],
+      }),
     );
     if (!written.ok) throw new Error(written.error);
     revision = written.data.revision;
@@ -585,7 +614,9 @@ test("a 2.x write that slips in between migrating a task and stubbing its file i
   const root = repo("feature/cas");
   const [id] = v2Fixture(root, 1);
   const store = new TaskStore(root, { migrateOnRead: true });
-  const internals = store as unknown as { openTask: (...args: unknown[]) => unknown };
+  const internals = store as unknown as {
+    openTask: (...args: unknown[]) => unknown;
+  };
   const openTask = internals.openTask.bind(store);
   internals.openTask = (...args) => {
     const result = openTask(...args);

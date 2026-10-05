@@ -67,7 +67,6 @@ const observationVerifier = (): NativeWorkerVerifier => ({
       host: actualCaller.host,
       session: expected.session,
       workerId: expected.workerId,
-      receipts: [{ kind: "host", host: actualCaller.host, handle: "native-event" }],
     }),
 });
 
@@ -105,7 +104,10 @@ test("reconcile anchors observations on fresh reads, not the passed view", () =>
         report: null,
       },
     } as never;
-    const staleView = { ...viewOf(value), task: { ...value.task, workers: [worker] } } as TaskView;
+    const staleView = {
+      ...viewOf(value),
+      task: { ...value.task, workers: [worker] },
+    } as TaskView;
     const progressed = value.core.task({
       schemaVersion: 1,
       action: "progress",
@@ -151,7 +153,11 @@ test("rewriteRecordRefs drops, nulls, and remaps by schema shape", () => {
   const rename = (ref: Ref): Ref | null =>
     ref.kind === "record" ? { ...ref, id: "00000000-0000-4000-8000-0000000000e2" } : ref;
   expect(rewriteRecordRefs([record], z.array(refSchema), rename)).toEqual([
-    { kind: "record", collection: "evidence", id: "00000000-0000-4000-8000-0000000000e2" },
+    {
+      kind: "record",
+      collection: "evidence",
+      id: "00000000-0000-4000-8000-0000000000e2",
+    },
   ]);
   expect(refSchema.safeParse(keep).success).toBe(true);
 });
@@ -170,19 +176,54 @@ test("exported bundles carry no host sessions, receipts, or unmapped refs", () =
       assessment: {
         facts: [],
         signals: {
-          approachUnknown: { value: false, basis: "inferred", reason: "k", refs: [] },
-          productChoiceOpen: { value: false, basis: "inferred", reason: "k", refs: [] },
+          approachUnknown: {
+            value: false,
+            basis: "inferred",
+            reason: "k",
+            refs: [],
+          },
+          productChoiceOpen: {
+            value: false,
+            basis: "inferred",
+            reason: "k",
+            refs: [],
+          },
           behaviorChange: {
             value: true,
             basis: "observed",
             reason: "b",
             refs: [{ kind: "external", url: "https://example.test/x" }],
           },
-          mechanicalLowRisk: { value: false, basis: "inferred", reason: "k", refs: [] },
-          durableAgreementNeeded: { value: false, basis: "inferred", reason: "k", refs: [] },
-          coordinationPlanNeeded: { value: false, basis: "inferred", reason: "k", refs: [] },
-          helperUseful: { value: false, basis: "inferred", reason: "k", refs: [] },
-          testFirstPractical: { value: false, basis: "inferred", reason: "k", refs: [] },
+          mechanicalLowRisk: {
+            value: false,
+            basis: "inferred",
+            reason: "k",
+            refs: [],
+          },
+          durableAgreementNeeded: {
+            value: false,
+            basis: "inferred",
+            reason: "k",
+            refs: [],
+          },
+          coordinationPlanNeeded: {
+            value: false,
+            basis: "inferred",
+            reason: "k",
+            refs: [],
+          },
+          helperUseful: {
+            value: false,
+            basis: "inferred",
+            reason: "k",
+            refs: [],
+          },
+          testFirstPractical: {
+            value: false,
+            basis: "inferred",
+            reason: "k",
+            refs: [],
+          },
         },
         consequences: [],
         verification: [],

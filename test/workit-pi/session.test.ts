@@ -179,19 +179,6 @@ test("Pi write interception passes writes through and keeps the trust gate", asy
   };
   const task = new WorkitCore(store, operationContext).task(taskStartRequest());
   if (!task.ok) throw new Error(task.error);
-  const taskRecord = store.readTask((task.data as { id: string }).id);
-  if (!taskRecord.ok) throw new Error(taskRecord.error);
-  const workspace = store.readWorkspace();
-  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
-  const acquired = new WorkitCore(store, operationContext).writer({
-    schemaVersion: 1,
-    action: "acquire",
-    taskId: taskRecord.data.id,
-    expectedRevision: taskRecord.data.revision,
-    expectedWorkspaceRevision: workspace.data.revision,
-    workerId: null,
-  });
-  if (!acquired.ok) throw new Error(acquired.error);
   const allowed = await handlers.get("tool_call")!(
     { type: "tool_call", toolCallId: "1", toolName: "write", input: { path: "src/file.ts" } },
     ctx,

@@ -333,10 +333,11 @@ export const collectCapabilityMatrix = (): CapabilityCell[] => {
   }
   cells.push({
     host: "cli",
-    capability: "interactive_decision",
+    capability: "grant_raise_confirmation",
     assurance: "enforced",
     tested: true,
-    reason: "TTY confirmation route; headless returns needs_input",
+    reason:
+      "workit grant set confirms autonomy raises on a TTY by workspace name; headless or agent-run raises are refused",
   });
   return cells;
 };

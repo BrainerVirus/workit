@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { runActionCommand, runTaskCommand } from "@/packages/workit-cli/src/task";
+import { runTaskCommand } from "@/packages/workit-cli/src/task";
+import { readExternalContext } from "@/packages/workit-core/src/core";
 import {
   authorizeLiveEvaluation,
   authorizedBudget,
@@ -190,12 +191,9 @@ test("CA-32 compiled and uncompiled operation schemas agree on the shared corpus
 
 test("capability matrix is generated from adapter fixtures", () => {
   const cells = collectCapabilityMatrix();
-  expect(cells.some((c) => c.host === "opencode" && c.capability === "interactive_decision")).toBe(
-    true,
-  );
-  expect(cells.some((c) => c.host === "cursor" && c.capability === "interactive_decision")).toBe(
-    true,
-  );
+  expect(cells.some((c) => c.host === "opencode")).toBe(true);
+  expect(cells.some((c) => c.host === "cursor")).toBe(true);
+  expect(cells.some((c) => c.capability === "interactive_decision")).toBe(false);
   expect(cells.some((c) => c.host === "cli")).toBe(true);
   for (const cell of cells) {
     expect(baselinePassesCapability(cell)).toBe(true);
@@ -266,7 +264,7 @@ test("targeted rerun includes affected scenarios and identities", () => {
   expect(reruns.length).toBeGreaterThan(5);
 });
 
-test("CLI command-level acceptance inspects task and action surfaces without model sessions", async () => {
+test("CLI command-level acceptance inspects task and read-only context surfaces without model sessions", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-accept-cli-"));
   const scope = { description: "acceptance", paths: ["."], exclusions: [] };
   const intent = { objective: "CA acceptance", scope, authorityRefs: [] };
@@ -309,14 +307,7 @@ test("CLI command-level acceptance inspects task and action surfaces without mod
       }),
     ).toBe(0);
     expect(JSON.parse(inspected.read().stdout)).toMatchObject({ ok: true, schemaVersion: 1 });
-    const preview = capture();
-    expect(
-      await runActionCommand(
-        ["context.read", "--payload", JSON.stringify({ kind: "git" }), "--json"],
-        { cwd: root, out: preview.out, err: preview.err, stdinIsTTY: () => false },
-      ),
-    ).toBe(0);
-    expect(JSON.parse(preview.read().stdout)).toMatchObject({
+    expect(await readExternalContext(root, { kind: "git" })).toMatchObject({
       ok: true,
       data: { kind: "git", context: { workspace_root: root } },
     });

@@ -20,7 +20,10 @@ const normalizedIssues = (issues: any[]) =>
   }));
 
 test("rejects unknown payload fields instead of stripping them", () => {
-  const result = parseOperation("task", { ...taskStartRequest(), surprise: true });
+  const result = parseOperation("task", {
+    ...taskStartRequest(),
+    surprise: true,
+  });
   expect(result).toMatchObject({ ok: false, code: "invalid_input" });
   if (!result.ok) expect(result.details.fields?.[0]?.path).toBe("surprise");
 });
@@ -37,7 +40,10 @@ test("compiled operation parsing preserves the canonical schema result", () => {
         (fixture, index, all) =>
           all.findIndex((other) => other.family === fixture.family) === index,
       )
-      .map((fixture) => ({ ...fixture, input: { ...fixture.input, action: "unknown" } as never })),
+      .map((fixture) => ({
+        ...fixture,
+        input: { ...fixture.input, action: "unknown" } as never,
+      })),
   ];
   for (const fixture of corpus) {
     const raw = operationSchemas[fixture.family].safeParse(fixture.input);
@@ -66,7 +72,14 @@ test("candidate files enforce path, digest, and executable invariants", () => {
     id: "a".repeat(64),
     scope: { description: "x", paths: ["."], exclusions: [] },
     completeness: "known",
-    files: [{ path: "../escape", kind: "absent", digest: "a".repeat(64), executable: false }],
+    files: [
+      {
+        path: "../escape",
+        kind: "absent",
+        digest: "a".repeat(64),
+        executable: false,
+      },
+    ],
     environment: [],
     head: null,
   };
@@ -82,10 +95,20 @@ test("candidate files enforce path, digest, and executable invariants", () => {
 
 test("signals require unknown values to use unknown basis and booleans to use known basis", () => {
   expect(
-    signalSchema.safeParse({ value: "unknown", basis: "inferred", reason: "x", refs: [] }).success,
+    signalSchema.safeParse({
+      value: "unknown",
+      basis: "inferred",
+      reason: "x",
+      refs: [],
+    }).success,
   ).toBe(false);
   expect(
-    signalSchema.safeParse({ value: true, basis: "unknown", reason: "x", refs: [] }).success,
+    signalSchema.safeParse({
+      value: true,
+      basis: "unknown",
+      reason: "x",
+      refs: [],
+    }).success,
   ).toBe(false);
 });
 
@@ -95,23 +118,31 @@ test("omitted revisions parse and default inside the engine", () => {
     ...common,
     action: "report",
     workerId: id,
-    report: { outcome: "completed", summary: "x", evidenceIds: [], findingIds: [] },
+    report: {
+      outcome: "completed",
+      summary: "x",
+      evidenceIds: [],
+      findingIds: [],
+    },
   };
   expect(parseOperation("worker", report).ok).toBe(true);
   expect(parseOperation("worker", { ...report, expectedWorkspaceRevision: id }).ok).toBe(true);
-  const release = {
+  const pause = {
     schemaVersion: 1,
-    action: "release",
+    action: "pause",
     taskId: id,
     expectedWorkspaceRevision: id,
     reason: "x",
   };
-  expect(parseOperation("writer", release).ok).toBe(true);
-  expect(parseOperation("writer", { ...release, expectedRevision: id }).ok).toBe(true);
+  expect(parseOperation("task", pause).ok).toBe(true);
+  expect(parseOperation("task", { ...pause, expectedRevision: id }).ok).toBe(true);
   // Explicit null is still rejected where a current revision is required.
   expect(
-    parseOperation("writer", { ...release, expectedRevision: id, expectedWorkspaceRevision: null })
-      .ok,
+    parseOperation("task", {
+      ...pause,
+      expectedRevision: id,
+      expectedWorkspaceRevision: null,
+    }).ok,
   ).toBe(false);
   expect(
     parseOperation("task", {
@@ -137,8 +168,18 @@ test("candidate and requirement digests ignore unordered scope and inventory ord
     scope: { description: "x", paths: ["b", "a"], exclusions: ["z", "y"] },
     completeness: "known" as const,
     files: [
-      { path: "b", kind: "file" as const, digest: "b".repeat(64), executable: false },
-      { path: "a", kind: "symlink" as const, digest: "c".repeat(64), executable: null },
+      {
+        path: "b",
+        kind: "file" as const,
+        digest: "b".repeat(64),
+        executable: false,
+      },
+      {
+        path: "a",
+        kind: "symlink" as const,
+        digest: "c".repeat(64),
+        executable: null,
+      },
     ],
     environment: [
       { name: "B", value: "2", refs: [] },
@@ -178,8 +219,18 @@ test("candidate identity ordering is independent of localeCompare", () => {
     scope: { description: "x", paths: ["ä", "z"], exclusions: [] },
     completeness: "known" as const,
     files: [
-      { path: "ä", kind: "file" as const, digest: "a".repeat(64), executable: false },
-      { path: "z", kind: "file" as const, digest: "b".repeat(64), executable: false },
+      {
+        path: "ä",
+        kind: "file" as const,
+        digest: "a".repeat(64),
+        executable: false,
+      },
+      {
+        path: "z",
+        kind: "file" as const,
+        digest: "b".repeat(64),
+        executable: false,
+      },
     ],
     environment: [
       { name: "ä", value: "1", refs: [] },
@@ -208,7 +259,10 @@ test("candidate schema rejects a shape-valid forged identity", () => {
     environment: [],
     head: null,
   };
-  const valid = { ...content, id: candidateDigest({ ...content, id: "0".repeat(64) }) };
+  const valid = {
+    ...content,
+    id: candidateDigest({ ...content, id: "0".repeat(64) }),
+  };
   expect(candidateSchema.safeParse(valid).success).toBe(true);
   expect(candidateSchema.safeParse({ ...valid, id: "f".repeat(64) }).success).toBe(false);
 });
@@ -236,17 +290,32 @@ test("rejects malformed versions, paths, numbers, Unicode, duplicates, UUIDs, di
   expect(
     parseOperation("task", {
       ...base,
-      intent: { ...base.intent, scope: { ...base.intent.scope, paths: ["/tmp"] } },
+      intent: {
+        ...base.intent,
+        scope: { ...base.intent.scope, paths: ["/tmp"] },
+      },
     }).ok,
   ).toBe(true);
   for (const input of [
     { ...base, schemaVersion: 2 },
-    { ...base, intent: { ...base.intent, scope: { ...base.intent.scope, paths: ["../escape"] } } },
-    { ...base, intent: { ...base.intent, objective: Number.MAX_SAFE_INTEGER + 1 } },
+    {
+      ...base,
+      intent: {
+        ...base.intent,
+        scope: { ...base.intent.scope, paths: ["../escape"] },
+      },
+    },
+    {
+      ...base,
+      intent: { ...base.intent, objective: Number.MAX_SAFE_INTEGER + 1 },
+    },
     { ...base, intent: { ...base.intent, objective: "\ud800" } },
     {
       ...base,
-      intent: { ...base.intent, authorityRefs: [{ kind: "file", path: "a", digest: "bad" }] },
+      intent: {
+        ...base.intent,
+        authorityRefs: [{ kind: "file", path: "a", digest: "bad" }],
+      },
     },
   ]) {
     expect(parseOperation("task", input).ok).toBe(false);

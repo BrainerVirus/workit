@@ -24,8 +24,6 @@ export {
   candidateDigest,
   requirementId,
   rewriteRecordRefs,
-  BINDING_QUESTION_BUDGET,
-  workitBindingQuestionIssue,
 } from "./core/task-contract";
 export type {
   OperationFamily,
@@ -74,76 +72,7 @@ export type { MethodId, SelectedMethod } from "./core/methods";
 export { shellBranchPolicyViolation, shellBranchTarget } from "./core/route-intent";
 export { classifyBranchDirt } from "./core/branch";
 export type { BranchDirt } from "./core/branch";
-export {
-  AUTO_CLASSES,
-  autoApproves,
-  operationAutoClass,
-  resolveAutoApproval,
-  standingApprovalLive,
-  standingAutoApplies,
-  standingAutoBinding,
-  standingReceiptFor,
-  verifyStandingApproval,
-} from "./core/auto-approval";
-export type {
-  AutoApproval,
-  AutoClass,
-  StandingAutoBinding,
-  StandingReceipt,
-} from "./core/auto-approval";
 export { bundleHashOfFile, isEphemeralCachePath, sha256Hex } from "./core/runtime-identity";
-export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
-export { normalizeChainSteps, chainStepKey } from "./core/authority";
-export type { ChainStep } from "./core/authority";
-export {
-  createAuthorizedExternalActionRunner,
-  runAuthorizedExternalAction,
-} from "./core/external-action";
-export type {
-  AuthorizedActionInput,
-  ExternalActionResult,
-  ExternalActionRunner,
-  ExternalActionEffect,
-  ExternalActionBinding,
-  NativeExternalActionObservation,
-  ExternalActionRequest,
-  ExternalActionOperation,
-} from "./core/external-action";
-export {
-  approvedBranchSetupIntent,
-  approvedChainStep,
-  approvedExternalAction,
-  approvedPlanCommit,
-  branchSetupIntent,
-  chainStepBinding,
-  planCommitDescriptor,
-  planCommitBinding,
-  commitMessageFromDescriptor,
-  externalActionState,
-  priorExternalAction,
-  priorResolvedDrift,
-  externalActionRef,
-  externalActionDescriptor,
-  externalActionHelp,
-  externalActionJsonSchema,
-  externalActionSchema,
-  planReservationLength,
-  externalActionRequest,
-  matchesNativeExternalAction,
-  nativeExternalActionObservation,
-  readNativeExternalActionObservation,
-} from "./core/external-action";
-export type {
-  ActionReservation,
-  NativeAuthorityContext,
-  NativeAuthorityVerifier,
-  NativeActionVerification,
-  NativeReconciliationVerification,
-  NativeDecisionVerification,
-  ReserveActionInput,
-  SettleActionInput,
-  ReconcileActionInput,
-} from "./core/authority";
 export {
   captureCandidate,
   checkPin,
@@ -156,20 +85,14 @@ export {
 export type { CandidateEnvironment, ClosureEvaluation } from "./core/task-evaluation";
 export { WorkitCore } from "./core/task-engine";
 export type { OperationContext } from "./core/task-engine";
-export { assertProductWriteAllowed } from "./core/workers";
 export type {
-  CallerContext,
   HostSession,
-  NativeWorkerDispatchVerification,
   NativeWorkerObservation,
   NativeWorkerVerification,
   NativeWorkerVerifier,
-  ProductWriteInput,
-  WorkerDispatch,
-  WorkerDispatchCommit,
-  WorkerDispatchRequest,
-  WorkerDispatchStage,
 } from "./core/workers";
+export { contextReadJsonSchema, parseContextRead, readExternalContext } from "./core/context-read";
+export type { ContextReadPayload } from "./core/context-read";
 
 export type Result<T> =
   | { ok: true; data: T; error: null }

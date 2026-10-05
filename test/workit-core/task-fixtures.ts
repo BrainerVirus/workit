@@ -37,14 +37,54 @@ export const caller = (overrides: Partial<Caller> = {}): Caller => ({
 export const assessment = (overrides: Partial<Assessment> = {}): Assessment => ({
   facts: [],
   signals: {
-    approachUnknown: { value: "unknown", basis: "unknown", reason: "not assessed", refs: [] },
-    productChoiceOpen: { value: "unknown", basis: "unknown", reason: "not assessed", refs: [] },
-    behaviorChange: { value: false, basis: "inferred", reason: "fixture", refs: [] },
-    mechanicalLowRisk: { value: true, basis: "inferred", reason: "fixture", refs: [] },
-    durableAgreementNeeded: { value: false, basis: "inferred", reason: "fixture", refs: [] },
-    coordinationPlanNeeded: { value: false, basis: "inferred", reason: "fixture", refs: [] },
-    helperUseful: { value: false, basis: "inferred", reason: "fixture", refs: [] },
-    testFirstPractical: { value: true, basis: "inferred", reason: "fixture", refs: [] },
+    approachUnknown: {
+      value: "unknown",
+      basis: "unknown",
+      reason: "not assessed",
+      refs: [],
+    },
+    productChoiceOpen: {
+      value: "unknown",
+      basis: "unknown",
+      reason: "not assessed",
+      refs: [],
+    },
+    behaviorChange: {
+      value: false,
+      basis: "inferred",
+      reason: "fixture",
+      refs: [],
+    },
+    mechanicalLowRisk: {
+      value: true,
+      basis: "inferred",
+      reason: "fixture",
+      refs: [],
+    },
+    durableAgreementNeeded: {
+      value: false,
+      basis: "inferred",
+      reason: "fixture",
+      refs: [],
+    },
+    coordinationPlanNeeded: {
+      value: false,
+      basis: "inferred",
+      reason: "fixture",
+      refs: [],
+    },
+    helperUseful: {
+      value: false,
+      basis: "inferred",
+      reason: "fixture",
+      refs: [],
+    },
+    testFirstPractical: {
+      value: true,
+      basis: "inferred",
+      reason: "fixture",
+      refs: [],
+    },
   },
   consequences: [],
   verification: [],
@@ -116,16 +156,19 @@ const binding = {
   workspaceId: id,
   scope: scope(),
   presented: "yes",
-  approvedContent: "yes",
   contentRefs: [],
 };
-const workerReport = { outcome: "completed", summary: "x", evidenceIds: [], findingIds: [] };
+const workerReport = {
+  outcome: "completed",
+  summary: "x",
+  evidenceIds: [],
+  findingIds: [],
+};
 const provenance = {
   kind: "host_observed",
   host: "workit_cli",
   session: null,
   workerId: null,
-  receipts: [],
 };
 const task = {
   schemaVersion: 1,
@@ -135,7 +178,12 @@ const task = {
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
   origin: null,
-  intent: { id, recordedAt: "2026-01-01T00:00:00Z", provenance, data: taskStartRequest().intent },
+  intent: {
+    id,
+    recordedAt: "2026-01-01T00:00:00Z",
+    provenance,
+    data: taskStartRequest().intent,
+  },
   constraints: [],
   status: "active",
   closure: null,
@@ -150,7 +198,10 @@ const task = {
   workers: [],
 };
 
-export const operationCorpus = (): Array<{ family: OperationFamily; input: OperationRequest }> => [
+export const operationCorpus = (): Array<{
+  family: OperationFamily;
+  input: OperationRequest;
+}> => [
   ...[
     taskStartRequest(),
     operation("list"),
@@ -177,7 +228,6 @@ export const operationCorpus = (): Array<{ family: OperationFamily; input: Opera
       taskId,
       expectedRevision: revision,
       expectedWorkspaceRevision: revision,
-      authorityRefs: [],
     }),
     operation("close", {
       taskId,
@@ -189,13 +239,21 @@ export const operationCorpus = (): Array<{ family: OperationFamily; input: Opera
     }),
   ].map((input) => ({ family: "task" as const, input })),
   ...[
-    operation("assess", { taskId, expectedRevision: revision, assessment: assessment() }),
+    operation("assess", {
+      taskId,
+      expectedRevision: revision,
+      assessment: assessment(),
+    }),
     operation("preview", { taskId, assessment: assessment() }),
     operation("explain", { taskId }),
   ].map((input) => ({ family: "policy" as const, input })),
   {
     family: "evidence",
-    input: operation("record", { taskId, expectedRevision: revision, evidence }),
+    input: operation("record", {
+      taskId,
+      expectedRevision: revision,
+      evidence,
+    }),
   },
   ...[
     operation("record", {
@@ -226,7 +284,12 @@ export const operationCorpus = (): Array<{ family: OperationFamily; input: Opera
       response: "approved",
       requirementIds: [digest],
     }),
-    operation("revoke", { taskId, expectedRevision: revision, decisionId: id, reason: "x" }),
+    operation("revoke", {
+      taskId,
+      expectedRevision: revision,
+      decisionId: id,
+      reason: "x",
+    }),
   ].map((input) => ({ family: "decision" as const, input })),
   ...[
     operation("assign", {
@@ -259,20 +322,6 @@ export const operationCorpus = (): Array<{ family: OperationFamily; input: Opera
     }),
   ].map((input) => ({ family: "worker" as const, input })),
   ...[
-    operation("acquire", {
-      taskId,
-      expectedRevision: revision,
-      expectedWorkspaceRevision: revision,
-      workerId: null,
-    }),
-    operation("release", {
-      taskId,
-      expectedRevision: revision,
-      expectedWorkspaceRevision: revision,
-      reason: "x",
-    }),
-  ].map((input) => ({ family: "writer" as const, input })),
-  ...[
     operation("export", { taskId }),
     operation("import", {
       expectedWorkspaceRevision: null,
@@ -283,7 +332,6 @@ export const operationCorpus = (): Array<{ family: OperationFamily; input: Opera
         task,
         digest,
       },
-      authorityRefs: [],
     }),
   ].map((input) => ({ family: "state" as const, input })),
 ];

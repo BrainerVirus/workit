@@ -20,8 +20,8 @@ Skip this method for a precise, settled request.
    choices into one small round. If an authorized reversible default works,
    state it and proceed.
 5. Record a settled choice once in the existing conversation or task context.
-   A discussion decision is knowledge; never fabricate a native permission
-   receipt or reopen it without new evidence.
+   A discussion decision is knowledge, never a permission; do not reopen it
+   without new evidence.
 6. Create durable documentation only when requested or when the decision needs
    a future reader. Brainstorming alone does not require a spec.
 

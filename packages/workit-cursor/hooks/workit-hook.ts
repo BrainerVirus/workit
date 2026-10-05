@@ -117,7 +117,6 @@ const workerVerifier = (input: CursorHookInput): NativeWorkerVerifier => ({
       host: "cursor" as const,
       session: hostRef(subagentId),
       workerId: expected.workerId,
-      receipts: [hostRef(parentId)],
     });
   },
 });
@@ -148,7 +147,9 @@ const handleSubagentStart = (input: CursorHookInput, root: string) => {
   const assignmentRole = explicitRole(input.task);
   if (!assignmentRole) return deny("active Workit subagents require an explicit role marker");
   if (assignmentRole.role === "implementer")
-    return deny("Cursor implementer delegation is unavailable without attested writer identity");
+    return deny(
+      "Cursor implementer delegation is unavailable: subagent writes are not attributable to the worker",
+    );
   const store = new TaskStore(root);
   const core = new WorkitCore(store, {
     ...contextFor(root, input.parent_conversation_id, null, { subagentStart: true }),

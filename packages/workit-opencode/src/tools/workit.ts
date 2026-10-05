@@ -1,12 +1,10 @@
 import {
+  OPERATION_FAMILIES,
   WorkitCore,
   TaskStore,
-  canonicalJson,
   failure,
   parseOperation,
-  sha256,
   success,
-  workitBindingQuestionIssue,
   type OperationFamily,
   type OperationContext,
   type ContractResult as Result,
@@ -14,7 +12,6 @@ import {
   type TaskRecord,
   type Worker,
 } from "@brainervirus/workit-core/src/core";
-import type { NativeAuthorityVerifier } from "@brainervirus/workit-core/src/core/authority";
 import type { NativeWorkerVerifier } from "@brainervirus/workit-core/src/core/workers";
 import { createContextTool } from "./context";
 
@@ -34,281 +31,6 @@ const sessionParent = (session: unknown): string | undefined | null => {
 };
 
 export type DirectChildren = Map<string, string>;
-export type ReceiptExpectation = Partial<
-  Pick<
-    Receipt,
-    | "callID"
-    | "selectedLabel"
-    | "selectedDescription"
-    | "decisionPurpose"
-    | "contentDigest"
-    | "question"
-  >
->;
-
-type Question = {
-  question?: unknown;
-  header?: unknown;
-  options?: unknown;
-};
-
-type Receipt = {
-  sessionID: string;
-  callID: string;
-  selectedLabel: string;
-  selectedDescription: string;
-  decisionPurpose: "design" | "action" | "limitation" | "preference";
-  question: string;
-  purpose: "decision" | "worker" | "resume" | "pause" | "complete";
-  contentDigest: string;
-  recordedAt: number;
-  sequence: number;
-};
-
-const decisionOptions = (options: unknown) =>
-  Array.isArray(options) &&
-  options.length === 2 &&
-  options.every(
-    (option) =>
-      typeof option === "object" &&
-      option !== null &&
-      typeof (option as { label?: unknown }).label === "string" &&
-      typeof (option as { description?: unknown }).description === "string" &&
-      Object.keys(option).length === 2 &&
-      Object.keys(option).every((key) => key === "label" || key === "description"),
-  )
-    ? (options as Array<{ label: string; description: string }>)
-    : null;
-
-/** Host UIs may append qualifiers like "(Recommended)" to option labels. */
-const normalizeReceiptLabel = (label: string): string =>
-  label
-    .trim()
-    .replace(/(?:\s*[([]\s*[^()[\]]*\s*[)\]]\s*)+$/u, "")
-    .trim()
-    .toLowerCase();
-
-const purposeForQuestion = (question: Question): Receipt["purpose"] | undefined => {
-  const header = typeof question.header === "string" ? question.header.trim() : "";
-  const options = decisionOptions(question.options);
-  const decisionPurpose = header.match(
-    /^Workit decision: (design|action|limitation|preference)$/,
-  )?.[1];
-  if (
-    decisionPurpose &&
-    options !== null &&
-    normalizeReceiptLabel(options[0].label) === "approved" &&
-    normalizeReceiptLabel(options[1].label) === "rejected"
-  )
-    return "decision";
-  return undefined;
-};
-
-/** Host-only receipt queue. The OpenCode V2 adapter announces each native
- * question at `tool.execute.before` (recordRequest) and mints its receipt from
- * the completed question result at `tool.execute.after` (record). */
-export class NativeReceiptStore {
-  #receipts = new Map<string, Receipt[]>();
-  #observations = new WeakSet();
-  #reservations = new WeakMap<object, Receipt>();
-  // Call IDs stay recorded until this host receipt store is unloaded.
-  #callSequences = new Map<string, number>();
-  #seenCalls = new Set<string>();
-  #now: () => number;
-  #sequence = 0;
-
-  constructor(options: { now?: () => number } = {}) {
-    this.#now = options.now ?? Date.now;
-  }
-
-  get sequence(): number {
-    return this.#sequence;
-  }
-
-  private callKey(sessionID: string, callID: string): string {
-    return `${sessionID.length}:${sessionID}${callID}`;
-  }
-
-  private rememberSequence(key: string, sequence: number): void {
-    if (!this.#callSequences.has(key)) this.#callSequences.set(key, sequence);
-  }
-
-  /** Order an asked native question by when it was asked, not answered. */
-  recordRequest(requestID: string, sessionID: string, callID: string): void {
-    if (typeof requestID !== "string" || !requestID) return;
-    const key = this.callKey(sessionID, callID);
-    if (!this.#callSequences.has(key)) this.rememberSequence(key, ++this.#sequence);
-  }
-
-  private mint(sessionID: string, callID: string, questions: unknown, answers: unknown): boolean {
-    const answer =
-      Array.isArray(answers) &&
-      answers.length === 1 &&
-      Array.isArray(answers[0]) &&
-      answers[0].length === 1 &&
-      typeof answers[0][0] === "string"
-        ? answers[0][0]
-        : undefined;
-    if (typeof answer !== "string" || !answer.trim()) return false;
-    if (!Array.isArray(questions) || questions.length !== 1) return false;
-    const question = questions[0] as Question;
-    if (!question || typeof question !== "object") return false;
-    const purpose = purposeForQuestion(question);
-    if (!purpose) return false;
-    const options = decisionOptions(question.options);
-    if (!options) return false;
-    const selected = options.find(
-      (option) => normalizeReceiptLabel(option.label) === normalizeReceiptLabel(answer),
-    );
-    if (!selected) return false;
-    const decisionPurpose =
-      typeof question.header === "string"
-        ? question.header.match(/^Workit decision: (design|action|limitation|preference)$/)?.[1]
-        : undefined;
-    if (!decisionPurpose) return false;
-    const key = this.callKey(sessionID, callID);
-    if (this.#seenCalls.has(key)) return true;
-    const receiptSequence = this.#callSequences.get(key) ?? ++this.#sequence;
-    this.rememberSequence(key, receiptSequence);
-    this.#seenCalls.add(key);
-    const content = decisionContent(
-      decisionPurpose as Receipt["decisionPurpose"],
-      typeof question.question === "string" ? question.question : "",
-      options[0].description,
-    );
-    const receipt: Receipt = {
-      sessionID,
-      callID,
-      selectedLabel: answer,
-      selectedDescription: selected.description,
-      decisionPurpose: decisionPurpose as Receipt["decisionPurpose"],
-      question: content.question,
-      purpose,
-      contentDigest: sha256(canonicalJson(content)),
-      recordedAt: this.#now(),
-      sequence: receiptSequence,
-    };
-    const queue = this.#receipts.get(sessionID) ?? [];
-    queue.push(receipt);
-    if (queue.length > 16) queue.shift();
-    this.#receipts.set(sessionID, queue);
-    return true;
-  }
-
-  record(
-    input: { sessionID: string; callID: string; args?: unknown },
-    output: { metadata?: unknown },
-  ): void {
-    const answers = (output.metadata as { answers?: unknown } | undefined)?.answers;
-    const args = input.args as { questions?: unknown } | undefined;
-    this.mint(input.sessionID, input.callID, args?.questions, answers);
-  }
-
-  reserve(
-    sessionID: string,
-    purpose: Receipt["purpose"],
-    expected: ReceiptExpectation = {},
-  ): { ok: true; receipt: Receipt; observation: object } | { ok: false; error: string } {
-    const queue = this.#receipts.get(sessionID) ?? [];
-    for (let i = queue.length - 1; i >= 0; i -= 1) {
-      const receipt = queue[i];
-      if (receipt.purpose !== purpose) continue;
-      if (
-        (expected.callID !== undefined && receipt.callID !== expected.callID) ||
-        (expected.selectedLabel !== undefined &&
-          normalizeReceiptLabel(receipt.selectedLabel) !==
-            normalizeReceiptLabel(expected.selectedLabel)) ||
-        (expected.selectedDescription !== undefined &&
-          receipt.selectedDescription !== expected.selectedDescription) ||
-        (expected.decisionPurpose !== undefined &&
-          receipt.decisionPurpose !== expected.decisionPurpose) ||
-        (expected.contentDigest !== undefined &&
-          receipt.contentDigest !== expected.contentDigest) ||
-        (expected.question !== undefined && receipt.question !== expected.question)
-      )
-        continue;
-      const observation = { receipt };
-      this.#observations.add(observation);
-      this.#reservations.set(observation, receipt);
-      return { ok: true, receipt, observation };
-    }
-    return {
-      ok: false,
-      error: (() => {
-        const samePurpose = queue.filter((receipt) => receipt.purpose === purpose);
-        const base = "permission_denied: no matching native question receipt for this purpose";
-        if (samePurpose.length) {
-          const closest = samePurpose[samePurpose.length - 1];
-          const reasons: string[] = [];
-          if (
-            expected.selectedLabel !== undefined &&
-            normalizeReceiptLabel(closest.selectedLabel) !==
-              normalizeReceiptLabel(expected.selectedLabel)
-          )
-            reasons.push(`selected answer was "${closest.selectedLabel}"`);
-          if (
-            expected.selectedDescription !== undefined &&
-            closest.selectedDescription !== expected.selectedDescription
-          )
-            reasons.push("approved option description did not match");
-          if (
-            expected.decisionPurpose !== undefined &&
-            closest.decisionPurpose !== expected.decisionPurpose
-          )
-            reasons.push(`purpose was "${closest.decisionPurpose}"`);
-          if (
-            expected.contentDigest !== undefined &&
-            closest.contentDigest !== expected.contentDigest
-          )
-            reasons.push("question or approved content differed from the asked receipt");
-          if (reasons.length) return `${base} (closest ${purpose} receipt: ${reasons.join("; ")})`;
-        }
-        return (
-          `${base}; if the user already settled this choice in conversation, do not ask ` +
-          `again — record the settled choice in task progress and reassess so the ` +
-          `requirement can retire. Otherwise ask once, receipt-shaped: header ` +
-          `\`Workit decision: <purpose>\`, the same label repeated in the question text, ` +
-          `with exactly approved/rejected options`
-        );
-      })(),
-    };
-  }
-
-  commit(observation: object): boolean {
-    const receipt = this.#reservations.get(observation);
-    this.#reservations.delete(observation);
-    if (!receipt) return false;
-    const queue = this.#receipts.get(receipt.sessionID) ?? [];
-    const index = queue.indexOf(receipt);
-    if (index < 0) return false;
-    queue.splice(index, 1);
-    if (!queue.length) this.#receipts.delete(receipt.sessionID);
-    return true;
-  }
-
-  consume(
-    sessionID: string,
-    purpose: Receipt["purpose"],
-    expected: ReceiptExpectation = {},
-  ): { ok: true; receipt: Receipt; observation: object } | { ok: false; error: string } {
-    const reserved = this.reserve(sessionID, purpose, expected);
-    if (reserved.ok) this.commit(reserved.observation);
-    return reserved;
-  }
-
-  verify(observation: unknown, sessionID: string, purpose: Receipt["purpose"]): Receipt | null {
-    if (
-      typeof observation !== "object" ||
-      observation === null ||
-      !this.#observations.has(observation)
-    )
-      return null;
-    const receipt = (observation as { receipt?: Receipt }).receipt;
-    if (!receipt || receipt.sessionID !== sessionID || receipt.purpose !== purpose) return null;
-    return receipt;
-  }
-}
-
 const output = (value: unknown): string => JSON.stringify(value, null, 2);
 
 const sessionData = async (client: SessionLookup | undefined, sessionID: string) => {
@@ -325,18 +47,10 @@ const sessionData = async (client: SessionLookup | undefined, sessionID: string)
 };
 
 import { sameWorkspace } from "../shared/session";
-import { decisionContent } from "../shared/decision-content";
 
 const hostRef = (handle: string) => ({ kind: "host" as const, host: "opencode" as const, handle });
 
 export const opencodeCapabilities = () => [
-  {
-    name: "interactive_decision",
-    surface: "question",
-    assurance: "enforced" as const,
-    reason: "native question answers are observed by tool.execute.after and consumed once",
-    refs: [hostRef("question")],
-  },
   {
     name: "direct_child_workers",
     surface: "task",
@@ -369,44 +83,6 @@ export const opencodeCapabilities = () => [
   },
 ];
 
-export const nativeAuthority = (
-  receipts: NativeReceiptStore,
-  actor: string,
-): NativeAuthorityVerifier => ({
-  verifyDecision: ({ observation, expected, caller }) => {
-    const receipt = receipts.verify(observation, actor, "decision");
-    const expectedApproved =
-      typeof (expected.binding as { displayed?: unknown }).displayed === "string"
-        ? (expected.binding as { displayed: string }).displayed
-        : expected.binding.approvedContent;
-    if (
-      !receipt ||
-      caller.host !== "opencode" ||
-      caller.actor !== actor ||
-      normalizeReceiptLabel(receipt.selectedLabel) !== normalizeReceiptLabel(expected.response) ||
-      (expected.response === "approved" && receipt.selectedDescription !== expectedApproved) ||
-      receipt.decisionPurpose !== expected.purpose ||
-      receipt.contentDigest !==
-        sha256(
-          canonicalJson(
-            decisionContent(expected.purpose, expected.binding.presented, expectedApproved),
-          ),
-        ) ||
-      receipt.question !== expected.binding.presented
-    )
-      return failure("permission_denied", "native decision receipt is not bound to this session");
-    return success(null, null, {
-      kind: "host_observed",
-      host: "opencode",
-      session: hostRef(actor),
-      workerId: null,
-      receipts: [hostRef(receipt.callID)],
-    });
-  },
-  verifyAction: () =>
-    failure("capability_unavailable", "OpenCode managed external actions are unavailable"),
-});
-
 export const nativeWorkerFor = (
   directChildren: DirectChildren,
   actor: string,
@@ -421,49 +97,6 @@ export const nativeWorkerFor = (
       host: "opencode",
       session: hostRef(expected.session.handle),
       workerId: expected.workerId,
-      receipts: [hostRef(expected.session.handle)],
-    });
-  },
-});
-
-/**
- * One coordinator `task` call. The record is in-memory only, so a plugin restart
- * loses it and an unbound worker can never be resolved from persisted state alone.
- */
-export type DispatchGeneration = {
-  coordinator: string;
-  callID: string;
-  childCreated: boolean;
-  noChild: boolean;
-};
-
-export const nativeDispatchFor = (
-  directChildren: DirectChildren,
-  actor: string,
-  generation: DispatchGeneration,
-): NativeWorkerVerifier => ({
-  ...nativeWorkerFor(directChildren, actor),
-  verifyDispatch: ({ expected, caller, observation }) => {
-    const observed = observation as { stage?: unknown; sessionID?: unknown; callID?: unknown };
-    if (
-      caller.host !== "opencode" ||
-      caller.actor !== actor ||
-      generation.coordinator !== actor ||
-      typeof observed !== "object" ||
-      observed === null ||
-      observed.stage !== expected.stage ||
-      observed.sessionID !== actor ||
-      observed.callID !== generation.callID
-    )
-      return failure("permission_denied", "OpenCode task dispatch was not observed");
-    if (expected.stage === "not_started" && (generation.childCreated || !generation.noChild))
-      return failure("permission_denied", "OpenCode task call did not prove that no child exists");
-    return success(null, null, {
-      kind: "host_observed",
-      host: "opencode",
-      session: hostRef(actor),
-      workerId: expected.workerId,
-      receipts: [hostRef(`task:${generation.callID}`)],
     });
   },
 });
@@ -511,13 +144,11 @@ export type NativeTool = {
 
 export type WorkitToolOptions = {
   client?: SessionLookup;
-  receipts?: NativeReceiptStore;
   directChildren?: DirectChildren;
 };
 
 export const createWorkitTools = ({
   client,
-  receipts = new NativeReceiptStore(),
   directChildren = new Map<string, string>(),
 }: WorkitToolOptions = {}): Record<string, NativeTool> => {
   const make = (family: OperationFamily): NativeTool => ({
@@ -548,72 +179,19 @@ export const createWorkitTools = ({
         constraints: [],
         now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
         workerId,
-        nativeAuthority: nativeAuthority(receipts, context.sessionID),
         nativeWorker: nativeWorkerFor(directChildren, context.sessionID),
       };
       const core = new WorkitCore(store, operationContext);
-      let result: Result<unknown>;
-      if (family === "decision" && (args as { action?: string }).action === "record") {
-        const decision = parsed.data as {
-          response: string;
-          purpose: Receipt["decisionPurpose"];
-          binding: { presented: string; approvedContent: string; displayed?: string };
-        };
-        // Stated choices settle without a native receipt: the user's words
-        // are the authority. Core restricts them to non-mutating purposes;
-        // action approvals always mint a receipt-shaped question first.
-        if (decision.response === "stated") {
-          result = core.observeDecision(parsed.data, undefined);
-          return output(result);
-        }
-        const budgetIssue = workitBindingQuestionIssue([
-          decisionContent(
-            decision.purpose,
-            decision.binding.presented,
-            decision.binding.approvedContent,
-          ),
-        ]);
-        if (budgetIssue) return output(failure("invalid_input", budgetIssue));
-        const expectation: ReceiptExpectation = {
-          selectedLabel: decision.response,
-          decisionPurpose: decision.purpose,
-          contentDigest: sha256(
-            canonicalJson(
-              decisionContent(
-                decision.purpose,
-                decision.binding.presented,
-                decision.binding.approvedContent,
-              ),
-            ),
-          ),
-          question: decision.binding.presented,
-        };
-        // The rejected option description is presentation text; only an
-        // approved answer binds the approved content bytes.
-        if (decision.response === "approved")
-          expectation.selectedDescription = decision.binding.approvedContent;
-        const observed = receipts.reserve(context.sessionID, "decision", expectation);
-        if (!observed.ok) return output(failure("permission_denied", observed.error));
-        result = core.observeDecision(parsed.data, observed.observation);
-        if (result.ok) {
-          receipts.commit(observed.observation);
-        }
-      } else {
-        const run = core[family] as unknown as (request: unknown) => Result<unknown>;
-        result = run.call(core, parsed.data);
-      }
+      const run = core[family] as unknown as (request: unknown) => Result<unknown>;
+      const result = run.call(core, parsed.data);
       return output(result);
     },
   });
   const tools = Object.fromEntries(
-    (
-      ["task", "policy", "evidence", "finding", "decision", "worker", "writer", "state"] as const
-    ).map((family) => [`workit_${family}`, make(family)]),
+    OPERATION_FAMILIES.map((family) => [`workit_${family}`, make(family)]),
   );
   return {
     ...tools,
     workit_context: createContextTool(),
   };
 };
-
-export type { Receipt };

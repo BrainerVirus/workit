@@ -13,7 +13,7 @@ established root cause.
 ## Method
 
 1. Inspect task scope, caller authority, candidate identity, existing evidence,
-   findings, and worker/writer state with shared `task`, `policy`, `evidence`, and
+   findings, and worker state with shared `task`, `policy`, `evidence`, and
    `finding` operations.
 2. Reproduce the failure at a stable behavioral boundary. Record observed facts,
    inferences, and unknowns with references; trace the failing value and all
@@ -21,8 +21,7 @@ established root cause.
 3. State the root-cause hypothesis and the smallest in-scope fix. Write a focused
    regression at the boundary when practical, then run RED and GREEN through
    `workit check <name>` so the results are observed, not reported.
-4. Acquire writer authority through `writer` before mutation. Reconcile the
-   candidate, evidence, and findings after the change; investigate sibling paths
+4. Mutate within the host's own permissions. Reconcile the candidate, evidence, and findings after the change; investigate sibling paths
    and stale conclusions rather than assuming the first patch worked.
 
 Respect the user's scope and native authority. For a deterministic failure, make

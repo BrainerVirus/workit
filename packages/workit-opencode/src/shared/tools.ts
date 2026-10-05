@@ -2,7 +2,7 @@ import {
   OPERATION_FAMILIES,
   OPERATION_SCHEMA_DEPTH,
   boundedOperationJsonSchema,
-  externalActionJsonSchema,
+  contextReadJsonSchema,
   type OperationFamily,
 } from "@brainervirus/workit-core/src/core";
 
@@ -38,10 +38,10 @@ export const WORKIT_TOOL_CATALOG: readonly WorkitToolSpec[] = [
     description:
       "Read Git, pull request, YouTrack, issue, changelog, release, or affected-file context.",
     input: (() => {
-      const variants = (externalActionJsonSchema() as { oneOf: Array<Record<string, any>> }).oneOf;
-      const context = variants.find(
-        (variant) => variant.properties.operation.const === "context.read",
-      )!.properties.payload;
+      const context = contextReadJsonSchema() as {
+        properties: Record<string, unknown>;
+        required?: string[];
+      };
       return objectSchema(context.properties, context.required ?? []);
     })(),
   },

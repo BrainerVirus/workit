@@ -5,7 +5,7 @@ import path from "node:path";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permissions";
-import { enforceNativeWriter } from "@/packages/workit-pi/src/tools";
+import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
 import { handleCursorHook } from "@/packages/workit-cursor/hooks/workit-hook";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
@@ -26,7 +26,11 @@ beforeAll(() => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({
-      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+      branchPolicy: {
+        preset: "custom",
+        allowed: ["feature/*"],
+        protected: ["main"],
+      },
     }),
   );
 });
@@ -58,13 +62,18 @@ const startTask = (root: string, host: OperationContext["caller"]["host"]) => {
 
 // Each adapter returns its denial reason, or null when the command passes.
 const opencodeDenial = async (root: string, command: string): Promise<string | null> => {
-  const event = { action: "shell", resources: [command], effect: "allow", message: undefined };
+  const event = {
+    action: "shell",
+    resources: [command],
+    effect: "allow",
+    message: undefined,
+  };
   evaluateShellPermission(root, event);
   return event.effect === "deny" ? String(event.message) : null;
 };
 
 const piDenial = (root: string, command: string): string | null => {
-  const result = enforceNativeWriter(
+  const result = enforceToolPolicy(
     { toolName: "bash", input: { command } } as never,
     { cwd: root, isProjectTrusted: () => true } as never,
   ) as { block?: boolean; reason?: string } | undefined;
@@ -86,7 +95,10 @@ const codexResult = (root: string, command: string) => {
     tool_name: "bash",
     tool_input: { command },
   });
-  return result.hookSpecificOutput as { hookEventName: string; permissionDecision?: string };
+  return result.hookSpecificOutput as {
+    hookEventName: string;
+    permissionDecision?: string;
+  };
 };
 
 const codexDenies = (root: string, command: string): boolean => {
@@ -146,7 +158,9 @@ test("all adapters enforce only recognized noncompliant branch targets", async (
         expect(cursorDenies(root, command), `cursor ${command}`).toBe(denied);
         expect(claudeDenies(root, command), `claude_code ${command}`).toBe(denied);
       }
-      expect(codexResult(root, "git status --short")).toEqual({ hookEventName: "PreToolUse" });
+      expect(codexResult(root, "git status --short")).toEqual({
+        hookEventName: "PreToolUse",
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

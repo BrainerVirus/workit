@@ -3,7 +3,7 @@
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
 
-Workit native extension for Pi (stock 0.85.1 package contract) — eight core-backed operation tools, sixteen method skills, session/compaction continuity, and a coordinator that supervises fresh reviewer/investigator processes plus explicitly scoped implementers.
+Workit native extension for Pi (stock 0.85.1 package contract) — seven core-backed operation tools plus read-only `workit_context`, sixteen method skills, session/compaction continuity, and a coordinator that supervises fresh reviewer/investigator processes plus explicitly scoped implementers.
 
 ## Requirements
 
@@ -19,8 +19,8 @@ resolves extension packages in your setup.
 
 ## Notes
 
-- Only an observed child process may acquire the shared writer; cancellation or restart uncertainty blocks replacement ownership.
+- Supervised implementer workers run as observed child processes; they no longer acquire a checkout lease. Cancellation or restart uncertainty still blocks a replacement worker.
 - The extension is a workflow control, not an OS sandbox: a supported literal
   branch-creation command is checked against workspace naming policy; other
   shell forms stay under the host's native permission rules.
-- Approval uses native `ctx.ui.confirm`, or `needs_input` when headless.
+- Pi project trust still gates mutations. Git and forge effects are bounded by Pi's own permissions plus the workspace autonomy grants (`workit grant show`); Workit asks no consent prompts of its own.

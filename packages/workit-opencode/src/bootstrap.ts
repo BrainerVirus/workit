@@ -5,6 +5,6 @@ let cached: string | null | undefined;
 
 export const getWorkitBootstrap = (): string | null => {
   if (cached !== undefined) return cached;
-  cached = `${marker}\n${invariantBootstrap()}\nOpenCode Workit decisions use the native question header "Workit decision: <purpose>", the exact presented question, and exactly two options: approved (description = approved content) and rejected (description = Reject this decision).`;
+  cached = `${marker}\n${invariantBootstrap()}\nOn OpenCode, use native host tools for external mutations; workit_context is read-only and there is no managed external-action executor. Record a meaningful user choice with workit_decision directly; it needs no question.`;
   return cached;
 };

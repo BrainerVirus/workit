@@ -26,8 +26,13 @@ workit upgrade [--hosts=opencode,cursor,codex,pi] [--cli] [--preview | --apply -
 workit launch <opencode|cursor|codex|pi> [--auto-upgrade] [-- host arguments]
 workit doctor            # offline installation health report
 workit doctor --json     # machine-readable report
-workit <family> <action> [--payload <json|@file|->] [--task <id>] [--revision <uuid>] [--workspace-revision <uuid|null>] [--view full] [--actor <id>] [--confirm] [--json]
-workit action <operation> --payload <JSON> [--preview] [--confirm] [--task <id>] [--json]   # preview or run one approved external action
+workit <family> <action> [--payload <json|@file|->] [--task <id>] [--revision <uuid>] [--workspace-revision <uuid|null>] [--view full] [--actor <id>] [--json]
+workit grant show [<workspace>] [--all]              # effective autonomy grants
+workit grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr]
+workit grant unset <workspace> <kind>…
+workit youtrack note <ISSUE> (--markdown <t>|--file <p>) [--minutes n] [--date auto|YYYY-MM-DD]
+workit youtrack time|meeting <ISSUE> --minutes n [--text t] [--date …]
+workit changelog apply (--entries <JSON|@file|->|--normalize-only) [--path CHANGELOG.md] [--preview]
 workit handoff --task <id> [--json]                   # export task state and compact destination context
 workit check <name> | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--json] -- <cmd…>   # run a check, record CLI-observed evidence (exit = the command's)
 workit uninstall                           # remove host registrations (keeps ~/.config/workit)
@@ -36,7 +41,7 @@ workit                                     # help
 
 `workit init` guides you through: detected host selection, basic global config (locale, branch policy), optional advanced commit policy, YouTrack, VCS, workspaces (scoped hosting/tracker/branch/commit rules, profiles and release tracks), and project hygiene files. The wizard is a TTY application — `workit init` requires an interactive terminal and prints guidance (exiting nonzero) when stdin is not a TTY.
 
-Authenticate GitHub or GitLab with `gh auth login` or `glab auth login` before hosting actions; Workit does not need a second provider token file. `workit action` Git/hosting payloads accept `cwd` to target any checkout while task state stays in the session directory. Non-Git directories can host tasks for OS work; YouTrack keeps its own permanent token.
+Authenticate GitHub or GitLab with `gh auth login` or `glab auth login` before hosting actions; Workit does not need a second provider token file. Non-Git directories can host tasks for OS work; YouTrack keeps its own permanent token.
 
 The platforms step lists all four supported hosts. Installed tools are selected
 initially; absent tools are disabled. Select all available, clear all, or pick
@@ -71,15 +76,21 @@ or host-permission change is performed.
 
 `workit doctor` checks the offline installation health and exits nonzero when problems are found; `--json` prints the full report as JSON instead of the human-readable table.
 
-The task surface exposes the eight shared operation families (`task`, `policy`,
-`evidence`, `finding`, `decision`, `worker`, `writer`, and `state`) and their 24
-closed actions. Payloads can be inline JSON, a UTF-8 `@file`, or UTF-8 stdin
+The task surface exposes the seven shared operation families (`task`, `policy`,
+`evidence`, `finding`, `decision`, `worker`, and `state`) and their closed
+actions. Payloads can be inline JSON, a UTF-8 `@file`, or UTF-8 stdin
 with `-`; `--json` preserves the structured Result shape and exits nonzero for
-failures. Headless mutations that require consent use `--confirm` (agent-reported)
-or an observed TTY prompt; the action route additionally requires an
-interactive TTY — headless action calls return `needs_input` even with
-`--confirm`. `workit handoff --task` is read-only and refuses to
+failures. Task-family mutations ask no consent prompt; `--confirm` is accepted
+and ignored. `workit handoff --task` is read-only and refuses to
 emit a handoff when export and inspection revisions differ.
+
+Delivery authority is the host's own permission system plus per-workspace
+autonomy grants in `~/.config/workit/workspaces.json` (see the root README).
+`workit grant set` raises a grant only for a user at an interactive terminal who
+types the workspace name; headless or agent shells get `blocked` with the
+command to give the user. Lowering is always allowed, and writes keep a
+`workspaces.json.bak`. The `youtrack` and `changelog` verbs are gated by host
+permission only. Workit 5.0 removed `workit action` and the checkout lease verb.
 
 ## Behavior
 
