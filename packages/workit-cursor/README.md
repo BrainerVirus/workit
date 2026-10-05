@@ -47,7 +47,7 @@ npx @brainervirus/workit-cli init
 
 - MCP server exposing the seven shared operation families: `workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, and `workit_state` (read-only for unattested callers; mutations run through `node_modules/.bin/workit <family> <action> --json [--actor <session-id>]`).
 - One bounded native hook executable for session context, recognized product-write and shell interception, and native subagent lifecycle observations.
-- Sixteen canonical `workit-*` method skills and the `workit-contract` rule.
+- Eleven canonical `workit-*` method skills and the `workit-contract` rule.
 
 ## Host limitations
 
@@ -59,7 +59,7 @@ Cursor maps shared Workit operations through the shared MCP transport. AskQuesti
 - MCP server: `mcp.json`.
 - Session-start hook: `hooks/hooks-cursor.json`.
 - Rule: `rules/workit-contract.mdc`.
-- Skills: `skills/` (sixteen canonical Workit methods).
+- Skills: `skills/` (eleven canonical Workit methods).
 
 ## Runtime
 
@@ -83,13 +83,13 @@ The runtime runs from `@latest` with `--prefer-online` and `--min-release-age=0`
 | `mcp/` + `dist/mcp-server.js` | MCP server entry (built).                                     |
 | `hooks/`                      | session-start hook manifest.                                  |
 | `rules/workit-contract.mdc`   | Adaptive task contract and truthful Cursor capability limits. |
-| `skills/`                     | Sixteen canonical adaptive Workit method skills.               |
+| `skills/`                     | Eleven canonical adaptive Workit method skills.               |
 | `.cursor-plugin/plugin.json`  | authoritative plugin manifest.                                |
 
 ## Package scripts
 
 ```bash
-  bun run build   # bundle MCP + native hook entries and copy sixteen method skills
+  bun run build   # bundle MCP + native hook entries and copy eleven method skills
 ```
 
 From the repository root, `bun run validate:cursor-marketplace` validates the tracked Marketplace artifact against the official Cursor JSON schemas and clean-checkout invariants (component paths, frontmatter, logo, sanitized vendor parity, no ignored-`dist` runtime references).

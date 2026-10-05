@@ -98,7 +98,7 @@ test("given SessionStart source compact, context is restored with the Claude add
   expect(context).toContain("<workit-contract>");
   expect(context).toContain("<workit-task-context>");
   expect(context).toContain("restore after compaction");
-  expect(context).toContain("/workit:steer");
+  expect(context).toContain("/workit:shape");
   expect(readFileSync(envFile, "utf8")).toBe(
     "export WORKIT_HOST=claude_code\nexport WORKIT_SESSION_ID='claude-session-1'\n",
   );
@@ -179,6 +179,10 @@ test("SubagentStart gives the worktree implementer write guidance and keeps othe
     "other:implementer",
   ])
     expect(context(agent), agent).toContain("read-only/agent-guided");
+  // The plugin's judges get their own session for verdicts (author != verifier).
+  for (const agent of ["workit:reviewer", "workit:verifier"])
+    expect(context(agent), agent).toContain("--session claude-session-1:agent-1");
+  expect(context("Explore")).not.toContain("--session");
 });
 
 test("a malformed payload or a missing bundle fails open with an empty decision and a diagnostic", () => {

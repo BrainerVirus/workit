@@ -115,6 +115,22 @@ test("agents: verifier and reviewer are read-only, implementer runs in an isolat
   const implementer = frontmatter(path.join(agents, "implementer.md"));
   expect(implementer.isolation).toBe("worktree");
   expect(readFileSync(path.join(agents, "implementer.md"), "utf8")).toContain("goal, scope (files");
+  // Author is not verifier: the read-only agents record ledger verdicts, the
+  // implementer never verdicts its own work.
+  const body = (name: string) => readFileSync(path.join(agents, `${name}.md`), "utf8");
+  for (const name of ["verifier", "reviewer"])
+    expect(body(name), name).toContain("workit ledger verdict");
+  expect(body("verifier")).toMatch(/never pass `--self`/);
+  expect(body("implementer")).toContain("Never record a verdict on your own work");
+  expect(body("implementer")).not.toMatch(/workit ledger verdict/);
+  expect(body("implementer")).toContain("workit git branch");
+  // Subagents inherit the lead's (author's) WORKIT_SESSION_ID, so verdicts use
+  // the session the SubagentStart hook names.
+  for (const name of ["verifier", "reviewer"]) {
+    expect(body(name), name).toContain("--session <id>");
+    expect(body(name), name).not.toContain("--as ");
+  }
+  expect(body("implementer")).toContain("MODE: resume");
   // Plugin subagents may ignore these keys; the design forbids relying on them.
   for (const name of ["verifier", "reviewer", "implementer"]) {
     const meta = frontmatter(path.join(agents, `${name}.md`));
@@ -134,10 +150,11 @@ test("skills are generated from workit-core, namespaced without the workit- pref
       path.join(REPO, "packages", "workit-core", "skills", `workit-${name}`, "SKILL.md"),
       "utf8",
     );
-    const generated = readFileSync(file, "utf8");
-    expect(generated, name).toContain("## In Claude Code");
-    // The method body is the canonical one, untouched.
-    expect(generated, name).toContain(source.slice(source.indexOf("\n---\n") + 5).trim());
+    // Only the frontmatter name changes; host mapping lives in the session
+    // addendum, so the body (and its references/) is the canonical one.
+    expect(readFileSync(file, "utf8"), name).toBe(
+      source.replace(`name: workit-${name}`, `name: ${name}`),
+    );
   }
   const tracked = spawnSync("git", ["ls-files", "packages/workit-claude-code/skills"], {
     cwd: REPO,

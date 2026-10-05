@@ -1,0 +1,40 @@
+schema_version: "1.0"
+name: shape-grill
+description: >-
+  An open design request loads the shape skill, which grounds facts itself and
+  grills the open choices as one numbered round with a recommended answer each,
+  without writing a spec for a one-file change.
+tags: [skills, shape]
+context:
+  scaffold_script: ../scaffold/git-repo.sh
+execution:
+  prompt: >-
+    Let's brainstorm before changing anything. add() in add.ts currently
+    subtracts; that is a known bug we will fix separately. Beyond that fix,
+    should add() also accept strings like "2" and maybe arrays of numbers?
+    Grill me on the open choices, but do not edit any file yet.
+  max_turns: 10
+  allowed_tools: [Read, Grep, Glob, Bash, Skill]
+runs: 1
+graders:
+  - type: tool_used
+    name: shape-skill-loaded
+    tool: Skill
+    input_match: "shape"
+  - type: regex
+    name: numbered-questions
+    target: last_message
+    pattern: "Q1"
+  - type: regex
+    name: recommends-answers
+    target: last_message
+    pattern: "Recommended"
+    flags: i
+  - type: llm
+    name: grounds-and-grills
+    criteria: >-
+      The agent read add.ts itself instead of asking what it contains, and asks
+      the open product
+      choices (string inputs, arrays) as numbered questions in one round, each
+      with a recommended answer and a reason. It does not create a spec or
+      plan file and does not edit add.ts.

@@ -68,8 +68,8 @@ jobs:
           export HOME="$RUNNER_TEMP/claude-home" CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude-home/.claude"
           mkdir -p "$CLAUDE_CONFIG_DIR"
           "$RUNNER_TEMP/claude/node_modules/.bin/claude" plugin eval packages/workit-claude-code \
-            --trust-plugin --scaffold --allow-tools Bash \
-            --runs 1 -j 2 --max-cost-usd 2 --threshold 0.8 \
+            --trust-plugin --scaffold --allow-tools Bash Write Edit \
+            --runs 1 -j 2 --max-cost-usd 4 --threshold 0.8 \
             --no-publish --json "$RUNNER_TEMP/eval-results.json" \
             --output-dir "$RUNNER_TEMP/eval-out"
 

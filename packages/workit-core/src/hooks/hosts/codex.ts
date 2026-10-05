@@ -285,5 +285,5 @@ export const codexAdapter: HostAdapter = {
   },
   render,
   addendum: (input) =>
-    `<workit-codex-mutations>Codex MCP is read-only for unattested callers. Run the workit CLI for task mutations: node_modules/.bin/workit <family> <action> --json${input.session.id ? ` --actor ${input.session.id}` : ""}. Delivery (push, PR, merge) runs through workit git/pr/stack verbs under the workspace autonomy grants.</workit-codex-mutations>`,
+    `<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run workit verbs with the workit CLI on the shell (node_modules/.bin/workit, or npx -y @brainervirus/workit-cli): check, git branch|commit|push, pr, ci, stack, ledger, handoff; task-family mutations take --json${input.session.id ? ` --actor ${input.session.id}` : ""}. A verifier or reviewer records workit ledger verdict under a session the lead assigns (WORKIT_SESSION_ID=<lead>-v<n>), never the author's. Merge and release need a workspace grant (workit grant show); a question answer is not host permission.</workit-codex-mutations>`,
 };

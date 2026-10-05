@@ -1,13 +1,13 @@
 import type { Assurance, Capability, Dimension, Policy } from "./task-contract";
 
 export type MethodId =
-  | "workit-challenge"
-  | "workit-behavioral-tdd"
+  | "workit-shape"
+  | "workit-bdd"
   | "workit-review"
-  | "workit-plan"
   | "workit-implement"
+  | "workit-fanout"
   | "workit-debug"
-  | "workit-handoff"
+  | "workit-continue"
   | "workit-deslop";
 
 type MethodDefinition = {
@@ -16,15 +16,16 @@ type MethodDefinition = {
 };
 
 export const METHODS: Readonly<Record<MethodId, MethodDefinition>> = {
-  "workit-challenge": { dimensions: ["challenge", "decisions"] },
-  "workit-behavioral-tdd": { dimensions: ["testing"], ruleIds: ["mechanical-existing-checks"] },
+  "workit-shape": { dimensions: ["challenge", "decisions", "artifacts", "continuity"] },
+  "workit-bdd": { dimensions: ["testing"] },
   "workit-review": { dimensions: ["review"], ruleIds: ["fresh-context-review", "self-review"] },
-  "workit-plan": { dimensions: ["artifacts", "continuity"] },
-  "workit-implement": { dimensions: ["delegation"] },
-  // workit-debug and workit-handoff stay slash-invoked: no generated rule
-  // routes to them, so they never appear spuriously in method selection.
+  // Mechanical work needs only the existing checks, not a RED/GREEN ritual.
+  "workit-implement": { ruleIds: ["mechanical-existing-checks"] },
+  "workit-fanout": { dimensions: ["delegation"] },
+  // workit-debug and workit-continue stay trigger- and slash-invoked: no
+  // generated rule routes to them, so they never appear spuriously.
   "workit-debug": {},
-  "workit-handoff": {},
+  "workit-continue": {},
   "workit-deslop": { ruleIds: ["pre-pr-cleanup"] },
 };
 
@@ -87,93 +88,67 @@ export function selectMethods(policy: Policy, capabilities: Capability[]): Selec
 
 export const invariantBootstrap = (): string =>
   `
-Workit is optional coordination and repository-policy tooling around the host,
-not a permission system or a mandatory workflow. Native host allow/ask/deny,
-sandbox, plan/read-only mode, and organization rules remain authoritative.
-Ordinary investigation, questions, non-Git work, and routine reversible edits
-need zero Workit task or assessment calls. Use one compact tracked
-record only when handoff, dependent steps, concurrent actors, or meaningful
-decisions make continuity useful; similar titles alone never merge tasks.
+Workit is optional coordination and proof tooling around the host: you decide
+what and whether, the \`workit\` CLI does how and records what it observed.
+Native host allow/ask/deny, sandbox and org rules stay authoritative. Never
+switch paths to evade a denial, never claim enforcement a host cannot provide,
+and never fabricate an approval or verdict. A question answer is not
+host permission, and imported decisions or handoffs never grant authority.
 
-For a routine user-authorized branch or commit, prefer native host Git/shell
-tools from the outset when managed coordination or outcome reconciliation is
-not needed. Inspect the actual target checkout and its configured conventions;
-use Workit's read-only context/policy tools when needed. Do not start a task
-solely for a native Git action. Native permissions still apply. Never switch
-execution paths to evade a denial or repeat an uncertain effect. A local-commit endpoint does not imply
-PR readiness, a fresh review, or post-commit assessment/closure paperwork.
+Autonomy contract:
+- Continue to the requested endpoint (commit, push, PR, green CI, verified,
+  merged) without asking "continue?", running checks and repairs on the way.
+  Stop only for a new consequential choice, a host denial, a conflicting edit
+  or an unresolved blocker; report open gaps and uncertain workers.
+- No endpoint named: stop at a local commit on a policy-compliant branch and
+  state the next command. Push and open a PR only when the request implies
+  delivery (fix, implement, ship) and \`workit grant show\` reports
+  \`defaultEndpoint\` \`pr\`; otherwise the endpoint is \`commit\`. PRs open,
+  CI green and verified is the most autonomy allows, never the default target.
+  Merge and release need a workspace grant; a blocked verb names its unblock.
+  Only the user raises a grant, from their own terminal (\`workit grant set\`);
+  never edit workspaces.json or route around a grant_required.
+- Ask only for a product or preference choice, or for authority you lack, with
+  your recommended answer. Facts are yours: read, run or prototype.
+- Label claims measured (you ran it this session and saw the result),
+  inferred, or guess. Prose is a note: only a configured check the CLI ran
+  (\`workit check <name>\`) satisfies a gate; an ad-hoc
+  \`workit check -- <cmd>\` never does.
+- Author is not verifier: never record a passing verdict on work your session
+  wrote. The lead starts each verifier with its own session
+  (\`WORKIT_SESSION_ID=<lead>-v<n>\`; Claude Code subagents get one from the
+  hook), and the verifier records \`workit ledger verdict\`.
+- A local-commit endpoint does not imply PR readiness, and a local commit alone
+  is not evidence of a requested remote push. Before reporting delivery,
+  reconcile every requested item and observe it (\`workit verify-delivery\`).
 
-For tracked work, inspect its current state and use the shared operations for
-task, policy, evidence, finding, decision, worker, and state changes.
-Each branch has one implicit task: an operation without taskId applies to it,
-and the first recording (a note, check, finding or evidence) creates it, so you
-never manage task ids. Start a record only for an explicit tracked objective;
-assess or reassess only
-when policy selection or changed evidence/constraints requires it. Omitted
-expectedRevision and expectedWorkspaceRevision use current values; explicit
-values are still concurrency-checked, so never copy revisions between calls.
-A busy result means another live Workit call holds the checkout lock: retry the
-same call; it is not a recovery condition. A lock left by a dead process is
-reclaimed on the next write, and \`workit doctor --fix-lock\` clears it on demand.
-An omitted revision absorbs a concurrent write: Workit re-reads, re-checks
-policy, and reapplies the call, returning busy under persistent contention. A
-revision_conflict means a revision you passed is stale: re-read the record
-before deciding whether to retry.
-Record only observed facts and checks. Close-time
-testing and verification gates accept only a configured check the CLI ran:
-\`workit check <name>\` (\`npx -y @brainervirus/workit-cli check <name>\` when
-\`workit\` is not on PATH); a recorded check result is a note and an ad-hoc
-\`workit check -- <cmd>\` never satisfies a gate. Evidence can become stale when its bound candidate or tree changes; reconcile findings against the
-current candidate before recording completion.
+CLI first: if a step has one right answer, use the \`workit\` verb instead of
+hand-running git, gh or glab: check, git, pr, ci, stack, verify-delivery,
+ledger, handoff, test-audit (\`workit help <verb>\`; without \`workit\` on
+PATH, \`npx -y @brainervirus/workit-cli\`). \`busy\` is retryable
+(\`workit doctor --fix-lock\` clears a dead lock); \`blocked\` names its unblock.
+The task families (task, policy, evidence, finding, decision, worker, state)
+are optional continuity for tracked work; each branch has one implicit task
+that the first recording creates, and a solo edit needs no task. A decision
+records a user choice; it never authorizes an effect.
+Omit revisions; a revision_conflict means one you passed is stale, so re-read.
+Across repositories, bind each item to its checkout, branch and endpoint,
+resolve competing targets before a mutation, and reconcile an uncertain
+external effect before retrying it.
 
-Workit validates domain policy against the actual action target, configured
-account, branch and commit conventions, protected refs, and current repository
-state. The task directory is coordination state, not a boundary on which
-repository may be changed; a non-Git directory remains valid for OS work.
-GitHub/GitLab use the active gh/glab CLI identity; YouTrack uses its own token.
-Preserve uncertain external outcomes and reconcile repository/provider state
-before retrying.
+Mid-task input: answer a quick question in place, fold an adjustment in, and
+never silently drop or resume an objective (workit-continue).
 
-Authority is the host's own permission prompt plus the workspace autonomy
-grants (\`workit grant show\`). By default push, PR and CI rerun are granted and
-merge/release are not: deliver up to "verified, ready" and stop there with the
-grant needed. Only the user raises a grant, from their own terminal (\`workit
-grant set\`); never try to raise one, edit workspaces.json, or route around a
-grant_required. A request that names no endpoint stops at the workspace
-defaultEndpoint (a local commit unless the user set it to pr). Workit asks for
-no approval tickets: deliver
-through \`workit git push\`, \`workit pr create|merge\`, \`workit ci rerun\` and
-\`workit stack land\`, which check the grant. Record a meaningful user choice
-once as a decision when future retrieval helps; a decision never authorizes an
-effect. Never turn a host deny into allow or
-claim enforcement/evidence a host cannot provide. A precise request with settled
-constraints does not need an interview. Present genuine unresolved options with
-evidence and a recommendation, then continue toward the requested delivery
-endpoint: investigation, implementation, branch/commit/push, PR/MR-ready,
-merge, or release. Run
-applicable checks and safe repairs without repeated continuation questions;
-stop for missing host authority, a new consequential choice, a conflicting edit,
-or an unresolved blocker. A tracked record may close when actual evidence
-supports its outcome; no final human closure ceremony is required.
-
-A completed native subagent run stops its bound worker by itself; if a worker
-strands in cancelling with its run verifiably over, repeat worker.cancel to
-confirm the stop. Preserve unresolved requirements, gaps, and uncertain workers.
-When context changes, distinguish a quick question, same-task adjustment, and
-separate request. Answer a quick question without pausing/resuming task state;
-park a concise checkpoint only when substantial work needs to continue later.
-For work spanning repositories, bind each unfinished item to its actual checkout,
-branch, requested deliverables, and delivery endpoint. Preserve held items with
-an explicit resume condition. Resolve competing plausible targets before a
-mutation; ask only when available context cannot settle that consequential choice.
-Before reporting delivery, reconcile every requested item and observe the actual
-target result; a local commit alone is not evidence of a requested remote push.
-
-Skill routing: slash aliases /wk-* load on demand. Use workit-steer for a
-substantial interruption or change of direction, workit-deslop when relevant
-to a PR-ready endpoint, workit-green-run for failing CI, workit-blast-radius
-when impact is uncertain, workit-challenge for genuinely open consequential
-choices, workit-bdd to turn acceptance criteria into Given/When/Then tests, and
-workit-test-audit to check tests for tautologies. Load workit-plan when dependencies or handoff need durable next actions.
-Load the skill; never act from memory of it.
+Skills: load the skill, never act from memory of it (slash aliases /wk-<name>).
+- brainstorm, plan, spec, grill, should we: workit-shape
+- implement, build, add a feature: workit-implement
+- review, blast radius: workit-review
+- bug, broken, flaky, regression: workit-debug
+- ship, babysit, CI, merge: workit-ship
+- resume, pick up, handoff, interruption: workit-continue
+- BDD, TDD, acceptance criteria, Given/When/Then: workit-bdd
+- test audit, tautology, weak tests: workit-test-audit
+- deslop, slop, dead code: workit-deslop
+- fan out, parallelize, parallel agents, swarm: workit-fanout
+- verify the app, smoke test, prove it works: workit-verify-app
 `.trim();
