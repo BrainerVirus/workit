@@ -1,29 +1,30 @@
-// Grants are read only from $HOME/.config/workit (S16 review M3). Tests that
-// configure workspaces point HOME at a temp directory and the config override
-// at that same directory, so grants and the rest of the config agree.
+// Grants are read only from the OS account's ~/.config/workit (S16 review M3),
+// never from $HOME or a config-dir override. Tests swap the grants home
+// in-process (autonomy.grantsHome) and point the config override at the same
+// directory, so grants and the rest of the config agree. Run grant-reading
+// verbs in-process (main/run), never as a subprocess, so the swap applies.
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { grantsHome } from "@/packages/workit-core/src/autonomy";
 
 export type ConfigHome = { home: string; configDir: string; restore: () => void };
 
 export const useConfigHome = (prefix: string): ConfigHome => {
-  const previous = {
-    HOME: process.env.HOME,
-    WORKFLOW_TOOLKIT_CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG,
-  };
+  const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const previousResolve = grantsHome.resolve;
   const home = mkdtempSync(path.join(os.tmpdir(), prefix));
   const configDir = path.join(home, ".config", "workit");
   mkdirSync(configDir, { recursive: true });
-  process.env.HOME = home;
+  grantsHome.resolve = () => home;
   process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
   return {
     home,
     configDir,
     restore: () => {
-      for (const [key, value] of Object.entries(previous))
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
+      grantsHome.resolve = previousResolve;
+      if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
       rmSync(home, { recursive: true, force: true });
     },
   };

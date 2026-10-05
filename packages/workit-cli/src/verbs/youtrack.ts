@@ -51,6 +51,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const date = youTrackWorkDateMs(flags.values.date ?? "auto");
   if ("error" in date) return usage(io, date.error, USAGE);
   const dateMs = date.data.dateMs;
+  // The marker names the day only when the user named it: with `--date auto`
+  // a retry on a later day is the same request and must not post again.
+  const markedDay =
+    flags.values.date !== undefined && flags.values.date !== "auto" ? { dateMs } : {};
   const root = io.cwd;
 
   const steps: { label: string; where: MarkerWhere; run: () => Promise<OnceOutcome> }[] = [];
@@ -94,7 +98,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         ? step(
             "time",
             "workItems",
-            { operation: "note.time", issueId, markdown, minutes, dateMs },
+            { operation: "note.time", issueId, markdown, minutes, ...markedDay },
             "workit update",
             (text) => logTimeUpdate({ issueId, minutes, text, dateMs, workspace_root: root }),
           )
@@ -108,16 +112,24 @@ export async function run(argv: string[], io: Io): Promise<number> {
     const missing = step(
       sub,
       "workItems",
-      { operation: sub, issueId, minutes, text, dateMs },
+      { operation: sub, issueId, minutes, text, ...markedDay },
       text,
       (marked) => logTimeUpdate({ issueId, minutes, text: marked, dateMs, workspace_root: root }),
     );
     if (missing) return emit(io, fail("unavailable", missing));
   }
-  const results: { step: string; status: OnceOutcome["status"] }[] = [];
+  const results: { step: string; status: OnceOutcome["status"]; note?: string }[] = [];
   for (const entry of steps) {
     const outcome = await entry.run();
-    results.push({ step: entry.label, status: outcome.status });
+    results.push({
+      step: entry.label,
+      status: outcome.status,
+      ...("precheck" in outcome && outcome.precheck === "inconclusive"
+        ? {
+            note: "the issue has more items than one read-back page, so an earlier copy could not be ruled out before writing",
+          }
+        : {}),
+    });
     if (outcome.status === "failed" || outcome.status === "unknown")
       return emit(
         io,
@@ -133,6 +145,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   return emit(io, ok({ issueId, date: date.data.localDate, steps: results }), (data) => [
     `${issueId}: ${data.steps.map((entry) => `${entry.step} ${entry.status.replace("_", " ")}`).join(", ")} (${data.date})`,
+    ...data.steps.flatMap((entry) => (entry.note ? [`  note (${entry.step}): ${entry.note}`] : [])),
   ]);
 }
 

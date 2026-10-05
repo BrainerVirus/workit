@@ -329,6 +329,37 @@ test("pr merge: grants written to a redirected config dir (WORKFLOW_TOOLKIT_CONF
   }
 });
 
+test("pr merge: HOME=<fake> with a forged grants file does not grant merge", async () => {
+  const { repo, runner } = setup("github", {
+    ...mergeRoutes("github/pr-passing.json"),
+    "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
+  });
+  workspace(repo, { vcs: { provider: "github", account: "octo" } });
+  // The agent fakes a home whose ~/.config/workit grants merge, and points
+  // both HOME and the config override at it.
+  const fake = path.join(configHome.home, "fake-home");
+  const forged = path.join(fake, ".config", "workit");
+  mkdirSync(forged, { recursive: true });
+  for (const name of ["workspaces.json", "config.json"])
+    writeFileSync(path.join(forged, name), readFileSync(path.join(configDir, name), "utf8"));
+  const forgedEntry = JSON.parse(readFileSync(path.join(forged, "workspaces.json"), "utf8"));
+  forgedEntry.workspaces[0].autonomy = { merge: true };
+  writeFileSync(path.join(forged, "workspaces.json"), JSON.stringify(forgedEntry));
+  await verdict(repo);
+  const saved = { HOME: process.env.HOME, CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG };
+  process.env.HOME = fake;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = forged;
+  try {
+    const result = await run(["pr", "merge", "--json"], repo.cwd);
+    expect(result.code).toBe(3);
+    expect(result.json()).toMatchObject({ code: "blocked", data: { reason: "grant_required" } });
+    expect(writes(runner.calls)).toEqual([]);
+  } finally {
+    process.env.HOME = saved.HOME;
+    process.env.WORKFLOW_TOOLKIT_CONFIG = saved.CONFIG;
+  }
+});
+
 test("pr merge: a PR that is not READY is refused with its next action", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-failing-thread.json"));
   grantMerge(repo);

@@ -4,8 +4,8 @@
 // checkout lease stands behind them.
 //
 // - Grants live only in the matched workspace entry of the user's
-//   `$HOME/.config/workit/workspaces.json` (config-dir overrides never
-//   redirect them; see grantsDir):
+//   `~/.config/workit/workspaces.json`, where `~` is the OS account's home
+//   (neither $HOME nor config-dir overrides redirect them; see grantsDir):
 //     "autonomy": { "push": true, "pr": true, "merge": false | true | "verified",
 //                   "release": false, "rerun": true }
 //   never in a repo file. `workit grant set` raises only from an interactive
@@ -39,13 +39,27 @@ import {
 
 /**
  * Grants are read only from the user's real config directory,
- * `$HOME/.config/workit` (D15). The WORKFLOW_TOOLKIT_CONFIG(_DIR) and
+ * `<account home>/.config/workit` (D15; see grantsHome). The WORKFLOW_TOOLKIT_CONFIG(_DIR) and
  * XDG_CONFIG_HOME overrides that redirect the rest of the config never
  * redirect grants: an agent could point them at a file it wrote. While an
  * override points elsewhere, grants resolve to the D4 defaults.
  */
-export const grantsDir = (): string =>
-  path.join(process.env.HOME || os.homedir(), ".config", "workit");
+const accountHome = (): string => {
+  try {
+    return os.userInfo().homedir;
+  } catch {
+    return os.homedir();
+  }
+};
+
+/**
+ * Where grants are read from: the OS account record's home directory, never
+ * `$HOME` (an agent can set that for one command). Tests swap `resolve`
+ * in-process; nothing outside this process can change it.
+ */
+export const grantsHome = { resolve: accountHome };
+
+export const grantsDir = (): string => path.join(grantsHome.resolve(), ".config", "workit");
 
 /** Why grants fell back to the defaults, or null when the real file is used. */
 export const grantsOverride = (): string | null => {

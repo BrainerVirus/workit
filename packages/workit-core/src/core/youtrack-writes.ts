@@ -59,7 +59,12 @@ export async function markerPresent(
 type WriteResult = { ok: boolean; error?: string | null; data?: unknown };
 
 export type OnceOutcome =
-  | { status: "done" | "already_done" | "settled"; data?: unknown }
+  | {
+      status: "done" | "already_done" | "settled";
+      data?: unknown;
+      /** The pre-write read-back could not rule out an earlier copy (>1 page). */
+      precheck?: "inconclusive";
+    }
   | { status: "failed" | "unknown"; error: string; data?: unknown };
 
 /** Write at most once: skip when the marker is there, read back an unknown outcome. */
@@ -69,14 +74,16 @@ export async function writeOnce(
   where: MarkerWhere,
   write: () => Promise<WriteResult>,
 ): Promise<OnceOutcome> {
-  if ((await markerPresent(issueId, marker, where)) === true) return { status: "already_done" };
+  const before = await markerPresent(issueId, marker, where);
+  if (before === true) return { status: "already_done" };
+  const precheck = before === null ? { precheck: "inconclusive" as const } : {};
   const result = await write();
-  if (result.ok) return { status: "done", data: result.data };
+  if (result.ok) return { status: "done", data: result.data, ...precheck };
   const outcome = (result.data as { outcome?: unknown } | undefined)?.outcome;
   if (outcome === "not_applied")
     return { status: "failed", error: result.error ?? "not applied", data: result.data };
   const settled = await markerPresent(issueId, marker, where);
-  if (settled === true) return { status: "settled" };
+  if (settled === true) return { status: "settled", ...precheck };
   return {
     status: settled === false ? "failed" : "unknown",
     error: result.error ?? "YouTrack write failed",

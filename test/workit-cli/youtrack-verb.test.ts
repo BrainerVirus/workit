@@ -103,3 +103,12 @@ test("Given a logged time entry, When the same time command runs again, Then it 
   await call(["time", "ABC-2", "--minutes", "20", "--text", "review", "--date", "2026-10-03"]);
   expect(server.workItems).toHaveLength(2);
 });
+
+test("Given --date auto, When the same time entry is retried, Then the marker ignores the day and nothing is posted twice", async () => {
+  const server = fakeYouTrack(() => false);
+  const args = ["time", "ABC-3", "--minutes", "10", "--text", "standup"];
+  await call(args);
+  const retry = await call([...args, "--date", "auto"]);
+  expect(retry.json().data.steps).toEqual([{ step: "time", status: "already_done" }]);
+  expect(server.workItems).toHaveLength(1);
+});
