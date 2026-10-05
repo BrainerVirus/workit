@@ -27,9 +27,9 @@ review to a fresh agent (Claude Code: the `reviewer` or `verifier` agent).
    (hunk, test or command output), concrete fix. Introduced issues get fixed;
    pre-existing ones become follow-ups; inconclusive ones escalate.
 7. Record the verdict:
-   `workit ledger verdict verified|failed|blocked --kind review --branch <b> --as reviewer --how "<what you ran and read>"`.
-   `--as` gives a fresh reviewer identity; a session that wrote the branch is
-   still refused, and `--self` never counts as independent.
+   `workit ledger verdict verified|failed|blocked --kind review --branch <b> --how "<what you ran and read>"`
+   under your own session (the one the lead or the hook gave you). A session
+   that wrote the branch is refused, and `--self` never counts as independent.
 
 ## Example
 

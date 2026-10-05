@@ -259,24 +259,40 @@ test("git commit: the session goes into a Workit-Session trailer and an observed
   expect(bad.code).toBe(2);
 });
 
-// Subagents usually share their lead's environment (Claude Code exports one
-// WORKIT_SESSION_ID per session; other hosts may export none). A verifier
-// therefore records with `--as verifier`, which mints a fresh id per call, so
-// author != verifier (D18) holds on every host without an env prefix.
-test("Given a commit by the lead session, When a verifier records with --as verifier, Then it is accepted, ids never repeat, and --session <author> is refused", async () => {
+// D18: a verifier must be a different session. `--as <role>` only mints a
+// distinct id per verifier; it never turns the author (or no session at all)
+// into an independent verifier. The lead hands each verifier its own session.
+test("Given the lead's commit, When the lead records with --as verifier, Then it is refused as the author, and with no session it is self", async () => {
   const repo = setup();
   repo.git("switch", "-q", "-c", "feature/slice");
   repo.write("s.txt", "s\n");
   expect((await run(["git", "commit", "-m", "feat: slice", "--", "s.txt"], repo.cwd)).code).toBe(0);
-  const own = await run(["ledger", "verdict", "verified", "--how", "ran it"], repo.cwd);
-  expect(own.code).toBe(3);
-  expect(own.stderr).toContain("author_verdict");
-  const asAuthor = await run(
-    ["ledger", "verdict", "verified", "--how", "x", "--session", "author-1"],
+  const asVerifier = await run(
+    ["ledger", "verdict", "verified", "--how", "ran it", "--as", "verifier"],
     repo.cwd,
-    { ...process.env, WORKIT_SESSION_ID: "" },
   );
-  expect(asAuthor.code).toBe(3);
+  expect(asVerifier.code).toBe(3);
+  expect(asVerifier.stderr).toContain("author_verdict");
+  expect(asVerifier.stderr).toContain("run the verifier as a separate session");
+  const bare = { ...process.env };
+  delete bare.WORKIT_SESSION_ID;
+  const anon = await run(
+    ["ledger", "verdict", "verified", "--how", "x", "--as", "verifier", "--json"],
+    repo.cwd,
+    bare,
+  );
+  expect(anon.code).toBe(0);
+  expect(anon.json().data).toMatchObject({ self: true, selfReason: "no_session" });
+  const check = await run(["ledger", "check", "--json"], repo.cwd);
+  expect(check.json().data.accepted.accepted).toBe(false);
+});
+
+test("Given the lead's commit, When a verifier the lead started with its own session records, Then it is accepted, and --as ids stay distinct per verifier", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/slice");
+  repo.write("s.txt", "s\n");
+  expect((await run(["git", "commit", "-m", "feat: slice", "--", "s.txt"], repo.cwd)).code).toBe(0);
+  const verifier = { ...process.env, WORKIT_SESSION_ID: "author-1-v1" };
   const verify = () =>
     run(
       [
@@ -292,24 +308,33 @@ test("Given a commit by the lead session, When a verifier records with --as veri
         "--json",
       ],
       repo.cwd,
+      verifier,
     );
   const first = await verify();
   expect(first.code, first.stderr).toBe(0);
   const second = await verify();
   const sessions = [first, second].map((r) => r.json().data.actor.session as string);
-  expect(sessions[0]).toMatch(/^author-1:verifier:[0-9a-f]{8}$/);
+  expect(sessions[0]).toMatch(/^author-1-v1:verifier:[0-9a-f]{8}$/);
   expect(sessions[1]).not.toBe(sessions[0]);
-  const check = await run(["ledger", "check", "--json"], repo.cwd);
-  expect(check.json().data.accepted.accepted).toBe(true);
-  // Without any session in the environment the role id still is fresh, never a constant.
-  const bare = { ...process.env };
-  delete bare.WORKIT_SESSION_ID;
-  const anon = await run(
-    ["ledger", "verdict", "tests-verified", "--how", "x", "--as", "verifier", "--json"],
-    repo.cwd,
-    bare,
+  expect((await run(["ledger", "check", "--json"], repo.cwd)).json().data.accepted.accepted).toBe(
+    true,
   );
-  expect(anon.json().data.actor.session).toMatch(/^cli:verifier:[0-9a-f]{8}$/);
+  // The Claude Code hook names a subagent's own session; --session uses it as is.
+  const hookNamed = await run(
+    [
+      "ledger",
+      "verdict",
+      "verified",
+      "--kind",
+      "review",
+      "--how",
+      "read the diff",
+      "--session",
+      "author-1:agent-7",
+    ],
+    repo.cwd,
+  );
+  expect(hookNamed.code, hookNamed.stderr).toBe(0);
   expect(
     (await run(["ledger", "verdict", "verified", "--how", "x", "--as", "Bad Role"], repo.cwd)).code,
   ).toBe(2);

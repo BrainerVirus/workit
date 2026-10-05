@@ -253,7 +253,7 @@ test("agent-critical delivery rules stay stated", () => {
     ["bootstrap", bootstrap, "never record a passing verdict on work your session wrote"],
     ["bootstrap", bootstrap, "resolve competing targets before a mutation"],
     ["bootstrap", bootstrap, "never claim enforcement a host cannot provide"],
-    ["bootstrap", bootstrap, "a question answer is not host permission"],
+    ["bootstrap", bootstrap, "A question answer is not host permission"],
     [
       "bootstrap",
       bootstrap,
@@ -263,6 +263,9 @@ test("agent-critical delivery rules stay stated", () => {
     ["workit-ship", skillText("workit-ship"), "report that a rebase is needed and stop"],
     ["workit-fanout", skillText("workit-fanout"), "any file outside it stops the fan-in"],
     ["workit-fanout", skillText("workit-fanout"), "observe that it exited"],
+    ["workit-fanout", skillText("workit-fanout"), "drops its uncommitted changes"],
+    ["workit-fanout", skillText("workit-fanout"), "never chosen by the author"],
+    ["bootstrap", bootstrap, "The lead starts each verifier with its own session"],
     ["workit-verify-app", skillText("workit-verify-app"), "never overwrite it"],
     ["workit-ship", skillText("workit-ship"), "PR creation does not start babysitting"],
     ["workit-ship", skillText("workit-ship"), "Stop at PR-ready"],

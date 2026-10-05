@@ -86,22 +86,31 @@ type Values = {
 const SESSION_SAFE = /^[A-Za-z0-9_.:@/+-]{1,128}$/;
 const ROLE_SAFE = /^[a-z][a-z0-9-]{0,31}$/;
 
-/** The acting identity: --session, a fresh --as role id, else the environment. */
-const actorFor = (io: Io, values: Values): RecordContext["actor"] | Error => {
+type Acting = { actor: RecordContext["actor"]; derivedFrom?: string | null };
+
+/**
+ * The acting identity: --session, a fresh --as role id, else the environment.
+ * An --as id remembers the session it was derived from: with none it is self,
+ * and an author's derived id is refused like the author (D18).
+ */
+const actorFor = (io: Io, values: Values): Acting | Error => {
   const actor = actorFromEnv(io.env);
   if (values.session !== undefined && values.as !== undefined)
     return new Error("pass --session or --as, not both");
   if (values.session !== undefined) {
     if (!SESSION_SAFE.test(values.session))
       return new Error("--session must be 1-128 characters of [A-Za-z0-9_.:@/+-]");
-    return { ...actor, session: values.session };
+    return { actor: { ...actor, session: values.session } };
   }
   if (values.as !== undefined) {
     if (!ROLE_SAFE.test(values.as)) return new Error("--as takes a lowercase role, e.g. verifier");
     const prefix = (actor.session ?? actor.host).slice(0, 96);
-    return { ...actor, session: `${prefix}:${values.as}:${randomBytes(4).toString("hex")}` };
+    return {
+      actor: { ...actor, session: `${prefix}:${values.as}:${randomBytes(4).toString("hex")}` },
+      derivedFrom: actor.session,
+    };
   }
-  return actor;
+  return { actor };
 };
 
 const positiveInt = (value: string | undefined, flag: string): number | undefined | Error => {
@@ -237,8 +246,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
 
   const target = targetBranch(io, rows, values.branch, pr);
   if (!target.ok) return failed(io, target);
-  const actor = actorFor(io, values);
-  if (actor instanceof Error) return usage(io, actor.message);
+  const acting = actorFor(io, values);
+  if (acting instanceof Error) return usage(io, acting.message);
+  const { actor } = acting;
   const context: RecordContext = {
     cwd: io.cwd,
     actor,
@@ -284,6 +294,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         surface: values.surface ?? null,
         self: values.self === true,
         evidenceRefs: values.evidence,
+        ...("derivedFrom" in acting ? { derivedFrom: acting.derivedFrom } : {}),
       }),
     ),
     (row) =>

@@ -124,8 +124,12 @@ test("agents: verifier and reviewer are read-only, implementer runs in an isolat
   expect(body("implementer")).toContain("Never record a verdict on your own work");
   expect(body("implementer")).not.toMatch(/workit ledger verdict/);
   expect(body("implementer")).toContain("workit git branch");
-  // Subagents inherit the lead's WORKIT_SESSION_ID; verdicts take a fresh role id.
-  for (const name of ["verifier", "reviewer"]) expect(body(name), name).toContain(`--as ${name}`);
+  // Subagents inherit the lead's (author's) WORKIT_SESSION_ID, so verdicts use
+  // the session the SubagentStart hook names.
+  for (const name of ["verifier", "reviewer"]) {
+    expect(body(name), name).toContain("--session <id>");
+    expect(body(name), name).not.toContain("--as ");
+  }
   expect(body("implementer")).toContain("MODE: resume");
   // Plugin subagents may ignore these keys; the design forbids relying on them.
   for (const name of ["verifier", "reviewer", "implementer"]) {

@@ -20,7 +20,8 @@ description of it. Follow the workit-review skill (`/workit:review`).
 4. Each finding: file:line, severity (blocker, major, minor, nit), evidence
    (hunk, test or command output), concrete fix.
 5. Record the verdict:
-   `workit ledger verdict verified|failed|blocked --kind review --branch <b> --as reviewer --how "<what you read and ran>"`
+   `workit ledger verdict verified|failed|blocked --kind review --branch <b> --session <id> --how "<what you read and ran>"`,
+   with the session the SubagentStart hook gave you
    (`verified` with `--kind review`: no blocker or major finding left).
    Record a design choice you had to make as `workit ledger ruling`.
 

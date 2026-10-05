@@ -30,6 +30,6 @@ Cursor cannot attest an implementer writer, so Workit never enforces a
 subagent's write scope here. Fanout writers (workit-fanout) are agent-guided:
 each runs in its own git worktree with a fixed brief, and its file scope is
 checked at fan-in with `git diff --name-only <base>...<branch>`, not enforced
-while it works. Verifiers and reviewers stay read-only and record verdicts with
-`workit ledger verdict <result> --as verifier` (or `--as reviewer`), which gives
-each one a fresh identity distinct from the author's.
+while it works. Verifiers and reviewers stay read-only and record
+`workit ledger verdict` under a session the lead assigns
+(`WORKIT_SESSION_ID=<lead>-v<n>` in the brief), never the author's.

@@ -449,13 +449,15 @@ into one of the new ones, and its `wk-*` alias was removed with it:
 
 On Claude Code the skills are `/workit:<name>` (for example `/workit:shape`).
 
-Verifiers and reviewers now record verdicts with
-`workit ledger verdict <result> --as verifier`. This gives each one a fresh
-identity, so it is never mistaken for the author.
+Verifiers and reviewers record `workit ledger verdict` under their own session.
+The lead starts each one with `WORKIT_SESSION_ID=<lead>-v<n>`; on Claude Code
+the SubagentStart hook names one. An author's session is always refused, and
+`--as <role>` only makes verifier ids distinct; it never makes the author
+independent.
 
 When you name no endpoint, the agent stops at a local commit. It pushes and
-opens a PR when you ask it to deliver, or when the workspace's
-`defaultEndpoint` is `pr`.
+opens a PR when you ask it to deliver, or when `workit grant show` reports
+`defaultEndpoint` `pr`.
 
 ## What it provides
 

@@ -22,12 +22,13 @@ description: Build a requested change in small verified steps - follow local pat
 6. Commit: `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`).
    No endpoint named? Stop here and state the next command. Push and open a
    PR (`workit git push`, `workit pr create --fill`, then workit-ship) only when
-   that was requested, or the request implies delivery and the workspace
-   `defaultEndpoint` is `pr`.
-7. Hand off verification. Never record a passing verdict on your own work: a
-   fresh agent (Claude Code: the `verifier` agent) runs verify-<app> and
-   `workit ledger verdict <result> --as verifier`. Before saying done, reconcile every named
-   deliverable against the target checkout and observe it (for a push:
+   that was requested, or the request implies delivery and `workit grant show`
+   reports `defaultEndpoint` `pr`; otherwise the endpoint is `commit`.
+7. Hand off verification. Never record a passing verdict on your own work.
+   Start a fresh verifier with its own session (`WORKIT_SESSION_ID=<yours>-v1`;
+   Claude Code: the `verifier` agent, which the hook gives one); it runs
+   verify-<app> and `workit ledger verdict`. Before saying done, reconcile
+   every named deliverable against the target checkout and observe it (for a push:
    `workit verify-delivery push`).
 
 Independent slices that could run in parallel go to workit-fanout. When a step

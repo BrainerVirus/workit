@@ -17,14 +17,35 @@ const offered = new Set<string>();
  * `workit:implementer` is ours: a bare or other-plugin `implementer` is not. */
 const CLAUDE_WORKTREE_IMPLEMENTER = "workit:implementer";
 
+/** The plugin's read-only judges: each records verdicts as its own session. */
+const CLAUDE_JUDGES: ReadonlySet<string> = new Set(["workit:verifier", "workit:reviewer"]);
+
+/** `<lead session>:<agent id>`, safe for the ledger's session grammar. */
+const subagentSession = (session: string | null, agentId: string): string =>
+  [session, agentId]
+    .filter((part): part is string => Boolean(part))
+    .join(":")
+    .replace(/[^A-Za-z0-9_.:@/+-]/g, "-")
+    .slice(0, 128);
+
 const subagentStartText = (
   host: HookInput["host"],
+  session: string | null,
   descriptor: HostDescriptor,
   event: Extract<HookInput["event"], { kind: "subagent.start" }>,
-): string =>
-  host === "claude_code" && event.agentType === CLAUDE_WORKTREE_IMPLEMENTER
-    ? `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) working in its own git worktree: it may edit and commit there, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`
-    : `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) as read-only/agent-guided; writer delegation is unavailable.`;
+): string => {
+  if (host === "claude_code" && event.agentType === CLAUDE_WORKTREE_IMPLEMENTER)
+    return `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) working in its own git worktree: it may edit and commit there, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
+  const readOnly = `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) as read-only/agent-guided; writer delegation is unavailable.`;
+  if (
+    host === "claude_code" &&
+    event.agentType &&
+    CLAUDE_JUDGES.has(event.agentType) &&
+    event.agentId
+  )
+    return `${readOnly} Its own Workit session is ${subagentSession(session, event.agentId)}: record verdicts with \`workit ledger verdict <result> --session ${subagentSession(session, event.agentId)} ...\` so the ledger tells it apart from the author.`;
+  return readOnly;
+};
 
 export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
   const { descriptor } = deps;
@@ -50,7 +71,10 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
     case "shell.pre":
       return usable(descriptor.shellPolicy.deny) ? shellPolicy(input.cwd, event.command) : NONE;
     case "subagent.start":
-      return { kind: "context", text: subagentStartText(input.host, descriptor, event) };
+      return {
+        kind: "context",
+        text: subagentStartText(input.host, input.session.id ?? null, descriptor, event),
+      };
     case "compact.pre":
       return {
         kind: "notice",

@@ -5,8 +5,8 @@ description: Drive pushed work to its endpoint - open or stack PRs, fix red CI, 
 
 # Ship to the endpoint
 
-Ship runs when delivery was requested (or the workspace `defaultEndpoint` is
-`pr`). The most it may do without a grant: PRs open, CI green, independently
+Ship runs when delivery was requested, or when `workit grant show` reports
+`defaultEndpoint` `pr`. The most it may do without a grant: PRs open, CI green, independently
 verified. Merge and release need a workspace grant. When `workit pr merge` or `workit stack land`
 is blocked, stop at "verified, ready" and report the grant it names. PR
 creation does not start babysitting, and a babysit request does not authorize
