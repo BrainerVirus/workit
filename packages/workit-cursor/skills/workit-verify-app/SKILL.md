@@ -11,6 +11,8 @@ says exactly how, then proves it once.
 
 ## Generate
 
+0. **Reuse first.** If any `verify-*` skill already exists in the repo's skills
+   directories, never overwrite it: go to Maintain.
 1. **Inspect the surface.** package.json scripts and `bin`, Makefile or
    justfile, Dockerfile and compose files, framework config, existing e2e
    (Playwright, Cypress), the README's run section, `.env.example`. Classify:

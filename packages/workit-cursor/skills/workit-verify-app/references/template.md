@@ -7,7 +7,7 @@ library has no Launch) and say so in one line.
 ```md
 ---
 name: verify-<app>
-description: Launch, drive and observe <app> on its real surface (<cli|web|api>) to prove a feature works. Use to verify, smoke test or reproduce on the running <app>.
+description: Launch, drive and observe <app> on its real surface (<cli|web|api>) to prove a feature works. Use to verify a change or reproduce a bug on the running <app>.
 ---
 
 # Verify <app>

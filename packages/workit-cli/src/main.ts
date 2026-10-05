@@ -148,6 +148,17 @@ export async function main(
     }
   }
   if (options.diagnostics) (await import("./diagnostics")).installDiagnostics(command);
+  // A 2.x store migrates on first use; say so once, on stderr (see
+  // workit-core store/notes.ts; a global slot keeps core off this path).
+  (globalThis as Record<symbol, unknown>)[Symbol.for("workit.migrationReporter")] = (report: {
+    from: string;
+    to: string;
+    backup: string;
+    tasks: number;
+  }) =>
+    io.stderr(
+      `workit: migrated ${report.tasks} task${report.tasks === 1 ? "" : "s"} from ${report.from} to ${report.to} (backup: ${report.backup})\n`,
+    );
   const verb = await entry.load();
   if (!io.json) return verb.run(args, io);
   return runJsonPure(io, command, (pure) => verb.run(args, pure));

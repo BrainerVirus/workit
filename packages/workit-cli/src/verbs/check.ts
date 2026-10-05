@@ -9,8 +9,8 @@
 //   envelope) while a bounded, redacted copy goes to the log blob.
 // - The run is keyed to the code (HEAD, worktree tree key, base + patch-id)
 //   and recorded as `observer:"workit_cli"` evidence: always in the ledger
-//   (`type:"check"`), and in the current task when there is one (--task, the
-//   writer's task, or the only active task). Attestation stays null until a
+//   (`type:"check"`), and in a task: --task, else the implicit task of the
+//   current branch, created by this run when there is none (D3). Attestation stays null until a
 //   host hook attests the run.
 // - It is *configured* only when the name is in the check config
 //   (workit.checks.json, else detected ecosystem defaults) and argv is exactly
@@ -22,7 +22,6 @@
 //   command passed but the evidence could not be recorded, the recording
 //   error's code (busy 4, unavailable 5) so a green run is never mistaken for
 //   recorded evidence.
-import fs from "node:fs";
 import path from "node:path";
 import {
   CHECKS_FILE,
@@ -116,22 +115,8 @@ function parse(argv: readonly string[]): Options | Error {
 
 const posix = (value: string): string => value.split(path.sep).join("/") || ".";
 
-/** The task store root: WORKFLOW_WORKSPACE_ROOT, else the nearest `.workit/workspace.json` up to the repo top. */
-function taskStoreRoot(io: Io, top: string): string | null {
-  const explicit = io.env.WORKFLOW_WORKSPACE_ROOT;
-  if (explicit)
-    return fs.existsSync(path.join(explicit, ".workit", "workspace.json")) ? explicit : null;
-  let dir = io.cwd;
-  for (;;) {
-    if (fs.existsSync(path.join(dir, ".workit", "workspace.json"))) return dir;
-    const parent = path.dirname(dir);
-    if (dir === top || parent === dir) return null;
-    dir = parent;
-  }
-}
-
 type TaskOutcome = {
-  task: { id: string; created: false } | null;
+  task: { id: string; created: boolean } | null;
   note: string | null;
   evidenceId: string | null;
   satisfies: string[];
@@ -161,33 +146,34 @@ async function recordInTask(
     stillUnsatisfied: [],
     error: null,
   };
-  // The engine pulls zod; load it only when a task store exists.
+  // The engine pulls zod; load it only here.
   const { TaskStore, WorkitCore } = await import("@brainervirus/workit-core/src/core");
   const store = new TaskStore(storeDir);
   let taskId = requested;
+  let created = false;
   if (!taskId) {
-    const workspace = store.readWorkspace();
-    const index = store.listTaskIndex();
-    if (!workspace.ok || !index.ok) {
-      const failed = !workspace.ok ? workspace : (index as Extract<typeof index, { ok: false }>);
+    // The implicit task of this branch (D3): created by its first recording.
+    const actor = io.env.WORKIT_SESSION_ID?.trim() || "cli";
+    const found = store.implicitTask({
+      provenance: {
+        kind: "host_observed",
+        host: "workit_cli",
+        session: { kind: "host", host: "workit_cli", handle: actor },
+        workerId: null,
+        receipts: [],
+      },
+    });
+    if (!found.ok || !found.data)
       return {
         ...empty,
-        note: "the task store is unreadable; recorded to the ledger only",
-        error: { code: "unavailable", message: `task store: ${failed.code}: ${failed.error}` },
+        note: "the task store is unavailable; recorded to the ledger only",
+        error: {
+          code: !found.ok && found.code === "busy" ? "busy" : "unavailable",
+          message: found.ok ? "task store: no task" : `task store: ${found.code}: ${found.error}`,
+        },
       };
-    }
-    const active = index.data.filter((entry) => entry.status === "active");
-    const writerTask = workspace.data?.writer?.owner.taskId ?? null;
-    const owned = active.find((entry) => entry.id === writerTask);
-    if (owned) taskId = owned.id;
-    else if (active.length === 1) taskId = active[0].id;
-    else
-      return {
-        ...empty,
-        note: active.length
-          ? `${active.length} active tasks and none holds the writer; pass --task <id> to attach the evidence (recorded to the ledger only)`
-          : "no active task; recorded to the ledger only",
-      };
+    taskId = found.data.task.id;
+    created = found.data.created;
   }
   const core = new WorkitCore(store, {
     root: store.root,
@@ -204,7 +190,7 @@ async function recordInTask(
   if (!recorded.ok)
     return {
       ...empty,
-      task: { id: taskId, created: false },
+      task: { id: taskId, created },
       error: {
         code: ENGINE_CODES[recorded.code] ?? "unavailable",
         message: `${recorded.code}: ${recorded.error}`,
@@ -212,7 +198,7 @@ async function recordInTask(
     };
   const outcome: TaskOutcome = {
     ...empty,
-    task: { id: taskId, created: false },
+    task: { id: taskId, created },
     evidenceId: recorded.data.id,
   };
   const view = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
@@ -407,19 +393,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ? checkCommand(names[0], version)
       : `add ${CHECKS_FILE} (e.g. {"checks":{"test":"<your test command>"}}), then ${checkCommand("test", version)}`;
   };
-  const storeDir = taskStoreRoot(io, top);
-  const task: TaskOutcome = storeDir
-    ? await recordInTask(io, storeDir, options.task, observation, unblockFor)
-    : {
-        task: null,
-        note: options.task
-          ? "no workit task store here; recorded to the ledger only"
-          : "no active task; recorded to the ledger only",
-        evidenceId: null,
-        satisfies: [],
-        stillUnsatisfied: [],
-        error: null,
-      };
+  const storeDir = io.env.WORKFLOW_WORKSPACE_ROOT || top;
+  const task: TaskOutcome = await recordInTask(io, storeDir, options.task, observation, unblockFor);
 
   const data = {
     evidenceId: task.evidenceId,

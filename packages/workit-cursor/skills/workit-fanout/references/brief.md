@@ -4,6 +4,7 @@ Every field is required. A brief with an empty field is not spawned. Point to
 files and ledger rows instead of pasting their content.
 
 ```md
+MODE: <new | resume (a replacement continuing an existing branch)>
 GOAL: <one observable outcome, in the user's terms>
 SCOPE: <file-scope manifest: the globs this worker may write; everything else is read-only>
   branch: <type>/<slug>   base: <trunk or parent branch>
@@ -22,6 +23,7 @@ STANDING: <the standing orders, verbatim: user preferences and every directive g
 ## Worked example
 
 ```md
+MODE: new
 GOAL: `GET /v1/usage` returns the workspace's run count per UTC day for the last 7 days.
 SCOPE: src/routes/usage.ts, src/queries/usage.ts, test/usage.test.ts
   branch: feature/usage-endpoint   base: main
@@ -39,8 +41,11 @@ STANDING: conventional commits; no comments that restate code; ask nothing, reco
 
 ## Worker rules (paste into the brief when the host has no implementer agent)
 
-1. First command: `workit git branch <branch> --base <base>` (the worktree may
-   start on a name that breaks branch policy).
+1. First command. `MODE: new`: `workit git branch <branch> --base <base>` (the
+   worktree may start on a name that breaks branch policy). `MODE: resume`:
+   `git switch <branch>` (the branch exists; the lead removed the dead
+   worker's worktree after its exit, so the switch succeeds), then continue
+   from its head.
 2. Decide ambiguities yourself and record them:
    `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`.
    Stop only for an irreversible action, a security-sensitive one, or a side

@@ -35,14 +35,15 @@ export const packageRoot = (): string => {
 };
 
 /**
- * The method skills directory. A built or installed package has its generated
- * copy in `assets/skills`; a source checkout loaded as a local pin has no
- * copy (it is git-ignored), so it reads the canonical
- * `packages/workit-core/skills` beside it, which the build would copy anyway.
+ * The method skills directory. A source checkout loaded as a local pin (it
+ * has `src/`) always reads the canonical `packages/workit-core/skills` beside
+ * it, so a stale generated `assets/skills` from an earlier build can never
+ * shadow the current skills. A built or installed package reads its own
+ * generated `assets/skills`.
  */
 export const skillsRoot = (): string => {
-  const packaged = path.join(packageRoot(), "assets", "skills");
-  if (existsSync(packaged)) return packaged;
-  const canonical = path.resolve(packageRoot(), "..", "workit-core", "skills");
-  return existsSync(canonical) ? canonical : packaged;
+  const root = packageRoot();
+  const canonical = path.resolve(root, "..", "workit-core", "skills");
+  if (existsSync(path.join(root, "src")) && existsSync(canonical)) return canonical;
+  return path.join(root, "assets", "skills");
 };

@@ -27,16 +27,19 @@ ceremony; do it yourself.
 5. **Judge liveness by side effects only:** new commits and pushes
    (`git log <branch>`), PR and check changes (`workit pr status --branch <b>`).
    No progress past the timebox means stuck. Stop the old worker and observe
-   that it exited (a timeout is not proof), then replace it with a fresh one in
-   a fresh worktree that continues from the branch head, carrying the
-   consolidated brief (original, later directives, its last report). Never two
-   live workers on one branch. Replace at most twice, then re-slice or report
-   the gap. Never chain resumes.
+   that it exited (a timeout is not proof); only then
+   `git worktree remove --force <its worktree>`. Respawn with the brief in
+   `MODE: resume` (consolidated: original, later directives, its last report):
+   the new worker runs `git switch <branch>` in its fresh worktree instead of
+   `workit git branch`. Never two live workers on one branch. Replace at most
+   twice, then re-slice or report the gap. Never chain resumes.
 6. **Verify each slice independently.** A fresh agent that did not write it
    (Claude Code: the `verifier` agent) runs VERIFY and verify-<app>, then
-   `workit ledger verdict <result> --branch <b> --how "<evidence>"`. A worker's
-   report is a pointer, never evidence.
-7. **Fan in.** `workit ledger check --branch <b>` for each slice; restack
+   `workit ledger verdict <result> --branch <b> --as verifier --how "<evidence>"`.
+   A worker's report is a pointer, never evidence.
+7. **Fan in.** Compare `git diff --name-only <base>...<b>` with the slice's
+   SCOPE: any file outside it stops the fan-in with a report. Then
+   `workit ledger check --branch <b>` for each slice; restack
    stacked slices with `workit stack sync`. Only you touch topology: workers
    never rebase, retarget or merge. Then workit-ship.
 

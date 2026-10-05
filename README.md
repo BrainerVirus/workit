@@ -239,7 +239,7 @@ The plugin ships:
   `[workit] Claude Code hook unavailable: …` line, and Claude runs as if Workit
   were not installed;
 - skills: the eleven method skills, namespaced as `/workit:<name>`
-  (`/workit:review`, `/workit:plan`, …);
+  (`/workit:review`, `/workit:shape`, …);
 - agents: `verifier` and `reviewer` (read-only) and `implementer`
   (`isolation: worktree`);
 - `workit` on the Bash tool's `PATH` (the plugin `bin/`).
@@ -281,9 +281,14 @@ workit upgrade --apply --confirm  # apply a reviewed preview
 workit upgrade --cli --apply --confirm  # also update an existing global CLI
 workit launch pi --auto-upgrade --  # update before starting Pi
 workit doctor            # offline installation health report (--json for machines)
-workit doctor --fix-lock # clear a stale .workit metadata lock (WORKFLOW_WORKSPACE_ROOT or cwd)
+workit doctor --fix-lock # clear a stale workit store lock (WORKFLOW_WORKSPACE_ROOT or cwd)
 workit doctor --fix-lock --force [--yes]  # clear a lock whose owner cannot be verified
-workit gc [--dry-run]    # prune .workit/recovery to the newest 3 copies per record
+workit gc [--dry-run]    # compact long task logs, drop unreferenced blobs and old check logs
+workit task status [--all]          # the current branch's task (no ids; --all: every task in the store)
+workit task start "<objective>"     # optional: name the branch's task (idempotent per branch)
+workit task note "<text>" [--next "<t>"]  # progress; creates the branch's task on first use
+workit task close [--outcome verified|limited|stopped] [--confirm]
+workit task adopt <id>              # bind a migrated 2.x (or other checkout's) task to this branch
 workit <family> <action> [--payload <json|@file|->] [--task <id>] [--confirm] [--json]
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--json]
 workit handoff --task <id> [--json]
@@ -427,6 +432,30 @@ unchanged installation with a visible warning; an installation or verification
 failure stops the launch. Native startup hooks do not run competing installers.
 This does not migrate task history, change host permissions, or change package
 pins. Re-run the preview after resolving a failure rather than blindly retrying.
+
+## Upgrading to skill set v3
+
+Skill set v3 has eleven skills, down from sixteen. Each removed skill was merged
+into one of the new ones, and its `wk-*` alias was removed with it:
+
+| Old skill (alias) | Now |
+| --- | --- |
+| `workit-challenge` (`/wk-challenge`), `workit-plan` (`/wk-plan`), `workit-diagram` (`/wk-diagram`), `workit-mockup` (`/wk-mockup`) | `workit-shape` (`/wk-shape`); diagrams and mockups are references inside it |
+| `workit-behavioral-tdd` (`/wk-tdd`) | `workit-bdd` (`/wk-bdd`) |
+| `workit-blast-radius` (`/wk-blast-radius`) | `workit-review` (`/wk-review`) |
+| `workit-babysit` (`/wk-babysit`), `workit-green-run` (`/wk-green-run`) | `workit-ship` (`/wk-ship`) |
+| `workit-steer` (`/wk-steer`), `workit-handoff` (`/wk-handoff`) | `workit-continue` (`/wk-continue`) |
+| (new) | `workit-fanout` (`/wk-fanout`), `workit-verify-app` (`/wk-verify-app`) |
+
+On Claude Code the skills are `/workit:<name>` (for example `/workit:shape`).
+
+Verifiers and reviewers now record verdicts with
+`workit ledger verdict <result> --as verifier`. This gives each one a fresh
+identity, so it is never mistaken for the author.
+
+When you name no endpoint, the agent stops at a local commit. It pushes and
+opens a PR when you ask it to deliver, or when the workspace's
+`defaultEndpoint` is `pr`.
 
 ## What it provides
 
@@ -604,12 +633,33 @@ plugins and the MCP server, 2 s in the CLI) and then returns the retryable
 `busy` code, never `recovery_required`. `workit doctor` warns about a stale
 lock and `workit doctor --fix-lock` clears it under the same reclaim guard
 writers use; `--force` (with `--yes` or an interactive confirmation) is the
-explicit escape hatch for a lock whose owner cannot be verified. Each snapshot
-replacement keeps a copy of the previous bytes in `.workit/recovery/`, capped at
-the newest three per task or workspace record; `workit gc` prunes copies left by
-older versions, removes stale temp files, and collapses duplicate stored
-candidates in paused tasks (closed tasks are never rewritten). It never deletes
-the live task or workspace records, and `--dry-run` writes nothing. New branch
+explicit escape hatch for a lock whose owner cannot be verified.
+
+Task state (3.0) lives in the git common directory, `.git/workit/` (shared by
+every worktree of the repository and kept across worktree removal and `git
+clean`), or in `<dir>/.workit/` outside git. Each task is an append-only event
+log (`tasks/<id>/events.jsonl`, one structural patch per change) with a
+rebuildable `snapshot.json`; there is no recovery directory, the log is the
+history. A crash can only leave a torn last line, which readers ignore and the
+next write truncates. Stored candidates are written once by content digest.
+`workit gc` folds long logs into a checkpoint plus their 50 most recent events
+(never losing the latest state), removes unreferenced blobs and stale temp
+files, and only reports a 2.x `.workit/recovery/` left by migration until you
+run `workit gc --prune-recovery --yes`; `--dry-run` writes nothing.
+
+Every branch is one implicit task: the first note, check, ledger record or
+commit on a branch creates it, and every task operation without a `taskId`
+applies to it, so agents never manage ids. A detached HEAD is keyed by its
+worktree and a non-git directory by its path. An explicit `task start` takes
+the branch over; closing a task frees it. The first CLI command (or any
+write) in a checkout with a 2.x `.workit/` store migrates it into the new
+store, under the 2.x store's own lock (never while a 2.x writer holds it),
+keeps a backup under `legacy/`, and prints one line; host hooks never migrate
+and say to run `workit task status`. `.workit/workspace.json` becomes a
+marker, written into every checkout 3.0 writes for, that 2.x runtimes reject
+with an upgrade message instead of starting a second store. Migrated tasks keep their ids and are not bound
+to a branch: `workit task status --all` lists them and `workit task adopt <id>`
+binds one. New branch
 setup shows both the existing local base SHA and remote base SHA in its
 approval, rechecks them, and creates only from an approved commit. Workit does
 not reject Git-valid branch names or user commit

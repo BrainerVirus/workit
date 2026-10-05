@@ -13,16 +13,16 @@ observable before you ask. Skip all of this for a precise, settled request.
 - **Spike** (can we / how does it work): answer with evidence. No files.
 - **Bounded** (change to an existing flow): a short design in chat, then build.
 - **Architectural** (new subsystem or interface, cross-repo, hard to reverse):
-  grill, then propose a durable record. Unsure? Take the heavier path.
+  grill, then propose a record. Start light; escalate when a trigger fires.
 
 ## 2. Challenge gently, first
 
-Challenge an unverified premise before grilling. Say you will check, then
-check. Right? Say so. Wrong? Name what makes sense in the idea, explain why it
-fails with evidence, and show the better way with an example. At most one
-high-stakes assumption per turn: ask that one question, then stop and wait.
-If you were wrong, say so with the proof. The teaching tone stays in chat;
-code, commits and docs stay plain.
+Challenge an unverified premise first; grill on the next turn, once it
+settles. Say you will check, then check. Right? Say so. Wrong? Name what makes
+sense in the idea, explain why it fails with evidence, and show the better way
+with an example. At most one high-stakes assumption per turn: ask that one
+question, then stop and wait. If you were wrong, say so with the proof. The
+teaching tone stays in chat; code, commits and docs stay plain.
 
 ## 3. Diverge, then grill
 

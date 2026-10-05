@@ -38,6 +38,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hooks and plugins no longer bundle them (OpenCode plugin bundle about 28%
   smaller). Use the `workit` CLI instead of deep imports.
 
+### Changed: task event store and implicit tasks
+
+- **Task event store and implicit tasks (3.0, D3/D13).** Task state moves from
+  `<checkout>/.workit/` to `$(git rev-parse --git-common-dir)/workit/` (shared
+  by all worktrees, kept across worktree removal and `git clean`; non-git
+  directories keep `<dir>/.workit/`). Each task is an append-only
+  `tasks/<id>/events.jsonl` of structural patches plus a rebuildable
+  `snapshot.json`: state grows with the change, not with full-record copies,
+  a crash leaves at most a torn last line that the next write truncates, and
+  stored candidates are content-addressed blobs. The `.workit/recovery/`
+  mechanism and `state.recover` are removed.
+- Every branch is one implicit task (detached HEAD: per worktree; non-git:
+  per directory). `workit check`, `workit ledger` records, `workit git commit`
+  and any task operation without a `taskId` (CLI, MCP, host tools) apply to
+  it and create it on first use; host tool schemas make `taskId` optional. An
+  explicit `task start` takes the branch over; closing frees it. Per-turn host
+  context falls back to the branch's task when no session-bound task applies.
+- New `workit task status [--all] | start "<objective>" | note "<text>"
+  [--next] [--objective] | close [--outcome] | adopt <id>`.
+- `workit gc` now compacts long task logs into a checkpoint plus their 50
+  most recent events (the latest state is never lost) and removes
+  unreferenced blobs; it reports a 2.x `.workit/recovery/` and deletes it only
+  with `--prune-recovery --yes`.
+- **Migration:** a 2.x `.workit/` store (tasks and workspace record)
+  migrates on the first CLI command or write in that checkout, under the
+  checkout lock and the 2.x store's own `metadata.lock` (a live 2.x writer
+  makes it `busy`; nothing is migrated under it), with a backup under
+  `legacy/<checkout>/v2/` and a one-line note on stderr. Per-turn hooks and
+  other reads never migrate; they say `run workit task status`. Tasks migrate
+  by content digest, so a 2.x write after an interrupted run is migrated as a
+  further event on the next run; each 2.x file is replaced by a marker only
+  while it still holds the migrated bytes. Migrated tasks keep their ids and
+  contents (inspect output is unchanged), join the checkout's workspace, and
+  are not bound to a branch: list them with `workit task status --all`, bind
+  one with `workit task adopt <id>`. `.workit/workspace.json` becomes a marker
+  (written into every checkout 3.0 writes for, git-ignored) whose critical
+  `store` field makes 2.x runtimes fail closed with an upgrade message instead
+  of starting a second store. A plain directory's `.workit/` store moves into
+  the git store after `git init`.
+- A checkout is its worktree top level for every host (a subdirectory is the
+  same checkout). Implicit-task creation is serialized per key across the
+  store; with duplicate open tasks on a key the oldest is used and `workit
+  task status` names the others with a close command. During a rebase the key
+  is the branch being rebased; a task follows its branch through `git branch
+  -m` (a branch created later under the old name starts a fresh task). reftable repositories and bare
+  repositories resolve through git. While a 2.x store waits to migrate, every
+  per-turn host context (hooks, OpenCode, Pi) shows `workit migration pending —
+  run \`workit task status\``. `workit gc` reports a log another writer
+  compacted meanwhile as `retried` (picked up by the next run), not `failed`.
+
 ### Added
 
 - `workit check <name>` / `workit check [--name <n>] -- <cmd…>` runs a check

@@ -34,8 +34,14 @@ export const TASK_FAMILY_NAMES = [
 const family = (name: string): VerbEntry => ({
   name,
   group: "task",
-  usage: `workit ${name} <action> [options]`,
-  summary: `Inspect and control a Workit task (${name} family)`,
+  usage:
+    name === "task"
+      ? 'workit task status [--all] | task start "<objective>" | task note "<text>" [--next "<t>"] | task close [--outcome verified|limited|stopped] | task adopt <id> | task <action> --payload <JSON>'
+      : `workit ${name} <action> [options]`,
+  summary:
+    name === "task"
+      ? "The current branch's task (created by its first note, check or recording; no ids needed), or the task family"
+      : `Inspect and control a Workit task (${name} family)`,
   load: async () => (await import("./family")).familyVerb(name),
 });
 
@@ -65,16 +71,15 @@ export const VERBS: readonly VerbEntry[] = [
     name: "doctor",
     group: "setup",
     usage: "workit doctor [--json] [--fix-lock [--force [--yes]]]",
-    summary:
-      "Verify the offline installation health (--fix-lock clears a stale .workit metadata lock)",
+    summary: "Verify the offline installation health (--fix-lock clears a stale workit store lock)",
     load: () => import("./doctor"),
   },
   {
     name: "gc",
     group: "setup",
-    usage: "workit gc [--dry-run] [--json]",
+    usage: "workit gc [--dry-run] [--prune-recovery --yes] [--json]",
     summary:
-      "Prune .workit/recovery copies beyond the cap and dedupe stored candidates in paused tasks",
+      "Compact long task event logs, drop unreferenced blobs and old check logs; report (or prune) 2.x recovery copies",
     load: () => import("./gc"),
   },
   {

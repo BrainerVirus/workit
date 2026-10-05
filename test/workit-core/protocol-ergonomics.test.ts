@@ -13,6 +13,7 @@ import {
   runtimeVersion,
 } from "@/packages/workit-core/src/core";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
+import { rawRecordOf, rewriteTaskLog, workspaceFileOf } from "./store-files";
 import { assessment, scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const TASK_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -352,10 +353,9 @@ test("new and legacy records carry truthful runtime versions", () => {
     if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
     expect(workspace.data.runtime).toEqual({ createdWith: version, updatedWith: version });
 
-    const taskFile = path.join(root, ".workit", "tasks", `${taskId}.json`);
-    const raw = JSON.parse(readFileSync(taskFile, "utf8"));
+    const raw = rawRecordOf(root, taskId);
     delete raw.runtime;
-    writeFileSync(taskFile, JSON.stringify(raw));
+    rewriteTaskLog(root, taskId, raw);
     const legacy = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
     expect(legacy.ok).toBe(true);
     expect(
@@ -366,10 +366,10 @@ test("new and legacy records carry truthful runtime versions", () => {
         progress: { summary: "stamped", nextAction: null, blockers: [] },
       }).ok,
     ).toBe(true);
-    const stamped = JSON.parse(readFileSync(taskFile, "utf8"));
+    const stamped = rawRecordOf(root, taskId);
     expect(stamped.runtime).toEqual({ createdWith: null, updatedWith: version });
 
-    const workspaceFile = path.join(root, ".workit", "workspace.json");
+    const workspaceFile = workspaceFileOf(root);
     const rawWorkspace = JSON.parse(readFileSync(workspaceFile, "utf8"));
     delete rawWorkspace.runtime;
     writeFileSync(workspaceFile, JSON.stringify(rawWorkspace));
@@ -394,15 +394,14 @@ test("records written by a newer Workit stay readable, and ask for an upgrade on
     const started = core.task(taskStartRequest());
     if (!started.ok) throw new Error(started.error);
     const taskId = (started.data as { id: string }).id;
-    const taskFile = path.join(root, ".workit", "tasks", `${taskId}.json`);
-    const raw = JSON.parse(readFileSync(taskFile, "utf8"));
+    const raw = rawRecordOf(root, taskId);
     raw.runtime = { createdWith: "99.0.0", updatedWith: "99.0.0" };
     raw.futureField = "unknown-to-this-runtime";
-    writeFileSync(taskFile, JSON.stringify(raw));
+    rewriteTaskLog(root, taskId, raw);
     // Reader tolerance (D17): an additive field never bricks an older reader.
     expect(new TaskStore(root).readTask(taskId).ok).toBe(true);
     raw.status = "status-from-the-future";
-    writeFileSync(taskFile, JSON.stringify(raw));
+    rewriteTaskLog(root, taskId, raw);
     const task = new TaskStore(root).readTask(taskId);
     expect(task.ok).toBe(false);
     if (!task.ok) {
@@ -434,8 +433,7 @@ test("plan commit bindings refuse branches other than the approved one", () => {
         steps: ["chore(a): one"],
       },
     });
-    const taskFile = path.join(root, ".workit", "tasks", `${taskId}.json`);
-    const raw = JSON.parse(readFileSync(taskFile, "utf8"));
+    const raw = rawRecordOf(root, taskId);
     raw.decisions = [
       {
         id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
@@ -465,7 +463,7 @@ test("plan commit bindings refuse branches other than the approved one", () => {
         },
       },
     ];
-    writeFileSync(taskFile, JSON.stringify(raw));
+    rewriteTaskLog(root, taskId, raw);
     const commitDescriptor = externalActionDescriptor("git.commit", {
       message: "chore(a): one",
       resolved: { head: "x", branch: "feature/plan", staged: "s", paths: ["x"] },

@@ -265,6 +265,12 @@ function copyCoreSources(stub: string) {
       path.join(repoRoot, "packages/workit-cli/src/admin", name),
       path.join(stub, "packages/workit-cli/src/admin", name),
     );
+  // store-lock.ts resolves the checkout lock through the task store layout.
+  mkdirSync(path.join(stub, "packages/workit-core/src/store"), { recursive: true });
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/src/store/paths.ts"),
+    path.join(stub, "packages/workit-core/src/store/paths.ts"),
+  );
   cpSync(
     path.join(repoRoot, "packages/workit-cli/scripts/doctor-check.ts"),
     path.join(stub, "packages/workit-cli/scripts/doctor-check.ts"),

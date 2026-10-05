@@ -6,9 +6,23 @@ import { canonicalJson } from "../core/task-contract";
 import { isObservedCheck, type Freshness } from "../core/task-evaluation";
 import { worktreeSignal } from "../git/rev";
 import { WorkitCore, type OperationContext } from "../core/task-engine";
-import { fileSignature, racySignature, TaskStore, type TaskIndexEntry } from "../core/task-store";
+import {
+  fileSignature,
+  MIGRATION_PENDING,
+  racySignature,
+  TaskStore,
+  type TaskIndexEntry,
+} from "../core/task-store";
 import { capabilitiesFor, type HostDescriptor } from "./descriptor";
 import type { HookInput } from "./protocol";
+
+/**
+ * Shown on every per-turn path while the checkout's 2.x store waits for the
+ * CLI to migrate it (hooks never migrate), instead of silently no context.
+ */
+export const MIGRATION_PENDING_NOTE = "workit migration pending — run `workit task status`";
+const migrationPending = (result: { ok: boolean; code?: string; error?: string }): boolean =>
+  !result.ok && result.code === "needs_input" && (result.error ?? "").startsWith(MIGRATION_PENDING);
 
 /** A native host session, e.g. `{ host: "opencode", handle: sessionID }`. */
 export type SessionHandle = { host: string; handle: string };
@@ -48,6 +62,34 @@ export const currentTaskEntry = (
   if (selection === "session-bound") return sessionTaskEntry(entries, session);
   const active = entries.filter((entry) => entry.status === "active");
   return active.length === 1 ? active[0] : null;
+};
+
+/**
+ * The open task bound to this checkout's branch (its implicit task, D3),
+ * unless a host conversation other than this one is bound to it: someone
+ * else's conversation is only ever offered, never injected. Sessions of the
+ * CLI (`workit_cli`, which creates implicit tasks) are tooling, not
+ * conversations.
+ */
+const implicitTaskEntry = (
+  store: TaskStore,
+  entries: TaskIndexEntry[],
+  session: SessionHandle,
+): TaskIndexEntry | null => {
+  const open = entries.filter(
+    (entry) =>
+      entry.key !== null &&
+      entry.status !== "closed" &&
+      !entry.sessions.some(
+        (item) =>
+          item.host !== "workit_cli" &&
+          !(item.host === session.host && item.handle === session.handle),
+      ),
+  );
+  if (open.length === 0) return null;
+  const key = store.currentKey();
+  if (!key.ok) return null;
+  return open.filter((entry) => entry.key === key.data.key).toSorted(newestFirst)[0] ?? null;
 };
 
 /**
@@ -109,7 +151,9 @@ const recentSignal = (root: string): string | null => {
 const cache = new Map<string, CachedContext>();
 
 /**
- * Compact context for `session`'s current task, for per-turn host injection.
+ * Compact context for `session`'s current task (the task bound to the
+ * session, else the implicit task of the checkout's branch), for per-turn
+ * host injection.
  *
  * Reads the task index (no full-record parse for unrelated tasks), never
  * captures a candidate, and reuses the previous result while the task and
@@ -123,8 +167,10 @@ export function sessionCompactContext(
   selection: HostDescriptor["context"]["task"] = "session-bound",
 ): string | null {
   const listed = store.listTaskIndex();
-  if (!listed.ok) return null;
-  const entry = currentTaskEntry(listed.data, session, selection);
+  if (!listed.ok) return migrationPending(listed) ? MIGRATION_PENDING_NOTE : null;
+  const entry =
+    currentTaskEntry(listed.data, session, selection) ??
+    implicitTaskEntry(store, listed.data, session);
   return entry ? entryCompactContext(store, entry, session, context) : null;
 }
 
@@ -208,8 +254,13 @@ export const sessionContextText = (
   try {
     const store = new TaskStore(input.cwd);
     const listed = store.listTaskIndex();
+    // Hooks never migrate (hot path, possibly a live 2.x writer): say how.
+    if (migrationPending(listed))
+      return `<workit-contract>\n${invariantBootstrap()}\n${MIGRATION_PENDING_NOTE}${options.addendum ? `\n${options.addendum}` : ""}\n</workit-contract>`;
     if (!listed.ok) throw new Error(listed.error);
-    const entry = currentTaskEntry(listed.data, session, descriptor.context.task);
+    const entry =
+      currentTaskEntry(listed.data, session, descriptor.context.task) ??
+      implicitTaskEntry(store, listed.data, session);
     const text = entry
       ? entryCompactContext(store, entry, session, hookOperationContext(input, descriptor))
       : null;
@@ -230,6 +281,7 @@ export const turnContextText = (input: HookInput, descriptor: HostDescriptor): s
       hookOperationContext(input, descriptor),
       descriptor.context.task,
     );
+    if (text === MIGRATION_PENDING_NOTE) return text;
     return text ? `<workit-task-context>${text}</workit-task-context>` : null;
   } catch {
     return null;

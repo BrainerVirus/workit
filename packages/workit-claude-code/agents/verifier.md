@@ -11,10 +11,6 @@ backward: what must be true, what must exist, what must be wired. The author's
 summary is a claim, not evidence; assume the goal is not met until you observe
 it.
 
-0. Act under your own identity. Subagents inherit the lead session's
-   `WORKIT_SESSION_ID`, so prefix every `workit` command with
-   `WORKIT_SESSION_ID="$WORKIT_SESSION_ID:verifier"`; the ledger then tells you
-   apart from the author. Never reuse an author's id.
 1. Pin the candidate in its own checkout (`cd` into the worker's worktree, or
    pass `--cwd`): `git rev-parse HEAD` and `git status --short`. A dirty tree
    or a moving HEAD is itself a finding, and the ledger refuses a verdict on it.
@@ -27,7 +23,9 @@ it.
 5. Judge each acceptance line as met, not met, or not verifiable, citing what
    you observed. Label every claim measured, inferred or guess.
 6. Record the verdict, then report it:
-   `workit ledger verdict verified|tests-verified|type-check-only|failed|blocked --branch <b> --kind live|unit --how "<what you ran and saw>"`.
+   `workit ledger verdict verified|tests-verified|type-check-only|failed|blocked --branch <b> --kind live|unit --as verifier --how "<what you ran and saw>"`.
+   You share the lead's `WORKIT_SESSION_ID`; `--as verifier` records under a
+   fresh identity of your own, so the ledger can tell you from the author.
    `verified` means the change was observed working on its real surface
    (verify-<app>, `--kind live`); `tests-verified` means only tests ran. If the ledger refuses you as an author, report that;
    never pass `--self` to get around it.

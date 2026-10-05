@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   TaskStore,
   WorkitCore,
-  canonicalJson,
   sha256,
   success,
   type OperationContext,
@@ -28,13 +27,6 @@ const context = (checkout: string): OperationContext => ({
   capabilities: [],
   constraints: [],
   now: "2026-01-01T00:00:00Z",
-  nativeRecovery: ({ writer }) =>
-    success(null, null, {
-      state: "accounted_for" as const,
-      pid: 0,
-      processStart: null,
-      ownerDigest: writer ? sha256(canonicalJson(writer)) : null,
-    }),
 });
 
 const started = () => {
@@ -453,145 +445,6 @@ test("resume reconciliation accepts only trusted worker observations", () => {
       [untrusted],
     ),
   ).toMatchObject({ ok: false, code: "permission_denied" });
-});
-
-test("corrupt-byte recovery keeps damaged bytes, invalidates old revisions, and never restores a writer", () => {
-  const value = started();
-  const changed = value.store.mutateTask(value.task.id, value.task.revision, (task, mutation) =>
-    success(mutation.revision, null, task),
-  );
-  expect(changed.ok).toBe(true);
-  const candidates = value.store.recoveryCandidates();
-  expect(candidates.ok).toBe(true);
-  if (!candidates.ok) throw new Error(candidates.error);
-  const candidate = candidates.data.find((item) => item.target === "task");
-  if (!candidate) throw new Error("missing recovery snapshot");
-  const taskFile = join(value.checkout, ".workit", "tasks", `${value.task.id}.json`);
-  writeFileSync(taskFile, "{broken");
-  const recovered = value.core.state({
-    schemaVersion: 1,
-    action: "recover",
-    taskId: value.task.id,
-    expectedWorkspaceRevision: value.workspace.revision,
-    target: "task",
-    expectedBytes: sha256("{broken"),
-    snapshotDigest: candidate.digest,
-    reason: "crash recovery",
-    authorityRefs: [],
-  });
-  expect(recovered).toMatchObject({ ok: true });
-  expect(readFileSync(taskFile, "utf8")).not.toBe("{broken");
-  expect(
-    value.store.mutateTask(value.task.id, value.task.revision, (task) => success(null, null, task)),
-  ).toMatchObject({
-    ok: false,
-    code: "revision_conflict",
-  });
-});
-
-test("workspace recovery clears a previously held writer and closed task recovery stays closed", () => {
-  const value = started();
-  const held = value.store.mutateWorkspace(value.workspace.revision, (workspace, mutation) =>
-    success(mutation.revision, mutation.revision, {
-      ...workspace,
-      writer: {
-        state: "held" as const,
-        owner: {
-          taskId: value.task.id,
-          workerId: null,
-          session: { kind: "host" as const, host: "workit_cli" as const, handle: "session" },
-        },
-        acquiredAt: mutation.now,
-      },
-    }),
-  );
-  expect(held.ok).toBe(true);
-  const heldWorkspaceBefore = value.store.readWorkspace();
-  if (!heldWorkspaceBefore.ok || !heldWorkspaceBefore.data)
-    throw new Error("held workspace missing");
-  const heldAgain = value.store.mutateWorkspace(
-    heldWorkspaceBefore.data.revision,
-    (workspace, mutation) => success(mutation.revision, mutation.revision, workspace),
-  );
-  expect(heldAgain.ok).toBe(true);
-  const heldWorkspace = value.store.readWorkspace();
-  if (!heldWorkspace.ok || !heldWorkspace.data) throw new Error("held workspace missing");
-  const workspaceCandidates = value.store.recoveryCandidates();
-  if (!workspaceCandidates.ok) throw new Error(workspaceCandidates.error);
-  const workspaceCandidate = workspaceCandidates.data.find((item) => {
-    if (item.target !== "workspace") return false;
-    try {
-      return JSON.parse(readFileSync(item.path, "utf8")).writer?.state === "held";
-    } catch {
-      return false;
-    }
-  });
-  if (!workspaceCandidate) throw new Error("missing workspace recovery snapshot");
-  const workspaceFile = join(value.checkout, ".workit", "workspace.json");
-  writeFileSync(workspaceFile, "{broken");
-  const recoveredWorkspace = value.core.state({
-    schemaVersion: 1,
-    action: "recover",
-    taskId: value.task.id,
-    expectedWorkspaceRevision: heldWorkspace.data.revision,
-    target: "workspace",
-    expectedBytes: sha256("{broken"),
-    snapshotDigest: workspaceCandidate.digest,
-    reason: "clear writer",
-    authorityRefs: [],
-  });
-  expect(recoveredWorkspace).toMatchObject({ ok: true, data: { writer: null } });
-
-  const currentTask = value.store.readTask(value.task.id);
-  const currentWorkspace = value.store.readWorkspace();
-  if (!currentTask.ok || !currentWorkspace.ok || !currentWorkspace.data)
-    throw new Error("state missing");
-  const closed = value.core.task({
-    schemaVersion: 1,
-    action: "close",
-    taskId: currentTask.data.id,
-    expectedRevision: currentTask.data.revision,
-    expectedWorkspaceRevision: currentWorkspace.data.revision,
-    outcome: "stopped",
-    summary: "closed",
-    decisionIds: [],
-  });
-  expect(closed.ok).toBe(true);
-  const closedTask = value.store.readTask(value.task.id);
-  if (!closedTask.ok) throw new Error(closedTask.error);
-  const closedMutation = value.store.mutateTask(
-    value.task.id,
-    closedTask.data.revision,
-    (task, mutation) => success(mutation.revision, null, task),
-  );
-  expect(closedMutation.ok).toBe(true);
-  const recoveryWorkspace = value.store.readWorkspace();
-  if (!recoveryWorkspace.ok || !recoveryWorkspace.data) throw new Error("workspace missing");
-  const closedCandidates = value.store.recoveryCandidates();
-  if (!closedCandidates.ok) throw new Error(closedCandidates.error);
-  const closedCandidate = closedCandidates.data.find((item) => {
-    if (item.target !== "task") return false;
-    try {
-      return JSON.parse(readFileSync(item.path, "utf8")).status === "closed";
-    } catch {
-      return false;
-    }
-  });
-  if (!closedCandidate) throw new Error("missing closed recovery snapshot");
-  writeFileSync(join(value.checkout, ".workit", "tasks", `${value.task.id}.json`), "{broken");
-  const recoveredTask = value.core.state({
-    schemaVersion: 1,
-    action: "recover",
-    taskId: value.task.id,
-    expectedWorkspaceRevision: recoveryWorkspace.data.revision,
-    target: "task",
-    expectedBytes: sha256("{broken"),
-    snapshotDigest: closedCandidate.digest,
-    reason: "retain closed history",
-    authorityRefs: [],
-  });
-  expect(recoveredTask).toMatchObject({ ok: true, data: { status: "closed" } });
-  expect(closedTask.data.status).toBe("closed");
 });
 
 test("state import rejects records that are not v1 export bundles", () => {

@@ -17,6 +17,7 @@ import {
   isolatedEnv,
 } from "@/test/shared/helpers/packages";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { eventsFileOf, rawRecordOf } from "../workit-core/store-files";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const id = "00000000-0000-4000-8000-000000000001";
@@ -643,9 +644,9 @@ test("task start, list, and read-only inspect work through the CLI", async () =>
     const started = JSON.parse(first.read().stdout);
     expect(started).toMatchObject({ ok: true, schemaVersion: 1 });
     const taskId = started.data.id as string;
-    const taskPath = path.join(root, ".workit", "tasks", `${taskId}.json`);
+    const taskPath = eventsFileOf(root, taskId);
     const before = readFileSync(taskPath, "utf8");
-    expect(JSON.parse(before).intent.provenance.kind).toBe("agent_reported");
+    expect(rawRecordOf(root, taskId).intent.provenance.kind).toBe("agent_reported");
 
     const inspected = capture();
     expect(
@@ -656,9 +657,7 @@ test("task start, list, and read-only inspect work through the CLI", async () =>
       }),
     ).toBe(0);
     expect(JSON.parse(inspected.read().stdout)).toMatchObject({ ok: true, schemaVersion: 1 });
-    expect(readFileSync(path.join(root, ".workit", "tasks", `${taskId}.json`), "utf8")).toBe(
-      before,
-    );
+    expect(readFileSync(taskPath, "utf8")).toBe(before);
 
     const listed = capture();
     expect(

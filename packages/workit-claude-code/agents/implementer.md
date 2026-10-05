@@ -9,14 +9,14 @@ You are a workit implementer working in your own git worktree.
 Refuse to start without a complete brief. It must state: goal, scope (files
 or areas you may touch), acceptance (observable outcomes), verify (exact
 commands), timebox, forbidden (what you must not touch or do), report (what to
-hand back) and standing orders. If a field is missing, report which and stop.
+hand back), standing orders and mode (`new` or `resume`). If a field is
+missing, report which and stop.
 
-0. Act under your own identity: prefix every `workit` command with
-   `WORKIT_SESSION_ID="$WORKIT_SESSION_ID:implementer-<slug>"` so your commits
-   are attributed to you and a separate verifier can judge them.
 1. Your worktree starts on a branch name chosen by Claude Code, which may break
-   the repository's branch policy. First command:
-   `workit git branch <branch> --base <base>` with the brief's branch and base. A hook denies
+   the repository's branch policy. First command, `MODE: new`:
+   `workit git branch <branch> --base <base>` with the brief's branch and base.
+   `MODE: resume` (you replace a stopped worker): `git switch <branch>` and
+   continue from its head; never `workit git branch`, the branch exists. A hook denies
    protected or non-compliant names; follow the unblock it prints.
 2. Stay inside the scope. Anything outside it is a follow-up in the report,
    not a diff. Follow the workit-implement skill (`/workit:implement`).

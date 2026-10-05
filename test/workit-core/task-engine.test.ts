@@ -24,6 +24,7 @@ import {
   success,
   type OperationContext,
 } from "@/packages/workit-core/src/core";
+import { workspaceFileOf } from "./store-files";
 import {
   assessment,
   caller,
@@ -121,11 +122,14 @@ test("task history search matches summaries and decisions, orders and limits rea
   );
   expect(amended.ok).toBe(true);
 
+  // Searching is read-only: no task log or workspace record changes.
   const taskDir = join(root, ".workit", "tasks");
-  const before = readdirSync(taskDir)
-    .toSorted()
-    .map((name) => [name, readFileSync(join(taskDir, name), "utf8")]);
-  const workspaceBefore = readFileSync(join(root, ".workit", "workspace.json"), "utf8");
+  const logs = () =>
+    readdirSync(taskDir)
+      .toSorted()
+      .map((name) => [name, readFileSync(join(taskDir, name, "events.jsonl"), "utf8")]);
+  const before = logs();
+  const workspaceBefore = readFileSync(workspaceFileOf(root), "utf8");
   const hit = makeCore("2026-01-03T00:00:00Z").task({
     schemaVersion: 1,
     action: "list",
@@ -200,12 +204,8 @@ test("task history search matches summaries and decisions, orders and limits rea
     newerId,
     (older.data as { id: string }).id,
   ]);
-  expect(
-    readdirSync(taskDir)
-      .toSorted()
-      .map((name) => [name, readFileSync(join(taskDir, name), "utf8")]),
-  ).toEqual(before);
-  expect(readFileSync(join(root, ".workit", "workspace.json"), "utf8")).toBe(workspaceBefore);
+  expect(logs()).toEqual(before);
+  expect(readFileSync(workspaceFileOf(root), "utf8")).toBe(workspaceBefore);
 });
 
 test("lifecycle pauses, resumes, and stops without reopening", () => {

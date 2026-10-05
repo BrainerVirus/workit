@@ -19,12 +19,14 @@ description: Build a requested change in small verified steps - follow local pat
 5. Prove the feature on its real surface with the project's `verify-<app>`
    skill (none yet? workit-verify-app writes one). Tests show branch behavior,
    not that the feature works.
-6. Deliver to the endpoint you were given (none named: the default ceiling, a
-   pushed PR): `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`),
-   then `workit git push` and `workit pr create --fill`; then workit-ship.
+6. Commit: `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`).
+   No endpoint named? Stop here and state the next command. Push and open a
+   PR (`workit git push`, `workit pr create --fill`, then workit-ship) only when
+   that was requested, or the request implies delivery and the workspace
+   `defaultEndpoint` is `pr`.
 7. Hand off verification. Never record a passing verdict on your own work: a
    fresh agent (Claude Code: the `verifier` agent) runs verify-<app> and
-   `workit ledger verdict`. Before saying done, reconcile every named
+   `workit ledger verdict <result> --as verifier`. Before saying done, reconcile every named
    deliverable against the target checkout and observe it (for a push:
    `workit verify-delivery push`).
 

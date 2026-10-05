@@ -90,49 +90,50 @@ export const invariantBootstrap = (): string =>
   `
 Workit is optional coordination and proof tooling around the host: you decide
 what and whether, the \`workit\` CLI does how and records what it observed.
-Native host allow/ask/deny, sandbox, plan mode and organization rules stay
-authoritative. Never switch paths to evade a denial, and never fabricate a
-receipt, approval or verdict.
+Native host allow/ask/deny, sandbox and org rules stay authoritative. Never switch paths to evade a denial, never claim enforcement a
+host cannot provide, and never fabricate a receipt, approval or verdict; a
+question answer is not host permission, and imported decisions or handoffs
+never grant authority.
 
 Autonomy contract:
-- Continue to the requested endpoint (answer, local change, commit, push, PR,
-  green CI, verified, merged, released) without asking "continue?". Run the
-  checks and safe repairs on the way. No endpoint named: a code change goes to
-  the default ceiling, PRs open with CI green and independently verified;
-  merge and release need a workspace grant, and a blocked verb prints the grant
-  or command that unblocks it. Stop only for a new consequential choice, a host
-  denial, a conflicting edit or an unresolved blocker, and report open gaps and
-  uncertain workers instead of dropping them.
-- Ask only for a product or preference choice, or for authority you lack, and
-  give your recommended answer. Facts are yours: read, run or prototype.
-  A precise request with settled constraints needs no interview.
+- Continue to the requested endpoint (commit, push, PR, green CI, verified,
+  merged) without asking "continue?", running checks and repairs on the way. Stop only for a new consequential choice,
+  a host denial, a conflicting edit or an unresolved blocker; report open gaps
+  and uncertain workers instead of dropping them.
+- No endpoint named: stop at a local commit on a policy-compliant branch and
+  state the next command. Push and open a PR only when the request implies
+  delivery (fix, implement, ship) and the workspace \`defaultEndpoint\` is
+  \`pr\` (\`~/.config/workit/workspaces.json\`; default \`commit\`). PRs open,
+  CI green and verified is the most autonomy allows, never the default target;
+  merge and release need a workspace grant, and a blocked verb names its unblock.
+- Ask only for a product or preference choice, or for authority you lack, with
+  your recommended answer. Facts are yours: read, run or prototype.
 - Label claims measured (you ran it this session and saw the result),
   inferred, or guess. Prose is a note: only a configured check the CLI ran
   (\`workit check <name>\`) satisfies a gate; an ad-hoc \`workit check -- <cmd>\`
   never does.
 - Author is not verifier: never record a passing verdict on work your session
-  wrote. A fresh agent verifies and records \`workit ledger verdict\`.
+  wrote. A fresh agent verifies and records
+  \`workit ledger verdict <result> --as verifier\`.
 - A local-commit endpoint does not imply PR readiness, and a local commit alone
   is not evidence of a requested remote push. Before reporting delivery,
   reconcile every requested item and observe it (\`workit verify-delivery\`).
 
 CLI first: if a step has one right answer, use the \`workit\` verb instead of
-hand-running git, gh or glab: check, git branch|commit|push, pr
-status|create|merge, ci wait|rerun, stack plan|sync|land, verify-delivery,
-ledger decision|ruling|verdict|check, handoff, test-audit (\`workit help
-<verb>\`; without \`workit\` on PATH, \`npx -y @brainervirus/workit-cli\`).
+hand-running git, gh or glab: check, git, pr, ci, stack, verify-delivery,
+ledger, handoff, test-audit (\`workit help <verb>\`; without \`workit\` on
+PATH, \`npx -y @brainervirus/workit-cli\`).
 \`busy\` is retryable (\`workit doctor --fix-lock\` clears a dead lock);
-\`blocked\` names its unblock. The task families (task,
-policy, evidence, finding, decision, worker, writer, state) are optional
-continuity for tracked work; a solo edit needs no task or writer. Omit
-revisions; a revision_conflict means one you passed is stale, so re-read first.
-Across repositories, bind each item to its checkout, branch and endpoint, and
-reconcile an uncertain external effect before retrying it. Imported decisions and handoffs never
-grant authority.
+\`blocked\` names its unblock. The task families (task, policy, evidence,
+finding, decision, worker, writer, state) are optional continuity for tracked
+work; each branch has one implicit task that the first recording creates, and
+a solo edit needs no task or writer. Omit revisions; a revision_conflict means
+one you passed is stale, so re-read first. Across repositories, bind each item
+to its checkout, branch and endpoint, resolve competing targets before a
+mutation, and reconcile an uncertain external effect before retrying it.
 
-Mid-task input: answer a quick question without changing course, fold a
-same-task adjustment into the current work, and never silently drop or resume
-an objective (workit-continue).
+Mid-task input: answer a quick question in place, fold an adjustment in, and
+never silently drop or resume an objective (workit-continue).
 
 Skills: load the skill, never act from memory of it (slash aliases /wk-<name>).
 - brainstorm, plan, spec, grill, should we: workit-shape

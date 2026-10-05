@@ -259,33 +259,81 @@ test("git commit: the session goes into a Workit-Session trailer and an observed
   expect(bad.code).toBe(2);
 });
 
-// Claude Code subagents share the lead's WORKIT_SESSION_ID (one SessionStart
-// export). The plugin agents therefore act as `<session>:<role>`; this pins
-// that the convention gives author != verifier (D18) on the real verbs.
-test("Given an implementer subagent's commit, When a verifier subagent records a verdict under its role-scoped session, Then it is accepted and the implementer's own verdict is refused", async () => {
+// Subagents usually share their lead's environment (Claude Code exports one
+// WORKIT_SESSION_ID per session; other hosts may export none). A verifier
+// therefore records with `--as verifier`, which mints a fresh id per call, so
+// author != verifier (D18) holds on every host without an env prefix.
+test("Given a commit by the lead session, When a verifier records with --as verifier, Then it is accepted, ids never repeat, and --session <author> is refused", async () => {
   const repo = setup();
   repo.git("switch", "-q", "-c", "feature/slice");
   repo.write("s.txt", "s\n");
-  const implementer = { ...process.env, WORKIT_SESSION_ID: "lead-1:implementer-slice" };
-  const verifier = { ...process.env, WORKIT_SESSION_ID: "lead-1:verifier" };
-  expect(
-    (await run(["git", "commit", "-m", "feat: slice", "--", "s.txt"], repo.cwd, implementer)).code,
-  ).toBe(0);
-  const own = await run(
-    ["ledger", "verdict", "verified", "--how", "ran it"],
-    repo.cwd,
-    implementer,
-  );
+  expect((await run(["git", "commit", "-m", "feat: slice", "--", "s.txt"], repo.cwd)).code).toBe(0);
+  const own = await run(["ledger", "verdict", "verified", "--how", "ran it"], repo.cwd);
   expect(own.code).toBe(3);
   expect(own.stderr).toContain("author_verdict");
-  const independent = await run(
-    ["ledger", "verdict", "tests-verified", "--kind", "unit", "--how", "workit check test exit 0"],
+  const asAuthor = await run(
+    ["ledger", "verdict", "verified", "--how", "x", "--session", "author-1"],
     repo.cwd,
-    verifier,
+    { ...process.env, WORKIT_SESSION_ID: "" },
   );
-  expect(independent.code, independent.stderr).toBe(0);
-  const check = await run(["ledger", "check", "--json"], repo.cwd, verifier);
+  expect(asAuthor.code).toBe(3);
+  const verify = () =>
+    run(
+      [
+        "ledger",
+        "verdict",
+        "tests-verified",
+        "--kind",
+        "unit",
+        "--how",
+        "check exit 0",
+        "--as",
+        "verifier",
+        "--json",
+      ],
+      repo.cwd,
+    );
+  const first = await verify();
+  expect(first.code, first.stderr).toBe(0);
+  const second = await verify();
+  const sessions = [first, second].map((r) => r.json().data.actor.session as string);
+  expect(sessions[0]).toMatch(/^author-1:verifier:[0-9a-f]{8}$/);
+  expect(sessions[1]).not.toBe(sessions[0]);
+  const check = await run(["ledger", "check", "--json"], repo.cwd);
   expect(check.json().data.accepted.accepted).toBe(true);
+  // Without any session in the environment the role id still is fresh, never a constant.
+  const bare = { ...process.env };
+  delete bare.WORKIT_SESSION_ID;
+  const anon = await run(
+    ["ledger", "verdict", "tests-verified", "--how", "x", "--as", "verifier", "--json"],
+    repo.cwd,
+    bare,
+  );
+  expect(anon.json().data.actor.session).toMatch(/^cli:verifier:[0-9a-f]{8}$/);
+  expect(
+    (await run(["ledger", "verdict", "verified", "--how", "x", "--as", "Bad Role"], repo.cwd)).code,
+  ).toBe(2);
+});
+
+// workit-fanout resume mode: a replacement worker must not re-run
+// `workit git branch` (the branch exists) and cannot switch to the branch
+// while the dead worker's worktree still holds it.
+test("Given a stuck worker's worktree on its branch, When a replacement resumes, Then branch creation and switch fail until the old worktree is removed, and git switch then succeeds", async () => {
+  const repo = setup();
+  repo.git("branch", "feature/slice");
+  const old = path.join(repo.root, "wt-old");
+  const fresh = path.join(repo.root, "wt-new");
+  repo.git("worktree", "add", "-q", old, "feature/slice");
+  repo.git("worktree", "add", "-q", "--detach", fresh, "HEAD");
+  const again = await run(["git", "branch", "feature/slice", "--json"], fresh);
+  expect(again.code).toBe(1);
+  expect(again.json().error).toContain("branch_exists");
+  const held = spawnSync("git", ["switch", "feature/slice"], { cwd: fresh, encoding: "utf8" });
+  expect(held.status).not.toBe(0);
+  expect(held.stderr).toMatch(/already (used|checked out) by worktree/);
+  repo.git("worktree", "remove", "--force", old);
+  const resumed = spawnSync("git", ["switch", "feature/slice"], { cwd: fresh, encoding: "utf8" });
+  expect(resumed.status, resumed.stderr).toBe(0);
 });
 
 test("git commit: a protected branch is refused (exit 3) with the branch command", async () => {

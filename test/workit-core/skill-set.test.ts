@@ -153,6 +153,29 @@ const agentFacingTexts = (): Array<[string, string]> => {
   return out;
 };
 
+/**
+ * The grammar a subcommand documents in its verb source: every usage line that
+ * names `workit <verb> <sub>` (also inside `a|sub` lists) plus the comment
+ * continuation lines under it. Verbs without per-subcommand usage fall back
+ * to the whole source.
+ */
+const grammarFor = (verb: string, sub: string | undefined, fallback: string): string => {
+  const file = path.join(VERB_SOURCES, `${verb}.ts`);
+  if (!existsSync(file)) return fallback;
+  const source = readFileSync(file, "utf8");
+  if (!sub || !/^[a-z]/.test(sub)) return source;
+  const lines = source.split("\n");
+  const names = new RegExp(`workit ${escape(verb)} (?:[a-z-]+\\|)*${escape(sub)}(?![a-z-])`);
+  const picked: string[] = [];
+  lines.forEach((line, index) => {
+    if (!names.test(line)) return;
+    picked.push(line);
+    for (let next = index + 1; /^\/\/\s+\[/.test(lines[next] ?? ""); next++)
+      picked.push(lines[next]);
+  });
+  return picked.length ? picked.join("\n") : source;
+};
+
 /** `workit …` invocations inside code spans and sh blocks, cut at shell operators. */
 const invocations = (text: string): string[] => {
   const code = [
@@ -182,17 +205,10 @@ test("Given every workit command in skills, references, agents and the bootstrap
           hasWord(entry.usage, sub),
           `${source}: "workit ${call}" (usage: ${entry.usage})`,
         ).toBe(true);
-      const file = path.join(VERB_SOURCES, `${verb}.ts`);
-      const handled = existsSync(file)
-        ? readFileSync(file, "utf8") +
-          readFileSync(path.join(VERB_SOURCES, "forge-common.ts"), "utf8")
-        : entry.usage;
+      const handled = grammarFor(verb, SUBCOMMAND_VERBS.has(verb) ? sub : undefined, entry.usage);
       for (const [flag] of call.matchAll(/--[a-z][a-z-]*/g))
         if (!GLOBAL_FLAGS.has(flag))
-          expect(
-            handled.includes(flag) || handled.includes(`${flag.slice(2)}:`),
-            `${source}: "workit ${call}" uses ${flag}`,
-          ).toBe(true);
+          expect(handled.includes(flag), `${source}: "workit ${call}" uses ${flag}`).toBe(true);
       if (verb === "git" && sub === "commit")
         expect(
           / --all\b| -- \S/.test(call),

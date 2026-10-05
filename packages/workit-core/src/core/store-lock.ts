@@ -4,9 +4,11 @@ import { hostname } from "node:os";
 import path from "node:path";
 import * as z from "zod";
 import { canonicalJson } from "./task-contract";
+import { checkoutSlug, resolveStore } from "../store/paths";
 
 /**
- * Ownership rules for a checkout's `.workit/metadata.lock`.
+ * Ownership rules for the workit store's locks: a checkout's
+ * `checkouts/<slug>/metadata.lock` and each task's `tasks/<id>/lock`.
  *
  * The lock is a short mutex around one store mutation (or one managed effect).
  * A lock whose owner is gone is reclaimed automatically; a lock whose owner is
@@ -197,7 +199,16 @@ const ageOf = (file: string, nowMs: number): number | null => {
   }
 };
 
-export const lockPathFor = (root: string) => path.join(root, ".workit", "metadata.lock");
+/** A checkout's lock in the task store (see core/task-store.ts). */
+export const lockPathFor = (root: string): string => {
+  let real = path.resolve(root);
+  try {
+    real = fs.realpathSync(real);
+  } catch {}
+  const location = resolveStore(real);
+  const dir = location instanceof Error ? path.join(real, ".workit") : location.dir;
+  return path.join(dir, "checkouts", checkoutSlug(real), "metadata.lock");
+};
 
 /** Remove a reclaim guard abandoned by a crashed reclaimer. Returns true when removed. */
 export const clearAbandonedReclaimGuard = (lockPath: string, nowMs = Date.now()): boolean => {
