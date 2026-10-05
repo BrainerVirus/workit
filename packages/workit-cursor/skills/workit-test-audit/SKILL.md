@@ -1,6 +1,6 @@
 ---
 name: workit-test-audit
-description: Use when tests may be tautological, low-value or noisy, before trusting a green suite, when reviewing tests an agent wrote, or when asked to clean up, prune or strengthen tests
+description: Find tautological, low-value or noisy tests and replace them with ones that catch real breaks. Use before trusting a green suite, for agent-written tests, test audit, tautology, weak tests, prune or strengthen tests.
 ---
 
 # Audit tests for tautologies
@@ -32,7 +32,15 @@ or weaken a test to make it quiet.
 4. Leave untouched tests outside the diff alone; propose that cleanup as its
    own change.
 
-## Completion
+## Example
+
+Bad fix: delete the flagged test, or change its expected value to whatever the
+code returns now.
+
+Good fix: `expect(total(items)).toBe(items.reduce(...))` flagged `tautology`; replaced with the worked example `toBe(15)`;
+planted `+ 1` in `total()`, saw the new test fail, reverted the plant.
+
+## Check
 
 Every finding is triaged (replaced with a test that failed on a planted bug,
 kept with an ignore comment and reason, or removed as above) and the configured

@@ -26,25 +26,15 @@ const target = targetArg ? path.resolve(targetArg) : packageDir;
 const PREFIX = "workit-";
 
 /** Plugin skills are namespaced by the plugin (`/workit:<name>`), so the
- * `workit-` prefix is dropped from the directory and the frontmatter name. */
+ * `workit-` prefix is dropped from the directory and the frontmatter name.
+ * Nothing else changes: host mapping lives once in the session addendum. */
 const pluginSkillName = (name: string): string =>
   name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name;
-
-const CLAUDE_NOTE = `
-
-## In Claude Code
-
-Workit operations (\`task\`, \`evidence\`, \`policy\`, \`decision\`, …) run through
-the \`workit\` CLI on the Bash tool: \`workit <family> <action> --json\`
-(\`workit --help\` lists the verbs). The plugin's \`verifier\`, \`reviewer\`
-and \`implementer\` agents take independent verification, fresh-context
-review and isolated implementation.
-`;
 
 const transformSkill = (text: string, from: string, to: string): string => {
   const renamed = text.replace(new RegExp(`^name:\\s*${from}\\s*$`, "m"), `name: ${to}`);
   if (renamed === text) throw new Error(`skill ${from}: frontmatter name: ${from} not found`);
-  return `${renamed.trimEnd()}\n${CLAUDE_NOTE}`;
+  return renamed;
 };
 
 const buildSkills = () => {

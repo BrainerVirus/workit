@@ -1,7 +1,5 @@
 # /wk-review
 
-Load and apply the bundled `workit-review` skill to the current candidate.
-
-Review the real diff on two axes (standards + spec fidelity) with proof-required findings, then fix, dismiss with evidence, or escalate — never relabel self-review as independent.
+Load and apply the bundled `workit-review` skill. Independent review of a diff, branch or PR - intent fidelity and standards as separate axes, test quality, blast radius - recorded as a non-author verdict. Use for review, code review, check this PR or MR, is this safe, blast radius.
 
 Extra context: $ARGUMENTS

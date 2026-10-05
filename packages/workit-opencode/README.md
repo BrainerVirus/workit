@@ -38,8 +38,8 @@ OpenCode.
 
 - **Eight native operation tools** — `workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, and `workit_state`.
 - **Read-only context and init tools** — `workit_context` accepts `{ "kind": "git" }` and the existing PR/YouTrack/changelog/release/affected context fields; `workit_init_apply` keeps confirmed configuration initialization.
-- **Sixteen policy-selected method skills** — challenge, behavioral TDD, review, plan, implement, debug, handoff,
-  babysit, blast-radius, deslop, diagram, mockup, green-run, steer, bdd, and test-audit.
+- **Eleven policy-selected method skills** — shape, implement, review, debug, ship, continue, bdd, test-audit,
+  deslop, fanout, and verify-app.
 - **Native lifecycle hooks** — host-observed question receipts, direct-child task workers, compact task bootstrap/restoration, and known-surface writer checks.
 
 ## Host-native behavior
@@ -63,10 +63,10 @@ before retrying them.
 
 ## Bundle / runtime model
 
-The build bundles the `@opencode/plugin` SDK surface used by the adapter into `dist/plugin.js`, so the published plugin has **no** runtime dependency on the SDK (it stays a development/build-only pin). The plugin loads through its real package entry `dist/plugin.js`; only the sixteen method skills ship under `assets/`.
+The build bundles the `@opencode/plugin` SDK surface used by the adapter into `dist/plugin.js`, so the published plugin has **no** runtime dependency on the SDK (it stays a development/build-only pin). The plugin loads through its real package entry `dist/plugin.js`; only the eleven method skills ship under `assets/`.
 
-The plugin registers ten tools with `codemode: false`, the sixteen
-skills and up to sixteen `wk-*` commands. Existing user skills and commands
+The plugin registers ten tools with `codemode: false`, the eleven
+skills and up to eleven `wk-*` commands. Existing user skills and commands
 are preserved; an alias is added only when its Workit skill is registered. It
 also provides question receipts for `decision.record`, direct-child subagent
 lineage with durable dispatch claims, and bootstrap/task/worker context plus

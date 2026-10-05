@@ -224,7 +224,7 @@ describe("analyzeReleaseScope", () => {
     r.tag("v0.8.11");
     try {
       r.commit("docs(skills): pause parked leads", {
-        "packages/workit-core/skills/workit-steer/SKILL.md": "# steer\n",
+        "packages/workit-core/skills/workit-continue/SKILL.md": "# continue\n",
       });
       expect(analyzeReleaseScope(r.root)).toEqual({
         level: "patch",

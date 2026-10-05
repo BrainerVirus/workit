@@ -1,41 +1,47 @@
 ---
 name: workit-bdd
-description: Use when turning a requirement, issue or acceptance criterion into tests, or when tests should read as behavior (Given/When/Then, BDD, scenarios, acceptance tests, test names and seams)
+description: Turn requirements into Given/When/Then scenarios, agree the test seam, and work test-first in vertical RED/GREEN slices. Use for BDD, TDD, acceptance criteria, scenarios, Given/When/Then, write a test first.
 ---
 
 # Behavior first: Given/When/Then
 
-Write each acceptance criterion as Given/When/Then before any code, then let
-it name the test and pick the seam. This skill shapes the scenarios; the
-RED/GREEN loop itself is workit-behavioral-tdd.
-
-## Method
-
-1. Write the scenarios. One behavior per scenario, in the user's or caller's
-   words: `Given <state>, When <action>, Then <observable result>`. Include the
-   unhappy paths a caller depends on (denied, empty, invalid, timeout).
-2. Agree the seams. Pick the highest stable interface the scenario can be
-   observed through: a CLI verb, a public function, an HTTP route. Ideally one
-   seam per feature. Write the seams down; do not test at an unagreed seam.
-3. Name the tests after the scenarios. The test name is the Given/When/Then
-   sentence; the body is arrange (Given), act (When), assert (Then). Expected
-   values come from the scenario (a literal from a worked example or the
-   spec), never from the code.
-4. Use Gherkin only where the repo already does (`.feature` files with
-   playwright-bdd, cucumber, jest-cucumber). Otherwise plain test names carry
-   the scenario; do not add a BDD framework.
-5. Build in vertical slices, one scenario at a time, with
-   workit-behavioral-tdd: run `workit check test` RED for the new scenario,
-   make the smallest change, run `workit check test` GREEN, then the next.
-6. Mock only at system boundaries: network, clock, randomness, other
-   processes, sometimes the filesystem. Never the unit or its internal
+1. **Write the scenarios.** One behavior each, in the caller's words:
+   `Given <state>, When <action>, Then <observable result>`. Include the
+   unhappy paths callers depend on (denied, empty, invalid, timeout).
+2. **Agree the seam.** The highest stable interface the scenario can be
+   observed through: a CLI verb, a public function, an HTTP route; ideally one
+   per feature. Do not test at a seam nobody agreed to.
+3. **Name tests after scenarios.** The name is the Given/When/Then sentence;
+   the body is arrange, act, assert. Expected values come from the scenario (a
+   literal from a worked example, the spec, an external contract), never from
+   the code under test.
+4. **Build in vertical slices.** Write one vertical RED slice that fails for
+   the missing behavior and run it through the CLI so the failure is observed:
+   `workit check test`. Make the smallest change, run the same check GREEN,
+   then take the next scenario. Any edit makes the observation stale; re-run
+   before you claim it. A recorded "tests pass" is a note, and an ad-hoc
+   `workit check -- <cmd>` never satisfies the gate: only the configured
+   `test` check does. No `test` detected? Create `workit.checks.json`, copying
+   in every check the repo already runs: once it exists it replaces the
+   detected defaults.
+5. **Mock only at system boundaries:** network, clock, randomness, other
+   processes, sometimes the filesystem. Never the unit or its own
    collaborators; use the real thing or an in-memory adapter behind a port.
+6. **Gherkin only where the repo already uses it** (`.feature` files with
+   playwright-bdd, cucumber, jest-cucumber). Otherwise test names carry it.
 
-## Completion
+Reject noise: version-pin assertions, tests that mirror private structure,
+assertions inside a possibly-empty loop, smoke-only renders, duplicates. If a
+test still passes when every imported function returns `undefined`, rewrite it
+(workit-test-audit finds these).
 
-Every acceptance criterion maps to a named test at an agreed seam, each was
-seen RED then GREEN through `workit check test`, and the new tests have no
-tautologies:
+## Example
+
+Bad: `test("calculateTotal works", () => expect(calculateTotal(items)).toBe(items.reduce((s, i) => s + i.price, 0)))`
+
+Good: `test("Given two items of 5 and 10, When totalled, Then the total is 15", () => expect(calculateTotal([{ price: 5 }, { price: 10 }])).toBe(15))`
+
+## Check
 
 ```sh
 workit test-audit --diff && workit check test
