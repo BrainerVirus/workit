@@ -18,6 +18,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { runtimeVersion } from "@/packages/workit-core/src/core/task-store";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import {
   AUTO_COMPACT_BYTES,
@@ -570,7 +571,7 @@ test("Given a 2.x .workit store with tasks and recovery copies, When 3.0 runs tw
   expect(stub).toMatchObject({
     id: ids[0],
     critical: ["store"],
-    runtime: { updatedWith: "3.0.0" },
+    runtime: { updatedWith: runtimeVersion() },
   });
   expect(readdirSync(path.join(root, ".workit", "recovery"))).toHaveLength(9);
 
@@ -604,7 +605,7 @@ test("Given a 2.x .workit store with tasks and recovery copies, When 3.0 runs tw
     critical: ["store"],
   });
   expect(workspaceRecordSchema.strict().safeParse(marker).success).toBe(false);
-  expect(marker.runtime.updatedWith).toBe("3.0.0");
+  expect(marker.runtime.updatedWith).toBe(runtimeVersion());
 });
 
 test("Given a 2.x store in a git checkout, Then it migrates into the git common dir and other worktrees see it", async () => {
