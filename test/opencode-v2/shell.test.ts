@@ -348,9 +348,9 @@ test("setup registers one collision-safe wk command per alias that forwards prom
       Object.keys(WORKIT_SKILL_ALIASES).toSorted(),
     );
     const names = commands.map((command) => command.name);
-    expect(names).toContain("wk-tdd");
-    expect(names).toContain("wk-babysit");
-    const tdd = commands.find((command) => command.name === "wk-tdd")!;
+    expect(names).toContain("wk-bdd");
+    expect(names).toContain("wk-ship");
+    const tdd = commands.find((command) => command.name === "wk-bdd")!;
     const delivery = { mode: "steer" };
     const files = [{ uri: "file:///tmp/a.png" }];
     await tdd.execute({
@@ -360,7 +360,7 @@ test("setup registers one collision-safe wk command per alias that forwards prom
     });
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toMatchObject({ sessionID: "ses_v2", delivery, files });
-    expect(prompts[0].text).toContain("workit-behavioral-tdd");
+    expect(prompts[0].text).toContain("workit-bdd");
     expect(prompts[0].text).toContain("user arguments");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -403,7 +403,7 @@ test("the implementation skill trigger covers ordinary requested implementation"
   try {
     const { skills } = await harness(root);
     expect(skills.find((skill) => skill.id === "workit-implement")?.description).toContain(
-      "implementing requested code changes",
+      "Use for implement, build",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

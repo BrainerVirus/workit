@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { OPERATION_FAMILIES } from "@/packages/workit-core/src/core";
 import { codexCapabilities, detectCodexSurface } from "@/packages/workit-codex/hooks/workit-hook";
-import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 
 const packageRoot = path.resolve(import.meta.dir, "../../packages/workit-codex");
 
@@ -19,9 +18,9 @@ test("Codex plugin ships the current manifest layout and the canonical method sk
   // hooks.json bundle, so the manifest must not advertise a Hooks capability.
   expect(manifest.interface.capabilities).toEqual(["MCP", "Task continuity"]);
   expect(manifest.mcpServers).toBe("./.mcp.json");
-  expect(readdirSync(path.join(packageRoot, "skills")).toSorted()).toEqual(
-    [...WORKIT_METHOD_SKILLS].toSorted(),
-  );
+  // skills/ is generated at build time (git-ignored); the packed tarball's
+  // copy is checked by the packaging tier (packed-launcher.test.ts).
+  expect(packageJson.files).toContain("skills/");
   expect(existsSync(path.join(packageRoot, "hooks/hooks.json"))).toBe(true);
   expect(existsSync(path.join(packageRoot, ".mcp.json"))).toBe(true);
   const hooks = JSON.parse(readFileSync(path.join(packageRoot, "hooks/hooks.json"), "utf8"));

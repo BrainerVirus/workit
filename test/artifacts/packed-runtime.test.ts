@@ -292,9 +292,7 @@ test(
       expect(code).toBe(0);
       const payload = JSON.parse(stdout);
       expect(payload.additional_context).toContain("<workit-contract>");
-      expect(payload.additional_context).toContain(
-        "Ordinary investigation, questions, non-Git work",
-      );
+      expect(payload.additional_context).toContain("a solo edit needs no task or writer");
     } finally {
       rmSync(install, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
@@ -403,9 +401,7 @@ test.skipIf(!npmRegistryOk)(
       expect(session.status, session.stderr ?? "").toBe(0);
       const payload = JSON.parse(session.stdout);
       expect(payload.additional_context).toContain("<workit-contract>");
-      expect(payload.additional_context).toContain(
-        "Ordinary investigation, questions, non-Git work",
-      );
+      expect(payload.additional_context).toContain("a solo edit needs no task or writer");
     } finally {
       rmSync(install, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });

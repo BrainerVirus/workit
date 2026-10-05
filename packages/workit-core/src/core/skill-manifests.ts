@@ -2,44 +2,68 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 export const WORKIT_METHOD_SKILLS = [
-  "workit-challenge",
-  "workit-behavioral-tdd",
-  "workit-review",
-  "workit-plan",
+  "workit-shape",
   "workit-implement",
+  "workit-review",
   "workit-debug",
-  "workit-handoff",
-  "workit-babysit",
-  "workit-blast-radius",
-  "workit-deslop",
-  "workit-diagram",
-  "workit-mockup",
-  "workit-green-run",
-  "workit-steer",
+  "workit-ship",
+  "workit-continue",
   "workit-bdd",
   "workit-test-audit",
+  "workit-deslop",
+  "workit-fanout",
+  "workit-verify-app",
 ] as const;
+
+export type WorkitSkill = (typeof WORKIT_METHOD_SKILLS)[number];
 
 /** wk- slash aliases (one per skill): alias → method skill. An alias routes
  * through policy to model skills; an alias never calls another alias. */
 export const WORKIT_SKILL_ALIASES = {
-  "wk-challenge": "workit-challenge",
-  "wk-babysit": "workit-babysit",
+  "wk-shape": "workit-shape",
   "wk-implement": "workit-implement",
-  "wk-plan": "workit-plan",
-  "wk-debug": "workit-debug",
   "wk-review": "workit-review",
-  "wk-handoff": "workit-handoff",
-  "wk-tdd": "workit-behavioral-tdd",
-  "wk-blast-radius": "workit-blast-radius",
-  "wk-deslop": "workit-deslop",
-  "wk-diagram": "workit-diagram",
-  "wk-mockup": "workit-mockup",
-  "wk-green-run": "workit-green-run",
-  "wk-steer": "workit-steer",
+  "wk-debug": "workit-debug",
+  "wk-ship": "workit-ship",
+  "wk-continue": "workit-continue",
   "wk-bdd": "workit-bdd",
   "wk-test-audit": "workit-test-audit",
-} as const;
+  "wk-deslop": "workit-deslop",
+  "wk-fanout": "workit-fanout",
+  "wk-verify-app": "workit-verify-app",
+} as const satisfies Record<string, WorkitSkill>;
+
+/**
+ * The words a user types that should load each skill. Each skill's
+ * description and its bootstrap routing line carry every one of them, and no
+ * two skills share one (checked by test), so a trigger routes to one skill.
+ */
+export const WORKIT_SKILL_TRIGGERS: Readonly<Record<WorkitSkill, readonly string[]>> = {
+  "workit-shape": ["brainstorm", "plan", "spec", "grill", "should we"],
+  "workit-implement": ["implement", "build", "add a feature"],
+  "workit-review": ["review", "blast radius"],
+  "workit-debug": ["bug", "broken", "flaky", "regression"],
+  "workit-ship": ["ship", "babysit", "CI", "merge"],
+  "workit-continue": ["resume", "pick up", "handoff", "interruption"],
+  "workit-bdd": ["BDD", "TDD", "acceptance criteria", "Given/When/Then"],
+  "workit-test-audit": ["test audit", "tautology", "weak tests"],
+  "workit-deslop": ["deslop", "slop", "dead code"],
+  "workit-fanout": ["fan out", "parallelize", "parallel agents", "swarm"],
+  "workit-verify-app": ["verify the app", "smoke test", "prove it works"],
+};
+
+/** The `description:` frontmatter value of a SKILL.md (one line, unquoted). */
+export const skillDescription = (skillMd: string): string => {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(skillMd)?.[1] ?? "";
+  const line = /^description:\s*(.+)$/m.exec(frontmatter)?.[1] ?? "";
+  return line.trim().replace(/^(["'])(.*)\1$/, "$2");
+};
+
+/** A generated Cursor slash command for one alias; `commands/` is committed
+ * because Cursor discovers the plugin from git, so the build writes these and
+ * a drift test compares them to the committed copies. */
+export const cursorCommandText = (alias: string, skill: string, description: string): string =>
+  `# /${alias}\n\nLoad and apply the bundled \`${skill}\` skill. ${description}\n\nExtra context: $ARGUMENTS\n`;
 
 export const skillManifestNames = (root: string): string[] =>
   existsSync(root)

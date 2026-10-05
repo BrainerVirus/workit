@@ -775,7 +775,7 @@ test("detects an out-of-matrix opencode SDK pin as mixed versions", () => {
 test("detects missing assets and clears once restored", () => {
   const asset = path.join(
     fixture.dev,
-    "packages/workit-opencode/assets/skills/workit-plan/SKILL.md",
+    "packages/workit-opencode/assets/skills/workit-shape/SKILL.md",
   );
   rmSync(asset, { force: true });
   try {
@@ -784,7 +784,7 @@ test("detects missing assets and clears once restored", () => {
     expect(check(report, "assets").status).toBe("fail");
     expect(check(report, "assets").fix).toBeTruthy();
   } finally {
-    writeConfig(asset, "# workit-plan\n");
+    writeConfig(asset, "# workit-shape\n");
   }
   expect(check(run(), "assets").status).toBe("pass");
 });
@@ -1505,13 +1505,13 @@ const expectInstallerFailure = (id: string, fixKeyword: string) => {
 test("installer fails when a selected-host asset is missing", () => {
   const asset = path.join(
     fixture.dev,
-    "packages/workit-opencode/assets/skills/workit-plan/SKILL.md",
+    "packages/workit-opencode/assets/skills/workit-shape/SKILL.md",
   );
   rmSync(asset, { force: true });
   try {
     expectInstallerFailure("assets", "Reinstall or rebuild");
   } finally {
-    writeConfig(asset, "# workit-plan\n");
+    writeConfig(asset, "# workit-shape\n");
   }
   expect(check(runInstaller(), "assets").status).toBe("pass");
 });

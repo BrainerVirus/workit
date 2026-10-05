@@ -1071,6 +1071,12 @@ export function recordVerdict(
     surface?: string | null;
     self?: boolean;
     evidenceRefs?: string[];
+    /**
+     * A role id derived from another session (`--as`): the session it was
+     * derived from. `null` means it was derived from no session, which makes
+     * the verdict self. An author's derived id is refused like the author.
+     */
+    derivedFrom?: string | null;
   },
 ): LedgerResult<VerdictRow> {
   if (!(VERDICT_RESULTS as readonly string[]).includes(input.result))
@@ -1105,19 +1111,22 @@ export function recordVerdict(
     );
   const session = context.actor.session;
   const selfReason: SelfReason | null =
-    input.self === true ? "flag" : session ? null : "no_session";
+    input.self === true ? "flag" : session && input.derivedFrom !== null ? null : "no_session";
   const self = selfReason !== null;
-  if (
-    !self &&
-    session &&
-    authorSessions(context.cwd, ledger.value.rows, branch, { base: key.base, head: key.head }).has(
-      session,
-    )
-  )
+  const authors = authorSessions(context.cwd, ledger.value.rows, branch, {
+    base: key.base,
+    head: key.head,
+  });
+  const authoring = [session, input.derivedFrom].find(
+    (candidate): candidate is string => typeof candidate === "string" && authors.has(candidate),
+  );
+  if (!self && authoring)
     return err(
       "blocked",
-      `author_verdict: session ${session} authored ${branch}; a verdict must come from a different session`,
-      'have a non-author session record the verdict, or pass --self (a self verdict is never accepted by merge:"verified")',
+      `author_verdict: session ${authoring} authored ${branch}; a verdict must come from a different session`,
+      input.derivedFrom === undefined
+        ? 'have a non-author session record the verdict, or pass --self (a self verdict is never accepted by merge:"verified")'
+        : "run the verifier as a separate session: the lead spawns it with its own WORKIT_SESSION_ID (Claude Code: subagents get one from the SubagentStart hook)",
     );
   const link = checkSupersede(context, "verdict", self);
   if (!link.ok) return link;

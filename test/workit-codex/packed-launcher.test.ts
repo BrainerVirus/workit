@@ -1,14 +1,16 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { extractTarball, packWorkspacePackages } from "@/test/shared/helpers/packages";
 
 // Packaging tier: starts the MCP launcher shipped in the packed Codex tarball.
 const CODEX = "@brainervirus/workit-codex";
+const CORE_SKILLS = path.resolve(import.meta.dir, "../../packages/workit-core/skills");
 
 const initializedRoot = () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-codex-packed-"));
@@ -140,5 +142,19 @@ test("packed Codex launcher lists empty on fresh checkouts without leaking paths
     launcher.child.kill();
     launcher.packed.cleanup();
     rmSync(freshRoot, { recursive: true, force: true });
+  }
+});
+
+test("Given the packed Codex tarball, Then it ships every generated method skill byte-identical to the canonical source", () => {
+  const packed = packCodex();
+  try {
+    const skills = path.join(packed.root, "skills");
+    expect(readdirSync(skills).toSorted()).toEqual([...WORKIT_METHOD_SKILLS].toSorted());
+    for (const skill of WORKIT_METHOD_SKILLS)
+      expect(readFileSync(path.join(skills, skill, "SKILL.md"), "utf8"), skill).toBe(
+        readFileSync(path.join(CORE_SKILLS, skill, "SKILL.md"), "utf8"),
+      );
+  } finally {
+    packed.cleanup();
   }
 });

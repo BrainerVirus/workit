@@ -1824,7 +1824,7 @@ export const resolveExternalActionRequest = (
 };
 
 export const prBabysitNext = (output: string): string =>
-  `PR ready: ${output}. Babysitting was explicitly requested. Follow workit-babysit to resolve conflicts, review threads, and get checks green. Stop at PR-ready; a PR or babysit request does not authorize merge or release.`;
+  `PR ready: ${output}. Babysitting was explicitly requested. Follow workit-ship to resolve conflicts, review threads, and get checks green. Stop at PR-ready; a PR or babysit request does not authorize merge or release.`;
 
 export const executeConcreteExternalAction = async (
   request: ExternalActionRequest,
@@ -2052,7 +2052,7 @@ export const executeConcreteExternalAction = async (
         ...(request.payload.babysit !== undefined ? { babysit: request.payload.babysit } : {}),
         ...(babysit
           ? {
-              babysitSkill: "workit-babysit",
+              babysitSkill: "workit-ship",
               next: prBabysitNext(String(result.output ?? "")),
             }
           : {}),

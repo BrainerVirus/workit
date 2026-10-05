@@ -14,7 +14,17 @@ module.exports = {
     ],
     // Conventional Commits preset formats notes; analyze-release-scope owns
     // bump selection, including `!` and BREAKING CHANGE on any commit type.
-    ["@semantic-release/release-notes-generator", { preset: "conventionalcommits" }],
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        preset: "conventionalcommits",
+        // Notes come from PR titles (squash = PR title, blank body). Defence in
+        // depth for any commit body that still reaches the parser: drop git
+        // trailers and keep a breaking note to its first paragraph, so release
+        // notes never repeat whole commit messages or Co-Authored-By lines.
+        writerOpts: { finalizeContext: require("./scripts/clean-release-notes.cjs") },
+      },
+    ],
     // AR-02: verify-time rewrite runs FIRST — before any npm plugin's
     // verification — so package verification never sees a workspace:* manifest.
     [
