@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-core",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "private": false,
   "description": "Workit shared core — task, policy, evidence, review, decision, worker, and writer state for agentic coding workflows",
   "keywords": [
