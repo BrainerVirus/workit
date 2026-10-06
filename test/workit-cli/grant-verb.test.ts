@@ -145,6 +145,47 @@ test("grant set: interactive with the wrong confirmation writes nothing", async 
   expect(existsSync(backup())).toBe(false);
 });
 
+test("grant set: Ctrl+C at the confirmation cancels cleanly (exit 130, nothing written)", async () => {
+  const before = readFileSync(file(), "utf8");
+  // The exact rejection readline/promises produces when ^C closes a pending
+  // question (pinned against the real module in cli-prompt.test.ts).
+  const ctrlC: GrantDeps = {
+    interactive: () => true,
+    ask: async () => {
+      throw new DOMException("The operation was aborted", "AbortError");
+    },
+  };
+  let stdout = "";
+  let stderr = "";
+  const code = await runGrant(
+    ["set", "w", "merge=verified"],
+    {
+      json: false,
+      cwd: path.join(checkout, "repo"),
+      env: {},
+      stdout: (text) => void (stdout += text),
+      stderr: (text) => void (stderr += text),
+    },
+    ctrlC,
+  );
+  expect(code).toBe(130);
+  expect(stderr.trim()).toBe("Cancelled.");
+  expect(stderr).not.toContain("uncaught_failure");
+  expect(stdout).toBe("");
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect(existsSync(backup())).toBe(false);
+});
+
+test("grant set: a prompt failure that is not a cancellation still propagates", async () => {
+  const broken: GrantDeps = {
+    interactive: () => true,
+    ask: async () => {
+      throw new Error("stdin exploded");
+    },
+  };
+  await expect(run(["set", "w", "merge=verified"], broken)).rejects.toThrow("stdin exploded");
+});
+
 test("grant set: lowering (push=false) succeeds headless", async () => {
   const result = await run(["set", "w", "push=false"], headless);
   expect(result.code).toBe(0);
