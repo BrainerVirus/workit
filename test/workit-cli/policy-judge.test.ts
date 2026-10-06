@@ -31,7 +31,7 @@ const workit = (cwd: string, ...args: string[]) => {
 const ruleIds = (output: { data: { requirements: { ruleId: string }[] } }) =>
   output.data.requirements.map((item) => item.ruleId);
 
-test("G `--judge behavior=yes risk=normal`, T requirements = {check:test, verdict:non-author}", () => {
+test("G `--judge behavior=yes risk=normal`, T requirements = {check:test, verdict:self} (default verification)", () => {
   const root = repo();
   const assessed = workit(
     root,
@@ -43,7 +43,8 @@ test("G `--judge behavior=yes risk=normal`, T requirements = {check:test, verdic
     "--json",
   );
   expect(assessed.code).toBe(0);
-  expect(ruleIds(assessed.json())).toEqual(["check:test", "verdict:non-author"]);
+  expect(ruleIds(assessed.json())).toEqual(["check:test", "verdict:self"]);
+  expect(assessed.json().data.requirements[0]).toMatchObject({ status: "unsatisfied" });
 });
 
 test("G a 2-line mechanical fix judged trivial, T zero requirements and no spec proposed", () => {

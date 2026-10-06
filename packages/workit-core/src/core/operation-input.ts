@@ -55,7 +55,7 @@ const FLAT: Record<OperationFamily, FamilySpec> = {
   },
   policy: {
     fields: {
-      riskTier: str("trivial|normal|high (low/medium accepted).", ["trivial", "normal", "high"]),
+      riskTier: str("low=trivial, medium=normal.", ["trivial", "normal", "high", "low", "medium"]),
       behaviorChange: bool("Observable behavior changes."),
       productChoiceOpen: bool("A product/preference choice is still open."),
       needsPlan: bool("Needs a written plan or spec first."),

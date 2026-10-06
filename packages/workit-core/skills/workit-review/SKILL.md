@@ -8,6 +8,8 @@ description: Independent review of a diff, branch or PR - intent fidelity and st
 Review the candidate, never the author's summary of it. A session that wrote a
 commit on the branch cannot record a passing verdict: if that is you, hand the
 review to a fresh agent (Claude Code: the `reviewer` or `verifier` agent).
+An author's `--self` verdict reads self-reviewed and never counts as
+independent; `type-check-only` never proves a behavior change.
 
 1. Pin the candidate: `git rev-parse HEAD`, the base, `git diff <base>...HEAD`;
    for a PR, `workit pr status --json` (checks, unresolved threads).

@@ -429,14 +429,16 @@ Plugin subagents may ignore `hooks`/`mcpServers`/`permissionMode` frontmatter, s
 - `judged{riskTier:"trivial"|"normal"|"high", behaviorChange, productChoiceOpen, needsPlan}`, flat via `--judge`; aliases accepted (`yes|y|true`, `risk=low` → trivial).
 - Derivation (`core/policy/derive.ts`, about 80 LOC):
 
-  | Judgment | Requirement |
+  | Judgment | Requirement (as shipped) |
   |---|---|
-  | `behaviorChange` | `check:test` (configured, fresh tree) |
-  | `behaviorChange && risk≥normal` | `verdict` from a non-author |
-  | `risk=high` | `verdict ∈ {verified}` (live surface) before land |
-  | `productChoiceOpen` | a `decision.recorded` before close |
-  | `needsPlan` | doc ref note (soft) |
-  | always | project-configured checks |
+  | `behaviorChange` | `check:test` (configured, fresh tree), before close |
+  | `behaviorChange && risk=normal` | `verdict:self`: the author's own `--self` strong verdict (labelled self-reviewed, never verified), or any independent one; `verdict:non-author` when the workspace sets `verification: "independent"` (user config, grant rules) |
+  | `risk=high` | `verdict:verified`: accepted independent `verified` verdict of kind `live`, before close |
+  | `productChoiceOpen` | `decision:product` (task decision or branch ledger decision), **before write** |
+  | `needsPlan` or `risk=high` | `plan` (judgment `--ref` to an existing doc, or an approved limitation), **before write** |
+  | always | project constraints |
+
+  `type-check-only` never satisfies a behavior change. Before-write rules deny working-tree edits where the host has a pre-write hook (Claude Code, OpenCode, Cursor, Pi; Codex advisory); Markdown, top-level `docs/`, `plans/`, the cited plan and files outside the checkout stay writable.
 
 - Delete: `assessmentSchema` (facts/signals/consequences/verification), most of `policy-resolver.ts` (486 → ~80), `selectMethods`/`triage*` remnants, `boundedOperationJsonSchema`/`OPERATION_SCHEMA_DEPTH`, the eight family op schemas → MCP/OpenCode tools become flat per-verb tools mirroring the CLI.
 

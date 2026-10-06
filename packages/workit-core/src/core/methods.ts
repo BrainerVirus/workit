@@ -114,10 +114,10 @@ Autonomy contract:
   inferred, or guess. Prose is a note: only a configured check the CLI ran
   (\`workit check <name>\`) satisfies a gate; an ad-hoc
   \`workit check -- <cmd>\` never does.
-- Author is not verifier: never record a passing verdict on work your session
-  wrote. The lead starts each verifier with its own session
-  (\`WORKIT_SESSION_ID=<lead>-v<n>\`; Claude Code subagents get one from the
-  hook), and the verifier records \`workit ledger verdict\`.
+- Author is not verifier: your own verdict is \`--self\` (after an observed
+  \`workit check test\`), shown as self-reviewed, never verified. High risk,
+  \`verification: independent\` and merge need a verifier with its own
+  session (\`WORKIT_SESSION_ID=<lead>-v<n>\`; Claude Code subagents get one).
 - A local-commit endpoint does not imply PR readiness, and a local commit alone
   is not evidence of a requested remote push. Before reporting delivery,
   reconcile every requested item and observe it (\`workit verify-delivery\`).
@@ -132,7 +132,7 @@ are optional continuity for tracked work; each branch has one implicit task
 that the first recording creates, and a solo edit needs no task. A decision
 records a user choice; it never authorizes an effect. Judge work once with
 \`workit policy assess --judge risk= behavior= product-choice= plan=\`; an
-open choice or missing plan blocks code writes until recorded.
+open choice or missing plan blocks edits until recorded.
 Omit revisions; a revision_conflict means one you passed is stale, so re-read.
 Across repositories, bind each item to its checkout, branch and endpoint,
 resolve competing targets before a mutation, and reconcile an uncertain

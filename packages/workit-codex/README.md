@@ -15,5 +15,7 @@ codex plugin add workit@workflow-toolkit
 Reads run over MCP (`workit-codex-mcp`); mutations run through the `workit`
 CLI because MCP is read-only for unattested callers. Invoke skills as
 `$workit-<name>` or from `/skills`. Codex permissions and sandbox stay
-authoritative; delivery limits come from the workspace
+authoritative. Codex PreToolUse does not see `apply_patch` edits, so the
+[before-write gate](https://github.com/BrainerVirus/workit/blob/main/docs/guides/verification.md) is advisory here (the session
+context says so). Delivery limits come from the workspace
 [grants](https://github.com/BrainerVirus/workit/blob/main/docs/guides/grants.md).

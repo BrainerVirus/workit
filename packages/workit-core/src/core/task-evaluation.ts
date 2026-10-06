@@ -557,7 +557,7 @@ export const verifyDecisionContentAtRoot = (
   return success(null, null, null);
 };
 
-const applicableDecision = (
+export const applicableDecision = (
   task: TaskRecord,
   workspace: WorkspaceRecord,
   requirement: Requirement,

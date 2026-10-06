@@ -5,6 +5,19 @@ contract onto what the host can actually observe; where a host cannot attest
 something, Workit labels it `agent_guided` instead of pretending. Claude Code
 has [its own guide](claude-code.md).
 
+Every `workit_<family>` tool (MCP, OpenCode, Pi) takes one flat object:
+`action` plus primitive or string-list fields (for example `workit_policy`
+`{action:"assess", riskTier:"normal", behaviorChange:true}` or `workit_task`
+`{action:"start", objective:"…", paths:["src"]}`). Omit `taskId` and
+revisions; nested payloads from older versions still work.
+
+**Before-write gate.** When the branch task has an open product choice or
+needs a plan ([verification](verification.md)), working-tree edits are denied
+with the exact unblock on OpenCode (permission evaluate: edits and recognizable
+shell writes), Cursor (`preToolUse` write tools), Pi (`tool_call` write/edit
+and bash) and Claude Code. Codex's PreToolUse does not see `apply_patch`, so
+there the gate is advisory and the session context says so.
+
 ## OpenCode
 
 Requires OpenCode 2.0.18+ and Node.js 24+.

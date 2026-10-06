@@ -100,7 +100,7 @@ test("hooks.json registers the designed events through the exec-form launcher, n
   // on recognizable shell writes (S17); file-writing tools for the write gate.
   expect(hooks.PreToolUse.map((group) => [group.matcher, group.hooks[0].if])).toEqual([
     ["Bash", undefined],
-    ["PowerShell", "PowerShell(git *)"],
+    ["PowerShell", undefined],
     ["Edit|Write|MultiEdit|NotebookEdit", undefined],
   ]);
 });

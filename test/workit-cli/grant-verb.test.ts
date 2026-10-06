@@ -210,3 +210,34 @@ test("grant show --json carries defaultEndpoint", async () => {
   const shown = await run(["show"], headless);
   expect(shown.json().data.defaultEndpoint).toBe("pr");
 });
+
+test("verification=independent (user config, S17) tightens headless, makes normal-risk behavior need a non-author verdict, and loosening needs the user", async () => {
+  const { TaskStore, WorkitCore } = await import("@/packages/workit-core/src/core");
+  const repo = path.join(checkout, "repo");
+  const core = new WorkitCore(new TaskStore(repo), {
+    root: repo,
+    caller: { host: "workit_cli", actor: "cli" },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  expect(core.task({ action: "start", objective: "verification mode" }).ok).toBe(true);
+  const rules = () => {
+    const preview = core.policy({ action: "preview", behaviorChange: true, riskTier: "normal" });
+    if (!preview.ok || !preview.data) throw new Error("preview failed");
+    return preview.data.requirements.map((item) => item.ruleId);
+  };
+  expect(rules()).toEqual(["check:test", "verdict:self"]);
+  const tightened = await run(["set", "w", "verification=independent"], headless);
+  expect(tightened.code).toBe(0);
+  expect(entry().verification).toBe("independent");
+  expect((await run(["show"], headless)).json().data.verification).toBe("independent");
+  expect(rules()).toEqual(["check:test", "verdict:non-author"]);
+  const loosened = await run(["set", "w", "verification=self"], headless);
+  expect(loosened.code).not.toBe(0);
+  expect(loosened.json()).toMatchObject({ ok: false });
+  expect(entry().verification).toBe("independent");
+  expect((await run(["unset", "w", "verification"], interactive("w"))).code).toBe(0);
+  expect(entry().verification).toBeUndefined();
+  expect(rules()).toEqual(["check:test", "verdict:self"]);
+});

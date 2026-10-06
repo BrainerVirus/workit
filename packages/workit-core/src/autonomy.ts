@@ -92,6 +92,19 @@ export const DEFAULT_GRANTS: Readonly<Grants> = Object.freeze({
  */
 export type DefaultEndpoint = "commit" | "pr";
 export const DEFAULT_ENDPOINT: DefaultEndpoint = "commit";
+/**
+ * How a normal-risk behavior change is verified (S17). `self` (default): an
+ * observed passing `workit check test` plus the author's own `--self`
+ * verdict, labelled self-reviewed. `independent`: a verdict from a session
+ * that did not author the branch. User config only, like grants.
+ */
+export type VerificationMode = "self" | "independent";
+export const DEFAULT_VERIFICATION: VerificationMode = "self";
+export const verificationOf = (entry: unknown): VerificationMode =>
+  (entry as { verification?: unknown } | null)?.verification === "independent"
+    ? "independent"
+    : "self";
+
 const endpointOf = (entry: unknown): DefaultEndpoint =>
   (entry as { defaultEndpoint?: unknown } | null)?.defaultEndpoint === "pr" ? "pr" : "commit";
 
@@ -106,6 +119,7 @@ export type Autonomy = {
   source: AutonomySource;
   accountConfigured: boolean;
   defaultEndpoint: DefaultEndpoint;
+  verification: VerificationMode;
   /** Set when the grants file was not read (see grantsOverride). */
   note?: string;
 };
@@ -182,6 +196,7 @@ export function resolveAutonomy(cwd: string): Autonomy {
       source: "default",
       accountConfigured: false,
       defaultEndpoint: DEFAULT_ENDPOINT,
+      verification: DEFAULT_VERIFICATION,
       note: override,
     };
   const workspace = resolveWorkspaceFrom(
@@ -197,6 +212,7 @@ export function resolveAutonomy(cwd: string): Autonomy {
     source,
     accountConfigured: Boolean(workspace?.vcs?.account),
     defaultEndpoint: endpointOf(workspace),
+    verification: verificationOf(workspace),
   };
 }
 
@@ -282,6 +298,7 @@ export type GrantWrite =
       grants: Grants;
       configured: GrantKind[];
       defaultEndpoint: DefaultEndpoint;
+      verification: VerificationMode;
     }
   | { ok: false; code: "not_found" | "invalid_input" | "failed"; error: string };
 
@@ -298,6 +315,8 @@ export function writeGrants(
   dir: string = grantsDir(),
   /** A new default endpoint; `null` removes it (back to `commit`). */
   endpoint?: DefaultEndpoint | null,
+  /** A new verification mode; `null` removes it (back to `self`). */
+  verification?: VerificationMode | null,
 ): GrantWrite {
   const current = readWorkspacesResult(dir);
   if (current.status === "missing")
@@ -329,6 +348,8 @@ export function writeGrants(
   delete entry.autoApprove;
   if (endpoint === null || endpoint === DEFAULT_ENDPOINT) delete entry.defaultEndpoint;
   else if (endpoint) entry.defaultEndpoint = endpoint;
+  if (verification === null || verification === DEFAULT_VERIFICATION) delete entry.verification;
+  else if (verification) entry.verification = verification;
   const autonomy = {
     ...unknown,
     ...Object.fromEntries(
@@ -366,6 +387,7 @@ export function writeGrants(
     grants: { ...DEFAULT_GRANTS, ...grants },
     configured: GRANT_KINDS.filter((kind) => grants[kind] !== undefined),
     defaultEndpoint: endpointOf(entry),
+    verification: verificationOf(entry),
   };
 }
 
@@ -378,6 +400,7 @@ export function listGrants(dir: string = grantsDir()): {
     grants: Grants;
     configured: GrantKind[];
     defaultEndpoint: DefaultEndpoint;
+    verification: VerificationMode;
   }[];
   error?: string;
 } {
@@ -394,6 +417,7 @@ export function listGrants(dir: string = grantsDir()): {
         grants: { ...DEFAULT_GRANTS, ...grants },
         configured: GRANT_KINDS.filter((kind) => grants[kind] !== undefined),
         defaultEndpoint: endpointOf(entry),
+        verification: verificationOf(entry),
       };
     }),
   };

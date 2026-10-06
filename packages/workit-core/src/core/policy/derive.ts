@@ -4,7 +4,8 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { currentBranch } from "../../git/rev";
-import { checkVerdicts, readLedger, type ReadRow } from "../../ledger";
+import { STRONG_RESULTS, checkVerdicts, readLedger, type ReadRow } from "../../ledger";
+import type { VerificationMode } from "../../autonomy";
 import {
   requirementId,
   sha256,
@@ -17,6 +18,7 @@ import {
 
 export const RULES = {
   test: "check:test",
+  self: "verdict:self",
   nonAuthor: "verdict:non-author",
   verified: "verdict:verified",
   product: "decision:product",
@@ -44,7 +46,8 @@ const normalizedScope = (scope: Scope): Scope => ({
 /**
  * | judgment                         | requirement                                  |
  * | behaviorChange                   | check:test (configured, fresh tree), close   |
- * | behaviorChange && risk = normal  | verdict:non-author (ledger), close           |
+ * | behaviorChange && risk = normal  | verdict:self (default) or verdict:non-author  |
+ * |                                  | (workspace verification: independent), close |
  * | risk = high                      | verdict:verified (ledger), close             |
  * | productChoiceOpen                | decision:product, before write               |
  * | needsPlan or risk = high         | plan (doc ref, soft), before write           |
@@ -54,6 +57,8 @@ export function deriveRequirements(
   judgment: Judgment,
   scope: Scope,
   constraints: Constraint[],
+  /** The workspace's user-config verification mode (autonomy.ts). */
+  verification: VerificationMode = "self",
 ): Requirement[] {
   const out: Requirement[] = [];
   const base = { scope, dependentAction: null };
@@ -71,16 +76,29 @@ export function deriveRequirements(
     );
   if (judgment.behaviorChange && judgment.riskTier === "normal")
     out.push(
-      derived({
-        ...base,
-        ruleId: RULES.nonAuthor,
-        dimension: "review",
-        reason: "A behavior change needs a verdict from a session that did not author it.",
-        satisfaction:
-          "An independent session records a passing verdict: `workit ledger verdict verified --how <what it exercised>`.",
-        before: "close",
-        acceptanceAllowed: false,
-      }),
+      verification === "independent"
+        ? derived({
+            ...base,
+            ruleId: RULES.nonAuthor,
+            dimension: "review",
+            reason:
+              "This workspace requires independent verification: a session that did not author the change records the verdict.",
+            satisfaction:
+              "An independent session records a passing verdict: `workit ledger verdict verified --how <what it exercised>`.",
+            before: "close",
+            acceptanceAllowed: false,
+          })
+        : derived({
+            ...base,
+            ruleId: RULES.self,
+            dimension: "review",
+            reason:
+              "A behavior change needs a recorded verdict; the author's own is allowed and is shown as self-reviewed, never verified.",
+            satisfaction:
+              "After an observed passing `workit check test`, record `workit ledger verdict tests-verified --self --how <what you ran>` (or have a verifier record one).",
+            before: "close",
+            acceptanceAllowed: false,
+          }),
     );
   if (judgment.riskTier === "high")
     out.push(
@@ -238,27 +256,47 @@ const planRecorded = (task: TaskRecord, root: string): RuleStatus => {
       };
 };
 
-/** Accepted (D18) verdict on this branch; `verified` additionally needs result verified. */
+/**
+ * Verdict rules over the D18 ledger. `type-check-only` never proves a
+ * behavior change. `verdict:self` takes the author's own current `--self`
+ * verdict (shown as self-reviewed) or an independent one; `verdict:non-author`
+ * an accepted independent one; `verdict:verified` an accepted independent
+ * `verified` verdict of kind `live`.
+ */
 const verdict = (requirement: Requirement, root: string, ledger: LedgerView): RuleStatus => {
   const branch = ledger.branch();
   if (!branch)
     return { met: false, reason: "no branch is checked out to hold a verdict", decisionIds: [] };
   const check = checkVerdicts(root, branch, ledger.rows());
-  const accepted = check.accepted.accepted ? check.accepted.verdict : null;
-  if (accepted && (requirement.ruleId !== RULES.verified || accepted.result === "verified"))
+  const failing = check.accepted.reasons.includes("failing_verdict");
+  const strong = (entry: (typeof check.verdicts)[number]) =>
+    STRONG_RESULTS.has(String(entry.verdict.result));
+  const met =
+    !failing &&
+    (requirement.ruleId === RULES.verified
+      ? check.verdicts.find(
+          (entry) =>
+            entry.accepted && entry.kind === "live" && String(entry.verdict.result) === "verified",
+        )
+      : requirement.ruleId === RULES.nonAuthor
+        ? check.verdicts.find((entry) => entry.accepted && strong(entry))
+        : check.verdicts.find((entry) => entry.current && strong(entry)));
+  if (met)
     return {
       met: true,
-      reason: `accepted ${String(accepted.result)} verdict ${accepted.id} from an independent session`,
+      reason: `${met.accepted ? "accepted independent" : "self-reviewed (author's own)"} ${String(met.verdict.result)} verdict ${met.verdict.id}`,
       decisionIds: [],
     };
-  const why = accepted
-    ? `the accepted verdict is ${String(accepted.result)}, not verified`
-    : (check.accepted.reasons.join(", ") || "no_verdict").replace(/_/g, " ");
-  return {
-    met: false,
-    reason: `${why}: an independent session records \`workit ledger verdict verified${requirement.ruleId === RULES.verified ? " --kind live" : ""} --how <what it exercised>\``,
-    decisionIds: [],
-  };
+  const why = failing
+    ? "a current independent verdict fails"
+    : check.verdicts.some((entry) => entry.current && entry.verdict.result === "type-check-only")
+      ? "type-check-only does not prove a behavior change"
+      : (check.accepted.reasons.join(", ") || "no_verdict").replace(/_/g, " ");
+  const unblock =
+    requirement.ruleId === RULES.self
+      ? "record your own verdict after an observed `workit check test`: `workit ledger verdict tests-verified --self --how <what you ran>` (shown as self-reviewed), or have a verifier record one"
+      : `an independent session records \`workit ledger verdict verified${requirement.ruleId === RULES.verified ? " --kind live" : ""} --how <what it exercised>\``;
+  return { met: false, reason: `${why}: ${unblock}`, decisionIds: [] };
 };
 
 /** Status of a derived rule that is not decided by task evidence; null for every other rule. */
@@ -273,6 +311,7 @@ export function derivedRuleStatus(
       return productDecision(task, ledger);
     case RULES.plan:
       return planRecorded(task, root);
+    case RULES.self:
     case RULES.nonAuthor:
     case RULES.verified:
       return verdict(requirement, root, ledger);

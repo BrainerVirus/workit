@@ -49,6 +49,8 @@ import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { normalizeOperationInput } from "./operation-input";
 import { latestJudgment } from "./policy/derive";
 import { normalizeJudgment } from "./policy/judgment";
+import { resolveAutonomy, type VerificationMode } from "../autonomy";
+
 import { sameDirectoryIdentity, TaskStore } from "./task-store";
 import { checkoutRootOf } from "../store/paths";
 import { defaultLockTimeout } from "./store-lock";
@@ -79,6 +81,15 @@ import {
   verifyDecisionContentAtRoot,
   type CandidateEnvironment,
 } from "./task-evaluation";
+
+/** The user-config verification mode for `root`; `self` when it cannot be read. */
+const workspaceVerification = (root: string): VerificationMode => {
+  try {
+    return resolveAutonomy(root).verification;
+  } catch {
+    return "self";
+  }
+};
 
 export type OperationContext = {
   root: string;
@@ -1760,6 +1771,7 @@ export class WorkitCore {
       intent: task.intent.data,
       judgment,
       constraints: this.context.constraints,
+      verification: workspaceVerification(this.context.root),
     });
   }
 

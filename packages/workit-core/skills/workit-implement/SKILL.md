@@ -27,10 +27,12 @@ description: Build a requested change in small verified steps - follow local pat
    PR (`workit git push`, `workit pr create --fill`, then workit-ship) only when
    that was requested, or the request implies delivery and `workit grant show`
    reports `defaultEndpoint` `pr`; otherwise the endpoint is `commit`.
-7. Hand off verification. Never record a passing verdict on your own work.
-   Start a fresh verifier with its own session (`WORKIT_SESSION_ID=<yours>-v1`;
-   Claude Code: the `verifier` agent, which the hook gives one); it runs
-   verify-<app> and `workit ledger verdict`. Before saying done, reconcile
+7. Verify. Normal risk: after `workit check test` passes, record your own
+   `workit ledger verdict tests-verified --self --how "<what you ran>"`; it
+   reads self-reviewed, never verified. High risk, a workspace with
+   `verification: independent` (`workit grant show`) or a verified merge needs
+   a fresh verifier with its own session (`WORKIT_SESSION_ID=<yours>-v1`;
+   Claude Code: the `verifier` agent). Before saying done, reconcile
    every named deliverable against the target checkout and observe it (for a push:
    `workit verify-delivery push`).
 

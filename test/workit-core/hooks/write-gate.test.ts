@@ -5,6 +5,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import {
@@ -149,24 +150,81 @@ test("G Codex (no pre-write hook), T the session says the gate is advisory and e
   expect(claudeStart.hookSpecificOutput?.additionalContext).not.toContain("advisory here");
 });
 
-test("shell write recognition is narrow: redirects, editors-in-place and mutating git, never quotes", () => {
-  for (const command of [
-    "echo x > a.ts",
-    "cat <<EOF >> b.ts",
-    "sed -i 's/a/b/' a.ts",
-    "rm -rf build",
-    "git commit -m x",
-    "printf x | tee a.ts",
-  ])
-    expect(shellWrites(command).writes, command).toBe(true);
+test("shell write recognition: working-tree edits only, with their targets; never quotes or history moves", () => {
+  const cases: [string, string[] | null][] = [
+    ["echo x > a.ts", ["a.ts"]],
+    ["cat <<EOF >> b.ts\nhello > x\nEOF\nls", ["b.ts"]],
+    ["sed -i 's/a/b/' a.ts", ["a.ts"]],
+    ["rm -rf build", ["build"]],
+    ["printf x | tee a.ts", ["a.ts"]],
+    ["mkdir -p docs/plans && touch docs/plans/x.md", ["docs/plans", "docs/plans/x.md"]],
+    ["cp a b /tmp/x", ["/tmp/x"]],
+    ["git checkout -- f.ts", ["f.ts"]],
+    ["git restore src/a.ts", ["src/a.ts"]],
+    ["Set-Content -Path src/a.ts -Value x", ["src/a.ts"]],
+    ["git apply fix.diff", null],
+  ];
+  for (const [command, targets] of cases)
+    expect(shellWrites(command), command).toEqual({ writes: true, targets });
   for (const command of [
     "ls -la",
     "git status",
+    "git commit -m 'x > y'",
+    "git merge main",
+    "git rebase origin/main",
+    "git stash pop",
+    "git checkout main",
     "bun test 2>&1",
+    "echo hi >&2",
     "echo 'a > b'",
     "grep -r x src > /dev/null",
-    "workit check test",
+    'workit ledger decision "a > b" --why c',
   ])
     expect(shellWrites(command).writes, command).toBe(false);
-  expect(shellWrites("echo x > docs/plan.md")).toEqual({ writes: true, targets: ["docs/plan.md"] });
+});
+
+test("the gate never blocks its own unblock path, files outside the checkout, or Markdown/docs/plans; it does gate .txt and nested docs dirs", () => {
+  const { root } = judged({ productChoiceOpen: true, needsPlan: true });
+  const bash = (command: string) =>
+    claude(root, "Bash", { command }).hookSpecificOutput?.permissionDecision ?? "allow";
+  const write = (file_path: string) =>
+    claude(root, "Write", { file_path }).hookSpecificOutput?.permissionDecision ?? "allow";
+  expect(bash('workit ledger decision "A" --why "user"')).toBe("allow");
+  expect(bash("mkdir -p docs/plans && echo '# plan' > docs/plans/x.md")).toBe("allow");
+  expect(bash("echo x > /tmp/scratch.txt")).toBe("allow");
+  expect(bash("git commit -m wip")).toBe("allow");
+  expect(write(path.join(tmpdir(), "outside.ts"))).toBe("allow");
+  expect(write("plans/rollout.ts")).toBe("allow");
+  expect(write("notes.txt")).toBe("deny");
+  expect(write("src/docs/a.ts")).toBe("deny");
+  expect(bash("cp src/a.ts src/b.ts")).toBe("deny");
+});
+
+test("G a needed plan, W an approved limitation waives it, T the write gate clears as close-time evaluation does", () => {
+  const { root, core } = judged({ needsPlan: true });
+  expect(opencode(root, "edit", ["src/a.ts"]).effect).toBe("deny");
+  const plan = core.policy({ action: "explain" });
+  if (!plan.ok || !plan.data) throw new Error("explain failed");
+  const requirement = plan.data.requirements.find((item) => item.ruleId === "plan")!;
+  expect(
+    core.decision({
+      action: "record",
+      purpose: "limitation",
+      response: "approved",
+      presented: "Skip the written plan for this one?",
+      requirementIds: [requirement.id],
+    }).ok,
+  ).toBe(true);
+  expect(opencode(root, "edit", ["src/a.ts"]).effect).toBe("allow");
+});
+
+test("G a long-lived host, W the cited plan file appears without a new revision, T the cached gate re-reads it", () => {
+  const { root, core } = judged({ needsPlan: true, refs: ["docs-plan.txt"] });
+  expect(opencode(root, "edit", ["src/a.ts"]).effect).toBe("deny");
+  writeFileSync(path.join(root, "docs-plan.txt"), "plan\n");
+  expect(opencode(root, "edit", ["src/a.ts"]).effect).toBe("allow");
+  // The cited plan itself is writable even though .txt is not exempt.
+  void core;
+  rmSync(path.join(root, "docs-plan.txt"));
+  expect(opencode(root, "edit", ["docs-plan.txt"]).effect).toBe("allow");
 });

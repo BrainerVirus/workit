@@ -10,7 +10,8 @@ repository.
   "glob": "/home/you/projects/personal/**",
   "vcs": { "provider": "github", "account": "you" },
   "autonomy": { "push": true, "pr": true, "merge": "verified", "release": false, "rerun": true },
-  "defaultEndpoint": "pr"
+  "defaultEndpoint": "pr",
+  "verification": "independent"
 }
 ```
 
@@ -22,6 +23,7 @@ repository.
 | `merge` | needs a grant | `workit pr merge`, `stack land`. `"verified"`: only with an accepted independent verdict; `true`: without one |
 | `release` | needs a grant | Reserved; no verb consumes it yet |
 | `defaultEndpoint` | `commit` | Where an unnamed request stops: `commit` or `pr` (skills read it) |
+| `verification` | `self` | What a normal-risk behavior change needs: `self` (observed `workit check test` plus the author's own `--self` verdict, shown as self-reviewed) or `independent` (a verdict from a session that did not author it). High risk always needs an independent live `verified` verdict |
 
 Without a merge grant the ceiling is: PR or stack opened, CI green,
 independently verified. Explicit grants need `vcs.account` for forge effects.
@@ -31,11 +33,12 @@ Protected-branch pushes stay denied.
 
 ```bash
 workit grant show [<workspace>] [--all]
-workit grant set personal merge=verified defaultEndpoint=pr
+workit grant set personal merge=verified defaultEndpoint=pr verification=independent
 workit grant unset personal merge
 ```
 
-Raising a grant (including `defaultEndpoint` from `commit` to `pr`) needs you
+Raising a grant (including `defaultEndpoint` from `commit` to `pr`, and
+`verification` from `independent` back to `self`) needs you
 at an interactive terminal, typing the workspace name to confirm. Headless and
 agent shells (no TTY, or an agent marker such as `CLAUDECODE`, `OPENCODE`,
 `CURSOR_AGENT`, `PI_CODING_AGENT`, `AI_AGENT`, `AGENT` or any `CODEX_*`) are

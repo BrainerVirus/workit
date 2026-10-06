@@ -14,8 +14,14 @@ import {
   type Result,
 } from "./task-contract";
 import { deriveRequirements } from "./policy/derive";
+import type { VerificationMode } from "../autonomy";
 
-export type ResolverInput = { intent: Intent; judgment: Judgment; constraints: Constraint[] };
+export type ResolverInput = {
+  intent: Intent;
+  judgment: Judgment;
+  constraints: Constraint[];
+  verification?: VerificationMode;
+};
 
 /** The task policy for a judgment: derived requirements plus an input digest. */
 export function resolvePolicy(input: ResolverInput): Result<Policy> {
@@ -31,10 +37,16 @@ export function resolvePolicy(input: ResolverInput): Result<Policy> {
         judgment: input.judgment,
         scope: input.intent.scope,
         constraints: input.constraints,
+        verification: input.verification ?? "self",
         policyVersion: POLICY_VERSION,
       }),
     ),
-    requirements: deriveRequirements(input.judgment, input.intent.scope, input.constraints),
+    requirements: deriveRequirements(
+      input.judgment,
+      input.intent.scope,
+      input.constraints,
+      input.verification,
+    ),
   };
   const parsed = policySchema.safeParse(policy);
   if (!parsed.success)

@@ -36,12 +36,16 @@ const judged = (raw: unknown, previous: Judgment | null = null) => {
   return result.data;
 };
 
-test("given --judge behavior=yes risk=normal, then requirements = {check:test, verdict:non-author}", () => {
+test("given --judge behavior=yes risk=normal, then requirements = {check:test, verdict:self} by default", () => {
   const raw = judgeTokens(["behavior=yes", "risk=normal"]);
   expect(rules(resolvePolicy(input({ judgment: judged(raw).judgment })))).toEqual([
     "check:test@close",
-    "verdict:non-author@close",
+    "verdict:self@close",
   ]);
+  // A workspace that requires independent verification (user config) needs a non-author verdict.
+  expect(
+    rules(resolvePolicy(input({ judgment: judged(raw).judgment, verification: "independent" }))),
+  ).toEqual(["check:test@close", "verdict:non-author@close"]);
 });
 
 test("given a 2-line mechanical fix judged trivial, then zero requirements and no spec proposed", () => {
@@ -117,6 +121,25 @@ test("an old-shape (≤6.x) assessment is accepted and mapped, never rejected fo
       needsPlan: true,
     });
   }
+  // Capped at normal unless the 6.x resolver itself demanded fresh review;
+  // an unknown behavior signal keeps the previous judgment (else false).
+  const unknownBehavior = assessment({
+    signals: {
+      ...assessment().signals,
+      behaviorChange: { value: "unknown", basis: "unknown", reason: "?", refs: [] },
+      mechanicalLowRisk: { value: false, basis: "inferred", reason: "r", refs: [] },
+    },
+    consequences: [
+      { area: "data", fact: { statement: "no data migration", basis: "inferred", refs: [] } },
+    ],
+  });
+  expect(judged(unknownBehavior).judgment).toMatchObject({
+    riskTier: "normal",
+    behaviorChange: false,
+  });
+  expect(judged(unknownBehavior, judgment({ behaviorChange: true })).judgment.behaviorChange).toBe(
+    true,
+  );
   // The fixture default (mechanical, unknowns elsewhere) maps to trivial.
   expect(judged(assessment()).judgment).toMatchObject({
     riskTier: "trivial",

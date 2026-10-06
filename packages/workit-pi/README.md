@@ -15,7 +15,10 @@ pi install ./packages/workit-pi -l --approve   # local checkout
 ```
 
 Pi discovers the extension and skills from the package's `pi` manifest
-(`./dist/workit.js`, `./skills`). Pi project trust still gates mutations;
-shell writes are agent-guided, since an extension is not an OS sandbox.
+(`./dist/workit.js`, `./skills`). Pi project trust still gates mutations.
+The `tool_call` boundary applies branch policy and the
+[before-write gate](https://github.com/BrainerVirus/workit/blob/main/docs/guides/verification.md) to write, edit and recognizable bash
+writes (unrecognized shell writes stay agent-guided; an extension is not an OS
+sandbox). Tools take flat fields.
 Delivery limits come from Pi's permissions plus the workspace
 [grants](https://github.com/BrainerVirus/workit/blob/main/docs/guides/grants.md).

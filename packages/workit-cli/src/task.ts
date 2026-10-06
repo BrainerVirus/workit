@@ -314,6 +314,40 @@ const contextFor = (
   now: deps.now ?? (() => new Date().toISOString()),
 });
 
+type RequirementEvaluation = { requirementId: string; status: string; reason: string };
+
+/**
+ * A recorded policy with each requirement's current status, so the output
+ * tells what is already met from what is still owed (S17 review L11).
+ */
+function withRequirementStatus(
+  core: WorkitCore,
+  result: Result<unknown>,
+  taskId: unknown,
+): Result<unknown> {
+  if (!result.ok || !result.data) return result;
+  const policy = result.data as { requirements: Array<{ id: string }> };
+  const view = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    ...(typeof taskId === "string" ? { taskId } : {}),
+  });
+  const evaluations = view.ok
+    ? ((view.data as { requirements?: RequirementEvaluation[] }).requirements ?? [])
+    : [];
+  return success(result.revision, result.workspaceRevision, {
+    ...policy,
+    requirements: policy.requirements.map((requirement) => {
+      const evaluation = evaluations.find((item) => item.requirementId === requirement.id);
+      return {
+        ...requirement,
+        status: evaluation?.status ?? "unsatisfied",
+        statusReason: evaluation?.reason ?? null,
+      };
+    }),
+  });
+}
+
 function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false): void {
   const stream = result.ok ? outOf(deps) : errOf(deps);
   if (!result.ok) {
@@ -328,6 +362,23 @@ function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false)
     write(stream, JSON.stringify(data.bundle, null, 2));
     write(stream, "Destination context");
     write(stream, JSON.stringify(data.context, null, 2));
+    return;
+  }
+  if (data && typeof data === "object" && "policyVersion" in data) {
+    const requirements = (data.requirements ?? []) as Array<{
+      ruleId: string;
+      before: string;
+      status?: string;
+      statusReason?: string | null;
+      satisfaction: string;
+    }>;
+    if (!requirements.length)
+      write(stream, "no requirements: nothing to prove beyond your own checks");
+    for (const item of requirements)
+      write(
+        stream,
+        `${item.status === "satisfied" || item.status === "accepted_limitation" ? "met " : "owed"} ${item.ruleId} (before ${item.before}): ${item.status === undefined ? item.satisfaction : (item.statusReason ?? item.satisfaction)}`,
+      );
     return;
   }
   const rows = Array.isArray(data) ? data : [data];
@@ -392,6 +443,8 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
         });
     }
   } else result = dispatch(core, parsed.parsed.family, parsed.parsed.request);
+  if (parsed.parsed.family === "policy" && parsed.parsed.action === "assess")
+    result = withRequirementStatus(core, result, parsed.parsed.request.taskId);
   if (parsed.parsed.json) jsonResult(outOf(deps), result);
   else printHuman(result, deps, parsed.parsed.handoff);
   return result.ok ? 0 : 1;

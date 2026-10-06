@@ -56,28 +56,40 @@ const flag = (value: unknown, unknownAs: boolean): Field => {
   return { ok: false };
 };
 
-/** A ≤6.x assessment's signals mapped onto the four judgments. */
-const fromLegacy = (raw: Json): Partial<Judgment> => {
+/**
+ * A ≤6.x assessment's signals mapped onto the four judgments, conservatively:
+ * risk is capped at normal and is high only where the 6.x resolver itself
+ * demanded fresh-context review (an explicit behavior change with a
+ * security, data, public-contract or operations consequence). An `unknown`
+ * signal keeps the previous judgment (else false).
+ */
+const fromLegacy = (raw: Json, previous: Judgment | null): Partial<Judgment> => {
   const source = isObject(raw.assessment) ? raw.assessment : raw;
   const signals = isObject(source.signals) ? source.signals : {};
   const value = (name: string): unknown =>
     isObject(signals[name]) ? signals[name].value : undefined;
-  const behaviorChange = value("behaviorChange") === true || value("behaviorChange") === "unknown";
+  const known = (name: string, fallback: boolean): boolean =>
+    typeof value(name) === "boolean" ? (value(name) as boolean) : fallback;
+  const behaviorChange = known("behaviorChange", previous?.behaviorChange ?? false);
   const consequences = Array.isArray(source.consequences) ? source.consequences : [];
-  const severe = consequences.some(
-    (item) =>
-      isObject(item) &&
-      ["security", "data", "public_contract", "operations"].includes(String(item.area)),
-  );
+  const freshReview =
+    value("behaviorChange") === true &&
+    consequences.some(
+      (item) =>
+        isObject(item) &&
+        ["security", "data", "public_contract", "operations"].includes(String(item.area)),
+    );
   return {
-    riskTier: severe
+    riskTier: freshReview
       ? "high"
       : value("mechanicalLowRisk") === true && !behaviorChange
         ? "trivial"
         : "normal",
     behaviorChange,
-    productChoiceOpen: value("productChoiceOpen") === true,
-    needsPlan: value("durableAgreementNeeded") === true || value("coordinationPlanNeeded") === true,
+    productChoiceOpen: known("productChoiceOpen", previous?.productChoiceOpen ?? false),
+    needsPlan:
+      known("durableAgreementNeeded", previous?.needsPlan ?? false) ||
+      value("coordinationPlanNeeded") === true,
   };
 };
 
@@ -107,7 +119,7 @@ export function normalizeJudgment(
   const legacy = Object.keys(input).some((key) => LEGACY_KEYS.has(key));
   // Refs accumulate across re-assessments; a new note replaces the old one.
   const base: Judgment = { ...DEFAULT, ...previous, refs: [...(previous?.refs ?? [])] };
-  const judgment: Judgment = legacy ? { ...base, ...fromLegacy(input) } : { ...base };
+  const judgment: Judgment = legacy ? { ...base, ...fromLegacy(input, previous) } : { ...base };
   const ignored: string[] = [];
   const fields: { path: string; reason: string }[] = [];
   for (const [key, value] of Object.entries(input)) {
