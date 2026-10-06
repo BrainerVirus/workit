@@ -11,6 +11,9 @@ description: Build a requested change in small verified steps - follow local pat
    neighbour that already does something similar. Copy its patterns, names and
    error handling. Repo rules (AGENTS.md, CLAUDE.md, lint config) win.
 2. On the default branch? Branch first: `workit git branch --kind feature --slug <s>`.
+   Tracking it? Judge once: `workit policy assess --judge risk=normal
+   behavior=yes product-choice=no plan=no` (trivial and no for a mechanical
+   fix); Workit derives what close needs.
 3. Small steps that each leave the tree green. Behavior change: write the
    acceptance as Given/When/Then and see a test fail first (workit-bdd).
    Mechanical change: the existing checks are enough.

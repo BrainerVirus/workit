@@ -3,12 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import {
-  TaskStore,
-  WorkitCore,
-  OPERATION_SCHEMA_MAX_DEPTH,
-  type OperationContext,
-} from "@/packages/workit-core/src/core";
+import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import extension, { persistUncertainCancel } from "@/packages/workit-pi/extensions/workit";
 import { nativeWorkerForEvidence } from "@/packages/workit-pi/src/worker";
 import { piCapabilities } from "@/packages/workit-pi/src/context";
@@ -147,7 +142,7 @@ test("clean Pi package declares stock discovery and the seven families plus read
     expect(depth(tool.parameters), tool.name).toBeLessThanOrEqual(8);
   }
   for (const tool of pi.tools) {
-    expect(depth(tool.parameters), tool.name).toBeLessThanOrEqual(OPERATION_SCHEMA_MAX_DEPTH);
+    expect(depth(tool.parameters), tool.name).toBeLessThanOrEqual(10);
   }
   expect(pi.commands.map((command) => command.name)).toContain("workit-worker");
 });

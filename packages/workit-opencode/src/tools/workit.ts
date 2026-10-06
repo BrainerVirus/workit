@@ -3,7 +3,7 @@ import {
   WorkitCore,
   TaskStore,
   failure,
-  parseOperation,
+  parseAdvertisedOperation,
   success,
   type OperationFamily,
   type OperationContext,
@@ -154,7 +154,7 @@ export const createWorkitTools = ({
   const make = (family: OperationFamily): NativeTool => ({
     description: `Workit ${family} operations backed by the shared task contract.`,
     execute: async (args, context) => {
-      const parsed = parseOperation(family, args);
+      const parsed = parseAdvertisedOperation(family, args, "opencode");
       if (!parsed.ok) return output(parsed);
       if (!client)
         return output(

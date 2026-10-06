@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking, S17 slim policy)
+
+- **Policy assessment is four flat judgments.** `workit policy assess --judge
+  risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no
+  [--ref <plan>]` (tools: `riskTier`, `behaviorChange`, `productChoiceOpen`,
+  `needsPlan`, `note`, `refs`). Workit derives the rest: `check:test` for a
+  behavior change, a non-author ledger verdict at normal risk, a `verified`
+  verdict and a plan at high risk, a user decision for an open product choice.
+  The 6.x `assessment` (facts/signals/consequences/verification) is still
+  accepted and mapped for one major; its schema export, `boundedOperationJsonSchema`
+  and `OPERATION_SCHEMA_DEPTH` are gone.
+- **Flat tool schemas.** Every `workit_<family>` tool (MCP, OpenCode, Pi) is one
+  flat object (depth 1, no unions); nested canonical payloads still work.
+  Advertised family schemas shrink from 21.6 KB to 6.3 KB.
+- **Before-write gate.** An open product choice or a missing plan on the
+  branch task denies code writes on Claude Code (PreToolUse Edit/Write/
+  MultiEdit/NotebookEdit and shell writes), OpenCode (permission evaluate),
+  Cursor (preToolUse) and Pi (tool_call), naming the unblock; docs and
+  Markdown stay writable. Codex has no pre-write hook: the gate is advisory
+  there and the session context says so.
+
 ### Removed (breaking, 3.0)
 
 - **OpenCode V1 (`server()`) adapter.** `@brainervirus/workit-opencode` now

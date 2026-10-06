@@ -22,7 +22,7 @@ behavior. A change that wants new behavior is its own change.
    validator that changes behavior is not deslop.
 5. **Re-run the checks** and report lines removed, not lines written. Nothing
    to clean is a valid result: say what you checked ("0 removals; ran knip and
-   read the diff"). When a tracked task lists a `pre-pr-cleanup` requirement,
+   read the diff"). When a tracked task lists a `pre-pr-cleanup` requirement (≤6.x tasks),
    record this result as its evidence.
 
 ## Example

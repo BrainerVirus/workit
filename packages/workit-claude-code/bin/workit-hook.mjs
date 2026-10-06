@@ -31,9 +31,34 @@ const failOpen = (reason) => {
   process.stdout.write("{}\n");
 };
 
-if (fromSource) {
+// Every Bash call reaches this hook (branch policy and the before-write
+// gate). A shell command with no git, no redirect and no writing verb can
+// need neither, so it answers `{}` before loading the runtime (fast path).
+let payload = "";
+for await (const chunk of process.stdin) payload += String(chunk);
+const MAYBE_GATED =
+  /\bgit\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl)\b/;
+const plainShell = (() => {
+  try {
+    const value = JSON.parse(payload);
+    const command = value?.tool_input?.command;
+    return (
+      value?.hook_event_name === "PreToolUse" &&
+      (value.tool_name === "Bash" || value.tool_name === "PowerShell") &&
+      typeof command === "string" &&
+      !MAYBE_GATED.test(command)
+    );
+  } catch {
+    return false;
+  }
+})();
+
+if (plainShell) {
+  process.stdout.write("{}\n");
+} else if (fromSource) {
   const run = spawnSync(process.env.WORKIT_BUN ?? "bun", [source], {
-    stdio: "inherit",
+    input: payload,
+    stdio: ["pipe", "inherit", "inherit"],
     windowsHide: true,
   });
   if (run.error) failOpen(`bun is required for the local pin (${run.error.message})`);
@@ -45,7 +70,7 @@ if (fromSource) {
   } catch (error) {
     failOpen(`cannot load ${dist} (${error instanceof Error ? error.message : String(error)})`);
   }
-  if (runClaudeHook) process.exitCode = await runClaudeHook(process.stdin, process.stdout);
+  if (runClaudeHook) process.exitCode = await runClaudeHook([payload], process.stdout);
 } else {
   failOpen(`${dist} is missing; run \`bun scripts/build.ts\` in ${root}`);
 }

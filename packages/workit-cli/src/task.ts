@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { checkRoot } from "@brainervirus/workit-core/src/check-config";
+import { judgeTokens } from "@brainervirus/workit-core/src/core/policy/judgment";
 import { sameDirectoryIdentity } from "@brainervirus/workit-core/src/core/task-store";
 import {
   OPERATION_FAMILIES,
@@ -173,9 +174,21 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   let view: string | undefined;
   let actor: string | undefined;
   let json = jsonRequested;
+  const judge: string[] = [];
   const seen = new Set<string>();
   for (let i = 2; i < argv.length; i += 1) {
     const token = argv[i];
+    // `policy assess|preview --judge behavior=yes risk=normal [--ref <path>]…` (S17).
+    if (family === "policy" && (token === "--judge" || token === "--ref")) {
+      if (token === "--ref") {
+        const value = argv[++i];
+        if (value === undefined || !value.trim()) return parseUsage("--ref requires a value", json);
+        judge.push(`ref=${value}`);
+        continue;
+      }
+      while (argv[i + 1] !== undefined && !argv[i + 1].startsWith("--")) judge.push(argv[++i]);
+      continue;
+    }
     if (token === "--json" || token === "--confirm") {
       if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
       seen.add(token);
@@ -205,6 +218,11 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   if (!loaded.ok) return { ok: false, result: loaded.result, json };
   const request = loaded.value;
   if (!("schemaVersion" in request)) request.schemaVersion = 1;
+  if (judge.length)
+    request.judgment = {
+      ...(isObject(request.judgment) ? request.judgment : {}),
+      ...judgeTokens(judge),
+    };
   for (const [key, value] of [
     ["action", action],
     ...(taskId === undefined ? [] : [["taskId", taskId] as const]),

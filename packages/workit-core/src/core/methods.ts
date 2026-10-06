@@ -130,7 +130,9 @@ PATH, \`npx -y @brainervirus/workit-cli\`). \`busy\` is retryable
 The task families (task, policy, evidence, finding, decision, worker, state)
 are optional continuity for tracked work; each branch has one implicit task
 that the first recording creates, and a solo edit needs no task. A decision
-records a user choice; it never authorizes an effect.
+records a user choice; it never authorizes an effect. Judge work once with
+\`workit policy assess --judge risk= behavior= product-choice= plan=\`; an
+open choice or missing plan blocks code writes until recorded.
 Omit revisions; a revision_conflict means one you passed is stale, so re-read.
 Across repositories, bind each item to its checkout, branch and endpoint,
 resolve competing targets before a mutation, and reconcile an uncertain

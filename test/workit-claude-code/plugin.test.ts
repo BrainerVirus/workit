@@ -96,9 +96,12 @@ test("hooks.json registers the designed events through the exec-form launcher, n
         expect(hook.args, event).toEqual(["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"]);
       }
   expect(hooks.SessionStart[0].matcher).toBe("startup|resume|clear|compact|fork");
+  // Every Bash command: branch policy on git forms and the before-write gate
+  // on recognizable shell writes (S17); file-writing tools for the write gate.
   expect(hooks.PreToolUse.map((group) => [group.matcher, group.hooks[0].if])).toEqual([
-    ["Bash", "Bash(git *)"],
+    ["Bash", undefined],
     ["PowerShell", "PowerShell(git *)"],
+    ["Edit|Write|MultiEdit|NotebookEdit", undefined],
   ]);
 });
 

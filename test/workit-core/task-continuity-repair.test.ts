@@ -18,7 +18,7 @@ import {
   type TaskView,
 } from "@/packages/workit-core/src/core";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
-import { assessment, caller, scope, taskStartRequest } from "./task-fixtures";
+import { assessment, caller, scope, taskStartRequest, type Assessment } from "./task-fixtures";
 
 const makeRoot = () => mkdtempSync(join(tmpdir(), "workit-continuity-repair-"));
 const makeContext = (root: string, nativeWorker?: NativeWorkerVerifier): OperationContext => ({
@@ -776,30 +776,17 @@ test("portable assessment state remains truthful and importable after host refs 
   expect(exported).toMatchObject({ ok: true });
   if (!exported.ok) throw new Error(exported.error);
   const bundle = exported.data as ExportBundle;
-  const portableAssessment = bundle.task.assessments[0].data;
-  expect(portableAssessment.facts[0]).toMatchObject({
-    basis: "unknown",
-    refs: [],
-  });
-  expect(portableAssessment.facts[1]).toMatchObject({
-    basis: "observed",
-    refs: [fileRef],
-  });
-  expect(portableAssessment.signals.behaviorChange).toMatchObject({
-    value: "unknown",
-    basis: "unknown",
-    refs: [],
-  });
-  expect(portableAssessment.signals.behaviorChange.reason).toContain("portable");
+  // ≤6.x assessments are kept verbatim as history; only unportable refs drop.
+  const portableAssessment = bundle.task.assessments[0].data as unknown as Assessment;
+  expect(portableAssessment.facts[0].refs).toEqual([]);
+  expect(portableAssessment.facts[1]).toMatchObject({ basis: "observed", refs: [fileRef] });
+  expect(portableAssessment.signals.behaviorChange.refs).toEqual([]);
   expect(portableAssessment.signals.mechanicalLowRisk).toMatchObject({
     value: true,
     basis: "observed",
     refs: [fileRef],
   });
-  expect(portableAssessment.consequences[0].fact).toMatchObject({
-    basis: "unknown",
-    refs: [],
-  });
+  expect(portableAssessment.consequences[0].fact.refs).toEqual([]);
 
   const destinationRoot = makeRoot();
   const destination = new WorkitCore(new TaskStore(destinationRoot), makeContext(destinationRoot));

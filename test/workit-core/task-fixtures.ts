@@ -2,10 +2,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   Caller,
+  Constraint,
+  Dimension,
   CheckObservation,
   OperationRequest,
   Scope,
-  Assessment,
   OperationFamily,
   Ref,
   TaskStartRequest,
@@ -33,6 +34,15 @@ export const caller = (overrides: Partial<Caller> = {}): Caller => ({
   actor: "test",
   ...overrides,
 });
+
+type LegacySignal = { value: boolean | "unknown"; basis: string; reason: string; refs: Ref[] };
+/** A ≤6.x assessment payload: still accepted and mapped onto the four judgments (S17, D17). */
+export type Assessment = {
+  facts: { statement: string; basis: string; refs: Ref[] }[];
+  signals: Record<string, LegacySignal>;
+  consequences: { area: string; fact: { statement: string; basis: string; refs: Ref[] } }[];
+  verification: unknown[];
+};
 
 export const assessment = (overrides: Partial<Assessment> = {}): Assessment => ({
   facts: [],
@@ -336,4 +346,20 @@ export const operationCorpus = (): Array<{
   ].map((input) => ({ family: "state" as const, input })),
 ];
 
-export { id, digest };
+export { id };
+
+/** A project constraint that requires one method (review, verification…) before close. */
+export const methodConstraint = (
+  method: Dimension,
+  overrides: Partial<Constraint> = {},
+): Constraint => ({
+  id: `repo-${method}`,
+  kind: "project",
+  statement: `${method} is required`,
+  source: ref(),
+  acceptanceAllowed: false,
+  requires: [
+    { kind: "method", scope: scope(), refs: [], method, before: "close", dependentAction: null },
+  ],
+  ...overrides,
+});

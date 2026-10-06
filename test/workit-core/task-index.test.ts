@@ -8,9 +8,9 @@ import {
   compactTaskContext,
   sha256,
   success,
-  type Assessment,
   type TaskView,
 } from "@/packages/workit-core/src/core";
+import type { Assessment } from "@/test/workit-core/task-fixtures";
 import { fileSignature, racySignature } from "@/packages/workit-core/src/core/task-store";
 import * as evaluation from "@/packages/workit-core/src/core/task-evaluation";
 import { compactContextFor, unfinishedTaskOfferFor } from "@/packages/workit-opencode/src/runtime";

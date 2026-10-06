@@ -13,6 +13,7 @@ export const OPENCODE_DESCRIPTOR: HostDescriptor = {
     "context.turn": { support: "native", native: 'session.hook("context")' },
     "shell.pre": { support: "native", native: 'permission.hook("evaluate")' },
     "tool.pre": { support: "native", native: 'tool.hook("execute.before")' },
+    "write.pre": { support: "native", native: 'permission.hook("evaluate")' },
     "shell.post": { support: "native", native: 'tool.hook("execute.after")' },
     "subagent.start": { support: "native", native: 'tool.hook("execute.before") subagent' },
     "subagent.stop": { support: "native", native: 'tool.hook("execute.after") subagent' },

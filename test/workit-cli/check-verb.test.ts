@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import * as z from "zod";
 import { main } from "@/packages/workit-cli/src/main";
-import { TaskStore, WorkitCore, type Assessment } from "@/packages/workit-core/src/core";
+import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import type { Assessment } from "@/test/workit-core/task-fixtures";
 import {
   CHECK_OBSERVATION_PATH,
   entrySchema,
@@ -170,7 +171,7 @@ test("G `workit check -- bun test` exiting 1, T failing evidence with exit code,
   expect(status()).toMatchObject({ status: "unsatisfied" });
   expect(data.stillUnsatisfied).toEqual([
     expect.objectContaining({
-      ruleId: "behavioral-verification",
+      ruleId: "check:test",
       unblock: expect.stringMatching(/^(workit|npx -y @brainervirus\/workit-cli@\S+) check test$/),
     }),
   ]);

@@ -7,25 +7,30 @@ import {
   WorkitCore,
   captureCandidate,
   selectMethods,
-  type Assessment,
   type OperationContext,
 } from "@/packages/workit-core/src/core";
+import type { Assessment } from "@/test/workit-core/task-fixtures";
 import { METHODS } from "@/packages/workit-core/src/core/methods";
 import {
   assessment,
   caller,
   checkObservation,
+  methodConstraint,
   ref,
   scope,
   taskStartRequest,
   writeTestCheck,
 } from "./task-fixtures";
 
-const context = (root: string, actor = "test"): OperationContext => ({
+const context = (
+  root: string,
+  actor = "test",
+  constraints: OperationContext["constraints"] = [],
+): OperationContext => ({
   root,
   caller: caller({ actor }),
   capabilities: [],
-  constraints: [],
+  constraints,
   now: "2026-01-01T00:00:00Z",
 });
 
@@ -56,10 +61,15 @@ const behavioralSignals = (): Assessment["signals"] => ({
   },
 });
 
-const startAndAssess = (root: string, signals: Parameters<typeof assess>[2], actor = "test") => {
+const startAndAssess = (
+  root: string,
+  signals: Parameters<typeof assess>[2],
+  actor = "test",
+  constraints: OperationContext["constraints"] = [],
+) => {
   writeTestCheck(root);
   const store = new TaskStore(root);
-  const core = new WorkitCore(store, context(root, actor));
+  const core = new WorkitCore(store, context(root, actor, constraints));
   const started = core.task(taskStartRequest());
   if (!started.ok) throw new Error(started.error);
   const taskId = (started.data as { id: string }).id;
@@ -214,41 +224,6 @@ test("kind mismatches name the expected evidence", () => {
         ]),
       },
     });
-    const cleanup = policy.requirements.find((item) => item.ruleId === "pre-pr-cleanup")!;
-    expect(
-      core.evidence({
-        schemaVersion: 1,
-        action: "record",
-        taskId,
-        evidence: {
-          kind: "artifact",
-          claim: "deslop report",
-          requirementIds: [cleanup.id],
-          result: "passed",
-          summary: "deslop pass",
-          refs: [],
-          exitCode: 0,
-          reviewContext: null,
-        },
-      }).ok,
-    ).toBe(true);
-    const after = core.task({
-      schemaVersion: 1,
-      action: "inspect",
-      taskId,
-      view: "summary",
-    });
-    expect(after).toMatchObject({
-      ok: true,
-      data: {
-        requirements: expect.arrayContaining([
-          expect.objectContaining({
-            requirementId: cleanup.id,
-            status: "satisfied",
-          }),
-        ]),
-      },
-    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -309,9 +284,14 @@ test("the same reviewer session may re-verify the same requirement", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-reviewer-retry-"));
   try {
     writeFileSync(join(root, "a.ts"), "before");
-    const { store, core, taskId } = startAndAssess(root, behavioralSignals());
+    // Evidence-based review comes from a project constraint; derived verdicts read the ledger.
+    const { store, core, taskId } = startAndAssess(root, behavioralSignals(), "test", [
+      methodConstraint("review"),
+    ]);
     const policy = policyOf(store, taskId);
-    const reviewRequirement = policy.requirements.find((item) => item.dimension === "review")!;
+    const reviewRequirement = policy.requirements.find((item) =>
+      item.ruleId.startsWith("project-constraint:repo-review"),
+    )!;
     const reviewer = new WorkitCore(store, {
       ...context(root),
       caller: caller({ actor: "reviewer" }),
@@ -367,39 +347,26 @@ test("the same reviewer session may re-verify the same requirement", () => {
   }
 });
 
-test("dead skill routes are gone and self-review is routed", () => {
+test("derived requirements route to their method skills; dead routes are gone", () => {
   const ruleIds = Object.values(METHODS).flatMap((definition) => definition.ruleIds ?? []);
-  expect(ruleIds).not.toContain("root-cause-investigation");
-  expect(ruleIds).not.toContain("durable-handoff");
+  for (const dead of ["root-cause-investigation", "durable-handoff"])
+    expect(ruleIds).not.toContain(dead);
   const root = mkdtempSync(join(tmpdir(), "workit-method-routes-"));
   try {
-    const { store, taskId } = startAndAssess(root, mechanicalSignals());
-    const policy = policyOf(store, taskId);
-    const selfReview = policy.requirements.find((item) => item.ruleId === "self-review")!;
-    expect(
-      selectMethods(
-        {
-          policyVersion: "1.0.0",
-          inputDigest: "0".repeat(64),
-          requirements: policy.requirements,
-        },
-        [],
-      ).map((method) => method.id),
-    ).toContain("workit-review");
-    const mechanical = policy.requirements.find(
-      (item) => item.ruleId === "mechanical-existing-checks",
-    )!;
-    expect(
-      selectMethods(
-        {
-          policyVersion: "1.0.0" as const,
-          inputDigest: "0".repeat(64),
-          requirements: [mechanical],
-        },
-        [],
-      ).map((method) => method.id),
-    ).toContain("workit-implement");
-    void selfReview;
+    writeTestCheck(root);
+    const core = new WorkitCore(new TaskStore(root), context(root));
+    const routed = (judgment: Record<string, unknown>) => {
+      const preview = core.policy({ action: "preview", ...judgment });
+      if (!preview.ok || !preview.data) throw new Error("preview failed");
+      return selectMethods(preview.data, []).map((method) => method.id);
+    };
+    expect(core.task({ action: "start", objective: "route" }).ok).toBe(true);
+    expect(routed({ behaviorChange: true, riskTier: "normal" })).toEqual([
+      "workit-bdd",
+      "workit-review",
+    ]);
+    expect(routed({ productChoiceOpen: true, needsPlan: true })).toEqual(["workit-shape"]);
+    expect(routed({ riskTier: "trivial" })).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

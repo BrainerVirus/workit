@@ -2,7 +2,7 @@
 import path from "node:path";
 import type { HostDescriptor } from "../descriptor";
 import type { HookDecision, HookEvent, HookEventKind, HostAdapter } from "../protocol";
-import { existingDirectory, isRecord, nonEmpty } from "./fields";
+import { existingDirectory, isRecord, isWriteTool, nonEmpty, writePaths } from "./fields";
 
 export type CursorHookEvent =
   | "sessionStart"
@@ -44,6 +44,8 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
     "context.turn": none,
     "shell.pre": { support: "native", native: "beforeShellExecution" },
     "tool.pre": { support: "native", native: "preToolUse" },
+    // preToolUse write tools; the file path is read from tool_input when present.
+    "write.pre": { support: "partial", native: "preToolUse" },
     "shell.post": undocumented,
     "subagent.start": { support: "native", native: "subagentStart" },
     // subagentStop carries no stable child identity.
@@ -212,7 +214,14 @@ const protocolEvent = (input: CursorHookInput): HookEvent => {
       // which branch name it targets.
       return { kind: "shell.pre", command: input.command ?? "", toolUseId: null };
     case "preToolUse":
-      return { kind: "tool.pre", tool: input.tool_name ?? "", toolUseId: null };
+      return isWriteTool(input.tool_name)
+        ? {
+            kind: "write.pre",
+            tool: input.tool_name ?? "",
+            paths: writePaths(input.tool_input),
+            toolUseId: null,
+          }
+        : { kind: "tool.pre", tool: input.tool_name ?? "", toolUseId: null };
     case "subagentStart":
       return {
         kind: "subagent.start",

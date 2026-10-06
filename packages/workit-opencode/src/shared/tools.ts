@@ -1,8 +1,8 @@
 import {
   OPERATION_FAMILIES,
-  OPERATION_SCHEMA_DEPTH,
-  boundedOperationJsonSchema,
   contextReadJsonSchema,
+  flatOperationJsonSchema,
+  operationDescription,
   type OperationFamily,
 } from "@brainervirus/workit-core/src/core";
 
@@ -27,8 +27,8 @@ const objectSchema = (
 
 const familyTools = OPERATION_FAMILIES.map((family): WorkitToolSpec => ({
   name: `workit_${family}`,
-  description: `Workit ${family} operations backed by the shared task contract.`,
-  input: { type: "object", ...boundedOperationJsonSchema(family, OPERATION_SCHEMA_DEPTH) },
+  description: operationDescription(family),
+  input: flatOperationJsonSchema(family)!,
 }));
 
 export const WORKIT_TOOL_CATALOG: readonly WorkitToolSpec[] = [

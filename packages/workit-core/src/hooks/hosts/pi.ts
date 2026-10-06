@@ -12,6 +12,7 @@ export const PI_DESCRIPTOR: HostDescriptor = {
     "context.turn": { support: "native", native: "before_agent_start" },
     "shell.pre": { support: "native", native: "tool_call" },
     "tool.pre": { support: "native", native: "tool_call" },
+    "write.pre": { support: "native", native: "tool_call" },
     "shell.post": { support: "native", native: "tool_result" },
     // Workers are supervised stock-Pi processes, not host subagents.
     "subagent.start": { support: "none", native: null },

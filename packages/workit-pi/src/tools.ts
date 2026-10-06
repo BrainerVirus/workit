@@ -1,19 +1,24 @@
 import {
   failure,
-  boundedOperationJsonSchema,
   contextReadJsonSchema,
+  flatOperationJsonSchema,
+  operationDescription,
   parseContextRead,
   readExternalContext,
-  OPERATION_SCHEMA_DEPTH,
   OPERATION_FAMILIES,
-  parseOperation,
+  parseAdvertisedOperation,
   success,
   TaskStore,
   WorkitCore,
   type OperationFamily,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
-import { shellPolicy } from "@brainervirus/workit-core/hooks";
+import {
+  handleHook,
+  PI_DESCRIPTOR,
+  writePaths,
+  type HookEvent,
+} from "@brainervirus/workit-core/hooks";
 import type {
   ExtensionContext,
   AgentToolResult,
@@ -30,8 +35,9 @@ const output = (result: Result<unknown>) => ({
 });
 type PiToolResult = AgentToolResult<Result<unknown>>;
 
+/** Flat schema; Pi's transport may stringify non-string params, so those also accept strings. */
 const schemaFor = (family: OperationFamily) =>
-  ({ type: "object", ...boundedOperationJsonSchema(family, OPERATION_SCHEMA_DEPTH, true) }) as any;
+  flatOperationJsonSchema(family, { stringTolerant: true }) as any;
 
 const decodeStrings = (value: unknown): unknown => {
   if (typeof value === "string") {
@@ -61,12 +67,10 @@ const executeFamily = async (
   input: unknown,
   ctx: ExtensionContext,
 ): Promise<PiToolResult> => {
-  // Pi may deliver structured params as JSON strings (host transport quirk).
-  // Strict input wins; a decoded retry only rescues stringified payloads, and
-  // the original failure stands when decoding changes nothing.
-  const parsedStrict = parseOperation(family, input);
-  const parsed = parsedStrict.ok ? parsedStrict : parseOperation(family, decodeStrings(input));
-  if (!parsed.ok) return output(parsedStrict);
+  // Pi may deliver structured params as JSON strings (host transport quirk);
+  // flat-input normalization decodes them.
+  const parsed = parseAdvertisedOperation(family, input, "pi");
+  if (!parsed.ok) return output(parsed);
   const trust = trustedForMutation(ctx, (parsed.data as { action?: unknown }).action);
   if (!trust.ok) return output(trust);
   const core = new WorkitCore(new TaskStore(ctx.cwd), piContext(ctx));
@@ -82,7 +86,7 @@ export const registerWorkitTools = (
     pi.registerTool({
       name: `workit_${family}`,
       label: `workit_${family}`,
-      description: `Workit ${family} operations backed by the shared task contract.`,
+      description: operationDescription(family),
       parameters: schemaFor(family),
       async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
         return executeFamily(family, input, ctx);
@@ -109,14 +113,34 @@ export const enforceToolPolicy = (
   event: ToolCallEvent,
   ctx: ExtensionContext,
 ): { block: true; reason: string } | undefined => {
+  // The shared hook handler: branch policy and the before-write gate (S17).
+  const gate = (hookEvent: HookEvent) => {
+    const decision = handleHook(
+      {
+        host: "pi",
+        cwd: ctx.cwd,
+        session: { id: "", agentId: null, agentType: null, parentId: null },
+        permissionMode: null,
+        transcriptPath: null,
+        event: hookEvent,
+      },
+      { descriptor: PI_DESCRIPTOR, addendum: null },
+    );
+    return decision.kind === "deny" ? { block: true as const, reason: decision.reason } : undefined;
+  };
   if (event.toolName === "bash") {
     const command = (event.input as { command?: unknown } | undefined)?.command;
-    const decision = typeof command === "string" ? shellPolicy(ctx.cwd, command) : null;
-    return decision?.kind === "deny" ? { block: true, reason: decision.reason } : undefined;
+    return typeof command === "string"
+      ? gate({ kind: "shell.pre", command, toolUseId: null })
+      : undefined;
   }
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
-  // Pi project trust is host policy and stays enforced; Workit does not gate
-  // file writes (D2: authority is the host's permissions plus autonomy grants).
+  // Pi project trust is host policy and stays enforced.
   if (!ctx.isProjectTrusted()) return { block: true, reason: "Pi project is not trusted" };
-  return undefined;
+  return gate({
+    kind: "write.pre",
+    tool: event.toolName,
+    paths: writePaths(event.input),
+    toolUseId: null,
+  });
 };

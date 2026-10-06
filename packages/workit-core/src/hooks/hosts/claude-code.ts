@@ -8,7 +8,15 @@ import type {
   HostAdapter,
   SessionSource,
 } from "../protocol";
-import { commandText, existingDirectory, isRecord, nonEmpty, optionalText } from "./fields";
+import {
+  commandText,
+  existingDirectory,
+  isRecord,
+  isWriteTool,
+  nonEmpty,
+  optionalText,
+  writePaths,
+} from "./fields";
 
 type ClaudeHookEvent =
   | "SessionStart"
@@ -31,6 +39,7 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     "context.turn": { support: "native", native: "UserPromptSubmit" },
     "shell.pre": { support: "native", native: "PreToolUse" },
     "tool.pre": { support: "native", native: "PreToolUse" },
+    "write.pre": { support: "native", native: "PreToolUse" },
     "shell.post": { support: "native", native: "PostToolUse" },
     // SubagentStart output is additionalContext only: it cannot block or bind.
     "subagent.start": { support: "native", native: "SubagentStart" },
@@ -140,6 +149,16 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
       return { ok: true, event: { kind: "context.turn" } };
     case "PreToolUse": {
       if (!nonEmpty(value.tool_name)) return { ok: false, error: "tool_name is required" };
+      if (isWriteTool(value.tool_name))
+        return {
+          ok: true,
+          event: {
+            kind: "write.pre",
+            tool: value.tool_name,
+            paths: writePaths(value.tool_input),
+            toolUseId,
+          },
+        };
       if (!SHELL_TOOLS.has(value.tool_name))
         return { ok: true, event: { kind: "tool.pre", tool: value.tool_name, toolUseId } };
       const command = toolCommand(value);

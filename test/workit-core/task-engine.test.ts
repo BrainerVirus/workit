@@ -29,6 +29,7 @@ import {
   assessment,
   caller,
   checkObservation,
+  methodConstraint,
   ref,
   scope,
   taskStartRequest,
@@ -612,7 +613,7 @@ test("engine mutations honor a fixed trusted clock", () => {
   const assessedTask = store.readTask(taskId);
   expect(assessedTask.ok).toBe(true);
   if (!assessedTask.ok) throw new Error(assessedTask.error);
-  expect(assessedTask.data.assessments.at(-1)?.recordedAt).toBe("2026-01-01T00:00:00Z");
+  expect(assessedTask.data.judgments?.at(-1)?.recordedAt).toBe("2026-01-01T00:00:00Z");
 });
 
 test("trusted clocks are isolated between cores sharing one store", () => {
@@ -650,7 +651,7 @@ test("trusted clocks are isolated between cores sharing one store", () => {
   const after = store.readTask(firstTask.data.id);
   expect(after.ok).toBe(true);
   if (!after.ok) throw new Error(after.error);
-  expect(after.data.assessments.at(-1)?.recordedAt).toBe("2026-01-01T00:00:00Z");
+  expect(after.data.judgments?.at(-1)?.recordedAt).toBe("2026-01-01T00:00:00Z");
 });
 
 test("a context rooted at another checkout cannot read or mutate the store", () => {
@@ -666,109 +667,48 @@ test("a context rooted at another checkout cannot read or mutate the store", () 
 });
 
 test.each(["workit_cli", "opencode", "cursor", "codex_cli", "codex_desktop", "pi"] as const)(
-  "%s: mechanical self-review stays fresh and permits verified closure",
+  "%s: a flat trivial behavior judgment gates close on a fresh configured check",
   (host) => {
-    const root = mkdtempSync(join(tmpdir(), "workit-self-review-"));
+    const root = mkdtempSync(join(tmpdir(), "workit-flat-judgment-"));
     try {
       writeFileSync(join(root, "a.ts"), "before");
       writeTestCheck(root);
       const store = new TaskStore(root);
-      const core = new WorkitCore(store, {
-        ...context(root),
-        caller: caller({ host }),
-      });
-      const started = core.task(taskStartRequest());
+      const core = new WorkitCore(store, { ...context(root), caller: caller({ host }) });
+      const started = core.task({ action: "start", objective: "fix a typo in a.ts" });
       if (!started.ok) throw new Error(started.error);
       const taskId = (started.data as { id: string }).id;
       const assessed = core.policy({
-        schemaVersion: 1,
         action: "assess",
         taskId,
-        assessment: assessment({
-          signals: {
-            ...assessment().signals,
-            approachUnknown: {
-              value: false,
-              basis: "inferred",
-              reason: "known",
-              refs: [],
-            },
-            productChoiceOpen: {
-              value: false,
-              basis: "inferred",
-              reason: "settled",
-              refs: [],
-            },
-          },
-        }),
+        riskTier: "low",
+        behaviorChange: "yes",
       });
       if (!assessed.ok) throw new Error(assessed.error);
-      const task = store.readTask(taskId);
-      if (!task.ok || !task.data.policy) throw new Error("policy missing");
-      const review = task.data.policy.requirements.find((item) => item.ruleId === "self-review")!;
-      // Close-time verification takes a check the workit CLI observed.
+      expect(assessed.data?.requirements.map((item) => item.ruleId)).toEqual(["check:test"]);
+      const testing = assessed.data!.requirements[0];
       const cli = new WorkitCore(store, context(root));
-      const record = () => {
+      const record = () =>
         expect(cli.observeCheck({ taskId, observation: checkObservation() }).ok).toBe(true);
-        for (const requirement of task.data.policy!.requirements) {
-          if (requirement.dimension !== "review") continue;
-          expect(
-            core.evidence({
-              schemaVersion: 1,
-              action: "record",
-              taskId,
-              evidence: {
-                kind: requirement.dimension === "review" ? "review" : "check",
-                claim: requirement.ruleId,
-                requirementIds: [requirement.id],
-                result: "passed",
-                summary: "lead checked the current candidate",
-                refs: [],
-                exitCode: 0,
-                reviewContext:
-                  requirement.dimension === "review"
-                    ? { kind: "host", host, handle: "test" }
-                    : null,
-              },
-            }).ok,
-          ).toBe(true);
-        }
-      };
       const inspect = (status: string) => {
-        for (const view of ["summary", "full"] as const) {
-          expect(core.task({ schemaVersion: 1, action: "inspect", taskId, view })).toMatchObject({
+        for (const view of ["summary", "full"] as const)
+          expect(core.task({ action: "inspect", taskId, view })).toMatchObject({
             ok: true,
             data: {
-              requirements: expect.arrayContaining([
-                expect.objectContaining({ requirementId: review.id, status }),
-              ]),
+              requirements: [expect.objectContaining({ requirementId: testing.id, status })],
             },
           });
-        }
       };
       const close = () =>
-        core.task({
-          schemaVersion: 1,
-          action: "close",
-          taskId,
-          outcome: "verified",
-          summary: "mechanical change reviewed",
-          decisionIds: [],
-        });
+        core.task({ action: "close", taskId, outcome: "verified", summary: "typo fixed" });
       inspect("unsatisfied");
       record();
       inspect("satisfied");
       writeFileSync(join(root, "a.ts"), "after");
       inspect("unsatisfied");
-      expect(close()).toMatchObject({
-        ok: false,
-        code: "requirements_unsatisfied",
-      });
+      expect(close()).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
       record();
-      expect(close()).toMatchObject({
-        ok: true,
-        data: { closure: { outcome: "verified" } },
-      });
+      expect(close()).toMatchObject({ ok: true, data: { closure: { outcome: "verified" } } });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -778,7 +718,8 @@ test.each(["workit_cli", "opencode", "cursor", "codex_cli", "codex_desktop", "pi
 test("review evidence uses the trusted caller session and requires an independent session", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-review-"));
   const store = new TaskStore(root);
-  const leadContext = context(root);
+  // Evidence-based review now comes from project constraints (S17 derives verdicts from the ledger).
+  const leadContext = { ...context(root), constraints: [methodConstraint("review")] };
   const lead = new WorkitCore(store, leadContext);
   const started = lead.task(taskStartRequest());
   expect(started.ok).toBe(true);
@@ -827,8 +768,8 @@ test("review evidence uses the trusted caller session and requires an independen
   const assessedTask = store.readTask(taskId);
   expect(assessedTask.ok).toBe(true);
   if (!assessedTask.ok || !assessedTask.data.policy) throw new Error("policy missing");
-  const reviewRequirement = assessedTask.data.policy.requirements.find(
-    (item) => item.dimension === "review",
+  const reviewRequirement = assessedTask.data.policy.requirements.find((item) =>
+    item.ruleId.startsWith("project-constraint:repo-review"),
   );
   if (!reviewRequirement) throw new Error("review requirement missing");
   const otherRequirement = assessedTask.data.policy.requirements.find(
@@ -999,7 +940,10 @@ test("summary and full inspection recapture candidates so scoped freshness agree
   mkdirSync(src, { recursive: true });
   writeFileSync(join(src, "a.ts"), "initial");
   const store = new TaskStore(root);
-  const core = new WorkitCore(store, context(root));
+  const core = new WorkitCore(store, {
+    ...context(root),
+    constraints: [methodConstraint("verification")],
+  });
   const started = core.task(
     taskStartRequest({
       intent: {
@@ -1414,7 +1358,10 @@ test("an unsupported stored policy version blocks stopped closure at the public 
 test("policy preview is pure and closure requires every applicable evidence type", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-engine-"));
   const store = new TaskStore(root);
-  const core = new WorkitCore(store, context(root));
+  const core = new WorkitCore(store, {
+    ...context(root),
+    constraints: [methodConstraint("review")],
+  });
   const started = core.task(taskStartRequest());
   if (!started.ok) throw new Error(started.error);
   const task = store.listTasks();
@@ -1490,7 +1437,10 @@ test("policy preview is pure and closure requires every applicable evidence type
 test("an applicable approved limitation satisfies only its permitted requirement", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-engine-"));
   const store = new TaskStore(root);
-  const core = new WorkitCore(store, context(root));
+  const core = new WorkitCore(store, {
+    ...context(root),
+    constraints: [methodConstraint("verification", { acceptanceAllowed: true })],
+  });
   const started = core.task(taskStartRequest());
   if (!started.ok) throw new Error(started.error);
   const listed = store.listTasks();
@@ -1575,7 +1525,10 @@ test("an applicable approved limitation satisfies only its permitted requirement
 test("a limitation excluding part of a requirement scope cannot bypass that requirement", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-scope-"));
   const store = new TaskStore(root);
-  const core = new WorkitCore(store, context(root));
+  const core = new WorkitCore(store, {
+    ...context(root),
+    constraints: [methodConstraint("verification", { acceptanceAllowed: true })],
+  });
   const started = core.task(taskStartRequest());
   expect(started.ok).toBe(true);
   if (!started.ok) throw new Error(started.error);

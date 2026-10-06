@@ -5,12 +5,12 @@ import {
   candidateDigest,
   policySchema,
   requirementId,
-  signalSchema,
+  judgmentSchema,
   utcSchema,
-  operationJsonSchema,
   operationSchemas,
   parseOperation,
 } from "@/packages/workit-core/src/core/task-contract";
+import { operationJsonSchema } from "@/packages/workit-core/src/core/operation-input";
 import { id, operationCorpus, taskStartRequest } from "./task-fixtures";
 
 const normalizedIssues = (issues: any[]) =>
@@ -93,23 +93,18 @@ test("candidate files enforce path, digest, and executable invariants", () => {
   }
 });
 
-test("signals require unknown values to use unknown basis and booleans to use known basis", () => {
-  expect(
-    signalSchema.safeParse({
-      value: "unknown",
-      basis: "inferred",
-      reason: "x",
-      refs: [],
-    }).success,
-  ).toBe(false);
-  expect(
-    signalSchema.safeParse({
-      value: true,
-      basis: "unknown",
-      reason: "x",
-      refs: [],
-    }).success,
-  ).toBe(false);
+test("judgments are four flat calls plus a note and refs", () => {
+  const judgment = {
+    riskTier: "normal",
+    behaviorChange: true,
+    productChoiceOpen: false,
+    needsPlan: false,
+    note: null,
+    refs: [],
+  };
+  expect(judgmentSchema.safeParse(judgment).success).toBe(true);
+  expect(judgmentSchema.safeParse({ ...judgment, riskTier: "medium" }).success).toBe(false);
+  expect(judgmentSchema.safeParse({ ...judgment, facts: [] }).success).toBe(false);
 });
 
 test("omitted revisions parse and default inside the engine", () => {

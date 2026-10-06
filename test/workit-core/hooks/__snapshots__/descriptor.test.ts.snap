@@ -197,6 +197,10 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
         "native": "PreToolUse",
         "support": "native",
       },
+      "write.pre": {
+        "native": "PreToolUse",
+        "support": "native",
+      },
     },
     "host": "claude_code",
     "interaction": {
@@ -527,6 +531,10 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
       "tool.pre": {
         "native": "PreToolUse",
         "support": "native",
+      },
+      "write.pre": {
+        "native": null,
+        "support": "undocumented",
       },
     },
     "host": "codex_cli",
@@ -879,6 +887,10 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
         "native": "preToolUse",
         "support": "native",
       },
+      "write.pre": {
+        "native": "preToolUse",
+        "support": "partial",
+      },
     },
     "host": "cursor",
     "interaction": {
@@ -1133,6 +1145,10 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
         "native": "tool.hook("execute.before")",
         "support": "native",
       },
+      "write.pre": {
+        "native": "permission.hook("evaluate")",
+        "support": "native",
+      },
     },
     "host": "opencode",
     "interaction": {
@@ -1334,6 +1350,10 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
         "support": "none",
       },
       "tool.pre": {
+        "native": "tool_call",
+        "support": "native",
+      },
+      "write.pre": {
         "native": "tool_call",
         "support": "native",
       },

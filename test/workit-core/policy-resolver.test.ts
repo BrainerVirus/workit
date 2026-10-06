@@ -1,83 +1,129 @@
+// S17 slim policy: four flat judgments in, derived requirements out.
 import { expect, test } from "bun:test";
 import {
   diffPolicy,
   resolvePolicy,
   type ResolverInput,
 } from "@/packages/workit-core/src/core/policy-resolver";
-import type { Constraint } from "@/packages/workit-core/src/core/task-contract";
-import { assessment, digest, id, ref, scope } from "./task-fixtures";
+import { judgeTokens, normalizeJudgment } from "@/packages/workit-core/src/core/policy/judgment";
+import type { Constraint, Judgment } from "@/packages/workit-core/src/core/task-contract";
+import { assessment, ref, scope } from "./task-fixtures";
 
-const input = (overrides: Partial<ResolverInput> = {}): ResolverInput => ({
-  intent: {
-    objective: "change the checkout",
-    scope: scope(),
-    authorityRefs: [],
-  },
-  assessment: assessment({
-    signals: {
-      ...assessment().signals,
-      approachUnknown: {
-        value: false,
-        basis: "inferred",
-        reason: "inspected",
-        refs: [],
-      },
-      productChoiceOpen: {
-        value: false,
-        basis: "inferred",
-        reason: "settled",
-        refs: [],
-      },
-      behaviorChange: {
-        value: false,
-        basis: "inferred",
-        reason: "mechanical",
-        refs: [],
-      },
-      mechanicalLowRisk: {
-        value: true,
-        basis: "inferred",
-        reason: "mechanical",
-        refs: [],
-      },
-      durableAgreementNeeded: {
-        value: false,
-        basis: "inferred",
-        reason: "none",
-        refs: [],
-      },
-      coordinationPlanNeeded: {
-        value: false,
-        basis: "inferred",
-        reason: "none",
-        refs: [],
-      },
-      helperUseful: {
-        value: false,
-        basis: "inferred",
-        reason: "none",
-        refs: [],
-      },
-      testFirstPractical: {
-        value: true,
-        basis: "inferred",
-        reason: "yes",
-        refs: [],
-      },
-    },
-  }),
-  constraints: [],
-  prior: { decisions: [], findings: [], requirements: [] },
+const judgment = (overrides: Partial<Judgment> = {}): Judgment => ({
+  riskTier: "trivial",
+  behaviorChange: false,
+  productChoiceOpen: false,
+  needsPlan: false,
+  note: null,
+  refs: [],
   ...overrides,
 });
-
+const input = (overrides: Partial<ResolverInput> = {}): ResolverInput => ({
+  intent: { objective: "change the checkout", scope: scope(), authorityRefs: [] },
+  judgment: judgment(),
+  constraints: [],
+  ...overrides,
+});
 const data = (result: ReturnType<typeof resolvePolicy>) => {
-  expect(result.ok).toBe(true);
   if (!result.ok) throw new Error(result.error);
   return result.data;
 };
 const rules = (result: ReturnType<typeof resolvePolicy>) =>
-  data(result).requirements.map((r) => r.ruleId);
+  data(result).requirements.map((item) => `${item.ruleId}@${item.before}`);
+const judged = (raw: unknown, previous: Judgment | null = null) => {
+  const result = normalizeJudgment(raw, previous);
+  if (!result.ok) throw new Error(JSON.stringify(result));
+  return result.data;
+};
+
+test("given --judge behavior=yes risk=normal, then requirements = {check:test, verdict:non-author}", () => {
+  const raw = judgeTokens(["behavior=yes", "risk=normal"]);
+  expect(rules(resolvePolicy(input({ judgment: judged(raw).judgment })))).toEqual([
+    "check:test@close",
+    "verdict:non-author@close",
+  ]);
+});
+
+test("given a 2-line mechanical fix judged trivial, then zero requirements and no spec proposed", () => {
+  const raw = judgeTokens(["risk=trivial", "behavior=no"]);
+  expect(rules(resolvePolicy(input({ judgment: judged(raw).judgment })))).toEqual([]);
+});
+
+test("high risk needs a live verified verdict and a plan before writes", () => {
+  expect(
+    rules(resolvePolicy(input({ judgment: judgment({ riskTier: "high", behaviorChange: true }) }))),
+  ).toEqual(["check:test@close", "verdict:verified@close", "plan@write"]);
+});
+
+test("an open product choice and a needed plan gate writes", () => {
+  expect(
+    rules(
+      resolvePolicy(input({ judgment: judgment({ productChoiceOpen: true, needsPlan: true }) })),
+    ),
+  ).toEqual(["decision:product@write", "plan@write"]);
+});
+
+test("aliases map onto the four judgments; unknown keys are ignored, bad values are named", () => {
+  const value = judged({
+    risk: "Medium",
+    behaviour: "y",
+    open_product_choice: "no",
+    "needs-plan": "docs/plans/x.md",
+    reason: "why",
+    extra: 1,
+  });
+  expect(value.judgment).toEqual({
+    riskTier: "normal",
+    behaviorChange: true,
+    productChoiceOpen: false,
+    needsPlan: true,
+    note: "why",
+    refs: [{ kind: "file", path: "docs/plans/x.md", digest: null }],
+  });
+  expect(value.ignored).toEqual(["extra"]);
+  expect(normalizeJudgment({ risk: "sky-high" }, null)).toMatchObject({
+    ok: false,
+    code: "invalid_input",
+    details: { fields: [{ path: "risk" }] },
+  });
+});
+
+test("omitted judgments keep the previous ones and refs accumulate", () => {
+  const previous = judgment({ riskTier: "high", needsPlan: true, refs: [] });
+  const next = judged({ ref: "docs/plan.md" }, previous).judgment;
+  expect(next).toMatchObject({ riskTier: "high", needsPlan: true });
+  expect(next.refs).toEqual([{ kind: "file", path: "docs/plan.md", digest: null }]);
+  expect(judged({ refs: ["https://x.test/p"] }, next).judgment.refs).toHaveLength(2);
+});
+
+test("an old-shape (≤6.x) assessment is accepted and mapped, never rejected for shape", () => {
+  const legacy = assessment({
+    signals: {
+      ...assessment().signals,
+      behaviorChange: { value: true, basis: "inferred", reason: "r", refs: [] },
+      mechanicalLowRisk: { value: false, basis: "inferred", reason: "r", refs: [] },
+      productChoiceOpen: { value: true, basis: "inferred", reason: "r", refs: [] },
+      durableAgreementNeeded: { value: true, basis: "inferred", reason: "r", refs: [] },
+    },
+    consequences: [{ area: "security", fact: { statement: "auth", basis: "inferred", refs: [] } }],
+  });
+  for (const raw of [legacy, { assessment: legacy }]) {
+    const value = judged(raw);
+    expect(value.legacy).toBe(true);
+    expect(value.judgment).toMatchObject({
+      riskTier: "high",
+      behaviorChange: true,
+      productChoiceOpen: true,
+      needsPlan: true,
+    });
+  }
+  // The fixture default (mechanical, unknowns elsewhere) maps to trivial.
+  expect(judged(assessment()).judgment).toMatchObject({
+    riskTier: "trivial",
+    behaviorChange: false,
+    productChoiceOpen: false,
+  });
+});
 
 const constraint = (requires: Constraint["requires"]): Constraint => ({
   id: "repo-checks",
@@ -88,389 +134,7 @@ const constraint = (requires: Constraint["requires"]): Constraint => ({
   requires,
 });
 
-const decision = (
-  requirementIds: string[],
-  contentRefs = [ref()],
-): ResolverInput["prior"]["decisions"][number] => ({
-  response: "approved",
-  purpose: "limitation",
-  binding: {
-    taskId: id,
-    workspaceId: id,
-    scope: scope({ paths: ["src", "test"], exclusions: ["vendor"] }),
-    presented: "accept this limitation",
-    contentRefs,
-  },
-  digest,
-  requirementIds,
-  revoked: null,
-});
-
-test("mechanical work only requires relevant existing checks and self-review", () => {
-  const result = resolvePolicy(input());
-  expect(rules(result)).toEqual(["mechanical-existing-checks", "self-review", "pre-pr-cleanup"]);
-  expect(rules(result)).not.toContain("durable-spec");
-  expect(rules(result)).not.toContain("coordination-plan");
-});
-
-test("a broad behavior-preserving rename does not escalate by size", () => {
-  const result = resolvePolicy(
-    input({
-      intent: { ...input().intent, scope: scope({ paths: ["src", "test"] }) },
-    }),
-  );
-  expect(rules(result)).toEqual(["mechanical-existing-checks", "self-review", "pre-pr-cleanup"]);
-});
-
-test("security behavior changes require behavioral verification and fresh-context review", () => {
-  const result = resolvePolicy(
-    input({
-      assessment: assessment({
-        ...input().assessment,
-        signals: {
-          ...input().assessment.signals,
-          behaviorChange: {
-            value: true,
-            basis: "observed",
-            reason: "authorization changes",
-            refs: [ref()],
-          },
-          mechanicalLowRisk: {
-            value: false,
-            basis: "inferred",
-            reason: "not mechanical",
-            refs: [],
-          },
-        },
-        consequences: [
-          {
-            area: "security",
-            fact: {
-              statement: "authorization",
-              basis: "observed",
-              refs: [ref()],
-            },
-          },
-        ],
-      }),
-    }),
-  );
-  expect(rules(result)).toEqual([
-    "behavioral-verification",
-    "fresh-context-review",
-    "pre-pr-cleanup",
-  ]);
-});
-
-test("bounded behavior changes keep testing but do not force independent review", () => {
-  const original = input();
-  const changed = {
-    ...original,
-    assessment: {
-      ...original.assessment,
-      consequences: [],
-      signals: {
-        ...original.assessment.signals,
-        behaviorChange: {
-          value: true as const,
-          basis: "inferred" as const,
-          reason: "sidebar highlighting",
-          refs: [],
-        },
-        mechanicalLowRisk: {
-          value: false as const,
-          basis: "inferred" as const,
-          reason: "observable change",
-          refs: [],
-        },
-      },
-    },
-  };
-  expect(rules(resolvePolicy(changed))).toEqual([
-    "behavioral-verification",
-    "self-review",
-    "pre-pr-cleanup",
-  ]);
-  expect(rules(resolvePolicy({ ...changed, preferences: { thorough: true } }))).toContain(
-    "fresh-context-review",
-  );
-  for (const area of ["security", "data", "public_contract", "operations"] as const) {
-    const consequential = {
-      ...changed,
-      preferences: { fast: true },
-      assessment: {
-        ...changed.assessment,
-        consequences: [
-          {
-            area,
-            fact: {
-              statement: "affected boundary",
-              basis: "inferred" as const,
-              refs: [],
-            },
-          },
-        ],
-      },
-    };
-    expect(rules(resolvePolicy(consequential))).toContain("fresh-context-review");
-  }
-});
-
-test("contradictory mechanical and behavioral signals fail reconciliation", () => {
-  const result = resolvePolicy(
-    input({
-      assessment: assessment({
-        ...input().assessment,
-        signals: {
-          ...input().assessment.signals,
-          behaviorChange: {
-            value: true,
-            basis: "observed",
-            reason: "changes behavior",
-            refs: [ref()],
-          },
-          mechanicalLowRisk: {
-            value: true,
-            basis: "observed",
-            reason: "mechanical",
-            refs: [ref()],
-          },
-        },
-      }),
-    }),
-  );
-  expect(result).toMatchObject({ ok: false, code: "invalid_input" });
-});
-
-test("independent signals produce independent artifact and coordination requirements", () => {
-  const spec = resolvePolicy(
-    input({
-      assessment: assessment({
-        ...input().assessment,
-        signals: {
-          ...input().assessment.signals,
-          durableAgreementNeeded: {
-            value: true,
-            basis: "observed",
-            reason: "durable",
-            refs: [ref()],
-          },
-        },
-      }),
-    }),
-  );
-  const plan = resolvePolicy(
-    input({
-      assessment: assessment({
-        ...input().assessment,
-        signals: {
-          ...input().assessment.signals,
-          coordinationPlanNeeded: {
-            value: true,
-            basis: "observed",
-            reason: "dependencies",
-            refs: [ref()],
-          },
-        },
-      }),
-    }),
-  );
-  expect(rules(spec)).toContain("durable-spec");
-  expect(rules(spec)).not.toContain("coordination-plan");
-  expect(rules(plan)).toContain("coordination-plan");
-  expect(rules(plan)).not.toContain("durable-spec");
-});
-
-test("helper usefulness is independent of formal documents", () => {
-  const result = resolvePolicy(
-    input({
-      assessment: assessment({
-        ...input().assessment,
-        signals: {
-          ...input().assessment.signals,
-          helperUseful: {
-            value: true,
-            basis: "observed",
-            reason: "independent investigation",
-            refs: [ref()],
-          },
-        },
-      }),
-    }),
-  );
-  expect(rules(result)).toEqual([
-    "mechanical-existing-checks",
-    "self-review",
-    "pre-pr-cleanup",
-    "helper-usefulness",
-  ]);
-});
-
-test("consequential unknowns block only their dependent action", () => {
-  const result = resolvePolicy(
-    input({
-      assessment: assessment({
-        ...input().assessment,
-        signals: {
-          ...input().assessment.signals,
-          approachUnknown: {
-            value: "unknown",
-            basis: "unknown",
-            reason: "dependency scope",
-            refs: [],
-          },
-        },
-      }),
-    }),
-  );
-  const policy = data(result);
-  expect(rules(result)).toContain("consequential-unknown");
-  expect(
-    policy.requirements.find((r) => r.ruleId === "consequential-unknown")?.dependentAction,
-  ).toBeNull();
-  expect(rules(result)).toContain("mechanical-existing-checks");
-});
-
-test("open product choices require a decision", () => {
-  const result = resolvePolicy(
-    input({
-      assessment: assessment({
-        ...input().assessment,
-        signals: {
-          ...input().assessment.signals,
-          productChoiceOpen: {
-            value: true,
-            basis: "observed",
-            reason: "two valid APIs",
-            refs: [ref()],
-          },
-        },
-      }),
-    }),
-  );
-  expect(rules(result)).toContain("product-decision");
-});
-
-test("preferences adjust only the permitted helper/review process", () => {
-  const helperInput = {
-    assessment: assessment({
-      ...input().assessment,
-      signals: {
-        ...input().assessment.signals,
-        helperUseful: {
-          value: true,
-          basis: "inferred",
-          reason: "independent investigation",
-          refs: [],
-        },
-      },
-    }),
-  };
-  expect(rules(resolvePolicy(input({ ...helperInput, preferences: { fast: true } })))).toEqual([
-    "mechanical-existing-checks",
-    "self-review",
-    "pre-pr-cleanup",
-  ]);
-  expect(rules(resolvePolicy(input({ ...helperInput, preferences: { thorough: true } })))).toEqual([
-    "mechanical-existing-checks",
-    "fresh-context-review",
-    "pre-pr-cleanup",
-    "helper-usefulness",
-  ]);
-
-  const constrained = constraint([
-    {
-      kind: "method",
-      scope: scope(),
-      refs: [ref()],
-      method: "delegation",
-      before: "dependent_action",
-      dependentAction: "delegate",
-    },
-  ]);
-  const protectedInput = input({
-    preferences: { fast: true },
-    constraints: [constrained],
-    assessment: assessment({
-      ...input().assessment,
-      consequences: [
-        {
-          area: "security",
-          fact: { statement: "authorization", basis: "inferred", refs: [] },
-        },
-      ],
-      signals: {
-        ...input().assessment.signals,
-        approachUnknown: {
-          value: "unknown",
-          basis: "unknown",
-          reason: "scope",
-          refs: [],
-        },
-        productChoiceOpen: {
-          value: true,
-          basis: "inferred",
-          reason: "choice remains",
-          refs: [],
-        },
-        behaviorChange: {
-          value: true,
-          basis: "inferred",
-          reason: "behavior changes",
-          refs: [],
-        },
-        mechanicalLowRisk: {
-          value: false,
-          basis: "inferred",
-          reason: "not mechanical",
-          refs: [],
-        },
-        durableAgreementNeeded: {
-          value: true,
-          basis: "inferred",
-          reason: "durable behavior",
-          refs: [],
-        },
-        coordinationPlanNeeded: {
-          value: true,
-          basis: "inferred",
-          reason: "coordination",
-          refs: [],
-        },
-        helperUseful: {
-          value: true,
-          basis: "inferred",
-          reason: "helper",
-          refs: [],
-        },
-      },
-    }),
-  });
-  const protectedRules = rules(resolvePolicy(protectedInput));
-  expect(protectedRules).toEqual(
-    expect.arrayContaining([
-      "consequential-unknown",
-      "product-decision",
-      "behavioral-verification",
-      "fresh-context-review",
-      "durable-spec",
-      "coordination-plan",
-    ]),
-  );
-  expect(
-    protectedRules.some((rule) => rule.startsWith("project-constraint:repo-checks:method:")),
-  ).toBe(true);
-  expect(protectedRules).not.toContain("helper-usefulness");
-});
-
-test("contradictory preferences fail reconciliation", () => {
-  expect(resolvePolicy(input({ preferences: { fast: true, thorough: true } }))).toMatchObject({
-    ok: false,
-    code: "invalid_input",
-  });
-});
-
-test("distinct same-kind constraints remain distinct while exact duplicates dedupe", () => {
+test("project constraints always apply; distinct obligations stay distinct, duplicates dedupe", () => {
   const first = {
     kind: "check" as const,
     scope: scope(),
@@ -479,215 +143,32 @@ test("distinct same-kind constraints remain distinct while exact duplicates dedu
     before: "close" as const,
     dependentAction: null,
   };
-  const second = {
-    ...first,
-    refs: [ref({ url: "https://example.test/two" })],
-  };
+  const second = { ...first, refs: [ref({ url: "https://example.test/two" })] };
   const result = data(resolvePolicy(input({ constraints: [constraint([first, second, first])] })));
-  const obligations = result.requirements.filter((item) =>
-    item.ruleId.startsWith("project-constraint:repo-checks:check:"),
+  expect(result.requirements).toHaveLength(2);
+  expect(result.requirements.every((item) => item.ruleId.startsWith("project-constraint:"))).toBe(
+    true,
   );
-  expect(obligations).toHaveLength(2);
-  expect(new Set(obligations.map((item) => item.id)).size).toBe(2);
-});
-
-test("constraint obligation kind and method combinations are validated", () => {
-  const invalidMethod = {
-    kind: "method" as const,
-    scope: scope(),
-    refs: [ref()],
-    method: null,
-    before: "write" as const,
-    dependentAction: null,
-  };
-  const invalidCheck = {
-    ...invalidMethod,
-    kind: "check" as const,
-    method: "verification" as const,
-  };
-  expect(resolvePolicy(input({ constraints: [constraint([invalidMethod])] }))).toMatchObject({
-    ok: false,
-    code: "invalid_input",
-  });
-  expect(resolvePolicy(input({ constraints: [constraint([invalidCheck])] }))).toMatchObject({
-    ok: false,
-    code: "invalid_input",
-  });
-});
-
-test("observed facts and signals require supporting references", () => {
   expect(
-    resolvePolicy(
-      input({
-        assessment: assessment({
-          ...input().assessment,
-          facts: [{ statement: "observed fact", basis: "observed", refs: [] }],
-        }),
-      }),
-    ),
-  ).toMatchObject({ ok: false, code: "invalid_input" });
-  expect(
-    resolvePolicy(
-      input({
-        assessment: assessment({
-          ...input().assessment,
-          signals: {
-            ...input().assessment.signals,
-            behaviorChange: {
-              value: true,
-              basis: "observed",
-              reason: "observed behavior",
-              refs: [],
-            },
-          },
-        }),
-      }),
-    ),
+    resolvePolicy(input({ constraints: [constraint([first]), constraint([second])] })),
   ).toMatchObject({ ok: false, code: "invalid_input" });
 });
 
-test("accepted tradeoffs remain settled without new evidence", () => {
-  const first = data(
-    resolvePolicy(
-      input({
-        assessment: assessment({
-          ...input().assessment,
-          signals: {
-            ...input().assessment.signals,
-            productChoiceOpen: {
-              value: true,
-              basis: "inferred",
-              reason: "two valid APIs",
-              refs: [],
-            },
-          },
-        }),
-      }),
-    ),
+test("equal judgments replay to identical policy bytes", () => {
+  expect(JSON.stringify(data(resolvePolicy(input())))).toBe(
+    JSON.stringify(data(resolvePolicy(input()))),
   );
-  const productRequirement = first.requirements.find((item) => item.ruleId === "product-decision");
-  expect(productRequirement).toBeDefined();
-  const second = data(
-    resolvePolicy(
-      input({
-        assessment: assessment({
-          ...input().assessment,
-          signals: {
-            ...input().assessment.signals,
-            productChoiceOpen: {
-              value: true,
-              basis: "inferred",
-              reason: "two valid APIs",
-              refs: [],
-            },
-          },
-        }),
-        prior: {
-          decisions: [decision([productRequirement!.id])],
-          findings: [],
-          requirements: first.requirements,
-        },
-      }),
-    ),
-  );
-  expect(second.requirements).toEqual(first.requirements);
-  expect(
-    diffPolicy(first, second, "accepted limitation remains settled", "2026-09-04T00:00:00Z"),
-  ).toBe(null);
-});
-
-test("equivalent reordered inputs replay to identical policy bytes", () => {
-  const firstContent = ref({ url: "https://example.test/first" });
-  const secondContent = ref({ url: "https://example.test/second" });
-  const firstDecision = decision([digest, "b".repeat(64)], [firstContent, secondContent]);
-  const reorderedDecision = decision(["b".repeat(64), digest], [secondContent, firstContent]);
-  reorderedDecision.binding.scope.paths.reverse();
-  reorderedDecision.binding.scope.exclusions.reverse();
-  const a = data(
-    resolvePolicy(
-      input({
-        prior: { decisions: [firstDecision], findings: [], requirements: [] },
-      }),
-    ),
-  );
-  const b = data(
-    resolvePolicy(
-      input({
-        prior: {
-          decisions: [reorderedDecision],
-          findings: [],
-          requirements: [],
-        },
-      }),
-    ),
-  );
-  expect(b).toEqual(a);
-});
-
-test("malformed and unknown resolver input is rejected", () => {
-  expect(
-    resolvePolicy({ ...input(), surprise: true } as ResolverInput & {
-      surprise: boolean;
-    }),
-  ).toMatchObject({ ok: false, code: "invalid_input" });
-  expect(
-    resolvePolicy({
-      ...input(),
-      assessment: {
-        ...input().assessment,
-        signals: {
-          ...input().assessment.signals,
-          behaviorChange: {
-            value: "unknown",
-            basis: "observed",
-            reason: "bad",
-            refs: [],
-          },
-        },
-      },
-    }),
-  ).toMatchObject({ ok: false, code: "invalid_input" });
 });
 
 test("diffPolicy reports explicit additions and removals", () => {
-  const previous = data(resolvePolicy(input()));
-  const next = data(
-    resolvePolicy(
-      input({
-        assessment: assessment({
-          ...input().assessment,
-          signals: {
-            ...input().assessment.signals,
-            mechanicalLowRisk: {
-              value: false,
-              basis: "inferred",
-              reason: "mechanical work removed",
-              refs: [],
-            },
-            durableAgreementNeeded: {
-              value: true,
-              basis: "observed",
-              reason: "now durable",
-              refs: [ref()],
-            },
-          },
-        }),
-      }),
-    ),
-  );
-  const change = diffPolicy(
-    previous,
-    next,
-    "new durable agreement evidence",
-    "2026-09-04T00:00:00Z",
-  );
+  const previous = data(resolvePolicy(input({ judgment: judgment({ behaviorChange: true }) })));
+  const next = data(resolvePolicy(input({ judgment: judgment({ needsPlan: true }) })));
+  const change = diffPolicy(previous, next, "plan needed", "2026-09-04T00:00:00Z");
   expect(change?.recordedAt).toBe("2026-09-04T00:00:00Z");
-  expect(typeof change?.reason).toBe("string");
   expect(String(change?.reason)).toContain("retired:");
-  expect(String(change?.reason)).toContain("new durable agreement evidence");
-  expect(change?.added.length).toBe(1);
-  expect(change?.retired).toEqual(
-    expect.arrayContaining(previous.requirements.map((requirement) => requirement.id)),
-  );
+  expect(String(change?.reason)).toContain("plan needed");
+  expect(change?.added).toHaveLength(1);
+  expect(change?.retired).toEqual(previous.requirements.map((item) => item.id));
+  expect(diffPolicy(next, next, "same", "2026-09-04T00:00:00Z")).toBeNull();
   expect(() => diffPolicy(previous, { ...next, inputDigest: "bad" }, "invalid", "bad")).toThrow();
 });

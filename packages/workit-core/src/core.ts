@@ -8,11 +8,6 @@ export {
   OPERATION_FAMILIES,
   operationSchemas,
   advertisedOperationSchemas,
-  operationJsonSchema,
-  boundedOperationJsonSchema,
-  OPERATION_SCHEMA_DEPTH,
-  OPERATION_SCHEMA_MAX_DEPTH,
-  canonicalFieldsDescription,
   parseOperation,
   success,
   failure,
@@ -25,6 +20,13 @@ export {
   requirementId,
   rewriteRecordRefs,
 } from "./core/task-contract";
+export {
+  flatOperationJsonSchema,
+  normalizeOperationInput,
+  operationDescription,
+  operationJsonSchema,
+  parseAdvertisedOperation,
+} from "./core/operation-input";
 export type {
   OperationFamily,
   OperationRequest,
@@ -32,7 +34,7 @@ export type {
   Caller,
   Scope,
   Ref,
-  Assessment,
+  Judgment,
   Dimension,
   Requirement,
   Constraint,

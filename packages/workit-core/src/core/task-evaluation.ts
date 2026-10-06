@@ -34,6 +34,7 @@ import {
 } from "../check-config";
 import { worktreeSignal, worktreeTree } from "../git/rev";
 import { runtimeVersion } from "./task-store";
+import { derivedRuleStatus, ledgerView } from "./policy/derive";
 
 export type CandidateEnvironment =
   | readonly (string | { name: string; value?: string | null })[]
@@ -729,7 +730,40 @@ export function evaluateRequirements(
       decisionIds: [],
       reason: "stored policy version is unsupported; reassessment is required",
     }));
+  const ledger = ledgerView(checkoutRoot);
   return (task.policy?.requirements ?? []).map((requirement) => {
+    // Verdict, product-decision and plan rules read the ledger or the plan (S17).
+    const derived = derivedRuleStatus(task, requirement, checkoutRoot, ledger);
+    if (derived) {
+      if (derived.met)
+        return {
+          requirementId: requirement.id,
+          status: "satisfied" as const,
+          evidenceIds: [],
+          decisionIds: derived.decisionIds,
+          reason: derived.reason,
+        };
+      const waived = requirement.acceptanceAllowed
+        ? applicableDecision(task, workspace, requirement, checkoutRoot)
+        : [];
+      if (waived.length)
+        return {
+          requirementId: requirement.id,
+          status: "accepted_limitation" as const,
+          evidenceIds: [],
+          decisionIds: waived.map(
+            (decision) => task.decisions.find((entry) => entry.data === decision)!.id,
+          ),
+          reason: "an applicable approved limitation permits the missing evidence",
+        };
+      return {
+        requirementId: requirement.id,
+        status: "unsatisfied" as const,
+        evidenceIds: [],
+        decisionIds: [],
+        reason: derived.reason,
+      };
+    }
     const gate = observedGate(requirement)
       ? evaluateObservedGate(task, requirement, statuses, configFor())
       : null;
