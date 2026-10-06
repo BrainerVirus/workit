@@ -126,6 +126,12 @@ async function create(argv: string[], io: Io): Promise<number> {
       return usage(io, `cannot read --body-file ${flags.values["body-file"]}`, CREATE_USAGE);
     }
   }
+  if (flags.values.base !== undefined && flags.values.track !== undefined)
+    return usage(
+      io,
+      "pass --base or --track, not both (--track picks the base for you)",
+      CREATE_USAGE,
+    );
   let base: string | null = flags.values.base ?? null;
   // Without --base the target is the release track's PR target (or the
   // workspace default when no tracks are configured).
@@ -139,8 +145,16 @@ async function create(argv: string[], io: Io): Promise<number> {
           unblock: "fix ~/.config/workit/vcs.json or pass --base <b>",
         }),
       );
-    base = String(resolved.defaultTargetBranch ?? "") || null;
     releaseTrack = resolved.releaseTrack ?? null;
+    // An undetermined release line never picks a target by guess.
+    if (releaseTrack?.blocking)
+      return emit(
+        io,
+        fail("blocked", releaseTrack.blocking, {
+          unblock: "workit pr create --track <name> …  # or --base <branch>",
+        }),
+      );
+    base = String(resolved.defaultTargetBranch ?? "") || null;
   }
   if (!base)
     return usage(io, "no default target branch is configured; pass --base <b>", CREATE_USAGE);

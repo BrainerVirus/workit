@@ -191,6 +191,21 @@ test("git branch --track nun names the branch with the nun template and bases it
   });
 });
 
+test("git branch --kind/--slug --base X names the branch from X's track, not HEAD's", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "develop");
+  const result = await run(
+    ["git", "branch", "--kind", "hotfix", "--slug", "crash", "--base", "nun-develop", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({
+    branch: "hotfix/nun-crash",
+    base: "nun-develop",
+    releaseTrack: { name: "nun", source: "branch" },
+  });
+});
+
 test("git branch --track with an unknown track is refused before anything is created", async () => {
   const repo = setup();
   repo.git("switch", "-q", "develop");
@@ -213,27 +228,127 @@ test("the branch policy protects every track's branches (union with the explicit
   expect(blocked.json().error).toContain("protected_ref");
 });
 
-test("an ambiguous branch falls back to the workspace default and says so", async () => {
-  const repo = setup();
-  // Cut from master: develop and nun-develop are both strictly ahead of it by
-  // different amounts, but neither contains the work, so ahead ties at 1; the
-  // behind count still separates them (develop 1 < nun-develop 2).
-  workBranchFrom(repo, "feature/old", "master");
-  expect(vcsConfig("resolve", repo.cwd).releaseTrack).toMatchObject({
-    name: "standard",
-    source: "ancestry",
-  });
-  // Make both lines equally far: one more commit on develop.
-  repo.git("switch", "-q", "develop");
-  repo.write("develop-2.txt", "2\n");
+const commitOn = (repo: RemoteRepo, branch: string, file: string) => {
+  repo.git("switch", "-q", branch);
+  repo.write(file, `${file}\n`);
   repo.git("add", "-A");
-  repo.git("commit", "-q", "-m", "chore: develop-2");
-  repo.git("push", "-q", "origin", "develop");
+  repo.git("commit", "-q", "-m", `chore: ${file}`);
+};
+const pushAll = (repo: RemoteRepo) =>
+  repo.git("push", "-q", "-f", "origin", "master", "develop", "nun-master", "nun-develop");
+
+test("nun forked from develop: a develop feature older than the fork is ambiguous (not nun), and mutating verbs block", async () => {
+  // Repro A: feature/old forks from develop; develop moves on; nun-develop
+  // forks from develop later and adds commits. Both fork points are equal, so
+  // counting commits (which said "nun") is wrong; Workit must not guess.
+  const repo = setup();
+  workBranchFrom(repo, "feature/old", "develop");
+  for (let index = 0; index < 5; index += 1) commitOn(repo, "develop", `develop-more-${index}.txt`);
+  repo.git("branch", "-f", "nun-develop", "develop");
+  for (let index = 0; index < 3; index += 1) commitOn(repo, "nun-develop", `nun-more-${index}.txt`);
+  pushAll(repo);
   repo.git("switch", "-q", "feature/old");
   const resolved = vcsConfig("resolve", repo.cwd);
-  expect(resolved.defaultTargetBranch).toBe("nun-develop");
   expect(resolved.releaseTrack).toMatchObject({ name: "nun", source: "default" });
-  expect(resolved.releaseTrack.warnings.join("\n")).toContain("equally close");
+  expect(resolved.releaseTrack.blocking).toContain("can't tell which release line feature/old");
+  const blocked = await run(
+    ["git", "branch", "--kind", "feature", "--slug", "next", "--json"],
+    repo.cwd,
+  );
+  expect(blocked.code).toBe(3);
+  expect(blocked.json().error).toContain("--track");
+  expect(repo.git("branch", "--list", "feature/next")).toBe("");
+  const pr = await run(["pr", "create", "--title", "feat: old", "--json"], repo.cwd);
+  expect(pr.code).toBe(3);
+  expect(pr.json().error).toContain("can't tell which release line");
+  // Read-only verbs only warn.
+  const shown = await run(["grant", "show"], repo.cwd);
+  expect(shown.code).toBe(0);
+  expect(shown.stdout).toContain("release track not determined");
+  // --base decides it: the base's own line.
+  const based = await run(
+    ["git", "branch", "feature/next", "--base", "develop", "--json"],
+    repo.cwd,
+  );
+  expect(based.code).toBe(0);
+  expect(based.json().data).toMatchObject({ base: "develop", releaseTrack: { name: "standard" } });
+});
+
+test("nun forked from develop: plain git checkout -b from develop is read from the HEAD reflog", () => {
+  const repo = setup();
+  commitOn(repo, "develop", "develop-2.txt");
+  repo.git("branch", "-f", "nun-develop", "develop");
+  commitOn(repo, "nun-develop", "nun-3.txt");
+  pushAll(repo);
+  repo.git("switch", "-q", "develop");
+  repo.git("checkout", "-q", "-b", "feature/plain");
+  // No commit yet: develop and nun-develop share the fork point, only the reflog can tell.
+  expect(vcsConfig("resolve", repo.cwd).releaseTrack).toMatchObject({
+    name: "standard",
+    source: "checkout",
+  });
+});
+
+test("nun syncs develop: a nun feature after the sync is nun; a develop feature from before it is ambiguous", () => {
+  // Repro B: nun-develop periodically merges develop in.
+  const repo = setup();
+  workBranchFrom(repo, "feature/dev", "develop");
+  commitOn(repo, "develop", "develop-2.txt");
+  repo.git("switch", "-q", "nun-develop");
+  repo.git("merge", "-q", "--no-ff", "--no-edit", "develop");
+  pushAll(repo);
+  workBranchFrom(repo, "feature/nun-after-sync", "nun-develop");
+  expect(vcsConfig("resolve", repo.cwd).releaseTrack).toMatchObject({
+    name: "nun",
+    source: "ancestry",
+  });
+  repo.git("switch", "-q", "feature/dev");
+  expect(vcsConfig("resolve", repo.cwd).releaseTrack).toMatchObject({
+    source: "default",
+    blocking: expect.stringContaining("can't tell"),
+  });
+});
+
+test("stack plan --track bogus blocks instead of falling back to main; --track with --trunk is refused", async () => {
+  const repo = setup();
+  workBranchFrom(repo, "feature/std", "develop");
+  const bogus = await run(["stack", "plan", "--track", "bogus", "--json"], repo.cwd);
+  expect(bogus.code).toBe(3);
+  expect(bogus.json().error).toContain('no release track "bogus"');
+  const both = await run(
+    ["stack", "plan", "--track", "nun", "--trunk", "develop", "--json"],
+    repo.cwd,
+  );
+  expect(both.code).toBe(2);
+});
+
+test("pr create --base with --track is refused (usage), never a silently ignored --track", async () => {
+  const repo = setup();
+  workBranchFrom(repo, "feature/std", "develop");
+  const result = await run(
+    ["pr", "create", "--base", "develop", "--track", "nun", "--title", "t", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(2);
+  expect(result.json().error).toContain("--base or --track");
+});
+
+test("a critical field the runtime cannot read is a refusal from vcsConfig, not a crash", () => {
+  const repo = setup({
+    ...TRACKS,
+    standard: { ...TRACKS.standard, freeze: "fri", critical: ["freeze"] },
+  });
+  workBranchFrom(repo, "feature/std", "develop");
+  const resolved = vcsConfig("resolve", repo.cwd);
+  expect(resolved.ok).toBe(false);
+  expect(resolved.error).toContain("freeze");
+  // Fail closed: every branch counts as protected.
+  expect(isProtectedTarget(repo.cwd, "feature/anything")).toBe(true);
+});
+
+test("a dropped track keeps its branches protected", () => {
+  const repo = setup({ ...TRACKS, legacy: { productionBranch: "legacy-master" } });
+  expect(isProtectedTarget(repo.cwd, "legacy-master")).toBe(true);
 });
 
 test("grant show and doctor display the configured tracks and the one this checkout resolves to", async () => {

@@ -51,10 +51,25 @@ const short = (sha: string | null | undefined): string => (sha ? sha.slice(0, 12
 const stackFailed = (io: Io, result: StackError): number =>
   emit(io, fail(result.code, result.error, { unblock: result.unblock, data: result.data ?? {} }));
 
-// The release track's PR target when tracks are configured (core vcsConfig).
-const defaultTrunk = (io: Io, track: string | null): string | null => {
-  const resolved = vcsConfig("resolve", io.cwd, { track });
-  return resolved.ok === false ? null : String(resolved.defaultTargetBranch ?? "") || null;
+// The release track's PR target when tracks are configured (core vcsConfig),
+// for `branch` (the stack's bottom) or the checkout. A track problem (an
+// unknown --track, a critical field, an undetermined line) is an error, never
+// a silent fall back to `main`; a broken vcs.json keeps the legacy fallback.
+const defaultTrunk = (
+  io: Io,
+  track: string | null,
+  branch: string | null,
+): { trunk: string | null } | { error: string } => {
+  const resolved = vcsConfig("resolve", io.cwd, {
+    track,
+    ...(branch ? { branch } : {}),
+  });
+  if (resolved.ok === false)
+    return track !== null || String(resolved.configPath ?? "").endsWith("workspaces.json")
+      ? { error: String(resolved.error) }
+      : { trunk: null };
+  if (resolved.releaseTrack?.blocking) return { error: String(resolved.releaseTrack.blocking) };
+  return { trunk: String(resolved.defaultTargetBranch ?? "") || null };
 };
 
 const label = (forge: string | null, pr: number | null): string =>
@@ -72,8 +87,31 @@ async function plan(argv: string[], io: Io): Promise<number> {
     const selected = selectStack(io.cwd, null);
     if (selected.ok) existing = selected.data;
   }
-  const trunk =
-    flags.values.trunk ?? existing?.trunk ?? defaultTrunk(io, flags.values.track ?? null) ?? "main";
+  const track = flags.values.track ?? null;
+  if (track !== null && flags.values.trunk !== undefined)
+    return usage(io, "pass --trunk or --track, not both (--track picks the trunk)", PLAN_USAGE);
+  let trunk = flags.values.trunk ?? existing?.trunk ?? null;
+  if (trunk === null || track !== null) {
+    const derived = defaultTrunk(io, track, flags.positionals[0] ?? null);
+    if ("error" in derived)
+      return emit(
+        io,
+        fail("blocked", derived.error, {
+          unblock: "workit stack plan --track <name> …  # or --trunk <branch>",
+        }),
+      );
+    // A re-plan keeps its trunk; --track must agree with it, not move it silently.
+    if (existing && track !== null && derived.trunk !== existing.trunk)
+      return emit(
+        io,
+        fail(
+          "invalid_input",
+          `stack ${existing.name} is on trunk ${existing.trunk}; --track ${track} targets ${derived.trunk ?? "(none)"}`,
+          { unblock: "drop --track to re-plan on the recorded trunk" },
+        ),
+      );
+    trunk ??= derived.trunk ?? "main";
+  }
   // PR lookups need the forge; planning itself does not (offline is fine).
   const connected = connect(io, flags.positionals[0] ?? null);
   const resolved = connected.ok ? connected.data : null;

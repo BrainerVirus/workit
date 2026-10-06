@@ -200,11 +200,12 @@ test("pr create: given release tracks and no --base, then the PR targets the tra
     vcs: { provider: "github", account: "octo", defaultTargetBranch: "develop" },
     releaseTracks: TWO_TRACKS,
   });
+  // feature/x was made with `git switch -c` on main: the HEAD reflog says so.
   const result = await run(["pr", "create", "--title", "feat: x", "--json"], repo.cwd);
   expect(result.code).toBe(0);
   expect(result.json().data).toMatchObject({
     base: "main",
-    releaseTrack: { name: "stable", source: "ancestry" },
+    releaseTrack: { name: "stable", source: "checkout" },
   });
   expect(writes(runner.calls)[0]).toMatchObject({ vars: { base: "main" } });
 });
@@ -499,7 +500,16 @@ test("pr merge: a PR landing on a track's production branch reports the merge-ba
     },
   });
   await verdict(repo);
-  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  // The owner of the merged-into branch decides, not a session's track choice.
+  const previous = process.env.WORKFLOW_RELEASE_TRACK;
+  process.env.WORKFLOW_RELEASE_TRACK = "next";
+  let result: Awaited<ReturnType<typeof run>>;
+  try {
+    result = await run(["pr", "merge", "--json"], repo.cwd);
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_RELEASE_TRACK;
+    else process.env.WORKFLOW_RELEASE_TRACK = previous;
+  }
   expect(result.code).toBe(0);
   expect(result.json().data).toMatchObject({
     base: "main",

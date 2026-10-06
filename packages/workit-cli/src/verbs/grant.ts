@@ -39,9 +39,8 @@ import {
   describeReleaseTracks,
   releaseTracksReport,
 } from "@brainervirus/workit-core/src/core/release-tracks";
-import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
 import { emit, fail, ok, type Io } from "../output";
-import { CANCELLED_EXIT, askLine, askOrCancel } from "../prompt";
+import { askLine, askOrCancel, cancelled } from "../prompt";
 
 const USAGE =
   "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr] [verification=self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
@@ -121,14 +120,7 @@ function show(argv: string[], io: Io): number {
   }
   // Release tracks ride along (read-only): which line this checkout is on
   // decides where push/pr/merge land, so the grant view shows it too.
-  let vcs: Record<string, any> = { ok: false };
-  try {
-    vcs = vcsConfig("resolve", io.cwd);
-  } catch {}
-  const tracks = releaseTracksReport(
-    io.cwd,
-    vcs.ok === false ? undefined : (vcs.workspaceDefaultTargetBranch ?? null),
-  );
+  const tracks = releaseTracksReport(io.cwd);
   const shown =
     tracks.tracks.length || tracks.error ? { ...autonomy, releaseTracks: tracks } : autonomy;
   return emit(io, ok(shown), (data) => [
@@ -210,7 +202,7 @@ async function change(
       ),
     );
     // Ctrl+C at the confirmation: a cancellation, not a failure; nothing written.
-    if (answer === null) return CANCELLED_EXIT;
+    if (answer === null) return cancelled(io);
     if (answer.trim() !== workspace)
       return emit(io, fail("blocked", "grant change not confirmed; nothing was written"));
   }

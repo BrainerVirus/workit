@@ -6,29 +6,38 @@
 // default.
 //
 // - readReleaseTracks is the lenient runtime reader (D17): an unknown or
-//   malformed track field is reported and skipped (the track is dropped when
-//   it lacks a usable production or integration branch), unless the track
-//   lists that field in its `critical` array, in which case the read fails
-//   closed so an older Workit never routes work on a track it misreads.
+//   malformed track field is reported and ignored (the track is dropped when
+//   it lacks a usable production or integration branch, but every branch it
+//   names stays protected), unless the track lists that field (or a parent of
+//   it) in its `critical` array, in which case the read fails closed so an
+//   older Workit never routes work on a track it misreads.
 // - resolveReleaseTrack is pure: git facts come through an injected probe, so
 //   the decision table is testable without a repository. Resolution order,
 //   cheapest deterministic signal first:
-//     1. an explicit track (`--track`, WORKFLOW_RELEASE_TRACK);
+//     1. an explicit `--track`;
 //     2. the branch is a track's integration, production or base branch;
-//     3. only one track is configured;
-//     4. the base `workit git branch` recorded for the branch
+//     3. WORKFLOW_RELEASE_TRACK (a host session's choice);
+//     4. only one track, when the workspace default target is on it;
+//     5. the base `workit git branch` recorded for the branch
 //        (git config branch.<b>.workitBase), followed through stacked
 //        parents;
-//     5. the reflog's "Created from <ref>" when it names a track branch;
-//     6. ancestry: the track whose integration (or base) branch the branch
-//        is fewest commits ahead of, then fewest behind.
-//   A tie or no usable signal falls back to the workspace default (the track
-//   whose integration branch or PR target is the configured default target,
-//   else the legacy default) and says so in `warnings`; it never guesses.
+//     6. the branch reflog's "Created from <track branch>";
+//     7. for a branch created at HEAD (plain `git checkout -b` / `switch -c`,
+//        branch reflog "Created from HEAD"), the HEAD reflog's
+//        "checkout: moving from <track branch> to <b>";
+//     8. ancestry by fork point: the track whose merge-base with the branch
+//        strictly descends from every other track's merge-base.
+//   When the workspace default target belongs to no track it is an implicit
+//   line of its own (resolving to it means "no track": the legacy default).
+//   A tie or no usable signal falls back to the workspace default and says so
+//   in `warnings`; with two or more tracks it also sets `blocking`, which
+//   mutating verbs (git branch, pr create, stack plan) refuse on. It never
+//   guesses.
 // - No configured tracks: status "none", and every caller keeps its legacy
-//   behavior unchanged.
+//   behavior unchanged (an explicit `--track` is then an error).
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { aheadBehind, currentBranch, pushRemoteName, resolveRef } from "../git/rev";
+import { currentBranch, mergeBase, pushRemoteName, remoteNames, resolveRef } from "../git/rev";
 import { resolveRuntimeReleaseTracks } from "./workspaces";
 
 export type RuntimeReleaseTrack = {
@@ -51,7 +60,15 @@ export type ReleaseTracksRead = {
   issues: string[];
   /** Set when a problem touches a field a track marked `critical`: fail closed. */
   error: string | null;
+  /**
+   * Every branch name any track entry names, usable or not: the protected
+   * union is built from this, so a dropped track never loses protection.
+   */
+  protectedBranches: string[];
 };
+
+/** A release-track problem that must fail closed; callers turn it into a refusal. */
+export class ReleaseTrackError extends Error {}
 
 const KNOWN_FIELDS = new Set([
   "strategy",
@@ -66,38 +83,57 @@ const KNOWN_FIELDS = new Set([
   "requiredChecks",
   "critical",
 ]);
+const BRANCH_FIELDS = ["productionBranch", "integrationBranch", "baseBranch", "pullRequestTarget"];
+const PLACEHOLDER = /\{[^}]*\}/gu;
+const HAS_PLACEHOLDER = /\{[^}]*\}/u;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const branchName = (value: unknown): string | null =>
   typeof value === "string" && value.trim() && !value.trim().startsWith("-") ? value.trim() : null;
 
+/** Every branch-valued string an entry names, whatever else is wrong with it. */
+const namedBranches = (entry: Record<string, unknown>): string[] =>
+  [
+    ...BRANCH_FIELDS.map((field) => branchName(entry[field])),
+    ...(Array.isArray(entry.mergeBackBranches) ? entry.mergeBackBranches.map(branchName) : []),
+  ].filter((name): name is string => name !== null);
+
+/** A naming template needs literal text besides placeholders and globs, or it would allow anything. */
+const literalOf = (template: string): string =>
+  template.replace(PLACEHOLDER, "").replace(/[*/]/gu, "").trim();
+
 /** Lenient read of a workspace's raw `releaseTracks` value (D17). */
 export function readReleaseTracks(raw: unknown): ReleaseTracksRead {
-  const out: ReleaseTracksRead = { tracks: [], issues: [], error: null };
+  const out: ReleaseTracksRead = { tracks: [], issues: [], error: null, protectedBranches: [] };
   if (raw === undefined || raw === null) return out;
   if (!isRecord(raw)) {
     out.issues.push("releaseTracks is not an object; ignored");
     return out;
   }
   const fatal: string[] = [];
+  const protectedNames = new Set<string>();
   for (const [name, entry] of Object.entries(raw).toSorted(([a], [b]) => (a < b ? -1 : 1))) {
     const label = `release track ${JSON.stringify(name)}`;
-    if (!name.trim()) {
-      out.issues.push("a release track with a blank name was ignored");
-      continue;
-    }
     if (!isRecord(entry)) {
       out.issues.push(`${label} is not an object; ignored`);
       continue;
     }
-    const critical = new Set(
-      Array.isArray(entry.critical)
-        ? entry.critical.filter((item): item is string => typeof item === "string")
-        : [],
-    );
+    for (const branch of namedBranches(entry)) protectedNames.add(branch);
+    if (!name.trim()) {
+      out.issues.push("a release track with a blank name was ignored");
+      continue;
+    }
+    let critical: string[] = [];
+    if (Array.isArray(entry.critical))
+      critical = entry.critical.filter((item): item is string => typeof item === "string");
+    else if (entry.critical !== undefined)
+      out.issues.push(`${label} critical: must be a list of field names; ignored`);
+    // A critical entry covers the field and everything under it (`naming` covers `naming.feature`).
+    const isCritical = (field: string) =>
+      critical.some((item) => field === item || field.startsWith(`${item}.`));
     const problem = (field: string, message: string) => {
-      if (critical.has(field)) fatal.push(`${label} ${field}: ${message}`);
+      if (isCritical(field)) fatal.push(`${label} ${field}: ${message}`);
       else out.issues.push(`${label} ${field}: ${message}`);
     };
     for (const key of Object.keys(entry))
@@ -130,8 +166,11 @@ export function readReleaseTracks(raw: unknown): ReleaseTracksRead {
         for (const kind of ["feature", "release", "hotfix"] as const) {
           const template = entry.naming[kind];
           if (template === undefined) continue;
-          if (typeof template === "string" && template.trim()) naming[kind] = template.trim();
-          else problem(`naming.${kind}`, "not a template string; ignored");
+          if (typeof template !== "string" || !template.trim())
+            problem(`naming.${kind}`, "not a template string; ignored");
+          else if (!literalOf(template))
+            problem(`naming.${kind}`, "needs literal text besides placeholders; ignored");
+          else naming[kind] = template.trim();
         }
     }
     if (!productionBranch || !integrationBranch) {
@@ -148,6 +187,7 @@ export function readReleaseTracks(raw: unknown): ReleaseTracksRead {
       naming,
     });
   }
+  out.protectedBranches = [...protectedNames];
   if (fatal.length)
     out.error = `workspace releaseTracks cannot be read by this Workit (${fatal.join("; ")}); upgrade Workit or fix the track`;
   return out;
@@ -166,8 +206,14 @@ export const trackBranches = (tracks: readonly RuntimeReleaseTrack[]): string[] 
   ),
 ];
 
-/** A naming template as an allowed-branch glob (`feature/{name}` -> `feature/*`). */
-export const namingGlob = (template: string): string => template.replace(/\{[^}]*\}/gu, "*");
+/**
+ * A naming template as an allowed-branch glob: `feature/{name}` -> `feature/*`;
+ * a template without a placeholder is a prefix (`nun/feature` -> `nun/feature/*`).
+ */
+export const namingGlob = (template: string): string =>
+  HAS_PLACEHOLDER.test(template)
+    ? template.replace(PLACEHOLDER, "*")
+    : `${template.replace(/\/?\*?$/u, "")}/*`;
 
 /** The branch name a track's naming gives `<kind>/<slug>`; null when it has no template. */
 export const trackBranchName = (
@@ -177,27 +223,38 @@ export const trackBranchName = (
 ): string | null => {
   const template = track?.naming[kind as keyof RuntimeReleaseTrack["naming"]];
   if (!template) return null;
-  return /\{[^}]*\}/u.test(template)
-    ? template.replace(/\{[^}]*\}/gu, slug)
+  return HAS_PLACEHOLDER.test(template)
+    ? template.replace(PLACEHOLDER, slug)
     : `${template.replace(/\/?\*?$/u, "")}/${slug}`;
 };
 
 /** Git facts the resolver needs, injected so the decision itself stays pure. */
 export type TrackProbe = {
+  /** Configured remote names (for stripping `<remote>/` from recorded refs). */
+  remotes: () => string[];
   /** The base `workit git branch` recorded for a branch, if any. */
   recordedBase: (branch: string) => string | null;
-  /** The ref the reflog says the branch was created from, if any. */
+  /** The branch reflog's "Created from <ref>", if it names a ref (not HEAD). */
   createdFrom: (branch: string) => string | null;
-  /** Commits the branch has that `trackBranch` lacks (ahead) and vice versa. */
-  distance: (branch: string, trackBranch: string) => { ahead: number; behind: number } | null;
+  /**
+   * For a branch created at HEAD (`git checkout -b` / `switch -c` without a
+   * start point), the HEAD reflog's oldest "checkout: moving from <X> to <branch>": X.
+   */
+  checkedOutFrom: (branch: string) => string | null;
+  /** The fork point (merge-base) of a branch and a track branch, or null. */
+  mergeBase: (branch: string, trackBranch: string) => string | null;
+  /** True when commit `ancestor` is in the history of commit `descendant`. */
+  isAncestor: (ancestor: string, descendant: string) => boolean;
 };
 
 export type TrackSource =
   | "flag"
+  | "env"
   | "branch"
   | "only-track"
   | "recorded-base"
   | "reflog"
+  | "checkout"
   | "ancestry"
   | "default";
 
@@ -205,20 +262,27 @@ export type TrackResolution =
   | { status: "none"; issues: string[] }
   | {
       status: "resolved";
-      /** Null only when falling back with no track matching the workspace default. */
+      /** Null: the legacy workspace default line (no track applies). */
       track: RuntimeReleaseTrack | null;
       source: TrackSource;
       detail: string;
       warnings: string[];
       tracks: RuntimeReleaseTrack[];
+      /**
+       * Set when the line could not be decided (or WORKFLOW_RELEASE_TRACK is
+       * wrong): read-only verbs warn, mutating verbs refuse with this.
+       */
+      blocking: string | null;
     }
   | { status: "invalid"; error: string; issues: string[] };
 
 export type TrackInput = {
   tracks: readonly RuntimeReleaseTrack[];
-  /** `--track` / WORKFLOW_RELEASE_TRACK. */
+  /** An explicit `--track`. */
   requested?: string | null;
-  /** The branch being resolved (current branch, or a PR base); null when detached. */
+  /** WORKFLOW_RELEASE_TRACK: below "the branch is a track branch". */
+  envRequested?: string | null;
+  /** The branch being resolved (current branch, or a base); null when detached. */
   branch: string | null;
   /** The workspace's legacy default target (vcs.defaultTargetBranch or policy default). */
   defaultBranch: string | null;
@@ -227,17 +291,20 @@ export type TrackInput = {
   issues?: readonly string[];
 };
 
+/** The implicit track standing for the legacy default line; resolving to it yields no track. */
+const IMPLICIT = "";
+
 const ownedBy = (tracks: readonly RuntimeReleaseTrack[], branch: string): RuntimeReleaseTrack[] =>
   tracks.filter((track) =>
     [track.integrationBranch, track.productionBranch, track.baseBranch].includes(branch),
   );
 
-/** Strip `refs/heads/`, `refs/remotes/<remote>/` and a leading `origin/`. */
-const shortRef = (ref: string): string =>
-  ref
-    .replace(/^refs\/heads\//u, "")
-    .replace(/^refs\/remotes\/[^/]+\//u, "")
-    .replace(/^origin\//u, "");
+/** Strip `refs/heads/`, `refs/remotes/<remote>/` and a leading `<remote>/`. */
+const shortRef = (ref: string, remotes: readonly string[]): string => {
+  const bare = ref.replace(/^refs\/heads\//u, "").replace(/^refs\/remotes\/[^/]+\//u, "");
+  const remote = remotes.find((name) => bare.startsWith(`${name}/`));
+  return remote ? bare.slice(remote.length + 1) : bare;
+};
 
 const MAX_RECORDED_HOPS = 10;
 
@@ -245,32 +312,73 @@ const MAX_RECORDED_HOPS = 10;
 export function resolveReleaseTrack(input: TrackInput): TrackResolution {
   const tracks = [...input.tracks];
   const issues = [...(input.issues ?? [])];
-  if (tracks.length === 0) return { status: "none", issues };
+  const requested = input.requested?.trim();
+  if (tracks.length === 0) {
+    if (requested)
+      return {
+        status: "invalid",
+        error: `no release tracks configured for this workspace; --track ${requested} cannot apply`,
+        issues,
+      };
+    return { status: "none", issues };
+  }
+  const names = tracks.map((track) => track.name).join(", ");
+  let envProblem: string | null = null;
   const done = (
     track: RuntimeReleaseTrack | null,
     source: TrackSource,
     detail: string,
     warnings: string[] = [],
+    ambiguous: string | null = null,
   ): TrackResolution => ({
     status: "resolved",
-    track,
+    track: track && track.name !== IMPLICIT ? track : null,
     source,
     detail,
-    warnings: [...issues, ...warnings],
+    warnings: [...issues, ...(envProblem ? [envProblem] : []), ...warnings],
     tracks,
+    blocking: envProblem ?? ambiguous,
   });
 
-  const requested = input.requested?.trim();
   if (requested) {
     const named = tracks.find((track) => track.name === requested);
     if (!named)
       return {
         status: "invalid",
-        error: `no release track ${JSON.stringify(requested)}; configured: ${tracks.map((track) => track.name).join(", ")}`,
+        error: `no release track ${JSON.stringify(requested)}; configured: ${names}`,
         issues,
       };
     return done(named, "flag", `track ${named.name} was requested explicitly`);
   }
+
+  // The legacy default line, when no track owns it, competes as an implicit track.
+  const owned = (branch: string | null) =>
+    branch !== null &&
+    tracks.some((track) =>
+      [
+        track.integrationBranch,
+        track.productionBranch,
+        track.baseBranch,
+        track.pullRequestTarget,
+      ].includes(branch),
+    );
+  const implicit: RuntimeReleaseTrack | null =
+    input.defaultBranch && !owned(input.defaultBranch)
+      ? {
+          name: IMPLICIT,
+          productionBranch: input.defaultBranch,
+          integrationBranch: input.defaultBranch,
+          baseBranch: input.defaultBranch,
+          pullRequestTarget: input.defaultBranch,
+          mergeBackBranches: [],
+          naming: {},
+        }
+      : null;
+  const candidates = implicit ? [...tracks, implicit] : tracks;
+  const label = (track: RuntimeReleaseTrack) =>
+    track.name === IMPLICIT
+      ? `the workspace default line (${track.integrationBranch})`
+      : `track ${track.name}`;
 
   const fallback = (why: string): TrackResolution => {
     const byDefault = input.defaultBranch
@@ -284,23 +392,50 @@ export function resolveReleaseTrack(input: TrackInput): TrackResolution {
     const target = track
       ? `track ${track.name}`
       : `default target ${input.defaultBranch ?? "(none)"}`;
-    return done(track, "default", `${why}; using the workspace ${target}`, [
-      `release track not determined: ${why}; using the workspace ${target} (pass --track <name> to choose)`,
-    ]);
+    const ambiguous =
+      tracks.length >= 2
+        ? `can't tell which release line ${input.branch ?? "HEAD"} is on (${why}); pass --track <name> (${names}) or --base <branch>`
+        : null;
+    return done(
+      track,
+      "default",
+      `${why}; using the workspace ${target}`,
+      [
+        `release track not determined: ${why}; using the workspace ${target} (pass --track <name> to choose)`,
+      ],
+      ambiguous,
+    );
   };
   const branch = input.branch;
-  if (!branch) return fallback("HEAD is detached");
 
-  // A track's own long-lived branch: no history needed.
-  const owners = ownedBy(tracks, branch);
-  if (owners.length === 1)
-    return done(owners[0], "branch", `${branch} is a ${owners[0].name} branch`);
-  if (owners.length > 1)
-    return fallback(
-      `${branch} belongs to more than one track (${owners.map((track) => track.name).join(", ")})`,
-    );
-  if (tracks.length === 1)
+  // A track's own long-lived branch: no history needed, and nothing outranks it but --track.
+  if (branch) {
+    const owners = ownedBy(candidates, branch);
+    if (owners.length === 1)
+      return done(owners[0], "branch", `${branch} is a branch of ${label(owners[0])}`);
+    if (owners.length > 1)
+      return fallback(
+        `${branch} belongs to more than one track (${owners.map((track) => track.name).join(", ")})`,
+      );
+  }
+
+  const env = input.envRequested?.trim();
+  if (env) {
+    const named = tracks.find((track) => track.name === env);
+    if (named) return done(named, "env", `WORKFLOW_RELEASE_TRACK selects track ${named.name}`);
+    envProblem = `WORKFLOW_RELEASE_TRACK=${env} names no release track of this workspace (${names}); ignored`;
+  }
+
+  if (!branch) return fallback("HEAD is detached");
+  if (tracks.length === 1 && !implicit)
     return done(tracks[0], "only-track", `${tracks[0].name} is the only track`);
+
+  let remotes: readonly string[] | null = null;
+  const short = (ref: string) => shortRef(ref, (remotes ??= input.probe.remotes()));
+  const ownerOf = (ref: string): RuntimeReleaseTrack | null => {
+    const owner = ownedBy(candidates, short(ref));
+    return owner.length === 1 ? owner[0] : null;
+  };
 
   // The base workit recorded when it created the branch, followed through
   // stacked parents (feature/b on feature/a on develop).
@@ -309,57 +444,65 @@ export function resolveReleaseTrack(input: TrackInput): TrackResolution {
   for (let hop = 0; hop < MAX_RECORDED_HOPS; hop += 1) {
     const recorded = input.probe.recordedBase(cursor);
     if (!recorded) break;
-    const base = shortRef(recorded);
-    const owner = ownedBy(tracks, base);
-    if (owner.length === 1)
-      return done(owner[0], "recorded-base", `${branch} was created from ${base}`);
-    if (owner.length > 1 || seen.has(base)) break;
+    const base = short(recorded);
+    const owner = ownerOf(base);
+    if (owner) return done(owner, "recorded-base", `${branch} was created from ${base}`);
+    if (ownedBy(candidates, base).length > 1 || seen.has(base)) break;
     seen.add(base);
     cursor = base;
   }
 
-  const created = input.probe.createdFrom(branch);
-  if (created) {
-    const base = shortRef(created);
-    const owner = ownedBy(tracks, base);
-    if (owner.length === 1)
-      return done(owner[0], "reflog", `${branch} was created from ${base} (reflog)`);
+  for (const [source, ref] of [
+    ["reflog", input.probe.createdFrom(branch)],
+    ["checkout", input.probe.checkedOutFrom(branch)],
+  ] as const) {
+    if (!ref) continue;
+    const owner = ownerOf(ref);
+    if (owner)
+      return done(
+        owner,
+        source,
+        `${branch} was created from ${short(ref)} (${source === "reflog" ? "branch reflog" : "HEAD reflog"})`,
+      );
   }
 
-  // Ancestry: the closest track by (ahead, behind) against its integration
-  // and base branches.
-  type Scored = { track: RuntimeReleaseTrack; ref: string; ahead: number; behind: number };
-  const scored: Scored[] = [];
-  for (const track of tracks) {
-    let best: Scored | null = null;
+  // Ancestry by fork point: a line wins only when its merge-base with the
+  // branch strictly descends from every other line's merge-base. Equal fork
+  // points (a line forked from another, or one that merges the other in) are
+  // ambiguous, never a guess by commit counts.
+  type Fork = { track: RuntimeReleaseTrack; ref: string; sha: string };
+  const forks: Fork[] = [];
+  for (const track of candidates)
     for (const ref of new Set([track.integrationBranch, track.baseBranch])) {
-      const distance = input.probe.distance(branch, ref);
-      if (!distance) continue;
-      const candidate = { track, ref, ...distance };
-      if (
-        !best ||
-        candidate.ahead < best.ahead ||
-        (candidate.ahead === best.ahead && candidate.behind < best.behind)
-      )
-        best = candidate;
+      const sha = input.probe.mergeBase(branch, ref);
+      if (sha) forks.push({ track, ref, sha });
     }
-    if (best) scored.push(best);
-  }
-  if (scored.length === 0)
+  if (forks.length === 0)
     return fallback(`no track branch could be compared with ${branch} (fetch the track branches)`);
-  scored.sort((a, b) => a.ahead - b.ahead || a.behind - b.behind);
-  const [first, second] = scored;
-  if (second && second.ahead === first.ahead && second.behind === first.behind)
-    return fallback(
-      `${branch} is equally close to ${scored
-        .filter((item) => item.ahead === first.ahead && item.behind === first.behind)
-        .map((item) => `${item.ref} (${item.track.name})`)
-        .join(" and ")}`,
+  const ancestry = new Map<string, boolean>();
+  const descends = (older: string, newer: string): boolean => {
+    if (older === newer) return false;
+    const key = `${older}>${newer}`;
+    if (!ancestry.has(key)) ancestry.set(key, input.probe.isAncestor(older, newer));
+    return ancestry.get(key) as boolean;
+  };
+  const winners = forks.filter((fork) =>
+    forks.every((other) => other.track === fork.track || descends(other.sha, fork.sha)),
+  );
+  const winningTracks = [...new Set(winners.map((fork) => fork.track))];
+  if (winningTracks.length === 1 && forks.some((fork) => fork.track !== winningTracks[0])) {
+    const win = winners[0];
+    return done(
+      win.track,
+      "ancestry",
+      `${branch} forked from ${win.ref} at ${win.sha.slice(0, 12)}, after every other line's fork point`,
     );
-  return done(
-    first.track,
-    "ancestry",
-    `${branch} is ${first.ahead} ahead / ${first.behind} behind ${first.ref}${second ? `, closer than ${second.ref} (${second.ahead} ahead / ${second.behind} behind)` : ""}`,
+  }
+  if (winningTracks.length === 1)
+    return fallback(`only ${label(winningTracks[0])} could be compared with ${branch}`);
+  const newest = forks.filter((fork) => !forks.some((other) => descends(fork.sha, other.sha)));
+  return fallback(
+    `${branch} has the same or unrelated fork points with ${[...new Set(newest.map((fork) => `${fork.ref} (${fork.track.name === IMPLICIT ? "workspace default" : fork.track.name})`))].join(" and ")}`,
   );
 }
 
@@ -385,11 +528,19 @@ export const recordBranchBase = (cwd: string, branch: string, base: string): voi
   git(cwd, ["config", recordedBaseKey(branch), base]);
 };
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
 export function gitTrackProbe(cwd: string): TrackProbe {
-  const remote = pushRemoteName(cwd) ?? "origin";
-  const tip = (branch: string): string | null =>
-    resolveRef(cwd, `refs/remotes/${remote}/${branch}`) ?? resolveRef(cwd, `refs/heads/${branch}`);
+  let remote: string | null | undefined;
+  let remotes: string[] | undefined;
+  const tip = (branch: string): string | null => {
+    remote ??= pushRemoteName(cwd) ?? "origin";
+    return (
+      resolveRef(cwd, `refs/remotes/${remote}/${branch}`) ?? resolveRef(cwd, `refs/heads/${branch}`)
+    );
+  };
   return {
+    remotes: () => (remotes ??= remoteNames(cwd)),
     recordedBase: (branch) => git(cwd, ["config", "--get", recordedBaseKey(branch)]) || null,
     createdFrom: (branch) => {
       const log = git(cwd, ["reflog", "show", "--format=%gs", `refs/heads/${branch}`, "--"]);
@@ -397,23 +548,45 @@ export function gitTrackProbe(cwd: string): TrackProbe {
       const match = /^branch: Created from (\S+)$/u.exec(oldest);
       return match && match[1] !== "HEAD" ? match[1] : null;
     },
-    distance: (branch, trackBranch) => {
-      const head = resolveRef(cwd, `refs/heads/${branch}`);
-      const base = tip(trackBranch);
-      if (!head || !base) return null;
-      const counted = aheadBehind(cwd, base, head);
-      return counted ? { ahead: counted.ahead, behind: counted.behind } : null;
+    checkedOutFrom: (branch) => {
+      // Only a branch started at HEAD ("Created from HEAD"): then the branch
+      // HEAD was on is its start. `switch -c b <sha>` names another start point.
+      const own = git(cwd, ["reflog", "show", "--format=%gs", `refs/heads/${branch}`, "--"]);
+      if (own?.split("\n").findLast(Boolean) !== "branch: Created from HEAD") return null;
+      const log = git(cwd, ["reflog", "show", "--format=%gs", "HEAD", "--"]);
+      const pattern = new RegExp(`^checkout: moving from (\\S+) to ${escapeRegExp(branch)}$`, "u");
+      const oldest = log?.split("\n").findLast((line) => pattern.test(line));
+      return oldest ? (pattern.exec(oldest)?.[1] ?? null) : null;
     },
+    mergeBase: (branch, trackBranch) => {
+      const base = tip(trackBranch);
+      return base && resolveRef(cwd, `refs/heads/${branch}`)
+        ? mergeBase(cwd, base, `refs/heads/${branch}`)
+        : null;
+    },
+    isAncestor: (ancestor, descendant) =>
+      git(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]) !== null,
   };
 }
 
 /** The tracks configured for the workspace matching cwd (lenient). */
 export function workspaceReleaseTracks(cwd: string): ReleaseTracksRead & {
   workspace: string | null;
+  defaultTargetBranch: string | null;
 } {
   const raw = resolveRuntimeReleaseTracks(cwd);
-  return { workspace: raw?.workspace ?? null, ...readReleaseTracks(raw?.releaseTracks) };
+  return {
+    workspace: raw?.workspace ?? null,
+    defaultTargetBranch: raw?.defaultTargetBranch ?? null,
+    ...readReleaseTracks(raw?.releaseTracks),
+  };
 }
+
+// Per-process memo: a CLI command asks several times (vcsConfig callers,
+// policy checks). Keyed on every input, including a digest of all branch tips,
+// so a long-lived host never sees a stale answer after a fetch or commit.
+const memo = new Map<string, TrackResolution>();
+const MEMO_LIMIT = 64;
 
 /** Resolve the release track for cwd's workspace and a branch (default: HEAD). */
 export function resolveTrackFor(
@@ -427,15 +600,32 @@ export function resolveTrackFor(
 ): TrackResolution {
   const read = workspaceReleaseTracks(cwd);
   if (read.error) return { status: "invalid", error: read.error, issues: read.issues };
-  if (read.tracks.length === 0) return { status: "none", issues: read.issues };
-  return resolveReleaseTrack({
+  if (read.tracks.length === 0 && !options.track?.trim())
+    return { status: "none", issues: read.issues };
+  const branch = options.branch === undefined ? currentBranch(cwd) : options.branch;
+  const envRequested = process.env.WORKFLOW_RELEASE_TRACK?.trim() || null;
+  const input = {
     tracks: read.tracks,
-    requested: options.track ?? (process.env.WORKFLOW_RELEASE_TRACK?.trim() || null),
-    branch: options.branch === undefined ? currentBranch(cwd) : options.branch,
+    requested: options.track ?? null,
+    envRequested,
+    branch,
     defaultBranch: options.defaultBranch,
-    probe: options.probe ?? gitTrackProbe(cwd),
     issues: read.issues,
-  });
+  };
+  let key: string | null = null;
+  if (!options.probe) {
+    const refs = git(cwd, ["for-each-ref", "--format=%(refname) %(objectname)"]) ?? "";
+    const reflog = git(cwd, ["reflog", "show", "-n", "1", "--format=%H %gs", "HEAD", "--"]) ?? "";
+    key = createHash("sha256").update(JSON.stringify({ cwd, input, refs, reflog })).digest("hex");
+    const hit = memo.get(key);
+    if (hit) return hit;
+  }
+  const resolution = resolveReleaseTrack({ ...input, probe: options.probe ?? gitTrackProbe(cwd) });
+  if (key) {
+    if (memo.size >= MEMO_LIMIT) memo.delete(memo.keys().next().value as string);
+    memo.set(key, resolution);
+  }
+  return resolution;
 }
 
 /** What `workit grant show` and `workit doctor` print about release tracks. */
@@ -451,16 +641,12 @@ export type ReleaseTracksReport = {
 };
 
 /**
- * The configured tracks and the one cwd resolves to. `defaultBranch` is the
- * workspace default target before tracks (vcsConfig's
- * workspaceDefaultTargetBranch); omitted, the workspace's own
- * vcs.defaultTargetBranch or branchPolicy.developBranch is used, which keeps
- * this importable from the doctor without the VCS resolver.
+ * The configured tracks and the one cwd resolves to, for display. The default
+ * target is the workspace's own (vcs.defaultTargetBranch, else the branch
+ * preset's), which keeps this importable from the doctor without the VCS
+ * resolver; it resolves once.
  */
-export function releaseTracksReport(
-  cwd: string,
-  defaultBranch?: string | null,
-): ReleaseTracksReport {
+export function releaseTracksReport(cwd: string): ReleaseTracksReport {
   let raw: ReturnType<typeof resolveRuntimeReleaseTracks>;
   try {
     raw = resolveRuntimeReleaseTracks(cwd);
@@ -482,9 +668,7 @@ export function releaseTracksReport(
   const base = { workspace: raw?.workspace ?? null, tracks };
   if (read.error) return { ...base, resolved: null, warnings: read.issues, error: read.error };
   if (tracks.length === 0) return { ...base, resolved: null, warnings: read.issues, error: null };
-  const resolution = resolveTrackFor(cwd, {
-    defaultBranch: defaultBranch === undefined ? (raw?.defaultTargetBranch ?? null) : defaultBranch,
-  });
+  const resolution = resolveTrackFor(cwd, { defaultBranch: raw?.defaultTargetBranch ?? null });
   if (resolution.status === "invalid")
     return { ...base, resolved: null, warnings: resolution.issues, error: resolution.error };
   if (resolution.status === "none")

@@ -18,6 +18,7 @@
 import { requireGrant, type AutonomySource } from "../autonomy";
 import { isProtectedTarget } from "../core/branch";
 import { vcsConfig } from "../core/vcs-config";
+import { workspaceReleaseTracks } from "../core/release-tracks";
 import { deleteRemoteBranch } from "../git/ops";
 import { spawnSync } from "node:child_process";
 import { currentBranch, fetchRefs, GIT_TIMEOUTS, remoteRefTip, resolveRef } from "../git/rev";
@@ -269,15 +270,24 @@ export type MergeOutcome = {
   mergeBackTrack: string | null;
 };
 
-/** The merge-back a merge into `base` owes under the release track that owns `base`. */
+/**
+ * The merge-back a merge into `base` owes: the track whose production branch
+ * `base` is, by ownership alone (no --track, no WORKFLOW_RELEASE_TRACK, no
+ * history). Best effort: a config problem never stops the pr.merged record.
+ */
 const mergeBackFor = (cwd: string, base: string): { track: string | null; branches: string[] } => {
-  const resolved = vcsConfig("resolve", cwd, { branch: base });
-  const track = resolved.ok === false ? null : resolved.releaseTrack?.track;
-  if (!track || track.productionBranch !== base) return { track: null, branches: [] };
-  return {
-    track: track.name,
-    branches: track.mergeBackBranches.filter((branch: string) => branch !== base),
-  };
+  try {
+    const owners = workspaceReleaseTracks(cwd).tracks.filter(
+      (track) => track.productionBranch === base,
+    );
+    if (owners.length !== 1) return { track: null, branches: [] };
+    return {
+      track: owners[0].name,
+      branches: owners[0].mergeBackBranches.filter((branch) => branch !== base),
+    };
+  } catch {
+    return { track: null, branches: [] };
+  }
 };
 
 /** Why `pr merge` refused, for the envelope `data` (agents branch on `reason`). */

@@ -139,10 +139,24 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
   if (!headSha(cwd) && currentBranch(cwd) === null)
     return failure("invalid_input", "not inside a git repository with a commit");
   // One resolution: the default target, the base for new branches and the
-  // release track (core/release-tracks.ts) all come from vcsConfig.
-  const resolved = vcsConfig("resolve", cwd, { track: input.track ?? null });
+  // release track (core/release-tracks.ts) all come from vcsConfig. With
+  // --base the track is the base's line (it decides the --kind naming);
+  // otherwise the checkout's.
+  const explicitBase = input.base?.trim() || null;
+  const resolved = vcsConfig("resolve", cwd, {
+    track: input.track ?? null,
+    ...(explicitBase ? { branch: explicitBase } : {}),
+  });
   const releaseTrack: ResolvedReleaseTrack | null =
     resolved.ok === false ? null : (resolved.releaseTrack ?? null);
+  // An undetermined line blocks whenever the track would decide something:
+  // the base (no --base) or the --kind/--slug name.
+  if (releaseTrack?.blocking && (!explicitBase || input.name === undefined))
+    return failure(
+      "blocked",
+      String(releaseTrack.blocking),
+      "workit git branch … --track <name>  # or --base <branch>",
+    );
   const name = (
     input.name ??
     (input.kind && input.slug
@@ -158,7 +172,7 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
   if (resolveRef(cwd, `refs/heads/${name}`))
     return failure("failed", `branch_exists: ${name} already exists`, `git switch ${name}`);
 
-  let base = input.base?.trim() || null;
+  let base = explicitBase;
   let defaultTarget: string | null = null;
   let defaultBase: string | null = null;
   // An explicit --track that does not resolve is never ignored, even with --base.

@@ -16,7 +16,12 @@ import {
   type WorkspaceCommitPolicy,
 } from "./workspaces";
 import { vcsCliIdentity, vcsConfig } from "./vcs-config";
-import { namingGlob, trackBranches, workspaceReleaseTracks } from "./release-tracks";
+import {
+  ReleaseTrackError,
+  namingGlob,
+  trackBranches,
+  workspaceReleaseTracks,
+} from "./release-tracks";
 
 /**
  * Release tracks extend the branch policy: every track's long-lived branches
@@ -29,8 +34,8 @@ const withReleaseTracks = (
   policy: ReturnType<typeof resolveConfiguredBranchPolicy>,
 ): ReturnType<typeof resolveConfiguredBranchPolicy> => {
   const read = workspaceReleaseTracks(workspaceRoot);
-  if (read.error) throw new Error(read.error);
-  if (read.tracks.length === 0) return policy;
+  if (read.error) throw new ReleaseTrackError(read.error);
+  if (read.tracks.length === 0 && read.protectedBranches.length === 0) return policy;
   const known = new Set(policy.allowed.map((pattern) => pattern.source));
   const allowed = [...policy.allowed];
   for (const glob of read.tracks.flatMap((track) => Object.values(track.naming).map(namingGlob))) {
@@ -45,7 +50,10 @@ const withReleaseTracks = (
     allowed,
     protected: new Set([
       ...policy.protected,
-      ...trackBranches(read.tracks).map((name) => name.toLowerCase()),
+      // Fail-safe: every branch any track entry names, including dropped ones.
+      ...[...trackBranches(read.tracks), ...read.protectedBranches].map((name) =>
+        name.toLowerCase(),
+      ),
     ]),
   };
 };
@@ -303,6 +311,8 @@ export const verifyPushIdentity = (
 const baseBranch = (cwd: string): { base: string; trackBranches: string[] } | { error: string } => {
   const resolved = vcsConfig("resolve", cwd);
   if (resolved.ok === false) return { error: String(resolved.error) };
+  // Creating a branch on an undetermined release line would guess the base.
+  if (resolved.releaseTrack?.blocking) return { error: String(resolved.releaseTrack.blocking) };
   return {
     base: String(resolved.baseBranch ?? resolved.defaultTargetBranch ?? "develop"),
     trackBranches: resolved.releaseTrack ? trackBranches(resolved.releaseTrack.tracks) : [],

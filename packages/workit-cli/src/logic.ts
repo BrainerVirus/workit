@@ -318,15 +318,17 @@ export function setProfileEditorValue(
 }
 
 export function trackEditorValue(track: ReleaseTrack, field: TrackEditorField): string {
+  // Only production/integration are required (runtime defaults the rest).
+  const source = track.versionSource ?? { kind: "git-tag" as const };
   if (field.startsWith("naming."))
-    return track.naming[field.slice(7) as "feature" | "release" | "hotfix"];
-  if (field === "mergeBackBranches" || field === "requiredChecks") return track[field].join(", ");
+    return track.naming?.[field.slice(7) as "feature" | "release" | "hotfix"] ?? "";
+  if (field === "mergeBackBranches" || field === "requiredChecks")
+    return (track[field] ?? []).join(", ");
   if (field.startsWith("versionSource.")) {
     const key = field.slice(14);
-    if (key === "kind") return track.versionSource.kind;
-    if (key === "path")
-      return track.versionSource.kind === "package-json" ? track.versionSource.path : "";
-    return track.versionSource.kind === "package-json" ? track.versionSource.field : "";
+    if (key === "kind") return source.kind;
+    if (key === "path") return source.kind === "package-json" ? source.path : "";
+    return source.kind === "package-json" ? source.field : "";
   }
   return String(track[field as keyof ReleaseTrack] ?? "");
 }
@@ -341,24 +343,15 @@ export function setTrackEditorValue(
   if (field === "mergeBackBranches" || field === "requiredChecks")
     return { ...track, [field]: splitList(value) };
   if (field.startsWith("versionSource.")) {
+    const current = track.versionSource ?? { kind: "git-tag" as const };
     const key = field.slice(14) as "kind" | "path" | "field";
-    const kind = key === "kind" ? value : track.versionSource.kind;
+    const kind = key === "kind" ? value : current.kind;
     const versionSource =
       kind === "package-json"
         ? {
             kind,
-            path:
-              key === "path"
-                ? value
-                : track.versionSource.kind === kind
-                  ? track.versionSource.path
-                  : "package.json",
-            field:
-              key === "field"
-                ? value
-                : track.versionSource.kind === kind
-                  ? track.versionSource.field
-                  : "version",
+            path: key === "path" ? value : current.kind === kind ? current.path : "package.json",
+            field: key === "field" ? value : current.kind === kind ? current.field : "version",
           }
         : kind === "manual"
           ? { kind }

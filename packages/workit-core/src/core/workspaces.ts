@@ -68,31 +68,43 @@ const versionSourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("git-tag") }).strict(),
   z.object({ kind: z.literal("manual") }).strict(),
 ]);
+// Only the production and integration branches are required: runtime
+// (core/release-tracks.ts) defaults the rest. Unknown keys pass through (D17:
+// a newer Workit's field must not invalidate the file for an older one); a
+// track lists the ones an older reader must not ignore in `critical`.
 const releaseTrackSchema = z
   .object({
-    strategy: branchPreset,
+    strategy: branchPreset.optional(),
     productionBranch: nonBlank,
     integrationBranch: nonBlank,
-    naming: z.object({ feature: nonBlank, release: nonBlank, hotfix: nonBlank }).strict(),
-    baseBranch: nonBlank,
-    mergeBackBranches: z.array(nonBlank),
-    pullRequestTarget: nonBlank,
-    tagNamespace: z.string(),
-    versionSource: versionSourceSchema,
-    requiredChecks: z.array(nonBlank),
+    naming: z
+      .object({
+        feature: nonBlank.optional(),
+        release: nonBlank.optional(),
+        hotfix: nonBlank.optional(),
+      })
+      .strict()
+      .optional(),
+    baseBranch: nonBlank.optional(),
+    mergeBackBranches: z.array(nonBlank).optional(),
+    pullRequestTarget: nonBlank.optional(),
+    tagNamespace: z.string().optional(),
+    versionSource: versionSourceSchema.optional(),
+    requiredChecks: z.array(nonBlank).optional(),
+    critical: z.array(nonBlank).optional(),
   })
-  .strict()
+  .passthrough()
   .superRefine((track, context) => {
     for (const [field, values] of [
-      ["mergeBackBranches", track.mergeBackBranches],
-      ["requiredChecks", track.requiredChecks],
+      ["mergeBackBranches", track.mergeBackBranches ?? []],
+      ["requiredChecks", track.requiredChecks ?? []],
     ] as const) {
       if (new Set(values).size !== values.length) {
         context.addIssue({ code: "custom", path: [field], message: "entries must be unique" });
       }
     }
     if (
-      track.versionSource.kind === "package-json" &&
+      track.versionSource?.kind === "package-json" &&
       (path.posix.isAbsolute(track.versionSource.path.replaceAll("\\", "/")) ||
         /^[A-Za-z]:\//u.test(track.versionSource.path.replaceAll("\\", "/")) ||
         track.versionSource.path.replaceAll("\\", "/").split("/").includes(".."))
@@ -618,11 +630,20 @@ export const resolveRuntimeReleaseTracks = (
   const text = (value: unknown): string | null =>
     typeof value === "string" && value.trim() ? value.trim() : null;
   const vcs = selected.vcs as { defaultTargetBranch?: unknown } | undefined;
-  const policy = selected.branchPolicy as { developBranch?: unknown } | undefined;
+  const preset = (selected.branchPolicy as { preset?: unknown } | undefined)?.preset;
+  // The same default vcsConfig derives (CA-05): explicit target, else the preset's.
+  const presetDefault =
+    typeof preset === "string" && Object.hasOwn(PRESETS, preset)
+      ? preset === "github-flow"
+        ? "main"
+        : preset === "trunk-based"
+          ? "master"
+          : "develop"
+      : null;
   return {
     workspace: selected.name,
     releaseTracks: selected.releaseTracks,
-    defaultTargetBranch: text(vcs?.defaultTargetBranch) ?? text(policy?.developBranch),
+    defaultTargetBranch: text(vcs?.defaultTargetBranch) ?? presetDefault,
   };
 };
 
