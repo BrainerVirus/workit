@@ -9,7 +9,10 @@ docs/*/sdd/
 # Stray branch-setup manifest when sdd_dir is not supplied
 docs/manifest.json
 
-# workit: SDD working state (never commit)
+# Local working state (never commit): SDD runs and live-qualification artifacts
+.superpowers/
+.workit-evaluation/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

@@ -1,4 +1,4 @@
-/** V2 lifecycle edge-case suite (docs/opencode-v2/plan.md step 4).
+/** V2 lifecycle edge-case suite (docs/archive/opencode-v2/plan.md step 4).
  *
  * Exercises what the contract suite does not: concurrent launches and event
  * interleaving, mid-flight interrupt, missed terminal events via mid-run

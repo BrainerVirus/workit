@@ -232,7 +232,10 @@ test("unknown or untested capability cells fail the baseline", () => {
 
 test("committed capabilities.md matches generated adapter fixtures", () => {
   const generated = renderCapabilitiesMarkdown(collectCapabilityMatrix());
-  const committed = readFileSync(path.join(REPO_ROOT, "docs/workit-v1/capabilities.md"), "utf8");
+  const committed = readFileSync(
+    path.join(REPO_ROOT, "docs/qualification/capabilities.md"),
+    "utf8",
+  );
   expect(committed).toBe(generated);
 });
 
@@ -322,7 +325,7 @@ test("release-candidate deterministic slice passes while live runs remain author
 });
 
 test("qualification.md explains commands without fabricated live results", () => {
-  const doc = readFileSync(path.join(REPO_ROOT, "docs/workit-v1/qualification.md"), "utf8");
+  const doc = readFileSync(path.join(REPO_ROOT, "docs/qualification/qualification.md"), "utf8");
   expect(doc).toContain("run-v1-evaluation.ts");
   expect(doc).toContain("90");
   expect(doc).not.toMatch(/\bpassed\b.*\b(all|every)\b.*\bruns\b/i);

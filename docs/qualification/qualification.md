@@ -1,4 +1,4 @@
-# Workit v1 release qualification
+# Workit release qualification
 
 This document defines the commands and evidence format for stable Workit v1
 release qualification. It does **not** contain live evaluation results; those

@@ -1,43 +1,62 @@
-# Contributing to workit
+# Contributing to Workit
 
-Thanks for contributing. `@brainervirus/workit` is the public npm name of the `workit` repo: workflow rails for agentic coding (specs, plans, YouTrack, CI-gated commits).
+Thanks for helping. Workit is a Bun monorepo; published packages run on
+Node.js 24+. The full development contract (commands, rules, release) is in
+[AGENTS.md](AGENTS.md); this page is the short version.
 
-## Install from source
-
-```bash
-bun i
-```
-
-Then load the plugin from a local path in your OpenCode config (`~/.config/opencode/opencode.json`) or `opencode.jsonc`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///path/to/workit/packages/workit-opencode/src/plugin.ts"]
-}
-```
-
-## Checks
+## Set up
 
 ```bash
-bun run check          # build + lint + format:check + bun test + tsc --noEmit
-bun run hooks:install  # optional, once per clone: lefthook git hooks
+git clone https://github.com/BrainerVirus/workit.git
+cd workit
+bun install --frozen-lockfile
+bun run hooks:install   # optional: format/lint on commit, commitlint on commit-msg
 ```
 
-Always run `bun run check` before opening a PR. The opt-in hooks format and lint
-staged files on `pre-commit` (under a second) and run commitlint on
-`commit-msg`; semantic-release reads Conventional Commits, so a malformed
-message changes release behavior. Hooks are shared by every worktree of a clone.
+To try your changes in a host, pin it to your checkout (see the
+[Claude Code](docs/guides/claude-code.md) and [hosts](docs/guides/hosts.md)
+guides). While a host has the checkout loaded, do not run root `bun run build`
+or `bun run check` in it; use a separate worktree.
 
-## Branch policy
+## Make a change
 
-- Every change lives on a `feature/<slug>` branch (bugfixes: `bugfix/<slug>`) cut from `main`.
-- `main` is the trunk; open a PR to `main` when the work is ready for review.
-- The spec/plan contract is enforced for tracked work: `docs/<slug>/spec.md` declares the branch and `docs/<slug>/plan.md` links it.
+1. Branch from `origin/main`, ideally in its own worktree:
+   `git worktree add -b feature/<slug> ../workit-wt/<slug> origin/main`.
+2. Keep the change small and focused. For larger work, open an issue first;
+   a short spec or plan under `docs/` helps when the change spans several PRs.
+3. Write tests for behavior (Given/When/Then is a good shape) and update the
+   README or the relevant guide when user-facing behavior changes.
+4. Verify:
 
-## Review flow
+   ```bash
+   bun run lint && bun run format:check && bun run typecheck
+   bun run test              # unit tier
+   bun run test:packaging    # if you touched packaging, install or doctor code
+   ```
 
-1. Open a PR to `main` with a concise conventional-commit description (`feat(...)`, `fix(...)`, `chore(...)`).
-2. CI (fast static gates, every test suite on Linux, core + artifacts on macOS/Windows) must be green.
-3. The OpenCode review check runs on the PR — it must be green (see the README [Code review](https://github.com/BrainerVirus/workit#code-review) section).
-4. A push to `main` that passes CI runs semantic-release from the same CI run: it versions from Conventional Commits and publishes the changed `@brainervirus/workit-*` packages with npm provenance.
+   If you use Workit while developing, `workit check <name>` records the run
+   as evidence you can cite in the PR.
+
+## Commits and pull requests
+
+- [Conventional Commits](https://www.conventionalcommits.org/): `feat`,
+  `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, with an optional scope
+  (`feat(cli): …`). Mark breaking changes with `!` or a `BREAKING CHANGE:`
+  footer.
+- PRs are squash-merged and **the PR title becomes the commit subject**, which
+  drives the release version. Keep it a valid conventional commit.
+- Fill in the PR template: what and why, scenarios covered, verification
+  evidence, breaking notes.
+- CI (lint, format, knip, typecheck, both test tiers on Linux; core and
+  artifacts on macOS and Windows) must be green. A different person or session
+  than the author reviews.
+
+Releases are automatic: semantic-release publishes from `main` when product
+paths changed.
+
+## Reporting bugs and security issues
+
+Use the [issue forms](https://github.com/BrainerVirus/workit/issues/new/choose)
+and include `workit doctor --json` output. Please do not report security
+vulnerabilities in public issues; contact the maintainer
+([@BrainerVirus](https://github.com/BrainerVirus)) privately first.

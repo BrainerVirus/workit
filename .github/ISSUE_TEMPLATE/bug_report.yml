@@ -1,0 +1,68 @@
+name: Bug report
+description: Something in workit (CLI, a host plugin or a skill) does not work as documented
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please check `workit doctor` first; many install problems name their own fix.
+  - type: input
+    id: version
+    attributes:
+      label: Workit version
+      description: Output of `workit --version` (or the installed plugin version)
+      placeholder: "6.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      options:
+        - Claude Code
+        - OpenCode
+        - Cursor
+        - Codex CLI / desktop
+        - Pi
+        - CLI only
+      multiple: true
+    validations:
+      required: true
+  - type: input
+    id: host-version
+    attributes:
+      label: Host version and OS
+      placeholder: "Claude Code 2.1.x on macOS 15 / Node 24.x"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands, prompts or skills used, from a clean state if possible
+      placeholder: |
+        1. `workit task status`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`workit doctor --json` output"
+      description: Remove anything private (paths, account names) before pasting
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Command output or logs
+      description: The failing command with `--json`, or the host's error message
+      render: text
