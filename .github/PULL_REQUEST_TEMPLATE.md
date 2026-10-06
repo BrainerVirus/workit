@@ -1,19 +1,35 @@
-## What it does
+<!-- PR title = squash commit subject: a Conventional Commit, e.g. `feat(cli): add stack land --max`. Add `!` for breaking changes. -->
 
-<!-- Short description of the change and why it exists. Link spec/plan if applicable: docs/<slug>/spec.md -->
+## What and why
 
-## Quality gates
+<!-- What changes, and the problem it solves. Link the issue, spec or plan (docs/…) if there is one. -->
 
-- [ ] Applicable tests, typecheck, lint, formatting and isolated release-candidate checks pass. With an active local host pin, run these directly instead of root `check`/`build`.
-- [ ] README/spec/plan describe the shipped behavior and current checkpoints.
-- [ ] Behavior is verified for the affected OpenCode, Cursor, Codex, Pi and CLI surfaces; native limitations are explicit.
+## Scenarios covered
+
+<!-- Given / When / Then for the behavior this PR adds or changes, and where each is tested. -->
+
+- Given …, when …, then … (`test/…`)
+
+## Verification
+
+<!-- Evidence, not claims. Paste `workit check` results or command output. -->
+
+- [ ] `bun run lint`, `bun run format:check`, `bun run typecheck`
+- [ ] `bun run test` (and `bun run test:packaging` if packaging, install or doctor code changed)
+- [ ] Exercised on the affected host(s) or CLI:
+
+```text
+workit check …
+```
+
+## Breaking changes
+
+<!-- None, or what breaks and how users migrate (also add `!` / a BREAKING CHANGE footer). -->
+
+None.
 
 ## Checklist
 
-- [ ] Existing scoped settings and local/version pins are preserved.
-- [ ] User-facing behavior is described below; semantic-release generates CHANGELOG entries.
-
-<!--
-Release note (if user-facing):
--
--->
+- [ ] README / `docs/guides/` updated for user-facing changes
+- [ ] Host differences are explicit (a host that cannot observe something says so)
+- [ ] Existing user config, pins and grants are preserved

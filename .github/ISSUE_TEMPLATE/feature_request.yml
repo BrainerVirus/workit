@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose a change to workit's CLI, skills or host integrations
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What friction or missing capability do you hit today? A real session or command helps.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should workit do? Which surface (CLI verb, skill, host hook)?
+    validations:
+      required: true
+  - type: textarea
+    id: scenarios
+    attributes:
+      label: Acceptance scenarios
+      description: Given / When / Then, if you can
+      placeholder: |
+        Given ...
+        When ...
+        Then ...
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: hosts
+    attributes:
+      label: Hosts affected
+      options:
+        - All
+        - Claude Code
+        - OpenCode
+        - Cursor
+        - Codex CLI / desktop
+        - Pi
+        - CLI only
+      multiple: true

@@ -1,4 +1,4 @@
-/** V2 Docker contract suite (docs/opencode-v2/plan.md step 3).
+/** V2 Docker contract suite (docs/archive/opencode-v2/plan.md step 3).
  *
  * Boots the pinned V2 image with the deterministic mock provider and asserts
  * every host surface the later parity matrix needs. Opt-in only:

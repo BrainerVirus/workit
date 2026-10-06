@@ -1,28 +1,19 @@
 # @brainervirus/workit-codex
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
-Workit plugin for Codex CLI and desktop — native manifest, documented hooks, the shared MCP transport, and eleven method skills. Reads run over MCP; mutations run CLI-driven, because MCP is read-only for unattested callers.
-
-## Requirements
-
-- **Node.js ≥ 24**
-- Codex CLI (`codex`) or Codex desktop
-
-## Install
-
-Register the plugin manifest and hooks per the Codex docs, pointing the MCP launcher at this package:
+[Workit](https://github.com/BrainerVirus/workit) for Codex CLI and desktop: native plugin manifest,
+documented lifecycle hooks, the shared MCP server and the eleven method skills.
+Requires Node.js 24+.
 
 ```bash
-workit-codex-mcp    # shared-transport MCP server (reads)
-workit-codex-hook   # documented SessionStart/PreToolUse/subagent hooks
+codex plugin marketplace add https://github.com/BrainerVirus/workit.git
+codex plugin add workit@workflow-toolkit
 ```
 
-## Usage
-
-```bash
-node_modules/.bin/workit <family> <action> --json [--actor <session-id>]   # mutations (CLI-driven)
-```
-
-The hook honors exactly the bound session and nothing else. Authority for Git and forge effects comes from Codex's own permissions plus the workspace autonomy grants (`workit grant show`). The package ships the eleven `workit-*` method skills in `skills/`, generated at build time from `packages/workit-core/skills`.
+Reads run over MCP (`workit-codex-mcp`); mutations run through the `workit`
+CLI because MCP is read-only for unattested callers. Invoke skills as
+`$workit-<name>` or from `/skills`. Codex permissions and sandbox stay
+authoritative; delivery limits come from the workspace
+[grants](https://github.com/BrainerVirus/workit/blob/main/docs/guides/grants.md).

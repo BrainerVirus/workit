@@ -1,18 +1,19 @@
 # @brainervirus/workit-mcp
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
-Shared low-level MCP transport for the seven workit operation families (`workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_state`); it exposes the families present. Host wiring stays adapter-owned: Cursor and Codex register this server and keep their native surfaces.
-
-## Requirements
-
-- **Node.js ≥ 24**
-
-## Usage
+Shared MCP stdio transport for [Workit](https://github.com/BrainerVirus/workit): the seven task
+families (`workit_task`, `workit_policy`, `workit_evidence`,
+`workit_finding`, `workit_decision`, `workit_worker`, `workit_state`) as
+tools, and read-only contexts (`git`, `pr`, `youtrack`, `github_issue`,
+`gitlab_issue`, `changelog`, `release`, `affected`) as
+`workit://context/{kind}` resources. Requires Node.js 24+.
 
 ```bash
-workit-mcp    # stdio MCP server: tools plus workit://context/{kind} resources
+workit-mcp
 ```
 
-Read-only contexts (`git`, `pr`, `youtrack`, `github_issue`, `gitlab_issue`, `changelog`, `release`, `affected`) are exposed as resources and need no approval. Mutations are unavailable over caller-unattested MCP by design — they run through each host's native surface or the CLI (`node_modules/.bin/workit <family> <action> --json`).
+Cursor and Codex register it; Claude Code does not by default (add it to your
+own settings to opt in). Mutations are unavailable to unattested callers; they
+run through the `workit` CLI.
