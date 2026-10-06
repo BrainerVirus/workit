@@ -176,6 +176,25 @@ test("grant set: Ctrl+C at the confirmation cancels cleanly (exit 130, nothing w
   expect(existsSync(backup())).toBe(false);
 });
 
+test("grant set: Ctrl+C under --json emits one cancelled envelope and exits 130", async () => {
+  const before = readFileSync(file(), "utf8");
+  const ctrlC: GrantDeps = {
+    interactive: () => true,
+    ask: async () => {
+      throw new DOMException("The operation was aborted", "AbortError");
+    },
+  };
+  const result = await run(["set", "w", "merge=verified"], ctrlC);
+  expect(result.code).toBe(130);
+  expect(result.json()).toMatchObject({
+    ok: false,
+    code: "failed",
+    error: "cancelled",
+    data: { reason: "cancelled" },
+  });
+  expect(readFileSync(file(), "utf8")).toBe(before);
+});
+
 test("grant set: a prompt failure that is not a cancellation still propagates", async () => {
   const broken: GrantDeps = {
     interactive: () => true,

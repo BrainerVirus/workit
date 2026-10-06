@@ -8,7 +8,7 @@ import {
   inspectMetadataLock,
 } from "@brainervirus/workit-core/src/core/store-lock";
 import { emit, fail, type Io } from "../output";
-import { CANCELLED_EXIT, askLine, askOrCancel } from "../prompt";
+import { askLine, askOrCancel, cancelled } from "../prompt";
 import { workspaceRootFor } from "../task";
 
 // Explicit escape hatch for a lock whose owner cannot be verified (no process
@@ -50,7 +50,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   let fixLock: ReturnType<typeof clearStaleMetadataLock> | null = null;
   if (argv.includes("--fix-lock")) {
     const confirmed = force ? await confirmForcedLockClear(root, argv, io) : true;
-    if (confirmed === "cancelled") return CANCELLED_EXIT;
+    if (confirmed === "cancelled") return cancelled(io);
     if (!confirmed) {
       // Exit 3 (blocked) in both output modes; the JSON form names the fix.
       if (!io.json) return 3;

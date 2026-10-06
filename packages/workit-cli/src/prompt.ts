@@ -4,10 +4,11 @@
 // crash, so it surfaces as `Cancelled.` with the conventional SIGINT exit code
 // instead of an uncaught_failure log.
 import { createInterface } from "node:readline/promises";
-import type { Io } from "./output";
+// Type-only import: this module also runs under plain Node (cli-prompt.test.ts).
+import type { Envelope, Io } from "./output";
 
 /** 128 + SIGINT: the exit code shells use for an interrupted command. */
-export const CANCELLED_EXIT = 130;
+const CANCELLED_EXIT = 130;
 
 /** The rejection readline/promises (and AbortSignal) use for an interrupted question. */
 export const isPromptAbort = (error: unknown): boolean =>
@@ -41,4 +42,21 @@ export async function askOrCancel(io: Io, ask: () => Promise<string>): Promise<s
     io.stderr("\nCancelled.\n");
     return null;
   }
+}
+
+/**
+ * Finish a cancelled command: exit 130, and under --json one envelope
+ * (`failed`, data.reason "cancelled") so stdout stays a single JSON document.
+ */
+export function cancelled(io: Io): number {
+  if (io.json) {
+    const envelope: Envelope = {
+      ok: false,
+      code: "failed",
+      data: { reason: "cancelled" },
+      error: "cancelled",
+    };
+    io.stdout(`${JSON.stringify(envelope)}\n`);
+  }
+  return CANCELLED_EXIT;
 }
