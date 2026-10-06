@@ -70,9 +70,11 @@ external target directory (build scripts accept one).
 
 A push to `main` that passes CI calls the release workflow (semantic-release).
 `packages/workit-core/scripts/analyze-release-scope.ts` picks the bump from
-Conventional Commits, and only when product paths changed (docs-only merges do
-not release). Only packages whose content changed are published, with npm
-provenance; release notes come from PR titles. Breaking changes need `!` or a
+Conventional Commits, and only when a package's published payload changed
+(anything under its `packages/<pkg>/` dir or the sources it bundles; a `docs:`
+or `chore:` change there still ships as a patch). Root docs, tests and tooling
+never release. Only changed packages are published, with npm provenance;
+release notes come from PR titles. Breaking changes need `!` or a
 `BREAKING CHANGE:` footer. Never edit versions or tags by hand.
 
 Live release qualification (`docs/qualification/qualification.md`) needs
