@@ -1,26 +1,21 @@
 # @brainervirus/workit-pi
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
-Workit native extension for Pi (stock 0.85.1 package contract) — seven core-backed operation tools plus read-only `workit_context`, eleven method skills, session/compaction continuity, and a coordinator that supervises fresh reviewer/investigator processes plus explicitly scoped implementers.
+[Workit](https://github.com/BrainerVirus/workit) for Pi (stock 0.85.1): a native extension with the
+seven task families plus read-only `workit_context`, the eleven method
+skills, session and compaction continuity, and a coordinator that launches
+fresh reviewer/investigator processes and scoped implementers. Requires
+Node.js 24+.
 
-## Requirements
+```bash
+pi install npm:@brainervirus/workit-pi
+pi install ./packages/workit-pi -l --approve   # local checkout
+```
 
-- **Node.js ≥ 24**
-- **Pi coding agent 0.85.1** (peer dependency)
-
-## Install
-
-Install this package alongside the Pi peer dependency. Pi discovers the
-extension and skills through the `pi` manifest section in `package.json`
-(`./dist/workit.js` plus `./skills`); see the Pi documentation for how it
-resolves extension packages in your setup.
-
-## Notes
-
-- Supervised implementer workers run as observed child processes; they no longer acquire a checkout lease. Cancellation or restart uncertainty still blocks a replacement worker.
-- The extension is a workflow control, not an OS sandbox: a supported literal
-  branch-creation command is checked against workspace naming policy; other
-  shell forms stay under the host's native permission rules.
-- Pi project trust still gates mutations. Git and forge effects are bounded by Pi's own permissions plus the workspace autonomy grants (`workit grant show`); Workit asks no consent prompts of its own.
+Pi discovers the extension and skills from the package's `pi` manifest
+(`./dist/workit.js`, `./skills`). Pi project trust still gates mutations;
+shell writes are agent-guided, since an extension is not an OS sandbox.
+Delivery limits come from Pi's permissions plus the workspace
+[grants](https://github.com/BrainerVirus/workit/blob/main/docs/guides/grants.md).

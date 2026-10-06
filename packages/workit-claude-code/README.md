@@ -1,9 +1,9 @@
 # @brainervirus/workit-claude-code
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
-Workit plugin for Claude Code: task context on session start and per turn,
+[Workit](https://github.com/BrainerVirus/workit) plugin for Claude Code: task context on session start and per turn,
 branch policy on `git` shell commands, eleven method skills (`/workit:<name>`),
 and `verifier`, `reviewer` and `implementer` agents.
 
@@ -44,3 +44,5 @@ export CLAUDE_CODE_PLUGIN_DIRS="$HOME/path/to/workit/packages/workit-claude-code
 | `evals/` | Opt-in `claude plugin eval` suite (nightly / `eval` label, not a PR gate) |
 
 Requires Node.js 24+ (installed plugin) or Bun (local pin).
+
+Full guide: [Claude Code](https://github.com/BrainerVirus/workit/blob/main/docs/guides/claude-code.md).

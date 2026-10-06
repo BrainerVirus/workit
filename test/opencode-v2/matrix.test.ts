@@ -1,4 +1,4 @@
-/** Dual-artifact matrix lanes (docs/opencode-v2/plan.md step 5b-6).
+/** Dual-artifact matrix lanes (docs/archive/opencode-v2/plan.md step 5b-6).
  *
  * One packed @brainervirus/workit-opencode artifact drives two lanes:
  * - `v2-native`: pinned V2 image, native config (`plugins`), packed dist entry;

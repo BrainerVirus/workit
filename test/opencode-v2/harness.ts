@@ -1,5 +1,5 @@
 /** Reusable Docker harness for the OpenCode V2 contract spike
- * (docs/opencode-v2/plan.md step 3) and the later parity matrix.
+ * (docs/archive/opencode-v2/plan.md step 3) and the later parity matrix.
  *
  * Layout per run (all disposable except the assertions):
  * - isolated bridge network;

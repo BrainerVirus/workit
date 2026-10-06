@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/BrainerVirus/workit#troubleshooting
+    about: Common problems and their fixes (doctor, locks, migration, grants)
+  - name: Security vulnerability
+    url: https://github.com/BrainerVirus
+    about: Do not open a public issue; contact the maintainer privately
