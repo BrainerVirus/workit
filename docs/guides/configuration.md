@@ -32,6 +32,85 @@ globs to hosting (GitHub/GitLab), trackers, branch/commit policy and
 GitHub and GitLab use your `gh auth login` / `glab auth login`; Workit stores
 no forge tokens of its own.
 
+## Release tracks
+
+A repository with more than one release line (for example `nun-develop` ->
+`nun-master` beside `develop` -> `master`) declares each line under the
+workspace's `releaseTracks`. `workit init` (advanced setup) edits them, or
+add them to `workspaces.json` yourself:
+
+```json
+{
+  "name": "ri-web",
+  "glob": "/home/you/work/ri/web/**",
+  "vcs": { "provider": "github", "account": "you", "defaultTargetBranch": "nun-develop" },
+  "branchPolicy": {
+    "preset": "gitflow",
+    "allowed": ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
+    "protected": ["main"],
+    "integration": "pr"
+  },
+  "releaseTracks": {
+    "nun": {
+      "strategy": "gitflow",
+      "productionBranch": "nun-master",
+      "integrationBranch": "nun-develop",
+      "naming": { "feature": "feature/{name}", "release": "release/nun-{version}", "hotfix": "hotfix/nun-{name}" },
+      "baseBranch": "nun-develop",
+      "mergeBackBranches": ["nun-develop"],
+      "pullRequestTarget": "nun-develop",
+      "tagNamespace": "nun/",
+      "versionSource": { "kind": "git-tag" },
+      "requiredChecks": []
+    },
+    "standard": {
+      "strategy": "gitflow",
+      "productionBranch": "master",
+      "integrationBranch": "develop",
+      "naming": { "feature": "feature/{name}", "release": "release/{version}", "hotfix": "hotfix/{name}" },
+      "baseBranch": "develop",
+      "mergeBackBranches": ["develop"],
+      "pullRequestTarget": "develop",
+      "tagNamespace": "",
+      "versionSource": { "kind": "git-tag" },
+      "requiredChecks": []
+    }
+  }
+}
+```
+
+Every command that needs a target picks the track first, in this order (the
+first signal that answers wins):
+
+1. `--track <name>` on `workit git branch`, `workit pr create` and
+   `workit stack plan` (or `WORKFLOW_RELEASE_TRACK` for a host session);
+2. the checkout is a track's integration, production or base branch;
+3. only one track is configured;
+4. the base `workit git branch` recorded for the branch
+   (`git config branch.<name>.workitBase`), followed through stacked parents;
+5. the reflog's `Created from <branch>` when it names a track branch;
+6. ancestry: the track whose integration (or base) branch the branch is fewest
+   commits ahead of, then fewest behind.
+
+A tie, a detached HEAD or unfetched track branches fall back to the workspace
+default (the track whose integration branch or PR target is
+`vcs.defaultTargetBranch`) with a `note:`; pass `--track` to decide.
+
+The resolved track sets the base of new branches (`baseBranch`), the
+`--kind`/`--slug` branch name (`naming`), the default PR target and stack
+trunk (`pullRequestTarget`), and, after `workit pr merge` lands on a
+`productionBranch`, the `mergeBackBranches` it reports (Workit does not open
+merge-back PRs itself). Every track's long-lived branches are protected in
+addition to `branchPolicy.protected`, and its naming templates are allowed
+branch patterns. `workit grant show` and `workit doctor` list the tracks and
+the one the current checkout resolves to. Without `releaseTracks`, nothing
+changes.
+
+At runtime a malformed or unknown track field is reported (`workit doctor`
+warns) and ignored; a track without a usable `productionBranch` and
+`integrationBranch` is skipped. A track that lists a field in its `critical`
+array makes Workit fail closed when that field is unknown or malformed.
+
 **YouTrack** is optional. Everything organization-specific comes from
 `youtrack.json`: `baseUrl` (required), `meetingIssue`/`meetingIssues`, an
 optional IANA `timezone` (else the process timezone). Comment text comes from

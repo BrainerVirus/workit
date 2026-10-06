@@ -557,10 +557,10 @@ const runtimeWorkspaceIndexSchema = z
   })
   .passthrough();
 
-const resolveRuntimeWorkspaceCandidate = (
+/** The workspaces.json entry matching cwd, checked only for name/glob (D17). */
+const matchRuntimeWorkspace = (
   cwd: string,
-  kind: RuntimeWorkspacePolicy,
-): RuntimeWorkspaceCandidate | null => {
+): { file: string; selected: Record<string, unknown> & { name: string } } | null => {
   const file = path.join(configDir(), "workspaces.json");
   let raw: string;
   try {
@@ -601,7 +601,38 @@ const resolveRuntimeWorkspaceCandidate = (
   });
   const workspaceName = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
   const selected = selectWorkspaceMatch(matches, cwd, workspaceName);
-  if (!selected) return null;
+  return selected ? { file, selected } : null;
+};
+
+/**
+ * The raw `releaseTracks` of the workspace matching cwd, unvalidated: the
+ * runtime reads them leniently (core/release-tracks.ts) so one malformed track
+ * is reported instead of disabling every command.
+ */
+export const resolveRuntimeReleaseTracks = (
+  cwd: string,
+): { workspace: string; releaseTracks: unknown; defaultTargetBranch: string | null } | null => {
+  const matched = matchRuntimeWorkspace(cwd);
+  if (!matched) return null;
+  const { selected } = matched;
+  const text = (value: unknown): string | null =>
+    typeof value === "string" && value.trim() ? value.trim() : null;
+  const vcs = selected.vcs as { defaultTargetBranch?: unknown } | undefined;
+  const policy = selected.branchPolicy as { developBranch?: unknown } | undefined;
+  return {
+    workspace: selected.name,
+    releaseTracks: selected.releaseTracks,
+    defaultTargetBranch: text(vcs?.defaultTargetBranch) ?? text(policy?.developBranch),
+  };
+};
+
+const resolveRuntimeWorkspaceCandidate = (
+  cwd: string,
+  kind: RuntimeWorkspacePolicy,
+): RuntimeWorkspaceCandidate | null => {
+  const matched = matchRuntimeWorkspace(cwd);
+  if (!matched) return null;
+  const { file, selected } = matched;
   const policy = runtimeWorkspacePolicySchema(kind).safeParse(selected);
   if (!policy.success) {
     const detail = policy.error.issues

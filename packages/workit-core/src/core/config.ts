@@ -287,6 +287,10 @@ export const describeConfigSource = (
   }
 };
 
+/** An allowed-branch glob (`feature/*`) as a case-insensitive whole-name RegExp. */
+export const branchGlobPattern = (glob: string): RegExp =>
+  new RegExp(`^${glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i");
+
 export const resolveBranchPolicy = (
   config: ToolkitConfig,
   workspace?: { branchPolicy?: Record<string, any> } | null,
@@ -315,9 +319,7 @@ export const resolveBranchPolicy = (
     },
     config,
   );
-  const allowed = merged.allowed.map(
-    (p) => new RegExp(`^${p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i"),
-  );
+  const allowed = merged.allowed.map(branchGlobPattern);
   return {
     preset,
     allowed,

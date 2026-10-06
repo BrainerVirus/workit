@@ -260,6 +260,24 @@ export type MergeOutcome = {
   grant: { source: AutonomySource };
   deletedBranch: boolean | { error: string };
   recorded: { id: string } | { error: string };
+  /**
+   * Release tracks: when the PR landed on a track's production branch, the
+   * branches it must flow back into (mergeBackBranches); empty otherwise.
+   * Workit reports them; it does not open the merge-back PRs itself.
+   */
+  mergeBack: string[];
+  mergeBackTrack: string | null;
+};
+
+/** The merge-back a merge into `base` owes under the release track that owns `base`. */
+const mergeBackFor = (cwd: string, base: string): { track: string | null; branches: string[] } => {
+  const resolved = vcsConfig("resolve", cwd, { branch: base });
+  const track = resolved.ok === false ? null : resolved.releaseTrack?.track;
+  if (!track || track.productionBranch !== base) return { track: null, branches: [] };
+  return {
+    track: track.name,
+    branches: track.mergeBackBranches.filter((branch: string) => branch !== base),
+  };
 };
 
 /** Why `pr merge` refused, for the envelope `data` (agents branch on `reason`). */
@@ -431,6 +449,7 @@ export async function mergePullRequest(
     deletedBranch =
       deleted.ok || (gone && gone.ok && gone.sha === null) ? true : { error: deleted.error };
   }
+  const mergeBack = mergeBackFor(cwd, doc.base);
   const row = appendObserved(cwd, {
     type: "pr.merged",
     actor: input.actor,
@@ -457,6 +476,8 @@ export async function mergePullRequest(
       grant: { source: grant.source },
       deletedBranch,
       recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
+      mergeBack: mergeBack.branches,
+      mergeBackTrack: mergeBack.track,
     },
   };
 }

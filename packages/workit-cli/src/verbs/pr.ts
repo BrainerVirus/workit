@@ -20,7 +20,10 @@ import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
 import { actorFromEnv, checkVerdicts, readLedger } from "@brainervirus/workit-core/src/ledger";
-import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
+import {
+  vcsConfig,
+  type ResolvedReleaseTrack,
+} from "@brainervirus/workit-core/src/core/vcs-config";
 import { emit, fail, ok, type Io } from "../output";
 import {
   connect,
@@ -34,7 +37,7 @@ import {
 
 const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]";
 const CREATE_USAGE =
-  "workit pr create [--base <b>] (--title <t> [--body <text> | --body-file <f>] | --fill) [--draft] [--json]";
+  "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f>] | --fill) [--draft] [--json]";
 const MERGE_USAGE =
   "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--json]";
 const USAGE = "workit pr status|create|merge ... (workit help pr)";
@@ -101,6 +104,7 @@ function verdictBlock(cwd: string, branch: string) {
 async function create(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
     base: "value",
+    track: "value",
     title: "value",
     body: "value",
     "body-file": "value",
@@ -123,8 +127,11 @@ async function create(argv: string[], io: Io): Promise<number> {
     }
   }
   let base: string | null = flags.values.base ?? null;
+  // Without --base the target is the release track's PR target (or the
+  // workspace default when no tracks are configured).
+  let releaseTrack: ResolvedReleaseTrack | null = null;
   if (!base) {
-    const resolved = vcsConfig("resolve", io.cwd);
+    const resolved = vcsConfig("resolve", io.cwd, { track: flags.values.track ?? null });
     if (resolved.ok === false)
       return emit(
         io,
@@ -133,6 +140,7 @@ async function create(argv: string[], io: Io): Promise<number> {
         }),
       );
     base = String(resolved.defaultTargetBranch ?? "") || null;
+    releaseTrack = resolved.releaseTrack ?? null;
   }
   if (!base)
     return usage(io, "no default target branch is configured; pass --base <b>", CREATE_USAGE);
@@ -164,8 +172,13 @@ async function create(argv: string[], io: Io): Promise<number> {
     forgeDeps.sleep,
   );
   if (!result.ok) return forgeFail(io, result);
-  return emit(io, ok(result.data), (data: CreateOutcome) => [
+  const created = releaseTrack ? { ...result.data, releaseTrack } : result.data;
+  return emit(io, ok(created), (data: CreateOutcome & { releaseTrack?: ResolvedReleaseTrack }) => [
     `${data.created ? "opened" : "found open"} ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number}${data.draft && data.created ? " (draft)" : ""}: ${data.branch} -> ${data.base}  ${data.url}`,
+    ...(data.releaseTrack?.name
+      ? [`release track: ${data.releaseTrack.name} (${data.releaseTrack.detail})`]
+      : []),
+    ...(data.releaseTrack?.warnings ?? []).map((warning) => `note: ${warning}`),
     `head ${data.head.slice(0, 12)} verified on the forge`,
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
   ]);
@@ -205,6 +218,11 @@ async function merge(argv: string[], io: Io): Promise<number> {
     data.verdict.required
       ? `verdict ${data.verdict.verdictId ?? "?"} accepted for that head`
       : "no verdict required (workspace grants merge: true)",
+    ...(data.mergeBack.length
+      ? [
+          `merge back: ${data.base} is the ${data.mergeBackTrack} production branch; bring it into ${data.mergeBack.join(", ")}`,
+        ]
+      : []),
     ...(data.deletedBranch === true
       ? [`deleted ${data.branch}`]
       : typeof data.deletedBranch === "object"

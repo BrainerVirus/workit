@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { configDir, PRESETS } from "./config";
 import { resolveRuntimeWorkspaceVcs } from "./workspaces";
 import { resolveBranchPolicyFor } from "./branch";
+import { resolveTrackFor, type RuntimeReleaseTrack, type TrackResolution } from "./release-tracks";
 // VCS resolution and CLI-backed identity/style reads.
 
 export const vcsConfigPath = (): string =>
@@ -146,8 +147,42 @@ export const readVcsConfig = (): VcsConfigResult => {
   return { status: "malformed", path: file, config: {}, error: `${file} is not a JSON object` };
 };
 
+/** The release track a vcsConfig call resolved (null: the workspace has no tracks). */
+export type ResolvedReleaseTrack = {
+  name: string | null;
+  source: string;
+  detail: string;
+  warnings: string[];
+  track: RuntimeReleaseTrack | null;
+  /** Every configured track, for displays and the branch policy. */
+  tracks: RuntimeReleaseTrack[];
+};
+
+export type VcsConfigOptions = {
+  /** An explicit release track (`--track`); else WORKFLOW_RELEASE_TRACK. */
+  track?: string | null;
+  /** Resolve the track for this branch instead of the checked-out one. */
+  branch?: string | null;
+};
+
+const trackSummary = (resolution: TrackResolution): ResolvedReleaseTrack | null =>
+  resolution.status === "resolved"
+    ? {
+        name: resolution.track?.name ?? null,
+        source: resolution.source,
+        detail: resolution.detail,
+        warnings: resolution.warnings,
+        track: resolution.track,
+        tracks: resolution.tracks,
+      }
+    : null;
+
 /** Port of scripts/vcs/config.sh — mode: load | summary | resolve. */
-export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): Record<string, any> {
+export function vcsConfig(
+  mode: "load" | "summary" | "resolve",
+  cwd?: string,
+  options: VcsConfigOptions = {},
+): Record<string, any> {
   const ws = resolveRuntimeWorkspaceVcs(vcsCwd(cwd));
   const wsVcs = (ws?.vcs ?? {}) as Record<string, any>;
   const wsYt = (ws?.youtrack ?? {}) as Record<string, any>;
@@ -186,11 +221,24 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   const wp = (ws?.branchPolicy ?? {}) as Record<string, any>;
   const hasWorkspacePolicy = typeof wp.preset === "string" && Object.hasOwn(PRESETS, wp.preset);
   const policyDefault = resolveBranchPolicyFor(root).defaultTargetBranch;
-  const defaultTarget = String(
+  const workspaceDefault = String(
     wsVcs.defaultTargetBranch ??
       (hasWorkspacePolicy ? policyDefault : (cfg.defaultTargetBranch ?? policyDefault)) ??
       "develop",
   );
+  // Release tracks (core/release-tracks.ts): the one place a branch's line is
+  // decided. With tracks, the PR target and the base for new branches come
+  // from the resolved track; without, the workspace default stays as is.
+  const trackResolution = resolveTrackFor(root, {
+    track: options.track,
+    ...(options.branch !== undefined ? { branch: options.branch } : {}),
+    defaultBranch: workspaceDefault,
+  });
+  if (trackResolution.status === "invalid")
+    return { ok: false, error: trackResolution.error, configPath: workspacesPath() };
+  const releaseTrack = trackSummary(trackResolution);
+  const defaultTarget = releaseTrack?.track?.pullRequestTarget ?? workspaceDefault;
+  const baseBranch = releaseTrack?.track?.baseBranch ?? defaultTarget;
   const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
   const youtrackBaseUrl = typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;
   // github issues path only when BOTH providers are github (mirrors WorkspaceConfig.issues).
@@ -215,6 +263,10 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
       workspace_name: ws?.name ?? null,
       provider,
       defaultTargetBranch: defaultTarget,
+      /** The target before release tracks (vcs.defaultTargetBranch or the policy default). */
+      workspaceDefaultTargetBranch: workspaceDefault,
+      baseBranch,
+      releaseTrack,
       link_issues: linkIssues,
       youtrack_base_url: youtrackBaseUrl,
       issues_provider: issuesProvider,
@@ -242,6 +294,8 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
     configPath: path.resolve(cfgPath),
     provider,
     defaultTargetBranch: defaultTarget,
+    baseBranch,
+    releaseTrack,
     pr: cfg.pr ?? {},
     workspace_name: ws?.name ?? null,
     link_issues: linkIssues,

@@ -35,6 +35,11 @@ import {
   type GrantValue,
   type Grants,
 } from "@brainervirus/workit-core/src/autonomy";
+import {
+  describeReleaseTracks,
+  releaseTracksReport,
+} from "@brainervirus/workit-core/src/core/release-tracks";
+import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
 import { emit, fail, ok, type Io } from "../output";
 import { CANCELLED_EXIT, askLine, askOrCancel } from "../prompt";
 
@@ -114,12 +119,25 @@ function show(argv: string[], io: Io): number {
   } catch (error) {
     return emit(io, fail("invalid_input", error instanceof Error ? error.message : String(error)));
   }
-  return emit(io, ok(autonomy), (data) => [
+  // Release tracks ride along (read-only): which line this checkout is on
+  // decides where push/pr/merge land, so the grant view shows it too.
+  let vcs: Record<string, any> = { ok: false };
+  try {
+    vcs = vcsConfig("resolve", io.cwd);
+  } catch {}
+  const tracks = releaseTracksReport(
+    io.cwd,
+    vcs.ok === false ? undefined : (vcs.workspaceDefaultTargetBranch ?? null),
+  );
+  const shown =
+    tracks.tracks.length || tracks.error ? { ...autonomy, releaseTracks: tracks } : autonomy;
+  return emit(io, ok(shown), (data) => [
     ...(data.note ? [`note: ${data.note}`] : []),
     data.workspace
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
     ...describe(data.grants, data.configured, data.defaultEndpoint, data.verification),
+    ...describeReleaseTracks(tracks).map((line) => `  ${line}`),
     "raising a grant needs the user: workit grant set <workspace> <kind>=<value>",
   ]);
 }

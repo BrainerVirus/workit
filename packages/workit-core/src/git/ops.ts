@@ -27,7 +27,8 @@ import {
 } from "../core/branch";
 import { detectCommitFlavor, matchCommitFlavor } from "../core/commit-flavors";
 import { pushTargetIsStable } from "../core/pr-create";
-import { vcsConfig } from "../core/vcs-config";
+import { recordBranchBase, trackBranchName } from "../core/release-tracks";
+import { vcsConfig, type ResolvedReleaseTrack } from "../core/vcs-config";
 import { redactText } from "../forge/redact";
 import { failure, success, type ForgeResult } from "../forge/types";
 import { appendObserved, readLedger, type LedgerActor } from "../ledger";
@@ -119,15 +120,37 @@ export type BranchOutcome = {
   carried: boolean;
   /** Fallbacks taken (fetch failed, base used from the local copy). */
   notes: string[];
+  /** The release track the base and name came from; null without tracks. */
+  releaseTrack: ResolvedReleaseTrack | null;
 };
 
-export function gitBranch(
-  cwd: string,
-  input: { name: string; base?: string | null; carry?: boolean },
-): ForgeResult<BranchOutcome> {
-  const name = input.name.trim();
+export type BranchInput = {
+  /** An explicit branch name; else `kind` + `slug` through the track's naming. */
+  name?: string;
+  kind?: "feature" | "bugfix" | "hotfix";
+  slug?: string;
+  base?: string | null;
+  carry?: boolean;
+  /** An explicit release track (`--track`). */
+  track?: string | null;
+};
+
+export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOutcome> {
   if (!headSha(cwd) && currentBranch(cwd) === null)
     return failure("invalid_input", "not inside a git repository with a commit");
+  // One resolution: the default target, the base for new branches and the
+  // release track (core/release-tracks.ts) all come from vcsConfig.
+  const resolved = vcsConfig("resolve", cwd, { track: input.track ?? null });
+  const releaseTrack: ResolvedReleaseTrack | null =
+    resolved.ok === false ? null : (resolved.releaseTrack ?? null);
+  const name = (
+    input.name ??
+    (input.kind && input.slug
+      ? (trackBranchName(releaseTrack?.track ?? null, input.kind, input.slug) ??
+        `${input.kind}/${input.slug}`)
+      : "")
+  ).trim();
+  if (!name) return failure("invalid_input", "missing branch name");
   if (!validRefName(cwd, name))
     return failure("invalid_input", `invalid branch name ${JSON.stringify(name)}`);
   const policy = validateBranchNameFor(cwd, name);
@@ -137,26 +160,34 @@ export function gitBranch(
 
   let base = input.base?.trim() || null;
   let defaultTarget: string | null = null;
-  const resolved = vcsConfig("resolve", cwd);
-  if (resolved.ok === false && !base)
+  let defaultBase: string | null = null;
+  // An explicit --track that does not resolve is never ignored, even with --base.
+  if (resolved.ok === false && (!base || input.track))
     return failure(
       "blocked",
       String(resolved.error),
       "fix ~/.config/workit/vcs.json or pass --base <branch>",
     );
-  if (resolved.ok !== false) defaultTarget = String(resolved.defaultTargetBranch ?? "") || null;
-  base ??= defaultTarget;
+  if (resolved.ok !== false) {
+    defaultTarget = String(resolved.defaultTargetBranch ?? "") || null;
+    defaultBase = String(resolved.baseBranch ?? "") || defaultTarget;
+  }
+  base ??= defaultBase;
   if (!base)
     return failure("invalid_input", "no default target branch is configured; pass --base <branch>");
   if (base.startsWith("-")) return failure("invalid_input", "--base must not start with -");
 
-  const notes: string[] = [];
+  const notes: string[] = [...(releaseTrack?.warnings ?? [])];
   const remotes = remoteNames(cwd);
   const remote = remotes.includes("origin") ? "origin" : pushRemoteName(cwd);
   const localTip = resolveRef(cwd, `refs/heads/${base}`);
   // A local, unprotected branch that is not the default target is a stack
   // parent: its local tip is the truth (it may not be pushed yet).
-  const stackParent = localTip !== null && base !== defaultTarget && !isProtectedTarget(cwd, base);
+  const stackParent =
+    localTip !== null &&
+    base !== defaultTarget &&
+    base !== defaultBase &&
+    !isProtectedTarget(cwd, base);
   let baseRef: string | null = null;
   if (stackParent) baseRef = `refs/heads/${base}`;
   else if (remote && validRefName(cwd, base)) {
@@ -194,6 +225,8 @@ export function gitBranch(
   const previous = currentBranch(cwd);
   const switched = git(cwd, ["switch", "--no-track", "-c", name, baseSha]);
   if (!switched.ok) return failure("failed", `git switch -c ${name} failed: ${gitError(switched)}`);
+  // The cheapest track signal later (release-tracks.ts): where this branch began.
+  recordBranchBase(cwd, name, base);
   return success({
     branch: name,
     previous,
@@ -202,6 +235,7 @@ export function gitBranch(
     baseSha,
     carried: dirt !== "clean",
     notes,
+    releaseTrack,
   });
 }
 
