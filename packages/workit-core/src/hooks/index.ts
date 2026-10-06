@@ -17,6 +17,8 @@ export {
   type SessionHandle,
 } from "./context";
 export { shellPolicy } from "./policy";
+export { shellWrites, writeGate } from "./write-gate";
+export { isWriteTool, writePaths } from "./hosts/fields";
 export { dispatchHook, failureDecision, handleHook, type HookDeps } from "./handle";
 export { HOOK_ADAPTERS, runHookProcess } from "./run";
 export { CLAUDE_CODE_DESCRIPTOR, claudeCodeAdapter } from "./hosts/claude-code";

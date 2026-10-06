@@ -15,10 +15,10 @@ import {
   OPERATION_FAMILIES,
   WorkitCore,
   TaskStore,
-  boundedOperationJsonSchema,
-  parseOperation,
+  flatOperationJsonSchema,
+  operationDescription,
+  parseAdvertisedOperation,
   type OperationContext,
-  type OperationFamily,
 } from "@brainervirus/workit-core/src/core";
 import {
   changedSourcesSinceLoad,
@@ -112,61 +112,32 @@ export function assertMcpHost(host: unknown): asserts host is McpHost {
   }
 }
 
-const operationDescription = (family: OperationFamily): string =>
-  `Workit ${family} operations. Inputs are validated by the shared Workit contract.`;
-
 const READ_ONLY_ACTIONS = new Set(["list", "inspect", "preview", "explain", "export"]);
 const requiresCallerIdentity = (input: unknown): boolean =>
   typeof input !== "object" ||
   input === null ||
   !READ_ONLY_ACTIONS.has(String((input as { action?: unknown }).action));
 
-const toolInputSchema = (family: OperationFamily) => {
-  const schema = boundedOperationJsonSchema(family);
-  // MCP requires an object at the root. The operation union remains entirely
-  // core-derived; this envelope preserves it while satisfying that protocol rule.
-  return { type: "object" as const, ...schema };
-};
-
-const schemaBranches = (schema: Record<string, unknown>): unknown[] =>
-  Array.isArray(schema.oneOf)
-    ? schema.oneOf
-    : Array.isArray(schema.anyOf)
-      ? schema.anyOf
-      : [schema];
-
-const readOnlyBranches = (family: OperationFamily): unknown[] =>
-  schemaBranches(boundedOperationJsonSchema(family)).filter((branch) => {
-    const action = (branch as { properties?: { action?: { const?: unknown } } }).properties?.action
-      ?.const;
-    return typeof action === "string" && READ_ONLY_ACTIONS.has(action);
-  });
-
-/** Attested callers (host sessions that can mutate) see the full family union;
+/** Attested callers (host sessions that can mutate) see every action;
  * unattested MCP callers see only read-only actions, and families with no
- * read-only action are not advertised as callable tools at all. */
+ * read-only action are not advertised as callable tools at all. Schemas are
+ * flat (depth 1): no provider needs a nesting projection. */
 export const advertisedToolSchemas = (
   attested: boolean,
-): { name: string; description: string; inputSchema: Record<string, unknown> }[] => {
-  if (attested)
-    return OPERATION_FAMILIES.map((family) => ({
-      name: `workit_${family}`,
-      description: operationDescription(family),
-      inputSchema: toolInputSchema(family),
-    }));
-  return OPERATION_FAMILIES.flatMap((family) => {
-    const branches = readOnlyBranches(family);
-    if (!branches.length) return [];
-    const schema = boundedOperationJsonSchema(family);
+): { name: string; description: string; inputSchema: Record<string, unknown> }[] =>
+  OPERATION_FAMILIES.flatMap((family) => {
+    const schema = flatOperationJsonSchema(family, { readOnly: !attested });
+    if (!schema) return [];
     return [
       {
         name: `workit_${family}`,
-        description: `${operationDescription(family)} Unattested MCP callers can only run read-only actions; mutating operations require an attested host session.`,
-        inputSchema: { type: "object" as const, ...schema, oneOf: branches },
+        description: attested
+          ? operationDescription(family)
+          : `${operationDescription(family)} Unattested MCP callers can only run read-only actions; mutating operations require an attested host session.`,
+        inputSchema: schema,
       },
     ];
   });
-};
 
 const sanitizeFailure = (result: Result<unknown>, workspaceRoot?: string): Result<unknown> => {
   if (result.ok) return result;
@@ -374,7 +345,7 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
           workspaceRoot,
         );
       }
-      const parsed = parseOperation(family, request.params.arguments);
+      const parsed = parseAdvertisedOperation(family, request.params.arguments, host);
       if (!parsed.ok) return resultForClient(parsed, workspaceRoot);
       if (context.callerAttested !== true && requiresCallerIdentity(parsed.data))
         return resultForClient(

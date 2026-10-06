@@ -24,6 +24,8 @@ import {
   withProtectedMain,
 } from "@/test/workit-core/hooks/hook-fixtures";
 import { installedPlugin, outputProblem, PLUGIN_DIR, runHook } from "./plugin-helpers";
+import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { recordDecision } from "@/packages/workit-core/src/ledger";
 
 const FIXTURES = path.resolve(import.meta.dir, "../fixtures/hooks/claude-code");
 const NAMES = readdirSync(FIXTURES).map((name) => name.replace(/\.json$/, ""));
@@ -82,6 +84,36 @@ for (const [label, plugin] of RUNTIMES) {
       );
       expect(allowed.json).toEqual({});
     });
+  }, 30_000);
+
+  test(`[${label}] given an open product choice, code writes are denied with the unblock and plain shell commands take the fast path`, () => {
+    const cwd = root();
+    const core = new WorkitCore(new TaskStore(cwd), {
+      root: cwd,
+      caller: { host: "claude_code", actor: "claude-session-1" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    expect(core.policy({ action: "assess", productChoiceOpen: true }).ok).toBe(true);
+    const write = runHook(plugin(), fixture("claude-code", "pre-tool-use-write", cwd));
+    const output = (write.json as Specific).hookSpecificOutput;
+    expect(output?.permissionDecision).toBe("deny");
+    expect(output?.permissionDecisionReason).toContain("workit ledger decision");
+    const shell = (command: string) =>
+      runHook(
+        plugin(),
+        fixture("claude-code", "pre-tool-use-bash", cwd, { tool_input: { command } }),
+      ).json as Specific;
+    expect(shell("echo x > src/a.ts").hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(shell("ls -la")).toEqual({});
+    expect(
+      recordDecision(
+        { cwd, actor: { host: "claude_code", session: "claude-session-1", agentId: null } },
+        { what: "option A", why: "the user chose A" },
+      ).ok,
+    ).toBe(true);
+    expect(runHook(plugin(), fixture("claude-code", "pre-tool-use-write", cwd)).json).toEqual({});
   }, 30_000);
 }
 

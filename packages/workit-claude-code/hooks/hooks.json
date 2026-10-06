@@ -1,5 +1,5 @@
 {
-  "description": "Workit host hooks: task context on session start (incl. compaction restore and forks) and when it changes per turn, branch policy on git shell commands, and worktree guidance for subagents. Only events that change Claude's behavior are registered.",
+  "description": "Workit host hooks: task context on session start (incl. compaction restore and forks) and when it changes per turn, branch policy on git shell commands, the before-write gate on file edits and shell writes, and worktree guidance for subagents. Only events that change Claude's behavior are registered.",
   "hooks": {
     "SessionStart": [
       {
@@ -32,7 +32,6 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(git *)",
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
             "timeout": 5
@@ -44,7 +43,17 @@
         "hooks": [
           {
             "type": "command",
-            "if": "PowerShell(git *)",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
             "timeout": 5

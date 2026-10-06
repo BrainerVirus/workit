@@ -1,4 +1,4 @@
-import { shellPolicy } from "@brainervirus/workit-core/hooks";
+import { shellPolicy, shellWrites, writeGate } from "@brainervirus/workit-core/hooks";
 
 export type PermissionEvaluationEvent = {
   action: string;
@@ -7,19 +7,33 @@ export type PermissionEvaluationEvent = {
   message?: string;
 };
 
+const WRITE_ACTIONS = new Set(["edit", "write", "patch"]);
+
 /**
- * Validate only direct literal branch-creation commands. Compliant branches,
- * PR commands, worktrees, and other shell forms keep the host's decision.
+ * Branch policy on direct literal branch-creation commands, and the
+ * before-write gate (S17) on edits and recognizable shell writes. Every
+ * other permission keeps the host's own decision.
  */
 export const evaluateShellPermission = (root: string, event: PermissionEvaluationEvent): void => {
-  if (event.action !== "shell" || event.effect === "deny") return;
-  for (const resource of event.resources) {
-    if (typeof resource !== "string") continue;
+  if (event.effect === "deny") return;
+  const deny = (reason: string) => {
+    event.effect = "deny";
+    event.message = reason;
+  };
+  const resources = event.resources.filter(
+    (resource): resource is string => typeof resource === "string",
+  );
+  if (WRITE_ACTIONS.has(event.action)) {
+    const decision = writeGate(root, resources);
+    if (decision.kind === "deny") deny(decision.reason);
+    return;
+  }
+  if (event.action !== "shell") return;
+  for (const resource of resources) {
     const decision = shellPolicy(root, resource);
-    if (decision.kind === "deny") {
-      event.effect = "deny";
-      event.message = decision.reason;
-      return;
-    }
+    if (decision.kind === "deny") return deny(decision.reason);
+    const writes = shellWrites(resource);
+    const gated = writes.writes ? writeGate(root, writes.targets) : null;
+    if (gated?.kind === "deny") return deny(gated.reason);
   }
 };

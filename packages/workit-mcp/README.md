@@ -6,7 +6,8 @@
 Shared MCP stdio transport for [Workit](https://github.com/BrainerVirus/workit): the seven task
 families (`workit_task`, `workit_policy`, `workit_evidence`,
 `workit_finding`, `workit_decision`, `workit_worker`, `workit_state`) as
-tools, and read-only contexts (`git`, `pr`, `youtrack`, `github_issue`,
+flat tools (one depth-1 object: `action` plus primitive fields, e.g.
+`workit_policy {action:"assess", riskTier:"normal", behaviorChange:true}`), and read-only contexts (`git`, `pr`, `youtrack`, `github_issue`,
 `gitlab_issue`, `changelog`, `release`, `affected`) as
 `workit://context/{kind}` resources. Requires Node.js 24+.
 

@@ -37,12 +37,33 @@ workit ledger decision "Use SQLite for the cache" --why "single-process, no serv
 workit ledger ruling "Skip Windows for now" --why "no users" --cost-if-wrong "port later"
 workit ledger verdict verified --how "workit check test; drove the CLI" --kind live
 workit ledger verdict              # current and accepted verdicts for this branch
-workit ledger check [--pr <n>]     # is this head independently verified?
+workit ledger check [--pr <n>]     # verified, self-reviewed or unreviewed?
 workit ledger list --type decision
 ```
 
 Verdict results: `verified`, `tests-verified`, `type-check-only` (passing) and
 `blocked`, `failed`. Kinds: `unit`, `live`, `perf`, `review`.
+`type-check-only` never proves a behavior change.
+
+**What a judged task needs** (`workit policy assess --judge risk=… behavior=…
+product-choice=… plan=…`, or the flat `workit_policy` tool fields):
+
+| Judgment | Needed |
+| --- | --- |
+| behavior change | an observed passing `workit check test` on the final tree |
+| behavior change, risk `normal` | a verdict: by default the author's own (`workit ledger verdict tests-verified --self --how …`), labelled **self-reviewed** in `ledger check` and `pr status`, never verified; with the workspace setting `verification: "independent"` ([grants](grants.md)) a verdict from a non-author session |
+| risk `high` | an independent `verified` verdict of kind `live`, and a plan before code is written |
+| open product choice | the user's answer recorded (`workit ledger decision "<choice>" --why "<reason>"`) before code is written |
+| plan needed | the plan written, then cited: `workit policy assess --ref <path>` (an approved limitation waives it) |
+
+Trivial work judged `risk=trivial behavior=no` needs nothing. Before-write
+requirements deny working-tree edits on hosts with a pre-write hook (Claude
+Code, OpenCode, Cursor, Pi; advisory on Codex); Markdown, top-level `docs/`,
+any `plans/` directory, the cited plan and files outside the checkout stay
+writable, and history moves (commit, merge, rebase, stash pop) are never gated.
+Shell writes are recognized for redirects, `tee`, `sed -i`/`perl -i`,
+`cp`/`mv`/`rm`/`touch`/`mkdir`, `dd` and working-tree git (`apply`, `restore`,
+`checkout --`); interpreters and formatters are not detected.
 
 **Author ≠ verifier.** The acting session is `WORKIT_SESSION_ID`. Commits made
 with `workit git commit` carry a `Workit-Session:` trailer, so the authoring

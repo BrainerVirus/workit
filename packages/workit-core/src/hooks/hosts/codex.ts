@@ -50,6 +50,9 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
     "context.turn": undocumented,
     "shell.pre": { support: "native", native: "PreToolUse" },
     "tool.pre": { support: "native", native: "PreToolUse" },
+    // Codex PreToolUse intercepts shell calls, not apply_patch edits: the
+    // before-write gate stays advisory rather than half-enforced.
+    "write.pre": { support: "undocumented", native: null },
     "shell.post": undocumented,
     "subagent.start": { support: "native", native: "SubagentStart" },
     "subagent.stop": { support: "native", native: "SubagentStop" },

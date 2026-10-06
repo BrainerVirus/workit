@@ -1,86 +1,109 @@
+// S17: advertised tool schemas are flat (depth 1) on every host, so no
+// provider needs a depth projection; flat inputs nest into the contract.
 import { expect, test } from "bun:test";
 import {
-  boundedOperationJsonSchema,
-  canonicalFieldsDescription,
+  flatOperationJsonSchema,
+  normalizeOperationInput,
   OPERATION_FAMILIES,
-  OPERATION_SCHEMA_DEPTH,
-  operationJsonSchema,
+  operationSchemas,
 } from "@/packages/workit-core/src/core";
 
-const depth = (node: unknown, current = 0): number => {
-  if (Array.isArray(node))
-    return node.reduce((max, item) => Math.max(max, depth(item, current)), current);
-  if (node && typeof node === "object") {
-    const keys = Object.keys(node);
-    if (!keys.length) return current;
-    return keys.reduce(
-      (max, key) => Math.max(max, depth((node as Record<string, unknown>)[key], current + 1)),
-      current,
-    );
-  }
-  return current;
+const propertyDepth = (node: unknown): number => {
+  if (!node || typeof node !== "object") return 0;
+  const record = node as { properties?: Record<string, unknown>; items?: unknown };
+  const children = [
+    ...Object.values(record.properties ?? {}),
+    ...(record.items ? [record.items] : []),
+  ];
+  const nested = Math.max(0, ...children.map(propertyDepth));
+  return record.properties ? 1 + nested : nested;
 };
 
-const collectDescriptions = (node: unknown, out: string[] = []): string[] => {
-  if (Array.isArray(node)) {
-    for (const item of node) collectDescriptions(item, out);
-    return out;
-  }
-  if (node && typeof node === "object") {
-    const record = node as Record<string, unknown>;
-    if (typeof record.description === "string") out.push(record.description);
-    for (const key of Object.keys(record))
-      if (key !== "description") collectDescriptions(record[key], out);
-  }
-  return out;
-};
-
-test("advertised operation schemas stay within provider nesting limits", () => {
-  for (const family of OPERATION_FAMILIES) {
-    const bounded = boundedOperationJsonSchema(family);
-    expect(depth(bounded), family).toBeLessThanOrEqual(8);
-  }
+test("given MCP tool schemas, then max depth is 1 with no projection or union", () => {
+  for (const family of OPERATION_FAMILIES)
+    for (const options of [{}, { stringTolerant: true }]) {
+      const schema = flatOperationJsonSchema(family, options)!;
+      expect(propertyDepth(schema), family).toBe(1);
+      expect(JSON.stringify(schema)).not.toMatch(/"(oneOf|anyOf|allOf)"/);
+      expect(schema.required).toEqual(["action"]);
+    }
 });
 
-test("collapsed nodes name their canonical fields", () => {
-  const bounded = boundedOperationJsonSchema("task");
-  const descriptions = collectDescriptions(bounded);
-  const collapsed = descriptions.filter((text) => text.startsWith("Fields (! required):"));
-  expect(collapsed.length).toBeGreaterThan(0);
-  expect(collapsed.some((text) => text.includes("objective"))).toBe(true);
-  expect(collapsed.some((text) => text.includes("!:") && text.includes("str"))).toBe(true);
-  expect(canonicalFieldsDescription(["a", "b"])).toContain("a, b");
+test("read-only projections keep only read actions and drop families without one", () => {
+  const actions = (family: (typeof OPERATION_FAMILIES)[number]) =>
+    (
+      flatOperationJsonSchema(family, { readOnly: true }) as {
+        properties: { action: { enum: string[] } };
+      } | null
+    )?.properties.action.enum ?? null;
+  expect(actions("task")).toEqual(["list", "inspect"]);
+  expect(actions("policy")).toEqual(["preview", "explain"]);
+  expect(actions("evidence")).toBeNull();
 });
 
-test("bounded schemas keep routable top-level actions", () => {
-  const text = JSON.stringify(boundedOperationJsonSchema("task"));
-  for (const action of ["start", "close"]) expect(text).toContain(`"${action}"`);
+test("Pi's string-tolerant schema accepts JSON-encoded strings for non-string fields", () => {
+  const schema = flatOperationJsonSchema("task", { stringTolerant: true }) as {
+    properties: Record<string, { type: unknown }>;
+  };
+  expect(schema.properties.paths.type).toEqual(["array", "string"]);
+  expect(schema.properties.objective.type).toBe("string");
 });
 
-test("stringified mode accepts JSON-encoded strings without growing past the limit", () => {
-  let sawTolerantDescription = false;
-  for (const family of OPERATION_FAMILIES) {
-    const tolerant = boundedOperationJsonSchema(family, 1, true);
-    expect(depth(tolerant), family).toBeLessThanOrEqual(10);
-    sawTolerantDescription =
-      sawTolerantDescription ||
-      JSON.stringify(tolerant).includes("A JSON-encoded string is also accepted");
-    expect(JSON.stringify(boundedOperationJsonSchema(family))).not.toContain(
-      "A JSON-encoded string is also accepted",
+const id = "00000000-0000-4000-8000-000000000001";
+test("flat inputs nest into the canonical contract on every family", () => {
+  const cases: [(typeof OPERATION_FAMILIES)[number], Record<string, unknown>][] = [
+    ["task", { action: "start", objective: "ship it", paths: ["src"] }],
+    ["task", { action: "progress", taskId: id, summary: "half", blockers: ["waiting on CI"] }],
+    ["task", { action: "close", taskId: id, outcome: "stopped", summary: "done" }],
+    ["policy", { action: "assess", taskId: id, riskTier: "low", behaviorChange: "yes" }],
+    [
+      "evidence",
+      { action: "record", taskId: id, kind: "investigation", claim: "c", result: "passed" },
+    ],
+    ["finding", { action: "record", taskId: id, claim: "c", consequence: "x", refs: ["a.ts"] }],
+    [
+      "finding",
+      { action: "resolve", taskId: id, findingId: id, disposition: "fixed", reason: "r" },
+    ],
+    [
+      "decision",
+      {
+        action: "record",
+        taskId: id,
+        purpose: "design",
+        response: "stated",
+        choice: "A",
+        presented: "A or B?",
+      },
+    ],
+    [
+      "worker",
+      { action: "assign", taskId: id, role: "reviewer", objective: "o", stoppingCondition: "s" },
+    ],
+    ["worker", { action: "report", taskId: id, workerId: id, outcome: "completed", summary: "s" }],
+    ["state", { action: "export", taskId: id }],
+  ];
+  for (const [family, input] of cases) {
+    const request = normalizeOperationInput(family, input, "workit_cli") as Record<string, unknown>;
+    // Decision binding ids are filled by the engine from the recording task.
+    if (family === "decision")
+      Object.assign(request.binding as object, { taskId: id, workspaceId: id });
+    const parsed = operationSchemas[family].safeParse(request);
+    expect(parsed.success, `${family}.${String(input.action)}: ${parsed.error?.message}`).toBe(
+      true,
     );
   }
-  expect(sawTolerantDescription).toBe(true);
-  const task = JSON.stringify(boundedOperationJsonSchema("task", 1, true));
-  expect(task).toContain('"const":"1"');
 });
 
-test("shared projection depth matches the documented host bound", () => {
-  expect(OPERATION_SCHEMA_DEPTH).toBe(1);
-});
-
-test("full contract schemas stay complete for runtime validation", () => {
-  for (const family of OPERATION_FAMILIES) {
-    const full = operationJsonSchema(family);
-    expect(JSON.stringify(full)).toContain("properties");
-  }
+test("canonical nested payloads pass through normalization unchanged in meaning", () => {
+  const canonical = {
+    schemaVersion: 1,
+    action: "start",
+    intent: {
+      objective: "o",
+      scope: { description: "d", paths: ["."], exclusions: [] },
+      authorityRefs: [],
+    },
+  };
+  expect(normalizeOperationInput("task", canonical, "workit_cli")).toEqual(canonical);
 });

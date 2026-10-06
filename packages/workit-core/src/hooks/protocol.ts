@@ -20,6 +20,8 @@ export type HookEvent =
   | { kind: "shell.pre"; command: string; toolUseId: string | null }
   /** A pre-tool gate for a non-shell tool. Host permission policy owns these. */
   | { kind: "tool.pre"; tool: string; toolUseId: string | null }
+  /** A file-writing tool (Edit, Write, apply_patch…): the before-write gate (S17). */
+  | { kind: "write.pre"; tool: string; paths: string[]; toolUseId: string | null }
   | {
       kind: "shell.post";
       command: string;
@@ -46,6 +48,7 @@ export const HOOK_EVENT_KINDS = [
   "context.turn",
   "shell.pre",
   "tool.pre",
+  "write.pre",
   "shell.post",
   "subagent.start",
   "subagent.stop",

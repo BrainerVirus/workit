@@ -7,16 +7,16 @@ import {
   failure,
   decisionDigest,
   exportBundleSchema,
-  assessmentSchema,
   decisionSchema,
   evidenceSchema,
   findingSchema,
   intentSchema,
+  judgmentSchema,
+  legacyAssessmentSchema,
   newId,
   parseOperation,
   rewriteRecordRefs,
   success,
-  type Assessment,
   type Candidate,
   type Capability,
   type Caller,
@@ -27,6 +27,7 @@ import {
   type Evidence,
   type ExportBundle,
   type Finding,
+  type Judgment,
   type Policy,
   provenanceSchema,
   type Ref,
@@ -45,6 +46,11 @@ import {
   scopeCovers as bindingCovers,
 } from "./task-contract";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
+import { normalizeOperationInput } from "./operation-input";
+import { latestJudgment } from "./policy/derive";
+import { normalizeJudgment } from "./policy/judgment";
+import { resolveAutonomy, type VerificationMode } from "../autonomy";
+
 import { sameDirectoryIdentity, TaskStore } from "./task-store";
 import { checkoutRootOf } from "../store/paths";
 import { defaultLockTimeout } from "./store-lock";
@@ -75,6 +81,15 @@ import {
   verifyDecisionContentAtRoot,
   type CandidateEnvironment,
 } from "./task-evaluation";
+
+/** The user-config verification mode for `root`; `self` when it cannot be read. */
+const workspaceVerification = (root: string): VerificationMode => {
+  try {
+    return resolveAutonomy(root).verification;
+  } catch {
+    return "self";
+  }
+};
 
 export type OperationContext = {
   root: string;
@@ -429,29 +444,8 @@ const mapRef = (ref: Ref, ids: Map<string, string>): Ref => {
   return { ...ref, id: ids.get(ref.id) ?? ref.id };
 };
 
-const portableRefs = (refs: Ref[]): Ref[] =>
-  refs.filter((ref) => ref.kind === "file" || ref.kind === "record");
 const portableRef = (ref: Ref | null): Ref | null =>
   ref && (ref.kind === "file" || ref.kind === "record") ? ref : null;
-const portableFact = (fact: Assessment["facts"][number]) => {
-  const refs = portableRefs(fact.refs);
-  return fact.basis === "observed" && refs.length === 0
-    ? { ...fact, basis: "unknown" as const, refs }
-    : { ...fact, refs };
-};
-const portableSignal = (signal: Assessment["signals"][keyof Assessment["signals"]]) => {
-  const refs = portableRefs(signal.refs);
-  return signal.basis === "observed" && refs.length === 0
-    ? {
-        ...signal,
-        value: "unknown" as const,
-        basis: "unknown" as const,
-        reason: "portable supporting reference was removed",
-        refs,
-      }
-    : { ...signal, refs };
-};
-
 const importedProvenance = (context: OperationContext): Provenance => ({
   kind: "imported",
   host: context.caller.host,
@@ -467,21 +461,6 @@ const portableTask = (task: TaskRecord): TaskRecord => {
   if (typeof stripped !== "object" || stripped === null || Array.isArray(stripped))
     throw new TypeError("portable task rewrite produced a non-record");
   const clone = structuredClone(stripped) as TaskRecord;
-  const demote = (
-    facts: Assessment["facts"][number][],
-    signals: Assessment["signals"],
-    consequences: Assessment["consequences"],
-  ): void => {
-    for (const fact of facts) Object.assign(fact, portableFact(fact));
-    for (const name of Object.keys(signals) as (keyof Assessment["signals"])[]) {
-      const signal = signals[name];
-      Object.assign(signal, portableSignal(signal));
-    }
-    for (const consequence of consequences)
-      Object.assign(consequence.fact, portableFact(consequence.fact));
-  };
-  for (const entry of clone.assessments)
-    demote(entry.data.facts, entry.data.signals, entry.data.consequences);
   // Candidate metadata can contain environment-derived paths and digests. The destination
   // must recapture its own candidate instead of receiving source checkout material.
   clone.candidates = [];
@@ -506,6 +485,7 @@ const importedTask = (
   for (const entry of [
     source.intent,
     ...source.assessments,
+    ...(source.judgments ?? []),
     ...source.evidence,
     ...source.decisions,
     ...source.findings,
@@ -529,9 +509,16 @@ const importedTask = (
       id: fresh(entry.id),
       recordedAt: timestamp,
       provenance: imported,
-      data: rewriteRecordRefs(data, assessmentSchema, remap) as typeof data,
+      data: rewriteRecordRefs(data, legacyAssessmentSchema, remap) as typeof data,
     };
   });
+  const judgments = source.judgments?.map((entry) => ({
+    ...entry,
+    id: fresh(entry.id),
+    recordedAt: timestamp,
+    provenance: imported,
+    data: rewriteRecordRefs(entry.data, judgmentSchema, remap) as typeof entry.data,
+  }));
   const evidence = source.evidence.map((entry) => ({
     ...entry,
     id: fresh(entry.id),
@@ -603,6 +590,7 @@ const importedTask = (
     status: "paused",
     closure: null,
     assessments,
+    ...(judgments ? { judgments } : {}),
     evidence,
     decisions: decisions.map((entry) => {
       const data = rewriteRecordRefs(entry.data, decisionSchema, remap) as typeof entry.data;
@@ -700,7 +688,9 @@ export class WorkitCore {
    * this checkout's branch (D3). Recording actions create that task on first
    * use; reads and lifecycle actions only look it up. Helpers never create.
    */
-  private implicitTask(family: OperationFamily, request: unknown): Result<unknown> {
+  private implicitTask(family: OperationFamily, raw: unknown): Result<unknown> {
+    // Flat tool inputs become the canonical request first (S17).
+    const request = normalizeOperationInput(family, raw, this.context.caller.host);
     if (typeof request !== "object" || request === null || Array.isArray(request))
       return success(null, null, request);
     const value = request as { action?: unknown; taskId?: unknown };
@@ -969,7 +959,10 @@ export class WorkitCore {
     if ((this.context.workerId ?? null) !== null)
       return failure("permission_denied", "helpers cannot change task requirements");
     this.fillRevisions(input, task.data);
-    const resolved = this.resolve(task.data, input.assessment);
+    const judged = normalizeJudgment(input.judgment, latestJudgment(task.data));
+    if (!judged.ok) return judged;
+    const judgment = judged.data.judgment;
+    const resolved = this.resolve(task.data, judgment);
     if (!resolved.ok) return resolved;
     if (input.action === "preview") return success(null, null, resolved.data);
     if (input.action !== "assess")
@@ -986,16 +979,18 @@ export class WorkitCore {
           "policy reassessed",
           mutation.now,
         );
-        const assessment = {
+        const entry = {
           id: newId(),
           recordedAt: mutation.now,
           provenance: provenance(this.context),
-          data: input.assessment as Assessment,
+          data: judgment,
         };
         const next = {
           ...current,
           constraints: this.context.constraints,
-          assessments: [...current.assessments, assessment],
+          judgments: [...(current.judgments ?? []), entry],
+          // Older readers would drop judgments on rewrite: they fail closed instead.
+          critical: [...new Set([...(current.critical ?? []), "judgments"])],
           policy: resolved.data,
           policyChanges: nextChange
             ? [...current.policyChanges, nextChange]
@@ -1270,9 +1265,15 @@ export class WorkitCore {
       const workspace = this.store.readWorkspace();
       if (!workspace.ok) return workspace;
       if (!workspace.data) return failure("not_found", "workspace not found");
-      if (input.binding.taskId !== task.data.id || input.binding.workspaceId !== workspace.data.id)
+      // Flat inputs omit the binding ids: a decision binds to where it is recorded.
+      const binding = {
+        ...input.binding,
+        taskId: input.binding.taskId ?? task.data.id,
+        workspaceId: input.binding.workspaceId ?? workspace.data.id,
+      } as Decision["binding"];
+      if (binding.taskId !== task.data.id || binding.workspaceId !== workspace.data.id)
         return failure("invalid_input", "decision task or workspace binding is invalid");
-      const content = verifyDecisionContentAtRoot(this.store.root, input.binding);
+      const content = verifyDecisionContentAtRoot(this.store.root, binding);
       if (!content.ok) return content;
       const knownRequirements = new Set(
         task.data.policy?.requirements.map((item) => item.id) ?? [],
@@ -1281,7 +1282,7 @@ export class WorkitCore {
         return failure("invalid_input", "decision references an unknown requirement");
       const base = {
         purpose: input.purpose,
-        binding: input.binding,
+        binding,
         response: input.response,
         requirementIds: input.requirementIds,
         revoked: null,
@@ -1765,20 +1766,12 @@ export class WorkitCore {
     });
   }
 
-  private resolve(task: TaskRecord, assessment: Assessment): Result<Policy> {
+  private resolve(task: TaskRecord, judgment: Judgment): Result<Policy> {
     return resolvePolicy({
       intent: task.intent.data,
-      assessment,
+      judgment,
       constraints: this.context.constraints,
-      prior: {
-        decisions: task.decisions
-          .filter((entry) => entry.provenance.kind !== "imported")
-          .map((entry) => entry.data),
-        findings: task.findings
-          .filter((entry) => entry.provenance.kind !== "imported")
-          .map((entry) => entry.data),
-        requirements: task.origin || task.policy === null ? [] : task.policy.requirements,
-      },
+      verification: workspaceVerification(this.context.root),
     });
   }
 

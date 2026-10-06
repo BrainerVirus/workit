@@ -132,7 +132,7 @@ const usage = (io: Io, error: string): number =>
 
 const verdictLines = (check: VerdictCheck): string[] => {
   const lines = [
-    `${check.branch} @ ${(check.head ?? "no commit").slice(0, 12)}: current: ${check.current.basis}${typeof check.current.verdict?.result === "string" ? ` (${check.current.verdict.result})` : ""}; ${check.accepted.accepted ? "accepted" : `not accepted (${check.accepted.reasons.join(", ")})`}`,
+    `${check.branch} @ ${(check.head ?? "no commit").slice(0, 12)}: current: ${check.current.basis}${typeof check.current.verdict?.result === "string" ? ` (${check.current.verdict.result})` : ""}; ${check.accepted.accepted ? "accepted" : `not accepted (${check.accepted.reasons.join(", ")})`}; review: ${check.review}`,
   ];
   for (const entry of check.verdicts)
     lines.push(

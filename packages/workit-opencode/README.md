@@ -22,8 +22,11 @@ Local checkout: run `bun packages/workit-opencode/scripts/build.ts`, then pin
 
 Effects (git, forge, files) run through OpenCode's native tools and the
 `workit` CLI under OpenCode permissions plus the workspace
-[grants](https://github.com/BrainerVirus/workit/blob/main/docs/guides/grants.md). The shell hook only denies direct,
-unquoted branch-creation commands that break the naming policy. Details:
+[grants](https://github.com/BrainerVirus/workit/blob/main/docs/guides/grants.md). The permission hook denies direct, unquoted
+branch-creation commands that break the naming policy, and edits or
+recognizable shell writes while the branch task has an open product choice or
+needs a plan ([before-write gate](https://github.com/BrainerVirus/workit/blob/main/docs/guides/verification.md)). Tools take flat
+fields. Details:
 [hosts guide](https://github.com/BrainerVirus/workit/blob/main/docs/guides/hosts.md#opencode).
 
 ```bash

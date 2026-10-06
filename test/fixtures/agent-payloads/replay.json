@@ -1,0 +1,208 @@
+{
+  "description": "Realistic agent tool payloads, replayed in order against one branch task (S17 invalid_input check). Shapes seen from agents: flat fields, omitted schemaVersion/taskId/revisions, aliases, stringified values (Pi), and the <=6.x nested assessment.",
+  "payloads": [
+    {
+      "name": "start with an objective only",
+      "family": "task",
+      "input": { "action": "start", "objective": "Fix the login redirect loop" }
+    },
+    {
+      "name": "flat judgment with aliases",
+      "family": "policy",
+      "input": {
+        "action": "assess",
+        "risk": "low",
+        "behavior": "yes",
+        "productChoice": "no",
+        "needs_plan": false
+      }
+    },
+    {
+      "name": "judgment with string booleans and a note",
+      "family": "policy",
+      "input": {
+        "action": "assess",
+        "riskTier": "medium",
+        "behaviorChange": "true",
+        "productChoiceOpen": "false",
+        "needsPlan": "no",
+        "note": "redirect logic only"
+      }
+    },
+    {
+      "name": "Pi stringified judgment values",
+      "family": "policy",
+      "input": {
+        "schemaVersion": "1",
+        "action": "preview",
+        "behaviorChange": "true",
+        "refs": "[\"docs/plan.md\"]"
+      }
+    },
+    {
+      "name": "nested judgment object",
+      "family": "policy",
+      "input": {
+        "action": "preview",
+        "judgment": {
+          "riskTier": "trivial",
+          "behaviorChange": false,
+          "productChoiceOpen": false,
+          "needsPlan": false
+        }
+      }
+    },
+    {
+      "name": "<=6.x nested assessment (old shape)",
+      "family": "policy",
+      "input": {
+        "schemaVersion": 1,
+        "action": "assess",
+        "assessment": {
+          "facts": [
+            {
+              "statement": "redirect handler loops on expired sessions",
+              "basis": "observed",
+              "refs": [{ "kind": "file", "path": "src/auth.ts", "digest": null }]
+            }
+          ],
+          "signals": {
+            "approachUnknown": {
+              "value": false,
+              "basis": "inferred",
+              "reason": "known",
+              "refs": []
+            },
+            "productChoiceOpen": {
+              "value": false,
+              "basis": "inferred",
+              "reason": "settled",
+              "refs": []
+            },
+            "behaviorChange": {
+              "value": true,
+              "basis": "inferred",
+              "reason": "redirect changes",
+              "refs": []
+            },
+            "mechanicalLowRisk": {
+              "value": false,
+              "basis": "inferred",
+              "reason": "behavioral",
+              "refs": []
+            },
+            "durableAgreementNeeded": {
+              "value": false,
+              "basis": "inferred",
+              "reason": "none",
+              "refs": []
+            },
+            "coordinationPlanNeeded": {
+              "value": false,
+              "basis": "inferred",
+              "reason": "none",
+              "refs": []
+            },
+            "helperUseful": { "value": false, "basis": "inferred", "reason": "none", "refs": [] },
+            "testFirstPractical": {
+              "value": true,
+              "basis": "inferred",
+              "reason": "unit test",
+              "refs": []
+            }
+          },
+          "consequences": [],
+          "verification": [
+            {
+              "claim": "auth tests pass",
+              "scope": { "description": "auth", "paths": ["src"], "exclusions": [] },
+              "availableChecks": [],
+              "gaps": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "<=6.x assessment with unknowns and extra keys",
+      "family": "policy",
+      "input": {
+        "action": "assess",
+        "facts": [],
+        "signals": {
+          "behaviorChange": {
+            "value": "unknown",
+            "basis": "unknown",
+            "reason": "not sure",
+            "refs": []
+          }
+        },
+        "consequences": [
+          {
+            "area": "security",
+            "fact": { "statement": "touches auth", "basis": "inferred", "refs": [] }
+          }
+        ],
+        "verification": [],
+        "confidence": "high"
+      }
+    },
+    { "name": "explain", "family": "policy", "input": { "action": "explain" } },
+    {
+      "name": "progress with string blockers",
+      "family": "task",
+      "input": {
+        "action": "progress",
+        "summary": "handler fixed, tests pending",
+        "nextAction": "workit check test",
+        "blockers": ["waiting on CI"]
+      }
+    },
+    {
+      "name": "Pi stringified progress",
+      "family": "task",
+      "input": { "action": "progress", "summary": "half", "blockers": "[]" }
+    },
+    {
+      "name": "evidence note, flat",
+      "family": "evidence",
+      "input": {
+        "action": "record",
+        "kind": "investigation",
+        "claim": "loop reproduced",
+        "result": "passed",
+        "summary": "curl shows 302 loop",
+        "refs": ["src/auth.ts"]
+      }
+    },
+    {
+      "name": "finding, flat with one path",
+      "family": "finding",
+      "input": {
+        "action": "record",
+        "claim": "session expiry is not checked",
+        "consequence": "users loop forever",
+        "paths": "src/auth.ts",
+        "refs": "src/auth.ts"
+      }
+    },
+    {
+      "name": "decision, flat stated choice",
+      "family": "decision",
+      "input": {
+        "action": "record",
+        "purpose": "preference",
+        "response": "stated",
+        "presented": "Redirect to /login or show an error?",
+        "choice": "redirect to /login"
+      }
+    },
+    { "name": "inspect summary", "family": "task", "input": { "action": "inspect" } },
+    {
+      "name": "list open tasks",
+      "family": "task",
+      "input": { "action": "list", "status": "open", "limit": "5" }
+    },
+    { "name": "export", "family": "state", "input": { "action": "export" } }
+  ]
+}

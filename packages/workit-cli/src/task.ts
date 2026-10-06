@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { checkRoot } from "@brainervirus/workit-core/src/check-config";
+import { judgeTokens } from "@brainervirus/workit-core/src/core/policy/judgment";
 import { sameDirectoryIdentity } from "@brainervirus/workit-core/src/core/task-store";
 import {
   OPERATION_FAMILIES,
@@ -173,9 +174,21 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   let view: string | undefined;
   let actor: string | undefined;
   let json = jsonRequested;
+  const judge: string[] = [];
   const seen = new Set<string>();
   for (let i = 2; i < argv.length; i += 1) {
     const token = argv[i];
+    // `policy assess|preview --judge behavior=yes risk=normal [--ref <path>]…` (S17).
+    if (family === "policy" && (token === "--judge" || token === "--ref")) {
+      if (token === "--ref") {
+        const value = argv[++i];
+        if (value === undefined || !value.trim()) return parseUsage("--ref requires a value", json);
+        judge.push(`ref=${value}`);
+        continue;
+      }
+      while (argv[i + 1] !== undefined && !argv[i + 1].startsWith("--")) judge.push(argv[++i]);
+      continue;
+    }
     if (token === "--json" || token === "--confirm") {
       if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
       seen.add(token);
@@ -205,6 +218,11 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   if (!loaded.ok) return { ok: false, result: loaded.result, json };
   const request = loaded.value;
   if (!("schemaVersion" in request)) request.schemaVersion = 1;
+  if (judge.length)
+    request.judgment = {
+      ...(isObject(request.judgment) ? request.judgment : {}),
+      ...judgeTokens(judge),
+    };
   for (const [key, value] of [
     ["action", action],
     ...(taskId === undefined ? [] : [["taskId", taskId] as const]),
@@ -296,6 +314,40 @@ const contextFor = (
   now: deps.now ?? (() => new Date().toISOString()),
 });
 
+type RequirementEvaluation = { requirementId: string; status: string; reason: string };
+
+/**
+ * A recorded policy with each requirement's current status, so the output
+ * tells what is already met from what is still owed (S17 review L11).
+ */
+function withRequirementStatus(
+  core: WorkitCore,
+  result: Result<unknown>,
+  taskId: unknown,
+): Result<unknown> {
+  if (!result.ok || !result.data) return result;
+  const policy = result.data as { requirements: Array<{ id: string }> };
+  const view = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    ...(typeof taskId === "string" ? { taskId } : {}),
+  });
+  const evaluations = view.ok
+    ? ((view.data as { requirements?: RequirementEvaluation[] }).requirements ?? [])
+    : [];
+  return success(result.revision, result.workspaceRevision, {
+    ...policy,
+    requirements: policy.requirements.map((requirement) => {
+      const evaluation = evaluations.find((item) => item.requirementId === requirement.id);
+      return {
+        ...requirement,
+        status: evaluation?.status ?? "unsatisfied",
+        statusReason: evaluation?.reason ?? null,
+      };
+    }),
+  });
+}
+
 function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false): void {
   const stream = result.ok ? outOf(deps) : errOf(deps);
   if (!result.ok) {
@@ -310,6 +362,23 @@ function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false)
     write(stream, JSON.stringify(data.bundle, null, 2));
     write(stream, "Destination context");
     write(stream, JSON.stringify(data.context, null, 2));
+    return;
+  }
+  if (data && typeof data === "object" && "policyVersion" in data) {
+    const requirements = (data.requirements ?? []) as Array<{
+      ruleId: string;
+      before: string;
+      status?: string;
+      statusReason?: string | null;
+      satisfaction: string;
+    }>;
+    if (!requirements.length)
+      write(stream, "no requirements: nothing to prove beyond your own checks");
+    for (const item of requirements)
+      write(
+        stream,
+        `${item.status === "satisfied" || item.status === "accepted_limitation" ? "met " : "owed"} ${item.ruleId} (before ${item.before}): ${item.status === undefined ? item.satisfaction : (item.statusReason ?? item.satisfaction)}`,
+      );
     return;
   }
   const rows = Array.isArray(data) ? data : [data];
@@ -374,6 +443,8 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
         });
     }
   } else result = dispatch(core, parsed.parsed.family, parsed.parsed.request);
+  if (parsed.parsed.family === "policy" && parsed.parsed.action === "assess")
+    result = withRequirementStatus(core, result, parsed.parsed.request.taskId);
   if (parsed.parsed.json) jsonResult(outOf(deps), result);
   else printHuman(result, deps, parsed.parsed.handoff);
   return result.ok ? 0 : 1;

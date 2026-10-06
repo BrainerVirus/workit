@@ -121,6 +121,8 @@ const workspaceConfigSchema = z
     autoApprove: z.union([z.boolean(), z.array(nonBlank)]).optional(),
     /** Where an unnamed request stops (skills read it); same rules as grants. */
     defaultEndpoint: z.enum(["commit", "pr"]).optional(),
+    /** How a normal-risk behavior change is verified (S17); same rules as grants. */
+    verification: z.enum(["self", "independent"]).optional(),
     /** Autonomy grants (D15): only ever set here, by the user. */
     autonomy: z
       .object(

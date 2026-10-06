@@ -25,6 +25,9 @@ The MCP server and hooks run through
 so manifests carry no repository-relative `dist` paths. The age override
 works around npm/cli#9765; `workit doctor` enforces this exact shape. MCP is
 read-only for unattested callers; mutations run through the `workit` CLI.
+The `preToolUse` hook applies the [before-write gate](https://github.com/BrainerVirus/workit/blob/main/docs/guides/verification.md)
+to write tools while the branch task has an open product choice or needs a
+plan.
 
 ## Marketplace
 

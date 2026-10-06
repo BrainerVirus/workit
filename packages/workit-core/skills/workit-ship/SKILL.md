@@ -33,7 +33,7 @@ merge: Stop at PR-ready unless the user set merge as the endpoint.
    `workit ci rerun --failed --reason flake` (once per head). Real: reproduce
    with `workit check`, fix the root cause, batch fixes into one push.
 6. **Verified.** After the last push a non-author records a verdict
-   (workit-review). Land only when granted: `workit stack land` (the
+   (workit-review); `pr status` showing self-reviewed is not verified. Land only when granted: `workit stack land` (the
    contiguous verified run from the root) or `workit pr merge`.
 7. **Observe it landed:** `workit verify-delivery pr` or `merge`.
 

@@ -7,8 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   OPERATION_FAMILIES,
-  OPERATION_SCHEMA_MAX_DEPTH,
-  boundedOperationJsonSchema,
+  flatOperationJsonSchema,
   type OperationContext,
 } from "@/packages/workit-core/src/core";
 import type { Host } from "@/packages/workit-core/src/core/task-contract";
@@ -54,12 +53,12 @@ test("MCP exposes exactly the eight family tools with core-derived 2020-12 schem
     );
     for (const family of OPERATION_FAMILIES) {
       const tool = listed.tools.find((candidate) => candidate.name === `workit_${family}`)!;
-      expect(tool.inputSchema).toMatchObject(boundedOperationJsonSchema(family));
+      expect(tool.inputSchema).toMatchObject(flatOperationJsonSchema(family)!);
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.inputSchema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
-      expect(jsonDepth(tool.inputSchema), `workit_${family}`).toBeLessThanOrEqual(
-        OPERATION_SCHEMA_MAX_DEPTH,
-      );
+      // S17: flat, so no provider needs a depth projection.
+      expect(propertyDepth(tool.inputSchema), `workit_${family}`).toBe(1);
+      expect(JSON.stringify(tool.inputSchema)).not.toMatch(/"(oneOf|anyOf|allOf)"/);
     }
   } finally {
     await client.close();
@@ -67,18 +66,16 @@ test("MCP exposes exactly the eight family tools with core-derived 2020-12 schem
   }
 });
 
-const jsonDepth = (node: unknown, current = 0): number => {
-  if (Array.isArray(node))
-    return node.reduce((max, item) => Math.max(max, jsonDepth(item, current)), current);
-  if (node && typeof node === "object") {
-    const keys = Object.keys(node);
-    if (!keys.length) return current;
-    return keys.reduce(
-      (max, key) => Math.max(max, jsonDepth((node as Record<string, unknown>)[key], current + 1)),
-      current,
-    );
-  }
-  return current;
+/** Object nesting depth: 1 when no property is itself an object with properties. */
+const propertyDepth = (node: unknown): number => {
+  if (!node || typeof node !== "object") return 0;
+  const record = node as { properties?: Record<string, unknown>; items?: unknown };
+  const children = [
+    ...Object.values(record.properties ?? {}),
+    ...(record.items ? [record.items] : []),
+  ];
+  const nested = Math.max(0, ...children.map(propertyDepth));
+  return record.properties ? 1 + nested : nested;
 };
 
 test("omitted caller attestation fails closed for mutations", async () => {
@@ -106,14 +103,10 @@ test("unattested MCP callers see only read-only actions", async () => {
       "workit_state",
     ]);
     const task = listed.tools.find((tool) => tool.name === "workit_task")!;
-    const oneOf =
-      (task.inputSchema as { oneOf?: Array<{ properties?: { action?: { const?: string } } }> })
-        .oneOf ?? [];
-    expect(oneOf.map((branch) => branch.properties?.action?.const ?? "").toSorted()).toEqual([
-      "inspect",
-      "list",
-    ]);
-    expect(jsonDepth(task.inputSchema)).toBeLessThanOrEqual(OPERATION_SCHEMA_MAX_DEPTH);
+    const action = (task.inputSchema as unknown as { properties: { action: { enum: string[] } } })
+      .properties.action;
+    expect(action.enum.toSorted()).toEqual(["inspect", "list"]);
+    expect(propertyDepth(task.inputSchema)).toBe(1);
   } finally {
     await client.close();
     await server.close();
@@ -342,12 +335,9 @@ test("MCP publishes every core action in every family without a second action ta
   try {
     const listed = await client.listTools();
     for (const family of OPERATION_FAMILIES) {
-      const schema = listed.tools.find((tool) => tool.name === `workit_${family}`)!.inputSchema as {
-        oneOf?: Array<{ properties?: { action?: { const?: string } } }>;
-      };
-      const actions = new Set(
-        (schema.oneOf ?? []).map((branch) => branch.properties?.action?.const).filter(Boolean),
-      );
+      const schema = listed.tools.find((tool) => tool.name === `workit_${family}`)!
+        .inputSchema as unknown as { properties: { action: { enum: string[] } } };
+      const actions = new Set(schema.properties.action.enum);
       expect(actions).toEqual(families.get(family) ?? new Set<string>());
     }
   } finally {

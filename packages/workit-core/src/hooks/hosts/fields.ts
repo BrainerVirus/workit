@@ -53,3 +53,38 @@ export const commandText = (value: unknown): string | null => {
   const joined = argv.map(quoteArg).join(" ");
   return nonEmpty(joined) ? joined : null;
 };
+
+const WRITE_TOOLS = new Set([
+  "write",
+  "edit",
+  "multiedit",
+  "notebookedit",
+  "applypatch",
+  "patch",
+  "delete",
+  "remove",
+  "rename",
+  "mkdir",
+  "mv",
+  "cp",
+  "touch",
+  "strreplace",
+  "searchreplace",
+  "editfile",
+  "writefile",
+]);
+/** A host tool that writes files (Claude Edit/Write, Cursor Write/Delete, apply_patch…). */
+export const isWriteTool = (name: unknown): boolean =>
+  typeof name === "string" && WRITE_TOOLS.has(name.toLowerCase().replace(/[_-]/g, ""));
+
+const PATH_KEYS = ["file_path", "filePath", "notebook_path", "path", "target_file", "file"];
+/** The files a write tool names: its path fields, or the files of an apply_patch body. */
+export const writePaths = (input: unknown): string[] => {
+  if (!isRecord(input)) return [];
+  const paths = PATH_KEYS.map((key) => input[key]).filter(nonEmpty);
+  for (const value of Object.values(input))
+    if (typeof value === "string")
+      for (const match of value.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm))
+        paths.push(match[1].trim());
+  return [...new Set(paths)];
+};

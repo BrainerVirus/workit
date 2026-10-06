@@ -2,6 +2,7 @@
 import { sessionContextText, turnContextText } from "./context";
 import type { HostDescriptor, Support } from "./descriptor";
 import { shellPolicy } from "./policy";
+import { shellWrites, writeGate } from "./write-gate";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
 export type HookDeps = { descriptor: HostDescriptor; addendum: string | null };
@@ -58,9 +59,13 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       const key = input.session.id ? `${input.host}\0${input.session.id}` : null;
       const offer = event.source === "startup" && (key === null || !offered.has(key));
       if (offer && key !== null) offered.add(key);
+      const advisory = usable(descriptor.events["write.pre"].support)
+        ? null
+        : `Workit cannot gate file writes on ${descriptor.label} (no pre-write hook): before-write requirements (an open product choice, a missing plan) are advisory here, so settle them before editing.`;
+      const addendum = [deps.addendum, advisory].filter(Boolean).join("\n") || null;
       return {
         kind: "context",
-        text: sessionContextText(input, descriptor, { offer, addendum: deps.addendum }),
+        text: sessionContextText(input, descriptor, { offer, addendum }),
       };
     }
     case "context.turn": {
@@ -68,8 +73,18 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       const text = turnContextText(input, descriptor);
       return text ? { kind: "context", text } : NONE;
     }
-    case "shell.pre":
-      return usable(descriptor.shellPolicy.deny) ? shellPolicy(input.cwd, event.command) : NONE;
+    case "shell.pre": {
+      const policy = usable(descriptor.shellPolicy.deny)
+        ? shellPolicy(input.cwd, event.command)
+        : NONE;
+      if (policy.kind !== "none" || !usable(descriptor.events["write.pre"].support)) return policy;
+      const writes = shellWrites(event.command);
+      return writes.writes ? writeGate(input.cwd, writes.targets) : NONE;
+    }
+    case "write.pre":
+      return usable(descriptor.events["write.pre"].support)
+        ? writeGate(input.cwd, event.paths)
+        : NONE;
     case "subagent.start":
       return {
         kind: "context",
@@ -102,7 +117,7 @@ export const failureDecision = (
   event: HookEventKind | null,
   error: string,
 ): HookDecision => {
-  if (event === "shell.pre" || event === "tool.pre")
+  if (event === "shell.pre" || event === "tool.pre" || event === "write.pre")
     return descriptor.shellPolicy.failClosed
       ? { kind: "deny", reason: error, unblock: null }
       : NONE;

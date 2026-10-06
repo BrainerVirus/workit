@@ -70,7 +70,7 @@ async function status(argv: string[], io: Io): Promise<number> {
       lines.length - 1,
       0,
       data.verdict
-        ? `verdict: ${data.verdict.accepted ? `accepted (${data.verdict.basis})` : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
+        ? `verdict: ${data.verdict.accepted ? `accepted (${data.verdict.basis})` : data.verdict.review === "self-reviewed" ? "self-reviewed (author's own verdict; not independent)" : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
         : "verdict: unknown (ledger unreadable)",
     );
     return lines;
@@ -87,6 +87,7 @@ function verdictBlock(cwd: string, branch: string) {
   const check = checkVerdicts(cwd, branch, ledger.value.rows);
   return {
     accepted: check.accepted.accepted,
+    review: check.review,
     basis: check.current.basis,
     reasons: check.accepted.reasons as string[],
     head: check.head,

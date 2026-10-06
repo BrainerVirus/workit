@@ -106,8 +106,12 @@ and compared by `test/acceptance/deterministic.test.ts`.
    applying; preserve unknown fields, credentials, exact/local pins and
    narrower workspace overrides. Never migrate task history through setup or
    weaken host permissions.
-8. Grants are read only from the user's `workspaces.json`; no repository file,
-   MCP tool or host tool may raise them.
+8. Grants (and the `verification` mode) are read only from the user's
+   `workspaces.json`; no repository file, MCP tool or host tool may raise them.
+9. Agent-facing tool schemas stay flat (depth 1): add fields in
+   `core/operation-input.ts`, not nested objects. The before-write gate gates
+   working-tree edits only, never Workit's own commands, history moves or the
+   paths that unblock it.
 
 ## Where a rule lives
 

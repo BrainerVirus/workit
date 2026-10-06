@@ -6,7 +6,7 @@ import {
   TaskStore,
   WorkitCore,
   failure,
-  parseOperation,
+  parseAdvertisedOperation,
   type OperationFamily,
 } from "@brainervirus/workit-core/src/core";
 import {
@@ -111,7 +111,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     store: TaskStore,
     workerId: string | null,
   ): unknown => {
-    const parsed = parseOperation(family, input);
+    const parsed = parseAdvertisedOperation(family, input, "opencode");
     if (!parsed.ok) return parsed;
     const core = new WorkitCore(store, {
       root,

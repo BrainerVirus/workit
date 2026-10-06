@@ -300,9 +300,10 @@ test("policy placeholders are gone and summaries carry timestamps", () => {
     expect(assessed.ok).toBe(true);
     if (!assessed.ok || !assessed.data) return;
     const product = assessed.data.requirements.find(
-      (requirement) => requirement.ruleId === "product-decision",
+      (requirement) => requirement.ruleId === "decision:product",
     );
     expect(product?.dependentAction).toBeNull();
+    expect(product?.before).toBe("write");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -448,7 +449,7 @@ test("close reports rule-level remedies for unsatisfied requirements", () => {
       schemaVersion: 1,
       action: "assess",
       taskId: (started.data as { id: string }).id,
-      assessment: assessment(),
+      behaviorChange: true,
     });
     expect(assessed.ok).toBe(true);
     const closed = core.task({

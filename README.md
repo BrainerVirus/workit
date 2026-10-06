@@ -158,10 +158,17 @@ set the ceiling: `push`, `pr` and `rerun` are allowed by default; `merge` needs
 unnamed request stops. Raising a grant needs you at a terminal; agents can only
 lower them. See [grants](docs/guides/grants.md).
 
-**Policy.** Workit assesses how much verification a change needs and keeps
-that proportionate: routine edits need no ceremony, consequential changes need
-real checks and an independent review. Host permissions (allow/ask/deny,
-sandbox) always stay authoritative; Workit adds no consent prompts of its own.
+**Policy.** Judge tracked work in four calls (`workit policy assess --judge
+risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no`,
+or the flat `workit_policy` tool fields) and Workit derives what it needs:
+nothing for trivial work, an observed `workit check test` and a verdict for a
+behavior change (the author's own, shown as self-reviewed, unless the
+workspace sets `verification: "independent"`), an independent live verdict and
+a plan for high risk. An open product choice or a needed plan blocks code
+edits until recorded, on every host with a pre-write hook (advisory on Codex).
+See [verification](docs/guides/verification.md). Host permissions
+(allow/ask/deny, sandbox) always stay authoritative; Workit adds no consent
+prompts of its own.
 
 **Stacks.** `workit stack` manages plain base-branch PR chains on GitHub and
 GitLab (no Graphite or `gh stack` needed): plan, restack after a merge, and

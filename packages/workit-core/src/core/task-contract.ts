@@ -267,96 +267,27 @@ export const entrySchema = <T extends z.ZodType>(data: T) =>
   z.object({ id, recordedAt: utc, provenance: provenanceSchema, data }).strict();
 export type Entry<T> = { id: Id; recordedAt: Utc; provenance: Provenance; data: T };
 
-export const factSchema = z
+/** Risk tiers an agent judges; aliases (low, medium, …) are mapped on input. */
+export const RISK_TIERS = ["trivial", "normal", "high"] as const;
+export type RiskTier = (typeof RISK_TIERS)[number];
+/**
+ * The agent's policy judgment (S17): four flat calls plus an optional note
+ * and supporting refs. Everything else is derived deterministically
+ * (core/policy/derive.ts).
+ */
+export const judgmentSchema = z
   .object({
-    statement: text,
-    basis: z.enum(["observed", "inferred", "unknown"]),
+    riskTier: z.enum(RISK_TIERS),
+    behaviorChange: z.boolean(),
+    productChoiceOpen: z.boolean(),
+    needsPlan: z.boolean(),
+    note: text.nullable(),
     refs: z.array(refSchema),
   })
-  .strict()
-  .check((ctx) => {
-    if (ctx.value.basis === "observed" && ctx.value.refs.length === 0)
-      ctx.issues.push({
-        code: "custom",
-        input: ctx.value,
-        message: "observed facts require supporting references",
-        path: ["refs"],
-      });
-  });
-export type Fact = z.infer<typeof factSchema>;
-export const signalSchema = z
-  .object({
-    value: z.union([z.boolean(), z.literal("unknown")]),
-    basis: z.enum(["observed", "inferred", "unknown"]),
-    reason: text,
-    refs: z.array(refSchema),
-  })
-  .strict()
-  .check((ctx) => {
-    const signal = ctx.value;
-    const valid =
-      signal.value === "unknown"
-        ? signal.basis === "unknown"
-        : signal.basis === "observed" || signal.basis === "inferred";
-    if (!valid)
-      ctx.issues.push({
-        code: "custom",
-        input: signal,
-        message: "signal value and basis disagree",
-        path: [],
-      });
-    if (signal.basis === "observed" && signal.refs.length === 0)
-      ctx.issues.push({
-        code: "custom",
-        input: signal,
-        message: "observed signals require supporting references",
-        path: ["refs"],
-      });
-  });
-export type Signal = z.infer<typeof signalSchema>;
-const signalSet = z
-  .object({
-    approachUnknown: signalSchema,
-    productChoiceOpen: signalSchema,
-    behaviorChange: signalSchema,
-    mechanicalLowRisk: signalSchema,
-    durableAgreementNeeded: signalSchema,
-    coordinationPlanNeeded: signalSchema,
-    helperUseful: signalSchema,
-    testFirstPractical: signalSchema,
-  })
   .strict();
-const consequenceSchema = z
-  .object({
-    area: z.enum([
-      "behavior",
-      "public_contract",
-      "data",
-      "security",
-      "operations",
-      "reversibility",
-      "consumers",
-    ]),
-    fact: factSchema,
-  })
-  .strict();
-const verificationSchema = z
-  .object({
-    claim: text,
-    scope: scopeSchema,
-    availableChecks: z.array(refSchema),
-    gaps: z.array(text),
-  })
-  .strict();
-export const assessmentSchema = z
-  .object({
-    facts: z.array(factSchema),
-    signals: signalSet,
-    consequences: z.array(consequenceSchema),
-    verification: z.array(verificationSchema),
-  })
-  .strict();
-export type Assessment = z.infer<typeof assessmentSchema>;
+export type Judgment = z.infer<typeof judgmentSchema>;
+/** A ≤6.x assessment as stored (facts/signals/…): kept verbatim, never written. */
+export const legacyAssessmentSchema = z.looseObject({});
 
 export const constraintSchema = z
   .object({
@@ -714,7 +645,10 @@ export const taskRecordSchema = z
     progress: progressSchema,
     pauseReason: text.nullable().optional(),
     runtime: runtimeSchema.optional(),
-    assessments: z.array(entrySchema(assessmentSchema)),
+    /** ≤6.x assessments, read-only history; judgments replace them. */
+    assessments: z.array(entrySchema(legacyAssessmentSchema)),
+    /** Listed in `critical` once written, so an older reader fails closed. */
+    judgments: z.array(entrySchema(judgmentSchema)).optional(),
     policy: policySchema.nullable(),
     policyChanges: z.array(policyChangeSchema),
     candidates: z.array(candidateSchema),
@@ -969,14 +903,16 @@ const taskOperations = {
     decisionIds: z.array(id).optional(),
   }),
 };
+/** Judgment values as sent; core/policy/judgment.ts maps aliases and validates. */
+const rawJudgment = z.record(z.string(), z.unknown());
 const policyOperations = {
   assess: operation({
     action: z.literal("assess"),
     ...taskId,
     expectedRevision: revision.optional(),
-    assessment: assessmentSchema,
+    judgment: rawJudgment,
   }),
-  preview: operation({ action: z.literal("preview"), ...taskId, assessment: assessmentSchema }),
+  preview: operation({ action: z.literal("preview"), ...taskId, judgment: rawJudgment }),
   explain: operation({ action: z.literal("explain"), ...taskId }),
 };
 const evidenceOperations = {
@@ -1015,7 +951,11 @@ const decisionOperations = {
     ...taskId,
     expectedRevision: revision.optional(),
     purpose: decisionSchema.shape.purpose,
-    binding: decisionSchema.shape.binding,
+    // The engine binds the decision to the task and workspace it records on.
+    binding: decisionSchema.shape.binding.extend({
+      taskId: id.optional(),
+      workspaceId: id.optional(),
+    }),
     response: decisionSchema.shape.response,
     requirementIds: z.array(digest),
   }),
@@ -1071,6 +1011,16 @@ export const operationSchemas = {
   state: z.discriminatedUnion("action", Object.values(stateOperations) as any),
 } as const;
 export type OperationRequest = z.infer<(typeof operationSchemas)[OperationFamily]>;
+/** Every action of each family, in contract order: the one action table. */
+export const OPERATION_ACTIONS: Record<OperationFamily, readonly string[]> = {
+  task: Object.keys(taskOperations),
+  policy: Object.keys(policyOperations),
+  evidence: Object.keys(evidenceOperations),
+  finding: Object.keys(findingOperations),
+  decision: Object.keys(decisionOperations),
+  worker: Object.keys(workerOperations),
+  state: Object.keys(stateOperations),
+};
 
 /**
  * Schemas advertised to hosts. Every `taskId` is optional there: an operation
@@ -1184,145 +1134,6 @@ export function parseOperation(family: OperationFamily, input: unknown): Result<
     reason: issue.message,
   }));
   return failure("invalid_input", "operation input is invalid", { fields });
-}
-
-export function operationJsonSchema(family: OperationFamily): z.core.JSONSchema.BaseSchema {
-  return z.toJSONSchema(advertisedOperationSchemas[family], { target: "draft-2020-12" });
-}
-
-/**
- * Advertised object depth shared by every host projection. Runtime validation
- * stays full-depth in parseOperation; this bound only keeps provider tool
- * schemas (e.g. Pi, MCP) within model nesting limits.
- */
-export const OPERATION_SCHEMA_DEPTH = 1;
-
-/** Provider nesting limit every advertised Workit schema must stay within. */
-export const OPERATION_SCHEMA_MAX_DEPTH = 10;
-
-const schemaShapeDescription = (value: unknown, depth = 0): string => {
-  if (!value || typeof value !== "object") return "value";
-  const schema = value as Record<string, unknown>;
-  if (Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf)) {
-    const options = (Array.isArray(schema.oneOf) ? schema.oneOf : schema.anyOf) as unknown[];
-    return `(${options.map((option) => schemaShapeDescription(option, depth)).join("|")})`;
-  }
-  if (schema.const !== undefined) return `=${JSON.stringify(schema.const)}`;
-  if (Array.isArray(schema.enum)) return `[${schema.enum.map(String).join("|")}]`;
-  const type = Array.isArray(schema.type) ? schema.type.join("/") : schema.type;
-  if (type === "array") return `arr<${schemaShapeDescription(schema.items, depth)}>`;
-  if (type === "object" && schema.properties && typeof schema.properties === "object") {
-    if (depth >= 2) return "obj";
-    const required = new Set(Array.isArray(schema.required) ? schema.required : []);
-    const properties = schema.properties as Record<string, unknown>;
-    const fields = Object.entries(properties).map(
-      ([name, child]) =>
-        `${name}${required.has(name) ? "!" : ""}:${schemaShapeDescription(child, depth + 1)}`,
-    );
-    return `obj{${fields.join(",")}}`;
-  }
-  if (typeof type !== "string") return "?";
-  return type
-    .split("/")
-    .map((part) => ({ string: "str", boolean: "bool", number: "num", null: "null" })[part] ?? part)
-    .join("|");
-};
-
-export const canonicalFieldsDescription = (
-  value: string[] | Record<string, unknown> | z.ZodType,
-): string => {
-  if (Array.isArray(value))
-    return `Canonical object fields: ${value.join(", ")}. Workit validates the complete nested value.`;
-  const isZodType = (schema: Record<string, unknown> | z.ZodType): schema is z.ZodType =>
-    "_zod" in schema && typeof schema._zod === "object";
-  const schema = isZodType(value)
-    ? (z.toJSONSchema(value, { target: "draft-2020-12" }) as Record<string, unknown>)
-    : value;
-  if (!schema.properties || typeof schema.properties !== "object") {
-    const variants = Array.isArray(schema.oneOf)
-      ? schema.oneOf
-      : Array.isArray(schema.anyOf)
-        ? schema.anyOf
-        : null;
-    return variants
-      ? `Canonical shapes: ${variants.map((variant) => schemaShapeDescription(variant)).join(" | ")}. Full nested value is validated.`
-      : "Canonical nested value; Workit validates the complete value.";
-  }
-  const properties = schema.properties as Record<string, unknown>;
-  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
-  const fields = Object.entries(properties).map(
-    ([name, child]) => `${name}${required.has(name) ? "!" : ""}:${schemaShapeDescription(child)}`,
-  );
-  return `Fields (! required): ${fields.join(", ")}. Full nested value is validated.`;
-};
-
-/**
- * Provider-safe projection of an operation JSON schema. Objects deeper than
- * maxDepth collapse to a described generic object that still names the
- * canonical fields, so models know what to send while providers accept the
- * shape. The full contract in operationJsonSchema is unchanged.
- *
- * With stringifiedObjects, every object, array, and primitive-const node also
- * accepts its JSON-encoded string form. Pi's transport stringifies nested
- * params before its own validation runs, so Pi publishes the tolerant shape
- * and decodes after validation; transports that carry real JSON stay strict.
- */
-export function boundedOperationJsonSchema(
-  family: OperationFamily,
-  maxDepth: number = OPERATION_SCHEMA_DEPTH,
-  stringifiedObjects = false,
-): Record<string, unknown> {
-  const tolerate = (projected: Record<string, unknown>): Record<string, unknown> => {
-    if (!stringifiedObjects) return projected;
-    if (projected.properties && typeof projected.properties === "object")
-      return { ...projected, type: ["object", "string"] };
-    if (projected.items) return { ...projected, type: ["array", "string"] };
-    if (
-      "const" in projected &&
-      (typeof projected.const === "number" || typeof projected.const === "boolean")
-    )
-      return { anyOf: [projected, { const: String(projected.const) }] };
-    if (projected.type === "object") return { ...projected, type: ["object", "string"] };
-    if (projected.type === "array") return { ...projected, type: ["array", "string"] };
-    return projected;
-  };
-  const collapse = (node: unknown, currentDepth: number): unknown => {
-    if (Array.isArray(node)) return node.map((item) => collapse(item, currentDepth));
-    if (typeof node !== "object" || node === null) return node;
-    const record = node as Record<string, unknown>;
-    if (record.properties && typeof record.properties === "object") {
-      const properties = record.properties as Record<string, unknown>;
-      const fields = Object.keys(properties);
-      if (currentDepth >= maxDepth || fields.length === 0) {
-        const description = stringifiedObjects
-          ? `${canonicalFieldsDescription(record)} A JSON-encoded string is also accepted.`
-          : canonicalFieldsDescription(record);
-        return tolerate({ type: "object", description });
-      }
-      return tolerate({
-        ...record,
-        properties: Object.fromEntries(
-          Object.entries(record.properties as Record<string, unknown>).map(([key, child]) => [
-            key,
-            collapse(child, currentDepth + 1),
-          ]),
-        ),
-      });
-    }
-    if (record.items) return tolerate({ ...record, items: collapse(record.items, currentDepth) });
-    const composed = (["anyOf", "oneOf", "allOf"] as const).filter((key) =>
-      Array.isArray(record[key]),
-    );
-    if (composed.length > 0) {
-      const projected: Record<string, unknown> = { ...record };
-      for (const key of composed)
-        projected[key] = (record[key] as unknown[]).map((item) => collapse(item, currentDepth));
-      return projected;
-    }
-    if ("const" in record) return tolerate({ ...record });
-    return node;
-  };
-  return collapse(operationJsonSchema(family), 0) as Record<string, unknown>;
 }
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };

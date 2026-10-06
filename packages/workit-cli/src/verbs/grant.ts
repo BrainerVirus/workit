@@ -6,7 +6,9 @@
 //   workit grant unset <workspace> <kind> [<kind>…]
 //
 // `defaultEndpoint=commit|pr` sets where an unnamed request stops (skills read
-// it); commit → pr is a raise, like any grant.
+// it); commit → pr is a raise, like any grant. `verification=self|independent`
+// sets what a normal-risk behavior change needs (S17): independent → self is a
+// raise (it lets the author verify its own work).
 //
 // Raising a grant (anything that lets an agent deliver more) needs the user at
 // an interactive terminal who types the workspace name to confirm; a headless
@@ -30,13 +32,14 @@ import {
   writeGrants,
   type DefaultEndpoint,
   type GrantKind,
+  type VerificationMode,
   type GrantValue,
   type Grants,
 } from "@brainervirus/workit-core/src/autonomy";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE =
-  "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint)";
+  "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr] [verification=self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
 
 /** Agent hosts that export a marker into the shells they run (best effort). */
 const AGENT_ENV = [
@@ -83,12 +86,14 @@ const describe = (
   grants: Grants,
   configured: readonly GrantKind[],
   endpoint: DefaultEndpoint,
+  verification: VerificationMode,
 ): string[] => [
   ...GRANT_KINDS.map(
     (kind) =>
       `  ${kind.padEnd(8)}${String(grants[kind]).padEnd(10)}${configured.includes(kind) ? "configured" : "default"}${kind === "release" ? " (no consumer yet: reserved, not enforced)" : ""}`,
   ),
   `  default endpoint: ${endpoint} (an unnamed request stops at ${endpoint === "pr" ? "an opened PR" : "a local commit"})`,
+  `  verification: ${verification} (${verification === "independent" ? "a normal-risk behavior change needs a non-author verdict" : "a normal-risk behavior change needs a passing check and the author's --self verdict, shown as self-reviewed"})`,
 ];
 
 function show(argv: string[], io: Io): number {
@@ -106,7 +111,7 @@ function show(argv: string[], io: Io): number {
     return emit(io, ok({ path: listed.path, defaults: DEFAULT_GRANTS, workspaces: rows }), () =>
       rows.flatMap((entry) => [
         `${entry.name} (${entry.glob})`,
-        ...describe(entry.grants, entry.configured, entry.defaultEndpoint),
+        ...describe(entry.grants, entry.configured, entry.defaultEndpoint, entry.verification),
       ]),
     );
   }
@@ -121,7 +126,7 @@ function show(argv: string[], io: Io): number {
     data.workspace
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
-    ...describe(data.grants, data.configured, data.defaultEndpoint),
+    ...describe(data.grants, data.configured, data.defaultEndpoint, data.verification),
     "raising a grant needs the user: workit grant set <workspace> <kind>=<value>",
   ]);
 }
@@ -141,12 +146,19 @@ async function change(
     return emit(io, fail("not_found", `no workspace named "${workspace}" in ${listed.path}`));
   const changes: { kind: GrantKind; value: GrantValue | undefined }[] = [];
   let endpoint: DefaultEndpoint | null | undefined;
+  let verification: VerificationMode | null | undefined;
   for (const spec of specs) {
     const [kind, raw] = verb === "set" ? spec.split("=", 2) : [spec, undefined];
     if (kind === "defaultEndpoint") {
       if (verb === "unset") endpoint = null;
       else if (raw === "commit" || raw === "pr") endpoint = raw;
       else return usage(io, `${spec}: defaultEndpoint must be commit or pr`);
+      continue;
+    }
+    if (kind === "verification") {
+      if (verb === "unset") verification = null;
+      else if (raw === "self" || raw === "independent") verification = raw;
+      else return usage(io, `${spec}: verification must be self or independent`);
       continue;
     }
     if (!isGrantKind(kind)) return usage(io, `unknown grant kind "${kind}"`);
@@ -163,6 +175,12 @@ async function change(
     .map(({ kind, value }) => ({ kind, value: String(value ?? DEFAULT_GRANTS[kind]) }));
   if (endpoint === "pr" && entry.defaultEndpoint !== "pr")
     raised.push({ kind: "defaultEndpoint", value: "pr" });
+  if (
+    verification !== undefined &&
+    verification !== "independent" &&
+    entry.verification === "independent"
+  )
+    raised.push({ kind: "verification", value: "self" });
   if (raised.length > 0) {
     const command = `workit grant ${verb} ${workspace} ${specs.join(" ")}`;
     const agent = agentMarker(io.env);
@@ -181,11 +199,11 @@ async function change(
     if (answer.trim() !== workspace)
       return emit(io, fail("blocked", "grant change not confirmed; nothing was written"));
   }
-  const written = writeGrants(workspace, changes, undefined, endpoint);
+  const written = writeGrants(workspace, changes, undefined, endpoint, verification);
   if (!written.ok) return emit(io, fail(written.code, written.error));
   return emit(io, ok(written), (data) => [
     `${data.workspace}: grants updated in ${data.path}${data.backup ? ` (previous copy: ${data.backup})` : ""}`,
-    ...describe(data.grants, data.configured, data.defaultEndpoint),
+    ...describe(data.grants, data.configured, data.defaultEndpoint, data.verification),
   ]);
 }
 

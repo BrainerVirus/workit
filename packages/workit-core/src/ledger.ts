@@ -56,6 +56,15 @@ export const VERDICT_RESULTS = [
 export type VerdictResult = (typeof VERDICT_RESULTS)[number];
 const PASSING: ReadonlySet<string> = new Set(["verified", "tests-verified", "type-check-only"]);
 const FAILING: ReadonlySet<string> = new Set(["failed", "blocked"]);
+/** Results that prove a behavior change; `type-check-only` never does (S17). */
+export const STRONG_RESULTS: ReadonlySet<string> = new Set(["verified", "tests-verified"]);
+
+/**
+ * How the branch's current code was reviewed: `verified` only with an
+ * accepted independent verdict; `self-reviewed` when the only current strong
+ * verdict is the author's own (`--self`), never shown as verified.
+ */
+export type ReviewLabel = "verified" | "self-reviewed" | "unreviewed";
 export const VERDICT_KINDS = ["unit", "live", "perf", "review"] as const;
 export type VerdictKind = (typeof VERDICT_KINDS)[number];
 export const VERDICT_SURFACES = ["ui", "cli", "api"] as const;
@@ -762,6 +771,9 @@ export type VerdictCheck = {
   current: { basis: VerdictBasis; verdict: ReadRow | null };
   /** What merge gates read: an accepted verdict and no current independent failure. */
   accepted: { accepted: boolean; verdict: ReadRow | null; reasons: RejectReason[] };
+  review: ReviewLabel;
+  /** The newest current, strong, self verdict when `review` is self-reviewed. */
+  selfVerdict: ReadRow | null;
   verdicts: VerdictEntry[];
   authors: string[];
 };
@@ -942,9 +954,17 @@ export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRo
             ? (["failing_verdict"] as RejectReason[])
             : (newestCurrent?.reasons ?? (["no_verdict"] as RejectReason[])),
         };
+  const selfEntry = failing
+    ? undefined
+    : verdicts.findLast(
+        (entry) =>
+          entry.current && !entry.independent && STRONG_RESULTS.has(String(entry.verdict.result)),
+      );
   return {
     branch,
     head,
+    review: accepted.accepted ? "verified" : selfEntry ? "self-reviewed" : "unreviewed",
+    selfVerdict: accepted.accepted ? null : (selfEntry?.verdict ?? null),
     base: newestCurrent?.verdict.base ?? fallbackBase,
     patchId: keyFor(newestCurrent?.verdict.base ?? fallbackBase).patchId,
     current: { basis: newestCurrent?.basis ?? "none", verdict: newestCurrent?.verdict ?? null },

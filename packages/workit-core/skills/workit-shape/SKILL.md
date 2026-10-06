@@ -43,7 +43,7 @@ a choice that is hard to reverse, surprising and a real trade-off; a glossary
 entry for a term you had to resolve; `.out-of-scope/<concept>.md` for a rejected
 request that will come back. A one-file mechanical fix gets none. Formats and
 triggers: `references/knowledge.md`. Record each settled choice once:
-`workit ledger decision "<what>" --why "<why>"`.
+`workit ledger decision "<what>" --why "<why>"`; cite a plan: `workit policy assess --ref <path>`.
 
 ## 5. Slice as tracer bullets
 

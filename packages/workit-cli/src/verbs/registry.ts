@@ -36,11 +36,15 @@ const family = (name: string): VerbEntry => ({
   usage:
     name === "task"
       ? 'workit task status [--all] | task start "<objective>" | task note "<text>" [--next "<t>"] | task close [--outcome verified|limited|stopped] | task adopt <id> | task <action> --payload <JSON>'
-      : `workit ${name} <action> [options]`,
+      : name === "policy"
+        ? "workit policy assess|preview --judge risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no [--ref <path>] | policy explain"
+        : `workit ${name} <action> [options]`,
   summary:
     name === "task"
       ? "The current branch's task (created by its first note, check or recording; no ids needed), or the task family"
-      : `Inspect and control a Workit task (${name} family)`,
+      : name === "policy"
+        ? "Judge the branch's work; Workit derives its checks, verdicts, decision and plan gates"
+        : `Inspect and control a Workit task (${name} family)`,
   load: async () => (await import("./family")).familyVerb(name),
 });
 

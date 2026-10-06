@@ -12,7 +12,7 @@ import {
   type WorkspaceRecord,
 } from "@/packages/workit-core/src/core";
 import * as coreApi from "@/packages/workit-core/src/core";
-import { assessment, caller, scope, taskStartRequest } from "./task-fixtures";
+import { assessment, caller, methodConstraint, scope, taskStartRequest } from "./task-fixtures";
 
 const now = "2026-01-01T00:00:00Z";
 
@@ -550,7 +550,11 @@ test("a reviewer assignment without requirement ids fails on an assessed task", 
 });
 
 test("a completed worker report satisfies its delegation requirement", () => {
-  const lead = active({ nativeWorker: observationVerifier() });
+  // Delegation requirements come from a project constraint (S17 derives none).
+  const lead = active({
+    nativeWorker: observationVerifier(),
+    constraints: [methodConstraint("delegation")],
+  });
   const assessed = lead.core.policy({
     schemaVersion: 1,
     action: "assess",
@@ -613,7 +617,9 @@ test("a completed worker report satisfies its delegation requirement", () => {
   if (!assessed.ok) throw new Error(assessed.error);
   const delegationId = (
     assessed.data as { requirements: Array<{ id: string; ruleId: string }> }
-  ).requirements.find((requirement) => requirement.ruleId === "helper-usefulness")?.id;
+  ).requirements.find((requirement) =>
+    requirement.ruleId.startsWith("project-constraint:repo-delegation"),
+  )?.id;
   expect(delegationId).toBeDefined();
   const statusOf = (): string | undefined => {
     const view = lead.core.task({
