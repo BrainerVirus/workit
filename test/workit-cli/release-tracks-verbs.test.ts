@@ -289,6 +289,56 @@ test("nun forked from develop: plain git checkout -b from develop is read from t
   });
 });
 
+test("a reused branch name: the HEAD reflog entry of the earlier branch is not trusted", () => {
+  const repo = setup();
+  repo.git("switch", "-q", "nun-develop");
+  repo.git("switch", "-q", "-c", "feature/reuse");
+  commitOn(repo, "feature/reuse", "first.txt");
+  repo.git("switch", "-q", "develop");
+  repo.git("branch", "-q", "-D", "feature/reuse");
+  repo.git("switch", "-q", "-c", "feature/reuse");
+  commitOn(repo, "feature/reuse", "second.txt");
+  expect(vcsConfig("resolve", repo.cwd).releaseTrack).toMatchObject({
+    name: "standard",
+    source: "checkout",
+  });
+});
+
+test("grant show and doctor use vcsConfig's default target, including the global vcs.json one", async () => {
+  const repo = setup();
+  // No workspace default and no workspace branchPolicy: the global vcs.json
+  // default (nun-develop) is the workspace default, so the single nun track owns it.
+  writeFileSync(
+    path.join(configDir, "vcs.json"),
+    JSON.stringify({ defaultTargetBranch: "nun-develop" }),
+  );
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "ri-web",
+          glob: `${repo.root.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "github" },
+          releaseTracks: { nun: TRACKS.nun },
+        },
+      ],
+    }),
+  );
+  try {
+    workBranchFrom(repo, "feature/x", "develop");
+    const resolved = vcsConfig("resolve", repo.cwd);
+    expect(resolved.releaseTrack).toMatchObject({ name: "nun", source: "only-track" });
+    const shown = await run(["grant", "show", "--json"], repo.cwd);
+    expect(shown.json().data.releaseTracks.resolved).toMatchObject({
+      name: "nun",
+      source: "only-track",
+    });
+  } finally {
+    rmSync(path.join(configDir, "vcs.json"), { force: true });
+  }
+});
+
 test("nun syncs develop: a nun feature after the sync is nun; a develop feature from before it is ambiguous", () => {
   // Repro B: nun-develop periodically merges develop in.
   const repo = setup();

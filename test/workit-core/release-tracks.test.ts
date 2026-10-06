@@ -262,6 +262,29 @@ describe("resolveReleaseTrack", () => {
     expect(picked(result)).toEqual({ track: "standard", source: "checkout", target: "develop" });
   });
 
+  test("given a branch started (checkout -b) from a stacked parent, then the parent's recorded base decides", () => {
+    const result = resolve({
+      branch: "feature/b",
+      facts: {
+        checkout: { "feature/b": "feature/a" },
+        recorded: { "feature/a": "nun-develop" },
+        ...FROM_DEVELOP,
+      },
+    });
+    expect(picked(result)).toEqual({ track: "nun", source: "checkout", target: "nun-develop" });
+  });
+
+  test("given one track beside a distinct default line, an undecided branch blocks (two lines, not one track)", () => {
+    const result = resolveReleaseTrack({
+      tracks: TRACKS.filter((track) => track.name === "nun"),
+      defaultBranch: "develop",
+      branch: "feature/z",
+      probe: probe(),
+    });
+    expect(picked(result)).toMatchObject({ track: null, source: "default" });
+    expect(blocking(result)).toContain("can't tell which release line feature/z");
+  });
+
   test("given no track branch can be compared, then the default with a warning", () => {
     const result = resolve({ branch: "feature/z" });
     expect(picked(result)).toMatchObject({ track: "nun", source: "default" });

@@ -38,7 +38,9 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { currentBranch, mergeBase, pushRemoteName, remoteNames, resolveRef } from "../git/rev";
-import { resolveRuntimeReleaseTracks } from "./workspaces";
+import { readFileSync } from "node:fs";
+import { vcsConfigPath } from "./config";
+import { resolveRuntimeReleaseTracks, workspaceDefaultTarget } from "./workspaces";
 
 export type RuntimeReleaseTrack = {
   name: string;
@@ -392,8 +394,10 @@ export function resolveReleaseTrack(input: TrackInput): TrackResolution {
     const target = track
       ? `track ${track.name}`
       : `default target ${input.defaultBranch ?? "(none)"}`;
+    // Count lines, not configured tracks: one track beside a distinct default
+    // line is still two lines to choose between.
     const ambiguous =
-      tracks.length >= 2
+      candidates.length >= 2
         ? `can't tell which release line ${input.branch ?? "HEAD"} is on (${why}); pass --track <name> (${names}) or --base <branch>`
         : null;
     return done(
@@ -437,27 +441,38 @@ export function resolveReleaseTrack(input: TrackInput): TrackResolution {
     return owner.length === 1 ? owner[0] : null;
   };
 
-  // The base workit recorded when it created the branch, followed through
+  // The base workit recorded when it created a branch, followed through
   // stacked parents (feature/b on feature/a on develop).
-  let cursor = branch;
-  const seen = new Set<string>([branch]);
-  for (let hop = 0; hop < MAX_RECORDED_HOPS; hop += 1) {
-    const recorded = input.probe.recordedBase(cursor);
-    if (!recorded) break;
-    const base = short(recorded);
-    const owner = ownerOf(base);
-    if (owner) return done(owner, "recorded-base", `${branch} was created from ${base}`);
-    if (ownedBy(candidates, base).length > 1 || seen.has(base)) break;
-    seen.add(base);
-    cursor = base;
-  }
+  const followRecorded = (start: string): RuntimeReleaseTrack | null => {
+    let cursor = start;
+    const seen = new Set<string>([start]);
+    for (let hop = 0; hop < MAX_RECORDED_HOPS; hop += 1) {
+      const recorded = input.probe.recordedBase(cursor);
+      if (!recorded) return null;
+      const base = short(recorded);
+      const owner = ownerOf(base);
+      if (owner) return owner;
+      if (ownedBy(candidates, base).length > 1 || seen.has(base)) return null;
+      seen.add(base);
+      cursor = base;
+    }
+    return null;
+  };
+  const recordedOwner = followRecorded(branch);
+  if (recordedOwner)
+    return done(
+      recordedOwner,
+      "recorded-base",
+      `${branch} was created on ${label(recordedOwner)}'s line (recorded base)`,
+    );
 
-  for (const [source, ref] of [
-    ["reflog", input.probe.createdFrom(branch)],
-    ["checkout", input.probe.checkedOutFrom(branch)],
-  ] as const) {
+  // Where the branch started, from the reflogs; a start that is itself a
+  // stacked work branch is followed through its recorded base.
+  for (const source of ["reflog", "checkout"] as const) {
+    const ref =
+      source === "reflog" ? input.probe.createdFrom(branch) : input.probe.checkedOutFrom(branch);
     if (!ref) continue;
-    const owner = ownerOf(ref);
+    const owner = ownerOf(ref) ?? followRecorded(short(ref));
     if (owner)
       return done(
         owner,
@@ -530,6 +545,22 @@ export const recordBranchBase = (cwd: string, branch: string, base: string): voi
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
+type ReflogEntry = { sha: string; time: number; subject: string };
+
+/** A ref's reflog, newest first, with unix times. */
+const reflog = (cwd: string, ref: string): ReflogEntry[] =>
+  (git(cwd, ["log", "-g", "--date=unix", "--format=%H%x09%gd%x09%gs", ref, "--"]) ?? "")
+    .split("\n")
+    .map((line) => {
+      const [sha = "", selector = "", ...subject] = line.split("\t");
+      return {
+        sha,
+        time: Number(/@\{(\d+)\}$/u.exec(selector)?.[1] ?? Number.NaN),
+        subject: subject.join("\t"),
+      };
+    })
+    .filter((entry) => entry.sha && Number.isFinite(entry.time));
+
 export function gitTrackProbe(cwd: string): TrackProbe {
   let remote: string | null | undefined;
   let remotes: string[] | undefined;
@@ -551,12 +582,19 @@ export function gitTrackProbe(cwd: string): TrackProbe {
     checkedOutFrom: (branch) => {
       // Only a branch started at HEAD ("Created from HEAD"): then the branch
       // HEAD was on is its start. `switch -c b <sha>` names another start point.
-      const own = git(cwd, ["reflog", "show", "--format=%gs", `refs/heads/${branch}`, "--"]);
-      if (own?.split("\n").findLast(Boolean) !== "branch: Created from HEAD") return null;
-      const log = git(cwd, ["reflog", "show", "--format=%gs", "HEAD", "--"]);
+      const own = reflog(cwd, `refs/heads/${branch}`);
+      const created = own.at(-1);
+      if (!created || created.subject !== "branch: Created from HEAD") return null;
+      // A reused name leaves older "moving from X to <b>" entries behind: only
+      // an entry at or after this branch's creation, landing on its creation
+      // commit, counts. The oldest such entry is the creation itself (a later
+      // switch back to the branch before any commit lands on the same commit).
       const pattern = new RegExp(`^checkout: moving from (\\S+) to ${escapeRegExp(branch)}$`, "u");
-      const oldest = log?.split("\n").findLast((line) => pattern.test(line));
-      return oldest ? (pattern.exec(oldest)?.[1] ?? null) : null;
+      const entry = reflog(cwd, "HEAD").findLast(
+        (item) =>
+          item.time >= created.time && item.sha === created.sha && pattern.test(item.subject),
+      );
+      return entry ? (pattern.exec(entry.subject)?.[1] ?? null) : null;
     },
     mergeBase: (branch, trackBranch) => {
       const base = tip(trackBranch);
@@ -572,15 +610,20 @@ export function gitTrackProbe(cwd: string): TrackProbe {
 /** The tracks configured for the workspace matching cwd (lenient). */
 export function workspaceReleaseTracks(cwd: string): ReleaseTracksRead & {
   workspace: string | null;
-  defaultTargetBranch: string | null;
 } {
   const raw = resolveRuntimeReleaseTracks(cwd);
-  return {
-    workspace: raw?.workspace ?? null,
-    defaultTargetBranch: raw?.defaultTargetBranch ?? null,
-    ...readReleaseTracks(raw?.releaseTracks),
-  };
+  return { workspace: raw?.workspace ?? null, ...readReleaseTracks(raw?.releaseTracks) };
 }
+
+/** vcs.json's global `defaultTargetBranch`, read leniently (display only; vcsConfig reports a malformed file). */
+const globalDefaultTarget = (): unknown => {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(vcsConfigPath(), "utf8"));
+    return isRecord(parsed) ? parsed.defaultTargetBranch : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 // Per-process memo: a CLI command asks several times (vcsConfig callers,
 // policy checks). Keyed on every input, including a digest of all branch tips,
@@ -614,9 +657,33 @@ export function resolveTrackFor(
   };
   let key: string | null = null;
   if (!options.probe) {
-    const refs = git(cwd, ["for-each-ref", "--format=%(refname) %(objectname)"]) ?? "";
-    const reflog = git(cwd, ["reflog", "show", "-n", "1", "--format=%H %gs", "HEAD", "--"]) ?? "";
-    key = createHash("sha256").update(JSON.stringify({ cwd, input, refs, reflog })).digest("hex");
+    const refs =
+      git(cwd, [
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+        "refs/heads",
+        "refs/remotes",
+      ]) ?? "";
+    const head = git(cwd, ["reflog", "show", "-n", "1", "--format=%H %gs", "HEAD", "--"]) ?? "";
+    // A deleted and recreated branch name, or a changed recorded base, must miss.
+    const own = branch
+      ? [
+          git(cwd, [
+            "log",
+            "-g",
+            "-n",
+            "1",
+            "--date=unix",
+            "--format=%H %gd %gs",
+            `refs/heads/${branch}`,
+            "--",
+          ]) ?? "",
+          git(cwd, ["config", "--get", recordedBaseKey(branch)]) ?? "",
+        ]
+      : [];
+    key = createHash("sha256")
+      .update(JSON.stringify({ cwd, input, refs, head, own }))
+      .digest("hex");
     const hit = memo.get(key);
     if (hit) return hit;
   }
@@ -642,9 +709,8 @@ export type ReleaseTracksReport = {
 
 /**
  * The configured tracks and the one cwd resolves to, for display. The default
- * target is the workspace's own (vcs.defaultTargetBranch, else the branch
- * preset's), which keeps this importable from the doctor without the VCS
- * resolver; it resolves once.
+ * target comes from workspaceDefaultTarget, the computation vcsConfig uses,
+ * without importing the VCS resolver (the doctor stays light); it resolves once.
  */
 export function releaseTracksReport(cwd: string): ReleaseTracksReport {
   let raw: ReturnType<typeof resolveRuntimeReleaseTracks>;
@@ -668,7 +734,19 @@ export function releaseTracksReport(cwd: string): ReleaseTracksReport {
   const base = { workspace: raw?.workspace ?? null, tracks };
   if (read.error) return { ...base, resolved: null, warnings: read.issues, error: read.error };
   if (tracks.length === 0) return { ...base, resolved: null, warnings: read.issues, error: null };
-  const resolution = resolveTrackFor(cwd, { defaultBranch: raw?.defaultTargetBranch ?? null });
+  let defaultBranch: string;
+  try {
+    // The same default vcsConfig uses, so the display matches the commands.
+    defaultBranch = workspaceDefaultTarget(cwd, globalDefaultTarget());
+  } catch (error) {
+    return {
+      ...base,
+      resolved: null,
+      warnings: read.issues,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const resolution = resolveTrackFor(cwd, { defaultBranch });
   if (resolution.status === "invalid")
     return { ...base, resolved: null, warnings: resolution.issues, error: resolution.error };
   if (resolution.status === "none")

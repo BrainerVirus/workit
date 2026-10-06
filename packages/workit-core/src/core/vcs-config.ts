@@ -1,19 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { configDir, PRESETS } from "./config";
-import { resolveRuntimeWorkspaceVcs } from "./workspaces";
-import { resolveBranchPolicyFor } from "./branch";
-import {
-  ReleaseTrackError,
-  resolveTrackFor,
-  type RuntimeReleaseTrack,
-  type TrackResolution,
-} from "./release-tracks";
+import { configDir, vcsConfigPath } from "./config";
+import { resolveRuntimeWorkspaceVcs, workspaceDefaultTarget } from "./workspaces";
+import { resolveTrackFor, type RuntimeReleaseTrack, type TrackResolution } from "./release-tracks";
 // VCS resolution and CLI-backed identity/style reads.
-
-export const vcsConfigPath = (): string =>
-  process.env.WORKFLOW_VCS_CONFIG ?? path.join(configDir(), "vcs.json");
 
 const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 
@@ -226,22 +217,9 @@ export function vcsConfig(
   // main). Explicit workspace vcs.defaultTargetBranch stays authoritative; a
   // workspace without a branchPolicy still falls back to the global vcs.json
   // default, and unmatched repos keep it too.
-  const wp = (ws?.branchPolicy ?? {}) as Record<string, any>;
-  const hasWorkspacePolicy = typeof wp.preset === "string" && Object.hasOwn(PRESETS, wp.preset);
-  let policyDefault: string;
-  try {
-    policyDefault = resolveBranchPolicyFor(root).defaultTargetBranch;
-  } catch (error) {
-    // A release track that must fail closed (a `critical` field) is a refusal, not a crash.
-    if (error instanceof ReleaseTrackError)
-      return { ok: false, error: error.message, configPath: workspacesPath() };
-    throw error;
-  }
-  const workspaceDefault = String(
-    wsVcs.defaultTargetBranch ??
-      (hasWorkspacePolicy ? policyDefault : (cfg.defaultTargetBranch ?? policyDefault)) ??
-      "develop",
-  );
+  // CA-05/CA-02 (workspaces.ts workspaceDefaultTarget): shared with doctor
+  // and grant show so their display never disagrees with the commands.
+  const workspaceDefault = workspaceDefaultTarget(root, cfg.defaultTargetBranch);
   const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
   const youtrackBaseUrl = typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;
   // github issues path only when BOTH providers are github (mirrors WorkspaceConfig.issues).

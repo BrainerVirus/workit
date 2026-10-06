@@ -99,17 +99,22 @@ first signal that answers wins):
    (`git config branch.<name>.workitBase`), followed through stacked parents;
 6. the branch reflog's `Created from <branch>` when it names a track branch;
 7. for a branch made with plain `git checkout -b` / `git switch -c`, the HEAD
-   reflog's `checkout: moving from <track branch> to <branch>`;
+   reflog's `checkout: moving from <branch> to <it>` entry that created it
+   (an entry left by an earlier, deleted branch of the same name is ignored; a
+   stacked parent is followed through its recorded base);
 8. ancestry by fork point: the track whose merge-base with the branch strictly
    descends from every other track's merge-base. Equal or unrelated fork
    points (one line forked from the other, or merges the other in) are
    ambiguous, never decided by commit counts.
 
-When the workspace default target (`vcs.defaultTargetBranch`, else the branch
-preset's) belongs to no track, it competes as a line of its own; a branch on it
-gets no track and today's defaults.
+When the workspace default target (the workspace `vcs.defaultTargetBranch`,
+else its branch preset's, else the global `vcs.json` `defaultTargetBranch`, the
+same value the commands, `grant show` and `doctor` use) belongs to no track,
+it competes as a line of its own; a branch on it gets no track and today's
+defaults.
 
-If none of these decides, with two or more tracks the line is undetermined:
+If none of these decides and there are two or more lines (tracks, plus the
+default line when no track owns it), the line is undetermined:
 `workit git branch`, `workit pr create` and `workit stack plan` refuse (exit 3,
 "can't tell which release line …; pass --track <name> or --base <branch>"),
 while `workit grant show` and `workit doctor` only show the note. `--base`

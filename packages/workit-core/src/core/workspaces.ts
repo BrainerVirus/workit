@@ -7,6 +7,7 @@ import {
   PRESETS,
   configDir,
   isConfigObject,
+  readConfig,
   resolveBranchPolicy as resolveConfiguredBranchPolicy,
   resolveCommitPolicy as resolveConfiguredCommitPolicy,
   type BranchPreset,
@@ -83,7 +84,7 @@ const releaseTrackSchema = z
         release: nonBlank.optional(),
         hotfix: nonBlank.optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     baseBranch: nonBlank.optional(),
     mergeBackBranches: z.array(nonBlank).optional(),
@@ -623,28 +624,11 @@ const matchRuntimeWorkspace = (
  */
 export const resolveRuntimeReleaseTracks = (
   cwd: string,
-): { workspace: string; releaseTracks: unknown; defaultTargetBranch: string | null } | null => {
+): { workspace: string; releaseTracks: unknown } | null => {
   const matched = matchRuntimeWorkspace(cwd);
-  if (!matched) return null;
-  const { selected } = matched;
-  const text = (value: unknown): string | null =>
-    typeof value === "string" && value.trim() ? value.trim() : null;
-  const vcs = selected.vcs as { defaultTargetBranch?: unknown } | undefined;
-  const preset = (selected.branchPolicy as { preset?: unknown } | undefined)?.preset;
-  // The same default vcsConfig derives (CA-05): explicit target, else the preset's.
-  const presetDefault =
-    typeof preset === "string" && Object.hasOwn(PRESETS, preset)
-      ? preset === "github-flow"
-        ? "main"
-        : preset === "trunk-based"
-          ? "master"
-          : "develop"
-      : null;
-  return {
-    workspace: selected.name,
-    releaseTracks: selected.releaseTracks,
-    defaultTargetBranch: text(vcs?.defaultTargetBranch) ?? presetDefault,
-  };
+  return matched
+    ? { workspace: matched.selected.name, releaseTracks: matched.selected.releaseTracks }
+    : null;
 };
 
 const resolveRuntimeWorkspaceCandidate = (
@@ -782,3 +766,31 @@ export const selectReleaseTrack = (
   }
   return { status: "selected", name: requestedTrack, track: tracks[requestedTrack] };
 };
+
+/**
+ * The workspace default target before release tracks: the one computation
+ * vcsConfig, `workit doctor` and `workit grant show` share (CA-05/CA-02).
+ * Explicit workspace vcs.defaultTargetBranch wins; a workspace with its own
+ * branchPolicy uses its preset's default (gitflow -> develop, github-flow ->
+ * main, trunk-based -> master); otherwise the global vcs.json
+ * `defaultTargetBranch` (`globalDefault`), else the effective preset's.
+ */
+export function workspaceDefaultTarget(cwd: string, globalDefault: unknown): string {
+  const ws = resolveRuntimeWorkspaceVcs(cwd);
+  const wp = (ws?.branchPolicy ?? {}) as Record<string, unknown>;
+  const hasWorkspacePolicy = typeof wp.preset === "string" && Object.hasOwn(PRESETS, wp.preset);
+  const selected = resolveRuntimeWorkspacePolicy(
+    cwd,
+    "branch",
+    process.env.WORKFLOW_PROFILE?.trim() || undefined,
+  );
+  const policyDefault = resolveConfiguredBranchPolicy(
+    readConfig(),
+    selected.policy ? { branchPolicy: selected.policy as WorkspaceBranchPolicy } : null,
+  ).defaultTargetBranch;
+  return String(
+    (ws?.vcs as { defaultTargetBranch?: unknown } | undefined)?.defaultTargetBranch ??
+      (hasWorkspacePolicy ? policyDefault : (globalDefault ?? policyDefault)) ??
+      "develop",
+  );
+}
