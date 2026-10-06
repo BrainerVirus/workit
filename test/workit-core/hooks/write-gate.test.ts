@@ -4,7 +4,7 @@
 // without a write hook say the gate is advisory.
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
@@ -227,4 +227,16 @@ test("G a long-lived host, W the cited plan file appears without a new revision,
   void core;
   rmSync(path.join(root, "docs-plan.txt"));
   expect(opencode(root, "edit", ["docs-plan.txt"]).effect).toBe("allow");
+});
+
+test("G a checkout reached through a symlink (macOS /var → /private/var), T in-checkout edits stay gated and outside ones do not", () => {
+  const { root } = judged({ productChoiceOpen: true });
+  const link = path.join(tmpdir(), `workit-link-${process.pid}-${Date.now()}`);
+  symlinkSync(root, link, "dir");
+  roots.push(link);
+  expect(opencode(link, "edit", [path.join(link, "src", "a.ts")]).effect).toBe("deny");
+  expect(opencode(link, "edit", ["src/new/b.ts"]).effect).toBe("deny");
+  expect(opencode(root, "edit", [path.join(link, "src", "a.ts")]).effect).toBe("deny");
+  expect(opencode(link, "edit", [path.join(root, "docs", "x.md")]).effect).toBe("allow");
+  expect(opencode(link, "edit", [path.join(tmpdir(), "elsewhere", "c.ts")]).effect).toBe("allow");
 });

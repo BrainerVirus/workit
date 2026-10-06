@@ -4,6 +4,7 @@
 // unblock. History moves (commit, merge, rebase, stash pop) are not edits.
 // Reads only the task index, one task snapshot and the ledger; never
 // migrates, never captures a candidate, and fails open on any state error.
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileSignature, TaskStore } from "../core/task-store";
 import { latestJudgment, writeBlockers, type WriteBlocker } from "../core/policy/derive";
@@ -13,13 +14,32 @@ import type { HookDecision } from "./protocol";
 
 const NONE: HookDecision = { kind: "none" };
 
+const CASE_INSENSITIVE = process.platform === "darwin" || process.platform === "win32";
+
+/**
+ * The real path of `file`: the nearest existing ancestor resolved through
+ * symlinks (macOS /var → /private/var), then the not-yet-existing rest.
+ */
+const canonical = (file: string): string => {
+  let rest = "";
+  for (let dir = path.resolve(file); ; dir = path.dirname(dir)) {
+    try {
+      return path.join(realpathSync(dir), rest);
+    } catch {
+      if (path.dirname(dir) === dir) return path.resolve(file);
+      rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
+    }
+  }
+};
+
 /**
  * Writes the gate never blocks: files outside the checkout (e.g. /tmp),
  * Markdown (*.md, *.mdx), the top-level `docs/` tree, any `plans/` directory,
  * and the plan files the task's judgment cites.
  */
 const exempt = (cwd: string, root: string, file: string, plans: ReadonlySet<string>): boolean => {
-  const relative = path.relative(root, path.resolve(cwd, file));
+  const fold = (value: string) => (CASE_INSENSITIVE ? value.toLowerCase() : value);
+  const relative = path.relative(fold(canonical(root)), fold(canonical(path.resolve(cwd, file))));
   if (relative.startsWith("..") || path.isAbsolute(relative)) return true;
   const posix = relative.split(path.sep).join("/");
   const segments = posix.split("/");
@@ -27,7 +47,7 @@ const exempt = (cwd: string, root: string, file: string, plans: ReadonlySet<stri
     /\.mdx?$/i.test(posix) ||
     segments[0] === "docs" ||
     segments.includes("plans") ||
-    plans.has(posix)
+    [...plans].some((plan) => fold(plan) === posix)
   );
 };
 
