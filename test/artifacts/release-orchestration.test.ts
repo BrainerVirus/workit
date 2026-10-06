@@ -131,6 +131,9 @@ test(
     // the semantic-release version bumps and rewrites to the released version.
     expect(prepare).toBeGreaterThan(npmLast);
     expect(config.match(/rewrite-workspace-deps\.ts/g) ?? []).toHaveLength(2);
+    // Bundles embed the package version, so they are rebuilt AFTER the bump;
+    // otherwise `workit --version` and npx hints report the previous release.
+    expect(config).toMatch(/prepareCmd:\s*"[^"]*rewrite-workspace-deps\.ts && bun run build"/);
 
     // CA-08 selective-publish pins are STRUCTURAL: load the pure-object config
     // instead of matching raw bytes, so a comment reflow can't break them.

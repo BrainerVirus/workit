@@ -43,11 +43,13 @@ module.exports = {
     ["@semantic-release/npm", { pkgRoot: "packages/workit-codex", npmPublish: false }],
     ["@semantic-release/npm", { pkgRoot: "packages/workit-pi", npmPublish: false }],
     ["@semantic-release/npm", { pkgRoot: "packages/workit-claude-code", npmPublish: false }],
-    // AR-02/RR-01: prepare-time rewrite AFTER version bumps (unchanged).
+    // AR-02/RR-01: prepare-time rewrite AFTER version bumps, then rebuild so
+    // every bundle embeds the version being released (the CI build ran before
+    // the bump, so `workit --version` and npx hints reported the previous one).
     [
       "@semantic-release/exec",
       {
-        prepareCmd: "bun packages/workit-core/scripts/rewrite-workspace-deps.ts",
+        prepareCmd: "bun packages/workit-core/scripts/rewrite-workspace-deps.ts && bun run build",
       },
     ],
     // AR-16: publish only packages with payload changes since the PREVIOUS
