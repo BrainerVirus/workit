@@ -1,13 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { configDir, PRESETS } from "./config";
-import { resolveRuntimeWorkspaceVcs } from "./workspaces";
-import { resolveBranchPolicyFor } from "./branch";
+import { configDir, vcsConfigPath } from "./config";
+import { resolveRuntimeWorkspaceVcs, workspaceDefaultTarget } from "./workspaces";
+import { resolveTrackFor, type RuntimeReleaseTrack, type TrackResolution } from "./release-tracks";
 // VCS resolution and CLI-backed identity/style reads.
-
-export const vcsConfigPath = (): string =>
-  process.env.WORKFLOW_VCS_CONFIG ?? path.join(configDir(), "vcs.json");
 
 const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 
@@ -146,8 +143,45 @@ export const readVcsConfig = (): VcsConfigResult => {
   return { status: "malformed", path: file, config: {}, error: `${file} is not a JSON object` };
 };
 
+/** The release track a vcsConfig call resolved (null: the workspace has no tracks). */
+export type ResolvedReleaseTrack = {
+  name: string | null;
+  source: string;
+  detail: string;
+  warnings: string[];
+  track: RuntimeReleaseTrack | null;
+  /** Every configured track, for displays and the branch policy. */
+  tracks: RuntimeReleaseTrack[];
+  /** The line is undetermined (or WORKFLOW_RELEASE_TRACK is wrong): mutating verbs refuse. */
+  blocking: string | null;
+};
+
+export type VcsConfigOptions = {
+  /** An explicit release track (`--track`); WORKFLOW_RELEASE_TRACK is read below it. */
+  track?: string | null;
+  /** Resolve the track for this branch instead of the checked-out one. */
+  branch?: string | null;
+};
+
+const trackSummary = (resolution: TrackResolution): ResolvedReleaseTrack | null =>
+  resolution.status === "resolved"
+    ? {
+        name: resolution.track?.name ?? null,
+        source: resolution.source,
+        detail: resolution.detail,
+        warnings: resolution.warnings,
+        track: resolution.track,
+        tracks: resolution.tracks,
+        blocking: resolution.blocking,
+      }
+    : null;
+
 /** Port of scripts/vcs/config.sh — mode: load | summary | resolve. */
-export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): Record<string, any> {
+export function vcsConfig(
+  mode: "load" | "summary" | "resolve",
+  cwd?: string,
+  options: VcsConfigOptions = {},
+): Record<string, any> {
   const ws = resolveRuntimeWorkspaceVcs(vcsCwd(cwd));
   const wsVcs = (ws?.vcs ?? {}) as Record<string, any>;
   const wsYt = (ws?.youtrack ?? {}) as Record<string, any>;
@@ -183,14 +217,9 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   // main). Explicit workspace vcs.defaultTargetBranch stays authoritative; a
   // workspace without a branchPolicy still falls back to the global vcs.json
   // default, and unmatched repos keep it too.
-  const wp = (ws?.branchPolicy ?? {}) as Record<string, any>;
-  const hasWorkspacePolicy = typeof wp.preset === "string" && Object.hasOwn(PRESETS, wp.preset);
-  const policyDefault = resolveBranchPolicyFor(root).defaultTargetBranch;
-  const defaultTarget = String(
-    wsVcs.defaultTargetBranch ??
-      (hasWorkspacePolicy ? policyDefault : (cfg.defaultTargetBranch ?? policyDefault)) ??
-      "develop",
-  );
+  // CA-05/CA-02 (workspaces.ts workspaceDefaultTarget): shared with doctor
+  // and grant show so their display never disagrees with the commands.
+  const workspaceDefault = workspaceDefaultTarget(root, cfg.defaultTargetBranch);
   const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
   const youtrackBaseUrl = typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;
   // github issues path only when BOTH providers are github (mirrors WorkspaceConfig.issues).
@@ -210,11 +239,30 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
     // instead of silently resolving defaults; a missing file is still a
     // legitimate unconfigured state that falls back to defaults.
     if (cfgStatus === "malformed") return { ok: false, error: cfgError, configPath: cfgPath };
+    // Release tracks (core/release-tracks.ts): the one place a branch's line is
+    // decided, in resolve mode only (load serves identity, push and tracker
+    // paths that never need it). With tracks, the PR target and the base for
+    // new branches come from the resolved track; without, the workspace
+    // default stays as is.
+    const trackResolution = resolveTrackFor(root, {
+      track: options.track,
+      ...(options.branch !== undefined ? { branch: options.branch } : {}),
+      defaultBranch: workspaceDefault,
+    });
+    if (trackResolution.status === "invalid")
+      return { ok: false, error: trackResolution.error, configPath: workspacesPath() };
+    const releaseTrack = trackSummary(trackResolution);
+    const defaultTarget = releaseTrack?.track?.pullRequestTarget ?? workspaceDefault;
+    const baseBranch = releaseTrack?.track?.baseBranch ?? defaultTarget;
     return {
       ok: true,
       workspace_name: ws?.name ?? null,
       provider,
       defaultTargetBranch: defaultTarget,
+      /** The target before release tracks (vcs.defaultTargetBranch or the policy default). */
+      workspaceDefaultTargetBranch: workspaceDefault,
+      baseBranch,
+      releaseTrack,
       link_issues: linkIssues,
       youtrack_base_url: youtrackBaseUrl,
       issues_provider: issuesProvider,
@@ -241,7 +289,8 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
     ok: true,
     configPath: path.resolve(cfgPath),
     provider,
-    defaultTargetBranch: defaultTarget,
+    // Load mode does not resolve release tracks: the workspace default.
+    defaultTargetBranch: workspaceDefault,
     pr: cfg.pr ?? {},
     workspace_name: ws?.name ?? null,
     link_issues: linkIssues,

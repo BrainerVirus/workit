@@ -170,6 +170,12 @@ See [verification](docs/guides/verification.md). Host permissions
 (allow/ask/deny, sandbox) always stay authoritative; Workit adds no consent
 prompts of its own.
 
+**Release tracks.** A repository with several release lines (say
+`nun-develop` -> `nun-master` and `develop` -> `master`) lists them under the
+workspace's `releaseTracks`; branch bases, PR targets, merge-back hints and
+protected branches then follow the line each branch belongs to. See
+[release tracks](docs/guides/configuration.md#release-tracks).
+
 **Stacks.** `workit stack` manages plain base-branch PR chains on GitHub and
 GitLab (no Graphite or `gh stack` needed): plan, restack after a merge, and
 land the contiguous verified run from the root. See

@@ -156,6 +156,60 @@ test("pr create (GitHub): given the pushed branch, then the PR is opened with th
   expect(check.json().data.branch).toBe("feature/x");
 });
 
+// Two release lines; the workspace default (develop) belongs to `next`, but
+// feature/x is cut from main, so its PR must target main.
+const TWO_TRACKS = {
+  stable: {
+    strategy: "gitflow",
+    productionBranch: "stable-prod",
+    integrationBranch: "main",
+    naming: { feature: "feature/{name}", release: "release/{version}", hotfix: "hotfix/{name}" },
+    baseBranch: "main",
+    mergeBackBranches: [],
+    pullRequestTarget: "main",
+    tagNamespace: "",
+    versionSource: { kind: "git-tag" },
+    requiredChecks: [],
+  },
+  next: {
+    strategy: "gitflow",
+    productionBranch: "next-prod",
+    integrationBranch: "develop",
+    naming: { feature: "feature/{name}", release: "release/{version}", hotfix: "hotfix/{name}" },
+    baseBranch: "develop",
+    mergeBackBranches: [],
+    pullRequestTarget: "develop",
+    tagNamespace: "next/",
+    versionSource: { kind: "git-tag" },
+    requiredChecks: [],
+  },
+};
+
+test("pr create: given release tracks and no --base, then the PR targets the track the branch derives from, not the workspace default", async () => {
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    "graphql find": fixture("github/find-none.json"),
+    "POST repos/o/r/pulls": JSON.stringify({
+      number: 13,
+      html_url: "https://github.com/o/r/pull/13",
+      state: "open",
+      head: { ref: "feature/x", sha: "{{HEAD}}" },
+    }),
+  });
+  workspace(repo, {
+    vcs: { provider: "github", account: "octo", defaultTargetBranch: "develop" },
+    releaseTracks: TWO_TRACKS,
+  });
+  // feature/x was made with `git switch -c` on main: the HEAD reflog says so.
+  const result = await run(["pr", "create", "--title", "feat: x", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({
+    base: "main",
+    releaseTrack: { name: "stable", source: "checkout" },
+  });
+  expect(writes(runner.calls)[0]).toMatchObject({ vars: { base: "main" } });
+});
+
 test("pr create: an open PR for the branch is reused (created:false) and nothing is posted", async () => {
   const { repo, runner } = setup("github", {
     ...githubBase(),
@@ -426,6 +480,42 @@ test("pr merge: READY + accepted verdict merges with the head SHA guard and reco
     expect.objectContaining({ kind: "pr_state", observed: "merged", ok: true }),
     expect.objectContaining({ kind: "merge_on_base", expected: repo.base, ok: true }),
   ]);
+});
+
+test("pr merge: a PR landing on a track's production branch reports the merge-back branches", async () => {
+  const { repo } = setup("github", mergeRoutes("github/pr-passing.json"));
+  workspace(repo, {
+    vcs: { provider: "github", account: "octo" },
+    autonomy: { merge: "verified" },
+    releaseTracks: {
+      ...TWO_TRACKS,
+      stable: {
+        ...TWO_TRACKS.stable,
+        productionBranch: "main",
+        integrationBranch: "develop-s",
+        baseBranch: "develop-s",
+        pullRequestTarget: "develop-s",
+        mergeBackBranches: ["develop-s"],
+      },
+    },
+  });
+  await verdict(repo);
+  // The owner of the merged-into branch decides, not a session's track choice.
+  const previous = process.env.WORKFLOW_RELEASE_TRACK;
+  process.env.WORKFLOW_RELEASE_TRACK = "next";
+  let result: Awaited<ReturnType<typeof run>>;
+  try {
+    result = await run(["pr", "merge", "--json"], repo.cwd);
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_RELEASE_TRACK;
+    else process.env.WORKFLOW_RELEASE_TRACK = previous;
+  }
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({
+    base: "main",
+    mergeBack: ["develop-s"],
+    mergeBackTrack: "stable",
+  });
 });
 
 test("pr merge: given the remote head advanced after the gates, then the forge's SHA guard refuses (blocked, head_moved)", async () => {

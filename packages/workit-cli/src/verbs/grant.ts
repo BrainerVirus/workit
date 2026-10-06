@@ -21,7 +21,6 @@
 // markers below or writes the file itself can get past it. The host's own
 // permission prompt (deny or ask on `workit grant set` and on edits under
 // ~/.config/workit) is the hard boundary.
-import { createInterface } from "node:readline/promises";
 import {
   DEFAULT_GRANTS,
   GRANT_KINDS,
@@ -36,7 +35,12 @@ import {
   type GrantValue,
   type Grants,
 } from "@brainervirus/workit-core/src/autonomy";
+import {
+  describeReleaseTracks,
+  releaseTracksReport,
+} from "@brainervirus/workit-core/src/core/release-tracks";
 import { emit, fail, ok, type Io } from "../output";
+import { askLine, askOrCancel, cancelled } from "../prompt";
 
 const USAGE =
   "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr] [verification=self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
@@ -63,14 +67,7 @@ export type GrantDeps = {
 
 const defaultDeps: GrantDeps = {
   interactive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
-  ask: async (question) => {
-    const prompt = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      return await prompt.question(question);
-    } finally {
-      prompt.close();
-    }
-  },
+  ask: (question) => askLine(question),
 };
 
 const parseValue = (raw: string): GrantValue | null =>
@@ -121,12 +118,18 @@ function show(argv: string[], io: Io): number {
   } catch (error) {
     return emit(io, fail("invalid_input", error instanceof Error ? error.message : String(error)));
   }
-  return emit(io, ok(autonomy), (data) => [
+  // Release tracks ride along (read-only): which line this checkout is on
+  // decides where push/pr/merge land, so the grant view shows it too.
+  const tracks = releaseTracksReport(io.cwd);
+  const shown =
+    tracks.tracks.length || tracks.error ? { ...autonomy, releaseTracks: tracks } : autonomy;
+  return emit(io, ok(shown), (data) => [
     ...(data.note ? [`note: ${data.note}`] : []),
     data.workspace
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
     ...describe(data.grants, data.configured, data.defaultEndpoint, data.verification),
+    ...describeReleaseTracks(tracks).map((line) => `  ${line}`),
     "raising a grant needs the user: workit grant set <workspace> <kind>=<value>",
   ]);
 }
@@ -193,9 +196,13 @@ async function change(
           { unblock: `ask the user to run, in their own terminal: ${command}` },
         ),
       );
-    const answer = await deps.ask(
-      `Raise ${raised.map(({ kind, value }) => `${kind}=${value}`).join(", ")} for workspace "${workspace}"? An agent there may then do this without asking. Type the workspace name to confirm: `,
+    const answer = await askOrCancel(io, () =>
+      deps.ask(
+        `Raise ${raised.map(({ kind, value }) => `${kind}=${value}`).join(", ")} for workspace "${workspace}"? An agent there may then do this without asking. Type the workspace name to confirm: `,
+      ),
     );
+    // Ctrl+C at the confirmation: a cancellation, not a failure; nothing written.
+    if (answer === null) return cancelled(io);
     if (answer.trim() !== workspace)
       return emit(io, fail("blocked", "grant change not confirmed; nothing was written"));
   }

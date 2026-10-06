@@ -115,7 +115,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "pr",
     group: "delivery",
     usage:
-      "workit pr status [--pr <n>] | pr create [--base <b>] (--title <t> | --fill) [--draft] | pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch]",
+      "workit pr status [--pr <n>] | pr create [--base <b> | --track <t>] (--title <t> | --fill) [--draft] | pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch]",
     summary:
       "PR/MR state with failing log tails and next action; open a SHA-verified PR; merge only when READY, verified and granted",
     load: () => import("./pr"),
@@ -132,7 +132,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "git",
     group: "delivery",
     usage:
-      "workit git branch <name> [--base <b>] | git commit -m <msg> [--all | -- <paths…>] | git push [--set-upstream] [--force-with-lease]",
+      "workit git branch <name> [--base <b>] [--track <t>] | git commit -m <msg> [--all | -- <paths…>] | git push [--set-upstream] [--force-with-lease]",
     summary:
       "Policy-checked branch and commit (Workit-Session trailer); push with a lease and a verified remote tip",
     load: () => import("./git"),

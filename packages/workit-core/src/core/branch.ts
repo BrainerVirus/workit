@@ -5,6 +5,7 @@ import path from "node:path";
 import { matchCommitFlavor } from "./commit-flavors";
 import { gitContext } from "./git";
 import {
+  branchGlobPattern,
   readConfig,
   resolveBranchPolicy as resolveConfiguredBranchPolicy,
   resolveCommitPolicy as resolveConfiguredCommitPolicy,
@@ -15,6 +16,47 @@ import {
   type WorkspaceCommitPolicy,
 } from "./workspaces";
 import { vcsCliIdentity, vcsConfig } from "./vcs-config";
+import {
+  ReleaseTrackError,
+  namingGlob,
+  trackBranches,
+  workspaceReleaseTracks,
+} from "./release-tracks";
+
+/**
+ * Release tracks extend the branch policy: every track's long-lived branches
+ * are protected (the union across tracks plus the explicit protected list),
+ * and the tracks' naming templates are allowed branch patterns. A track read
+ * that must fail closed (a `critical` field) throws, so callers block.
+ */
+const withReleaseTracks = (
+  workspaceRoot: string,
+  policy: ReturnType<typeof resolveConfiguredBranchPolicy>,
+): ReturnType<typeof resolveConfiguredBranchPolicy> => {
+  const read = workspaceReleaseTracks(workspaceRoot);
+  if (read.error) throw new ReleaseTrackError(read.error);
+  if (read.tracks.length === 0 && read.protectedBranches.length === 0) return policy;
+  const known = new Set(policy.allowed.map((pattern) => pattern.source));
+  const allowed = [...policy.allowed];
+  for (const glob of read.tracks.flatMap((track) => Object.values(track.naming).map(namingGlob))) {
+    const pattern = branchGlobPattern(glob);
+    if (!known.has(pattern.source)) {
+      known.add(pattern.source);
+      allowed.push(pattern);
+    }
+  }
+  return {
+    ...policy,
+    allowed,
+    protected: new Set([
+      ...policy.protected,
+      // Fail-safe: every branch any track entry names, including dropped ones.
+      ...[...trackBranches(read.tracks), ...read.protectedBranches].map((name) =>
+        name.toLowerCase(),
+      ),
+    ]),
+  };
+};
 
 function effectiveWorkspacePolicy(
   workspaceRoot: string,
@@ -53,9 +95,12 @@ function effectiveWorkspacePolicy(
   const config = readConfig();
   return kind === "branch"
     ? {
-        branchPolicy: resolveConfiguredBranchPolicy(
-          config,
-          selected.policy ? { branchPolicy: selected.policy as WorkspaceBranchPolicy } : null,
+        branchPolicy: withReleaseTracks(
+          workspaceRoot,
+          resolveConfiguredBranchPolicy(
+            config,
+            selected.policy ? { branchPolicy: selected.policy as WorkspaceBranchPolicy } : null,
+          ),
         ),
         provenance: { branchPolicy: selected.source },
       }
@@ -262,10 +307,16 @@ export const verifyPushIdentity = (
   return { ok: true };
 };
 // RL-01: malformed vcs.json blocks branch resolution with an exact-path error.
-const baseBranch = (cwd: string): { base: string } | { error: string } => {
+// With release tracks, the base is the resolved track's base branch.
+const baseBranch = (cwd: string): { base: string; trackBranches: string[] } | { error: string } => {
   const resolved = vcsConfig("resolve", cwd);
   if (resolved.ok === false) return { error: String(resolved.error) };
-  return { base: String(resolved.defaultTargetBranch ?? "develop") };
+  // Creating a branch on an undetermined release line would guess the base.
+  if (resolved.releaseTrack?.blocking) return { error: String(resolved.releaseTrack.blocking) };
+  return {
+    base: String(resolved.baseBranch ?? resolved.defaultTargetBranch ?? "develop"),
+    trackBranches: resolved.releaseTrack ? trackBranches(resolved.releaseTrack.tracks) : [],
+  };
 };
 const DECLARE_RE = /^\s*\*+Branch:\*+\s*`?([^`\s|]+)`?\s*$/gim;
 const USE_CURRENT_RE = /^\s*\*+Branch:\*+\s*use-current\s*$/im;
@@ -407,7 +458,13 @@ export const docsBranch = ({
   if ("error" in baseResolved) return { error: baseResolved.error };
   const base = baseResolved.base;
 
-  if (current === base || current === "main" || current === "master" || current === "develop") {
+  if (
+    current === base ||
+    current === "main" ||
+    current === "master" ||
+    current === "develop" ||
+    baseResolved.trackBranches.includes(current)
+  ) {
     let slug = "";
     if (plan_path) {
       const plan = path.isAbsolute(plan_path) ? plan_path : path.join(cwd, plan_path);

@@ -18,6 +18,7 @@
 import { requireGrant, type AutonomySource } from "../autonomy";
 import { isProtectedTarget } from "../core/branch";
 import { vcsConfig } from "../core/vcs-config";
+import { workspaceReleaseTracks } from "../core/release-tracks";
 import { deleteRemoteBranch } from "../git/ops";
 import { spawnSync } from "node:child_process";
 import { currentBranch, fetchRefs, GIT_TIMEOUTS, remoteRefTip, resolveRef } from "../git/rev";
@@ -260,6 +261,33 @@ export type MergeOutcome = {
   grant: { source: AutonomySource };
   deletedBranch: boolean | { error: string };
   recorded: { id: string } | { error: string };
+  /**
+   * Release tracks: when the PR landed on a track's production branch, the
+   * branches it must flow back into (mergeBackBranches); empty otherwise.
+   * Workit reports them; it does not open the merge-back PRs itself.
+   */
+  mergeBack: string[];
+  mergeBackTrack: string | null;
+};
+
+/**
+ * The merge-back a merge into `base` owes: the track whose production branch
+ * `base` is, by ownership alone (no --track, no WORKFLOW_RELEASE_TRACK, no
+ * history). Best effort: a config problem never stops the pr.merged record.
+ */
+const mergeBackFor = (cwd: string, base: string): { track: string | null; branches: string[] } => {
+  try {
+    const owners = workspaceReleaseTracks(cwd).tracks.filter(
+      (track) => track.productionBranch === base,
+    );
+    if (owners.length !== 1) return { track: null, branches: [] };
+    return {
+      track: owners[0].name,
+      branches: owners[0].mergeBackBranches.filter((branch) => branch !== base),
+    };
+  } catch {
+    return { track: null, branches: [] };
+  }
 };
 
 /** Why `pr merge` refused, for the envelope `data` (agents branch on `reason`). */
@@ -431,6 +459,7 @@ export async function mergePullRequest(
     deletedBranch =
       deleted.ok || (gone && gone.ok && gone.sha === null) ? true : { error: deleted.error };
   }
+  const mergeBack = mergeBackFor(cwd, doc.base);
   const row = appendObserved(cwd, {
     type: "pr.merged",
     actor: input.actor,
@@ -457,6 +486,8 @@ export async function mergePullRequest(
       grant: { source: grant.source },
       deletedBranch,
       recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
+      mergeBack: mergeBack.branches,
+      mergeBackTrack: mergeBack.track,
     },
   };
 }

@@ -234,6 +234,7 @@ const STUB_CORE_FILES = [
   "task-contract.ts",
   "store-lock.ts",
   "runtime-identity.ts",
+  "release-tracks.ts",
 ];
 const STUB_ADMIN_FILES = ["registration.ts", "doctor.ts", "host-install.ts"];
 
@@ -265,6 +266,12 @@ function copyCoreSources(stub: string) {
       path.join(repoRoot, "packages/workit-cli/src/admin", name),
       path.join(stub, "packages/workit-cli/src/admin", name),
     );
+  // release-tracks.ts (doctor) reads branch facts through git/rev.ts.
+  mkdirSync(path.join(stub, "packages/workit-core/src/git"), { recursive: true });
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/src/git/rev.ts"),
+    path.join(stub, "packages/workit-core/src/git/rev.ts"),
+  );
   // store-lock.ts resolves the checkout lock through the task store layout.
   mkdirSync(path.join(stub, "packages/workit-core/src/store"), { recursive: true });
   cpSync(

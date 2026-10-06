@@ -7,6 +7,7 @@ import {
   PRESETS,
   configDir,
   isConfigObject,
+  readConfig,
   resolveBranchPolicy as resolveConfiguredBranchPolicy,
   resolveCommitPolicy as resolveConfiguredCommitPolicy,
   type BranchPreset,
@@ -68,31 +69,43 @@ const versionSourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("git-tag") }).strict(),
   z.object({ kind: z.literal("manual") }).strict(),
 ]);
+// Only the production and integration branches are required: runtime
+// (core/release-tracks.ts) defaults the rest. Unknown keys pass through (D17:
+// a newer Workit's field must not invalidate the file for an older one); a
+// track lists the ones an older reader must not ignore in `critical`.
 const releaseTrackSchema = z
   .object({
-    strategy: branchPreset,
+    strategy: branchPreset.optional(),
     productionBranch: nonBlank,
     integrationBranch: nonBlank,
-    naming: z.object({ feature: nonBlank, release: nonBlank, hotfix: nonBlank }).strict(),
-    baseBranch: nonBlank,
-    mergeBackBranches: z.array(nonBlank),
-    pullRequestTarget: nonBlank,
-    tagNamespace: z.string(),
-    versionSource: versionSourceSchema,
-    requiredChecks: z.array(nonBlank),
+    naming: z
+      .object({
+        feature: nonBlank.optional(),
+        release: nonBlank.optional(),
+        hotfix: nonBlank.optional(),
+      })
+      .passthrough()
+      .optional(),
+    baseBranch: nonBlank.optional(),
+    mergeBackBranches: z.array(nonBlank).optional(),
+    pullRequestTarget: nonBlank.optional(),
+    tagNamespace: z.string().optional(),
+    versionSource: versionSourceSchema.optional(),
+    requiredChecks: z.array(nonBlank).optional(),
+    critical: z.array(nonBlank).optional(),
   })
-  .strict()
+  .passthrough()
   .superRefine((track, context) => {
     for (const [field, values] of [
-      ["mergeBackBranches", track.mergeBackBranches],
-      ["requiredChecks", track.requiredChecks],
+      ["mergeBackBranches", track.mergeBackBranches ?? []],
+      ["requiredChecks", track.requiredChecks ?? []],
     ] as const) {
       if (new Set(values).size !== values.length) {
         context.addIssue({ code: "custom", path: [field], message: "entries must be unique" });
       }
     }
     if (
-      track.versionSource.kind === "package-json" &&
+      track.versionSource?.kind === "package-json" &&
       (path.posix.isAbsolute(track.versionSource.path.replaceAll("\\", "/")) ||
         /^[A-Za-z]:\//u.test(track.versionSource.path.replaceAll("\\", "/")) ||
         track.versionSource.path.replaceAll("\\", "/").split("/").includes(".."))
@@ -557,10 +570,10 @@ const runtimeWorkspaceIndexSchema = z
   })
   .passthrough();
 
-const resolveRuntimeWorkspaceCandidate = (
+/** The workspaces.json entry matching cwd, checked only for name/glob (D17). */
+const matchRuntimeWorkspace = (
   cwd: string,
-  kind: RuntimeWorkspacePolicy,
-): RuntimeWorkspaceCandidate | null => {
+): { file: string; selected: Record<string, unknown> & { name: string } } | null => {
   const file = path.join(configDir(), "workspaces.json");
   let raw: string;
   try {
@@ -601,7 +614,30 @@ const resolveRuntimeWorkspaceCandidate = (
   });
   const workspaceName = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
   const selected = selectWorkspaceMatch(matches, cwd, workspaceName);
-  if (!selected) return null;
+  return selected ? { file, selected } : null;
+};
+
+/**
+ * The raw `releaseTracks` of the workspace matching cwd, unvalidated: the
+ * runtime reads them leniently (core/release-tracks.ts) so one malformed track
+ * is reported instead of disabling every command.
+ */
+export const resolveRuntimeReleaseTracks = (
+  cwd: string,
+): { workspace: string; releaseTracks: unknown } | null => {
+  const matched = matchRuntimeWorkspace(cwd);
+  return matched
+    ? { workspace: matched.selected.name, releaseTracks: matched.selected.releaseTracks }
+    : null;
+};
+
+const resolveRuntimeWorkspaceCandidate = (
+  cwd: string,
+  kind: RuntimeWorkspacePolicy,
+): RuntimeWorkspaceCandidate | null => {
+  const matched = matchRuntimeWorkspace(cwd);
+  if (!matched) return null;
+  const { file, selected } = matched;
   const policy = runtimeWorkspacePolicySchema(kind).safeParse(selected);
   if (!policy.success) {
     const detail = policy.error.issues
@@ -730,3 +766,31 @@ export const selectReleaseTrack = (
   }
   return { status: "selected", name: requestedTrack, track: tracks[requestedTrack] };
 };
+
+/**
+ * The workspace default target before release tracks: the one computation
+ * vcsConfig, `workit doctor` and `workit grant show` share (CA-05/CA-02).
+ * Explicit workspace vcs.defaultTargetBranch wins; a workspace with its own
+ * branchPolicy uses its preset's default (gitflow -> develop, github-flow ->
+ * main, trunk-based -> master); otherwise the global vcs.json
+ * `defaultTargetBranch` (`globalDefault`), else the effective preset's.
+ */
+export function workspaceDefaultTarget(cwd: string, globalDefault: unknown): string {
+  const ws = resolveRuntimeWorkspaceVcs(cwd);
+  const wp = (ws?.branchPolicy ?? {}) as Record<string, unknown>;
+  const hasWorkspacePolicy = typeof wp.preset === "string" && Object.hasOwn(PRESETS, wp.preset);
+  const selected = resolveRuntimeWorkspacePolicy(
+    cwd,
+    "branch",
+    process.env.WORKFLOW_PROFILE?.trim() || undefined,
+  );
+  const policyDefault = resolveConfiguredBranchPolicy(
+    readConfig(),
+    selected.policy ? { branchPolicy: selected.policy as WorkspaceBranchPolicy } : null,
+  ).defaultTargetBranch;
+  return String(
+    (ws?.vcs as { defaultTargetBranch?: unknown } | undefined)?.defaultTargetBranch ??
+      (hasWorkspacePolicy ? policyDefault : (globalDefault ?? policyDefault)) ??
+      "develop",
+  );
+}

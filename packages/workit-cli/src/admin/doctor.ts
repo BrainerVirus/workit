@@ -27,6 +27,10 @@ import {
   isEphemeralCachePath,
 } from "@brainervirus/workit-core/src/core/runtime-identity";
 import { EVENT } from "@brainervirus/workit-core/src/core/boundary";
+import {
+  describeReleaseTracks,
+  releaseTracksReport,
+} from "@brainervirus/workit-core/src/core/release-tracks";
 import { getDiagnosticLogger, isConfigObject } from "@brainervirus/workit-core/src/core/config";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
@@ -1246,12 +1250,29 @@ const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
       fix: `Choose a matching workspace with WORKFLOW_WORKSPACE_NAME or repair ${file}`,
     };
   }
-  if (match)
-    return {
-      id: "workspace_mismatch",
-      status: "pass",
-      detail: `current directory matches workspace "${match.name}"`,
-    };
+  if (match) {
+    const matched = `current directory matches workspace "${match.name}"`;
+    // Release tracks: the configured lines and the one this checkout resolves
+    // to. Reader issues or an undetermined track warn; a critical field fails.
+    const tracks = releaseTracksReport(res.cwd);
+    const lines = describeReleaseTracks(tracks);
+    const detail = [matched, ...lines].join("; ");
+    if (tracks.error)
+      return {
+        id: "workspace_mismatch",
+        status: "fail",
+        detail,
+        fix: `Repair releaseTracks in ${file} (or upgrade Workit for a critical field)`,
+      };
+    if (tracks.warnings.length)
+      return {
+        id: "workspace_mismatch",
+        status: "warn",
+        detail,
+        fix: `Fix the reported releaseTracks fields in ${file}, or pass --track <name> where the track is not determined`,
+      };
+    return { id: "workspace_mismatch", status: "pass", detail };
+  }
   return {
     id: "workspace_mismatch",
     status: "fail",

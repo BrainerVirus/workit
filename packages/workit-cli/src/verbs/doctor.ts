@@ -2,13 +2,13 @@
 // reflects the health. Never writes the report to stderr (the logger owns that).
 // `--fix-lock` clears a stale .workit metadata lock first, so the report
 // reflects the cleaned state.
-import { createInterface } from "node:readline/promises";
 import { runDoctor } from "../admin/doctor";
 import {
   clearStaleMetadataLock,
   inspectMetadataLock,
 } from "@brainervirus/workit-core/src/core/store-lock";
 import { emit, fail, type Io } from "../output";
+import { askLine, askOrCancel, cancelled } from "../prompt";
 import { workspaceRootFor } from "../task";
 
 // Explicit escape hatch for a lock whose owner cannot be verified (no process
@@ -16,7 +16,11 @@ import { workspaceRootFor } from "../task";
 // an interactive confirmation.
 // Under --json the holder line and the prompt go to stderr; a refusal is a
 // `blocked` envelope on stdout.
-async function confirmForcedLockClear(root: string, args: string[], io: Io): Promise<boolean> {
+async function confirmForcedLockClear(
+  root: string,
+  args: string[],
+  io: Io,
+): Promise<boolean | "cancelled"> {
   const lock = inspectMetadataLock(root);
   if (!lock.present) return true;
   const owner = lock.owner
@@ -29,16 +33,14 @@ async function confirmForcedLockClear(root: string, args: string[], io: Io): Pro
     if (!io.json) say("fix-lock --force: refusing without --yes outside an interactive terminal\n");
     return false;
   }
-  const rl = createInterface({
-    input: process.stdin,
-    output: io.json ? process.stderr : process.stdout,
-  });
-  try {
-    const answer = await rl.question("Remove this lock even if its holder may be alive? [y/N] ");
-    return /^y(es)?$/i.test(answer.trim());
-  } finally {
-    rl.close();
-  }
+  const answer = await askOrCancel(io, () =>
+    askLine(
+      "Remove this lock even if its holder may be alive? [y/N] ",
+      io.json ? process.stderr : process.stdout,
+    ),
+  );
+  if (answer === null) return "cancelled";
+  return /^y(es)?$/i.test(answer.trim());
 }
 
 export async function run(argv: string[], io: Io): Promise<number> {
@@ -47,7 +49,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const force = argv.includes("--force");
   let fixLock: ReturnType<typeof clearStaleMetadataLock> | null = null;
   if (argv.includes("--fix-lock")) {
-    if (force && !(await confirmForcedLockClear(root, argv, io))) {
+    const confirmed = force ? await confirmForcedLockClear(root, argv, io) : true;
+    if (confirmed === "cancelled") return cancelled(io);
+    if (!confirmed) {
       // Exit 3 (blocked) in both output modes; the JSON form names the fix.
       if (!io.json) return 3;
       return emit(

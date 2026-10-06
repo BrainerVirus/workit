@@ -2,7 +2,7 @@
 // forge connection, the single-writer lock and rendering; the rules live in
 // core stack.ts.
 //
-//   workit stack plan   [--name <n>] [--trunk <b>] [<bottom> … <top>]
+//   workit stack plan   [--name <n>] [--trunk <b> | --track <t>] [<bottom> … <top>]
 //   workit stack status [--name <n>]
 //   workit stack sync   [--name <n>] [--local] [--dry-run]
 //   workit stack land   [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase]
@@ -37,7 +37,8 @@ import {
   usage,
 } from "./forge-common";
 
-const PLAN_USAGE = "workit stack plan [--name <n>] [--trunk <b>] [<bottom> … <top>] [--json]";
+const PLAN_USAGE =
+  "workit stack plan [--name <n>] [--trunk <b> | --track <t>] [<bottom> … <top>] [--json]";
 const STATUS_USAGE = "workit stack status [--name <n>] [--json]";
 const SYNC_USAGE =
   "workit stack sync [--name <n>] [--local] [--dry-run] [--force <branch>]… [--json]";
@@ -50,16 +51,32 @@ const short = (sha: string | null | undefined): string => (sha ? sha.slice(0, 12
 const stackFailed = (io: Io, result: StackError): number =>
   emit(io, fail(result.code, result.error, { unblock: result.unblock, data: result.data ?? {} }));
 
-const defaultTrunk = (io: Io): string | null => {
-  const resolved = vcsConfig("resolve", io.cwd);
-  return resolved.ok === false ? null : String(resolved.defaultTargetBranch ?? "") || null;
+// The release track's PR target when tracks are configured (core vcsConfig),
+// for `branch` (the stack's bottom) or the checkout. A track problem (an
+// unknown --track, a critical field, an undetermined line) is an error, never
+// a silent fall back to `main`; a broken vcs.json keeps the legacy fallback.
+const defaultTrunk = (
+  io: Io,
+  track: string | null,
+  branch: string | null,
+): { trunk: string | null } | { error: string } => {
+  const resolved = vcsConfig("resolve", io.cwd, {
+    track,
+    ...(branch ? { branch } : {}),
+  });
+  if (resolved.ok === false)
+    return track !== null || String(resolved.configPath ?? "").endsWith("workspaces.json")
+      ? { error: String(resolved.error) }
+      : { trunk: null };
+  if (resolved.releaseTrack?.blocking) return { error: String(resolved.releaseTrack.blocking) };
+  return { trunk: String(resolved.defaultTargetBranch ?? "") || null };
 };
 
 const label = (forge: string | null, pr: number | null): string =>
   pr === null ? "no PR" : `${forge === "gitlab" ? "MR !" : "PR #"}${pr}`;
 
 async function plan(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { name: "value", trunk: "value" });
+  const flags = parseFlags(argv, { name: "value", trunk: "value", track: "value" });
   if (typeof flags === "string") return usage(io, flags, PLAN_USAGE);
   const name = flags.values.name ?? null;
   const existingByName = name ? readStack(io.cwd, name) : null;
@@ -70,7 +87,31 @@ async function plan(argv: string[], io: Io): Promise<number> {
     const selected = selectStack(io.cwd, null);
     if (selected.ok) existing = selected.data;
   }
-  const trunk = flags.values.trunk ?? existing?.trunk ?? defaultTrunk(io) ?? "main";
+  const track = flags.values.track ?? null;
+  if (track !== null && flags.values.trunk !== undefined)
+    return usage(io, "pass --trunk or --track, not both (--track picks the trunk)", PLAN_USAGE);
+  let trunk = flags.values.trunk ?? existing?.trunk ?? null;
+  if (trunk === null || track !== null) {
+    const derived = defaultTrunk(io, track, flags.positionals[0] ?? null);
+    if ("error" in derived)
+      return emit(
+        io,
+        fail("blocked", derived.error, {
+          unblock: "workit stack plan --track <name> …  # or --trunk <branch>",
+        }),
+      );
+    // A re-plan keeps its trunk; --track must agree with it, not move it silently.
+    if (existing && track !== null && derived.trunk !== existing.trunk)
+      return emit(
+        io,
+        fail(
+          "invalid_input",
+          `stack ${existing.name} is on trunk ${existing.trunk}; --track ${track} targets ${derived.trunk ?? "(none)"}`,
+          { unblock: "drop --track to re-plan on the recorded trunk" },
+        ),
+      );
+    trunk ??= derived.trunk ?? "main";
+  }
   // PR lookups need the forge; planning itself does not (offline is fine).
   const connected = connect(io, flags.positionals[0] ?? null);
   const resolved = connected.ok ? connected.data : null;

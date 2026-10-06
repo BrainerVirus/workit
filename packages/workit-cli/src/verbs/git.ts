@@ -1,7 +1,7 @@
 // `workit git branch|commit|push` (design §2.1 S11). Flag parsing, the forge
 // identity check and the grant seam; the rules live in core git/ops.ts.
 //
-//   workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--carry]
+//   workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]
 //   workit git commit -m <msg> [--all | [--] <paths…>]
 //   workit git push [--set-upstream] [--force-with-lease [--expect <sha>]]
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
@@ -20,7 +20,7 @@ import { emit, fail, ok, type Io } from "../output";
 import { connect, forgeFail, parseFlags, usage } from "./forge-common";
 
 const BRANCH_USAGE =
-  "workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--carry] [--json]";
+  "workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
 const COMMIT_USAGE = "workit git commit -m <msg> [--all | [--] <paths…>] [--json]";
 const PUSH_USAGE =
   "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--json]";
@@ -29,7 +29,13 @@ const USAGE = "workit git branch|commit|push ... (workit help git)";
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
 
 async function branch(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { base: "value", kind: "value", slug: "value", carry: "boolean" });
+  const flags = parseFlags(argv, {
+    base: "value",
+    kind: "value",
+    slug: "value",
+    track: "value",
+    carry: "boolean",
+  });
   if (typeof flags === "string") return usage(io, flags, BRANCH_USAGE);
   const { kind, slug } = flags.values;
   if (flags.positionals.length > 1)
@@ -40,16 +46,23 @@ async function branch(argv: string[], io: Io): Promise<number> {
     return usage(io, "--kind must be feature, bugfix or hotfix", BRANCH_USAGE);
   if (kind !== undefined && flags.positionals.length)
     return usage(io, "pass a name or --kind/--slug, not both", BRANCH_USAGE);
-  const name = kind !== undefined ? `${kind}/${slug}` : flags.positionals[0];
-  if (!name) return usage(io, "missing branch name", BRANCH_USAGE);
+  if (kind === undefined && !flags.positionals[0])
+    return usage(io, "missing branch name", BRANCH_USAGE);
+  // --kind/--slug names come from the release track's naming (core).
   const result = gitBranch(io.cwd, {
-    name,
+    ...(kind !== undefined
+      ? { kind: kind as "feature" | "bugfix" | "hotfix", slug }
+      : { name: flags.positionals[0] }),
     base: flags.values.base ?? null,
+    track: flags.values.track ?? null,
     carry: flags.booleans.has("carry"),
   });
   if (!result.ok) return forgeFail(io, result);
   return emit(io, ok(result.data), (data: BranchOutcome) => [
     `switched to new branch ${data.branch} from ${data.baseRef} (${short(data.baseSha)})${data.carried ? ", carrying uncommitted changes" : ""}`,
+    ...(data.releaseTrack?.name
+      ? [`release track: ${data.releaseTrack.name} (${data.releaseTrack.detail})`]
+      : []),
     ...data.notes.map((note) => `note: ${note}`),
   ]);
 }

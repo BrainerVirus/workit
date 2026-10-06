@@ -231,9 +231,14 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
 
   // The caller selects the target; GitHub/GitLab enforce their own protections.
   const targetOverride = env.WF_PR_TARGET;
-  const resolvedDefault = String(
-    cfg.defaultTargetBranch ?? policy.defaultTargetBranch ?? "develop",
-  );
+  let resolvedDefault = String(cfg.defaultTargetBranch ?? policy.defaultTargetBranch ?? "develop");
+  if (!targetOverride) {
+    // Release tracks resolve in resolve mode: the target is the branch's line.
+    const resolved = vcsConfig("resolve", root);
+    if (resolved.ok === false) return { error: String(resolved.error) };
+    if (resolved.releaseTrack?.blocking) return { error: String(resolved.releaseTrack.blocking) };
+    resolvedDefault = String(resolved.defaultTargetBranch ?? resolvedDefault);
+  }
   const target = targetOverride || resolvedDefault;
   const title = String(env.WF_PR_TITLE ?? "");
   const br = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
