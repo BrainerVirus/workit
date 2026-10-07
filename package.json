@@ -1,6 +1,6 @@
 {
   "name": "workit",
-  "version": "7.2.0",
+  "version": "7.4.0",
   "private": true,
   "description": "Workit — workflow rails for agentic coding: one shared task and policy core with native OpenCode, Cursor, Codex, Pi, Claude Code, and CLI surfaces",
   "keywords": [
