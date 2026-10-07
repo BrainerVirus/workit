@@ -10,7 +10,7 @@ import {
   type SetupPreviewInput,
   type SetupResult,
 } from "@/packages/workit-cli/src/admin/setup";
-import { isolatedEnv } from "@/test/shared/helpers/packages";
+import { isolatedEnv, SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
 
 // PT-10 + cursor cwd semantics: the SHIPPED plugin manifest stays
 // package-relative, but Cursor spawns plugin MCP servers with the workspace as
@@ -37,7 +37,7 @@ beforeAll(() => {
     { encoding: "utf8" },
   );
   if (build.status !== 0) throw new Error(`cursor build failed: ${build.stderr}`);
-});
+}, SLOW_TEST_TIMEOUT_MS);
 afterAll(() => rmSync(devCheckout, { recursive: true, force: true }));
 
 const tempDir = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -71,58 +71,66 @@ const apply = (dir: string, home: string): SetupResult =>
 const statusOf = (result: SetupResult, file: string): string | undefined =>
   result.entries.find((e) => e.file === file)?.status;
 
-test("the installed plugin mcp.json carries the marketplace npx command (CA-17)", () => {
-  const home = tempDir("wk-cursor-mcp-home-");
-  const dir = tempDir("wk-cursor-mcp-cfg-");
-  try {
-    const result = apply(dir, home);
-    expect(result.ok, JSON.stringify(result.entries)).toBe(true);
+test(
+  "the installed plugin mcp.json carries the marketplace npx command (CA-17)",
+  () => {
+    const home = tempDir("wk-cursor-mcp-home-");
+    const dir = tempDir("wk-cursor-mcp-cfg-");
+    try {
+      const result = apply(dir, home);
+      expect(result.ok, JSON.stringify(result.entries)).toBe(true);
 
-    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
-    const pluginMcp = JSON.parse(readFileSync(path.join(pluginDir, "mcp.json"), "utf8"));
-    const entry = pluginMcp.mcpServers.workit;
-    expect(entry.command).toBe("npx");
-    expect(entry.args).toEqual([
-      "-y",
-      "--prefer-online",
-      "--min-release-age=0",
-      "--package=@brainervirus/workit-cursor@latest",
-      "workit-cursor-mcp",
-      "${workspaceFolder}",
-    ]);
+      const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
+      const pluginMcp = JSON.parse(readFileSync(path.join(pluginDir, "mcp.json"), "utf8"));
+      const entry = pluginMcp.mcpServers.workit;
+      expect(entry.command).toBe("npx");
+      expect(entry.args).toEqual([
+        "-y",
+        "--prefer-online",
+        "--min-release-age=0",
+        "--package=@brainervirus/workit-cursor@latest",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ]);
 
-    // The shipped manifest is identical: the installed copy is no longer a
-    // derived absolute-dist artifact, it copies the Marketplace-safe command.
-    const shipped = JSON.parse(
-      readFileSync(path.join(repoRoot, "packages", "workit-cursor", "mcp.json"), "utf8"),
-    );
-    expect(shipped.mcpServers.workit).toEqual(entry);
+      // The shipped manifest is identical: the installed copy is no longer a
+      // derived absolute-dist artifact, it copies the Marketplace-safe command.
+      const shipped = JSON.parse(
+        readFileSync(path.join(repoRoot, "packages", "workit-cursor", "mcp.json"), "utf8"),
+      );
+      expect(shipped.mcpServers.workit).toEqual(entry);
 
-    // ~/.cursor/mcp.json registers the same npx entry.
-    const userMcp = JSON.parse(readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8"));
-    expect(userMcp.mcpServers.workit).toEqual(entry);
-  } finally {
-    clean(home);
-    clean(dir);
-  }
-});
+      // ~/.cursor/mcp.json registers the same npx entry.
+      const userMcp = JSON.parse(readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8"));
+      expect(userMcp.mcpServers.workit).toEqual(entry);
+    } finally {
+      clean(home);
+      clean(dir);
+    }
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
-test("a second cursor apply reports the plugin Skipped — the derived mcp.json matches (truthful Skipped)", () => {
-  const home = tempDir("wk-cursor-mcp-idem-home-");
-  const dir = tempDir("wk-cursor-mcp-idem-cfg-");
-  try {
-    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
-    mkdirSync(path.dirname(pluginDir), { recursive: true });
+test(
+  "a second cursor apply reports the plugin Skipped — the derived mcp.json matches (truthful Skipped)",
+  () => {
+    const home = tempDir("wk-cursor-mcp-idem-home-");
+    const dir = tempDir("wk-cursor-mcp-idem-cfg-");
+    try {
+      const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
+      mkdirSync(path.dirname(pluginDir), { recursive: true });
 
-    const first = apply(dir, home);
-    expect(first.ok, JSON.stringify(first.entries)).toBe(true);
-    expect(statusOf(first, pluginDir)).toBe("Installed");
+      const first = apply(dir, home);
+      expect(first.ok, JSON.stringify(first.entries)).toBe(true);
+      expect(statusOf(first, pluginDir)).toBe("Installed");
 
-    const second = apply(dir, home);
-    expect(second.ok, JSON.stringify(second.entries)).toBe(true);
-    expect(statusOf(second, pluginDir)).toBe("Skipped");
-  } finally {
-    clean(home);
-    clean(dir);
-  }
-});
+      const second = apply(dir, home);
+      expect(second.ok, JSON.stringify(second.entries)).toBe(true);
+      expect(statusOf(second, pluginDir)).toBe("Skipped");
+    } finally {
+      clean(home);
+      clean(dir);
+    }
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);

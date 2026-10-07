@@ -5,7 +5,9 @@ import type { ForgeRunner } from "@brainervirus/workit-core/src/forge/exec";
 import type { PrStatusDoc } from "@brainervirus/workit-core/src/forge/report";
 import {
   checkIdentity,
+  checkPushIdentity,
   resolveForge,
+  type PushIdentity,
   type ResolvedForge,
 } from "@brainervirus/workit-core/src/forge/resolve";
 import type { ForgeResult } from "@brainervirus/workit-core/src/forge/types";
@@ -123,19 +125,32 @@ export const forgeFail = (
   data?: Record<string, unknown>,
 ): number => emit(io, fail(result.code, result.error, { data, unblock: result.unblock }));
 
-/** Resolve the forge from the push remote and verify the effective account. */
+/** Bound on resolving the forge and checking the account, for verbs without a --timeout. */
+const CONNECT_BUDGET_MS = 15_000;
+
+/**
+ * Resolve the forge from the push remote and verify the effective account.
+ * `deadline` (absolute, forgeDeps.now clock) bounds this and every later call
+ * through the returned forge, so a verb's --timeout covers the whole command;
+ * without one, resolution gets CONNECT_BUDGET_MS and later calls only their
+ * own per-call caps.
+ */
 export function connect(
   io: Io,
   branch?: string | null,
+  options: { deadline?: number | null } = {},
 ): ForgeResult<ResolvedForge & { identity: NonNullable<PrStatusDoc["identity"]> }> {
+  const verbDeadline = options.deadline ?? null;
   const resolved = resolveForge(io.cwd, {
     branch,
     env: io.env,
     runner: forgeDeps.runner,
     now: forgeDeps.now,
+    deadline: verbDeadline ?? forgeDeps.now() + CONNECT_BUDGET_MS,
   });
   if (!resolved.ok) return resolved;
   const identity = checkIdentity(resolved.data);
+  resolved.data.limits.deadline = verbDeadline;
   if (!identity.ok) return identity;
   return {
     ok: true,
@@ -149,6 +164,15 @@ export function connect(
     },
   };
 }
+
+/** The bounded, best-effort identity check before `git push` (core checkPushIdentity). */
+export const pushIdentity = (io: Io, branch: string): ForgeResult<PushIdentity> =>
+  checkPushIdentity(io.cwd, {
+    branch,
+    env: io.env,
+    runner: forgeDeps.runner,
+    now: forgeDeps.now,
+  });
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 7) : "?");
 

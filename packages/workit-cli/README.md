@@ -18,6 +18,10 @@ workit help        # every verb; `workit help <verb>` for one
 
 Or run once without installing: `npx @brainervirus/workit-cli init`.
 
+Agents and hooks call `workit` from PATH. `workit doctor` warns (`workit_on_path`)
+when none is found, when it does not run, or when it is older than an installed
+host plugin, and prints the `npm i -g` (or `npx`) command for the matching version.
+
 See the root [README](https://github.com/BrainerVirus/workit) for concepts and the
 [CLI reference](https://github.com/BrainerVirus/workit#cli-reference), and the
 [guides](https://github.com/BrainerVirus/workit/tree/main/docs/guides) for verification, delivery, grants and
