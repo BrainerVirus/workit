@@ -52,7 +52,7 @@ module.exports = {
       "@semantic-release/exec",
       {
         prepareCmd:
-          "bun packages/workit-core/scripts/rewrite-workspace-deps.ts && bun run build && bun packages/workit-core/scripts/verify-bundle-sources.ts",
+          "bun packages/workit-core/scripts/rewrite-workspace-deps.ts && bun packages/workit-core/scripts/verify-bundle-sources.ts --installs-only && bun run build && bun packages/workit-core/scripts/verify-bundle-sources.ts",
       },
     ],
     // AR-16: publish only packages with payload changes since the PREVIOUS

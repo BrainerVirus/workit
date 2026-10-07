@@ -2,7 +2,7 @@
 // workspace package (8.0.0 shipped 7.7.0's core in every adapter but pi).
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -15,18 +15,21 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(bundles: Record<string, string>): string {
+const CORE_BUNDLE = "// packages/workit-core/src/ledger.ts\nfunction effectiveOf() {}\n";
+
+function fixture(files: Record<string, string>): string {
   const root = mkdtempSync(path.join(tmpdir(), "workit-bundle-sources-"));
   roots.push(root);
-  for (const [rel, body] of Object.entries(bundles)) {
+  mkdirSync(path.join(root, "packages/workit-core"), { recursive: true });
+  for (const [rel, body] of Object.entries(files)) {
     mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     writeFileSync(path.join(root, rel), body);
   }
   return root;
 }
 
-const guard = (root: string) =>
-  spawnSync(process.execPath, [SCRIPT, root], {
+const guard = (root: string, ...flags: string[]) =>
+  spawnSync(process.execPath, [SCRIPT, root, ...flags], {
     encoding: "utf8",
     env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
   });
@@ -35,21 +38,20 @@ test("given a CLI bundle that inlined a registry copy of core, the guard fails n
   const root = fixture({
     "packages/workit-cli/dist/index.js":
       "// packages/workit-cli/node_modules/@brainervirus/workit-core/src/ledger.ts\nfunction effectiveOf() {}\n",
-    "packages/workit-mcp/dist/index.js": "// packages/workit-core/src/ledger.ts\n",
+    "packages/workit-mcp/dist/index.js": CORE_BUNDLE,
   });
   const run = guard(root);
   expect(run.status).toBe(1);
   expect(run.stderr).toContain(
-    "packages/workit-cli/dist/index.js: 1 modules, e.g. packages/workit-cli/node_modules/@brainervirus/workit-core/src/ledger.ts",
+    "packages/workit-cli/dist/index.js: 1 registry-copy modules, e.g. packages/workit-cli/node_modules/@brainervirus/workit-core/src/ledger.ts",
   );
   expect(run.stderr).not.toContain("workit-mcp/dist");
 });
 
-test("given bundles that inline only workspace sources, the guard passes", () => {
+test("given bundles that inline workspace core, the guard passes", () => {
   const root = fixture({
-    "packages/workit-cli/dist/index.js":
-      "// packages/workit-core/src/ledger.ts\n// node_modules/ink/build/index.js\n",
-    "packages/workit-cursor/dist/hooks/workit-hook.js": "// packages/workit-mcp/src/index.ts\n",
+    "packages/workit-cli/dist/index.js": `${CORE_BUNDLE}// node_modules/ink/build/index.js\n`,
+    "packages/workit-cursor/dist/hooks/workit-hook.js": CORE_BUNDLE,
   });
   const run = guard(root);
   expect(run.stderr).toBe("");
@@ -57,8 +59,51 @@ test("given bundles that inline only workspace sources, the guard passes", () =>
   expect(run.status).toBe(0);
 });
 
+test("given an unminified bundle with no workspace-core header, the guard fails", () => {
+  const root = fixture({
+    "packages/workit-mcp/dist/index.js": "var a = 1;\nfunction effectiveOf() {}\n",
+  });
+  const run = guard(root);
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain(
+    "packages/workit-mcp/dist/index.js: no `// packages/workit-core/src/` module header",
+  );
+});
+
+test("given a minified bundle (no headers to read), the bundle check leaves it to the install check", () => {
+  const root = fixture({
+    "packages/workit-claude-code/dist/workit-hook.js": `${"var a=1;".repeat(400)}\n`,
+  });
+  expect(guard(root).status).toBe(0);
+});
+
+test("given a planted nested node_modules/@brainervirus/workit-core, the install check fails", () => {
+  const root = fixture({
+    "packages/workit-cli/node_modules/@brainervirus/workit-core/package.json": "{}",
+  });
+  const run = guard(root, "--installs-only");
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain(
+    "packages/workit-cli/node_modules/@brainervirus/workit-core: installed copy outside packages/",
+  );
+});
+
+test("given a hoisted @brainervirus entry outside packages/, the install check fails; a workspace link passes", () => {
+  const root = fixture({ "node_modules/@brainervirus/workit-mcp/package.json": "{}" });
+  symlinkSync(
+    "../../packages/workit-core",
+    path.join(root, "node_modules/@brainervirus/workit-core"),
+  );
+  const run = guard(root, "--installs-only");
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain("node_modules/@brainervirus/workit-mcp: installed copy");
+  expect(run.stderr).not.toContain("@brainervirus/workit-core:");
+  rmSync(path.join(root, "node_modules/@brainervirus/workit-mcp"), { recursive: true });
+  expect(guard(root, "--installs-only").status).toBe(0);
+});
+
 test("given no built bundles, the guard fails instead of passing vacuously", () => {
-  const run = guard(fixture({ "packages/workit-core/src/ledger.ts": "" }));
+  const run = guard(fixture({}));
   expect(run.status).toBe(1);
   expect(run.stderr).toContain("no adapter bundles");
 });

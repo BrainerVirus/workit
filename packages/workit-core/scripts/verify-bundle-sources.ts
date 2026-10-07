@@ -3,54 +3,95 @@
 // @brainervirus sources, never a registry copy. bun build resolves the nearest
 // node_modules first, so an installed packages/<pkg>/node_modules/@brainervirus
 // copy silently replaces the tagged source (8.0.0 shipped 7.7.0's core that
-// way). bun prefixes each inlined module with a `// <path>` header; a header
-// under node_modules/@brainervirus/ names a stale copy. Runs after the
-// prepare-time build, before publish, and in the release-candidate gate.
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+// way). Two checks:
+//  - installs: no packages/*/node_modules/@brainervirus/* entry, and every root
+//    node_modules/@brainervirus/* entry resolves inside packages/ (run before
+//    the build; it also covers minified bundles, which carry no path headers);
+//  - bundles: bun prefixes each inlined module with a `// <path>` header; a
+//    header under node_modules/@brainervirus/ names a stale copy, and every
+//    non-minified bundle must inline core from packages/workit-core/src/.
+// `--installs-only` runs only the first check (prepareCmd, before the build).
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { RELEASE_PACKAGES } from "./analyze-release-scope";
 
-const REGISTRY_COPY = /^\/\/ (\S*node_modules\/@brainervirus\/\S+)$/gmu;
+const REGISTRY_COPY = /^\/\/ (.*node_modules\/@brainervirus\/.+)$/gmu;
+const WORKSPACE_CORE = /^\/\/ packages\/workit-core\/src\//mu;
+/** bun's unminified output averages well under 100 bytes a line; --minify is thousands. */
+const MINIFIED_BYTES_PER_LINE = 1000;
+
+const entries = (dir: string): string[] => (existsSync(dir) ? readdirSync(dir) : []);
+
+/** Installed @brainervirus packages a build could resolve instead of workspace source. */
+export function registryInstalls(root: string): string[] {
+  const nested = entries(join(root, "packages")).flatMap((pkg) => {
+    const scope = join(root, "packages", pkg, "node_modules", "@brainervirus");
+    return entries(scope).map((name) => relative(root, join(scope, name)));
+  });
+  const packages = join(realpathSync(root), "packages") + sep;
+  const scope = join(root, "node_modules", "@brainervirus");
+  const hoisted = entries(scope)
+    .filter((name) => !realpathSync(join(scope, name)).startsWith(packages))
+    .map((name) => relative(root, join(scope, name)));
+  return [...nested, ...hoisted];
+}
 
 function bundles(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).flatMap((name) => {
+  return entries(dir).flatMap((name) => {
     const file = join(dir, name);
     if (statSync(file).isDirectory()) return bundles(file);
     return name.endsWith(".js") ? [file] : [];
   });
 }
 
-/** Built adapter bundles under `root`, and the registry-copy modules each inlines. */
-export function bundleSources(root: string): {
-  scanned: string[];
-  stale: Array<{ bundle: string; modules: string[] }>;
-} {
+export type BundleProblem = { bundle: string; problem: string };
+
+/** Built adapter bundles under `root`, and what each one inlined wrongly. */
+export function bundleSources(root: string): { scanned: string[]; problems: BundleProblem[] } {
   const scanned = RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-core").flatMap((pkg) =>
     bundles(join(root, "packages", pkg, "dist")),
   );
-  const stale = scanned.flatMap((file) => {
-    const modules = [...readFileSync(file, "utf8").matchAll(REGISTRY_COPY)].map((m) => m[1]);
-    return modules.length ? [{ bundle: relative(root, file), modules }] : [];
+  const problems = scanned.flatMap((file): BundleProblem[] => {
+    const bundle = relative(root, file);
+    const text = readFileSync(file, "utf8");
+    const copies = [...text.matchAll(REGISTRY_COPY)].map((m) => m[1]);
+    if (copies.length)
+      return [{ bundle, problem: `${copies.length} registry-copy modules, e.g. ${copies[0]}` }];
+    const minified = text.length / (text.split("\n").length || 1) > MINIFIED_BYTES_PER_LINE;
+    if (!minified && !WORKSPACE_CORE.test(text))
+      return [{ bundle, problem: "no `// packages/workit-core/src/` module header" }];
+    return [];
   });
-  return { scanned: scanned.map((file) => relative(root, file)), stale };
+  return { scanned: scanned.map((file) => relative(root, file)), problems };
+}
+
+/** Every failure under `root` as printable lines; empty when the release may proceed. */
+export function verifyBundleSources(root: string, options: { installsOnly?: boolean } = {}) {
+  const failures = registryInstalls(root).map(
+    (path) => `${path}: installed copy outside packages/ (bundles would inline it)`,
+  );
+  if (options.installsOnly) return { failures, scanned: 0 };
+  const { scanned, problems } = bundleSources(root);
+  if (scanned.length === 0)
+    failures.push(`no adapter bundles under packages/*/dist; run \`bun run build\` first`);
+  for (const { bundle, problem } of problems) failures.push(`${bundle}: ${problem}`);
+  return { failures, scanned: scanned.length };
 }
 
 if (import.meta.main) {
-  const root = resolve(process.argv[2] ?? process.cwd());
-  const { scanned, stale } = bundleSources(root);
-  if (scanned.length === 0) {
-    console.error(`no adapter bundles under ${root}/packages/*/dist; run \`bun run build\` first`);
+  const args = process.argv.slice(2);
+  const installsOnly = args.includes("--installs-only");
+  const root = resolve(args.find((arg) => !arg.startsWith("--")) ?? process.cwd());
+  const { failures, scanned } = verifyBundleSources(root, { installsOnly });
+  if (failures.length) {
+    console.error("adapter bundles would not inline the workspace's own sources:");
+    for (const failure of failures) console.error(`  - ${failure}`);
+    console.error("remove the copies and rebuild; see release.yml NPM_CONFIG_WORKSPACES_UPDATE");
     process.exit(1);
   }
-  if (stale.length) {
-    console.error("adapter bundles inline a registry copy of a workspace package, not its source:");
-    for (const { bundle, modules } of stale)
-      console.error(`  - ${bundle}: ${modules.length} modules, e.g. ${modules[0]}`);
-    console.error(
-      "remove packages/*/node_modules/@brainervirus and rebuild; see release.yml NPM_CONFIG_WORKSPACES_UPDATE",
-    );
-    process.exit(1);
-  }
-  console.log(`verified ${scanned.length} adapter bundles inline workspace sources`);
+  console.log(
+    installsOnly
+      ? "no registry copies of workspace packages installed"
+      : `verified ${scanned} adapter bundles inline workspace sources`,
+  );
 }

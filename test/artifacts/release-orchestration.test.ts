@@ -139,7 +139,7 @@ test(
     // otherwise `workit --version` and npx hints report the previous release.
     // ...and the rebuilt bundles must inline the tagged workspace sources.
     expect(config).toMatch(
-      /prepareCmd:\s*"[^"]*rewrite-workspace-deps\.ts && bun run build && bun packages\/workit-core\/scripts\/verify-bundle-sources\.ts"/,
+      /prepareCmd:\s*"[^"]*rewrite-workspace-deps\.ts && bun packages\/workit-core\/scripts\/verify-bundle-sources\.ts --installs-only && bun run build && bun packages\/workit-core\/scripts\/verify-bundle-sources\.ts"/,
     );
 
     // CA-08 selective-publish pins are STRUCTURAL: load the pure-object config
