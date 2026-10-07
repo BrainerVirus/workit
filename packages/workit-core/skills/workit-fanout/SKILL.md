@@ -14,11 +14,10 @@ ceremony; do it yourself.
    per slice an id, branch, TIER, the file-scope manifest (SCOPE globs),
    `owns` for shared files (lockfile, registry, barrels), `dependsOn` only for
    a real dependency (independent PRs off trunk are the default), and the
-   brief fields. Run `workit fanout plan <plan.json>`. It refuses an empty or
-   placeholder brief field (exit 2) and two slices that may write one file
-   (exit 3) with a fix: an owner for a shared file, or a dependency that
-   serializes them. Apply the fix and re-run: refuse to spawn while a field is
-   empty or the plan is refused.
+   brief fields. `workit fanout plan <plan.json>` refuses an empty brief field
+   (exit 2) and two slices that may write one file (exit 3) with a fix: an
+   owner for a shared file, or a dependency that serializes them. Apply it and
+   re-run: refuse to spawn while a field is empty or the plan is refused.
    Its `waves` say which slices may run together; keep 4-6 in flight.
 2. **Brief each worker** from its slice with the fixed template: GOAL, SCOPE,
    CONTEXT (pointers, not pasted text), ACCEPTANCE (Given/When/Then), VERIFY
@@ -34,8 +33,8 @@ ceremony; do it yourself.
    No progress past the timebox means stuck. Stop the old worker and observe
    that it exited (a timeout is not proof). `git worktree remove --force`
    drops its uncommitted changes, so first record `git -C <wt> status --short`
-   in the ledger or your report; only then remove the worktree. Respawn with the brief in
-   `MODE: resume` (consolidated: original, later directives, its last report):
+   in the ledger or your report; only then remove the worktree. Respawn with
+   the brief in `MODE: resume` (original, later directives, its last report):
    the new worker runs `git switch <branch>` in its fresh worktree instead of
    `workit git branch`. Never two live workers on one branch. Replace at most
    twice, then re-slice or report the gap. Never chain resumes.
@@ -45,14 +44,15 @@ ceremony; do it yourself.
    session you started it with (`WORKIT_SESSION_ID=<lead>-v<n>`, set by you,
    never chosen by the author; Claude Code: the hook names one).
    A worker's report is a pointer, never evidence.
-6. **Fan in** with `workit fanout check`: it compares each slice branch's
-   diff with its scope (any file outside it stops the fan-in) and runs
-   `git merge-tree` against trunk and between siblings (a conflict is charged
-   to the slice that lands later). Fix what it names (an out-of-scope edit
-   becomes a follow-up slice) until it exits 0,
-   then `workit ledger check --branch <b>` per slice and land in its landing
-   order; restack stacked slices with `workit stack sync`. Only you touch
-   topology: workers never rebase, retarget or merge. Then workit-ship.
+6. **Fan in** with `workit fanout check`: out-of-scope files (any file outside
+   it stops the fan-in), and `git merge-tree` conflicts with trunk and between
+   siblings, charged to the slice that lands later. Fix what it names (an
+   out-of-scope edit becomes a follow-up slice) until it exits 0. A landed
+   slice reads as not found: re-plan without it and drop it from dependents'
+   `dependsOn`. Then `workit ledger check --branch <b>` per slice; land in its
+   order. Stacked slices: `workit stack plan <bottom> … <top>` once, then
+   `workit stack sync` and `land`. Only you touch topology: workers never
+   rebase, retarget or merge. Then workit-ship.
 
 ## Example
 

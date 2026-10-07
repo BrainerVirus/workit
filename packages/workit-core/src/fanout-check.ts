@@ -15,6 +15,7 @@
 // `workit pr merge`, not here. Refs are read as they are locally: fetch first.
 import { checkVerdicts, readLedger, type ReadRow } from "./ledger";
 import {
+  FANOUT_VERSION,
   branchRef,
   fanoutFail,
   gitRun,
@@ -50,6 +51,8 @@ export type SiblingConflict = {
   /** Lands second; it carries the conflict. */
   second: string;
   paths: string[];
+  /** The two branches name one file with different case (one file on macOS and Windows). */
+  caseOnly?: true;
   resolution: string;
 };
 
@@ -62,6 +65,7 @@ export type CheckOutcome = {
   conflicts: SiblingConflict[];
   landingOrder: string[];
   next: string;
+  notes: string[];
 };
 
 const SAFE = (value: string | null): value is string => Boolean(value) && !value?.startsWith("-");
@@ -79,7 +83,12 @@ function mergeConflicts(cwd: string, a: string, b: string): string[] | { error: 
   ]);
   if (run.status === 0) return [];
   if (run.status === 1) return [...new Set(nulList(run.stdout).slice(1))];
-  return { error: run.stderr.trim().split("\n")[0] || `git merge-tree exited ${run.status}` };
+  const first = run.stderr.trim().split("\n")[0] || `git merge-tree exited ${run.status}`;
+  return {
+    error: /write-tree|usage: git merge-tree/u.test(run.stderr)
+      ? `${first} (needs git >= 2.38 for merge-tree --write-tree)`
+      : first,
+  };
 }
 
 const isAncestor = (cwd: string, a: string, b: string): boolean =>
@@ -111,8 +120,9 @@ export function checkFanout(
   const rows: readonly ReadRow[] = ledger.ok ? ledger.value.rows : [];
 
   const checks = new Map<string, SliceCheck>();
+  const changedBy = new Map<string, string[]>();
   for (const slice of plan.slices)
-    checks.set(slice.id, inspect(cwd, plan, slice, trunk, tips, rows));
+    checks.set(slice.id, inspect(cwd, plan, slice, trunk, tips, rows, changedBy));
 
   // Pairwise siblings: skip a pair where one contains the other (a stacked child).
   const conflicts: SiblingConflict[] = [];
@@ -123,8 +133,26 @@ export function checkFanout(
       const a = tips.get(first);
       const b = tips.get(second);
       if (!a || !b || isAncestor(cwd, a, b) || isAncestor(cwd, b, a)) continue;
-      const result = mergeConflicts(cwd, a, b);
       const check = checks.get(second) as SliceCheck;
+      const theirs = new Map(
+        (changedBy.get(first) ?? []).map((file) => [file.toLowerCase(), file]),
+      );
+      const cased = (changedBy.get(second) ?? []).flatMap((file) => {
+        const other = theirs.get(file.toLowerCase());
+        return other !== undefined && other !== file ? [`${other} ~ ${file}`] : [];
+      });
+      if (cased.length) {
+        conflicts.push({
+          first,
+          second,
+          paths: cased,
+          caseOnly: true,
+          resolution: `use ${first}'s spelling on ${second} (git mv), then workit fanout check`,
+        });
+        check.siblingConflicts.push({ with: first, paths: cased });
+        check.reasons.push(`differs only in case from ${first}: ${cased.join(", ")}`);
+      }
+      const result = mergeConflicts(cwd, a, b);
       if (!Array.isArray(result)) {
         check.reasons.push(`cannot merge with ${first}: ${result.error}`);
         continue;
@@ -158,6 +186,12 @@ export function checkFanout(
     .map((id) => checks.get(id) as SliceCheck);
   const ready = slices.every((check) => check.status === "ready");
   const blocked = slices.find((check) => check.status === "blocked");
+  const notes =
+    plan.v === FANOUT_VERSION
+      ? []
+      : [
+          `plan file version ${plan.v} is not ${FANOUT_VERSION}; read leniently (re-plan to rewrite it)`,
+        ];
   const next = blocked
     ? unblockFor(blocked, plan)
     : `land in this order: ${slices.map((check) => check.id).join(", ")} (workit pr merge each once verified; stacked slices with workit stack land)`;
@@ -173,6 +207,7 @@ export function checkFanout(
         (conflict) => !selected || selected.has(conflict.first) || selected.has(conflict.second),
       ),
       landingOrder: order,
+      notes,
       next,
     },
   };
@@ -188,6 +223,7 @@ function inspect(
   trunk: string,
   tips: ReadonlyMap<string, string | null>,
   rows: readonly ReadRow[],
+  changedBy: Map<string, string[]>,
 ): SliceCheck {
   const head = tips.get(slice.id) ?? null;
   const check: SliceCheck = {
@@ -205,7 +241,7 @@ function inspect(
     reasons: [],
   };
   if (!head) {
-    check.reasons.push(`branch ${slice.branch} not found (not started, or not fetched)`);
+    check.reasons.push(`branch ${slice.branch} not found (not started, landed, or not fetched)`);
     return check;
   }
   const parent = plan.slices.find((other) => other.branch === slice.base);
@@ -225,6 +261,7 @@ function inspect(
     return check;
   }
   const changed = nulList(diff.stdout);
+  changedBy.set(slice.id, changed);
   check.changed = changed.length;
   if (changed.length === 0) check.reasons.push(`no changes beyond ${slice.base}`);
   check.outOfScope = changed.filter((file) => !inScope(plan, slice, file)).toSorted();
@@ -242,7 +279,8 @@ function inspect(
 }
 
 function unblockFor(check: SliceCheck, plan: FanoutFile): string {
-  if (!check.head) return `start or fetch ${check.branch}, then workit fanout check`;
+  if (!check.head)
+    return `start or fetch ${check.branch}, then workit fanout check; if it landed, re-plan without slice ${check.id}`;
   if (check.outOfScope.length)
     return `move ${check.outOfScope.join(", ")} off ${check.branch} (a follow-up slice), or widen slice ${check.id}'s scope with workit fanout plan, then workit fanout check`;
   if (check.trunkConflicts.length)

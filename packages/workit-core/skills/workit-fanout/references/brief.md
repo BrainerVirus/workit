@@ -49,8 +49,8 @@ slice carries the brief fields the plan checks (goal, scope, acceptance,
 verify, forbidden must be filled; tier is mundane, standard or hard). `base`
 defaults to the trunk, or to the branch of a single `dependsOn` slice (a
 stack); `worktree` defaults to `../<repo>-wt/<id>`. `owns` claims a shared
-file another slice's glob also matches. Name files a slice creates literally,
-so overlap on not-yet-existing files is caught.
+file another slice's glob also matches. Globs that match no file yet are compared
+through a sample path. Escape literal brackets: `"app/\\[id\\]/page.tsx"`.
 
 ```json
 {

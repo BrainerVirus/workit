@@ -1,10 +1,19 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import { readLedger } from "@/packages/workit-core/src/ledger";
+import { stackFileName } from "@/packages/workit-core/src/stack";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remote";
 
@@ -476,6 +485,147 @@ test("fanout check: given an unknown slice id, when checked, then it is a usage 
   const result = await run(repo.cwd, ["fanout", "check", "nope", "--json"]);
   expect(result.code).toBe(2);
   expect(result.json().error).toBe("nope: not a slice of fanout wave");
+});
+
+// ---------------------------------------------------------------------------
+// globs on directories nobody has created, brackets, case, stored-file trust
+
+for (const [left, right] of [
+  ["src/new/", "src/new/"],
+  ["src/new", "src/new/**"],
+  ["src/new/*.ts", "src/new/**"],
+] as const)
+  test(`fanout plan: given ${left} and ${right} in two independent slices and no src/new on trunk, when planned, then the overlap is caught through a sample path`, async () => {
+    const repo = makeRepo();
+    const result = await run(repo.cwd, [
+      "fanout",
+      "plan",
+      repo.plan(planDoc([slice("a", [left]), slice("b", [right])])),
+      "--json",
+    ]);
+    expect(result.code, result.stdout).toBe(3);
+    expect(result.json().data.conflicts.map((c: { slices: string[] }) => c.slices)).toEqual([
+      ["a", "b"],
+    ]);
+  });
+
+test("fanout plan: given new-directory globs that cannot meet (src/new/*.ts and src/other/**), when planned, then no overlap is reported", async () => {
+  const repo = makeRepo();
+  const result = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("a", ["src/new/*.ts"]), slice("b", ["src/other/**"])])),
+    "--json",
+  ]);
+  expect(result.code, result.stdout).toBe(0);
+});
+
+test("fanout plan and check: given a Next.js route path, when the brackets are unescaped the plan names the \\[ workaround, and when escaped the route file is in scope", async () => {
+  const repo = makeRepo();
+  const raw = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("route", ["app/[id]/page.tsx"])])),
+    "--json",
+  ]);
+  expect(raw.code).toBe(2);
+  expect(raw.json().data.problems[0]).toContain("write \\[ and \\] for literal brackets");
+
+  await planned(repo, [slice("route", ["app/\\[id\\]/page.tsx"]), slice("ui", ["src/ui/**"])]);
+  repo.branch("feature/route", "main", {
+    "app/[id]/page.tsx": "export default () => null;\n",
+    "app/[slug]/page.tsx": "export default () => 1;\n",
+  });
+  const { byId } = await checkJson(repo, "route");
+  expect(byId.route).toMatchObject({ changed: 2, outOfScope: ["app/[slug]/page.tsx"] });
+});
+
+test("fanout plan: given two slices naming one new file in different case, when planned, then it is one file and the overlap is blocked", async () => {
+  const repo = makeRepo();
+  const result = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("a", ["src/Shared.ts"]), slice("b", ["src/shared.ts"])])),
+    "--json",
+  ]);
+  expect(result.code, result.stdout).toBe(3);
+  expect(result.json().data.conflicts[0].paths).toEqual(["src/Shared.ts ~ src/shared.ts"]);
+});
+
+test("fanout check: given two sibling branches adding one file under different case, when checked, then the later slice is flagged although git merges them cleanly", async () => {
+  const repo = makeRepo();
+  await planned(repo, [
+    slice("first", ["docs/**"]),
+    slice("second", ["docs/**"], { dependsOn: ["first"], base: "main" }),
+  ]);
+  repo.branch("feature/first", "main", { "docs/Guide.md": "first\n" });
+  repo.branch("feature/second", "main", { "docs/guide.md": "second\n" });
+  const { code, envelope, byId } = await checkJson(repo);
+  expect(code).toBe(3);
+  expect(envelope.data.conflicts).toEqual([
+    {
+      first: "first",
+      second: "second",
+      paths: ["docs/Guide.md ~ docs/guide.md"],
+      caseOnly: true,
+      resolution: "use first's spelling on second (git mv), then workit fanout check",
+    },
+  ]);
+  expect(byId.first).toMatchObject({ status: "ready" });
+  expect(byId.second).toMatchObject({ status: "blocked", trunkConflicts: [] });
+});
+
+const tamper = async (repo: Repo, edit: (plan: Record<string, any>) => void) => {
+  await planned(repo, [slice("a", ["src/api/**"]), slice("b", ["src/ui/**"])]);
+  const file = path.join(fanoutsDir(repo), stackFileName("wave"));
+  const stored = JSON.parse(readFileSync(file, "utf8"));
+  edit(stored);
+  writeFileSync(file, JSON.stringify(stored));
+  return run(repo.cwd, ["fanout", "check", "--name", "wave", "--json"]);
+};
+
+test("fanout check: given a stored plan edited to an unclosed brace scope, when checked, then it is not a valid plan (never matched against)", async () => {
+  const result = await tamper(makeRepo(), (plan) => {
+    plan.slices[0].scope = ["src/{api"];
+  });
+  expect(result.code).toBe(1);
+  expect(result.json().error).toContain("is not a valid plan");
+});
+
+test("fanout check: given a stored plan edited into a dependency cycle or an unknown dependency, when checked, then it is not a valid plan", async () => {
+  const cycle = await tamper(makeRepo(), (plan) => {
+    plan.slices[0].dependsOn = ["b"];
+    plan.slices[1].dependsOn = ["a"];
+  });
+  expect(cycle.json().error).toContain("is not a valid plan");
+  const unknown = await tamper(makeRepo(), (plan) => {
+    plan.slices[0].dependsOn = ["ghost"];
+  });
+  expect(unknown.json().error).toContain("is not a valid plan");
+});
+
+test("fanout check: given a stored plan with an unknown version, when checked, then it still checks and says so in notes", async () => {
+  const repo = makeRepo();
+  const result = await tamper(repo, (plan) => {
+    plan.v = 99;
+  });
+  expect(result.json().data.notes).toEqual([
+    "plan file version 99 is not 1; read leniently (re-plan to rewrite it)",
+  ]);
+});
+
+test("matchesScope: an unclosed { and a stray } are literal characters, and matching returns (it used to loop forever)", () => {
+  const module = path.resolve(import.meta.dir, "../../packages/workit-core/src/fanout.ts");
+  const probe = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `const { matchesScope } = await import(${JSON.stringify(module)}); console.log(JSON.stringify([matchesScope("src/{a", "src/{a"), matchesScope("src/a}", "src/a}"), matchesScope("src/{a", "src/a")]));`,
+    ],
+    { encoding: "utf8", timeout: 4_000 },
+  );
+  expect(probe.error?.message, probe.stderr).toBeUndefined();
+  expect(JSON.parse(probe.stdout)).toEqual([true, true, false]);
 });
 
 // ---------------------------------------------------------------------------

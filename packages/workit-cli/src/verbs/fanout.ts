@@ -145,6 +145,7 @@ const renderCheck = (data: CheckOutcome): string[] => [
   ),
   `landing order: ${data.landingOrder.join(", ")}`,
   `next: ${data.next}`,
+  ...data.notes.map((note) => `note: ${note}`),
 ];
 
 function check(argv: string[], io: Io): number {

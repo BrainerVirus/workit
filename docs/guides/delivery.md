@@ -116,7 +116,9 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, lan
 
 - The plan file lists slices: `id`, `branch`, `tier` (`mundane`, `standard`,
   `hard`), `scope` (globs: `*`, `**`, `?`, `{a,b}`; a plain path also covers
-  what is below it), optional `owns`, `dependsOn`, `base`, `worktree`, and
+  what is below it; `.` is the whole repository; escape literal brackets as
+  `\[` and `\]`, e.g. `app/\[id\]/page.tsx`, written `"app/\\[id\\]/page.tsx"` in
+  JSON), optional `owns`, `dependsOn`, `base`, `worktree`, and
   the brief: `goal`, `acceptance`, `verify`, `forbidden` (plus optional
   `context`, `timebox`). The shape is in the fanout skill's
   `references/brief.md`. It is stored in `<git common dir>/workit/fanouts/`,
@@ -132,8 +134,10 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, lan
   one `dependsOn` is stacked on that slice's branch.
 - `plan` exits 2 (`invalid_input`) and lists every empty or placeholder brief
   field, unknown or cyclic dependency and bad glob. It exits 3 (`blocked`)
-  when two slices may write the same file, checked against the trunk's files
-  plus every literal path a scope names. Each overlap comes with a fix: an
+  when two slices may write the same file. It checks the trunk's files plus
+  one sample path per glob (`src/new/**` -> `src/new/<any>`), so overlap in
+  directories nobody has created yet is caught, and paths that differ only in
+  case count as one file. Each overlap comes with a fix: an
   owner (`owns`) for lockfiles, manifests, barrels and CI config, otherwise a
   `dependsOn` that serializes the slices. Overlap between slices that already
   depend on each other, or with exactly one owner, is accepted.
@@ -142,7 +146,12 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, lan
   another slice owns counts as outside), conflicts with the trunk, and
   conflicts with each sibling branch from `git merge-tree`. A sibling
   conflict is charged to the slice that lands later. A slice whose
-  dependency is not ready waits. Exit 0 means every checked slice is ready
+  dependency is not ready waits. Two siblings that change one file under
+  different case are flagged too. Merge checks need git 2.38 or newer.
+- A slice whose PR already landed reads as `not found` once its branch is
+  deleted (squash merges never make it an ancestor of the trunk). Re-plan
+  without it and remove it from its dependents' `dependsOn`; `fanout status`
+  will detect landed slices later. Exit 0 means every checked slice is ready
   and `next` names the landing order: dependencies first, then plan order.
   Exit 3 names the first blocked slice and how to unblock it. The verdict per
   slice is shown; `pr merge` still enforces it.

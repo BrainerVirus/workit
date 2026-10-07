@@ -12,9 +12,9 @@
 // (`blocked`) two slices that may write the same file unless that is
 // resolved: exactly one slice lists the file under `owns`, or the slices are
 // serialized by a dependency. Overlap is evaluated on the trunk's tracked
-// files plus every literal path a scope names (files that do not exist yet);
-// two globs that only match files nobody has created are not compared, so
-// name new files literally. Each unresolved overlap carries one
+// files plus one sample path per glob (`src/new/**` -> `src/new/<any>`), so
+// directories nobody has created yet are compared too, and paths differing
+// only in case count as one file. Each unresolved overlap carries one
 // deterministic suggestion: an owner for known shared files (lockfiles,
 // manifests, barrels, CI config), else a dependency that serializes them.
 //
@@ -98,14 +98,52 @@ export const DEFAULT_SHARED: readonly string[] = [
 // ---------------------------------------------------------------------------
 // scope globs
 
-const GLOB_SPECIAL = /[*?{}]/u;
-const escapeRegExp = (text: string): string => text.replace(/[.+^$()|[\]\\]/gu, "\\$&");
+const escapeRegExp = (text: string): string => text.replace(/[.+^$()|[\]\\{}*?]/gu, "\\$&");
+/** The pattern with `\x` escapes resolved: what a wildcard-free pattern names. */
+const unescape = (pattern: string): string => pattern.replace(/\\(.)/gu, "$1");
+/** Has an unescaped `*`, `?` or `{`. */
+const hasWildcard = (pattern: string): boolean => /[*?{]/u.test(pattern.replace(/\\./gu, ""));
+
+/**
+ * One concrete path the pattern matches, standing in for files nobody has
+ * created yet: `src/new/**` -> `src/new/<any>`, `src/*.ts` -> `src/<any>.ts`.
+ */
+export function scopeSamples(pattern: string): string[] {
+  // A plain path covers what is below it too, so `src/new` and `src/new/**`
+  // overlap through `src/new/<any>` without a second sample.
+  if (!hasWildcard(pattern)) return [unescape(pattern)];
+  let out = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "\\" && index + 1 < pattern.length) {
+      out += pattern[index + 1];
+      index += 1;
+    } else if (char === "*" && pattern[index + 1] === "*") {
+      const atSegmentStart = index === 0 || pattern[index - 1] === "/";
+      if (atSegmentStart && pattern[index + 2] === "/") index += 2;
+      else {
+        out += "<any>";
+        index += 1;
+      }
+    } else if (char === "*") out += "<any>";
+    else if (char === "?") out += "x";
+    else if (char === "{" && pattern.indexOf("}", index) > index) {
+      const close = pattern.indexOf("}", index);
+      out += pattern.slice(index + 1, close).split(",")[0];
+      index = close;
+    } else out += char;
+  }
+  return [out];
+}
 
 function globSource(pattern: string): string {
   let out = "";
   for (let index = 0; index < pattern.length; index += 1) {
     const char = pattern[index];
-    if (char === "*" && pattern[index + 1] === "*") {
+    if (char === "\\" && index + 1 < pattern.length) {
+      out += escapeRegExp(pattern[index + 1]);
+      index += 1;
+    } else if (char === "*" && pattern[index + 1] === "*") {
       const atSegmentStart = index === 0 || pattern[index - 1] === "/";
       if (atSegmentStart && pattern[index + 2] === "/") {
         out += "(?:[^/]*/)*";
@@ -116,7 +154,8 @@ function globSource(pattern: string): string {
       }
     } else if (char === "*") out += "[^/]*";
     else if (char === "?") out += "[^/]";
-    else if (char === "{") {
+    else if (char === "{" && pattern.indexOf("}", index) > index) {
+      // An unclosed brace is a literal `{` (stored plans are not trusted).
       const close = pattern.indexOf("}", index);
       const alternatives = pattern
         .slice(index + 1, close)
@@ -143,7 +182,7 @@ export function matchesScope(pattern: string, file: string): boolean {
     regex = new RegExp(`^${globSource(pattern)}$`, "u");
     compiled.set(pattern, regex);
   }
-  return regex.test(file) || (!GLOB_SPECIAL.test(pattern) && file.startsWith(`${pattern}/`));
+  return regex.test(file) || (!hasWildcard(pattern) && file.startsWith(`${unescape(pattern)}/`));
 }
 
 const matchesAny = (patterns: readonly string[], file: string): boolean =>
@@ -151,16 +190,25 @@ const matchesAny = (patterns: readonly string[], file: string): boolean =>
 
 /** A scope entry in canonical form, or why it is refused. */
 function normalizePattern(raw: string): { pattern: string } | { error: string } {
-  let pattern = raw.trim().replaceAll("\\", "/");
+  // A backslash escapes a glob character (`app/\\[id\\]`); any other one is a
+  // Windows separator.
+  let pattern = raw.trim().replace(/\\(?![[\]{}*?])/gu, "/");
   while (pattern.startsWith("./")) pattern = pattern.slice(2);
+  if (pattern === "." || pattern === "") pattern = raw.trim() ? "**" : "";
   if (pattern.endsWith("/")) pattern = `${pattern}**`;
   if (!pattern) return { error: "is empty" };
   if (pattern.startsWith("/") || /^[A-Za-z]:/u.test(pattern))
     return { error: "must be relative to the repository root" };
   if (pattern.split("/").includes("..")) return { error: "must not contain .." };
-  if (/[[\]!]/u.test(pattern)) return { error: "uses [ ] or ! (only * ** ? {a,b} are supported)" };
+  const bare = pattern.replace(/\\./gu, "");
+  if (/[[\]]/u.test(bare))
+    return {
+      error:
+        'has an unescaped [ or ]: write \\[ and \\] for literal brackets (app/\\[id\\]/page.tsx; in JSON "app/\\\\[id\\\\]/page.tsx")',
+    };
+  if (bare.startsWith("!")) return { error: "uses ! (negation is not supported)" };
   let depth = 0;
-  for (const char of pattern) {
+  for (const char of bare) {
     if (char === "{") depth += 1;
     if (char === "}") depth -= 1;
     if (depth < 0 || depth > 1) return { error: "has unbalanced or nested braces" };
@@ -470,13 +518,20 @@ export function analyzeOverlap(
     Boolean(before.get(a)?.has(b) || before.get(b)?.has(a));
   const overlaps: Overlap[] = [];
   const groups = new Map<string, OverlapConflict & { members: Slice[] }>();
-  for (const file of [...new Set(candidates)].toSorted()) {
-    const matching = plan.slices.filter(
-      (slice) => matchesAny(slice.scope, file) || matchesAny(slice.owns, file),
-    );
+  // Paths that differ only in case are one file on case-insensitive checkouts.
+  const byCase = new Map<string, string[]>();
+  for (const file of [...new Set(candidates)].toSorted())
+    (
+      byCase.get(file.toLowerCase()) ?? byCase.set(file.toLowerCase(), []).get(file.toLowerCase())
+    )?.push(file);
+  for (const spellings of byCase.values()) {
+    const file = spellings.join(" ~ ");
+    const any = (patterns: readonly string[]) =>
+      spellings.some((spelling) => matchesAny(patterns, spelling));
+    const matching = plan.slices.filter((slice) => any(slice.scope) || any(slice.owns));
     if (matching.length < 2) continue;
     const ids = matching.map((slice) => slice.id);
-    const owners = matching.filter((slice) => matchesAny(slice.owns, file));
+    const owners = matching.filter((slice) => any(slice.owns));
     if (owners.length === 1) {
       overlaps.push({ path: file, slices: ids, resolution: "owner", owner: owners[0].id });
       continue;
@@ -490,7 +545,7 @@ export function analyzeOverlap(
     }
     const members = owners.length > 1 ? owners : matching;
     const reason = owners.length > 1 ? "several_owners" : "overlap";
-    const isShared = matchesAny(shared, file);
+    const isShared = any(shared);
     const key = `${reason}|${isShared}|${members.map((slice) => slice.id).join(",")}`;
     const group = groups.get(key);
     if (group) group.paths.push(file);
@@ -592,12 +647,27 @@ export function fanoutsDir(cwd: string): FanoutResult<string> {
   return { ok: true, data: path.join(root.value.root, "fanouts") };
 }
 
+/**
+ * Tolerant read (D17) that still re-validates what the checks rely on: every
+ * glob normalizes, every dependency is a known slice, no cycle. A file that
+ * fails is "not a valid plan", never half-trusted.
+ */
 function parseStored(raw: unknown): FanoutFile | null {
   if (!isRecord(raw) || typeof raw.name !== "string" || typeof raw.trunk !== "string") return null;
   if (!Array.isArray(raw.slices)) return null;
   const list = (value: unknown): string[] =>
     Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   const text = (value: unknown): string => (typeof value === "string" ? value : "");
+  let globsValid = true;
+  const globs = (value: unknown): string[] =>
+    list(value).map((entry) => {
+      const normalized = normalizePattern(entry);
+      if ("error" in normalized) {
+        globsValid = false;
+        return entry;
+      }
+      return normalized.pattern;
+    });
   const slices: Slice[] = [];
   for (const item of raw.slices) {
     if (!isRecord(item) || typeof item.id !== "string" || typeof item.branch !== "string")
@@ -609,8 +679,8 @@ function parseStored(raw: unknown): FanoutFile | null {
       worktree: text(item.worktree),
       tier: (TIERS as readonly unknown[]).includes(item.tier) ? (item.tier as Tier) : "standard",
       dependsOn: list(item.dependsOn),
-      scope: list(item.scope),
-      owns: list(item.owns),
+      scope: globs(item.scope),
+      owns: globs(item.owns),
       goal: text(item.goal),
       acceptance: list(item.acceptance),
       verify: list(item.verify),
@@ -619,11 +689,20 @@ function parseStored(raw: unknown): FanoutFile | null {
       timebox: typeof item.timebox === "string" ? item.timebox : null,
     });
   }
+  const shared = globs(raw.shared);
+  const ids = new Set(slices.map((slice) => slice.id));
+  if (
+    !globsValid ||
+    ids.size !== slices.length ||
+    slices.some((slice) => slice.dependsOn.some((dep) => dep === slice.id || !ids.has(dep))) ||
+    findCycle(slices)
+  )
+    return null;
   return {
     v: typeof raw.v === "number" ? raw.v : FANOUT_VERSION,
     name: raw.name,
     trunk: raw.trunk,
-    shared: list(raw.shared),
+    shared,
     slices,
     createdAt: text(raw.createdAt),
     updatedAt: text(raw.updatedAt),
@@ -767,10 +846,10 @@ export function planFanout(
   const tracked = ref
     ? nulList(gitRun(cwd, ["ls-tree", "-r", "-z", "--name-only", ref]).stdout)
     : [];
-  const literal = plan.slices.flatMap((slice) =>
-    [...slice.scope, ...slice.owns].filter((pattern) => !GLOB_SPECIAL.test(pattern)),
+  const samples = plan.slices.flatMap((slice) =>
+    [...slice.scope, ...slice.owns].flatMap(scopeSamples),
   );
-  const { overlaps, conflicts } = analyzeOverlap(plan, [...tracked, ...literal]);
+  const { overlaps, conflicts } = analyzeOverlap(plan, [...tracked, ...samples]);
   if (conflicts.length)
     return fanoutFail(
       "blocked",
@@ -797,7 +876,9 @@ export function planFanout(
   const grouped = waves(plan.slices);
   const notes: string[] = [];
   if (!ref)
-    notes.push(`trunk ${plan.trunk} does not resolve here; only literal scope paths were compared`);
+    notes.push(
+      `trunk ${plan.trunk} does not resolve here; only sample paths of each glob were compared`,
+    );
   grouped.forEach((wave, index) => {
     if (wave.length > IN_FLIGHT_CAP)
       notes.push(
