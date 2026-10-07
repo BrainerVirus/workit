@@ -761,6 +761,8 @@ export type RejectReason =
   | "no_session"
   | "author_session"
   | "failing_verdict"
+  /** The only passing current verdict is `type-check-only`, which proves no behavior. */
+  | "type_check_only"
   | "no_verdict";
 
 export type VerdictEntry = {
@@ -783,7 +785,10 @@ export type VerdictCheck = {
   patchId: string | null;
   /** Newest current verdict (else newest verdict): does it still apply? */
   current: { basis: VerdictBasis; verdict: ReadRow | null };
-  /** What merge gates read: an accepted verdict and no current independent failure. */
+  /**
+   * What merge gates read: an accepted strong (`verified`/`tests-verified`)
+   * verdict and no current independent failure. `type-check-only` never counts.
+   */
   accepted: { accepted: boolean; verdict: ReadRow | null; reasons: RejectReason[] };
   review: ReviewLabel;
   /** The newest current, strong, self verdict when `review` is self-reviewed. */
@@ -974,7 +979,10 @@ export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRo
   const failing = verdicts.find(
     (entry) => entry.current && entry.independent && FAILING.has(String(entry.verdict.result)),
   );
-  const newestAccepted = verdicts.findLast((entry) => entry.accepted) ?? null;
+  const newestAccepted =
+    verdicts.findLast(
+      (entry) => entry.accepted && STRONG_RESULTS.has(String(entry.verdict.result)),
+    ) ?? null;
   const accepted =
     newestAccepted && !failing
       ? { accepted: true, verdict: newestAccepted.verdict, reasons: [] }
@@ -983,7 +991,11 @@ export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRo
           verdict: failing?.verdict ?? null,
           reasons: failing
             ? (["failing_verdict"] as RejectReason[])
-            : (newestCurrent?.reasons ?? (["no_verdict"] as RejectReason[])),
+            : !newestCurrent
+              ? (["no_verdict"] as RejectReason[])
+              : newestCurrent.reasons.length
+                ? newestCurrent.reasons
+                : (["type_check_only"] as RejectReason[]),
         };
   const selfEntry = failing
     ? undefined
@@ -1361,7 +1373,7 @@ export type RowSummary = {
 };
 
 /** Row types that count only when an observing verb wrote them. */
-const OBSERVED_ONLY: ReadonlySet<string> = new Set(["check", ...PR_ROW_TYPES]);
+const OBSERVED_ONLY: ReadonlySet<string> = new Set(["check", "merge.unverified", ...PR_ROW_TYPES]);
 
 export function rowLabels(row: ReadRow): RowSummary["labels"] {
   const labels: RowSummary["labels"] = [];
@@ -1406,6 +1418,9 @@ export function summarizeRow(row: ReadRow): RowSummary {
       break;
     case "pr.merged":
       summary = `#${row.pr ?? "?"} ${text("method")} at ${(row.head ?? "?").slice(0, 12)}${text("mergeSha") ? ` -> ${text("mergeSha").slice(0, 12)}` : ""}`;
+      break;
+    case "merge.unverified":
+      summary = `#${row.pr ?? "?"} unverified merge requested at ${(row.head ?? "?").slice(0, 12)} (reason: ${text("reason")})`;
       break;
     case "delivery.verified":
       summary = `${text("expect")} delivered at ${(row.head ?? "?").slice(0, 12)}`;

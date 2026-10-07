@@ -200,6 +200,133 @@ test("stack land: given a workspace without a merge grant (default ceiling), whe
   expect(human.stdout).toContain("grant_required (verified, ready)");
 });
 
+// `merge: true` lands only verified PRs unless the user asked for an
+// explicit, recorded `--unverified --reason`; `merge: "verified"` never.
+const MERGE_TRUE = { push: true, pr: true, merge: true };
+
+test("stack land: given merge: true and no verdict on the root, then it stops at no_verdict and names the verifier and the --unverified bypass", async () => {
+  const forge = setup("github", MERGE_TRUE);
+  await plan(forge);
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({
+    landed: [],
+    stoppedAt: { pr: 11, reason: "no_verdict" },
+  });
+  expect(result.json().data.stoppedAt.unblock).toContain("workit ledger verdict verified");
+  expect(result.json().data.stoppedAt.unblock).toContain(
+    'workit stack land --unverified --reason "<why>"',
+  );
+  expect(forge.writes).toEqual([]);
+});
+
+test("stack land: given merge: true, when --unverified --reason is passed, then a verified PR lands normally and an unverified one lands with a bypass row", async () => {
+  const forge = setup("github", MERGE_TRUE);
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  const b = forge.tip("feature/b");
+  const result = await run(
+    ["stack", "land", "--max", "2", "--unverified", "--reason", "user asked to land now", "--json"],
+    forge.cwd,
+  );
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  const data = result.json().data;
+  expect(data.landed.map((item: { pr: number }) => item.pr)).toEqual([11, 12]);
+  expect(data.landed[0].unverified).toBeNull();
+  const bypass = rows(forge.cwd, "merge.unverified");
+  expect(bypass).toEqual([
+    expect.objectContaining({
+      observer: "workit_cli",
+      actor: expect.objectContaining({ session: "lander-1" }),
+      branch: "feature/b",
+      pr: 12,
+      reason: "user asked to land now",
+    }),
+  ]);
+  // The bypass names the head that was merged: feature/b restacked onto main.
+  expect(bypass[0].head).not.toBe(b);
+  const merged = rows(forge.cwd, "pr.merged").find((row) => row.pr === 12);
+  expect(bypass[0].head).toBe(merged?.head ?? "(no pr.merged row)");
+  expect(data.landed[1].unverified).toBe(String(bypass[0].id));
+  expect(forge.prs.get(12)?.state).toBe("merged");
+});
+
+test("stack land: --unverified without --reason is a usage error and nothing moves", async () => {
+  const forge = setup("github", MERGE_TRUE);
+  await plan(forge);
+  const result = await run(["stack", "land", "--unverified", "--json"], forge.cwd);
+  expect(result.code).toBe(2);
+  expect(result.stderr + result.stdout).toContain("--unverified needs --reason");
+  expect(forge.writes).toEqual([]);
+});
+
+test('stack land: given merge: "verified", then --unverified is refused, naming why, and nothing moves', async () => {
+  const forge = setup("github");
+  await plan(forge);
+  const result = await run(
+    ["stack", "land", "--unverified", "--reason", "user asked", "--json"],
+    forge.cwd,
+  );
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain(
+    'grants merge: "verified", which never lands without an accepted independent verdict',
+  );
+  expect(forge.writes).toEqual([]);
+  expect(rows(forge.cwd, "merge.unverified")).toEqual([]);
+});
+
+test("stack land: given merge: true and a current independent failed verdict on the root, then --unverified stops at failed_verdict and nothing moves", async () => {
+  const forge = setup("github", MERGE_TRUE);
+  await plan(forge);
+  const failed = await run(
+    ["ledger", "verdict", "failed", "--how", "broke it", "--branch", "feature/a", "--json"],
+    forge.cwd,
+    "reviewer-2",
+  );
+  expect(failed.code).toBe(0);
+  const result = await run(
+    ["stack", "land", "--unverified", "--reason", "user asked", "--json"],
+    forge.cwd,
+  );
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({
+    landed: [],
+    stoppedAt: {
+      pr: 11,
+      reason: "failed_verdict",
+      unblock: "a new independent verdict on the head supersedes it",
+    },
+  });
+  expect(forge.writes).toEqual([]);
+  expect(rows(forge.cwd, "merge.unverified")).toEqual([]);
+});
+
+test("stack land: --unverified without a merge grant is refused up front with grant_required", async () => {
+  const forge = setup("github", { push: true, pr: true, merge: false });
+  await plan(forge);
+  const result = await run(
+    ["stack", "land", "--unverified", "--reason", "user asked", "--json"],
+    forge.cwd,
+  );
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("grant_required");
+  expect(result.json().unblock).toContain("workit grant set w merge=");
+  expect(forge.writes).toEqual([]);
+});
+
+test("stack land: given merge: true and an accepted verdict on the root, then the root lands without a bypass row", async () => {
+  const forge = setup("github", MERGE_TRUE);
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({
+    landed: [{ pr: 11, unverified: null }],
+    stoppedAt: { pr: 12, reason: "no_verdict" },
+  });
+  expect(rows(forge.cwd, "merge.unverified")).toEqual([]);
+});
+
 test("stack land --dry-run: reports the contiguous verified run and mutates nothing", async () => {
   const forge = setup("github");
   await plan(forge);

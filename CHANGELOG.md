@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking, merge needs a verdict)
+
+- **`merge: true` needs an accepted independent verdict.** `workit pr merge`
+  and `workit stack land` merge only a head with an accepted independent
+  `verified` or `tests-verified` verdict, under `merge: true` and
+  `merge: "verified"` alike. `type-check-only` never satisfies the merge gate.
+  `NEEDS_VERDICT` (or `stack land`'s `no_verdict`) names the verifier route.
+- **`--unverified --reason "<why>"` is the explicit bypass.** It works only
+  under `merge: true` and only when the user asks for it. Before the merge
+  call it records a `merge.unverified` ledger row with the session, PR, head
+  and reason, and nothing merges if that row cannot be written. It never
+  overrides a current independent failed verdict (`failed_verdict`). Under
+  `merge: "verified"` it is refused (`unverified_refused`).
+  Migration: pass `--unverified --reason` where a verdict-less merge was
+  intended, or set `merge=verified` to forbid the bypass.
+- **`workit pr create` prints `next:`** (`next` in `--json`), which names the
+  non-author review and what the effective endpoint does after it.
+- **Removed** the unused `core/pr-create.ts` `mergePr` and the
+  `integration: "merge"` local-merge path of `prCreate`, which could merge
+  without these gates.
+
 ### Changed (breaking, S17 slim policy)
 
 - **Policy assessment is four flat judgments.** `workit policy assess --judge
@@ -263,8 +284,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remote tip equals the local SHA. `pr create`
   binds the pushed SHA, reuses an open PR/MR, post-verifies the forge head and
   records `pr.created`. `pr merge` needs `pr status` READY, an accepted
-  independent verdict for that head (unless the workspace grants
-  `merge: true`) and the merge grant; it merges with the forge's head-SHA
+  independent verdict for that head (under any merge grant; `merge: true`
+  also allows a recorded `--unverified --reason` bypass) and the merge grant; it merges with the forge's head-SHA
   guard, deletes the branch under a lease (never a protected branch, the base
   or the default target) and records `pr.merged`.
   `verify-delivery push|pr|merge|release` observes the remote (branch tip,

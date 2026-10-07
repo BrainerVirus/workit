@@ -51,7 +51,7 @@ test("requireGrant: defaults apply when nothing is configured; explicit values a
         allowed: true,
         kind,
         source: "default",
-        requireVerdict: false,
+        allowUnverified: false,
         workspace: null,
       });
     for (const kind of ["merge", "release"] as const)
@@ -104,7 +104,7 @@ test("requireGrant: defaults apply when nothing is configured; explicit values a
     expect(requireGrant(cwd, "merge")).toMatchObject({
       allowed: true,
       source: "autonomy",
-      requireVerdict: true,
+      allowUnverified: false,
     });
     expect(requireGrant(cwd, "release")).toMatchObject({
       allowed: false,
@@ -122,7 +122,7 @@ test("requireGrant: defaults apply when nothing is configured; explicit values a
     });
     expect(requireGrant(cwd, "merge")).toMatchObject({
       allowed: true,
-      requireVerdict: false,
+      allowUnverified: true,
     });
     // Only merge is configured; push falls back to the default.
     expect(requireGrant(cwd, "push")).toMatchObject({

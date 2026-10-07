@@ -43,7 +43,7 @@ workit ledger list --type decision
 
 Verdict results: `verified`, `tests-verified`, `type-check-only` (passing) and
 `blocked`, `failed`. Kinds: `unit`, `live`, `perf`, `review`.
-`type-check-only` never proves a behavior change.
+`type-check-only` never proves a behavior change and never satisfies a merge.
 
 **What a judged task needs** (`workit policy assess --judge risk=… behavior=…
 product-choice=… plan=…`, or the flat `workit_policy` tool fields):

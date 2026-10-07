@@ -6,6 +6,7 @@
 // verified against the pushed SHA; records `pr.created`.
 // merge: only when `pr status` reads READY, an accepted independent verdict
 // covers the head (S13) and the merge grant allows it; head-SHA guarded.
+// `--unverified --reason` (merge: true only) bypasses the verdict, recorded.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { prBodyFor } from "@brainervirus/workit-core/src/forge/pr-body";
@@ -32,6 +33,7 @@ import {
   parseFlags,
   positiveInt,
   renderStatus,
+  unverifiedFlag,
   usage,
 } from "./forge-common";
 
@@ -39,7 +41,7 @@ const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60
 const CREATE_USAGE =
   "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f>] | --fill) [--draft] [--json]";
 const MERGE_USAGE =
-  "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--json]";
+  "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>] [--json]";
 const USAGE = "workit pr status|create|merge ... (workit help pr)";
 
 async function status(argv: string[], io: Io): Promise<number> {
@@ -195,14 +197,23 @@ async function create(argv: string[], io: Io): Promise<number> {
     ...(data.releaseTrack?.warnings ?? []).map((warning) => `note: ${warning}`),
     `head ${data.head.slice(0, 12)} verified on the forge`,
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
+    `next: ${data.next}`,
   ]);
 }
 
 const METHODS: ReadonlySet<string> = new Set<MergeMethod>(["squash", "merge", "rebase"]);
 
 async function merge(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { pr: "value", method: "value", "delete-branch": "boolean" });
+  const flags = parseFlags(argv, {
+    pr: "value",
+    method: "value",
+    "delete-branch": "boolean",
+    unverified: "boolean",
+    reason: "value",
+  });
   if (typeof flags === "string") return usage(io, flags, MERGE_USAGE);
+  const unverified = unverifiedFlag(flags);
+  if (typeof unverified === "string") return usage(io, unverified, MERGE_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, MERGE_USAGE);
   const pr = positiveInt(flags.values.pr, "--pr");
@@ -216,7 +227,13 @@ async function merge(argv: string[], io: Io): Promise<number> {
   const result = await mergePullRequest(
     io.cwd,
     connected.data,
-    { pr, method, deleteBranch: flags.booleans.has("delete-branch"), actor: actorFromEnv(io.env) },
+    {
+      pr,
+      method,
+      deleteBranch: flags.booleans.has("delete-branch"),
+      actor: actorFromEnv(io.env),
+      ...(unverified ? { unverified } : {}),
+    },
     forgeDeps.sleep,
   );
   if (!result.ok)
@@ -229,9 +246,9 @@ async function merge(argv: string[], io: Io): Promise<number> {
     );
   return emit(io, ok(result.data), (data: MergeOutcome) => [
     `merged ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number} (${data.method}) at head ${data.head.slice(0, 12)}${data.mergeSha ? ` -> ${data.mergeSha.slice(0, 12)}` : ""}`,
-    data.verdict.required
-      ? `verdict ${data.verdict.verdictId ?? "?"} accepted for that head`
-      : "no verdict required (workspace grants merge: true)",
+    data.unverified
+      ? `UNVERIFIED: merged without a verdict (--unverified: ${data.unverified.reason}); ledger ${data.unverified.recorded}`
+      : `verdict ${data.verdict.verdictId ?? "?"} accepted for that head`,
     ...(data.mergeBack.length
       ? [
           `merge back: ${data.base} is the ${data.mergeBackTrack} production branch; bring it into ${data.mergeBack.join(", ")}`,

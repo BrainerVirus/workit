@@ -996,6 +996,7 @@ export type StopReason =
   | "not_ready"
   | "no_verdict"
   | "needs_verdict"
+  | "failed_verdict"
   | "grant_required"
   | "max_reached"
   | "merge_refused"
@@ -1096,8 +1097,9 @@ const verdictOf = (cwd: string, branch: string, rows: readonly ReadRow[]) => {
 /**
  * Does the root-most open PR qualify to land? Order: a PR exists and is
  * open, it targets the trunk, the forge says READY, an accepted verdict
- * covers the head (unless the grant is `merge: true`), and the grant allows
- * merging. `ready` says everything but the grant holds ("verified, ready").
+ * covers the head (unless `bypass`: `--unverified` under `merge: true`), and
+ * the grant allows merging. `ready` says everything but the grant holds
+ * ("verified, ready").
  */
 export function qualify(
   ctx: Pick<Ctx, "cwd" | "resolved">,
@@ -1108,6 +1110,8 @@ export function qualify(
   grant: GrantDecision,
   /** Why the PR number no longer belongs to this branch (null: it does). */
   binding: string | null = null,
+  /** `stack land --unverified`: skip the verdict where the grant allows it. */
+  bypass = false,
 ): Qualification {
   const label = entry.pr ? noun(ctx.resolved, entry.pr) : entry.branch;
   const stop = (reason: StopReason, detail: string, unblock: string, ready = false) => ({
@@ -1149,12 +1153,19 @@ export function qualify(
         ? `workit ci wait --pr ${entry.pr}`
         : `workit pr status --pr ${entry.pr}`,
     );
-  const requireVerdict = grant.allowed ? grant.requireVerdict : true;
-  if (requireVerdict && !verdict.accepted)
+  const allowUnverified = grant.allowed && grant.allowUnverified;
+  // The bypass covers a missing verdict, never a rejection.
+  if (bypass && allowUnverified && verdict.reasons.includes("failing_verdict"))
+    return stop(
+      "failed_verdict",
+      `${label} has a current independent failed verdict for ${doc.head.sha.slice(0, 12)}; --unverified never lands over a rejection`,
+      "a new independent verdict on the head supersedes it",
+    );
+  if (!(bypass && allowUnverified) && !verdict.accepted)
     return stop(
       verdict.reasons.includes("no_verdict") ? "no_verdict" : "needs_verdict",
       `${label} has no accepted independent verdict for ${doc.head.sha.slice(0, 12)} (${verdict.reasons.join(", ") || "none"})`,
-      `an independent session verifies ${entry.branch} and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${entry.branch}`,
+      `an independent session verifies ${entry.branch} and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${entry.branch}${allowUnverified ? `; or, only if the user asks to land unverified: workit stack land --unverified --reason "<why>"` : ""}`,
     );
   if (!grant.allowed)
     return stop(
@@ -1701,6 +1712,8 @@ export type LandOptions = {
   dryRun: boolean;
   max: number | null;
   method: MergeMethod;
+  /** Land without verdicts (`merge: true` only); each bypass is recorded. */
+  unverified?: { reason: string } | null;
   /** How long to wait for CI on a PR that was just restacked. */
   timeoutMs: number;
   intervalMs: number;
@@ -1709,7 +1722,8 @@ export type LandOptions = {
 export type LandOutcome = {
   name: string;
   dryRun: boolean;
-  landed: Array<{ pr: number; branch: string; mergeSha: string | null }>;
+  /** `unverified`: the ledger row of an `--unverified` bypass, else null. */
+  landed: Array<{ pr: number; branch: string; mergeSha: string | null; unverified: string | null }>;
   /** Dry run: the PRs that qualify now, in order (later ones assume a clean restack). */
   wouldLand: Array<{ pr: number; branch: string }>;
   stoppedAt: {
@@ -1778,6 +1792,23 @@ export async function landStack(
   });
   const mismatch = repoMismatch(ctx, stack);
   if (mismatch) return failWith(mismatch);
+  const bypass = options.unverified ?? null;
+  if (bypass) {
+    const grant = requireGrant(ctx.cwd, "merge");
+    if (!grant.allowed)
+      return failWith(
+        stackFail("blocked", grant.error, grant.unblock, { reason: "grant_required" }),
+      );
+    if (!grant.allowUnverified)
+      return failWith(
+        stackFail(
+          "blocked",
+          `unverified_refused: workspace ${grant.workspace ? `"${grant.workspace}"` : "(none)"} grants merge: "verified", which never lands without an accepted independent verdict`,
+          "a non-author session verifies each head (workit-review), then land without --unverified",
+          { reason: "unverified_refused" },
+        ),
+      );
+  }
 
   // Catch up first: a parent merged elsewhere leaves the rest to restack.
   if (!options.dryRun) {
@@ -1847,6 +1878,7 @@ export async function landStack(
       verdict,
       grant,
       doc ? prBinding(ctx, entry, doc) : null,
+      bypass !== null,
     );
     if (!q.ok) {
       outcome.stoppedAt = {
@@ -1874,6 +1906,7 @@ export async function landStack(
         deleteBranch: false,
         actor: ctx.actor,
         expect: { base: stack.trunk, branch: entry.branch },
+        ...(bypass && !verdict.accepted ? { unverified: bypass } : {}),
       },
       ctx.sleep,
     );
@@ -1891,7 +1924,12 @@ export async function landStack(
       }
       return failWith(stackFail(merged.code, merged.error, merged.unblock));
     }
-    outcome.landed.push({ pr, branch: entry.branch, mergeSha: merged.data.mergeSha });
+    outcome.landed.push({
+      pr,
+      branch: entry.branch,
+      mergeSha: merged.data.mergeSha,
+      unverified: merged.data.unverified?.recorded ?? null,
+    });
     entry.merged = { pr, mergeSha: merged.data.mergeSha, at: new Date().toISOString() };
     const written = writeStack(ctx.cwd, stack);
     if (!written.ok) return failWith(written);
