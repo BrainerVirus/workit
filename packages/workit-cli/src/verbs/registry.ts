@@ -8,11 +8,21 @@ import type { Verb } from "../output";
 
 export type VerbGroup = "setup" | "task" | "delivery";
 
+/** One subcommand's help row (the shape `workit help <verb> <sub>` reads). */
+type SubcommandEntry = {
+  name: string;
+  /** Other spellings the verb accepts for this subcommand. */
+  aliases?: readonly string[];
+  usage: string;
+  summary: string;
+};
+
 export type VerbEntry = {
   name: string;
   group: VerbGroup;
   usage: string;
   summary: string;
+  subcommands?: readonly SubcommandEntry[];
   /** The slice that implements this verb; set while it is a stub. */
   planned?: string;
   load: () => Promise<Verb>;
@@ -118,6 +128,47 @@ export const VERBS: readonly VerbEntry[] = [
       "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] | pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--label <l>]… [--reviewer <login>]… [--draft] | pr ready [--pr <n>] [--undo] | pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] | pr threads [--pr <n>] | pr reply [--pr <n>] --thread <id> [--body-file <f|->] [--resolve] | pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]",
     summary:
       "PR/MR state with failing log tails and next action; open a SHA-verified PR; mark ready, edit, list and answer review threads; merge only when READY, verified and granted",
+    subcommands: [
+      {
+        name: "status",
+        usage: "workit pr status [--pr <n> | --branch <b>] [--log-lines 60]",
+        summary: "PR/MR state, failing check log tails, the next action and the command for it",
+      },
+      {
+        name: "create",
+        usage:
+          "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--label <l>]… [--reviewer <login>]… [--draft]",
+        summary: "Open a PR/MR for the pushed branch, verified against the local HEAD",
+      },
+      {
+        name: "ready",
+        usage: "workit pr ready [--pr <n>] [--undo]",
+        summary: "Mark a draft PR/MR ready for review (--undo: back to draft)",
+      },
+      {
+        name: "edit",
+        usage:
+          "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]",
+        summary:
+          "Change the title, body, labels, reviewers or base (the default target or the stack parent)",
+      },
+      {
+        name: "threads",
+        usage: "workit pr threads [--pr <n>]",
+        summary: "List unresolved review threads with their ids",
+      },
+      {
+        name: "reply",
+        usage: "workit pr reply [--pr <n>] --thread <id> [--body-file <f|->] [--resolve]",
+        summary: "Reply to an unresolved review thread and/or resolve it",
+      },
+      {
+        name: "merge",
+        usage:
+          "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]",
+        summary: "Merge when READY, verified by a non-author and granted",
+      },
+    ],
     load: () => import("./pr"),
   },
   {
