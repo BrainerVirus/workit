@@ -195,8 +195,28 @@ export async function main(
       `workit: migrated ${report.tasks} task${report.tasks === 1 ? "" : "s"} from ${report.from} to ${report.to} (backup: ${report.backup})\n`,
     );
   const verb = await entry.load();
-  if (!io.json) return verb.run(ended, io);
-  return runJsonPure(io, command, (pure) => verb.run(ended, pure));
+  const runVerb = (target: Io) => guarded(target, () => verb.run(ended, target));
+  if (!io.json) return runVerb(io);
+  return runJsonPure(io, command, runVerb);
+}
+
+/**
+ * A workspaces.json problem (an ambiguous glob, an invalid vcs entry) thrown
+ * from deep in core is the user's to fix: report it as `blocked` with the fix,
+ * not as an uncaught failure. Anything else still propagates.
+ */
+async function guarded(io: Io, run: () => Promise<number>): Promise<number> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "WorkspaceConfigError") throw error;
+    return emit(
+      io,
+      fail("blocked", error.message, {
+        unblock: "fix ~/.config/workit/workspaces.json (workit init → Workspaces)",
+      }),
+    );
+  }
 }
 
 const CODE_FOR_EXIT: Record<number, Exclude<EnvelopeCode, "ok">> = {

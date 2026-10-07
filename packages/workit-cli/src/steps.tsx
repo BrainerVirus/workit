@@ -32,7 +32,10 @@ import {
   resolveWorkspaceFromEntries,
   resolveWorkspacePolicy,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
-import { detectBranchPolicy } from "@brainervirus/workit-core/src/core/branch-policy.ts";
+import {
+  detectBranchPolicy,
+  repoBranchPreset,
+} from "@brainervirus/workit-core/src/core/branch-policy.ts";
 import {
   createInitialDraft,
   reducer,
@@ -1441,7 +1444,9 @@ function Screen({
           };
           const checkout = resolveBasePath(draft.values);
           const workspace = resolveWorkspaceFromEntries(checkout, draft.values.workspaces);
-          const resolved = resolveWorkspacePolicy(config, workspace);
+          const resolved = resolveWorkspacePolicy(config, workspace, undefined, () =>
+            repoBranchPreset(checkout),
+          );
           if (resolved.status === "invalid") return { error: resolved.error };
           return {
             error: null,

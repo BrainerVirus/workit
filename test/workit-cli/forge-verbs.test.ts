@@ -216,6 +216,63 @@ test("ci wait: one hard deadline covers every call, including the final status b
   expect(runner.calls.slice(afterPoll + 1).filter((call) => call.method !== "CLI")).toEqual([]);
 });
 
+test("ci wait: given every gh call takes 5s and an account to verify, then --timeout 30s bounds the whole command, identity check included (M2)", async () => {
+  const { repo, runner } = setup(fixture("github/pr-pending.json"));
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "w",
+          glob: `${repo.root.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "github", account: "octo" },
+        },
+      ],
+    }),
+  );
+  const offered: number[] = [];
+  // A slow forge: each call costs 5s of the virtual clock, or its whole
+  // timeout when that is shorter (the call is killed).
+  forgeDeps.runner = (bin, args, options) => {
+    offered.push(options.timeoutMs);
+    if (options.timeoutMs < 5_000) {
+      clock += options.timeoutMs;
+      return { status: null, stdout: "", stderr: "", timedOut: true, missing: false };
+    }
+    clock += 5_000;
+    if (args[0] === "auth")
+      return { status: 0, stdout: "gho_octo\n", stderr: "", timedOut: false, missing: false };
+    return runner(bin, args, options);
+  };
+  const result = await run(
+    ["ci", "wait", "--interval", "2s", "--timeout", "30s", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(4);
+  expect(result.json().data).toMatchObject({ state: "waiting", reason: "checks_pending" });
+  // The identity lookups ran inside the 30s, not before it.
+  expect(runner.calls.slice(0, 2).map((call) => call.endpoint)).toEqual(["repos/o/r", "user"]);
+  expect(clock).toBeLessThanOrEqual(30_000);
+  expect(Math.max(...offered.slice(1))).toBeLessThanOrEqual(30_000 - 5_000);
+});
+
+test("ci wait: a conflicting PR with pending checks stops at once as blocked: conflicts (M8)", async () => {
+  const conflicting = JSON.parse(fixture("github/pr-pending.json"));
+  conflicting.data.repository.pullRequest.mergeable = "CONFLICTING";
+  const { repo } = setup(JSON.stringify(conflicting));
+  const result = await run(
+    ["ci", "wait", "--interval", "2s", "--timeout", "10m", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(3);
+  expect(result.json()).toMatchObject({
+    code: "blocked",
+    data: { state: "blocked", reason: "conflicts", polls: 1 },
+  });
+  expect(result.json().unblock).toContain("rebase onto main");
+  expect(delays).toEqual([]);
+});
+
 test("ci rerun: once per head, then blocked (exit 3) unless --force", async () => {
   const { repo, runner } = setup();
   const missing = await run(["ci", "rerun", "--failed", "--json"], repo.cwd);
