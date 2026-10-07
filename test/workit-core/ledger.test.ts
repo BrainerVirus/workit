@@ -176,7 +176,7 @@ test("given N concurrent appenders of near-4096-byte rows, some killed with SIGK
     const [cwd, writer, count] = process.argv.slice(1);
     for (let i = 0; i < Number(count); i++) {
       const what = \`w\${writer}-\${i}\`;
-      const row = appendRow(cwd, { type: "decision", what, why: "x".repeat(3700),
+      const row = appendRow(cwd, { type: "decision", what, why: "x".repeat(3500),
         refs: [], actor: { host: "test", session: null, agentId: null },
         branch: null, head: null, base: null, baseSha: null, patchId: null, diffHash: null, tree: null, dirty: null });
       if (!row.ok) { console.error(row.error); process.exit(1); }
@@ -213,11 +213,13 @@ test("given N concurrent appenders of near-4096-byte rows, some killed with SIGK
   // A SIGKILL can cut a writer's own unacknowledged append short; the fence
   // isolates it on its own line and the reader skips it. At most one per
   // killed writer, and never a row any writer reported as written.
-  const torn = lines.filter((line) => Buffer.byteLength(line) + 1 <= 3700);
+  const torn = lines.filter((line) => Buffer.byteLength(line) + 1 <= 3500);
   expect(torn.length).toBeLessThanOrEqual(killed.size);
   const ledger = read(root);
   expect(ledger.skipped).toBe(torn.length);
   expect(ledger.rows).toHaveLength(lines.length - torn.length);
+  // Racing appenders may chain onto the same line; the chain still verifies.
+  expect(ledger.integrity.unverified).toEqual([]);
   for (let writer = 0; writer < writers; writer++) {
     const mine = ledger.rows.filter((row) => String(row.what).startsWith(`w${writer}-`));
     // A writer's rows are a gap-free prefix in its own order.
@@ -234,6 +236,8 @@ test("given N concurrent appenders of near-4096-byte rows, some killed with SIGK
 
 test("a row of exactly MAX_LINE_BYTES is accepted and one byte more is refused", () => {
   const root = repo();
+  // A row chained onto a previous one (not the file's first) is the size to probe.
+  value(recordDecision({ cwd: root, actor: actor() }, { what: "first", why: "w" }));
   const probe = value(
     recordDecision({ cwd: root, actor: actor() }, { what: "p", why: "y".repeat(100) }),
   );
@@ -254,7 +258,7 @@ test("a row of exactly MAX_LINE_BYTES is accepted and one byte more is refused",
     expect(over.code).toBe("invalid_input");
     expect(over.error).toContain(`${MAX_LINE_BYTES + 1} bytes`);
   }
-  expect(read(root).rows).toHaveLength(2);
+  expect(read(root).rows).toHaveLength(3);
 });
 
 test("a short write is reported as unavailable", () => {

@@ -39,6 +39,7 @@ workit ledger verdict verified --how "workit check test; drove the CLI" --kind l
 workit ledger verdict              # current and accepted verdicts for this branch
 workit ledger check [--pr <n>]     # verified, self-reviewed or unreviewed?
 workit ledger list --type decision
+workit ledger verify-integrity     # rows the CLI did not write, or that changed since
 ```
 
 Verdict results: `verified`, `tests-verified`, `type-check-only` (passing) and
@@ -56,6 +57,11 @@ product-choice=… plan=…`, or the flat `workit_policy` tool fields):
 | open product choice | the user's answer recorded (`workit ledger decision "<choice>" --why "<reason>"`) before code is written |
 | plan needed | the plan written, then cited: `workit policy assess --ref <path>` (an approved limitation waives it) |
 
+Every `policy assess` is recorded in the ledger as a `policy.judged` row
+(session, what was sent, the resulting requirements). A session that judged
+an open product choice or a needed plan cannot lift it silently: its own
+`product-choice=no` or `plan=no` needs `--why "<reason>"`, which the row keeps.
+
 Trivial work judged `risk=trivial behavior=no` needs nothing. Before-write
 requirements deny working-tree edits on hosts with a pre-write hook (Claude
 Code, OpenCode, Cursor, Pi; advisory on Codex); Markdown, top-level `docs/`,
@@ -70,8 +76,27 @@ with `workit git commit` carry a `Workit-Session:` trailer, so the authoring
 session's verdict is never accepted. A lead starts each verifier with its own
 id (`WORKIT_SESSION_ID=<lead>-v<n>`; on Claude Code the SubagentStart hook does
 this). `--as <role>` only keeps verifier ids distinct; it never makes the
-author independent. Verdicts are SHA-keyed and carry over a rebase when the
-patch-id and diff are unchanged. A dirty tree is refused.
+author independent. `--session <id>` equal to an author session is refused;
+any other id is accepted but recorded as `sessionSource: flag`, and
+`ledger check` prints "named by --session" so you can tell a claimed verifier
+id from one the host set. Verdicts are SHA-keyed and carry over a rebase when
+the patch-id and diff are unchanged. A dirty tree is refused, also when the
+branch is checked out in another worktree. Verdicts and author rows follow a
+`git branch -m` rename (through the branch's reflog).
+
+`--supersedes <id>` replaces only a row of the same type, session and branch
+(and, for a verdict, the same kind). A same-session verdict that does not
+replace that session's own standing failure on the same code prints why and
+the `--supersedes` to use. An author's own `failed --self` never blocks an
+independent pass, but `ledger check` shows it as a warning.
+
+**Integrity.** Each row the CLI writes carries `prevHash`/`rowHash`, a sha256
+chain over the file. `workit ledger verify-integrity` lists rows outside it
+(`unsigned`: appended by hand; `hash_mismatch`: edited; `broken_link`: a row
+before it was edited or removed) as `unverified_rows`, and `ledger check`
+warns about any on the branch. Neither blocks: the chain catches mistakes, it
+is not a defense against someone forging rows. Rows written before the chain
+existed read as legacy.
 
 ## `workit test-audit`
 
