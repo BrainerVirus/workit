@@ -88,7 +88,17 @@ export const makeDoctorFixture = (): DoctorFixture => {
     path.join(pluginDir, "dist", "cursor-session-start.js"),
     "#!/usr/bin/env node\n// installed hook bundle\n",
   );
+  writeFileSync(
+    path.join(pluginDir, "dist", "workit-hook.js"),
+    "#!/usr/bin/env node\n// installed hook bundle\nprocess.stdout.write('{}\\n');\n",
+  );
   mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
+  // The real hook launcher, as an install copies it.
+  for (const file of ["launch.mjs", "launch-runtime.mjs"])
+    copyFileSync(
+      path.join(import.meta.dir, "..", "..", "..", "packages", "workit-cursor", "hooks", file),
+      path.join(pluginDir, "hooks", file),
+    );
   writeFileSync(
     path.join(pluginDir, "hooks", "hooks-cursor.json"),
     JSON.stringify({
@@ -96,8 +106,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
       hooks: {
         sessionStart: [
           {
-            command:
-              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+            command: 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-session-start',
           },
         ],
       },

@@ -73,6 +73,13 @@ the `workit-contract` rule and the skills. Manual MCP config:
 runtime resolves from npm at launch (the age override works around
 npm/cli#9765). First run needs network access.
 
+Hooks do not use npm at launch. Each one runs the plugin's launcher
+(`hooks/launch.mjs`), which prefers the bundled hook that `workit init`
+installs, then a global `workit-cursor-hook`, then `npx --prefer-offline`
+pinned to the plugin's version. Hooks fail open: when the runtime cannot run
+(offline, crash, timeout) the action proceeds without Workit checks; Workit
+denials still block. `workit doctor` shows the launcher mode and latency.
+
 Limits: AskQuestion is policy-only, session start and compaction are
 non-blocking, arbitrary shell writes and Tab edits are not observable, and
 subagent stop identity is unstable, so native delegation is read-only. MCP is

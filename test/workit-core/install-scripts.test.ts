@@ -437,20 +437,12 @@ rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor
   );
   mkdirSync(path.join(cursorPkg, "mcp"), { recursive: true });
   mkdirSync(path.join(cursorPkg, "hooks"), { recursive: true });
-  writeFileSync(
-    path.join(cursorPkg, "hooks/hooks-cursor.json"),
-    JSON.stringify({
-      version: 1,
-      hooks: {
-        sessionStart: [
-          {
-            command:
-              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-          },
-        ],
-      },
-    }),
-  );
+  // The committed hook manifest and launcher, as the real package ships them.
+  for (const file of ["hooks-cursor.json", "launch.mjs", "launch-runtime.mjs"])
+    cpSync(
+      path.join(repoRoot, "packages/workit-cursor/hooks", file),
+      path.join(cursorPkg, "hooks", file),
+    );
   mkdirSync(path.join(cursorPkg, "dist"), { recursive: true });
   writeFileSync(path.join(cursorPkg, "dist/mcp-server.js"), "#!/usr/bin/env node\n// bundle\n");
   writeFileSync(
@@ -487,10 +479,7 @@ rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor
     path.join(cursorPkg, "dist", "cursor-session-start.js"),
     path.join(pluginDir, "dist", "cursor-session-start.js"),
   );
-  cpSync(
-    path.join(cursorPkg, "hooks", "hooks-cursor.json"),
-    path.join(pluginDir, "hooks", "hooks-cursor.json"),
-  );
+  cpSync(path.join(cursorPkg, "hooks"), path.join(pluginDir, "hooks"), { recursive: true });
   cpSync(path.join(cursorPkg, "mcp.json"), path.join(pluginDir, "mcp.json"));
   cpSync(path.join(cursorPkg, "package.json"), path.join(pluginDir, "package.json"));
   mkdirSync(path.join(home, ".cursor"), { recursive: true });

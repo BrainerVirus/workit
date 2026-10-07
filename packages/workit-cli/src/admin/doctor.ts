@@ -69,6 +69,7 @@ type DoctorCheckId =
   | "claude_plugin"
   | "assets"
   | "launcher"
+  | "cursor_hook"
   | "utility"
   | "stale_pin"
   | "stale_install"
@@ -601,10 +602,9 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
   };
 };
 
-// CA-17: the canonical session-start hook runs the published package through
-// npx as a single command string (Cursor's documented hook format). The doctor
-// validates its shape exactly like the MCP launcher — no substring matching,
-// no version abstraction.
+// The canonical session-start hook runs the plugin's pinned launcher as a
+// single command string (Cursor's documented hook format). The doctor
+// validates its shape exactly — no substring matching.
 const canonicalCursorHook = cursorHooksEntry("").command;
 
 // Returns the registered hook command, null when absent, or "invalid".
@@ -625,7 +625,7 @@ const registeredCursorHook = (res: Resolved): string | null => {
 // The local-dist install points the session-start hook at the plugin's own
 // built dist (`node <pluginDir>/dist/cursor-session-start.js`) so Cursor runs
 // the checkout's code. Accept that form — validated against the real dist entry
-// — alongside the canonical npx pin, mirroring the MCP launcher's node form.
+// — alongside the canonical launcher, mirroring the MCP launcher's node form.
 const validLocalDistHook = (command: string, res: Resolved): boolean => {
   const m = /^node\s+(.+)$/.exec(command.trim());
   if (!m) return false;
@@ -706,6 +706,77 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
     status: "pass",
     detail: `${res.host} launcher/hook entries present`,
   };
+};
+
+// Ask the installed plugin's own hook launcher (hooks/launch.mjs --probe)
+// which runtime Cursor would run (its bundled dist, a global bin, or npx pinned
+// to the plugin's version) and time one no-op hook through it, node startup
+// included, as Cursor pays it. The npx probe runs with --offline, so the
+// doctor never downloads: a cold npx cache reports as such instead.
+const CURSOR_HOOK_FIX = "Run `workit init` and select Cursor to install the bundled hook";
+
+const checkCursorHook = (res: Resolved): DoctorCheck => {
+  if (!hostsFor(res.host).includes("cursor"))
+    return { id: "cursor_hook", status: "pass", detail: "cursor hook not inspected on this host" };
+  if (!existsSync(res.cursorPluginDir))
+    return {
+      id: "cursor_hook",
+      status: "pass",
+      detail: "no Cursor plugin install — hook launcher not inspected",
+    };
+  const launcher = path.join(res.cursorPluginDir, "hooks", "launch.mjs");
+  if (!existsSync(launcher))
+    return {
+      id: "cursor_hook",
+      status: "warn",
+      detail: `cursor hook launcher mode: missing — ${launcher} is absent (an install from before the pinned launcher)`,
+      fix: CURSOR_HOOK_FIX,
+    };
+  const started = performance.now();
+  const probe = spawnSync("node", [launcher, "--probe", "workit-cursor-hook"], {
+    encoding: "utf8",
+    env: { ...res.env, WORKIT_CURSOR_HOOK_NPX_OFFLINE: "1" },
+    timeout: 40_000,
+    windowsHide: true,
+  });
+  const ms = Math.round(performance.now() - started);
+  let report: { mode?: unknown; source?: unknown; error?: unknown } = {};
+  try {
+    report = JSON.parse(probe.stdout || "{}");
+  } catch {
+    /* reported below as a failed probe */
+  }
+  const mode = typeof report.mode === "string" ? report.mode : null;
+  if (mode === "missing")
+    return {
+      id: "cursor_hook",
+      status: "warn",
+      detail:
+        "cursor hook launcher mode: missing — no bundled hook, no workit-cursor-hook on PATH, no npx; Cursor hooks fail open (no Workit enforcement)",
+      fix: CURSOR_HOOK_FIX,
+    };
+  const label = `cursor hook launcher mode: ${mode ?? "unknown"} (${String(report.source ?? launcher)})`;
+  const error =
+    typeof report.error === "string"
+      ? report.error.replace(/^\[workit\] Cursor hook unavailable: /, "")
+      : mode === null
+        ? (probe.error?.message ?? `launcher exited ${probe.status ?? probe.signal}`)
+        : null;
+  if (error)
+    return {
+      id: "cursor_hook",
+      status: "warn",
+      detail: `${label}; probe failed after ${ms} ms (${error})${mode === "npx-pinned" ? " — the pinned package is not in the npx cache yet" : ""}; Cursor hooks fail open until it runs`,
+      fix: CURSOR_HOOK_FIX,
+    };
+  if (mode === "npx-pinned")
+    return {
+      id: "cursor_hook",
+      status: "warn",
+      detail: `${label}; probe ${ms} ms — every Cursor shell command and edit spawns npx`,
+      fix: `${CURSOR_HOOK_FIX} (faster, no npm at hook time)`,
+    };
+  return { id: "cursor_hook", status: "pass", detail: `${label}; probe ${ms} ms` };
 };
 
 const checkUtility = (res: Resolved): DoctorCheck => {
@@ -1023,7 +1094,7 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
       id: "stale_install",
       status: "fail",
       detail: `stale_install: sessionStart hook runs a legacy selector (canonical: ${canonicalHook})`,
-      fix: "Re-run install-cursor-plugin.sh — it rewrites the sessionStart hook to the canonical @latest selector",
+      fix: "Re-run install-cursor-plugin.sh — it rewrites the sessionStart hook to the canonical pinned launcher",
     };
   }
   // Enforcement-event drift: a present-but-divergent preToolUse matcher (or
@@ -1049,7 +1120,11 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
   // below). Canonical @latest installs resolve fresh at launch — the installed
   // package.json version is metadata, not a freshness signal (CA-04), so they
   // skip both version comparisons and never fail stale_install on metadata.
-  const localDist = mcpSelectors === null && hookCmd !== null && hookCmd.startsWith("node ");
+  const localDist =
+    mcpSelectors === null &&
+    hookCmd !== null &&
+    hookCmd !== canonicalHook &&
+    hookCmd.startsWith("node ");
   if (localDist && installed !== null && source !== null && !semverAtLeast(installed, source)) {
     return {
       id: "stale_install",
@@ -1122,7 +1197,7 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
     detail:
       installed === null
         ? "installed workit-cursor selectors are canonical"
-        : `installed workit-cursor ${installed} is metadata on the canonical @latest install (fresh at launch)`,
+        : `installed workit-cursor ${installed} on canonical selectors (hooks run this version through the pinned launcher; MCP resolves @latest at launch)`,
   };
   if (res.host === "cli") {
     const oc = checkOpenCodePackageCache(res);
@@ -1686,6 +1761,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkClaudePlugin,
   checkAssets,
   checkLauncher,
+  checkCursorHook,
   checkUtility,
   checkStalePin,
   checkStaleInstall,

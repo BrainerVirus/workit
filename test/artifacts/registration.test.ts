@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import path from "node:path";
 import {
-  CURSOR_HOOK_RUN_COMMAND,
   CURSOR_PRETOOLUSE_MATCHER,
   CURSOR_RUNTIME_PACKAGE,
   cursorHookDrift,
@@ -23,6 +22,9 @@ import {
 // existing user config, deduplicate every current + legacy Workit identity, and
 // return the deduplicated config PLUS the explicit list of keys changed — never
 // rewriting unrelated user settings (values round-trip JSON-identical).
+
+const HOOK_COMMAND = 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-hook';
+const SESSION_COMMAND = 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-session-start';
 
 const PIN = "file:///work/packages/workit-opencode/src/plugin.ts";
 const CURSOR_ROOT = path.join("/home/user", ".cursor");
@@ -334,7 +336,7 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
     },
   };
   const { config, changed } = mergeCursorHooks(input, {
-    command: `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+    command: SESSION_COMMAND,
   });
   const hooks = config.hooks as {
     sessionStart?: { command: string; args?: string[] }[];
@@ -344,19 +346,24 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
   };
   expect(hooks.sessionStart).toEqual([
     {
-      command: `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+      command: SESSION_COMMAND,
     },
   ]);
   // Missing enforcement events are filled with the canonical entries so the
   // installer heals exactly what the doctor flags.
   expect(hooks.preToolUse).toEqual([
-    { command: CURSOR_HOOK_RUN_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: true },
+    { command: HOOK_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false },
   ]);
-  expect(hooks.beforeShellExecution).toEqual([
-    { command: CURSOR_HOOK_RUN_COMMAND, failClosed: true },
-  ]);
+  expect(hooks.beforeShellExecution).toEqual([{ command: HOOK_COMMAND, failClosed: false }]);
   expect(hooks.otherHook).toEqual([{ command: "echo hi" }]);
-  expect(changed).toEqual(["hooks.sessionStart", "hooks.preToolUse", "hooks.beforeShellExecution"]);
+  expect(changed).toEqual([
+    "hooks.sessionStart",
+    "hooks.preToolUse",
+    "hooks.beforeShellExecution",
+    "hooks.subagentStart",
+    "hooks.subagentStop",
+    "hooks.preCompact",
+  ]);
 });
 
 test("mergeCursorHooks is idempotent on canonical input", () => {
@@ -365,21 +372,20 @@ test("mergeCursorHooks is idempotent on canonical input", () => {
     hooks: {
       sessionStart: [
         {
-          command: `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+          command: SESSION_COMMAND,
         },
       ],
       preToolUse: [
-        {
-          command: CURSOR_HOOK_RUN_COMMAND,
-          matcher: CURSOR_PRETOOLUSE_MATCHER,
-          failClosed: true,
-        },
+        { command: HOOK_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false },
       ],
-      beforeShellExecution: [{ command: CURSOR_HOOK_RUN_COMMAND, failClosed: true }],
+      beforeShellExecution: [{ command: HOOK_COMMAND, failClosed: false }],
+      subagentStart: [{ command: HOOK_COMMAND, failClosed: false }],
+      subagentStop: [{ command: HOOK_COMMAND, failClosed: false }],
+      preCompact: [{ command: HOOK_COMMAND, failClosed: false }],
     },
   };
   const { config, changed } = mergeCursorHooks(canonical, {
-    command: `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+    command: SESSION_COMMAND,
   });
   expect(changed).toEqual([]);
   expect(config).toEqual(canonical);
@@ -390,7 +396,7 @@ test("cursorHookDrift flags divergent enforcement events, not absent ones", () =
   expect(
     cursorHookDrift({
       version: 1,
-      hooks: { preToolUse: [{ command: CURSOR_HOOK_RUN_COMMAND, matcher: "Write" }] },
+      hooks: { preToolUse: [{ command: HOOK_COMMAND, matcher: "Write" }] },
     }),
   ).toEqual(["preToolUse"]);
   expect(
@@ -398,17 +404,28 @@ test("cursorHookDrift flags divergent enforcement events, not absent ones", () =
       version: 1,
       hooks: {
         preToolUse: [
-          {
-            command: CURSOR_HOOK_RUN_COMMAND,
-            matcher: CURSOR_PRETOOLUSE_MATCHER,
-            failClosed: true,
-          },
+          { command: HOOK_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false },
         ],
-        beforeShellExecution: [{ command: "echo stale", failClosed: true }],
+        beforeShellExecution: [{ command: "echo stale", failClosed: false }],
       },
     }),
   ).toEqual(["beforeShellExecution"]);
   expect(cursorHookDrift(null)).toEqual(["hooks file is not a hook map"]);
+});
+
+test("cursorHookDrift flags the legacy fail-closed npx @latest entries an older install carries", () => {
+  const legacy =
+    "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook";
+  expect(
+    cursorHookDrift({
+      version: 1,
+      hooks: {
+        beforeShellExecution: [{ command: legacy, failClosed: true }],
+        subagentStart: [{ command: HOOK_COMMAND, failClosed: true }],
+        subagentStop: [{ command: HOOK_COMMAND }],
+      },
+    }),
+  ).toEqual(["beforeShellExecution", "subagentStart"]);
 });
 
 test("cursorMcpServerEntry launches the published package via npx", () => {
@@ -426,9 +443,7 @@ test("cursorMcpServerEntry launches the published package via npx", () => {
 
 test("cursorHooksEntry uses the documented single command string with no args", () => {
   const entry = cursorHooksEntry("/any/pkg/dir");
-  expect(entry.command).toBe(
-    `npx -y --prefer-online --min-release-age=0 --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
-  );
+  expect(entry.command).toBe(SESSION_COMMAND);
   expect(entry.args).toEqual([]);
 });
 
@@ -442,4 +457,28 @@ test("cursorHookLocalDistEntry uses the node dist single command string with no 
   const entry = cursorHookLocalDistEntry("/pkg");
   expect(entry.command).toBe(`node ${path.join("/pkg", "dist", "cursor-session-start.js")}`);
   expect(entry.args).toEqual([]);
+});
+
+test("generated Cursor hook config never resolves @latest, never shells to npx, never fails closed", () => {
+  for (const sessionStart of [cursorHooksEntry("/pkg"), cursorHookLocalDistEntry("/pkg")]) {
+    const { config } = mergeCursorHooks(
+      {
+        version: 1,
+        hooks: {
+          preToolUse: [
+            {
+              command:
+                "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+              failClosed: true,
+            },
+          ],
+        },
+      },
+      { command: sessionStart.command },
+    );
+    const text = JSON.stringify(config);
+    expect(text).not.toContain("@latest");
+    expect(text).not.toContain("npx");
+    expect(text).not.toContain('"failClosed":true');
+  }
 });

@@ -30,6 +30,8 @@ import { readSetupState } from "@/packages/workit-cli/src/admin/setup-state";
 import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
 import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
 
+const SESSION_HOOK = 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-session-start';
+
 // The offline doctor engine (DG-07/DG-08, CA-09): one fixture tree, one broken
 // surface at a time, assert the typed check + nonzero exitCode, then repair the
 // fixture and assert it clears.
@@ -251,16 +253,14 @@ test("reports stale_install when the installed preToolUse matcher drifts from ca
       hooks: {
         sessionStart: [
           {
-            command:
-              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+            command: SESSION_HOOK,
           },
         ],
         preToolUse: [
           {
-            command:
-              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+            command: 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-hook',
             matcher: "Write|Edit|Delete|Shell",
-            failClosed: true,
+            failClosed: false,
           },
         ],
       },
@@ -953,185 +953,198 @@ test("cursor launcher validates the canonical registered MCP target", () => {
   }
 });
 
-test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)", () => {
-  const canonical = JSON.stringify({
-    mcpServers: {
-      workit: {
-        command: "npx",
-        args: [
+test(
+  "cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
+  () => {
+    const canonical = JSON.stringify({
+      mcpServers: {
+        workit: {
+          command: "npx",
+          args: [
+            "-y",
+            "--prefer-online",
+            "--min-release-age=0",
+            "--package=@brainervirus/workit-cursor@latest",
+            "workit-cursor-mcp",
+            "${workspaceFolder}",
+          ],
+        },
+      },
+    });
+    const variants: Array<[string, string[]]> = [
+      [
+        "exact pin @0.8.5",
+        [
           "-y",
           "--prefer-online",
-          "--min-release-age=0",
+          "--package=@brainervirus/workit-cursor@0.8.5",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
+      ],
+      [
+        "bare @latest without --prefer-online",
+        [
+          "-y",
           "--package=@brainervirus/workit-cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
-      },
-    },
-  });
-  const variants: Array<[string, string[]]> = [
-    [
-      "exact pin @0.8.5",
-      [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@0.8.5",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
       ],
-    ],
-    [
-      "bare @latest without --prefer-online",
       [
-        "-y",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
+        "@latest-alpha",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest-alpha",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "@latest-alpha",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest-alpha",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
+        "@0.8.5-alpha",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@0.8.5-alpha",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "@0.8.5-alpha",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@0.8.5-alpha",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
+        "@0.8.50",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@0.8.50",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "@0.8.50",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@0.8.50",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
+        "missing ${workspaceFolder}",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp",
+        ],
       ],
-    ],
-    [
-      "missing ${workspaceFolder}",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp",
+        "extra args",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+          "extra",
+        ],
       ],
-    ],
-    [
-      "extra args",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
-        "extra",
+        "executable lookalike",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp-foo",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "executable lookalike",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp-foo",
-        "${workspaceFolder}",
+        "wrong position: --prefer-online after --package",
+        [
+          "-y",
+          "--package=@brainervirus/workit-cursor@latest",
+          "--prefer-online",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "wrong position: --prefer-online after --package",
-      [
-        "-y",
-        "--package=@brainervirus/workit-cursor@latest",
-        "--prefer-online",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
-      ],
-    ],
-  ];
-  try {
-    for (const [label, args] of variants) {
-      writeConfig(
-        fixture.cursorMcp,
-        JSON.stringify({ mcpServers: { workit: { command: "npx", args } } }),
-      );
-      const report = run();
-      expect(check(report, "launcher").status, label).toBe("fail");
-      expect(check(report, "launcher").detail, label).toContain("canonical");
+    ];
+    try {
+      for (const [label, args] of variants) {
+        writeConfig(
+          fixture.cursorMcp,
+          JSON.stringify({ mcpServers: { workit: { command: "npx", args } } }),
+        );
+        const report = run();
+        expect(check(report, "launcher").status, label).toBe("fail");
+        expect(check(report, "launcher").detail, label).toContain("canonical");
+      }
+    } finally {
+      writeConfig(fixture.cursorMcp, canonical);
     }
-  } finally {
-    writeConfig(fixture.cursorMcp, canonical);
-  }
-  expect(check(run(), "launcher").status).toBe("pass");
-});
+    expect(check(run(), "launcher").status).toBe("pass");
+  },
+  // Every doctor run probes the Cursor hook launcher (two node starts).
+  { timeout: 30_000 },
+);
 
-test("cursor session-start hook command matches exact canonical string (CA-17)", () => {
-  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
-  const canonical = {
-    version: 1,
-    hooks: {
-      sessionStart: [
-        {
-          command:
-            "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-        },
+test(
+  "cursor session-start hook command matches exact canonical string (CA-17)",
+  () => {
+    const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+    const canonical = {
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command: SESSION_HOOK,
+          },
+        ],
+      },
+    };
+    const hookVariants: Array<[string, string]> = [
+      [
+        "legacy npx @latest launcher",
+        "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
       ],
-    },
-  };
-  const hookVariants: Array<[string, string]> = [
-    [
-      "exact pin @0.8.5",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
-    ],
-    [
-      "bare @latest without --prefer-online",
-      "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-    ],
-    [
-      "@latest-alpha",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
-    ],
-    [
-      "@0.8.5-alpha",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5-alpha workit-cursor-session-start",
-    ],
-    [
-      "@0.8.50",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.50 workit-cursor-session-start",
-    ],
-    [
-      "extra-token",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start extra",
-    ],
-    ["missing-executable", "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest"],
-  ];
-  try {
-    for (const [label, command] of hookVariants) {
-      writeConfig(
-        hooksFile,
-        JSON.stringify({ version: 1, hooks: { sessionStart: [{ command }] } }),
-      );
-      const report = run();
-      expect(check(report, "launcher").status, label).toBe("fail");
-      expect(check(report, "launcher").detail, label).toContain("canonical");
-      expect(check(report, "launcher").detail, label).toContain("hooks-cursor.json");
+      [
+        "exact pin @0.8.5",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
+      ],
+      [
+        "bare @latest without --prefer-online",
+        "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+      ],
+      [
+        "@latest-alpha",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
+      ],
+      [
+        "@0.8.5-alpha",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5-alpha workit-cursor-session-start",
+      ],
+      [
+        "@0.8.50",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.50 workit-cursor-session-start",
+      ],
+      [
+        "extra-token",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start extra",
+      ],
+      ["missing-executable", "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest"],
+    ];
+    try {
+      for (const [label, command] of hookVariants) {
+        writeConfig(
+          hooksFile,
+          JSON.stringify({ version: 1, hooks: { sessionStart: [{ command }] } }),
+        );
+        const report = run();
+        expect(check(report, "launcher").status, label).toBe("fail");
+        expect(check(report, "launcher").detail, label).toContain("canonical");
+        expect(check(report, "launcher").detail, label).toContain("hooks-cursor.json");
+      }
+    } finally {
+      writeConfig(hooksFile, JSON.stringify(canonical));
     }
-  } finally {
-    writeConfig(hooksFile, JSON.stringify(canonical));
-  }
-  expect(check(run(), "launcher").status).toBe("pass");
-});
+    expect(check(run(), "launcher").status).toBe("pass");
+  },
+  // Every doctor run probes the Cursor hook launcher (two node starts).
+  { timeout: 30_000 },
+);
 
 test("accepts a local-dist node session-start hook pointing at the installed dist (CA-17)", () => {
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
@@ -1147,9 +1160,7 @@ test("accepts a local-dist node session-start hook pointing at the installed dis
     expect(check(run(), "launcher").status).toBe("fail");
     write(`node ${path.join(fixture.pluginDir, "dist", "missing.js")}`);
     expect(check(run(), "launcher").status).toBe("fail");
-    write(
-      "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-    );
+    write(SESSION_HOOK);
     expect(check(run(), "launcher").status).toBe("pass");
   } finally {
     writeConfig(
@@ -1159,8 +1170,7 @@ test("accepts a local-dist node session-start hook pointing at the installed dis
         hooks: {
           sessionStart: [
             {
-              command:
-                "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+              command: SESSION_HOOK,
             },
           ],
         },
@@ -1901,5 +1911,67 @@ test("doctor reads Workit pins from both the `plugins` (2.x) and `plugin` keys",
     expect(check(run(), "duplicate_registration").status).toBe("fail");
   } finally {
     writeConfig(fixture.opencodeConfig, original);
+  }
+});
+
+test("cursor_hook reports the local launcher mode and its probe latency", () => {
+  const hook = check(run(), "cursor_hook");
+  expect(hook.status).toBe("pass");
+  expect(hook.detail).toContain(
+    `cursor hook launcher mode: local (${path.join(fixture.pluginDir, "dist", "workit-hook.js")})`,
+  );
+  expect(hook.detail).toMatch(/probe \d+ ms$/);
+});
+
+test(
+  "cursor_hook reports npx-pinned (probed offline) and missing modes as warnings",
+  () => {
+    const bundled = path.join(fixture.pluginDir, "dist", "workit-hook.js");
+    const pluginPkg = path.join(fixture.pluginDir, "package.json");
+    const original = readFileSync(bundled, "utf8");
+    const bin = binDirWithRuntimes(path.join(fixture.root, "cursor-hook-bin"));
+    const argsLog = path.join(fixture.root, "npx-args");
+    rmSync(bundled);
+    writeConfig(
+      pluginPkg,
+      JSON.stringify({ name: "@brainervirus/workit-cursor", version: "4.5.6" }),
+    );
+    writeConfig(path.join(bin, "npx"), `#!/bin/sh\necho "$@" > "${argsLog}"\necho '{}'\n`, 0o755);
+    try {
+      const pinned = check(run({ env: { ...process.env, PATH: bin } }), "cursor_hook");
+      expect(pinned.status).toBe("warn");
+      expect(pinned.detail).toContain(
+        "cursor hook launcher mode: npx-pinned (@brainervirus/workit-cursor@4.5.6)",
+      );
+      expect(pinned.detail).toMatch(/probe \d+ ms/);
+      expect(readFileSync(argsLog, "utf8").trim()).toBe(
+        "-y --offline --package=@brainervirus/workit-cursor@4.5.6 workit-cursor-hook",
+      );
+
+      rmSync(path.join(bin, "npx"));
+      const missing = check(run({ env: { ...process.env, PATH: bin } }), "cursor_hook");
+      expect(missing.status).toBe("warn");
+      expect(missing.detail).toContain("cursor hook launcher mode: missing");
+      expect(missing.fix).toContain("workit init");
+    } finally {
+      writeConfig(bundled, original);
+      rmSync(pluginPkg, { force: true });
+    }
+    expect(check(run(), "cursor_hook").status).toBe("pass");
+  },
+  { timeout: 30_000 },
+);
+
+test("cursor_hook flags an install that predates the pinned launcher", () => {
+  const launcher = path.join(fixture.pluginDir, "hooks", "launch.mjs");
+  const original = readFileSync(launcher, "utf8");
+  rmSync(launcher);
+  try {
+    const hook = check(run(), "cursor_hook");
+    expect(hook.status).toBe("warn");
+    expect(hook.detail).toContain("cursor hook launcher mode: missing");
+    expect(hook.detail).toContain("launch.mjs is absent");
+  } finally {
+    writeConfig(launcher, original);
   }
 });

@@ -100,6 +100,8 @@ test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bi
     ".cursor-plugin/plugin.json",
     "rules/workit-contract.mdc",
     "hooks/hooks-cursor.json",
+    "hooks/launch.mjs",
+    "hooks/launch-runtime.mjs",
   ]) {
     expect(entries, required).toContain(required);
   }

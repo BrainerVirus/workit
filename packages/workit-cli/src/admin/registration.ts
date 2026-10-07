@@ -146,10 +146,10 @@ export function mergeCursorMcp(
   return { config: base, changed };
 }
 
-/** Swap the sessionStart hook command and normalize the enforcement events to
- *  canonical (missing or divergent preToolUse/beforeShellExecution entries are
- *  rewritten so the installer heals exactly what the doctor flags). Other
- *  hooks and fields are preserved. */
+/** Swap the sessionStart hook command and normalize the workit-owned events to
+ *  canonical (missing or divergent entries, including a legacy
+ *  `failClosed: true`, are rewritten so the installer heals exactly what the
+ *  doctor flags). Other hooks and fields are preserved. */
 export function mergeCursorHooks(
   hooks: unknown,
   sessionStartEntry: Record<string, unknown>,
@@ -166,15 +166,13 @@ export function mergeCursorHooks(
     hooksMap.sessionStart = [sessionStartEntry];
     changed.push("hooks.sessionStart");
   }
-  for (const event of ["preToolUse", "beforeShellExecution"] as const) {
+  for (const event of CURSOR_HOOK_EVENTS) {
     const canonical = canonicalHookEntry(event);
     const current = hooksMap[event];
     if (
       !Array.isArray(current) ||
       current.length !== 1 ||
-      !isRecord(current[0]) ||
-      JSON.stringify({ ...current[0], failClosed: true }) !==
-        JSON.stringify({ ...canonical, failClosed: true })
+      JSON.stringify(current[0]) !== JSON.stringify(canonical)
     ) {
       hooksMap[event] = [canonical];
       changed.push(`hooks.${event}`);
@@ -185,19 +183,27 @@ export function mergeCursorHooks(
 }
 
 /**
- * Canonical selector for the Cursor npm runtime: `@latest` with `--prefer-online`
- * (README "Update review"). The single source for every source-derived Cursor
- * runtime selector; the committed manifests keep the literal (static data
- * cannot import TS). `--min-release-age=0` works around npm/cli#9765, where
- * npx ignores the user's scoped release-age exclusion.
+ * Canonical selector for the Cursor MCP server's npm runtime: `@latest` with
+ * `--prefer-online` (README "Update review"). `--min-release-age=0` works
+ * around npm/cli#9765, where npx ignores the user's scoped release-age
+ * exclusion. Hooks never use it: they go through the pinned launcher below.
  */
 export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest";
 
 /**
- * Canonical Cursor hook launcher (single source of truth for the shipped
+ * Cursor hook launcher (`packages/workit-cursor/hooks/launch.mjs`, committed
+ * plain JS so a Marketplace git checkout runs it unbuilt). It prefers the
+ * plugin's bundled dist, then a global `workit-cursor-*` bin, then npx pinned
+ * to the plugin's own version with `--prefer-offline`; it never resolves
+ * `@latest`, and it fails open on any launcher or infrastructure failure.
+ */
+const CURSOR_HOOK_LAUNCHER = 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs"';
+
+/**
+ * Canonical Cursor hook command (single source of truth for the shipped
  * hooks-cursor.json, the installer merge, and the doctor drift check).
  */
-export const CURSOR_HOOK_RUN_COMMAND = `npx -y --prefer-online --min-release-age=0 --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-hook`;
+export const CURSOR_HOOK_RUN_COMMAND = `${CURSOR_HOOK_LAUNCHER} workit-cursor-hook`;
 
 /**
  * preToolUse matcher covering every name the hook's write-tool guard treats
@@ -207,23 +213,42 @@ export const CURSOR_HOOK_RUN_COMMAND = `npx -y --prefer-online --min-release-age
 export const CURSOR_PRETOOLUSE_MATCHER =
   "Write|Edit|Delete|Shell|Remove|ApplyPatch|Apply_Patch|Patch|Rename|Mkdir|Mv|Cp|Touch";
 
-const canonicalHookEntry = (
-  event: "preToolUse" | "beforeShellExecution",
-): Record<string, unknown> =>
+/** Workit-owned Cursor events besides sessionStart, in manifest order. */
+const CURSOR_HOOK_EVENTS = [
+  "preToolUse",
+  "beforeShellExecution",
+  "subagentStart",
+  "subagentStop",
+  "preCompact",
+] as const;
+
+type CursorHookEvent = (typeof CURSOR_HOOK_EVENTS)[number];
+
+/**
+ * `failClosed: false` on every event. Cursor's failClosed cannot tell a
+ * launcher failure (offline npx, crash, timeout) from a policy decision, so
+ * fail-closed would brick every shell command and edit when the runtime is
+ * unreachable. Policy denials still block: the hook answers Cursor's deny JSON
+ * with exit 2, which Cursor honors regardless of failClosed. The trade-off: a
+ * broken runtime means no Workit enforcement (host permissions still apply).
+ */
+const canonicalHookEntry = (event: CursorHookEvent): Record<string, unknown> =>
   event === "preToolUse"
-    ? { command: CURSOR_HOOK_RUN_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: true }
-    : { command: CURSOR_HOOK_RUN_COMMAND, failClosed: true };
+    ? { command: CURSOR_HOOK_RUN_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false }
+    : { command: CURSOR_HOOK_RUN_COMMAND, failClosed: false };
 
 /**
  * Drift between an installed hooks file and the canonical event entries.
  * Only present-but-divergent entries count: absent events are filled in by
- * the installer merge on the next run, and minimal installs predate them.
+ * the installer merge on the next run, and minimal installs predate them. A
+ * legacy `failClosed: true` is drift: it turns an offline runtime into a
+ * blanket deny.
  */
 export function cursorHookDrift(installed: unknown): string[] {
   if (!isRecord(installed) || !isRecord(installed.hooks)) return ["hooks file is not a hook map"];
   const hooks = installed.hooks;
   const drift: string[] = [];
-  for (const event of ["preToolUse", "beforeShellExecution"] as const) {
+  for (const event of CURSOR_HOOK_EVENTS) {
     const list = hooks[event];
     if (list === undefined) continue;
     const canonical = canonicalHookEntry(event);
@@ -231,6 +256,7 @@ export function cursorHookDrift(installed: unknown): string[] {
     if (
       !isRecord(entry) ||
       entry.command !== canonical.command ||
+      entry.failClosed === true ||
       (event === "preToolUse" && entry.matcher !== canonical.matcher)
     )
       drift.push(event);
@@ -262,16 +288,13 @@ export function cursorMcpServerEntry(_packageDir: string): {
 
 /**
  * Portable Cursor sessionStart hook entry (CA-17): a single command string in
- * Cursor's documented format (no args array).
+ * Cursor's documented format (no args array), through the pinned launcher.
  */
 export function cursorHooksEntry(_packageDir: string): {
   command: string;
   args: string[];
 } {
-  return {
-    command: `npx -y --prefer-online --min-release-age=0 --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
-    args: [],
-  };
+  return { command: `${CURSOR_HOOK_LAUNCHER} workit-cursor-session-start`, args: [] };
 }
 
 /**

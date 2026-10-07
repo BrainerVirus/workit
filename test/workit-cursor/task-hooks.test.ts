@@ -148,15 +148,48 @@ test("blocking shell hooks pass ambiguous writes through while advisory events s
   });
 });
 
-test("malformed blocking hook input exits fail-closed", () => {
-  const result = spawnSync(
+const runHookProcess = (payload: unknown) =>
+  spawnSync(
     process.execPath,
     ["run", path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks/workit-hook.ts")],
-    {
-      input: JSON.stringify({ hook_event_name: "beforeShellExecution" }),
-      encoding: "utf8",
-    },
+    { input: JSON.stringify(payload), encoding: "utf8" },
   );
+
+test("a blocking payload with no workspace or no conversation id is allowed with a note, not denied", () => {
+  for (const payload of [
+    { hook_event_name: "beforeShellExecution" },
+    {
+      hook_event_name: "beforeShellExecution",
+      workspace_roots: [],
+      conversation_id: "c1",
+      command: "ls",
+    },
+    { hook_event_name: "preToolUse", workspace_roots: [process.cwd()], tool_name: "Write" },
+    { hook_event_name: "subagentStart", workspace_roots: [process.cwd()], subagent_id: "s1" },
+  ]) {
+    const result = runHookProcess(payload);
+    const label = JSON.stringify(payload);
+    expect(result.status, label).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.permission, label).toBe("allow");
+    expect(output.agent_message, label).toContain("Workit checks are skipped");
+  }
+  expect(
+    handleCursorHook({ hook_event_name: "sessionStart", workspace_roots: [process.cwd()] }),
+  ).toEqual({
+    additional_context:
+      "[workit: the hook payload carries no conversation id; Workit checks are skipped for this action]",
+  });
+});
+
+test("a blocking payload that is placeable but inconsistent still exits fail-closed", () => {
+  const result = runHookProcess({
+    hook_event_name: "beforeShellExecution",
+    workspace_roots: [process.cwd()],
+    conversation_id: "conv-a",
+    session_id: "conv-b",
+    command: "ls",
+  });
   expect(result.status).toBe(2);
   expect(result.stdout).toContain('"permission":"deny"');
 });

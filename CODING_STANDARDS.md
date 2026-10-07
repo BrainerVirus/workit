@@ -54,7 +54,8 @@ what to fix.
 ## Enforced by checks (pointers only)
 
 - Flat (depth 1) agent-facing tool schemas: `test/workit-mcp/server.test.ts`.
-- Cursor runtime launcher shape: `test/workit-core/install-scripts.test.ts`.
+- Cursor runtime launcher shape: `test/workit-core/install-scripts.test.ts`;
+  the pinned, fail-open hook launcher: `test/workit-cursor/hook-launcher.test.ts`.
 - YouTrack hosts, issue ids and timezones out of shipped source:
   `test/workit-core/youtrack-work-date.test.ts`.
 - Generated skill copies and the skill routing list:
