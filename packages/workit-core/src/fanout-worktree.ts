@@ -103,20 +103,52 @@ const slicePath = (cwd: string, slice: Slice): string =>
     ? slice.worktree
     : path.resolve(mainCheckout(cwd), slice.worktree);
 
-/** The newest `fanout.worktree.created` row for this fanout, slice and path. */
+/** Timestamps of the admin dir and the ledger have second granularity on some filesystems. */
+const CLOCK_SLACK_MS = 2000;
+
+/**
+ * The live `fanout.worktree.created` row for this fanout, slice and path:
+ * the newest one, unless a later release removed that worktree (a row is
+ * void once its worktree is gone), and only while the worktree at the path
+ * is the one it recorded: git's admin dir for it (`.git/worktrees/<id>`) was
+ * made no earlier than the row. Anything else is someone else's worktree.
+ */
 function createdRow(cwd: string, plan: FanoutFile, slice: Slice, target: string) {
   const ledger = readLedger(cwd);
   if (!ledger.ok) return null;
-  return (
-    ledger.value.rows.findLast(
-      (row) =>
-        row.type === "fanout.worktree.created" &&
-        row.fanout === plan.name &&
-        row.slice === slice.id &&
-        typeof row.path === "string" &&
-        samePath(row.path, target),
-    ) ?? null
+  const atPath = (row: Record<string, unknown>) =>
+    row.fanout === plan.name &&
+    row.slice === slice.id &&
+    typeof row.path === "string" &&
+    samePath(row.path, target);
+  const rows = ledger.value.rows;
+  const row = rows.findLast(
+    (candidate) => candidate.type === "fanout.worktree.created" && atPath(candidate),
   );
+  if (!row) return null;
+  const removedSince = rows.some(
+    (candidate) =>
+      candidate.seq > row.seq &&
+      candidate.type === "fanout.worktree.released" &&
+      candidate.outcome === "removed" &&
+      atPath(candidate),
+  );
+  if (removedSince) return null;
+  const made = adminDirTime(target);
+  if (made === null || made + CLOCK_SLACK_MS < Date.parse(row.at)) return null;
+  return row;
+}
+
+/** When git made the worktree's admin dir (birth time, else mtime); null when unknown. */
+function adminDirTime(worktree: string): number | null {
+  const dir = gitRun(worktree, ["rev-parse", "--absolute-git-dir"]);
+  if (!dir.ok) return null;
+  try {
+    const stat = fs.statSync(dir.stdout.trim());
+    return stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
+  } catch {
+    return null;
+  }
 }
 
 function findSlice(plan: FanoutFile, id: string): FanoutResult<Slice> {
@@ -304,6 +336,7 @@ export function createSliceWorktree(
     mode,
     head,
     dirExisted,
+    planCreatedAt: plan.createdAt,
     ...(baseSha ? { baseSha } : {}),
   });
   return { ok: true, data: { ...base, scratch, head, mode, created: true, notes } };

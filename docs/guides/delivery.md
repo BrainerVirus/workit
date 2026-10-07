@@ -163,8 +163,8 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   included, even after the branch was deleted), asked through `gh`/`glab`.
   A merged PR whose branch is gone counts only when the ledger links the
   branch to the slice (a `worktree create` row, or a row such as a verdict
-  recorded on the merged head), so an older branch of the same name is not
-  taken for it. Without the forge (`--offline`, no CLI, no login, or after
+  recorded on the merged head) since the plan was first made, so an older
+  branch or fanout of the same name is not taken for it. Without the forge (`--offline`, no CLI, no login, or after
   the first timeout or unavailable answer in a run) git decides: the branch
   tip is on the trunk and its reflog shows a commit made on the branch (a
   branch only fast-forwarded to a newer trunk does not count), or its change
@@ -199,6 +199,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   uncommitted changes unless `--force`, then removes the scratch dir and the
   worktree with `git worktree remove`. The branch is kept. It removes only a
   worktree that `create` made for this fanout, slice and path (its ledger row
-  says so), even with `--force`; never the main checkout, a worktree someone
+  says so, no later release removed it, and git's admin dir for the worktree
+  is no older than the row), even with `--force`; never the main checkout, a worktree someone
   else added there, or a plain directory. An empty directory that existed
   before `create` is left in place.

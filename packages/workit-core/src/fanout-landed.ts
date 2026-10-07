@@ -187,14 +187,20 @@ function trunkPatchIds(ctx: LandingContext, fork: string): Set<string> {
 /** The ledger links `branch` to this slice: a worktree row, or a row recorded on `head`. */
 function linked(
   rows: readonly Record<string, unknown>[],
-  fanout: string,
+  input: Pick<LandingInput, "fanout" | "since">,
   slice: Pick<Slice, "id" | "branch">,
   head: string | null,
 ): boolean {
+  // Only rows from this run of the fanout: a plan of the same name made
+  // earlier must not lend its merged PRs to this one.
+  const since = input.since ? Date.parse(input.since) : Number.NaN;
   return rows.some(
     (row) =>
-      (row.type === "fanout.worktree.created" && row.fanout === fanout && row.slice === slice.id) ||
-      (head !== null && row.branch === slice.branch && row.head === head),
+      (Number.isNaN(since) || Date.parse(String(row.at)) >= since) &&
+      ((row.type === "fanout.worktree.created" &&
+        row.fanout === input.fanout &&
+        row.slice === slice.id) ||
+        (head !== null && row.branch === slice.branch && row.head === head)),
   );
 }
 
@@ -206,6 +212,8 @@ export type LandingInput = {
   /** Its dependency branch's tip (or merged head) for a stacked slice. */
   parentHead: string | null;
   fanout: string;
+  /** When this fanout plan was first made (FanoutFile.createdAt): older rows do not link. */
+  since: string | null;
   rows: readonly Record<string, unknown>[];
 };
 
@@ -248,7 +256,7 @@ export function detectLanding(
         const merged = found.data.headSha;
         const label = `#${found.data.number}`;
         if (!head) {
-          if (!linked(input.rows, input.fanout, slice, merged)) {
+          if (!linked(input.rows, input, slice, merged)) {
             out.pr = null;
             out.note = `${slice.branch} is gone; merged ${label} is not linked to this slice in the ledger (an older branch of the same name?)`;
             return out;

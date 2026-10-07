@@ -238,6 +238,19 @@ test("fanout status: given a merged PR for a reused branch name that the ledger 
   ]);
 });
 
+test("fanout status: given a verdict that linked feature/a's merged head before this fanout was planned, when the branch is gone, then that older row does not make the slice landed", async () => {
+  const forge = forgeSetup();
+  await verify(forge.cwd, "feature/a");
+  forge.mergeExternally(11);
+  forge.git("fetch", "-q", "origin");
+  forge.git("branch", "-q", "-D", "feature/a");
+  forge.git("update-ref", "-d", "refs/remotes/origin/feature/a");
+  await Bun.sleep(5);
+  await stackPlan(forge);
+  const { byId } = await status(forge.cwd);
+  expect(byId.a).toMatchObject({ state: "not_started", landed: null });
+});
+
 test("fanout status: given gh hangs on every PR lookup, when shown, then it asks once, marks the forge down for the rest of the run, and git decides every slice", async () => {
   const forge = forgeSetup();
   await stackPlan(forge);
@@ -597,6 +610,21 @@ test("fanout worktree release: given a detached worktree someone else added at t
   const create = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(create.code).toBe(3);
   expect(create.json().error).toContain("did not make for slice a");
+});
+
+test("fanout worktree release: given a worktree that was created and released, then a foreign detached worktree added at the same path with uncommitted work, when released with --force, then it is refused and the work is kept", async () => {
+  const { root, cwd } = localRepo();
+  await plan(cwd, root, [slice("b", ["b.ts"])]);
+  const wt = path.join(root, "app-wt", "b");
+  expect((await run(cwd, ["fanout", "worktree", "create", "b", "--json"])).code).toBe(0);
+  expect((await run(cwd, ["fanout", "worktree", "release", "b", "--json"])).code).toBe(0);
+  git(cwd, "worktree", "add", "-q", "--detach", wt, "main");
+  writeFileSync(path.join(wt, "notes.txt"), "someone else's\n");
+  const release = await run(cwd, ["fanout", "worktree", "release", "b", "--force", "--json"]);
+  expect(release.code).toBe(3);
+  expect(release.json().error).toContain("was not made by workit fanout worktree create");
+  expect(readFileSync(path.join(wt, "notes.txt"), "utf8")).toBe("someone else's\n");
+  expect(git(cwd, "worktree", "list")).toContain(wt);
 });
 
 test("fanout worktree: given a file at the slice's path, when created, then it is refused; given an empty directory there, it is used and recreated empty on release", async () => {
