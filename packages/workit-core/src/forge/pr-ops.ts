@@ -59,6 +59,9 @@ export type CreateInput = {
   body: string;
   draft: boolean;
   actor: LedgerActor;
+  /** Applied after the PR is opened or found (`--label`, `--reviewer`). */
+  labels?: string[];
+  reviewers?: string[];
 };
 
 export type CreateOutcome = {
@@ -86,10 +89,14 @@ const createNext = (cwd: string): string => {
   return `a non-author verifies the head (workit-review); the endpoint is ${endpoint}, so ${AFTER_REVIEW[endpoint]}`;
 };
 
+/** Workit's own commit trailer: provenance for the ledger, not PR prose. */
+const SESSION_TRAILER = /^Workit-Session:.*$/gimu;
+
 /**
  * `--fill`: the title and body from the branch's commits on top of the base
  * (fetched first). One commit gives its subject and body; several give the
- * oldest subject and a list of every subject.
+ * oldest subject and every subject with its body, like `gh pr create
+ * --fill-verbose`. `Workit-Session:` trailers are left out of the body.
  */
 export function fillFromCommits(
   cwd: string,
@@ -122,7 +129,7 @@ export function fillFromCommits(
     .filter(Boolean)
     .map((entry) => {
       const [subject = "", body = ""] = entry.split("\x1f");
-      return { subject: subject.trim(), body: body.trim() };
+      return { subject: subject.trim(), body: body.replace(SESSION_TRAILER, "").trim() };
     });
   if (commits.length === 0)
     return failure(
@@ -133,9 +140,20 @@ export function fillFromCommits(
   if (commits.length === 1) return success({ title: commits[0].subject, body: commits[0].body });
   return success({
     title: commits[0].subject,
-    body: commits.map((commit) => `- ${commit.subject}`).join("\n"),
+    body: commits
+      .map((commit) =>
+        [`- ${commit.subject}`, ...(commit.body ? ["", indent(commit.body), ""] : [])].join("\n"),
+      )
+      .join("\n")
+      .trim(),
   });
 }
+
+const indent = (text: string): string =>
+  text
+    .split("\n")
+    .map((line) => (line ? `  ${line}` : line))
+    .join("\n");
 
 /** The pushed head of the current branch, bound before any forge write. */
 export function boundSource(
@@ -242,6 +260,21 @@ export async function createPullRequest(
     repo: resolved.forge.repo,
     created,
   });
+  const labels = input.labels ?? [];
+  const reviewers = input.reviewers ?? [];
+  if (labels.length || reviewers.length) {
+    const edited = resolved.forge.editPr(ref.number, {
+      addLabels: labels,
+      removeLabels: [],
+      addReviewers: reviewers,
+    });
+    if (!edited.ok)
+      return failure(
+        edited.code,
+        `${noun(resolved)} #${ref.number} is open (${ref.url}), but its labels or reviewers were not set: ${edited.error}`,
+        `workit pr edit --pr ${ref.number}${labels.map((name) => ` --add-label ${name}`).join("")}${reviewers.map((name) => ` --add-reviewer ${name}`).join("")}`,
+      );
+  }
   return success({
     number: ref.number,
     url: ref.url,
@@ -351,19 +384,37 @@ const refuse = (error: string, unblock: string, refusal: MergeRefusal): MergeRes
   refusal,
 });
 
-const NEXT_HINTS: Record<string, string> = {
-  RESOLVE_CONFLICTS: "rebase onto the base, resolve, then workit git push --force-with-lease",
-  REBASE: "rebase onto the base, then workit git push --force-with-lease",
-  RESOLVE_THREADS: "address and resolve the open review threads (workit pr status lists them)",
-  FIX_CI:
-    "fix the failing checks (workit pr status shows the log tails), push, then workit ci wait",
-  WAITING_CI: "workit ci wait",
-  ADDRESS_REVIEW: "address the requested changes",
-  REVIEW: "get the required review",
-  MARK_READY: "mark the PR ready for review",
-  IN_MERGE_QUEUE: "the PR is already in the merge queue",
-  NOT_MERGEABLE: "workit pr status  # the forge reports it cannot merge yet",
-};
+/**
+ * The command (or step) that clears a `next` blocker, for `pr status` and a
+ * `pr merge` refusal; null for READY and the terminal states.
+ */
+export function nextHint(next: string, number: number): string | null {
+  const pr = `--pr ${number}`;
+  switch (next) {
+    case "RESOLVE_CONFLICTS":
+      return "rebase onto the base, resolve, then workit git push --force-with-lease";
+    case "REBASE":
+      return "rebase onto the base, then workit git push --force-with-lease";
+    case "RESOLVE_THREADS":
+      return `workit pr threads ${pr}; fix or answer each: workit pr reply ${pr} --thread <id> --body-file <f> [--resolve]`;
+    case "FIX_CI":
+      return "fix the failing checks (workit pr status shows the log tails), push, then workit ci wait";
+    case "WAITING_CI":
+      return "workit ci wait";
+    case "ADDRESS_REVIEW":
+      return `address the requested changes; answer threads with workit pr reply ${pr} --thread <id> --body-file <f>`;
+    case "REVIEW":
+      return `get the required review (workit pr edit ${pr} --add-reviewer <login>)`;
+    case "MARK_READY":
+      return `workit pr ready ${pr}`;
+    case "IN_MERGE_QUEUE":
+      return "the PR is already in the merge queue";
+    case "NOT_MERGEABLE":
+      return "workit pr status  # the forge reports it cannot merge yet";
+    default:
+      return null;
+  }
+}
 
 export async function mergePullRequest(
   cwd: string,
@@ -406,7 +457,7 @@ export async function mergePullRequest(
   if (doc.next !== "READY")
     return refuse(
       `not_ready: ${label} is ${doc.next} (${doc.blockers.join(", ") || doc.next.toLowerCase()})`,
-      NEXT_HINTS[doc.next] ?? "workit pr status",
+      nextHint(doc.next, doc.number) ?? "workit pr status",
       { reason: "not_ready", next: doc.next, blockers: doc.blockers },
     );
 

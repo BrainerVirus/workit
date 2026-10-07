@@ -10,6 +10,7 @@ import {
   type ForgePrStatus,
   type ForgeResult,
   type ForgeThread,
+  type PrMeta,
   type PrRef,
   type PrState,
 } from "./types";
@@ -27,6 +28,23 @@ const CONTEXTS = `contexts(first: 100, after: $contexts) { pageInfo { hasNextPag
 export const PR_STATUS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $threads: String, $contexts: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PR_FIELDS} ${THREADS} commits(last: 1) { nodes { commit { oid statusCheckRollup { state ${CONTEXTS} } } } } } } }`;
 
 export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number url state headRefName headRefOid headRepositoryOwner { login } } } } }`;
+
+const READY_MUTATION = `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
+const DRAFT_MUTATION = `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
+const REPLY_MUTATION = `mutation($thread: ID!, $body: String!) { addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, body: $body }) { comment { url } } }`;
+const RESOLVE_MUTATION = `mutation($thread: ID!) { resolveReviewThread(input: { threadId: $thread }) { thread { isResolved } } }`;
+
+type RestPr = {
+  number?: number;
+  html_url?: string;
+  node_id?: string;
+  state?: string;
+  merged?: boolean;
+  draft?: boolean;
+  title?: string;
+  base?: { ref?: string };
+  head?: { ref?: string };
+};
 
 type Page<T> = { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: T[] };
 
@@ -267,6 +285,14 @@ export function createGitHubForge(options: {
             if (typeof item.context === "string") contexts.add(item.context);
       }
     return [...contexts];
+  };
+
+  const restPr = (number: number): ForgeResult<RestPr> => {
+    const pr = rest<RestPr>(`repos/${repo}/pulls/${number}`, `pull request #${number}`);
+    if (!pr.ok) return pr;
+    return typeof pr.data.number === "number"
+      ? pr
+      : failure("failed", `gh api pulls/${number} returned no pull request`);
   };
 
   return {
@@ -524,6 +550,108 @@ export function createGitHubForge(options: {
         `retarget of pull request #${number}`,
       );
       return updated.ok ? success(undefined) : updated;
+    },
+
+    prMeta(number) {
+      const pr = restPr(number);
+      if (!pr.ok) return pr;
+      const value = pr.data;
+      const meta: PrMeta = {
+        number,
+        url: value.html_url ?? "",
+        state: value.merged ? "merged" : value.state === "closed" ? "closed" : "open",
+        draft: value.draft === true,
+        title: value.title ?? "",
+        base: value.base?.ref ?? "",
+        headBranch: value.head?.ref ?? "",
+      };
+      return success(meta);
+    },
+
+    setDraft(number, draft) {
+      const pr = restPr(number);
+      if (!pr.ok) return pr;
+      if (!pr.data.node_id) return failure("failed", `pull request #${number} has no node id`);
+      const done = graphql<unknown>(
+        draft ? DRAFT_MUTATION : READY_MUTATION,
+        { id: pr.data.node_id },
+        draft ? `draft conversion of pull request #${number}` : `ready of pull request #${number}`,
+      );
+      return done.ok ? success(undefined) : done;
+    },
+
+    editPr(number, edit) {
+      const write = (args: string[], what: string): ForgeResult<unknown> =>
+        apiWrite<unknown>(runner, "gh", apiHost, ["api", ...args], what);
+      const fields: string[] = [];
+      if (edit.title !== undefined) fields.push("-f", `title=${edit.title}`);
+      if (edit.body !== undefined) fields.push("-f", `body=${edit.body}`);
+      if (edit.base !== undefined) fields.push("-f", `base=${edit.base}`);
+      if (fields.length) {
+        const patched = write(
+          ["-X", "PATCH", `repos/${repo}/pulls/${number}`, ...fields],
+          `edit of pull request #${number}`,
+        );
+        if (!patched.ok) return patched;
+      }
+      if (edit.addLabels.length) {
+        const added = write(
+          [
+            "-X",
+            "POST",
+            `repos/${repo}/issues/${number}/labels`,
+            ...edit.addLabels.flatMap((label) => ["-f", `labels[]=${label}`]),
+          ],
+          `labels of pull request #${number}`,
+        );
+        if (!added.ok) return added;
+      }
+      for (const label of edit.removeLabels) {
+        const removed = write(
+          ["-X", "DELETE", `repos/${repo}/issues/${number}/labels/${encodeURIComponent(label)}`],
+          `label ${label} of pull request #${number}`,
+        );
+        // A label the PR does not carry is already removed.
+        if (!removed.ok && removed.code !== "not_found") return removed;
+      }
+      if (edit.addReviewers.length) {
+        // org/team requests a team; anything else is a login.
+        const requested = write(
+          [
+            "-X",
+            "POST",
+            `repos/${repo}/pulls/${number}/requested_reviewers`,
+            ...edit.addReviewers.flatMap((reviewer) =>
+              reviewer.includes("/")
+                ? ["-f", `team_reviewers[]=${reviewer.split("/").pop()}`]
+                : ["-f", `reviewers[]=${reviewer}`],
+            ),
+          ],
+          `reviewers of pull request #${number}`,
+        );
+        if (!requested.ok) return requested;
+      }
+      return success(undefined);
+    },
+
+    replyThread(number, thread, body) {
+      const replied = graphql<{
+        addPullRequestReviewThreadReply?: { comment?: { url?: string } | null } | null;
+      }>(REPLY_MUTATION, { thread, body }, `reply on pull request #${number}`);
+      if (!replied.ok) return replied;
+      return success({
+        url: safeUrl(replied.data.addPullRequestReviewThreadReply?.comment?.url ?? null),
+      });
+    },
+
+    resolveThread(number, thread) {
+      const resolved = graphql<{
+        resolveReviewThread?: { thread?: { isResolved?: boolean } | null } | null;
+      }>(RESOLVE_MUTATION, { thread }, `resolve on pull request #${number}`);
+      if (!resolved.ok) return resolved;
+      return resolved.data.resolveReviewThread?.thread?.isResolved === true
+        ? success(undefined)
+        : failure("failed", `thread ${thread} on pull request #${number} is still unresolved`);
     },
   };
 }

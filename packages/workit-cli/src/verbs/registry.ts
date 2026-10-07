@@ -115,9 +115,9 @@ export const VERBS: readonly VerbEntry[] = [
     name: "pr",
     group: "delivery",
     usage:
-      "workit pr status [--pr <n>] | pr create [--base <b> | --track <t>] (--title <t> | --fill) [--draft] | pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]",
+      "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] | pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--label <l>]… [--reviewer <login>]… [--draft] | pr ready [--pr <n>] [--undo] | pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] | pr threads [--pr <n>] | pr reply [--pr <n>] --thread <id> [--body-file <f|->] [--resolve] | pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]",
     summary:
-      "PR/MR state with failing log tails and next action; open a SHA-verified PR; merge only when READY, verified and granted",
+      "PR/MR state with failing log tails and next action; open a SHA-verified PR; mark ready, edit, list and answer review threads; merge only when READY, verified and granted",
     load: () => import("./pr"),
   },
   {

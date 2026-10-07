@@ -21,11 +21,13 @@ export const fixture = (name: string): string => readFileSync(path.join(FIXTURES
 
 export type Call = {
   bin: CliBin;
-  method: "GET" | "POST" | "CLI";
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE" | "CLI";
   endpoint: string;
   /** GraphQL variables (`-f`/`-F key=value`), query excluded. */
   vars: Record<string, string>;
-  /** "status" | "find" for GraphQL calls. */
+  /** Every `-f`/`-F` pair in order, so repeated array keys (`labels[]`) stay visible. */
+  pairs: Array<[string, string]>;
+  /** "status" | "find", or the mutation's field name, for GraphQL calls. */
   op: string | null;
   /** The per-call credential the runner was handed (tests assert on it). */
   token: string | undefined;
@@ -43,10 +45,11 @@ export const replyError = (stderr: string, status = 1): CliRun => ({
 
 const parseCall = (bin: CliBin, args: readonly string[], token?: string): Call => {
   if (args[0] !== "api")
-    return { bin, method: "CLI", endpoint: args.join(" "), vars: {}, op: null, token };
+    return { bin, method: "CLI", endpoint: args.join(" "), vars: {}, pairs: [], op: null, token };
   const rest = args.slice(1);
   let method: Call["method"] = "GET";
   const vars: Record<string, string> = {};
+  const pairs: Array<[string, string]> = [];
   let endpoint = "";
   let op: string | null = null;
   for (let index = 0; index < rest.length; index += 1) {
@@ -60,13 +63,21 @@ const parseCall = (bin: CliBin, args: readonly string[], token?: string): Call =
       const eq = pair.indexOf("=");
       const key = pair.slice(0, eq);
       const value = pair.slice(eq + 1);
-      if (key === "query") op = value.includes("pullRequests(headRefName") ? "find" : "status";
-      else vars[key] = value;
+      if (key === "query")
+        op = value.startsWith("mutation")
+          ? (/\{\s*(\w+)\(/u.exec(value)?.[1] ?? "mutation")
+          : value.includes("pullRequests(headRefName")
+            ? "find"
+            : "status";
+      else {
+        vars[key] = value;
+        pairs.push([key, value]);
+      }
       continue;
     }
     if (!endpoint) endpoint = arg;
   }
-  return { bin, method, endpoint, vars, op, token };
+  return { bin, method, endpoint, vars, pairs, op, token };
 };
 
 /**

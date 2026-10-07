@@ -1,4 +1,4 @@
-// `workit pr status|create|merge` (design §2.1, S10/S11).
+// `workit pr status|create|merge|ready|edit|threads|reply` (design §2.1, S10/S11).
 //
 // status: PR/MR state, checks with failing job log tails, unresolved review
 // threads, behind-base, and the next action.
@@ -7,13 +7,25 @@
 // merge: only when `pr status` reads READY, an accepted independent verdict
 // covers the head (S13) and the merge grant allows it; head-SHA guarded.
 // `--unverified --reason` (merge: true only) bypasses the verdict, recorded.
+// ready/edit/threads/reply: the lifecycle steps `next` names (audit M13).
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { prBodyFor } from "@brainervirus/workit-core/src/forge/pr-body";
 import {
+  editPullRequest,
+  listThreads,
+  readyPullRequest,
+  replyToThread,
+  type EditOutcome,
+  type ReadyOutcome,
+  type ReplyOutcome,
+  type ThreadsOutcome,
+} from "@brainervirus/workit-core/src/forge/pr-edit";
+import {
   createPullRequest,
   fillFromCommits,
   mergePullRequest,
+  nextHint,
   type CreateOutcome,
   type MergeOutcome,
 } from "@brainervirus/workit-core/src/forge/pr-ops";
@@ -39,10 +51,30 @@ import {
 
 const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]";
 const CREATE_USAGE =
-  "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f>] | --fill) [--draft] [--json]";
+  "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--label <l>]… [--reviewer <login>]… [--draft] [--json]";
 const MERGE_USAGE =
   "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>] [--json]";
-const USAGE = "workit pr status|create|merge ... (workit help pr)";
+const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
+const EDIT_USAGE =
+  "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--json]";
+const THREADS_USAGE = "workit pr threads [--pr <n>] [--json]";
+const REPLY_USAGE =
+  "workit pr reply [--pr <n>] --thread <id> [--body-file <f|->] [--resolve] [--json]";
+const USAGE = "workit pr status|create|merge|ready|edit|threads|reply ... (workit help pr)";
+
+/** `--body-file <path>`, or `-` for stdin. A string is the usage error. */
+function readBodyFile(io: Io, file: string): { body: string } | string {
+  try {
+    return {
+      body: file === "-" ? forgeDeps.readStdin() : readFileSync(path.resolve(io.cwd, file), "utf8"),
+    };
+  } catch {
+    return `cannot read --body-file ${file}`;
+  }
+}
+
+const prLabel = (kind: string, number: number): string =>
+  `${kind === "github" ? "PR #" : "MR !"}${number}`;
 
 async function status(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, { pr: "value", branch: "value", "log-lines": "value" });
@@ -68,18 +100,25 @@ async function status(argv: string[], io: Io): Promise<number> {
   });
   if (!report.ok) return forgeFail(io, report);
   const doc = report.data.doc;
-  return emit(io, ok({ ...doc, verdict: verdictBlock(io.cwd, doc.head.branch) }), (data) => {
-    const lines = renderStatus(data);
-    // `next:` stays the last line.
-    lines.splice(
-      lines.length - 1,
-      0,
-      data.verdict
-        ? `verdict: ${data.verdict.accepted ? `accepted (${data.verdict.basis})` : data.verdict.review === "self-reviewed" ? "self-reviewed (author's own verdict; not independent)" : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
-        : "verdict: unknown (ledger unreadable)",
-    );
-    return lines;
-  });
+  const hint = nextHint(doc.next, doc.number);
+  return emit(
+    io,
+    ok({ ...doc, nextHint: hint, verdict: verdictBlock(io.cwd, doc.head.branch) }),
+    (data) => {
+      const lines = renderStatus(data);
+      // `next:` stays the last line.
+      lines.splice(
+        lines.length - 1,
+        0,
+        data.verdict
+          ? `verdict: ${data.verdict.accepted ? `accepted (${data.verdict.basis})` : data.verdict.review === "self-reviewed" ? "self-reviewed (author's own verdict; not independent)" : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
+          : "verdict: unknown (ledger unreadable)",
+      );
+      // The step that clears `next`, right above it.
+      if (data.nextHint) lines.splice(lines.length - 1, 0, `do: ${data.nextHint}`);
+      return lines;
+    },
+  );
 }
 
 /**
@@ -112,6 +151,8 @@ async function create(argv: string[], io: Io): Promise<number> {
     "body-file": "value",
     fill: "boolean",
     draft: "boolean",
+    label: "list",
+    reviewer: "list",
   });
   if (typeof flags === "string") return usage(io, flags, CREATE_USAGE);
   if (flags.positionals.length)
@@ -122,11 +163,9 @@ async function create(argv: string[], io: Io): Promise<number> {
     return usage(io, "pass --body or --body-file, not both", CREATE_USAGE);
   let body = flags.values.body ?? null;
   if (flags.values["body-file"] !== undefined) {
-    try {
-      body = readFileSync(path.resolve(io.cwd, flags.values["body-file"]), "utf8");
-    } catch {
-      return usage(io, `cannot read --body-file ${flags.values["body-file"]}`, CREATE_USAGE);
-    }
+    const read = readBodyFile(io, flags.values["body-file"]);
+    if (typeof read === "string") return usage(io, read, CREATE_USAGE);
+    body = read.body;
   }
   if (flags.values.base !== undefined && flags.values.track !== undefined)
     return usage(
@@ -184,6 +223,8 @@ async function create(argv: string[], io: Io): Promise<number> {
       }),
       draft: flags.booleans.has("draft"),
       actor: actorFromEnv(io.env),
+      labels: flags.lists.label ?? [],
+      reviewers: flags.lists.reviewer ?? [],
     },
     forgeDeps.sleep,
   );
@@ -263,11 +304,138 @@ async function merge(argv: string[], io: Io): Promise<number> {
   ]);
 }
 
+async function ready(argv: string[], io: Io): Promise<number> {
+  const flags = parseFlags(argv, { pr: "value", undo: "boolean" });
+  if (typeof flags === "string") return usage(io, flags, READY_USAGE);
+  if (flags.positionals.length)
+    return usage(io, `unexpected argument ${flags.positionals[0]}`, READY_USAGE);
+  const pr = positiveInt(flags.values.pr, "--pr");
+  if (typeof pr === "string") return usage(io, pr, READY_USAGE);
+  const connected = connect(io);
+  if (!connected.ok) return forgeFail(io, connected);
+  const result = readyPullRequest(io.cwd, connected.data, {
+    pr,
+    undo: flags.booleans.has("undo"),
+  });
+  if (!result.ok) return forgeFail(io, result);
+  const kind = connected.data.forge.kind;
+  return emit(io, ok(result.data), (data: ReadyOutcome) => [
+    `${prLabel(kind, data.number)} ${data.changed ? "is now" : "was already"} ${data.draft ? "a draft" : "ready for review"}  ${data.url}`,
+  ]);
+}
+
+async function edit(argv: string[], io: Io): Promise<number> {
+  const flags = parseFlags(argv, {
+    pr: "value",
+    title: "value",
+    "body-file": "value",
+    base: "value",
+    "add-label": "list",
+    "remove-label": "list",
+    "add-reviewer": "list",
+  });
+  if (typeof flags === "string") return usage(io, flags, EDIT_USAGE);
+  if (flags.positionals.length)
+    return usage(io, `unexpected argument ${flags.positionals[0]}`, EDIT_USAGE);
+  const pr = positiveInt(flags.values.pr, "--pr");
+  if (typeof pr === "string") return usage(io, pr, EDIT_USAGE);
+  let body: string | undefined;
+  if (flags.values["body-file"] !== undefined) {
+    const read = readBodyFile(io, flags.values["body-file"]);
+    if (typeof read === "string") return usage(io, read, EDIT_USAGE);
+    body = read.body;
+  }
+  const connected = connect(io);
+  if (!connected.ok) return forgeFail(io, connected);
+  const result = editPullRequest(io.cwd, connected.data, {
+    pr,
+    edit: {
+      ...(flags.values.title !== undefined ? { title: flags.values.title } : {}),
+      ...(body !== undefined ? { body } : {}),
+      ...(flags.values.base !== undefined ? { base: flags.values.base } : {}),
+      addLabels: flags.lists["add-label"] ?? [],
+      removeLabels: flags.lists["remove-label"] ?? [],
+      addReviewers: flags.lists["add-reviewer"] ?? [],
+    },
+  });
+  if (!result.ok)
+    return result.code === "invalid_input"
+      ? usage(io, result.error, EDIT_USAGE)
+      : forgeFail(io, result);
+  const kind = connected.data.forge.kind;
+  return emit(io, ok(result.data), (data: EditOutcome) => [
+    `edited ${prLabel(kind, data.number)} (${data.changed.join(", ")}): ${data.title} -> ${data.base}  ${data.url}`,
+  ]);
+}
+
+async function threads(argv: string[], io: Io): Promise<number> {
+  const flags = parseFlags(argv, { pr: "value" });
+  if (typeof flags === "string") return usage(io, flags, THREADS_USAGE);
+  if (flags.positionals.length)
+    return usage(io, `unexpected argument ${flags.positionals[0]}`, THREADS_USAGE);
+  const pr = positiveInt(flags.values.pr, "--pr");
+  if (typeof pr === "string") return usage(io, pr, THREADS_USAGE);
+  const connected = connect(io);
+  if (!connected.ok) return forgeFail(io, connected);
+  const result = listThreads(io.cwd, connected.data, { pr });
+  if (!result.ok) return forgeFail(io, result);
+  const kind = connected.data.forge.kind;
+  return emit(io, ok(result.data), (data: ThreadsOutcome) => [
+    `${prLabel(kind, data.number)}: ${data.threads.length} unresolved thread${data.threads.length === 1 ? "" : "s"}${data.truncated ? " (truncated at the page cap)" : ""}`,
+    ...data.threads.map(
+      (thread) =>
+        `${thread.id}  ${thread.path ? `${thread.path}${thread.line ? `:${thread.line}` : ""} ` : ""}@${thread.author ?? "?"}${thread.isBot ? " (bot)" : ""}${thread.outdated ? " (outdated)" : ""}: ${thread.body}`,
+    ),
+  ]);
+}
+
+async function reply(argv: string[], io: Io): Promise<number> {
+  const flags = parseFlags(argv, {
+    pr: "value",
+    thread: "value",
+    "body-file": "value",
+    resolve: "boolean",
+  });
+  if (typeof flags === "string") return usage(io, flags, REPLY_USAGE);
+  if (flags.positionals.length)
+    return usage(io, `unexpected argument ${flags.positionals[0]}`, REPLY_USAGE);
+  const pr = positiveInt(flags.values.pr, "--pr");
+  if (typeof pr === "string") return usage(io, pr, REPLY_USAGE);
+  const thread = flags.values.thread;
+  if (!thread) return usage(io, "--thread <id> is required (workit pr threads)", REPLY_USAGE);
+  let body: string | null = null;
+  if (flags.values["body-file"] !== undefined) {
+    const read = readBodyFile(io, flags.values["body-file"]);
+    if (typeof read === "string") return usage(io, read, REPLY_USAGE);
+    body = read.body;
+  }
+  const connected = connect(io);
+  if (!connected.ok) return forgeFail(io, connected);
+  const result = replyToThread(io.cwd, connected.data, {
+    pr,
+    thread,
+    body,
+    resolve: flags.booleans.has("resolve"),
+  });
+  if (!result.ok)
+    return result.code === "invalid_input"
+      ? usage(io, result.error, REPLY_USAGE)
+      : forgeFail(io, result);
+  const kind = connected.data.forge.kind;
+  return emit(io, ok(result.data), (data: ReplyOutcome) => [
+    `${[data.replied ? "replied to" : null, data.resolved ? "resolved" : null].filter(Boolean).join(" and ")} thread ${data.thread} on ${prLabel(kind, data.number)}${data.replyUrl ? `  ${data.replyUrl}` : ""}`,
+  ]);
+}
+
 export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv;
   if (sub === "status") return status(rest, io);
   if (sub === "create") return create(rest, io);
   if (sub === "merge") return merge(rest, io);
+  if (sub === "ready") return ready(rest, io);
+  if (sub === "edit") return edit(rest, io);
+  if (sub === "threads") return threads(rest, io);
+  if (sub === "reply") return reply(rest, io);
   return usage(
     io,
     sub && !sub.startsWith("-") ? `unknown pr subcommand "${sub}"` : "missing pr subcommand",
