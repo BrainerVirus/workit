@@ -50,8 +50,8 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   `pr edit --base` takes a plain branch name and retargets only to the
   branch's default target (from the release track that owns the PR's current
   base; an undetermined line refuses) or to its stack parent (the base
-  `workit git branch` recorded, or a member of its stack), never to another
-  protected branch. Labels and reviewers are checked before any write: no
+  `workit git branch` recorded, or the branch below it in its stack, never a
+  descendant or sibling), never to another protected branch. Labels and reviewers are checked before any write: no
   commas, GitLab reviewers are usernames, and a GitHub `org/team` must belong
   to the repository's owner. On GitLab, draft state lives in the title
   (`Draft:`, `[Draft]`, `(Draft)`), and a new title keeps it. `pr reply` acts

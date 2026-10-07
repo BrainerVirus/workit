@@ -5,6 +5,7 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
+import { STACK_VERSION, writeStack } from "@/packages/workit-core/src/stack";
 import {
   fixture,
   makeForgeRepo,
@@ -318,6 +319,56 @@ test("pr edit --base: given an unprotected branch that is not the stack parent, 
   expect(result.json().error).toStartWith("not_stack_parent: feature/other");
   expect(result.json().unblock).toStartWith("workit pr edit --pr 12 --base main");
   expect(writes(runner.calls)).toEqual([]);
+});
+
+test("pr edit --base (stack a -> feature/x -> c): the branch below is allowed; a descendant or sibling is refused as a cycle", async () => {
+  let base = "main";
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    "GET repos/o/r/pulls/12": () => ghPull({ base: { ref: base } }),
+    "PATCH repos/o/r/pulls/12": (call) => {
+      base = call.vars.base;
+      return ghPull({ base: { ref: base } });
+    },
+  });
+  const entry = (branch: string, parent: string) => ({
+    branch,
+    parent,
+    pr: null,
+    lastHead: null,
+    lastParentHead: null,
+    patchId: null,
+    merged: null,
+  });
+  const write = (name: string, branches: ReturnType<typeof entry>[]) =>
+    expect(
+      writeStack(repo.cwd, {
+        v: STACK_VERSION,
+        name,
+        trunk: "main",
+        forge: "github",
+        repo: "o/r",
+        branches,
+        updatedAt: "",
+      }).ok,
+    ).toBe(true);
+  write("s", [
+    entry("feature/a", "main"),
+    entry("feature/x", "feature/a"),
+    entry("feature/c", "feature/x"),
+  ]);
+  write("t", [entry("feature/a", "main"), entry("feature/sib", "feature/a")]);
+  for (const refused of ["feature/c", "feature/sib"]) {
+    const result = await run(["pr", "edit", "--base", refused, "--json"], repo.cwd);
+    expect(result.code, refused).toBe(3);
+    expect(result.json().error, refused).toStartWith(`not_stack_parent: ${refused}`);
+  }
+  expect(writes(runner.calls)).toEqual([]);
+  const parent = await run(["pr", "edit", "--base", "feature/a"], repo.cwd);
+  expect(parent.code, parent.stdout).toBe(0);
+  expect(writes(runner.calls)).toEqual([
+    expect.objectContaining({ method: "PATCH", vars: { base: "feature/a" } }),
+  ]);
 });
 
 test("pr edit --base: refs/ names and whitespace are usage errors", async () => {

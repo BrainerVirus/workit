@@ -94,7 +94,7 @@ const git = (cwd: string, args: string[]): string | null => {
  * Where `pr edit --base` may point the PR: the head branch's default target
  * (from the release track that owns the PR's current base, else the head's
  * own track; an undetermined line refuses), or the head's stack parent —
- * its recorded `workitBase` or a member of a stack it belongs to. A protected
+ * its recorded `workitBase` or its parent entry in a stack. A protected
  * branch other than the default target never qualifies.
  */
 function checkBase(cwd: string, meta: PrMeta, base: string): ForgeResult<void> {
@@ -137,15 +137,17 @@ function checkBase(cwd: string, meta: PrMeta, base: string): ForgeResult<void> {
       instead,
     );
   const stacks = listStacks(cwd);
-  const members = new Set<string>(
+  // Only the branch directly below the head: a descendant or sibling would
+  // make a cycle or cross stacks.
+  const parents = new Set<string>(
     stacks.ok
-      ? stacks.data
-          .filter((stack) => stack.branches.some((entry) => entry.branch === head))
-          .flatMap((stack) => stack.branches.map((entry) => entry.branch))
+      ? stacks.data.flatMap((stack) =>
+          stack.branches.filter((entry) => entry.branch === head).map((entry) => entry.parent),
+        )
       : [],
   );
   const recorded = git(cwd, ["config", "--get", recordedBaseKey(head)]);
-  if (base === recorded || (members.has(base) && base !== head)) return success(undefined);
+  if (base === recorded || parents.has(base)) return success(undefined);
   return failure(
     "blocked",
     `not_stack_parent: ${base} is neither ${head}'s default target${target ? ` (${target})` : ""} nor its stack parent; workit retargets only to those`,
