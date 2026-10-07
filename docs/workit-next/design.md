@@ -230,7 +230,7 @@ workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]
 
 **S10 `workit ci wait|rerun`**
 ```
-workit ci wait  [--pr <n>] [--head <sha>] [--timeout 20m] [--interval 30s] [--json]   # exit 0 pass /1 fail /4 pending at timeout; final payload = pr status
+workit ci wait  [--pr <n>] [--head <sha>] [--timeout 20m] [--interval 30s] [--json]   # exit 0 pass /1 fail /3 conflicts or closed /4 pending at timeout /5 forge unreachable; final payload = pr status
 workit ci rerun [--pr <n>] [--check <name>…|--failed] --reason flake|infra [--force] [--json]
 ```
 `ci rerun` allows once per (pr, head, check) without `--force` and records a `ci.rerun` ledger row; the agent classifies flake vs real. In skills on Claude, tell the agent to run `ci wait` with `run_in_background: true` (no second sleep loop).

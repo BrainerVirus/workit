@@ -113,6 +113,54 @@ const gitlabMr = (overrides: Record<string, unknown> = {}): string =>
 // ---------------------------------------------------------------------------
 // pr create
 
+test("pr create: a forge refusal (HTTP 422) surfaces the reason from the response body (M7)", async () => {
+  const { repo } = setup("github", {
+    ...githubBase(),
+    "graphql find": fixture("github/find-none.json"),
+    "POST repos/o/r/pulls": {
+      status: 1,
+      stdout: JSON.stringify({
+        message: "Validation Failed",
+        errors: [
+          {
+            resource: "PullRequest",
+            code: "custom",
+            message: "No commits between main and feature/x",
+          },
+        ],
+      }),
+      stderr: "gh: Validation Failed (HTTP 422)\n",
+      timedOut: false,
+      missing: false,
+    },
+  });
+  const result = await run(
+    ["pr", "create", "--base", "main", "--title", "feat: x", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain(
+    "refused by the forge: Validation Failed; No commits between main and feature/x (Validation Failed (HTTP 422))",
+  );
+});
+
+test("pr create: a 5xx on the create call is unavailable (exit 5) and says to check before retrying", async () => {
+  const { repo } = setup("github", {
+    ...githubBase(),
+    "graphql find": fixture("github/find-none.json"),
+    "POST repos/o/r/pulls": replyError(
+      "gh: HTTP 502: Bad Gateway (https://api.github.com/repos/o/r/pulls)",
+    ),
+  });
+  const result = await run(
+    ["pr", "create", "--base", "main", "--title", "feat: x", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(5);
+  expect(result.json().error).toContain("failed (network)");
+  expect(result.json().unblock).toStartWith("workit pr status  # the write may have gone through");
+});
+
 test("pr create (GitHub): given the pushed branch, then the PR is opened with that head, verified and recorded", async () => {
   const { repo, runner } = setup("github", {
     ...githubBase(),
