@@ -128,7 +128,7 @@ type InProgress = {
   operation: Operation;
   /**
    * A commit is the legitimate next step: an interactive rebase stopped at an
-   * `edit`, or a revert without conflicts (`git revert --no-commit`).
+   * `edit`, or a revert or merge without conflicts (`--no-commit`).
    */
   commitAllowed: boolean;
   /** The branch being rebased (HEAD is detached meanwhile). */
@@ -167,7 +167,7 @@ function operationInProgress(cwd: string): InProgress | null {
         : null;
       return { operation, commitAllowed: branch !== null, branch };
     }
-    if (operation === "revert" && !conflicted())
+    if ((operation === "revert" || operation === "merge") && !conflicted())
       return { operation, commitAllowed: true, branch: null };
     return { operation, commitAllowed: false, branch: null };
   }
@@ -565,8 +565,18 @@ export function gitCommit(
   if (paths.length) {
     if (paths.some((value) => value.startsWith("-") || !value.trim()))
       return failure("invalid_input", "paths must not be empty or start with -");
-    const added = git(cwd, ["add", "-A", "--", ...paths]);
-    if (!added.ok) return failure("failed", `git add failed: ${gitError(added)}`);
+    // A path already removed from disk and index (`git rm`) has nothing to
+    // add, and `git add` would fail on it; the commit below still records it.
+    const tracked = new Set(nulList(git(cwd, ["ls-files", "-z", "--", ...paths]).stdout));
+    const addable = paths.filter(
+      (value) =>
+        existsSync(path.resolve(cwd, value)) ||
+        [...tracked].some((file) => file === value || file.startsWith(`${value}/`)),
+    );
+    if (addable.length) {
+      const added = git(cwd, ["add", "-A", "--", ...addable]);
+      if (!added.ok) return failure("failed", `git add failed: ${gitError(added)}`);
+    }
     if (changeRequired && git(cwd, ["diff", "--cached", "--quiet", "HEAD", "--", ...paths]).ok)
       return nothingToCommit(`${paths.join(", ")} has no change to commit`);
     args.push("--", ...paths);
@@ -601,8 +611,15 @@ export function gitCommit(
     );
   const sha = headSha(cwd);
   if (!sha) return failure("failed", "the commit did not resolve");
+  // A merge commit lists what it brought in relative to its first parent.
+  const merge = git(cwd, ["rev-parse", "-q", "--verify", `${sha}^2`]).ok;
   const files = nulList(
-    git(cwd, ["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha]).stdout,
+    git(
+      cwd,
+      merge
+        ? ["diff", "--name-only", "-z", `${sha}^1`, sha]
+        : ["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha],
+    ).stdout,
   );
   const leftDirty = dirtEntries(cwd).length;
   const notes: string[] = [];

@@ -545,6 +545,45 @@ test("Given an interactive rebase stopped at edit, When the commit is amended, T
   expect(repo.git("log", "--format=%s", "origin/main..feature/a")).toBe("feat: b\nfeat: a edited");
 });
 
+test("Given a conflict-free git merge --no-commit, When committing, Then the merge commit is recorded; branch and push stay refused until then", async () => {
+  const repo = setup();
+  await onFeature(repo);
+  repo.pushFromElsewhere("main", "m.txt");
+  repo.git("fetch", "-q", "origin");
+  repo.git("merge", "-q", "--no-ff", "--no-commit", "origin/main");
+  for (const argv of [
+    ["git", "push", "--json"],
+    ["git", "branch", "feature/z", "--json"],
+  ]) {
+    const refused = await run(argv, repo.cwd);
+    expect(refused.code, argv.join(" ")).toBe(3);
+    expect(refused.json().error).toStartWith("merge_in_progress:");
+  }
+  const result = await run(["git", "commit", "-m", "chore: merge main", "--json"], repo.cwd);
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({ branch: "feature/a", files: ["m.txt"] });
+  expect(repo.git("rev-list", "--parents", "-n", "1", "HEAD").split(" ")).toHaveLength(3);
+  expect(
+    spawnSync("git", ["rev-parse", "-q", "--verify", "MERGE_HEAD"], { cwd: repo.cwd }).status,
+  ).not.toBe(0);
+});
+
+test("Given a path already deleted and staged with git rm, When it is committed by path, Then the deletion is committed", async () => {
+  const repo = setup();
+  await onFeature(repo);
+  repo.write("b.txt", "b\n");
+  expect((await run(["git", "commit", "-m", "feat: b", "--", "b.txt"], repo.cwd)).code).toBe(0);
+  repo.git("rm", "-q", "a.txt");
+  repo.write("b.txt", "b2\n");
+  const result = await run(
+    ["git", "commit", "-m", "feat: drop a", "--json", "--", "a.txt", "b.txt"],
+    repo.cwd,
+  );
+  expect(result.code, result.stdout).toBe(0);
+  expect(repo.git("show", "--name-status", "--format=", "HEAD")).toBe("D\ta.txt\nM\tb.txt");
+  expect(repo.git("status", "--porcelain")).toBe("");
+});
+
 // ---------------------------------------------------------------------------
 // hook output
 

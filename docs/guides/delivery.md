@@ -28,7 +28,7 @@ workit git push [--set-upstream] [--force-with-lease]
 - During a rebase, merge, cherry-pick or revert, `git branch`, `git commit`
   and `git push` refuse and say how to continue or abort it. `git commit` is
   allowed where a commit is the next step: an interactive rebase stopped at
-  `edit`, and a revert without conflicts (`git revert --no-commit`).
+  `edit`, and a revert or merge without conflicts (`--no-commit`).
 - A failing hook's output is kept whole (head and tail past 200 lines, lines
   cut at 1000 characters).
 - `git push` never pushes a protected branch and succeeds only when the remote
