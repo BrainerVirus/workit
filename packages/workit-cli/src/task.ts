@@ -177,6 +177,15 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   const judge: string[] = [];
   const seen = new Set<string>();
   for (let i = 2; i < argv.length; i += 1) {
+    if (argv[i] === "--") {
+      const extra = argv.slice(i + 1);
+      if (extra.length)
+        return parseUsage(
+          `${family} ${actionName} takes no positional arguments (got: ${extra.join(" ")})`,
+          json,
+        );
+      break;
+    }
     // `--flag=value` passes a value that starts with `-`.
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const token = eq > 0 ? argv[i].slice(0, eq) : argv[i];
@@ -258,6 +267,12 @@ async function parseHandoffArgs(argv: string[], deps: TaskCliDeps): Promise<Pars
   const seen = new Set<string>();
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
+    if (token === "--") {
+      const extra = argv.slice(i + 1);
+      if (extra.length)
+        return parseUsage(`handoff takes no positional arguments (got: ${extra.join(" ")})`, json);
+      break;
+    }
     if (token === "--json") {
       if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
       seen.add(token);

@@ -238,7 +238,9 @@ const usage = (io: Io, message: string): number =>
   emit(io, fail("invalid_input", `${message}\nusage: ${USAGE}`));
 
 export async function runGrant(argv: string[], io: Io, deps: GrantDeps = defaultDeps) {
-  const [sub, ...rest] = argv;
+  // Workspaces and specs never start with --; a bare `--` before them is dropped.
+  const end = argv.indexOf("--");
+  const [sub, ...rest] = end < 0 ? argv : [...argv.slice(0, end), ...argv.slice(end + 1)];
   if (sub === "show") return show(rest, io);
   // `--help`/`-h` never reach here: the router answers them (help.ts).
   if (sub === undefined || sub.startsWith("--")) return show(argv, io);

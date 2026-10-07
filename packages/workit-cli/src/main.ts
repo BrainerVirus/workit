@@ -7,6 +7,7 @@ import pkg from "../package.json" with { type: "json" };
 import {
   firstWord,
   helpAsValue,
+  takesPositionals,
   subcommandHelp,
   usageLines,
   verbHelp,
@@ -165,6 +166,8 @@ export async function main(
       );
     return help(io, sub ? subcommandHelp(entry, sub) : verbHelp(entry));
   }
+  const ended = endOfOptions(io, entry, args);
+  if (typeof ended === "number") return ended;
   if (parsed.cwd !== null) {
     try {
       // Existing verbs resolve from process.cwd(); keep them in step with io.cwd.
@@ -192,8 +195,8 @@ export async function main(
       `workit: migrated ${report.tasks} task${report.tasks === 1 ? "" : "s"} from ${report.from} to ${report.to} (backup: ${report.backup})\n`,
     );
   const verb = await entry.load();
-  if (!io.json) return verb.run(args, io);
-  return runJsonPure(io, command, (pure) => verb.run(args, pure));
+  if (!io.json) return verb.run(ended, io);
+  return runJsonPure(io, command, (pure) => verb.run(ended, pure));
 }
 
 const CODE_FOR_EXIT: Record<number, Exclude<EnvelopeCode, "ok">> = {
@@ -274,6 +277,36 @@ const withJsonFlag = (args: string[]): string[] => {
 
 // Planned verbs answer `not_implemented`; help does not advertise them.
 const listed = (): VerbEntry[] => VERBS.filter((entry) => !entry.planned);
+
+/**
+ * A bare `--` ends the options of every verb. A verb or subcommand whose usage
+ * takes no positional arguments refuses anything after it (exit 2, before it
+ * runs) and never sees a trailing `--`; the others parse it themselves. A
+ * subcommand verb given only `--` is missing its subcommand.
+ */
+function endOfOptions(io: Io, entry: VerbEntry, args: string[]): string[] | number {
+  const end = args.indexOf("--");
+  if (end < 0) return args;
+  const word = firstWord(args);
+  const sub = word === undefined ? undefined : findSubcommand(entry, word);
+  const unblock = `workit help ${entry.name}${sub ? ` ${sub.name}` : ""}`;
+  if (entry.subcommands?.length && !sub) {
+    if (entry.optionalSubcommand || word !== undefined) return args;
+    return emit(io, fail("invalid_input", `missing ${entry.name} subcommand`, { unblock }));
+  }
+  if (takesPositionals(sub ? [sub.usage] : [entry.usage])) return args;
+  const extra = args.slice(end + 1);
+  if (extra.length)
+    return emit(
+      io,
+      fail(
+        "invalid_input",
+        `${entry.name}${sub ? ` ${sub.name}` : ""} takes no positional arguments (got: ${extra.join(" ")})`,
+        { unblock },
+      ),
+    );
+  return args.slice(0, end);
+}
 
 /** The positional words of `help <verb> [<sub>]`. */
 const words = (args: readonly string[]): string[] => args.filter((arg) => !arg.startsWith("-"));

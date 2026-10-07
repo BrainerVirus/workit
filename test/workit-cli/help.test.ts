@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { takesPositionals } from "@/packages/workit-cli/src/help";
 import { TASK_ACTIONS } from "@/packages/workit-cli/src/task";
 import {
   FAMILY_ACTIONS,
@@ -430,3 +431,70 @@ test("given every subcommand a verb dispatches, then the registry has a help ent
   expect(seen).toBeGreaterThanOrEqual(45);
   expect(dispatched("ledger")).toEqual(expect.arrayContaining(["add", "show", "standing"]));
 });
+
+const UNKNOWN_END =
+  /unknown (?:argument|option):? --(?![\w-])|subcommand "--"|action for \w+: --(?![\w-])/u;
+
+test("given -- after any verb or subcommand, then it ends the options: no-positional commands refuse what follows before running, never 'unknown argument: --'", async () => {
+  const refused: Array<{ argv: string[]; expected: string }> = [];
+  const positional: string[][] = [];
+  for (const entry of VERBS) {
+    if (entry.subcommands?.length && !entry.optionalSubcommand)
+      refused.push({
+        argv: [entry.name, "--", "-h"],
+        expected: `missing ${entry.name} subcommand`,
+      });
+    else if (!entry.subcommands?.length && !takesPositionals([entry.usage]))
+      refused.push({
+        argv: [entry.name, "--", "-h"],
+        expected: `${entry.name} takes no positional arguments (got: -h)`,
+      });
+    else positional.push([entry.name, "--", "-h"]);
+    for (const sub of entry.subcommands ?? []) {
+      const argv = [entry.name, sub.name, "--", "-h"];
+      if (takesPositionals([sub.usage])) positional.push(argv);
+      else
+        refused.push({
+          argv,
+          expected: `${entry.name} ${sub.name} takes no positional arguments (got: -h)`,
+        });
+    }
+  }
+  // The split is the usage grammar's: spot-check both sides.
+  const labels = (rows: string[][]) => rows.map((argv) => argv.slice(0, -2).join(" "));
+  expect(labels(refused.map((row) => row.argv))).toEqual(
+    expect.arrayContaining(["gc", "init", "evidence record", "pr merge", "git push", "handoff"]),
+  );
+  expect(labels(positional)).toEqual(
+    expect.arrayContaining(["task note", "git commit", "check", "launch", "grant"]),
+  );
+
+  const before = snapshot(root);
+  const results = await inBatches(refused, 12, async ({ argv, expected }) => ({
+    ...(await cliAsync(argv)),
+    expected,
+  }));
+  for (const result of results) {
+    const label = `workit ${result.argv.join(" ")}\n${result.stdout}${result.stderr}`;
+    expect(result.code, label).toBe(2);
+    expect(result.stderr, label).toContain(result.expected);
+  }
+  expect(snapshot(root)).toEqual(before);
+
+  // Commands that take positionals parse `--` themselves (they may act on -h).
+  for (const result of await inBatches(positional, 6, cliAsync)) {
+    const label = `workit ${result.argv.join(" ")}\n${result.stdout}${result.stderr}`;
+    expect(`${result.stdout}${result.stderr}`, label).not.toMatch(UNKNOWN_END);
+    // -h after -- is never a help request (help prints usage on stdout).
+    expect(result.stdout, label).not.toStartWith("usage: workit");
+  }
+
+  // A bare trailing -- is accepted.
+  for (const argv of [
+    ["task", "status", "--json", "--"],
+    ["ledger", "list", "--json", "--"],
+  ]) {
+    const result = cli(argv);
+    expect(result.code, `${argv.join(" ")}\n${result.stderr}`).toBe(0);
+  }
+}, 120_000);

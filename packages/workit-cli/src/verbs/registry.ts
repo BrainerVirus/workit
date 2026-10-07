@@ -28,6 +28,8 @@ export type VerbEntry = {
   usage: string;
   summary: string;
   subcommands?: readonly SubcommandEntry[];
+  /** The verb runs without a subcommand too (`grant` shows, `verify-delivery` infers). */
+  optionalSubcommand?: boolean;
   examples?: readonly string[];
   /** The slice that implements this verb; set while it is a stub. */
   planned?: string;
@@ -163,6 +165,7 @@ function withSubcommands(
   return {
     ...entry,
     usage: `workit ${entry.name} ${options.optional ? `[${names}]` : names} [options]`,
+    ...(options.optional ? { optionalSubcommand: true } : {}),
   };
 }
 
@@ -472,7 +475,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "add",
-        usage: "workit ledger add decision|ruling|verdict …",
+        usage: 'workit ledger add decision|ruling|verdict "<what>" …',
         summary: "Same as the bare decision, ruling and verdict forms",
       },
     ],

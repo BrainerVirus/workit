@@ -245,7 +245,9 @@ Skills load automatically when the task fits, or explicitly: `/wk-<name>`
 
 `workit help <command> [<subcommand>]`, or `-h`/`--help` anywhere after a
 command (before a bare `--`), prints its usage, flags and examples and runs
-nothing; after `--` a `-h` is an ordinary value. A value that starts with `-`
+nothing. A bare `--` ends any command's options: after it `-h` is an ordinary
+value, and a command that takes no positional arguments refuses anything there
+(exit 2) before it runs. A value that starts with `-`
 goes as `--flag=value` (`workit git commit --message=-h`); `-h` right after a
 flag that takes a value is refused as ambiguous. Global flags:
 `--json` (envelope `{"ok","code","data","error"?,"unblock"?}`), `--cwd <dir>`,

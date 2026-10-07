@@ -52,6 +52,16 @@ export function helpAsValue(args: readonly string[], lines: readonly string[]): 
   return null;
 }
 
+/**
+ * Whether a usage line takes positional arguments: something other than a
+ * flag and its value is left (`<name>`, `"<text>"`, `paths…`).
+ */
+export function takesPositionals(lines: readonly string[]): boolean {
+  const flag =
+    /(?<![\w-])--?[a-zA-Z][\w-]*(?:\|--?[a-zA-Z][\w-]*)*(?:[ =](?!-)(?:<[^>]*>|"[^"]*"|[\w.,@/|=-]+)…?)?/gu;
+  return lines.some((line) => /<|"|\w…|\s…/u.test(line.replace(flag, "")));
+}
+
 export type HelpDoc = {
   name: string;
   group: VerbGroup;
