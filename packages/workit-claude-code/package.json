@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-claude-code",
-  "version": "7.4.0",
+  "version": "7.5.0",
   "private": false,
   "description": "Workit Claude Code plugin — session and per-turn task context, branch policy on git shell commands, workit method skills, and verifier/reviewer/implementer agents",
   "keywords": [
