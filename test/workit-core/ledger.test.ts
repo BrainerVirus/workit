@@ -633,6 +633,23 @@ test("a session's own supersede replaces its failing verdict", () => {
   expect(checkVerdicts(root, "feature/x", read(root).rows).accepted.accepted).toBe(true);
 });
 
+test("given a session's failed verdict on head A and a fix commit B, when that same non-author session verifies B, then B is current and accepted", () => {
+  const root = featureRepo();
+  seedAuthor(root, "commit.recorded", "lead");
+  const reviewerSession = "lead:agent-1";
+  value(recordVerdict(reviewer(reviewerSession)(root), { result: "failed", how: "bug" }));
+  const fixed = commit(root, "feature.txt", "feature, fixed\n", "fix review finding");
+  value(recordVerdict(reviewer(reviewerSession)(root), { result: "verified", how: "re-reviewed" }));
+  const check = checkVerdicts(root, "feature/x", read(root).rows);
+  expect(check.head).toBe(fixed);
+  expect(check.current).toMatchObject({
+    basis: "fresh",
+    verdict: { result: "verified", head: fixed },
+  });
+  expect(check.accepted).toMatchObject({ accepted: true, reasons: [] });
+  expect(check.review).toBe("verified");
+});
+
 // ---------------------------------------------------------------------------
 // PR → branch (H2)
 

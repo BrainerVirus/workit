@@ -843,8 +843,10 @@ const independenceReasons = (row: ReadRow, authors: Set<string>): RejectReason[]
 /**
  * The effective verdict of one kind, walking rows in order: a self verdict
  * never displaces an independent one, and an independent failed/blocked
- * verdict sticks until an independent verdict from a different session (or
- * its own session's supersede) replaces it.
+ * verdict sticks, for the code it judged, until an independent verdict from a
+ * different session (or its own session's supersede) replaces it. A verdict
+ * from the same session on different code (a new head, not a carry of the
+ * failed one) is a re-review of the fix and replaces it.
  */
 function effectiveOf(rows: readonly ReadRow[], authors: Set<string>): ReadRow | null {
   let effective: ReadRow | null = null;
@@ -859,7 +861,8 @@ function effectiveOf(rows: readonly ReadRow[], authors: Set<string>): ReadRow | 
     if (
       effIndependent &&
       FAILING.has(String(effective.result)) &&
-      row.actor.session === effective.actor.session
+      row.actor.session === effective.actor.session &&
+      verdictBasis(effective, row) !== "stale"
     )
       continue;
     effective = row;
