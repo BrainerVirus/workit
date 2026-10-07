@@ -21,7 +21,7 @@ independent; `type-check-only` never proves a behavior change.
    - **Standards:** repo rules first, then a smell baseline (unclear name, long
      function, duplicated logic, leaky abstraction). Judgment only; lint owns nits.
 4. **Tests:** `workit test-audit --diff`. Would each new test fail if the
-   behavior broke? Triage with workit-test-audit.
+   behavior broke? Triage the findings (workit-test-audit).
 5. **Blast radius:** for each touched contract, caller, config or migration,
    state the one fact it is safe because of and run the proof. Anything
    unproven is labeled UNPROVEN, never assumed safe: `references/impact.md`.
@@ -30,8 +30,11 @@ independent; `type-check-only` never proves a behavior change.
    pre-existing ones become follow-ups; inconclusive ones escalate.
 7. Record the verdict:
    `workit ledger verdict verified|failed|blocked --kind review --branch <b> --how "<what you ran and read>"`
-   under your own session (the one the lead or the hook gave you). A session
-   that wrote the branch is refused, and `--self` never counts as independent.
+   under your own session (the one the lead or the hook gave you).
+8. **Harness note** (optional): friction caused by the repo or harness, not
+   the change (a flaky fixture, a missing check, a misleading doc or skill
+   line), goes on its own `Harness note:` line in the report and any PR
+   comment, never as a finding or in the verdict, so a later retro finds it.
 
 ## Example
 

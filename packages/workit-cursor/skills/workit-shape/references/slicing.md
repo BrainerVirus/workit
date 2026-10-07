@@ -6,7 +6,9 @@ small enough for one fresh context window and one reviewable PR.
 
 ## Rules
 
-1. Prefer five narrow PRs to one large one. Each PR tells one part of the story.
+1. Prefer five narrow PRs to one large one. Size each slice so an agent can
+   finish it in about 150k tokens of context (reading, edits, checks); estimate
+   high, and split a slice that would take more.
 2. Prefactor first: "make the change easy, then make the easy change". A
    behavior-preserving refactor is its own slice, below the feature.
 3. Order by dependency, then by risk: the slice that can prove the idea wrong
@@ -14,7 +16,7 @@ small enough for one fresh context window and one reviewable PR.
 4. Every slice lists its acceptance as Given/When/Then lines and the command
    that verifies it. No acceptance, no slice.
 5. Mark the edges: independent slices branch from the trunk and can fan out
-   (workit-fanout); a slice that needs another's code stacks on it.
+   (read the `workit-fanout` skill's SKILL.md and follow it); a slice that needs another's code stacks on it.
 6. Wide mechanical changes use expand-contract: add the new path, migrate
    callers in batches, then delete the old path.
 

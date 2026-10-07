@@ -12,4 +12,4 @@ ASCII only, no code.
    settle it (density, motion, brand) and a hi-fi prototype is needed.
 
 The sketch and the chosen option go into the spec only if a spec exists;
-otherwise they stay in the conversation. Throwaway by design.
+otherwise they stay in the conversation.

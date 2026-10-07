@@ -6,8 +6,7 @@ description: Generate or maintain the project's own verify-<app> skill that laun
 # Generate a verify-<app> skill
 
 Tests show branch behavior. A verifier also needs to drive the real thing, the
-way a user would. This skill writes a project-local `verify-<app>` skill that
-says exactly how, then proves it once.
+way a user would.
 
 ## Generate
 

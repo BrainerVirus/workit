@@ -9,25 +9,26 @@ description: Build a requested change in small verified steps - follow local pat
 
 1. Read before writing: the files you will touch, their callers, and one
    neighbour that already does something similar. Copy its patterns, names and
-   error handling. Repo rules (AGENTS.md, CLAUDE.md, lint config) win.
+   error handling.
 2. On the default branch? Branch first: `workit git branch --kind feature --slug <s>`.
    Tracking it? Judge once: `workit policy assess --judge risk=normal
    behavior=yes product-choice=no plan=no` (trivial and no for a mechanical
    fix); Workit derives what close needs.
 3. Small steps that each leave the tree green. Behavior change: write the
    acceptance as Given/When/Then and see a test fail first (workit-bdd).
-   Mechanical change: the existing checks are enough.
+   Mechanical change: the existing checks are enough. No tautological tests:
+   a test must fail if the behavior breaks, never restate the implementation.
 4. Run the real checks: `workit check test` (and `lint`, `typecheck` when the
-   repo has them). A recorded "tests pass" is a note; an observed run counts.
+   repo has them).
 5. Prove the feature on its real surface with the project's `verify-<app>`
-   skill (none yet? workit-verify-app writes one). Tests show branch behavior,
+   skill; none yet? Write one (workit-verify-app). Tests show branch behavior,
    not that the feature works.
 6. Commit: `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`).
    No endpoint named? Stop here and state the next command. Push and open a
-   PR (`workit git push`, `workit pr create --fill`, then workit-ship) only when
-   that was requested, or the request implies delivery and the effective
-   endpoint in `workit grant show` is `pr`, `green` or `merged` (`green` and
-   `merged`: keep babysitting per workit-ship); otherwise it is `commit`.
+   PR with `workit git push` and `workit pr create --fill`, then ship it
+   (workit-ship), only when that was requested, or the request implies
+   delivery and the effective endpoint in `workit grant show` is `pr`, `green`
+   or `merged`; `green` and `merged` keep babysitting. Otherwise it is `commit`.
 7. Verify. Normal risk: after `workit check test` passes, record your own
    `workit ledger verdict tests-verified --self --how "<what you ran>"`; it
    reads self-reviewed, never verified. High risk, a workspace with
@@ -37,9 +38,7 @@ description: Build a requested change in small verified steps - follow local pat
    every named deliverable against the target checkout and observe it (for a push:
    `workit verify-delivery push`).
 
-Independent slices that could run in parallel go to workit-fanout. When a step
-stalls on a fact, find it (read, run, prototype); ask only for a product or
-preference choice, with your recommended answer.
+Independent slices that could run in parallel: fan them out (workit-fanout).
 
 ## Example
 

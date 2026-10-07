@@ -46,4 +46,3 @@ Screenshots go to `<tmp dir>/verify-<app>/<feature>.png`; cite the path.
 - Ready signals and expectations are literal (a string, a status code, a
   count), never "works" or "looks right".
 - Keep it under ~80 lines; move long fixtures into the skill's own directory.
-- Maintenance edits only this directory.

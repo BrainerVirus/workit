@@ -6,7 +6,9 @@ small enough for one fresh context window and one reviewable PR.
 
 ## Rules
 
-1. Prefer five narrow PRs to one large one. Each PR tells one part of the story.
+1. Prefer five narrow PRs to one large one. Size each slice so an agent can
+   finish it in about 150k tokens of context (reading, edits, checks); estimate
+   high, and split a slice that would take more.
 2. Prefactor first: "make the change easy, then make the easy change". A
    behavior-preserving refactor is its own slice, below the feature.
 3. Order by dependency, then by risk: the slice that can prove the idea wrong

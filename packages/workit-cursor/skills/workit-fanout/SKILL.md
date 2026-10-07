@@ -10,7 +10,7 @@ verifiable alone. Code-coupled work stays with one owner, who fans out after
 the blocking part lands. A worker whose whole job is re-running one command is
 ceremony; do it yourself.
 
-1. **Slice** (workit-shape): each slice gets a branch, a file-scope manifest
+1. **Slice** (read the `workit-shape` skill's SKILL.md and follow it): each slice gets a branch, a file-scope manifest
    (the globs it may write) and, if it depends on another, its stack parent.
 2. **Check disjointness.** No two manifests overlap. Shared files (lockfile,
    registry, barrel exports) belong to one slice, or to you after fan-in.

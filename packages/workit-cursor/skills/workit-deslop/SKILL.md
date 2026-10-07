@@ -5,8 +5,8 @@ description: Remove AI slop before a PR - dead code, comments that restate the c
 
 # Deslop code and prose
 
-Throughput without quality is slop. Deslop only removes; it never changes
-behavior. A change that wants new behavior is its own change.
+Deslop only removes lines; it never changes behavior or moves logic. A change
+that wants new behavior is its own change.
 
 1. **Find it with tools first.** The repo's dead-code and lint tools on the
    branch diff (for example `knip`, `ts-prune`, `vulture`, `cargo udeps`, or
@@ -18,9 +18,7 @@ behavior. A change that wants new behavior is its own change.
    link), license headers and tool directives.
 3. **Prose** (PR body, spec, docs): cut filler and hedging, keep real symbol
    names and before-to-after numbers. One doc, one purpose.
-4. **Minimal diff.** Deslop removes lines; it never moves logic. A removed
-   validator that changes behavior is not deslop.
-5. **Re-run the checks** and report lines removed, not lines written. Nothing
+4. **Re-run the checks** and report lines removed, not lines written. Nothing
    to clean is a valid result: say what you checked ("0 removals; ran knip and
    read the diff"). When a tracked task lists a `pre-pr-cleanup` requirement (≤6.x tasks),
    record this result as its evidence.
