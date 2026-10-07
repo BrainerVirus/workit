@@ -243,7 +243,9 @@ Skills load automatically when the task fits, or explicitly: `/wk-<name>`
 
 ## CLI reference
 
-`workit help <command>` prints the exact usage of any verb. Global flags:
+`workit help <command> [<subcommand>]`, or `-h`/`--help` anywhere after a
+command (before a bare `--`), prints its usage, flags and examples and runs
+nothing; after `--` a `-h` is an ordinary value. Global flags:
 `--json` (envelope `{"ok","code","data","error"?,"unblock"?}`), `--cwd <dir>`,
 `--version`. Exit codes: `0` ok, `1` failed, `2` usage, `3` blocked,
 `4` busy/pending, `5` unavailable.

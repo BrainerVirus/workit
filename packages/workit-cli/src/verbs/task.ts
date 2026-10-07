@@ -4,7 +4,7 @@
 //
 //   workit task status [--all] [--json]
 //   workit task start "<objective>"                 # idempotent per branch
-//   workit task note "<text>" [--next "<t>"] [--objective "<t>"]
+//   workit task note "<text>" [--next "<t>"] [--objective "<t>"]   # text after `--` is literal
 //   workit task close [--outcome verified|limited|stopped] [--summary "<t>"] [--confirm]
 //   workit task adopt <id>                          # bind a migrated/other task to this branch
 //
@@ -24,7 +24,7 @@ export function isImplicitTaskForm(argv: readonly string[]): boolean {
   const [action, first] = argv;
   if (!action) return false;
   if (IMPLICIT.has(action)) return true;
-  if (action === "start") return first !== undefined && !first.startsWith("--");
+  if (action === "start") return first !== undefined && (first === "--" || !first.startsWith("--"));
   if (action === "close") return !argv.includes("--task") && !argv.includes("--payload");
   return false;
 }
@@ -38,6 +38,10 @@ function parse(argv: readonly string[]): Flags | Error {
   const flags: Flags = { positionals: [], values: new Map(), switches: new Set() };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === "--") {
+      flags.positionals.push(...argv.slice(index + 1));
+      break;
+    }
     const [flag, inline] = arg.startsWith("--") && arg.includes("=") ? arg.split(/=(.*)/su) : [arg];
     if (SWITCHES.has(flag)) {
       flags.switches.add(flag);

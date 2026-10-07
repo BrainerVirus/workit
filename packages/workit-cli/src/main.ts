@@ -4,10 +4,12 @@
 // only `init`/`uninstall` ever load ink/react (through index.tsx).
 import path from "node:path";
 import pkg from "../package.json" with { type: "json" };
+import { firstWord, subcommandHelp, verbHelp, wantsHelp, type HelpDoc } from "./help";
 import { emit, fail, ok, type EnvelopeCode, type Io } from "./output";
 import {
   TASK_FAMILY_NAMES,
   VERBS,
+  findSubcommand,
   findVerb,
   type VerbEntry,
   type VerbGroup,
@@ -47,19 +49,17 @@ Usage: workit <command> [args] [--json] [--cwd <dir>]
 ${sections.join("\n\n")}
 
 Global flags:
-  --json        Machine-readable output: {"ok","code","data","error"?,"unblock"?}
-  --cwd <dir>   Run as if started in <dir>
-  --version     Print the CLI version
-  help <cmd>    Show usage for one command
+  --json             Machine-readable output: {"ok","code","data","error"?,"unblock"?}
+  --cwd <dir>        Run as if started in <dir>
+  --version          Print the CLI version
+  -h, --help         Show usage for the command and subcommand before it (runs nothing)
+  help <cmd> [<sub>] The same, as a command
 
 Exit codes: 0 ok · 1 failed · 2 usage · 3 blocked · 4 busy/pending · 5 unavailable
 
 Run \`npx @brainervirus/workit-cli init\` to configure platforms, YouTrack, VCS and project hygiene.
 `;
 }
-
-const verbHelp = (entry: VerbEntry): string =>
-  `usage: ${entry.usage}\n\n${entry.summary}${entry.planned ? ` (coming in ${entry.planned})` : ""}\n`;
 
 type Parsed = { json: boolean; cwd: string | null; rest: string[]; error?: string };
 
@@ -122,17 +122,33 @@ export async function main(
     return emit(io, ok({ version: pkg.version }), (data) => data.version);
   }
   if (command === undefined || command === "help" || command === "--help" || command === "-h") {
-    const topic = command === "help" ? args.find((arg) => !arg.startsWith("-")) : undefined;
+    const [topic, sub] = command === "help" ? words(args) : [];
     if (topic) {
       const entry = findVerb(topic);
       if (!entry) return unknown(io, topic);
-      return emit(io, ok(describe(entry)), () => verbHelp(entry));
+      if (sub === undefined) return help(io, verbHelp(entry));
+      const found = findSubcommand(entry, sub);
+      if (!found)
+        return emit(
+          io,
+          fail("invalid_input", `unknown ${topic} subcommand "${sub}"`, {
+            unblock: `workit help ${topic}`,
+          }),
+        );
+      return help(io, subcommandHelp(entry, found));
     }
     return emit(io, ok({ version: pkg.version, verbs: listed().map(describe) }), () => helpText());
   }
 
   const entry = findVerb(command);
   if (!entry) return unknown(io, command);
+  // `-h`/`--help` anywhere before a bare `--` answers before the verb loads,
+  // so no verb can act on it (or take it as a value).
+  if (wantsHelp(verbArgs)) {
+    const word = firstWord(verbArgs);
+    const sub = word === undefined ? undefined : findSubcommand(entry, word);
+    return help(io, sub ? subcommandHelp(entry, sub) : verbHelp(entry));
+  }
   if (parsed.cwd !== null) {
     try {
       // Existing verbs resolve from process.cwd(); keep them in step with io.cwd.
@@ -242,6 +258,11 @@ const withJsonFlag = (args: string[]): string[] => {
 
 // Planned verbs answer `not_implemented`; help does not advertise them.
 const listed = (): VerbEntry[] => VERBS.filter((entry) => !entry.planned);
+
+/** The positional words of `help <verb> [<sub>]`. */
+const words = (args: readonly string[]): string[] => args.filter((arg) => !arg.startsWith("-"));
+
+const help = (io: Io, doc: HelpDoc): number => emit(io, ok(doc), (data) => data.text);
 
 const describe = (entry: VerbEntry) => ({
   name: entry.name,

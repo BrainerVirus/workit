@@ -240,12 +240,9 @@ const usage = (io: Io, message: string): number =>
 export async function runGrant(argv: string[], io: Io, deps: GrantDeps = defaultDeps) {
   const [sub, ...rest] = argv;
   if (sub === "show") return show(rest, io);
-  if (sub === undefined || (sub.startsWith("--") && sub !== "--help")) return show(argv, io);
+  // `--help`/`-h` never reach here: the router answers them (help.ts).
+  if (sub === undefined || sub.startsWith("--")) return show(argv, io);
   if (sub === "set" || sub === "unset") return change(sub, rest, io, deps);
-  if (sub === "--help" || sub === "-h") {
-    io.stdout(`usage: ${USAGE}\n`);
-    return 0;
-  }
   return usage(io, `unknown subcommand "${sub}"`);
 }
 
