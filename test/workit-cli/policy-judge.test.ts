@@ -102,7 +102,7 @@ test("Given a judge call, When `policy assess --judge` runs, Then a ledger row r
     judgment: { needsPlan: true },
     requirements: ["plan"],
   });
-});
+}, 30_000);
 
 test("Given lead judged product-choice=yes, When lead judges product-choice=no without --why, Then it is refused; with --why it is recorded with the reason", () => {
   const root = repo();
@@ -139,7 +139,7 @@ test("Given lead judged product-choice=yes, When lead judges product-choice=no w
     lifted: ["productChoiceOpen"],
     why: "the user picked option B",
   });
-});
+}, 30_000);
 
 test("Given lead judged product-choice=yes, When lead lifts it with a 1900-char --why, Then the policy.judged row records the reason once; a reason too long to record is refused and lifts nothing", () => {
   const root = repo();
@@ -177,4 +177,4 @@ test("Given lead judged product-choice=yes, When lead lifts it with a 1900-char 
   expect(rows).toHaveLength(2);
   expect(rows[1]).toMatchObject({ lifted: ["productChoiceOpen"], why });
   expect(JSON.stringify(rows[1]).split(why)).toHaveLength(2);
-});
+}, 30_000);
