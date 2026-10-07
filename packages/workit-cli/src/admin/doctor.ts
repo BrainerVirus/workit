@@ -232,15 +232,24 @@ const pluginEntries = (cfg: Record<string, any> | null): string[] => {
   ];
 };
 
+// win32 executables carry an .exe suffix (bun.exe, git.exe), so probe both
+// names — statSync with the bare name would never find them.
 const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean =>
-  findOnPath(name, env) !== null;
+  findOnPath(process.platform === "win32" ? [name, `${name}.exe`] : [name], env) !== null;
 
-/** Absolute path of the first executable `name` on env.PATH, or null. */
-const findOnPath = (name: string, env: NodeJS.ProcessEnv): string | null => {
+/** Names a shell resolves for `name` on win32: one per PATHEXT extension
+ * (npm installs global bins as `workit.cmd`). Elsewhere just `name`. */
+const pathextNames = (name: string, env: NodeJS.ProcessEnv): string[] =>
+  process.platform === "win32"
+    ? (env.PATHEXT ?? process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+        .split(";")
+        .filter(Boolean)
+        .map((ext) => `${name}${ext.toLowerCase()}`)
+    : [name];
+
+/** Absolute path of the first executable among `names` on env.PATH, or null. */
+const findOnPath = (names: string[], env: NodeJS.ProcessEnv): string | null => {
   const dirs = (env.PATH ?? process.env.PATH ?? "").split(path.delimiter);
-  // win32 executables carry an .exe suffix (bun.exe, git.exe), so probe both
-  // names — statSync with the bare name would never find them.
-  const names = process.platform === "win32" ? [name, `${name}.exe`] : [name];
   for (const dir of dirs) {
     if (!dir) continue;
     for (const candidateName of names) {
@@ -1698,7 +1707,11 @@ const workitVersionAt = (bin: string, env: NodeJS.ProcessEnv): string | null => 
     return null;
   }
   if (workitVersions.has(key)) return workitVersions.get(key) ?? null;
-  const r = spawnSync(bin, ["--version"], { encoding: "utf8", env, timeout: 10_000 });
+  // win32 refuses to spawn a .cmd/.bat without a shell (CVE-2024-27980).
+  const viaShell = process.platform === "win32" && /\.(?:cmd|bat)$/i.test(bin);
+  const r = viaShell
+    ? spawnSync(`"${bin}" --version`, { encoding: "utf8", env, timeout: 10_000, shell: true })
+    : spawnSync(bin, ["--version"], { encoding: "utf8", env, timeout: 10_000 });
   const version = r.status === 0 ? ((r.stdout ?? "").match(SEMVER)?.[0] ?? null) : null;
   workitVersions.set(key, version);
   return version;
@@ -1726,7 +1739,7 @@ const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
   );
   const target = newest?.version ?? "latest";
   const fix = `npm i -g ${CLI_PACKAGE}@${target} (or run it without a global install: npx -y ${CLI_PACKAGE}@${target} <command>)`;
-  const bin = findOnPath("workit", res.env);
+  const bin = findOnPath(pathextNames("workit", res.env), res.env);
   if (!bin) {
     return { id: "workit_on_path", status: "warn", detail: "no workit on PATH", fix };
   }

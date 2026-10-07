@@ -1946,16 +1946,22 @@ test(
     const fakeRoot = mkdtempSync(path.join(tmpdir(), "wk-doctor-workit-"));
     const pathWithout = (process.env.PATH ?? "")
       .split(path.delimiter)
-      .filter((dir) => dir && !existsSync(path.join(dir, "workit")))
+      .filter(
+        (dir) =>
+          dir && !["workit", "workit.cmd", "workit.exe"].some((n) => existsSync(path.join(dir, n))),
+      )
       .join(path.delimiter);
     // Each fake lives in its own dir: the doctor probes a binary once per identity.
-    const withScript = (name: string, script: string) => {
+    // win32 gets the `workit.cmd` shim npm installs; elsewhere a shell script.
+    const win = process.platform === "win32";
+    const withScript = (name: string, body: string) => {
       const dir = path.join(fakeRoot, name);
       mkdirSync(dir, { recursive: true });
-      writeFileSync(path.join(dir, "workit"), script, { mode: 0o755 });
+      const script = win ? `@echo off\r\n${body}\r\n` : `#!/bin/sh\n${body}\n`;
+      writeFileSync(path.join(dir, win ? "workit.cmd" : "workit"), script, { mode: 0o755 });
       return run({ env: { ...process.env, PATH: `${dir}${path.delimiter}${pathWithout}` } });
     };
-    const withFake = (version: string) => withScript(version, `#!/bin/sh\necho ${version}\n`);
+    const withFake = (version: string) => withScript(version, `echo ${version}`);
     try {
       writeConfig(
         opencodeCachePkg,
@@ -1985,7 +1991,7 @@ test(
       expect(absent.fix).toContain("npm i -g @brainervirus/workit-cli@9.2.0");
       expect(missing.exitCode).toBe(baseline.exitCode);
 
-      const broken = withScript("broken", "#!/bin/sh\nexit 3\n");
+      const broken = withScript("broken", win ? "exit /b 3" : "exit 3");
       expect(check(broken, "workit_on_path").status).toBe("warn");
       expect(check(broken, "workit_on_path").detail).toContain("does not run");
     } finally {
