@@ -1,14 +1,20 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
 import { appendObserved, readLedger } from "@/packages/workit-core/src/ledger";
 import { fixture, replayRunner, replyError } from "@/test/shared/helpers/forge-replay";
-import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remote";
+import {
+  makeRemoteRepo,
+  sshForgeRemote,
+  withHome,
+  type RemoteRepo,
+} from "@/test/shared/helpers/git-remote";
 
 // S11 `workit git branch|commit|push` and `verify-delivery push` against real
 // git: a temp checkout whose origin is a local bare repository.
@@ -702,32 +708,60 @@ test("git push: given vcs.account=cpincetti but glab reports another user, then 
   expect(result.json()).toMatchObject({ ok: false, code: "blocked" });
   expect(result.json().error).toContain("identity_mismatch");
   expect(result.json().error).toContain("other");
-  expect(result.json().unblock).toContain("glab auth login --hostname gitlab.com");
+  // glab keeps one login per host: the fix is a workspace token, never a global switch.
+  expect(result.json().unblock).toContain("vcs.tokenFile");
+  expect(result.json().unblock).not.toContain("glab auth login");
   expect(repo.remoteTip("feature/a")).toBeNull();
   expect(rows(repo.cwd, "push.verified")).toHaveLength(0);
 });
 
-test("git push: a workspace token is never printed, even when the forge echoes it back", async () => {
-  const repo = setup();
-  await feature(repo);
-  forgeRemote(repo, "github");
-  const token = "ghp_S3cretS3cretS3cretS3cretS3cret0000";
-  const tokenFile = path.join(repo.root, "token");
-  writeFileSync(tokenFile, `${token}\n`);
-  workspace(repo, { vcs: { provider: "github", account: "octo", tokenFile } });
-  const runner = replayRunner({
-    "GET repos/o/r": fixture("github/repo.json"),
-    "GET user": replyError(`gh: Bad credentials for token ${token} (HTTP 401)`),
-  });
-  forgeDeps.runner = runner;
-  const json = await run(["git", "push", "--json"], repo.cwd);
-  const human = await run(["git", "push"], repo.cwd);
-  expect(json.code).toBe(5);
-  expect(runner.calls.every((call) => call.token === token)).toBe(true);
-  for (const output of [json.stdout, json.stderr, human.stdout, human.stderr])
-    expect(output).not.toContain(token);
-  expect(repo.remoteTip("feature/a")).toBeNull();
-});
+test.skipIf(process.platform === "win32")(
+  "git push: a rejected workspace token blocks the push, and the token is never printed",
+  async () => {
+    const repo = setup();
+    await feature(repo);
+    sshForgeRemote(repo, "git@github.com:o/r.git");
+    const token = "ghp_S3cretS3cretS3cretS3cretS3cret0000";
+    const tokenFile = path.join(repo.root, "token");
+    writeFileSync(tokenFile, `${token}\n`);
+    workspace(repo, { vcs: { provider: "github", account: "octo", tokenFile } });
+    const runner = replayRunner({
+      "GET user": replyError(`gh: Bad credentials for token ${token} (HTTP 401)`),
+    });
+    forgeDeps.runner = runner;
+    const { json, human } = await withHome(configHome.home, async () => ({
+      json: await run(["git", "push", "--json"], repo.cwd),
+      human: await run(["git", "push"], repo.cwd),
+    }));
+    expect(json.code).toBe(5);
+    expect(json.json().error).toBe("gh is not authenticated for github.com");
+    expect(runner.calls.every((call) => call.token === token)).toBe(true);
+    for (const output of [json.stdout, json.stderr, human.stdout, human.stderr])
+      expect(output).not.toContain(token);
+    expect(repo.remoteTip("feature/a")).toBeNull();
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git push: given gh has no login for the workspace account, then the push is blocked (git could push as the active account)",
+  async () => {
+    const repo = setup();
+    await feature(repo);
+    sshForgeRemote(repo, "git@github.com:o/r.git");
+    workspace(repo, { vcs: { provider: "github", account: "octo" } });
+    const bin = fakeGh(repo, 'echo "no oauth token found for github.com account octo" >&2\nexit 1');
+    const result = await withHome(configHome.home, () =>
+      run(["git", "push", "--json"], repo.cwd, { ...SESSION, PATH: bin }),
+    );
+    expect(result.code).toBe(3);
+    expect(result.json().error).toBe(
+      "identity_unavailable: gh has no login for octo on github.com (workspace w)",
+    );
+    expect(result.json().unblock).toStartWith("gh auth login --hostname github.com");
+    expect(repo.remoteTip("feature/a")).toBeNull();
+    expect(rows(repo.cwd, "push.verified")).toHaveLength(0);
+  },
+);
 
 test("git push: an explicit push=false grant and a grant without an account are both blocked", async () => {
   const repo = setup();
@@ -760,4 +794,253 @@ test("git: usage errors exit 2 with the subcommand usage", async () => {
   expect(help.stdout).toContain("usage: workit git branch <name>");
   expect(help.stdout).not.toContain("coming in");
   expect(readFileSync(path.join(configDir, "config.json"), "utf8")).toContain("github-flow");
+});
+
+// ---------------------------------------------------------------------------
+// push identity is best effort (B1): git decides the transport, so only a
+// forge that names another account blocks. Fake ssh transports keep every
+// push offline while the push URL is a real forge address.
+
+const fakeGh = (repo: RemoteRepo, body: string): string => {
+  const bin = path.join(repo.root, "fake-bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, "gh"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  return bin;
+};
+
+const lastPush = (cwd: string) => rows(cwd, "push.verified").at(-1);
+
+test.skipIf(process.platform === "win32")(
+  "git push: given gh hangs, then it still pushes within the 5s identity budget, warns why the check was skipped, and records it",
+  async () => {
+    const repo = setup();
+    const sha = await feature(repo);
+    sshForgeRemote(repo, "git@github.com:o/r.git");
+    workspace(repo, { vcs: { provider: "github", account: "octo" } });
+    const bin = fakeGh(
+      repo,
+      `exec ${spawnSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).stdout.trim()} 30`,
+    );
+    const started = Date.now();
+    const result = await withHome(configHome.home, () =>
+      run(["git", "push"], repo.cwd, { ...SESSION, PATH: bin }),
+    );
+    const elapsed = Date.now() - started;
+    expect(result.code).toBe(0);
+    expect(repo.remoteTip("feature/a")).toBe(sha);
+    expect(elapsed).toBeLessThan(10_000);
+    expect(result.stderr).toContain(
+      "warning: identity check skipped: gh auth token timed out after",
+    );
+    expect(result.stdout).not.toContain("warning:");
+    expect(lastPush(repo.cwd)).toMatchObject({
+      head: sha,
+      identity: {
+        status: "skipped",
+        forge: "github",
+        account: "octo",
+        login: null,
+        reason: expect.stringContaining("gh auth token timed out"),
+      },
+    });
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git push: given gh fails with a network error or is not installed, then it pushes with a warning naming the cause",
+  async () => {
+    const repo = setup();
+    await feature(repo);
+    sshForgeRemote(repo, "git@github.com:o/r.git");
+    workspace(repo, { vcs: { provider: "github", account: "octo" } });
+    const bin = fakeGh(
+      repo,
+      'if [ "$1" = auth ]; then echo gho_octo; exit 0; fi\necho "error connecting to api.github.com" >&2\nexit 1',
+    );
+    const failing = await withHome(configHome.home, () =>
+      run(["git", "push", "--json"], repo.cwd, { ...SESSION, PATH: bin }),
+    );
+    expect(failing.code).toBe(0);
+    expect(failing.json().data.identity).toMatchObject({ status: "skipped" });
+    expect(failing.json().warnings).toHaveLength(1);
+    expect(failing.json().warnings[0]).toStartWith(
+      "identity check skipped: gh api user failed (network)",
+    );
+    expect(failing.stderr).toContain(
+      "warning: identity check skipped: gh api user failed (network)",
+    );
+    expect(failing.json().data.identity.reason).toContain(
+      "(network): error connecting to api.github.com",
+    );
+
+    const sha = await feature(repo, "b.txt");
+    const empty = path.join(repo.root, "empty-bin");
+    mkdirSync(empty);
+    const missing = await withHome(configHome.home, () =>
+      run(["git", "push", "--json"], repo.cwd, { ...SESSION, PATH: empty }),
+    );
+    expect(missing.code).toBe(0);
+    expect(missing.json().data.identity).toMatchObject({
+      status: "skipped",
+      reason: "gh is not installed",
+    });
+    expect(repo.remoteTip("feature/a")).toBe(sha);
+    expect(lastPush(repo.cwd)?.identity).toMatchObject({ reason: "gh is not installed" });
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git push: the token lookup and /user share one 5s budget (a slow token leaves /user only the rest)",
+  async () => {
+    const repo = setup();
+    await feature(repo);
+    sshForgeRemote(repo, "git@github.com:o/r.git");
+    workspace(repo, { vcs: { provider: "github", account: "octo" } });
+    let clock = 0;
+    const offered: number[] = [];
+    forgeDeps.now = () => clock;
+    forgeDeps.runner = (_bin, args, options) => {
+      offered.push(options.timeoutMs);
+      if (args[0] === "auth") {
+        clock += 3_000;
+        return { status: 0, stdout: "gho_octo\n", stderr: "", timedOut: false, missing: false };
+      }
+      clock += options.timeoutMs; // /user hangs until killed
+      return { status: null, stdout: "", stderr: "", timedOut: true, missing: false };
+    };
+    const result = await withHome(configHome.home, () => run(["git", "push", "--json"], repo.cwd));
+    expect(result.code).toBe(0);
+    expect(offered).toEqual([5_000, 2_000]);
+    expect(clock).toBe(5_000);
+    expect(result.json().data.identity.reason).toBe("gh api user timed out after 2000 ms");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git push: given gh answers with another account, then it is still refused and nothing is pushed",
+  async () => {
+    const repo = setup();
+    await feature(repo);
+    sshForgeRemote(repo, "git@github.com:o/r.git");
+    workspace(repo, { vcs: { provider: "github", account: "octo" } });
+    forgeDeps.runner = replayRunner({
+      "CLI auth token --hostname github.com --user octo": "gho_octo",
+      "GET user": JSON.stringify({ login: "personal-me" }),
+    });
+    const result = await withHome(configHome.home, () => run(["git", "push", "--json"], repo.cwd));
+    expect(result.code).toBe(3);
+    expect(result.json().error).toStartWith(
+      "identity_mismatch: the gh login is personal-me but workspace w expects octo",
+    );
+    expect(repo.remoteTip("feature/a")).toBeNull();
+    expect(rows(repo.cwd, "push.verified")).toHaveLength(0);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git push: given a linked worktree outside every workspace glob, then it uses the main checkout's workspace account (B2)",
+  async () => {
+    const repo = setup();
+    sshForgeRemote(repo, "git@github.com:o/r.git");
+    workspace(repo, { vcs: { provider: "github", account: "octo" } });
+    const outside = mkdtempSync(path.join(os.tmpdir(), "wk-outside-wt-"));
+    try {
+      const wt = path.join(outside, "wt");
+      repo.git("worktree", "add", "-q", wt, "-b", "feature/wt");
+      writeFileSync(path.join(wt, "w.txt"), "w\n");
+      spawnSync("git", ["add", "w.txt"], { cwd: wt });
+      spawnSync("git", ["commit", "-qm", "feat: w"], { cwd: wt });
+      const runner = replayRunner({
+        "CLI auth token --hostname github.com --user octo": "gho_octo_token",
+        "GET user": fixture("github/user.json"),
+      });
+      forgeDeps.runner = runner;
+      const result = await withHome(configHome.home, () => run(["git", "push", "--json"], wt));
+      expect(result.code).toBe(0);
+      expect(result.json().data.identity).toEqual({
+        status: "verified",
+        forge: "github",
+        account: "octo",
+        login: "octo",
+      });
+      expect(runner.calls.find((call) => call.endpoint === "user")?.token).toBe("gho_octo_token");
+      expect(repo.remoteTip("feature/wt")).toBe(repo.git("rev-parse", "feature/wt"));
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git push: given a remote that is neither GitHub nor GitLab, then it pushes with git only and the forge verbs say so (M9)",
+  async () => {
+    const repo = setup();
+    const sha = await feature(repo);
+    sshForgeRemote(repo, "git@bitbucket.org:o/bb.git");
+    const runner = replayRunner({});
+    forgeDeps.runner = runner;
+    const pushed = await withHome(configHome.home, () => run(["git", "push", "--json"], repo.cwd));
+    expect(pushed.code).toBe(0);
+    expect(pushed.json().data.identity).toMatchObject({ status: "skipped", forge: null });
+    expect(pushed.json().data.identity.reason).toStartWith(
+      "unsupported_forge: ssh host bitbucket.org is not a GitHub/GitLab host or an alias workit can resolve; account checks skipped",
+    );
+    expect(repo.remoteTip("feature/a")).toBe(sha);
+    expect(runner.calls).toEqual([]);
+    const status = await withHome(configHome.home, () => run(["pr", "status", "--json"], repo.cwd));
+    expect(status.code).toBe(5);
+    expect(status.json().error).toStartWith("unsupported_forge:");
+    // Mapping bitbucket.org to github.com would break git: the fix is conditional.
+    expect(status.json().unblock).not.toMatch(/^map the alias/u);
+    expect(status.json().unblock).toContain("other forges (Bitbucket, Gitea…) have no PR/CI verbs");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git push: given a GitHub repo under a GitLab workspace, then push works with a note and PR verbs give a fix workit can apply (M11)",
+  async () => {
+    const repo = setup();
+    const sha = await feature(repo);
+    sshForgeRemote(repo, "git@github.com:o/r.git");
+    workspace(repo, { vcs: { provider: "gitlab", account: "cpincetti" } });
+    const runner = replayRunner({});
+    forgeDeps.runner = runner;
+    const pushed = await withHome(configHome.home, () => run(["git", "push", "--json"], repo.cwd));
+    expect(pushed.code).toBe(0);
+    expect(pushed.json().data.identity.reason).toStartWith("forge_mismatch:");
+    expect(repo.remoteTip("feature/a")).toBe(sha);
+    expect(runner.calls).toEqual([]);
+    const status = await withHome(configHome.home, () => run(["pr", "status", "--json"], repo.cwd));
+    expect(status.code).toBe(3);
+    expect(status.json().error).toStartWith("forge_mismatch:");
+    expect(status.json().unblock).toContain('"vcs": {"provider": "github"}');
+    expect(status.json().unblock).not.toContain("workit-github-override");
+  },
+);
+
+test("config problems are clean blocked envelopes, never an uncaught failure (M12)", async () => {
+  const repo = setup();
+  const root = repo.root.replaceAll("\\", "/");
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        { name: "a", glob: `${root}/**` },
+        { name: "b", glob: `${root}/*` },
+      ],
+    }),
+  );
+  const branch = await run(["git", "branch", "feature/y", "--json"], repo.cwd);
+  expect(branch.code).toBe(3);
+  expect(branch.json()).toMatchObject({ ok: false, code: "blocked" });
+  expect(branch.json().error).toContain("ambiguous workspace");
+  expect(branch.json().unblock).toContain("workspaces.json");
+  expect(repo.git("branch", "--show-current")).toBe("main");
+
+  workspace(repo, { vcs: { account: "octo" } });
+  repo.git("switch", "-q", "-c", "feature/z");
+  const create = await run(["pr", "create", "--title", "feat: z", "--json"], repo.cwd);
+  expect(create.code).toBe(3);
+  expect(create.json()).toMatchObject({ ok: false, code: "blocked" });
+  expect(create.json().error).toContain("vcs");
 });

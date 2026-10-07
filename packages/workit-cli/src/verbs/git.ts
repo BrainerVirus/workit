@@ -14,12 +14,11 @@ import {
   pushPreflight,
   type BranchOutcome,
   type CommitOutcome,
-  type PushOutcome,
 } from "@brainervirus/workit-core/src/git/ops";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
-import { connect, forgeFail, parseFlags, usage } from "./forge-common";
+import { forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
 
 const BRANCH_USAGE =
   "workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
@@ -243,13 +242,13 @@ async function push(argv: string[], io: Io): Promise<number> {
 
   const plan = pushPreflight(io.cwd);
   if (!plan.ok) return forgeFail(io, plan);
-  // A forge remote: the credential must be the workspace account (S10); a
-  // local path has no account to check.
-  if (!plan.data.local) {
-    const connected = connect(io, plan.data.branch);
-    if (!connected.ok) return forgeFail(io, connected);
-  }
-  const grant = requireGrant(io.cwd, "push", { forge: !plan.data.local });
+  // A forge remote: the credential should be the workspace account (S10).
+  // Best effort (B1): only a forge that names another account blocks; a slow,
+  // down or unknown forge pushes with git and says why the check was skipped.
+  const identity = plan.data.local ? null : pushIdentity(io, plan.data.branch);
+  if (identity && !identity.ok) return forgeFail(io, identity);
+  const checked = identity?.data ?? null;
+  const grant = requireGrant(io.cwd, "push", { forge: checked?.forge != null });
   if (!grant.allowed)
     return emit(
       io,
@@ -264,13 +263,22 @@ async function push(argv: string[], io: Io): Promise<number> {
     expect,
     setUpstream: flags.booleans.has("set-upstream"),
     actor: actorFromEnv(io.env),
+    ...(checked ? { identity: { ...checked } } : {}),
   });
   if (!result.ok)
     return forgeFail(io, result, {
       branch: plan.data.branch,
       sha: plan.data.sha,
     });
-  return emit(io, ok(result.data), (data: PushOutcome) => [
+  const warnings =
+    checked?.status === "skipped"
+      ? [
+          `identity check skipped: ${checked.reason}${checked.unblock ? ` (to restore it: ${checked.unblock})` : ""}`,
+        ]
+      : [];
+  for (const warning of warnings) io.stderr(`warning: ${warning}\n`);
+  const envelope = ok({ ...result.data, identity: checked });
+  return emit(io, warnings.length ? { ...envelope, warnings } : envelope, (data) => [
     data.pushed
       ? `pushed ${data.branch} ${short(data.previous)} -> ${short(data.sha)} to ${data.remote}${data.forced ? " (force-with-lease)" : ""}; remote tip verified`
       : `${data.remote}/${data.branch} is already at ${short(data.sha)}; remote tip verified`,

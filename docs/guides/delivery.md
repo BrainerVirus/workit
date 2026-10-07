@@ -40,13 +40,22 @@ workit git push [--set-upstream] [--force-with-lease]
   `--force-with-lease`, not to fetch and rebase. Content that only matches by
   patch (no merge commits) is named in the advice but still needs
   `--overwrite-unintegrated`.
+- Before a push to GitHub or GitLab, `git push` checks that the forge login is
+  the workspace `vcs.account`, within 5 seconds in total. Evidence against the
+  account blocks the push: the forge names another account, gh has no login
+  for it, the credential is rejected, or `vcs.tokenFile` is broken. When
+  gh/glab is missing, slow or offline, or the remote is another forge
+  (Bitbucket, Gitea, an ssh alias workit cannot resolve), git pushes anyway
+  and prints `warning: identity check skipped: <why>` on stderr (`warnings`
+  in `--json`); the `push.verified` ledger row records the outcome under
+  `identity`.
 
 ## Pull requests and CI
 
 ```bash
 workit pr create (--title <t> | --fill) [--base <b> | --track <t>] [--draft]
 workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next and babysit step
-workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 4 still pending
+workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
 workit pr merge [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
@@ -70,6 +79,12 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   satisfies the gate.
 - `verify-delivery` answers "did it land?" from the remote, never from local
   state.
+- `ci wait --timeout` bounds the whole command, from resolving the forge and
+  checking the account to the last poll. A conflicting PR stops the wait at
+  once (`blocked: conflicts`): CI does not run on it.
+- A forge refusal (HTTP 405/422) shows the forge's own reason, such as "No
+  commits between main and feature/x". Network errors and 5xx answers exit 5
+  (`unavailable`, retry), not 1.
 
 ### Babysitting a PR
 
@@ -101,7 +116,13 @@ the base keeps moving, or after 3 failed fix attempts on the same check.
 GitHub is read through `gh api`, GitLab through `glab api`. The forge is
 picked from the push remote, and the workspace account's credential is passed
 on every call without switching your active login. A login that is not the
-workspace `vcs.account` is `blocked` (exit 3) with a hint.
+workspace `vcs.account` is `blocked` (exit 3) with a hint. A linked worktree
+outside every workspace glob (`~/.codex/worktrees/…`, `../x`) uses the
+workspace of the checkout it was added from. A worktree inside a glob takes
+that glob's workspace, even when it differs from the main checkout's: the
+worktree's own path wins. A remote whose forge differs
+from the workspace `vcs.provider` blocks the PR and CI verbs (`forge_mismatch`)
+until a workspace with a narrower glob names the right provider.
 
 ## Stacks
 

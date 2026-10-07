@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
@@ -413,6 +414,70 @@ export const validateWorkspaceGlob = (glob: string): GlobValidation => {
   return { ok: true };
 };
 
+/** A workspaces.json problem for the user to fix; CLI verbs report it as `blocked`. */
+export class WorkspaceConfigError extends Error {
+  override name = "WorkspaceConfigError";
+}
+
+const mainCheckouts = new Map<string, string | null>();
+
+/**
+ * The main checkout of the linked worktree at `cwd` (null when cwd is not a
+ * linked worktree). A worktree outside every glob (~/.codex/worktrees/…,
+ * ../x, /tmp) belongs to the workspace of the checkout it was added from (B2).
+ */
+const mainCheckoutOf = (cwd: string): string | null => {
+  const cached = mainCheckouts.get(cwd);
+  if (cached !== undefined) return cached;
+  // The repository at cwd, not one an inherited GIT_DIR/GIT_WORK_TREE names.
+  const env = { ...process.env };
+  for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"])
+    delete env[name];
+  const git = (args: string[]): string | null => {
+    const run = spawnSync("git", args, {
+      cwd,
+      env,
+      encoding: "utf8",
+      timeout: 5000,
+      windowsHide: true,
+    });
+    return run.status === 0 ? run.stdout : null;
+  };
+  let main: string | null = null;
+  const dirs = git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]);
+  const [gitDir, common] = (dirs ?? "").trim().split(/\r?\n/u);
+  if (gitDir && common && path.resolve(gitDir) !== path.resolve(common)) {
+    // The first `worktree` entry is the main one, also with --separate-git-dir
+    // (where the common dir is not <main>/.git); a bare repo lists its own path.
+    const listed = /^worktree (.+)$/mu.exec(git(["worktree", "list", "--porcelain"]) ?? "")?.[1];
+    main = listed?.trim() || (path.basename(common) === ".git" ? path.dirname(common) : common);
+  }
+  mainCheckouts.set(cwd, main);
+  return main;
+};
+
+/**
+ * The entries whose glob matches cwd (its logical and real path); for a linked
+ * worktree that matches none, the entries matching its main checkout.
+ */
+const matchingEntries = <T extends { glob: string }>(cwd: string, entries: readonly T[]): T[] => {
+  const match = (where: string): T[] => {
+    const targets = [where, realpathOf(where)].map((value) => value.replaceAll("\\", "/"));
+    return entries.filter((entry) => {
+      const glob = entry.glob.replaceAll("\\", "/");
+      const canonical = canonicalGlob(glob);
+      return targets.some(
+        (target) =>
+          matchWorkspace(glob, target) || (canonical !== glob && matchWorkspace(canonical, target)),
+      );
+    });
+  };
+  const direct = match(cwd);
+  if (direct.length) return direct;
+  const main = mainCheckoutOf(cwd);
+  return main ? match(main) : direct;
+};
+
 const realpathOf = (p: string): string => {
   // realpathSync.native goes through libuv, which expands Windows 8.3 short
   // names (C:\Users\RUNNER~1 -> C:\Users\runneradmin); the plain realpathSync
@@ -453,13 +518,17 @@ const selectWorkspaceMatch = <T extends { name: string; glob: string }>(
     const named = matches.filter((entry) => entry.name === workspaceName);
     if (named.length === 1) return named[0];
     if (named.length > 1)
-      throw new Error(`ambiguous workspace ${JSON.stringify(workspaceName)} for ${cwd}`);
+      throw new WorkspaceConfigError(
+        `ambiguous workspace ${JSON.stringify(workspaceName)} for ${cwd}`,
+      );
     if (matches.length > 0) {
-      throw new Error(
+      throw new WorkspaceConfigError(
         `workspace ${JSON.stringify(workspaceName)} does not match ${cwd}; matching choices: ${matches.map((entry) => entry.name).join(", ")}`,
       );
     }
-    throw new Error(`workspace ${JSON.stringify(workspaceName)} does not match ${cwd}`);
+    throw new WorkspaceConfigError(
+      `workspace ${JSON.stringify(workspaceName)} does not match ${cwd}`,
+    );
   }
 
   if (matches.length < 2) return matches[0];
@@ -468,7 +537,7 @@ const selectWorkspaceMatch = <T extends { name: string; glob: string }>(
     (entry) => globSpecificity(entry.glob) === highestSpecificity,
   );
   if (mostSpecific.length > 1) {
-    throw new Error(
+    throw new WorkspaceConfigError(
       `ambiguous workspace for ${cwd}; choose one of: ${mostSpecific.map((entry) => entry.name).join(", ")}`,
     );
   }
@@ -486,23 +555,7 @@ export const resolveWorkspaceFromEntries = <T extends { name: string; glob: stri
   // written with the logical path, so a workspace would silently stop
   // matching on macOS. Match both forms on each side; on Linux both forms
   // are identical so behavior is unchanged.
-  const targets = [cwd, realpathOf(cwd)].map((p) => p.replaceAll("\\", "/"));
-  const matches: T[] = [];
-  for (const ws of entries) {
-    const glob = ws.glob.replaceAll("\\", "/");
-    const canonical = canonicalGlob(glob);
-    let matched = false;
-    for (const target of targets) {
-      if (
-        matchWorkspace(glob, target) ||
-        (canonical !== glob && matchWorkspace(canonical, target))
-      ) {
-        matched = true;
-        break;
-      }
-    }
-    if (matched) matches.push(ws);
-  }
+  const matches = matchingEntries(cwd, entries);
   return selectWorkspaceMatch(matches, cwd, workspaceName) ?? null;
 };
 
@@ -513,7 +566,8 @@ export const resolveWorkspaceFrom = (
   workspaceName?: string,
 ): WorkspaceConfig | null => {
   const result = readWorkspacesResult(dir);
-  if (result.status === "malformed" || result.status === "invalid") throw new Error(result.error);
+  if (result.status === "malformed" || result.status === "invalid")
+    throw new WorkspaceConfigError(result.error);
   return resolveWorkspaceFromEntries(cwd, result.entries, workspaceName);
 };
 
@@ -586,7 +640,7 @@ const matchRuntimeWorkspace = (
     raw = readFileSync(file, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw new Error(
+    throw new WorkspaceConfigError(
       `${file} could not be read: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
@@ -595,29 +649,21 @@ const matchRuntimeWorkspace = (
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error(`${file} is not valid JSON`);
+    throw new WorkspaceConfigError(`${file} is not valid JSON`);
   }
   const validated = runtimeWorkspaceIndexSchema.safeParse(parsed);
   if (!validated.success) {
     const detail = validated.error.issues
       .map((issue) => `${issue.path.map(String).join(".") || "workspaces"}: ${issue.message}`)
       .join("; ");
-    throw new Error(`${file} has invalid workspace matching data: ${detail}`);
+    throw new WorkspaceConfigError(`${file} has invalid workspace matching data: ${detail}`);
   }
   const entries = validated.data.workspaces;
   for (const entry of entries ?? []) {
     const glob = validateWorkspaceGlob(entry.glob);
-    if (!glob.ok) throw new Error(`${file} workspace ${entry.name}: ${glob.error}`);
+    if (!glob.ok) throw new WorkspaceConfigError(`${file} workspace ${entry.name}: ${glob.error}`);
   }
-  const targets = [cwd, realpathOf(cwd)].map((value) => value.replaceAll("\\", "/"));
-  const matches = (entries ?? []).filter((entry) => {
-    const glob = entry.glob.replaceAll("\\", "/");
-    const canonical = canonicalGlob(glob);
-    return targets.some(
-      (target) =>
-        matchWorkspace(glob, target) || (canonical !== glob && matchWorkspace(canonical, target)),
-    );
-  });
+  const matches = matchingEntries(cwd, entries ?? []);
   const workspaceName = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
   const selected = selectWorkspaceMatch(matches, cwd, workspaceName);
   return selected ? { file, selected } : null;
@@ -649,7 +695,7 @@ const resolveRuntimeWorkspaceCandidate = (
     const detail = policy.error.issues
       .map((issue) => `${issue.path.map(String).join(".") || "workspace"}: ${issue.message}`)
       .join("; ");
-    throw new Error(`${file} has invalid ${kind} policy configuration: ${detail}`);
+    throw new WorkspaceConfigError(`${file} has invalid ${kind} policy configuration: ${detail}`);
   }
   return policy.data as RuntimeWorkspaceCandidate;
 };
@@ -670,12 +716,12 @@ export const resolveRuntimeWorkspacePolicy = (
     candidate.defaultProfile &&
     !Object.hasOwn(candidate.profiles ?? {}, candidate.defaultProfile)
   )
-    throw new Error(
+    throw new WorkspaceConfigError(
       `workspace ${JSON.stringify(candidate.name)} has no profile ${JSON.stringify(candidate.defaultProfile)}`,
     );
   const profile = profileName ? candidate.profiles?.[profileName] : undefined;
   if (profileName && !profile)
-    throw new Error(
+    throw new WorkspaceConfigError(
       `workspace ${JSON.stringify(candidate.name)} has no profile ${JSON.stringify(profileName)}`,
     );
   const profilePolicy = profile?.[key] as WorkspaceBranchPolicy | WorkspaceCommitPolicy | undefined;
