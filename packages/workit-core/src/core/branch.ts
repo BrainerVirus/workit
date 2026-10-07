@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { repoBranchPreset } from "./branch-policy";
 import { matchCommitFlavor } from "./commit-flavors";
 import { gitContext } from "./git";
 import {
@@ -100,6 +101,7 @@ function effectiveWorkspacePolicy(
           resolveConfiguredBranchPolicy(
             config,
             selected.policy ? { branchPolicy: selected.policy as WorkspaceBranchPolicy } : null,
+            () => repoBranchPreset(workspaceRoot),
           ),
         ),
         provenance: { branchPolicy: selected.source },

@@ -15,6 +15,7 @@ import {
   type ToolkitConfig,
 } from "./config";
 import type { CommitFlavorPreset } from "./commit-flavors";
+import { repoBranchPreset } from "./branch-policy";
 
 export type VcsProvider = "gitlab" | "github";
 
@@ -777,6 +778,8 @@ export const resolveWorkspacePolicy = (
   config: ToolkitConfig,
   workspace: WorkspaceConfig | null,
   profileName?: string,
+  /** The preset the checkout's branches imply, used when no policy is configured. */
+  repoPreset?: () => BranchPreset | null,
 ): WorkspacePolicyResolution | { status: "invalid"; error: string } => {
   const selected = workspace
     ? resolveWorkspaceProfile(workspace, profileName)
@@ -791,7 +794,7 @@ export const resolveWorkspacePolicy = (
     status: "resolved",
     workspace: selected.workspace,
     profileName: selected.profileName,
-    branchPolicy: resolveConfiguredBranchPolicy(config, selected.workspace),
+    branchPolicy: resolveConfiguredBranchPolicy(config, selected.workspace, repoPreset),
     commitPolicy: resolveConfiguredCommitPolicy(config, selected.workspace),
     provenance: selected.provenance,
   };
@@ -838,6 +841,7 @@ export function workspaceDefaultTarget(cwd: string, globalDefault: unknown): str
   const policyDefault = resolveConfiguredBranchPolicy(
     readConfig(),
     selected.policy ? { branchPolicy: selected.policy as WorkspaceBranchPolicy } : null,
+    () => repoBranchPreset(cwd),
   ).defaultTargetBranch;
   return String(
     (ws?.vcs as { defaultTargetBranch?: unknown } | undefined)?.defaultTargetBranch ??
