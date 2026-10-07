@@ -18,6 +18,41 @@ shell writes), Cursor (`preToolUse` write tools), Pi (`tool_call` write/edit
 and bash) and Claude Code. Codex's PreToolUse does not see `apply_patch`, so
 there the gate is advisory and the session context says so.
 
+**Raw git and forge commands.** Workit's delivery rules (merge grant and
+verdict gate, protected branches, the session trailer) live in its own verbs,
+so every host's shell hook steers raw commands toward them. Inside a Workit
+workspace (a repository with a Workit store, or one `workspaces.json` matches):
+
+- `gh pr merge`, `glab mr merge`, and `git push` onto a protected branch or
+  the default target (`git push origin HEAD:main`, `--force` or not, a bare
+  `git push` while on `main`, `--delete main`) are denied with the command to
+  run instead: `workit pr merge`, `workit git push [--force-with-lease]`.
+- `git commit`, a feature-branch `git push`, `gh pr create|view|checks` and
+  `glab mr create|view` run, with a one-line nudge naming the workit verb.
+  Read-only git (`status`, `log`, `diff`, `fetch`) gets nothing.
+- A raw `git commit` (or `--amend`) that succeeded is recorded as the
+  session's `commit.recorded` ledger row, so that session's own verdict is
+  never accepted as independent.
+
+Commands are parsed as text (chains, `cd x &&`, `git -C`, env prefixes,
+`bash -c '…'`); git is spawned only to read a new commit. The hooks fail open
+and never grant permission: host allow/deny rules stay authoritative.
+
+| Host | Deny | Nudge | Raw commit recorded | Session id in the shell |
+| --- | --- | --- | --- | --- |
+| Claude Code | PreToolUse | PreToolUse `additionalContext` | PostToolUse (`Bash(git *)`) | `WORKIT_SESSION_ID` from SessionStart |
+| Codex | PreToolUse | PreToolUse `additionalContext` | PostToolUse | `CODEX_THREAD_ID` |
+| OpenCode | permission `evaluate` | appended to the shell result | `tool` `execute.after` | `OPENCODE_SESSION_ID` |
+| Pi | `tool_call` block | appended to the bash result | `tool_result` | `PI_SESSION_ID` |
+| Cursor | `beforeShellExecution` | `agent_message` | on the session's next shell command | none: session context names the id to prefix |
+
+`workit` reads `WORKIT_SESSION_ID` first (set it, even empty, to override),
+then the host's own variable from the table. Cursor puts no conversation id in
+the agent's shell (its `sessionStart` env reaches hooks only), so its session
+context and commit nudge say `WORKIT_SESSION_ID=<id> workit git commit …`.
+Cursor's raw commits are recorded when the session runs its next shell command,
+since no post-shell hook is registered yet.
+
 ## OpenCode
 
 Requires OpenCode 2.0.18+ and Node.js 24+.
@@ -37,9 +72,9 @@ The plugin (V2 `setup()` API, self-contained bundle) registers nine tools: the
 seven task families, read-only `workit_context`, and `workit_init_apply`. It
 adds the eleven skills with `wk-*` commands (an existing user skill with the
 same id wins), direct-child subagent delegation, and context injection on
-session start and after compaction. Its shell hook denies only direct,
-unquoted literal branch-creation commands that break the workspace naming
-policy.
+session start and after compaction. Its shell hook denies direct, unquoted
+literal branch-creation commands that break the workspace naming policy and
+the raw git/forge gate bypasses above.
 
 **OpenCode 1.x** can only load the removed V1 entry. Stay on Workit 2.x there:
 `{ "plugin": ["@brainervirus/workit-opencode@2"] }`. `workit doctor` fails

@@ -222,7 +222,14 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
   }
 };
 
-const CONTEXT_EVENTS = new Set(["SessionStart", "UserPromptSubmit", "SubagentStart"]);
+/** Events whose hookSpecificOutput takes additionalContext (PreToolUse: a raw-git nudge). */
+const CONTEXT_EVENTS = new Set([
+  "SessionStart",
+  "UserPromptSubmit",
+  "SubagentStart",
+  "PreToolUse",
+  "PostToolUse",
+]);
 
 /** Never emits `allow`: that would bypass the user's own permission prompt. */
 const render = (decision: HookDecision, native: string | null) => {

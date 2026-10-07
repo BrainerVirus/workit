@@ -68,6 +68,42 @@ for (const [label, plugin] of RUNTIMES) {
     });
   }, 60_000);
 
+  test(`[${label}] in a Workit workspace, raw gh pr merge is denied, a raw commit nudged and recorded, all schema-valid`, async () => {
+    await withProtectedMain(() => {
+      const cwd = root();
+      const git = (...args: string[]) =>
+        Bun.spawnSync(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd });
+      git("init", "-q", "-b", "feature/x");
+      mkdirSync(path.join(cwd, ".git", "workit"), { recursive: true });
+      const bash = (event: string, command: string) => {
+        const payload = {
+          ...fixture("claude-code", "pre-tool-use-bash", cwd),
+          hook_event_name: event,
+          tool_input: { command },
+        };
+        const run = runHook(plugin(), payload);
+        expect(outputProblem(event, run.json), command).toBeNull();
+        return (run.json as Specific).hookSpecificOutput;
+      };
+      // gh never reached the runtime before (launcher fast path): now it does.
+      expect(bash("PreToolUse", "gh pr merge 3 --squash")?.permissionDecision).toBe("deny");
+      expect(bash("PreToolUse", "git commit -m 'feat: x'")?.additionalContext).toContain(
+        "workit git commit",
+      );
+      writeFileSync(path.join(cwd, "x.txt"), "x\n");
+      git("add", "x.txt");
+      git("commit", "-q", "-m", "feat: x");
+      expect(bash("PostToolUse", "ls -la")).toBeUndefined();
+      expect(bash("PostToolUse", "git commit -m 'feat: x'")).toBeUndefined();
+      const ledger = readFileSync(
+        path.join(cwd, ".git", "workit", "ledger", "ledger.jsonl"),
+        "utf8",
+      );
+      expect(ledger).toContain('"type":"commit.recorded"');
+      expect(ledger).toContain('"observer":"host_hook"');
+    });
+  }, 60_000);
+
   test(`[${label}] given a protected main, a Bash \`git checkout -b main\` is denied with protected_ref`, async () => {
     await withProtectedMain(() => {
       const run = runHook(plugin(), fixture("claude-code", "pre-tool-use-bash", root()));

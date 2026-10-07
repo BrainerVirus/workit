@@ -22,6 +22,7 @@ import { createContextTool } from "../tools/context";
 import { createV2Lifecycle } from "./lifecycle";
 import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from "./injection";
 import { evaluateShellPermission } from "./permissions";
+import { observeShellResult } from "./shell";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
 
@@ -181,6 +182,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     });
   });
   await ctx.tool.hook("execute.after", async (event) => {
+    if (event.tool === "shell") return observeShellResult(root, event as never);
     if (event.tool !== "subagent") return;
     await lifecycle.executeAfter({
       tool: event.tool,

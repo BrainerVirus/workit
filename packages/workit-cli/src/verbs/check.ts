@@ -50,6 +50,7 @@ import {
   type CodeKey,
 } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, type EnvelopeCode, type Io } from "../output";
+import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
 
 const USAGE =
   "workit check <name> | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--json] -- <cmd…>";
@@ -153,7 +154,7 @@ async function recordInTask(
   let created = false;
   if (!taskId) {
     // The implicit task of this branch (D3): created by its first recording.
-    const actor = io.env.WORKIT_SESSION_ID?.trim() || "cli";
+    const actor = hostSessionFromEnv(io.env).session ?? "cli";
     const found = store.implicitTask({
       provenance: {
         kind: "host_observed",
@@ -176,7 +177,7 @@ async function recordInTask(
   }
   const core = new WorkitCore(store, {
     root: store.root,
-    caller: { host: "workit_cli", actor: io.env.WORKIT_SESSION_ID?.trim() || "cli" },
+    caller: { host: "workit_cli", actor: hostSessionFromEnv(io.env).session ?? "cli" },
     provenanceKind: "host_observed",
     capabilities: [],
     constraints: [],

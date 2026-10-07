@@ -13,6 +13,7 @@
 import { checkRoot } from "@brainervirus/workit-core/src/check-config";
 import { emit, fail, ok, type EnvelopeCode, type Io } from "../output";
 import { runTaskCommand } from "../task";
+import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
 
 const USAGE =
   'workit task status [--all] | task start "<objective>" | task note "<text>" [--next "<t>"] [--objective "<t>"] | task close [--outcome verified|limited|stopped] [--summary "<t>"] [--confirm] | task adopt <id>';
@@ -97,7 +98,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const { TaskStore, WorkitCore } = await import("@brainervirus/workit-core/src/core");
   const root = rootFor(io);
   const store = new TaskStore(root);
-  const actor = io.env.WORKIT_SESSION_ID?.trim() || "cli";
+  const actor = hostSessionFromEnv(io.env).session ?? "cli";
   const context = {
     root: store.root,
     caller: { host: "workit_cli" as const, actor },

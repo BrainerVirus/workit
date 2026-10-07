@@ -4,7 +4,12 @@ import type { HookDecision, HookEvent, HookEventKind, HostAdapter } from "../pro
 import { commandText, existingDirectory, isRecord, nonEmpty, optionalText } from "./fields";
 
 export type CodexHost = "codex_cli" | "codex_desktop";
-export type CodexHookEvent = "SessionStart" | "PreToolUse" | "SubagentStart" | "SubagentStop";
+export type CodexHookEvent =
+  | "SessionStart"
+  | "PreToolUse"
+  | "PostToolUse"
+  | "SubagentStart"
+  | "SubagentStop";
 type SessionSource = "startup" | "resume" | "clear" | "compact";
 
 export type CodexHookInput = {
@@ -21,6 +26,8 @@ export type CodexHookInput = {
   /** The shell command as one string; argv arrays are joined. */
   command?: string;
   tool_use_id?: string;
+  /** PostToolUse: the model-facing tool output. */
+  tool_response?: string;
   agent_id?: string;
   agent_type?: string;
   agent_transcript_path?: string | null;
@@ -53,7 +60,7 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
     // Codex PreToolUse intercepts shell calls, not apply_patch edits: the
     // before-write gate stays advisory rather than half-enforced.
     "write.pre": { support: "undocumented", native: null },
-    "shell.post": undocumented,
+    "shell.post": { support: "native", native: "PostToolUse" },
     "subagent.start": { support: "native", native: "SubagentStart" },
     "subagent.stop": { support: "native", native: "SubagentStop" },
     "prompt.submit": undocumented,
@@ -74,7 +81,7 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
     worktreeIsolation: "undocumented",
     maxConcurrency: "undocumented",
   },
-  provenance: { sessionId: "native", agentIdOnTool: "partial", postToolObserve: "undocumented" },
+  provenance: { sessionId: "native", agentIdOnTool: "partial", postToolObserve: "native" },
   interaction: { questions: "none", writeBoundary: "partial" },
   stopControl: "undocumented",
   shellAvailable: "native",
@@ -146,6 +153,7 @@ export const codexDescriptor = (host: CodexHost): HostDescriptor => ({ ...CODEX_
 const EVENTS: Record<CodexHookEvent, HookEventKind> = {
   SessionStart: "session.start",
   PreToolUse: "shell.pre",
+  PostToolUse: "shell.post",
   SubagentStart: "subagent.start",
   SubagentStop: "subagent.stop",
 };
@@ -166,10 +174,10 @@ export const parseCodexHookInput = (value: unknown): CodexParseResult => {
   const event = value.hook_event_name as CodexHookEvent;
   const cwd = existingDirectory(value.cwd);
   if (!cwd) return { ok: false, error: "cwd must be an existing absolute directory" };
-  if (event === "PreToolUse" && !nonEmpty(value.tool_name))
-    return { ok: false, error: "tool_name is required" };
+  const toolEvent = event === "PreToolUse" || event === "PostToolUse";
+  if (toolEvent && !nonEmpty(value.tool_name)) return { ok: false, error: "tool_name is required" };
   const command = isRecord(value.tool_input) ? commandText(value.tool_input.command) : null;
-  if (event === "PreToolUse" && isShellTool(value.tool_name) && !command)
+  if (toolEvent && isShellTool(value.tool_name) && !command)
     return { ok: false, error: "tool_input.command is required for shell tools" };
   if (event === "SubagentStart" && !nonEmpty(value.agent_id))
     return { ok: false, error: "agent_id is required" };
@@ -188,7 +196,10 @@ export const parseCodexHookInput = (value: unknown): CodexParseResult => {
         : {}),
       ...(nonEmpty(value.turn_id) ? { turn_id: value.turn_id } : {}),
       ...(nonEmpty(value.tool_name) ? { tool_name: value.tool_name } : {}),
-      ...(event === "PreToolUse" ? { tool_input: value.tool_input } : {}),
+      ...(toolEvent ? { tool_input: value.tool_input } : {}),
+      ...(event === "PostToolUse" && typeof value.tool_response === "string"
+        ? { tool_response: value.tool_response }
+        : {}),
       ...(command ? { command } : {}),
       ...(nonEmpty(value.tool_use_id) ? { tool_use_id: value.tool_use_id } : {}),
       ...(nonEmpty(value.agent_id) ? { agent_id: value.agent_id } : {}),
@@ -217,6 +228,20 @@ const protocolEvent = (input: CodexHookInput): HookEvent => {
             toolUseId,
           }
         : { kind: "tool.pre", tool: input.tool_name!, toolUseId };
+    }
+    case "PostToolUse": {
+      const toolUseId = input.tool_use_id ?? null;
+      return isShellTool(input.tool_name)
+        ? {
+            kind: "shell.post",
+            command: input.command ?? "",
+            stdout: input.tool_response ?? "",
+            // Codex reports the model-facing output, not an exit code.
+            exitCode: null,
+            toolUseId,
+          }
+        : // A non-shell tool result carries nothing workit observes.
+          { kind: "tool.pre", tool: input.tool_name!, toolUseId };
     }
     case "SubagentStart":
       return {
@@ -288,5 +313,5 @@ export const codexAdapter: HostAdapter = {
   },
   render,
   addendum: (input) =>
-    `<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run workit verbs with the workit CLI on the shell (node_modules/.bin/workit, or npx -y @brainervirus/workit-cli): check, git branch|commit|push, pr, ci, stack, ledger, handoff; task-family mutations take --json${input.session.id ? ` --actor ${input.session.id}` : ""}. A verifier or reviewer records workit ledger verdict under a session the lead assigns (WORKIT_SESSION_ID=<lead>-v<n>), never the author's. Merge and release need a workspace grant (workit grant show); a question answer is not host permission.</workit-codex-mutations>`,
+    `<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run workit verbs with the workit CLI on the shell (node_modules/.bin/workit, or npx -y @brainervirus/workit-cli): check, git branch|commit|push, pr, ci, stack, ledger, handoff; task-family mutations take --json${input.session.id ? ` --actor ${input.session.id}` : ""}. workit acts as this thread (CODEX_THREAD_ID${input.session.id ? `=${input.session.id}` : ""}) unless WORKIT_SESSION_ID is set. A verifier or reviewer records workit ledger verdict under a session the lead assigns (WORKIT_SESSION_ID=<lead>-v<n>), never the author's. Merge and release need a workspace grant (workit grant show); a question answer is not host permission.</workit-codex-mutations>`,
 };

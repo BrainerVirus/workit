@@ -18,6 +18,7 @@ export {
 } from "./context";
 export { shellPolicy } from "./policy";
 export { shellWrites, writeGate } from "./write-gate";
+export { rawGitPost, rawGitPre } from "./raw-git";
 export { isWriteTool, writePaths } from "./hosts/fields";
 export { dispatchHook, failureDecision, handleHook, type HookDeps } from "./handle";
 export { HOOK_ADAPTERS, runHookProcess } from "./run";
