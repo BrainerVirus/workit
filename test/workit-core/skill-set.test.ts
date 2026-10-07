@@ -45,15 +45,17 @@ test("Given every skill, Then its description says what and when within 250 char
   }
 });
 
-test("Given the skill frontmatter, Then only workit-retro is user-invoked and its route says so", () => {
+test("Given the skill frontmatter, Then exactly the opt-in skills are user-invoked and each route says so", () => {
   const userInvoked = WORKIT_METHOD_SKILLS.filter((name) =>
     /^disable-model-invocation:\s*true\s*$/m.test(skillMd(name).split("\n---")[0]),
   );
-  expect(userInvoked).toEqual(["workit-retro"]);
-  const route = invariantBootstrap()
-    .split("\n")
-    .find((line) => line.endsWith(": workit-retro"));
-  expect(route).toContain("user-invoked");
+  expect(userInvoked).toEqual(["workit-retro", "workit-architecture"]);
+  const lines = invariantBootstrap().split("\n");
+  for (const name of userInvoked)
+    expect(
+      lines.find((line) => line.endsWith(`: ${name}`)),
+      name,
+    ).toContain("(user-invoked; offer it)");
 });
 
 test("Given a user-invoked skill, Then Codex gets the same flag from agents/openai.yaml, and no other skill disables implicit invocation", () => {

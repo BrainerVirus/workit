@@ -254,6 +254,13 @@ const phrase = (text: string) =>
 
 test("agent-critical delivery rules stay stated", () => {
   const bootstrap = invariantBootstrap();
+  const architectureFiles = readFileSync(
+    path.join(
+      import.meta.dir,
+      "../../packages/workit-core/skills/workit-architecture/references/instruction-files.md",
+    ),
+    "utf8",
+  );
   const rules: Array<[string, string, string]> = [
     // CLI-first replaced "prefer native host Git/shell": one right answer, one verb.
     ["bootstrap", bootstrap, "if a step has one right answer, use the `workit` verb"],
@@ -311,6 +318,25 @@ test("agent-critical delivery rules stay stated", () => {
     ["workit-retro", skillText("workit-retro"), "only if the user opts in"],
     ["workit-retro", skillText("workit-retro"), "Nothing changes until the user approves"],
     ["workit-retro", skillText("workit-retro"), "Never fork a local copy"],
+    ["workit-architecture", skillText("workit-architecture"), "never start it yourself"],
+    [
+      "workit-architecture",
+      skillText("workit-architecture"),
+      "never refactors without the user's approval",
+    ],
+    ["workit-architecture", skillText("workit-architecture"), "2 or more cited occurrences"],
+    [
+      "workit-architecture",
+      skillText("workit-architecture"),
+      "merge danger**: one-way or two-way door, plus blast radius",
+    ],
+    ["workit-architecture", skillText("workit-architecture"), "each its own commit in one PR"],
+    [
+      "instruction-files.md",
+      architectureFiles,
+      "Each pass is its own commit in one PR, in this order",
+    ],
+    ["workit-architecture", skillText("workit-architecture"), "Never scaffold an empty file"],
   ];
   for (const [source, text, rule] of rules)
     expect(text, `${source}: ${rule}`).toMatch(phrase(rule));
@@ -329,7 +355,7 @@ test("method skills impose no task-start preamble and do not wait for policy sel
 test("method manifest matches the canonical skill directories", () => {
   // Pinned on purpose: a skill-set change (adding or dropping a skill from
   // both the manifest and the directory) must update this count.
-  expect(WORKIT_METHOD_SKILLS).toHaveLength(12);
+  expect(WORKIT_METHOD_SKILLS).toHaveLength(13);
   expect(
     skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
   ).toEqual([...WORKIT_METHOD_SKILLS].toSorted());

@@ -147,4 +147,5 @@ Skills: load the skill, never act from memory of it (slash aliases /wk-<name>).
 - fan out, parallelize, parallel agents, swarm: workit-fanout
 - verify the app, smoke test, prove it works: workit-verify-app
 - retro (user-invoked; offer it): workit-retro
+- architecture (user-invoked; offer it): workit-architecture
 `.trim();

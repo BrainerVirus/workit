@@ -14,6 +14,7 @@ export const WORKIT_METHOD_SKILLS = [
   "workit-fanout",
   "workit-verify-app",
   "workit-retro",
+  "workit-architecture",
 ] as const;
 
 export type WorkitSkill = (typeof WORKIT_METHOD_SKILLS)[number];
@@ -33,6 +34,7 @@ export const WORKIT_SKILL_ALIASES = {
   "wk-fanout": "workit-fanout",
   "wk-verify-app": "workit-verify-app",
   "wk-retro": "workit-retro",
+  "wk-architecture": "workit-architecture",
 } as const satisfies Record<string, WorkitSkill>;
 
 /**
@@ -53,6 +55,7 @@ export const WORKIT_SKILL_TRIGGERS: Readonly<Record<WorkitSkill, readonly string
   "workit-fanout": ["fan out", "parallelize", "parallel agents", "swarm"],
   "workit-verify-app": ["verify the app", "smoke test", "prove it works"],
   "workit-retro": ["retro"],
+  "workit-architecture": ["architecture"],
 };
 
 /** The `description:` frontmatter value of a SKILL.md (one line, unquoted). */
