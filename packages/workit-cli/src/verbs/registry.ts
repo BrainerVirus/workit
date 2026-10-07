@@ -132,7 +132,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "git",
     group: "delivery",
     usage:
-      "workit git branch <name> [--base <b>] [--track <t>] | git commit -m <msg> [--all | -- <paths…>] | git push [--set-upstream] [--force-with-lease]",
+      "workit git branch <name> [--base <b>] [--track <t>] | git commit (-m <msg> | -F <file|->) [--amend [--no-edit]] [--allow-empty] [--all | -- <paths…>] | git push [--set-upstream] [--force-with-lease]",
     summary:
       "Policy-checked branch and commit (Workit-Session trailer); push with a lease and a verified remote tip",
     load: () => import("./git"),

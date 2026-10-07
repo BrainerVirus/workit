@@ -14,6 +14,7 @@ import {
   type ToolkitConfig,
 } from "./config";
 import type { CommitFlavorPreset } from "./commit-flavors";
+import { repoBranchPreset } from "./branch-policy";
 
 export type VcsProvider = "gitlab" | "github";
 
@@ -792,6 +793,7 @@ export function workspaceDefaultTarget(cwd: string, globalDefault: unknown): str
   const policyDefault = resolveConfiguredBranchPolicy(
     readConfig(),
     selected.policy ? { branchPolicy: selected.policy as WorkspaceBranchPolicy } : null,
+    () => repoBranchPreset(cwd),
   ).defaultTargetBranch;
   return String(
     (ws?.vcs as { defaultTargetBranch?: unknown } | undefined)?.defaultTargetBranch ??

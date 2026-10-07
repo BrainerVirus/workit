@@ -2,8 +2,10 @@
 // identity check and the grant seam; the rules live in core git/ops.ts.
 //
 //   workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]
-//   workit git commit -m <msg> [--all | [--] <paths…>]
+//   workit git commit (-m <msg> | -F <file|->) [--amend [--no-edit]] [--allow-empty] [--all | [--] <paths…>]
 //   workit git push [--set-upstream] [--force-with-lease [--expect <sha>]]
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import {
   executePush,
@@ -21,7 +23,8 @@ import { connect, forgeFail, parseFlags, usage } from "./forge-common";
 
 const BRANCH_USAGE =
   "workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
-const COMMIT_USAGE = "workit git commit -m <msg> [--all | [--] <paths…>] [--json]";
+const COMMIT_USAGE =
+  "workit git commit (-m <msg> | -F <file|->) [--amend [--no-edit]] [--allow-empty] [--all | [--] <paths…>] [--json]";
 const PUSH_USAGE =
   "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--json]";
 const USAGE = "workit git branch|commit|push ... (workit help git)";
@@ -67,11 +70,42 @@ async function branch(argv: string[], io: Io): Promise<number> {
   ]);
 }
 
-/** `-m` (repeatable, joined like git), `--all`/`-a`, paths positionally or after `--`. */
-function parseCommit(
-  argv: readonly string[],
-): { messages: string[]; all: boolean; paths: string[] } | string {
-  const out = { messages: [] as string[], all: false, paths: [] as string[] };
+type CommitArgs = {
+  messages: string[];
+  files: string[];
+  all: boolean;
+  amend: boolean;
+  noEdit: boolean;
+  allowEmpty: boolean;
+  paths: string[];
+};
+
+const COMMIT_SWITCHES: Record<
+  string,
+  keyof Pick<CommitArgs, "all" | "amend" | "noEdit" | "allowEmpty">
+> = {
+  "-a": "all",
+  "--all": "all",
+  "--amend": "amend",
+  "--no-edit": "noEdit",
+  "--allow-empty": "allowEmpty",
+};
+
+/**
+ * `-m` (repeatable, joined like git), `-F`/`--file` (`-` reads stdin),
+ * `--amend`, `--no-edit`, `--allow-empty`, `--all`/`-a`, paths positionally
+ * or after `--`.
+ */
+function parseCommit(argv: readonly string[]): CommitArgs | string {
+  const out: CommitArgs = {
+    messages: [],
+    files: [],
+    all: false,
+    amend: false,
+    noEdit: false,
+    allowEmpty: false,
+    paths: [],
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--") {
@@ -79,22 +113,32 @@ function parseCommit(
       break;
     }
     if (arg === "--json") continue;
-    if (arg === "-a" || arg === "--all") {
-      out.all = true;
+    const flag = COMMIT_SWITCHES[arg];
+    if (flag) {
+      out[flag] = true;
       continue;
     }
-    if (arg === "-m" || arg === "--message") {
-      const value = argv[++index];
-      if (value === undefined) return `${arg} requires a message`;
-      out.messages.push(value);
-      continue;
-    }
-    if (arg.startsWith("--message=")) {
-      out.messages.push(arg.slice("--message=".length));
-      continue;
-    }
-    if (arg.startsWith("-m") && arg.length > 2) {
-      out.messages.push(arg.slice(2));
+    const valued = (
+      [
+        ["-m", "--message", out.messages],
+        ["-F", "--file", out.files],
+      ] as const
+    ).find(
+      ([shortName, longName]) =>
+        arg === shortName ||
+        arg === longName ||
+        arg.startsWith(`${longName}=`) ||
+        (arg.startsWith(shortName) && arg.length > 2),
+    );
+    if (valued) {
+      const [shortName, longName, into] = valued;
+      if (arg === shortName || arg === longName) {
+        const value = argv[++index];
+        if (value === undefined)
+          return `${arg} requires a ${shortName === "-m" ? "message" : "file"}`;
+        into.push(value);
+      } else
+        into.push(arg.startsWith(`${longName}=`) ? arg.slice(longName.length + 1) : arg.slice(2));
       continue;
     }
     if (arg.startsWith("-")) return `unknown option ${arg}`;
@@ -103,24 +147,59 @@ function parseCommit(
   return out;
 }
 
+/** The commit message from -m or -F (a path relative to the checkout, or `-` for stdin). */
+function commitMessage(parsed: CommitArgs, io: Io): string | { error: string } {
+  if (parsed.messages.length && parsed.files.length) return { error: "pass -m or -F, not both" };
+  if (parsed.files.length > 1) return { error: "-F takes one file" };
+  const [file] = parsed.files;
+  if (file === undefined) return parsed.messages.join("\n\n");
+  try {
+    return file === "-"
+      ? readFileSync(0, "utf8")
+      : readFileSync(path.resolve(io.cwd, file), "utf8");
+  } catch (error) {
+    return {
+      error: `cannot read -F ${file}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 async function commit(argv: string[], io: Io): Promise<number> {
   const parsed = parseCommit(argv);
   if (typeof parsed === "string") return usage(io, parsed, COMMIT_USAGE);
-  if (!parsed.messages.length) return usage(io, "missing -m <msg>", COMMIT_USAGE);
   if (parsed.all && parsed.paths.length)
     return usage(io, "pass --all or paths, not both", COMMIT_USAGE);
+  if (parsed.noEdit && !parsed.amend)
+    return usage(io, "--no-edit only applies with --amend", COMMIT_USAGE);
+  const given = parsed.messages.length + parsed.files.length > 0;
+  if (parsed.noEdit && given)
+    return usage(io, "--no-edit keeps the message; drop -m/-F or --no-edit", COMMIT_USAGE);
+  if (!given && !parsed.noEdit)
+    return usage(
+      io,
+      parsed.amend ? "--amend needs -m/-F or --no-edit" : "missing -m <msg> or -F <file>",
+      COMMIT_USAGE,
+    );
+  const message = given ? commitMessage(parsed, io) : null;
+  if (message !== null && typeof message !== "string")
+    return usage(io, message.error, COMMIT_USAGE);
+  if (message !== null && !message.trim())
+    return usage(io, "the commit message is empty", COMMIT_USAGE);
   const result = gitCommit(io.cwd, {
-    message: parsed.messages.join("\n\n"),
+    message,
     all: parsed.all,
     paths: parsed.paths,
+    amend: parsed.amend,
+    allowEmpty: parsed.allowEmpty,
     actor: actorFromEnv(io.env),
     env: io.env,
   });
   if (!result.ok) return forgeFail(io, result);
   await ensureImplicitTask(io);
   return emit(io, ok(result.data), (data: CommitOutcome) => [
-    `${data.branch} ${short(data.sha)} ${data.message.split("\n", 1)[0]} (${data.files.length} file${data.files.length === 1 ? "" : "s"})`,
+    `${data.branch} ${short(data.sha)} ${data.message.split("\n", 1)[0]} (${data.files.length ? `${data.files.length} file${data.files.length === 1 ? "" : "s"}` : "empty commit"})${data.amended ? `, amends ${short(data.amended)}` : ""}`,
     ...(data.leftDirty ? [`${data.leftDirty} change(s) left uncommitted`] : []),
+    ...data.notes.map((note) => `note: ${note}`),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     ...(data.session
       ? []
@@ -174,7 +253,10 @@ async function push(argv: string[], io: Io): Promise<number> {
   if (!grant.allowed)
     return emit(
       io,
-      fail("blocked", grant.error, { unblock: grant.unblock, data: { reason: grant.reason } }),
+      fail("blocked", grant.error, {
+        unblock: grant.unblock,
+        data: { reason: grant.reason },
+      }),
     );
   const result = executePush(io.cwd, plan.data, {
     forceWithLease: flags.booleans.has("force-with-lease"),
@@ -183,7 +265,11 @@ async function push(argv: string[], io: Io): Promise<number> {
     setUpstream: flags.booleans.has("set-upstream"),
     actor: actorFromEnv(io.env),
   });
-  if (!result.ok) return forgeFail(io, result, { branch: plan.data.branch, sha: plan.data.sha });
+  if (!result.ok)
+    return forgeFail(io, result, {
+      branch: plan.data.branch,
+      sha: plan.data.sha,
+    });
   return emit(io, ok(result.data), (data: PushOutcome) => [
     data.pushed
       ? `pushed ${data.branch} ${short(data.previous)} -> ${short(data.sha)} to ${data.remote}${data.forced ? " (force-with-lease)" : ""}; remote tip verified`

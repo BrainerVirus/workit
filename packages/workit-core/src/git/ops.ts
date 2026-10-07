@@ -18,6 +18,8 @@
 //   the tip workit last recorded, and success only when the remote tip
 //   observed afterwards equals the local SHA (`push.verified` row).
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import {
   classifyBranchDirt,
   isProtectedTarget,
@@ -51,12 +53,17 @@ import {
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const PUSH_TIMEOUT_MS = 120_000;
 
-type Run = { ok: boolean; status: number | null; stdout: string; stderr: string };
+type Run = {
+  ok: boolean;
+  status: number | null;
+  stdout: string;
+  stderr: string;
+};
 
 const git = (
   cwd: string,
   args: string[],
-  options: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
+  options: { timeoutMs?: number; env?: NodeJS.ProcessEnv; input?: string } = {},
 ): Run => {
   const result = spawnSync("git", args, {
     cwd,
@@ -66,7 +73,9 @@ const git = (
     timeout: options.timeoutMs ?? GIT_TIMEOUTS.local,
     killSignal: "SIGKILL",
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    ...(options.input === undefined
+      ? { stdio: ["ignore", "pipe", "pipe"] as const }
+      : { input: options.input, stdio: ["pipe", "pipe", "pipe"] as const }),
   });
   return {
     ok: result.status === 0,
@@ -84,6 +93,63 @@ const gitError = (run: { stderr: string; stdout?: string }, max = 3): string => 
     .filter((value) => value && !value.startsWith("hint:"));
   return lines.slice(-max).join(" / ").slice(0, 400) || "git failed";
 };
+
+/** Past this many lines, hook output keeps its head and tail. */
+const OUTPUT_LINES = 200;
+
+/**
+ * Everything git and its hooks printed, redacted and without `hint:` lines, so
+ * a failing lint hook's errors reach the agent. Long output keeps the first
+ * and last OUTPUT_LINES / 2 lines.
+ */
+const gitOutput = (run: { stderr: string; stdout?: string }): string => {
+  const lines = redactText(`${run.stderr}\n${run.stdout ?? ""}`)
+    .split(/\r?\n/u)
+    .map((value) => value.trimEnd())
+    .filter((value) => value.trim() && !value.trimStart().startsWith("hint:"));
+  if (!lines.length) return "git failed";
+  if (lines.length <= OUTPUT_LINES) return lines.join("\n");
+  const half = OUTPUT_LINES / 2;
+  return [
+    ...lines.slice(0, half),
+    `… ${lines.length - OUTPUT_LINES} lines omitted …`,
+    ...lines.slice(-half),
+  ].join("\n");
+};
+
+type Operation = "rebase" | "am" | "merge" | "cherry-pick" | "revert";
+
+/** The multi-step git operation the checkout is in the middle of, if any. */
+function operationInProgress(cwd: string): Operation | null {
+  const markers: [string, Operation][] = [
+    ["rebase-merge", "rebase"],
+    ["rebase-apply", "rebase"],
+    ["MERGE_HEAD", "merge"],
+    ["CHERRY_PICK_HEAD", "cherry-pick"],
+    ["REVERT_HEAD", "revert"],
+  ];
+  const run = git(cwd, ["rev-parse", ...markers.flatMap(([name]) => ["--git-path", name])]);
+  if (!run.ok) return null;
+  const found = run.stdout.split("\n").map((line) => path.resolve(cwd, line.trim()));
+  for (const [index, [, operation]] of markers.entries()) {
+    const marker = found[index];
+    if (!marker || !existsSync(marker)) continue;
+    // `git am` also uses rebase-apply; its `applying` file tells them apart.
+    if (index === 1 && existsSync(path.join(marker, "applying"))) return "am";
+    return operation;
+  }
+  return null;
+}
+
+/** A refusal that names the operation in progress and how to finish or leave it. */
+function inProgressFailure<T>(operation: Operation, verb: string): ForgeResult<T> {
+  const command = operation === "am" ? "git am" : `git ${operation}`;
+  return failure(
+    "blocked",
+    `${operation.replace("-", "_")}_in_progress: a ${operation === "am" ? "git am" : operation} is in progress; finish or abort it before workit can ${verb}`,
+    `resolve the conflicts, git add <files>, then ${command} --continue  # or ${command} --abort to return to where you started`,
+  );
+}
 
 const validRefName = (cwd: string, name: string): boolean =>
   !name.startsWith("-") && git(cwd, ["check-ref-format", "--branch", name]).ok;
@@ -138,6 +204,8 @@ export type BranchInput = {
 export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOutcome> {
   if (!headSha(cwd) && currentBranch(cwd) === null)
     return failure("invalid_input", "not inside a git repository with a commit");
+  const operation = operationInProgress(cwd);
+  if (operation) return inProgressFailure(operation, "create a branch");
   // One resolution: the default target, the base for new branches and the
   // release track (core/release-tracks.ts) all come from vcsConfig. With
   // --base the track is the base's line (it decides the --kind naming);
@@ -264,6 +332,10 @@ export type CommitOutcome = {
   /** Changes left uncommitted (not selected). */
   leftDirty: number;
   session: string | null;
+  /** With --amend: the commit this one replaced. */
+  amended: string | null;
+  /** Follow-ups the agent should know (an amended commit that was already pushed). */
+  notes: string[];
   /** The ledger row id, or why it could not be written (the commit stands). */
   recorded: { id: string } | { error: string };
 };
@@ -296,20 +368,56 @@ export function lintCommitMessage(
 
 const SESSION_SAFE = /^[\w.:@/+-]{1,128}$/u;
 
+/**
+ * The message with a `Workit-Session:` trailer for `session`, keeping every
+ * existing trailer and never adding the same session twice (an amend of a
+ * commit this session already made).
+ */
+function withSessionTrailer(cwd: string, message: string, session: string | null): string {
+  if (!session) return message;
+  const run = git(
+    cwd,
+    [
+      "interpret-trailers",
+      "--if-exists",
+      "addIfDifferent",
+      "--trailer",
+      `Workit-Session: ${session}`,
+    ],
+    { input: `${message}\n` },
+  );
+  return run.ok ? run.stdout.trim() : `${message}\n\nWorkit-Session: ${session}`;
+}
+
+const nothingToCommit = (what: string) =>
+  failure<CommitOutcome>(
+    "failed",
+    `nothing_to_commit: ${what}`,
+    "workit git commit --allow-empty -m '<msg>'  # only to record an empty commit on purpose",
+  );
+
 export function gitCommit(
   cwd: string,
   input: {
-    message: string;
+    /** The new message; with `amend` and no message the amended commit's is kept. */
+    message?: string | null;
     all?: boolean;
     paths?: readonly string[];
+    /** Replace the branch's last commit (`git commit --amend`). */
+    amend?: boolean;
+    /** Record a commit even when it changes no file. */
+    allowEmpty?: boolean;
     actor: LedgerActor;
     env?: NodeJS.ProcessEnv;
   },
 ): ForgeResult<CommitOutcome> {
-  const message = input.message.trim();
-  if (!message) return failure("invalid_input", "a commit message is required (-m <msg>)");
+  const given = input.message?.trim() ?? "";
+  if (!given && !input.amend)
+    return failure("invalid_input", "a commit message is required (-m <msg> or -F <file>)");
   const paths = input.paths ?? [];
   if (input.all && paths.length) return failure("invalid_input", "pass --all or paths, not both");
+  const operation = operationInProgress(cwd);
+  if (operation) return inProgressFailure(operation, "commit");
   const branch = currentBranch(cwd);
   if (!branch)
     return failure(
@@ -322,52 +430,90 @@ export function gitCommit(
       `protected_branch: ${branch} is protected by the workspace branch policy; workit never commits to it`,
       "workit git branch <feature/name>  # then commit there",
     );
-  const lint = lintCommitMessage(cwd, message);
-  if (!lint.ok) return failure("blocked", lint.error, lint.correction);
+  const previous = input.amend ? headSha(cwd) : null;
+  if (input.amend && !previous)
+    return failure("invalid_input", `nothing to amend: ${branch} has no commit yet`);
+  let message = given;
+  if (given) {
+    const lint = lintCommitMessage(cwd, given);
+    if (!lint.ok) return failure("blocked", lint.error, lint.correction);
+  } else {
+    const kept = git(cwd, ["log", "-1", "--format=%B", previous as string]);
+    if (!kept.ok)
+      return failure("failed", `could not read the message of ${branch}: ${gitError(kept)}`);
+    message = kept.stdout.trim();
+  }
   const session = input.actor.session;
   if (session && !SESSION_SAFE.test(session))
     return failure(
       "invalid_input",
       "WORKIT_SESSION_ID must be 1-128 characters of [A-Za-z0-9_.:@/+-]",
     );
+  // A commit that only rewords (amend) or is empty on purpose needs no change.
+  const changeRequired = !input.amend && !input.allowEmpty;
 
-  const args = ["commit", "--no-edit", "-m", message];
-  if (session) args.push("--trailer", `Workit-Session: ${session}`);
+  const args = ["commit", "--no-edit"];
+  if (input.amend) args.push("--amend");
+  if (input.allowEmpty) args.push("--allow-empty");
+  args.push("-m", withSessionTrailer(cwd, message, session));
   if (paths.length) {
     if (paths.some((value) => value.startsWith("-") || !value.trim()))
       return failure("invalid_input", "paths must not be empty or start with -");
     const added = git(cwd, ["add", "-A", "--", ...paths]);
     if (!added.ok) return failure("failed", `git add failed: ${gitError(added)}`);
+    if (changeRequired && git(cwd, ["diff", "--cached", "--quiet", "HEAD", "--", ...paths]).ok)
+      return nothingToCommit(`${paths.join(", ")} has no change to commit`);
     args.push("--", ...paths);
   } else if (input.all) {
     const added = git(cwd, ["add", "-A"]);
     if (!added.ok) return failure("failed", `git add failed: ${gitError(added)}`);
-  } else {
+    if (changeRequired && git(cwd, ["diff", "--cached", "--quiet"]).ok)
+      return nothingToCommit("the working tree is clean");
+  } else if (changeRequired) {
     const staged = git(cwd, ["diff", "--cached", "--name-only", "-z"]);
     if (staged.ok && !staged.stdout.replaceAll("\0", "")) {
       const dirt = dirtEntries(cwd);
+      if (!dirt.length) return nothingToCommit("the working tree is clean");
       return failure(
-        dirt.length ? "blocked" : "failed",
-        dirt.length
-          ? `nothing_staged: nothing is staged and workit never commits unrelated changes implicitly (${dirt.length} changed: ${dirt
-              .slice(0, 5)
-              .map((entry) => entry.slice(3))
-              .join(", ")}${dirt.length > 5 ? ", …" : ""})`
-          : "nothing_to_commit: the working tree is clean",
-        dirt.length
-          ? `workit git commit -m '<msg>' -- <paths>  # or --all to commit every change`
-          : undefined,
+        "blocked",
+        `nothing_staged: nothing is staged and workit never commits unrelated changes implicitly (${dirt.length} changed: ${dirt
+          .slice(0, 5)
+          .map((entry) => entry.slice(3))
+          .join(", ")}${dirt.length > 5 ? ", …" : ""})`,
+        `workit git commit -m '<msg>' -- <paths>  # or --all to commit every change`,
       );
     }
   }
-  const committed = git(cwd, args, { timeoutMs: COMMIT_TIMEOUT_MS, env: input.env });
-  if (!committed.ok) return failure("failed", `git commit failed: ${gitError(committed, 6)}`);
+  const committed = git(cwd, args, {
+    timeoutMs: COMMIT_TIMEOUT_MS,
+    env: input.env,
+  });
+  if (!committed.ok)
+    return failure(
+      "failed",
+      `git commit failed (a hook or git refused it):\n${gitOutput(committed)}`,
+    );
   const sha = headSha(cwd);
   if (!sha) return failure("failed", "the commit did not resolve");
   const files = nulList(
     git(cwd, ["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha]).stdout,
   );
   const leftDirty = dirtEntries(cwd).length;
+  const notes: string[] = [];
+  if (previous) {
+    const published = git(cwd, [
+      "for-each-ref",
+      "--format=%(refname:short)",
+      "--contains",
+      previous,
+      "refs/remotes",
+    ]);
+    const where = published.ok ? published.stdout.split("\n").filter(Boolean) : [];
+    if (where.length)
+      notes.push(
+        `the amended commit ${previous.slice(0, 12)} was already pushed (${where.slice(0, 3).join(", ")}); publish the rewrite with: workit git push --force-with-lease`,
+      );
+  }
 
   // Bounded row (MAX_LINE_BYTES): the subject and the first files only.
   const listed: string[] = [];
@@ -388,6 +534,7 @@ export function gitCommit(
     subject: (message.split("\n", 1)[0] ?? "").slice(0, 200),
     files: listed,
     fileCount: files.length,
+    ...(previous ? { amended: previous } : {}),
   });
   return success({
     sha,
@@ -396,6 +543,8 @@ export function gitCommit(
     files,
     leftDirty,
     session,
+    amended: previous,
+    notes,
     recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
   });
 }
@@ -421,7 +570,11 @@ export function pushPreflight(
   options: { branch?: string | null } = {},
 ): ForgeResult<PushPlan> {
   const branch = options.branch ?? currentBranch(cwd);
-  if (!branch) return failure("invalid_input", "HEAD is detached; push a branch");
+  if (!branch) {
+    const operation = operationInProgress(cwd);
+    if (operation) return inProgressFailure(operation, "push");
+    return failure("invalid_input", "HEAD is detached; push a branch");
+  }
   if (isProtectedTarget(cwd, branch))
     return failure(
       "blocked",
@@ -489,14 +642,35 @@ export function recordedRemoteTip(cwd: string, plan: PushPlan): string | undefin
 }
 
 /**
- * `--force-if-includes` semantics: the remote tip was integrated locally, i.e.
- * it is reachable from the local branch or appears in the branch's reflog
- * (the commit was this branch's tip before a rebase/amend).
+ * `--force-if-includes` semantics: the remote tip was integrated locally. It
+ * is reachable from the local branch, or from a former tip in the branch's
+ * reflog (the branch held it before an amend or rebase), or every remote
+ * commit the branch lacks has a patch-equivalent local commit (rebased or
+ * cherry-picked here).
  */
 function includesRemoteTip(cwd: string, branch: string, tip: string): boolean {
-  if (git(cwd, ["merge-base", "--is-ancestor", tip, `refs/heads/${branch}`]).ok) return true;
-  const reflog = git(cwd, ["reflog", "show", "--format=%H", `refs/heads/${branch}`, "--"]);
-  return reflog.ok && reflog.stdout.split("\n").some((line) => line.trim() === tip);
+  const ref = `refs/heads/${branch}`;
+  if (git(cwd, ["merge-base", "--is-ancestor", tip, ref]).ok) return true;
+  const reflog = git(cwd, ["reflog", "show", "--format=%H", ref, "--"]);
+  const former = [
+    ...new Set(
+      (reflog.ok ? reflog.stdout : "")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (former.includes(tip)) return true;
+  if (former.length) {
+    // Commits reachable from the tip but from no former tip: none means included.
+    const outside = git(cwd, ["rev-list", "-n", "1", "--stdin"], {
+      input: `${tip}\n${former.map((sha) => `^${sha}`).join("\n")}\n`,
+    });
+    if (outside.ok && !outside.stdout.trim()) return true;
+  }
+  const cherry = git(cwd, ["cherry", ref, tip]);
+  const unmatched = cherry.ok ? cherry.stdout.split("\n").filter(Boolean) : [];
+  return cherry.ok && unmatched.length > 0 && unmatched.every((line) => line.startsWith("-"));
 }
 
 export type PushOutcome = {
@@ -578,13 +752,26 @@ export function executePush(
           `lease_mismatch: ${plan.remote}/${plan.branch} moved while pushing`,
           `git fetch ${plan.remote} ${plan.branch} && git rebase ${plan.remote}/${plan.branch}  # or merge it; then: workit git push`,
         );
+      const rewritten = before.sha !== null && includesRemoteTip(cwd, plan.branch, before.sha);
+      if (rewritten && /non-fast-forward|fetch first|\[rejected\]/iu.test(text)) {
+        // An amend or rebase rewrote commits that are already pushed: a fetch
+        // and rebase would re-apply the old ones. The lease is the tip seen now.
+        const anchored = recordedRemoteTip(cwd, plan) === before.sha;
+        return failure(
+          "failed",
+          `non_fast_forward: local ${plan.branch} was rewritten (amend or rebase) after ${plan.remote}/${plan.branch} (${before.sha?.slice(0, 12)}) was pushed; that tip is already part of the local history, so do not fetch and rebase`,
+          anchored
+            ? "workit git push --force-with-lease"
+            : `workit git push --force-with-lease --expect ${before.sha}`,
+        );
+      }
       if (/non-fast-forward|fetch first|\[rejected\]/iu.test(text))
         return failure(
           "failed",
           `non_fast_forward: ${plan.remote}/${plan.branch} has commits this branch does not`,
           `git fetch ${plan.remote} && git rebase ${plan.remote}/${plan.branch}  # or, if the rewrite is intended: workit git push --force-with-lease`,
         );
-      return failure("failed", `git push to ${plan.url} failed: ${gitError(run)}`);
+      return failure("failed", `git push to ${plan.url} failed:\n${gitOutput(run)}`);
     }
     pushed = true;
   }
@@ -669,6 +856,10 @@ export function deleteRemoteBranch(
   if (run.ok) return { ok: true };
   const text = `${run.stderr}\n${run.stdout}`;
   return /stale info|cannot lock ref|fetch first|non-fast-forward/iu.test(text)
-    ? { ok: false, lease: true, error: "the remote branch tip changed before deletion" }
+    ? {
+        ok: false,
+        lease: true,
+        error: "the remote branch tip changed before deletion",
+      }
     : { ok: false, lease: false, error: gitError(run) };
 }

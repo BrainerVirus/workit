@@ -9,17 +9,27 @@ observed in the run ledger. Each one checks the workspace
 ```bash
 workit git branch feature/x [--base <b>] [--track <t>]   # policy-checked name, from the fetched default target
 workit git commit -m "feat: x" -- <paths>       # convention-checked; --all takes every change
+workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last commit; -F <file|-> reads the message
+workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]
 ```
 
 - `git branch` and `git commit` apply the workspace branch and commit policy,
   never commit to a protected branch, and never sweep in changes you did not
-  name. Commits carry a `Workit-Session:` trailer.
+  name. Commits carry a `Workit-Session:` trailer (an amend keeps the
+  existing trailers and never repeats one). With no configured branch policy,
+  the repository's branches pick it: `develop` means gitflow, `main` alone
+  github-flow, `master` alone trunk-based.
+- During a rebase, merge, cherry-pick or revert, `git branch`, `git commit`
+  and `git push` refuse and say how to continue or abort it. A failing hook's
+  output is kept whole (head and tail past 200 lines).
 - `git push` never pushes a protected branch and succeeds only when the remote
   tip equals the local SHA afterwards. It forces only with
   `--force-with-lease`, leased on the tip Workit itself last pushed (otherwise
   `--expect <sha>`), and refuses to drop remote commits you never had unless
-  you pass `--overwrite-unintegrated`.
+  you pass `--overwrite-unintegrated`. When the push is rejected because you
+  amended or rebased commits that were already pushed, it says to push with
+  `--force-with-lease`, not to fetch and rebase.
 
 ## Pull requests and CI
 

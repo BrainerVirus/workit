@@ -9,17 +9,34 @@ const PREFIXES = {
   hotfix: "hotfix/*",
 };
 
-export const detectBranchPolicy = (workspaceRoot: string) => {
-  const branchExists = (name: string): boolean => {
-    const r = spawnSync("git", ["branch", "--list", name], {
+/** Local and remote-tracking branch names (`origin/develop` counts as `develop`). */
+const branchNames = (workspaceRoot: string): Set<string> => {
+  const r = spawnSync(
+    "git",
+    ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+    {
       cwd: workspaceRoot,
       encoding: "utf8",
-    });
-    return r.status === 0 && (r.stdout ?? "").trim() !== "";
-  };
-  const develop = branchExists("develop");
-  const main = branchExists("main");
-  const master = branchExists("master");
+    },
+  );
+  if (r.status !== 0) return new Set();
+  return new Set(
+    (r.stdout ?? "")
+      .split("\n")
+      .filter(Boolean)
+      .map((ref) =>
+        ref.startsWith("refs/heads/")
+          ? ref.slice("refs/heads/".length)
+          : ref.split("/").slice(3).join("/"),
+      ),
+  );
+};
+
+export const detectBranchPolicy = (workspaceRoot: string) => {
+  const names = branchNames(workspaceRoot);
+  const develop = names.has("develop");
+  const main = names.has("main");
+  const master = names.has("master");
   const root = main ? "main" : master ? "master" : null;
 
   if (develop) {
@@ -60,4 +77,14 @@ export const detectBranchPolicy = (workspaceRoot: string) => {
     allowed: [],
     prefixes: PREFIXES,
   };
+};
+
+/**
+ * The preset this repository's branches imply (develop -> gitflow, main ->
+ * github-flow, master -> trunk-based), or null when they imply none. Used
+ * only when no branch policy is configured anywhere (core/config.ts).
+ */
+export const repoBranchPreset = (workspaceRoot: string): BranchPreset | null => {
+  const detected = detectBranchPolicy(workspaceRoot);
+  return detected.developBranch || detected.allowed.length ? detected.preset : null;
 };
