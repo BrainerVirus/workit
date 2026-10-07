@@ -5,7 +5,6 @@ import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -323,20 +322,21 @@ test("Given 20 alternating same-session failed/verified rows on distinct heads, 
     value(recordVerdict(as(root, "v1"), { result: "verified", how: `fixed ${index}` }));
   }
   const rows = read(root).rows;
-  const shim = tmp("wk-integrity-shim-");
-  const log = path.join(shim, "calls.log");
-  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
-  writeFileSync(path.join(shim, "git"), `#!/bin/sh\necho x >> "${log}"\nexec "${realGit}" "$@"\n`);
-  chmodSync(path.join(shim, "git"), 0o755);
-  const savedPath = process.env.PATH;
-  process.env.PATH = `${shim}${path.delimiter}${savedPath ?? ""}`;
+  // git's own trace2 event log counts every git process, on every OS (no
+  // PATH shim: Windows spawns resolve only git.exe).
+  const log = path.join(tmp("wk-integrity-trace-"), "trace.json");
+  const saved = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = log;
   let check: ReturnType<typeof checkVerdicts>;
   try {
     check = checkVerdicts(root, "feature/x", rows);
   } finally {
-    process.env.PATH = savedPath;
+    if (saved === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = saved;
   }
   expect(check.accepted.accepted).toBe(true);
-  const calls = readFileSync(log, "utf8").split("\n").filter(Boolean).length;
+  const calls = readFileSync(log, "utf8")
+    .split("\n")
+    .filter((line) => line.includes('"event":"start"')).length;
   expect(calls).toBeLessThan(CALLS_BOUND);
 }, 30_000);
