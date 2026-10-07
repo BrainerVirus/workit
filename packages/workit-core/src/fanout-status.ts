@@ -70,7 +70,7 @@ export type StatusOutcome = {
   slices: SliceStatusRow[];
   /** Landable slices in the order to land them. */
   landingOrder: string[];
-  /** Not started, every dependency landed (or, stacked, its parent branch exists). */
+  /** Not started; every dependency landed (or, stacked, its parent has an accepted verdict). */
   spawnable: string[];
   stuck: string[];
   next: string;
@@ -256,7 +256,7 @@ export function fanoutStatus(
     else if (row.branchExists) row.state = "active";
     else if (
       row.waitsFor.length === 0 ||
-      (parent && row.waitsFor.length === 1 && out.get(parent.id)?.branchExists)
+      (parent && row.waitsFor.length === 1 && out.get(parent.id)?.verdict.accepted)
     ) {
       const created = rows.some(
         (candidate) =>

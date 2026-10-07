@@ -373,6 +373,23 @@ test("fanout status: given a merge-commit landing and a not-started dependent, w
   expect(data.next).toStartWith("spawn docs");
 });
 
+test("fanout status: given a not-started slice stacked on an unverified parent, when shown, then it waits; once the parent has an accepted verdict it is spawnable", async () => {
+  const { root, cwd } = localRepo();
+  await plan(cwd, root, [
+    slice("api", ["api.ts"]),
+    slice("docs", ["docs.md"], { dependsOn: ["api"] }),
+  ]);
+  branchAt(cwd, "feature/api", "api.ts", 5);
+  const before = await status(cwd, "--offline");
+  expect(before.byId.docs).toMatchObject({ state: "waiting", waitsFor: ["api"] });
+  expect(before.data.spawnable).toEqual([]);
+  await verify(cwd, "feature/api");
+  const after = await status(cwd, "--offline");
+  expect(after.byId.docs).toMatchObject({ state: "not_started" });
+  expect(after.data.spawnable).toEqual(["docs"]);
+  expect(after.data.landingOrder).toEqual(["api"]);
+});
+
 test("fanout status: given a fresh branch with no commits of its own, when shown offline, then it is not mistaken for landed", async () => {
   const { root, cwd } = localRepo();
   await plan(cwd, root, [slice("a", ["a.ts"])]);
