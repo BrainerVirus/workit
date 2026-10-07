@@ -5,8 +5,10 @@
 //   workit grant set <workspace> <kind>=<true|false|verified> [<kind>=<value>…]
 //   workit grant unset <workspace> <kind> [<kind>…]
 //
-// `defaultEndpoint=commit|pr` sets where an unnamed request stops (skills read
-// it); commit → pr is a raise, like any grant. `verification=self|independent`
+// `defaultEndpoint=commit|pr|green|merged` sets where an unnamed request stops
+// (skills read it); any step up commit < pr < green < merged is a raise, like
+// any grant. `merged` only takes effect with the merge grant: show reports the
+// configured and the effective endpoint. `verification=self|independent`
 // sets what a normal-risk behavior change needs (S17): independent → self is a
 // raise (it lets the author verify its own work).
 //
@@ -22,14 +24,18 @@
 // permission prompt (deny or ask on `workit grant set` and on edits under
 // ~/.config/workit) is the hard boundary.
 import {
+  DEFAULT_ENDPOINTS,
   DEFAULT_GRANTS,
   GRANT_KINDS,
+  isDefaultEndpoint,
   isGrantKind,
   listGrants,
   raises,
+  raisesEndpoint,
   resolveAutonomy,
   writeGrants,
   type DefaultEndpoint,
+  type EndpointView,
   type GrantKind,
   type VerificationMode,
   type GrantValue,
@@ -43,7 +49,7 @@ import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 
 const USAGE =
-  "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr] [verification=self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
+  "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr|green|merged] [verification=self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
 
 /** Agent hosts that export a marker into the shells they run (best effort). */
 const AGENT_ENV = [
@@ -79,17 +85,31 @@ const parseValue = (raw: string): GrantValue | null =>
         ? "verified"
         : null;
 
+const STOPS_AT: Record<DefaultEndpoint, string> = {
+  commit: "a local commit",
+  pr: "an opened PR",
+  green: "a merge-ready PR: CI green, threads resolved, verified; never merged",
+  merged: "a merged PR (workit pr merge)",
+};
+
+/** `merged (effective: green, merge grant missing)`; just the name when they agree. */
+const endpointLabel = (view: EndpointView): string =>
+  view.effectiveEndpoint === view.defaultEndpoint
+    ? view.defaultEndpoint
+    : `${view.defaultEndpoint} (effective: ${view.effectiveEndpoint}${view.endpointReason ? `, ${view.endpointReason}` : ""})`;
+
 const describe = (
   grants: Grants,
   configured: readonly GrantKind[],
-  endpoint: DefaultEndpoint,
+  endpoint: EndpointView,
   verification: VerificationMode,
 ): string[] => [
   ...GRANT_KINDS.map(
     (kind) =>
       `  ${kind.padEnd(8)}${String(grants[kind]).padEnd(10)}${configured.includes(kind) ? "configured" : "default"}${kind === "release" ? " (no consumer yet: reserved, not enforced)" : ""}`,
   ),
-  `  default endpoint: ${endpoint} (an unnamed request stops at ${endpoint === "pr" ? "an opened PR" : "a local commit"})`,
+  `  default endpoint: ${endpointLabel(endpoint)} (an unnamed request stops at ${STOPS_AT[endpoint.effectiveEndpoint]})`,
+  ...(endpoint.endpointIssue ? [`  note: ${endpoint.endpointIssue}`] : []),
   `  verification: ${verification} (${verification === "independent" ? "a normal-risk behavior change needs a non-author verdict" : "a normal-risk behavior change needs a passing check and the author's --self verdict, shown as self-reviewed"})`,
 ];
 
@@ -108,7 +128,7 @@ function show(argv: string[], io: Io): number {
     return emit(io, ok({ path: listed.path, defaults: DEFAULT_GRANTS, workspaces: rows }), () =>
       rows.flatMap((entry) => [
         `${entry.name} (${entry.glob})`,
-        ...describe(entry.grants, entry.configured, entry.defaultEndpoint, entry.verification),
+        ...describe(entry.grants, entry.configured, entry, entry.verification),
       ]),
     );
   }
@@ -128,7 +148,7 @@ function show(argv: string[], io: Io): number {
     data.workspace
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
-    ...describe(data.grants, data.configured, data.defaultEndpoint, data.verification),
+    ...describe(data.grants, data.configured, data, data.verification),
     ...describeReleaseTracks(tracks).map((line) => `  ${line}`),
     "raising a grant needs the user: workit grant set <workspace> <kind>=<value>",
   ]);
@@ -154,8 +174,8 @@ async function change(
     const [kind, raw] = verb === "set" ? spec.split("=", 2) : [spec, undefined];
     if (kind === "defaultEndpoint") {
       if (verb === "unset") endpoint = null;
-      else if (raw === "commit" || raw === "pr") endpoint = raw;
-      else return usage(io, `${spec}: defaultEndpoint must be commit or pr`);
+      else if (isDefaultEndpoint(raw)) endpoint = raw;
+      else return usage(io, `${spec}: defaultEndpoint must be ${DEFAULT_ENDPOINTS.join(", ")}`);
       continue;
     }
     if (kind === "verification") {
@@ -176,8 +196,8 @@ async function change(
   const raised: { kind: string; value: string }[] = changes
     .filter(({ kind, value }) => raises(kind, entry.grants[kind], value ?? DEFAULT_GRANTS[kind]))
     .map(({ kind, value }) => ({ kind, value: String(value ?? DEFAULT_GRANTS[kind]) }));
-  if (endpoint === "pr" && entry.defaultEndpoint !== "pr")
-    raised.push({ kind: "defaultEndpoint", value: "pr" });
+  if (endpoint && raisesEndpoint(entry.defaultEndpoint, endpoint))
+    raised.push({ kind: "defaultEndpoint", value: endpoint });
   if (
     verification !== undefined &&
     verification !== "independent" &&
@@ -210,7 +230,7 @@ async function change(
   if (!written.ok) return emit(io, fail(written.code, written.error));
   return emit(io, ok(written), (data) => [
     `${data.workspace}: grants updated in ${data.path}${data.backup ? ` (previous copy: ${data.backup})` : ""}`,
-    ...describe(data.grants, data.configured, data.defaultEndpoint, data.verification),
+    ...describe(data.grants, data.configured, data, data.verification),
   ]);
 }
 

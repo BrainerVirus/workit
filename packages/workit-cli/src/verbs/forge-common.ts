@@ -190,6 +190,7 @@ export function renderStatus(doc: PrStatusDoc): string[] {
   if (doc.truncated) lines.push("(lists truncated at the page cap)");
   if (doc.blockers.length) lines.push(`blockers: ${doc.blockers.join(", ")}`);
   if (doc.identity?.note) lines.push(`identity: ${doc.identity.note}`);
+  if (doc.babysit) lines.push(`babysit: ${doc.babysit}`);
   lines.push(`next: ${doc.next}`);
   return lines;
 }

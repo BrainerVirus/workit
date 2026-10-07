@@ -29,6 +29,18 @@ Global config lives in `~/.config/workit/` (`config.json`, `workspaces.json`,
 globs to hosting (GitHub/GitLab), trackers, branch/commit policy and
 [grants](grants.md); the narrowest glob wins.
 
+A workspace's `defaultEndpoint` sets how far an unnamed delivery request goes:
+`commit` (default), `pr`, `green` (babysit the PR until merge-ready, never
+merging) or `merged` (`green`, then merge; needs the `merge` grant, otherwise
+it acts as `green`). Set it with `workit grant set <workspace>
+defaultEndpoint=<value>`: a step up needs you at a terminal, a step down does
+not. An unknown value is reported by `workit grant show` and read as
+`commit`. See [Default endpoint](grants.md#default-endpoint).
+
+```json
+{ "name": "personal", "glob": "/home/you/projects/personal/**", "defaultEndpoint": "green" }
+```
+
 GitHub and GitLab use your `gh auth login` / `glab auth login`; Workit stores
 no forge tokens of its own.
 
