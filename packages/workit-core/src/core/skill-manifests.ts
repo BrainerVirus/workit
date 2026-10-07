@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export const WORKIT_METHOD_SKILLS = [
@@ -64,6 +64,52 @@ export const skillDescription = (skillMd: string): string => {
  * a drift test compares them to the committed copies. */
 export const cursorCommandText = (alias: string, skill: string, description: string): string =>
   `# /${alias}\n\nLoad and apply the bundled \`${skill}\` skill. ${description}\n\nExtra context: $ARGUMENTS\n`;
+
+/** The hosts whose build writes a copy of the skills. */
+export type SkillHost = "claude-code" | "cursor" | "codex" | "opencode" | "pi";
+
+/**
+ * How an agent on `host` loads another Workit skill. A skill named only in
+ * prose does not reliably load; naming the host's own loading mechanism does
+ * (mattpocock/skills 1.3.0). Claude Code namespaces plugin skills, so
+ * `workit-bdd` is `workit:bdd` there.
+ */
+export const skillLoadWording = (host: SkillHost, skill: string): string => {
+  switch (host) {
+    case "claude-code":
+      return `call the Skill tool with \`workit:${skill.replace(/^workit-/, "")}\``;
+    case "opencode":
+      return `call the skill tool with \`${skill}\``;
+    default:
+      return `read the \`${skill}\` skill's SKILL.md and follow it`;
+  }
+};
+
+/** A canonical cross-skill reference: a method skill's name alone in parentheses. */
+const SKILL_REFERENCE = /\((workit-[a-z-]+)\)/g;
+
+/** A canonical skill file with each cross-skill reference in the host's load wording. */
+export const renderSkillText = (text: string, host: SkillHost): string =>
+  text.replace(SKILL_REFERENCE, (match, name: string) =>
+    (WORKIT_METHOD_SKILLS as readonly string[]).includes(name)
+      ? `(${skillLoadWording(host, name)})`
+      : match,
+  );
+
+/** Copy one canonical skill directory to `out`, rendering its Markdown for `host`. */
+export const copySkillForHost = (source: string, out: string, host: SkillHost): void => {
+  cpSync(source, out, { recursive: true });
+  const pending = [out];
+  while (pending.length > 0) {
+    const dir = pending.pop()!;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) pending.push(file);
+      else if (entry.name.endsWith(".md"))
+        writeFileSync(file, renderSkillText(readFileSync(file, "utf8"), host));
+    }
+  }
+};
 
 export const skillManifestNames = (root: string): string[] =>
   existsSync(root)

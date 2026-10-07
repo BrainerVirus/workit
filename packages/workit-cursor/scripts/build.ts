@@ -8,6 +8,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  copySkillForHost,
   cursorCommandText,
   skillDescription,
   validateSkillManifests,
@@ -82,7 +83,7 @@ for (const name of WORKIT_METHOD_SKILLS) {
     console.error(`missing canonical Workit method skill in core: ${name}`);
     process.exit(1);
   }
-  cpSync(srcSkill, path.join(skills, name), { recursive: true });
+  copySkillForHost(srcSkill, path.join(skills, name), "cursor");
 }
 const sourceSkills = path.join(pkgDir, "skills");
 if (existsSync(sourceSkills)) {

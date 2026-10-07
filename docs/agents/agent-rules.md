@@ -21,5 +21,10 @@ those projects.
   Cursor's `skills/` and `commands/`: Cursor installs from git, so those are
   committed. `test/workit-core/generated-copies.test.ts` fails when they drift
   and names the command that regenerates them.
+- Refer to another skill as its name alone in parentheses, `(workit-bdd)`.
+  The builds rewrite that form into each host's load wording
+  (`renderSkillText` in `packages/workit-core/src/core/skill-manifests.ts`;
+  on Claude Code, "call the Skill tool with `workit:bdd`"). A name in plain
+  prose is not rewritten.
 - `test/workit-core/skill-set.test.ts` keeps descriptions, trigger words and
   the routing list in step.

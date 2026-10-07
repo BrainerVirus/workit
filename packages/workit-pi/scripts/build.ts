@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   WORKIT_METHOD_SKILLS,
+  copySkillForHost,
   validateSkillManifests,
 } from "../../workit-core/src/core/skill-manifests";
 
@@ -48,7 +49,7 @@ const skills = path.join(target, "skills");
 rmSync(skills, { recursive: true, force: true });
 mkdirSync(skills, { recursive: true });
 for (const name of WORKIT_METHOD_SKILLS)
-  cpSync(path.join(coreDir, "skills", name), path.join(skills, name), { recursive: true });
+  copySkillForHost(path.join(coreDir, "skills", name), path.join(skills, name), "pi");
 const error = validateSkillManifests(skills, WORKIT_METHOD_SKILLS, "Pi Workit skills");
 if (error) throw new Error(error);
 console.log(`pi: built extension and ${WORKIT_METHOD_SKILLS.length} method skills (${target})`);
