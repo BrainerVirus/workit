@@ -1,0 +1,500 @@
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { takesPositionals } from "@/packages/workit-cli/src/help";
+import { TASK_ACTIONS } from "@/packages/workit-cli/src/task";
+import {
+  FAMILY_ACTIONS,
+  TASK_FAMILY_NAMES,
+  VERBS,
+  findSubcommand,
+  type VerbEntry,
+} from "@/packages/workit-cli/src/verbs/registry";
+
+// `-h`/`--help` and `help <verb> [<sub>]` answer from the registry before any
+// verb loads, and the registry's usage lines name exactly the flags each
+// verb's parser accepts.
+
+const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const cliSrc = path.join(repoRoot, "packages/workit-cli/src");
+const mainEntry = path.join(cliSrc, "main.ts");
+
+// ---------------------------------------------------------------------------
+// The flags a verb's parser accepts, read from its source. Every parser style
+// in the CLI: parseFlags specs (`name: "value"`), node:util parseArgs options
+// (`name: { type: … }`), and hand parsers comparing argv against literals
+// (`"--all"`, `"-m"`, `startsWith("--hosts=")`). Arrays that start with a
+// non-flag word are argv for git/npm, not flags, and are skipped.
+
+/** `file` or `file#function` (that function's body only), relative to the CLI source. */
+const PARSERS: Record<string, string[]> = {
+  init: ["verbs/init.ts"],
+  upgrade: ["upgrade.ts#runUpgradeCommand"],
+  launch: ["upgrade.ts#runLaunchCommand"],
+  doctor: ["verbs/doctor.ts"],
+  gc: ["verbs/gc.ts"],
+  uninstall: ["verbs/uninstall.ts"],
+  grant: ["verbs/grant.ts"],
+  ...Object.fromEntries(TASK_FAMILY_NAMES.map((name) => [name, ["task.ts#parseTaskArgs"]])),
+  check: ["verbs/check.ts"],
+  pr: ["verbs/pr.ts"],
+  ci: ["verbs/ci.ts"],
+  git: ["verbs/git.ts"],
+  "verify-delivery": ["verbs/verify-delivery.ts"],
+  stack: ["verbs/stack.ts"],
+  fanout: ["verbs/fanout.ts"],
+  ledger: ["verbs/ledger.ts"],
+  "test-audit": ["verbs/test-audit.ts"],
+  knowledge: ["verbs/knowledge.ts"],
+  youtrack: ["verbs/youtrack.ts"],
+  changelog: ["verbs/changelog.ts"],
+  handoff: ["verbs/handoff.ts", "task.ts#parseHandoffArgs"],
+};
+PARSERS.task = [...PARSERS.task, "verbs/task.ts"];
+
+// Flags a parser names but does not accept for this verb.
+const NOT_ACCEPTED: Record<string, string[]> = {
+  // parseTaskArgs reads --judge/--ref/--why only when the family is policy.
+  ...Object.fromEntries(
+    TASK_FAMILY_NAMES.filter((name) => name !== "policy").map((name) => [
+      name,
+      ["--judge", "--ref", "--why"],
+    ]),
+  ),
+  // `git push` names --force/-f only to refuse them.
+  git: ["--force", "-f"],
+};
+
+const GLOBAL = new Set(["--json", "--cwd", "--help", "-h"]);
+
+const functionBody = (source: string, name: string): string => {
+  const start = source.search(new RegExp(`function ${name}\\(`, "u"));
+  if (start < 0) throw new Error(`no function ${name}`);
+  const end = source.indexOf("\n}\n", start);
+  return source.slice(start, end < 0 ? undefined : end);
+};
+
+const parserFlags = (verb: string): Set<string> => {
+  const flags = new Set<string>();
+  for (const ref of PARSERS[verb]) {
+    const [file, fn] = ref.split("#");
+    const whole = readFileSync(path.join(cliSrc, file), "utf8");
+    const source = (fn ? functionBody(whole, fn) : whole)
+      .replace(/\/\/[^\n]*/gu, "")
+      .replace(/\[\s*"(?!-)[^"]*"[^\]]*\]/gu, "");
+    const keyed =
+      /[{,]\s*("?)([a-z][a-z0-9-]*)\1:\s*(?:"(?:value|boolean|list)"|\{\s*type:\s*"(?:string|boolean)")/gu;
+    for (const match of source.matchAll(keyed)) flags.add(`--${match[2]}`);
+    for (const match of source.matchAll(/"(--[a-z][a-z0-9-]*)=?"/gu)) flags.add(match[1]);
+    for (const match of source.matchAll(/"(-[a-zA-Z])"/gu)) flags.add(match[1]);
+  }
+  for (const flag of [...GLOBAL, ...(NOT_ACCEPTED[verb] ?? [])]) flags.delete(flag);
+  return flags;
+};
+
+const usageLines = (entry: VerbEntry): string[] => [
+  entry.usage,
+  ...(entry.subcommands ?? []).map((sub) => sub.usage),
+];
+
+const documentedFlags = (entry: VerbEntry): Set<string> => {
+  const flags = new Set<string>();
+  for (const line of usageLines(entry))
+    for (const match of line.matchAll(/(?<![\w-])(--[a-z][a-z0-9-]*|-[a-zA-Z])(?![\w])/gu))
+      flags.add(match[1]);
+  for (const flag of GLOBAL) flags.delete(flag);
+  return flags;
+};
+
+test("given every verb, then each flag its parser accepts is named in its usage, and no other", () => {
+  expect(Object.keys(PARSERS).toSorted()).toEqual(VERBS.map((entry) => entry.name).toSorted());
+  for (const entry of VERBS) {
+    const accepted = [...parserFlags(entry.name)].toSorted();
+    const documented = [...documentedFlags(entry)].toSorted();
+    expect(documented, `workit ${entry.name}: usage vs parser`).toEqual(accepted);
+  }
+  // The extractor sees every parser style (a silent empty set would pass above
+  // only if the usage were empty too).
+  expect([...parserFlags("git")]).toEqual(
+    expect.arrayContaining(["--carry", "--message", "-m", "-a", "--expect", "-u"]),
+  );
+  expect([...parserFlags("ledger")]).toContain("--cost-if-wrong");
+  expect([...parserFlags("upgrade")]).toContain("--hosts");
+  expect([...parserFlags("test-audit")]).toContain("--max-mutants");
+  expect([...parserFlags("policy")]).toContain("--judge");
+  expect([...parserFlags("evidence")]).not.toContain("--judge");
+});
+
+test("given the task families, then help lists exactly the actions the family grammar accepts", () => {
+  for (const name of TASK_FAMILY_NAMES) {
+    expect(Object.keys(FAMILY_ACTIONS[name]).toSorted(), name).toEqual(
+      [...TASK_ACTIONS[name]].toSorted(),
+    );
+    const subs = VERBS.find((entry) => entry.name === name)!.subcommands!.map((sub) => sub.name);
+    for (const action of TASK_ACTIONS[name]) expect(subs, `${name} ${action}`).toContain(action);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Behavior: a scratch repository with a task and a ledger row; no help request
+// may change a byte of it (or of the isolated home).
+
+let root = "";
+let cwd = "";
+let env: Record<string, string> = {};
+
+const cli = (argv: string[]) => {
+  const result = Bun.spawnSync(["bun", mainEntry, ...argv], {
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return {
+    code: result.exitCode,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+  };
+};
+
+const cliAsync = async (argv: string[]) => {
+  const child = Bun.spawn(["bun", mainEntry, ...argv], {
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  return { argv, code, stdout, stderr };
+};
+
+const snapshot = (dir: string): Map<string, string> => {
+  const out = new Map<string, string>();
+  const walk = (current: string) => {
+    for (const name of readdirSync(current)) {
+      const file = path.join(current, name);
+      const rel = path.relative(dir, file);
+      if (statSync(file).isDirectory()) {
+        out.set(rel, "dir");
+        walk(file);
+      } else out.set(rel, createHash("sha1").update(readFileSync(file)).digest("hex"));
+    }
+  };
+  walk(dir);
+  return out;
+};
+
+beforeAll(() => {
+  root = mkdtempSync(path.join(os.tmpdir(), "wk-help-"));
+  const home = path.join(root, "home");
+  cwd = path.join(root, "work");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(cwd, { recursive: true });
+  env = Object.fromEntries(
+    Object.entries({
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      WORKFLOW_TOOLKIT_CONFIG: path.join(home, ".config", "workit"),
+      WORKFLOW_TOOLKIT_STATE: path.join(home, ".local", "state", "workit"),
+      WORKIT_SESSION_ID: "help-test-session",
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    }).filter(
+      (pair): pair is [string, string] =>
+        pair[0] !== "WORKFLOW_WORKSPACE_ROOT" && pair[1] !== undefined,
+    ),
+  );
+  const git = (...args: string[]) =>
+    expect(Bun.spawnSync(["git", ...args], { cwd, env }).exitCode).toBe(0);
+  git("init", "-q", "-b", "main");
+  git("commit", "-q", "--allow-empty", "-m", "chore: seed");
+  expect(cli(["task", "start", "seed objective"]).code).toBe(0);
+  expect(cli(["ledger", "decision", "seed decision", "--why", "seed"]).code).toBe(0);
+});
+afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+/** Every verb, and every subcommand (and alias) of it, as help targets. */
+const targets = (): Array<{ words: string[]; expected: string }> =>
+  VERBS.flatMap((entry) => [
+    { words: [entry.name], expected: `usage: workit ${entry.name}` },
+    ...(entry.subcommands ?? []).flatMap((sub) =>
+      [sub.name, ...(sub.aliases ?? [])].map((word) => ({
+        words: [entry.name, word],
+        expected: `usage: workit ${entry.name} ${sub.name}`,
+      })),
+    ),
+  ]);
+
+const inBatches = async <T, R>(items: T[], size: number, run: (item: T) => Promise<R>) => {
+  const out: R[] = [];
+  for (let index = 0; index < items.length; index += size)
+    out.push(...(await Promise.all(items.slice(index, index + size).map(run))));
+  return out;
+};
+
+test("given every verb and subcommand, when --help or -h follows it, then usage prints, exit 0, and nothing changes", async () => {
+  const before = snapshot(root);
+  const cases = targets().flatMap(({ words, expected }) => [
+    { argv: [...words, "--help"], expected },
+    { argv: [...words, "-h"], expected },
+  ]);
+  // Help flags after real arguments, on the verbs that used to act on them.
+  cases.push(
+    { argv: ["task", "start", "-h"], expected: "usage: workit task start" },
+    { argv: ["task", "note", "would be noted", "-h"], expected: "usage: workit task note" },
+    {
+      argv: ["task", "close", "--outcome", "verified", "-h"],
+      expected: "usage: workit task close",
+    },
+    { argv: ["gc", "--prune-recovery", "--yes", "--help"], expected: "usage: workit gc" },
+    { argv: ["doctor", "--fix-lock", "--force", "--yes", "-h"], expected: "usage: workit doctor" },
+    { argv: ["stack", "plan", "feature/a", "-h"], expected: "usage: workit stack plan" },
+    {
+      argv: ["git", "commit", "-m", "fix: x", "--all", "--help"],
+      expected: "usage: workit git commit",
+    },
+    { argv: ["git", "branch", "feature/x", "-h"], expected: "usage: workit git branch" },
+    {
+      argv: ["ledger", "decision", "x", "--why", "y", "-h"],
+      expected: "usage: workit ledger decision",
+    },
+    { argv: ["grant", "set", "work", "push=true", "-h"], expected: "usage: workit grant set" },
+    { argv: ["--json", "task", "note", "x", "--help"], expected: '"subcommand":"note"' },
+  );
+  expect(cases.length).toBeGreaterThan(150);
+  const results = await inBatches(cases, 12, async ({ argv, expected }) => ({
+    ...(await cliAsync(argv)),
+    expected,
+  }));
+  for (const result of results) {
+    const label = `workit ${result.argv.join(" ")}\n${result.stderr}`;
+    expect(result.code, label).toBe(0);
+    expect(result.stderr, label).toBe("");
+    expect(result.stdout, label).toContain(result.expected);
+  }
+  expect(snapshot(root)).toEqual(before);
+}, 120_000);
+
+test("given help flags after --, then they are values: task note -- -h records the note -h", () => {
+  const before = snapshot(root);
+  const noted = cli(["task", "note", "--json", "--", "-h"]);
+  expect(noted.code, noted.stderr).toBe(0);
+  const status = JSON.parse(cli(["task", "status", "--json"]).stdout);
+  expect(status.data.task.progress.summary).toBe("-h");
+  // The snapshot sees a store write, so the no-change assertion above can fail.
+  expect(snapshot(root)).not.toEqual(before);
+});
+
+test("given help <verb> <sub>, then it prints that subcommand, the same as --help", () => {
+  const viaHelp = cli(["help", "git", "commit"]);
+  expect(viaHelp.code).toBe(0);
+  expect(viaHelp.stdout).toStartWith("usage: workit git commit -m|--message <msg>…");
+  expect(viaHelp.stdout).not.toContain("git push");
+  expect(cli(["git", "commit", "--help"]).stdout).toBe(viaHelp.stdout);
+
+  const verb = cli(["help", "git"]);
+  expect(verb.stdout).toContain("usage: workit git push [-u|--set-upstream]");
+  expect(verb.stdout).toContain("examples:\n  workit git branch --kind feature");
+
+  const unknown = cli(["help", "git", "frob"]);
+  expect(unknown.code).toBe(2);
+  expect(unknown.stderr).toContain('unknown git subcommand "frob"');
+});
+
+test("given --json, then help is an envelope carrying the usage and the text", () => {
+  const result = cli(["git", "push", "-h", "--json"]);
+  expect(result.code).toBe(0);
+  const envelope = JSON.parse(result.stdout);
+  expect(envelope).toMatchObject({
+    ok: true,
+    code: "ok",
+    data: {
+      name: "git",
+      group: "delivery",
+      subcommand: "push",
+      usage:
+        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]]",
+      usages: [
+        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]]",
+      ],
+    },
+  });
+  expect(envelope.data.text).toStartWith("usage: workit git push");
+  expect(JSON.parse(cli(["--json", "help", "pr", "merge"]).stdout).data.subcommand).toBe("merge");
+
+  // help <verb> keeps `usage` a string (the first line) and adds every line.
+  const verb = JSON.parse(cli(["help", "ci", "--json"]).stdout).data;
+  expect(verb.group).toBe("delivery");
+  expect(verb.usage).toBe(
+    "workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
+  );
+  expect(verb.usages).toHaveLength(2);
+  expect(verb.usages[1]).toStartWith("workit ci rerun ");
+  const listed = JSON.parse(cli(["help", "--json"]).stdout).data.verbs;
+  expect(listed.find((entry: { name: string }) => entry.name === "ci")).toMatchObject({
+    group: "delivery",
+    usage: "workit ci wait|rerun [options]",
+    usages: verb.usages,
+  });
+});
+
+test("given -h or --help right after a flag that takes a value, then it is a usage error naming the escape, and nothing changes", () => {
+  const before = snapshot(root);
+  const cases: Array<[string[], string]> = [
+    [["git", "commit", "-m", "-h"], "`-h` looks like the value of -m; use --message=-h"],
+    [["git", "commit", "--message", "--help"], "use --message=--help"],
+    [
+      ["ledger", "decision", "x", "--why", "-h"],
+      "`-h` looks like the value of --why; use --why=-h",
+    ],
+    [["task", "close", "--outcome", "-h"], "use --outcome=-h"],
+    [["pr", "create", "--title", "-h"], "use --title=-h"],
+  ];
+  for (const [argv, message] of cases) {
+    const result = cli(argv);
+    expect(result.code, argv.join(" ")).toBe(2);
+    expect(result.stdout, argv.join(" ")).toBe("");
+    expect(result.stderr, argv.join(" ")).toContain(message);
+  }
+  // A boolean flag before -h takes no value: that is a help request.
+  expect(cli(["git", "push", "--set-upstream", "-h"]).code).toBe(0);
+  expect(snapshot(root)).toEqual(before);
+});
+
+test("given --flag=value or a bare --, then a value starting with - reaches the verb", () => {
+  // --flag=value: the escape the usage error names.
+  const noted = cli(["task", "note", "--next=-h", "escaped next"]);
+  expect(noted.code, noted.stderr).toBe(0);
+  const status = JSON.parse(cli(["task", "status", "--json"]).stdout);
+  expect(status.data.task.progress.nextAction).toBe("-h");
+
+  // parseFlags verbs: after --, -h is a positional (here an invalid issue id).
+  const youtrack = cli(["youtrack", "note", "--markdown", "x", "--", "-h"]);
+  expect(youtrack.code).toBe(2);
+  expect(youtrack.stderr).toContain("an issue id like ABC-123 is required");
+
+  // `task start --json -- -h` is the implicit form, not the family grammar.
+  const started = cli(["task", "start", "--json", "--", "-h"]);
+  expect(started.code, started.stderr).toBe(0);
+  expect(JSON.parse(started.stdout).ok).toBe(true);
+});
+
+// Every subcommand a verb dispatches on, read from its source: `sub === "x"`,
+// `["x", …].includes(sub)`, `positionals[0] === "x"`, the verify-delivery
+// ENDPOINTS keys and the implicit task forms.
+const dispatched = (verb: string): string[] => {
+  const file = path.join(cliSrc, "verbs", `${verb}.ts`);
+  const source = readFileSync(file, "utf8");
+  const names = new Set<string>();
+  for (const match of source.matchAll(/\b(?:sub|positionals\[0\]) *[!=]== *"([a-z][a-z-]*)"/gu))
+    names.add(match[1]);
+  for (const match of source.matchAll(/\[([^\]]*)\]\.includes\(sub\b/gu))
+    for (const word of match[1].matchAll(/"([a-z][a-z-]*)"/gu)) names.add(word[1]);
+  const endpoints = /const ENDPOINTS[^=]*= \{([^}]*)\}/u.exec(source);
+  for (const key of endpoints?.[1].matchAll(/^\s*([a-z]+):/gmu) ?? []) names.add(key[1]);
+  if (verb === "task") {
+    const implicit = /const IMPLICIT = new Set\(\[([^\]]*)\]\)/u.exec(source)![1];
+    for (const word of implicit.matchAll(/"([a-z]+)"/gu)) names.add(word[1]);
+    for (const match of source.matchAll(/\baction === "([a-z]+)"/gu)) names.add(match[1]);
+  }
+  return [...names];
+};
+
+test("given every subcommand a verb dispatches, then the registry has a help entry for it", () => {
+  let seen = 0;
+  for (const entry of VERBS) {
+    if (!existsSync(path.join(cliSrc, "verbs", `${entry.name}.ts`))) continue;
+    for (const name of dispatched(entry.name)) {
+      seen += 1;
+      expect(findSubcommand(entry, name), `workit ${entry.name} ${name}`).toBeDefined();
+    }
+  }
+  // git 3, pr 3, ci 2, stack 4, fanout 5, ledger 8, grant 3, youtrack 3,
+  // verify-delivery 7, changelog 1, knowledge 1, task 5.
+  expect(seen).toBeGreaterThanOrEqual(45);
+  expect(dispatched("ledger")).toEqual(expect.arrayContaining(["add", "show", "standing"]));
+});
+
+const UNKNOWN_END =
+  /unknown (?:argument|option):? --(?![\w-])|subcommand "--"|action for \w+: --(?![\w-])/u;
+
+test("given -- after any verb or subcommand, then it ends the options: no-positional commands refuse what follows before running, never 'unknown argument: --'", async () => {
+  const refused: Array<{ argv: string[]; expected: string }> = [];
+  const positional: string[][] = [];
+  for (const entry of VERBS) {
+    if (entry.subcommands?.length && !entry.optionalSubcommand)
+      refused.push({
+        argv: [entry.name, "--", "-h"],
+        expected: `missing ${entry.name} subcommand`,
+      });
+    else if (!entry.subcommands?.length && !takesPositionals([entry.usage]))
+      refused.push({
+        argv: [entry.name, "--", "-h"],
+        expected: `${entry.name} takes no positional arguments (got: -h)`,
+      });
+    else positional.push([entry.name, "--", "-h"]);
+    for (const sub of entry.subcommands ?? []) {
+      const argv = [entry.name, sub.name, "--", "-h"];
+      if (takesPositionals([sub.usage])) positional.push(argv);
+      else
+        refused.push({
+          argv,
+          expected: `${entry.name} ${sub.name} takes no positional arguments (got: -h)`,
+        });
+    }
+  }
+  // The split is the usage grammar's: spot-check both sides.
+  const labels = (rows: string[][]) => rows.map((argv) => argv.slice(0, -2).join(" "));
+  expect(labels(refused.map((row) => row.argv))).toEqual(
+    expect.arrayContaining(["gc", "init", "evidence record", "pr merge", "git push", "handoff"]),
+  );
+  expect(labels(positional)).toEqual(
+    expect.arrayContaining(["task note", "git commit", "check", "launch", "grant"]),
+  );
+
+  const before = snapshot(root);
+  const results = await inBatches(refused, 12, async ({ argv, expected }) => ({
+    ...(await cliAsync(argv)),
+    expected,
+  }));
+  for (const result of results) {
+    const label = `workit ${result.argv.join(" ")}\n${result.stdout}${result.stderr}`;
+    expect(result.code, label).toBe(2);
+    expect(result.stderr, label).toContain(result.expected);
+  }
+  expect(snapshot(root)).toEqual(before);
+
+  // Commands that take positionals parse `--` themselves (they may act on -h).
+  for (const result of await inBatches(positional, 6, cliAsync)) {
+    const label = `workit ${result.argv.join(" ")}\n${result.stdout}${result.stderr}`;
+    expect(`${result.stdout}${result.stderr}`, label).not.toMatch(UNKNOWN_END);
+    // -h after -- is never a help request (help prints usage on stdout).
+    expect(result.stdout, label).not.toStartWith("usage: workit");
+  }
+
+  // A bare trailing -- is accepted.
+  for (const argv of [
+    ["task", "status", "--json", "--"],
+    ["ledger", "list", "--json", "--"],
+  ]) {
+    const result = cli(argv);
+    expect(result.code, `${argv.join(" ")}\n${result.stderr}`).toBe(0);
+  }
+}, 120_000);
