@@ -11,6 +11,7 @@ import {
   type ForgePrStatus,
   type ForgeResult,
   type ForgeThread,
+  type PrMeta,
   type PrState,
 } from "./types";
 
@@ -22,6 +23,8 @@ type GlUser = { username?: string; bot?: boolean } | null;
 
 type GlMr = {
   iid: number;
+  title?: string;
+  reviewers?: Array<{ id: number }>;
   web_url: string;
   state: string;
   draft?: boolean;
@@ -169,6 +172,20 @@ const safeUrl = (value: string | null): string | null => (value ? redactText(val
 const isBot = (author: GlUser): boolean =>
   author?.bot === true || /(?:^project_\d+_bot|bot$|\[bot\]$)/iu.test(author?.username ?? "");
 
+/** GitLab's draft markers at the start of an MR title. */
+const DRAFT_PREFIX = /^(?:\s*(?:\[draft\]|\(draft\)|draft:)\s*)+/iu;
+
+/**
+ * `title` with GitLab's draft markers (`Draft:`, `[Draft]`, `(Draft)`,
+ * repeated) replaced by one `Draft: ` or removed (GitLab keeps draft in the
+ * title). Null when nothing but markers is left.
+ */
+const draftTitle = (title: string, draft: boolean): string | null => {
+  const bare = title.replace(DRAFT_PREFIX, "").trim();
+  if (!bare) return null;
+  return draft ? `Draft: ${bare}` : bare;
+};
+
 // Statuses where GitLab has not finished computing mergeability.
 const UNSETTLED = new Set(["checking", "unchecked", "preparing", "approvals_syncing"]);
 
@@ -231,6 +248,26 @@ export function createGitLabForge(options: {
       `branch ${branch}`,
     );
     return tip.ok && typeof tip.data.commit?.id === "string" ? tip.data.commit.id : null;
+  };
+
+  const getMr = (iid: number): ForgeResult<GlMr> =>
+    apiJson<GlMr>(
+      runner,
+      "glab",
+      apiHost,
+      api(`${project}/merge_requests/${iid}`),
+      `merge request !${iid}`,
+    );
+
+  const putMr = (iid: number, fields: string[], what: string): ForgeResult<void> => {
+    const updated = apiWrite<unknown>(
+      runner,
+      "glab",
+      apiHost,
+      ["api", "-X", "PUT", `${project}/merge_requests/${iid}`, ...fields],
+      `${what} of merge request !${iid}`,
+    );
+    return updated.ok ? success(undefined) : updated;
   };
 
   return {
@@ -551,6 +588,136 @@ export function createGitLabForge(options: {
         `retarget of merge request !${iid}`,
       );
       return updated.ok ? success(undefined) : updated;
+    },
+
+    prMeta(iid) {
+      const mr = getMr(iid);
+      if (!mr.ok) return mr;
+      const value = mr.data;
+      const meta: PrMeta = {
+        number: value.iid,
+        url: value.web_url,
+        state: mrState(value.state),
+        draft: value.draft ?? value.work_in_progress ?? false,
+        title: value.title ?? "",
+        base: value.target_branch,
+        headBranch: value.source_branch,
+      };
+      return success(meta);
+    },
+
+    setDraft(iid, draft) {
+      const mr = getMr(iid);
+      if (!mr.ok) return mr;
+      const title = draftTitle(mr.data.title ?? "", draft);
+      if (title === null)
+        return failure(
+          "invalid_input",
+          `merge request !${iid} has no title besides its draft marker`,
+        );
+      return putMr(iid, ["-f", `title=${title}`], `draft state`);
+    },
+
+    editPr(iid, edit) {
+      const mr = getMr(iid);
+      if (!mr.ok) return mr;
+      const fields: string[] = [];
+      // A new title keeps the MR's draft state (it lives in the title).
+      if (edit.title !== undefined) {
+        const title = draftTitle(edit.title, mr.data.draft ?? mr.data.work_in_progress ?? false);
+        if (title === null)
+          return failure("invalid_input", "--title must have text besides a draft marker");
+        fields.push("-f", `title=${title}`);
+      }
+      if (edit.body !== undefined) fields.push("-f", `description=${edit.body}`);
+      if (edit.base !== undefined) fields.push("-f", `target_branch=${edit.base}`);
+      if (edit.addLabels.length) fields.push("-f", `add_labels=${edit.addLabels.join(",")}`);
+      if (edit.removeLabels.length)
+        fields.push("-f", `remove_labels=${edit.removeLabels.join(",")}`);
+      if (edit.addReviewers.length) {
+        // reviewer_ids replaces the list: keep the current reviewers.
+        const ids = new Set((mr.data.reviewers ?? []).map((reviewer) => reviewer.id));
+        for (const username of edit.addReviewers) {
+          const users = apiJson<Array<{ id?: number; username?: string }>>(
+            runner,
+            "glab",
+            apiHost,
+            api(`users?username=${encodeURIComponent(username)}`),
+            `user ${username}`,
+          );
+          if (!users.ok) return users;
+          const user = Array.isArray(users.data)
+            ? users.data.find((entry) => entry.username?.toLowerCase() === username.toLowerCase())
+            : undefined;
+          if (typeof user?.id !== "number")
+            return failure("not_found", `GitLab user ${username} was not found`);
+          ids.add(user.id);
+        }
+        // One JSON array: glab rejects `reviewer_ids[]=` keys in a JSON body.
+        fields.push("-F", `reviewer_ids=${JSON.stringify([...ids])}`);
+      }
+      return fields.length ? putMr(iid, fields, "edit") : success(undefined);
+    },
+
+    replyThread(iid, thread, body) {
+      const note = apiWrite<{ id?: number }>(
+        runner,
+        "glab",
+        apiHost,
+        [
+          "api",
+          "-X",
+          "POST",
+          `${project}/merge_requests/${iid}/discussions/${encodeURIComponent(thread)}/notes`,
+          "-f",
+          `body=${body}`,
+        ],
+        `reply on merge request !${iid}`,
+      );
+      if (!note.ok) return note;
+      return success({ url: null });
+    },
+
+    resolveThread(iid, thread) {
+      const resolved = apiWrite<{ notes?: GlNote[] }>(
+        runner,
+        "glab",
+        apiHost,
+        [
+          "api",
+          "-X",
+          "PUT",
+          `${project}/merge_requests/${iid}/discussions/${encodeURIComponent(thread)}`,
+          "-F",
+          "resolved=true",
+        ],
+        `resolve on merge request !${iid}`,
+      );
+      if (!resolved.ok) return resolved;
+      const open = (resolved.data.notes ?? []).some(
+        (note) => note.resolvable === true && note.resolved !== true,
+      );
+      return open
+        ? failure("failed", `discussion ${thread} on merge request !${iid} is still unresolved`)
+        : success(undefined);
+    },
+
+    threadState(iid, thread) {
+      const discussion = apiJson<GlDiscussion>(
+        runner,
+        "glab",
+        apiHost,
+        api(`${project}/merge_requests/${iid}/discussions/${encodeURIComponent(thread)}`),
+        `discussion ${thread}`,
+      );
+      if (!discussion.ok) return discussion.code === "not_found" ? success(null) : discussion;
+      const notes = Array.isArray(discussion.data.notes) ? discussion.data.notes : [];
+      if (!notes.some((note) => note.resolvable === true)) return success(null);
+      return success(
+        notes.some((note) => note.resolvable === true && note.resolved !== true)
+          ? "open"
+          : "resolved",
+      );
     },
   };
 }

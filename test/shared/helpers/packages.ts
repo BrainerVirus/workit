@@ -12,6 +12,10 @@ import path from "node:path";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 
+/** Per-test budget for tests that pack, build or spawn the doctor repeatedly:
+ * bun's 5 s default times them out on a loaded machine. */
+export const SLOW_TEST_TIMEOUT_MS = 60_000;
+
 export type PackedPackage = {
   packageName: string;
   tarball: string;

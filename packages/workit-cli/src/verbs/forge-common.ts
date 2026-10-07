@@ -1,11 +1,14 @@
 // Shared plumbing for the forge verbs (`pr`, `ci`, `git push`, `verify-delivery`):
 // flag parsing, forge resolution + identity check, envelope mapping, and the
 // human rendering of a PR status document.
+import { readFileSync } from "node:fs";
 import type { ForgeRunner } from "@brainervirus/workit-core/src/forge/exec";
 import type { PrStatusDoc } from "@brainervirus/workit-core/src/forge/report";
 import {
   checkIdentity,
+  checkPushIdentity,
   resolveForge,
+  type PushIdentity,
   type ResolvedForge,
 } from "@brainervirus/workit-core/src/forge/resolve";
 import type { ForgeResult } from "@brainervirus/workit-core/src/forge/types";
@@ -14,15 +17,17 @@ import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
 export { parseDuration } from "@brainervirus/workit-core/src/duration";
 import { emit, fail, type Io } from "../output";
 
-/** Test seams: a recorded-fixture runner, a virtual clock and a fake npm. */
+/** Test seams: a recorded-fixture runner, a virtual clock, a fake npm and stdin. */
 export const forgeDeps: {
   runner: ForgeRunner | undefined;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   npm: NpmRunner | undefined;
+  readStdin: () => string;
 } = {
   runner: undefined,
   npm: undefined,
+  readStdin: () => readFileSync(0, "utf8"),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
 };
@@ -123,19 +128,32 @@ export const forgeFail = (
   data?: Record<string, unknown>,
 ): number => emit(io, fail(result.code, result.error, { data, unblock: result.unblock }));
 
-/** Resolve the forge from the push remote and verify the effective account. */
+/** Bound on resolving the forge and checking the account, for verbs without a --timeout. */
+const CONNECT_BUDGET_MS = 15_000;
+
+/**
+ * Resolve the forge from the push remote and verify the effective account.
+ * `deadline` (absolute, forgeDeps.now clock) bounds this and every later call
+ * through the returned forge, so a verb's --timeout covers the whole command;
+ * without one, resolution gets CONNECT_BUDGET_MS and later calls only their
+ * own per-call caps.
+ */
 export function connect(
   io: Io,
   branch?: string | null,
+  options: { deadline?: number | null } = {},
 ): ForgeResult<ResolvedForge & { identity: NonNullable<PrStatusDoc["identity"]> }> {
+  const verbDeadline = options.deadline ?? null;
   const resolved = resolveForge(io.cwd, {
     branch,
     env: io.env,
     runner: forgeDeps.runner,
     now: forgeDeps.now,
+    deadline: verbDeadline ?? forgeDeps.now() + CONNECT_BUDGET_MS,
   });
   if (!resolved.ok) return resolved;
   const identity = checkIdentity(resolved.data);
+  resolved.data.limits.deadline = verbDeadline;
   if (!identity.ok) return identity;
   return {
     ok: true,
@@ -149,6 +167,15 @@ export function connect(
     },
   };
 }
+
+/** The bounded, best-effort identity check before `git push` (core checkPushIdentity). */
+export const pushIdentity = (io: Io, branch: string): ForgeResult<PushIdentity> =>
+  checkPushIdentity(io.cwd, {
+    branch,
+    env: io.env,
+    runner: forgeDeps.runner,
+    now: forgeDeps.now,
+  });
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 7) : "?");
 
