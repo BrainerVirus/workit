@@ -132,8 +132,13 @@ const workspaceConfigSchema = z
       .optional(),
     /** Legacy (≤4.x) standing approvals; read once as autonomy grants (autonomy.ts). */
     autoApprove: z.union([z.boolean(), z.array(nonBlank)]).optional(),
-    /** Where an unnamed request stops (skills read it); same rules as grants. */
-    defaultEndpoint: z.enum(["commit", "pr"]).optional(),
+    /**
+     * Where an unnamed request stops (skills read it): commit, pr, green or
+     * merged; same rules as grants. Read leniently (autonomy.ts endpointOf):
+     * a value this version does not know is reported and treated as commit,
+     * so a newer Workit's endpoint never invalidates the whole file.
+     */
+    defaultEndpoint: z.unknown().optional(),
     /** How a normal-risk behavior change is verified (S17); same rules as grants. */
     verification: z.enum(["self", "independent"]).optional(),
     /** Autonomy grants (D15): only ever set here, by the user. */

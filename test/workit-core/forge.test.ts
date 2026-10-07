@@ -23,6 +23,7 @@ import { createGitHubForge } from "@/packages/workit-core/src/forge/github";
 import { createGitLabForge } from "@/packages/workit-core/src/forge/gitlab";
 import { logTail, redactText, shortBody } from "@/packages/workit-core/src/forge/redact";
 import {
+  babysitAction,
   executeRerun,
   nextAction,
   pollDelay,
@@ -174,6 +175,7 @@ describe("S10 pr status", () => {
       expect(doc.reviews.decision).toBe("review_required");
       expect(doc.mergeable).toBe("yes");
       expect(doc.next).toBe("RESOLVE_THREADS");
+      expect(doc.babysit).toBe("address-threads");
     }
     expect(shape(docs[0])).toEqual(shape(docs[1]));
     expect(docs.map((doc) => doc.forge)).toEqual(["github", "gitlab"]);
@@ -323,17 +325,34 @@ describe("S10 pr status", () => {
       behindBase: { behind: 3 },
       reviews: { decision: "approved" },
       next: "REBASE",
+      babysit: "update-branch",
     });
     const gitlab = repoFor("gitlab");
     const routes = gitlabRoutes(gitlabMr({ detailed_merge_status: "need_rebase" }));
     routes[`GET ${GL}/merge_requests/12/discussions?per_page=100&page=1`] = "[]";
     expect(statusOf(gitlab, routes)).toMatchObject({ rebaseRequired: true, next: "REBASE" });
-    // Behind but not required, nothing else open: READY.
+    // Behind but not required, nothing else open: READY, and babysitting is
+    // done too: behindBase is information, not an update on a busy base.
     const passing = repoFor("github");
     expect(statusOf(passing, githubRoutes("github/pr-passing.json"))).toMatchObject({
       rebaseRequired: false,
       behindBase: { behind: 3 },
       next: "READY",
+      babysit: "ready",
+    });
+    // A draft that still needs a review: next is REVIEW, the babysitter marks it ready.
+    const draft = JSON.parse(fixture("github/pr-passing.json"));
+    Object.assign(draft.data.repository.pullRequest, {
+      isDraft: true,
+      reviewDecision: "REVIEW_REQUIRED",
+      mergeStateStatus: "BLOCKED",
+    });
+    const draftRoutes = githubRoutes("github/pr-passing.json");
+    draftRoutes[GH_STATUS] = JSON.stringify(draft);
+    expect(statusOf(repoFor("github"), draftRoutes)).toMatchObject({
+      draft: true,
+      next: "REVIEW",
+      babysit: "mark-ready",
     });
   });
 
@@ -343,6 +362,7 @@ describe("S10 pr status", () => {
       state: "merged",
       behindBase: null,
       next: "MERGED",
+      babysit: "merged",
     });
   });
 
@@ -410,6 +430,7 @@ describe("S10 pr status", () => {
     expect(doc.checks.state).toBe("failing");
     expect(doc.checks.failing.map((check) => check.name)).toEqual(["pipeline"]);
     expect(doc.next).toBe("FIX_CI");
+    expect(doc.babysit).toBe("fix-ci");
     expect(waitVerdict(doc, { elapsedMs: 100_000 }).state).toBe("failed");
   });
 
@@ -1169,6 +1190,27 @@ describe("S10 redaction and verdicts", () => {
     expect(nextAction({ ...gl, checks: "none", mergeState: "ci_must_pass" })).toBe("WAITING_CI");
     expect(nextAction({ ...gl, mergeState: "draft_status" })).toBe("MARK_READY");
     expect(nextAction({ ...gl, mergeState: "jira_association_missing" })).toBe("NOT_MERGEABLE");
+  });
+
+  test("babysit maps next to one step; only a forge-required update rewrites the branch", () => {
+    expect(babysitAction("MERGED", "merged", false)).toBe("merged");
+    expect(babysitAction("CLOSED", "closed", false)).toBeNull();
+    expect(babysitAction("RESOLVE_CONFLICTS", "conflicts", false)).toBe("update-branch");
+    expect(babysitAction("REBASE", "behind_base_required", false)).toBe("update-branch");
+    expect(babysitAction("RESOLVE_THREADS", "unresolved_threads", true)).toBe("address-threads");
+    expect(babysitAction("ADDRESS_REVIEW", "changes_requested", false)).toBe("address-threads");
+    expect(babysitAction("FIX_CI", "checks_failing", true)).toBe("fix-ci");
+    expect(babysitAction("WAITING_CI", "checks_pending", false)).toBe("wait");
+    // CI is done but the forge is still deciding: not a `ci wait` (it would return at once).
+    expect(babysitAction("IN_MERGE_QUEUE", "in_merge_queue", false)).toBe("wait-forge");
+    expect(babysitAction("NOT_MERGEABLE", "mergeability_unknown", false)).toBe("wait-forge");
+    // A draft is marked ready even when a pending review sorts ahead of MARK_READY.
+    expect(babysitAction("MARK_READY", "draft", true)).toBe("mark-ready");
+    expect(babysitAction("REVIEW", "review_required", true)).toBe("mark-ready");
+    // Nothing left for the agent: a human approval or a forge rule decides.
+    expect(babysitAction("REVIEW", "review_required", false)).toBe("ready");
+    expect(babysitAction("NOT_MERGEABLE", "merge_state_blocked", false)).toBe("ready");
+    expect(babysitAction("READY", null, false)).toBe("ready");
   });
 
   test("ci wait verdicts and the deterministic backoff", () => {

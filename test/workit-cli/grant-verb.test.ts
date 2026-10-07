@@ -63,10 +63,10 @@ const interactive = (answer: string, asked: string[] = []): GrantDeps => ({
   },
 });
 
-const run = async (argv: string[], deps: GrantDeps, env: NodeJS.ProcessEnv = {}) => {
+const run = async (argv: string[], deps: GrantDeps, env: NodeJS.ProcessEnv = {}, json = true) => {
   let stdout = "";
   const io: Io = {
-    json: true,
+    json,
     cwd: path.join(checkout, "repo"),
     // Never inherit the runner's env: it may carry an agent marker such as CLAUDECODE.
     env,
@@ -74,7 +74,7 @@ const run = async (argv: string[], deps: GrantDeps, env: NodeJS.ProcessEnv = {})
     stderr: () => {},
   };
   const code = await runGrant(argv, io, deps);
-  return { code, json: () => JSON.parse(stdout) };
+  return { code, json: () => JSON.parse(stdout), text: () => stdout };
 };
 
 test("grant show: a workspace without grants reports the D4 defaults", async () => {
@@ -300,4 +300,179 @@ test("verification=independent (user config, S17) tightens headless, makes norma
   expect((await run(["unset", "w", "verification"], interactive("w"))).code).toBe(0);
   expect(entry().verification).toBeUndefined();
   expect(rules()).toEqual(["check:test", "verdict:self"]);
+});
+
+// Babysit endpoints: commit < pr < green < merged. `green` babysits the PR to
+// merge-ready, `merged` also lands it but needs the merge grant to take effect.
+
+test("grant set: each step up the endpoint ladder is a raise refused headless", async () => {
+  for (const [from, to] of [
+    ["commit", "pr"],
+    ["pr", "green"],
+    ["green", "merged"],
+    ["commit", "merged"],
+  ]) {
+    writeWorkspace(from === "commit" ? {} : { defaultEndpoint: from });
+    const before = readFileSync(file(), "utf8");
+    const result = await run(["set", "w", `defaultEndpoint=${to}`], headless);
+    expect(result.code, `${from} -> ${to}`).toBe(3);
+    expect(result.json().error).toContain("grant_raise_refused: raising defaultEndpoint");
+    expect(result.json().unblock).toContain(`workit grant set w defaultEndpoint=${to}`);
+    expect(readFileSync(file(), "utf8")).toBe(before);
+  }
+});
+
+test("grant set: a raise to green or merged writes once the user types the workspace name", async () => {
+  const asked: string[] = [];
+  const green = await run(["set", "w", "defaultEndpoint=green"], interactive("w", asked));
+  expect(green.code).toBe(0);
+  expect(asked[0]).toContain("defaultEndpoint=green");
+  expect(entry().defaultEndpoint).toBe("green");
+
+  const refused = await run(["set", "w", "defaultEndpoint=merged"], interactive("nope"));
+  expect(refused.code).toBe(3);
+  expect(entry().defaultEndpoint).toBe("green");
+
+  const merged = await run(["set", "w", "defaultEndpoint=merged"], interactive("w"));
+  expect(merged.code).toBe(0);
+  expect(entry().defaultEndpoint).toBe("merged");
+});
+
+test("grant set: stepping the endpoint down is free headless", async () => {
+  writeWorkspace({ defaultEndpoint: "merged" });
+  const green = await run(["set", "w", "defaultEndpoint=green"], headless);
+  expect(green.code).toBe(0);
+  expect(entry().defaultEndpoint).toBe("green");
+  const pr = await run(["set", "w", "defaultEndpoint=pr"], headless);
+  expect(pr.code).toBe(0);
+  expect(entry().defaultEndpoint).toBe("pr");
+  writeWorkspace({ defaultEndpoint: "merged" });
+  expect((await run(["unset", "w", "defaultEndpoint"], headless)).code).toBe(0);
+  expect(entry().defaultEndpoint).toBeUndefined();
+});
+
+test("grant set: an endpoint outside commit|pr|green|merged is rejected and nothing is written", async () => {
+  const before = readFileSync(file(), "utf8");
+  const result = await run(["set", "w", "defaultEndpoint=deployed"], interactive("w"));
+  expect(result.code).not.toBe(0);
+  expect(result.json()).toMatchObject({ ok: false, code: "invalid_input" });
+  expect(result.json().error).toContain("commit, pr, green, merged");
+  expect(readFileSync(file(), "utf8")).toBe(before);
+});
+
+test("grant show: an unknown configured endpoint is reported, reads as commit, and keeps the other grants", async () => {
+  writeWorkspace({ defaultEndpoint: "deployed", autonomy: { merge: "verified" } });
+  const shown = await run(["show"], headless);
+  expect(shown.code).toBe(0);
+  expect(shown.json().data).toMatchObject({
+    grants: { merge: "verified" },
+    defaultEndpoint: "commit",
+    configuredEndpoint: "deployed",
+    effectiveEndpoint: "commit",
+  });
+  expect(shown.json().data.endpointIssue).toContain('"deployed"');
+  const text = (await run(["show"], headless, {}, false)).text();
+  expect(text).toContain('note: defaultEndpoint "deployed" is not one of');
+  // The fallback is commit, so any endpoint above it is still a raise.
+  const raise = await run(["set", "w", "defaultEndpoint=pr"], headless);
+  expect(raise.code).toBe(3);
+  // A lowering write keeps the value it does not understand untouched.
+  expect((await run(["set", "w", "push=false"], headless)).code).toBe(0);
+  expect(entry().defaultEndpoint).toBe("deployed");
+});
+
+test("grant show: merged without the merge grant is effectively green, in text and JSON", async () => {
+  writeWorkspace({ defaultEndpoint: "merged" });
+  const shown = await run(["show"], headless);
+  expect(shown.json().data).toMatchObject({
+    defaultEndpoint: "merged",
+    configuredEndpoint: "merged",
+    effectiveEndpoint: "green",
+    endpointReason:
+      "merge grant missing; ask the user to run, in their own terminal: workit grant set w merge=verified",
+  });
+  const text = (await run(["show"], headless, {}, false)).text();
+  expect(text).toContain(
+    "default endpoint: merged (effective: green, merge grant missing; ask the user to run, in their own terminal: workit grant set w merge=verified)",
+  );
+  const all = await run(["show", "--all"], headless);
+  expect(all.json().data.workspaces[0]).toMatchObject({
+    defaultEndpoint: "merged",
+    effectiveEndpoint: "green",
+  });
+});
+
+test("grant show: merged with the merge grant is effective; green is never raised by the grant", async () => {
+  writeWorkspace({ defaultEndpoint: "merged", autonomy: { merge: "verified" } });
+  const merged = await run(["show"], headless);
+  expect(merged.json().data).toMatchObject({
+    defaultEndpoint: "merged",
+    effectiveEndpoint: "merged",
+  });
+  expect(merged.json().data.endpointReason).toBeUndefined();
+  expect((await run(["show"], headless, {}, false)).text()).toContain(
+    "default endpoint: merged (an unnamed request stops at a merged PR",
+  );
+
+  writeWorkspace({ defaultEndpoint: "green", autonomy: { merge: true } });
+  expect((await run(["show"], headless)).json().data).toMatchObject({
+    defaultEndpoint: "green",
+    effectiveEndpoint: "green",
+  });
+});
+
+test("grant show: explicit grants without vcs.account lower any forge endpoint to commit, like pr create would", async () => {
+  writeFileSync(
+    file(),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "w",
+          glob: `${checkout.replaceAll("\\", "/")}/**`,
+          defaultEndpoint: "merged",
+          autonomy: { merge: "verified" },
+        },
+      ],
+    }),
+  );
+  const data = (await run(["show"], headless)).json().data;
+  expect(data).toMatchObject({ defaultEndpoint: "merged", effectiveEndpoint: "commit" });
+  expect(data.endpointReason).toStartWith("vcs.account missing; set vcs.account for workspace");
+});
+
+test("grant set: lowering merge under a merged endpoint shows it falling back to green", async () => {
+  writeWorkspace({ defaultEndpoint: "merged", autonomy: { merge: "verified" } });
+  const lowered = await run(["set", "w", "merge=false"], headless);
+  expect(lowered.code).toBe(0);
+  expect(lowered.json().data).toMatchObject({
+    defaultEndpoint: "merged",
+    effectiveEndpoint: "green",
+  });
+  expect(lowered.json().data.endpointReason).toStartWith("merge grant missing; ");
+});
+
+test("grant show: without the push or pr grant, pr, green and merged act as commit and name the unblock", async () => {
+  for (const endpoint of ["pr", "green", "merged"])
+    for (const kind of ["push", "pr"]) {
+      writeWorkspace({ defaultEndpoint: endpoint, autonomy: { [kind]: false, merge: "verified" } });
+      const data = (await run(["show"], headless)).json().data;
+      expect(data, `${endpoint} without ${kind}`).toMatchObject({
+        defaultEndpoint: endpoint,
+        configuredEndpoint: endpoint,
+        effectiveEndpoint: "commit",
+        endpointReason: `${kind} grant missing; ask the user to run, in their own terminal: workit grant set w ${kind}=true`,
+      });
+      expect((await run(["show"], headless, {}, false)).text()).toContain(
+        `default endpoint: ${endpoint} (effective: commit, ${kind} grant missing;`,
+      );
+    }
+  // commit has nothing to lower, and an unset endpoint reads configuredEndpoint null.
+  writeWorkspace({ autonomy: { push: false } });
+  const plain = (await run(["show"], headless)).json().data;
+  expect(plain).toMatchObject({
+    defaultEndpoint: "commit",
+    configuredEndpoint: null,
+    effectiveEndpoint: "commit",
+  });
+  expect(plain.endpointReason).toBeUndefined();
 });
