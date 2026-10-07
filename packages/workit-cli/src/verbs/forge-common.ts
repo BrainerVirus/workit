@@ -64,12 +64,15 @@ export function parseFlags(argv: readonly string[], spec: FlagSpec): ParsedFlags
   return parsed;
 }
 
+const MAX_REASON = 500;
+
 /** `--unverified --reason <why>`: the reason is required with it and only valid with it. */
 export function unverifiedFlag(flags: ParsedFlags): { reason: string } | null | string {
   const reason = flags.values.reason?.trim();
   if (!flags.booleans.has("unverified"))
     return reason === undefined ? null : "--reason is only used with --unverified";
-  return reason ? { reason } : "--unverified needs --reason <why the user asked for it>";
+  if (!reason) return "--unverified needs --reason <why the user asked for it>";
+  return reason.length > MAX_REASON ? `--reason is capped at ${MAX_REASON} characters` : { reason };
 }
 
 export function positiveInt(value: string | undefined, flag: string): number | null | string {

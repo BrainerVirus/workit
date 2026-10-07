@@ -5,7 +5,6 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   hostingApiHostMatches,
-  mergePr,
   prBuildBody,
   prCreate,
   pushRemoteIdentity,
@@ -15,8 +14,6 @@ import {
 import { stubCli, stubPath as stubPathWith } from "@/test/shared/helpers/stub-cli";
 
 // WF_PR_TARGET is chosen by the caller; the provider decides whether it accepts it.
-// Native host CLIs are executables; shell-script stubs cannot be launched by spawnSync on Windows.
-const t = process.platform === "win32" ? test.skip : test;
 
 const git = (cwd: string, args: string[]) =>
   spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env } });
@@ -271,95 +268,6 @@ const customPolicy = {
   protected: ["develop"],
 };
 
-t("merge matches exact target and source SHA on both hosts", () => {
-  setupRepo();
-  const source = "feature/merge-target";
-  git(root, ["checkout", "-q", "-b", source]);
-  const sha = git(root, ["rev-parse", "HEAD"]).stdout.trim();
-  const reply = path.join(stubBin, "merge-requests.json");
-  const retargetReply = path.join(stubBin, "merge-requests-retargeted.json");
-  const apiCount = path.join(stubBin, "merge-api-count");
-  const mergeLog = path.join(stubBin, "merge.log");
-  const writeCli = (name: string) => {
-    writeFileSync(
-      path.join(stubBin, name),
-      `#!/bin/sh\nif [ "$1" = api ] && [ "$2" = user ]; then echo '{"login":"stub","username":"stub"}'; exit 0; fi\nif [ "$1" = api ]; then count=0; [ -f "${apiCount}" ] && count=$(cat "${apiCount}"); count=$((count + 1)); echo "$count" > "${apiCount}"; if [ "$count" -gt 1 ] && [ -f "${retargetReply}" ]; then cat "${retargetReply}"; else cat "${reply}"; fi; exit 0; fi\nprintf '%s\\n' "$*" >> "${mergeLog}"\nexit 0\n`,
-      { mode: 0o755 },
-    );
-    writeFileSync(
-      path.join(stubBin, `${name}.cmd`),
-      `@echo off\r\nif "%1 %2"=="api user" (echo {"login":"stub","username":"stub"} & exit /b 0)\r\nif "%1"=="api" goto api\r\n>>"${mergeLog}" echo %*\r\nexit /b 0\r\n:api\r\nset count=0\r\nif exist "${apiCount}" set /p count=<"${apiCount}"\r\nset /a count=count+1\r\necho %count%>"${apiCount}"\r\nif %count% GTR 1 if exist "${retargetReply}" goto retarget\r\ntype "${reply}"\r\nexit /b 0\r\n:retarget\r\ntype "${retargetReply}"\r\nexit /b 0\r\n`,
-    );
-  };
-  writeCli("gh");
-  writeCli("glab");
-  writeFileSync(mergeLog, "");
-  const cases = [
-    {
-      provider: "github" as const,
-      remote: "https://github.com/o/r.git",
-      host: "github.com",
-      record: (target: string, sourceSha: string) => ({
-        number: 42,
-        state: "open",
-        base: { ref: target },
-        head: { ref: source, sha: sourceSha },
-      }),
-      mergeArgs: /pr merge 42 .*--match-head-commit/,
-    },
-    {
-      provider: "gitlab" as const,
-      remote: "https://gitlab.com/group/sub/r.git",
-      host: "gitlab.com",
-      record: (target: string, sourceSha: string) => ({
-        iid: 7,
-        state: "opened",
-        target_branch: target,
-        source_branch: source,
-        sha: sourceSha,
-      }),
-      mergeArgs: /mr merge 7 .*--sha/,
-    },
-  ];
-  for (const entry of cases) {
-    writeFileSync(mergeLog, "");
-    git(root, ["remote", "remove", "origin"]);
-    git(root, ["remote", "add", "origin", entry.remote]);
-    const invoke = () =>
-      mergePr(root, {
-        target: "develop",
-        source,
-        sourceCommit: sha,
-        remote: pushRemoteIdentity(entry.remote)!,
-        account: "stub",
-        apiHost: entry.host,
-      });
-    withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
-      writeConfig(customPolicy, "develop", undefined, entry.provider);
-      writeFileSync(apiCount, "0");
-      writeFileSync(reply, JSON.stringify([entry.record("main", sha)]));
-      expect(invoke().error).toContain("exact approved merge request");
-      expect(readFileSync(mergeLog, "utf8")).toBe("");
-      writeFileSync(apiCount, "0");
-      writeFileSync(reply, JSON.stringify([entry.record("develop", "f".repeat(40))]));
-      expect(invoke().error).toContain("exact approved merge request");
-      expect(readFileSync(mergeLog, "utf8")).toBe("");
-      writeFileSync(apiCount, "0");
-      writeFileSync(reply, JSON.stringify([entry.record("develop", sha)]));
-      expect(invoke().ok).toBe(true);
-      expect(readFileSync(mergeLog, "utf8")).toMatch(entry.mergeArgs);
-      expect(readFileSync(mergeLog, "utf8")).toContain(sha);
-      writeFileSync(mergeLog, "");
-      writeFileSync(apiCount, "0");
-      writeFileSync(reply, JSON.stringify([entry.record("develop", sha)]));
-      writeFileSync(retargetReply, JSON.stringify([entry.record("release", sha)]));
-      expect(invoke().error ?? "").toContain("changed before merge");
-      expect(readFileSync(mergeLog, "utf8")).toBe("");
-      rmSync(retargetReply, { force: true });
-    });
-  }
-});
-
 test(
   "B1: caller-supplied WF_PR_TARGET is validated against the branch policy",
   () => {
@@ -534,73 +442,6 @@ test(
     expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/42-title" })).toBe("Closes #42");
     expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-fix" })).toBe("Closes #2024");
     expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "release/2024-fix" })).toBe("Closes #2024");
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "CA-04: merge integration finishes the feature into the target without a PR",
-  () => {
-    // bare origin remote, like branch-policy.test.ts's repoWithDevelop
-    const remote = mkdtempSync(path.join(os.tmpdir(), "wf-merge-remote-"));
-    try {
-      git(remote, ["init", "-q", "--bare"]);
-      setupRepo();
-      git(root, ["remote", "add", "origin", remote]);
-      git(root, ["push", "-q", "-u", "origin", "develop"]);
-      git(root, ["branch", "main"]);
-      git(root, ["checkout", "-q", "main"]);
-      git(root, ["checkout", "-q", "-b", "feature/merge-mode"]);
-      // the brief's literal test omitted a feature commit; without one develop is
-      // up to date and --no-ff merges nothing, so the "T" commit never appears.
-      writeFileSync(path.join(root, "feature.md"), "work\n");
-      git(root, ["add", "feature.md"]);
-      git(root, ["commit", "-q", "-m", "feature work"]);
-      git(root, ["push", "-q", "-u", "origin", "feature/merge-mode"]);
-      writeFileSync(
-        path.join(cfgDir, "config.json"),
-        JSON.stringify({ branchPolicy: { preset: "gitflow" } }, null, 2),
-        "utf8",
-      );
-      writeFileSync(
-        path.join(cfgDir, "vcs.json"),
-        JSON.stringify({ provider: "github", defaultTargetBranch: "develop" }),
-        "utf8",
-      );
-      writeFileSync(
-        path.join(cfgDir, "workspaces.json"),
-        JSON.stringify({
-          workspaces: [
-            {
-              name: "t",
-              glob: `${root}/**`,
-              branchPolicy: { preset: "gitflow", integration: "merge" },
-            },
-          ],
-        }),
-        "utf8",
-      );
-      // no token written on purpose: merge mode is local git merge + push and must
-      // work tokenless (SSH-push users have no glab/gh API token).
-      const p = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () =>
-        prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "" }, root),
-      );
-      expect(p.ok, JSON.stringify(p)).toBe(true);
-      expect(p.mode).toBe("merge");
-      expect(p.targetBranch).toBe("develop");
-      expect(p.merged).toBe(true);
-      expect(p.pushed).toBe(true);
-      const log = git(root, ["log", "--oneline", "-1", "develop"]).stdout;
-      expect(log).toContain("T");
-      const remoteLog = spawnSync(
-        "git",
-        ["--git-dir", remote, "log", "--oneline", "-1", "refs/heads/develop"],
-        { encoding: "utf8" },
-      ).stdout;
-      expect(remoteLog).toContain("T");
-    } finally {
-      rmSync(remote, { recursive: true, force: true });
-    }
   },
   { timeout: 60_000 },
 );

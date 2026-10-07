@@ -32,7 +32,8 @@ Protected-branch pushes stay denied.
 ## Merging
 
 `merge: true` and `merge: "verified"` both merge only a READY PR whose head
-has an accepted independent verdict (`workit ledger check`). Without one,
+has an accepted independent `verified` or `tests-verified` verdict (`workit
+ledger check`; `type-check-only` never counts). Without one,
 `pr merge` refuses with `NEEDS_VERDICT` and `stack land` stops at
 `no_verdict`; the unblock names the verifier route.
 
@@ -41,13 +42,16 @@ asking for it: `workit pr merge --unverified --reason "<why>"` (or `workit
 stack land --unverified --reason "<why>"`). `--reason` is required. Before
 the merge call Workit records a `merge.unverified` ledger row with the
 session, the PR, its head and the reason. If that row cannot be written,
-nothing merges. Under `merge: "verified"`, `--unverified` is refused with
-`unverified_refused`. Agents pass `--unverified` only when the user asks for
-it.
+nothing merges. `--unverified` covers a missing verdict, never a rejection:
+a current independent `failed` or `blocked` verdict refuses it with
+`failed_verdict` until a new independent verdict on the head supersedes it.
+Under `merge: "verified"`, `--unverified` is refused with
+`unverified_refused`, and without a merge grant with `grant_required`. Agents
+pass `--unverified` only when the user asks for it.
 
 Before 8.0, `merge: true` merged without a verdict check. To keep that
-behavior for a merge, pass `--unverified --reason "<why>"`. To keep verdicts
-mandatory, switch to `workit grant set <workspace> merge=verified`.
+behavior for a merge, pass `--unverified --reason "<why>"`. To forbid the
+bypass, switch to `workit grant set <workspace> merge=verified`.
 
 ## Managing grants
 

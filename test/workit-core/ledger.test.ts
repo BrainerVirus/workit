@@ -650,6 +650,22 @@ test("given a session's failed verdict on head A and a fix commit B, when that s
   expect(check.review).toBe("verified");
 });
 
+test("given a session's failed verdict on A and a fix commit B, when that same session records only type-check-only on B, then nothing is accepted for merge (type_check_only) until a strong verdict", () => {
+  const root = featureRepo();
+  seedAuthor(root, "commit.recorded", "lead");
+  const session = reviewer("lead:agent-1");
+  value(recordVerdict(session(root), { result: "failed", how: "bug" }));
+  const fixed = commit(root, "feature.txt", "feature, fixed\n", "fix review finding");
+  value(recordVerdict(session(root), { result: "type-check-only", how: "tsc only" }));
+  let check = checkVerdicts(root, "feature/x", read(root).rows);
+  expect(check.current.verdict).toMatchObject({ result: "type-check-only", head: fixed });
+  expect(check.accepted).toMatchObject({ accepted: false, reasons: ["type_check_only"] });
+  expect(check.review).not.toBe("verified");
+  value(recordVerdict(session(root), { result: "tests-verified", how: "ran the suite" }));
+  check = checkVerdicts(root, "feature/x", read(root).rows);
+  expect(check.accepted).toMatchObject({ accepted: true, reasons: [] });
+});
+
 /** A failed verdict on head A, then `move` changes the head without changing the code. */
 const failThenReverify = (
   move: (root: string) => void,

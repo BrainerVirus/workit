@@ -45,7 +45,9 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   allows it, under `merge: true` and `merge: "verified"` alike. The merge call
   carries the head SHA, so a moved head is refused. Only `merge: true` accepts
   `--unverified --reason "<why>"`, which merges without a verdict and records
-  a `merge.unverified` ledger row ([grants](grants.md#merging)).
+  a `merge.unverified` ledger row, but never over a current independent
+  failed verdict ([grants](grants.md#merging)). `type-check-only` never
+  satisfies the gate.
 - `verify-delivery` answers "did it land?" from the remote, never from local
   state.
 

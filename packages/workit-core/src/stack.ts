@@ -996,6 +996,7 @@ export type StopReason =
   | "not_ready"
   | "no_verdict"
   | "needs_verdict"
+  | "failed_verdict"
   | "grant_required"
   | "max_reached"
   | "merge_refused"
@@ -1153,6 +1154,13 @@ export function qualify(
         : `workit pr status --pr ${entry.pr}`,
     );
   const allowUnverified = grant.allowed && grant.allowUnverified;
+  // The bypass covers a missing verdict, never a rejection.
+  if (bypass && allowUnverified && verdict.reasons.includes("failing_verdict"))
+    return stop(
+      "failed_verdict",
+      `${label} has a current independent failed verdict for ${doc.head.sha.slice(0, 12)}; --unverified never lands over a rejection`,
+      "a new independent verdict on the head supersedes it",
+    );
   if (!(bypass && allowUnverified) && !verdict.accepted)
     return stop(
       verdict.reasons.includes("no_verdict") ? "no_verdict" : "needs_verdict",
@@ -1787,7 +1795,11 @@ export async function landStack(
   const bypass = options.unverified ?? null;
   if (bypass) {
     const grant = requireGrant(ctx.cwd, "merge");
-    if (grant.allowed && !grant.allowUnverified)
+    if (!grant.allowed)
+      return failWith(
+        stackFail("blocked", grant.error, grant.unblock, { reason: "grant_required" }),
+      );
+    if (!grant.allowUnverified)
       return failWith(
         stackFail(
           "blocked",

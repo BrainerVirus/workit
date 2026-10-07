@@ -75,8 +75,8 @@ export type CreateOutcome = {
 };
 
 const AFTER_REVIEW: Record<DefaultEndpoint, string> = {
-  commit: "stop here",
-  pr: "stop here",
+  commit: "stop here; review comes when the user asks",
+  pr: "stop here; review comes when the user asks",
   green: "babysit it to merge-ready, never merging",
   merged: "babysit it, then land it after verification",
 };
@@ -320,6 +320,7 @@ export type MergeRefusal = {
   reason:
     | "grant_required"
     | "unverified_refused"
+    | "failed_verdict"
     | "not_ready"
     | "needs_verdict"
     | "head_mismatch"
@@ -451,6 +452,13 @@ export async function mergePullRequest(
       covered && typeof check.accepted.verdict?.id === "string" ? check.accepted.verdict.id : null,
   };
   let unverified: MergeOutcome["unverified"] = null;
+  // The bypass covers a missing verdict, never a rejection.
+  if (!covered && bypass && check.accepted.reasons.includes("failing_verdict"))
+    return refuse(
+      `failed_verdict: ${label} has a current independent failed verdict${typeof check.accepted.verdict?.id === "string" ? ` (${check.accepted.verdict.id})` : ""}; --unverified never merges over a rejection`,
+      "a new independent verdict on the head supersedes it",
+      { reason: "failed_verdict", verdict: summary },
+    );
   if (!covered && bypass) {
     // Recorded before the merge call: a bypass that cannot be audited never merges.
     const reason = bypass.reason.trim();
