@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   WORKIT_METHOD_SKILLS,
   WORKIT_SKILL_ALIASES,
+  renderSkillText,
 } from "@brainervirus/workit-core/src/core/skill-manifests";
 import { skillsRoot } from "../shared/assets";
 
@@ -64,7 +65,7 @@ const parseFrontmatter = (
 
 /**
  * Register the packaged method skills with exact ids, paths,
- * descriptions, and content. A user skill with the same id is never replaced.
+ * descriptions, and content rendered for OpenCode. A user skill with the same id is never replaced.
  *
  * The host runs transform callbacks when it (re)builds its catalog, not
  * necessarily inside `transform()`, so the returned set — which gates the
@@ -95,7 +96,8 @@ export const registerSkills = async (ctx: SkillContext): Promise<ReadonlySet<str
         name: parsed.name || id,
         ...(parsed.description ? { description: parsed.description } : {}),
         path: file,
-        content: parsed.body,
+        // A local pin reads the canonical skills; render them as the build would.
+        content: renderSkillText(parsed.body, "opencode"),
       });
     }
   });

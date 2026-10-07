@@ -43,6 +43,7 @@ import {
   type ReadRow,
   type RecordContext,
   type VerdictCheck,
+  type VerdictRow,
 } from "@brainervirus/workit-core/src/ledger";
 import {
   planLeads,
@@ -146,6 +147,24 @@ const fromResult = <T>(io: Io, result: LedgerResult<T>, human: (value: T) => str
 
 const usage = (io: Io, error: string): number =>
   emit(io, fail("invalid_input", error, { unblock: USAGE }));
+
+/** The CLI observed a passing `workit check test` on the verdict's branch and clean head. */
+const passedTestOn = (cwd: string, verdict: VerdictRow): boolean => {
+  const ledger = readLedger(cwd);
+  return (
+    ledger.ok &&
+    ledger.value.rows.some(
+      (row) =>
+        row.type === "check" &&
+        row.observer === "workit_cli" &&
+        row.name === "test" &&
+        row.result === "passed" &&
+        row.dirty !== true &&
+        row.branch === verdict.branch &&
+        row.head === verdict.head,
+    )
+  );
+};
 
 const verdictLines = (check: VerdictCheck): string[] => {
   const lines = [
@@ -302,19 +321,24 @@ export async function run(argv: string[], io: Io): Promise<number> {
     );
   if (rest.length !== 1)
     return usage(io, `ledger verdict takes one result: ${VERDICT_RESULTS.join("|")}`);
+  const verdict = await recorded(
+    recordVerdict(context, {
+      result: rest[0],
+      kind: values.kind,
+      how: values.how,
+      surface: values.surface ?? null,
+      self: values.self === true,
+      evidenceRefs: values.evidence,
+      ...("derivedFrom" in acting ? { derivedFrom: acting.derivedFrom } : {}),
+    }),
+  );
+  if (verdict.ok && verdict.value.selfReason === "flag" && !passedTestOn(io.cwd, verdict.value))
+    io.stderr(
+      `warning: no passing \`workit check test\` observed on ${(verdict.value.head ?? "this head").slice(0, 12)}; run it before a --self verdict\n`,
+    );
   return fromResult(
     io,
-    await recorded(
-      recordVerdict(context, {
-        result: rest[0],
-        kind: values.kind,
-        how: values.how,
-        surface: values.surface ?? null,
-        self: values.self === true,
-        evidenceRefs: values.evidence,
-        ...("derivedFrom" in acting ? { derivedFrom: acting.derivedFrom } : {}),
-      }),
-    ),
+    verdict,
     (row) =>
       `recorded verdict ${row.id}: ${row.result} [${row.kind}] for ${row.branch} @ ${(row.head ?? "").slice(0, 12)} as ${actor.session ?? "no session"}${row.self ? ` (self${row.selfReason === "no_session" ? ": WORKIT_SESSION_ID unset" : ""}; never accepted)` : ""}`,
   );

@@ -53,7 +53,7 @@ const HEADING = /^\s{0,3}#{1,6}(\s|$)/;
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+/;
 const PLACEHOLDER =
-  /^(?:(?:tbd|todo|tba|fixme)\b.*|n\/a|none|none yet|coming soon|placeholder|\.\.\.|…|-)?[.:]?$/i;
+  /^(?:(?:tbd|todo|tba|fixme)(?:\s*[:–—-].*)?|n\/a|none|none yet|coming soon|placeholder|\.\.\.|…|-)?[.:]?$/i;
 
 const INDENTED_CODE = /^(?: {4}|\t)/;
 const blank = (line: string | undefined) => (line ?? "").trim() === "";

@@ -338,6 +338,19 @@ test("setup registers every method skill with packaged content and paths", async
   }
 });
 
+// The checkout is a local pin: skills come from the canonical, unrendered source.
+test("Given a local source pin, When skills register, Then cross-skill references use OpenCode's load wording", async () => {
+  const root = repository();
+  try {
+    const { skills } = await harness(root);
+    const ship = skills.find((skill) => skill.id === "workit-ship")!;
+    expect(ship.content).toContain("(call the skill tool with `workit-review`)");
+    for (const skill of skills) expect(skill.content, skill.id).not.toMatch(/\(workit-[a-z-]+\)/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("setup registers one collision-safe wk command per alias that forwards prompts", async () => {
   const root = repository();
   try {
