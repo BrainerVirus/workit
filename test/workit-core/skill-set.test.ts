@@ -173,6 +173,23 @@ const GLOBAL_FLAGS = new Set(["--json", "--cwd", "--help"]);
 // Verbs the skills already name ahead of their slice; drop each when it lands.
 const PLANNED_VERBS = new Set<string>();
 
+/** Every ledger row type the shipped source writes (`type: "<t>"` literals). */
+const ledgerRowTypes = (): Set<string> => {
+  const types = new Set<string>();
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name.endsWith(".ts"))
+        for (const [, type] of readFileSync(file, "utf8").matchAll(/type: "([a-z][a-z.]*)"/g))
+          types.add(type);
+    }
+  };
+  walk(path.join(REPO, "packages/workit-core/src"));
+  walk(VERB_SOURCES);
+  return types;
+};
+
 const agentFacingTexts = (): Array<[string, string]> => {
   const out: Array<[string, string]> = [
     ["bootstrap", invariantBootstrap()],
@@ -229,6 +246,7 @@ const invocations = (text: string): string[] => {
 
 test("Given every workit command in skills, references, agents and the bootstrap, Then it matches the real CLI grammar", () => {
   const verbs = new Map(VERBS.map((verb) => [verb.name, verb]));
+  const rowTypes = ledgerRowTypes();
   let checked = 0;
   for (const [source, text] of agentFacingTexts())
     for (const call of invocations(text)) {
@@ -247,6 +265,12 @@ test("Given every workit command in skills, references, agents and the bootstrap
       for (const [flag] of call.matchAll(/--[a-z][a-z-]*/g))
         if (!GLOBAL_FLAGS.has(flag))
           expect(handled.includes(flag), `${source}: "workit ${call}" uses ${flag}`).toBe(true);
+      if (verb === "ledger")
+        for (const [, type] of call.matchAll(/--type\s+([a-z][a-z.]*)/g))
+          expect(
+            rowTypes.has(type),
+            `${source}: "workit ${call}" lists no row type "${type}"`,
+          ).toBe(true);
       if (verb === "git" && sub === "commit")
         expect(
           / --all\b| -- \S/.test(call),
@@ -254,4 +278,27 @@ test("Given every workit command in skills, references, agents and the bootstrap
         ).toBe(true);
     }
   expect(checked).toBeGreaterThan(40);
+});
+
+// Builds rewrite `(workit-<skill>)` into each host's load wording
+// (renderSkillText); a bare name in prose would never load. A user-invoked
+// skill is never loaded from another skill, so it appears only in prose.
+test("Given every skill file, Then each other method skill is named only in the form the build renders", () => {
+  const userInvoked = new Set(
+    WORKIT_METHOD_SKILLS.filter((name) =>
+      /^disable-model-invocation:\s*true$/m.test(skillMd(name).split("\n---")[0]),
+    ),
+  );
+  const names = WORKIT_METHOD_SKILLS.join("|");
+  const mention = new RegExp(`(\\()?\\b(${names})(?![a-z-])(\\))?`, "g");
+  for (const [source, text] of agentFacingTexts()) {
+    if (!source.includes("/skills/")) continue;
+    const prose = text.startsWith("---\n") ? body(text) : text;
+    for (const [match, open, name, close] of prose.matchAll(mention)) {
+      const canonical = Boolean(open && close);
+      if (userInvoked.has(name))
+        expect(canonical, `${source}: ${match} would load a user-invoked skill`).toBe(false);
+      else expect(canonical, `${source}: write "${match}" as (${name})`).toBe(true);
+    }
+  }
 });
