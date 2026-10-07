@@ -1,6 +1,14 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { localLockHost, lockPathFor } from "@/packages/workit-core/src/core/store-lock";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,6 +96,23 @@ test("Given AGENTS.md with a broken link, When workit doctor runs, Then it print
     rmSync(agents, { force: true });
   }
 });
+
+test.skipIf(process.getuid?.() === 0)(
+  "Given an unreadable AGENTS.md, When workit doctor runs, Then the knowledge line says unavailable and doctor does not crash",
+  () => {
+    const agents = path.join(fixture.cwd, "AGENTS.md");
+    writeFileSync(agents, "# Agents\n");
+    chmodSync(agents, 0o000);
+    try {
+      const text = runCli(["doctor"], fixture.cwd);
+      expect(text.status, text.stderr).toBe(0);
+      expect(text.stdout).toContain("info knowledge — unavailable\n");
+    } finally {
+      chmodSync(agents, 0o644);
+      rmSync(agents, { force: true });
+    }
+  },
+);
 
 /** The store directory holding a checkout lock (`<store>/checkouts/<slug>/metadata.lock`). */
 const storeOf = (lockPath: string) => path.dirname(path.dirname(path.dirname(lockPath)));

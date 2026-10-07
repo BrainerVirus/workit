@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -87,7 +87,7 @@ test("Given need-based files with only headings, comments, placeholders or a bar
   const root = tempRepo({
     "AGENTS.md": "Read CODING_STANDARDS.md before review.\n",
     "CODING_STANDARDS.md":
-      "---\ntitle: standards\n---\n# Coding standards\n\n<!-- add rules\nlater -->\n## Tests\n\n- TBD\n- _None yet._\n\n---\n",
+      "---\ntitle: standards\n---\n# Coding standards\n\n<!-- add rules\nlater -->\n## Tests\n\n- TBD\n- _None yet._\n- TODO: write the first rule\n\n---\n",
     "GLOSSARY.md": "# Glossary\n\n| Term | Meaning |\n| --- | --- |\n",
   });
   expect(rulesOf(root)).toEqual([
@@ -179,3 +179,76 @@ test("Given workit.checks.json registers knowledge, When workit check knowledge 
   const passing = await run(root, ["check", "knowledge", "--json"]);
   expect(passing.code).toBe(0);
 });
+
+const gitRepo = (root: string) => {
+  const git = (...args: string[]) => {
+    const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  };
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  return root;
+};
+
+test("Given dot-directory pointers, Then only ./ and ../ are relative, and a dot-dir must be a tracked top-level entry", () => {
+  const root = gitRepo(
+    tempRepo({
+      ".github/workflows/ci.yml": "on: push\n",
+      "AGENTS.md": [
+        "CI lives in `.github/workflows/ci.yml`; `.github/workflows/gone.yml` is stale.", // 1
+        "Not pointers: `.out-of-scope/x.md` and `.claude/settings.local.json`.", // 2
+        "Relative: `./docs/missing.md`.", // 3
+      ].join("\n"),
+    }),
+  );
+  // Present on disk but untracked: still not a pointer, so local and CI agree.
+  mkdirSync(path.join(root, ".claude"));
+  writeFileSync(path.join(root, ".claude/other.json"), "{}");
+  expect(rulesOf(root)).toEqual([
+    { rule: "broken-link", file: "AGENTS.md", line: 1 },
+    { rule: "broken-link", file: "AGENTS.md", line: 3 },
+  ]);
+});
+
+test("Given links in inline code, indented code and long fences, and a target with parentheses, Then only real links are checked", () => {
+  const root = tempRepo({
+    "docs/a (v2).md": "here\n",
+    "AGENTS.md": [
+      "Example syntax: `[x](docs/inline-missing.md)`.", // 1
+      "", // 2
+      "    [x](docs/indented-missing.md)", // 3
+      "", // 4
+      "````md", // 5
+      "```", // 6
+      "[x](docs/fenced-missing.md)", // 7
+      "````", // 8
+      "Read [v2](docs/a%20(v2).md) and [old](docs/old(v1).md).", // 9
+      "- a list item", // 10
+      "", // 11
+      "    continued [gone](docs/list-missing.md)", // 12
+    ].join("\n"),
+  });
+  expect(rulesOf(root)).toEqual([
+    { rule: "broken-link", file: "AGENTS.md", line: 9 },
+    { rule: "broken-link", file: "AGENTS.md", line: 12 },
+  ]);
+  expect(lintKnowledge(root).findings[0].message).toContain("docs/old(v1).md");
+});
+
+const asRoot = process.getuid?.() === 0;
+
+test.skipIf(asRoot)(
+  "Given an unreadable AGENTS.md, When workit knowledge lint runs, Then it reports unavailable (exit 5) instead of crashing",
+  async () => {
+    const root = tempRepo({ "AGENTS.md": "# Agents\n" });
+    chmodSync(path.join(root, "AGENTS.md"), 0o000);
+    try {
+      expect(lintKnowledge(root).unreadable).toEqual(["AGENTS.md"]);
+      const result = await run(root, ["knowledge", "lint", "--json"]);
+      expect(result.code).toBe(5);
+      expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, code: "unavailable" });
+    } finally {
+      chmodSync(path.join(root, "AGENTS.md"), 0o644);
+    }
+  },
+);

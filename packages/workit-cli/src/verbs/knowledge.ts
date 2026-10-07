@@ -16,6 +16,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv.filter((arg) => arg !== "--json");
   if (sub !== "lint" || rest.length > 0) return emit(io, fail("invalid_input", `usage: ${USAGE}`));
   const report = lintKnowledge(checkRoot(io.cwd));
+  if (report.unreadable.length > 0)
+    return emit(
+      io,
+      fail("unavailable", `knowledge lint: cannot read ${report.unreadable.join(", ")}`, {
+        data: report,
+        unblock: `make ${report.unreadable.join(", ")} readable, then re-run workit knowledge lint`,
+      }),
+    );
   const summary = `knowledge lint: ${report.findings.length} finding${report.findings.length === 1 ? "" : "s"} in ${report.files.length} file${report.files.length === 1 ? "" : "s"} (${report.files.map((file) => `${file.file} ${file.bytes} B`).join(", ") || "no knowledge files"}; AGENTS.md budget ${report.budget} B)`;
   if (io.json)
     return emit(

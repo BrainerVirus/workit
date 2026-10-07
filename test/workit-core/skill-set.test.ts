@@ -56,6 +56,21 @@ test("Given the skill frontmatter, Then only workit-retro is user-invoked and it
   expect(route).toContain("user-invoked");
 });
 
+test("Given a user-invoked skill, Then Codex gets the same flag from agents/openai.yaml, and no other skill disables implicit invocation", () => {
+  for (const name of WORKIT_METHOD_SKILLS) {
+    const userInvoked = /^disable-model-invocation:\s*true\s*$/m.test(
+      skillMd(name).split("\n---")[0],
+    );
+    const codex = path.join(SKILLS, name, "agents", "openai.yaml");
+    const implicitOff =
+      existsSync(codex) &&
+      /^policy:\s*\n\s+allow_implicit_invocation:\s*false\s*$/m.test(readFileSync(codex, "utf8"));
+    expect(implicitOff, `${name}: agents/openai.yaml allow_implicit_invocation: false`).toBe(
+      userInvoked,
+    );
+  }
+});
+
 test("Given the trigger lists, Then no trigger word routes to two skills", () => {
   const owner = new Map<string, string>();
   for (const [skill, words] of Object.entries(WORKIT_SKILL_TRIGGERS))

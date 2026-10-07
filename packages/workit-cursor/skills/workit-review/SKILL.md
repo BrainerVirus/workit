@@ -18,8 +18,9 @@ independent; `type-check-only` never proves a behavior change.
 3. Judge two axes separately, never merged or re-ranked:
    - **Spec:** does the diff do what the acceptance says? Missing, creep or
      wrong; quote the line.
-   - **Standards:** repo rules first, then a smell baseline (unclear name, long
-     function, duplicated logic, leaky abstraction). Judgment only; lint owns nits.
+   - **Standards:** repo rules first (`CODING_STANDARDS.md` when present),
+     then a smell baseline (unclear name, long function, duplicated logic,
+     leaky abstraction). Judgment only; lint owns nits.
 4. **Tests:** `workit test-audit --diff`. Would each new test fail if the
    behavior broke? Triage with workit-test-audit.
 5. **Blast radius:** for each touched contract, caller, config or migration,

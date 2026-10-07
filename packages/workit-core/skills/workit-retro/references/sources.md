@@ -13,8 +13,8 @@ differs from the one below, say so and skip it rather than search wider.
 
 | Host | Location |
 | --- | --- |
-| Claude Code | `~/.claude/projects/<workspace path, / and . replaced by ->/*.jsonl` |
-| Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`; keep only files whose `session_meta` line has this workspace as `cwd` |
+| Claude Code | `~/.claude/projects/<folder>/*.jsonl`, one folder per path from `git worktree list`: the absolute path with every `/` and `.` replaced by `-`. Compute each folder name; never glob for it |
+| Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. To filter, parse only line 1 (`session_meta`) and read only its `cwd` field; skip files whose `cwd` is not this workspace without reading or reporting anything else from them |
 | Cursor | `~/.cursor/projects/<workspace slug>/agent-transcripts/` |
 | Pi | `~/.pi/agent/sessions/--<workspace path, / replaced by ->--/*.jsonl` |
 | OpenCode | this project's sessions from `opencode session list`, read with `opencode export <id>` |
@@ -33,5 +33,3 @@ repositories never do.
     reads of the same file, long outputs nobody used;
   - repeated work: the same fix or check redone, a step undone later;
   - request conflicts: instructions the agent had to reconcile or ask about.
-- Cite by location; never paste secrets, tokens or personal data into the
-  report.

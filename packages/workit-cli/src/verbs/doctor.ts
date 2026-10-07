@@ -3,7 +3,6 @@
 // `--fix-lock` clears a stale .workit metadata lock first, so the report
 // reflects the cleaned state.
 import { runDoctor } from "../admin/doctor";
-import { checkRoot } from "@brainervirus/workit-core/src/check-config";
 import { lintKnowledge } from "@brainervirus/workit-core/src/knowledge";
 import {
   clearStaleMetadataLock,
@@ -72,15 +71,25 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   const report = runDoctor({ host: "cli", cwd: io.cwd, workspaceRoot: root });
   // Advisory only: knowledge findings never change the doctor's exit code.
-  const knowledge = lintKnowledge(checkRoot(io.cwd));
-  const agents = knowledge.files.find((file) => file.file === "AGENTS.md");
-  const knowledgeLine = `info knowledge — ${agents ? `AGENTS.md ${agents.bytes} of ${knowledge.budget} bytes` : "no AGENTS.md"}; ${knowledge.findings.length} finding(s) (workit knowledge lint)`;
+  let knowledge: ReturnType<typeof lintKnowledge> | null = null;
+  try {
+    knowledge = lintKnowledge(root);
+    if (knowledge.unreadable.length > 0) knowledge = null;
+  } catch {
+    knowledge = null;
+  }
+  const agents = knowledge?.files.find((file) => file.file === "AGENTS.md");
+  const knowledgeLine = knowledge
+    ? `info knowledge — ${agents ? `AGENTS.md ${agents.bytes} of ${knowledge.budget} bytes` : "no AGENTS.md"}; ${knowledge.findings.length} finding(s) (workit knowledge lint)`
+    : "info knowledge — unavailable";
   if (argv.includes("--json")) {
-    const summary = {
-      agentsBytes: agents?.bytes ?? null,
-      budget: knowledge.budget,
-      findings: knowledge.findings.length,
-    };
+    const summary = knowledge
+      ? {
+          agentsBytes: agents?.bytes ?? null,
+          budget: knowledge.budget,
+          findings: knowledge.findings.length,
+        }
+      : { unavailable: true };
     io.stdout(
       `${JSON.stringify({ ...report, ...(fixLock ? { fixLock } : {}), knowledge: summary }, null, 2)}\n`,
     );
