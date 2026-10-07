@@ -15,7 +15,8 @@ any test runs when that `node` is older than the support-matrix minimum
 When a live host (Claude Code `--plugin-dir`, OpenCode `file://` pin, Pi local
 install) loads a checkout, never run root `bun run build` or `bun run check` in
 it: they replace bundles the host has loaded. Run lint, format, typecheck and
-tests directly, or work in a separate worktree.
+tests directly, work in a separate worktree, or build into an external target
+directory (`bun packages/<pkg>/scripts/build.ts <target-dir>`).
 
 ## Tiers
 
@@ -34,7 +35,7 @@ runs everything; `bun test <path>` runs one file.
 
 ## Opt-in suites
 
-- OpenCode v2 docker suites (`test/opencode-v2/contract|lifecycle|matrix`) sit
+- OpenCode v2 docker suites (`test/opencode-v2/{contract,lifecycle,matrix}.test.ts`) sit
   in the packaging tier but report as skipped unless `WORKIT_V2_HARNESS=1` is
   set and docker is available. CI runs them only on demand or with the
   `opencode-v2` PR label (`.github/workflows/opencode-v2-harness.yml`).

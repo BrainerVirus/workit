@@ -13,7 +13,9 @@ or `chore:` change there still ships as a patch. Root docs, tests and tooling
 never release, and only changed packages are published.
 
 Never edit versions or tags by hand. Because PRs are squash-merged, the PR
-title is the commit semantic-release reads.
+title is the commit semantic-release reads. A breaking change needs `!` in the
+PR title (`fix!: …`); a `BREAKING CHANGE:` footer only counts if it lands in
+the squash body.
 
 `bun run verify:release-candidate` checks the release candidate (CI runs it);
 `bun run validate:cursor-marketplace` checks the Cursor marketplace manifest.

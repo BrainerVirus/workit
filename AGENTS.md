@@ -19,7 +19,7 @@ a checkout a live host has loaded; see [testing.md](docs/agents/testing.md#local
 - One worktree per change, never on `main`: `git worktree add -b feature/<slug> ../workit-wt/<slug> origin/main`.
 - The squash-merged PR title is the release note and picks the version: a Conventional Commit (CI lints it).
 - Check `gh api user --jq .login` before a GitHub remote mutation; `gh auth status` can disagree.
-- A non-author session reviews. User-facing behavior updates the README or guide in the same PR.
+- Report verification through `workit check <name>`; a non-author session reviews. User-facing behavior updates the README or guide in the same PR.
 
 ## Read before
 
