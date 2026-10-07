@@ -115,7 +115,8 @@ async function resumeBrief(argv: string[], io: Io): Promise<number> {
 }
 
 export async function run(argv: string[], io: Io): Promise<number> {
-  if (!argv.includes("--task")) return resumeBrief(argv, io);
+  if (!argv.some((arg) => arg === "--task" || arg.startsWith("--task=")))
+    return resumeBrief(argv, io);
   const { runTaskCommand } = await import("../task");
   return runTaskCommand(["handoff", ...argv]);
 }
