@@ -131,7 +131,10 @@ export const runCursorHookLaunch = ({ candidates, payload, env, spawn = spawnSyn
       errors.push(`${candidate.source}: ${run.error.message}`);
       continue;
     }
-    if (run.error) return failOpen(`${candidate.source}: ${run.error.message}`);
+    // EPIPE only means the hook exited without reading all of stdin; its exit
+    // status still stands.
+    if (run.error && !(code === "EPIPE" && typeof run.status === "number"))
+      return failOpen(`${candidate.source}: ${run.error.message}`);
     // 0 = the hook's answer; 2 = the hook's own policy deny (Cursor's channel).
     if (run.status === 0 || run.status === 2)
       return { stdout: String(run.stdout ?? ""), exitCode: run.status, warning: null };

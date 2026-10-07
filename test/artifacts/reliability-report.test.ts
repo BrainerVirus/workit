@@ -44,13 +44,14 @@ test("default report aggregates the deterministic candidate and an isolated doct
   // exactly the utility check fails (D11/D13); codex_pin and claude_plugin
   // pass (absent).
   // Counts include both provider identity checks (pass with no Git remote)
-  // and the workspace_lock check (pass with no metadata lock).
+  // and the workspace_lock check (pass with no metadata lock), plus
+  // cursor_hook (pass: no Cursor plugin install).
   expect(report.doctor).toEqual({
     ok: false,
-    passed: 17,
+    passed: 18,
     warned: 0,
     failed: 1,
-    total: 18,
+    total: 19,
     fixes: 1,
   });
   expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -77,13 +78,14 @@ test("report doctor counts are exact against a controlled isolated fixture", () 
     });
     // node+bun on PATH but no git: exactly the utility check fails; codex_pin passes (absent).
     // Counts include both provider identity checks (pass with no Git remote)
-    // and the workspace_lock check (pass with no metadata lock).
+    // and the workspace_lock check (pass with no metadata lock), plus
+    // cursor_hook (pass: the fixture's bundled hook runs locally).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 17,
+      passed: 18,
       warned: 0,
       failed: 1,
-      total: 18,
+      total: 19,
       fixes: 1,
     });
   } finally {

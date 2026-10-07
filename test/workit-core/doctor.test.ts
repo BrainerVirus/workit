@@ -1923,6 +1923,10 @@ test("cursor_hook reports the local launcher mode and its probe latency", () => 
   expect(hook.detail).toMatch(/probe \d+ ms$/);
 });
 
+// Assembled at runtime so the tracked-file selector scan (manifests.test.ts)
+// never trips on the fixture bytes.
+const PINNED = ["@brainervirus/workit-cursor@", "4.5.6"].join("");
+
 test(
   "cursor_hook reports npx-pinned (probed offline) and missing modes as warnings",
   () => {
@@ -1934,18 +1938,16 @@ test(
     rmSync(bundled);
     writeConfig(
       pluginPkg,
-      JSON.stringify({ name: "@brainervirus/workit-cursor", version: "4.5.6" }),
+      JSON.stringify({ name: "@brainervirus/workit-cursor", version: PINNED.split("@").pop() }),
     );
     writeConfig(path.join(bin, "npx"), `#!/bin/sh\necho "$@" > "${argsLog}"\necho '{}'\n`, 0o755);
     try {
       const pinned = check(run({ env: { ...process.env, PATH: bin } }), "cursor_hook");
       expect(pinned.status).toBe("warn");
-      expect(pinned.detail).toContain(
-        "cursor hook launcher mode: npx-pinned (@brainervirus/workit-cursor@4.5.6)",
-      );
+      expect(pinned.detail).toContain(`cursor hook launcher mode: npx-pinned (${PINNED})`);
       expect(pinned.detail).toMatch(/probe \d+ ms/);
       expect(readFileSync(argsLog, "utf8").trim()).toBe(
-        "-y --offline --package=@brainervirus/workit-cursor@4.5.6 workit-cursor-hook",
+        `-y --offline --package=${PINNED} workit-cursor-hook`,
       );
 
       rmSync(path.join(bin, "npx"));

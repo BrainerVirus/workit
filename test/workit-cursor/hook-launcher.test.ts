@@ -191,3 +191,16 @@ test("a spawn failure falls through to the next candidate, and fails open when n
   expect(failed.exitCode).toBe(0);
   expect(failed.warning).toContain("/nope/workit-cursor-hook");
 });
+
+test("a hook that answers without reading all of stdin still has its answer passed through", () => {
+  // Node (which Cursor runs the launcher with) reports EPIPE for this; bun
+  // does not, so the launcher runs under node here.
+  const root = plugin({ bundled: 'process.stdout.write("denied");process.exit(2);\n' });
+  const result = spawnSync(NODE, [path.join(root, "hooks", "launch.mjs"), "workit-cursor-hook"], {
+    input: "x".repeat(4 * 1024 * 1024),
+    encoding: "utf8",
+    env: { PATH: "" },
+  });
+  expect(result.status).toBe(2);
+  expect(result.stdout).toBe("denied");
+});
