@@ -22,7 +22,7 @@ import { createContextTool } from "../tools/context";
 import { createV2Lifecycle } from "./lifecycle";
 import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from "./injection";
 import { evaluateShellPermission } from "./permissions";
-import { observeShellResult } from "./shell";
+import { observeShellBefore, observeShellResult, type ShellWorkdirs } from "./shell";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
 
@@ -172,7 +172,9 @@ const setup = async (ctx: Context): Promise<() => void> => {
       });
     }
   });
+  const shellWorkdirs: ShellWorkdirs = new Map();
   await ctx.tool.hook("execute.before", async (event) => {
+    if (event.tool === "shell") return observeShellBefore(root, event, shellWorkdirs);
     if (event.tool !== "subagent") return;
     await lifecycle.executeBefore({
       tool: event.tool,
@@ -195,7 +197,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     });
   });
   await ctx.permission.hook("evaluate", (event) => {
-    evaluateShellPermission(root, event);
+    evaluateShellPermission(root, event, shellWorkdirs);
   });
   await ctx.session.hook("context", async (event) => {
     const session = await sessionFacts(ctx, String(event.sessionID));

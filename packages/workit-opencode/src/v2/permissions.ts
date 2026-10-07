@@ -16,7 +16,11 @@ const WRITE_ACTIONS = new Set(["edit", "write", "patch"]);
  * before-write gate (S17) on edits and recognizable shell writes. Every
  * other permission keeps the host's own decision.
  */
-export const evaluateShellPermission = (root: string, event: PermissionEvaluationEvent): void => {
+export const evaluateShellPermission = (
+  root: string,
+  event: PermissionEvaluationEvent,
+  workdirs: ReadonlyMap<string, string> = new Map(),
+): void => {
   if (event.effect === "deny") return;
   const deny = (reason: string) => {
     event.effect = "deny";
@@ -34,17 +38,18 @@ export const evaluateShellPermission = (root: string, event: PermissionEvaluatio
   for (const resource of resources) {
     const decision = shellPolicy(root, resource);
     if (decision.kind === "deny") return deny(decision.reason);
+    // The shell tool's workdir, noted by execute.before for this session.
+    const cwd = (event.sessionID && workdirs.get(event.sessionID)) || root;
     const raw = rawGitPre(
       {
         host: "opencode",
-        cwd: root,
+        cwd,
         session: { id: event.sessionID ?? "", agentId: null, agentType: null, parentId: null },
         permissionMode: null,
         transcriptPath: null,
         event: { kind: "shell.pre", command: resource, toolUseId: null },
       },
       resource,
-      { pending: false },
     );
     if (raw.kind === "deny") return deny(raw.reason);
     const writes = shellWrites(resource);

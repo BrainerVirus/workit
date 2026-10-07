@@ -63,11 +63,10 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(git *)",
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
             "timeout": 5

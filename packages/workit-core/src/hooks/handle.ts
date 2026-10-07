@@ -2,7 +2,14 @@
 import { sessionContextText, turnContextText } from "./context";
 import type { HostDescriptor, Support } from "./descriptor";
 import { shellPolicy } from "./policy";
-import { rawGitPre, rawGitPost, settlePendingCommit } from "./raw-git";
+import {
+  callKey,
+  NEXT_COMMAND,
+  noteRawCommit,
+  rawGitPost,
+  rawGitPre,
+  settlePendingCommit,
+} from "./raw-git";
 import { shellWrites, writeGate } from "./write-gate";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
@@ -81,15 +88,25 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       // Without a post-tool event, the previous raw commit is recorded now.
       const postTool = usable(descriptor.events["shell.post"].support);
       if (!postTool) settlePendingCommit(input);
-      const raw = canDeny ? rawGitPre(input, event.command, { pending: !postTool }) : NONE;
-      if (raw.kind === "deny" || !usable(descriptor.events["write.pre"].support)) return raw;
-      const writes = shellWrites(event.command);
+      const raw = canDeny ? rawGitPre(input, event.command) : NONE;
+      if (raw.kind === "deny") return raw;
+      const writes = usable(descriptor.events["write.pre"].support)
+        ? shellWrites(event.command)
+        : { writes: false, targets: null };
       const gate = writes.writes ? writeGate(input.cwd, writes.targets) : NONE;
-      return gate.kind === "deny" ? gate : raw;
+      if (gate.kind === "deny") return gate;
+      // The command will run: note HEAD so the post-tool hook (or the next
+      // command, without one) can tell whether a raw commit moved it.
+      noteRawCommit(
+        input,
+        event.command,
+        postTool ? callKey(event.toolUseId, event.command) : NEXT_COMMAND,
+      );
+      return raw;
     }
     case "shell.post":
       if (usable(descriptor.events["shell.post"].support))
-        rawGitPost(input, event.command, event.exitCode);
+        rawGitPost(input, event.command, callKey(event.toolUseId, event.command));
       return NONE;
     case "write.pre":
       return usable(descriptor.events["write.pre"].support)

@@ -30,17 +30,25 @@ workspace (a repository with a Workit store, or one `workspaces.json` matches):
 - `git commit`, a feature-branch `git push`, `gh pr create|view|checks` and
   `glab mr create|view` run, with a one-line nudge naming the workit verb.
   Read-only git (`status`, `log`, `diff`, `fetch`) gets nothing.
-- A raw `git commit` (or `--amend`) that succeeded is recorded as the
-  session's `commit.recorded` ledger row, so that session's own verdict is
-  never accepted as independent.
+- A raw `git commit` (or `--amend`) is recorded as the session's
+  `commit.recorded` ledger row, so that session's own verdict is never
+  accepted as independent. The pre-tool hook notes HEAD; only a commit that
+  moved HEAD, was made after the note and is not claimed by another session
+  (a ledger row or `Workit-Session` trailer) is recorded, so a failed commit
+  never records someone else's HEAD.
+- `--help`, `git push --dry-run` and a push to a remote other than the one
+  workit pushes to (a fork) are never denied.
 
-Commands are parsed as text (chains, `cd x &&`, `git -C`, env prefixes,
-`bash -c '…'`); git is spawned only to read a new commit. The hooks fail open
+Commands are parsed as text (chains, `cd x &&`, `( … )` subshells,
+`pushd`/`popd`, `git -C`, env prefixes, `bash -c '…'`, and PowerShell quoting
+for Claude Code's PowerShell tool); a directory that cannot be known (`cd -`,
+`cd $X`) gets no decision. Git is spawned only to read a new commit and, before
+a deny, the push remote. The hooks fail open
 and never grant permission: host allow/deny rules stay authoritative.
 
 | Host | Deny | Nudge | Raw commit recorded | Session id in the shell |
 | --- | --- | --- | --- | --- |
-| Claude Code | PreToolUse | PreToolUse `additionalContext` | PostToolUse (`Bash(git *)`) | `WORKIT_SESSION_ID` from SessionStart |
+| Claude Code | PreToolUse | PreToolUse `additionalContext` | PostToolUse | `WORKIT_SESSION_ID` from SessionStart |
 | Codex | PreToolUse | PreToolUse `additionalContext` | PostToolUse | `CODEX_THREAD_ID` |
 | OpenCode | permission `evaluate` | appended to the shell result | `tool` `execute.after` | `OPENCODE_SESSION_ID` |
 | Pi | `tool_call` block | appended to the bash result | `tool_result` | `PI_SESSION_ID` |
@@ -50,8 +58,11 @@ and never grant permission: host allow/deny rules stay authoritative.
 then the host's own variable from the table. Cursor puts no conversation id in
 the agent's shell (its `sessionStart` env reaches hooks only), so its session
 context and commit nudge say `WORKIT_SESSION_ID=<id> workit git commit …`.
-Cursor's raw commits are recorded when the session runs its next shell command,
-since no post-shell hook is registered yet.
+Cursor's raw commits are recorded when the session runs its next shell command
+in the same checkout, since no post-shell hook is registered yet. A
+`WORKIT_SESSION_ID` inherited from another host (its `WORKIT_HOST` names that
+host, as when Codex runs inside Claude Code's Bash) yields to the inner host's
+own id; to assign a verifier id there, set `WORKIT_HOST` to the inner host too.
 
 ## OpenCode
 

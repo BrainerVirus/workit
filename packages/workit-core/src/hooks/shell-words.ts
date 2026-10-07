@@ -1,15 +1,56 @@
 // A small shell tokenizer shared by the hooks: quoted words, operators,
-// redirects and heredoc bodies. Pure string parsing, no I/O.
-export type Segment = { words: string[]; redirects: string[] };
+// redirects, heredoc bodies and `( … )` group markers. Pure string parsing,
+// no I/O. Two dialects:
+//   - posix (Bash, sh, zsh): `\` escapes, '…' is literal, "…" honors `\"`;
+//   - powershell (Claude Code's PowerShell tool): `\` is a path separator,
+//     the backtick escapes, '…' is literal with '' for a quote, "…" honors `".
+export type Segment = {
+  words: string[];
+  redirects: string[];
+  /** A `(`/`$(` group starts or ends here; the segment carries no words. */
+  group?: "open" | "close";
+};
 
-/** A small shell tokenizer: quoted words, operators, redirects and heredoc bodies. */
-export const segmentsOf = (command: string): Segment[] => {
+export type ShellDialect = "posix" | "powershell";
+
+/** The index of the quote closing the one at `start`, or -1. */
+const closingQuote = (command: string, start: number, dialect: ShellDialect): number => {
+  const quote = command[start];
+  for (let index = start + 1; index < command.length; index++) {
+    const char = command[index];
+    if (quote === "'") {
+      if (char !== "'") continue;
+      // PowerShell: '' inside single quotes is one quote.
+      if (dialect === "powershell" && command[index + 1] === "'") {
+        index++;
+        continue;
+      }
+      return index;
+    }
+    if ((dialect === "posix" && char === "\\") || (dialect === "powershell" && char === "`")) {
+      index++;
+      continue;
+    }
+    if (char === '"') return index;
+  }
+  return -1;
+};
+
+/** The text of a quoted span without its quotes, escapes resolved. */
+const unquote = (body: string, quote: string, dialect: ShellDialect): string => {
+  if (quote === "'") return dialect === "powershell" ? body.replaceAll("''", "'") : body;
+  return dialect === "posix" ? body.replace(/\\(["\\$`])/g, "$1") : body.replace(/`(.)/g, "$1");
+};
+
+/** Tokenize `command` into simple-command segments. */
+export const segmentsOf = (command: string, dialect: ShellDialect = "posix"): Segment[] => {
   const segments: Segment[] = [];
   let current: Segment = { words: [], redirects: [] };
   let word = "";
   let inWord = false;
   let pending: "redirect" | "input" | "heredoc" | null = null;
   const heredocs: string[] = [];
+  const escape = dialect === "posix" ? "\\" : "`";
   const flushWord = () => {
     if (!inWord) return;
     if (pending === "redirect") {
@@ -28,11 +69,11 @@ export const segmentsOf = (command: string): Segment[] => {
   for (let index = 0; index < command.length; index++) {
     const char = command[index];
     if (char === "'" || char === '"') {
-      const end = command.indexOf(char, index + 1);
-      word += command.slice(index + 1, end < 0 ? undefined : end);
+      const end = closingQuote(command, index, dialect);
+      word += unquote(command.slice(index + 1, end < 0 ? undefined : end), char, dialect);
       inWord = true;
       index = end < 0 ? command.length : end;
-    } else if (char === "\\" && index + 1 < command.length) {
+    } else if (char === escape && index + 1 < command.length) {
       word += command[++index];
       inWord = true;
     } else if (char === "\n") {
@@ -46,7 +87,15 @@ export const segmentsOf = (command: string): Segment[] => {
         index += skipped;
       }
     } else if (/\s/.test(char)) flushWord();
-    else if (";&|()".includes(char)) {
+    else if (char === "(" || char === ")") {
+      // `$(` opens a command substitution: the `$` is not a word.
+      if (char === "(" && inWord && word.endsWith("$")) {
+        word = word.slice(0, -1);
+        inWord = word !== "";
+      }
+      flushSegment();
+      segments.push({ words: [], redirects: [], group: char === "(" ? "open" : "close" });
+    } else if (";&|".includes(char)) {
       if (char === "&" && command[index + 1] === ">") continue;
       flushSegment();
     } else if (char === ">") {
@@ -62,7 +111,7 @@ export const segmentsOf = (command: string): Segment[] => {
         inWord = true;
       }
       pending = "redirect";
-    } else if (char === "<") {
+    } else if (char === "<" && dialect === "posix") {
       flushWord();
       if (command[index + 1] === "<") {
         index++;

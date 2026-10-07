@@ -27,6 +27,20 @@ test("the acting session: WORKIT_SESSION_ID when set (even empty), else the host
       { host: "codex_desktop", session: "t-2" },
     ],
     [{ CURSOR_TRACE_ID: "x" }, { host: null, session: null }],
+    // Codex started from Claude Code's Bash inherits Claude's pair: Codex's own id wins.
+    [
+      { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "claude-1", CODEX_THREAD_ID: "t-3" },
+      { host: "codex_cli", session: "t-3" },
+    ],
+    // A pair naming the same host is deliberate (a Pi worker, a lead-assigned verifier id).
+    [
+      { WORKIT_HOST: "pi", WORKIT_SESSION_ID: "pi-w-1", PI_SESSION_ID: "pi-child" },
+      { host: "pi", session: "pi-w-1" },
+    ],
+    [
+      { WORKIT_HOST: "codex_cli", WORKIT_SESSION_ID: "t-3-v1", CODEX_THREAD_ID: "t-3" },
+      { host: "codex_cli", session: "t-3-v1" },
+    ],
   ];
   for (const [env, expected] of table)
     expect(hostSessionFromEnv(env), JSON.stringify(env)).toEqual(expected);

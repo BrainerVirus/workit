@@ -143,7 +143,7 @@ export const enforceToolPolicy = (
   if (event.toolName === "bash") {
     const command = (event.input as { command?: unknown } | undefined)?.command;
     return typeof command === "string"
-      ? gate({ kind: "shell.pre", command, toolUseId: null })
+      ? gate({ kind: "shell.pre", command, toolUseId: event.toolCallId ?? null })
       : undefined;
   }
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
@@ -178,7 +178,7 @@ export const observeToolResult = (
       toolUseId: event.toolCallId,
     });
     handleHook(post, { descriptor: PI_DESCRIPTOR, addendum: null });
-    const nudge = rawGitPre(post, command, { pending: false });
+    const nudge = rawGitPre(post, command);
     return nudge.kind === "context"
       ? { content: [...event.content, { type: "text", text: nudge.text }] }
       : undefined;

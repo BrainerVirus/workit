@@ -2,18 +2,22 @@
 // rules (merge grant, verdict gate, protected branches, session trailer) live
 // in its own verbs, so a raw command skips them. The pre-tool hook:
 //   - refuses, inside a Workit workspace, the raw forms that bypass a gate:
-//     `gh pr merge`, `glab mr merge`, and `git push` onto a protected branch
-//     or the default target (forced or not), naming the workit command;
+//     `gh pr merge`, `glab mr merge`, and `git push` to the workspace's push
+//     remote onto a protected branch or the default target, naming the
+//     workit command;
 //   - lets routine raw commands run (`git commit`, a feature-branch push,
 //     `gh pr create|view|checks`, `glab mr create|view`) with a short nudge.
-// The post-tool hook records a successful raw `git commit` as the session's
-// `commit.recorded` row, so the author's own verdict never reads as
-// independent. Hosts without a post-tool event record it on the session's
-// next shell command instead (a pending marker in the store).
+// A raw `git commit` is recorded as the session's `commit.recorded` row so
+// the author's own verdict never reads as independent. The pre-tool hook
+// notes HEAD before the command (a marker in the commit's own repository);
+// the post-tool hook records only a commit that moved HEAD away from it and
+// was made after it, and that no other session claims. Hosts without a
+// post-tool event settle the marker on the session's next shell command.
 //
 // Classification is string parsing only. Git is spawned only to read the new
-// commit after a raw commit; the current branch is read from the git dir.
-// Every failure answers "no decision": hooks fail open.
+// commit after a raw commit and the push remote before a deny; HEAD and the
+// current branch are read from the git dir. Every failure answers "no
+// decision": hooks fail open.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -21,20 +25,30 @@ import os from "node:os";
 import path from "node:path";
 import { resolveBranchPolicyFor } from "../core/branch";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
+import { pushRemoteName } from "../git/rev";
 import { appendHookObserved, readLedger } from "../ledger";
 import { resolveStore, resolveTaskKey, type StoreLocation } from "../store/paths";
 import type { HookDecision, HookInput } from "./protocol";
-import { segmentsOf } from "./shell-words";
+import { segmentsOf, type ShellDialect } from "./shell-words";
 
 const NONE: HookDecision = { kind: "none" };
 
 /** One git/gh/glab invocation: its arguments after global options, and the
- * directory it runs in relative to the hook's cwd (`cd x`, `git -C x`). */
-export type RawInvocation = { tool: "git" | "gh" | "glab"; dir: string | null; args: string[] };
+ * directory it runs in relative to the hook's cwd (`cd x`, `git -C x`).
+ * `dir` is undefined when it cannot be known (`cd -`, `cd $X`, an unmatched
+ * `popd`): such an invocation never gets a decision. */
+export type RawInvocation = {
+  tool: "git" | "gh" | "glab";
+  dir: string | null | undefined;
+  args: string[];
+};
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-const PREFIXES = new Set(["sudo", "command", "env", "nohup", "time", "exec", "nice"]);
+const PREFIXES = new Set(["sudo", "command", "env", "nohup", "time", "exec", "nice", "&"]);
 const SCRIPT_FLAG = /^-[a-zA-Z]*c[a-zA-Z]*$/;
+const CD = new Set(["cd", "chdir", "set-location", "sl"]);
+const PUSHD = new Set(["pushd", "push-location"]);
+const POPD = new Set(["popd", "pop-location"]);
 /** git global options that take the next word as their value. */
 const GIT_VALUE_OPTIONS = new Set([
   "-c",
@@ -46,11 +60,24 @@ const GIT_VALUE_OPTIONS = new Set([
   "--super-prefix",
 ]);
 
-const joinDir = (base: string | null, next: string): string | null => {
-  if (next.includes("$") || next.includes("`")) return base;
+type Dir = string | null | undefined;
+
+const isAbsolute = (value: string) =>
+  path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+
+const joinDir = (base: Dir, next: string): Dir => {
+  if (base === undefined || /[$`*?]/.test(next) || next === "-") return undefined;
   const expanded =
     next === "~" || next.startsWith("~/") ? path.join(os.homedir(), next.slice(1)) : next;
-  return base === null || path.isAbsolute(expanded) ? expanded : path.join(base, expanded);
+  return base === null || isAbsolute(expanded) ? expanded : path.join(base, expanded);
+};
+
+/** The directory operand of `cd`/`Set-Location` (`-Path x`, `-LiteralPath x`). */
+const cdTarget = (words: string[]): string | null => {
+  const args = words.slice(1);
+  const flag = args.findIndex((word) => /^-(?:literal)?path$/i.test(word));
+  if (flag >= 0) return args[flag + 1] ?? null;
+  return args.find((word) => word === "-" || !word.startsWith("-")) ?? null;
 };
 
 /** Drop env assignments, wrappers (`sudo`, `env -i`, `timeout 30`) and their options. */
@@ -71,26 +98,64 @@ const stripPrefixes = (input: string[]): string[] => {
   }
 };
 
+const commandName = (word: string | undefined) =>
+  (word?.split(/[\\/]/).at(-1) ?? "").toLowerCase().replace(/\.exe$/, "");
+
 /**
  * Every git/gh/glab invocation in a shell command: `&&`/`;`/`|` chains,
- * `cd` before it, `git -C dir`, env prefixes and `bash -c '…'` scripts.
+ * `cd`/`pushd`/`popd` before it (scoped to `( … )` groups), `git -C dir`,
+ * env prefixes and `bash -c '…'` scripts.
  */
-export function rawInvocations(command: string, depth = 0): RawInvocation[] {
+export function rawInvocations(
+  command: string,
+  dialect: ShellDialect = "posix",
+  depth = 0,
+): RawInvocation[] {
   const found: RawInvocation[] = [];
-  let dir: string | null = null;
-  for (const segment of segmentsOf(command)) {
+  let dir: Dir = null;
+  const groups: Array<{ dir: Dir; stack: Dir[] }> = [];
+  let stack: Dir[] = [];
+  for (const segment of segmentsOf(command, dialect)) {
+    if (segment.group === "open") {
+      groups.push({ dir, stack: [...stack] });
+      continue;
+    }
+    if (segment.group === "close") {
+      const saved = groups.pop();
+      if (saved) ({ dir, stack } = saved);
+      continue;
+    }
     const words = stripPrefixes(segment.words);
-    const name = (words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
-    if (name === "cd" || name === "pushd") {
-      dir = words[1] ? joinDir(dir, words[1]) : null;
+    const name = commandName(words[0]);
+    if (CD.has(name)) {
+      const target = cdTarget(words);
+      dir = target === null ? os.homedir() : joinDir(dir, target);
+      continue;
+    }
+    if (PUSHD.has(name)) {
+      const target = cdTarget(words);
+      stack.push(dir);
+      dir = target === null || target === "-" ? undefined : joinDir(dir, target);
+      continue;
+    }
+    if (POPD.has(name)) {
+      dir = stack.length ? stack.pop() : undefined;
       continue;
     }
     if (SHELLS.has(name) && depth < 3) {
       const flag = words.findIndex((word, index) => index > 0 && SCRIPT_FLAG.test(word));
       const script = flag > 0 ? words[flag + 1] : undefined;
       if (script)
-        for (const inner of rawInvocations(script, depth + 1))
-          found.push({ ...inner, dir: inner.dir === null ? dir : joinDir(dir, inner.dir) });
+        for (const inner of rawInvocations(script, "posix", depth + 1))
+          found.push({
+            ...inner,
+            dir:
+              inner.dir === null
+                ? dir
+                : inner.dir === undefined
+                  ? undefined
+                  : joinDir(dir, inner.dir),
+          });
       continue;
     }
     if (name === "gh" || name === "glab") {
@@ -120,6 +185,7 @@ export type RawAction =
       targets: Array<string | null>;
       /** Forced without a lease (`--force`, `-f`, `+refspec`). */
       blindForce: boolean;
+      /** The remote named on the command line; null pushes to the default one. */
       remote: string | null;
     }
   | { kind: "merge"; forge: "gh" | "glab" }
@@ -129,10 +195,11 @@ export type RawAction =
 /** git push options that take the next word as their value. */
 const PUSH_VALUE_OPTIONS = new Set(["-o", "--push-option", "--receive-pack", "--exec", "--repo"]);
 
-const pushAction = (args: string[]): RawAction => {
+const pushAction = (args: string[]): RawAction | null => {
   let force = false;
   let lease = false;
   let wholesale = false;
+  let remote: string | null = null;
   const positionals: string[] = [];
   for (let index = 1; index < args.length; index++) {
     const arg = args[index];
@@ -140,13 +207,18 @@ const pushAction = (args: string[]): RawAction => {
       positionals.push(...args.slice(index + 1));
       break;
     }
-    if (PUSH_VALUE_OPTIONS.has(arg)) index++;
+    if (arg === "--dry-run" || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(arg)) return null;
+    if (arg === "--repo") remote = args[++index] ?? null;
+    else if (arg.startsWith("--repo=")) remote = arg.slice("--repo=".length);
+    else if (PUSH_VALUE_OPTIONS.has(arg)) index++;
     else if (arg === "--force" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(arg)) force = true;
     else if (arg.startsWith("--force-with-lease") || arg === "--force-if-includes") lease = true;
     else if (["--all", "--mirror", "--branches", "--tags"].includes(arg)) wholesale = true;
     else if (!arg.startsWith("-")) positionals.push(arg);
   }
-  const [remote = null, ...specs] = positionals;
+  // `--repo` names the remote; positionals are then all refspecs.
+  const specs = remote === null ? positionals.slice(1) : positionals;
+  remote ??= positionals[0] ?? null;
   const targets: Array<string | null> = [];
   for (const raw of specs) {
     if (raw.startsWith("+")) force = true;
@@ -163,12 +235,19 @@ const pushAction = (args: string[]): RawAction => {
   return { kind: "push", targets, blindForce: force && !lease, remote };
 };
 
-/** The workit meaning of one invocation; null for read-only or unrelated ones. */
+const HELP = new Set(["--help", "-h", "help"]);
+
+/** The workit meaning of one invocation; null for read-only, help or unrelated ones. */
 export function rawAction(invocation: RawInvocation): RawAction | null {
-  const [first, second] = invocation.args;
+  const args = invocation.args;
+  if (args.some((arg) => HELP.has(arg))) return null;
+  const [first, second] = args;
   if (invocation.tool === "git") {
-    if (first === "commit") return { kind: "commit", amend: invocation.args.includes("--amend") };
-    if (first === "push") return pushAction(invocation.args);
+    if (first === "commit")
+      return args.includes("--dry-run")
+        ? null
+        : { kind: "commit", amend: args.includes("--amend") };
+    if (first === "push") return pushAction(args);
     return null;
   }
   const forge = invocation.tool;
@@ -215,17 +294,51 @@ const guardedBranch = (dir: string, branch: string): boolean => {
   }
 };
 
+/** A push names the remote workit itself pushes to (or none, the default). */
+const toPushRemote = (repo: Repo, remote: string | null): boolean => {
+  if (remote === null) return true;
+  try {
+    // No known push remote: the named one may well be it.
+    const pushRemote = pushRemoteName(repo.dir, repo.branch);
+    return pushRemote === null || pushRemote === remote;
+  } catch {
+    return false;
+  }
+};
+
+/** HEAD's commit read from the git dir (loose or packed ref), or null. */
+const headSha = (repo: Repo): string | null => {
+  const git = repo.location.git;
+  if (!git || git.reftable) return null;
+  try {
+    const head = fs.readFileSync(path.join(git.gitDir, "HEAD"), "utf8").trim();
+    if (/^[0-9a-f]{40,64}$/.test(head)) return head;
+    const ref = /^ref: (refs\/.+)$/.exec(head)?.[1];
+    if (!ref) return null;
+    const common = path.dirname(repo.location.dir);
+    try {
+      return fs.readFileSync(path.join(common, ref), "utf8").trim() || null;
+    } catch {}
+    const packed = fs.readFileSync(path.join(common, "packed-refs"), "utf8");
+    return (
+      new RegExp(`^([0-9a-f]{40,64}) ${ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").exec(
+        packed,
+      )?.[1] ?? null
+    );
+  } catch {
+    return null;
+  }
+};
+
 // ---------------------------------------------------------------------------
 // pre-tool: refuse or nudge
 
 const quote = (text: string) => `\`${text}\``;
 
-const refusal = (action: RawAction, branch: string | null): string | null => {
+const refusal = (action: RawAction, branch: string | null): string => {
   if (action.kind === "merge")
     return `workit: raw ${quote(action.forge === "gh" ? "gh pr merge" : "glab mr merge")} bypasses the merge grant and the verdict gate. Run ${quote("workit pr merge")} instead (it checks both; ${quote("workit help pr")}).`;
-  if (action.kind === "push" && branch)
-    return `workit: raw ${quote("git push")}${action.blindForce ? " --force" : ""} onto ${branch}, a protected branch or the default target, bypasses workit's protected-branch check. Push your feature branch with ${quote("workit git push")} (${quote("workit git push --force-with-lease")} to rewrite it) and land it with ${quote("workit pr merge")}.`;
-  return null;
+  return `workit: raw ${quote("git push")}${action.kind === "push" && action.blindForce ? " --force" : ""} onto ${branch}, a protected branch or the default target, bypasses workit's protected-branch check. Push your feature branch with ${quote("workit git push")} (${quote("workit git push --force-with-lease")} to rewrite it) and land it with ${quote("workit pr merge")}.`;
 };
 
 const nudgeFor = (action: RawAction, host: HookInput["host"], session: string): string | null => {
@@ -250,46 +363,52 @@ const nudgeFor = (action: RawAction, host: HookInput["host"], session: string): 
   }
 };
 
-/** Raw invocations that change history, each with its repository. */
-const actionsIn = (cwd: string, command: string): Array<{ action: RawAction; repo: Repo }> => {
-  const out: Array<{ action: RawAction; repo: Repo }> = [];
+type Located = { action: RawAction; repo: Repo };
+
+/** Raw invocations with a meaning, each with its Workit repository. */
+const actionsIn = (cwd: string, command: string, dialect: ShellDialect): Located[] => {
+  const out: Located[] = [];
   const repos = new Map<string, Repo | null>();
-  for (const invocation of rawInvocations(command)) {
+  for (const invocation of rawInvocations(command, dialect)) {
+    if (invocation.dir === undefined) continue;
     const action = rawAction(invocation);
     if (!action) continue;
     const dir = path.resolve(cwd, invocation.dir ?? ".");
-    if (!repos.has(dir)) repos.set(dir, repoAt(dir));
+    if (!repos.has(dir)) {
+      const repo = repoAt(dir);
+      repos.set(dir, repo && isWorkitWorkspace(repo) ? repo : null);
+    }
     const repo = repos.get(dir);
-    if (repo && isWorkitWorkspace(repo)) out.push({ action, repo });
+    if (repo) out.push({ action, repo });
   }
   return out;
 };
 
 /** Cheap pre-filter: no git/gh/glab word, nothing to do. */
-const mentionsRawTool = (command: string) => /\b(?:git|gh|glab)\b/.test(command);
+const mentionsRawTool = (command: string) => /\b(?:git|gh|glab)\b/i.test(command);
+
+const dialectOf = (input: HookInput): ShellDialect =>
+  (input.event.kind === "shell.pre" || input.event.kind === "shell.post"
+    ? input.event.dialect
+    : undefined) ?? "posix";
 
 /**
  * The pre-tool decision for a shell command: deny a gate bypass inside a
  * Workit workspace, else a nudge (as context) for routine raw delivery
- * commands, else nothing. Never throws.
+ * commands, else nothing. Never throws, never writes.
  */
-export function rawGitPre(
-  input: HookInput,
-  command: string,
-  options: { pending: boolean },
-): HookDecision {
+export function rawGitPre(input: HookInput, command: string): HookDecision {
   try {
     if (!mentionsRawTool(command)) return NONE;
-    const actions = actionsIn(input.cwd, command);
     const nudges: string[] = [];
-    for (const { action, repo } of actions) {
-      if (action.kind === "merge") return deny(refusal(action, null)!);
+    for (const { action, repo } of actionsIn(input.cwd, command, dialectOf(input))) {
+      if (action.kind === "merge") return deny(refusal(action, null));
       if (action.kind === "push")
         for (const target of action.targets) {
           const branch = target ?? repo.branch;
-          if (branch && guardedBranch(repo.dir, branch)) return deny(refusal(action, branch)!);
+          if (branch && guardedBranch(repo.dir, branch) && toPushRemote(repo, action.remote))
+            return deny(refusal(action, branch));
         }
-      if (action.kind === "commit" && options.pending) markPending(input, repo);
       const nudge = nudgeFor(action, input.host, input.session.id);
       if (nudge && !nudges.includes(nudge)) nudges.push(nudge);
     }
@@ -302,47 +421,99 @@ export function rawGitPre(
 const deny = (reason: string): HookDecision => ({ kind: "deny", reason, unblock: null });
 
 // ---------------------------------------------------------------------------
-// post-tool: record a raw commit for the session (B2)
+// recording raw commits (B2)
 
-/** A commit made within this window (or since a pending marker) is taken as this command's. */
-const FRESH_SECONDS = 600;
+/** The marker key for a shell call that has no post-tool event (Cursor). */
+export const NEXT_COMMAND = "next";
+/** A marker older than this is a command that never reported back. */
+const MARKER_TTL_SECONDS = 3_600;
 
-type HeadCommit = { sha: string; committed: number; subject: string };
+type Marker = { head: string | null; at: number };
+
+const markerFile = (repo: Repo, session: string, key: string) =>
+  path.join(
+    repo.location.dir,
+    "hooks",
+    `commit-${createHash("sha256").update(`${session}\0${key}`).digest("hex").slice(0, 32)}.json`,
+  );
+
+/** The marker key of one shell call: its tool-use id, else the command. */
+export const callKey = (toolUseId: string | null, command: string): string =>
+  toolUseId ?? `cmd:${createHash("sha256").update(command).digest("hex")}`;
+
+/**
+ * Before a shell call that runs a raw `git commit` in a Workit workspace:
+ * note HEAD and the time in that repository's store, under the session and
+ * `key`. Never throws.
+ */
+export function noteRawCommit(input: HookInput, command: string, key: string): void {
+  try {
+    if (!input.session.id || !/\bcommit\b/.test(command)) return;
+    const at = Math.floor(Date.now() / 1000);
+    for (const { action, repo } of actionsIn(input.cwd, command, dialectOf(input))) {
+      if (action.kind !== "commit") continue;
+      const file = markerFile(repo, input.session.id, key);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${JSON.stringify({ head: headSha(repo), at } satisfies Marker)}\n`);
+    }
+  } catch {
+    // Fail open: a missing marker only loses this record.
+  }
+}
+
+type HeadCommit = { sha: string; committed: number; subject: string; trailer: string | null };
 
 const headCommit = (dir: string): HeadCommit | null => {
-  const run = spawnSync("git", ["log", "-1", "--format=%H%x1f%ct%x1f%s"], {
-    cwd: dir,
-    encoding: "utf8",
-    timeout: 5_000,
-    windowsHide: true,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
-  });
-  const [sha, committed, subject = ""] = (run.status === 0 ? run.stdout.trim() : "").split("\x1f");
+  const run = spawnSync(
+    "git",
+    [
+      "log",
+      "-1",
+      "--format=%H%x1f%ct%x1f%s%x1f%(trailers:key=Workit-Session,valueonly,separator=%x2c)",
+    ],
+    {
+      cwd: dir,
+      encoding: "utf8",
+      timeout: 5_000,
+      windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
+    },
+  );
+  const [sha, committed, subject = "", trailer = ""] = (
+    run.status === 0 ? run.stdout.trim() : ""
+  ).split("\x1f");
   return sha && /^[0-9a-f]{40,64}$/.test(sha)
-    ? { sha, committed: Number(committed), subject }
+    ? { sha, committed: Number(committed), subject, trailer: trailer.trim() || null }
     : null;
 };
 
 /**
- * Record HEAD as a commit of `input`'s session when it is new enough (made
- * at or after `since`, Unix seconds) and not recorded for the session yet.
- * True when a row was written.
+ * Settle one marker: record HEAD for the session when HEAD moved away from
+ * the noted commit, the new commit was made at or after the note, and no
+ * other session claims it (a ledger row or a Workit-Session trailer).
  */
-const recordCommit = (input: HookInput, repo: Repo, since: number): boolean => {
+const settle = (input: HookInput, repo: Repo, file: string): void => {
+  let marker: Marker;
+  try {
+    marker = JSON.parse(fs.readFileSync(file, "utf8")) as Marker;
+  } catch {
+    return;
+  }
+  fs.rmSync(file, { force: true });
   const session = input.session.id;
-  if (!session || !repo.branch) return false;
+  const now = Date.now() / 1000;
+  if (typeof marker.at !== "number" || now - marker.at > MARKER_TTL_SECONDS) return;
+  if (!session || !repo.branch) return;
   const head = headCommit(repo.dir);
-  if (!head || head.committed < since) return false;
+  if (!head || head.sha === marker.head || head.committed < marker.at) return;
+  if (head.trailer && head.trailer !== session) return;
   const ledger = readLedger(repo.dir);
-  if (!ledger.ok) return false;
-  const known = ledger.value.rows.some(
-    (row) =>
-      row.type === "commit.recorded" &&
-      (row.sha === head.sha || row.head === head.sha) &&
-      (row.session ?? row.actor.session) === session,
+  if (!ledger.ok) return;
+  const claimed = ledger.value.rows.some(
+    (row) => row.type === "commit.recorded" && (row.sha === head.sha || row.head === head.sha),
   );
-  if (known) return false;
-  return appendHookObserved(repo.dir, {
+  if (claimed) return;
+  appendHookObserved(repo.dir, {
     type: "commit.recorded",
     actor: { host: input.host, session, agentId: input.session.agentId },
     branch: repo.branch,
@@ -354,65 +525,33 @@ const recordCommit = (input: HookInput, repo: Repo, since: number): boolean => {
     files: [],
     fileCount: null,
     via: "raw_shell",
-  }).ok;
+  });
 };
 
-/** Post-tool: a raw `git commit` that succeeded is recorded for the session. */
-export function rawGitPost(input: HookInput, command: string, exitCode: number | null): void {
+/** Post-tool: a raw `git commit` the pre-tool hook noted is recorded for the session. */
+export function rawGitPost(input: HookInput, command: string, key: string): void {
   try {
-    if (exitCode !== null && exitCode !== 0) return;
-    if (!/\bcommit\b/.test(command)) return;
-    const since = Date.now() / 1000 - FRESH_SECONDS;
-    for (const { action, repo } of actionsIn(input.cwd, command))
-      if (action.kind === "commit") recordCommit(input, repo, since);
+    if (!input.session.id || !/\bcommit\b/.test(command)) return;
+    for (const { action, repo } of actionsIn(input.cwd, command, dialectOf(input)))
+      if (action.kind === "commit") settle(input, repo, markerFile(repo, input.session.id, key));
   } catch {
     // Fail open: a lost record only weakens author detection.
   }
 }
 
-// ---------------------------------------------------------------------------
-// hosts without a post-tool event: a pending marker, settled next command
-
-const markerPath = (store: string, session: string) =>
-  path.join(
-    store,
-    "hooks",
-    `pending-commit-${createHash("sha256").update(session).digest("hex").slice(0, 24)}.json`,
-  );
-
-const storeOf = (cwd: string): string | null => {
-  const location = resolveStore(cwd);
-  return location instanceof Error || !location.shared ? null : location.dir;
-};
-
-function markPending(input: HookInput, repo: Repo): void {
-  const store = storeOf(input.cwd);
-  if (!store || !input.session.id) return;
-  const file = markerPath(store, input.session.id);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(
-    file,
-    `${JSON.stringify({ dir: repo.dir, at: Math.floor(Date.now() / 1000) })}\n`,
-  );
-}
-
 /**
- * On a host without a post-tool event, the session's previous raw commit (if
- * any) is recorded now: the marker names the repository and when the commit
- * command started. One stat when there is nothing pending.
+ * A host without a post-tool event: the session's previous raw commit in
+ * the checkout it works in is settled on its next shell command (one stat
+ * when nothing is pending). A commit made in another repository through
+ * `cd`/`-C` is settled only when a later command runs there.
  */
 export function settlePendingCommit(input: HookInput): void {
   try {
     if (!input.session.id) return;
-    const store = storeOf(input.cwd);
-    if (!store) return;
-    const file = markerPath(store, input.session.id);
-    if (!fs.existsSync(file)) return;
-    const marker = JSON.parse(fs.readFileSync(file, "utf8")) as { dir?: unknown; at?: unknown };
-    fs.rmSync(file, { force: true });
-    if (typeof marker.dir !== "string" || typeof marker.at !== "number") return;
-    const repo = repoAt(marker.dir);
-    if (repo) recordCommit(input, repo, marker.at - 1);
+    const repo = repoAt(input.cwd);
+    if (!repo) return;
+    const file = markerFile(repo, input.session.id, NEXT_COMMAND);
+    if (fs.existsSync(file)) settle(input, repo, file);
   } catch {
     // Fail open.
   }

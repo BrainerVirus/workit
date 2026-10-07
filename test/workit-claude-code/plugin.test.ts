@@ -107,9 +107,11 @@ test("hooks.json registers the designed events through the exec-form launcher, n
     ["PowerShell", undefined],
     ["Edit|Write|MultiEdit|NotebookEdit", undefined],
   ]);
-  // A process per Bash call would double the hook cost: only git commands.
+  // No `if` filter: it misses `cd x && git commit`, `bash -c` and absolute git
+  // paths. The launcher answers a PostToolUse without `commit` before the
+  // runtime loads.
   expect(hooks.PostToolUse.map((group) => [group.matcher, group.hooks[0].if])).toEqual([
-    ["Bash", "Bash(git *)"],
+    ["Bash|PowerShell", undefined],
   ]);
 });
 
