@@ -12,6 +12,7 @@ CONTEXT: <pointers: spec section, ledger decisions, the neighbour file to imitat
 ACCEPTANCE:
   - Given <state>, When <action>, Then <observable result>
 VERIFY: <exact commands, e.g. `workit check test`, the verify-<app> feature to drive>
+TIER: <mundane | standard | hard: how much model the slice needs>
 TIMEBOX: <wall clock or turn budget; past it without a new commit you will be replaced>
 FORBIDDEN: <no edits outside SCOPE; no rebase, retarget, merge or force-push; no new dependencies; ...>
 REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,
@@ -34,10 +35,54 @@ ACCEPTANCE:
   - Given 3 runs today and 1 yesterday, When GET /v1/usage, Then the last two entries are {"runs":1} and {"runs":3}
   - Given no auth header, When GET /v1/usage, Then the status is 401
 VERIFY: `workit check test`; verify-api feature "usage"
+TIER: standard
 TIMEBOX: 45 minutes
 FORBIDDEN: no edits outside SCOPE; no schema migration; no rebase or force-push; no new packages
 REPORT: as in the template
 STANDING: conventional commits; no comments that restate code; ask nothing, record rulings instead
+```
+
+## Plan file
+
+`workit fanout plan <plan.json>` records the slices before any spawn. Each
+slice carries the brief fields the plan checks (goal, scope, acceptance,
+verify, forbidden must be filled; tier is mundane, standard or hard). `base`
+defaults to the trunk, or to the branch of a single `dependsOn` slice (a
+stack); `worktree` defaults to `../<repo>-wt/<id>`. `owns` claims a shared
+file another slice's glob also matches. Globs that match no file yet are compared
+through a sample path. Escape literal brackets: `"app/\\[id\\]/page.tsx"`.
+
+```json
+{
+  "name": "usage",
+  "trunk": "main",
+  "slices": [
+    {
+      "id": "usage-endpoint",
+      "branch": "feature/usage-endpoint",
+      "tier": "standard",
+      "scope": ["src/routes/usage.ts", "src/queries/usage.ts", "test/usage.test.ts"],
+      "owns": ["package.json"],
+      "goal": "GET /v1/usage returns the run count per UTC day for the last 7 days",
+      "acceptance": ["Given no auth header, When GET /v1/usage, Then the status is 401"],
+      "verify": ["workit check test"],
+      "forbidden": ["no edits outside SCOPE", "no rebase or force-push"],
+      "context": "docs/usage/spec.md Behavior",
+      "timebox": "45 minutes"
+    },
+    {
+      "id": "usage-docs",
+      "branch": "docs/usage",
+      "tier": "mundane",
+      "dependsOn": ["usage-endpoint"],
+      "scope": ["docs/usage/**"],
+      "goal": "The API guide documents GET /v1/usage",
+      "acceptance": ["Given the guide, When a reader looks up usage, Then the response shape is shown"],
+      "verify": ["workit check docs"],
+      "forbidden": ["no edits outside SCOPE"]
+    }
+  ]
+}
 ```
 
 ## Worker rules (paste into the brief when the host has no implementer agent)
