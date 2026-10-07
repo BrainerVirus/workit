@@ -10,6 +10,13 @@ installers. `test/shared/node-guard.ts` (a `bunfig.toml` preload) exits before
 any test runs when that `node` is older than the support-matrix minimum
 (24); switch with `fnm use` (reads `.node-version`).
 
+## Local pins
+
+When a live host (Claude Code `--plugin-dir`, OpenCode `file://` pin, Pi local
+install) loads a checkout, never run root `bun run build` or `bun run check` in
+it: they replace bundles the host has loaded. Run lint, format, typecheck and
+tests directly, or work in a separate worktree.
+
 ## Tiers
 
 `bun scripts/test.ts <unit|packaging> [bun test args]` selects a tier; the
@@ -38,4 +45,4 @@ runs everything; `bun test <path>` runs one file.
 
 CI also runs `bun run knip` (unused files/exports and reachability),
 `bun run doctor` (react-doctor on the CLI UI), actionlint and zizmor, which
-`bun run check` does not. Run knip after deleting or moving exports.
+`bun run check` does not, and lints the PR title with commitlint. Run knip after deleting or moving exports.

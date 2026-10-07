@@ -10,7 +10,7 @@ those projects.
 | Method-specific behavior | the skill under `packages/workit-core/skills/` |
 | Skill triggers | `WORKIT_SKILL_TRIGGERS` in `packages/workit-core/src/core/skill-manifests.ts`, the skill description and the bootstrap routing list |
 | Failure guidance for one host | that adapter's messages |
-| Developing and releasing this repo | `AGENTS.md` and `docs/agents/` |
+| Developing and releasing this repo | `AGENTS.md`, `docs/agents/` and `CODING_STANDARDS.md` |
 | Install and usage | README, `docs/guides/`, package READMEs |
 | Release history | GitHub release notes and `CHANGELOG.md` |
 

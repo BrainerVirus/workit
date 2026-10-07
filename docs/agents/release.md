@@ -1,7 +1,7 @@
 # Release and qualification
 
-Read before anything that touches versions, tags, the release workflow or
-release qualification.
+Read before anything that touches versions, tags, the release workflow,
+release qualification, branch names or commit messages.
 
 ## How a release happens
 
@@ -24,8 +24,8 @@ Live release qualification (`docs/qualification/qualification.md`) needs
 explicit authorization: never run `scripts/run-v1-evaluation.ts` or fabricate
 batch results without it.
 
-`docs/qualification/capabilities.md` is the output of
-`renderCapabilitiesMarkdown(collectCapabilityMatrix())` in
-`test/acceptance/harness.ts`; `test/acceptance/deterministic.test.ts` (in the
-unit tier and `bun run test:acceptance`) fails when the committed file
-differs. No script writes it, so regenerate it from that function.
+## Branches and commits
+
+Branch prefixes: `feature/`, `bugfix/`, `chore/`, `docs/`, `ci/`. Commit
+messages are linted by commitlint once you run `bun run hooks:install`; CI
+lints the PR title (`.github/workflows/pr-title.yml`).

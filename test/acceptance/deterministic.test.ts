@@ -236,7 +236,10 @@ test("committed capabilities.md matches generated adapter fixtures", () => {
     path.join(REPO_ROOT, "docs/qualification/capabilities.md"),
     "utf8",
   );
-  expect(committed).toBe(generated);
+  expect(
+    committed,
+    "docs/qualification/capabilities.md is stale; regenerate it with `bun run write:capabilities`",
+  ).toBe(generated);
 });
 
 test("observable action judge rejects self-reported compliance without actions", () => {
