@@ -67,6 +67,7 @@ type DoctorCheckId =
   | "codex_pin"
   | "opencode_version"
   | "claude_plugin"
+  | "workit_on_path"
   | "assets"
   | "launcher"
   | "utility"
@@ -231,7 +232,11 @@ const pluginEntries = (cfg: Record<string, any> | null): string[] => {
   ];
 };
 
-const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
+const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean =>
+  findOnPath(name, env) !== null;
+
+/** Absolute path of the first executable `name` on env.PATH, or null. */
+const findOnPath = (name: string, env: NodeJS.ProcessEnv): string | null => {
   const dirs = (env.PATH ?? process.env.PATH ?? "").split(path.delimiter);
   // win32 executables carry an .exe suffix (bun.exe, git.exe), so probe both
   // names — statSync with the bare name would never find them.
@@ -243,13 +248,13 @@ const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
       try {
         const st = statSync(candidate);
         if (process.platform !== "win32" && (st.mode & 0o111) === 0) continue;
-        return true;
+        return candidate;
       } catch {
         /* keep scanning */
       }
     }
   }
-  return false;
+  return null;
 };
 
 const versionOf = (bin: string, env: NodeJS.ProcessEnv, timeout?: number): string | null => {
@@ -1678,12 +1683,84 @@ const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: bool
   };
 };
 
+const CLI_PACKAGE = "@brainervirus/workit-cli";
+const SEMVER = /\d+\.\d+\.\d+/;
+
+// One probe per binary identity per process: a long-lived caller re-running
+// the doctor does not respawn an unchanged binary, and a replaced one re-probes.
+const workitVersions = new Map<string, string | null>();
+const workitVersionAt = (bin: string, env: NodeJS.ProcessEnv): string | null => {
+  let key: string;
+  try {
+    const st = statSync(bin);
+    key = `${bin}:${st.ino}:${st.size}:${st.mtimeMs}`;
+  } catch {
+    return null;
+  }
+  if (workitVersions.has(key)) return workitVersions.get(key) ?? null;
+  const r = spawnSync(bin, ["--version"], { encoding: "utf8", env, timeout: 10_000 });
+  const version = r.status === 0 ? ((r.stdout ?? "").match(SEMVER)?.[0] ?? null) : null;
+  workitVersions.set(key, version);
+  return version;
+};
+
+/**
+ * Agents and hooks shell out to `workit`, so the binary on PATH must run, and
+ * should not be older than the host plugins that call it. Advisory only: a
+ * missing or older CLI warns with the install command and never changes the
+ * exit code. Plugins republish only when their payload changes, so a CLI newer
+ * than a plugin is normal and passes.
+ */
+const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
+  const plugins = [
+    ...claudeWorkitInstalls(res.home, res.env, res.cwd).map((i) => ({
+      label: `Claude Code plugin ${i.id}`,
+      version: i.version,
+    })),
+    { label: "Cursor plugin", version: installedPluginVersion(res) },
+    { label: "OpenCode plugin", version: installedOpenCodeCacheVersion(res) },
+  ].filter((p): p is { label: string; version: string } => p.version !== null);
+  const newest = plugins.reduce<{ label: string; version: string } | null>(
+    (best, p) => (best && semverAtLeast(best.version, p.version) ? best : p),
+    null,
+  );
+  const target = newest?.version ?? "latest";
+  const fix = `npm i -g ${CLI_PACKAGE}@${target} (or run it without a global install: npx -y ${CLI_PACKAGE}@${target} <command>)`;
+  const bin = findOnPath("workit", res.env);
+  if (!bin) {
+    return { id: "workit_on_path", status: "warn", detail: "no workit on PATH", fix };
+  }
+  const version = workitVersionAt(bin, res.env);
+  if (!version) {
+    return {
+      id: "workit_on_path",
+      status: "warn",
+      detail: `${bin} does not run (\`workit --version\` failed)`,
+      fix,
+    };
+  }
+  if (newest && versionBehind(version, newest.version)) {
+    return {
+      id: "workit_on_path",
+      status: "warn",
+      detail: `workit ${version} at ${bin} is older than the ${newest.label} ${newest.version}`,
+      fix,
+    };
+  }
+  return {
+    id: "workit_on_path",
+    status: "pass",
+    detail: `workit ${version} at ${bin}${newest ? ` (newest host plugin ${newest.version})` : ""}`,
+  };
+};
+
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
   checkCodexPin,
   checkOpencodeVersion,
   checkClaudePlugin,
+  checkWorkitOnPath,
   checkAssets,
   checkLauncher,
   checkUtility,

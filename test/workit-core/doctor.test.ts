@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -828,34 +829,38 @@ test("cursor launcher checks use the installed registered runtime", () => {
   }
 });
 
-test("cursor launcher rejects empty or non-Node installed dist entries", () => {
-  const entries = ["mcp-server.js", "cursor-session-start.js"];
-  for (const entry of entries) {
-    const installed = path.join(fixture.pluginDir, "dist", entry);
-    for (const invalid of ["", "console.log('not a Node launcher');\n"]) {
-      writeConfig(installed, invalid);
-      try {
-        for (const host of ["cursor", "cli"] as const) {
-          const report = runDoctor({
-            host,
-            home: fixture.home,
-            configDir: fixture.configDir,
-            stateDir: fixture.stateDir,
-            dev: fixture.dev,
-            cwd: fixture.cwd,
-            cursorPluginDir: fixture.pluginDir,
-          });
-          const launcher = check(report, "launcher");
-          expect(launcher.status, `${host}/${entry}/${JSON.stringify(invalid)}`).toBe("fail");
-          expect(launcher.detail).toContain(installed);
-          expect(launcher.fix).toContain("Rebuild");
+test(
+  "cursor launcher rejects empty or non-Node installed dist entries",
+  () => {
+    const entries = ["mcp-server.js", "cursor-session-start.js"];
+    for (const entry of entries) {
+      const installed = path.join(fixture.pluginDir, "dist", entry);
+      for (const invalid of ["", "console.log('not a Node launcher');\n"]) {
+        writeConfig(installed, invalid);
+        try {
+          for (const host of ["cursor", "cli"] as const) {
+            const report = runDoctor({
+              host,
+              home: fixture.home,
+              configDir: fixture.configDir,
+              stateDir: fixture.stateDir,
+              dev: fixture.dev,
+              cwd: fixture.cwd,
+              cursorPluginDir: fixture.pluginDir,
+            });
+            const launcher = check(report, "launcher");
+            expect(launcher.status, `${host}/${entry}/${JSON.stringify(invalid)}`).toBe("fail");
+            expect(launcher.detail).toContain(installed);
+            expect(launcher.fix).toContain("Rebuild");
+          }
+        } finally {
+          writeConfig(installed, "#!/usr/bin/env node\n// bundle\n");
         }
-      } finally {
-        writeConfig(installed, "#!/usr/bin/env node\n// bundle\n");
       }
     }
-  }
-});
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
 test("cursor launcher rejects shebang-valid JavaScript syntax errors without executing them", () => {
   const marker = path.join(fixture.root, "must-not-execute");
@@ -953,221 +958,236 @@ test("cursor launcher validates the canonical registered MCP target", () => {
   }
 });
 
-test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)", () => {
-  const canonical = JSON.stringify({
-    mcpServers: {
-      workit: {
-        command: "npx",
-        args: [
+test(
+  "cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
+  () => {
+    const canonical = JSON.stringify({
+      mcpServers: {
+        workit: {
+          command: "npx",
+          args: [
+            "-y",
+            "--prefer-online",
+            "--min-release-age=0",
+            "--package=@brainervirus/workit-cursor@latest",
+            "workit-cursor-mcp",
+            "${workspaceFolder}",
+          ],
+        },
+      },
+    });
+    const variants: Array<[string, string[]]> = [
+      [
+        "exact pin @0.8.5",
+        [
           "-y",
           "--prefer-online",
-          "--min-release-age=0",
+          "--package=@brainervirus/workit-cursor@0.8.5",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
+      ],
+      [
+        "bare @latest without --prefer-online",
+        [
+          "-y",
           "--package=@brainervirus/workit-cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
-      },
-    },
-  });
-  const variants: Array<[string, string[]]> = [
-    [
-      "exact pin @0.8.5",
-      [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@0.8.5",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
       ],
-    ],
-    [
-      "bare @latest without --prefer-online",
       [
-        "-y",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
+        "@latest-alpha",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest-alpha",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "@latest-alpha",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest-alpha",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
+        "@0.8.5-alpha",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@0.8.5-alpha",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "@0.8.5-alpha",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@0.8.5-alpha",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
+        "@0.8.50",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@0.8.50",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "@0.8.50",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@0.8.50",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
+        "missing ${workspaceFolder}",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp",
+        ],
       ],
-    ],
-    [
-      "missing ${workspaceFolder}",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp",
+        "extra args",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+          "extra",
+        ],
       ],
-    ],
-    [
-      "extra args",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
-        "extra",
+        "executable lookalike",
+        [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp-foo",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "executable lookalike",
       [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp-foo",
-        "${workspaceFolder}",
+        "wrong position: --prefer-online after --package",
+        [
+          "-y",
+          "--package=@brainervirus/workit-cursor@latest",
+          "--prefer-online",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
       ],
-    ],
-    [
-      "wrong position: --prefer-online after --package",
-      [
-        "-y",
-        "--package=@brainervirus/workit-cursor@latest",
-        "--prefer-online",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
-      ],
-    ],
-  ];
-  try {
-    for (const [label, args] of variants) {
-      writeConfig(
-        fixture.cursorMcp,
-        JSON.stringify({ mcpServers: { workit: { command: "npx", args } } }),
-      );
-      const report = run();
-      expect(check(report, "launcher").status, label).toBe("fail");
-      expect(check(report, "launcher").detail, label).toContain("canonical");
+    ];
+    try {
+      for (const [label, args] of variants) {
+        writeConfig(
+          fixture.cursorMcp,
+          JSON.stringify({ mcpServers: { workit: { command: "npx", args } } }),
+        );
+        const report = run();
+        expect(check(report, "launcher").status, label).toBe("fail");
+        expect(check(report, "launcher").detail, label).toContain("canonical");
+      }
+    } finally {
+      writeConfig(fixture.cursorMcp, canonical);
     }
-  } finally {
-    writeConfig(fixture.cursorMcp, canonical);
-  }
-  expect(check(run(), "launcher").status).toBe("pass");
-});
+    expect(check(run(), "launcher").status).toBe("pass");
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
-test("cursor session-start hook command matches exact canonical string (CA-17)", () => {
-  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
-  const canonical = {
-    version: 1,
-    hooks: {
-      sessionStart: [
-        {
-          command:
-            "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-        },
+test(
+  "cursor session-start hook command matches exact canonical string (CA-17)",
+  () => {
+    const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+    const canonical = {
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command:
+              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+          },
+        ],
+      },
+    };
+    const hookVariants: Array<[string, string]> = [
+      [
+        "exact pin @0.8.5",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
       ],
-    },
-  };
-  const hookVariants: Array<[string, string]> = [
-    [
-      "exact pin @0.8.5",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
-    ],
-    [
-      "bare @latest without --prefer-online",
-      "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-    ],
-    [
-      "@latest-alpha",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
-    ],
-    [
-      "@0.8.5-alpha",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5-alpha workit-cursor-session-start",
-    ],
-    [
-      "@0.8.50",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.50 workit-cursor-session-start",
-    ],
-    [
-      "extra-token",
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start extra",
-    ],
-    ["missing-executable", "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest"],
-  ];
-  try {
-    for (const [label, command] of hookVariants) {
+      [
+        "bare @latest without --prefer-online",
+        "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+      ],
+      [
+        "@latest-alpha",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
+      ],
+      [
+        "@0.8.5-alpha",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5-alpha workit-cursor-session-start",
+      ],
+      [
+        "@0.8.50",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.50 workit-cursor-session-start",
+      ],
+      [
+        "extra-token",
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start extra",
+      ],
+      ["missing-executable", "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest"],
+    ];
+    try {
+      for (const [label, command] of hookVariants) {
+        writeConfig(
+          hooksFile,
+          JSON.stringify({ version: 1, hooks: { sessionStart: [{ command }] } }),
+        );
+        const report = run();
+        expect(check(report, "launcher").status, label).toBe("fail");
+        expect(check(report, "launcher").detail, label).toContain("canonical");
+        expect(check(report, "launcher").detail, label).toContain("hooks-cursor.json");
+      }
+    } finally {
+      writeConfig(hooksFile, JSON.stringify(canonical));
+    }
+    expect(check(run(), "launcher").status).toBe("pass");
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "accepts a local-dist node session-start hook pointing at the installed dist (CA-17)",
+  () => {
+    const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+    const distHook = `node ${path.join(fixture.pluginDir, "dist", "cursor-session-start.js")}`;
+    const write = (command: string) =>
       writeConfig(
         hooksFile,
         JSON.stringify({ version: 1, hooks: { sessionStart: [{ command }] } }),
       );
-      const report = run();
-      expect(check(report, "launcher").status, label).toBe("fail");
-      expect(check(report, "launcher").detail, label).toContain("canonical");
-      expect(check(report, "launcher").detail, label).toContain("hooks-cursor.json");
+    try {
+      write(distHook);
+      expect(check(run(), "launcher").status, "local dist").toBe("pass");
+      // The node form must point at the plugin's own valid dist entry: an
+      // unrelated node command or a missing dist file stays a failure.
+      write("node /elsewhere/cursor-session-start.js");
+      expect(check(run(), "launcher").status).toBe("fail");
+      write(`node ${path.join(fixture.pluginDir, "dist", "missing.js")}`);
+      expect(check(run(), "launcher").status).toBe("fail");
+      write(
+        "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+      );
+      expect(check(run(), "launcher").status).toBe("pass");
+    } finally {
+      writeConfig(
+        hooksFile,
+        JSON.stringify({
+          version: 1,
+          hooks: {
+            sessionStart: [
+              {
+                command:
+                  "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+              },
+            ],
+          },
+        }),
+      );
     }
-  } finally {
-    writeConfig(hooksFile, JSON.stringify(canonical));
-  }
-  expect(check(run(), "launcher").status).toBe("pass");
-});
-
-test("accepts a local-dist node session-start hook pointing at the installed dist (CA-17)", () => {
-  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
-  const distHook = `node ${path.join(fixture.pluginDir, "dist", "cursor-session-start.js")}`;
-  const write = (command: string) =>
-    writeConfig(hooksFile, JSON.stringify({ version: 1, hooks: { sessionStart: [{ command }] } }));
-  try {
-    write(distHook);
-    expect(check(run(), "launcher").status, "local dist").toBe("pass");
-    // The node form must point at the plugin's own valid dist entry: an
-    // unrelated node command or a missing dist file stays a failure.
-    write("node /elsewhere/cursor-session-start.js");
-    expect(check(run(), "launcher").status).toBe("fail");
-    write(`node ${path.join(fixture.pluginDir, "dist", "missing.js")}`);
-    expect(check(run(), "launcher").status).toBe("fail");
-    write(
-      "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-    );
-    expect(check(run(), "launcher").status).toBe("pass");
-  } finally {
-    writeConfig(
-      hooksFile,
-      JSON.stringify({
-        version: 1,
-        hooks: {
-          sessionStart: [
-            {
-              command:
-                "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-            },
-          ],
-        },
-      }),
-    );
-  }
-});
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
 test("detects an unavailable runtime (no node/bun on PATH) and clears with a full PATH", () => {
   const emptyBin = path.join(fixture.root, "empty-bin");
@@ -1283,60 +1303,72 @@ test("detects malformed config files and clears once repaired", () => {
   expect(check(run(), "malformed_config").status).toBe("pass");
 });
 
-test("AR-07: non-object config shapes are flagged malformed, never healthy", () => {
-  const configFile = path.join(fixture.configDir, "config.json");
-  for (const content of ["null", '"just a string"', "42", "[]", "[1, 2, 3]"]) {
-    writeConfig(configFile, content);
-    const report = run();
-    expect(check(report, "malformed_config").status, content).toBe("fail");
-    expect(check(report, "malformed_config").detail, content).toContain("config.json");
-  }
-  rmSync(configFile, { force: true });
-  expect(check(run(), "malformed_config").status).toBe("pass");
-});
-
-test("AR-07: doctor agrees with the readers on malformed shapes", () => {
-  const vcsFile = path.join(fixture.configDir, "vcs.json");
-  const wsFile = path.join(fixture.configDir, "workspaces.json");
-  const prev = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = fixture.configDir;
-  try {
-    for (const content of ["null", "42"]) {
-      writeConfig(vcsFile, content);
-      expect(check(run(), "malformed_config").status, content).toBe("fail");
-      expect(readVcsConfig().status).toBe("malformed");
-      expect(readVcsConfig().error).toContain(vcsFile);
-      expect(readSetupState(fixture.configDir).vcs.status).toBe("malformed");
-
-      writeConfig(wsFile, content);
-      expect(readWorkspacesResult(fixture.configDir).status).toBe("malformed");
-      expect(readWorkspacesResult(fixture.configDir).error).toContain(wsFile);
-      expect(readSetupState(fixture.configDir).workspaces.status).toBe("malformed");
+test(
+  "AR-07: non-object config shapes are flagged malformed, never healthy",
+  () => {
+    const configFile = path.join(fixture.configDir, "config.json");
+    for (const content of ["null", '"just a string"', "42", "[]", "[1, 2, 3]"]) {
+      writeConfig(configFile, content);
+      const report = run();
+      expect(check(report, "malformed_config").status, content).toBe("fail");
+      expect(check(report, "malformed_config").detail, content).toContain("config.json");
     }
-  } finally {
-    if (prev === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prev;
-    rmSync(vcsFile, { force: true });
-    rmSync(wsFile, { force: true });
-  }
-  expect(check(run(), "malformed_config").status).toBe("pass");
-});
+    rmSync(configFile, { force: true });
+    expect(check(run(), "malformed_config").status).toBe("pass");
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
-test("AR-07: doctor agrees with the readers on malformed youtrack.json shapes", () => {
-  const ytFile = path.join(fixture.configDir, "youtrack.json");
-  try {
-    for (const content of ["null", "42"]) {
-      writeConfig(ytFile, content);
-      expect(check(run(), "malformed_config").status, content).toBe("fail");
-      expect(check(run(), "malformed_config").detail, content).toContain("youtrack.json");
-      expect(readSetupState(fixture.configDir).youtrack.status, content).toBe("malformed");
-      expect(readSetupState(fixture.configDir).youtrack.error, content).toContain(ytFile);
+test(
+  "AR-07: doctor agrees with the readers on malformed shapes",
+  () => {
+    const vcsFile = path.join(fixture.configDir, "vcs.json");
+    const wsFile = path.join(fixture.configDir, "workspaces.json");
+    const prev = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    process.env.WORKFLOW_TOOLKIT_CONFIG = fixture.configDir;
+    try {
+      for (const content of ["null", "42"]) {
+        writeConfig(vcsFile, content);
+        expect(check(run(), "malformed_config").status, content).toBe("fail");
+        expect(readVcsConfig().status).toBe("malformed");
+        expect(readVcsConfig().error).toContain(vcsFile);
+        expect(readSetupState(fixture.configDir).vcs.status).toBe("malformed");
+
+        writeConfig(wsFile, content);
+        expect(readWorkspacesResult(fixture.configDir).status).toBe("malformed");
+        expect(readWorkspacesResult(fixture.configDir).error).toContain(wsFile);
+        expect(readSetupState(fixture.configDir).workspaces.status).toBe("malformed");
+      }
+    } finally {
+      if (prev === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      else process.env.WORKFLOW_TOOLKIT_CONFIG = prev;
+      rmSync(vcsFile, { force: true });
+      rmSync(wsFile, { force: true });
     }
-  } finally {
-    rmSync(ytFile, { force: true });
-  }
-  expect(check(run(), "malformed_config").status).toBe("pass");
-});
+    expect(check(run(), "malformed_config").status).toBe("pass");
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "AR-07: doctor agrees with the readers on malformed youtrack.json shapes",
+  () => {
+    const ytFile = path.join(fixture.configDir, "youtrack.json");
+    try {
+      for (const content of ["null", "42"]) {
+        writeConfig(ytFile, content);
+        expect(check(run(), "malformed_config").status, content).toBe("fail");
+        expect(check(run(), "malformed_config").detail, content).toContain("youtrack.json");
+        expect(readSetupState(fixture.configDir).youtrack.status, content).toBe("malformed");
+        expect(readSetupState(fixture.configDir).youtrack.error, content).toContain(ytFile);
+      }
+    } finally {
+      rmSync(ytFile, { force: true });
+    }
+    expect(check(run(), "malformed_config").status).toBe("pass");
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
 test("detects a workspace mismatch and clears once the glob matches", () => {
   const workspacesFile = path.join(fixture.configDir, "workspaces.json");
@@ -1903,3 +1935,63 @@ test("doctor reads Workit pins from both the `plugins` (2.x) and `plugin` keys",
     writeConfig(fixture.opencodeConfig, original);
   }
 });
+
+test(
+  "workit_on_path: warns without failing when workit is missing or older than a host plugin",
+  () => {
+    const opencodeCachePkg = path.join(
+      fixture.home,
+      ".cache/opencode/packages/@brainervirus/workit-opencode@latest/node_modules/@brainervirus/workit-opencode/package.json",
+    );
+    const fakeRoot = mkdtempSync(path.join(tmpdir(), "wk-doctor-workit-"));
+    const pathWithout = (process.env.PATH ?? "")
+      .split(path.delimiter)
+      .filter((dir) => dir && !existsSync(path.join(dir, "workit")))
+      .join(path.delimiter);
+    // Each fake lives in its own dir: the doctor probes a binary once per identity.
+    const withScript = (name: string, script: string) => {
+      const dir = path.join(fakeRoot, name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "workit"), script, { mode: 0o755 });
+      return run({ env: { ...process.env, PATH: `${dir}${path.delimiter}${pathWithout}` } });
+    };
+    const withFake = (version: string) => withScript(version, `#!/bin/sh\necho ${version}\n`);
+    try {
+      writeConfig(
+        opencodeCachePkg,
+        JSON.stringify({ name: "@brainervirus/workit-opencode", version: "9.2.0" }),
+      );
+      const baseline = withFake("9.2.0");
+      const current = check(baseline, "workit_on_path");
+      expect(current.status).toBe("pass");
+      expect(current.detail).toContain("workit 9.2.0");
+
+      // A CLI newer than the plugin is normal: plugins republish only on payload change.
+      expect(check(withFake("9.3.0"), "workit_on_path").status).toBe("pass");
+
+      const older = withFake("9.1.4");
+      const stale = check(older, "workit_on_path");
+      expect(stale.status).toBe("warn");
+      expect(stale.detail).toContain("9.1.4");
+      expect(stale.fix).toContain("npm i -g @brainervirus/workit-cli@9.2.0");
+      expect(stale.fix).toContain("npx -y @brainervirus/workit-cli@9.2.0");
+      expect(older.exitCode).toBe(baseline.exitCode);
+      expect(older.fixes.map((f) => f.id)).not.toContain("workit_on_path");
+
+      const missing = run({ env: { ...process.env, PATH: pathWithout } });
+      const absent = check(missing, "workit_on_path");
+      expect(absent.status).toBe("warn");
+      expect(absent.detail).toBe("no workit on PATH");
+      expect(absent.fix).toContain("npm i -g @brainervirus/workit-cli@9.2.0");
+      expect(missing.exitCode).toBe(baseline.exitCode);
+
+      const broken = withScript("broken", "#!/bin/sh\nexit 3\n");
+      expect(check(broken, "workit_on_path").status).toBe("warn");
+      expect(check(broken, "workit_on_path").detail).toContain("does not run");
+    } finally {
+      rmSync(path.join(fixture.home, ".cache/opencode"), { recursive: true, force: true });
+      rmSync(fakeRoot, { recursive: true, force: true });
+    }
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
