@@ -68,17 +68,19 @@ async function wait(argv: string[], io: Io): Promise<number> {
   if (head !== null && !/^[0-9a-f]{7,64}$/u.test(head))
     return usage(io, "--head must be a commit sha (7-64 hex chars)", WAIT_USAGE);
 
-  const connected = connect(io, flags.values.branch);
+  // One hard deadline for every API call, from resolving the forge and the
+  // identity check to the final status build (M2). A zero or tiny --timeout
+  // still gets one complete poll.
+  const started = forgeDeps.now();
+  const deadline = started + timeoutMs;
+  const connected = connect(io, flags.values.branch, {
+    deadline: started + Math.max(timeoutMs, ONE_POLL_MS),
+  });
   if (!connected.ok) return forgeFail(io, connected);
   const resolved = connected.data;
   const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
   if (!number.ok) return forgeFail(io, number);
 
-  const started = forgeDeps.now();
-  // One hard deadline for every API call, including the final status build.
-  // A zero or tiny --timeout still gets one complete poll.
-  const deadline = started + timeoutMs;
-  resolved.limits.deadline = started + Math.max(timeoutMs, ONE_POLL_MS);
   let polls = 0;
   let errors = 0;
   let status: ForgePrStatus | null = null;

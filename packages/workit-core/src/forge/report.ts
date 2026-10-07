@@ -473,14 +473,15 @@ export function waitVerdict(
     return { state: "waiting", reason: "head_mismatch" };
   const checks = doc.checks.state;
   if (checks === "failing") return { state: "failed", reason: "checks_failing" };
-  if (checks === "pending") return { state: "waiting", reason: "checks_pending" };
-  if (checks === "passing") return { state: "ready", reason: "checks_passing" };
-  if (doc.conflicts)
+  // Before "pending": CI never runs on a conflicting PR, so waiting cannot help (M8).
+  if (doc.conflicts && checks !== "passing")
     return {
       state: "blocked",
       reason: "conflicts",
       unblock: `rebase onto ${doc.base} and push; CI does not run on a conflicting PR`,
     };
+  if (checks === "pending") return { state: "waiting", reason: "checks_pending" };
+  if (checks === "passing") return { state: "ready", reason: "checks_passing" };
   const ciRequired =
     doc.checks.missingRequired === null ||
     doc.mergeState === "ci_must_pass" ||

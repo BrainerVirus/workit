@@ -138,6 +138,12 @@ const DEFAULTS: ToolkitConfig = {
   commitPolicy: { preset: "conventional" },
 };
 
+// Configs whose branch policy nobody chose (no config.json, or one without a
+// valid branchPolicy.preset). For them the repository's own branches pick the
+// preset (resolveBranchPolicy's `repoPreset`), so a main-only repository is
+// not held to gitflow's `develop`.
+const unchosenBranchPolicy = new WeakSet<ToolkitConfig>([DEFAULTS]);
+
 const readSafe = (p: string): string | null => {
   try {
     return readFileSync(p, "utf8");
@@ -191,36 +197,35 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
       ? input.commitPolicy?.preset
       : "conventional"
   ) as CommitFlavorPreset;
-  return {
-    status: "valid",
-    path: file,
-    config: {
-      locale,
-      localeOptions: Array.isArray(input.localeOptions)
-        ? input.localeOptions
-        : DEFAULTS.localeOptions,
-      // RL-02/CA-23: the persisted preset is authoritative; derived allowed /
-      // protected fields always reset from PRESETS via the one shared merge.
-      branchPolicy: mergePreset(
-        preset,
-        {
-          allowed: Array.isArray(input.branchPolicy?.allowed)
-            ? input.branchPolicy.allowed
-            : undefined,
-          protectedNames: Array.isArray(input.branchPolicy?.protected)
-            ? input.branchPolicy.protected
-            : undefined,
-        },
-        DEFAULTS,
-      ),
-      commitPolicy: {
-        preset: commitPreset,
-        ...(typeof input.commitPolicy?.pattern === "string"
-          ? { pattern: input.commitPolicy.pattern }
-          : {}),
+  const config: ToolkitConfig = {
+    locale,
+    localeOptions: Array.isArray(input.localeOptions)
+      ? input.localeOptions
+      : DEFAULTS.localeOptions,
+    // RL-02/CA-23: the persisted preset is authoritative; derived allowed /
+    // protected fields always reset from PRESETS via the one shared merge.
+    branchPolicy: mergePreset(
+      preset,
+      {
+        allowed: Array.isArray(input.branchPolicy?.allowed)
+          ? input.branchPolicy.allowed
+          : undefined,
+        protectedNames: Array.isArray(input.branchPolicy?.protected)
+          ? input.branchPolicy.protected
+          : undefined,
       },
+      DEFAULTS,
+    ),
+    commitPolicy: {
+      preset: commitPreset,
+      ...(typeof input.commitPolicy?.pattern === "string"
+        ? { pattern: input.commitPolicy.pattern }
+        : {}),
     },
   };
+  if (!Object.hasOwn(PRESETS, input.branchPolicy?.preset as string))
+    unchosenBranchPolicy.add(config);
+  return { status: "valid", path: file, config };
 };
 
 export const readConfigTyped = (dir?: string): ReaderResult<ToolkitConfig> => {
@@ -298,19 +303,28 @@ export const branchGlobPattern = (glob: string): RegExp =>
 export const resolveBranchPolicy = (
   config: ToolkitConfig,
   workspace?: { branchPolicy?: Record<string, any> } | null,
+  /** The preset the repository's branches imply (core/branch-policy.ts repoBranchPreset). */
+  repoPreset?: () => BranchPreset | null,
 ): {
   preset: BranchPreset;
   allowed: RegExp[];
   protected: Set<string>;
   integration: "pr" | "merge";
   defaultTargetBranch: string;
+  /** No policy was configured; the repository's branches chose the preset. */
+  detected: boolean;
 } => {
   const wp = workspace?.branchPolicy ?? {};
   // An invalid workspace preset (e.g. a typo) falls back to the global preset,
   // preserving resolution order workspace > global > preset, instead of
   // crashing on PRESETS[preset] (mirrors parseConfigResult's Object.hasOwn).
+  const workspacePreset = Object.hasOwn(PRESETS, wp.preset);
+  // With no policy chosen anywhere, the repository's branches pick the preset
+  // (M10); the gitflow protected names stay protected regardless.
+  const detected =
+    !workspacePreset && unchosenBranchPolicy.has(config) ? (repoPreset?.() ?? null) : null;
   const preset = (
-    Object.hasOwn(PRESETS, wp.preset) ? wp.preset : (config.branchPolicy?.preset ?? "gitflow")
+    workspacePreset ? wp.preset : (detected ?? config.branchPolicy?.preset ?? "gitflow")
   ) as BranchPreset;
   // RL-02: the preset is authoritative — allowed/protected re-derive from the
   // workspace's own values or the preset table, never the global config's, and
@@ -327,11 +341,16 @@ export const resolveBranchPolicy = (
   return {
     preset,
     allowed,
-    protected: new Set(merged.protected.map((p) => p.toLowerCase())),
+    protected: new Set(
+      [...merged.protected, ...(detected ? PRESETS.gitflow.protected : [])].map((p) =>
+        p.toLowerCase(),
+      ),
+    ),
     integration: wp.integration === "merge" ? "merge" : "pr",
     // CA-05: preset-aware default target when vcs.defaultTargetBranch is unset.
     defaultTargetBranch:
       preset === "github-flow" ? "main" : preset === "trunk-based" ? "master" : "develop",
+    detected: detected !== null,
   };
 };
 

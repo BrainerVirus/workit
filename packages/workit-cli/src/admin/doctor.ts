@@ -31,7 +31,12 @@ import {
   describeReleaseTracks,
   releaseTracksReport,
 } from "@brainervirus/workit-core/src/core/release-tracks";
-import { getDiagnosticLogger, isConfigObject } from "@brainervirus/workit-core/src/core/config";
+import { repoBranchPreset } from "@brainervirus/workit-core/src/core/branch-policy";
+import {
+  getDiagnosticLogger,
+  isConfigObject,
+  readConfigFromDir,
+} from "@brainervirus/workit-core/src/core/config";
 import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
@@ -45,6 +50,8 @@ import {
 import {
   readWorkspacesResult,
   resolveWorkspaceFrom,
+  resolveWorkspacePolicy,
+  type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces";
 import {
   CLAUDE_MARKETPLACE_NAME,
@@ -1360,6 +1367,23 @@ const checkMalformedConfig = (res: Resolved): DoctorCheck => {
   };
 };
 
+/** The effective branch preset, marked when the repository's branches chose it. */
+const branchPresetLine = (res: Resolved, workspace: WorkspaceConfig | null): string[] => {
+  try {
+    const resolved = resolveWorkspacePolicy(
+      readConfigFromDir(res.configDir),
+      workspace,
+      undefined,
+      () => repoBranchPreset(res.cwd),
+    );
+    if (resolved.status === "invalid") return [];
+    const { preset, detected } = resolved.branchPolicy;
+    return [`preset: ${detected ? `detected (${preset})` : preset}`];
+  } catch {
+    return [];
+  }
+};
+
 const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
   const result = readWorkspacesResult(res.configDir);
   const file = result.path;
@@ -1367,7 +1391,7 @@ const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
     return {
       id: "workspace_mismatch",
       status: "pass",
-      detail: "no workspaces configured",
+      detail: ["no workspaces configured", ...branchPresetLine(res, null)].join("; "),
     };
   if (result.status === "malformed" || result.status === "invalid")
     return {
@@ -1397,7 +1421,7 @@ const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
     // to. Reader issues or an undetermined track warn; a critical field fails.
     const tracks = releaseTracksReport(res.cwd);
     const lines = describeReleaseTracks(tracks);
-    const detail = [matched, ...lines].join("; ");
+    const detail = [matched, ...branchPresetLine(res, match), ...lines].join("; ");
     if (tracks.error)
       return {
         id: "workspace_mismatch",
