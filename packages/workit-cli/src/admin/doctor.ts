@@ -1721,24 +1721,34 @@ const SEMVER = /\d+\.\d+\.\d+/;
 
 // One probe per binary identity per process: a long-lived caller re-running
 // the doctor does not respawn an unchanged binary, and a replaced one re-probes.
-const workitVersions = new Map<string, string | null>();
-const workitVersionAt = (bin: string, env: NodeJS.ProcessEnv): string | null => {
+const WORKIT_PROBE_TIMEOUT_MS = 10_000;
+type WorkitProbe = { version: string | null; timedOut: boolean };
+const workitVersions = new Map<string, WorkitProbe>();
+const workitVersionAt = (bin: string, env: NodeJS.ProcessEnv): WorkitProbe => {
   let key: string;
   try {
     const st = statSync(bin);
     key = `${bin}:${st.ino}:${st.size}:${st.mtimeMs}`;
   } catch {
-    return null;
+    return { version: null, timedOut: false };
   }
-  if (workitVersions.has(key)) return workitVersions.get(key) ?? null;
+  const cached = workitVersions.get(key);
+  if (cached) return cached;
   // win32 refuses to spawn a .cmd/.bat without a shell (CVE-2024-27980).
   const viaShell = process.platform === "win32" && /\.(?:cmd|bat)$/i.test(bin);
   const r = viaShell
-    ? spawnSync(`"${bin}" --version`, { encoding: "utf8", env, timeout: 10_000, shell: true })
-    : spawnSync(bin, ["--version"], { encoding: "utf8", env, timeout: 10_000 });
+    ? spawnSync(`"${bin}" --version`, {
+        encoding: "utf8",
+        env,
+        timeout: WORKIT_PROBE_TIMEOUT_MS,
+        shell: true,
+      })
+    : spawnSync(bin, ["--version"], { encoding: "utf8", env, timeout: WORKIT_PROBE_TIMEOUT_MS });
+  const timedOut = r.error !== undefined && "code" in r.error && r.error.code === "ETIMEDOUT";
   const version = r.status === 0 ? ((r.stdout ?? "").match(SEMVER)?.[0] ?? null) : null;
-  workitVersions.set(key, version);
-  return version;
+  const probe = { version: timedOut ? null : version, timedOut };
+  workitVersions.set(key, probe);
+  return probe;
 };
 
 /**
@@ -1767,12 +1777,14 @@ const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
   if (!bin) {
     return { id: "workit_on_path", status: "warn", detail: "no workit on PATH", fix };
   }
-  const version = workitVersionAt(bin, res.env);
+  const { version, timedOut } = workitVersionAt(bin, res.env);
   if (!version) {
     return {
       id: "workit_on_path",
       status: "warn",
-      detail: `${bin} does not run (\`workit --version\` failed)`,
+      detail: timedOut
+        ? `${bin} does not run (\`workit --version\` timed out after ${WORKIT_PROBE_TIMEOUT_MS / 1000}s)`
+        : `${bin} does not run (\`workit --version\` failed)`,
       fix,
     };
   }

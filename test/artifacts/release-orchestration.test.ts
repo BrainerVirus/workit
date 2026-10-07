@@ -109,7 +109,11 @@ test(
     const supersede = syncRun.indexOf("gh pr close");
     expect(supersede, "superseded sync PRs must be closed").toBeGreaterThanOrEqual(0);
     expect(supersede).toBeLessThan(syncRun.indexOf("gh pr create"));
-    expect(syncRun).toMatch(/startswith\("chore\/manifest-sync-"\)/);
+    expect(syncRun).toContain("isCrossRepository");
+    // Fork PRs are never closed: same-repo heads only.
+    expect(syncRun).toContain(
+      'select((.isCrossRepository | not) and (.headRefName | startswith("chore/manifest-sync-")))',
+    );
     expect(syncRun).toContain("sort -V");
     expect(syncRun).toMatch(
       /gh pr close[^\n]*--comment "Superseded by v\$\{VERSION\}"[^\n]*--delete-branch/,
