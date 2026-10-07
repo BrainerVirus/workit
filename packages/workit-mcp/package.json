@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-mcp",
-  "version": "7.5.0",
+  "version": "7.5.1",
   "private": false,
   "description": "Workit shared MCP transport for the eight task and policy operation families",
   "keywords": [
