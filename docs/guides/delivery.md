@@ -76,3 +76,40 @@ workit stack land [--dry-run] [--max <n>]
   verified, one at a time through `pr merge`'s gates, and stops at the first
   that does not qualify with a reason (`no_verdict`, `not_ready`,
   `grant_required`, …).
+
+## Parallel slices (fanout)
+
+`workit fanout` records the slices one lead fans out to parallel workers and
+gates their fan-in. It never spawns agents: the host's own subagents do that.
+
+```bash
+workit fanout plan <plan.json> [--name <n>] [--trunk <b>]   # register slices; refuse gaps and overlap
+workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, landing order
+```
+
+- The plan file lists slices: `id`, `branch`, `tier` (`mundane`, `standard`,
+  `hard`), `scope` (globs: `*`, `**`, `?`, `{a,b}`; a plain path also covers
+  what is below it), optional `owns`, `dependsOn`, `base`, `worktree`, and
+  the brief: `goal`, `acceptance`, `verify`, `forbidden` (plus optional
+  `context`, `timebox`). The shape is in the fanout skill's
+  `references/brief.md`. It is stored in `<git common dir>/workit/fanouts/`,
+  shared by every worktree, and each plan appends a `fanout.planned` ledger
+  row.
+- Slices are independent PRs off the trunk by default. A slice with exactly
+  one `dependsOn` is stacked on that slice's branch.
+- `plan` exits 2 (`invalid_input`) and lists every empty or placeholder brief
+  field, unknown or cyclic dependency and bad glob. It exits 3 (`blocked`)
+  when two slices may write the same file, checked against the trunk's files
+  plus every literal path a scope names. Each overlap comes with a fix: an
+  owner (`owns`) for lockfiles, manifests, barrels and CI config, otherwise a
+  `dependsOn` that serializes the slices. Overlap between slices that already
+  depend on each other, or with exactly one owner, is accepted.
+- `check` reads the slice branches as git has them locally (fetch first). Per
+  slice it flags files changed since its base outside its scope (a file
+  another slice owns counts as outside), conflicts with the trunk, and
+  conflicts with each sibling branch from `git merge-tree`. A sibling
+  conflict is charged to the slice that lands later. A slice whose
+  dependency is not ready waits. Exit 0 means every checked slice is ready
+  and `next` names the landing order: dependencies first, then plan order.
+  Exit 3 names the first blocked slice and how to unblock it. The verdict per
+  slice is shown; `pr merge` still enforces it.
