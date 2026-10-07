@@ -37,7 +37,7 @@ const family = (name: string): VerbEntry => ({
     name === "task"
       ? 'workit task status [--all] | task start "<objective>" | task note "<text>" [--next "<t>"] | task close [--outcome verified|limited|stopped] | task adopt <id> | task <action> --payload <JSON>'
       : name === "policy"
-        ? "workit policy assess|preview --judge risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no [--ref <path>] | policy explain"
+        ? "workit policy assess|preview --judge risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no [--ref <path>] [--why <reason>] | policy explain"
         : `workit ${name} <action> [options]`,
   summary:
     name === "task"

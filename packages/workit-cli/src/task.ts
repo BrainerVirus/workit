@@ -178,12 +178,13 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   const seen = new Set<string>();
   for (let i = 2; i < argv.length; i += 1) {
     const token = argv[i];
-    // `policy assess|preview --judge behavior=yes risk=normal [--ref <path>]…` (S17).
-    if (family === "policy" && (token === "--judge" || token === "--ref")) {
-      if (token === "--ref") {
+    // `policy assess|preview --judge behavior=yes risk=normal [--ref <path>]… [--why <reason>]` (S17).
+    if (family === "policy" && (token === "--judge" || token === "--ref" || token === "--why")) {
+      if (token === "--ref" || token === "--why") {
         const value = argv[++i];
-        if (value === undefined || !value.trim()) return parseUsage("--ref requires a value", json);
-        judge.push(`ref=${value}`);
+        if (value === undefined || !value.trim())
+          return parseUsage(`${token} requires a value`, json);
+        judge.push(`${token.slice(2)}=${value}`);
         continue;
       }
       while (argv[i + 1] !== undefined && !argv[i + 1].startsWith("--")) judge.push(argv[++i]);
@@ -307,7 +308,11 @@ const contextFor = (
   provenanceKind: OperationContext["provenanceKind"] = "agent_reported",
 ): OperationContext => ({
   root,
-  caller: deps.caller ?? { host: "workit_cli", actor: deps.actor ?? "cli" },
+  // The session the host exported (as the other CLI verbs read it), else "cli".
+  caller: deps.caller ?? {
+    host: "workit_cli",
+    actor: deps.actor ?? (process.env.WORKIT_SESSION_ID?.trim() || "cli"),
+  },
   provenanceKind,
   capabilities: deps.capabilities ?? [],
   constraints: deps.constraints ?? [],

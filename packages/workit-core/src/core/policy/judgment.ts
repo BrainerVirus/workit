@@ -190,3 +190,36 @@ export const judgeTokens = (tokens: string[]): Json => {
   }
   return out;
 };
+
+/** The judgments that, while true, block working-tree writes (S17). */
+const BLOCKING = ["productChoiceOpen", "needsPlan"] as const;
+type Blocking = (typeof BLOCKING)[number];
+
+/** The before-write blockers a judgment lifts: true before, false now. */
+export const liftedBlockers = (previous: Judgment | null, next: Judgment): Blocking[] =>
+  BLOCKING.filter((field) => previous?.[field] === true && next[field] === false);
+
+/**
+ * Of the lifted blockers, those `session` itself judged true earlier on this
+ * task (M6): lifting your own blocker needs a recorded reason. Another
+ * session (a lead, the user's) may lift it; the ledger still records it.
+ */
+export const ownLiftedBlockers = (
+  history: ReadonlyArray<{ provenance: { session: unknown }; data: Judgment }>,
+  lifted: readonly Blocking[],
+  session: string,
+): Blocking[] => {
+  const handle = (value: unknown): unknown => (isObject(value) ? value.handle : undefined);
+  return lifted.filter((field) =>
+    history.some((entry) => handle(entry.provenance.session) === session && entry.data[field]),
+  );
+};
+
+/** The reason sent with this judgment (`--why`, `note=`), not one kept from before. */
+export const givenReason = (raw: unknown): string | null => {
+  if (!isObject(raw)) return null;
+  for (const [key, value] of Object.entries(raw))
+    if (ALIASES.note.includes(squash(key)) && typeof value === "string" && value.trim())
+      return value.trim();
+  return null;
+};

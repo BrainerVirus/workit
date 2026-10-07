@@ -48,7 +48,14 @@ import {
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { normalizeOperationInput } from "./operation-input";
 import { latestJudgment } from "./policy/derive";
-import { normalizeJudgment } from "./policy/judgment";
+import {
+  givenReason,
+  liftedBlockers,
+  normalizeJudgment,
+  ownLiftedBlockers,
+} from "./policy/judgment";
+import { appendObserved } from "../ledger";
+import { currentBranch, headSha } from "../git/rev";
 import { resolveAutonomy, type VerificationMode } from "../autonomy";
 
 import { sameDirectoryIdentity, TaskStore } from "./task-store";
@@ -959,7 +966,8 @@ export class WorkitCore {
     if ((this.context.workerId ?? null) !== null)
       return failure("permission_denied", "helpers cannot change task requirements");
     this.fillRevisions(input, task.data);
-    const judged = normalizeJudgment(input.judgment, latestJudgment(task.data));
+    const previous = latestJudgment(task.data);
+    const judged = normalizeJudgment(input.judgment, previous);
     if (!judged.ok) return judged;
     const judgment = judged.data.judgment;
     const resolved = this.resolve(task.data, judgment);
@@ -967,6 +975,16 @@ export class WorkitCore {
     if (input.action === "preview") return success(null, null, resolved.data);
     if (input.action !== "assess")
       return failure("invalid_transition", "unsupported policy action");
+    // M6: a session lifting a before-write blocker it judged itself gives a
+    // reason; every assess is recorded in the ledger below either way.
+    const lifted = liftedBlockers(previous, judgment);
+    const why = givenReason(input.judgment);
+    const own = ownLiftedBlockers(task.data.judgments ?? [], lifted, this.context.caller.actor);
+    if (own.length && !why)
+      return failure(
+        "invalid_input",
+        `this session judged ${own.join(" and ")} true on this task; lifting it needs a reason: re-run with --why "<reason>" (recorded in the ledger)`,
+      );
     const changed = this.store.mutateTask(
       task.data.id,
       input.expectedRevision,
@@ -1001,7 +1019,41 @@ export class WorkitCore {
       trustedNow(this.context),
     );
     if (!changed.ok) return changed;
+    this.recordJudged(task.data.id, input.judgment, judgment, changed.data.policy, lifted, why);
     return success(changed.data.revision, null, changed.data.policy);
+  }
+
+  /**
+   * Make a judge call auditable (M6): who judged, what was sent, what it
+   * resolved to and which blockers it lifted. Best effort: the assessment
+   * already stands in the task store, and an unwritable ledger must not undo it.
+   */
+  private recordJudged(
+    taskId: string,
+    input: unknown,
+    judgment: Judgment,
+    policy: Policy | null,
+    lifted: readonly string[],
+    why: string | null,
+  ): void {
+    const root = this.store.root;
+    const branch = currentBranch(root);
+    appendObserved(root, {
+      type: "policy.judged",
+      actor: {
+        host: this.context.caller.host,
+        session: this.context.caller.actor,
+        agentId: this.context.workerId ?? null,
+      },
+      branch,
+      head: branch ? headSha(root) : null,
+      taskId,
+      input: input ?? {},
+      judgment,
+      requirements: (policy?.requirements ?? []).map((requirement) => requirement.ruleId),
+      lifted,
+      why,
+    });
   }
 
   evidence(request: unknown): Result<Entry<Evidence>> {
