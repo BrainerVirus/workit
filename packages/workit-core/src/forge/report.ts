@@ -36,11 +36,15 @@ export type NextAction =
 
 /**
  * The next babysitting step for a `green`/`merged` endpoint, coarser than
- * `next`: `ready` means nothing is left for the agent (a human approval may
- * still be pending); null for a closed PR.
+ * `next`: `wait` is CI running (`workit ci wait`); `wait-forge` is CI done
+ * but the forge still deciding (merge queue, mergeability computing);
+ * `ready` means nothing is left for the agent (a human approval may still be
+ * pending); null for a closed, unmerged PR.
  */
 export type BabysitAction =
   | "wait"
+  | "wait-forge"
+  | "mark-ready"
   | "fix-ci"
   | "address-threads"
   | "update-branch"
@@ -207,14 +211,16 @@ export function nextAction(input: NextInput): NextAction {
 }
 
 /**
- * Map `next` (plus the first blocker's reason and the behind-base count) to
- * one babysitting step. A branch that is merely behind its base is updated
- * only once nothing else is open, so a fix in flight is not churned.
+ * Map `next` (plus the first blocker's reason) to one babysitting step. The
+ * branch is updated only when the forge requires it (conflicts, a required
+ * rebase): merely behind its base is still `ready`, so a busy base never
+ * starts a rebase/CI loop or drops approvals. A draft reads `mark-ready` once
+ * nothing else is open, even when a review is also pending.
  */
 export function babysitAction(
   next: NextAction,
   reason: string | null,
-  behindBase: Pick<BehindBase, "behind"> | null,
+  draft: boolean,
 ): BabysitAction | null {
   switch (next) {
     case "MERGED":
@@ -230,11 +236,13 @@ export function babysitAction(
     case "FIX_CI":
       return "fix-ci";
     case "WAITING_CI":
-    case "IN_MERGE_QUEUE":
       return "wait";
+    case "IN_MERGE_QUEUE":
+      return "wait-forge";
     default:
-      if (next === "NOT_MERGEABLE" && reason === "mergeability_unknown") return "wait";
-      return (behindBase?.behind ?? 0) > 0 ? "update-branch" : "ready";
+      if (draft) return "mark-ready";
+      if (next === "NOT_MERGEABLE" && reason === "mergeability_unknown") return "wait-forge";
+      return "ready";
   }
 }
 
@@ -409,7 +417,11 @@ export function buildStatusDoc(
     identity: options.identity ?? null,
     truncated: status.truncated,
     next: blockers[0]?.next ?? "READY",
-    babysit: babysitAction(blockers[0]?.next ?? "READY", blockers[0]?.reason ?? null, behindBase),
+    babysit: babysitAction(
+      blockers[0]?.next ?? "READY",
+      blockers[0]?.reason ?? null,
+      status.draft || blockers.some((blocker) => blocker.next === "MARK_READY"),
+    ),
   });
 }
 

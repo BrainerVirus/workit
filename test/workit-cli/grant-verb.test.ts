@@ -367,6 +367,7 @@ test("grant show: an unknown configured endpoint is reported, reads as commit, a
   expect(shown.json().data).toMatchObject({
     grants: { merge: "verified" },
     defaultEndpoint: "commit",
+    configuredEndpoint: "deployed",
     effectiveEndpoint: "commit",
   });
   expect(shown.json().data.endpointIssue).toContain('"deployed"');
@@ -385,11 +386,15 @@ test("grant show: merged without the merge grant is effectively green, in text a
   const shown = await run(["show"], headless);
   expect(shown.json().data).toMatchObject({
     defaultEndpoint: "merged",
+    configuredEndpoint: "merged",
     effectiveEndpoint: "green",
-    endpointReason: "merge grant missing",
+    endpointReason:
+      "merge grant missing; ask the user to run, in their own terminal: workit grant set w merge=verified",
   });
   const text = (await run(["show"], headless, {}, false)).text();
-  expect(text).toContain("default endpoint: merged (effective: green, merge grant missing)");
+  expect(text).toContain(
+    "default endpoint: merged (effective: green, merge grant missing; ask the user to run, in their own terminal: workit grant set w merge=verified)",
+  );
   const all = await run(["show", "--all"], headless);
   expect(all.json().data.workspaces[0]).toMatchObject({
     defaultEndpoint: "merged",
@@ -416,7 +421,7 @@ test("grant show: merged with the merge grant is effective; green is never raise
   });
 });
 
-test("grant show: merged with a merge grant but no vcs.account stays green, like pr merge would", async () => {
+test("grant show: explicit grants without vcs.account lower any forge endpoint to commit, like pr create would", async () => {
   writeFileSync(
     file(),
     JSON.stringify({
@@ -430,10 +435,9 @@ test("grant show: merged with a merge grant but no vcs.account stays green, like
       ],
     }),
   );
-  expect((await run(["show"], headless)).json().data).toMatchObject({
-    effectiveEndpoint: "green",
-    endpointReason: "vcs.account missing",
-  });
+  const data = (await run(["show"], headless)).json().data;
+  expect(data).toMatchObject({ defaultEndpoint: "merged", effectiveEndpoint: "commit" });
+  expect(data.endpointReason).toStartWith("vcs.account missing; set vcs.account for workspace");
 });
 
 test("grant set: lowering merge under a merged endpoint shows it falling back to green", async () => {
@@ -443,6 +447,32 @@ test("grant set: lowering merge under a merged endpoint shows it falling back to
   expect(lowered.json().data).toMatchObject({
     defaultEndpoint: "merged",
     effectiveEndpoint: "green",
-    endpointReason: "merge grant missing",
   });
+  expect(lowered.json().data.endpointReason).toStartWith("merge grant missing; ");
+});
+
+test("grant show: without the push or pr grant, pr, green and merged act as commit and name the unblock", async () => {
+  for (const endpoint of ["pr", "green", "merged"])
+    for (const kind of ["push", "pr"]) {
+      writeWorkspace({ defaultEndpoint: endpoint, autonomy: { [kind]: false, merge: "verified" } });
+      const data = (await run(["show"], headless)).json().data;
+      expect(data, `${endpoint} without ${kind}`).toMatchObject({
+        defaultEndpoint: endpoint,
+        configuredEndpoint: endpoint,
+        effectiveEndpoint: "commit",
+        endpointReason: `${kind} grant missing; ask the user to run, in their own terminal: workit grant set w ${kind}=true`,
+      });
+      expect((await run(["show"], headless, {}, false)).text()).toContain(
+        `default endpoint: ${endpoint} (effective: commit, ${kind} grant missing;`,
+      );
+    }
+  // commit has nothing to lower, and an unset endpoint reads configuredEndpoint null.
+  writeWorkspace({ autonomy: { push: false } });
+  const plain = (await run(["show"], headless)).json().data;
+  expect(plain).toMatchObject({
+    defaultEndpoint: "commit",
+    configuredEndpoint: null,
+    effectiveEndpoint: "commit",
+  });
+  expect(plain.endpointReason).toBeUndefined();
 });

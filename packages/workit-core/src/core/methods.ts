@@ -103,8 +103,8 @@ Autonomy contract:
 - No endpoint named: stop at a local commit on a policy-compliant branch and
   state the next command. If the request implies delivery (fix, implement,
   ship), go to the effective endpoint in \`workit grant show\`: \`pr\` opens
-  the PR; \`green\` then babysits it without asking (workit-ship) until
-  merge-ready, never merging; \`merged\` also lands it.
+  the PR; \`green\` babysits it without asking (workit-ship) to merge-ready,
+  never merging; \`merged\` also lands it with \`workit pr merge\`.
   Merge and release need a workspace grant; a blocked verb names its unblock.
   Only the user raises a grant, from their own terminal (\`workit grant set\`);
   never edit workspaces.json or route around a grant_required.

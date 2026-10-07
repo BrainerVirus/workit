@@ -97,6 +97,7 @@ test("requireGrant: defaults apply when nothing is configured; explicit values a
       source: "autonomy",
       accountConfigured: true,
       defaultEndpoint: "commit",
+      configuredEndpoint: null,
       effectiveEndpoint: "commit",
       verification: "self",
     });

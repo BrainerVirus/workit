@@ -108,31 +108,47 @@ export const raisesEndpoint = (current: DefaultEndpoint, next: DefaultEndpoint):
  * version does not know falls back to `commit` and is reported in `issue`, so
  * a newer Workit's endpoint never invalidates the file for an older one.
  */
-function endpointOf(entry: unknown): { endpoint: DefaultEndpoint; issue?: string } {
+function endpointOf(entry: unknown): { raw: unknown; endpoint: DefaultEndpoint; issue?: string } {
   const raw = (entry as { defaultEndpoint?: unknown } | null)?.defaultEndpoint;
-  if (raw === undefined) return { endpoint: DEFAULT_ENDPOINT };
-  if (isDefaultEndpoint(raw)) return { endpoint: raw };
+  if (raw === undefined) return { raw, endpoint: DEFAULT_ENDPOINT };
+  if (isDefaultEndpoint(raw)) return { raw, endpoint: raw };
   return {
+    raw,
     endpoint: DEFAULT_ENDPOINT,
     issue: `defaultEndpoint ${JSON.stringify(raw)} is not one of ${DEFAULT_ENDPOINTS.join(", ")}; using ${DEFAULT_ENDPOINT}`,
   };
 }
 
+type EndpointContext = {
+  workspace: string | null;
+  grants: Grants;
+  configured: readonly GrantKind[];
+  accountConfigured: boolean;
+};
+
 /**
- * What the configured endpoint means today: `merged` acts as `green` unless
- * `workit pr merge` could pass its grant check (merge granted, and an account
- * when grants are configured; see requireGrant).
+ * What the configured endpoint means today, mirroring the grant checks the
+ * delivery verbs make (requireGrant): without `push` or `pr` (or without the
+ * account explicit grants need) nothing reaches the forge, so anything above
+ * `commit` acts as `commit`; without `merge`, `merged` acts as `green`. The
+ * reason names the unblock.
  */
 function effectiveEndpoint(
   endpoint: DefaultEndpoint,
-  grants: Grants,
-  configured: readonly GrantKind[],
-  accountConfigured: boolean,
+  context: EndpointContext,
 ): { endpoint: DefaultEndpoint; reason?: string } {
-  if (endpoint !== "merged") return { endpoint };
-  if (grants.merge === false) return { endpoint: "green", reason: "merge grant missing" };
-  if (configured.length > 0 && !accountConfigured)
-    return { endpoint: "green", reason: "vcs.account missing" };
+  if (endpoint === "commit") return { endpoint };
+  const missing = (kind: GrantKind) =>
+    `${kind} grant missing; ${grantHint(context.workspace, kind)}`;
+  if (context.grants.push === false) return { endpoint: "commit", reason: missing("push") };
+  if (context.grants.pr === false) return { endpoint: "commit", reason: missing("pr") };
+  if (context.configured.length > 0 && !context.accountConfigured)
+    return {
+      endpoint: "commit",
+      reason: `vcs.account missing; set vcs.account for workspace "${context.workspace ?? "?"}" in ~/.config/workit/workspaces.json`,
+    };
+  if (endpoint === "merged" && context.grants.merge === false)
+    return { endpoint: "green", reason: missing("merge") };
   return { endpoint };
 }
 
@@ -140,29 +156,28 @@ function effectiveEndpoint(
 export type EndpointView = {
   /** As configured (an unknown value reads as the default, see endpointIssue). */
   defaultEndpoint: DefaultEndpoint;
-  /** What an agent acts on: `merged` without the merge grant is `green`. */
+  /** The raw stored value (null when unset), including one this version does not know. */
+  configuredEndpoint: unknown;
+  /** What an agent acts on, e.g. `merged` without the merge grant is `green`. */
   effectiveEndpoint: DefaultEndpoint;
-  /** Why the effective endpoint is lower than the configured one. */
+  /** Why the effective endpoint is lower than the configured one, with its unblock. */
   endpointReason?: string;
   /** A configured value this version does not know (reported, then ignored). */
   endpointIssue?: string;
 };
 
-function endpointView(
-  entry: unknown,
-  grants: Grants,
-  configured: readonly GrantKind[],
-  accountConfigured: boolean,
-): EndpointView {
-  const { endpoint, issue } = endpointOf(entry);
-  const effective = effectiveEndpoint(endpoint, grants, configured, accountConfigured);
+function endpointView(entry: unknown, context: EndpointContext): EndpointView {
+  const { raw, endpoint, issue } = endpointOf(entry);
+  const effective = effectiveEndpoint(endpoint, context);
   return {
     defaultEndpoint: endpoint,
+    configuredEndpoint: raw ?? null,
     effectiveEndpoint: effective.endpoint,
     ...(effective.reason ? { endpointReason: effective.reason } : {}),
     ...(issue ? { endpointIssue: issue } : {}),
   };
 }
+
 /**
  * How a normal-risk behavior change is verified (S17). `self` (default): an
  * observed passing `workit check test` plus the author's own `--self`
@@ -263,6 +278,7 @@ export function resolveAutonomy(cwd: string): Autonomy {
       source: "default",
       accountConfigured: false,
       defaultEndpoint: DEFAULT_ENDPOINT,
+      configuredEndpoint: null,
       effectiveEndpoint: DEFAULT_ENDPOINT,
       verification: DEFAULT_VERIFICATION,
       note: override,
@@ -282,7 +298,12 @@ export function resolveAutonomy(cwd: string): Autonomy {
     configured,
     source,
     accountConfigured,
-    ...endpointView(workspace, full, configured, accountConfigured),
+    ...endpointView(workspace, {
+      workspace: workspace?.name ?? null,
+      grants: full,
+      configured,
+      accountConfigured,
+    }),
     verification: verificationOf(workspace),
   };
 }
@@ -461,7 +482,12 @@ export function writeGrants(
     workspace: workspaceName,
     grants: full,
     configured,
-    ...endpointView(entry, full, configured, Boolean(accountOf(entry))),
+    ...endpointView(entry, {
+      workspace: workspaceName,
+      grants: full,
+      configured,
+      accountConfigured: Boolean(accountOf(entry)),
+    }),
     verification: verificationOf(entry),
   };
 }
@@ -492,7 +518,12 @@ export function listGrants(dir: string = grantsDir()): {
         glob: entry.glob,
         grants: full,
         configured,
-        ...endpointView(entry, full, configured, Boolean(entry.vcs?.account)),
+        ...endpointView(entry, {
+          workspace: entry.name,
+          grants: full,
+          configured,
+          accountConfigured: Boolean(entry.vcs?.account),
+        }),
         verification: verificationOf(entry),
       };
     }),
