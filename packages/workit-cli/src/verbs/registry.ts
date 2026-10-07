@@ -159,7 +159,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "fanout",
     group: "delivery",
     usage:
-      "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] | fanout brief <slice> [--mode new|resume] [--attempt <n>] | fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline] | fanout status [--name <n>] [--stuck-after 30m] [--offline] | fanout worktree create|release <slice> [--force] [--json]",
+      "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead] | fanout brief <slice> [--mode new|resume] [--attempt <n>] | fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline] | fanout status [--name <n>] [--stuck-after 30m] [--offline] | fanout worktree create|release <slice> [--force] [--json]",
     summary:
       "Register parallel slices (complete briefs, disjoint scopes, shared-file owners), render each worker's brief with the standing orders, watch them (STUCK, PR, CI, verdict, landed, landing order), make and release slice worktrees, and gate fan-in: out-of-scope edits, trunk and sibling merge conflicts",
     load: () => import("./fanout"),

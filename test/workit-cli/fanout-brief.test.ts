@@ -496,3 +496,76 @@ test("ledger standing: given a plan recorded before lead sessions (no leadSessio
     expect.objectContaining({ what: "no new deps" }),
   ]);
 });
+
+test("fanout plan --take-lead: given a lead that resumed in a new session, when it re-plans without the flag the old lead stays with a hint, and with --take-lead it becomes the lead, the change is in the ledger, the old orders stay in force, and it can clear them", async () => {
+  const { root, cwd } = repo();
+  const file = path.join(root, "plan.json");
+  writeFileSync(
+    file,
+    JSON.stringify({ name: "usage", trunk: "main", slices: [slice("a", ["a.ts"])] }),
+  );
+  expect((await run(cwd, ["fanout", "plan", file, "--json"], "lead-1")).code).toBe(0);
+  await run(cwd, ["ledger", "standing", "add", "no new deps", "--json"], "lead-1");
+
+  const stuck = await run(cwd, ["ledger", "standing", "clear", "--json"], "lead-2");
+  expect(stuck.code).toBe(3);
+  expect(stuck.json().unblock).toContain("--take-lead");
+
+  const kept = await run(cwd, ["fanout", "plan", file, "--json"], "lead-2");
+  expect(kept.code).toBe(0);
+  expect(kept.json().data.notes).toContain(
+    "the lead stays lead-1; this session is lead-2. Leading from this session now? workit fanout plan <plan.json> --take-lead",
+  );
+  expect((await run(cwd, ["ledger", "standing", "clear", "--json"], "lead-2")).code).toBe(3);
+
+  const took = await run(cwd, ["fanout", "plan", file, "--take-lead", "--json"], "lead-2");
+  expect(took.code, took.stderr + took.stdout).toBe(0);
+  const ledger = readLedger(cwd);
+  if (!ledger.ok) throw new Error(ledger.error);
+  expect(ledger.value.rows.filter((row) => row.type === "fanout.lead.changed")).toMatchObject([
+    { fanout: "usage", from: "lead-1", to: "lead-2" },
+  ]);
+  // The old lead's orders are still in force for the new lead...
+  expect((await brief(cwd, "a")).standing).toEqual([
+    expect.objectContaining({ what: "no new deps" }),
+  ]);
+  // ...the old session can no longer add any...
+  expect((await run(cwd, ["ledger", "standing", "add", "x", "--json"], "lead-1")).code).toBe(3);
+  // ...and the new lead clears them.
+  expect((await run(cwd, ["ledger", "standing", "clear", "--json"], "lead-2")).code).toBe(0);
+  expect(
+    (await run(cwd, ["ledger", "standing", "list", "--json"], "lead-2")).json().data.orders,
+  ).toEqual([]);
+});
+
+test("fanout plan --take-lead: given a worker id, a hook-named verifier id or no session, when it takes the lead, then it is refused and the lead is unchanged", async () => {
+  const { root, cwd } = repo();
+  const file = path.join(root, "plan.json");
+  writeFileSync(
+    file,
+    JSON.stringify({ name: "usage", trunk: "main", slices: [slice("a", ["a.ts"])] }),
+  );
+  expect((await run(cwd, ["fanout", "plan", file, "--json"], "lead-1")).code).toBe(0);
+  for (const session of ["lead-1-w-a", "lead-1-w-a+try2", "lead-1-v1", "lead-1:agent7"]) {
+    const refused = await run(cwd, ["fanout", "plan", file, "--take-lead", "--json"], session);
+    expect(refused.code, session).toBe(3);
+    expect(refused.json().error).toBe(
+      `session ${session} is a worker or verifier id; only a lead takes the lead`,
+    );
+  }
+  let stdout = "";
+  const none = await main(["fanout", "plan", file, "--take-lead", "--json"], {
+    cwd,
+    env: { ...process.env, WORKIT_SESSION_ID: "" },
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  });
+  expect(none).toBe(3);
+  expect(JSON.parse(stdout).error).toBe(
+    "--take-lead needs a session: WORKIT_SESSION_ID is not set",
+  );
+  const stored = JSON.parse(
+    readFileSync(path.join(cwd, ".git", "workit", "fanouts", stackFileName("usage")), "utf8"),
+  );
+  expect(stored.leadSession).toBe("lead-1");
+});

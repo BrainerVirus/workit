@@ -39,6 +39,7 @@ import { GIT_TIMEOUTS, gitCommonDir, pushRemoteName, resolveRef } from "./git/re
 import {
   activeStanding,
   appendObserved,
+  isDelegateSession,
   defaultBase,
   readLedger,
   storeRoot,
@@ -86,8 +87,10 @@ export type FanoutFile = {
   /** Extra shared-file globs on top of DEFAULT_SHARED. */
   shared: string[];
   slices: Slice[];
-  /** The session that first made the plan: the only one whose standing orders count. */
+  /** The lead: the session that made the plan or took it over (`--take-lead`). */
   leadSession: string | null;
+  /** Leads it took over from: their standing orders stay in force until cleared. */
+  formerLeads: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -459,6 +462,7 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       shared,
       slices,
       leadSession: null,
+      formerLeads: [],
       createdAt: "",
       updatedAt: "",
     },
@@ -766,6 +770,11 @@ export function worktreeRoot(cwd: string): string {
   return path.join(path.dirname(main), `${path.basename(main)}-wt`);
 }
 
+/** Whose standing orders count: the lead and those it took over from; null before leads. */
+export const planLeads = (
+  plan: Pick<FanoutFile, "leadSession" | "formerLeads">,
+): string[] | null => (plan.leadSession ? [plan.leadSession, ...plan.formerLeads] : null);
+
 /**
  * sha256 (16 hex) of the slice's definition. Brief-only fields (tier,
  * timebox, context) and the worktree path are left out, so fixing a typo in
@@ -858,6 +867,7 @@ function parseStored(raw: unknown): FanoutFile | null {
     shared,
     slices,
     leadSession: typeof raw.leadSession === "string" && raw.leadSession ? raw.leadSession : null,
+    formerLeads: list(raw.formerLeads),
     createdAt,
     updatedAt: text(raw.updatedAt),
   };
@@ -973,11 +983,31 @@ export const IN_FLIGHT_CAP = 6;
 
 export function planFanout(
   cwd: string,
-  input: { raw: unknown; name: string | null; trunk: string | null; actor: LedgerActor },
+  input: {
+    raw: unknown;
+    name: string | null;
+    trunk: string | null;
+    actor: LedgerActor;
+    /** Record this session as the lead (a lead resuming in a new session). */
+    takeLead?: boolean;
+  },
   now: Date = new Date(),
 ): FanoutResult<PlanOutcome> {
   const dir = fanoutsDir(cwd);
   if (!dir.ok) return dir;
+  const session = input.actor.session;
+  if (input.takeLead && !session)
+    return fanoutFail(
+      "blocked",
+      "--take-lead needs a session: WORKIT_SESSION_ID is not set",
+      "export WORKIT_SESSION_ID=<your session id>, then plan again with --take-lead",
+    );
+  if (input.takeLead && isDelegateSession(session))
+    return fanoutFail(
+      "blocked",
+      `session ${session} is a worker or verifier id; only a lead takes the lead`,
+      "run --take-lead from the lead's own session",
+    );
   const parsed = parsePlan(
     input.trunk && isRecord(input.raw) ? { ...input.raw, trunk: input.trunk } : input.raw,
     {
@@ -1048,8 +1078,17 @@ export function planFanout(
   const existing = readFanout(cwd, plan.name);
   const previous = existing.ok ? existing.data : null;
   plan.createdAt = previous?.createdAt || now.toISOString();
-  // A re-plan keeps the lead (and a plan from before leads stays without one).
-  plan.leadSession = previous ? previous.leadSession : input.actor.session;
+  // A re-plan keeps the lead (and a plan from before leads stays without one)
+  // unless this session takes it over.
+  plan.leadSession = input.takeLead ? session : previous ? previous.leadSession : session;
+  plan.formerLeads = [
+    ...new Set([
+      ...(previous?.formerLeads ?? []),
+      ...(previous?.leadSession && previous.leadSession !== plan.leadSession
+        ? [previous.leadSession]
+        : []),
+    ]),
+  ].filter((former) => former !== plan.leadSession);
   plan.updatedAt = now.toISOString();
   // Per slice: the same definition continues its run; a changed one starts anew.
   for (const slice of plan.slices) {
@@ -1060,6 +1099,14 @@ export function planFanout(
   }
   const written = writeFanout(cwd, plan);
   if (!written.ok) return written;
+  if (previous && plan.leadSession !== previous.leadSession)
+    appendObserved(cwd, {
+      type: "fanout.lead.changed",
+      actor: input.actor,
+      fanout: plan.name,
+      from: previous.leadSession,
+      to: plan.leadSession,
+    });
   appendObserved(cwd, {
     type: "fanout.planned",
     actor: input.actor,
@@ -1073,9 +1120,13 @@ export function planFanout(
   const grouped = waves(plan.slices);
   const notes: string[] = [];
   const warnings: string[] = [];
+  if (!input.takeLead && previous?.leadSession && session && session !== previous.leadSession)
+    notes.push(
+      `the lead stays ${previous.leadSession}; this session is ${session}. Leading from this session now? workit fanout plan <plan.json> --take-lead`,
+    );
   if (previous === null) {
     const ledger = readLedger(cwd);
-    const inForce = ledger.ok ? activeStanding(ledger.value.rows, plan.name, plan.leadSession) : [];
+    const inForce = ledger.ok ? activeStanding(ledger.value.rows, plan.name, planLeads(plan)) : [];
     if (inForce.length)
       warnings.push(
         `${inForce.length} standing order${inForce.length === 1 ? " is" : "s are"} already in force for fanout ${plan.name}, and every brief will carry ${inForce.length === 1 ? "it" : "them"}: ${inForce.map((row) => `"${String(row.what)}"`).join("; ")}. From an earlier run? workit ledger standing clear --fanout ${plan.name}`,

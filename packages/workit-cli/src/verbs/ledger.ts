@@ -44,7 +44,12 @@ import {
   type RecordContext,
   type VerdictCheck,
 } from "@brainervirus/workit-core/src/ledger";
-import { readFanout, selectFanout, type FanoutFile } from "@brainervirus/workit-core/src/fanout";
+import {
+  planLeads,
+  readFanout,
+  selectFanout,
+  type FanoutFile,
+} from "@brainervirus/workit-core/src/fanout";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
@@ -350,11 +355,12 @@ async function standing(io: Io, values: Values, args: string[]): Promise<number>
     return emit(io, fail("invalid_input", target.message, { unblock: STANDING_USAGE }));
   const fanout = target.name;
   const lead = target.plan?.leadSession ?? null;
+  const leads = target.plan ? planLeads(target.plan) : null;
   if (action === "list") {
     if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
     const ledger = readLedger(io.cwd);
     if (!ledger.ok) return failed(io, ledger);
-    const orders = activeStanding(ledger.value.rows, fanout, lead).map((row) => ({
+    const orders = activeStanding(ledger.value.rows, fanout, leads).map((row) => ({
       id: row.id,
       at: row.at,
       what: row.what as string,
@@ -389,9 +395,12 @@ async function standing(io: Io, values: Values, args: string[]): Promise<number>
       (row) => `recorded standing order ${row.id} for fanout ${fanout}`,
     );
   if (rest.length > 1) return usage(io, `unexpected argument: ${rest[1]}`);
-  return fromResult(io, clearStanding(context, { fanout, lead, target: rest[0] ?? null }), (row) =>
-    row.target
-      ? `cleared standing order ${row.target} for fanout ${fanout}`
-      : `cleared every standing order for fanout ${fanout}`,
+  return fromResult(
+    io,
+    clearStanding(context, { fanout, lead, leads, target: rest[0] ?? null }),
+    (row) =>
+      row.target
+        ? `cleared standing order ${row.target} for fanout ${fanout}`
+        : `cleared every standing order for fanout ${fanout}`,
   );
 }

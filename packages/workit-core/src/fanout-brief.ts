@@ -14,7 +14,7 @@
 // from hiding `.workit-scratch/` in the repository's info/exclude.
 import { createHash } from "node:crypto";
 import { activeStanding, readLedger, type LedgerActor } from "./ledger";
-import { branchRef, fanoutFail, type FanoutFile, type FanoutResult } from "./fanout";
+import { branchRef, fanoutFail, planLeads, type FanoutFile, type FanoutResult } from "./fanout";
 import {
   SCRATCH_DIR,
   excludeScratch,
@@ -115,7 +115,7 @@ export function renderBrief(
     ? `SCRATCH: ${scratch}  (yours alone; temp files go here, never a shared path)`
     : `SCRATCH: ${SCRATCH_DIR}/ at your worktree root (mkdir -p it; git ignores it; never a shared path)`;
 
-  const standing = activeStanding(ledger.value.rows, plan.name, plan.leadSession).map((row) => ({
+  const standing = activeStanding(ledger.value.rows, plan.name, planLeads(plan)).map((row) => ({
     id: row.id,
     what: String(row.what),
   }));

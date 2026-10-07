@@ -112,7 +112,7 @@ isolation, and gates their fan-in. It never spawns agents: the host's own
 subagents do that.
 
 ```bash
-workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>]   # register slices; refuse gaps and overlap
+workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead]  # register slices; refuse gaps and overlap
 workit ledger standing add "<order>" | list | clear [<id>] [--fanout <n>] # the lead's standing orders for every worker
 workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>]  # the complete worker brief, verbatim
 workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
@@ -158,12 +158,23 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   pick; `add --fanout` must name an existing plan. An order is one line (a
   newline or control character is refused). The plan records its lead, the
   session that first made it (`leadSession`); only that session may add or
-  clear orders, and `brief` and `list` count only the orders it recorded, so
-  no worker, verifier or hand-written row can inject one. A plan from before
-  `leadSession` falls back to refusing the worker and verifier ids workit
-  hands out (`<lead>-w-<slice>`, `<lead>-v<n>`, `--as verifier`). `list`
+  clear orders, and `brief` and `list` count only the orders a lead
+  recorded, so no worker, verifier or hand-written row can inject one. `list`
   shows the orders in force; `clear <id>` ends one and `clear` ends them all
   (a `standing.cleared` row).
+- Sessions change with each new conversation. A lead that resumes in a new
+  session runs `fanout plan <plan.json> --take-lead`: the plan records the
+  current session as `leadSession`, keeps the previous lead in `formerLeads`
+  (its orders stay in force until the new lead clears them; it can no longer
+  add any), and the ledger gets a `fanout.lead.changed` row (`from`, `to`).
+  `--take-lead` is refused without a `WORKIT_SESSION_ID` and from a worker or
+  verifier id (`<lead>-w-<slice>`, `+try<n>`, `<lead>-v<n>`, or any id with a
+  colon: the Claude Code hook's `<lead>:<agent id>` and `--as` ids). A
+  re-plan from another session without the flag keeps the lead and notes how
+  to take it.
+- A plan recorded before lead sessions has `leadSession: null`. Its standing
+  orders count from any session, and `standing add` and `clear` fall back to
+  refusing the worker and verifier ids above. `--take-lead` gives it a lead.
 - `brief <slice>` prints the worker brief: MODE, GOAL, SCOPE (with `owns`,
   branch and base), CONTEXT, ACCEPTANCE, VERIFY, TIER, TIMEBOX (default 30
   minutes), SCRATCH, FORBIDDEN, the fan-in rule, REPORT, the standing orders

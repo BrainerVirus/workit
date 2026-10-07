@@ -1091,11 +1091,12 @@ export function recordRuling(
 }
 
 /**
- * May this row speak for the fanout's lead? With a recorded lead session only
- * that session's rows count; a plan from before it (null) takes any session.
+ * May this row speak for the fanout's lead? With recorded leads (the current
+ * one and any it took over from) only their rows count; a plan from before
+ * leads (null) takes any session.
  */
-const fromLead = (row: ReadRow, lead: string | null): boolean =>
-  lead === null || row.actor.session === lead;
+const fromLead = (row: ReadRow, leads: readonly string[] | null): boolean =>
+  leads === null || (row.actor.session !== null && leads.includes(row.actor.session));
 
 /**
  * The standing orders in force for `fanout`, oldest first (D17: odd rows are
@@ -1105,11 +1106,11 @@ const fromLead = (row: ReadRow, lead: string | null): boolean =>
 export function activeStanding(
   rows: readonly ReadRow[],
   fanout: string,
-  lead: string | null = null,
+  leads: readonly string[] | null = null,
 ): ReadRow[] {
   const active: ReadRow[] = [];
   for (const row of rows) {
-    if (row.fanout !== fanout || !fromLead(row, lead)) continue;
+    if (row.fanout !== fanout || !fromLead(row, leads)) continue;
     if (row.type === "standing" && typeof row.what === "string" && row.what.trim()) {
       if (!row.superseded) active.push(row);
     } else if (row.type === "standing.cleared") {
@@ -1125,15 +1126,17 @@ export function activeStanding(
 }
 
 /**
- * A worker or verifier session by the ids the lead hands out (`fanout
- * brief`'s `<lead>-w-<slice>[+try<n>]`, a verifier's `<lead>-v<n>`, an
- * `--as verifier|reviewer` id). Only for plans that predate `leadSession`.
+ * A worker or verifier session by the ids workit hands out: `fanout brief`'s
+ * `<lead>-w-<slice>[+try<n>]`, a verifier's `<lead>-v<n>`, the Claude Code
+ * hook's `<lead>:<agent id>` and `--as` ids (`<session>:<role>:<hex>`). Host
+ * session ids carry no colon. Used where no recorded lead decides: plans that
+ * predate `leadSession`, and `fanout plan --take-lead`.
  */
-const isDelegateSession = (session: string | null): boolean =>
+export const isDelegateSession = (session: string | null): boolean =>
   session !== null &&
   (/-w-[a-z0-9._-]+(?:\+try\d)?$/u.test(session) ||
     /-v\d+$/u.test(session) ||
-    /:(?:verifier|reviewer):[0-9a-f]+$/u.test(session));
+    session.includes(":"));
 
 /**
  * Standing orders come from the fanout's lead: the session that first made
@@ -1149,7 +1152,9 @@ function leadOnly(context: RecordContext, lead: string | null): LedgerResult<voi
     lead !== null
       ? `session ${session ?? "(none)"} is not the fanout's lead (${lead}): standing orders come from the lead`
       : `session ${session} is a worker or verifier: standing orders come from the lead`,
-    "report the order to the lead instead",
+    lead !== null
+      ? `the lead in a new session? workit fanout plan <plan.json> --take-lead from this session; a worker or verifier reports the order to the lead instead`
+      : "a worker or verifier reports the order to the lead instead",
   );
 }
 
@@ -1186,7 +1191,12 @@ export function recordStanding(
 /** Clear one standing order by id (it must be in force), or all of them; lead only. */
 export function clearStanding(
   context: RecordContext,
-  input: { fanout: string; lead: string | null; target: string | null },
+  input: {
+    fanout: string;
+    lead: string | null;
+    leads?: readonly string[] | null;
+    target: string | null;
+  },
 ): LedgerResult<StandingClearedRow> {
   const lead = leadOnly(context, input.lead);
   if (!lead.ok) return lead;
@@ -1194,7 +1204,7 @@ export function clearStanding(
     const ledger = readLedger(context.cwd);
     if (!ledger.ok) return ledger;
     if (
-      !activeStanding(ledger.value.rows, input.fanout, input.lead).some(
+      !activeStanding(ledger.value.rows, input.fanout, input.leads ?? null).some(
         (row) => row.id === input.target,
       )
     )

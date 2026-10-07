@@ -1,7 +1,7 @@
 // `workit fanout plan|brief|check|status|worktree` (G1-G5): flag parsing and
 // rendering; the rules live in core fanout*.ts. The CLI never spawns agents.
 //
-//   workit fanout plan     <plan.json> [--name <n>] [--trunk <b> | --track <t>]
+//   workit fanout plan     <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead]
 //   workit fanout brief    <slice> [--name <n>] [--mode new|resume] [--attempt <n>]
 //   workit fanout check    [<slice>…] [--name <n>] [--base <ref>] [--offline]
 //   workit fanout status   [--name <n>] [--stuck-after 30m] [--offline]
@@ -30,7 +30,7 @@ import { emit, fail, ok, type Io } from "../output";
 import { connect, parseDuration, parseFlags, releaseTrunk, usage } from "./forge-common";
 
 const PLAN_USAGE =
-  "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--json]";
+  "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead] [--json]";
 const BRIEF_USAGE =
   "workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--json]";
 const CHECK_USAGE =
@@ -115,7 +115,12 @@ function resolveTrunk(
 }
 
 function plan(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, { name: "value", trunk: "value", track: "value" });
+  const flags = parseFlags(argv, {
+    name: "value",
+    trunk: "value",
+    track: "value",
+    "take-lead": "boolean",
+  });
   if (typeof flags === "string") return usage(io, flags, PLAN_USAGE);
   const track = flags.values.track ?? null;
   if (track !== null && flags.values.trunk !== undefined)
@@ -142,6 +147,7 @@ function plan(argv: string[], io: Io): number {
     name: flags.values.name ?? null,
     trunk: trunk.trunk,
     actor: actorFromEnv(io.env),
+    takeLead: flags.booleans.has("take-lead"),
   });
   if (!result.ok) {
     const code = failed(io, result);
