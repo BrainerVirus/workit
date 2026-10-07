@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { WORKIT_METHOD_SKILLS } from "../../workit-core/src/core/skill-manifests";
+import { WORKIT_METHOD_SKILLS, copySkillForHost } from "../../workit-core/src/core/skill-manifests";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagesDir = path.resolve(packageDir, "..");
@@ -27,7 +27,8 @@ const PREFIX = "workit-";
 
 /** Plugin skills are namespaced by the plugin (`/workit:<name>`), so the
  * `workit-` prefix is dropped from the directory and the frontmatter name.
- * Nothing else changes: host mapping lives once in the session addendum. */
+ * Cross-skill references become Skill tool calls (copySkillForHost); other
+ * host mapping lives once in the session addendum. */
 const pluginSkillName = (name: string): string =>
   name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name;
 
@@ -46,7 +47,7 @@ const buildSkills = () => {
     if (!existsSync(path.join(source, "SKILL.md")))
       throw new Error(`missing canonical Workit method skill in core: ${name}`);
     const out = path.join(skills, pluginSkillName(name));
-    cpSync(source, out, { recursive: true });
+    copySkillForHost(source, out, "claude-code");
     const file = path.join(out, "SKILL.md");
     writeFileSync(file, transformSkill(readFileSync(file, "utf8"), name, pluginSkillName(name)));
   }

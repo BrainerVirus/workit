@@ -5,7 +5,10 @@ import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import {
+  WORKIT_METHOD_SKILLS,
+  renderSkillText,
+} from "@/packages/workit-core/src/core/skill-manifests";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import {
   SYNC_MANIFEST_PATHS,
@@ -153,10 +156,10 @@ test("skills are generated from workit-core, namespaced without the workit- pref
       path.join(REPO, "packages", "workit-core", "skills", `workit-${name}`, "SKILL.md"),
       "utf8",
     );
-    // Only the frontmatter name changes; host mapping lives in the session
-    // addendum, so the body (and its references/) is the canonical one.
+    // Only the frontmatter name and the cross-skill references (rendered as
+    // Skill tool calls) change; other host mapping lives in the session addendum.
     expect(readFileSync(file, "utf8"), name).toBe(
-      source.replace(`name: workit-${name}`, `name: ${name}`),
+      renderSkillText(source, "claude-code").replace(`name: workit-${name}`, `name: ${name}`),
     );
   }
   const tracked = spawnSync("git", ["ls-files", "packages/workit-claude-code/skills"], {

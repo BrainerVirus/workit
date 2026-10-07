@@ -4,7 +4,10 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
-import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import {
+  WORKIT_METHOD_SKILLS,
+  renderSkillText,
+} from "@/packages/workit-core/src/core/skill-manifests";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { extractTarball, packWorkspacePackages } from "@/test/shared/helpers/packages";
 
@@ -145,14 +148,14 @@ test("packed Codex launcher lists empty on fresh checkouts without leaking paths
   }
 });
 
-test("Given the packed Codex tarball, Then it ships every generated method skill byte-identical to the canonical source", () => {
+test("Given the packed Codex tarball, Then it ships every method skill as the canonical source rendered for Codex", () => {
   const packed = packCodex();
   try {
     const skills = path.join(packed.root, "skills");
     expect(readdirSync(skills).toSorted()).toEqual([...WORKIT_METHOD_SKILLS].toSorted());
     for (const skill of WORKIT_METHOD_SKILLS)
       expect(readFileSync(path.join(skills, skill, "SKILL.md"), "utf8"), skill).toBe(
-        readFileSync(path.join(CORE_SKILLS, skill, "SKILL.md"), "utf8"),
+        renderSkillText(readFileSync(path.join(CORE_SKILLS, skill, "SKILL.md"), "utf8"), "codex"),
       );
   } finally {
     packed.cleanup();

@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
 // Build the self-contained OpenCode plugin entry (dist/plugin.js) and copy the
-// deterministic assets root containing the canonical method skills.
+// deterministic assets root containing the method skills, rendered for OpenCode.
 // Runs from the repo (where workspace deps resolve); target dir defaults to the
 // package dir and can be overridden for the pack sandbox.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   WORKIT_METHOD_SKILLS,
+  copySkillForHost,
   skillManifestNames,
   validateSkillManifests,
 } from "../../workit-core/src/core/skill-manifests";
@@ -53,7 +54,7 @@ mkdirSync(skills, { recursive: true });
 for (const name of WORKIT_METHOD_SKILLS) {
   const source = path.join(coreDir, "skills", name);
   if (!existsSync(source)) throw new Error(`missing Workit method skill: ${source}`);
-  cpSync(source, path.join(skills, name), { recursive: true });
+  copySkillForHost(source, path.join(skills, name), "opencode");
 }
 const packagedWorkitError = validateSkillManifests(
   skills,

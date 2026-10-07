@@ -10,7 +10,7 @@ verifiable alone. Code-coupled work stays with one owner, who fans out after
 the blocking part lands. A worker whose whole job is re-running one command is
 ceremony; do it yourself.
 
-1. **Plan the slices** (workit-shape) in a plan file (`references/brief.md`):
+1. **Plan the slices** (read the `workit-shape` skill's SKILL.md and follow it) in a plan file (`references/brief.md`):
    per slice an id, branch, TIER, the file-scope manifest (SCOPE globs),
    `owns` for shared files (lockfile, registry, barrels), `dependsOn` only for
    a real dependency (independent PRs off trunk are the default), and the
@@ -52,7 +52,7 @@ ceremony; do it yourself.
    `workit ledger check --branch <b>` per slice, land in `fanout status` order
    and release the worktrees you made. Stacks: `workit stack plan <bottom> …
    <top>` once, then `stack sync` and `land`. Only you touch topology: workers
-   never rebase, retarget or merge. Then workit-ship.
+   never rebase, retarget or merge. Then ship (read the `workit-ship` skill's SKILL.md and follow it).
 
 ## Example
 

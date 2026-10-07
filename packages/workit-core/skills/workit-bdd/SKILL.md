@@ -14,7 +14,8 @@ description: Turn requirements into Given/When/Then scenarios, agree the test se
 3. **Name tests after scenarios.** The name is the Given/When/Then sentence;
    the body is arrange, act, assert. Expected values come from the scenario (a
    literal from a worked example, the spec, an external contract), never from
-   the code under test.
+   the code under test. No tautological tests: a test must fail if the
+   behavior breaks, never restate the implementation.
 4. **Build in vertical slices.** Write one vertical RED slice that fails for
    the missing behavior and run it through the CLI so the failure is observed:
    `workit check test`. Make the smallest change, run the same check GREEN,
@@ -32,8 +33,8 @@ description: Turn requirements into Given/When/Then scenarios, agree the test se
 
 Reject noise: version-pin assertions, tests that mirror private structure,
 assertions inside a possibly-empty loop, smoke-only renders, duplicates. If a
-test still passes when every imported function returns `undefined`, rewrite it
-(workit-test-audit finds these).
+test still passes when every imported function returns `undefined`, rewrite it;
+the audit finds these (workit-test-audit).
 
 ## Example
 

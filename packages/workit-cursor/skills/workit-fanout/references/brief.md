@@ -1,7 +1,8 @@
 # Worker brief template
 
 Every field is required. A brief with an empty field is not spawned. Point to
-files and ledger rows instead of pasting their content.
+files and ledger rows instead of pasting their content. Size the slice so the
+worker finishes it in about 150k tokens of context; split a larger one first.
 
 ```md
 MODE: <new | resume (a replacement continuing an existing branch)>

@@ -52,7 +52,7 @@ ceremony; do it yourself.
    `workit ledger check --branch <b>` per slice, land in `fanout status` order
    and release the worktrees you made. Stacks: `workit stack plan <bottom> …
    <top>` once, then `stack sync` and `land`. Only you touch topology: workers
-   never rebase, retarget or merge. Then workit-ship.
+   never rebase, retarget or merge. Then ship (workit-ship).
 
 ## Example
 

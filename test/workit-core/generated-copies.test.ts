@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   WORKIT_SKILL_ALIASES,
   cursorCommandText,
+  renderSkillText,
   skillDescription,
 } from "@/packages/workit-core/src/core/skill-manifests";
 
@@ -16,9 +17,10 @@ import {
 const repoRoot = path.resolve(import.meta.dir, "../..");
 
 const GENERATED_COPIES: Record<string, string[]> = {
-  "packages/workit-core/skills": ["packages/workit-cursor/skills"],
   "packages/workit-core/templates": ["packages/workit-cli/assets/templates"],
 };
+const CANONICAL_SKILLS = "packages/workit-core/skills";
+const CURSOR_SKILLS = "packages/workit-cursor/skills";
 
 const git = (...args: string[]) => spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });
 
@@ -34,13 +36,32 @@ const committedFile = (relative: string): string => {
   return result.stdout;
 };
 
-test("committed Cursor skills match the canonical source they are built from", () => {
+const committedFiles = (relative: string): string[] =>
+  git("ls-tree", "-r", "--name-only", "HEAD", `${relative}/`)
+    .stdout.trim()
+    .split("\n")
+    .map((file) => path.posix.relative(relative, file))
+    .toSorted();
+
+test("committed Cursor skills are the canonical skills rendered for Cursor", () => {
+  const regenerate = "run bun packages/workit-cursor/scripts/build.ts --skills-only";
+  const files = committedFiles(CANONICAL_SKILLS);
+  expect(committedFiles(CURSOR_SKILLS), regenerate).toEqual(files);
+  for (const file of files) {
+    const canonical = committedFile(`${CANONICAL_SKILLS}/${file}`);
+    expect(committedFile(`${CURSOR_SKILLS}/${file}`), `${file}: ${regenerate}`).toBe(
+      file.endsWith(".md") ? renderSkillText(canonical, "cursor") : canonical,
+    );
+  }
+});
+
+test("committed template copies match the canonical source they are built from", () => {
   for (const [canonical, copies] of Object.entries(GENERATED_COPIES)) {
     const expected = committedTree(canonical);
     for (const copy of copies)
       expect(
         committedTree(copy),
-        `${copy} differs from ${canonical}; run bun packages/workit-cursor/scripts/build.ts --skills-only`,
+        `${copy} differs from ${canonical}; run bun packages/workit-cli/scripts/build.ts`,
       ).toBe(expected);
   }
 });
