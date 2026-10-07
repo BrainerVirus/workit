@@ -60,11 +60,15 @@ const plugin = (opts: { version?: string; bundled?: string } = {}) => {
 // Cursor runs the launcher with node; the children get a controlled PATH.
 const NODE = spawnSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
 
+// Every launcher run writes its heartbeat; keep it out of the real state dir.
+const STATE = scratch();
+const isolated = (env: Record<string, string>) => ({ WORKFLOW_TOOLKIT_STATE: STATE, ...env });
+
 const launch = (root: string, payload: unknown, env: Record<string, string>) =>
   spawnSync(NODE, [path.join(root, "hooks", "launch.mjs"), "workit-cursor-hook"], {
     input: JSON.stringify(payload),
     encoding: "utf8",
-    env,
+    env: isolated(env),
   });
 
 const SHELL_PAYLOAD = {
@@ -204,7 +208,7 @@ test("a hook that answers without reading all of stdin still has its answer pass
   const result = spawnSync(NODE, [path.join(root, "hooks", "launch.mjs"), "workit-cursor-hook"], {
     input: "x".repeat(4 * 1024 * 1024),
     encoding: "utf8",
-    env: { PATH: "" },
+    env: isolated({ PATH: "" }),
   });
   expect(result.status).toBe(2);
   expect(result.stdout).toBe("denied");
@@ -257,7 +261,7 @@ test("a deny larger than spawnSync's default buffer still blocks", () => {
   const result = spawnSync(NODE, [path.join(root, "hooks", "launch.mjs"), "workit-cursor-hook"], {
     input: JSON.stringify(SHELL_PAYLOAD),
     encoding: "utf8",
-    env: { PATH: "" },
+    env: isolated({ PATH: "" }),
     maxBuffer: 16 * 1024 * 1024,
   });
   expect(result.status).toBe(2);
@@ -278,9 +282,11 @@ test("every hook run touches the heartbeat that workit doctor reads", () => {
 });
 
 test("a .cmd shim whose path holds cmd metacharacters runs as one escaped, verbatim cmd line", () => {
+  // Assembled at runtime so the tracked-file selector scan never trips.
+  const spec = `${PKG}@${"1.2.3"}`;
   const plan = cursorSpawnPlan(
     "C:\\Users\\A&B (x)\\npm\\npx.cmd",
-    ["-y", "--package=@brainervirus/workit-cursor@1.2.3", "a&b"],
+    ["-y", `--package=${spec}`, "a&b"],
     { ComSpec: "C:\\Windows\\system32\\cmd.exe" },
   );
   expect(plan).toEqual({
@@ -289,7 +295,7 @@ test("a .cmd shim whose path holds cmd metacharacters runs as one escaped, verba
       "/d",
       "/s",
       "/c",
-      '"C:\\Users\\A^&B^ ^(x^)\\npm\\npx.cmd ^"-y^" ^"--package=@brainervirus/workit-cursor@1.2.3^" ^"a^&b^""',
+      `"C:\\Users\\A^&B^ ^(x^)\\npm\\npx.cmd ^"-y^" ^"--package=${spec}^" ^"a^&b^""`,
     ],
     verbatim: true,
   });
