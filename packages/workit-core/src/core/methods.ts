@@ -105,9 +105,9 @@ Autonomy contract:
   ship), go to the effective endpoint in \`workit grant show\`: \`pr\` opens
   the PR; \`green\` babysits it without asking (workit-ship) to merge-ready,
   never merging; \`merged\` also lands it with \`workit pr merge\`.
-  Merge and release need a workspace grant, which only the user raises (a
-  blocked verb names how); never edit workspaces.json or route around a
-  grant_required.
+  Merge and release need a workspace grant, which only the user raises from
+  their own terminal (a blocked verb names how); never edit workspaces.json or
+  route around a grant_required.
 - Ask only for a product or preference choice, or for authority you lack, with
   your recommended answer. Facts are yours: read, run or prototype.
 - Label claims measured (run and seen this session), inferred, or guess.
@@ -115,7 +115,7 @@ Autonomy contract:
   satisfies a gate; an ad-hoc \`workit check -- <cmd>\` never does.
 - Author is not verifier: your own verdict is \`--self\`, shown as
   self-reviewed, never verified. High risk, \`verification: independent\` and
-  merge need a verifier with its own session.
+  merge need a verifier with its own session (\`WORKIT_SESSION_ID=<lead>-v<n>\`).
 - A local-commit endpoint does not imply PR readiness, and a local commit alone
   is not evidence of a requested remote push. Before reporting delivery,
   reconcile every requested item and observe it (\`workit verify-delivery\`).
