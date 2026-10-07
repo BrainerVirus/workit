@@ -9,6 +9,8 @@ import type {
 } from "@/packages/workit-core/src/core/task-contract";
 import { invariantBootstrap, selectMethods } from "@/packages/workit-core/src/core/methods";
 import { compactTaskContext } from "@/packages/workit-core/src/core/task-context";
+import { DEFAULT_ENDPOINT, DEFAULT_ENDPOINTS } from "@/packages/workit-core/src/autonomy";
+import { babysitAction, type NextAction } from "@/packages/workit-core/src/forge/report";
 import {
   WORKIT_METHOD_SKILLS,
   skillManifestNames,
@@ -275,7 +277,7 @@ test("agent-critical delivery rules stay stated", () => {
       bootstrap,
       "No endpoint named: stop at a local commit on a policy-compliant branch",
     ],
-    ["bootstrap", bootstrap, "never the default target"],
+    ["bootstrap", bootstrap, "go to the effective endpoint in `workit grant show`"],
     ["workit-ship", skillText("workit-ship"), "report that a rebase is needed and stop"],
     ["workit-fanout", skillText("workit-fanout"), "any file outside it stops the fan-in"],
     ["workit-fanout", skillText("workit-fanout"), "observe that it exited"],
@@ -331,4 +333,66 @@ test("method manifest matches the canonical skill directories", () => {
   expect(
     skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
   ).toEqual([...WORKIT_METHOD_SKILLS].toSorted());
+});
+
+// Babysit endpoints (defaultEndpoint green|merged): the doctrine an agent acts
+// on after opening a PR. Each phrase is a rule; dropping or inverting one fails.
+test("bootstrap routes every endpoint above commit and keeps green short of a merge", () => {
+  const bootstrap = invariantBootstrap();
+  for (const endpoint of DEFAULT_ENDPOINTS.filter((value) => value !== DEFAULT_ENDPOINT))
+    expect(bootstrap, endpoint).toContain(`\`${endpoint}\``);
+  for (const rule of [
+    "`green` babysits it without asking (workit-ship) to merge-ready",
+    "never merging; `merged` also lands it with `workit pr merge`",
+  ])
+    expect(bootstrap, rule).toMatch(phrase(rule));
+});
+
+test("workit-ship states the babysit loop, its verbs and its only stop conditions", () => {
+  const ship = skillText("workit-ship");
+  for (const rule of [
+    "that endpoint applies only when the request named none",
+    "Stop at PR-ready (`babysit` `ready`)",
+    "After opening the PR keep babysitting without asking until CI is green, every thread is resolved and the verification gate is met; `green` never merges",
+    "`merged` without the merge grant acts as `green`); a lowered one's reason names the unblock",
+    "`wait`: `workit ci wait` in the background where the host allows",
+    "re-check `workit pr status` in the background with backoff, at most 5 times, then stop and report",
+    "`update-branch` (conflicts or a required rebase): step 3",
+    "`mark-ready`: mark the draft ready",
+    "`ready`: under `green`, stop; under `merged`, run step 6 once the verdict is accepted",
+    "`null` (closed, not merged): stop and report",
+    "one `workit ci rerun --failed --reason flake|infra` per head",
+    "Stop early only for a new consequential choice, a host denial, a review comment that needs a product decision, a required update that repeats because the base keeps moving, or after 3 failed fix attempts on the same check",
+  ])
+    expect(ship, rule).toMatch(phrase(rule));
+  expect(skillText("workit-implement")).toMatch(
+    phrase("effective endpoint in `workit grant show` is `pr`, `green` or `merged`"),
+  );
+});
+
+test("workit-ship names every babysit step `workit pr status` can report", () => {
+  const ship = skillText("workit-ship");
+  const nexts: NextAction[] = [
+    "MERGED",
+    "CLOSED",
+    "RESOLVE_CONFLICTS",
+    "REBASE",
+    "RESOLVE_THREADS",
+    "FIX_CI",
+    "WAITING_CI",
+    "ADDRESS_REVIEW",
+    "REVIEW",
+    "MARK_READY",
+    "IN_MERGE_QUEUE",
+    "NOT_MERGEABLE",
+    "READY",
+  ];
+  const steps = new Set(
+    nexts.flatMap((next) =>
+      [true, false].map((draft) => babysitAction(next, "mergeability_unknown", draft)),
+    ),
+  );
+  steps.delete(null);
+  expect(steps.size).toBe(8);
+  for (const step of steps) expect(ship, String(step)).toContain(`\`${step}\``);
 });

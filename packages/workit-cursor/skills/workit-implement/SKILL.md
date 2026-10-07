@@ -25,8 +25,9 @@ description: Build a requested change in small verified steps - follow local pat
 6. Commit: `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`).
    No endpoint named? Stop here and state the next command. Push and open a
    PR (`workit git push`, `workit pr create --fill`, then workit-ship) only when
-   that was requested, or the request implies delivery and `workit grant show`
-   reports `defaultEndpoint` `pr`; otherwise the endpoint is `commit`.
+   that was requested, or the request implies delivery and the effective
+   endpoint in `workit grant show` is `pr`, `green` or `merged` (`green` and
+   `merged`: keep babysitting per workit-ship); otherwise it is `commit`.
 7. Verify. Normal risk: after `workit check test` passes, record your own
    `workit ledger verdict tests-verified --self --how "<what you ran>"`; it
    reads self-reviewed, never verified. High risk, a workspace with
