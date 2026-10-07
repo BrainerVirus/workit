@@ -263,7 +263,12 @@ test("Given every workit command in skills, references, agents and the bootstrap
           hasWord(entry.usage, sub),
           `${source}: "workit ${call}" (usage: ${entry.usage})`,
         ).toBe(true);
-      const handled = grammarFor(verb, SUBCOMMAND_VERBS.has(verb) ? sub : undefined, entry.usage);
+      const usage = [entry.usage, ...(entry.subcommands ?? []).map((line) => line.usage)];
+      const handled = grammarFor(
+        verb,
+        SUBCOMMAND_VERBS.has(verb) ? sub : undefined,
+        usage.join("\n"),
+      );
       for (const [flag] of call.matchAll(/--[a-z][a-z-]*/g))
         if (!GLOBAL_FLAGS.has(flag))
           expect(handled.includes(flag), `${source}: "workit ${call}" uses ${flag}`).toBe(true);
