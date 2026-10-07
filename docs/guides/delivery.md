@@ -53,8 +53,12 @@ workit git push [--set-upstream] [--force-with-lease]
 ## Pull requests and CI
 
 ```bash
-workit pr create (--title <t> | --fill) [--base <b> | --track <t>] [--draft]
-workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next and babysit step
+workit pr create (--title <t> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [--label <l>]… [--reviewer <login>]… [--draft]
+workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
+workit pr ready [--undo]               # mark the draft ready (or back to draft)
+workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
+workit pr threads                      # unresolved review threads, one line each with its id
+workit pr reply --thread <id> [--body-file <f|->] [--resolve]
 workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
 workit pr merge [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]
@@ -65,6 +69,22 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   that SHA as the PR head. It ends with a `next:` line (`next` in `--json`):
   a non-author verifies the head, then what the effective endpoint does
   (stop, babysit, or land after verification).
+- `pr create --fill` takes the title from the oldest commit and the body from
+  the commit messages (one commit: its body; several: each subject with its
+  body), leaving out Workit's `Workit-Session:` trailer. `--body-file -` reads
+  the body from stdin.
+- `pr status` prints the command that clears `next` on a `do:` line
+  (`nextHint` in `--json`), e.g. `workit pr ready --pr 12` for a draft.
+- `pr ready`, `pr edit` and `pr reply` need the `pr` grant and an open PR.
+  `pr edit --base` takes a plain branch name and retargets only to the
+  branch's default target (from the release track that owns the PR's current
+  base; an undetermined line refuses) or to its stack parent (the base
+  `workit git branch` recorded, or the branch below it in its stack, never a
+  descendant or sibling), never to another protected branch. Labels and
+  reviewers are checked before any write: no commas, GitLab reviewers are
+  usernames, and a GitHub `org/team` must belong to the repository's owner. On GitLab, draft state lives in the title
+  (`Draft:`, `[Draft]`, `(Draft)`), and a new title keeps it. `pr reply` acts
+  only on an unresolved thread of that PR.
 - With [release tracks](configuration.md#release-tracks), the default base of
   `git branch`, the default target of `pr create` and the default trunk of
   `stack plan` come from the track the branch belongs to; `pr merge` onto a
@@ -97,9 +117,9 @@ babysitting it without asking. `pr status` names the step in `babysit`:
 | `wait` | checks pending | runs `workit ci wait`, in the background where the host allows |
 | `wait-forge` | CI done, but the PR is in a merge queue or the forge is still computing mergeability | re-checks `workit pr status` in the background with backoff, at most 5 times, then stops and reports |
 | `fix-ci` | a gating check failed | one `workit ci rerun --failed --reason flake\|infra` for a clear flake or infra failure; otherwise reproduces with `workit check`, fixes and pushes |
-| `address-threads` | unresolved threads or changes requested | fixes or replies with a reasoned dismissal |
+| `address-threads` | unresolved threads or changes requested | lists them with `workit pr threads`, fixes or replies with a reasoned dismissal (`workit pr reply`) |
 | `update-branch` | conflicts or a rebase the forge requires | rebases its own branch (or `workit stack sync`) and pushes with `--force-with-lease` |
-| `mark-ready` | a draft with nothing else open (even with a review pending) | marks the PR ready for review |
+| `mark-ready` | a draft with nothing else open (even with a review pending) | runs `workit pr ready` |
 | `ready` | nothing left for the agent; a human approval may still be pending | stops (`green`), or lands with `workit pr merge` once the verdict is accepted (`merged`) |
 | `merged` | the PR is merged | observes it with `workit verify-delivery merge` |
 
