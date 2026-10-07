@@ -46,10 +46,13 @@ module.exports = {
     // AR-02/RR-01: prepare-time rewrite AFTER version bumps, then rebuild so
     // every bundle embeds the version being released (the CI build ran before
     // the bump, so `workit --version` and npx hints reported the previous one).
+    // verify-bundle-sources fails the release if a bundle inlined a registry
+    // copy of a workspace package instead of the tagged source.
     [
       "@semantic-release/exec",
       {
-        prepareCmd: "bun packages/workit-core/scripts/rewrite-workspace-deps.ts && bun run build",
+        prepareCmd:
+          "bun packages/workit-core/scripts/rewrite-workspace-deps.ts && bun run build && bun packages/workit-core/scripts/verify-bundle-sources.ts",
       },
     ],
     // AR-16: publish only packages with payload changes since the PREVIOUS

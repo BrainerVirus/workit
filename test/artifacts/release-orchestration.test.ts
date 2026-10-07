@@ -93,6 +93,10 @@ test(
     expect(afterRelease, "no gate may run between Release and the manifest sync").toBe("");
     expect(wf.jobs.release.steps[idx[1]].run).toContain("bun run build");
     expect(wf.jobs.release.steps[idx[2]].run).toContain("bun run verify:release-candidate");
+    // `npm version` must not reinstall the workspace: on a major bump it would
+    // install the previous release under packages/*/node_modules and the
+    // prepare-time build would bundle it (8.0.0).
+    expect(wf.jobs.release.steps[idx[3]].env?.NPM_CONFIG_WORKSPACES_UPDATE).toBe("false");
     // AR-15: main is protected — the sync lands via an auto-merged PR opened
     // with the RELEASE_SYNC_TOKEN PAT (GITHUB_TOKEN-opened PRs never trigger
     // the required checks, so auto-merge would hang); any pre-sync dirtiness
@@ -133,7 +137,10 @@ test(
     expect(config.match(/rewrite-workspace-deps\.ts/g) ?? []).toHaveLength(2);
     // Bundles embed the package version, so they are rebuilt AFTER the bump;
     // otherwise `workit --version` and npx hints report the previous release.
-    expect(config).toMatch(/prepareCmd:\s*"[^"]*rewrite-workspace-deps\.ts && bun run build"/);
+    // ...and the rebuilt bundles must inline the tagged workspace sources.
+    expect(config).toMatch(
+      /prepareCmd:\s*"[^"]*rewrite-workspace-deps\.ts && bun run build && bun packages\/workit-core\/scripts\/verify-bundle-sources\.ts"/,
+    );
 
     // CA-08 selective-publish pins are STRUCTURAL: load the pure-object config
     // instead of matching raw bytes, so a comment reflow can't break them.

@@ -20,6 +20,12 @@ the squash body.
 `bun run verify:release-candidate` checks the release candidate (CI runs it);
 `bun run validate:cursor-marketplace` checks the Cursor marketplace manifest.
 
+Adapter bundles inline workit-core (and the CLI/MCP sources) at build time.
+`packages/workit-core/scripts/verify-bundle-sources.ts` fails the release when a
+bundle inlined a registry copy from `packages/*/node_modules/@brainervirus`
+instead of the tagged source; the release job sets
+`NPM_CONFIG_WORKSPACES_UPDATE=false` so `npm version` never installs one.
+
 ## Qualification
 
 Live release qualification (`docs/qualification/qualification.md`) needs

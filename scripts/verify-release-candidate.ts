@@ -5,6 +5,14 @@
 // never publishes, tags, or touches a registry or marketplace.
 import { packReleaseCandidate } from "../test/shared/helpers/packages.ts";
 import { verifyReleaseCandidateDeterministicSlice } from "../test/acceptance/harness.ts";
+import { bundleSources } from "../packages/workit-core/scripts/verify-bundle-sources.ts";
+
+const { stale } = bundleSources(process.cwd());
+if (stale.length) {
+  console.error("adapter bundles inline a registry copy of a workspace package:");
+  for (const { bundle, modules } of stale) console.error(`  - ${bundle}: ${modules[0]}`);
+  process.exit(1);
+}
 
 const packs = packReleaseCandidate();
 for (const pack of packs) {
