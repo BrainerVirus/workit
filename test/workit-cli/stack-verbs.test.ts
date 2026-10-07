@@ -245,7 +245,8 @@ test("stack land: given merge: true, when --unverified --reason is passed, then 
   ]);
   // The bypass names the head that was merged: feature/b restacked onto main.
   expect(bypass[0].head).not.toBe(b);
-  expect(bypass[0].head).toBe(rows(forge.cwd, "pr.merged").find((row) => row.pr === 12)?.head);
+  const merged = rows(forge.cwd, "pr.merged").find((row) => row.pr === 12);
+  expect(bypass[0].head).toBe(merged?.head ?? "(no pr.merged row)");
   expect(data.landed[1].unverified).toBe(String(bypass[0].id));
   expect(forge.prs.get(12)?.state).toBe("merged");
 });
