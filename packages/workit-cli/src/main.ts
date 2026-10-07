@@ -4,7 +4,15 @@
 // only `init`/`uninstall` ever load ink/react (through index.tsx).
 import path from "node:path";
 import pkg from "../package.json" with { type: "json" };
-import { firstWord, subcommandHelp, verbHelp, wantsHelp, type HelpDoc } from "./help";
+import {
+  firstWord,
+  helpAsValue,
+  subcommandHelp,
+  usageLines,
+  verbHelp,
+  wantsHelp,
+  type HelpDoc,
+} from "./help";
 import { emit, fail, ok, type EnvelopeCode, type Io } from "./output";
 import {
   TASK_FAMILY_NAMES,
@@ -147,6 +155,14 @@ export async function main(
   if (wantsHelp(verbArgs)) {
     const word = firstWord(verbArgs);
     const sub = word === undefined ? undefined : findSubcommand(entry, word);
+    const asValue = helpAsValue(verbArgs, sub ? [sub.usage] : usageLines(entry));
+    if (asValue)
+      return emit(
+        io,
+        fail("invalid_input", asValue, {
+          unblock: `workit help ${entry.name}${sub ? ` ${sub.name}` : ""}`,
+        }),
+      );
     return help(io, sub ? subcommandHelp(entry, sub) : verbHelp(entry));
   }
   if (parsed.cwd !== null) {
@@ -268,6 +284,7 @@ const describe = (entry: VerbEntry) => ({
   name: entry.name,
   group: entry.group,
   usage: entry.usage,
+  usages: usageLines(entry),
   summary: entry.summary,
   ...(entry.planned ? { planned: entry.planned } : {}),
 });

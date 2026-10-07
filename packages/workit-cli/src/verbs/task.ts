@@ -21,9 +21,11 @@ const IMPLICIT = new Set(["status", "note", "adopt"]);
 
 /** Whether `argv` (after `task`) is an implicit-task form rather than the family grammar. */
 export function isImplicitTaskForm(argv: readonly string[]): boolean {
-  const [action, first] = argv;
+  const [action, ...rest] = argv;
   if (!action) return false;
   if (IMPLICIT.has(action)) return true;
+  // The objective, or a bare `--` before one; `--json` may come first.
+  const first = rest.find((arg) => arg !== "--json");
   if (action === "start") return first !== undefined && (first === "--" || !first.startsWith("--"));
   if (action === "close") return !argv.includes("--task") && !argv.includes("--payload");
   return false;

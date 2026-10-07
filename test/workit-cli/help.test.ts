@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { TASK_ACTIONS } from "@/packages/workit-cli/src/task";
@@ -8,6 +16,7 @@ import {
   FAMILY_ACTIONS,
   TASK_FAMILY_NAMES,
   VERBS,
+  findSubcommand,
   type VerbEntry,
 } from "@/packages/workit-cli/src/verbs/registry";
 
@@ -317,12 +326,107 @@ test("given --json, then help is an envelope carrying the usage and the text", (
     code: "ok",
     data: {
       name: "git",
+      group: "delivery",
       subcommand: "push",
-      usage: [
+      usage:
+        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]]",
+      usages: [
         "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]]",
       ],
     },
   });
   expect(envelope.data.text).toStartWith("usage: workit git push");
   expect(JSON.parse(cli(["--json", "help", "pr", "merge"]).stdout).data.subcommand).toBe("merge");
+
+  // help <verb> keeps `usage` a string (the first line) and adds every line.
+  const verb = JSON.parse(cli(["help", "ci", "--json"]).stdout).data;
+  expect(verb.group).toBe("delivery");
+  expect(verb.usage).toBe(
+    "workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
+  );
+  expect(verb.usages).toHaveLength(2);
+  expect(verb.usages[1]).toStartWith("workit ci rerun ");
+  const listed = JSON.parse(cli(["help", "--json"]).stdout).data.verbs;
+  expect(listed.find((entry: { name: string }) => entry.name === "ci")).toMatchObject({
+    group: "delivery",
+    usage: "workit ci wait|rerun [options]",
+    usages: verb.usages,
+  });
+});
+
+test("given -h or --help right after a flag that takes a value, then it is a usage error naming the escape, and nothing changes", () => {
+  const before = snapshot(root);
+  const cases: Array<[string[], string]> = [
+    [["git", "commit", "-m", "-h"], "`-h` looks like the value of -m; use --message=-h"],
+    [["git", "commit", "--message", "--help"], "use --message=--help"],
+    [
+      ["ledger", "decision", "x", "--why", "-h"],
+      "`-h` looks like the value of --why; use --why=-h",
+    ],
+    [["task", "close", "--outcome", "-h"], "use --outcome=-h"],
+    [["pr", "create", "--title", "-h"], "use --title=-h"],
+  ];
+  for (const [argv, message] of cases) {
+    const result = cli(argv);
+    expect(result.code, argv.join(" ")).toBe(2);
+    expect(result.stdout, argv.join(" ")).toBe("");
+    expect(result.stderr, argv.join(" ")).toContain(message);
+  }
+  // A boolean flag before -h takes no value: that is a help request.
+  expect(cli(["git", "push", "--set-upstream", "-h"]).code).toBe(0);
+  expect(snapshot(root)).toEqual(before);
+});
+
+test("given --flag=value or a bare --, then a value starting with - reaches the verb", () => {
+  // --flag=value: the escape the usage error names.
+  const noted = cli(["task", "note", "--next=-h", "escaped next"]);
+  expect(noted.code, noted.stderr).toBe(0);
+  const status = JSON.parse(cli(["task", "status", "--json"]).stdout);
+  expect(status.data.task.progress.nextAction).toBe("-h");
+
+  // parseFlags verbs: after --, -h is a positional (here an invalid issue id).
+  const youtrack = cli(["youtrack", "note", "--markdown", "x", "--", "-h"]);
+  expect(youtrack.code).toBe(2);
+  expect(youtrack.stderr).toContain("an issue id like ABC-123 is required");
+
+  // `task start --json -- -h` is the implicit form, not the family grammar.
+  const started = cli(["task", "start", "--json", "--", "-h"]);
+  expect(started.code, started.stderr).toBe(0);
+  expect(JSON.parse(started.stdout).ok).toBe(true);
+});
+
+// Every subcommand a verb dispatches on, read from its source: `sub === "x"`,
+// `["x", …].includes(sub)`, `positionals[0] === "x"`, the verify-delivery
+// ENDPOINTS keys and the implicit task forms.
+const dispatched = (verb: string): string[] => {
+  const file = path.join(cliSrc, "verbs", `${verb}.ts`);
+  const source = readFileSync(file, "utf8");
+  const names = new Set<string>();
+  for (const match of source.matchAll(/\b(?:sub|positionals\[0\]) *[!=]== *"([a-z][a-z-]*)"/gu))
+    names.add(match[1]);
+  for (const match of source.matchAll(/\[([^\]]*)\]\.includes\(sub\b/gu))
+    for (const word of match[1].matchAll(/"([a-z][a-z-]*)"/gu)) names.add(word[1]);
+  const endpoints = /const ENDPOINTS[^=]*= \{([^}]*)\}/u.exec(source);
+  for (const key of endpoints?.[1].matchAll(/^\s*([a-z]+):/gmu) ?? []) names.add(key[1]);
+  if (verb === "task") {
+    const implicit = /const IMPLICIT = new Set\(\[([^\]]*)\]\)/u.exec(source)![1];
+    for (const word of implicit.matchAll(/"([a-z]+)"/gu)) names.add(word[1]);
+    for (const match of source.matchAll(/\baction === "([a-z]+)"/gu)) names.add(match[1]);
+  }
+  return [...names];
+};
+
+test("given every subcommand a verb dispatches, then the registry has a help entry for it", () => {
+  let seen = 0;
+  for (const entry of VERBS) {
+    if (!existsSync(path.join(cliSrc, "verbs", `${entry.name}.ts`))) continue;
+    for (const name of dispatched(entry.name)) {
+      seen += 1;
+      expect(findSubcommand(entry, name), `workit ${entry.name} ${name}`).toBeDefined();
+    }
+  }
+  // git 3, pr 3, ci 2, stack 4, fanout 5, ledger 8, grant 3, youtrack 3,
+  // verify-delivery 7, changelog 1, knowledge 1, task 5.
+  expect(seen).toBeGreaterThanOrEqual(45);
+  expect(dispatched("ledger")).toEqual(expect.arrayContaining(["add", "show", "standing"]));
 });
