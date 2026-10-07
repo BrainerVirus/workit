@@ -70,6 +70,10 @@ function parse(argv: string[]): Options | string {
   };
   for (let index = 0; index < argv.length; index += 1) {
     const raw = argv[index];
+    if (raw === "--") {
+      options.paths.push(...argv.slice(index + 1));
+      break;
+    }
     const [flag, inline] =
       raw.startsWith("--") && raw.includes("=")
         ? [raw.slice(0, raw.indexOf("=")), raw.slice(raw.indexOf("=") + 1)]

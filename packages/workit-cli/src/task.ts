@@ -177,19 +177,32 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   const judge: string[] = [];
   const seen = new Set<string>();
   for (let i = 2; i < argv.length; i += 1) {
-    const token = argv[i];
+    if (argv[i] === "--") {
+      const extra = argv.slice(i + 1);
+      if (extra.length)
+        return parseUsage(
+          `${family} ${actionName} takes no positional arguments (got: ${extra.join(" ")})`,
+          json,
+        );
+      break;
+    }
+    // `--flag=value` passes a value that starts with `-`.
+    const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
+    const token = eq > 0 ? argv[i].slice(0, eq) : argv[i];
+    const inline = eq > 0 ? argv[i].slice(eq + 1) : undefined;
     // `policy assess|preview --judge behavior=yes risk=normal [--ref <path>]…` (S17).
     if (family === "policy" && (token === "--judge" || token === "--ref")) {
       if (token === "--ref") {
-        const value = argv[++i];
+        const value = inline ?? argv[++i];
         if (value === undefined || !value.trim()) return parseUsage("--ref requires a value", json);
         judge.push(`ref=${value}`);
         continue;
       }
+      if (inline !== undefined) judge.push(inline);
       while (argv[i + 1] !== undefined && !argv[i + 1].startsWith("--")) judge.push(argv[++i]);
       continue;
     }
-    if (token === "--json" || token === "--confirm") {
+    if ((token === "--json" || token === "--confirm") && inline === undefined) {
       if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
       seen.add(token);
       // --confirm is accepted and ignored (≤4.x consent flag; D2).
@@ -201,8 +214,8 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
         token,
       )
     )
-      return parseUsage(`unknown argument: ${token}`, json);
-    const value = argv[++i];
+      return parseUsage(`unknown argument: ${argv[i]}`, json);
+    const value = inline ?? argv[++i];
     if (value === undefined || (value.trim() === "" && token !== "--workspace-revision"))
       return parseUsage(`${token} requires a value`, json);
     if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
@@ -254,18 +267,28 @@ async function parseHandoffArgs(argv: string[], deps: TaskCliDeps): Promise<Pars
   const seen = new Set<string>();
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
+    if (token === "--") {
+      const extra = argv.slice(i + 1);
+      if (extra.length)
+        return parseUsage(`handoff takes no positional arguments (got: ${extra.join(" ")})`, json);
+      break;
+    }
     if (token === "--json") {
       if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
       seen.add(token);
       json = true;
       continue;
     }
-    if (token !== "--task") return parseUsage(`unknown argument: ${token}`, json);
-    if (taskId !== undefined || argv[i + 1] === undefined || argv[i + 1].trim() === "")
+    const inline = token.startsWith("--task=") ? token.slice("--task=".length) : undefined;
+    if (token !== "--task" && inline === undefined)
+      return parseUsage(`unknown argument: ${token}`, json);
+    const value = inline ?? argv[i + 1];
+    if (taskId !== undefined || value === undefined || value.trim() === "")
       return parseUsage("--task requires one non-empty value", json);
-    if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
-    seen.add(token);
-    taskId = argv[++i];
+    if (seen.has("--task")) return parseUsage("duplicate argument: --task", json);
+    seen.add("--task");
+    taskId = value;
+    if (inline === undefined) i += 1;
   }
   if (!taskId) return parseUsage("handoff requires --task <id>", json);
   void deps;

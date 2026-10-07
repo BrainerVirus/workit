@@ -24,7 +24,7 @@ import { connect, forgeFail, parseFlags, usage } from "./forge-common";
 const BRANCH_USAGE =
   "workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
 const COMMIT_USAGE =
-  "workit git commit (-m <msg> | -F <file|->) [--amend [--no-edit]] [--allow-empty] [--all | [--] <paths…>] [--json]";
+  "workit git commit -m|--message <msg>… | -F|--file <file|-> [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>] [--json]";
 const PUSH_USAGE =
   "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--json]";
 const USAGE = "workit git branch|commit|push ... (workit help git)";
