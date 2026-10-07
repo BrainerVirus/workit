@@ -204,7 +204,7 @@ export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest";
  * Marketplace install can do); a local install (`workit init`,
  * install-cursor-plugin.sh) writes the absolute path instead.
  */
-export const cursorHookLauncher = (pluginDir?: string): string =>
+const cursorHookLauncher = (pluginDir?: string): string =>
   pluginDir
     ? `node "${path.join(pluginDir, "hooks", "launch.mjs")}"`
     : 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs"';
