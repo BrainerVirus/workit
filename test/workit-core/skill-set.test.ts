@@ -45,6 +45,17 @@ test("Given every skill, Then its description says what and when within 250 char
   }
 });
 
+test("Given the skill frontmatter, Then only workit-retro is user-invoked and its route says so", () => {
+  const userInvoked = WORKIT_METHOD_SKILLS.filter((name) =>
+    /^disable-model-invocation:\s*true\s*$/m.test(skillMd(name).split("\n---")[0]),
+  );
+  expect(userInvoked).toEqual(["workit-retro"]);
+  const route = invariantBootstrap()
+    .split("\n")
+    .find((line) => line.endsWith(": workit-retro"));
+  expect(route).toContain("user-invoked");
+});
+
 test("Given the trigger lists, Then no trigger word routes to two skills", () => {
   const owner = new Map<string, string>();
   for (const [skill, words] of Object.entries(WORKIT_SKILL_TRIGGERS))
@@ -141,6 +152,7 @@ const SUBCOMMAND_VERBS = new Set([
   "ledger",
   "verify-delivery",
   "grant",
+  "knowledge",
 ]);
 const GLOBAL_FLAGS = new Set(["--json", "--cwd", "--help"]);
 // Verbs the skills already name ahead of their slice; drop each when it lands.
