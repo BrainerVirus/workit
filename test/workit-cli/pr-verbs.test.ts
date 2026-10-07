@@ -441,6 +441,25 @@ test("pr merge: given READY but no accepted verdict, then NEEDS_VERDICT; the aut
   expect(writes(runner.calls)).toEqual([]);
 });
 
+test("pr merge: given a reviewer's failed verdict on an earlier head, when the same reviewer verifies the PR head, then merge: verified merges", async () => {
+  const { repo } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMerge(repo);
+  repo.git("reset", "-q", "--hard", "HEAD~1");
+  writeFileSync(path.join(repo.cwd, "feature.txt"), "draft\n");
+  repo.git("add", "-A");
+  repo.git("commit", "-q", "-m", "feature draft");
+  const failed = await run(["ledger", "verdict", "failed", "--how", "bug"], repo.cwd, "reviewer-2");
+  expect(failed.code).toBe(0);
+  repo.git("reset", "-q", "--hard", repo.head);
+  await verdict(repo, "reviewer-2");
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({
+    head: repo.head,
+    verdict: { required: true, accepted: true },
+  });
+});
+
 test("pr merge: READY + accepted verdict merges with the head SHA guard and records pr.merged", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
   grantMerge(repo);

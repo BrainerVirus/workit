@@ -843,10 +843,17 @@ const independenceReasons = (row: ReadRow, authors: Set<string>): RejectReason[]
 /**
  * The effective verdict of one kind, walking rows in order: a self verdict
  * never displaces an independent one, and an independent failed/blocked
- * verdict sticks until an independent verdict from a different session (or
- * its own session's supersede) replaces it.
+ * verdict sticks, for the code it judged, until an independent verdict from a
+ * different session (or its own session's supersede) replaces it. A verdict
+ * from the same session on different code (`sameCode` false: a real change,
+ * not a carry or restack of the failed code) is a re-review of the fix and
+ * replaces it.
  */
-function effectiveOf(rows: readonly ReadRow[], authors: Set<string>): ReadRow | null {
+function effectiveOf(
+  rows: readonly ReadRow[],
+  authors: Set<string>,
+  sameCode: (failed: ReadRow, row: ReadRow) => boolean,
+): ReadRow | null {
   let effective: ReadRow | null = null;
   for (const row of rows) {
     if (!effective) {
@@ -859,7 +866,8 @@ function effectiveOf(rows: readonly ReadRow[], authors: Set<string>): ReadRow | 
     if (
       effIndependent &&
       FAILING.has(String(effective.result)) &&
-      row.actor.session === effective.actor.session
+      row.actor.session === effective.actor.session &&
+      sameCode(effective, row)
     )
       continue;
     effective = row;
@@ -913,15 +921,24 @@ export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRo
   const head = branchHead(cwd, branch);
   const fallbackBase = defaultBase(cwd);
   const keyCache = new Map<string, { patchId: string | null; diffHash: string | null }>();
-  const keyFor = (base: string | null) => {
-    if (!base || !head) return { patchId: null, diffHash: null };
-    let key = keyCache.get(base);
+  const keysAt = (base: string | null, at: string | null) => {
+    if (!base || !at) return { patchId: null, diffHash: null };
+    const cacheKey = `${base}\0${at}`;
+    let key = keyCache.get(cacheKey);
     if (!key) {
-      key = { patchId: patchId(cwd, base, head), diffHash: diffHash(cwd, base, head) };
-      keyCache.set(base, key);
+      key = { patchId: patchId(cwd, base, at), diffHash: diffHash(cwd, base, at) };
+      keyCache.set(cacheKey, key);
     }
     return key;
   };
+  const keyFor = (base: string | null) => keysAt(base, head);
+  // A newer row is judged under the failure's own base, so a row recorded
+  // with a different --base cannot make unchanged code look changed.
+  const sameCode = (failed: ReadRow, row: ReadRow): boolean =>
+    verdictBasis(failed, {
+      head: row.head,
+      ...keysAt(failed.base ?? fallbackBase, row.head),
+    }) !== "stale" || restackCarries(rows, branch, failed.head, row.head);
   const authors = authorSessions(cwd, rows, branch, { base: fallbackBase, head });
   const byKind = new Map<string, ReadRow[]>();
   for (const row of rows)
@@ -931,7 +948,7 @@ export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRo
     }
   const verdicts: VerdictEntry[] = [];
   for (const [kind, list] of byKind) {
-    const row = effectiveOf(list, authors);
+    const row = effectiveOf(list, authors, sameCode);
     if (!row) continue;
     let basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
     if (basis === "stale" && restackCarries(rows, branch, row.head, head)) basis = "carried";

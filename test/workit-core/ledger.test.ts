@@ -633,6 +633,78 @@ test("a session's own supersede replaces its failing verdict", () => {
   expect(checkVerdicts(root, "feature/x", read(root).rows).accepted.accepted).toBe(true);
 });
 
+test("given a session's failed verdict on head A and a fix commit B, when that same non-author session verifies B, then B is current and accepted", () => {
+  const root = featureRepo();
+  seedAuthor(root, "commit.recorded", "lead");
+  const reviewerSession = "lead:agent-1";
+  value(recordVerdict(reviewer(reviewerSession)(root), { result: "failed", how: "bug" }));
+  const fixed = commit(root, "feature.txt", "feature, fixed\n", "fix review finding");
+  value(recordVerdict(reviewer(reviewerSession)(root), { result: "verified", how: "re-reviewed" }));
+  const check = checkVerdicts(root, "feature/x", read(root).rows);
+  expect(check.head).toBe(fixed);
+  expect(check.current).toMatchObject({
+    basis: "fresh",
+    verdict: { result: "verified", head: fixed },
+  });
+  expect(check.accepted).toMatchObject({ accepted: true, reasons: [] });
+  expect(check.review).toBe("verified");
+});
+
+/** A failed verdict on head A, then `move` changes the head without changing the code. */
+const failThenReverify = (
+  move: (root: string) => void,
+  base?: string,
+): ReturnType<typeof checkVerdicts> => {
+  const root = featureRepo();
+  seedAuthor(root, "commit.recorded", "lead");
+  const session = reviewer("lead:agent-1");
+  value(recordVerdict(session(root), { result: "failed", how: "bug" }));
+  move(root);
+  value(recordVerdict({ ...session(root), base }, { result: "verified", how: "looks fine now" }));
+  return checkVerdicts(root, "feature/x", read(root).rows);
+};
+
+test("given a session's failed verdict on A, when the head moves without a code change (empty commit, amend, or a verdict recorded with --base HEAD~1), then the same session's verified does not release it", () => {
+  const cases: [string, (root: string) => void, string | undefined][] = [
+    [
+      "empty commit",
+      (root) => git(root, "commit", "-q", "--allow-empty", "-m", "nothing"),
+      undefined,
+    ],
+    ["amend", (root) => git(root, "commit", "-q", "--amend", "-m", "reworded"), undefined],
+    [
+      "--base HEAD~1",
+      (root) => git(root, "commit", "-q", "--allow-empty", "-m", "nothing"),
+      "HEAD~1",
+    ],
+  ];
+  for (const [name, move, base] of cases) {
+    const check = failThenReverify(move, base);
+    expect(check.verdicts.find((entry) => entry.kind === "review")?.verdict.result, name).toBe(
+      "failed",
+    );
+    expect(check.accepted, name).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  }
+});
+
+test("given a session's failed verdict on A, when a workit-observed restack carries A to B, then the same session's verified on B does not release it", () => {
+  const check = failThenReverify((root) => {
+    const failedHead = git(root, "rev-parse", "HEAD");
+    const restacked = commit(root, "feature.txt", "feature, restacked\n", "restack");
+    value(
+      appendObserved(root, {
+        type: "stack.restacked",
+        actor: actor("lead"),
+        branch: "feature/x",
+        fromHead: failedHead,
+        head: restacked,
+        patchEqual: true,
+      }),
+    );
+  });
+  expect(check.accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+});
+
 // ---------------------------------------------------------------------------
 // PR → branch (H2)
 
