@@ -167,6 +167,9 @@ export type ClassifyOptions = {
   reclaimUnverifiedAfterTtl?: boolean;
 };
 
+/** How task-store locks (and doctor, which inspects them) classify an owner. */
+export const TASK_STORE_LOCK: ClassifyOptions = { reclaimUnverifiedAfterTtl: true };
+
 export const classifyLockOwner = (
   payload: unknown,
   ageMs: number | null,
@@ -282,7 +285,8 @@ export const inspectMetadataLock = (root: string, nowMs = Date.now()): MetadataL
   }
   const owner = parseMetadataLockOrNull(raw);
   const ageMs = ageOf(lockPath, nowMs);
-  const verdict = classifyLockOwner(owner, ageMs);
+  // The task store's own reclaim rule, so doctor reports what a write will do.
+  const verdict = classifyLockOwner(owner, ageMs, localLockHost(), TASK_STORE_LOCK);
   return { path: lockPath, present: true, owner, ...verdict, guard, raw, ageMs };
 };
 
@@ -320,7 +324,12 @@ export const clearStaleMetadataLock = (
     const before = fs.readFileSync(status.path, "utf8");
     if (before !== status.raw) return { ...outcome, skipped: "the lock changed" };
     if (!options.force) {
-      const verdict = classifyLockOwner(parseMetadataLockOrNull(before), ageOf(status.path, nowMs));
+      const verdict = classifyLockOwner(
+        parseMetadataLockOrNull(before),
+        ageOf(status.path, nowMs),
+        localLockHost(),
+        TASK_STORE_LOCK,
+      );
       if (verdict.state !== "stale") return { ...outcome, skipped: verdict.reason };
     }
     if (fs.readFileSync(status.path, "utf8") !== before)
