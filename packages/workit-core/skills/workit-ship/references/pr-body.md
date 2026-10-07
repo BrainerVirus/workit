@@ -7,7 +7,7 @@ this order, and nothing else the reviewer has to read.
    call tree, a file tree, a Mermaid diagram or one diff hunk), with a sentence
    or two in the domain's words.
 2. **Evidence:** before and after, observed, never asserted. Name the checks
-   recorded on the head SHA (`workit ledger list --branch <b> --type check.ran`)
+   recorded on the head SHA (`workit ledger list --branch <b> --type check`)
    and the verdict (`workit ledger check --branch <b>`), or a command with its
    output: red before the change, green after.
 3. **Merge danger:** one line. One-way door (hard to undo: a migration, a
@@ -19,11 +19,12 @@ this order, and nothing else the reviewer has to read.
 
 ```md
 ## Summary
-`workit pr status` → babysitAction() → `wait-forge` now backs off 30s, 60s, … (was: one fixed 60s wait)
+Ship skill, step 5: "fix CI" → "reproduce with `workit check`, then fix the root cause"
 
 ## Evidence
-- Before: `bun test report.test.ts -t backoff` red (expected 30, got 60)
-- After: `workit check test` exit 0 on 4be1c2d; verdict verified (reviewer session)
+- `check` row: `test` exit 0 on 4be1c2d (`workit ledger list --branch docs/ship-ci --type check`)
+- `verdict` row: verified, kind review, non-author session (`workit ledger check --branch docs/ship-ci`)
 
 ## Merge danger
-Two-way door: skill text only, a revert restores it. Blast radius: agents babysitting PRs on every host.
+Two-way door: skill text only, a revert restores it. Blast radius: agents that babysit PRs, on every host.
+```

@@ -9,7 +9,7 @@ description: Build a requested change in small verified steps - follow local pat
 
 1. Read before writing: the files you will touch, their callers, and one
    neighbour that already does something similar. Copy its patterns, names and
-   error handling.
+   error handling. Repo rules (AGENTS.md, CLAUDE.md, lint config) win.
 2. On the default branch? Branch first: `workit git branch --kind feature --slug <s>`.
    Tracking it? Judge once: `workit policy assess --judge risk=normal
    behavior=yes product-choice=no plan=no` (trivial and no for a mechanical
@@ -24,11 +24,11 @@ description: Build a requested change in small verified steps - follow local pat
    skill; none yet? Write one (workit-verify-app). Tests show branch behavior,
    not that the feature works.
 6. Commit: `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`).
-   No endpoint named? Stop here and state the next command. Push and open a
-   PR with `workit git push` and `workit pr create --fill`, then ship it
-   (workit-ship), only when that was requested, or the request implies
-   delivery and the effective endpoint in `workit grant show` is `pr`, `green`
-   or `merged`; `green` and `merged` keep babysitting. Otherwise it is `commit`.
+   No endpoint named? Stop here and state the next command. Hand delivery to
+   ship, which pushes and opens the PR with its body shape (workit-ship), only
+   when that was requested, or the request implies delivery and the effective
+   endpoint in `workit grant show` is `pr`, `green` or `merged`; `green` and
+   `merged` keep babysitting. Otherwise it is `commit`.
 7. Verify. Normal risk: after `workit check test` passes, record your own
    `workit ledger verdict tests-verified --self --how "<what you ran>"`; it
    reads self-reviewed, never verified. High risk, a workspace with

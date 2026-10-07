@@ -52,7 +52,7 @@ ceremony; do it yourself.
    `dependsOn`. Then `workit ledger check --branch <b>` per slice; land in its
    order. Stacked slices: `workit stack plan <bottom> … <top>` once, then
    `workit stack sync` and `land`. Only you touch topology: workers never
-   rebase, retarget or merge. Then workit-ship.
+   rebase, retarget or merge. Then ship (read the `workit-ship` skill's SKILL.md and follow it).
 
 ## Example
 

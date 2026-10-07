@@ -44,7 +44,7 @@ approach to take, and redoes a finished slice.
 
 Good: "`workit handoff`: feature/usage at 4be1, `test` stale, verdict none,
 next `workit check test`. Re-ran it: exit 0. The brief says PR #42 is open:
-`workit pr status` confirms, CI pending. Continuing with workit-ship."
+`workit pr status` confirms, CI pending. Continuing to ship (read the `workit-ship` skill's SKILL.md and follow it)."
 
 ## Check
 
