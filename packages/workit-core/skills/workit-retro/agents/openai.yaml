@@ -1,0 +1,3 @@
+# Codex: user-invoked only (the counterpart of disable-model-invocation).
+policy:
+  allow_implicit_invocation: false

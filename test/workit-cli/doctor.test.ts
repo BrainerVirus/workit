@@ -1,6 +1,14 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { localLockHost, lockPathFor } from "@/packages/workit-core/src/core/store-lock";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +75,44 @@ test("workit doctor (text) prints per-check lines and no JSON to stdout", () => 
   expect(() => JSON.parse(text.stdout)).toThrow();
   expect(text.stdout).toMatch(/stale_pin/);
 });
+
+test("Given AGENTS.md with a broken link, When workit doctor runs, Then it prints one knowledge line and the exit code is unchanged", () => {
+  const agents = path.join(fixture.cwd, "AGENTS.md");
+  writeFileSync(agents, "# Agents\n\nSee [gone](docs/gone.md).\n");
+  try {
+    const text = runCli(["doctor"], fixture.cwd);
+    expect(text.status).toBe(0);
+    expect(text.stdout).toContain(
+      "info knowledge — AGENTS.md 36 of 8192 bytes; 1 finding(s) (workit knowledge lint)",
+    );
+    const json = runCli(["doctor", "--json"], fixture.cwd);
+    expect(json.status).toBe(0);
+    expect(JSON.parse(json.stdout).knowledge).toEqual({
+      agentsBytes: 36,
+      budget: 8192,
+      findings: 1,
+    });
+  } finally {
+    rmSync(agents, { force: true });
+  }
+});
+
+test.skipIf(process.getuid?.() === 0)(
+  "Given an unreadable AGENTS.md, When workit doctor runs, Then the knowledge line says unavailable and doctor does not crash",
+  () => {
+    const agents = path.join(fixture.cwd, "AGENTS.md");
+    writeFileSync(agents, "# Agents\n");
+    chmodSync(agents, 0o000);
+    try {
+      const text = runCli(["doctor"], fixture.cwd);
+      expect(text.status, text.stderr).toBe(0);
+      expect(text.stdout).toContain("info knowledge — unavailable\n");
+    } finally {
+      chmodSync(agents, 0o644);
+      rmSync(agents, { force: true });
+    }
+  },
+);
 
 /** The store directory holding a checkout lock (`<store>/checkouts/<slug>/metadata.lock`). */
 const storeOf = (lockPath: string) => path.dirname(path.dirname(path.dirname(lockPath)));

@@ -86,6 +86,34 @@ mock echoes, snapshots of constants, duplicated bodies, over-mocking, …) with 
 suggested independent oracle; `--rule` and `--min-severity` narrow the
 report. `--mutate` runs diff-scoped mutation testing on changed lines.
 
+## `workit knowledge lint`
+
+```bash
+workit knowledge lint          # exit 1 when anything is found
+workit knowledge lint --json
+```
+
+Deterministic checks over the agent knowledge files at the repository top:
+
+| Rule | Fails when |
+| --- | --- |
+| `agents-budget` | `AGENTS.md` (or a `CLAUDE.md` that is not the same file) is over 8 KB |
+| `broken-link` | a markdown link, or a backticked path whose first segment exists, points at a missing local file |
+| `scaffold-file` | `CODING_STANDARDS.md` or `GLOSSARY.md` holds only headings, comments or placeholders |
+| `duplicate-rule` | the same sentence appears in `AGENTS.md` and `CODING_STANDARDS.md` |
+
+It is not a gate by default. Register it as a configured check so
+`workit check knowledge` records it:
+
+```json
+{ "checks": { "knowledge": "workit knowledge lint" } }
+```
+
+`workit doctor` prints a one-line summary (AGENTS.md size and finding count)
+that never changes its exit code. The user-invoked `retro` skill uses this
+lint as its bloat guard: it proposes fixes ranked by enforcer strength and
+applies nothing without your approval.
+
 ## Proving it on the real app
 
 The `verify-app` skill generates a project-specific `verify-<app>` skill that
