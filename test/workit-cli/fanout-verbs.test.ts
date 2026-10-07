@@ -575,6 +575,110 @@ test("fanout check: given two sibling branches adding one file under different c
   expect(byId.second).toMatchObject({ status: "blocked", trunkConflicts: [] });
 });
 
+// Review follow-ups: backslashes, brace samples, case against the trunk.
+
+for (const [raw, error] of [
+  ["src\\**\\*.ts", "only \\[ and \\] are escapes; use / as the separator"],
+  ["app\\[id\\]\\page.tsx", "mixes \\[ or \\] escapes with other backslashes, which is ambiguous"],
+  ["src\\api\\\\{a,b}.ts", "use / as the separator"],
+] as const)
+  test(`fanout plan: given the scope ${raw}, when planned, then it is refused as ambiguous (a backslash escapes only [ and ])`, async () => {
+    const repo = makeRepo();
+    const result = await run(repo.cwd, [
+      "fanout",
+      "plan",
+      repo.plan(planDoc([slice("a", [raw])])),
+      "--json",
+    ]);
+    expect(result.code, result.stdout).toBe(2);
+    const [problem] = result.json().data.problems as string[];
+    expect(problem).toStartWith(`slice a: scope "${raw}" `);
+    expect(problem).toContain(error);
+  });
+
+test("fanout plan: given a Windows path src\\api\\users.ts, when planned, then it is stored as src/api/users.ts and overlaps a slice naming src/api/**", async () => {
+  const repo = makeRepo();
+  const alone = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("win", ["src\\api\\users.ts"])])),
+    "--json",
+  ]);
+  expect(alone.code, alone.stdout).toBe(0);
+  expect(alone.json().data.slices[0].scope).toEqual(["src/api/users.ts"]);
+  const both = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("win", ["src\\api\\users.ts"]), slice("api", ["src/api/**"])])),
+    "--json",
+  ]);
+  expect(both.code, both.stdout).toBe(3);
+  expect(both.json().data.conflicts[0].paths).toEqual(["src/api/users.ts"]);
+});
+
+test("fanout plan: given src/{x,b}/** and src/{y,b}/** in a directory nobody has created, when planned, then the shared alternative b is caught as overlap", async () => {
+  const repo = makeRepo();
+  const result = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("one", ["src/{x,b}/**"]), slice("two", ["src/{y,b}/**"])])),
+    "--json",
+  ]);
+  expect(result.code, result.stdout).toBe(3);
+  expect(result.json().data.conflicts[0]).toMatchObject({
+    slices: ["one", "two"],
+    paths: ["src/b/<any>"],
+  });
+  const apart = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("one", ["src/{x,c}/**"]), slice("two", ["src/{y,d}/**"])])),
+    "--json",
+  ]);
+  expect(apart.code, apart.stdout).toBe(0);
+});
+
+test("fanout plan: given a slice naming src/API/users.ts while the trunk has src/api/users.ts, when planned, then it is blocked with the trunk's spelling", async () => {
+  const repo = makeRepo();
+  const result = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("a", ["src/API/**"]), slice("b", ["src/ui/Page.tsx"])])),
+    "--json",
+  ]);
+  expect(result.code, result.stdout).toBe(3);
+  expect(result.json().data.caseCollisions).toEqual([
+    { slice: "a", path: "src/API", trunk: "src/api" },
+    { slice: "b", path: "src/ui/Page.tsx", trunk: "src/ui/page.tsx" },
+  ]);
+  expect(result.json().unblock).toContain("use main's spelling src/api in slice a's scope");
+  expect(existsSync(fanoutsDir(repo))).toBe(false);
+});
+
+test("fanout check: given a slice that adds src/UI/Button.tsx while the trunk has src/ui/, when checked, then it is blocked on the case collision; a deliberate case rename is not", async () => {
+  const repo = makeRepo();
+  await planned(repo, [slice("ui", ["src/**"])]);
+  repo.branch("feature/ui", "main", { "src/UI/Button.tsx": "export const B = 1;\n" });
+  const clash = await checkJson(repo);
+  expect(clash.code).toBe(3);
+  expect(clash.byId.ui).toMatchObject({
+    status: "blocked",
+    caseCollisions: ["src/UI ~ src/ui"],
+    outOfScope: [],
+    trunkConflicts: [],
+  });
+  expect(clash.envelope.unblock).toContain("rename to main's spelling on feature/ui (git mv)");
+
+  git(repo.cwd, "branch", "-q", "-D", "feature/ui");
+  repo.branch("feature/ui", "main", {
+    "src/ui/page.tsx": null,
+    "src/ui/Page.tsx": "export const Page = () => null;\n",
+  });
+  const rename = await checkJson(repo);
+  expect(rename.code, JSON.stringify(rename.byId.ui)).toBe(0);
+  expect(rename.byId.ui.caseCollisions).toEqual([]);
+});
+
 const tamper = async (repo: Repo, edit: (plan: Record<string, any>) => void) => {
   await planned(repo, [slice("a", ["src/api/**"]), slice("b", ["src/ui/**"])]);
   const file = path.join(fanoutsDir(repo), stackFileName("wave"));
@@ -609,9 +713,9 @@ test("fanout check: given a stored plan with an unknown version, when checked, t
   const result = await tamper(repo, (plan) => {
     plan.v = 99;
   });
-  expect(result.json().data.notes).toEqual([
+  expect(result.json().data.notes).toContain(
     "plan file version 99 is not 1; read leniently (re-plan to rewrite it)",
-  ]);
+  );
 });
 
 test("matchesScope: an unclosed { and a stray } are literal characters, and matching returns (it used to loop forever)", () => {
@@ -747,9 +851,11 @@ test("fanout plan without release tracks: given a workspace default of nun-devel
   expect(result.json().data.trunk).toBe("main");
 });
 
-test("workit help fanout prints both subcommands", async () => {
+test("workit help fanout prints every subcommand", async () => {
   const result = await run(os.tmpdir(), ["help", "fanout"]);
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("usage: workit fanout plan <plan.json>");
   expect(result.stdout).toContain("fanout check [<slice>…]");
+  expect(result.stdout).toContain("fanout status [--name <n>] [--stuck-after 30m]");
+  expect(result.stdout).toContain("fanout worktree create|release <slice>");
 });

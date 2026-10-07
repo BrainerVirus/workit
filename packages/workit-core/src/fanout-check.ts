@@ -9,14 +9,22 @@
 //   PRs that would conflict once the first lands are caught before either
 //   does. A pairwise conflict is charged to the slice that lands later; the
 //   earlier one stays landable.
+// - case: a file or directory it adds that the trunk spells differently only
+//   in case (one path on macOS and Windows checkouts).
+// A slice that already landed (fanout-landed.ts: its PR merged, squash
+// merges included, or git shows its change on the trunk) is done: it is not
+// checked, and slices that depend on it no longer wait for it.
 // The landing order puts dependencies first, then the plan's order. A slice
 // is ready when none of the above fired and every slice it depends on is
-// ready. Verdicts are reported (`workit ledger check`) but gated by
+// ready or landed. Verdicts are reported (`workit ledger check`) but gated by
 // `workit pr merge`, not here. Refs are read as they are locally: fetch first.
+import type { ResolvedForge } from "./forge/resolve";
 import { checkVerdicts, readLedger, type ReadRow } from "./ledger";
 import {
   FANOUT_VERSION,
   branchRef,
+  caseClash,
+  caseIndex,
   fanoutFail,
   gitRun,
   inScope,
@@ -27,8 +35,15 @@ import {
   type FanoutResult,
   type Slice,
 } from "./fanout";
+import {
+  detectLanding,
+  forgeBreaker,
+  sliceStart,
+  type LandingContext,
+  type SliceLanding,
+} from "./fanout-landed";
 
-export type SliceStatus = "ready" | "blocked";
+export type SliceStatus = "ready" | "blocked" | "landed";
 
 export type SliceCheck = {
   id: string;
@@ -38,10 +53,14 @@ export type SliceCheck = {
   status: SliceStatus;
   changed: number;
   outOfScope: string[];
+  /** Paths it adds that the trunk spells differently only in case: `ours ~ trunk's`. */
+  caseCollisions: string[];
   trunkConflicts: string[];
   siblingConflicts: Array<{ with: string; paths: string[] }>;
   waitsFor: string[];
   verdict: { accepted: boolean; basis: string };
+  /** How it landed, when it did (then nothing else was checked). */
+  landed: { how: string; pr: number | null } | null;
   reasons: string[];
 };
 
@@ -66,6 +85,13 @@ export type CheckOutcome = {
   landingOrder: string[];
   next: string;
   notes: string[];
+};
+
+export type CheckOptions = {
+  only?: readonly string[];
+  trunkRef?: string | null;
+  /** Asks the forge whether a slice's PR merged; null checks with git alone. */
+  forge?: ResolvedForge | null;
 };
 
 const SAFE = (value: string | null): value is string => Boolean(value) && !value?.startsWith("-");
@@ -97,7 +123,7 @@ const isAncestor = (cwd: string, a: string, b: string): boolean =>
 export function checkFanout(
   cwd: string,
   plan: FanoutFile,
-  options: { only?: readonly string[]; trunkRef?: string | null } = {},
+  options: CheckOptions = {},
 ): FanoutResult<CheckOutcome> {
   const unknown = (options.only ?? []).filter((id) => !plan.slices.some((s) => s.id === id));
   if (unknown.length)
@@ -119,10 +145,22 @@ export function checkFanout(
   const ledger = readLedger(cwd);
   const rows: readonly ReadRow[] = ledger.ok ? ledger.value.rows : [];
 
+  const breaker = forgeBreaker(options.forge ?? null);
+  const landings = sliceLandings(cwd, plan, trunk, tips, rows, breaker.forge);
+  const trunkCase = caseIndex(
+    nulList(gitRun(cwd, ["ls-tree", "-r", "-z", "--name-only", trunk]).stdout),
+  );
   const checks = new Map<string, SliceCheck>();
   const changedBy = new Map<string, string[]>();
-  for (const slice of plan.slices)
-    checks.set(slice.id, inspect(cwd, plan, slice, trunk, tips, rows, changedBy));
+  for (const slice of plan.slices) {
+    const landing = landings.get(slice.id) as SliceLanding;
+    checks.set(
+      slice.id,
+      landing.landed
+        ? landedCheck(slice, tips.get(slice.id) ?? null, landing)
+        : inspect(cwd, plan, slice, { trunk, trunkCase, tips, landings, rows }, changedBy),
+    );
+  }
 
   // Pairwise siblings: skip a pair where one contains the other (a stacked child).
   const conflicts: SiblingConflict[] = [];
@@ -132,6 +170,7 @@ export function checkFanout(
       const second = order[j];
       const a = tips.get(first);
       const b = tips.get(second);
+      if (landings.get(first)?.landed || landings.get(second)?.landed) continue;
       if (!a || !b || isAncestor(cwd, a, b) || isAncestor(cwd, b, a)) continue;
       const check = checks.get(second) as SliceCheck;
       const theirs = new Map(
@@ -173,8 +212,9 @@ export function checkFanout(
 
   for (const id of order) {
     const check = checks.get(id) as SliceCheck;
+    if (check.status === "landed") continue;
     check.waitsFor = (byId.get(id)?.dependsOn ?? []).filter(
-      (dep) => checks.get(dep)?.status !== "ready",
+      (dep) => checks.get(dep)?.status !== "ready" && checks.get(dep)?.status !== "landed",
     );
     if (check.waitsFor.length) check.reasons.push(`waits for ${check.waitsFor.join(", ")}`);
     check.status = check.reasons.length ? "blocked" : "ready";
@@ -184,7 +224,7 @@ export function checkFanout(
   const slices = order
     .filter((id) => !selected || selected.has(id))
     .map((id) => checks.get(id) as SliceCheck);
-  const ready = slices.every((check) => check.status === "ready");
+  const ready = slices.every((check) => check.status !== "blocked");
   const blocked = slices.find((check) => check.status === "blocked");
   const notes =
     plan.v === FANOUT_VERSION
@@ -192,9 +232,21 @@ export function checkFanout(
       : [
           `plan file version ${plan.v} is not ${FANOUT_VERSION}; read leniently (re-plan to rewrite it)`,
         ];
+  const forgeErrors = [...landings.values()].flatMap((landing) =>
+    landing.forgeError ? [landing.forgeError] : [],
+  );
+  if (!options.forge)
+    notes.push("landed slices detected with git only (no forge): a squash merge may be missed");
+  else if (breaker.down())
+    notes.push(`forge went down (${breaker.down()}); git alone decided the remaining slices`);
+  else if (forgeErrors.length)
+    notes.push(`forge lookups failed (${forgeErrors[0]}); git alone decided those slices`);
+  const toLand = slices.filter((check) => check.status === "ready").map((check) => check.id);
   const next = blocked
     ? unblockFor(blocked, plan)
-    : `land in this order: ${slices.map((check) => check.id).join(", ")} (workit pr merge each once verified; stacked slices with workit stack land)`;
+    : toLand.length
+      ? `land in this order: ${toLand.join(", ")} (workit pr merge each once verified; stacked slices with workit stack land)`
+      : "every slice has landed";
   return {
     ok: true,
     data: {
@@ -216,40 +268,132 @@ export function checkFanout(
 const resolves = (cwd: string, ref: string): boolean =>
   gitRun(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]).ok;
 
+/** Landed state per slice, dependencies first (a child's base is its parent's merged head). */
+export function sliceLandings(
+  cwd: string,
+  plan: FanoutFile,
+  trunk: string,
+  tips: ReadonlyMap<string, string | null>,
+  rows: readonly ReadRow[],
+  forge: ResolvedForge | null,
+): Map<string, SliceLanding> {
+  const ctx: LandingContext = { cwd, trunk, forge };
+  const out = new Map<string, SliceLanding>();
+  const byId = new Map(plan.slices.map((slice) => [slice.id, slice]));
+  for (const id of landingOrder(plan.slices)) {
+    const slice = byId.get(id) as Slice;
+    const parent = plan.slices.find((other) => other.branch === slice.base);
+    const parentHead = parent
+      ? (tips.get(parent.id) ?? out.get(parent.id)?.landedHead ?? null)
+      : null;
+    out.set(
+      id,
+      detectLanding(ctx, slice, {
+        head: tips.get(id) ?? null,
+        createdFrom: sliceStart(cwd, rows, plan.name, slice),
+        parentHead,
+        fanout: plan.name,
+        since: plan.createdAt || null,
+        rows,
+      }),
+    );
+  }
+  return out;
+}
+
+const blank = (slice: Slice, head: string | null): SliceCheck => ({
+  id: slice.id,
+  branch: slice.branch,
+  head,
+  base: slice.base,
+  status: "blocked",
+  changed: 0,
+  outOfScope: [],
+  caseCollisions: [],
+  trunkConflicts: [],
+  siblingConflicts: [],
+  waitsFor: [],
+  verdict: { accepted: false, basis: "missing" },
+  landed: null,
+  reasons: [],
+});
+
+function landedCheck(slice: Slice, head: string | null, landing: SliceLanding): SliceCheck {
+  return {
+    ...blank(slice, head),
+    status: "landed",
+    landed: { how: landing.how ?? "pr_merged", pr: landing.pr?.number ?? null },
+  };
+}
+
+type InspectContext = {
+  trunk: string;
+  trunkCase: ReadonlyMap<string, ReadonlySet<string>>;
+  tips: ReadonlyMap<string, string | null>;
+  landings: ReadonlyMap<string, SliceLanding>;
+  rows: readonly ReadRow[];
+};
+
+/** Files at `rev`, or null when it cannot be listed. */
+const treeFiles = (cwd: string, rev: string | null): Set<string> | null => {
+  if (!rev) return null;
+  const run = gitRun(cwd, ["ls-tree", "-r", "-z", "--name-only", rev]);
+  return run.ok ? new Set(nulList(run.stdout)) : null;
+};
+
+/**
+ * Paths the slice adds or changes that the trunk spells differently only in
+ * case, unless the slice removed the trunk's spelling (a case rename).
+ */
+function trunkCaseCollisions(
+  cwd: string,
+  ctx: InspectContext,
+  head: string,
+  changed: readonly string[],
+): string[] {
+  const headFiles = treeFiles(cwd, head);
+  const forkFiles = treeFiles(
+    cwd,
+    gitRun(cwd, ["merge-base", head, ctx.trunk]).stdout.trim() || null,
+  );
+  if (!headFiles) return [];
+  const present = (files: ReadonlySet<string> | null, prefix: string): boolean =>
+    Boolean(
+      files && (files.has(prefix) || [...files].some((file) => file.startsWith(`${prefix}/`))),
+    );
+  const out = new Set<string>();
+  for (const file of changed) {
+    if (!headFiles.has(file)) continue;
+    const clash = caseClash(ctx.trunkCase, file);
+    if (!clash) continue;
+    // The slice deleted the trunk's spelling it had: a deliberate case rename.
+    if (present(forkFiles, clash.trunk) && !present(headFiles, clash.trunk)) continue;
+    out.add(`${clash.path} ~ ${clash.trunk}`);
+  }
+  return [...out].toSorted();
+}
+
 function inspect(
   cwd: string,
   plan: FanoutFile,
   slice: Slice,
-  trunk: string,
-  tips: ReadonlyMap<string, string | null>,
-  rows: readonly ReadRow[],
+  ctx: InspectContext,
   changedBy: Map<string, string[]>,
 ): SliceCheck {
+  const { trunk, tips, rows } = ctx;
   const head = tips.get(slice.id) ?? null;
-  const check: SliceCheck = {
-    id: slice.id,
-    branch: slice.branch,
-    head,
-    base: slice.base,
-    status: "blocked",
-    changed: 0,
-    outOfScope: [],
-    trunkConflicts: [],
-    siblingConflicts: [],
-    waitsFor: [],
-    verdict: { accepted: false, basis: "missing" },
-    reasons: [],
-  };
+  const check = blank(slice, head);
   if (!head) {
-    check.reasons.push(`branch ${slice.branch} not found (not started, landed, or not fetched)`);
+    check.reasons.push(`branch ${slice.branch} not found (not started, or not fetched)`);
     return check;
   }
   const parent = plan.slices.find((other) => other.branch === slice.base);
+  // A landed parent whose branch is gone: diff against the head that merged.
   const baseRef =
     slice.base === plan.trunk
       ? trunk
       : parent
-        ? (tips.get(parent.id) ?? null)
+        ? (tips.get(parent.id) ?? ctx.landings.get(parent.id)?.landedHead ?? null)
         : branchRef(cwd, slice.base);
   if (!SAFE(baseRef)) {
     check.reasons.push(`base ${slice.base} not found`);
@@ -267,6 +411,11 @@ function inspect(
   check.outOfScope = changed.filter((file) => !inScope(plan, slice, file)).toSorted();
   if (check.outOfScope.length)
     check.reasons.push(`edits outside its scope: ${check.outOfScope.join(", ")}`);
+  check.caseCollisions = trunkCaseCollisions(cwd, ctx, head, changed);
+  if (check.caseCollisions.length)
+    check.reasons.push(
+      `differs only in case from ${plan.trunk}: ${check.caseCollisions.join(", ")}`,
+    );
   const trunkResult = mergeConflicts(cwd, trunk, head);
   if (Array.isArray(trunkResult)) {
     check.trunkConflicts = trunkResult;
@@ -280,9 +429,11 @@ function inspect(
 
 function unblockFor(check: SliceCheck, plan: FanoutFile): string {
   if (!check.head)
-    return `start or fetch ${check.branch}, then workit fanout check; if it landed, re-plan without slice ${check.id}`;
+    return `start or fetch ${check.branch}, then workit fanout check (a landed slice is detected through its merged PR when the forge is reachable)`;
   if (check.outOfScope.length)
     return `move ${check.outOfScope.join(", ")} off ${check.branch} (a follow-up slice), or widen slice ${check.id}'s scope with workit fanout plan, then workit fanout check`;
+  if (check.caseCollisions.length)
+    return `rename to ${plan.trunk}'s spelling on ${check.branch} (git mv), then workit fanout check`;
   if (check.trunkConflicts.length)
     return `rebase ${check.branch} onto ${plan.trunk} and resolve ${check.trunkConflicts.join(", ")}, then workit fanout check`;
   if (check.siblingConflicts.length) {

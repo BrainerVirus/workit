@@ -15,6 +15,7 @@ ACCEPTANCE:
 VERIFY: <exact commands, e.g. `workit check test`, the verify-<app> feature to drive>
 TIER: <mundane | standard | hard: how much model the slice needs>
 TIMEBOX: <wall clock or turn budget; past it without a new commit you will be replaced>
+SCRATCH: <your own temp dir: the one `fanout worktree create` printed, else `mktemp -d`; never a shared path>
 FORBIDDEN: <no edits outside SCOPE; no rebase, retarget, merge or force-push; no new dependencies; ...>
 REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,
   each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),
@@ -38,6 +39,7 @@ ACCEPTANCE:
 VERIFY: `workit check test`; verify-api feature "usage"
 TIER: standard
 TIMEBOX: 45 minutes
+SCRATCH: ../app-wt/usage-endpoint/.workit-scratch
 FORBIDDEN: no edits outside SCOPE; no schema migration; no rebase or force-push; no new packages
 REPORT: as in the template
 STANDING: conventional commits; no comments that restate code; ask nothing, record rulings instead
@@ -51,7 +53,9 @@ verify, forbidden must be filled; tier is mundane, standard or hard). `base`
 defaults to the trunk, or to the branch of a single `dependsOn` slice (a
 stack); `worktree` defaults to `../<repo>-wt/<id>`. `owns` claims a shared
 file another slice's glob also matches. Globs that match no file yet are compared
-through a sample path. Escape literal brackets: `"app/\\[id\\]/page.tsx"`.
+through a sample path. Use `/` as the separator; a backslash only escapes
+literal brackets: `"app/\\[id\\]/page.tsx"`. A `timebox` such as `45 minutes`
+is the slice's STUCK threshold in `workit fanout status`.
 
 ```json
 {

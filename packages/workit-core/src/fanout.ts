@@ -104,14 +104,41 @@ const unescape = (pattern: string): string => pattern.replace(/\\(.)/gu, "$1");
 /** Has an unescaped `*`, `?` or `{`. */
 const hasWildcard = (pattern: string): boolean => /[*?{]/u.test(pattern.replace(/\\./gu, ""));
 
+/** Brace alternatives expanded (`src/{a,b}/x` -> `src/a/x`, `src/b/x`), capped. */
+function expandBraces(pattern: string, limit = 64): string[] {
+  for (let index = 0; index < pattern.length; index += 1) {
+    if (pattern[index] === "\\") {
+      index += 1;
+      continue;
+    }
+    const close = pattern.indexOf("}", index);
+    if (pattern[index] !== "{" || close < index) continue;
+    const head = pattern.slice(0, index);
+    const tail = pattern.slice(close + 1);
+    const out: string[] = [];
+    for (const alternative of pattern.slice(index + 1, close).split(","))
+      for (const rest of expandBraces(tail, limit)) {
+        if (out.length >= limit) return out;
+        out.push(`${head}${alternative}${rest}`);
+      }
+    return out;
+  }
+  return [pattern];
+}
+
 /**
- * One concrete path the pattern matches, standing in for files nobody has
- * created yet: `src/new/**` -> `src/new/<any>`, `src/*.ts` -> `src/<any>.ts`.
+ * Concrete paths the pattern matches, one per brace alternative, standing in
+ * for files nobody has created yet: `src/new/**` -> `src/new/<any>`,
+ * `src/{a,b}/*.ts` -> `src/a/<any>.ts`, `src/b/<any>.ts`.
  */
 export function scopeSamples(pattern: string): string[] {
   // A plain path covers what is below it too, so `src/new` and `src/new/**`
   // overlap through `src/new/<any>` without a second sample.
   if (!hasWildcard(pattern)) return [unescape(pattern)];
+  return [...new Set(expandBraces(pattern).map(sampleOne))];
+}
+
+function sampleOne(pattern: string): string {
   let out = "";
   for (let index = 0; index < pattern.length; index += 1) {
     const char = pattern[index];
@@ -127,13 +154,9 @@ export function scopeSamples(pattern: string): string[] {
       }
     } else if (char === "*") out += "<any>";
     else if (char === "?") out += "x";
-    else if (char === "{" && pattern.indexOf("}", index) > index) {
-      const close = pattern.indexOf("}", index);
-      out += pattern.slice(index + 1, close).split(",")[0];
-      index = close;
-    } else out += char;
+    else out += char;
   }
-  return [out];
+  return out;
 }
 
 function globSource(pattern: string): string {
@@ -190,9 +213,23 @@ const matchesAny = (patterns: readonly string[], file: string): boolean =>
 
 /** A scope entry in canonical form, or why it is refused. */
 function normalizePattern(raw: string): { pattern: string } | { error: string } {
-  // A backslash escapes a glob character (`app/\\[id\\]`); any other one is a
-  // Windows separator.
-  let pattern = raw.trim().replace(/\\(?![[\]{}*?])/gu, "/");
+  // Only `\\[` and `\\]` are escapes (`app/\\[id\\]`); any other backslash is
+  // a Windows separator. Where both readings are possible, refuse.
+  let pattern = raw.trim();
+  if (pattern.includes("\\")) {
+    if (/\\[*?{}]/u.test(pattern))
+      return {
+        error:
+          "has \\*, \\?, \\{ or \\}: only \\[ and \\] are escapes; use / as the separator (src/**/*.ts)",
+      };
+    const brackets = /\\[[\]]/u.test(pattern);
+    if (brackets && pattern.replace(/\\[[\]]/gu, "").includes("\\"))
+      return {
+        error:
+          "mixes \\[ or \\] escapes with other backslashes, which is ambiguous: use / as the separator (app/\\[id\\]/page.tsx)",
+      };
+    if (!brackets) pattern = pattern.replaceAll("\\", "/");
+  }
   while (pattern.startsWith("./")) pattern = pattern.slice(2);
   if (pattern === "." || pattern === "") pattern = raw.trim() ? "**" : "";
   if (pattern.endsWith("/")) pattern = `${pattern}**`;
@@ -244,6 +281,8 @@ const ID = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 
 export type PlanDefaults = {
   trunk: string;
+  /** The main checkout: a relative `worktree` is resolved against it at plan time. */
+  root: string;
   /** Where default worktrees go: `<repo>-wt/` next to the main checkout. */
   worktreeRoot: string;
 };
@@ -335,7 +374,10 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       id,
       branch,
       base: optional("base") ?? "",
-      worktree: optional("worktree") ?? path.join(defaults.worktreeRoot, id),
+      worktree: path.resolve(
+        defaults.root,
+        optional("worktree") ?? path.join(defaults.worktreeRoot, id),
+      ),
       tier: tier as Tier,
       dependsOn: [...new Set(dependsOn ?? [])],
       scope,
@@ -583,15 +625,58 @@ export function analyzeOverlap(
 }
 
 // ---------------------------------------------------------------------------
+// case-only collisions with the trunk
+
+export type CaseCollision = { slice: string; path: string; trunk: string };
+
+/** Trunk paths (files and the directories above them) by lower case. */
+export function caseIndex(files: Iterable<string>): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const file of files) {
+    const parts = file.split("/");
+    for (let end = 1; end <= parts.length; end += 1) {
+      const prefix = parts.slice(0, end).join("/");
+      const key = prefix.toLowerCase();
+      (index.get(key) ?? index.set(key, new Set()).get(key))?.add(prefix);
+    }
+  }
+  return index;
+}
+
+/**
+ * The shallowest part of `file` (a directory or the file itself) that the
+ * trunk spells differently only in case: one path on macOS and Windows
+ * checkouts, two in git. Null when there is none.
+ */
+export function caseClash(
+  index: ReadonlyMap<string, ReadonlySet<string>>,
+  file: string,
+): { path: string; trunk: string } | null {
+  const parts = file.split("/");
+  for (let end = 1; end <= parts.length; end += 1) {
+    const prefix = parts.slice(0, end).join("/");
+    if (prefix.includes("<any>")) return null;
+    const spellings = index.get(prefix.toLowerCase());
+    if (spellings && !spellings.has(prefix))
+      return { path: prefix, trunk: [...spellings].toSorted()[0] };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // git
 
 type GitRun = { ok: boolean; status: number | null; stdout: string; stderr: string };
 
-export const gitRun = (cwd: string, args: string[]): GitRun => {
+export const gitRun = (
+  cwd: string,
+  args: string[],
+  timeoutMs: number = GIT_TIMEOUTS.local,
+): GitRun => {
   const run = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
-    timeout: GIT_TIMEOUTS.local,
+    timeout: timeoutMs,
     killSignal: "SIGKILL",
     windowsHide: true,
     maxBuffer: 64 * 1024 * 1024,
@@ -631,10 +716,15 @@ export function defaultTrunk(cwd: string): string {
   return base ? base.replace(/^origin\//u, "") : "main";
 }
 
+/** The main checkout (beside `.git`), else `cwd`. */
+export function mainCheckout(cwd: string): string {
+  const common = gitCommonDir(cwd);
+  return common && path.basename(common) === ".git" ? path.dirname(common) : path.resolve(cwd);
+}
+
 /** `<repo>-wt/` beside the main checkout. */
 export function worktreeRoot(cwd: string): string {
-  const common = gitCommonDir(cwd);
-  const main = common && path.basename(common) === ".git" ? path.dirname(common) : cwd;
+  const main = mainCheckout(cwd);
   return path.join(path.dirname(main), `${path.basename(main)}-wt`);
 }
 
@@ -823,7 +913,11 @@ export function planFanout(
   if (!dir.ok) return dir;
   const parsed = parsePlan(
     input.trunk && isRecord(input.raw) ? { ...input.raw, trunk: input.trunk } : input.raw,
-    { trunk: input.trunk ?? defaultTrunk(cwd), worktreeRoot: worktreeRoot(cwd) },
+    {
+      trunk: input.trunk ?? defaultTrunk(cwd),
+      root: mainCheckout(cwd),
+      worktreeRoot: worktreeRoot(cwd),
+    },
     input.name,
   );
   if (!parsed.ok)
@@ -856,6 +950,26 @@ export function planFanout(
       `${conflicts.length} file-scope overlap${conflicts.length === 1 ? "" : "s"} between slices: ${conflicts[0].slices.join(" and ")} on ${conflicts[0].paths[0]}${conflicts[0].paths.length > 1 ? ` (+${conflicts[0].paths.length - 1})` : ""}`,
       conflicts[0].suggestion.text,
       { name: plan.name, conflicts, overlaps },
+    );
+
+  const trunkCase = caseIndex(tracked);
+  const clashes: CaseCollision[] = [];
+  for (const slice of plan.slices) {
+    const seen = new Set<string>();
+    for (const sample of [...slice.scope, ...slice.owns].flatMap(scopeSamples)) {
+      const clash = caseClash(trunkCase, sample);
+      if (clash && !seen.has(clash.path)) {
+        seen.add(clash.path);
+        clashes.push({ slice: slice.id, ...clash });
+      }
+    }
+  }
+  if (clashes.length)
+    return fanoutFail(
+      "blocked",
+      `slice ${clashes[0].slice} names ${clashes[0].path}, which differs only in case from ${plan.trunk}'s ${clashes[0].trunk} (one path on macOS and Windows)`,
+      `use ${plan.trunk}'s spelling ${clashes[0].trunk} in slice ${clashes[0].slice}'s scope, then workit fanout plan again`,
+      { name: plan.name, caseCollisions: clashes, overlaps },
     );
 
   const existing = readFanout(cwd, plan.name);
