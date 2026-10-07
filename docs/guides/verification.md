@@ -51,7 +51,7 @@ product-choice=… plan=…`, or the flat `workit_policy` tool fields):
 | Judgment | Needed |
 | --- | --- |
 | behavior change | an observed passing `workit check test` on the final tree |
-| behavior change, risk `normal` | a verdict: by default the author's own (`workit ledger verdict tests-verified --self --how …`), labelled **self-reviewed** in `ledger check` and `pr status`, never verified; with the workspace setting `verification: "independent"` ([grants](grants.md)) a verdict from a non-author session |
+| behavior change, risk `normal` | a verdict: by default the author's own (`workit ledger verdict tests-verified --self --how …`), labelled **self-reviewed** in `ledger check` and `pr status`, never verified (it warns when no passing `workit check test` was observed on the head); with the workspace setting `verification: "independent"` ([grants](grants.md)) a verdict from a non-author session |
 | risk `high` | an independent `verified` verdict of kind `live`, and a plan before code is written |
 | open product choice | the user's answer recorded (`workit ledger decision "<choice>" --why "<reason>"`) before code is written |
 | plan needed | the plan written, then cited: `workit policy assess --ref <path>` (an approved limitation waives it) |

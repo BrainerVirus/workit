@@ -539,7 +539,7 @@ test("given a verdict recorded by the session that authored the commits, it is r
     if (!refused.ok) {
       expect(refused.code).toBe("blocked");
       expect(refused.error).toContain("author_verdict");
-      expect(refused.unblock).toContain("--self");
+      expect(refused.unblock).toContain("WORKIT_SESSION_ID");
     }
     const self = value(recordVerdict(author, { result: "verified", how: "looked", self: true }));
     expect(self).toMatchObject({ self: true, selfReason: "flag" });

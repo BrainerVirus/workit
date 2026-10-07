@@ -1145,7 +1145,7 @@ export function recordVerdict(
       "blocked",
       `author_verdict: session ${authoring} authored ${branch}; a verdict must come from a different session`,
       input.derivedFrom === undefined
-        ? 'have a non-author session record the verdict, or pass --self (a self verdict is never accepted by merge:"verified")'
+        ? "have a non-author session record the verdict: spawn a verifier with its own WORKIT_SESSION_ID=<lead>-v<n> (Claude Code: subagents get one from the SubagentStart hook); or, as the author, pass --self (self-reviewed, never accepted)"
         : "run the verifier as a separate session: the lead spawns it with its own WORKIT_SESSION_ID (Claude Code: subagents get one from the SubagentStart hook)",
     );
   const link = checkSupersede(context, "verdict", self);
