@@ -89,3 +89,33 @@ export function makeRemoteRepo(subjects: readonly string[] = ["chore: base"]): R
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }
+
+/**
+ * Point the push URL at an ssh forge address (`git@github.com:o/r.git`) whose
+ * transport is a fake ssh (core.sshCommand) serving the local bare repo: the
+ * forge is derived from a real forge URL while every push stays offline.
+ * POSIX only (a shell script). Pair with `withHome` so ~/.ssh/config aliases
+ * of the machine running the tests cannot change the derived host.
+ */
+export function sshForgeRemote(repo: RemoteRepo, url: string): void {
+  const ssh = path.join(repo.root, "fake-ssh");
+  writeFileSync(
+    ssh,
+    `#!/bin/sh\nfor last; do :; done\ncase "$last" in\n  git-receive-pack*) exec git receive-pack '${repo.bare}' ;;\n  git-upload-pack*) exec git upload-pack '${repo.bare}' ;;\nesac\necho "fake ssh: unexpected $last" >&2\nexit 1\n`,
+    { mode: 0o755 },
+  );
+  runGit(repo.cwd, "config", "core.sshCommand", ssh);
+  runGit(repo.cwd, "remote", "set-url", "--push", "origin", url);
+}
+
+/** Run `fn` with HOME at `home` (an empty ~/.ssh/config), restoring it after. */
+export async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+}

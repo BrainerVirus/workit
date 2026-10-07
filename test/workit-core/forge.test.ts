@@ -898,7 +898,7 @@ describe("S10 forge resolution and identity", () => {
     });
   });
 
-  test("a GitLab account mismatch is blocked with a login hint", () => {
+  test("a GitLab account mismatch is blocked with a workspace-token fix", () => {
     const gitlab = repoFor("gitlab");
     writeWorkspace(gitlab, { provider: "gitlab", account: "Octo" });
     expect(checkIdentity(connect(gitlab, gitlabRoutes()).resolved)).toMatchObject({
@@ -906,11 +906,48 @@ describe("S10 forge resolution and identity", () => {
       data: { login: "octo", matches: true },
     });
     writeWorkspace(gitlab, { provider: "gitlab", account: "cpincetti" });
+    // glab keeps one login per host, so the fix is a workspace token, not a switch.
     expect(checkIdentity(connect(gitlab, gitlabRoutes()).resolved)).toMatchObject({
       ok: false,
       code: "blocked",
-      unblock: "glab auth login --hostname gitlab.com  # sign in as cpincetti",
+      unblock:
+        "put a token for cpincetti in the workspace w vcs.tokenFile (glab keeps one login per host, so workit never switches it)",
     });
+  });
+
+  test("a glab login switch shows on the next identity check in the same process (cli_login is not memoized)", () => {
+    const gitlab = repoFor("gitlab");
+    writeWorkspace(gitlab, { provider: "gitlab", account: "octo" });
+    let login = "octo";
+    const runner = replayRunner({
+      ...gitlabRoutes(),
+      "GET user": () => JSON.stringify({ id: 1, username: login }),
+    });
+    const check = () => {
+      const resolved = resolveForge(gitlab.cwd, { runner });
+      if (!resolved.ok) throw new Error(resolved.error);
+      return checkIdentity(resolved.data);
+    };
+    expect(check()).toMatchObject({ ok: true, data: { matches: true } });
+    login = "someone-else";
+    expect(check()).toMatchObject({ ok: false, code: "blocked" });
+  });
+
+  test("an explicit gh account token is looked up once per process and gh config dir", () => {
+    const github = repoFor("github");
+    writeWorkspace(github, { provider: "github", account: "octo" });
+    const runner = replayRunner({
+      ...githubRoutes(),
+      "CLI auth token --hostname github.com --user octo": "gho_octo\n",
+    });
+    const lookups = () => runner.calls.filter((call) => call.method === "CLI").length;
+    const env = { ...process.env, GH_CONFIG_DIR: "/one" };
+    for (const _ of [1, 2]) expect(resolveForge(github.cwd, { runner, env }).ok).toBe(true);
+    expect(lookups()).toBe(1);
+    expect(resolveForge(github.cwd, { runner, env: { ...env, GH_CONFIG_DIR: "/two" } }).ok).toBe(
+      true,
+    );
+    expect(lookups()).toBe(2);
   });
 
   test("a workspace provider that disagrees with the push remote is blocked (D16)", () => {
@@ -919,7 +956,58 @@ describe("S10 forge resolution and identity", () => {
     const resolved = resolveForge(repo.cwd, { runner: replayRunner({}) });
     expect(resolved).toMatchObject({ ok: false, code: "blocked" });
     expect(!resolved.ok && resolved.error).toStartWith("forge_mismatch:");
-    expect(!resolved.ok && resolved.unblock).toContain("workit-github-override");
+    expect(!resolved.ok && resolved.unblock).toContain('"vcs": {"provider": "github"}');
+    expect(!resolved.ok && resolved.unblock).not.toContain("workit-github-override");
+  });
+
+  test("a gh auth token that times out or errors is unavailable (exit 5), not a missing login (M1)", () => {
+    const github = repoFor("github");
+    writeWorkspace(github, { provider: "github", account: "octo" });
+    const key = "CLI auth token --hostname github.com --user octo";
+    const timedOut = resolveForge(github.cwd, {
+      runner: replayRunner({
+        ...githubRoutes(),
+        [key]: { status: null, stdout: "", stderr: "", timedOut: true, missing: false },
+      }),
+    });
+    expect(timedOut).toMatchObject({ ok: false, code: "unavailable" });
+    expect(!timedOut.ok && timedOut.error).toStartWith("gh auth token timed out after 20000 ms");
+    expect(!timedOut.ok && timedOut.unblock).not.toContain("auth login");
+    const broken = resolveForge(github.cwd, {
+      runner: replayRunner({
+        ...githubRoutes(),
+        [key]: replyError("error connecting to github.com"),
+      }),
+    });
+    expect(broken).toMatchObject({
+      ok: false,
+      code: "unavailable",
+      error: "gh auth token failed (network): error connecting to github.com",
+    });
+  });
+
+  test("a resolution deadline bounds the token lookup and every probe after it (M2)", () => {
+    const github = repoFor("github");
+    writeWorkspace(github, { provider: "github", account: "octo" });
+    let clock = 0;
+    const offered: number[] = [];
+    const resolved = resolveForge(github.cwd, {
+      now: () => clock,
+      deadline: 4_000,
+      runner: (_bin, args, options) => {
+        offered.push(options.timeoutMs);
+        clock += Math.min(options.timeoutMs, 3_000);
+        return args[0] === "auth"
+          ? { status: 0, stdout: "gho_t\n", stderr: "", timedOut: false, missing: false }
+          : { status: null, stdout: "", stderr: "", timedOut: true, missing: false };
+      },
+    });
+    expect(offered).toEqual([4_000, 1_000]);
+    expect(resolved).toMatchObject({
+      ok: false,
+      code: "unavailable",
+      error: "gh api repository o/r timed out after 1000 ms",
+    });
   });
 
   test("a missing gh is unavailable with an install hint", () => {
@@ -954,6 +1042,10 @@ describe("S10 forge resolution and identity", () => {
       error: "gh api user timed out after 20000 ms",
     });
     expect(run("gh: Not Found (HTTP 404)")).toMatchObject({ code: "not_found" });
+    // Transport trouble is retryable: unavailable (exit 5), not failed (m9).
+    expect(run("error connecting to api.github.com")).toMatchObject({ code: "unavailable" });
+    expect(run("gh: HTTP 502: Bad Gateway")).toMatchObject({ code: "unavailable" });
+    expect(run("gh: Validation Failed (HTTP 422)")).toMatchObject({ code: "failed" });
     const token = `ghp_${"A1b2".repeat(9)}`;
     const leaked = run(`fatal: https://x:${token}@github.com/o/r failed`);
     expect(JSON.stringify(leaked)).not.toContain(token);
