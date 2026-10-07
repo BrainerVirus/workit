@@ -115,7 +115,7 @@ export function renderBrief(
     ? `SCRATCH: ${scratch}  (yours alone; temp files go here, never a shared path)`
     : `SCRATCH: ${SCRATCH_DIR}/ at your worktree root (mkdir -p it; git ignores it; never a shared path)`;
 
-  const standing = activeStanding(ledger.value.rows, plan.name).map((row) => ({
+  const standing = activeStanding(ledger.value.rows, plan.name, plan.leadSession).map((row) => ({
     id: row.id,
     what: String(row.what),
   }));

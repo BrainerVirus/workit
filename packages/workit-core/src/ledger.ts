@@ -1090,11 +1090,26 @@ export function recordRuling(
   );
 }
 
-/** The standing orders in force for `fanout`, oldest first (D17: odd rows are skipped). */
-export function activeStanding(rows: readonly ReadRow[], fanout: string): ReadRow[] {
+/**
+ * May this row speak for the fanout's lead? With a recorded lead session only
+ * that session's rows count; a plan from before it (null) takes any session.
+ */
+const fromLead = (row: ReadRow, lead: string | null): boolean =>
+  lead === null || row.actor.session === lead;
+
+/**
+ * The standing orders in force for `fanout`, oldest first (D17: odd rows are
+ * skipped). Given the plan's lead session, orders and clears recorded by any
+ * other session are ignored, so a worker can neither add nor clear one.
+ */
+export function activeStanding(
+  rows: readonly ReadRow[],
+  fanout: string,
+  lead: string | null = null,
+): ReadRow[] {
   const active: ReadRow[] = [];
   for (const row of rows) {
-    if (row.fanout !== fanout) continue;
+    if (row.fanout !== fanout || !fromLead(row, lead)) continue;
     if (row.type === "standing" && typeof row.what === "string" && row.what.trim()) {
       if (!row.superseded) active.push(row);
     } else if (row.type === "standing.cleared") {
@@ -1110,19 +1125,37 @@ export function activeStanding(rows: readonly ReadRow[], fanout: string): ReadRo
 }
 
 /**
- * A worker or verifier session by the ids the lead hands out: `fanout brief`'s
- * `<lead>-w-<slice>` (`+try<n>` for a race attempt), a verifier's
- * `<lead>-v<n>`, or an id `--as verifier|reviewer` minted.
+ * A worker or verifier session by the ids the lead hands out (`fanout
+ * brief`'s `<lead>-w-<slice>[+try<n>]`, a verifier's `<lead>-v<n>`, an
+ * `--as verifier|reviewer` id). Only for plans that predate `leadSession`.
  */
-export const isDelegateSession = (session: string | null): boolean =>
+const isDelegateSession = (session: string | null): boolean =>
   session !== null &&
   (/-w-[a-z0-9._-]+(?:\+try\d)?$/u.test(session) ||
     /-v\d+$/u.test(session) ||
     /:(?:verifier|reviewer):[0-9a-f]+$/u.test(session));
 
+/**
+ * Standing orders come from the fanout's lead: the session that first made
+ * the plan (`lead`). A plan without one falls back to refusing the session
+ * ids handed to workers and verifiers.
+ */
+function leadOnly(context: RecordContext, lead: string | null): LedgerResult<void> {
+  const session = context.actor.session;
+  if (lead !== null ? session === lead : !isDelegateSession(session))
+    return { ok: true, value: undefined };
+  return err(
+    "blocked",
+    lead !== null
+      ? `session ${session ?? "(none)"} is not the fanout's lead (${lead}): standing orders come from the lead`
+      : `session ${session} is a worker or verifier: standing orders come from the lead`,
+    "report the order to the lead instead",
+  );
+}
+
 export function recordStanding(
   context: RecordContext,
-  input: { fanout: string; what?: string },
+  input: { fanout: string; lead: string | null; what?: string },
 ): LedgerResult<StandingRow> {
   const what = required(input.what, "<order>");
   if (!what.ok) return what;
@@ -1134,12 +1167,8 @@ export function recordStanding(
       "a standing order is one line: no newlines or control characters",
       'add each order separately: workit ledger standing add "<order>"',
     );
-  if (isDelegateSession(context.actor.session))
-    return err(
-      "blocked",
-      `session ${context.actor.session} is a worker or verifier: standing orders come from the lead`,
-      "report the order to the lead instead",
-    );
+  const lead = leadOnly(context, input.lead);
+  if (!lead.ok) return lead;
   const link = checkSupersede(context, "standing");
   if (!link.ok) return link;
   return appendRow<StandingRow>(
@@ -1154,15 +1183,21 @@ export function recordStanding(
   );
 }
 
-/** Clear one standing order by id (it must be in force), or all of them. */
+/** Clear one standing order by id (it must be in force), or all of them; lead only. */
 export function clearStanding(
   context: RecordContext,
-  input: { fanout: string; target: string | null },
+  input: { fanout: string; lead: string | null; target: string | null },
 ): LedgerResult<StandingClearedRow> {
+  const lead = leadOnly(context, input.lead);
+  if (!lead.ok) return lead;
   if (input.target !== null) {
     const ledger = readLedger(context.cwd);
     if (!ledger.ok) return ledger;
-    if (!activeStanding(ledger.value.rows, input.fanout).some((row) => row.id === input.target))
+    if (
+      !activeStanding(ledger.value.rows, input.fanout, input.lead).some(
+        (row) => row.id === input.target,
+      )
+    )
       return err(
         "not_found",
         `no standing order ${input.target} in force for fanout ${input.fanout}`,

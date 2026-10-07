@@ -156,10 +156,14 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
 - `ledger standing add "<order>"` records a standing order (a `standing` row)
   for the fanout that `--fanout` names, else the one `fanout` commands would
   pick; `add --fanout` must name an existing plan. An order is one line (a
-  newline or control character is refused), and a worker or verifier
-  session (`<lead>-w-<slice>`, `<lead>-v<n>`, or one `--as verifier` minted)
-  cannot add one. `list` shows the orders in force; `clear <id>` ends one
-  and `clear` ends them all (a `standing.cleared` row).
+  newline or control character is refused). The plan records its lead, the
+  session that first made it (`leadSession`); only that session may add or
+  clear orders, and `brief` and `list` count only the orders it recorded, so
+  no worker, verifier or hand-written row can inject one. A plan from before
+  `leadSession` falls back to refusing the worker and verifier ids workit
+  hands out (`<lead>-w-<slice>`, `<lead>-v<n>`, `--as verifier`). `list`
+  shows the orders in force; `clear <id>` ends one and `clear` ends them all
+  (a `standing.cleared` row).
 - `brief <slice>` prints the worker brief: MODE, GOAL, SCOPE (with `owns`,
   branch and base), CONTEXT, ACCEPTANCE, VERIFY, TIER, TIMEBOX (default 30
   minutes), SCRATCH, FORBIDDEN, the fan-in rule, REPORT, the standing orders

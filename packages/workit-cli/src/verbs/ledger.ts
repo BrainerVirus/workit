@@ -9,8 +9,9 @@
 //   workit ledger list|show [--branch b] [--pr n] [--type t] [--last n]
 //   workit ledger check    [--pr n|--branch b]
 //   workit ledger standing add "<order>" | list | clear [<id>]  [--fanout <name>]
-//                          # the lead's standing orders for a fanout's workers;
-//                          # `workit fanout brief` pastes those in force
+//                          # the lead's standing orders for a fanout's workers,
+//                          # recorded only by the session that first made the
+//                          # plan; `workit fanout brief` pastes those in force
 //   workit ledger add decision|ruling|verdict …       # same as the bare forms
 //
 // Every write accepts --supersedes <id> (same type, same session only), plus
@@ -43,7 +44,7 @@ import {
   type RecordContext,
   type VerdictCheck,
 } from "@brainervirus/workit-core/src/ledger";
-import { readFanout, selectFanout } from "@brainervirus/workit-core/src/fanout";
+import { readFanout, selectFanout, type FanoutFile } from "@brainervirus/workit-core/src/fanout";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
@@ -315,13 +316,22 @@ export async function run(argv: string[], io: Io): Promise<number> {
 }
 
 /** The fanout a standing order belongs to: --fanout, else the plan `fanout` commands would pick. */
-function standingFanout(io: Io, values: Values): string | Error {
+/**
+ * The fanout a standing order belongs to: --fanout, else the plan `fanout`
+ * commands would pick. `plan` is null only for a --fanout with no plan file
+ * (its orders can still be listed and cleared).
+ */
+function standingFanout(io: Io, values: Values): { name: string; plan: FanoutFile | null } | Error {
   if (values.fanout !== undefined) {
     const name = values.fanout.trim();
-    return name ? name : new Error("--fanout needs a plan name");
+    if (!name) return new Error("--fanout needs a plan name");
+    const read = readFanout(io.cwd, name);
+    return { name, plan: read.ok ? read.data : null };
   }
   const selected = selectFanout(io.cwd, null, currentBranch(io.cwd));
-  return selected.ok ? selected.data.name : new Error(`${selected.error}; pass --fanout <name>`);
+  return selected.ok
+    ? { name: selected.data.name, plan: selected.data }
+    : new Error(`${selected.error}; pass --fanout <name>`);
 }
 
 async function standing(io: Io, values: Values, args: string[]): Promise<number> {
@@ -335,14 +345,16 @@ async function standing(io: Io, values: Values, args: string[]): Promise<number>
         { unblock: STANDING_USAGE },
       ),
     );
-  const fanout = standingFanout(io, values);
-  if (fanout instanceof Error)
-    return emit(io, fail("invalid_input", fanout.message, { unblock: STANDING_USAGE }));
+  const target = standingFanout(io, values);
+  if (target instanceof Error)
+    return emit(io, fail("invalid_input", target.message, { unblock: STANDING_USAGE }));
+  const fanout = target.name;
+  const lead = target.plan?.leadSession ?? null;
   if (action === "list") {
     if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
     const ledger = readLedger(io.cwd);
     if (!ledger.ok) return failed(io, ledger);
-    const orders = activeStanding(ledger.value.rows, fanout).map((row) => ({
+    const orders = activeStanding(ledger.value.rows, fanout, lead).map((row) => ({
       id: row.id,
       at: row.at,
       what: row.what as string,
@@ -363,24 +375,21 @@ async function standing(io: Io, values: Values, args: string[]): Promise<number>
     actor: acting.actor,
     ...(values.supersedes ? { supersedes: values.supersedes } : {}),
   };
-  if (action === "add" && values.fanout !== undefined) {
-    const plan = readFanout(io.cwd, fanout);
-    if (!plan.ok || plan.data === null)
-      return emit(
-        io,
-        fail("not_found", `no fanout plan named ${fanout}`, {
-          unblock: "workit fanout plan <plan.json> first, or name an existing plan with --fanout",
-        }),
-      );
-  }
+  if (action === "add" && target.plan === null)
+    return emit(
+      io,
+      fail("not_found", `no fanout plan named ${fanout}`, {
+        unblock: "workit fanout plan <plan.json> first, or name an existing plan with --fanout",
+      }),
+    );
   if (action === "add")
     return fromResult(
       io,
-      recordStanding(context, { fanout, what: rest.join(" ") }),
+      recordStanding(context, { fanout, lead, what: rest.join(" ") }),
       (row) => `recorded standing order ${row.id} for fanout ${fanout}`,
     );
   if (rest.length > 1) return usage(io, `unexpected argument: ${rest[1]}`);
-  return fromResult(io, clearStanding(context, { fanout, target: rest[0] ?? null }), (row) =>
+  return fromResult(io, clearStanding(context, { fanout, lead, target: rest[0] ?? null }), (row) =>
     row.target
       ? `cleared standing order ${row.target} for fanout ${fanout}`
       : `cleared every standing order for fanout ${fanout}`,

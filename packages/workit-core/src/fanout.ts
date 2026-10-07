@@ -86,6 +86,8 @@ export type FanoutFile = {
   /** Extra shared-file globs on top of DEFAULT_SHARED. */
   shared: string[];
   slices: Slice[];
+  /** The session that first made the plan: the only one whose standing orders count. */
+  leadSession: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -456,6 +458,7 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       fanIn: fanIn as FanInMode,
       shared,
       slices,
+      leadSession: null,
       createdAt: "",
       updatedAt: "",
     },
@@ -854,6 +857,7 @@ function parseStored(raw: unknown): FanoutFile | null {
     fanIn,
     shared,
     slices,
+    leadSession: typeof raw.leadSession === "string" && raw.leadSession ? raw.leadSession : null,
     createdAt,
     updatedAt: text(raw.updatedAt),
   };
@@ -1044,6 +1048,8 @@ export function planFanout(
   const existing = readFanout(cwd, plan.name);
   const previous = existing.ok ? existing.data : null;
   plan.createdAt = previous?.createdAt || now.toISOString();
+  // A re-plan keeps the lead (and a plan from before leads stays without one).
+  plan.leadSession = previous ? previous.leadSession : input.actor.session;
   plan.updatedAt = now.toISOString();
   // Per slice: the same definition continues its run; a changed one starts anew.
   for (const slice of plan.slices) {
@@ -1069,7 +1075,7 @@ export function planFanout(
   const warnings: string[] = [];
   if (previous === null) {
     const ledger = readLedger(cwd);
-    const inForce = ledger.ok ? activeStanding(ledger.value.rows, plan.name) : [];
+    const inForce = ledger.ok ? activeStanding(ledger.value.rows, plan.name, plan.leadSession) : [];
     if (inForce.length)
       warnings.push(
         `${inForce.length} standing order${inForce.length === 1 ? " is" : "s are"} already in force for fanout ${plan.name}, and every brief will carry ${inForce.length === 1 ? "it" : "them"}: ${inForce.map((row) => `"${String(row.what)}"`).join("; ")}. From an earlier run? workit ledger standing clear --fanout ${plan.name}`,
