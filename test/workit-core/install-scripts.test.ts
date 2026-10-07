@@ -227,6 +227,7 @@ const STUB_CORE_FILES = [
   "boundary.ts",
   "logger.ts",
   "workspaces.ts",
+  "branch-policy.ts",
   "support-matrix.ts",
   "skill-manifests.ts",
   "package-root.ts",
