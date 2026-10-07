@@ -157,10 +157,21 @@ export type LockOwnerState = {
   reason: string;
 };
 
+export type ClassifyOptions = {
+  /**
+   * Task-store locks only: a holder keeps one for a single mutation, so a
+   * same-host lock past FOREIGN_LOCK_TTL_MS whose start time cannot be
+   * compared is taken as a reused pid (Windows has no start time). Never for
+   * the stack lock, which a long synchronous rebase holds without heartbeat.
+   */
+  reclaimUnverifiedAfterTtl?: boolean;
+};
+
 export const classifyLockOwner = (
   payload: unknown,
   ageMs: number | null,
   localHost: string = localLockHost(),
+  options: ClassifyOptions = {},
 ): LockOwnerState => {
   const lock = metadataLockSchema.safeParse(payload);
   if (!lock.success)
@@ -189,9 +200,11 @@ export const classifyLockOwner = (
   if (processStart !== null && currentStart !== null && processStart !== currentStart)
     return { state: "stale", reason: `pid ${pid} now belongs to a different process` };
   // Without both start times (Windows has none) a reused pid looks alive. A
-  // holder keeps the lock for one mutation, never minutes, so past the TTL
-  // the pid is taken to be reused and the crashed writer's lock is reclaimed.
+  // task-store holder keeps the lock for one mutation, never minutes, so past
+  // the TTL the pid is taken to be reused and the crashed writer's lock is
+  // reclaimed (opt-in: see ClassifyOptions).
   if (
+    options.reclaimUnverifiedAfterTtl === true &&
     (processStart === null || currentStart === null) &&
     ageMs !== null &&
     ageMs > FOREIGN_LOCK_TTL_MS

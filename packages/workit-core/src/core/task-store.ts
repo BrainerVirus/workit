@@ -2144,7 +2144,11 @@ export class TaskStore {
         try {
           ageMs = nowMs - fs.lstatSync(lockPath).mtimeMs;
         } catch {}
-        return classifyLockOwner(payload, ageMs).state === "stale";
+        return (
+          classifyLockOwner(payload, ageMs, localLockHost(), {
+            reclaimUnverifiedAfterTtl: true,
+          }).state === "stale"
+        );
       },
       // The library re-checks the bytes before removal, so a lock replaced
       // after classification is never deleted.

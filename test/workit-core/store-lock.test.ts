@@ -18,6 +18,7 @@ import {
 } from "@/packages/workit-core/src/core/store-lock";
 import { join, resolve } from "node:path";
 import { TaskStore } from "@/packages/workit-core/src/core/task-store";
+import { stackLockStale } from "@/packages/workit-core/src/stack";
 import { success, type TaskRecord } from "@/packages/workit-core/src/core/task-contract";
 import { ref, scope } from "./task-fixtures";
 
@@ -101,6 +102,11 @@ test("Given a same-host lock older than the TTL whose pid is running but whose s
   utimesSync(lockPath, new Date(0), new Date(0));
   expect(store.mutateTask(task.id, task.revision, identity).ok).toBe(true);
   expect(existsSync(lockPath)).toBe(false);
+});
+
+test("Given a stack-lock holder on this machine whose pid is running but whose start time cannot be checked, When its lock is an hour old, Then it is not stale (a long synchronous rebase cannot heartbeat)", () => {
+  const owner = { pid: process.pid, processStart: null, host: localLockHost(), nonce: "rebasing" };
+  expect(stackLockStale(JSON.stringify(owner), 60 * 60_000)).toBe(false);
 });
 
 test("Given a lock from another host older than the TTL, When a write runs, Then the lock is reclaimed and the write succeeds", () => {
