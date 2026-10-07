@@ -40,7 +40,7 @@ const committedFiles = (relative: string): string[] =>
   git("ls-tree", "-r", "--name-only", "HEAD", `${relative}/`)
     .stdout.trim()
     .split("\n")
-    .map((file) => path.relative(relative, file))
+    .map((file) => path.posix.relative(relative, file))
     .toSorted();
 
 test("committed Cursor skills are the canonical skills rendered for Cursor", () => {
