@@ -156,9 +156,10 @@ head independently verified?".
 set the ceiling: `push`, `pr` and `rerun` are allowed by default; `merge` needs
 `true` or `verified`; `defaultEndpoint` is where an unnamed delivery request
 stops: `commit` (default), `pr` (push and open the PR), `green` (open the PR,
-then babysit CI, review threads and the base branch until it is merge-ready,
+then babysit CI, review threads and required rebases until it is merge-ready,
 never merging) or `merged` (`green`, then `workit pr merge`; it acts as `green`
-until the workspace has the merge grant). Raising a grant or the endpoint needs
+until the workspace has the merge grant). Without the `push` or `pr` grant any
+of them acts as `commit`; `workit grant show` reports the effective endpoint. Raising a grant or the endpoint needs
 you at a terminal; agents can only lower them. See
 [grants](docs/guides/grants.md).
 

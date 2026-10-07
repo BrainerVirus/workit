@@ -52,17 +52,24 @@ babysitting it without asking. `pr status` names the step in `babysit`:
 
 | `babysit` | Means | The agent |
 | --- | --- | --- |
-| `wait` | checks pending, merge queue, or mergeability still computing | runs `workit ci wait`, in the background where the host allows |
+| `wait` | checks pending | runs `workit ci wait`, in the background where the host allows |
+| `wait-forge` | CI done, but the PR is in a merge queue or the forge is still computing mergeability | re-checks `workit pr status` in the background with backoff, at most 5 times, then stops and reports |
 | `fix-ci` | a gating check failed | one `workit ci rerun --failed --reason flake\|infra` for a clear flake or infra failure; otherwise reproduces with `workit check`, fixes and pushes |
 | `address-threads` | unresolved threads or changes requested | fixes or replies with a reasoned dismissal |
-| `update-branch` | conflicts, a required rebase, or behind its base with nothing else open | rebases its own branch (or `workit stack sync`) and pushes with `--force-with-lease` |
-| `ready` | nothing left for the agent (a human approval may still be pending) | stops (`green`), or lands with `workit pr merge` once verified (`merged`) |
+| `update-branch` | conflicts or a rebase the forge requires | rebases its own branch (or `workit stack sync`) and pushes with `--force-with-lease` |
+| `mark-ready` | a draft with nothing else open (even with a review pending) | marks the PR ready for review |
+| `ready` | nothing left for the agent; a human approval may still be pending | stops (`green`), or lands with `workit pr merge` once the verdict is accepted (`merged`) |
 | `merged` | the PR is merged | observes it with `workit verify-delivery merge` |
 
-`babysit` is absent (`null`) for a closed PR. The agent stops early for a new
-consequential choice, a host denial, a review comment that needs a product
-decision, or after 3 failed fix attempts on the same check. `green` never
-merges, and `merged` without the `merge` grant behaves as `green`.
+A branch that is only behind its base reads `ready`: `behindBase` is
+information, so a busy base never starts a rebase/CI loop or drops approvals.
+
+`babysit` is `null` for a closed, unmerged PR: the agent stops and reports.
+It also stops early for a new consequential choice, a host denial, a review
+comment that needs a product decision, a required update that repeats because
+the base keeps moving, or after 3 failed fix attempts on the same check.
+`green` never merges, and `merged` without the `merge` grant behaves as
+`green`.
 
 GitHub is read through `gh api`, GitLab through `glab api`. The forge is
 picked from the push remote, and the workspace account's credential is passed

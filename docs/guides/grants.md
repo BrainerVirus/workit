@@ -55,26 +55,32 @@ allowed. Each write keeps `workspaces.json.bak`.
 | --- | --- |
 | `commit` | a local commit on a policy-compliant branch (default) |
 | `pr` | the pushed branch with its PR open |
-| `green` | the PR merge-ready: it keeps babysitting without asking (`workit ci wait` in the background, one `workit ci rerun` for a clear flake or infra failure, otherwise a fix; review threads answered; the branch kept up to date with its base) until CI is green, threads are resolved and the verification gate is met. It never merges |
+| `green` | the PR merge-ready: it keeps babysitting without asking (`workit ci wait` in the background, one `workit ci rerun` for a clear flake or infra failure, otherwise a fix; review threads answered; the branch rebased when the forge requires it; a draft marked ready) until CI is green, threads are resolved and the verification gate is met. It never merges |
 | `merged` | everything in `green`, then `workit pr merge` |
 
-The agent stops early only for a new consequential choice, a host denial, a
-review comment that needs a product decision, or after 3 failed fix attempts
-on the same check. `workit pr status` reports a `babysit` step (`wait`,
-`fix-ci`, `address-threads`, `update-branch`, `ready`, `merged`) for the loop.
+The configured endpoint applies only when the request names none; an
+explicit "babysit this PR" stops at merge-ready. The agent stops early only
+for a new consequential choice, a host denial, a review comment that needs a
+product decision, a required branch update that keeps repeating because the
+base keeps moving, or after 3 failed fix attempts on the same check. `workit
+pr status` reports a `babysit` step for the loop (see
+[delivery](delivery.md#babysitting-a-pr)).
 
-`merged` takes effect only when `workit pr merge` could pass its grant check:
-the `merge` grant (and `vcs.account`, as for any explicit grant). Otherwise it
-acts as `green`, and `workit grant show` says so:
+The effective endpoint follows the grant checks the delivery verbs make.
+`pr`, `green` and `merged` act as `commit` when the `push` or `pr` grant is
+false, or when explicit grants have no `vcs.account`. `merged` acts as
+`green` without the `merge` grant. `workit grant show` says so and names the
+unblock:
 
 ```text
-  default endpoint: merged (effective: green, merge grant missing) (an unnamed request stops at a merge-ready PR: ...)
+  default endpoint: merged (effective: green, merge grant missing; ask the user to run, in their own terminal: workit grant set personal merge=verified) (...)
 ```
 
-`grant show --json` carries `defaultEndpoint` (configured), `effectiveEndpoint`
-and, when they differ, `endpointReason`. A value this version does not know is
-reported (`endpointIssue`) and read as `commit`; the rest of the file still
-applies.
+`grant show --json` carries `defaultEndpoint` (the endpoint as read),
+`configuredEndpoint` (the raw stored value, `null` when unset),
+`effectiveEndpoint` and, when it is lower, `endpointReason`. A value this
+version does not know is reported (`endpointIssue`) and read as `commit`;
+the rest of the file still applies.
 
 When workspace globs overlap, the match with the most literal path components
 wins; equally specific matches need an explicit workspace name. The
