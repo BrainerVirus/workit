@@ -879,12 +879,15 @@ export function pushForge(
   const forge = deriveForge(url, options);
   if (!forge) {
     // Never echo the raw URL: it may carry a token (https://user:tok@…).
-    const host = parseRemoteUrl(url)?.host || null;
+    const parsed = parseRemoteUrl(url);
+    const host = parsed?.host || null;
     return {
       ok: false,
       code: "unavailable",
       error: host
-        ? `unsupported_forge: cannot tell whether push host "${host}" is GitHub or GitLab; PR and CI verbs need one (workit git push still pushes with git)`
+        ? parsed?.protocol === "ssh"
+          ? `unsupported_forge: could not resolve ssh alias "${host}" to GitHub or GitLab; PR and CI verbs need one (workit git push still pushes with git)`
+          : `unsupported_forge: cannot tell whether push host "${host}" is GitHub or GitLab; PR and CI verbs need one (workit git push still pushes with git)`
         : `push URL ${redactRemote(url)} of remote "${remote}" is not a GitHub/GitLab URL`,
       unblock: host
         ? `if ${host} is an ssh alias of GitHub/GitLab, add "Host ${host}" with "HostName github.com" (or gitlab.com) to ~/.ssh/config; if it is a self-hosted GitHub/GitLab, set github.host or gitlab.host in ~/.config/workit/vcs.json; other forges (Bitbucket, Gitea…) have no PR/CI verbs`

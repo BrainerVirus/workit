@@ -915,6 +915,41 @@ describe("S10 forge resolution and identity", () => {
     });
   });
 
+  test("a glab login switch shows on the next identity check in the same process (cli_login is not memoized)", () => {
+    const gitlab = repoFor("gitlab");
+    writeWorkspace(gitlab, { provider: "gitlab", account: "octo" });
+    let login = "octo";
+    const runner = replayRunner({
+      ...gitlabRoutes(),
+      "GET user": () => JSON.stringify({ id: 1, username: login }),
+    });
+    const check = () => {
+      const resolved = resolveForge(gitlab.cwd, { runner });
+      if (!resolved.ok) throw new Error(resolved.error);
+      return checkIdentity(resolved.data);
+    };
+    expect(check()).toMatchObject({ ok: true, data: { matches: true } });
+    login = "someone-else";
+    expect(check()).toMatchObject({ ok: false, code: "blocked" });
+  });
+
+  test("an explicit gh account token is looked up once per process and gh config dir", () => {
+    const github = repoFor("github");
+    writeWorkspace(github, { provider: "github", account: "octo" });
+    const runner = replayRunner({
+      ...githubRoutes(),
+      "CLI auth token --hostname github.com --user octo": "gho_octo\n",
+    });
+    const lookups = () => runner.calls.filter((call) => call.method === "CLI").length;
+    const env = { ...process.env, GH_CONFIG_DIR: "/one" };
+    for (const _ of [1, 2]) expect(resolveForge(github.cwd, { runner, env }).ok).toBe(true);
+    expect(lookups()).toBe(1);
+    expect(resolveForge(github.cwd, { runner, env: { ...env, GH_CONFIG_DIR: "/two" } }).ok).toBe(
+      true,
+    );
+    expect(lookups()).toBe(2);
+  });
+
   test("a workspace provider that disagrees with the push remote is blocked (D16)", () => {
     const repo = repoFor("github");
     writeWorkspace(repo, { provider: "gitlab" });

@@ -265,7 +265,21 @@ export function apiWrite<T>(
       );
     if (!run.missing && !run.timedOut && /\b(405|406|422)\b/u.test(text))
       return failure("blocked", `${what} refused by the forge: ${reason}`);
-    return cliFailure(bin, apiHost, run, what, timeoutMs);
+    const failed = cliFailure<T>(bin, apiHost, run, what, timeoutMs);
+    // A timeout, a dropped connection or a 5xx may come after the forge
+    // applied the write: look before writing again.
+    if (
+      !failed.ok &&
+      failed.code === "unavailable" &&
+      !run.missing &&
+      !/ is not authenticated for /u.test(failed.error)
+    )
+      return failure(
+        "unavailable",
+        failed.error,
+        "workit pr status  # the write may have gone through; check it first, then retry",
+      );
+    return failed;
   }
   if (!run.stdout.trim()) return { ok: true, data: {} as T };
   try {

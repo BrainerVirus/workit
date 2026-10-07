@@ -428,16 +428,28 @@ const mainCheckouts = new Map<string, string | null>();
 const mainCheckoutOf = (cwd: string): string | null => {
   const cached = mainCheckouts.get(cwd);
   if (cached !== undefined) return cached;
+  // The repository at cwd, not one an inherited GIT_DIR/GIT_WORK_TREE names.
+  const env = { ...process.env };
+  for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"])
+    delete env[name];
+  const git = (args: string[]): string | null => {
+    const run = spawnSync("git", args, {
+      cwd,
+      env,
+      encoding: "utf8",
+      timeout: 5000,
+      windowsHide: true,
+    });
+    return run.status === 0 ? run.stdout : null;
+  };
   let main: string | null = null;
-  const run = spawnSync(
-    "git",
-    ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
-    { cwd, encoding: "utf8", timeout: 5000, windowsHide: true },
-  );
-  if (run.status === 0) {
-    const [gitDir, common] = run.stdout.trim().split(/\r?\n/u);
-    if (gitDir && common && path.resolve(gitDir) !== path.resolve(common))
-      main = path.basename(common) === ".git" ? path.dirname(common) : common;
+  const dirs = git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]);
+  const [gitDir, common] = (dirs ?? "").trim().split(/\r?\n/u);
+  if (gitDir && common && path.resolve(gitDir) !== path.resolve(common)) {
+    // The first `worktree` entry is the main one, also with --separate-git-dir
+    // (where the common dir is not <main>/.git); a bare repo lists its own path.
+    const listed = /^worktree (.+)$/mu.exec(git(["worktree", "list", "--porcelain"]) ?? "")?.[1];
+    main = listed?.trim() || (path.basename(common) === ".git" ? path.dirname(common) : common);
   }
   mainCheckouts.set(cwd, main);
   return main;

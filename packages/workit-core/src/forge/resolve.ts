@@ -70,23 +70,34 @@ export type ResolveOptions = {
 
 // Per-process memo of credential lookups and /user answers (a long-lived MCP
 // server re-asks after the TTL). Scoped by runner, so an injected test runner
-// never sees another's answers; only successes are kept.
+// never sees another's answers, and keyed by the gh/glab config location, so
+// another GH_CONFIG_DIR never reuses them; only successes are kept.
 const MEMO_TTL_MS = 5 * 60_000;
 const SYSTEM_SCOPE = {};
 const memoScopes = new WeakMap<object, Map<string, { at: number; value: unknown }>>();
 
+type MemoScope = { owner: object; key: string };
+
+const memoScope = (runner: ForgeRunner | undefined, env: NodeJS.ProcessEnv): MemoScope => ({
+  owner: runner ?? SYSTEM_SCOPE,
+  key: [env.GH_CONFIG_DIR, env.GLAB_CONFIG_DIR, env.XDG_CONFIG_HOME, env.HOME]
+    .map((value) => value ?? "")
+    .join("|"),
+});
+
 function memo<T>(
-  scope: object,
+  scope: MemoScope,
   key: string,
   compute: () => { keep: boolean; value: T },
   now = Date.now,
 ): T {
-  let entries = memoScopes.get(scope);
-  if (!entries) memoScopes.set(scope, (entries = new Map()));
-  const hit = entries.get(key);
+  let entries = memoScopes.get(scope.owner);
+  if (!entries) memoScopes.set(scope.owner, (entries = new Map()));
+  const full = `${scope.key} ${key}`;
+  const hit = entries.get(full);
   if (hit && now() - hit.at < MEMO_TTL_MS) return hit.value as T;
   const { keep, value } = compute();
-  if (keep) entries.set(key, { at: now(), value });
+  if (keep) entries.set(full, { at: now(), value });
   return value;
 }
 
@@ -117,15 +128,20 @@ function clampedRunner(
   };
 }
 
-/** `forge.identity` answered once per credential per TTL (push, then pr create, …). */
-const memoizedIdentity = (forge: Forge, scope: object, credentialKey: string): Forge => {
+/**
+ * `forge.identity` answered once per explicit credential per TTL (push, then
+ * pr create, …). The CLI's own login (`cli_login`) is never memoized: a
+ * `glab auth login` / `gh auth switch` must show on the next call.
+ */
+const memoizedIdentity = (forge: Forge, scope: MemoScope, credential: Credential): Forge => {
+  if (credential.credential === "cli_login") return forge;
   const identity = (expected: string | null) => forge.identity(expected);
   return {
     ...forge,
     identity: (expected: string | null) =>
       memo(
         scope,
-        `identity ${forge.kind} ${forge.apiHost} ${credentialKey} ${expected ?? ""}`,
+        `identity ${forge.kind} ${forge.apiHost} ${credential.credential} ${credential.token ?? ""} ${expected ?? ""}`,
         () => {
           const value = identity(expected);
           return { keep: value.ok, value };
@@ -141,7 +157,7 @@ function resolveCredential(
   workspace: ReturnType<typeof resolveRuntimeWorkspaceVcs>,
   derived: DerivedForge,
   run: ForgeRunner,
-  scope: object,
+  scope: MemoScope,
 ): ForgeResult<Credential> {
   const { kind, apiHost } = derived;
   const expectedAccount = workspace?.vcs?.account ?? null;
@@ -271,7 +287,7 @@ export function resolveForge(
   const derived = pushed.forge;
   const { kind, apiHost } = derived;
   const base = options.runner ?? systemRunner(kind, apiHost, options.env ?? process.env);
-  const scope = options.runner ?? SYSTEM_SCOPE;
+  const scope = memoScope(options.runner, options.env ?? process.env);
   const now = options.now ?? Date.now;
   const expectedAccount = workspace?.vcs?.account ?? null;
   // The deadline covers resolution too, so a verb's --timeout bounds it all.
@@ -279,11 +295,10 @@ export function resolveForge(
   const credential = resolveCredential(workspace, derived, clampedRunner(base, limits, now), scope);
   if (!credential.ok) return credential;
   const runner = clampedRunner(base, limits, now, credential.data.token);
-  const memoKey = `${credential.data.credential} ${credential.data.token ?? ""}`;
 
   // Base repository: an `upstream` remote on the same forge, else the fork parent.
   const headRepo = derived.repo;
-  const probe = memoizedIdentity(createForge(derived, headRepo, runner), scope, memoKey);
+  const probe = memoizedIdentity(createForge(derived, headRepo, runner), scope, credential.data);
   const info = probe.repoInfo(headRepo);
   if (!info.ok && info.code !== "not_found") return info;
   const headProjectId = info.ok ? info.data.id : null;
@@ -310,7 +325,7 @@ export function resolveForge(
     forge:
       baseRepo === headRepo
         ? probe
-        : memoizedIdentity(createForge(derived, baseRepo, runner), scope, memoKey),
+        : memoizedIdentity(createForge(derived, baseRepo, runner), scope, credential.data),
     remote: pushed.remote,
     url: pushed.url,
     derived,
@@ -360,6 +375,10 @@ const mismatch = <T>(
   );
 };
 
+/** The forge could not answer at all, as opposed to answering against the account. */
+const unreachable = (result: { code: string; error: string }): boolean =>
+  result.code === "unavailable" && !/ is not authenticated for /u.test(result.error);
+
 /** Total budget for the identity check before a push (B1). */
 export const PUSH_IDENTITY_BUDGET_MS = 5_000;
 
@@ -380,9 +399,11 @@ export type PushIdentity = {
 
 /**
  * The best-effort identity check before `git push`: git decides the transport,
- * so only a forge that positively reports another account blocks (S10, B1).
- * Every other outcome pushes with `status: "skipped"` and the reason. All
- * calls share one `budgetMs` and are memoized per credential.
+ * so a forge that cannot answer (missing, slow, offline, unknown, another
+ * provider) pushes with `status: "skipped"` and the reason (S10, B1). Positive
+ * evidence still blocks: another account, no gh login for the workspace
+ * account, a broken token file or a rejected credential. All calls share one
+ * `budgetMs`; explicit credentials are memoized.
  */
 export function checkPushIdentity(
   cwd: string,
@@ -415,10 +436,13 @@ export function checkPushIdentity(
   });
   if (!pushed.ok) {
     const host = /^unsupported_forge: .*?"([^"]+)"/u.exec(pushed.error)?.[1];
+    const alias = /could not resolve ssh alias/u.test(pushed.error);
     return skipped(
       null,
       host
-        ? `unsupported_forge: ${host} is not a GitHub or GitLab host workit knows; pushed with git only (no identity check, no PR or CI verbs)`
+        ? alias
+          ? `unsupported_forge: could not resolve ssh alias ${host} to GitHub or GitLab; account checks skipped, pushed with git only (no PR or CI verbs)`
+          : `unsupported_forge: ${host} is not a GitHub or GitLab host workit knows; account checks skipped, pushed with git only (no PR or CI verbs)`
         : pushed.error,
       pushed.unblock,
     );
@@ -430,18 +454,28 @@ export function checkPushIdentity(
 
   const base =
     options.runner ?? systemRunner(derived.kind, derived.apiHost, options.env ?? process.env);
-  const scope = options.runner ?? SYSTEM_SCOPE;
+  const scope = memoScope(options.runner, options.env ?? process.env);
   const now = options.now ?? Date.now;
   const limits = { deadline: now() + (options.budgetMs ?? PUSH_IDENTITY_BUDGET_MS) };
   const credential = resolveCredential(workspace, derived, clampedRunner(base, limits, now), scope);
-  if (!credential.ok) return skipped(derived.kind, credential.error, credential.unblock);
+  // A forge that cannot answer (missing CLI, timeout, transport) is skipped;
+  // local evidence against the account (no gh login for it, a broken
+  // vcs.tokenFile, a rejected credential) still blocks: over HTTPS git would
+  // push with whatever account gh's credential helper has active.
+  if (!credential.ok)
+    return unreachable(credential)
+      ? skipped(derived.kind, credential.error, credential.unblock)
+      : credential;
   const forge = memoizedIdentity(
     createForge(derived, derived.repo, clampedRunner(base, limits, now, credential.data.token)),
     scope,
-    `${credential.data.credential} ${credential.data.token ?? ""}`,
+    credential.data,
   );
   const identity = forge.identity(account);
-  if (!identity.ok) return skipped(derived.kind, identity.error, identity.unblock);
+  if (!identity.ok)
+    return unreachable(identity)
+      ? skipped(derived.kind, identity.error, identity.unblock)
+      : identity;
   if (identity.data.matches === false)
     return mismatch(
       { forge, credential: credential.data.credential, expectedAccount: account },

@@ -22,6 +22,8 @@ export type Envelope<T = Record<string, unknown>> = {
   error?: string;
   /** The exact command or user action that clears a `blocked`/`unavailable`. */
   unblock?: string;
+  /** Things that went through but deserve attention (also printed on stderr). */
+  warnings?: string[];
 };
 
 /** 0 ok · 1 failed · 2 usage · 3 blocked · 4 busy/pending · 5 unavailable. */

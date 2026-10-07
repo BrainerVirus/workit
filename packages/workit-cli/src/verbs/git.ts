@@ -184,17 +184,19 @@ async function push(argv: string[], io: Io): Promise<number> {
     ...(checked ? { identity: { ...checked } } : {}),
   });
   if (!result.ok) return forgeFail(io, result, { branch: plan.data.branch, sha: plan.data.sha });
-  return emit(io, ok({ ...result.data, identity: checked }), (data) => [
+  const warnings =
+    checked?.status === "skipped"
+      ? [
+          `identity check skipped: ${checked.reason}${checked.unblock ? ` (to restore it: ${checked.unblock})` : ""}`,
+        ]
+      : [];
+  for (const warning of warnings) io.stderr(`warning: ${warning}\n`);
+  const envelope = ok({ ...result.data, identity: checked });
+  return emit(io, warnings.length ? { ...envelope, warnings } : envelope, (data) => [
     data.pushed
       ? `pushed ${data.branch} ${short(data.previous)} -> ${short(data.sha)} to ${data.remote}${data.forced ? " (force-with-lease)" : ""}; remote tip verified`
       : `${data.remote}/${data.branch} is already at ${short(data.sha)}; remote tip verified`,
     ...(data.upstream ? [`upstream: ${data.remote}/${data.branch}`] : []),
-    ...(checked?.status === "skipped"
-      ? [
-          `warning: identity check skipped: ${checked.reason}`,
-          ...(checked.unblock ? [`  to restore it: ${checked.unblock}`] : []),
-        ]
-      : []),
   ]);
 }
 

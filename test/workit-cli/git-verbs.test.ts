@@ -716,10 +716,10 @@ test("git push: given vcs.account=cpincetti but glab reports another user, then 
 });
 
 test.skipIf(process.platform === "win32")(
-  "git push: a workspace token is never printed, even when the forge echoes it back in the skipped-check warning",
+  "git push: a rejected workspace token blocks the push, and the token is never printed",
   async () => {
     const repo = setup();
-    const sha = await feature(repo);
+    await feature(repo);
     sshForgeRemote(repo, "git@github.com:o/r.git");
     const token = "ghp_S3cretS3cretS3cretS3cretS3cret0000";
     const tokenFile = path.join(repo.root, "token");
@@ -733,14 +733,33 @@ test.skipIf(process.platform === "win32")(
       json: await run(["git", "push", "--json"], repo.cwd),
       human: await run(["git", "push"], repo.cwd),
     }));
-    expect(json.code).toBe(0);
-    expect(json.json().data.identity).toMatchObject({ status: "skipped", forge: "github" });
-    expect(human.stdout).toContain("warning: identity check skipped: gh is not authenticated");
+    expect(json.code).toBe(5);
+    expect(json.json().error).toBe("gh is not authenticated for github.com");
     expect(runner.calls.every((call) => call.token === token)).toBe(true);
     for (const output of [json.stdout, json.stderr, human.stdout, human.stderr])
       expect(output).not.toContain(token);
-    expect(JSON.stringify(rows(repo.cwd, "push.verified"))).not.toContain(token);
-    expect(repo.remoteTip("feature/a")).toBe(sha);
+    expect(repo.remoteTip("feature/a")).toBeNull();
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git push: given gh has no login for the workspace account, then the push is blocked (git could push as the active account)",
+  async () => {
+    const repo = setup();
+    await feature(repo);
+    sshForgeRemote(repo, "git@github.com:o/r.git");
+    workspace(repo, { vcs: { provider: "github", account: "octo" } });
+    const bin = fakeGh(repo, 'echo "no oauth token found for github.com account octo" >&2\nexit 1');
+    const result = await withHome(configHome.home, () =>
+      run(["git", "push", "--json"], repo.cwd, { ...SESSION, PATH: bin }),
+    );
+    expect(result.code).toBe(3);
+    expect(result.json().error).toBe(
+      "identity_unavailable: gh has no login for octo on github.com (workspace w)",
+    );
+    expect(result.json().unblock).toStartWith("gh auth login --hostname github.com");
+    expect(repo.remoteTip("feature/a")).toBeNull();
+    expect(rows(repo.cwd, "push.verified")).toHaveLength(0);
   },
 );
 
@@ -810,9 +829,10 @@ test.skipIf(process.platform === "win32")(
     expect(result.code).toBe(0);
     expect(repo.remoteTip("feature/a")).toBe(sha);
     expect(elapsed).toBeLessThan(10_000);
-    expect(result.stdout).toContain(
+    expect(result.stderr).toContain(
       "warning: identity check skipped: gh auth token timed out after",
     );
+    expect(result.stdout).not.toContain("warning:");
     expect(lastPush(repo.cwd)).toMatchObject({
       head: sha,
       identity: {
@@ -842,6 +862,13 @@ test.skipIf(process.platform === "win32")(
     );
     expect(failing.code).toBe(0);
     expect(failing.json().data.identity).toMatchObject({ status: "skipped" });
+    expect(failing.json().warnings).toHaveLength(1);
+    expect(failing.json().warnings[0]).toStartWith(
+      "identity check skipped: gh api user failed (network)",
+    );
+    expect(failing.stderr).toContain(
+      "warning: identity check skipped: gh api user failed (network)",
+    );
     expect(failing.json().data.identity.reason).toContain(
       "(network): error connecting to api.github.com",
     );
@@ -956,7 +983,7 @@ test.skipIf(process.platform === "win32")(
     expect(pushed.code).toBe(0);
     expect(pushed.json().data.identity).toMatchObject({ status: "skipped", forge: null });
     expect(pushed.json().data.identity.reason).toStartWith(
-      "unsupported_forge: bitbucket.org is not a GitHub or GitLab host",
+      "unsupported_forge: could not resolve ssh alias bitbucket.org to GitHub or GitLab; account checks skipped",
     );
     expect(repo.remoteTip("feature/a")).toBe(sha);
     expect(runner.calls).toEqual([]);

@@ -21,11 +21,14 @@ workit git push [--set-upstream] [--force-with-lease]
   `--expect <sha>`), and refuses to drop remote commits you never had unless
   you pass `--overwrite-unintegrated`.
 - Before a push to GitHub or GitLab, `git push` checks that the forge login is
-  the workspace `vcs.account`, within 5 seconds in total. Only a forge that
-  answers with another account blocks the push. When gh/glab is missing, slow,
-  offline or failing, or the remote is another forge (Bitbucket, Gitea…), git
-  pushes anyway and prints `warning: identity check skipped: <why>`; the
-  `push.verified` ledger row records the outcome under `identity`.
+  the workspace `vcs.account`, within 5 seconds in total. Evidence against the
+  account blocks the push: the forge names another account, gh has no login
+  for it, the credential is rejected, or `vcs.tokenFile` is broken. When
+  gh/glab is missing, slow or offline, or the remote is another forge
+  (Bitbucket, Gitea, an ssh alias workit cannot resolve), git pushes anyway
+  and prints `warning: identity check skipped: <why>` on stderr (`warnings`
+  in `--json`); the `push.verified` ledger row records the outcome under
+  `identity`.
 
 ## Pull requests and CI
 
@@ -95,7 +98,9 @@ picked from the push remote, and the workspace account's credential is passed
 on every call without switching your active login. A login that is not the
 workspace `vcs.account` is `blocked` (exit 3) with a hint. A linked worktree
 outside every workspace glob (`~/.codex/worktrees/…`, `../x`) uses the
-workspace of the checkout it was added from. A remote whose forge differs
+workspace of the checkout it was added from. A worktree inside a glob takes
+that glob's workspace, even when it differs from the main checkout's: the
+worktree's own path wins. A remote whose forge differs
 from the workspace `vcs.provider` blocks the PR and CI verbs (`forge_mismatch`)
 until a workspace with a narrower glob names the right provider.
 
