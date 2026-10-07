@@ -885,9 +885,11 @@ export function pushForge(
       ok: false,
       code: "unavailable",
       error: host
-        ? parsed?.protocol === "ssh"
+        ? parsed?.protocol === "ssh" && !host.includes(".")
           ? `unsupported_forge: could not resolve ssh alias "${host}" to GitHub or GitLab; PR and CI verbs need one (workit git push still pushes with git)`
-          : `unsupported_forge: cannot tell whether push host "${host}" is GitHub or GitLab; PR and CI verbs need one (workit git push still pushes with git)`
+          : parsed?.protocol === "ssh"
+            ? `unsupported_forge: ssh host "${host}" is not a GitHub/GitLab host or an alias workit can resolve; PR and CI verbs need one (workit git push still pushes with git)`
+            : `unsupported_forge: cannot tell whether push host "${host}" is GitHub or GitLab; PR and CI verbs need one (workit git push still pushes with git)`
         : `push URL ${redactRemote(url)} of remote "${remote}" is not a GitHub/GitLab URL`,
       unblock: host
         ? `if ${host} is an ssh alias of GitHub/GitLab, add "Host ${host}" with "HostName github.com" (or gitlab.com) to ~/.ssh/config; if it is a self-hosted GitHub/GitLab, set github.host or gitlab.host in ~/.config/workit/vcs.json; other forges (Bitbucket, Gitea…) have no PR/CI verbs`

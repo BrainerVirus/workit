@@ -983,7 +983,7 @@ test.skipIf(process.platform === "win32")(
     expect(pushed.code).toBe(0);
     expect(pushed.json().data.identity).toMatchObject({ status: "skipped", forge: null });
     expect(pushed.json().data.identity.reason).toStartWith(
-      "unsupported_forge: could not resolve ssh alias bitbucket.org to GitHub or GitLab; account checks skipped",
+      "unsupported_forge: ssh host bitbucket.org is not a GitHub/GitLab host or an alias workit can resolve; account checks skipped",
     );
     expect(repo.remoteTip("feature/a")).toBe(sha);
     expect(runner.calls).toEqual([]);

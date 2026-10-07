@@ -436,13 +436,15 @@ export function checkPushIdentity(
   });
   if (!pushed.ok) {
     const host = /^unsupported_forge: .*?"([^"]+)"/u.exec(pushed.error)?.[1];
-    const alias = /could not resolve ssh alias/u.test(pushed.error);
+    const what = /could not resolve ssh alias/u.test(pushed.error)
+      ? `could not resolve ssh alias ${host} to GitHub or GitLab`
+      : pushed.error.startsWith("unsupported_forge: ssh host")
+        ? `ssh host ${host} is not a GitHub/GitLab host or an alias workit can resolve`
+        : `${host} is not a GitHub or GitLab host workit knows`;
     return skipped(
       null,
       host
-        ? alias
-          ? `unsupported_forge: could not resolve ssh alias ${host} to GitHub or GitLab; account checks skipped, pushed with git only (no PR or CI verbs)`
-          : `unsupported_forge: ${host} is not a GitHub or GitLab host workit knows; account checks skipped, pushed with git only (no PR or CI verbs)`
+        ? `unsupported_forge: ${what}; account checks skipped, pushed with git only (no PR or CI verbs)`
         : pushed.error,
       pushed.unblock,
     );

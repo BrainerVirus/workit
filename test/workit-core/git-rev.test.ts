@@ -317,6 +317,23 @@ test("pushForge derives the forge from the push remote, not the configured provi
   const unknown = pushForge(root, { sshConfig: "" });
   expect(unknown).toMatchObject({ ok: false, code: "unavailable" });
   if (!unknown.ok) expect(unknown.unblock).toContain("Host github-work.com");
+  // Only a dotless host is called an alias; a dotted one may be a real host.
+  if (!unknown.ok)
+    expect(unknown.error).toContain(
+      'ssh host "github-work.com" is not a GitHub/GitLab host or an alias workit can resolve',
+    );
+  git(root, "remote", "set-url", "--push", "origin", "git@workgh:EnghouseGlobal/project.git");
+  const alias = pushForge(root, { sshConfig: "" });
+  if (alias.ok) throw new Error("expected an unresolved alias");
+  expect(alias.error).toContain('could not resolve ssh alias "workgh" to GitHub or GitLab');
+  git(
+    root,
+    "remote",
+    "set-url",
+    "--push",
+    "origin",
+    "git@github-work.com:EnghouseGlobal/project.git",
+  );
 
   // D16: a disagreeing workspace provider is blocked with the exact fix.
   if (!derived.ok) throw new Error("expected a forge");
