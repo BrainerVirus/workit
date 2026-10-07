@@ -1109,12 +1109,37 @@ export function activeStanding(rows: readonly ReadRow[], fanout: string): ReadRo
   return active;
 }
 
+/**
+ * A worker or verifier session by the ids the lead hands out: `fanout brief`'s
+ * `<lead>-w-<slice>` (`+try<n>` for a race attempt), a verifier's
+ * `<lead>-v<n>`, or an id `--as verifier|reviewer` minted.
+ */
+export const isDelegateSession = (session: string | null): boolean =>
+  session !== null &&
+  (/-w-[a-z0-9._-]+(?:\+try\d)?$/u.test(session) ||
+    /-v\d+$/u.test(session) ||
+    /:(?:verifier|reviewer):[0-9a-f]+$/u.test(session));
+
 export function recordStanding(
   context: RecordContext,
   input: { fanout: string; what?: string },
 ): LedgerResult<StandingRow> {
   const what = required(input.what, "<order>");
   if (!what.ok) return what;
+  // One order per line of every brief: a newline or control character would
+  // let an order forge other brief fields.
+  if (/\p{Cc}/u.test(what.value))
+    return err(
+      "invalid_input",
+      "a standing order is one line: no newlines or control characters",
+      'add each order separately: workit ledger standing add "<order>"',
+    );
+  if (isDelegateSession(context.actor.session))
+    return err(
+      "blocked",
+      `session ${context.actor.session} is a worker or verifier: standing orders come from the lead`,
+      "report the order to the lead instead",
+    );
   const link = checkSupersede(context, "standing");
   if (!link.ok) return link;
   return appendRow<StandingRow>(

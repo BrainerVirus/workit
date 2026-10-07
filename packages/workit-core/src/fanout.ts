@@ -18,12 +18,13 @@
 // deterministic suggestion: an owner for known shared files (lockfiles,
 // manifests, barrels, CI config), else a dependency that serializes them.
 //
-// Each slice's `hash` covers its own definition (brief, scope, branch, base,
-// dependencies; not its worktree path). A re-plan that changes a slice starts
-// a new run for that slice alone: its `hashSince` moves to now, and only
-// ledger rows recorded under its hash (worktree rows carry `sliceHash`) or
-// since then link a gone branch's merged PR to it or count as its activity.
-// Its siblings keep their runs.
+// Each slice's `hash` covers what it is (goal, acceptance, verify, forbidden,
+// scope, owns, branch, base, dependencies), not how it is briefed (tier,
+// timebox, context) or where its worktree goes. A re-plan that changes a
+// slice starts a new run for that slice alone: its `hashSince` moves to now,
+// and only ledger rows recorded under its hash (worktree rows carry
+// `sliceHash`) or since then link a gone branch's merged PR to it or count as
+// its worktree. Liveness still reads every row. Its siblings keep their runs.
 //
 // `fanIn: "integration"` is the one-PR mode: the trunk is an integration
 // branch (never origin's default branch), workers merge its tip into their
@@ -762,9 +763,21 @@ export function worktreeRoot(cwd: string): string {
   return path.join(path.dirname(main), `${path.basename(main)}-wt`);
 }
 
-/** sha256 (16 hex) of the slice's definition: everything but its worktree path and hash. */
+/**
+ * sha256 (16 hex) of the slice's definition. Brief-only fields (tier,
+ * timebox, context) and the worktree path are left out, so fixing a typo in
+ * them never re-dispatches landed work.
+ */
 export function sliceHash(slice: Slice): string {
-  const { worktree: _worktree, hash: _hash, hashSince: _since, ...definition } = slice;
+  const {
+    worktree: _worktree,
+    hash: _hash,
+    hashSince: _since,
+    tier: _tier,
+    timebox: _timebox,
+    context: _context,
+    ...definition
+  } = slice;
   return createHash("sha256").update(JSON.stringify(definition)).digest("hex").slice(0, 16);
 }
 

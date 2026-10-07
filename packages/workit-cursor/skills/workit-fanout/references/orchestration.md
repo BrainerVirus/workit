@@ -59,12 +59,25 @@ it (`git branch <branch> <winner>`), have the verifier record the verdict on
 Follow the workspace `verification` setting (`workit grant show`); the
 worker never records a verdict on its own work.
 
-- Normal: a verifier that wrote none of the slices records the verdicts. A
-  lead that authored none of the slices may record them in its own session.
-- `verification: independent` and high risk: never the lead's own session.
-  A separate verifier session records them (`WORKIT_SESSION_ID=<lead>-v<n>`,
-  or `--as verifier`); at high risk one verifier per slice, plus a review
-  panel (below).
+- `self` (the default): a verifier that wrote none of the slices records the
+  verdicts. A lead that authored none of the slices may record them in its
+  own session.
+- `independent`, and any slice at high risk: a separate verifier session
+  records them, never the lead's own; at high risk one verifier per slice,
+  plus a review panel (below). This is doctrine, not enforced: the ledger
+  only tells a branch's authors from everyone else, and a lead that wrote
+  none of it counts as independent.
+
+Which session id a verdict carries, per host:
+
+- Claude Code: subagents inherit your `WORKIT_SESSION_ID`, so the
+  SubagentStart hook names each `verifier` and `reviewer` its own session
+  (`<lead>:<agent id>`), passed as `--session`; that one wins over any
+  `<lead>-v<n>` in a brief. An `implementer` uses the session its brief
+  exports for its workit commands.
+- Other hosts: the session the brief sets wins: `export
+  WORKIT_SESSION_ID=<lead>-w-<slice>` from `workit fanout brief` for a
+  worker, `<lead>-v<n>` (or `--as verifier`) for a verifier you start.
 
 A batch verifier takes several slices on one surface in one session: for
 each branch it checks out the head, runs that slice's VERIFY, and records its

@@ -43,7 +43,7 @@ import {
   type RecordContext,
   type VerdictCheck,
 } from "@brainervirus/workit-core/src/ledger";
-import { selectFanout } from "@brainervirus/workit-core/src/fanout";
+import { readFanout, selectFanout } from "@brainervirus/workit-core/src/fanout";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
@@ -363,6 +363,16 @@ async function standing(io: Io, values: Values, args: string[]): Promise<number>
     actor: acting.actor,
     ...(values.supersedes ? { supersedes: values.supersedes } : {}),
   };
+  if (action === "add" && values.fanout !== undefined) {
+    const plan = readFanout(io.cwd, fanout);
+    if (!plan.ok || plan.data === null)
+      return emit(
+        io,
+        fail("not_found", `no fanout plan named ${fanout}`, {
+          unblock: "workit fanout plan <plan.json> first, or name an existing plan with --fanout",
+        }),
+      );
+  }
   if (action === "add")
     return fromResult(
       io,

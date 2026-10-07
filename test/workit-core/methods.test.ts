@@ -324,7 +324,22 @@ test("agent-critical delivery rules stay stated", () => {
     ["workit-fanout", skillText("workit-fanout"), "keep 4-6 in flight and refill from `spawnable`"],
     ["workit-fanout", skillText("workit-fanout"), "Never hand-edit it"],
     ["workit-fanout", skillText("workit-fanout"), "Verify by the workspace `verification` setting"],
-    ["workit-fanout", skillText("workit-fanout"), "one verifier may take a batch of slices"],
+    [
+      "workit-fanout",
+      skillText("workit-fanout"),
+      "never yours (doctrine: the ledger only refuses authors)",
+    ],
+    ["fanout orchestration", fanoutOrchestration(), "This is doctrine, not enforced"],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
+      "the SubagentStart hook names each `verifier` and `reviewer` its own session",
+    ],
+    [
+      "workit-fanout",
+      skillText("workit-fanout"),
+      "One verifier may take a batch of slices, one verdict per branch",
+    ],
     [
       "workit-fanout",
       skillText("workit-fanout"),
@@ -358,7 +373,7 @@ test("agent-critical delivery rules stay stated", () => {
     [
       "fanout orchestration",
       fanoutOrchestration(),
-      "`verification: independent` and high risk: never the lead's own session",
+      "`independent`, and any slice at high risk: a separate verifier session",
     ],
     [
       "fanout orchestration",

@@ -40,12 +40,12 @@ ceremony; do it yourself. Workit never spawns agents; you do.
    chain resumes. A hard slice may race instead: N attempts, keep the best
    verdict (`references/orchestration.md`).
 7. **Verify by the workspace `verification` setting** (`workit grant show`).
-   A worker's report is a pointer, never evidence. A fresh agent that wrote
-   none of the slices (Claude Code: the `verifier` agent) runs VERIFY and
-   verify-<app>; one verifier may take a batch of slices, recording one
-   `workit ledger verdict <result> --branch <b> --how "<evidence>"` per
-   branch, under a session you set (`WORKIT_SESSION_ID=<lead>-v<n>`), never
-   chosen by the author. A review panel on separate models only at high risk.
+   A report is a pointer, never evidence. `self`: a verifier that wrote none
+   of the slices, or you if you wrote none. `independent` or high risk: a
+   separate verifier session, never yours (doctrine: the ledger only refuses
+   authors). One verifier may take a batch of slices, one verdict per branch
+   (`workit ledger verdict <result> --branch <b> --how "<evidence>"`), in a
+   session never chosen by the author. A review panel on separate models only at high risk.
 8. **Fan in** with `workit fanout check`: out-of-scope files (any file outside
    it stops the fan-in) and `git merge-tree` conflicts with trunk and between
    siblings. Fix what it names until it exits 0; a merged slice reads as

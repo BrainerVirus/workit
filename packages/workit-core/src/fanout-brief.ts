@@ -4,10 +4,15 @@
 //
 // MODE is `resume` when the branch already exists (a retry continues it),
 // else `new`; `--attempt <n>` renders one attempt of a race on its own branch
-// `<branch>-try<n>` and worktree. The fan-in line follows the plan's `fanIn`:
+// `<branch>-try<n>` (refused when another slice has that branch), worktree
+// `<worktree>+try<n>` and session `<lead>-w-<slice>+try<n>`: slice ids cannot
+// contain `+`, so no attempt collides with another slice's path or session.
+// The lead must have a WORKIT_SESSION_ID: worker ids derive from it. A
+// worker id longer than the ledger's 128 characters hashes its slice part. The fan-in line follows the plan's `fanIn`:
 // one PR per slice forbids every merge; integration mode has the worker merge
 // the integration tip before reporting, and nothing else. It only reads, apart
 // from hiding `.workit-scratch/` in the repository's info/exclude.
+import { createHash } from "node:crypto";
 import { activeStanding, readLedger, type LedgerActor } from "./ledger";
 import { branchRef, fanoutFail, type FanoutFile, type FanoutResult } from "./fanout";
 import {
@@ -57,6 +62,18 @@ const rules = (mode: BriefMode, branch: string, base: string): string[] => [
 /** A session id fragment that the ledger accepts ([A-Za-z0-9_.:@/+-]). */
 const sessionSafe = (text: string): string => text.replace(/[^A-Za-z0-9_.:@/+-]/gu, "-");
 
+/** The ledger's session id limit. */
+const SESSION_MAX = 128;
+
+/** `<lead>-w-<slice>[+try<n>]`, with the slice part hashed when the whole would be too long. */
+function workerSession(lead: string, slice: string, attempt: number | null): string {
+  const tail = attempt === null ? "" : `+try${attempt}`;
+  const full = `${lead}-w-${slice}${tail}`;
+  if (full.length <= SESSION_MAX) return full;
+  const digest = createHash("sha256").update(slice).digest("hex").slice(0, 12);
+  return `${lead.slice(0, SESSION_MAX - 3 - digest.length - tail.length)}-w-${digest}${tail}`;
+}
+
 export function renderBrief(
   cwd: string,
   plan: FanoutFile,
@@ -67,8 +84,20 @@ export function renderBrief(
   const slice = found.data;
   const ledger = readLedger(cwd);
   if (!ledger.ok) return fanoutFail(ledger.code, ledger.error, ledger.unblock);
-  const suffix = input.attempt === null ? "" : `-try${input.attempt}`;
-  const branch = `${slice.branch}${suffix}`;
+  if (!input.actor.session)
+    return fanoutFail(
+      "blocked",
+      "WORKIT_SESSION_ID is not set: worker session ids derive from the lead's",
+      "export WORKIT_SESSION_ID=<your session id>, then render the brief again",
+    );
+  const branch = input.attempt === null ? slice.branch : `${slice.branch}-try${input.attempt}`;
+  const taken = plan.slices.find((other) => other.id !== slice.id && other.branch === branch);
+  if (taken)
+    return fanoutFail(
+      "invalid_input",
+      `attempt branch ${branch} is slice ${taken.id}'s branch`,
+      "pick another --attempt number, or rename one of the branches in the plan",
+    );
   const head = branchRef(cwd, branch);
   const mode: BriefMode = input.mode ?? (head ? "resume" : "new");
   if (mode === "resume" && !head)
@@ -78,7 +107,7 @@ export function renderBrief(
       `workit fanout brief ${slice.id} --mode new`,
     );
 
-  const planned = `${slicePath(cwd, slice)}${suffix}`;
+  const planned = `${slicePath(cwd, slice)}${input.attempt === null ? "" : `+try${input.attempt}`}`;
   const exists = listWorktrees(cwd).some((entry) => samePath(entry.path, planned));
   excludeScratch(cwd);
   const scratch = exists ? `${planned}/${SCRATCH_DIR}` : SCRATCH_DIR;
@@ -90,8 +119,7 @@ export function renderBrief(
     id: row.id,
     what: String(row.what),
   }));
-  const lead = sessionSafe(input.actor.session ?? "lead").slice(0, 96);
-  const session = `${lead}-w-${slice.id}${suffix}`;
+  const session = workerSession(sessionSafe(input.actor.session), slice.id, input.attempt);
   const fanIn =
     plan.fanIn === "integration"
       ? [

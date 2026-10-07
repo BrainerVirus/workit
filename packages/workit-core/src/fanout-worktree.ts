@@ -12,11 +12,17 @@
 // (`fanout.worktree.released`), refuses while it has uncommitted changes
 // unless forced, then runs `git worktree remove` (which takes the scratch dir
 // with it). The branch is kept. It only removes a worktree that `create` made
-// for this fanout, slice and path (its ledger row says so, and git's admin dir
-// for the worktree is the one the row recorded: same id, inode and birth
-// time), on the slice's branch or detached; never the main checkout, the one the command runs in,
-// or a worktree someone else made there, not even with --force. An empty
+// for this fanout, slice and path, on the slice's branch or detached; never
+// the main checkout, the one the command runs in, or a worktree someone else
+// made there, not even with --force. "Made by create" is exact: create writes
+// a random token into git's admin dir for the worktree
+// (`.git/worktrees/<id>/workit-fanout-token`) and records it with the admin
+// dir's id and inode; release and adopt need all three to match. A worktree
+// removed by hand and re-added at the path gets a new admin dir without the
+// token, on any filesystem (no birth time needed). A row from before the
+// token is matched by time only, so release refuses --force for it. An empty
 // directory that existed before `create` is left in place.
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { gitBranch } from "./git/ops";
@@ -111,11 +117,10 @@ const CLOCK_SLACK_MS = 2000;
  * The live `fanout.worktree.created` row for this fanout, slice and path:
  * the newest one, unless a later release removed that worktree (a row is
  * void once its worktree is gone), and only while the worktree at the path
- * is the one it recorded: git's admin dir for it (`.git/worktrees/<id>`) has
- * the recorded id, inode and birth time. A worktree removed by hand and
- * re-added at the path gets a new admin dir, so it never matches. A row from
- * before these fields falls back to the admin dir being no older than it.
- * Anything else is someone else's worktree.
+ * is the one it recorded. `exact`: the admin dir's token, id and inode match
+ * the row. A row without a token (written before it) matches when the admin
+ * dir is no older than the row, which a re-added worktree also passes, so it
+ * is never exact. Anything else is someone else's worktree.
  */
 function createdRow(cwd: string, plan: FanoutFile, slice: Slice, target: string) {
   const ledger = readLedger(cwd);
@@ -140,22 +145,29 @@ function createdRow(cwd: string, plan: FanoutFile, slice: Slice, target: string)
   if (removedSince) return null;
   const admin = adminDir(target);
   if (!admin) return null;
-  if (typeof row.adminId === "string") {
-    const sameBirth =
-      typeof row.adminBirth !== "string" || admin.birth === null || row.adminBirth === admin.birth;
-    return row.adminId === admin.id && row.adminIno === admin.ino && sameBirth ? row : null;
-  }
+  if (typeof row.adminToken === "string")
+    return row.adminToken === admin.token && row.adminId === admin.id && row.adminIno === admin.ino
+      ? { row, exact: true }
+      : null;
   const made = admin.birthMs ?? admin.mtimeMs;
   if (made + CLOCK_SLACK_MS < Date.parse(row.at)) return null;
-  return row;
+  return { row, exact: false };
 }
 
+const TOKEN_FILE = "workit-fanout-token";
+
+/** The filesystem calls identity relies on; tests stub them. */
+export const worktreeDeps = {
+  stat: (file: string): fs.BigIntStats => fs.statSync(file, { bigint: true }),
+};
+
 type AdminDir = {
+  path: string;
   /** `<id>` of `.git/worktrees/<id>`. */
   id: string;
   ino: string;
-  /** Birth time in ns, null where the filesystem has none. */
-  birth: string | null;
+  /** The token create wrote there, or null. */
+  token: string | null;
   birthMs: number | null;
   mtimeMs: number;
 };
@@ -165,19 +177,38 @@ function adminDir(worktree: string): AdminDir | null {
   const dir = gitRun(worktree, ["rev-parse", "--absolute-git-dir"]);
   if (!dir.ok) return null;
   const file = dir.stdout.trim();
+  let token: string | null = null;
   try {
-    const stat = fs.statSync(file, { bigint: true });
-    const born = stat.birthtimeNs > 0n;
+    token = fs.readFileSync(path.join(file, TOKEN_FILE), "utf8").trim() || null;
+  } catch {
+    token = null;
+  }
+  try {
+    const stat = worktreeDeps.stat(file);
     return {
+      path: file,
       id: path.basename(file),
       ino: stat.ino.toString(),
-      birth: born ? stat.birthtimeNs.toString() : null,
-      birthMs: born ? Number(stat.birthtimeMs) : null,
+      token,
+      birthMs: stat.birthtimeNs > 0n ? Number(stat.birthtimeMs) : null,
       mtimeMs: Number(stat.mtimeMs),
     };
   } catch {
     return null;
   }
+}
+
+/** Mark the admin dir of a worktree create just made; null when it cannot. */
+function markAdminDir(worktree: string): (AdminDir & { token: string }) | null {
+  const admin = adminDir(worktree);
+  if (!admin) return null;
+  const token = randomBytes(16).toString("hex");
+  try {
+    fs.writeFileSync(path.join(admin.path, TOKEN_FILE), `${token}\n`);
+  } catch {
+    return null;
+  }
+  return { ...admin, token };
 }
 
 export function findSlice(plan: FanoutFile, id: string): FanoutResult<Slice> {
@@ -354,7 +385,7 @@ export function createSliceWorktree(
   const scratch = ensureScratch(target);
   const head = gitRun(target, ["rev-parse", "HEAD"]).stdout.trim();
   const baseSha = mode === "new" ? head : null;
-  const admin = adminDir(target);
+  const admin = markAdminDir(target);
   appendObserved(cwd, {
     type: "fanout.worktree.created",
     actor: input.actor,
@@ -368,7 +399,7 @@ export function createSliceWorktree(
     dirExisted,
     planCreatedAt: plan.createdAt,
     sliceHash: slice.hash,
-    ...(admin ? { adminId: admin.id, adminIno: admin.ino, adminBirth: admin.birth } : {}),
+    ...(admin ? { adminId: admin.id, adminIno: admin.ino, adminToken: admin.token } : {}),
     ...(baseSha ? { baseSha } : {}),
   });
   return { ok: true, data: { ...base, scratch, head, mode, created: true, notes } };
@@ -442,13 +473,20 @@ export function releaseSliceWorktree(
       "blocked",
       `${entry.path} is on ${entry.branch.replace(/^refs\/heads\//u, "")}, not slice ${slice.id}'s ${slice.branch}; nothing was removed`,
     );
-  const made = createdRow(cwd, plan, slice, entry.path);
-  if (!made)
+  const owned = createdRow(cwd, plan, slice, entry.path);
+  if (!owned)
     return fanoutFail(
       "blocked",
       `${entry.path} was not made by workit fanout worktree create for slice ${slice.id} (no ledger row); nothing was removed`,
       `remove it yourself (git worktree remove ${entry.path}) once you know what it holds`,
     );
+  if (input.force && !owned.exact)
+    return fanoutFail(
+      "blocked",
+      `${entry.path} was created before workit recorded worktree identity, so it cannot be told from a worktree someone re-added there; --force is refused and nothing was removed`,
+      `release it without --force, or remove it yourself (git worktree remove ${entry.path}) once you know what it holds`,
+    );
+  const made = owned.row;
   out.head = entry.head;
   const status = gitRun(entry.path, [
     "status",
