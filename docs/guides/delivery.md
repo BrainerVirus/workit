@@ -16,20 +16,30 @@ workit git push [--set-upstream] [--force-with-lease]
 
 - `git branch` and `git commit` apply the workspace branch and commit policy,
   never commit to a protected branch, and never sweep in changes you did not
-  name. Commits carry a `Workit-Session:` trailer (an amend keeps the
-  existing trailers and never repeats one). With no configured branch policy,
-  the repository's branches pick it: `develop` means gitflow, `main` alone
+  name. Commits carry a `Workit-Session:` trailer. An amend keeps the old
+  commit's trailers (`--no-edit` keeps the whole message; a new `-m`/`-F`
+  message gets the old trailers carried over) and never repeats one.
+  `--amend` refuses a commit that is already on the default target or a
+  protected branch, and suggests a forced push only when the amended commit
+  was on the branch's own upstream. With no configured branch policy,
+  the repository's local and `origin` branches pick it (`workit doctor` shows
+  `preset: detected (…)`): `develop` means gitflow, `main` alone
   github-flow, `master` alone trunk-based.
 - During a rebase, merge, cherry-pick or revert, `git branch`, `git commit`
-  and `git push` refuse and say how to continue or abort it. A failing hook's
-  output is kept whole (head and tail past 200 lines).
+  and `git push` refuse and say how to continue or abort it. `git commit` is
+  allowed where a commit is the next step: an interactive rebase stopped at
+  `edit`, and a revert without conflicts (`git revert --no-commit`).
+- A failing hook's output is kept whole (head and tail past 200 lines, lines
+  cut at 1000 characters).
 - `git push` never pushes a protected branch and succeeds only when the remote
   tip equals the local SHA afterwards. It forces only with
   `--force-with-lease`, leased on the tip Workit itself last pushed (otherwise
   `--expect <sha>`), and refuses to drop remote commits you never had unless
   you pass `--overwrite-unintegrated`. When the push is rejected because you
   amended or rebased commits that were already pushed, it says to push with
-  `--force-with-lease`, not to fetch and rebase.
+  `--force-with-lease`, not to fetch and rebase. Content that only matches by
+  patch (no merge commits) is named in the advice but still needs
+  `--overwrite-unintegrated`.
 
 ## Pull requests and CI
 

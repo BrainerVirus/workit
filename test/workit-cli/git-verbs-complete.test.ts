@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from 
 import { spawnSync } from "node:child_process";
 import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { readLedger } from "@/packages/workit-core/src/ledger";
@@ -157,6 +158,73 @@ test("Given a pushed commit, When it is amended, Then the output says to publish
   expect(repo.remoteTip("feature/a")).toBe(repo.git("rev-parse", "HEAD"));
 });
 
+test("Given a fresh feature branch whose HEAD is main's tip, When --amend is used, Then it is refused and nothing is rewritten", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/a");
+  const head = repo.git("rev-parse", "HEAD");
+  for (const argv of [
+    ["git", "commit", "--amend", "-m", "feat: x", "--json"],
+    ["git", "commit", "--amend", "--no-edit", "--json"],
+  ]) {
+    const result = await run(argv, repo.cwd);
+    expect(result.code).toBe(3);
+    expect(result.json().error).toStartWith("amend_shared_commit:");
+    expect(result.json().error).toContain("main");
+  }
+  expect(repo.git("rev-parse", "HEAD")).toBe(head);
+  expect(repo.git("rev-parse", "main")).toBe(head);
+});
+
+test("Given a commit pushed only under another, unprotected name, When it is amended, Then the amend works and no forced push is suggested", async () => {
+  const repo = setup();
+  await onFeature(repo);
+  repo.git("push", "-q", "origin", "feature/a:refs/heads/backup");
+  repo.git("fetch", "-q", "origin");
+  const result = await run(["git", "commit", "--amend", "-m", "feat: a2"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.stdout).not.toContain("already pushed");
+  expect(result.stdout).not.toContain("--force-with-lease");
+});
+
+test("Given a commit with a Refs trailer, When --amend -m gives a new message, Then the old trailers are carried over once", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/a");
+  repo.write("a.txt", "a\n");
+  expect(
+    (await run(["git", "commit", "-m", "feat: a", "-m", "Refs: WK-1", "--", "a.txt"], repo.cwd))
+      .code,
+  ).toBe(0);
+  expect((await run(["git", "commit", "--amend", "-m", "feat: reworded"], repo.cwd)).code).toBe(0);
+  expect(repo.git("log", "-1", "--format=%B")).toBe(
+    "feat: reworded\n\nRefs: WK-1\nWorkit-Session: author-1",
+  );
+});
+
+test("Given a body with a --- line, When committing, Then the trailer still lands at the end of the message", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/a");
+  repo.write("a.txt", "a\n");
+  const body = "Notes:\n---\nmore notes";
+  expect(
+    (await run(["git", "commit", "-m", "feat: a", "-m", body, "--", "a.txt"], repo.cwd)).code,
+  ).toBe(0);
+  expect(repo.git("log", "-1", "--format=%B")).toBe(
+    `feat: a\n\n${body}\n\nWorkit-Session: author-1`,
+  );
+});
+
+test("Given an empty commit, When it is amended without --allow-empty, Then the amend still works", async () => {
+  const repo = setup();
+  await onFeature(repo);
+  expect(
+    (await run(["git", "commit", "--allow-empty", "-m", "chore: retrigger"], repo.cwd)).code,
+  ).toBe(0);
+  const amended = await run(["git", "commit", "--amend", "-m", "chore: retrigger ci"], repo.cwd);
+  expect(amended.code, amended.stderr).toBe(0);
+  expect(repo.git("log", "-1", "--format=%s")).toBe("chore: retrigger ci");
+  expect(repo.git("rev-parse", "HEAD^{tree}")).toBe(repo.git("rev-parse", "HEAD~1^{tree}"));
+});
+
 // ---------------------------------------------------------------------------
 // push advice after a raw amend
 
@@ -187,7 +255,7 @@ test("Given a branch pushed with raw git and then amended with raw git, When wor
   expect(repo.remoteTip("feature/a")).toBe(repo.git("rev-parse", "HEAD"));
 });
 
-test("Given a remote commit with the same patch as a local one (rebased elsewhere), When workit pushes, Then it is seen as integrated", async () => {
+test("Given a remote commit with the same patch as a local one (rebased elsewhere), When workit pushes, Then the advice names the equivalence but the lease guard still needs --overwrite-unintegrated", async () => {
   const repo = setup();
   repo.git("switch", "-q", "-c", "feature/a");
   repo.write("a.txt", "a\n");
@@ -206,10 +274,71 @@ test("Given a remote commit with the same patch as a local one (rebased elsewher
   repo.git("branch", "-m", "feature/a");
   const result = await run(["git", "push", "--json"], repo.cwd);
   expect(result.code).toBe(1);
-  expect(result.json().unblock).toBe(`workit git push --force-with-lease --expect ${remote}`);
-  expect(
-    (await run(["git", "push", "--force-with-lease", "--expect", remote], repo.cwd)).code,
-  ).toBe(0);
+  expect(result.json().error).toContain("patch-equivalent");
+  expect(result.json().unblock).toStartWith(
+    `workit git push --force-with-lease --expect ${remote} --overwrite-unintegrated`,
+  );
+  // Patch equivalence never satisfies the guard by itself.
+  const guarded = await run(
+    ["git", "push", "--force-with-lease", "--expect", remote, "--json"],
+    repo.cwd,
+  );
+  expect(guarded.code).toBe(3);
+  expect(guarded.json().error).toStartWith("lease_not_integrated:");
+  expect(repo.remoteTip("feature/a")).toBe(remote);
+  const forced = await run(
+    ["git", "push", "--force-with-lease", "--expect", remote, "--overwrite-unintegrated"],
+    repo.cwd,
+  );
+  expect(forced.code).toBe(0);
+  expect(repo.remoteTip("feature/a")).toBe(repo.git("rev-parse", "HEAD"));
+});
+
+/** A second clone of the remote with its own identity (another developer). */
+const clone = (repo: RemoteRepo, name: string) => {
+  const dir = path.join(repo.root, name);
+  const git = (...args: string[]) => {
+    const result = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  expect(spawnSync("git", ["clone", "-q", repo.bare, dir]).status).toBe(0);
+  git("config", "user.name", name);
+  git("config", "user.email", `${name}@t`);
+  git("config", "commit.gpgsign", "false");
+  git("config", "core.hooksPath", path.join(repo.root, "no-hooks"));
+  return { dir, git };
+};
+
+test("Given Bob merged main into the pushed branch and added a fix in the merge commit, When the local rebased branch is pushed, Then it is not called a rewrite and a lease without --overwrite-unintegrated is refused", async () => {
+  const repo = setup();
+  await onFeature(repo);
+  expect((await run(["git", "push"], repo.cwd)).code).toBe(0);
+  repo.pushFromElsewhere("main", "m.txt");
+  const bob = clone(repo, "bob");
+  bob.git("switch", "-q", "feature/a");
+  bob.git("merge", "-q", "--no-ff", "--no-commit", "origin/main");
+  writeFileSync(path.join(bob.dir, "bobfix.txt"), "bob\n");
+  bob.git("add", "bobfix.txt");
+  bob.git("commit", "-qm", "Merge main into feature/a");
+  bob.git("push", "-q", "origin", "feature/a");
+  const bobTip = bob.git("rev-parse", "HEAD");
+
+  repo.git("fetch", "-q", "origin");
+  repo.git("rebase", "-q", "origin/main");
+  const result = await run(["git", "push", "--json"], repo.cwd);
+  expect(result.code).toBe(1);
+  expect(result.json().error).not.toContain("rewritten");
+  expect(result.json().error).not.toContain("patch-equivalent");
+  expect(result.json().unblock).toStartWith("git fetch origin && git rebase origin/feature/a");
+  const leased = await run(
+    ["git", "push", "--force-with-lease", "--expect", bobTip, "--json"],
+    repo.cwd,
+  );
+  expect(leased.code).toBe(3);
+  expect(leased.json().error).toStartWith("lease_not_integrated:");
+  expect(repo.remoteTip("feature/a")).toBe(bobTip);
+  expect(repo.git("show", "--name-only", "--format=", bobTip)).toBe("bobfix.txt");
 });
 
 test("Given someone else pushed to the branch, When workit pushes, Then the advice is still to fetch and integrate", async () => {
@@ -368,6 +497,54 @@ test("Given a conflicted revert, When committing, Then workit says a revert is i
   await refusesWith(repo, "revert_in_progress", "git revert");
 });
 
+test("Given git revert --no-commit, When committing, Then the revert is recorded; branch and push stay refused until then", async () => {
+  const repo = setup();
+  await onFeature(repo);
+  repo.git("revert", "--no-commit", "HEAD");
+  for (const argv of [
+    ["git", "push", "--json"],
+    ["git", "branch", "feature/z", "--json"],
+  ]) {
+    const refused = await run(argv, repo.cwd);
+    expect(refused.code, argv.join(" ")).toBe(3);
+    expect(refused.json().error).toStartWith("revert_in_progress:");
+  }
+  const result = await run(["git", "commit", "-m", "fix: undo a", "--json"], repo.cwd);
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({ branch: "feature/a", files: ["a.txt"] });
+  expect(
+    spawnSync("git", ["rev-parse", "-q", "--verify", "REVERT_HEAD"], { cwd: repo.cwd }).status,
+  ).not.toBe(0);
+});
+
+test("Given an interactive rebase stopped at edit, When the commit is amended, Then it is recorded for the rebased branch and the rebase continues", async () => {
+  const repo = setup();
+  await onFeature(repo);
+  repo.write("b.txt", "b\n");
+  expect((await run(["git", "commit", "-m", "feat: b", "--", "b.txt"], repo.cwd)).code).toBe(0);
+  const stopped = spawnSync("git", ["rebase", "-i", "HEAD~2"], {
+    cwd: repo.cwd,
+    env: { ...process.env, GIT_SEQUENCE_EDITOR: "sed -i 1s/^pick/edit/" },
+  });
+  expect(stopped.status).toBe(0);
+  for (const argv of [
+    ["git", "push", "--json"],
+    ["git", "branch", "feature/z", "--base", "main", "--json"],
+  ]) {
+    const refused = await run(argv, repo.cwd);
+    expect(refused.code, argv.join(" ")).toBe(3);
+    expect(refused.json().error).toStartWith("rebase_in_progress:");
+  }
+  const amended = await run(
+    ["git", "commit", "--amend", "-m", "feat: a edited", "--json"],
+    repo.cwd,
+  );
+  expect(amended.code, amended.stdout).toBe(0);
+  expect(amended.json().data.branch).toBe("feature/a");
+  repo.git("rebase", "--continue");
+  expect(repo.git("log", "--format=%s", "origin/main..feature/a")).toBe("feat: b\nfeat: a edited");
+});
+
 // ---------------------------------------------------------------------------
 // hook output
 
@@ -404,6 +581,17 @@ test("Given a hook that prints 250 lines, When committing, Then the head and tai
   expect(error).not.toContain("line 125\n");
   expect(error).toContain("line 151\n");
   expect(error).toEndWith("line 250");
+});
+
+test("Given a hook that prints one 3000-character line, When committing, Then the line is cut at 1000 characters", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/a");
+  hook(repo, "pre-commit", "head -c 3000 /dev/zero | tr '\\0' x; echo; exit 1");
+  repo.write("a.txt", "a\n");
+  const result = await run(["git", "commit", "-m", "feat: a", "--json", "--", "a.txt"], repo.cwd);
+  const error: string = result.json().error;
+  expect(error).toContain(`${"x".repeat(1000)}…`);
+  expect(error).not.toContain("x".repeat(1001));
 });
 
 test("Given a pre-push hook that fails with 10 lines, When pushing, Then all of them are reported", async () => {
@@ -460,4 +648,35 @@ test("Given a configured gitflow policy in a main-only repository, When creating
   const result = await run(["git", "branch", "feature/one", "--json"], repo.cwd);
   expect(result.code).toBe(1);
   expect(result.json().error).toContain("base develop does not resolve");
+});
+
+test("Given no workit config and develop only on a non-origin remote, When creating a branch, Then the fork's develop does not make it gitflow", async () => {
+  const repo = setup(null);
+  const fork = path.join(repo.root, "fork.git");
+  expect(spawnSync("git", ["init", "-q", "--bare", fork]).status).toBe(0);
+  repo.git("remote", "add", "fork", fork);
+  repo.git("push", "-q", "fork", "main:develop");
+  repo.git("fetch", "-q", "fork");
+  const result = await run(["git", "branch", "feature/one", "--json"], repo.cwd);
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data.base).toBe("main");
+});
+
+test("Given no workit config, When doctor runs in a main-only repository, Then it reports the detected preset; a configured one is shown plainly", () => {
+  const repo = setup(null);
+  const doctor = () =>
+    runDoctor({
+      cwd: repo.cwd,
+      home: configHome.home,
+      configDir: configHome.configDir,
+      stateDir: path.join(repo.root, "state"),
+      env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: configHome.configDir },
+    }).checks.find((check) => check.id === "workspace_mismatch")?.detail;
+  expect(doctor()).toContain("preset: detected (github-flow)");
+  writeFileSync(
+    path.join(configHome.configDir, "config.json"),
+    JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
+  );
+  expect(doctor()).toContain("preset: gitflow");
+  expect(doctor()).not.toContain("detected");
 });

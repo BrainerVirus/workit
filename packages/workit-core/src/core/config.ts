@@ -311,6 +311,8 @@ export const resolveBranchPolicy = (
   protected: Set<string>;
   integration: "pr" | "merge";
   defaultTargetBranch: string;
+  /** No policy was configured; the repository's branches chose the preset. */
+  detected: boolean;
 } => {
   const wp = workspace?.branchPolicy ?? {};
   // An invalid workspace preset (e.g. a typo) falls back to the global preset,
@@ -348,6 +350,7 @@ export const resolveBranchPolicy = (
     // CA-05: preset-aware default target when vcs.defaultTargetBranch is unset.
     defaultTargetBranch:
       preset === "github-flow" ? "main" : preset === "trunk-based" ? "master" : "develop",
+    detected: detected !== null,
   };
 };
 

@@ -732,6 +732,8 @@ export const resolveWorkspacePolicy = (
   config: ToolkitConfig,
   workspace: WorkspaceConfig | null,
   profileName?: string,
+  /** The preset the checkout's branches imply, used when no policy is configured. */
+  repoPreset?: () => BranchPreset | null,
 ): WorkspacePolicyResolution | { status: "invalid"; error: string } => {
   const selected = workspace
     ? resolveWorkspaceProfile(workspace, profileName)
@@ -746,7 +748,7 @@ export const resolveWorkspacePolicy = (
     status: "resolved",
     workspace: selected.workspace,
     profileName: selected.profileName,
-    branchPolicy: resolveConfiguredBranchPolicy(config, selected.workspace),
+    branchPolicy: resolveConfiguredBranchPolicy(config, selected.workspace, repoPreset),
     commitPolicy: resolveConfiguredCommitPolicy(config, selected.workspace),
     provenance: selected.provenance,
   };

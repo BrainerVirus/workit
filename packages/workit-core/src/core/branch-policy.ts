@@ -9,15 +9,15 @@ const PREFIXES = {
   hotfix: "hotfix/*",
 };
 
-/** Local and remote-tracking branch names (`origin/develop` counts as `develop`). */
+/**
+ * Local branch names plus origin's remote-tracking ones (`origin/develop`
+ * counts as `develop`; a fork or mirror remote's branches do not).
+ */
 const branchNames = (workspaceRoot: string): Set<string> => {
   const r = spawnSync(
     "git",
-    ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
-    {
-      cwd: workspaceRoot,
-      encoding: "utf8",
-    },
+    ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"],
+    { cwd: workspaceRoot, encoding: "utf8" },
   );
   if (r.status !== 0) return new Set();
   return new Set(
@@ -27,7 +27,7 @@ const branchNames = (workspaceRoot: string): Set<string> => {
       .map((ref) =>
         ref.startsWith("refs/heads/")
           ? ref.slice("refs/heads/".length)
-          : ref.split("/").slice(3).join("/"),
+          : ref.slice("refs/remotes/origin/".length),
       ),
   );
 };
