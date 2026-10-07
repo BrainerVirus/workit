@@ -324,8 +324,10 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "commit",
-        usage: "workit git commit -m|--message <msg>… [-a|--all | [--] <paths…>]",
-        summary: "Commit with a linted Conventional Commit message and the session trailer",
+        usage:
+          "workit git commit -m|--message <msg>… | -F|--file <file|-> [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>]",
+        summary:
+          "Commit (or --amend) with a linted Conventional Commit message and the session trailer",
       },
       {
         name: "push",
@@ -337,6 +339,7 @@ export const VERBS: readonly VerbEntry[] = [
     examples: [
       "workit git branch --kind feature --slug help-everywhere",
       'workit git commit -m "fix(cli): answer help flags first" --all',
+      "workit git commit --amend --no-edit -- src/forgotten.ts",
       "workit git push --set-upstream",
     ],
     load: () => import("./git"),
