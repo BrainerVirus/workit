@@ -482,7 +482,7 @@ test("packed CLI: help lists task, grant, handoff, and uninstall commands", () =
     expect(help.status, help.stderr).toBe(0);
     for (const command of [
       "workit <family> <action> [options]",
-      "workit grant show [<workspace>] [--all]",
+      "workit grant [show|set|unset] [options]",
       "workit handoff --task <id>",
       "workit uninstall",
     ]) {

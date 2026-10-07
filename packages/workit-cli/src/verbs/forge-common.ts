@@ -39,11 +39,18 @@ export type ParsedFlags = {
   positionals: string[];
 };
 
-/** `--name value`, `--name=value`, booleans, repeatable lists; unknown flags are errors. */
+/**
+ * `--name value`, `--name=value`, booleans, repeatable lists; unknown flags are
+ * errors. Everything after a bare `--` is positional.
+ */
 export function parseFlags(argv: readonly string[], spec: FlagSpec): ParsedFlags | string {
   const parsed: ParsedFlags = { values: {}, booleans: new Set(), lists: {}, positionals: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === "--") {
+      parsed.positionals.push(...argv.slice(index + 1));
+      break;
+    }
     if (arg === "--json") continue;
     if (!arg.startsWith("--")) {
       parsed.positionals.push(arg);
