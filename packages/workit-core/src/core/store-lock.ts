@@ -188,6 +188,18 @@ export const classifyLockOwner = (
   const currentStart = processStartOf(pid);
   if (processStart !== null && currentStart !== null && processStart !== currentStart)
     return { state: "stale", reason: `pid ${pid} now belongs to a different process` };
+  // Without both start times (Windows has none) a reused pid looks alive. A
+  // holder keeps the lock for one mutation, never minutes, so past the TTL
+  // the pid is taken to be reused and the crashed writer's lock is reclaimed.
+  if (
+    (processStart === null || currentStart === null) &&
+    ageMs !== null &&
+    ageMs > FOREIGN_LOCK_TTL_MS
+  )
+    return {
+      state: "stale",
+      reason: `pid ${pid} is running but the lock is older than its TTL and the pid's start time cannot be checked (reused pid)`,
+    };
   return { state: "live", reason: `held by running pid ${pid}` };
 };
 

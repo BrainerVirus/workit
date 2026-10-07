@@ -90,6 +90,19 @@ test.skipIf(process.platform !== "linux")(
   },
 );
 
+test("Given a same-host lock older than the TTL whose pid is running but whose start time cannot be checked (Windows), When a write runs, Then the pid is taken as reused and the lock is reclaimed", () => {
+  const { store, task, lockPath } = startedStore();
+  writeLock(lockPath, {
+    pid: process.pid,
+    processStart: null,
+    host: localLockHost(),
+    nonce: "crashed-writer-pid-reused",
+  });
+  utimesSync(lockPath, new Date(0), new Date(0));
+  expect(store.mutateTask(task.id, task.revision, identity).ok).toBe(true);
+  expect(existsSync(lockPath)).toBe(false);
+});
+
 test("Given a lock from another host older than the TTL, When a write runs, Then the lock is reclaimed and the write succeeds", () => {
   const { store, task, lockPath } = startedStore();
   writeLock(lockPath, {
