@@ -284,7 +284,7 @@ test("Given every workit command in skills, references, agents and the bootstrap
 // (renderSkillText); a bare name in prose would never load. A user-invoked
 // skill is never loaded from another skill, so it appears only in prose.
 test("Given every skill file, Then each other method skill is named only in the form the build renders", () => {
-  const userInvoked = new Set(
+  const userInvoked = new Set<string>(
     WORKIT_METHOD_SKILLS.filter((name) =>
       /^disable-model-invocation:\s*true$/m.test(skillMd(name).split("\n---")[0]),
     ),
