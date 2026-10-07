@@ -89,7 +89,7 @@ export function selectMethods(policy: Policy, capabilities: Capability[]): Selec
 export const invariantBootstrap = (): string =>
   `
 Workit is optional coordination and proof tooling around the host: you decide
-what and whether, the \`workit\` CLI does how and records what it observed.
+what and whether, the CLI does how and records what it observed.
 Native host allow/ask/deny, sandbox and org rules stay authoritative. Never
 switch paths to evade a denial, never claim enforcement a host cannot provide,
 and never fabricate an approval or verdict. A question answer is not
@@ -110,8 +110,8 @@ Autonomy contract:
   never edit workspaces.json or route around a grant_required.
 - Ask only for a product or preference choice, or for authority you lack, with
   your recommended answer. Facts are yours: read, run or prototype.
-- Label claims measured (you ran it this session and saw the result),
-  inferred, or guess. Prose is a note: only a configured check the CLI ran
+- Label claims measured (you ran it this session and saw it), inferred, or
+  guess. Prose is a note: only a configured check the CLI ran
   (\`workit check <name>\`) satisfies a gate; an ad-hoc
   \`workit check -- <cmd>\` never does.
 - Author is not verifier: your own verdict is \`--self\` (after an observed
@@ -123,23 +123,21 @@ Autonomy contract:
   reconcile every requested item and observe it (\`workit verify-delivery\`).
 
 CLI first: if a step has one right answer, use the \`workit\` verb instead of
-hand-running git, gh or glab: check, git, pr, ci, stack, verify-delivery,
-ledger, handoff, test-audit (\`workit help <verb>\`; without \`workit\` on
-PATH, \`npx -y @brainervirus/workit-cli\`). \`busy\` is retryable
-(\`workit doctor --fix-lock\` clears a dead lock); \`blocked\` names its unblock.
+hand-running git, gh or glab (\`workit git|pr|ci|check\`; \`workit help\` lists
+the rest; without \`workit\` on PATH, \`npx -y @brainervirus/workit-cli\`).
+\`busy\` is retryable (\`workit doctor --fix-lock\` clears a dead lock).
 The task families (task, policy, evidence, finding, decision, worker, state)
 are optional continuity for tracked work; each branch has one implicit task
 that the first recording creates, and a solo edit needs no task. A decision
 records a user choice; it never authorizes an effect. Judge work once with
 \`workit policy assess --judge risk= behavior= product-choice= plan=\`; an
 open choice or missing plan blocks edits until recorded.
-Omit revisions; a revision_conflict means one you passed is stale, so re-read.
+Omit revisions; on a revision_conflict, re-read.
 Across repositories, bind each item to its checkout, branch and endpoint,
 resolve competing targets before a mutation, and reconcile an uncertain
 external effect before retrying it.
 
-Mid-task input: answer a quick question in place, fold an adjustment in, and
-never silently drop or resume an objective (workit-continue).
+Mid-task: never silently drop or resume an objective (workit-continue).
 
 Skills: load the skill, never act from memory of it (slash aliases /wk-<name>).
 - brainstorm, plan, spec, grill, should we: workit-shape
@@ -153,4 +151,5 @@ Skills: load the skill, never act from memory of it (slash aliases /wk-<name>).
 - deslop, slop, dead code: workit-deslop
 - fan out, parallelize, parallel agents, swarm: workit-fanout
 - verify the app, smoke test, prove it works: workit-verify-app
+- retro (user-invoked; offer it): workit-retro
 `.trim();

@@ -310,6 +310,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   ledger: [["list"]],
   handoff: [[], ["--task"]],
   "test-audit": [["--bogus"], ["--diff", "no-such-base"]],
+  knowledge: [[], ["bogus"], ["lint"]],
   grant: [["bogus"], ["set"], ["set", "w", "merge=verified"]],
   youtrack: [[], ["note"]],
   changelog: [[], ["apply"]],

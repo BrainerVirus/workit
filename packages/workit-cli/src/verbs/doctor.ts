@@ -3,6 +3,7 @@
 // `--fix-lock` clears a stale .workit metadata lock first, so the report
 // reflects the cleaned state.
 import { runDoctor } from "../admin/doctor";
+import { lintKnowledge } from "@brainervirus/workit-core/src/knowledge";
 import {
   clearStaleMetadataLock,
   inspectMetadataLock,
@@ -69,8 +70,29 @@ export async function run(argv: string[], io: Io): Promise<number> {
     fixLock = clearStaleMetadataLock(root, { force });
   }
   const report = runDoctor({ host: "cli", cwd: io.cwd, workspaceRoot: root });
+  // Advisory only: knowledge findings never change the doctor's exit code.
+  let knowledge: ReturnType<typeof lintKnowledge> | null = null;
+  try {
+    knowledge = lintKnowledge(root);
+    if (knowledge.unreadable.length > 0) knowledge = null;
+  } catch {
+    knowledge = null;
+  }
+  const agents = knowledge?.files.find((file) => file.file === "AGENTS.md");
+  const knowledgeLine = knowledge
+    ? `info knowledge — ${agents ? `AGENTS.md ${agents.bytes} of ${knowledge.budget} bytes` : "no AGENTS.md"}; ${knowledge.findings.length} finding(s) (workit knowledge lint)`
+    : "info knowledge — unavailable";
   if (argv.includes("--json")) {
-    io.stdout(`${JSON.stringify(fixLock ? { ...report, fixLock } : report, null, 2)}\n`);
+    const summary = knowledge
+      ? {
+          agentsBytes: agents?.bytes ?? null,
+          budget: knowledge.budget,
+          findings: knowledge.findings.length,
+        }
+      : { unavailable: true };
+    io.stdout(
+      `${JSON.stringify({ ...report, ...(fixLock ? { fixLock } : {}), knowledge: summary }, null, 2)}\n`,
+    );
     return report.exitCode;
   }
   if (fixLock) {
@@ -91,6 +113,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     io.stdout(`${mark} ${check.id} — ${check.detail}\n`);
     if (check.fix) io.stdout(`     fix: ${check.fix}\n`);
   }
+  io.stdout(`${knowledgeLine}\n`);
   io.stdout(
     `passed ${report.summary.passed} / warned ${report.summary.warned} / failed ${report.summary.failed}\n`,
   );
