@@ -1,13 +1,15 @@
-// `workit fanout plan|check|status|worktree` (G1-G4): flag parsing and
+// `workit fanout plan|brief|check|status|worktree` (G1-G5): flag parsing and
 // rendering; the rules live in core fanout*.ts. The CLI never spawns agents.
 //
 //   workit fanout plan     <plan.json> [--name <n>] [--trunk <b> | --track <t>]
+//   workit fanout brief    <slice> [--name <n>] [--mode new|resume] [--attempt <n>]
 //   workit fanout check    [<slice>…] [--name <n>] [--base <ref>] [--offline]
 //   workit fanout status   [--name <n>] [--stuck-after 30m] [--offline]
 //   workit fanout worktree create|release <slice> [--name <n>] [--force]
 import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedForge } from "@brainervirus/workit-core/src/forge/resolve";
+import { renderBrief, type BriefOutcome } from "@brainervirus/workit-core/src/fanout-brief";
 import { checkFanout, type CheckOutcome } from "@brainervirus/workit-core/src/fanout-check";
 import { fanoutStatus, type StatusOutcome } from "@brainervirus/workit-core/src/fanout-status";
 import {
@@ -29,12 +31,14 @@ import { connect, parseDuration, parseFlags, releaseTrunk, usage } from "./forge
 
 const PLAN_USAGE =
   "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--json]";
+const BRIEF_USAGE =
+  "workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--json]";
 const CHECK_USAGE =
   "workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline] [--json]";
 const STATUS_USAGE = "workit fanout status [--name <n>] [--stuck-after 30m] [--offline] [--json]";
 const WORKTREE_USAGE =
   "workit fanout worktree create <slice> [--name <n>] | worktree release <slice> [--name <n>] [--force] [--json]";
-const USAGE = "workit fanout plan|check|status|worktree ... (workit help fanout)";
+const USAGE = "workit fanout plan|brief|check|status|worktree ... (workit help fanout)";
 
 /** The forge for PR lookups, or why there is none (offline is never an error). */
 function forgeFor(io: Io, offline: boolean): { forge: ResolvedForge | null; error: string | null } {
@@ -145,7 +149,7 @@ function plan(argv: string[], io: Io): number {
     return code;
   }
   return emit(io, ok(result.data), (data: PlanOutcome) => [
-    `${data.created ? "planned" : "re-planned"} fanout ${data.name} on ${data.trunk}: ${data.slices.length} slice${data.slices.length === 1 ? "" : "s"}`,
+    `${data.created ? "planned" : "re-planned"} fanout ${data.name} on ${data.trunk}${data.fanIn === "integration" ? " (integration branch: one PR)" : ""}: ${data.slices.length} slice${data.slices.length === 1 ? "" : "s"} · plan ${data.hash}`,
     ...data.slices.map(
       (slice) =>
         `  ${slice.id} [${slice.tier}] ${slice.branch} <- ${slice.base}${slice.dependsOn.length ? `  after ${slice.dependsOn.join(", ")}` : ""}\n      worktree ${slice.worktree}`,
@@ -158,6 +162,34 @@ function plan(argv: string[], io: Io): number {
     `landing order: ${data.landingOrder.join(", ")}`,
     ...data.notes.map((note) => `note: ${note}`),
   ]);
+}
+
+function brief(argv: string[], io: Io): number {
+  const flags = parseFlags(argv, { name: "value", mode: "value", attempt: "value" });
+  if (typeof flags === "string") return usage(io, flags, BRIEF_USAGE);
+  if (flags.positionals.length !== 1)
+    return usage(
+      io,
+      flags.positionals.length ? `unexpected argument ${flags.positionals[1]}` : "missing <slice>",
+      BRIEF_USAGE,
+    );
+  const mode = flags.values.mode ?? null;
+  if (mode !== null && mode !== "new" && mode !== "resume")
+    return usage(io, "--mode takes new or resume", BRIEF_USAGE);
+  const rawAttempt = flags.values.attempt;
+  const attempt = rawAttempt === undefined ? null : Number(rawAttempt);
+  if (attempt !== null && !(Number.isInteger(attempt) && attempt >= 1 && attempt <= 9))
+    return usage(io, "--attempt takes a number from 1 to 9", BRIEF_USAGE);
+  const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
+  if (!selected.ok) return failed(io, selected);
+  const result = renderBrief(io.cwd, selected.data, {
+    slice: flags.positionals[0],
+    mode,
+    attempt,
+    actor: actorFromEnv(io.env),
+  });
+  if (!result.ok) return failed(io, result);
+  return emit(io, ok(result.data), (data: BriefOutcome) => data.text.trimEnd());
 }
 
 const renderCheck = (data: CheckOutcome): string[] => [
@@ -307,6 +339,7 @@ function worktree(argv: string[], io: Io): number {
 export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv.filter((arg) => arg !== "--json");
   if (sub === "plan") return plan(rest, io);
+  if (sub === "brief") return brief(rest, io);
   if (sub === "check") return check(rest, io);
   if (sub === "status") return status(rest, io);
   if (sub === "worktree") return worktree(rest, io);

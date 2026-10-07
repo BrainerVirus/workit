@@ -12,8 +12,9 @@
 // (`fanout.worktree.released`), refuses while it has uncommitted changes
 // unless forced, then runs `git worktree remove` (which takes the scratch dir
 // with it). The branch is kept. It only removes a worktree that `create` made
-// for this fanout, slice and path (its ledger row says so), on the slice's
-// branch or detached; never the main checkout, the one the command runs in,
+// for this fanout, slice and path (its ledger row says so, and git's admin dir
+// for the worktree is the one the row recorded: same id, inode and birth
+// time), on the slice's branch or detached; never the main checkout, the one the command runs in,
 // or a worktree someone else made there, not even with --force. An empty
 // directory that existed before `create` is left in place.
 import fs from "node:fs";
@@ -68,7 +69,7 @@ const canonical = (target: string): string => {
   }
 };
 
-const samePath = (a: string, b: string): boolean => {
+export const samePath = (a: string, b: string): boolean => {
   const left = canonical(a);
   const right = canonical(b);
   return process.platform === "win32" || process.platform === "darwin"
@@ -82,7 +83,7 @@ const inside = (child: string, parent: string): boolean => {
 };
 
 /** `git worktree list --porcelain -z`; the first entry is the main worktree. */
-function listWorktrees(cwd: string): WorktreeEntry[] {
+export function listWorktrees(cwd: string): WorktreeEntry[] {
   const out: WorktreeEntry[] = [];
   let current: WorktreeEntry | null = null;
   for (const field of gitRun(cwd, ["worktree", "list", "--porcelain", "-z"]).stdout.split("\0")) {
@@ -98,7 +99,7 @@ function listWorktrees(cwd: string): WorktreeEntry[] {
 }
 
 /** The slice's worktree path: absolute since plan time; an older relative one is the main checkout's. */
-const slicePath = (cwd: string, slice: Slice): string =>
+export const slicePath = (cwd: string, slice: Slice): string =>
   path.isAbsolute(slice.worktree)
     ? slice.worktree
     : path.resolve(mainCheckout(cwd), slice.worktree);
@@ -110,8 +111,11 @@ const CLOCK_SLACK_MS = 2000;
  * The live `fanout.worktree.created` row for this fanout, slice and path:
  * the newest one, unless a later release removed that worktree (a row is
  * void once its worktree is gone), and only while the worktree at the path
- * is the one it recorded: git's admin dir for it (`.git/worktrees/<id>`) was
- * made no earlier than the row. Anything else is someone else's worktree.
+ * is the one it recorded: git's admin dir for it (`.git/worktrees/<id>`) has
+ * the recorded id, inode and birth time. A worktree removed by hand and
+ * re-added at the path gets a new admin dir, so it never matches. A row from
+ * before these fields falls back to the admin dir being no older than it.
+ * Anything else is someone else's worktree.
  */
 function createdRow(cwd: string, plan: FanoutFile, slice: Slice, target: string) {
   const ledger = readLedger(cwd);
@@ -134,24 +138,49 @@ function createdRow(cwd: string, plan: FanoutFile, slice: Slice, target: string)
       atPath(candidate),
   );
   if (removedSince) return null;
-  const made = adminDirTime(target);
-  if (made === null || made + CLOCK_SLACK_MS < Date.parse(row.at)) return null;
+  const admin = adminDir(target);
+  if (!admin) return null;
+  if (typeof row.adminId === "string") {
+    const sameBirth =
+      typeof row.adminBirth !== "string" || admin.birth === null || row.adminBirth === admin.birth;
+    return row.adminId === admin.id && row.adminIno === admin.ino && sameBirth ? row : null;
+  }
+  const made = admin.birthMs ?? admin.mtimeMs;
+  if (made + CLOCK_SLACK_MS < Date.parse(row.at)) return null;
   return row;
 }
 
-/** When git made the worktree's admin dir (birth time, else mtime); null when unknown. */
-function adminDirTime(worktree: string): number | null {
+type AdminDir = {
+  /** `<id>` of `.git/worktrees/<id>`. */
+  id: string;
+  ino: string;
+  /** Birth time in ns, null where the filesystem has none. */
+  birth: string | null;
+  birthMs: number | null;
+  mtimeMs: number;
+};
+
+/** Git's admin dir for the worktree: what tells this worktree from a later one at the path. */
+function adminDir(worktree: string): AdminDir | null {
   const dir = gitRun(worktree, ["rev-parse", "--absolute-git-dir"]);
   if (!dir.ok) return null;
+  const file = dir.stdout.trim();
   try {
-    const stat = fs.statSync(dir.stdout.trim());
-    return stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
+    const stat = fs.statSync(file, { bigint: true });
+    const born = stat.birthtimeNs > 0n;
+    return {
+      id: path.basename(file),
+      ino: stat.ino.toString(),
+      birth: born ? stat.birthtimeNs.toString() : null,
+      birthMs: born ? Number(stat.birthtimeMs) : null,
+      mtimeMs: Number(stat.mtimeMs),
+    };
   } catch {
     return null;
   }
 }
 
-function findSlice(plan: FanoutFile, id: string): FanoutResult<Slice> {
+export function findSlice(plan: FanoutFile, id: string): FanoutResult<Slice> {
   const slice = plan.slices.find((candidate) => candidate.id === id);
   return slice
     ? { ok: true, data: slice }
@@ -163,7 +192,7 @@ function findSlice(plan: FanoutFile, id: string): FanoutResult<Slice> {
 }
 
 /** Hide the scratch dir from git status and `git add -A` in every worktree. */
-function excludeScratch(cwd: string): void {
+export function excludeScratch(cwd: string): void {
   const common = gitCommonDir(cwd);
   if (!common) return;
   const file = path.join(common, "info", "exclude");
@@ -325,6 +354,7 @@ export function createSliceWorktree(
   const scratch = ensureScratch(target);
   const head = gitRun(target, ["rev-parse", "HEAD"]).stdout.trim();
   const baseSha = mode === "new" ? head : null;
+  const admin = adminDir(target);
   appendObserved(cwd, {
     type: "fanout.worktree.created",
     actor: input.actor,
@@ -337,6 +367,8 @@ export function createSliceWorktree(
     head,
     dirExisted,
     planCreatedAt: plan.createdAt,
+    planHash: plan.hash,
+    ...(admin ? { adminId: admin.id, adminIno: admin.ino, adminBirth: admin.birth } : {}),
     ...(baseSha ? { baseSha } : {}),
   });
   return { ok: true, data: { ...base, scratch, head, mode, created: true, notes } };

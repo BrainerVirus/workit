@@ -12,8 +12,9 @@
 //   commit (a squash merge that applied without the trunk touching the same
 //   lines). Anything else reads as not landed.
 // A merged PR whose branch is gone counts only when the ledger links that
-// branch to this slice (a worktree row, or a row recorded on its merged
-// head), so a reused branch name from older work is not taken for this slice.
+// branch to this slice: a worktree row made under this plan's hash, or a row
+// recorded on its merged head since this hash was planned. A reused branch
+// name from older work, or an older plan of the same name, never links.
 // A landing whose changed paths read on the trunk exactly as before it (a
 // revert) is not landed; the note says so.
 // The forge is asked through a breaker: after the first unavailable answer
@@ -187,21 +188,27 @@ function trunkPatchIds(ctx: LandingContext, fork: string): Set<string> {
 /** The ledger links `branch` to this slice: a worktree row, or a row recorded on `head`. */
 function linked(
   rows: readonly Record<string, unknown>[],
-  input: Pick<LandingInput, "fanout" | "since">,
+  input: Pick<LandingInput, "fanout" | "since" | "planHash">,
   slice: Pick<Slice, "id" | "branch">,
   head: string | null,
 ): boolean {
   // Only rows from this run of the fanout: a plan of the same name made
-  // earlier must not lend its merged PRs to this one.
+  // earlier, or re-planned with other content, must not lend its merged PRs.
   const since = input.since ? Date.parse(input.since) : Number.NaN;
-  return rows.some(
-    (row) =>
-      (Number.isNaN(since) || Date.parse(String(row.at)) >= since) &&
-      ((row.type === "fanout.worktree.created" &&
-        row.fanout === input.fanout &&
-        row.slice === slice.id) ||
-        (head !== null && row.branch === slice.branch && row.head === head)),
-  );
+  const recent = (row: Record<string, unknown>) =>
+    Number.isNaN(since) || Date.parse(String(row.at)) >= since;
+  return rows.some((row) => {
+    if (
+      row.type === "fanout.worktree.created" &&
+      row.fanout === input.fanout &&
+      row.slice === slice.id
+    )
+      // A row from before plan hashes falls back to its time.
+      return typeof row.planHash === "string" && input.planHash
+        ? row.planHash === input.planHash
+        : recent(row);
+    return recent(row) && head !== null && row.branch === slice.branch && row.head === head;
+  });
 }
 
 export type LandingInput = {
@@ -212,8 +219,10 @@ export type LandingInput = {
   /** Its dependency branch's tip (or merged head) for a stacked slice. */
   parentHead: string | null;
   fanout: string;
-  /** When this fanout plan was first made (FanoutFile.createdAt): older rows do not link. */
+  /** When this plan content was first recorded (FanoutFile.hashSince): older rows do not link. */
   since: string | null;
+  /** The plan's content hash: worktree rows link only under the same one. */
+  planHash: string | null;
   rows: readonly Record<string, unknown>[];
 };
 

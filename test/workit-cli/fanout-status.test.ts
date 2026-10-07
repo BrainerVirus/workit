@@ -251,6 +251,39 @@ test("fanout status: given a verdict that linked feature/a's merged head before 
   expect(byId.a).toMatchObject({ state: "not_started", landed: null });
 });
 
+test("fanout status: given slice a's worktree made under this plan and its PR squash-merged with the branch gone, when re-planned under the same name with the same content it stays landed, and with changed content it is no longer linked", async () => {
+  const forge = forgeSetup();
+  await stackPlan(forge);
+  const created = await run(forge.cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(created.code, created.stderr + created.stdout).toBe(0);
+  const hash = rowsOf(forge.cwd, "fanout.planned").at(-1)?.planHash;
+  expect(rowsOf(forge.cwd, "fanout.worktree.created").at(-1)?.planHash).toBe(hash);
+  expect((await run(forge.cwd, ["fanout", "worktree", "release", "a", "--json"])).code).toBe(0);
+  forge.mergeExternally(11);
+  forge.git("fetch", "-q", "origin");
+  forge.git("branch", "-q", "-D", "feature/a");
+  forge.git("update-ref", "-d", "refs/remotes/origin/feature/a");
+  // Only the worktree row links feature/a to slice a: no verdict on its head.
+  expect((await status(forge.cwd)).byId.a).toMatchObject({
+    state: "landed",
+    landed: { how: "pr_merged", pr: 11 },
+  });
+
+  await stackPlan(forge);
+  expect((await status(forge.cwd)).byId.a).toMatchObject({ state: "landed" });
+
+  await plan(forge.cwd, forge.root, [
+    slice("a", ["a.txt"], { goal: "ship a again, differently" }),
+    slice("b", ["b.txt"], { dependsOn: ["a"] }),
+  ]);
+  const { byId } = await status(forge.cwd);
+  expect(byId.a).toMatchObject({ landed: null, pr: null, branchExists: false });
+  expect(byId.a.state).not.toBe("landed");
+  expect(byId.a.notes).toEqual([
+    "feature/a is gone; merged #11 is not linked to this slice in the ledger (an older branch of the same name?)",
+  ]);
+});
+
 test("fanout status: given gh hangs on every PR lookup, when shown, then it asks once, marks the forge down for the rest of the run, and git decides every slice", async () => {
   const forge = forgeSetup();
   await stackPlan(forge);
@@ -625,6 +658,30 @@ test("fanout worktree release: given a worktree that was created and released, t
   expect(release.json().error).toContain("was not made by workit fanout worktree create");
   expect(readFileSync(path.join(wt, "notes.txt"), "utf8")).toBe("someone else's\n");
   expect(git(cwd, "worktree", "list")).toContain(wt);
+});
+
+test("fanout worktree release: given slice b's worktree removed by hand (no released row) and a foreign detached worktree added at the same path with uncommitted work, when released with --force, then it is refused and the work is kept; create refuses to adopt it", async () => {
+  const { root, cwd } = localRepo();
+  await plan(cwd, root, [slice("b", ["b.ts"])]);
+  const wt = path.join(root, "app-wt", "b");
+  expect((await run(cwd, ["fanout", "worktree", "create", "b", "--json"])).code).toBe(0);
+  const row = rowsOf(cwd, "fanout.worktree.created").at(-1);
+  expect(row?.adminId).toBe("b");
+  git(cwd, "worktree", "remove", "--force", wt);
+  // Same path, same admin dir name (git derives it from the path): only the
+  // directory's identity tells the two worktrees apart.
+  git(cwd, "worktree", "add", "-q", "--detach", wt, "main");
+  expect(path.basename(git(wt, "rev-parse", "--absolute-git-dir"))).toBe("b");
+  writeFileSync(path.join(wt, "notes.txt"), "someone else's\n");
+
+  const release = await run(cwd, ["fanout", "worktree", "release", "b", "--force", "--json"]);
+  expect(release.code).toBe(3);
+  expect(release.json().error).toContain("was not made by workit fanout worktree create");
+  expect(readFileSync(path.join(wt, "notes.txt"), "utf8")).toBe("someone else's\n");
+  expect(git(cwd, "worktree", "list")).toContain(wt);
+  const create = await run(cwd, ["fanout", "worktree", "create", "b", "--json"]);
+  expect(create.code).toBe(3);
+  expect(create.json().error).toContain("did not make for slice b");
 });
 
 test("fanout worktree: given a file at the slice's path, when created, then it is refused; given an empty directory there, it is used and recreated empty on release", async () => {

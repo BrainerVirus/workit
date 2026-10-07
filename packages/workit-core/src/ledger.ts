@@ -130,8 +130,22 @@ export type VerdictRow = RowCommon & {
   evidenceRefs: string[];
 };
 export type HandoffRow = RowCommon & { type: "handoff"; note: string | null; next: string };
+/** A lead's standing order for every worker of a fanout ("no new dependencies"). */
+export type StandingRow = RowCommon & { type: "standing"; fanout: string; what: string };
+/** Ends one standing order (`target`), or every one recorded before it (null). */
+export type StandingClearedRow = RowCommon & {
+  type: "standing.cleared";
+  fanout: string;
+  target: string | null;
+};
 
-export type LedgerRow = DecisionRow | RulingRow | VerdictRow | HandoffRow;
+export type LedgerRow =
+  | DecisionRow
+  | RulingRow
+  | VerdictRow
+  | HandoffRow
+  | StandingRow
+  | StandingClearedRow;
 /** A row as read back: any known or future type, plus its position. */
 export type ReadRow = RowCommon &
   Record<string, unknown> & {
@@ -1076,6 +1090,72 @@ export function recordRuling(
   );
 }
 
+/** The standing orders in force for `fanout`, oldest first (D17: odd rows are skipped). */
+export function activeStanding(rows: readonly ReadRow[], fanout: string): ReadRow[] {
+  const active: ReadRow[] = [];
+  for (const row of rows) {
+    if (row.fanout !== fanout) continue;
+    if (row.type === "standing" && typeof row.what === "string" && row.what.trim()) {
+      if (!row.superseded) active.push(row);
+    } else if (row.type === "standing.cleared") {
+      const target = str(row.target);
+      if (target === null) active.length = 0;
+      else {
+        const index = active.findIndex((order) => order.id === target);
+        if (index >= 0) active.splice(index, 1);
+      }
+    }
+  }
+  return active;
+}
+
+export function recordStanding(
+  context: RecordContext,
+  input: { fanout: string; what?: string },
+): LedgerResult<StandingRow> {
+  const what = required(input.what, "<order>");
+  if (!what.ok) return what;
+  const link = checkSupersede(context, "standing");
+  if (!link.ok) return link;
+  return appendRow<StandingRow>(
+    context.cwd,
+    {
+      ...common(context, noteKey(context)),
+      type: "standing",
+      fanout: input.fanout,
+      what: what.value,
+    },
+    { now: context.now },
+  );
+}
+
+/** Clear one standing order by id (it must be in force), or all of them. */
+export function clearStanding(
+  context: RecordContext,
+  input: { fanout: string; target: string | null },
+): LedgerResult<StandingClearedRow> {
+  if (input.target !== null) {
+    const ledger = readLedger(context.cwd);
+    if (!ledger.ok) return ledger;
+    if (!activeStanding(ledger.value.rows, input.fanout).some((row) => row.id === input.target))
+      return err(
+        "not_found",
+        `no standing order ${input.target} in force for fanout ${input.fanout}`,
+        `workit ledger standing list --fanout ${input.fanout}`,
+      );
+  }
+  return appendRow<StandingClearedRow>(
+    context.cwd,
+    {
+      ...common(context, noteKey(context)),
+      type: "standing.cleared",
+      fanout: input.fanout,
+      target: input.target,
+    },
+    { now: context.now },
+  );
+}
+
 /**
  * Record an agent-asserted verdict on a branch's committed head. Refused on a
  * dirty worktree (the head would not be what was judged) and, for an author
@@ -1220,6 +1300,12 @@ export function summarizeRow(row: ReadRow): RowSummary {
       break;
     case "handoff":
       summary = `next: ${text("next")}${text("note") ? ` (note: ${text("note")})` : ""}`;
+      break;
+    case "standing":
+      summary = `${text("what")} (fanout ${text("fanout")})`;
+      break;
+    case "standing.cleared":
+      summary = `cleared ${text("target") || "every standing order"} (fanout ${text("fanout")})`;
       break;
     case "commit.recorded":
       summary = `${(row.head ?? "?").slice(0, 12)} ${text("subject")}${row.actor.session ? "" : " (no session)"}`;
