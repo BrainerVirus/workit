@@ -22,7 +22,7 @@ repository.
 | `rerun` | allowed | `workit ci rerun` |
 | `merge` | needs a grant | `workit pr merge`, `stack land`. `"verified"`: only with an accepted independent verdict; `true`: without one |
 | `release` | needs a grant | Reserved; no verb consumes it yet |
-| `defaultEndpoint` | `commit` | Where an unnamed request stops: `commit` or `pr` (skills read it) |
+| `defaultEndpoint` | `commit` | Where an unnamed delivery request stops, lowest to highest: `commit`, `pr`, `green`, `merged` (skills read it; see [Default endpoint](#default-endpoint)) |
 | `verification` | `self` | What a normal-risk behavior change needs: `self` (observed `workit check test` plus the author's own `--self` verdict, shown as self-reviewed) or `independent` (a verdict from a session that did not author it). High risk always needs an independent live `verified` verdict |
 
 Without a merge grant the ceiling is: PR or stack opened, CI green,
@@ -37,13 +37,44 @@ workit grant set personal merge=verified defaultEndpoint=pr verification=indepen
 workit grant unset personal merge
 ```
 
-Raising a grant (including `defaultEndpoint` from `commit` to `pr`, and
+Raising a grant (including any step up `defaultEndpoint`'s
+`commit` < `pr` < `green` < `merged`, and
 `verification` from `independent` back to `self`) needs you
 at an interactive terminal, typing the workspace name to confirm. Headless and
 agent shells (no TTY, or an agent marker such as `CLAUDECODE`, `OPENCODE`,
 `CURSOR_AGENT`, `PI_CODING_AGENT`, `AI_AGENT`, `AGENT` or any `CODEX_*`) are
 refused with `blocked` and the command to run yourself. Lowering is always
 allowed. Each write keeps `workspaces.json.bak`.
+
+## Default endpoint
+
+`defaultEndpoint` says how far an agent goes when a request implies delivery
+(fix, implement, ship) but names no endpoint:
+
+| Value | The agent stops at |
+| --- | --- |
+| `commit` | a local commit on a policy-compliant branch (default) |
+| `pr` | the pushed branch with its PR open |
+| `green` | the PR merge-ready: it keeps babysitting without asking (`workit ci wait` in the background, one `workit ci rerun` for a clear flake or infra failure, otherwise a fix; review threads answered; the branch kept up to date with its base) until CI is green, threads are resolved and the verification gate is met. It never merges |
+| `merged` | everything in `green`, then `workit pr merge` |
+
+The agent stops early only for a new consequential choice, a host denial, a
+review comment that needs a product decision, or after 3 failed fix attempts
+on the same check. `workit pr status` reports a `babysit` step (`wait`,
+`fix-ci`, `address-threads`, `update-branch`, `ready`, `merged`) for the loop.
+
+`merged` takes effect only when `workit pr merge` could pass its grant check:
+the `merge` grant (and `vcs.account`, as for any explicit grant). Otherwise it
+acts as `green`, and `workit grant show` says so:
+
+```text
+  default endpoint: merged (effective: green, merge grant missing) (an unnamed request stops at a merge-ready PR: ...)
+```
+
+`grant show --json` carries `defaultEndpoint` (configured), `effectiveEndpoint`
+and, when they differ, `endpointReason`. A value this version does not know is
+reported (`endpointIssue`) and read as `commit`; the rest of the file still
+applies.
 
 When workspace globs overlap, the match with the most literal path components
 wins; equally specific matches need an explicit workspace name. The
