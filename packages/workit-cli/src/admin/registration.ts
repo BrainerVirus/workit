@@ -206,8 +206,14 @@ export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest";
  */
 const cursorHookLauncher = (pluginDir?: string): string =>
   pluginDir
-    ? `node "${path.join(pluginDir, "hooks", "launch.mjs")}"`
+    ? `node "${shellQuotedPath(path.join(pluginDir, "hooks", "launch.mjs"))}"`
     : 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs"';
+
+/** Cursor may run a hook command through `sh -c`; inside double quotes `$`,
+ *  a backtick, `"` and `\` stay special there, so escape them in a POSIX path.
+ *  Windows paths (backslash separators) are left as is. */
+const shellQuotedPath = (file: string): string =>
+  path.sep === "\\" ? file : file.replace(/([$`"\\])/g, "\\$1");
 
 /**
  * Canonical Cursor hook command (single source of truth for the shipped

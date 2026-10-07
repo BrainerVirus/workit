@@ -1963,7 +1963,8 @@ test(
       expect(pinned.status).toBe("warn");
       expect(pinned.detail).toContain(`cursor hook launcher mode: npx-pinned (${PINNED})`);
       expect(pinned.detail).toMatch(/probe \d+ ms/);
-      expect(readFileSync(argsLog, "utf8").trim()).toBe(
+      // The Windows shim sees each argument quoted (cmd /s /c "<escaped line>").
+      expect(readFileSync(argsLog, "utf8").trim().replaceAll('"', "")).toBe(
         `-y --offline --package=${PINNED} workit-cursor-hook`,
       );
 

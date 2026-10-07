@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  cursorSpawnPlan,
   resolveCursorHookLaunch,
   runCursorHookLaunch,
 } from "@/packages/workit-cursor/hooks/launch-runtime.mjs";
@@ -274,4 +275,28 @@ test("every hook run touches the heartbeat that workit doctor reads", () => {
   rmSync(path.join(state, "cursor-hook-last-run"));
   launch(plugin(), SHELL_PAYLOAD, { PATH: "", WORKFLOW_TOOLKIT_STATE: state });
   expect(existsSync(path.join(state, "cursor-hook-last-run"))).toBe(true);
+});
+
+test("a .cmd shim whose path holds cmd metacharacters runs as one escaped, verbatim cmd line", () => {
+  const plan = cursorSpawnPlan(
+    "C:\\Users\\A&B (x)\\npm\\npx.cmd",
+    ["-y", "--package=@brainervirus/workit-cursor@1.2.3", "a&b"],
+    { ComSpec: "C:\\Windows\\system32\\cmd.exe" },
+  );
+  expect(plan).toEqual({
+    command: "C:\\Windows\\system32\\cmd.exe",
+    args: [
+      "/d",
+      "/s",
+      "/c",
+      '"C:\\Users\\A^&B^ ^(x^)\\npm\\npx.cmd ^"-y^" ^"--package=@brainervirus/workit-cursor@1.2.3^" ^"a^&b^""',
+    ],
+    verbatim: true,
+  });
+  // Not a shim: spawned directly, arguments untouched.
+  expect(cursorSpawnPlan("/usr/bin/npx", ["-y"], {})).toEqual({
+    command: "/usr/bin/npx",
+    args: ["-y"],
+    verbatim: false,
+  });
 });

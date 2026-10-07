@@ -78,15 +78,43 @@ const onPath = (name, env) => {
 
 /**
  * @typedef {{ mode: "local" | "npx-pinned", source: string, version: string | null,
- *   command: string, args: string[], timeoutMs: number }} LaunchCandidate
+ *   command: string, args: string[], verbatim?: boolean, timeoutMs: number }} LaunchCandidate
  */
 
-/** Node cannot spawn a Windows `.cmd` shim directly; run it through cmd.exe.
- *  @param {string} file @param {string[]} args @param {NodeJS.ProcessEnv} env */
-const commandFor = (file, args, env) =>
-  /\.(?:cmd|bat)$/i.test(file)
-    ? { command: env.ComSpec ?? "cmd.exe", args: ["/d", "/c", file, ...args] }
-    : { command: file, args };
+// cmd.exe metacharacters, escaped with `^` (ported from workit-core's
+// checks.ts, which this plain-JS launcher cannot import).
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
+
+/** One argument for a `cmd /d /s /c "…"` line; `double` for node_modules/.bin
+ *  shims, which re-parse their arguments.
+ *  @param {string} arg @param {boolean} double */
+const cmdArgument = (arg, double) => {
+  let out = arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1");
+  out = `"${out}"`.replace(CMD_META, "^$1");
+  return double ? out.replace(CMD_META, "^$1") : out;
+};
+
+/**
+ * How to spawn `file args…`. Node cannot spawn a Windows `.cmd`/`.bat` shim
+ * directly, so it runs as `cmd.exe /d /s /c "<line>"` with every metacharacter
+ * escaped and the line passed verbatim: a path such as `C:\A&B\x.cmd` must
+ * never split into a second command.
+ * @param {string} file @param {string[]} args @param {NodeJS.ProcessEnv} env
+ * @returns {{ command: string, args: string[], verbatim: boolean }}
+ */
+export const cursorSpawnPlan = (file, args, env) => {
+  if (!/\.(?:cmd|bat)$/i.test(file)) return { command: file, args, verbatim: false };
+  const double = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(file);
+  const line = [
+    path.win32.normalize(file).replace(CMD_META, "^$1"),
+    ...args.map((arg) => cmdArgument(arg, double)),
+  ].join(" ");
+  return {
+    command: env.ComSpec ?? env.COMSPEC ?? "cmd.exe",
+    args: ["/d", "/s", "/c", `"${line}"`],
+    verbatim: true,
+  };
+};
 
 /**
  * Ordered launch candidates for `bin`; an empty list means "missing".
@@ -117,7 +145,7 @@ export const resolveCursorHookLaunch = ({ root, bin, env, node = process.execPat
       mode: "local",
       source: global,
       version: globalBinVersion(global),
-      ...commandFor(global, [], env),
+      ...cursorSpawnPlan(global, [], env),
       timeoutMs: LOCAL_TIMEOUT_MS,
     });
   const npx = onPath("npx", env);
@@ -127,7 +155,7 @@ export const resolveCursorHookLaunch = ({ root, bin, env, node = process.execPat
       source: `${CURSOR_HOOK_PACKAGE}@${version}`,
       version,
       // WORKIT_CURSOR_HOOK_NPX_OFFLINE=1 (the doctor's probe) never downloads.
-      ...commandFor(
+      ...cursorSpawnPlan(
         npx,
         [
           "-y",
@@ -167,6 +195,7 @@ export const runCursorHookLaunch = ({ candidates, payload, env, spawn = spawnSyn
       timeout: timeoutMs ?? candidate.timeoutMs,
       maxBuffer: MAX_OUTPUT_BYTES,
       windowsHide: true,
+      windowsVerbatimArguments: candidate.verbatim === true,
     });
     const code = /** @type {{ code?: string } | undefined} */ (run.error)?.code;
     // The process never started: try the next candidate on the same payload.

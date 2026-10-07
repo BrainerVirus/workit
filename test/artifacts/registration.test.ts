@@ -503,3 +503,12 @@ test("generated Cursor hook config never resolves @latest, never shells to npx, 
     expect(text).not.toContain('"failClosed":true');
   }
 });
+
+test.skipIf(process.platform === "win32")(
+  "an absolute plugin path is escaped for sh -c inside the double-quoted launcher",
+  () => {
+    expect(cursorHooksEntry("/home/a$b`c/plugin").command).toBe(
+      'node "/home/a\\$b\\`c/plugin/hooks/launch.mjs" workit-cursor-session-start',
+    );
+  },
+);
