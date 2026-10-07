@@ -1,8 +1,10 @@
 # Contributing to Workit
 
 Thanks for helping. Workit is a Bun monorepo; published packages run on
-Node.js 24+. The full development contract (commands, rules, release) is in
-[AGENTS.md](AGENTS.md); this page is the short version.
+Node.js 24+. The full development contract is [AGENTS.md](AGENTS.md) (commands
+and workflow), the topic files it points to in [`docs/agents/`](docs/agents/)
+(testing, hosts, release) and [CODING_STANDARDS.md](CODING_STANDARDS.md);
+this page is the short version.
 
 ## Set up
 

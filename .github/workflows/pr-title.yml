@@ -1,0 +1,39 @@
+# PRs are squash-merged, so the PR title becomes the commit semantic-release
+# reads: lint it as a Conventional Commit with the repo's .commitlintrc.json.
+# Not a required check (branch protection is configured separately).
+name: PR title
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: pr-title-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commitlint:
+    name: PR title (commitlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.1"
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Lint PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | bunx commitlint --verbose

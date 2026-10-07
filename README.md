@@ -300,7 +300,7 @@ More: [configuration and storage](docs/guides/configuration.md).
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Agent and maintainer conventions for
-this repository live in [AGENTS.md](AGENTS.md).
+this repository live in [AGENTS.md](AGENTS.md), [`docs/agents/`](docs/agents/) and [CODING_STANDARDS.md](CODING_STANDARDS.md).
 
 ## License
 
