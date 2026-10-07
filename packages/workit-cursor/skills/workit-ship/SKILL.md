@@ -54,7 +54,8 @@ after 3 failed fix attempts on the same check.
 6. **Verified.** After the last push a non-author records a verdict
    (read the `workit-review` skill's SKILL.md and follow it). Land only when granted: `workit stack land` (the
    contiguous verified run from the root) or `workit pr merge`.
-7. **Observe it landed:** `workit verify-delivery pr` or `merge`.
+7. **Observe it landed:** `workit verify-delivery pr` or `merge`. At any endpoint
+   (stack land, fan-in too), after a failed verdict or a check red 3+ times: offer `/wk-retro`.
 
 ## Example
 

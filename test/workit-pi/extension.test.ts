@@ -162,6 +162,7 @@ test("Pi registers wk- slash aliases that expand the bundled skill commands", as
     ["wk-deslop", "workit-deslop"],
     ["wk-fanout", "workit-fanout"],
     ["wk-verify-app", "workit-verify-app"],
+    ["wk-retro", "workit-retro"],
   ]) {
     const command = pi.commands.find((entry: any) => entry.name === alias);
     expect(command, alias).toBeDefined();

@@ -306,6 +306,11 @@ test("agent-critical delivery rules stay stated", () => {
     ["workit-fanout", skillText("workit-fanout"), "refuse to spawn while a field is empty"],
     ["workit-fanout", skillText("workit-fanout"), "Replace at most twice"],
     ["workit-verify-app", skillText("workit-verify-app"), "Prove it end-to-end once"],
+    ["workit-retro", skillText("workit-retro"), "never start it yourself"],
+    ["workit-retro", skillText("workit-retro"), "2 or more cited occurrences"],
+    ["workit-retro", skillText("workit-retro"), "only if the user opts in"],
+    ["workit-retro", skillText("workit-retro"), "Nothing changes until the user approves"],
+    ["workit-retro", skillText("workit-retro"), "Never fork a local copy"],
   ];
   for (const [source, text, rule] of rules)
     expect(text, `${source}: ${rule}`).toMatch(phrase(rule));
@@ -324,7 +329,7 @@ test("method skills impose no task-start preamble and do not wait for policy sel
 test("method manifest matches the canonical skill directories", () => {
   // Pinned on purpose: a skill-set change (adding or dropping a skill from
   // both the manifest and the directory) must update this count.
-  expect(WORKIT_METHOD_SKILLS).toHaveLength(11);
+  expect(WORKIT_METHOD_SKILLS).toHaveLength(12);
   expect(
     skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
   ).toEqual([...WORKIT_METHOD_SKILLS].toSorted());

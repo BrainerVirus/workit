@@ -103,3 +103,55 @@ workit stack land [--dry-run] [--max <n>]
   verified, one at a time through `pr merge`'s gates, and stops at the first
   that does not qualify with a reason (`no_verdict`, `not_ready`,
   `grant_required`, …).
+
+## Parallel slices (fanout)
+
+`workit fanout` records the slices one lead fans out to parallel workers and
+gates their fan-in. It never spawns agents: the host's own subagents do that.
+
+```bash
+workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>]   # register slices; refuse gaps and overlap
+workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, landing order
+```
+
+- The plan file lists slices: `id`, `branch`, `tier` (`mundane`, `standard`,
+  `hard`), `scope` (globs: `*`, `**`, `?`, `{a,b}`; a plain path also covers
+  what is below it; `.` is the whole repository; escape literal brackets as
+  `\[` and `\]`, e.g. `app/\[id\]/page.tsx`, written `"app/\\[id\\]/page.tsx"` in
+  JSON), optional `owns`, `dependsOn`, `base`, `worktree`, and
+  the brief: `goal`, `acceptance`, `verify`, `forbidden` (plus optional
+  `context`, `timebox`). The shape is in the fanout skill's
+  `references/brief.md`. It is stored in `<git common dir>/workit/fanouts/`,
+  shared by every worktree, and each plan appends a `fanout.planned` ledger
+  row.
+- The trunk is `--trunk`, else the plan's `trunk`, else, with
+  [release tracks](configuration.md#release-tracks), the PR target of the
+  checkout's line, as for `stack plan`. When the line cannot be told apart
+  `plan` is `blocked` until you pass `--track <name>` or `--trunk`. Without
+  tracks it is origin's default branch, else `main`.
+- One lead owns a plan: re-planning overwrites the file without a lock.
+- Slices are independent PRs off the trunk by default. A slice with exactly
+  one `dependsOn` is stacked on that slice's branch.
+- `plan` exits 2 (`invalid_input`) and lists every empty or placeholder brief
+  field, unknown or cyclic dependency and bad glob. It exits 3 (`blocked`)
+  when two slices may write the same file. It checks the trunk's files plus
+  one sample path per glob (`src/new/**` -> `src/new/<any>`), so overlap in
+  directories nobody has created yet is caught, and paths that differ only in
+  case count as one file. Each overlap comes with a fix: an
+  owner (`owns`) for lockfiles, manifests, barrels and CI config, otherwise a
+  `dependsOn` that serializes the slices. Overlap between slices that already
+  depend on each other, or with exactly one owner, is accepted.
+- `check` reads the slice branches as git has them locally (fetch first). Per
+  slice it flags files changed since its base outside its scope (a file
+  another slice owns counts as outside), conflicts with the trunk, and
+  conflicts with each sibling branch from `git merge-tree`. A sibling
+  conflict is charged to the slice that lands later. A slice whose
+  dependency is not ready waits. Two siblings that change one file under
+  different case are flagged too. Merge checks need git 2.38 or newer.
+- A slice whose PR already landed reads as `not found` once its branch is
+  deleted (squash merges never make it an ancestor of the trunk). Re-plan
+  without it and remove it from its dependents' `dependsOn`; `fanout status`
+  will detect landed slices later. Exit 0 means every checked slice is ready
+  and `next` names the landing order: dependencies first, then plan order.
+  Exit 3 names the first blocked slice and how to unblock it. The verdict per
+  slice is shown; `pr merge` still enforces it.

@@ -10,6 +10,7 @@ import {
 } from "@brainervirus/workit-core/src/forge/resolve";
 import type { ForgeResult } from "@brainervirus/workit-core/src/forge/types";
 import type { NpmRunner } from "@brainervirus/workit-core/src/forge/verify";
+import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
 import { emit, fail, type Io } from "../output";
 
 /** Test seams: a recorded-fixture runner, a virtual clock and a fake npm. */
@@ -74,6 +75,33 @@ export function parseDuration(value: string): number | null {
   const unit = match[2] ?? "s";
   const factor = unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60_000 : 3_600_000;
   return Math.round(Number(match[1]) * factor);
+}
+
+/**
+ * The release track's PR target when tracks are configured (core vcsConfig),
+ * for `branch` or the checkout. A track problem (an unknown --track, a
+ * critical field, an undetermined line) is an error, never a silent fall back
+ * to `main`; a broken vcs.json keeps the legacy fallback. `tracked` says
+ * whether release tracks decided the trunk.
+ */
+export function releaseTrunk(
+  io: Io,
+  track: string | null,
+  branch: string | null,
+): { trunk: string | null; tracked: boolean } | { error: string } {
+  const resolved = vcsConfig("resolve", io.cwd, {
+    track,
+    ...(branch ? { branch } : {}),
+  });
+  if (resolved.ok === false)
+    return track !== null || String(resolved.configPath ?? "").endsWith("workspaces.json")
+      ? { error: String(resolved.error) }
+      : { trunk: null, tracked: false };
+  if (resolved.releaseTrack?.blocking) return { error: String(resolved.releaseTrack.blocking) };
+  return {
+    trunk: String(resolved.defaultTargetBranch ?? "") || null,
+    tracked: Boolean(resolved.releaseTrack),
+  };
 }
 
 export const usage = (io: Io, message: string, line: string): number =>

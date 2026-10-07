@@ -209,6 +209,9 @@ shape  →  implement  →  review  →  ship
 
 For independent slices, **fanout** runs one worker per isolated worktree with
 a fixed brief and file-scope manifest, and a non-author verifier per slice.
+`workit fanout plan` refuses incomplete briefs and overlapping scopes before
+any spawn; `workit fanout check` gates fan-in. See
+[parallel slices](docs/guides/delivery.md#parallel-slices-fanout).
 
 ## Skills
 
@@ -229,6 +232,7 @@ Skills load automatically when the task fits, or explicitly: `/wk-<name>`
 | `deslop` | Remove dead code, restating comments and filler before a PR, behavior unchanged |
 | `fanout` | Run independent slices in parallel worktrees with per-slice verifiers |
 | `verify-app` | Generate the project's own `verify-<app>` skill that drives the real app |
+| `retro` | User-invoked: find repeated friction in recent sessions and propose cited fixes ranked by enforcer strength; never applies them |
 
 ## CLI reference
 
@@ -250,11 +254,13 @@ Skills load automatically when the task fits, or explicitly: `/wk-<name>`
 | `workit handoff` | Resume brief: branch, HEAD, dirty state, verdict, next command |
 | `workit check <name>` | Run a configured check and record observed evidence |
 | `workit test-audit [--diff] [--mutate]` | Flag tautological tests; optional diff-scoped mutation |
+| `workit knowledge lint` | Lint AGENTS.md budget, local links, scaffold-only and duplicated rules; register as `workit check knowledge` |
 | `workit ledger decision\|ruling\|verdict\|list\|check` | Decisions, rulings and SHA-keyed verdicts |
 | `workit git branch\|commit\|push` | Policy-checked branch/commit; leased push with verified remote tip |
 | `workit pr status\|create\|merge` | PR state and next action; SHA-bound create; gated merge |
 | `workit ci wait\|rerun` | Wait for CI on the PR head; rerun failed jobs once per head |
 | `workit stack plan\|status\|sync\|land` | Base-branch PR stacks |
+| `workit fanout plan\|check` | Register parallel slices (complete briefs, disjoint scopes); gate fan-in on scope, merge conflicts and landing order |
 | `workit verify-delivery [push\|pr\|merge\|release]` | Confirm on the remote that it landed |
 | `workit youtrack note\|time\|meeting` | YouTrack comments and work time |
 | `workit changelog apply` | Add entries under the changelog's Unreleased section |

@@ -25,7 +25,6 @@ import {
   type StatusOutcome,
   type SyncOutcome,
 } from "@brainervirus/workit-core/src/stack";
-import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
 import { emit, fail, ok, type Io } from "../output";
 import {
   connect,
@@ -34,6 +33,7 @@ import {
   parseDuration,
   parseFlags,
   positiveInt,
+  releaseTrunk,
   usage,
 } from "./forge-common";
 
@@ -50,27 +50,6 @@ const short = (sha: string | null | undefined): string => (sha ? sha.slice(0, 12
 
 const stackFailed = (io: Io, result: StackError): number =>
   emit(io, fail(result.code, result.error, { unblock: result.unblock, data: result.data ?? {} }));
-
-// The release track's PR target when tracks are configured (core vcsConfig),
-// for `branch` (the stack's bottom) or the checkout. A track problem (an
-// unknown --track, a critical field, an undetermined line) is an error, never
-// a silent fall back to `main`; a broken vcs.json keeps the legacy fallback.
-const defaultTrunk = (
-  io: Io,
-  track: string | null,
-  branch: string | null,
-): { trunk: string | null } | { error: string } => {
-  const resolved = vcsConfig("resolve", io.cwd, {
-    track,
-    ...(branch ? { branch } : {}),
-  });
-  if (resolved.ok === false)
-    return track !== null || String(resolved.configPath ?? "").endsWith("workspaces.json")
-      ? { error: String(resolved.error) }
-      : { trunk: null };
-  if (resolved.releaseTrack?.blocking) return { error: String(resolved.releaseTrack.blocking) };
-  return { trunk: String(resolved.defaultTargetBranch ?? "") || null };
-};
 
 const label = (forge: string | null, pr: number | null): string =>
   pr === null ? "no PR" : `${forge === "gitlab" ? "MR !" : "PR #"}${pr}`;
@@ -92,7 +71,7 @@ async function plan(argv: string[], io: Io): Promise<number> {
     return usage(io, "pass --trunk or --track, not both (--track picks the trunk)", PLAN_USAGE);
   let trunk = flags.values.trunk ?? existing?.trunk ?? null;
   if (trunk === null || track !== null) {
-    const derived = defaultTrunk(io, track, flags.positionals[0] ?? null);
+    const derived = releaseTrunk(io, track, flags.positionals[0] ?? null);
     if ("error" in derived)
       return emit(
         io,
