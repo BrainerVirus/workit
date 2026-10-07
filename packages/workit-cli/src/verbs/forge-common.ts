@@ -11,6 +11,7 @@ import {
 import type { ForgeResult } from "@brainervirus/workit-core/src/forge/types";
 import type { NpmRunner } from "@brainervirus/workit-core/src/forge/verify";
 import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
+export { parseDuration } from "@brainervirus/workit-core/src/duration";
 import { emit, fail, type Io } from "../output";
 
 /** Test seams: a recorded-fixture runner, a virtual clock and a fake npm. */
@@ -66,15 +67,6 @@ export function parseFlags(argv: readonly string[], spec: FlagSpec): ParsedFlags
 export function positiveInt(value: string | undefined, flag: string): number | null | string {
   if (value === undefined) return null;
   return /^[1-9]\d{0,8}$/u.test(value) ? Number(value) : `${flag} must be a positive integer`;
-}
-
-/** `20m`, `30s`, `1500ms`, `1h`, or bare seconds. */
-export function parseDuration(value: string): number | null {
-  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/u.exec(value.trim());
-  if (!match) return null;
-  const unit = match[2] ?? "s";
-  const factor = unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60_000 : 3_600_000;
-  return Math.round(Number(match[1]) * factor);
 }
 
 /**

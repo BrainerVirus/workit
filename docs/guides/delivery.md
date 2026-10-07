@@ -161,9 +161,16 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
 - A slice that already landed is done: `check` and `status` skip it and its
   dependents stop waiting. Landed means its PR merged (squash merges
   included, even after the branch was deleted), asked through `gh`/`glab`.
-  Without the forge (`--offline`, no CLI, no login) git decides: the branch
-  tip is on the trunk with commits of its own, or its change has the same
-  patch-id as a trunk commit (a squash merge that applied cleanly). Exit 0
+  A merged PR whose branch is gone counts only when the ledger links the
+  branch to the slice (a `worktree create` row, or a row such as a verdict
+  recorded on the merged head), so an older branch of the same name is not
+  taken for it. Without the forge (`--offline`, no CLI, no login, or after
+  the first timeout or unavailable answer in a run) git decides: the branch
+  tip is on the trunk and its reflog shows a commit made on the branch (a
+  branch only fast-forwarded to a newer trunk does not count), or its change
+  has the same patch-id as a trunk commit (a squash merge that applied
+  cleanly). A landing whose changed paths read on the trunk exactly as before
+  it (a revert) is not landed, and the slice's notes say so. Exit 0
   means every checked slice is ready or landed and `next` names the landing
   order: dependencies first, then plan order.
   Exit 3 names the first blocked slice and how to unblock it. The verdict per
@@ -172,12 +179,15 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   branch head and its age, the PR and its CI (when the forge answers), the
   ledger verdict on the current head, and landed. A slice is `STUCK` when it
   started, has no accepted verdict, and nothing moved for longer than
-  `--stuck-after`, else its `timebox` (`45 minutes`, `2h`), else 30 minutes:
-  no commit or branch update, no ledger row for its branch or slice. The
+  `--stuck-after`, else its `timebox` (`45 minutes`, `2h`, `1h30m`), else
+  30 minutes: no commit or branch update, no ledger row for its branch or
+  slice. The
   landing order lists slices with an accepted verdict and, with the forge,
   an open PR whose checks pass, each after the dependencies it waits for;
-  `spawnable` lists slices that can start now. Without `gh`/`glab` it still
-  answers (exit 0) and says the forge is off.
+  `spawnable` lists slices that can start now (every dependency landed, or a
+  stacked child whose only open dependency is its verified parent). Without
+  `gh`/`glab` it still answers (exit 0), says the forge is off, and its next
+  step asks for a PR (`workit pr create`) before any merge.
 - `worktree create` (for hosts without native worktrees: OpenCode, Codex,
   Cursor, Pi) adds the slice's worktree at its planned path. A new slice
   starts at its base and gets its branch through `workit git branch` (branch
@@ -188,5 +198,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   (`fanout.worktree.released`) before anything else, refuses while there are
   uncommitted changes unless `--force`, then removes the scratch dir and the
   worktree with `git worktree remove`. The branch is kept. It removes only a
-  registered worktree on the slice's branch, never the main checkout or a
-  plain directory at that path.
+  worktree that `create` made for this fanout, slice and path (its ledger row
+  says so), even with `--force`; never the main checkout, a worktree someone
+  else added there, or a plain directory. An empty directory that existed
+  before `create` is left in place.

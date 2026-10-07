@@ -35,7 +35,13 @@ import {
   type FanoutResult,
   type Slice,
 } from "./fanout";
-import { detectLanding, sliceStart, type LandingContext, type SliceLanding } from "./fanout-landed";
+import {
+  detectLanding,
+  forgeBreaker,
+  sliceStart,
+  type LandingContext,
+  type SliceLanding,
+} from "./fanout-landed";
 
 export type SliceStatus = "ready" | "blocked" | "landed";
 
@@ -139,7 +145,8 @@ export function checkFanout(
   const ledger = readLedger(cwd);
   const rows: readonly ReadRow[] = ledger.ok ? ledger.value.rows : [];
 
-  const landings = sliceLandings(cwd, plan, trunk, tips, rows, options.forge ?? null);
+  const breaker = forgeBreaker(options.forge ?? null);
+  const landings = sliceLandings(cwd, plan, trunk, tips, rows, breaker.forge);
   const trunkCase = caseIndex(
     nulList(gitRun(cwd, ["ls-tree", "-r", "-z", "--name-only", trunk]).stdout),
   );
@@ -230,6 +237,8 @@ export function checkFanout(
   );
   if (!options.forge)
     notes.push("landed slices detected with git only (no forge): a squash merge may be missed");
+  else if (breaker.down())
+    notes.push(`forge went down (${breaker.down()}); git alone decided the remaining slices`);
   else if (forgeErrors.length)
     notes.push(`forge lookups failed (${forgeErrors[0]}); git alone decided those slices`);
   const toLand = slices.filter((check) => check.status === "ready").map((check) => check.id);
@@ -283,6 +292,8 @@ export function sliceLandings(
         head: tips.get(id) ?? null,
         createdFrom: sliceStart(cwd, rows, plan.name, slice),
         parentHead,
+        fanout: plan.name,
+        rows,
       }),
     );
   }

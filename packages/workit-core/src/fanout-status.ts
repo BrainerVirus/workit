@@ -15,10 +15,12 @@
 // walks the plan's order (dependencies first), skips landed slices and keeps
 // a slice only once each dependency has landed or comes earlier in the order.
 // Without the forge (offline, no gh/glab) the rest still works and says so.
+import { parseDuration } from "./duration";
 import { checksState, gatingChecks, missingRequired, type ChecksState } from "./forge/report";
 import type { ResolvedForge } from "./forge/resolve";
 import { checkVerdicts, readLedger, type ReadRow, type VerdictBasis } from "./ledger";
 import { sliceLandings } from "./fanout-check";
+import { forgeBreaker } from "./fanout-landed";
 import {
   branchRef,
   fanoutFail,
@@ -85,13 +87,11 @@ export type StatusOptions = {
   now?: Date;
 };
 
-/** A TIMEBOX such as `45 minutes`, `45m`, `2h` or `1.5 hours`, in ms; null otherwise. */
+/** A TIMEBOX such as `45 minutes`, `2h` or `1h30m`, in ms; null without a unit or otherwise. */
 export function timeboxMs(text: string | null): number | null {
-  if (!text) return null;
-  const match = /^(\d+(?:\.\d+)?)\s*(m|mins?|minutes?|h|hrs?|hours?)$/iu.exec(text.trim());
-  if (!match) return null;
-  const minutes = Number(match[1]) * (match[2].toLowerCase().startsWith("h") ? 60 : 1);
-  return minutes > 0 ? Math.round(minutes * 60_000) : null;
+  if (!text || /^\s*\d+(?:\.\d+)?\s*$/u.test(text)) return null;
+  const ms = parseDuration(text);
+  return ms && ms > 0 ? ms : null;
 }
 
 const isoOf = (seconds: string): string | null => {
@@ -147,7 +147,8 @@ export function fanoutStatus(
   options: StatusOptions,
 ): FanoutResult<StatusOutcome> {
   const now = options.now ?? new Date();
-  const forge = options.forge;
+  const breaker = forgeBreaker(options.forge);
+  const forge = breaker.forge;
   const trunk = trunkRef(cwd, plan.trunk);
   if (!trunk)
     return fanoutFail(
@@ -211,7 +212,8 @@ export function fanoutStatus(
         ...(landing?.forgeError ? [`forge: ${landing.forgeError}`] : []),
       ],
     };
-    if (forge && landing?.pr && landing.pr.state === "open" && !row.landed) {
+    const answered = forge !== null && !landing?.forgeError;
+    if (answered && landing?.pr && landing.pr.state === "open" && !row.landed) {
       const status = forge.forge.prStatus(landing.pr.number);
       if (status.ok)
         row.ci = checksState(gatingChecks(status.data).checks, missingRequired(status.data));
@@ -229,7 +231,7 @@ export function fanoutStatus(
       row.reasons.push(
         `verdict ${row.verdict.basis === "none" ? "missing" : row.verdict.basis} on the current head`,
       );
-    if (forge && row.branchExists) {
+    if (answered && row.branchExists) {
       if (!row.pr) row.reasons.push("no PR");
       else if (row.pr.state !== "open") row.reasons.push(`PR ${row.pr.state}`);
       else if (row.ci === "failing" || row.ci === "pending") row.reasons.push(`CI ${row.ci}`);
@@ -256,7 +258,10 @@ export function fanoutStatus(
     else if (row.branchExists) row.state = "active";
     else if (
       row.waitsFor.length === 0 ||
-      (parent && row.waitsFor.length === 1 && out.get(parent.id)?.verdict.accepted)
+      (parent &&
+        row.waitsFor.length === 1 &&
+        row.waitsFor[0] === parent.id &&
+        out.get(parent.id)?.verdict.accepted)
     ) {
       const created = rows.some(
         (candidate) =>
@@ -271,22 +276,40 @@ export function fanoutStatus(
       row.reasons.push(`waits for ${row.waitsFor.join(", ")}`);
   }
   const stuck = order.filter((id) => out.get(id)?.stuck);
+  const down = breaker.down();
+  if (down)
+    notes.push(
+      `forge went down during this run (${down}): later slices show no PR or CI, and git alone decided whether they landed`,
+    );
+  const online = forge !== null && !down;
+  // Verified, but the forge has no PR for them yet.
+  const noPr = order.filter((id) => {
+    const row = out.get(id) as SliceStatusRow;
+    return !row.landed && row.reasons.length === 1 && row.reasons[0] === "no PR";
+  });
   const next = stuck.length
     ? `replace ${stuck.join(", ")}: stop the worker, then workit fanout worktree release ${stuck[0]} (records git status first) and respawn it in MODE: resume`
     : suggested.length
-      ? `land in this order: ${suggested.join(", ")} (workit fanout check first; workit pr merge each)`
-      : spawnable.length
-        ? `spawn ${spawnable.join(", ")} (workit fanout worktree create <slice> on hosts without native worktrees)`
-        : order.every((id) => out.get(id)?.landed)
-          ? "every slice has landed"
-          : "wait for workers, then workit fanout status again";
+      ? online
+        ? `land in this order: ${suggested.join(", ")} (workit fanout check first; workit pr merge each)`
+        : `land in this order: ${suggested.join(", ")} once each has a PR (offline: PRs unchecked; open a missing one with workit git push && workit pr create --fill, then workit fanout status online)`
+      : noPr.length
+        ? `open PRs for ${noPr.join(", ")}: workit git push && workit pr create --fill on each branch`
+        : spawnable.length
+          ? `spawn ${spawnable.join(", ")} (workit fanout worktree create <slice> on hosts without native worktrees)`
+          : order.every((id) => out.get(id)?.landed)
+            ? "every slice has landed"
+            : "wait for workers, then workit fanout status again";
   return {
     ok: true,
     data: {
       name: plan.name,
       trunk: plan.trunk,
       trunkRef: trunk,
-      forge: { available: forge !== null, error: forge ? null : (options.forgeError ?? null) },
+      forge: {
+        available: online,
+        error: online ? null : (down ?? options.forgeError ?? null),
+      },
       slices: order.map((id) => out.get(id) as SliceStatusRow),
       landingOrder: suggested,
       spawnable,

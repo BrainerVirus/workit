@@ -173,6 +173,8 @@ for (const kind of ["github", "gitlab"] as const)
   test(`fanout status and check (${kind}): given slice a squash-merged on the forge and its branch deleted locally, when shown and checked, then a is landed through its merged PR and b stops waiting for it`, async () => {
     const forge = forgeSetup(kind);
     await stackPlan(forge);
+    // The verdict on a's head links that branch to this slice in the ledger.
+    await verify(forge.cwd, "feature/a");
     await verify(forge.cwd, "feature/b");
     forge.mergeExternally(11);
     forge.git("fetch", "-q", "origin");
@@ -220,6 +222,44 @@ test("fanout check: given the same landed slice a with the forge turned off, whe
   const [a, b] = check.json().data.slices;
   expect(a).toMatchObject({ id: "a", status: "blocked", landed: null });
   expect(b).toMatchObject({ id: "b", status: "blocked", waitsFor: ["a"] });
+});
+
+test("fanout status: given a merged PR for a reused branch name that the ledger never linked to this slice and no branch, when shown, then the slice reads as not started, not landed", async () => {
+  const forge = forgeSetup();
+  forge.mergeExternally(11);
+  forge.git("fetch", "-q", "origin");
+  forge.git("branch", "-q", "-D", "feature/a");
+  forge.git("update-ref", "-d", "refs/remotes/origin/feature/a");
+  await stackPlan(forge);
+  const { byId } = await status(forge.cwd);
+  expect(byId.a).toMatchObject({ state: "not_started", landed: null, pr: null });
+  expect(byId.a.notes).toEqual([
+    "feature/a is gone; merged #11 is not linked to this slice in the ledger (an older branch of the same name?)",
+  ]);
+});
+
+test("fanout status: given gh hangs on every PR lookup, when shown, then it asks once, marks the forge down for the rest of the run, and git decides every slice", async () => {
+  const forge = forgeSetup();
+  await stackPlan(forge);
+  let lookups = 0;
+  const hanging: ForgeRunner = (bin, args, options) => {
+    if (args.includes("graphql")) {
+      lookups += 1;
+      return { status: null, stdout: "", stderr: "", timedOut: true, missing: false };
+    }
+    return forge.runner(bin, args, options);
+  };
+  Object.assign(forgeDeps, { runner: hanging });
+  const { data, byId } = await status(forge.cwd);
+  expect(lookups).toBe(1);
+  expect(data.forge.available).toBe(false);
+  expect(data.forge.error).toContain("timed out");
+  expect(
+    data.notes.some((note: string) => note.startsWith("forge went down during this run")),
+  ).toBe(true);
+  expect(byId.a).toMatchObject({ pr: null, ci: "unknown", state: "active" });
+  expect(byId.b).toMatchObject({ pr: null, ci: "unknown" });
+  expect(byId.b.reasons).not.toContain("no PR");
 });
 
 // ---------------------------------------------------------------------------
@@ -324,6 +364,9 @@ test("fanout status: given a slice whose last commit and branch update are 2 hou
     "replace idle: stop the worker, then workit fanout worktree release idle",
   );
 
+  const compound = await status(cwd, "--stuck-after", "1h30m");
+  expect(compound.byId.idle).toMatchObject({ stuck: true, stuckAfterMinutes: 90 });
+
   const patient = await status(cwd, "--stuck-after", "3h");
   expect(patient.byId.idle).toMatchObject({ state: "active", stuck: false });
   expect(patient.data.stuck).toEqual([]);
@@ -373,6 +416,22 @@ test("fanout status: given a merge-commit landing and a not-started dependent, w
   expect(data.next).toStartWith("spawn docs");
 });
 
+test("fanout status: given a slice stacked on a verified, landed parent that also depends on a second, unstarted slice, when shown, then it waits for the second and is not spawnable", async () => {
+  const { root, cwd } = localRepo();
+  await plan(cwd, root, [
+    slice("api", ["api.ts"]),
+    slice("db", ["db.ts"]),
+    slice("docs", ["docs.md"], { dependsOn: ["api", "db"], base: "feature/api" }),
+  ]);
+  branchAt(cwd, "feature/api", "api.ts", 5);
+  await verify(cwd, "feature/api");
+  git(cwd, "merge", "-q", "--no-ff", "-m", "Merge feature/api", "feature/api");
+  const { data, byId } = await status(cwd, "--offline");
+  expect(byId.api.state).toBe("landed");
+  expect(byId.docs).toMatchObject({ state: "waiting", waitsFor: ["db"] });
+  expect(data.spawnable).toEqual(["db"]);
+});
+
 test("fanout status: given a not-started slice stacked on an unverified parent, when shown, then it waits; once the parent has an accepted verdict it is spawnable", async () => {
   const { root, cwd } = localRepo();
   await plan(cwd, root, [
@@ -388,6 +447,38 @@ test("fanout status: given a not-started slice stacked on an unverified parent, 
   expect(after.byId.docs).toMatchObject({ state: "not_started" });
   expect(after.data.spawnable).toEqual(["docs"]);
   expect(after.data.landingOrder).toEqual(["api"]);
+  // Offline it cannot see PRs: the next step says to open one, not to merge.
+  expect(after.data.next).toStartWith(
+    "land in this order: api once each has a PR (offline: PRs unchecked; open a missing one with workit git push && workit pr create --fill",
+  );
+});
+
+test("fanout status: given a branch created at main and only fast-forwarded after trunk moved, when shown offline, then it is not landed (no commit was made on it)", async () => {
+  const { root, cwd } = localRepo();
+  await plan(cwd, root, [slice("a", ["a.ts"])]);
+  git(cwd, "branch", "feature/a", "main");
+  writeFileSync(path.join(cwd, "other.ts"), "export const other = 1;\n");
+  git(cwd, "add", "-A");
+  git(cwd, "commit", "-qm", "feat: trunk moved");
+  git(cwd, "switch", "-q", "feature/a");
+  git(cwd, "merge", "-q", "--ff-only", "main");
+  git(cwd, "switch", "-q", "main");
+  const { byId } = await status(cwd, "--offline");
+  expect(byId.a).toMatchObject({ landed: null, state: "active" });
+});
+
+test("fanout status: given a slice merged into main and then reverted, when shown offline, then it is not landed and the note says it was reverted", async () => {
+  const { root, cwd } = localRepo();
+  await plan(cwd, root, [slice("api", ["api.ts"])]);
+  branchAt(cwd, "feature/api", "api.ts", 10);
+  git(cwd, "merge", "-q", "--no-ff", "-m", "Merge feature/api", "feature/api");
+  expect((await status(cwd, "--offline")).byId.api.state).toBe("landed");
+  git(cwd, "revert", "--no-edit", "-m", "1", "HEAD");
+  const { byId } = await status(cwd, "--offline");
+  expect(byId.api).toMatchObject({ landed: null, state: "active" });
+  expect(byId.api.notes).toEqual([
+    "landed (on_trunk), then reverted on the trunk: its paths read as before it",
+  ]);
 });
 
 test("fanout status: given a fresh branch with no commits of its own, when shown offline, then it is not mistaken for landed", async () => {
@@ -492,6 +583,37 @@ test("fanout worktree release: given a plain directory at the slice's path, when
   const create = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(create.code).toBe(3);
   expect(create.json().error).toContain("exists and is not empty");
+});
+
+test("fanout worktree release: given a detached worktree someone else added at the slice's path, when released even with --force, then it is refused and kept; create refuses to adopt it", async () => {
+  const { root, cwd } = localRepo();
+  await plan(cwd, root, [slice("a", ["a.ts"])]);
+  const wt = path.join(root, "app-wt", "a");
+  git(cwd, "worktree", "add", "-q", "--detach", wt, "main");
+  const release = await run(cwd, ["fanout", "worktree", "release", "a", "--force", "--json"]);
+  expect(release.code).toBe(3);
+  expect(release.json().error).toContain("was not made by workit fanout worktree create");
+  expect(git(cwd, "worktree", "list")).toContain(wt);
+  const create = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(create.code).toBe(3);
+  expect(create.json().error).toContain("did not make for slice a");
+});
+
+test("fanout worktree: given a file at the slice's path, when created, then it is refused; given an empty directory there, it is used and recreated empty on release", async () => {
+  const { root, cwd } = localRepo();
+  await plan(cwd, root, [slice("a", ["a.ts"])]);
+  const wt = path.join(root, "app-wt", "a");
+  mkdirSync(path.dirname(wt), { recursive: true });
+  writeFileSync(wt, "not a dir\n");
+  const onFile = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(onFile.code).toBe(3);
+  expect(onFile.json().error).toContain("is not a directory");
+  rmSync(wt);
+  mkdirSync(wt);
+  expect((await run(cwd, ["fanout", "worktree", "create", "a", "--json"])).code).toBe(0);
+  expect((await run(cwd, ["fanout", "worktree", "release", "a", "--json"])).code).toBe(0);
+  expect(existsSync(wt)).toBe(true);
+  expect(git(cwd, "worktree", "list")).not.toContain(wt);
 });
 
 test("fanout worktree create: given the slice branch is checked out in the main checkout, when created, then it is refused (never two workers on one branch)", async () => {

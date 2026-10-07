@@ -281,6 +281,8 @@ const ID = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 
 export type PlanDefaults = {
   trunk: string;
+  /** The main checkout: a relative `worktree` is resolved against it at plan time. */
+  root: string;
   /** Where default worktrees go: `<repo>-wt/` next to the main checkout. */
   worktreeRoot: string;
 };
@@ -372,7 +374,10 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       id,
       branch,
       base: optional("base") ?? "",
-      worktree: optional("worktree") ?? path.join(defaults.worktreeRoot, id),
+      worktree: path.resolve(
+        defaults.root,
+        optional("worktree") ?? path.join(defaults.worktreeRoot, id),
+      ),
       tier: tier as Tier,
       dependsOn: [...new Set(dependsOn ?? [])],
       scope,
@@ -711,10 +716,15 @@ export function defaultTrunk(cwd: string): string {
   return base ? base.replace(/^origin\//u, "") : "main";
 }
 
+/** The main checkout (beside `.git`), else `cwd`. */
+export function mainCheckout(cwd: string): string {
+  const common = gitCommonDir(cwd);
+  return common && path.basename(common) === ".git" ? path.dirname(common) : path.resolve(cwd);
+}
+
 /** `<repo>-wt/` beside the main checkout. */
 export function worktreeRoot(cwd: string): string {
-  const common = gitCommonDir(cwd);
-  const main = common && path.basename(common) === ".git" ? path.dirname(common) : cwd;
+  const main = mainCheckout(cwd);
   return path.join(path.dirname(main), `${path.basename(main)}-wt`);
 }
 
@@ -903,7 +913,11 @@ export function planFanout(
   if (!dir.ok) return dir;
   const parsed = parsePlan(
     input.trunk && isRecord(input.raw) ? { ...input.raw, trunk: input.trunk } : input.raw,
-    { trunk: input.trunk ?? defaultTrunk(cwd), worktreeRoot: worktreeRoot(cwd) },
+    {
+      trunk: input.trunk ?? defaultTrunk(cwd),
+      root: mainCheckout(cwd),
+      worktreeRoot: worktreeRoot(cwd),
+    },
     input.name,
   );
   if (!parsed.ok)

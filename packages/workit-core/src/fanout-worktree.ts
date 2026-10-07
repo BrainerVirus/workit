@@ -10,19 +10,22 @@
 //
 // release: records `git status` of the worktree in the ledger first
 // (`fanout.worktree.released`), refuses while it has uncommitted changes
-// unless forced, then removes the scratch dir and runs `git worktree remove`.
-// The branch is kept. Nothing outside the slice's own worktree is deleted,
-// and only a registered worktree on the slice's branch (or detached) is
-// removed, never the main checkout or the one the command runs in.
+// unless forced, then runs `git worktree remove` (which takes the scratch dir
+// with it). The branch is kept. It only removes a worktree that `create` made
+// for this fanout, slice and path (its ledger row says so), on the slice's
+// branch or detached; never the main checkout, the one the command runs in,
+// or a worktree someone else made there, not even with --force. An empty
+// directory that existed before `create` is left in place.
 import fs from "node:fs";
 import path from "node:path";
 import { gitBranch } from "./git/ops";
 import { GIT_TIMEOUTS, gitCommonDir, pushRemoteName, resolveRef } from "./git/rev";
-import { appendObserved, type LedgerActor } from "./ledger";
+import { appendObserved, readLedger, type LedgerActor } from "./ledger";
 import {
   branchRef,
   fanoutFail,
   gitRun,
+  mainCheckout,
   nulList,
   trunkRef,
   type FanoutFile,
@@ -94,6 +97,28 @@ function listWorktrees(cwd: string): WorktreeEntry[] {
   return out;
 }
 
+/** The slice's worktree path: absolute since plan time; an older relative one is the main checkout's. */
+const slicePath = (cwd: string, slice: Slice): string =>
+  path.isAbsolute(slice.worktree)
+    ? slice.worktree
+    : path.resolve(mainCheckout(cwd), slice.worktree);
+
+/** The newest `fanout.worktree.created` row for this fanout, slice and path. */
+function createdRow(cwd: string, plan: FanoutFile, slice: Slice, target: string) {
+  const ledger = readLedger(cwd);
+  if (!ledger.ok) return null;
+  return (
+    ledger.value.rows.findLast(
+      (row) =>
+        row.type === "fanout.worktree.created" &&
+        row.fanout === plan.name &&
+        row.slice === slice.id &&
+        typeof row.path === "string" &&
+        samePath(row.path, target),
+    ) ?? null
+  );
+}
+
 function findSlice(plan: FanoutFile, id: string): FanoutResult<Slice> {
   const slice = plan.slices.find((candidate) => candidate.id === id);
   return slice
@@ -159,7 +184,7 @@ export function createSliceWorktree(
       `slice ${slice.id} has no worktree path`,
       "re-plan it with workit fanout plan",
     );
-  const target = path.resolve(cwd, slice.worktree);
+  const target = slicePath(cwd, slice);
   const worktrees = listWorktrees(cwd);
   const localRef = `refs/heads/${slice.branch}`;
   const existing = worktrees.find((entry) => samePath(entry.path, target));
@@ -176,6 +201,12 @@ export function createSliceWorktree(
         "blocked",
         `${target} is a worktree on ${existing.branch.replace(/^refs\/heads\//u, "")}, not ${slice.branch}`,
         `release it first, or set slice ${slice.id}'s worktree to another path`,
+      );
+    if (!createdRow(cwd, plan, slice, target))
+      return fanoutFail(
+        "blocked",
+        `${target} is a worktree that workit fanout worktree create did not make for slice ${slice.id}`,
+        `remove it yourself (git worktree remove ${target}) once you know what it holds`,
       );
     excludeScratch(cwd);
     return {
@@ -197,12 +228,20 @@ export function createSliceWorktree(
       `${slice.branch} is checked out at ${elsewhere.path}: never two live workers on one branch`,
       `stop that worker, then workit fanout worktree release ${slice.id} (or git worktree remove ${elsewhere.path})`,
     );
-  if (fs.existsSync(target) && fs.readdirSync(target).length > 0)
-    return fanoutFail(
-      "blocked",
-      `${target} exists and is not empty (not a worktree of this repository)`,
-      `move it away, or set slice ${slice.id}'s worktree to another path`,
-    );
+  let dirExisted = false;
+  try {
+    const stat = fs.statSync(target);
+    if (!stat.isDirectory() || fs.readdirSync(target).length > 0)
+      return fanoutFail(
+        "blocked",
+        `${target} exists and is ${stat.isDirectory() ? "not empty" : "not a directory"} (not a worktree of this repository)`,
+        `move it away, or set slice ${slice.id}'s worktree to another path`,
+      );
+    dirExisted = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+      return fanoutFail("failed", `cannot read ${target}: ${(error as Error).message}`);
+  }
 
   const notes: string[] = [];
   let mode: CreateOutcome["mode"] = "resume";
@@ -264,6 +303,7 @@ export function createSliceWorktree(
     scratch,
     mode,
     head,
+    dirExisted,
     ...(baseSha ? { baseSha } : {}),
   });
   return { ok: true, data: { ...base, scratch, head, mode, created: true, notes } };
@@ -298,7 +338,7 @@ export function releaseSliceWorktree(
   const found = findSlice(plan, input.slice);
   if (!found.ok) return found;
   const slice = found.data;
-  const target = path.resolve(cwd, slice.worktree);
+  const target = slicePath(cwd, slice);
   const worktrees = listWorktrees(cwd);
   const index = worktrees.findIndex((entry) => samePath(entry.path, target));
   const out: ReleaseOutcome = {
@@ -337,6 +377,13 @@ export function releaseSliceWorktree(
       "blocked",
       `${entry.path} is on ${entry.branch.replace(/^refs\/heads\//u, "")}, not slice ${slice.id}'s ${slice.branch}; nothing was removed`,
     );
+  const made = createdRow(cwd, plan, slice, entry.path);
+  if (!made)
+    return fanoutFail(
+      "blocked",
+      `${entry.path} was not made by workit fanout worktree create for slice ${slice.id} (no ledger row); nothing was removed`,
+      `remove it yourself (git worktree remove ${entry.path}) once you know what it holds`,
+    );
   out.head = entry.head;
   const status = gitRun(entry.path, [
     "status",
@@ -351,9 +398,9 @@ export function releaseSliceWorktree(
       `git status in ${entry.path} failed: ${status.stderr.trim().split("\n")[0]}`,
       "nothing was removed; inspect the worktree by hand",
     );
-  out.dirty = porcelainEntries(status.stdout).filter(
-    (line) => !line.slice(3).startsWith(`${SCRATCH_DIR}/`),
-  );
+  const entries = porcelainEntries(status.stdout);
+  const inScratch = (line: string) => line.slice(3).startsWith(`${SCRATCH_DIR}/`);
+  out.dirty = entries.filter((line) => !inScratch(line));
   out.unpushed = unpushedCount(cwd, slice.branch);
   const refused = out.dirty.length > 0 && !input.force;
   // Record first: once the worktree is gone its state cannot be read back.
@@ -382,9 +429,14 @@ export function releaseSliceWorktree(
       `commit them on ${slice.branch} (workit git commit), or pass --force to drop them`,
       { ...out },
     );
-  removeScratch(entry.path);
   const args = ["worktree", "remove", ...(input.force ? ["--force"] : []), entry.path];
-  const removed = gitRun(cwd, args, SLOW);
+  let removed = gitRun(cwd, args, SLOW);
+  if (!removed.ok && entries.some(inScratch)) {
+    // The scratch dir shows as untracked (its info/exclude line was removed):
+    // clear it, the only thing in the way, and try once more.
+    removeScratch(entry.path);
+    removed = gitRun(cwd, args, SLOW);
+  }
   if (!removed.ok)
     return fanoutFail(
       "failed",
@@ -393,6 +445,7 @@ export function releaseSliceWorktree(
       { ...out },
     );
   out.removed = true;
+  if (made.dirExisted === true) fs.mkdirSync(entry.path, { recursive: true });
   if (out.unpushed)
     out.notes.push(`${slice.branch} is kept with ${out.unpushed} commit(s) not on the remote`);
   return { ok: true, data: out };
