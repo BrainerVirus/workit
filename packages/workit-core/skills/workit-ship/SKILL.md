@@ -51,8 +51,8 @@ the base keeps moving, or after 3 failed fix attempts on the same check.
    flake|infra` per head. Real: reproduce with `workit check`, fix the root
    cause, batch fixes into one push.
 6. **Verified.** After the last push a non-author records a verdict
-   (workit-review). Land only when granted: `workit stack land` (the
-   contiguous verified run from the root) or `workit pr merge`.
+   (workit-review). Land only when granted: `workit stack land` (verified run
+   from the root) or `workit pr merge`; `--unverified --reason` only if user-asked.
 7. **Observe it landed:** `workit verify-delivery pr` or `merge`. After a failed
    verdict or a check red 3+ times, at any endpoint: offer `/wk-retro` in one
    line of the final or stop report; never pause the babysit loop for it.

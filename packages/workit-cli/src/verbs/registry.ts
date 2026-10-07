@@ -115,7 +115,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "pr",
     group: "delivery",
     usage:
-      "workit pr status [--pr <n>] | pr create [--base <b> | --track <t>] (--title <t> | --fill) [--draft] | pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch]",
+      "workit pr status [--pr <n>] | pr create [--base <b> | --track <t>] (--title <t> | --fill) [--draft] | pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]",
     summary:
       "PR/MR state with failing log tails and next action; open a SHA-verified PR; merge only when READY, verified and granted",
     load: () => import("./pr"),
@@ -150,7 +150,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "stack",
     group: "delivery",
     usage:
-      "workit stack plan [<bottom> … <top>] | status | sync [--local] | land [--dry-run] [--max <n>] [--json]",
+      "workit stack plan [<bottom> … <top>] | status | sync [--local] | land [--dry-run] [--max <n>] [--unverified --reason <why>] [--json]",
     summary:
       "Plan, restack (lease push + retarget) and land a base-branch stack of PRs, root first",
     load: () => import("./stack"),

@@ -154,6 +154,38 @@ test("pr create (GitHub): given the pushed branch, then the PR is opened with th
   ]);
   const check = await run(["ledger", "check", "--pr", "13", "--json"], repo.cwd);
   expect(check.json().data.branch).toBe("feature/x");
+  // No workspace: the default endpoint (commit) stops after the review.
+  expect(result.json().data.next).toBe(
+    "a non-author verifies the head (workit-review); the endpoint is commit, so stop here",
+  );
+});
+
+test("pr create: given an endpoint of merged without the merge grant, then next names the review and the effective endpoint (green)", async () => {
+  const { repo } = setup("github", {
+    ...githubBase(),
+    "graphql find": fixture("github/find-none.json"),
+    "POST repos/o/r/pulls": JSON.stringify({
+      number: 13,
+      html_url: "https://github.com/o/r/pull/13",
+      state: "open",
+      head: { ref: "feature/x", sha: "{{HEAD}}" },
+    }),
+  });
+  workspace(repo, {
+    vcs: { provider: "github", account: "octo" },
+    autonomy: { merge: false },
+    defaultEndpoint: "merged",
+  });
+  const args = ["pr", "create", "--base", "main", "--title", "feat: x", "--body", "Why: y"];
+  const json = await run([...args, "--json"], repo.cwd);
+  expect(json.code, json.stdout).toBe(0);
+  expect(json.json().data.next).toBe(
+    "a non-author verifies the head (workit-review); the endpoint is green, so babysit it to merge-ready, never merging",
+  );
+  const human = await run(args, repo.cwd);
+  expect(human.stdout.trimEnd().split("\n").at(-1)).toBe(
+    "next: a non-author verifies the head (workit-review); the endpoint is green, so babysit it to merge-ready, never merging",
+  );
 });
 
 // Two release lines; the workspace default (develop) belongs to `next`, but
@@ -432,6 +464,8 @@ test("pr merge: given READY but no accepted verdict, then NEEDS_VERDICT; the aut
   expect(none.json().error).toContain("NEEDS_VERDICT");
   expect(none.json()).toMatchObject({ data: { reason: "needs_verdict" } });
   expect(none.json().unblock).toContain("workit ledger verdict verified");
+  // merge: "verified" never offers the bypass.
+  expect(none.json().unblock).not.toContain("--unverified");
   // A self verdict is recorded but never accepted.
   expect(
     (await run(["ledger", "verdict", "verified", "--how", "x", "--self"], repo.cwd)).code,
@@ -567,25 +601,98 @@ test("pr merge: a PR head that is not the verified local head is refused before 
   expect(writes(runner.calls)).toEqual([]);
 });
 
-test("pr merge: merge: true grants merging without a verdict (still READY-gated)", async () => {
-  const { repo } = setup("github", {});
+// `merge: true` still needs a verdict; only an explicit, recorded
+// `--unverified --reason` bypasses it. `merge: "verified"` never does.
+const grantMergeTrue = (repo: ForgeRepo) =>
   workspace(repo, { vcs: { provider: "github", account: "octo" }, autonomy: { merge: true } });
-  const runner = replayRunner(
-    {
-      ...mergeRoutes("github/pr-passing.json"),
-      "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
-    },
-    repo.subs,
-  );
-  forgeDeps.runner = runner;
+
+test("pr merge: given merge: true and no verdict, then NEEDS_VERDICT names the verifier and the --unverified bypass", async () => {
+  const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMergeTrue(repo);
   const result = await run(["pr", "merge", "--json"], repo.cwd);
-  expect(result.code).toBe(0);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("NEEDS_VERDICT");
+  expect(result.json()).toMatchObject({ data: { reason: "needs_verdict" } });
+  expect(result.json().unblock).toContain("workit ledger verdict verified");
+  expect(result.json().unblock).toContain('workit pr merge --unverified --reason "<why>"');
+  expect(writes(runner.calls)).toEqual([]);
+  expect(rows(repo.cwd, "merge.unverified")).toEqual([]);
+});
+
+test("pr merge: given merge: true, when --unverified --reason is passed, then it merges and the ledger records who bypassed which head and why", async () => {
+  const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMergeTrue(repo);
+  const result = await run(
+    ["pr", "merge", "--unverified", "--reason", "user asked: hotfix before the demo", "--json"],
+    repo.cwd,
+  );
+  expect(result.code, result.stdout).toBe(0);
   expect(result.json().data).toMatchObject({
-    verdict: { required: false, accepted: false },
+    verdict: { required: false, accepted: false, verdictId: null },
+    unverified: { reason: "user asked: hotfix before the demo" },
     grant: { source: "autonomy" },
   });
+  expect(writes(runner.calls)).toEqual([
+    expect.objectContaining({ method: "PUT", endpoint: "repos/o/r/pulls/12/merge" }),
+  ]);
   expect(runner.calls.at(-1)?.token).toBe("gho_token_for_octo_0000000000000000");
   expect(result.stdout).not.toContain("gho_token_for_octo");
+  const [bypass] = rows(repo.cwd, "merge.unverified");
+  expect(bypass).toMatchObject({
+    observer: "workit_cli",
+    actor: { session: "author-1" },
+    branch: "feature/x",
+    head: repo.head,
+    pr: 12,
+    reason: "user asked: hotfix before the demo",
+  });
+  expect(result.json().data.unverified.recorded).toBe(String(bypass.id));
+  expect(rows(repo.cwd, "pr.merged")).toEqual([
+    expect.objectContaining({ pr: 12, verdictId: null, unverified: String(bypass.id) }),
+  ]);
+  const human = await run(["ledger", "list", "--type", "merge.unverified"], repo.cwd);
+  expect(human.stdout).toContain("merged without a verdict");
+});
+
+test("pr merge: --unverified without --reason (or --reason alone) is a usage error and nothing is called", async () => {
+  const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMergeTrue(repo);
+  const bare = await run(["pr", "merge", "--unverified", "--json"], repo.cwd);
+  expect(bare.code).toBe(2);
+  expect(bare.stderr + bare.stdout).toContain("--unverified needs --reason");
+  expect((await run(["pr", "merge", "--reason", "why", "--json"], repo.cwd)).code).toBe(2);
+  expect(runner.calls).toEqual([]);
+  expect(rows(repo.cwd, "merge.unverified")).toEqual([]);
+});
+
+test('pr merge: given merge: "verified", then --unverified is refused, naming why, and nothing merges', async () => {
+  const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMerge(repo);
+  const result = await run(
+    ["pr", "merge", "--unverified", "--reason", "user asked", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(3);
+  expect(result.json()).toMatchObject({ data: { reason: "unverified_refused" } });
+  expect(result.json().error).toContain(
+    'grants merge: "verified", which never merges without an accepted independent verdict',
+  );
+  expect(writes(runner.calls)).toEqual([]);
+  expect(rows(repo.cwd, "merge.unverified")).toEqual([]);
+});
+
+test("pr merge: given merge: true and an accepted independent verdict, then it merges without a bypass row", async () => {
+  const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
+  grantMergeTrue(repo);
+  await verdict(repo);
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({
+    verdict: { required: true, accepted: true },
+    unverified: null,
+  });
+  expect(writes(runner.calls)).toHaveLength(1);
+  expect(rows(repo.cwd, "merge.unverified")).toEqual([]);
 });
 
 test("pr merge (GitLab): READY MR merges with sha= and squash; rebase is not a GitLab request option", async () => {

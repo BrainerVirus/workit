@@ -154,7 +154,9 @@ head independently verified?".
 
 **Autonomy grants.** Per-workspace grants in `~/.config/workit/workspaces.json`
 set the ceiling: `push`, `pr` and `rerun` are allowed by default; `merge` needs
-`true` or `verified`; `defaultEndpoint` is where an unnamed delivery request
+`true` or `verified`, and both merge only with an accepted independent verdict
+(`true` also allows a ledger-recorded `--unverified --reason` bypass);
+`defaultEndpoint` is where an unnamed delivery request
 stops: `commit` (default), `pr` (push and open the PR), `green` (open the PR,
 then babysit CI, review threads and required rebases until it is merge-ready,
 never merging) or `merged` (`green`, then `workit pr merge`; it acts as `green`

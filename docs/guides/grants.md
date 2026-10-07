@@ -20,7 +20,7 @@ repository.
 | `push` | allowed | `workit git push`, `stack sync` |
 | `pr` | allowed | `workit pr create` |
 | `rerun` | allowed | `workit ci rerun` |
-| `merge` | needs a grant | `workit pr merge`, `stack land`. `"verified"`: only with an accepted independent verdict; `true`: without one |
+| `merge` | needs a grant | `workit pr merge`, `stack land`. Both need an accepted independent verdict. `true` also allows `--unverified --reason "<why>"`, a bypass recorded in the ledger; `"verified"` never does (see [Merging](#merging)) |
 | `release` | needs a grant | Reserved; no verb consumes it yet |
 | `defaultEndpoint` | `commit` | Where an unnamed delivery request stops, lowest to highest: `commit`, `pr`, `green`, `merged` (skills read it; see [Default endpoint](#default-endpoint)) |
 | `verification` | `self` | What a normal-risk behavior change needs: `self` (observed `workit check test` plus the author's own `--self` verdict, shown as self-reviewed) or `independent` (a verdict from a session that did not author it). High risk always needs an independent live `verified` verdict |
@@ -28,6 +28,26 @@ repository.
 Without a merge grant the ceiling is: PR or stack opened, CI green,
 independently verified. Explicit grants need `vcs.account` for forge effects.
 Protected-branch pushes stay denied.
+
+## Merging
+
+`merge: true` and `merge: "verified"` both merge only a READY PR whose head
+has an accepted independent verdict (`workit ledger check`). Without one,
+`pr merge` refuses with `NEEDS_VERDICT` and `stack land` stops at
+`no_verdict`; the unblock names the verifier route.
+
+Only under `merge: true` can you merge without a verdict, and only by
+asking for it: `workit pr merge --unverified --reason "<why>"` (or `workit
+stack land --unverified --reason "<why>"`). `--reason` is required. Before
+the merge call Workit records a `merge.unverified` ledger row with the
+session, the PR, its head and the reason. If that row cannot be written,
+nothing merges. Under `merge: "verified"`, `--unverified` is refused with
+`unverified_refused`. Agents pass `--unverified` only when the user asks for
+it.
+
+Before 8.0, `merge: true` merged without a verdict check. To keep that
+behavior for a merge, pass `--unverified --reason "<why>"`. To keep verdicts
+mandatory, switch to `workit grant set <workspace> merge=verified`.
 
 ## Managing grants
 
@@ -56,7 +76,7 @@ allowed. Each write keeps `workspaces.json.bak`.
 | `commit` | a local commit on a policy-compliant branch (default) |
 | `pr` | the pushed branch with its PR open |
 | `green` | the PR merge-ready: it keeps babysitting without asking (`workit ci wait` in the background, one `workit ci rerun` for a clear flake or infra failure, otherwise a fix; review threads answered; the branch rebased when the forge requires it; a draft marked ready) until CI is green, threads are resolved and the verification gate is met. It never merges |
-| `merged` | everything in `green`, then `workit pr merge` |
+| `merged` | everything in `green`, then `workit pr merge` once a non-author verdict is accepted |
 
 The configured endpoint applies only when the request names none; an
 explicit "babysit this PR" stops at merge-ready. The agent stops early only

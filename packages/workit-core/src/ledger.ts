@@ -1361,7 +1361,7 @@ export type RowSummary = {
 };
 
 /** Row types that count only when an observing verb wrote them. */
-const OBSERVED_ONLY: ReadonlySet<string> = new Set(["check", ...PR_ROW_TYPES]);
+const OBSERVED_ONLY: ReadonlySet<string> = new Set(["check", "merge.unverified", ...PR_ROW_TYPES]);
 
 export function rowLabels(row: ReadRow): RowSummary["labels"] {
   const labels: RowSummary["labels"] = [];
@@ -1406,6 +1406,9 @@ export function summarizeRow(row: ReadRow): RowSummary {
       break;
     case "pr.merged":
       summary = `#${row.pr ?? "?"} ${text("method")} at ${(row.head ?? "?").slice(0, 12)}${text("mergeSha") ? ` -> ${text("mergeSha").slice(0, 12)}` : ""}`;
+      break;
+    case "merge.unverified":
+      summary = `#${row.pr ?? "?"} merged without a verdict at ${(row.head ?? "?").slice(0, 12)} (reason: ${text("reason")})`;
       break;
     case "delivery.verified":
       summary = `${text("expect")} delivered at ${(row.head ?? "?").slice(0, 12)}`;

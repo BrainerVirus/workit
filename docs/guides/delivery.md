@@ -28,19 +28,24 @@ workit pr create (--title <t> | --fill) [--base <b> | --track <t>] [--draft]
 workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next and babysit step
 workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 4 still pending
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
-workit pr merge [--method squash|merge|rebase] [--delete-branch]
+workit pr merge [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 ```
 
 - `pr create` requires the branch to be pushed and checks the forge reports
-  that SHA as the PR head.
+  that SHA as the PR head. It ends with a `next:` line (`next` in `--json`):
+  a non-author verifies the head, then what the effective endpoint does
+  (stop, babysit, or land after verification).
 - With [release tracks](configuration.md#release-tracks), the default base of
   `git branch`, the default target of `pr create` and the default trunk of
   `stack plan` come from the track the branch belongs to; `pr merge` onto a
   track's production branch reports the branches to merge back into.
 - `pr merge` merges only when `pr status` reads READY, an independent verdict
   is accepted for that head (`workit ledger check`), and the `merge` grant
-  allows it. The merge call carries the head SHA, so a moved head is refused.
+  allows it, under `merge: true` and `merge: "verified"` alike. The merge call
+  carries the head SHA, so a moved head is refused. Only `merge: true` accepts
+  `--unverified --reason "<why>"`, which merges without a verdict and records
+  a `merge.unverified` ledger row ([grants](grants.md#merging)).
 - `verify-delivery` answers "did it land?" from the remote, never from local
   state.
 
@@ -102,7 +107,8 @@ workit stack land [--dry-run] [--max <n>]
 - `land` merges the contiguous run from the root whose PRs are READY and
   verified, one at a time through `pr merge`'s gates, and stops at the first
   that does not qualify with a reason (`no_verdict`, `not_ready`,
-  `grant_required`, …).
+  `grant_required`, …). Under `merge: true`, `--unverified --reason "<why>"`
+  also lands the unverified PRs in that run and records a bypass row for each.
 
 ## Parallel slices (fanout)
 

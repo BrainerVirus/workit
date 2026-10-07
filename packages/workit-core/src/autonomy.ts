@@ -17,8 +17,9 @@
 // - Defaults (D4) when a kind is absent: push, pr and rerun are allowed;
 //   merge and release need an explicit grant. The default ceiling is a stack
 //   opened, CI green and independently verified: "verified, ready".
-// - `merge: "verified"` allows a merge only with an accepted independent
-//   verdict (S13); `merge: true` is the only way to merge without one.
+// - Every merge needs an accepted independent verdict (S13). `merge: true`
+//   also allows an explicit, ledger-recorded `--unverified --reason` bypass;
+//   `merge: "verified"` never does.
 // - A legacy `autoApprove: true | [classes]` maps once to grants (its `merge`
 //   class becomes `merge: "verified"`; `branch`/`commit` are local, dropped).
 // - Explicitly configured grants require an account (design §2.0 Identity):
@@ -131,7 +132,8 @@ type EndpointContext = {
  * delivery verbs make (requireGrant): without `push` or `pr` (or without the
  * account explicit grants need) nothing reaches the forge, so anything above
  * `commit` acts as `commit`; without `merge`, `merged` acts as `green`. The
- * reason names the unblock.
+ * reason names the unblock. `merged` stays `merged` under either merge grant;
+ * landing still needs an accepted verdict (forge/pr-ops.ts).
  */
 function effectiveEndpoint(
   endpoint: DefaultEndpoint,
@@ -212,8 +214,8 @@ export type GrantDecision =
       kind: GrantKind;
       /** Where the permission came from. */
       source: AutonomySource;
-      /** A merge must also have an accepted independent verdict (S13). */
-      requireVerdict: boolean;
+      /** `merge: true` only: `--unverified --reason` may bypass the verdict (S13). */
+      allowUnverified: boolean;
       workspace: string | null;
     }
   | {
@@ -373,7 +375,7 @@ export function requireGrant(
     allowed: true,
     kind,
     source: configured ? autonomy.source : "default",
-    requireVerdict: kind === "merge" && value !== true,
+    allowUnverified: kind === "merge" && value === true,
     workspace,
   };
 }

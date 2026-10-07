@@ -9,13 +9,19 @@
 // merge: three independent gates, all required:
 //   1. the S10 status document reads READY (required checks green, no
 //      conflicts, threads, review or draft blockers);
-//   2. an accepted S13 verdict for that exact head (fresh or carried), unless
-//      the workspace grants `merge: true`;
+//   2. an accepted S13 verdict for that exact head (fresh or carried). Under
+//      `merge: true` only, `--unverified --reason` bypasses it, and the bypass
+//      is recorded (`merge.unverified`) before the merge call;
 //   3. the `merge` grant (autonomy.ts `requireGrant`; S16 fills the defaults).
 // The merge call carries the head SHA (GitHub `sha=`, GitLab `sha=`), so a
 // head that moves after the gates refuses instead of merging unverified code.
 // --delete-branch deletes with a lease on that same SHA.
-import { requireGrant, type AutonomySource } from "../autonomy";
+import {
+  requireGrant,
+  resolveAutonomy,
+  type AutonomySource,
+  type DefaultEndpoint,
+} from "../autonomy";
 import { isProtectedTarget } from "../core/branch";
 import { vcsConfig } from "../core/vcs-config";
 import { workspaceReleaseTracks } from "../core/release-tracks";
@@ -64,6 +70,20 @@ export type CreateOutcome = {
   created: boolean;
   draft: boolean;
   recorded: { id: string } | { error: string };
+  /** The review step and what the effective endpoint does after it. */
+  next: string;
+};
+
+const AFTER_REVIEW: Record<DefaultEndpoint, string> = {
+  commit: "stop here",
+  pr: "stop here",
+  green: "babysit it to merge-ready, never merging",
+  merged: "babysit it, then land it after verification",
+};
+
+const createNext = (cwd: string): string => {
+  const endpoint = resolveAutonomy(cwd).effectiveEndpoint;
+  return `a non-author verifies the head (workit-review); the endpoint is ${endpoint}, so ${AFTER_REVIEW[endpoint]}`;
 };
 
 /**
@@ -231,6 +251,7 @@ export async function createPullRequest(
     created,
     draft: input.draft,
     recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
+    next: createNext(cwd),
   });
 }
 
@@ -247,6 +268,8 @@ export type MergeInput = {
    * comes from this branch, re-checked right before the merge call.
    */
   expect?: { base: string; branch: string };
+  /** Merge without a verdict (`merge: true` only); the reason is recorded. */
+  unverified?: { reason: string };
 };
 
 export type MergeOutcome = {
@@ -258,6 +281,8 @@ export type MergeOutcome = {
   method: MergeMethod;
   mergeSha: string | null;
   verdict: { required: boolean; accepted: boolean; verdictId: string | null };
+  /** Set when `--unverified` bypassed the verdict: the reason and its ledger row. */
+  unverified: { reason: string; recorded: string } | null;
   grant: { source: AutonomySource };
   deletedBranch: boolean | { error: string };
   recorded: { id: string } | { error: string };
@@ -294,6 +319,7 @@ const mergeBackFor = (cwd: string, base: string): { track: string | null; branch
 export type MergeRefusal = {
   reason:
     | "grant_required"
+    | "unverified_refused"
     | "not_ready"
     | "needs_verdict"
     | "head_mismatch"
@@ -346,6 +372,15 @@ export async function mergePullRequest(
 ): Promise<MergeResult> {
   const grant = requireGrant(cwd, "merge");
   if (!grant.allowed) return refuse(grant.error, grant.unblock, { reason: "grant_required" });
+  const bypass = input.unverified ?? null;
+  if (bypass && !bypass.reason.trim())
+    return failure("invalid_input", "--unverified needs --reason <why the user asked for it>");
+  if (bypass && !grant.allowUnverified)
+    return refuse(
+      `unverified_refused: workspace ${grant.workspace ? `"${grant.workspace}"` : "(none)"} grants merge: "verified", which never merges without an accepted independent verdict`,
+      "a non-author session verifies the head (workit-review), then merge without --unverified",
+      { reason: "unverified_refused" },
+    );
 
   const number = selectPr(cwd, resolved, { pr: input.pr });
   if (!number.ok) return number;
@@ -404,34 +439,50 @@ export async function mergePullRequest(
         { reason: "protected_branch" },
       );
   }
+  const ledger = readLedger(cwd);
+  if (!ledger.ok) return ledger;
+  const check = checkVerdicts(cwd, branch, ledger.value.rows);
+  const summary = { head: check.head, accepted: check.accepted, authors: check.authors };
+  const covered = check.head === head && check.accepted.accepted;
   let verdict: MergeOutcome["verdict"] = {
-    required: grant.requireVerdict,
-    accepted: false,
-    verdictId: null,
+    required: true,
+    accepted: covered,
+    verdictId:
+      covered && typeof check.accepted.verdict?.id === "string" ? check.accepted.verdict.id : null,
   };
-  if (grant.requireVerdict) {
-    const ledger = readLedger(cwd);
-    if (!ledger.ok) return ledger;
-    const check = checkVerdicts(cwd, branch, ledger.value.rows);
-    const summary = { head: check.head, accepted: check.accepted, authors: check.authors };
-    if (check.head !== head)
-      return refuse(
-        `head_mismatch: the verdict check reads ${branch} at ${check.head?.slice(0, 12) ?? "(missing)"} but ${label} is at ${head.slice(0, 12)}`,
-        `git fetch && git switch ${branch} && git merge --ff-only @{u}  # then re-verify that head`,
-        { reason: "head_mismatch", verdict: summary },
+  let unverified: MergeOutcome["unverified"] = null;
+  if (!covered && bypass) {
+    // Recorded before the merge call: a bypass that cannot be audited never merges.
+    const reason = bypass.reason.trim();
+    const recorded = appendObserved(cwd, {
+      type: "merge.unverified",
+      actor: input.actor,
+      branch,
+      head,
+      pr: doc.number,
+      base: doc.base,
+      reason,
+      grant: grant.source,
+    });
+    if (!recorded.ok)
+      return failure(
+        "failed",
+        `unverified_unrecorded: the --unverified bypass could not be recorded (${recorded.error}); nothing was merged`,
       );
-    if (!check.accepted.accepted)
-      return refuse(
-        `NEEDS_VERDICT: ${label} has no accepted independent verdict for ${head.slice(0, 12)} (${check.accepted.reasons.join(", ")})`,
-        `an independent session verifies the head and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${branch}`,
-        { reason: "needs_verdict", verdict: summary },
-      );
-    verdict = {
-      required: true,
-      accepted: true,
-      verdictId: typeof check.accepted.verdict?.id === "string" ? check.accepted.verdict.id : null,
-    };
-  }
+    verdict = { required: false, accepted: false, verdictId: null };
+    unverified = { reason, recorded: String(recorded.value.id) };
+  } else if (check.head !== head)
+    return refuse(
+      `head_mismatch: the verdict check reads ${branch} at ${check.head?.slice(0, 12) ?? "(missing)"} but ${label} is at ${head.slice(0, 12)}`,
+      `git fetch && git switch ${branch} && git merge --ff-only @{u}  # then re-verify that head`,
+      { reason: "head_mismatch", verdict: summary },
+    );
+  else if (!covered)
+    return refuse(
+      `NEEDS_VERDICT: ${label} has no accepted independent verdict for ${head.slice(0, 12)} (${check.accepted.reasons.join(", ")})`,
+      `an independent session verifies the head and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${branch}${grant.allowUnverified ? `; or, only if the user asks to merge unverified: workit pr merge --unverified --reason "<why>"` : ""}`,
+      { reason: "needs_verdict", verdict: summary },
+    );
 
   const merged = resolved.forge.merge(doc.number, { sha: head, method: input.method });
   if (!merged.ok) return merged;
@@ -470,6 +521,7 @@ export async function mergePullRequest(
     mergeSha: merged.data.mergeSha,
     method: input.method,
     verdictId: verdict.verdictId,
+    ...(unverified ? { unverified: unverified.recorded } : {}),
     grant: grant.source,
   });
   return {
@@ -483,6 +535,7 @@ export async function mergePullRequest(
       method: input.method,
       mergeSha: merged.data.mergeSha,
       verdict,
+      unverified,
       grant: { source: grant.source },
       deletedBranch,
       recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
