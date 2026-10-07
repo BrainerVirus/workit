@@ -170,20 +170,30 @@ test(
     const fixture = makeCursorStub();
     const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
     try {
-      // makeCursorStub already mirrors a synced canonical install; capture the
-      // pre-run bytes to prove the installer never rewrites them.
-      const hookBytes = readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"));
-      const installed = spawnSync(
-        "bash",
-        ["packages/workit-core/scripts/install-cursor-plugin.sh"],
-        {
+      const install = () =>
+        spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
           cwd: fixture.stub,
           env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
-        },
-      );
-      expect(installed.status, installed.stderr).toBe(0);
-      expect(readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"))).toEqual(hookBytes);
+        });
+      const hooksFile = path.join(pluginDir, "hooks", "hooks-cursor.json");
+      const first = install();
+      expect(first.status, first.stderr).toBe(0);
+      // A local install addresses the launcher by absolute path in every
+      // event, so it never depends on Cursor expanding ${CURSOR_PLUGIN_ROOT}.
+      const launcher = `node "${path.join(pluginDir, "hooks", "launch.mjs")}"`;
+      const hooks = JSON.parse(readFileSync(hooksFile, "utf8")).hooks as Record<
+        string,
+        { command: string }[]
+      >;
+      expect(Object.keys(hooks)).toHaveLength(6);
+      for (const [event, [entry]] of Object.entries(hooks))
+        expect(entry.command, event).toStartWith(`${launcher} workit-cursor-`);
+      // A second run over the healthy install rewrites nothing.
+      const hookBytes = readFileSync(hooksFile);
+      const second = install();
+      expect(second.status, second.stderr).toBe(0);
+      expect(readFileSync(hooksFile)).toEqual(hookBytes);
       const doctor = spawnSync(
         "bash",
         [

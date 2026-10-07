@@ -107,16 +107,19 @@ const mcp = fs.existsSync(mcpPath)
 const mergedMcp = mergeCursorMcp(mcp, "workit", server);
 fs.writeFileSync(mcpPath, JSON.stringify(mergedMcp.config, null, 2) + "\n");
 
-// The plugin'"'"'s own hooks-cursor.json ships the npx pin; the local-dist
-// install swaps its sessionStart entry to node against the installed dist.
-if (localDist) {
-  const hooksPath = path.join(pluginDir, "hooks", "hooks-cursor.json");
-  const hooks = fs.existsSync(hooksPath)
-    ? JSON.parse(fs.readFileSync(hooksPath, "utf8"))
-    : { version: 1, hooks: {} };
-  const mergedHooks = mergeCursorHooks(hooks, cursorHookLocalDistEntry(pluginDir));
+// The shipped hooks-cursor.json reaches the launcher through
+// ${CURSOR_PLUGIN_ROOT}, which only a Marketplace install needs. A local
+// install writes the absolute launcher path into every event so hooks do not
+// depend on Cursor expanding it; --local-dist also points sessionStart at the
+// installed dist.
+const hooksPath = path.join(pluginDir, "hooks", "hooks-cursor.json");
+const hooks = fs.existsSync(hooksPath)
+  ? JSON.parse(fs.readFileSync(hooksPath, "utf8"))
+  : { version: 1, hooks: {} };
+const sessionStart = localDist ? cursorHookLocalDistEntry(pluginDir) : cursorHooksEntry(pluginDir);
+const mergedHooks = mergeCursorHooks(hooks, { command: sessionStart.command }, pluginDir);
+if (mergedHooks.changed.length > 0)
   fs.writeFileSync(hooksPath, JSON.stringify(mergedHooks.config, null, 2) + "\n");
-}
 '
 
 # DG-09: verify the just-written Cursor registration with the shared offline doctor.

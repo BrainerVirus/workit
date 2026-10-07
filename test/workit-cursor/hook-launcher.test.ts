@@ -5,10 +5,13 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -176,6 +179,7 @@ test("a spawn failure falls through to the next candidate, and fails open when n
   const missing = {
     mode: "local" as const,
     source: "/nope/workit-cursor-hook",
+    version: null,
     command: "/nope/workit-cursor-hook",
     args: [],
     timeoutMs: 1_000,
@@ -203,4 +207,71 @@ test("a hook that answers without reading all of stdin still has its answer pass
   });
   expect(result.status).toBe(2);
   expect(result.stdout).toBe("denied");
+});
+
+test("relative PATH entries are never searched for a global hook bin", () => {
+  const workspace = scratch();
+  executable(path.join(workspace, "node_modules", ".bin", "workit-cursor-hook"), "#!/bin/sh\n");
+  executable(path.join(workspace, "workit-cursor-hook"), "#!/bin/sh\n");
+  const previous = process.cwd();
+  process.chdir(workspace);
+  try {
+    expect(
+      resolveCursorHookLaunch({
+        root: plugin(),
+        bin: "workit-cursor-hook",
+        env: { PATH: [".", "node_modules/.bin"].join(path.delimiter) },
+      }),
+    ).toEqual([]);
+  } finally {
+    process.chdir(previous);
+  }
+});
+
+test("a global hook bin reports the workit-cursor version it belongs to", () => {
+  const prefix = scratch();
+  const pkg = path.join(prefix, "lib", "node_modules", "@brainervirus", "workit-cursor");
+  executable(path.join(pkg, "dist", "workit-hook.js"), "#!/bin/sh\necho '{}'\n");
+  writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: PKG, version: "7.1.2" }));
+  const bin = path.join(prefix, "bin");
+  mkdirSync(bin, { recursive: true });
+  symlinkSync(path.join(pkg, "dist", "workit-hook.js"), path.join(bin, "workit-cursor-hook"));
+  const [global] = resolveCursorHookLaunch({
+    root: plugin(),
+    bin: "workit-cursor-hook",
+    env: { PATH: bin },
+  });
+  expect([global.mode, global.source, global.version]).toEqual([
+    "local",
+    path.join(bin, "workit-cursor-hook"),
+    "7.1.2",
+  ]);
+});
+
+test("a deny larger than spawnSync's default buffer still blocks", () => {
+  const big = JSON.stringify({ permission: "deny", agent_message: "x".repeat(2 * 1024 * 1024) });
+  const root = plugin({
+    bundled: `process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write(${JSON.stringify(big)});process.exitCode=2;});\n`,
+  });
+  const result = spawnSync(NODE, [path.join(root, "hooks", "launch.mjs"), "workit-cursor-hook"], {
+    input: JSON.stringify(SHELL_PAYLOAD),
+    encoding: "utf8",
+    env: { PATH: "" },
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  expect(result.status).toBe(2);
+  expect(result.stdout.length).toBe(big.length);
+});
+
+test("every hook run touches the heartbeat that workit doctor reads", () => {
+  const state = scratch();
+  const root = plugin({ bundled: 'process.stdout.write("{}");\n' });
+  const result = launch(root, SHELL_PAYLOAD, { PATH: "", WORKFLOW_TOOLKIT_STATE: state });
+  expect(result.status).toBe(0);
+  const beat = JSON.parse(readFileSync(path.join(state, "cursor-hook-last-run"), "utf8"));
+  expect(beat.bin).toBe("workit-cursor-hook");
+  // Even a run that fails open proves Cursor reached the launcher.
+  rmSync(path.join(state, "cursor-hook-last-run"));
+  launch(plugin(), SHELL_PAYLOAD, { PATH: "", WORKFLOW_TOOLKIT_STATE: state });
+  expect(existsSync(path.join(state, "cursor-hook-last-run"))).toBe(true);
 });

@@ -77,8 +77,10 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
   interaction: { questions: "none", writeBoundary: "partial" },
   stopControl: "undocumented",
   shellAvailable: "native",
-  // Every hook spawns `npx -y --prefer-online …@latest`: a registry round-trip per event.
-  perEventCost: "npx-network",
+  // Hooks run the plugin's launcher against a local runtime (bundled dist or a
+  // global bin); only an install with neither falls back to a pinned,
+  // --prefer-offline npx.
+  perEventCost: "low",
   capabilities: [
     {
       name: "known_product_writes",

@@ -442,9 +442,30 @@ test("cursorMcpServerEntry launches the published package via npx", () => {
 });
 
 test("cursorHooksEntry uses the documented single command string with no args", () => {
-  const entry = cursorHooksEntry("/any/pkg/dir");
+  const entry = cursorHooksEntry();
   expect(entry.command).toBe(SESSION_COMMAND);
   expect(entry.args).toEqual([]);
+  expect(cursorHooksEntry("/home/u/.cursor/plugins/local/workit").command).toBe(
+    `node "${path.join("/home/u/.cursor/plugins/local/workit", "hooks", "launch.mjs")}" workit-cursor-session-start`,
+  );
+});
+
+test("a local install's hook entries carry the absolute launcher path, which drift accepts", () => {
+  const dir = "/home/u/.cursor/plugins/local/workit";
+  const launcher = `node "${path.join(dir, "hooks", "launch.mjs")}"`;
+  const { config } = mergeCursorHooks({ version: 1, hooks: {} }, { command: "s" }, dir);
+  const hooks = config.hooks as Record<string, { command: string }[]>;
+  for (const event of ["preToolUse", "beforeShellExecution", "subagentStart", "subagentStop"])
+    expect(hooks[event][0].command, event).toBe(`${launcher} workit-cursor-hook`);
+  expect(cursorHookDrift(config, dir)).toEqual([]);
+  // Without the plugin dir only the portable form is canonical.
+  expect(cursorHookDrift(config)).toEqual([
+    "preToolUse",
+    "beforeShellExecution",
+    "subagentStart",
+    "subagentStop",
+    "preCompact",
+  ]);
 });
 
 test("cursorMcpLocalDistEntry launches the installed dist through node", () => {

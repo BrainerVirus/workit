@@ -223,10 +223,9 @@ const degradedCursorHook = (raw: unknown): { json: Record<string, unknown> } | n
         ? "the hook payload carries no conversation id"
         : null;
   if (!gap || !event) return null;
+  if (!BLOCKING_EVENTS.has(event)) return { json: {} };
   const note = `[workit: ${gap}; Workit checks are skipped for this action]`;
-  if (BLOCKING_EVENTS.has(event)) return { json: { permission: "allow", agent_message: note } };
-  if (event === "sessionStart") return { json: { additional_context: note } };
-  return { json: {} };
+  return { json: { permission: "allow", user_message: note, agent_message: note } };
 };
 
 export const handleCursorHook = (raw: unknown): Record<string, unknown> =>

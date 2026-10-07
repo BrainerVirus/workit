@@ -149,10 +149,13 @@ export function mergeCursorMcp(
 /** Swap the sessionStart hook command and normalize the workit-owned events to
  *  canonical (missing or divergent entries, including a legacy
  *  `failClosed: true`, are rewritten so the installer heals exactly what the
- *  doctor flags). Other hooks and fields are preserved. */
+ *  doctor flags). Other hooks and fields are preserved. With `pluginDir` (a
+ *  local install) the entries carry the absolute launcher path, so they do not
+ *  depend on Cursor expanding `${CURSOR_PLUGIN_ROOT}`. */
 export function mergeCursorHooks(
   hooks: unknown,
   sessionStartEntry: Record<string, unknown>,
+  pluginDir?: string,
 ): MergeResult<Record<string, unknown>> {
   const base: Record<string, unknown> = isRecord(hooks) ? { ...hooks } : { version: 1 };
   const hooksMap = isRecord(base.hooks) ? { ...base.hooks } : {};
@@ -167,7 +170,7 @@ export function mergeCursorHooks(
     changed.push("hooks.sessionStart");
   }
   for (const event of CURSOR_HOOK_EVENTS) {
-    const canonical = canonicalHookEntry(event);
+    const canonical = canonicalHookEntry(event, pluginDir);
     const current = hooksMap[event];
     if (
       !Array.isArray(current) ||
@@ -196,14 +199,21 @@ export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest";
  * plugin's bundled dist, then a global `workit-cursor-*` bin, then npx pinned
  * to the plugin's own version with `--prefer-offline`; it never resolves
  * `@latest`, and it fails open on any launcher or infrastructure failure.
+ *
+ * The shipped manifest addresses it through `${CURSOR_PLUGIN_ROOT}` (all a
+ * Marketplace install can do); a local install (`workit init`,
+ * install-cursor-plugin.sh) writes the absolute path instead.
  */
-const CURSOR_HOOK_LAUNCHER = 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs"';
+export const cursorHookLauncher = (pluginDir?: string): string =>
+  pluginDir
+    ? `node "${path.join(pluginDir, "hooks", "launch.mjs")}"`
+    : 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs"';
 
 /**
  * Canonical Cursor hook command (single source of truth for the shipped
  * hooks-cursor.json, the installer merge, and the doctor drift check).
  */
-export const CURSOR_HOOK_RUN_COMMAND = `${CURSOR_HOOK_LAUNCHER} workit-cursor-hook`;
+export const CURSOR_HOOK_RUN_COMMAND = `${cursorHookLauncher()} workit-cursor-hook`;
 
 /**
  * preToolUse matcher covering every name the hook's write-tool guard treats
@@ -232,19 +242,25 @@ type CursorHookEvent = (typeof CURSOR_HOOK_EVENTS)[number];
  * with exit 2, which Cursor honors regardless of failClosed. The trade-off: a
  * broken runtime means no Workit enforcement (host permissions still apply).
  */
-const canonicalHookEntry = (event: CursorHookEvent): Record<string, unknown> =>
-  event === "preToolUse"
-    ? { command: CURSOR_HOOK_RUN_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false }
-    : { command: CURSOR_HOOK_RUN_COMMAND, failClosed: false };
+const canonicalHookEntry = (
+  event: CursorHookEvent,
+  pluginDir?: string,
+): Record<string, unknown> => {
+  const command = `${cursorHookLauncher(pluginDir)} workit-cursor-hook`;
+  return event === "preToolUse"
+    ? { command, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false }
+    : { command, failClosed: false };
+};
 
 /**
  * Drift between an installed hooks file and the canonical event entries.
  * Only present-but-divergent entries count: absent events are filled in by
  * the installer merge on the next run, and minimal installs predate them. A
  * legacy `failClosed: true` is drift: it turns an offline runtime into a
- * blanket deny.
+ * blanket deny. With `pluginDir`, the absolute launcher form a local install
+ * writes is canonical too.
  */
-export function cursorHookDrift(installed: unknown): string[] {
+export function cursorHookDrift(installed: unknown, pluginDir?: string): string[] {
   if (!isRecord(installed) || !isRecord(installed.hooks)) return ["hooks file is not a hook map"];
   const hooks = installed.hooks;
   const drift: string[] = [];
@@ -252,10 +268,12 @@ export function cursorHookDrift(installed: unknown): string[] {
     const list = hooks[event];
     if (list === undefined) continue;
     const canonical = canonicalHookEntry(event);
+    const commands = [canonical.command];
+    if (pluginDir) commands.push(canonicalHookEntry(event, pluginDir).command);
     const entry = Array.isArray(list) ? list[0] : undefined;
     if (
       !isRecord(entry) ||
-      entry.command !== canonical.command ||
+      !commands.includes(entry.command) ||
       entry.failClosed === true ||
       (event === "preToolUse" && entry.matcher !== canonical.matcher)
     )
@@ -287,14 +305,16 @@ export function cursorMcpServerEntry(_packageDir: string): {
 }
 
 /**
- * Portable Cursor sessionStart hook entry (CA-17): a single command string in
- * Cursor's documented format (no args array), through the pinned launcher.
+ * Cursor sessionStart hook entry (CA-17): a single command string in Cursor's
+ * documented format (no args array), through the pinned launcher. Without a
+ * plugin dir it is the portable `${CURSOR_PLUGIN_ROOT}` form; with one, the
+ * absolute form a local install writes.
  */
-export function cursorHooksEntry(_packageDir: string): {
+export function cursorHooksEntry(pluginDir?: string): {
   command: string;
   args: string[];
 } {
-  return { command: `${CURSOR_HOOK_LAUNCHER} workit-cursor-session-start`, args: [] };
+  return { command: `${cursorHookLauncher(pluginDir)} workit-cursor-session-start`, args: [] };
 }
 
 /**

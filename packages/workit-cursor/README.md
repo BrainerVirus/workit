@@ -34,8 +34,15 @@ never resolves `@latest` at hook time. Hooks are registered with
 lets the action through with a `[workit] Cursor hook unavailable` line on
 stderr, while the hook's own denials (exit 2) still block. A window with no
 folder open, or a payload without a conversation id, is allowed with a note.
-`workit doctor` reports the launcher mode (`local`, `npx-pinned` or
-`missing`) and the latency of one no-op hook.
+A local install (`workit init`, `install-cursor-plugin.sh`) writes the
+launcher's absolute path into every event, so only a Marketplace install
+relies on Cursor expanding `${CURSOR_PLUGIN_ROOT}`. On Windows the npx and
+global-bin fallbacks run their `.cmd` shims through `cmd.exe`.
+`workit doctor` reports the launcher mode (`local` with the runtime's version,
+`npx-pinned`, `missing` or `stale`) and the latency of one no-op hook. It
+also warns when Cursor started the Workit MCP server but no hook has run
+since: the launcher stamps `cursor-hook-last-run` and the MCP server stamps
+`cursor-session-last-start` in Workit's state directory.
 The `preToolUse` hook applies the [before-write gate](https://github.com/BrainerVirus/workit/blob/main/docs/guides/verification.md)
 to write tools while the branch task has an open product choice or needs a
 plan.

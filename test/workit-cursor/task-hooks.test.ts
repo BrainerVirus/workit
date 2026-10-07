@@ -173,13 +173,11 @@ test("a blocking payload with no workspace or no conversation id is allowed with
     const output = JSON.parse(result.stdout);
     expect(output.permission, label).toBe("allow");
     expect(output.agent_message, label).toContain("Workit checks are skipped");
+    expect(output.user_message, label).toBe(output.agent_message);
   }
   expect(
     handleCursorHook({ hook_event_name: "sessionStart", workspace_roots: [process.cwd()] }),
-  ).toEqual({
-    additional_context:
-      "[workit: the hook payload carries no conversation id; Workit checks are skipped for this action]",
-  });
+  ).toEqual({});
 });
 
 test("a blocking payload that is placeable but inconsistent still exits fail-closed", () => {

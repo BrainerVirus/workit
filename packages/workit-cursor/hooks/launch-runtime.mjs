@@ -2,7 +2,15 @@
 // (launch.mjs, including its `--probe` mode for `workit doctor`). Side-effect
 // free: importing it runs nothing.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const CURSOR_HOOK_PACKAGE = "@brainervirus/workit-cursor";
@@ -15,6 +23,9 @@ const CURSOR_HOOK_BINS = {
 
 const LOCAL_TIMEOUT_MS = 20_000;
 const NPX_TIMEOUT_MS = 30_000;
+// A deny can carry a long agent message; spawnSync's 1 MiB default would turn
+// an oversized answer into a launcher failure (and fail open).
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 /** @param {string} root */
 const pluginVersion = (root) => {
@@ -28,11 +39,30 @@ const pluginVersion = (root) => {
   }
 };
 
+/** The workit-cursor version a global bin belongs to (its package.json), if any.
+ *  @param {string} bin */
+const globalBinVersion = (bin) => {
+  try {
+    for (let dir = path.dirname(realpathSync(bin)); ; dir = path.dirname(dir)) {
+      const pkg = path.join(dir, "package.json");
+      if (existsSync(pkg)) {
+        const parsed = JSON.parse(readFileSync(pkg, "utf8"));
+        return parsed.name === CURSOR_HOOK_PACKAGE ? pluginVersion(dir) : null;
+      }
+      if (path.dirname(dir) === dir) return null;
+    }
+  } catch {
+    return null;
+  }
+};
+
 /** @param {string} name @param {NodeJS.ProcessEnv} env */
 const onPath = (name, env) => {
   const names = process.platform === "win32" ? [`${name}.cmd`, `${name}.exe`, name] : [name];
   for (const dir of (env.PATH ?? "").split(path.delimiter)) {
-    if (!dir) continue;
+    // Relative entries (`.`, `node_modules/.bin`) resolve against the
+    // workspace Cursor runs the hook in: never trust them.
+    if (!dir || !path.isAbsolute(dir)) continue;
     for (const candidate of names.map((n) => path.join(dir, n))) {
       try {
         const st = statSync(candidate);
@@ -47,9 +77,16 @@ const onPath = (name, env) => {
 };
 
 /**
- * @typedef {{ mode: "local" | "npx-pinned", source: string, command: string,
- *   args: string[], timeoutMs: number }} LaunchCandidate
+ * @typedef {{ mode: "local" | "npx-pinned", source: string, version: string | null,
+ *   command: string, args: string[], timeoutMs: number }} LaunchCandidate
  */
+
+/** Node cannot spawn a Windows `.cmd` shim directly; run it through cmd.exe.
+ *  @param {string} file @param {string[]} args @param {NodeJS.ProcessEnv} env */
+const commandFor = (file, args, env) =>
+  /\.(?:cmd|bat)$/i.test(file)
+    ? { command: env.ComSpec ?? "cmd.exe", args: ["/d", "/c", file, ...args] }
+    : { command: file, args };
 
 /**
  * Ordered launch candidates for `bin`; an empty list means "missing".
@@ -63,11 +100,13 @@ export const resolveCursorHookLaunch = ({ root, bin, env, node = process.execPat
     ? CURSOR_HOOK_BINS[/** @type {keyof typeof CURSOR_HOOK_BINS} */ (bin)]
     : null;
   if (!entry) return candidates;
+  const version = pluginVersion(root);
   const bundled = path.join(root, "dist", entry);
   if (existsSync(bundled))
     candidates.push({
       mode: "local",
       source: bundled,
+      version,
       command: node,
       args: [bundled],
       timeoutMs: LOCAL_TIMEOUT_MS,
@@ -77,24 +116,27 @@ export const resolveCursorHookLaunch = ({ root, bin, env, node = process.execPat
     candidates.push({
       mode: "local",
       source: global,
-      command: global,
-      args: [],
+      version: globalBinVersion(global),
+      ...commandFor(global, [], env),
       timeoutMs: LOCAL_TIMEOUT_MS,
     });
-  const version = pluginVersion(root);
   const npx = onPath("npx", env);
   if (version && npx)
     candidates.push({
       mode: "npx-pinned",
       source: `${CURSOR_HOOK_PACKAGE}@${version}`,
-      command: npx,
+      version,
       // WORKIT_CURSOR_HOOK_NPX_OFFLINE=1 (the doctor's probe) never downloads.
-      args: [
-        "-y",
-        env.WORKIT_CURSOR_HOOK_NPX_OFFLINE === "1" ? "--offline" : "--prefer-offline",
-        `--package=${CURSOR_HOOK_PACKAGE}@${version}`,
-        bin,
-      ],
+      ...commandFor(
+        npx,
+        [
+          "-y",
+          env.WORKIT_CURSOR_HOOK_NPX_OFFLINE === "1" ? "--offline" : "--prefer-offline",
+          `--package=${CURSOR_HOOK_PACKAGE}@${version}`,
+          bin,
+        ],
+        env,
+      ),
       timeoutMs: NPX_TIMEOUT_MS,
     });
   return candidates;
@@ -123,6 +165,7 @@ export const runCursorHookLaunch = ({ candidates, payload, env, spawn = spawnSyn
       env,
       stdio: ["pipe", "pipe", "inherit"],
       timeout: timeoutMs ?? candidate.timeoutMs,
+      maxBuffer: MAX_OUTPUT_BYTES,
       windowsHide: true,
     });
     const code = /** @type {{ code?: string } | undefined} */ (run.error)?.code;
@@ -141,4 +184,36 @@ export const runCursorHookLaunch = ({ candidates, payload, env, spawn = spawnSyn
     return failOpen(`${candidate.source} exited ${run.status ?? `on ${run.signal ?? "a signal"}`}`);
   }
   return failOpen(errors.join("; "));
+};
+
+/** Workit's state dir, as core's resolveStateDir computes it.
+ *  @param {NodeJS.ProcessEnv} env */
+export const workitStateDir = (env) => {
+  if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
+  const home = env.HOME || os.homedir();
+  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
+  if (process.platform === "darwin")
+    return path.join(home, "Library", "Application Support", "workit");
+  if (process.platform === "win32")
+    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
+  return path.join(home, ".local", "state", "workit");
+};
+
+/** File the launcher touches on every run, so `workit doctor` can tell when
+ *  Cursor started sessions but never ran a Workit hook. */
+export const CURSOR_HOOK_HEARTBEAT = "cursor-hook-last-run";
+
+/** Best-effort heartbeat; a read-only state dir never blocks a hook.
+ *  @param {NodeJS.ProcessEnv} env @param {string} bin */
+export const touchCursorHookHeartbeat = (env, bin) => {
+  try {
+    const dir = workitStateDir(env);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path.join(dir, CURSOR_HOOK_HEARTBEAT),
+      `${JSON.stringify({ at: new Date().toISOString(), bin })}\n`,
+    );
+  } catch {
+    /* heartbeat is diagnostic only */
+  }
 };

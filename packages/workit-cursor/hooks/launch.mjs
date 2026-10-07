@@ -17,7 +17,11 @@
 // policy deny from the hook itself (exit 2 with Cursor's deny JSON) blocks.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveCursorHookLaunch, runCursorHookLaunch } from "./launch-runtime.mjs";
+import {
+  resolveCursorHookLaunch,
+  runCursorHookLaunch,
+  touchCursorHookHeartbeat,
+} from "./launch-runtime.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -36,12 +40,13 @@ if (process.argv[2] === "--probe") {
   });
   const first = candidates[0];
   process.stdout.write(
-    `${JSON.stringify({ mode: first?.mode ?? "missing", source: first?.source ?? null, error: run.warning })}\n`,
+    `${JSON.stringify({ mode: first?.mode ?? "missing", source: first?.source ?? null, version: first?.version ?? null, error: run.warning })}\n`,
   );
   process.exit(0);
 }
 
 const bin = process.argv[2] ?? "";
+touchCursorHookHeartbeat(process.env, bin);
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
 let result;

@@ -32,6 +32,7 @@ import {
   releaseTracksReport,
 } from "@brainervirus/workit-core/src/core/release-tracks";
 import { getDiagnosticLogger, isConfigObject } from "@brainervirus/workit-core/src/core/config";
+import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
@@ -148,6 +149,9 @@ type Resolved = {
   cursorSettings: string;
   cursorMcp: string;
   cursorPluginDir: string;
+  /** Where the Cursor hook launcher and MCP server leave their heartbeats
+   *  (core's resolveStateDir, unless a state dir is given). */
+  cursorHeartbeatDir: string;
   env: NodeJS.ProcessEnv;
   installer: boolean;
 };
@@ -191,6 +195,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
     cursorPluginDir:
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
+    cursorHeartbeatDir: options.stateDir ?? (env.WORKFLOW_TOOLKIT_STATE || resolveStateDir()),
     env,
     installer: options.installer ?? false,
   };
@@ -605,7 +610,10 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
 // The canonical session-start hook runs the plugin's pinned launcher as a
 // single command string (Cursor's documented hook format). The doctor
 // validates its shape exactly — no substring matching.
-const canonicalCursorHook = cursorHooksEntry("").command;
+const canonicalCursorHook = cursorHooksEntry().command;
+// A local install writes the absolute launcher path instead of the variable.
+const isCanonicalCursorHook = (command: string, res: Resolved): boolean =>
+  command === canonicalCursorHook || command === cursorHooksEntry(res.cursorPluginDir).command;
 
 // Returns the registered hook command, null when absent, or "invalid".
 const registeredCursorHook = (res: Resolved): string | null => {
@@ -669,7 +677,11 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
       missing.push(
         `cursor: canonical session-start hook in ${path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json")}`,
       );
-    } else if (hook !== null && hook !== canonicalCursorHook && !validLocalDistHook(hook, res)) {
+    } else if (
+      hook !== null &&
+      !isCanonicalCursorHook(hook, res) &&
+      !validLocalDistHook(hook, res)
+    ) {
       missing.push(
         `cursor: canonical session-start hook in ${path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json")} (registered ${hook})`,
       );
@@ -732,6 +744,26 @@ const checkCursorHook = (res: Resolved): DoctorCheck => {
       detail: `cursor hook launcher mode: missing — ${launcher} is absent (an install from before the pinned launcher)`,
       fix: CURSOR_HOOK_FIX,
     };
+  // The registered commands must run the launcher; anything else (a legacy
+  // npx @latest entry, a hand edit) is what stale_install repairs.
+  const hooksFile = path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json");
+  const registered = readJson(hooksFile);
+  const sessionCommand = registered?.hooks?.sessionStart?.[0]?.command;
+  const offLauncher = [
+    ...(typeof sessionCommand === "string" &&
+    !isCanonicalCursorHook(sessionCommand, res) &&
+    !validLocalDistHook(sessionCommand, res)
+      ? ["sessionStart"]
+      : []),
+    ...(registered ? cursorHookDrift(registered, res.cursorPluginDir) : ["hooks file"]),
+  ];
+  if (offLauncher.length > 0)
+    return {
+      id: "cursor_hook",
+      status: "warn",
+      detail: `cursor hook launcher mode: stale — ${hooksFile} does not run the launcher for ${offLauncher.join(", ")} (see stale_install)`,
+      fix: "Re-run install-cursor-plugin.sh (or `workit init` with Cursor) to rewrite the hook entries",
+    };
   const started = performance.now();
   const probe = spawnSync("node", [launcher, "--probe", "workit-cursor-hook"], {
     encoding: "utf8",
@@ -740,7 +772,7 @@ const checkCursorHook = (res: Resolved): DoctorCheck => {
     windowsHide: true,
   });
   const ms = Math.round(performance.now() - started);
-  let report: { mode?: unknown; source?: unknown; error?: unknown } = {};
+  let report: { mode?: unknown; source?: unknown; version?: unknown; error?: unknown } = {};
   try {
     report = JSON.parse(probe.stdout || "{}");
   } catch {
@@ -755,7 +787,10 @@ const checkCursorHook = (res: Resolved): DoctorCheck => {
         "cursor hook launcher mode: missing — no bundled hook, no workit-cursor-hook on PATH, no npx; Cursor hooks fail open (no Workit enforcement)",
       fix: CURSOR_HOOK_FIX,
     };
-  const label = `cursor hook launcher mode: ${mode ?? "unknown"} (${String(report.source ?? launcher)})`;
+  // npx-pinned names its version in the source already.
+  const version =
+    mode === "local" && typeof report.version === "string" ? `, v${report.version}` : "";
+  const label = `cursor hook launcher mode: ${mode ?? "unknown"} (${String(report.source ?? launcher)}${version})`;
   const error =
     typeof report.error === "string"
       ? report.error.replace(/^\[workit\] Cursor hook unavailable: /, "")
@@ -776,7 +811,36 @@ const checkCursorHook = (res: Resolved): DoctorCheck => {
       detail: `${label}; probe ${ms} ms — every Cursor shell command and edit spawns npx`,
       fix: `${CURSOR_HOOK_FIX} (faster, no npm at hook time)`,
     };
+  const silent = silentCursorHooks(res);
+  if (silent)
+    return {
+      id: "cursor_hook",
+      status: "warn",
+      detail: `${label}; probe ${ms} ms; ${silent}`,
+      fix: "Open a Cursor agent chat, then re-run `workit doctor`; if this persists, re-run `workit init` with Cursor (it writes absolute hook paths)",
+    };
   return { id: "cursor_hook", status: "pass", detail: `${label}; probe ${ms} ms` };
+};
+
+// The Cursor MCP server stamps cursor-session-last-start when Cursor starts
+// it; the hook launcher stamps cursor-hook-last-run on every hook. A session
+// older than the grace period with no hook since means Cursor is not running
+// the plugin's hooks (for example `${CURSOR_PLUGIN_ROOT}` left unexpanded):
+// hooks fail open, so nothing else would show it.
+const SILENT_HOOK_GRACE_MS = 2 * 60_000;
+const mtimeMs = (file: string): number | null => {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return null;
+  }
+};
+const silentCursorHooks = (res: Resolved): string | null => {
+  const session = mtimeMs(path.join(res.cursorHeartbeatDir, "cursor-session-last-start"));
+  if (session === null || Date.now() - session < SILENT_HOOK_GRACE_MS) return null;
+  const hook = mtimeMs(path.join(res.cursorHeartbeatDir, "cursor-hook-last-run"));
+  if (hook !== null && hook >= session) return null;
+  return `Cursor started the Workit MCP server at ${new Date(session).toISOString()} but no Workit hook has run since${hook === null ? " (none ever)" : ""} — if the agent ran in that window, Cursor is not running the plugin hooks and Workit enforcement is off`;
 };
 
 const checkUtility = (res: Resolved): DoctorCheck => {
@@ -1086,7 +1150,7 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
   const canonicalHook = canonicalCursorHook;
   const staleHook =
     hookCmd !== null &&
-    hookCmd !== canonicalHook &&
+    !isCanonicalCursorHook(hookCmd, res) &&
     !hookCmd.startsWith("node ") &&
     hookCmd.includes("@brainervirus/workit-cursor@");
   if (staleHook) {
@@ -1100,7 +1164,9 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
   // Enforcement-event drift: a present-but-divergent preToolUse matcher (or
   // beforeShellExecution command) silently narrows what the hook intercepts.
   // Absent events are filled by the installer merge, so only divergence fails.
-  const hookDrift = existsSync(hooksFile) ? cursorHookDrift(readJson(hooksFile)) : [];
+  const hookDrift = existsSync(hooksFile)
+    ? cursorHookDrift(readJson(hooksFile), res.cursorPluginDir)
+    : [];
   if (hookDrift.length > 0) {
     return {
       id: "stale_install",
@@ -1123,7 +1189,7 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
   const localDist =
     mcpSelectors === null &&
     hookCmd !== null &&
-    hookCmd !== canonicalHook &&
+    !isCanonicalCursorHook(hookCmd, res) &&
     hookCmd.startsWith("node ");
   if (localDist && installed !== null && source !== null && !semverAtLeast(installed, source)) {
     return {

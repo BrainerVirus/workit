@@ -78,7 +78,9 @@ Hooks do not use npm at launch. Each one runs the plugin's launcher
 installs, then a global `workit-cursor-hook`, then `npx --prefer-offline`
 pinned to the plugin's version. Hooks fail open: when the runtime cannot run
 (offline, crash, timeout) the action proceeds without Workit checks; Workit
-denials still block. `workit doctor` shows the launcher mode and latency.
+denials still block. `workit init` writes the launcher's absolute path into
+every hook. `workit doctor` shows the launcher mode and latency, and warns
+when Cursor sessions started but no Workit hook has run since.
 
 Limits: AskQuestion is policy-only, session start and compaction are
 non-blocking, arbitrary shell writes and Tab edits are not observable, and
