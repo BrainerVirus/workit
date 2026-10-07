@@ -1,8 +1,9 @@
 # Archive
 
 Specs and plans from earlier eras, kept for history. None of them describes
-the shipped system; the current design record is
-[`docs/workit-next/`](../workit-next/spec.md) and usage lives in the
+the shipped system. The 3.0–7.0 redesign record is
+[`docs/workit-next/`](../workit-next/spec.md), itself a dated record not kept
+in step with the code; usage lives in the
 [README](../../README.md) and [guides](../guides/). Paths inside these
 documents refer to their original locations under `docs/`.
 

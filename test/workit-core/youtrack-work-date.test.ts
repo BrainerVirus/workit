@@ -129,10 +129,11 @@ test("Given an epoch dateMs, When it is resolved in any timezone, Then localDate
   }
 });
 
-// Guard for the AGENTS.md rule: shipped source must not carry organization
-// specifics. It flags (1) a concrete YouTrack Cloud host (example.* allowed),
-// (2) a literal issue id used as a fallback (`?? "ABC-12"`, `|| "ABC-12"`) or
-// as an issue field value (`meetingIssue: "ABC-12"`), and (3) a hard-coded
+// Guard for the YouTrack rule in docs/agents/hosts.md: shipped source must
+// not carry organization specifics. It flags (1) a concrete YouTrack Cloud
+// host (example.* allowed), (2) a literal issue id used as a fallback
+// (`?? "ABC-12"`, `|| "ABC-12"`) or as an issue field value
+// (`meetingIssue: "ABC-12"`), and (3) a hard-coded
 // IANA region zone used as a fallback or timezone field value. Standard
 // identifiers that look like issue ids (UTF-8, SHA-256, ...) are not issues.
 const NOT_ISSUE_KEYS = new Set(["UTF", "SHA", "ISO", "RFC", "AES", "TLS", "SSL", "HTTP", "ES"]);

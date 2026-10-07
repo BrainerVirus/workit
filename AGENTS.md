@@ -1,129 +1,30 @@
 # Agent contract (workit repository)
 
-This file is the development contract for working **on** this repository. It
-does not reach installed Workit projects: agent behavior there ships in
-packages (see [Where a rule lives](#where-a-rule-lives)). Usage docs are in
-[README.md](README.md) and [docs/guides/](docs/guides/).
-
-## Layout
-
-- `packages/workit-core/`: shared core (task store, ledger, policy, forge,
-  stack, hooks) and the single source of the skills (`skills/`).
-- `packages/workit-cli/`: the `workit` CLI (verbs in `src/verbs/`, setup and
-  doctor in `src/admin/`).
-- Host adapters: `workit-claude-code`, `workit-opencode`, `workit-cursor`,
-  `workit-codex`, `workit-pi`, plus the shared MCP transport `workit-mcp`.
-- `test/`: suites per package, `test/acceptance/`, `test/artifacts/`
-  (packaging). `scripts/`: build, test tiers, release checks.
-- `docs/workit-next/`: current design record. `docs/archive/`: superseded
-  specs. `docs/qualification/`: generated host matrix and qualification.
+How to work **on** Workit, a Bun monorepo: one workflow core plus host adapters and a CLI.
+It does not reach installed projects; see [docs/agents/agent-rules.md](docs/agents/agent-rules.md).
 
 ## Commands
 
-Bun for development; published bundles run on Node.js 24+.
-
 ```bash
-bun install --frozen-lockfile
-bun run lint              # oxlint
-bun run format:check      # oxfmt (bun run format to fix; Markdown is not formatted)
-bun run typecheck         # tsc --noEmit
-bun run test              # unit tier
-bun run test:packaging    # packs tarballs, installs, doctor, docker (slow)
-bun run knip              # unused files/exports and reachability
-bun run build             # every package bundle
-bun run check             # build + lint + format:check + both test tiers + tsc
-bun run test:acceptance   # deterministic acceptance fixtures
-bun run verify:release-candidate
-bun run validate:cursor-marketplace
+bun run check   # build + lint + format:check + both test tiers + tsc
+bun run lint; bun run format:check; bun run typecheck; bun run test  # one gate each
+bun test <path> # one file; `bun run format` fixes formatting (not Markdown)
 ```
 
-`bun scripts/test.ts <unit|packaging> [bun test args]` selects a tier; plain
-`bun test <path>` runs any file. Packaging suites build what they pack, so
-neither tier needs a prior build.
-
-## Local-pin caveat
-
-When a live host (Claude Code `--plugin-dir`, OpenCode `file://` pin, Pi local
-install) loads this checkout, **never run root `bun run build` or `bun run
-check` in it**: they replace bundles the host has loaded. Run lint, format,
-typecheck and tests directly, work in a separate worktree, or build into an
-external target directory (build scripts accept one).
+Tests need Node 24+ on PATH (`fnm use` reads `.node-version`). Never run root `build` or `check` in
+a checkout a live host has loaded; see [testing.md](docs/agents/testing.md#local-pins).
 
 ## Workflow
 
-- Work in a git worktree per change, on a branch cut from `origin/main`:
-  `git worktree add -b feature/<slug> ../workit-wt/<slug> origin/main`.
-  Parallel agents each get their own worktree. Never commit on `main`.
-- Branch prefixes: `feature/`, `bugfix/`, `chore/`, `docs/`, `ci/`.
-- Conventional Commits, enforced by commitlint (opt-in hooks:
-  `bun run hooks:install`). The PR title is the squash commit subject, so it
-  must be a valid conventional commit (`feat(cli): …`, `fix!: …`); it drives the
-  release version.
-- Before any GitHub remote mutation, confirm the effective identity with
-  `gh api user --jq .login`; `gh auth status` can disagree with the credential
-  actually used.
-- Use `workit check <name>` for verification you report, and hand review to a
-  session that did not author the change.
-- Update README or the relevant guide in the same PR as user-facing behavior.
+- One worktree per change, never on `main`: `git worktree add -b feature/<slug> ../workit-wt/<slug> origin/main`.
+- The squash-merged PR title is the release note and picks the version: a Conventional Commit (CI lints it).
+- Check `gh api user --jq .login` before a GitHub remote mutation; `gh auth status` can disagree.
+- Report verification through `workit check <name>`; a non-author session reviews. User-facing behavior updates the README or guide in the same PR.
 
-## Release
+## Read before
 
-A push to `main` that passes CI calls the release workflow (semantic-release).
-`packages/workit-core/scripts/analyze-release-scope.ts` picks the bump from
-Conventional Commits, and only when a package's published payload changed
-(anything under its `packages/<pkg>/` dir or the sources it bundles; a `docs:`
-or `chore:` change there still ships as a patch). Root docs, tests and tooling
-never release. Only changed packages are published, with npm provenance;
-release notes come from PR titles. Breaking changes need `!` or a
-`BREAKING CHANGE:` footer. Never edit versions or tags by hand.
-
-Live release qualification (`docs/qualification/qualification.md`) needs
-explicit authorization: never run `scripts/run-v1-evaluation.ts` or fabricate
-batch results without it. `docs/qualification/capabilities.md` is generated
-and compared by `test/acceptance/deterministic.test.ts`.
-
-## Engineering rules
-
-1. Core logic lives in `packages/workit-core/src/`; adapters only map
-   host-native surfaces onto it. Never re-implement core logic per host.
-2. A feature reaches every host it applies to plus the CLI, with tests showing
-   the same outcome. Where a host cannot observe something, report it as
-   `agent_guided`; never fabricate authority, receipts or identity.
-3. Skills have one source, `packages/workit-core/skills/`. Host copies are
-   generated by each package's `scripts/build.ts` and git-ignored, except
-   Cursor's `skills/` and `commands/` (Cursor installs from git): after editing
-   a skill run `bun packages/workit-cursor/scripts/build.ts --skills-only` and
-   commit the result (`generated-copies.test.ts` compares them).
-4. Hooks fail open and never answer `allow`; host permissions stay
-   authoritative.
-5. Cursor's runtime launcher is exactly
-   `npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest …`
-   (npm/cli#9765); the doctor enforces this shape.
-6. YouTrack: never hard-code hosts, issue ids, people, greetings or a default
-   timezone in core or tests; they come from `youtrack.json` and the
-   `issue-update` template (`youtrack-work-date.test.ts` scans for this).
-7. Setup and upgrade: keep config migrations idempotent and back up before
-   applying; preserve unknown fields, credentials, exact/local pins and
-   narrower workspace overrides. Never migrate task history through setup or
-   weaken host permissions.
-8. Grants (and the `verification` mode) are read only from the user's
-   `workspaces.json`; no repository file, MCP tool or host tool may raise them.
-9. Agent-facing tool schemas stay flat (depth 1): add fields in
-   `core/operation-input.ts`, not nested objects. The before-write gate gates
-   working-tree edits only, never Workit's own commands, history moves or the
-   paths that unblock it.
-
-## Where a rule lives
-
-| Rule kind | Home |
-| --- | --- |
-| How agents behave in any installed project | `invariantBootstrap()` in `packages/workit-core/src/core/methods.ts` (injected on every host) |
-| Method-specific behavior | the skill under `packages/workit-core/skills/` |
-| Skill triggers | `WORKIT_SKILL_TRIGGERS` in `skill-manifests.ts`, the skill description and the bootstrap routing list (`skill-set.test.ts` keeps them in step) |
-| Failure guidance for one host | that adapter's messages |
-| Developing and releasing this repo | this file |
-| Install and usage | README, `docs/guides/`, package READMEs |
-| Release history | GitHub release notes and `CHANGELOG.md` |
-
-If a rule must change what an agent does in an installed project, it ships in
-a package; text that lives only here never gets there.
+- Writing or reviewing code: [CODING_STANDARDS.md](CODING_STANDARDS.md).
+- Packaging, acceptance or CI-only suites: [docs/agents/testing.md](docs/agents/testing.md).
+- Adapters, hooks, setup, grants, tool schemas, YouTrack: [docs/agents/hosts.md](docs/agents/hosts.md).
+- Skills, the bootstrap, rules for installed projects: [docs/agents/agent-rules.md](docs/agents/agent-rules.md).
+- Versions, release, qualification, branch prefixes: [docs/agents/release.md](docs/agents/release.md).
