@@ -884,10 +884,10 @@ export function pushForge(
       ok: false,
       code: "unavailable",
       error: host
-        ? `cannot tell whether push host "${host}" is GitHub or GitLab`
+        ? `unsupported_forge: cannot tell whether push host "${host}" is GitHub or GitLab; PR and CI verbs need one (workit git push still pushes with git)`
         : `push URL ${redactRemote(url)} of remote "${remote}" is not a GitHub/GitLab URL`,
       unblock: host
-        ? `map the alias in ~/.ssh/config (Host ${host} / HostName github.com|gitlab.com) or set github.host / gitlab.host in ~/.config/workit/vcs.json`
+        ? `if ${host} is an ssh alias of GitHub/GitLab, add "Host ${host}" with "HostName github.com" (or gitlab.com) to ~/.ssh/config; if it is a self-hosted GitHub/GitLab, set github.host or gitlab.host in ~/.config/workit/vcs.json; other forges (Bitbucket, Gitea…) have no PR/CI verbs`
         : `git remote set-url --push ${remote} <ssh-or-https-url>`,
     };
   }
@@ -906,7 +906,7 @@ export function forgeConflict(
   if (!configured || configured === derived.kind) return null;
   return {
     code: "blocked",
-    error: `forge_mismatch: push remote ${derived.host} is ${derived.kind} but the workspace vcs.provider is ${configured}`,
-    unblock: `set vcs.provider to "${derived.kind}" for this repo in ~/.config/workit/workspaces.json (workit-github-override), or push to a ${configured} remote`,
+    error: `forge_mismatch: push remote ${derived.host} is ${derived.kind} but the workspace vcs.provider is ${configured}, so its account and grants do not apply; PR and CI verbs stop here (workit git push still pushes with git)`,
+    unblock: `add a workspace whose glob matches only this repo, with "vcs": {"provider": "${derived.kind}"} (and its account), to ~/.config/workit/workspaces.json; the most specific glob wins`,
   };
 }

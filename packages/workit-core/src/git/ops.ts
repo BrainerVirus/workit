@@ -526,6 +526,8 @@ export function executePush(
     setUpstream?: boolean;
     actor: LedgerActor;
     timeoutMs?: number;
+    /** The pre-push identity check's outcome, kept on the ledger row. */
+    identity?: Record<string, unknown>;
   },
 ): ForgeResult<PushOutcome> {
   const before = remoteRefTip(cwd, plan.rawUrl, `refs/heads/${plan.branch}`);
@@ -618,6 +620,7 @@ export function executePush(
     previous: before.sha,
     pushed,
     forced,
+    ...(input.identity ? { identity: input.identity } : {}),
   });
   return success({
     remote: plan.remote,

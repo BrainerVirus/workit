@@ -19,6 +19,8 @@ export type CliRun = {
   timedOut: boolean;
   /** The binary is not on PATH. */
   missing: boolean;
+  /** The timeout actually applied (a deadline may have shortened it). */
+  timeoutMs?: number;
 };
 
 /** Runs one gh/glab command. Injected in tests to replay recorded API fixtures. */
@@ -109,6 +111,47 @@ export const installHint = (bin: CliBin): string =>
 export const loginHint = (bin: CliBin, apiHost: string): string =>
   `${bin} auth login --hostname ${apiHost}`;
 
+/** Transport trouble (DNS, TCP, TLS, a 5xx from the forge): retryable, exit 5. */
+const NETWORK =
+  /error connecting|could not resolve|no such host|connection (refused|reset|timed out)|network is unreachable|i\/o timeout|tls handshake|unexpected eof|\bHTTP 5\d\d\b|bad gateway|service unavailable|gateway time-?out/iu;
+
+export const isNetworkError = (text: string): boolean => NETWORK.test(text);
+
+/**
+ * The forge's own reason for a refusal: `gh api`/`glab api` print the error
+ * body on stdout (`message`, `errors[].message`), stderr only says "HTTP 422".
+ */
+export function forgeReason(run: Pick<CliRun, "stdout" | "stderr">): string {
+  const parts: string[] = [];
+  try {
+    const body = JSON.parse(run.stdout) as {
+      message?: unknown;
+      error?: unknown;
+      errors?: unknown;
+    };
+    const add = (value: unknown): void => {
+      if (typeof value === "string" && value.trim()) parts.push(value.trim());
+      else if (Array.isArray(value)) value.forEach(add);
+      else if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        if (typeof record.message === "string") add(record.message);
+        else if (!("code" in record)) Object.values(record).forEach(add);
+      }
+    };
+    add(body.message);
+    add(body.error);
+    add(body.errors);
+  } catch {
+    // not a JSON body
+  }
+  const stderr = (run.stderr.split(/\r?\n/u).find((value) => value.trim()) ?? "").trim();
+  const unique = [...new Set(parts)];
+  const text = unique.length
+    ? `${unique.join("; ")}${stderr ? ` (${stderr.replace(/^gh: |^glab: /u, "")})` : ""}`
+    : stderr || (run.stdout.split(/\r?\n/u).find((value) => value.trim()) ?? "");
+  return redactText(text).slice(0, 300);
+}
+
 /** Map a failed CLI run to an envelope error. */
 export function cliFailure<T>(
   bin: CliBin,
@@ -119,7 +162,13 @@ export function cliFailure<T>(
 ): ForgeResult<T> {
   if (run.missing) return failure("unavailable", `${bin} is not installed`, installHint(bin));
   if (run.timedOut)
-    return failure("unavailable", `${bin} api ${what} timed out after ${timeoutMs} ms`);
+    return failure(
+      "unavailable",
+      run.timeoutMs === 0
+        ? `${bin} api ${what} not attempted: the command's time budget ran out`
+        : `${bin} api ${what} timed out after ${run.timeoutMs ?? timeoutMs} ms`,
+      `check the network to ${apiHost}, then retry`,
+    );
   const stderr = redactText(run.stderr).trim();
   if (
     /auth login|not logged in|no token|authentication required|bad credentials|\b401\b|unauthorized/iu.test(
@@ -133,6 +182,12 @@ export function cliFailure<T>(
     );
   if (/\b404\b|not found/iu.test(stderr)) return failure("not_found", `${what} was not found`);
   const first = stderr.split(/\r?\n/u).find((value) => value.trim()) ?? `exit ${run.status}`;
+  if (isNetworkError(stderr))
+    return failure(
+      "unavailable",
+      `${bin} api ${what} failed (network): ${first.slice(0, 200)}`,
+      `check the network to ${apiHost}, then retry`,
+    );
   return failure("failed", `${bin} api ${what} failed: ${first.slice(0, 200)}`);
 }
 
@@ -197,7 +252,7 @@ export function apiWrite<T>(
   const run = runner(bin, args, { timeoutMs });
   if (run.status !== 0) {
     const text = redactText(`${run.stderr}\n${run.stdout}`).trim();
-    const reason = (text.split(/\r?\n/u).find((value) => value.trim()) ?? "").slice(0, 200);
+    const reason = forgeReason(run);
     if (
       !run.missing &&
       !run.timedOut &&

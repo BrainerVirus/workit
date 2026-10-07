@@ -324,7 +324,7 @@ test("pushForge derives the forge from the push remote, not the configured provi
   expect(forgeConflict(derived.forge, undefined)).toBeNull();
   const conflict = forgeConflict(derived.forge, "GitLab");
   expect(conflict?.code).toBe("blocked");
-  expect(conflict?.unblock).toContain('vcs.provider to "github"');
+  expect(conflict?.unblock).toContain('"vcs": {"provider": "github"}');
 });
 
 test("given trunk moved and the branch was not rebased, patchId is unchanged", () => {
