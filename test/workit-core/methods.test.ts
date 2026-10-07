@@ -337,6 +337,13 @@ test("agent-critical delivery rules stay stated", () => {
       "Each pass is its own commit in one PR, in this order",
     ],
     ["workit-architecture", skillText("workit-architecture"), "Never scaffold an empty file"],
+    [
+      "workit-architecture",
+      skillText("workit-architecture"),
+      "Never re-litigate an ADR without new evidence",
+    ],
+    ["workit-architecture", skillText("workit-architecture"), "then stop and wait for approval"],
+    ["instruction-files.md", architectureFiles, "no commit adds a finding"],
   ];
   for (const [source, text, rule] of rules)
     expect(text, `${source}: ${rule}`).toMatch(phrase(rule));

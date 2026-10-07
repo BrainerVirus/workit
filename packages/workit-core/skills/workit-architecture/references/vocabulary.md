@@ -33,8 +33,11 @@ Use these words exactly in every candidate. Do not drift into "component",
   them changing together).
 - Code that is untested, or hard to test through its current interface.
 
-The explorer returns only cited findings (file, commit, ledger row), never a
-refactor.
+The explorer is read-only (on Claude Code, the Explore agent). It reads code,
+git history, `workit ledger list` and `workit test-audit` output only: never
+session transcripts and never another workspace. It copies no secret, token
+or personal data into its findings. It returns only cited findings (file,
+commit, ledger row), never a refactor.
 
 ## Dependency categories (how the deeper module is tested)
 
@@ -45,5 +48,6 @@ refactor.
    adapter in tests.
 4. Third party: an injected port, a fake adapter in tests.
 
-Replace, do not layer: once tests at the deeper interface exist, the old tests
-on the shallow modules are waste; the slice deletes them.
+Replace, do not layer. An old test on a shallow module is deleted only after
+naming the break it catches and showing that a test at the deeper interface
+fails on that planted break (workit-test-audit). Until then it stays.

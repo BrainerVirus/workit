@@ -3,8 +3,14 @@
 Instruction files are paid for in every session that reads them. Restructure
 them in three escalating passes. Each pass is its own commit in one PR, in
 this order, so the user can keep pass 1 and drop pass 3. Run
-`workit knowledge lint` before pass 1 and after every commit; each commit
-leaves it at exit 0 and never adds a finding.
+`workit knowledge lint` before pass 1 and after every commit: no commit adds
+a finding, and the lint exits 0 after the last pass, or the report lists the
+findings that remain and why.
+
+After each commit, run `workit check test`. A sentence a test pins stays,
+unless the user approves changing that test. Commit each pass with
+`workit git commit -m "<type>: <pass>" -- <paths>`, then open the PR
+(workit-ship).
 
 Before pass 1, report the current byte counts and the plan for each pass, then
 wait for approval. A pass with nothing to do is skipped and said so, not
@@ -23,8 +29,9 @@ Keep the root file to what every session needs: commands, workflow, and
 "Read before <task>: <file>" pointers. Move topic detail (testing, release,
 hosts, architecture) into topic files under an existing docs folder, one file
 per topic, each opened by when to read it. Move text verbatim first; rewording
-belongs in pass 1 or a later change. Every pointer must resolve (the lint's
-`broken-link` rule).
+belongs in pass 1 or a later change. Every pointer from AGENTS.md or
+CLAUDE.md must resolve (the lint's `broken-link` rule). The lint does not read
+topic files: check their own links and content by hand.
 
 ## Pass 3: standards and checks
 
@@ -38,7 +45,8 @@ belongs in pass 1 or a later change. Every pointer must resolve (the lint's
 
 ## Never
 
-- Create `CODING_STANDARDS.md`, `GLOSSARY.md` or a topic file without its
-  first real entry in the same commit (`scaffold-file`).
+- Create a file without its first real entry in the same commit. The lint
+  flags a scaffolded `CODING_STANDARDS.md` or `GLOSSARY.md` (`scaffold-file`);
+  for a topic file, that check is yours.
 - Squash the passes into one commit, or mix a behavior change into them.
 - Grow the root file past the lint's byte budget (`agents-budget`).
