@@ -8,6 +8,7 @@ import {
   packWorkspacePackages,
   readTarballFile,
   REPO_ROOT,
+  SLOW_TEST_TIMEOUT_MS,
 } from "@/test/shared/helpers/packages";
 
 // Task 7 package-content gate: every adapter tarball ships ONE package-local JS
@@ -47,217 +48,249 @@ const distJs = (tarball: string, prefix = "dist/") =>
 // Guard the `tsEntries` gate above: the root loader shim is the ONLY non-vendor
 // exemption. A nested `index.ts` (or any other TS path) must stay rejected, so
 // a future source tree renamed into the allowlist shape still fails the gate.
-test("runtime TS allowlist permits vendor examples and exactly the root loader shim", () => {
-  expect(isAllowedTs(ROOT_LOADER_SHIM)).toBe(true);
-  expect(isAllowedTs("assets/vendor/example.ts")).toBe(true);
-  expect(isAllowedTs("vendor/example.ts")).toBe(true);
-  for (const rejected of [
-    "dist/index.ts",
-    "src/index.ts",
-    "v2/index.ts",
-    "packages/index.ts",
-    "assets/skills/index.ts",
-    "assets/index.ts",
-    "index.d.ts",
-  ]) {
-    expect(isAllowedTs(rejected), rejected).toBe(false);
-  }
-});
-
-test("opencode tarball ships one bundled dist entry and no commands, templates or vendor trees", () => {
-  const packs = packWorkspacePackages();
-  const tarball = byName(packs, OPENCODE).tarball;
-  const entries = listTarball(tarball);
-
-  expect(entries).toContain("dist/plugin.js");
-  expect(entries.some((e) => e.startsWith("assets/commands/"))).toBe(false);
-  expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(false);
-  expect(entries.some((e) => e.startsWith("assets/vendor/"))).toBe(false);
-  expect(tsEntries(tarball)).toEqual([]);
-  // The one allowed root `index.ts` is the V2 directory-loader shim, not a
-  // second bundle: it re-exports the single packed dist entry asserted above.
-  expect(readTarballFile(tarball, ROOT_LOADER_SHIM)).toContain('"./dist/plugin.js"');
-
-  // CA-07: the SDK helper/schema runtime is bundled, so the packed entry has no
-  // unresolved `@opencode-ai/plugin` import to resolve at load time.
-  const pluginJs = readTarballFile(tarball, "dist/plugin.js");
-  expect(pluginJs, "dist/plugin.js").not.toMatch(
-    /(?:from\s+|import\s*\(\s*)\s*["']@opencode(?:-ai)?\/plugin["']/,
-  );
-});
-
-test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bins (RR-03/PT-07/CA-16)", () => {
-  const packs = packWorkspacePackages();
-  const tarball = byName(packs, CURSOR).tarball;
-  const entries = listTarball(tarball);
-
-  for (const required of [
-    "dist/mcp-server.js",
-    "dist/cursor-session-start.js",
-    "dist/workit-hook.js",
-    "mcp.json",
-    "assets/logo.svg",
-    ".cursor-plugin/plugin.json",
-    "rules/workit-contract.mdc",
-    "hooks/hooks-cursor.json",
-    "hooks/launch.mjs",
-    "hooks/launch-runtime.mjs",
-  ]) {
-    expect(entries, required).toContain(required);
-  }
-  // CA-17: the obsolete shell launchers ship no longer — the plugin launches
-  // the published package through npx, not a repo-relative dist/sh file.
-  expect(entries).not.toContain("mcp/run-server.sh");
-  expect(entries).not.toContain("hooks/session-start");
-  expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
-  expect(tsEntries(tarball)).toEqual([]);
-  const cursorRule = readTarballFile(tarball, "rules/workit-contract.mdc");
-  expect(cursorRule).toContain("Ordinary questions,");
-  expect(cursorRule).not.toContain("one active task");
-
-  // CA-16: the packed package.json exposes both npm executables at the exact
-  // built entry paths (no wrapper files, no source entries).
-  const pkg = JSON.parse(readTarballFile(tarball, "package.json"));
-  expect(pkg.bin).toEqual({
-    "workit-cursor-mcp": "./dist/mcp-server.js",
-    "workit-cursor-session-start": "./dist/cursor-session-start.js",
-    "workit-cursor-hook": "./dist/workit-hook.js",
-  });
-});
-
-test("cli tarball ships a single nonsplitting dist entry plus bin (PT-10)", () => {
-  const packs = packWorkspacePackages();
-  const tarball = byName(packs, CLI).tarball;
-  const entries = listTarball(tarball);
-
-  expect(entries).toContain("dist/index.js");
-  expect(distJs(tarball)).toEqual(["dist/index.js"]);
-  const pkg = JSON.parse(readTarballFile(tarball, "package.json"));
-  expect(pkg.bin.workit).toBe("./dist/index.js");
-  expect(tsEntries(tarball)).toEqual([]);
-});
-
-test("core tarball keeps its source package layout without legacy vendor shell (PT-08)", () => {
-  const packs = packWorkspacePackages();
-  const tarball = byName(packs, CORE).tarball;
-  const entries = listTarball(tarball);
-
-  for (const required of [
-    "src/core.ts",
-    "scripts/rewrite-workspace-deps.ts",
-    "scripts/install-opencode-plugin.sh",
-    "scripts/sync-runtime.sh",
-    "templates/",
-    "skills/",
-  ]) {
-    expect(
-      entries.some((e) => e.startsWith(required)),
-      required,
-    ).toBe(true);
-  }
-  expect(entries.some((e) => e.includes("vendor/superpowers"))).toBe(false);
-  expect(entries).not.toContain("scripts/verify-project.sh");
-});
-
-test("packed runtime JS imports no core source subpaths and no checkout paths", () => {
-  const packs = packWorkspacePackages();
-  const normalized = REPO_ROOT.split(path.sep).join("/");
-  for (const pack of packs) {
-    if (pack.packageName === CORE) continue; // source package ships src/*.ts by design
-    for (const entry of distJs(pack.tarball)) {
-      const js = readTarballFile(pack.tarball, entry);
-      expect(js, `${pack.packageName}/${entry}`).not.toContain("@brainervirus/workit-core/src/");
-      // bun bakes relative `// packages/...` source comments (harmless), but no
-      // absolute checkout or share paths may leak into packaged runtime JS.
-      expect(js, `${pack.packageName}/${entry}`).not.toContain(normalized);
-      expect(js, `${pack.packageName}/${entry}`).not.toContain(".local/share/workit");
+test(
+  "runtime TS allowlist permits vendor examples and exactly the root loader shim",
+  () => {
+    expect(isAllowedTs(ROOT_LOADER_SHIM)).toBe(true);
+    expect(isAllowedTs("assets/vendor/example.ts")).toBe(true);
+    expect(isAllowedTs("vendor/example.ts")).toBe(true);
+    for (const rejected of [
+      "dist/index.ts",
+      "src/index.ts",
+      "v2/index.ts",
+      "packages/index.ts",
+      "assets/skills/index.ts",
+      "assets/index.ts",
+      "index.d.ts",
+    ]) {
+      expect(isAllowedTs(rejected), rejected).toBe(false);
     }
-  }
-});
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
-test("packed runtime JS resolves only declared dependencies (RR-08)", () => {
-  const packs = packWorkspacePackages();
-  const nodeBuiltins = new Set([
-    "node:assert",
-    "node:async_hooks",
-    "node:buffer",
-    "node:child_process",
-    "node:cluster",
-    "node:console",
-    "node:constants",
-    "node:crypto",
-    "node:dgram",
-    "node:diagnostics_channel",
-    "node:dns",
-    "node:domain",
-    "node:events",
-    "node:fs",
-    "node:http",
-    "node:http2",
-    "node:https",
-    "node:inspector",
-    "node:module",
-    "node:net",
-    "node:os",
-    "node:path",
-    "node:perf_hooks",
-    "node:process",
-    "node:punycode",
-    "node:querystring",
-    "node:readline",
-    "node:repl",
-    "node:stream",
-    "node:string_decoder",
-    "node:sys",
-    "node:timers",
-    "node:tls",
-    "node:trace_events",
-    "node:tty",
-    "node:url",
-    "node:util",
-    "node:v8",
-    "node:vm",
-    "node:wasi",
-    "node:worker_threads",
-    "node:zlib",
-  ]);
-  for (const pack of packs) {
-    if (pack.packageName === CORE) continue; // source package, not bundled JS
-    const pkg = JSON.parse(readTarballFile(pack.tarball, "package.json"));
-    const declared = new Set(Object.keys(pkg.dependencies ?? {}));
-    for (const entry of distJs(pack.tarball)) {
-      const js = readTarballFile(pack.tarball, entry);
-      const found = new Set<string>();
-      // Only literal string specifiers count as runtime dependency resolution;
-      // bun's codegen for computed `import(expr)` is not a literal import.
-      const re = /(?:from\s+|import\s*\(\s*)\s*["']([^"'\s]+)["']/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(js)) !== null) {
-        const spec = m[1];
-        if (spec.startsWith("node:") || nodeBuiltins.has(spec)) continue;
-        if (spec.startsWith(".") || spec.startsWith("/")) continue;
-        // @babel/parser (bundled into the CLI) has `... from 'some-module'`
-        // inside an error-message template, not an import.
-        if (spec === "some-module") continue;
-        found.add(spec);
+test(
+  "opencode tarball ships one bundled dist entry and no commands, templates or vendor trees",
+  () => {
+    const packs = packWorkspacePackages();
+    const tarball = byName(packs, OPENCODE).tarball;
+    const entries = listTarball(tarball);
+
+    expect(entries).toContain("dist/plugin.js");
+    expect(entries.some((e) => e.startsWith("assets/commands/"))).toBe(false);
+    expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(false);
+    expect(entries.some((e) => e.startsWith("assets/vendor/"))).toBe(false);
+    expect(tsEntries(tarball)).toEqual([]);
+    // The one allowed root `index.ts` is the V2 directory-loader shim, not a
+    // second bundle: it re-exports the single packed dist entry asserted above.
+    expect(readTarballFile(tarball, ROOT_LOADER_SHIM)).toContain('"./dist/plugin.js"');
+
+    // CA-07: the SDK helper/schema runtime is bundled, so the packed entry has no
+    // unresolved `@opencode-ai/plugin` import to resolve at load time.
+    const pluginJs = readTarballFile(tarball, "dist/plugin.js");
+    expect(pluginJs, "dist/plugin.js").not.toMatch(
+      /(?:from\s+|import\s*\(\s*)\s*["']@opencode(?:-ai)?\/plugin["']/,
+    );
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "cursor tarball ships dist MCP + hook entries, manifests, assets and npm bins (RR-03/PT-07/CA-16)",
+  () => {
+    const packs = packWorkspacePackages();
+    const tarball = byName(packs, CURSOR).tarball;
+    const entries = listTarball(tarball);
+
+    for (const required of [
+      "dist/mcp-server.js",
+      "dist/cursor-session-start.js",
+      "dist/workit-hook.js",
+      "mcp.json",
+      "assets/logo.svg",
+      ".cursor-plugin/plugin.json",
+      "rules/workit-contract.mdc",
+      "hooks/hooks-cursor.json",
+      "hooks/launch.mjs",
+      "hooks/launch-runtime.mjs",
+    ]) {
+      expect(entries, required).toContain(required);
+    }
+    // CA-17: the obsolete shell launchers ship no longer — the plugin launches
+    // the published package through npx, not a repo-relative dist/sh file.
+    expect(entries).not.toContain("mcp/run-server.sh");
+    expect(entries).not.toContain("hooks/session-start");
+    expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
+    expect(tsEntries(tarball)).toEqual([]);
+    const cursorRule = readTarballFile(tarball, "rules/workit-contract.mdc");
+    expect(cursorRule).toContain("Ordinary questions,");
+    expect(cursorRule).not.toContain("one active task");
+
+    // CA-16: the packed package.json exposes both npm executables at the exact
+    // built entry paths (no wrapper files, no source entries).
+    const pkg = JSON.parse(readTarballFile(tarball, "package.json"));
+    expect(pkg.bin).toEqual({
+      "workit-cursor-mcp": "./dist/mcp-server.js",
+      "workit-cursor-session-start": "./dist/cursor-session-start.js",
+      "workit-cursor-hook": "./dist/workit-hook.js",
+    });
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "cli tarball ships a single nonsplitting dist entry plus bin (PT-10)",
+  () => {
+    const packs = packWorkspacePackages();
+    const tarball = byName(packs, CLI).tarball;
+    const entries = listTarball(tarball);
+
+    expect(entries).toContain("dist/index.js");
+    expect(distJs(tarball)).toEqual(["dist/index.js"]);
+    const pkg = JSON.parse(readTarballFile(tarball, "package.json"));
+    expect(pkg.bin.workit).toBe("./dist/index.js");
+    expect(tsEntries(tarball)).toEqual([]);
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "core tarball keeps its source package layout without legacy vendor shell (PT-08)",
+  () => {
+    const packs = packWorkspacePackages();
+    const tarball = byName(packs, CORE).tarball;
+    const entries = listTarball(tarball);
+
+    for (const required of [
+      "src/core.ts",
+      "scripts/rewrite-workspace-deps.ts",
+      "scripts/install-opencode-plugin.sh",
+      "scripts/sync-runtime.sh",
+      "templates/",
+      "skills/",
+    ]) {
+      expect(
+        entries.some((e) => e.startsWith(required)),
+        required,
+      ).toBe(true);
+    }
+    expect(entries.some((e) => e.includes("vendor/superpowers"))).toBe(false);
+    expect(entries).not.toContain("scripts/verify-project.sh");
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "packed runtime JS imports no core source subpaths and no checkout paths",
+  () => {
+    const packs = packWorkspacePackages();
+    const normalized = REPO_ROOT.split(path.sep).join("/");
+    for (const pack of packs) {
+      if (pack.packageName === CORE) continue; // source package ships src/*.ts by design
+      for (const entry of distJs(pack.tarball)) {
+        const js = readTarballFile(pack.tarball, entry);
+        expect(js, `${pack.packageName}/${entry}`).not.toContain("@brainervirus/workit-core/src/");
+        // bun bakes relative `// packages/...` source comments (harmless), but no
+        // absolute checkout or share paths may leak into packaged runtime JS.
+        expect(js, `${pack.packageName}/${entry}`).not.toContain(normalized);
+        expect(js, `${pack.packageName}/${entry}`).not.toContain(".local/share/workit");
       }
-      const undeclared = [...found].filter((s) => !declared.has(s));
-      expect(undeclared, `${pack.packageName}/${entry}`).toEqual([]);
     }
-  }
-});
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
-test("adapter tarballs expose a top-level assets root and no runtime TypeScript", () => {
-  const packs = packWorkspacePackages();
-  for (const name of [OPENCODE, CURSOR, CLI]) {
-    const tarball = byName(packs, name).tarball;
-    expect(
-      listTarball(tarball).some((e) => e.startsWith("assets/")),
-      name,
-    ).toBe(true);
-    expect(tsEntries(tarball), name).toEqual([]);
-  }
-});
+test(
+  "packed runtime JS resolves only declared dependencies (RR-08)",
+  () => {
+    const packs = packWorkspacePackages();
+    const nodeBuiltins = new Set([
+      "node:assert",
+      "node:async_hooks",
+      "node:buffer",
+      "node:child_process",
+      "node:cluster",
+      "node:console",
+      "node:constants",
+      "node:crypto",
+      "node:dgram",
+      "node:diagnostics_channel",
+      "node:dns",
+      "node:domain",
+      "node:events",
+      "node:fs",
+      "node:http",
+      "node:http2",
+      "node:https",
+      "node:inspector",
+      "node:module",
+      "node:net",
+      "node:os",
+      "node:path",
+      "node:perf_hooks",
+      "node:process",
+      "node:punycode",
+      "node:querystring",
+      "node:readline",
+      "node:repl",
+      "node:stream",
+      "node:string_decoder",
+      "node:sys",
+      "node:timers",
+      "node:tls",
+      "node:trace_events",
+      "node:tty",
+      "node:url",
+      "node:util",
+      "node:v8",
+      "node:vm",
+      "node:wasi",
+      "node:worker_threads",
+      "node:zlib",
+    ]);
+    for (const pack of packs) {
+      if (pack.packageName === CORE) continue; // source package, not bundled JS
+      const pkg = JSON.parse(readTarballFile(pack.tarball, "package.json"));
+      const declared = new Set(Object.keys(pkg.dependencies ?? {}));
+      for (const entry of distJs(pack.tarball)) {
+        const js = readTarballFile(pack.tarball, entry);
+        const found = new Set<string>();
+        // Only literal string specifiers count as runtime dependency resolution;
+        // bun's codegen for computed `import(expr)` is not a literal import.
+        const re = /(?:from\s+|import\s*\(\s*)\s*["']([^"'\s]+)["']/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(js)) !== null) {
+          const spec = m[1];
+          if (spec.startsWith("node:") || nodeBuiltins.has(spec)) continue;
+          if (spec.startsWith(".") || spec.startsWith("/")) continue;
+          // @babel/parser (bundled into the CLI) has `... from 'some-module'`
+          // inside an error-message template, not an import.
+          if (spec === "some-module") continue;
+          found.add(spec);
+        }
+        const undeclared = [...found].filter((s) => !declared.has(s));
+        expect(undeclared, `${pack.packageName}/${entry}`).toEqual([]);
+      }
+    }
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "adapter tarballs expose a top-level assets root and no runtime TypeScript",
+  () => {
+    const packs = packWorkspacePackages();
+    for (const name of [OPENCODE, CURSOR, CLI]) {
+      const tarball = byName(packs, name).tarball;
+      expect(
+        listTarball(tarball).some((e) => e.startsWith("assets/")),
+        name,
+      ).toBe(true);
+      expect(tsEntries(tarball), name).toEqual([]);
+    }
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
 // --- Finding: vendored content must be inert and internally consistent ---
 // The opencode build copies the core vendor skill tree into assets/vendor with a
@@ -267,33 +300,37 @@ test("adapter tarballs expose a top-level assets root and no runtime TypeScript"
 // point at files that the build filtered out (unless explicitly allowlisted as
 // intentionally filtered operational tools).
 
-test("cursor build has no vendored legacy skills", () => {
-  const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-windows-mode-"));
-  const target = path.join(fixture, "output");
-  try {
-    mkdirSync(path.join(fixture, "packages"));
-    for (const pkg of ["workit-core", "workit-cursor"]) {
-      cpSync(path.join(REPO_ROOT, "packages", pkg), path.join(fixture, "packages", pkg), {
-        recursive: true,
-        filter: (src) => !src.includes(`${path.sep}node_modules`),
-      });
+test(
+  "cursor build has no vendored legacy skills",
+  () => {
+    const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-windows-mode-"));
+    const target = path.join(fixture, "output");
+    try {
+      mkdirSync(path.join(fixture, "packages"));
+      for (const pkg of ["workit-core", "workit-cursor"]) {
+        cpSync(path.join(REPO_ROOT, "packages", pkg), path.join(fixture, "packages", pkg), {
+          recursive: true,
+          filter: (src) => !src.includes(`${path.sep}node_modules`),
+        });
+      }
+      symlinkSync(
+        path.join(REPO_ROOT, "node_modules"),
+        path.join(fixture, "node_modules"),
+        "junction",
+      );
+      const build = spawnSync(
+        "bun",
+        [path.join(fixture, "packages/workit-cursor/scripts/build.ts"), target],
+        { encoding: "utf8" },
+      );
+      expect(build.status, build.stderr).toBe(0);
+      expect(existsSync(path.join(target, "vendor"))).toBe(false);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
     }
-    symlinkSync(
-      path.join(REPO_ROOT, "node_modules"),
-      path.join(fixture, "node_modules"),
-      "junction",
-    );
-    const build = spawnSync(
-      "bun",
-      [path.join(fixture, "packages/workit-cursor/scripts/build.ts"), target],
-      { encoding: "utf8" },
-    );
-    expect(build.status, build.stderr).toBe(0);
-    expect(existsSync(path.join(target, "vendor"))).toBe(false);
-  } finally {
-    rmSync(fixture, { recursive: true, force: true });
-  }
-});
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
 // --- Tool-rename content gate: shipped prose names only live workit_* tools ---
 // The orchestration tools are registered as workit_*; a live workflow_*
@@ -312,54 +349,66 @@ const CONTENT_TREES = [
 
 const RETIRED_CURSOR_ROUTE = /\bworkit_(?:sdd_[a-z0-9_]*|resolve_branch|branch_setup|doctor)\b/;
 
-test("Cursor ships one contract rule and no retired workflow routes", () => {
-  const tarball = byName(packWorkspacePackages(), CURSOR).tarball;
-  const offenders: string[] = [];
-  for (const entry of listTarball(tarball)) {
-    if (!entry.endsWith(".md") && !entry.endsWith(".mdc")) continue;
-    if (
-      !entry.startsWith("rules/") &&
-      !entry.startsWith("skills/") &&
-      !entry.startsWith("assets/skills/") &&
-      !entry.startsWith("assets/templates/") &&
-      entry !== "README.md"
-    )
-      continue;
-    const stale = RETIRED_CURSOR_ROUTE.exec(readTarballFile(tarball, entry));
-    if (stale) offenders.push(`${entry}: ${stale[0]}`);
-  }
-  expect(offenders).toEqual([]);
-  expect(
-    listTarball(tarball).filter((entry) => entry.startsWith("rules/") && entry.endsWith(".mdc")),
-  ).toEqual(["rules/workit-contract.mdc"]);
-});
-
-test("shipped skill/template/vendor markdown has no live workflow_ tool references", () => {
-  const packs = packWorkspacePackages();
-  for (const pack of packs) {
+test(
+  "Cursor ships one contract rule and no retired workflow routes",
+  () => {
+    const tarball = byName(packWorkspacePackages(), CURSOR).tarball;
     const offenders: string[] = [];
-    for (const entry of listTarball(pack.tarball)) {
+    for (const entry of listTarball(tarball)) {
       if (!entry.endsWith(".md") && !entry.endsWith(".mdc")) continue;
-      if (!CONTENT_TREES.some((tree) => entry.startsWith(tree))) continue;
-      const md = readTarballFile(pack.tarball, entry);
-      const stale = LIVE_WORKFLOW_TOOL.exec(md);
+      if (
+        !entry.startsWith("rules/") &&
+        !entry.startsWith("skills/") &&
+        !entry.startsWith("assets/skills/") &&
+        !entry.startsWith("assets/templates/") &&
+        entry !== "README.md"
+      )
+        continue;
+      const stale = RETIRED_CURSOR_ROUTE.exec(readTarballFile(tarball, entry));
       if (stale) offenders.push(`${entry}: ${stale[0]}`);
     }
-    expect(offenders, `${pack.packageName} ships stale workflow_ tool references`).toEqual([]);
-  }
-});
+    expect(offenders).toEqual([]);
+    expect(
+      listTarball(tarball).filter((entry) => entry.startsWith("rules/") && entry.endsWith(".mdc")),
+    ).toEqual(["rules/workit-contract.mdc"]);
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
-test("adapter tarballs ship no legacy vendor trees", () => {
-  const packs = packWorkspacePackages();
-  for (const pack of packs) {
-    const entries = listTarball(pack.tarball);
-    expect(
-      entries.some((e) => e.includes("vendor/superpowers")),
-      pack.packageName,
-    ).toBe(false);
-    expect(
-      entries.some((e) => e.startsWith("assets/vendor/")),
-      pack.packageName,
-    ).toBe(false);
-  }
-});
+test(
+  "shipped skill/template/vendor markdown has no live workflow_ tool references",
+  () => {
+    const packs = packWorkspacePackages();
+    for (const pack of packs) {
+      const offenders: string[] = [];
+      for (const entry of listTarball(pack.tarball)) {
+        if (!entry.endsWith(".md") && !entry.endsWith(".mdc")) continue;
+        if (!CONTENT_TREES.some((tree) => entry.startsWith(tree))) continue;
+        const md = readTarballFile(pack.tarball, entry);
+        const stale = LIVE_WORKFLOW_TOOL.exec(md);
+        if (stale) offenders.push(`${entry}: ${stale[0]}`);
+      }
+      expect(offenders, `${pack.packageName} ships stale workflow_ tool references`).toEqual([]);
+    }
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "adapter tarballs ship no legacy vendor trees",
+  () => {
+    const packs = packWorkspacePackages();
+    for (const pack of packs) {
+      const entries = listTarball(pack.tarball);
+      expect(
+        entries.some((e) => e.includes("vendor/superpowers")),
+        pack.packageName,
+      ).toBe(false);
+      expect(
+        entries.some((e) => e.startsWith("assets/vendor/")),
+        pack.packageName,
+      ).toBe(false);
+    }
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
