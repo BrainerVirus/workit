@@ -106,20 +106,26 @@ workit stack land [--dry-run] [--max <n>]
 
 ## Parallel slices (fanout)
 
-`workit fanout` records the slices one lead fans out to parallel workers and
-gates their fan-in. It never spawns agents: the host's own subagents do that.
+`workit fanout` records the slices one lead fans out to parallel workers,
+shows how each is doing, makes their worktrees on hosts without native
+isolation, and gates their fan-in. It never spawns agents: the host's own
+subagents do that.
 
 ```bash
 workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>]   # register slices; refuse gaps and overlap
-workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, landing order
+workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
+workit fanout worktree create <slice> [--name <n>]                      # the slice's worktree and scratch dir
+workit fanout worktree release <slice> [--name <n>] [--force]           # record git status, then remove it
+workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-in gate, landing order
 ```
 
 - The plan file lists slices: `id`, `branch`, `tier` (`mundane`, `standard`,
   `hard`), `scope` (globs: `*`, `**`, `?`, `{a,b}`; a plain path also covers
   what is below it; `.` is the whole repository; escape literal brackets as
   `\[` and `\]`, e.g. `app/\[id\]/page.tsx`, written `"app/\\[id\\]/page.tsx"` in
-  JSON), optional `owns`, `dependsOn`, `base`, `worktree`, and
-  the brief: `goal`, `acceptance`, `verify`, `forbidden` (plus optional
+  JSON; any other backslash is read as a Windows separator, and `\*`, `\?`,
+  `\{`, `\}` or a mix of both readings is refused: use `/`), optional
+  `owns`, `dependsOn`, `base`, `worktree`, and the brief: `goal`, `acceptance`, `verify`, `forbidden` (plus optional
   `context`, `timebox`). The shape is in the fanout skill's
   `references/brief.md`. It is stored in `<git common dir>/workit/fanouts/`,
   shared by every worktree, and each plan appends a `fanout.planned` ledger
@@ -135,9 +141,11 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, lan
 - `plan` exits 2 (`invalid_input`) and lists every empty or placeholder brief
   field, unknown or cyclic dependency and bad glob. It exits 3 (`blocked`)
   when two slices may write the same file. It checks the trunk's files plus
-  one sample path per glob (`src/new/**` -> `src/new/<any>`), so overlap in
-  directories nobody has created yet is caught, and paths that differ only in
-  case count as one file. Each overlap comes with a fix: an
+  one sample path per glob and brace alternative (`src/new/**` ->
+  `src/new/<any>`, `src/{a,b}/**` -> `src/a/<any>`, `src/b/<any>`), so overlap
+  in directories nobody has created yet is caught, and paths that differ only
+  in case count as one file. A scope path that differs only in case from a
+  trunk file or directory (`src/API` against `src/api`) is `blocked` too. Each overlap comes with a fix: an
   owner (`owns`) for lockfiles, manifests, barrels and CI config, otherwise a
   `dependsOn` that serializes the slices. Overlap between slices that already
   depend on each other, or with exactly one owner, is accepted.
@@ -147,11 +155,38 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, lan
   conflicts with each sibling branch from `git merge-tree`. A sibling
   conflict is charged to the slice that lands later. A slice whose
   dependency is not ready waits. Two siblings that change one file under
-  different case are flagged too. Merge checks need git 2.38 or newer.
-- A slice whose PR already landed reads as `not found` once its branch is
-  deleted (squash merges never make it an ancestor of the trunk). Re-plan
-  without it and remove it from its dependents' `dependsOn`; `fanout status`
-  will detect landed slices later. Exit 0 means every checked slice is ready
-  and `next` names the landing order: dependencies first, then plan order.
+  different case are flagged too, as is a file a slice adds that the trunk
+  spells differently only in case (a case rename that removes the trunk's
+  spelling is fine). Merge checks need git 2.38 or newer.
+- A slice that already landed is done: `check` and `status` skip it and its
+  dependents stop waiting. Landed means its PR merged (squash merges
+  included, even after the branch was deleted), asked through `gh`/`glab`.
+  Without the forge (`--offline`, no CLI, no login) git decides: the branch
+  tip is on the trunk with commits of its own, or its change has the same
+  patch-id as a trunk commit (a squash merge that applied cleanly). Exit 0
+  means every checked slice is ready or landed and `next` names the landing
+  order: dependencies first, then plan order.
   Exit 3 names the first blocked slice and how to unblock it. The verdict per
   slice is shown; `pr merge` still enforces it.
+- `status` reads side effects only, never worker reports. Per slice: the
+  branch head and its age, the PR and its CI (when the forge answers), the
+  ledger verdict on the current head, and landed. A slice is `STUCK` when it
+  started, has no accepted verdict, and nothing moved for longer than
+  `--stuck-after`, else its `timebox` (`45 minutes`, `2h`), else 30 minutes:
+  no commit or branch update, no ledger row for its branch or slice. The
+  landing order lists slices with an accepted verdict and, with the forge,
+  an open PR whose checks pass, each after the dependencies it waits for;
+  `spawnable` lists slices that can start now. Without `gh`/`glab` it still
+  answers (exit 0) and says the forge is off.
+- `worktree create` (for hosts without native worktrees: OpenCode, Codex,
+  Cursor, Pi) adds the slice's worktree at its planned path. A new slice
+  starts at its base and gets its branch through `workit git branch` (branch
+  policy applies); an existing branch is checked out as it is (`MODE:
+  resume`). It also makes `<worktree>/.workit-scratch`, hidden from git
+  through the repository's `info/exclude`, for the worker's temp files.
+- `worktree release` records the worktree's `git status` in the ledger
+  (`fanout.worktree.released`) before anything else, refuses while there are
+  uncommitted changes unless `--force`, then removes the scratch dir and the
+  worktree with `git worktree remove`. The branch is kept. It removes only a
+  registered worktree on the slice's branch, never the main checkout or a
+  plain directory at that path.
