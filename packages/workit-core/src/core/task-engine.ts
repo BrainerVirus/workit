@@ -50,11 +50,15 @@ import { normalizeOperationInput } from "./operation-input";
 import { latestJudgment } from "./policy/derive";
 import {
   givenReason,
+  judgeInputSummary,
   liftedBlockers,
   normalizeJudgment,
   ownLiftedBlockers,
 } from "./policy/judgment";
-import { appendObserved } from "../ledger";
+import { MAX_LINE_BYTES, appendObserved, observedRowBytes } from "../ledger";
+
+/** Refs kept in a `policy.judged` row (the task store keeps all of them). */
+const MAX_JUDGED_REFS = 5;
 import { currentBranch, headSha } from "../git/rev";
 import { resolveAutonomy, type VerificationMode } from "../autonomy";
 
@@ -985,6 +989,22 @@ export class WorkitCore {
         "invalid_input",
         `this session judged ${own.join(" and ")} true on this task; lifting it needs a reason: re-run with --why "<reason>" (recorded in the ledger)`,
       );
+    // The audit row is sized before anything changes, so a blocker is never
+    // lifted with a reason too long to record.
+    const audit = this.judgedRow(
+      task.data.id,
+      input.judgment,
+      judgment,
+      resolved.data,
+      lifted,
+      why,
+    );
+    const bytes = observedRowBytes(audit);
+    if (bytes > MAX_LINE_BYTES)
+      return failure(
+        "invalid_input",
+        `the judgment is too long to record in the ledger (${bytes} bytes; the limit is ${MAX_LINE_BYTES}): shorten --why and pass details by --ref <path>`,
+      );
     const changed = this.store.mutateTask(
       task.data.id,
       input.expectedRevision,
@@ -1019,26 +1039,29 @@ export class WorkitCore {
       trustedNow(this.context),
     );
     if (!changed.ok) return changed;
-    this.recordJudged(task.data.id, input.judgment, judgment, changed.data.policy, lifted, why);
+    // Best effort: the assessment already stands in the task store.
+    appendObserved(this.store.root, audit);
     return success(changed.data.revision, null, changed.data.policy);
   }
 
   /**
-   * Make a judge call auditable (M6): who judged, what was sent, what it
-   * resolved to and which blockers it lifted. Best effort: the assessment
-   * already stands in the task store, and an unwritable ledger must not undo it.
+   * The ledger row that makes a judge call auditable (M6): who judged, what
+   * was sent (the reason once, in `why`), what it resolved to, the
+   * requirements and the blockers it lifted. Refs are capped to keep the row
+   * within one ledger line.
    */
-  private recordJudged(
+  private judgedRow(
     taskId: string,
     input: unknown,
     judgment: Judgment,
     policy: Policy | null,
     lifted: readonly string[],
     why: string | null,
-  ): void {
+  ) {
     const root = this.store.root;
     const branch = currentBranch(root);
-    appendObserved(root, {
+    const { note: _note, refs, ...calls } = judgment;
+    return {
       type: "policy.judged",
       actor: {
         host: this.context.caller.host,
@@ -1048,12 +1071,12 @@ export class WorkitCore {
       branch,
       head: branch ? headSha(root) : null,
       taskId,
-      input: input ?? {},
-      judgment,
+      input: judgeInputSummary(input),
+      judgment: { ...calls, refs: refs.slice(0, MAX_JUDGED_REFS), refCount: refs.length },
       requirements: (policy?.requirements ?? []).map((requirement) => requirement.ruleId),
       lifted,
       why,
-    });
+    };
   }
 
   evidence(request: unknown): Result<Entry<Evidence>> {

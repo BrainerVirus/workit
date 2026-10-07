@@ -50,3 +50,14 @@ makes the author independent. Each verifier runs under its own session id.
   and folded into `autonomy` on the next `workit grant` write.
 - Without a named endpoint, agents stop at a local commit unless
   `defaultEndpoint` is `pr`.
+
+## Ledger hash chain (after 8.0)
+
+- Rows the CLI writes now carry a `prevHash`/`rowHash` chain. Rows written
+  before the upgrade read as legacy. A row appended later by an older Workit
+  install (another host, a stale CLI) has no chain fields, so `ledger check`
+  and `workit ledger verify-integrity` report it as `unsigned`. That is a
+  warning only; upgrade every host to stop it.
+- `--supersedes` now links only rows of the same branch and verdict kind, so
+  old cross-branch or cross-kind links are ignored and the rows they hid
+  count again. Record a fresh verdict if `ledger check` changes.

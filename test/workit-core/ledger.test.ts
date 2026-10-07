@@ -89,7 +89,7 @@ const value = <T>(result: LedgerResult<T>): T => {
   if (!result.ok) throw new Error(`${result.code}: ${result.error}`);
   return result.value;
 };
-const read = (cwd: string): LedgerRead => value(readLedger(cwd));
+const read = (cwd: string): LedgerRead => value(readLedger(cwd, { integrity: true }));
 
 const BASE_FILE = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n") + "\n";
 
@@ -219,7 +219,7 @@ test("given N concurrent appenders of near-4096-byte rows, some killed with SIGK
   expect(ledger.skipped).toBe(torn.length);
   expect(ledger.rows).toHaveLength(lines.length - torn.length);
   // Racing appenders may chain onto the same line; the chain still verifies.
-  expect(ledger.integrity.unverified).toEqual([]);
+  expect(ledger.integrity?.unverified).toEqual([]);
   for (let writer = 0; writer < writers; writer++) {
     const mine = ledger.rows.filter((row) => String(row.what).startsWith(`w${writer}-`));
     // A writer's rows are a gap-free prefix in its own order.

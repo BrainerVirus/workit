@@ -33,6 +33,7 @@ import {
   VERDICT_RESULTS,
   actorFromEnv,
   branchForPr,
+  branchScope,
   activeStanding,
   checkVerdicts,
   clearStanding,
@@ -43,6 +44,7 @@ import {
   recordStanding,
   recordVerdict,
   summarizeRow,
+  supersedeAllowed,
   type LedgerRead,
   type LedgerResult,
   type ReadRow,
@@ -200,8 +202,19 @@ const shadowedWhy = (cwd: string, row: VerdictRow): string | null => {
   );
   if (!entry || entry.verdict.id === row.id) return null;
   const effective = entry.verdict;
-  if (effective.actor.session === row.actor.session)
-    return `your ${String(effective.result)} verdict ${effective.id} on the same code still stands, so this ${row.result} verdict is not the one ${row.branch} reads; to replace it, re-record with --supersedes ${effective.id}`;
+  if (effective.actor.session === row.actor.session) {
+    // The same rule `--supersedes` applies on write and read (renames followed).
+    const scope = branchScope(cwd, row.branch);
+    const problem = supersedeAllowed(row, effective, (target) =>
+      typeof target.at === "string"
+        ? scope({ branch: typeof target.branch === "string" ? target.branch : null, at: target.at })
+        : false,
+    );
+    const stands = `your ${String(effective.result)} verdict ${effective.id} on the same code still stands, so this ${row.result} verdict is not the one ${row.branch} reads`;
+    return problem
+      ? `${stands}; it cannot be superseded by this verdict (${problem})`
+      : `${stands}; to replace it, re-record with --supersedes ${effective.id}`;
+  }
   return `${row.branch} still reads verdict ${effective.id} (${String(effective.result)} by ${effective.actor.session ?? "no session"})${row.self ? ": a self verdict never displaces an independent one" : ""}`;
 };
 
@@ -209,7 +222,7 @@ const integrityLines = (data: {
   intact: boolean;
   chained: number;
   legacy: number;
-  unverified_rows: LedgerRead["integrity"]["unverified"];
+  unverified_rows: NonNullable<LedgerRead["integrity"]>["unverified"];
 }): string[] =>
   data.intact
     ? [
@@ -292,7 +305,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
     return usage(io, `unknown ledger subcommand "${sub}"`);
   if (sub === "standing") return standing(io, values, rest);
 
-  const ledger = readLedger(io.cwd);
+  // The hash chain is verified only where it is reported.
+  const ledger = readLedger(io.cwd, {
+    integrity: sub === "check" || sub === "verdict" || sub === "verify-integrity",
+  });
   if (!ledger.ok) return failed(io, ledger);
   const { rows } = ledger.value;
 
@@ -300,7 +316,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   // mistake, it does not stop a forger.
   if (sub === "verify-integrity") {
     if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
-    const { integrity } = ledger.value;
+    const integrity = ledger.value.integrity ?? { chained: 0, legacy: 0, unverified: [] };
     return emit(
       io,
       ok({

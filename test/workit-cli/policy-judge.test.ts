@@ -140,3 +140,41 @@ test("Given lead judged product-choice=yes, When lead judges product-choice=no w
     why: "the user picked option B",
   });
 });
+
+test("Given lead judged product-choice=yes, When lead lifts it with a 1900-char --why, Then the policy.judged row records the reason once; a reason too long to record is refused and lifts nothing", () => {
+  const root = repo();
+  expect(
+    workitAs(root, "lead", "policy", "assess", "--judge", "product-choice=yes", "--json").code,
+  ).toBe(0);
+  const tooLong = workitAs(
+    root,
+    "lead",
+    "policy",
+    "assess",
+    "--judge",
+    "product-choice=no",
+    "--why",
+    "r".repeat(4200),
+    "--json",
+  );
+  expect(tooLong.code).not.toBe(0);
+  expect(tooLong.json()).toMatchObject({ code: "invalid_input" });
+  expect(judgedRows(root)).toHaveLength(1);
+  const why = "w".repeat(1900);
+  const lifted = workitAs(
+    root,
+    "lead",
+    "policy",
+    "assess",
+    "--judge",
+    "product-choice=no",
+    "--why",
+    why,
+    "--json",
+  );
+  expect(lifted.code).toBe(0);
+  const rows = judgedRows(root);
+  expect(rows).toHaveLength(2);
+  expect(rows[1]).toMatchObject({ lifted: ["productChoiceOpen"], why });
+  expect(JSON.stringify(rows[1]).split(why)).toHaveLength(2);
+});

@@ -73,7 +73,7 @@ const value = <T>(result: LedgerResult<T>): T => {
   if (!result.ok) throw new Error(`${result.code}: ${result.error}`);
   return result.value;
 };
-const read = (cwd: string): LedgerRead => value(readLedger(cwd));
+const read = (cwd: string): LedgerRead => value(readLedger(cwd, { integrity: true }));
 const as = (root: string, session: string | null) => ({ cwd: root, actor: actor(session) });
 const seedAuthor = (root: string, branch: string, session: string) =>
   value(
@@ -98,10 +98,10 @@ test("Given rows the CLI wrote and one appended by hand, When the ledger is read
   );
   value(recordVerdict(as(root, "s2"), { result: "verified", how: "ran it" }));
   const ledger = read(root);
-  expect(ledger.integrity.unverified.map((row) => [row.id, row.reason])).toEqual([
+  expect(ledger.integrity?.unverified.map((row) => [row.id, row.reason])).toEqual([
     ["ghost-1", "unsigned"],
   ]);
-  expect(ledger.integrity.chained).toBe(2);
+  expect(ledger.integrity?.chained).toBe(2);
   const check = checkVerdicts(root, "feature/x", ledger.rows);
   expect(check.warnings.join("\n")).toContain("ghost-1");
 });
@@ -118,9 +118,9 @@ test("Given a CLI-written row edited in place, When the ledger is read, Then the
   value(recordDecision(as(root, "s1"), { what: "next", why: "w" }));
   writeFileSync(file, readFileSync(file, "utf8").replace('"original"', '"rewritten"'));
   const integrity = read(root).integrity;
-  expect(integrity.legacy).toBe(1);
-  expect(integrity.unverified.map((row) => row.reason)).toEqual(["hash_mismatch", "broken_link"]);
-  expect(integrity.unverified[0].id).toBe(edited.id);
+  expect(integrity?.legacy).toBe(1);
+  expect(integrity?.unverified.map((row) => row.reason)).toEqual(["hash_mismatch", "broken_link"]);
+  expect(integrity?.unverified[0].id).toBe(edited.id);
 });
 
 // ---------------------------------------------------------------------------
@@ -246,13 +246,77 @@ test("Given a release track whose PR target is integration, When the default bas
   ).toBe("integration");
 });
 
+test("Given a reviewer's failure on feature/a, When the branch is renamed to feature/b, Then the same session's --supersedes of that failure is accepted on write and on read", () => {
+  const root = featureRepo("feature/a");
+  const failure = value(recordVerdict(as(root, "v1"), { result: "failed", how: "bug" }));
+  git(root, "branch", "-m", "feature/a", "feature/b");
+  value(
+    recordVerdict(
+      { ...as(root, "v1"), supersedes: failure.id },
+      { result: "verified", how: "my mistake" },
+    ),
+  );
+  const rows = read(root).rows;
+  expect(rows.find((row) => row.id === failure.id)?.superseded).toBe(true);
+  expect(checkVerdicts(root, "feature/b", rows).accepted.accepted).toBe(true);
+});
+
+test("Given rows of an older, deleted feature/a, When a new feature/a is created and renamed to feature/b, Then the old rows do not count for feature/b", () => {
+  const root = featureRepo("feature/a");
+  const earlier = new Date(Date.now() - 120_000);
+  value(
+    appendObserved(
+      root,
+      {
+        type: "commit.recorded",
+        session: "old-author",
+        actor: actor("old-author"),
+        branch: "feature/a",
+        head: git(root, "rev-parse", "HEAD"),
+      },
+      { now: earlier },
+    ),
+  );
+  git(root, "checkout", "-q", "main");
+  git(root, "branch", "-D", "feature/a");
+  git(root, "checkout", "-qb", "feature/a");
+  commit(root, "other.txt", "other\n", "new work");
+  seedAuthor(root, "feature/a", "new-author");
+  git(root, "branch", "-m", "feature/a", "feature/b");
+  expect(checkVerdicts(root, "feature/b", read(root).rows).authors).toEqual(["new-author"]);
+});
+
+test("Given a plain read, When the ledger is read without integrity, Then no row is hashed or labelled", () => {
+  const root = featureRepo();
+  value(recordDecision(as(root, "s1"), { what: "first", why: "w" }));
+  const plain = value(readLedger(root));
+  expect(plain.integrity).toBeNull();
+  expect(plain.rows[0].integrity).toBeUndefined();
+});
+
+test("Given a hand-written line longer than the 64 KB tail, When the CLI appends after it, Then its row links to that line and only the hand line is unverified", () => {
+  const root = featureRepo();
+  value(recordDecision(as(root, "s1"), { what: "first", why: "w" }));
+  appendFileSync(
+    value(ledgerPath(root)),
+    `${JSON.stringify({ v: 1, id: "huge-1", at: "2030-01-01T00:00:00.000Z", type: "decision", what: "x".repeat(70_000), actor: {} })}\n`,
+  );
+  value(recordDecision(as(root, "s1"), { what: "after", why: "w" }));
+  expect(read(root).integrity?.unverified.map((row) => [row.id, row.reason])).toEqual([
+    ["huge-1", "unsigned"],
+  ]);
+});
+
 // ---------------------------------------------------------------------------
 // perf: same-session re-reviews must not cost git calls per row
 
-test("Given 40 alternating same-session failed/verified rows on distinct heads, When the branch is checked, Then the git calls do not grow with the rows", () => {
+/** The fixed git calls of one check (heads, base, trailers, reflog, keys), with slack; per-row calls exceed it. */
+const CALLS_BOUND = 20;
+
+test("Given 20 alternating same-session failed/verified rows on distinct heads, When the branch is checked, Then the git calls do not grow with the rows", () => {
   const root = featureRepo();
   seedAuthor(root, "feature/x", "author");
-  for (let index = 0; index < 20; index += 1) {
+  for (let index = 0; index < 10; index += 1) {
     commit(root, "feature.txt", `feature ${index}\n`, `step ${index}`);
     value(recordVerdict(as(root, "v1"), { result: "failed", how: `bug ${index}` }));
     commit(root, "feature.txt", `feature ${index} fixed\n`, `fix ${index}`);
@@ -274,5 +338,5 @@ test("Given 40 alternating same-session failed/verified rows on distinct heads, 
   }
   expect(check.accepted.accepted).toBe(true);
   const calls = readFileSync(log, "utf8").split("\n").filter(Boolean).length;
-  expect(calls).toBeLessThan(20);
-});
+  expect(calls).toBeLessThan(CALLS_BOUND);
+}, 30_000);

@@ -179,7 +179,8 @@ export type ReadRow = RowCommon &
     superseded: boolean;
     /** The row names a `supersedes` target the reader refused (D18 supersede rules). */
     supersedeIgnored: boolean;
-    integrity: RowIntegrity;
+    /** Set only when read with `{ integrity: true }`. */
+    integrity?: RowIntegrity;
   };
 
 export type LedgerError = {
@@ -531,20 +532,39 @@ const TAIL_BYTES = 64 * 1024;
 /**
  * The last complete (newline-terminated) non-empty line before `size`, read
  * from the tail. An unterminated tail is a torn row or another appender's
- * write still in flight, so it is not chained onto.
+ * write still in flight, so it is not chained onto. A line longer than the
+ * window (a hand-written one) is read whole by widening the window, so the
+ * link stays exact.
  */
 const lastLine = (fd: number, size: number): string | null => {
-  const span = Math.min(size, TAIL_BYTES);
-  if (span === 0) return null;
-  const buffer = Buffer.alloc(span);
-  fs.readSync(fd, buffer, 0, span, size - span);
-  const text = buffer.toString("utf8");
-  const lines = text
-    .slice(0, text.lastIndexOf("\n") + 1)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return lines.at(-1) ?? null;
+  for (let span = Math.min(size, TAIL_BYTES); span > 0; span = Math.min(size, span * 2)) {
+    const buffer = Buffer.alloc(span);
+    fs.readSync(fd, buffer, 0, span, size - span);
+    const end = buffer.lastIndexOf(0x0a);
+    if (end < 0) {
+      if (span === size) return null;
+      continue;
+    }
+    // Skip blank lines (a fence) back to the last non-empty complete line.
+    let stop = end;
+    let text = "";
+    while (stop >= 0) {
+      const start = buffer.lastIndexOf(0x0a, stop - 1);
+      text = buffer.toString("utf8", start + 1, stop).trim();
+      if (text) {
+        // Its start must be inside the window (or be the file's start).
+        if (start >= 0 || span === size) return text;
+        break;
+      }
+      if (start < 0) {
+        if (span === size) return null;
+        break;
+      }
+      stop = start;
+    }
+    if (span === size) return text || null;
+  }
+  return null;
 };
 
 /** The line to write, given the file's current last line (null: empty file). */
@@ -644,6 +664,12 @@ export function appendRow<T extends LedgerRow>(
   return appendRaw<T>(cwd, row, options);
 }
 
+/** The bytes `appendObserved` would write for `row` (its chain fields included). */
+export function observedRowBytes(row: Record<string, unknown>): number {
+  const sample = sealed({ ...row, observer: "workit_cli" }, newId(), new Date().toISOString(), "");
+  return Buffer.byteLength(sample.line);
+}
+
 /**
  * Internal API for observing verbs only (S9b `check`, S10 `ci`, S11 `pr`/`git
  * commit`): append a row the CLI itself observed, stamped
@@ -674,19 +700,29 @@ const normalizeActor = (value: unknown): LedgerActor => {
   };
 };
 
+type SupersedeRow = Pick<ReadRow, "type" | "actor"> & {
+  self?: unknown;
+  branch?: unknown;
+  kind?: unknown;
+  at?: unknown;
+};
+
 /**
- * May `by` supersede `target`? Same type, same known session, same branch,
+ * May `by` supersede `target`? Same type, same known session, same branch
+ * (`onBranch`: the target belongs to `by`'s branch, which follows renames),
  * for a verdict the same kind, later in the file, and a self verdict never
  * replaces an independent one.
  */
 export function supersedeAllowed(
-  by: Pick<ReadRow, "type" | "actor"> & { self?: unknown; branch?: unknown; kind?: unknown },
-  target: Pick<ReadRow, "type" | "actor"> & { self?: unknown; branch?: unknown; kind?: unknown },
+  by: SupersedeRow,
+  target: SupersedeRow,
+  onBranch: (target: SupersedeRow) => boolean = (row) =>
+    (by.branch ?? null) === (row.branch ?? null),
 ): string | null {
   if (by.type !== target.type) return `a ${by.type} row cannot supersede a ${target.type} row`;
   if (!by.actor.session || by.actor.session !== target.actor.session)
     return "only the session that wrote a row can supersede it";
-  if ((by.branch ?? null) !== (target.branch ?? null))
+  if (!onBranch(target))
     return `the row is on another branch (${String(target.branch ?? "none")}); a row supersedes only one on its own branch`;
   if (by.type === "verdict" && (by.kind ?? "review") !== (target.kind ?? "review"))
     return `a ${String(by.kind ?? "review")} verdict cannot supersede a ${String(target.kind ?? "review")} verdict; record it with --kind ${String(target.kind ?? "review")}`;
@@ -708,11 +744,19 @@ export type LedgerRead = {
   path: string;
   rows: ReadRow[];
   skipped: number;
-  integrity: LedgerIntegrity;
+  /** Only when read with `{ integrity: true }` (hashing every line has a cost). */
+  integrity: LedgerIntegrity | null;
 };
 
-/** Every valid row in append order. A missing file is empty. */
-export function readLedger(cwd: string): LedgerResult<LedgerRead> {
+/**
+ * Every valid row in append order. A missing file is empty. `integrity`
+ * verifies the hash chain too (`ledger check`, `verify-integrity`); other
+ * readers, such as the write gate, skip that cost.
+ */
+export function readLedger(
+  cwd: string,
+  options: { integrity?: boolean } = {},
+): LedgerResult<LedgerRead> {
   const file = ledgerPath(cwd);
   if (!file.ok) return file;
   let text = "";
@@ -726,7 +770,7 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
           path: file.value,
           rows: [],
           skipped: 0,
-          integrity: { chained: 0, legacy: 0, unverified: [] },
+          integrity: options.integrity ? { chained: 0, legacy: 0, unverified: [] } : null,
         },
       };
     return err("unavailable", `cannot read ${file.value}: ${(error as Error).message}`);
@@ -743,10 +787,9 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
   for (const raw of text.split("\n")) {
     const trimmed = raw.trim();
     if (!trimmed) continue;
-    const lineHash = sha256(trimmed);
     // Checked after this line is added: a row cannot name its own line.
     const linked = (prevHash: string | null): boolean => earlier.has(prevHash);
-    earlier.add(lineHash);
+    if (options.integrity) earlier.add(sha256(trimmed));
     let parsed: unknown;
     try {
       parsed = JSON.parse(trimmed);
@@ -758,9 +801,11 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
       skipped += 1;
       continue;
     }
-    let rowIntegrity: RowIntegrity = "verified";
+    let rowIntegrity: RowIntegrity | undefined = options.integrity ? "verified" : undefined;
     let reason: UnverifiedReason | null = null;
-    if (typeof parsed.rowHash === "string") {
+    if (!options.integrity) {
+      // not verified on this read
+    } else if (typeof parsed.rowHash === "string") {
       chainStarted = true;
       const { rowHash, ...body } = parsed;
       const prevHash = str(parsed.prevHash);
@@ -790,9 +835,10 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
       seq: rows.length + 1,
       superseded: false,
       supersedeIgnored: false,
-      integrity: rowIntegrity,
+      ...(rowIntegrity ? { integrity: rowIntegrity } : {}),
     };
     rows.push(row);
+    if (!options.integrity) continue;
     if (rowIntegrity === "verified") integrity.chained += 1;
     else if (rowIntegrity === "legacy") integrity.legacy += 1;
     else if (reason)
@@ -804,15 +850,27 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
         reason,
       });
   }
-  // Only a well-formed supersede link counts; anything else is ignored.
+  // Only a well-formed supersede link counts; anything else is ignored. A
+  // link across branch names is checked against the renames (reflog read
+  // only for such links, once per branch).
+  const scopes = new Map<string, BranchScope>();
+  const scopeOf = (branch: string): BranchScope => {
+    let scope = scopes.get(branch);
+    if (!scope) scopes.set(branch, (scope = branchScope(cwd, branch)));
+    return scope;
+  };
   const byId = new Map<string, ReadRow>();
   for (const row of rows) {
     const target = row.supersedes ? byId.get(row.supersedes) : undefined;
-    if (target && supersedeAllowed(row, target) === null) target.superseded = true;
+    if (target && supersedeAllowed(row, target, renameAwareBranch(scopeOf, row.branch)) === null)
+      target.superseded = true;
     else if (row.supersedes) row.supersedeIgnored = true;
     if (!byId.has(row.id)) byId.set(row.id, row);
   }
-  return { ok: true, value: { path: file.value, rows, skipped, integrity } };
+  return {
+    ok: true,
+    value: { path: file.value, rows, skipped, integrity: options.integrity ? integrity : null },
+  };
 }
 
 export type RowFilter = { branch?: string; pr?: number; type?: string; last?: number };
@@ -999,6 +1057,9 @@ const RENAMED = /^branch: renamed refs\/heads\/(.+) to refs\/heads\/(.+)$/iu;
  */
 export function branchScope(cwd: string, branch: string): BranchScope {
   const renamedAt = new Map<string, number>();
+  // The branch's oldest reflog entry (its creation): rows of an older,
+  // deleted branch that once had one of its earlier names predate it.
+  let since = Number.NEGATIVE_INFINITY;
   if (safeRef(branch)) {
     const log = git(cwd, [
       "log",
@@ -1010,9 +1071,12 @@ export function branchScope(cwd: string, branch: string): BranchScope {
     ]);
     for (const line of (log ?? "").split("\n")) {
       const [selector = "", subject = ""] = line.split("\t");
-      const match = RENAMED.exec(subject);
       const seconds = Number(/@\{(\d+)\}$/u.exec(selector)?.[1]);
-      if (!match || match[1] === branch || !Number.isFinite(seconds)) continue;
+      if (!Number.isFinite(seconds)) continue;
+      // Newest first: the last entry read is the oldest.
+      since = seconds * 1000;
+      const match = RENAMED.exec(subject);
+      if (!match || match[1] === branch) continue;
       // Reflog times are whole seconds: the rename's second still counts.
       const until = (seconds + 1) * 1000;
       renamedAt.set(match[1], Math.max(renamedAt.get(match[1]) ?? 0, until));
@@ -1021,9 +1085,22 @@ export function branchScope(cwd: string, branch: string): BranchScope {
   return (row) => {
     if (row.branch === branch) return true;
     const until = row.branch === null ? undefined : renamedAt.get(row.branch);
-    return until !== undefined && Date.parse(row.at) <= until;
+    if (until === undefined) return false;
+    const at = Date.parse(row.at);
+    return at >= since && at <= until;
   };
 }
+
+/** `supersedeAllowed`'s branch test for rows on `branch`, following its renames. */
+const renameAwareBranch = (scopeOf: (branch: string) => BranchScope, branch: unknown) => {
+  return (target: SupersedeRow): boolean => {
+    const own = typeof branch === "string" ? branch : null;
+    const theirs = typeof target.branch === "string" ? target.branch : null;
+    if (own === theirs) return true;
+    if (own === null || theirs === null || typeof target.at !== "string") return false;
+    return scopeOf(own)({ branch: theirs, at: target.at });
+  };
+};
 
 /**
  * Sessions that authored `branch`: the union of `commit.recorded` /
@@ -1318,7 +1395,11 @@ function checkSupersede(
   if (!target) return err("not_found", `no ledger row ${context.supersedes} to supersede`);
   const branch =
     row.branch === undefined ? (context.branch ?? currentBranch(context.cwd)) : row.branch;
-  const problem = supersedeAllowed({ type, actor: context.actor, ...row, branch }, target);
+  const problem = supersedeAllowed(
+    { type, actor: context.actor, ...row, branch },
+    target,
+    renameAwareBranch((name) => branchScope(context.cwd, name), branch),
+  );
   return problem
     ? err("invalid_input", `--supersedes: ${problem}`)
     : { ok: true, value: undefined };
