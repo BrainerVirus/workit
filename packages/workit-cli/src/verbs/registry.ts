@@ -173,6 +173,14 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./test-audit"),
   },
   {
+    name: "knowledge",
+    group: "delivery",
+    usage: "workit knowledge lint [--json]",
+    summary:
+      "Lint agent knowledge files: AGENTS.md byte budget, broken local links, scaffold-only files, duplicated rules (exit 1 on findings)",
+    load: () => import("./knowledge"),
+  },
+  {
     name: "youtrack",
     group: "delivery",
     usage:

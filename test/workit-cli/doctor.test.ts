@@ -68,6 +68,27 @@ test("workit doctor (text) prints per-check lines and no JSON to stdout", () => 
   expect(text.stdout).toMatch(/stale_pin/);
 });
 
+test("Given AGENTS.md with a broken link, When workit doctor runs, Then it prints one knowledge line and the exit code is unchanged", () => {
+  const agents = path.join(fixture.cwd, "AGENTS.md");
+  writeFileSync(agents, "# Agents\n\nSee [gone](docs/gone.md).\n");
+  try {
+    const text = runCli(["doctor"], fixture.cwd);
+    expect(text.status).toBe(0);
+    expect(text.stdout).toContain(
+      "info knowledge — AGENTS.md 36 of 8192 bytes; 1 finding(s) (workit knowledge lint)",
+    );
+    const json = runCli(["doctor", "--json"], fixture.cwd);
+    expect(json.status).toBe(0);
+    expect(JSON.parse(json.stdout).knowledge).toEqual({
+      agentsBytes: 36,
+      budget: 8192,
+      findings: 1,
+    });
+  } finally {
+    rmSync(agents, { force: true });
+  }
+});
+
 /** The store directory holding a checkout lock (`<store>/checkouts/<slug>/metadata.lock`). */
 const storeOf = (lockPath: string) => path.dirname(path.dirname(path.dirname(lockPath)));
 

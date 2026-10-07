@@ -3,6 +3,8 @@
 // `--fix-lock` clears a stale .workit metadata lock first, so the report
 // reflects the cleaned state.
 import { runDoctor } from "../admin/doctor";
+import { checkRoot } from "@brainervirus/workit-core/src/check-config";
+import { lintKnowledge } from "@brainervirus/workit-core/src/knowledge";
 import {
   clearStaleMetadataLock,
   inspectMetadataLock,
@@ -69,8 +71,19 @@ export async function run(argv: string[], io: Io): Promise<number> {
     fixLock = clearStaleMetadataLock(root, { force });
   }
   const report = runDoctor({ host: "cli", cwd: io.cwd, workspaceRoot: root });
+  // Advisory only: knowledge findings never change the doctor's exit code.
+  const knowledge = lintKnowledge(checkRoot(io.cwd));
+  const agents = knowledge.files.find((file) => file.file === "AGENTS.md");
+  const knowledgeLine = `info knowledge — ${agents ? `AGENTS.md ${agents.bytes} of ${knowledge.budget} bytes` : "no AGENTS.md"}; ${knowledge.findings.length} finding(s) (workit knowledge lint)`;
   if (argv.includes("--json")) {
-    io.stdout(`${JSON.stringify(fixLock ? { ...report, fixLock } : report, null, 2)}\n`);
+    const summary = {
+      agentsBytes: agents?.bytes ?? null,
+      budget: knowledge.budget,
+      findings: knowledge.findings.length,
+    };
+    io.stdout(
+      `${JSON.stringify({ ...report, ...(fixLock ? { fixLock } : {}), knowledge: summary }, null, 2)}\n`,
+    );
     return report.exitCode;
   }
   if (fixLock) {
@@ -91,6 +104,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     io.stdout(`${mark} ${check.id} — ${check.detail}\n`);
     if (check.fix) io.stdout(`     fix: ${check.fix}\n`);
   }
+  io.stdout(`${knowledgeLine}\n`);
   io.stdout(
     `passed ${report.summary.passed} / warned ${report.summary.warned} / failed ${report.summary.failed}\n`,
   );
