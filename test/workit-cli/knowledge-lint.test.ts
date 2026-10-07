@@ -105,6 +105,19 @@ test("Given need-based files with one real entry each, Then neither is a scaffol
   expect(rulesOf(root)).toEqual([]);
 });
 
+test("Given a rule that starts with TODO, Then it is an entry, while a bare TODO or a TODO: note is still a scaffold finding", () => {
+  const rule = tempRepo({
+    "CODING_STANDARDS.md": "# Coding standards\n\n- TODO comments name a tracker issue.\n",
+  });
+  expect(rulesOf(rule)).toEqual([]);
+  for (const placeholder of ["- TODO", "- TODO: add rules"]) {
+    const root = tempRepo({ "CODING_STANDARDS.md": `# Coding standards\n\n${placeholder}\n` });
+    expect(rulesOf(root), placeholder).toEqual([
+      { rule: "scaffold-file", file: "CODING_STANDARDS.md", line: null },
+    ]);
+  }
+});
+
 test("Given the same rule wrapped and marked up differently in AGENTS.md and CODING_STANDARDS.md, Then it is one duplicate finding; short shared phrases are not", () => {
   const root = tempRepo({
     "AGENTS.md": [
