@@ -1,18 +1,30 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import { readLedger } from "@/packages/workit-core/src/ledger";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
+import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remote";
 
 // G1 + G2: `workit fanout plan` registers slices and refuses overlap;
 // `workit fanout check` gates fan-in on real branches with git diff and
 // git merge-tree. Every repository here is a real git repository.
 
+// An empty config home: the trunk may come from release tracks in workspaces.json.
+let configHome: ConfigHome;
+beforeAll(() => {
+  configHome = useConfigHome("wk-fanout-config-");
+});
+afterAll(() => configHome.restore());
+
 const dirs: string[] = [];
+const remotes: RemoteRepo[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const remote of remotes.splice(0)) remote.cleanup();
+  rmSync(path.join(configHome.configDir, "workspaces.json"), { force: true });
 });
 
 const git = (cwd: string, ...args: string[]): string => {
@@ -464,6 +476,125 @@ test("fanout check: given an unknown slice id, when checked, then it is a usage 
   const result = await run(repo.cwd, ["fanout", "check", "nope", "--json"]);
   expect(result.code).toBe(2);
   expect(result.json().error).toBe("nope: not a slice of fanout wave");
+});
+
+// ---------------------------------------------------------------------------
+// trunk from release tracks (the ri-web shape: nun-develop and develop lines)
+
+const TRACK = (line: string, production: string, tags: string) => ({
+  strategy: "gitflow",
+  productionBranch: production,
+  integrationBranch: line,
+  naming: {
+    feature: "feature/{name}",
+    release: `release/${tags}{version}`,
+    hotfix: "hotfix/{name}",
+  },
+  baseBranch: line,
+  mergeBackBranches: [line],
+  pullRequestTarget: line,
+  tagNamespace: tags,
+  versionSource: { kind: "git-tag" },
+  requiredChecks: [],
+});
+
+/** develop = master + 1, nun-develop = master + 2; the workspace default is nun-develop. */
+const tracked = (tracks = true): RemoteRepo => {
+  const repo = makeRemoteRepo();
+  remotes.push(repo);
+  const commit = (file: string) => {
+    repo.write(file, `${file}\n`);
+    repo.git("add", "-A");
+    repo.git("commit", "-q", "-m", `chore: ${file}`);
+  };
+  repo.git("switch", "-q", "-c", "master");
+  repo.git("switch", "-q", "-c", "develop");
+  commit("develop-1.txt");
+  repo.git("switch", "-q", "-c", "nun-develop", "master");
+  commit("nun-1.txt");
+  commit("nun-2.txt");
+  repo.git("push", "-q", "origin", "master", "develop", "nun-develop");
+  writeFileSync(
+    path.join(configHome.configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "ri-web",
+          glob: `${repo.root.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "github", defaultTargetBranch: "nun-develop" },
+          branchPolicy: { preset: "gitflow", developBranch: "nun-develop" },
+          ...(tracks
+            ? {
+                releaseTracks: {
+                  nun: TRACK("nun-develop", "master", "nun/"),
+                  standard: TRACK("develop", "master", ""),
+                },
+              }
+            : {}),
+        },
+      ],
+    }),
+  );
+  return repo;
+};
+
+const trunkless = (repo: RemoteRepo) => {
+  const file = path.join(repo.root, "plan.json");
+  writeFileSync(file, JSON.stringify({ name: "wave", slices: [slice("api", ["src/api/**"])] }));
+  return file;
+};
+
+test("fanout plan with release tracks: given the checkout is on a develop-line feature and the plan names no trunk, when planned, then the trunk and the slice base are the develop line's PR target, not the workspace default", async () => {
+  const repo = tracked();
+  repo.git("switch", "-q", "-c", "feature/lead", "develop");
+  repo.write("lead.txt", "lead\n");
+  repo.git("add", "-A");
+  repo.git("commit", "-q", "-m", "feat: lead");
+  const result = await run(repo.cwd, ["fanout", "plan", trunkless(repo), "--json"]);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  const data = result.json().data;
+  expect(data.trunk).toBe("develop");
+  expect(data.slices[0].base).toBe("develop");
+});
+
+test("fanout plan with release tracks: given a checkout whose release line cannot be told apart, when planned without --trunk, then it blocks (exit 3) asking for --track, and --track nun picks nun-develop", async () => {
+  const repo = tracked();
+  // A branch cut from master before either line forked: both lines are equally close.
+  repo.git("switch", "-q", "-c", "feature/old", "master");
+  repo.write("old.txt", "old\n");
+  repo.git("add", "-A");
+  repo.git("commit", "-q", "-m", "feat: old");
+  const plan = trunkless(repo);
+  const blocked = await run(repo.cwd, ["fanout", "plan", plan, "--json"]);
+  expect(blocked.code, blocked.stdout).toBe(3);
+  expect(blocked.json()).toMatchObject({
+    code: "blocked",
+    unblock: "workit fanout plan <plan.json> --track <name>  # or --trunk <branch>",
+  });
+  expect(existsSync(path.join(repo.cwd, ".git", "workit", "fanouts"))).toBe(false);
+
+  const picked = await run(repo.cwd, ["fanout", "plan", plan, "--track", "nun", "--json"]);
+  expect(picked.code, picked.stdout).toBe(0);
+  expect(picked.json().data.trunk).toBe("nun-develop");
+
+  const both = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    plan,
+    "--track",
+    "nun",
+    "--trunk",
+    "develop",
+    "--json",
+  ]);
+  expect(both.code).toBe(2);
+});
+
+test("fanout plan without release tracks: given a workspace default of nun-develop and no tracks, when planned without a trunk, then the trunk stays origin's default branch", async () => {
+  const repo = tracked(false);
+  const result = await run(repo.cwd, ["fanout", "plan", trunkless(repo), "--json"]);
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data.trunk).toBe("main");
 });
 
 test("workit help fanout prints both subcommands", async () => {

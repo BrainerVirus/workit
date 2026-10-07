@@ -83,7 +83,7 @@ workit stack land [--dry-run] [--max <n>]
 gates their fan-in. It never spawns agents: the host's own subagents do that.
 
 ```bash
-workit fanout plan <plan.json> [--name <n>] [--trunk <b>]   # register slices; refuse gaps and overlap
+workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>]   # register slices; refuse gaps and overlap
 workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, landing order
 ```
 
@@ -95,6 +95,12 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>]  # fan-in gate, lan
   `references/brief.md`. It is stored in `<git common dir>/workit/fanouts/`,
   shared by every worktree, and each plan appends a `fanout.planned` ledger
   row.
+- The trunk is `--trunk`, else the plan's `trunk`, else, with
+  [release tracks](configuration.md#release-tracks), the PR target of the
+  checkout's line, as for `stack plan`. When the line cannot be told apart
+  `plan` is `blocked` until you pass `--track <name>` or `--trunk`. Without
+  tracks it is origin's default branch, else `main`.
+- One lead owns a plan: re-planning overwrites the file without a lock.
 - Slices are independent PRs off the trunk by default. A slice with exactly
   one `dependsOn` is stacked on that slice's branch.
 - `plan` exits 2 (`invalid_input`) and lists every empty or placeholder brief

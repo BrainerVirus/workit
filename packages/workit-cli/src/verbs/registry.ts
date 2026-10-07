@@ -159,7 +159,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "fanout",
     group: "delivery",
     usage:
-      "workit fanout plan <plan.json> [--name <n>] [--trunk <b>] | fanout check [<slice>…] [--name <n>] [--base <ref>] [--json]",
+      "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] | fanout check [<slice>…] [--name <n>] [--base <ref>] [--json]",
     summary:
       "Register parallel slices (complete briefs, disjoint scopes, shared-file owners), then gate fan-in: out-of-scope edits, trunk and sibling merge conflicts, landing order",
     load: () => import("./fanout"),

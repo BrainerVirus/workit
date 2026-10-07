@@ -1,7 +1,7 @@
 // `workit fanout plan|check` (G1, G2): flag parsing and rendering; the rules
 // live in core fanout.ts and fanout-check.ts. The CLI never spawns agents.
 //
-//   workit fanout plan  <plan.json> [--name <n>] [--trunk <b>]
+//   workit fanout plan  <plan.json> [--name <n>] [--trunk <b> | --track <t>]
 //   workit fanout check [<slice>…] [--name <n>] [--base <ref>]
 import fs from "node:fs";
 import path from "node:path";
@@ -15,9 +15,10 @@ import {
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
-import { parseFlags, usage } from "./forge-common";
+import { parseFlags, releaseTrunk, usage } from "./forge-common";
 
-const PLAN_USAGE = "workit fanout plan <plan.json> [--name <n>] [--trunk <b>] [--json]";
+const PLAN_USAGE =
+  "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--json]";
 const CHECK_USAGE = "workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--json]";
 const USAGE = "workit fanout plan|check ... (workit help fanout)";
 
@@ -41,9 +42,53 @@ function renderBlockedPlan(io: Io, result: FanoutError): void {
       );
 }
 
+/**
+ * The trunk: --trunk, else the plan's `trunk`, else the release track's PR
+ * target when tracks are configured (as `stack plan`; an undetermined line
+ * blocks), else core's default (origin's default branch, else main).
+ * --track picks the track and must agree with a `trunk` the plan names.
+ */
+function resolveTrunk(
+  io: Io,
+  raw: unknown,
+  flag: string | null,
+  track: string | null,
+): { trunk: string | null } | { code: number } {
+  if (flag !== null) return { trunk: flag };
+  const named =
+    typeof raw === "object" &&
+    raw !== null &&
+    typeof (raw as { trunk?: unknown }).trunk === "string"
+      ? (raw as { trunk: string }).trunk.trim() || null
+      : null;
+  if (named !== null && track === null) return { trunk: null };
+  const derived = releaseTrunk(io, track, null);
+  if ("error" in derived)
+    return {
+      code: emit(
+        io,
+        fail("blocked", derived.error, {
+          unblock: "workit fanout plan <plan.json> --track <name>  # or --trunk <branch>",
+        }),
+      ),
+    };
+  if (named !== null && derived.trunk !== named)
+    return {
+      code: usage(
+        io,
+        `the plan names trunk ${named}; --track ${track} targets ${derived.trunk ?? "(none)"}`,
+        PLAN_USAGE,
+      ),
+    };
+  return { trunk: derived.tracked || track !== null ? derived.trunk : null };
+}
+
 function plan(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, { name: "value", trunk: "value" });
+  const flags = parseFlags(argv, { name: "value", trunk: "value", track: "value" });
   if (typeof flags === "string") return usage(io, flags, PLAN_USAGE);
+  const track = flags.values.track ?? null;
+  if (track !== null && flags.values.trunk !== undefined)
+    return usage(io, "pass --trunk or --track, not both (--track picks the trunk)", PLAN_USAGE);
   if (flags.positionals.length !== 1)
     return usage(
       io,
@@ -59,10 +104,12 @@ function plan(argv: string[], io: Io): number {
   } catch (error) {
     return usage(io, `cannot read ${file} as JSON: ${(error as Error).message}`, PLAN_USAGE);
   }
+  const trunk = resolveTrunk(io, raw, flags.values.trunk ?? null, track);
+  if ("code" in trunk) return trunk.code;
   const result = planFanout(io.cwd, {
     raw,
     name: flags.values.name ?? null,
-    trunk: flags.values.trunk ?? null,
+    trunk: trunk.trunk,
     actor: actorFromEnv(io.env),
   });
   if (!result.ok) {
