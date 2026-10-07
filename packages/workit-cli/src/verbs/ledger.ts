@@ -313,7 +313,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ...("derivedFrom" in acting ? { derivedFrom: acting.derivedFrom } : {}),
     }),
   );
-  if (verdict.ok && verdict.value.self && !passedTestOn(io.cwd, verdict.value))
+  if (verdict.ok && verdict.value.selfReason === "flag" && !passedTestOn(io.cwd, verdict.value))
     io.stderr(
       `warning: no passing \`workit check test\` observed on ${(verdict.value.head ?? "this head").slice(0, 12)}; run it before a --self verdict\n`,
     );
