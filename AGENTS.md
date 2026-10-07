@@ -1,9 +1,8 @@
 # Agent contract (workit repository)
 
 This file is the development contract for working **on** this repository. It
-does not reach installed Workit projects: agent behavior there ships in
-packages (see [Where a rule lives](#where-a-rule-lives)). Usage docs are in
-[README.md](README.md) and [docs/guides/](docs/guides/).
+does not reach installed Workit projects: a rule that must change agent behavior
+there ships in a package (see [Where a rule lives](#where-a-rule-lives)).
 
 ## Layout
 
@@ -24,14 +23,15 @@ Bun for development; published bundles run on Node.js 24+.
 
 ```bash
 bun install --frozen-lockfile
+bun run check             # build + lint + format:check + both test tiers + tsc
 bun run lint              # oxlint
 bun run format:check      # oxfmt (bun run format to fix; Markdown is not formatted)
 bun run typecheck         # tsc --noEmit
 bun run test              # unit tier
 bun run test:packaging    # packs tarballs, installs, doctor, docker (slow)
-bun run knip              # unused files/exports and reachability
+bun run knip              # unused files/exports and reachability (CI, not in check)
+bun run doctor            # react-doctor on the CLI UI (CI, not in check)
 bun run build             # every package bundle
-bun run check             # build + lint + format:check + both test tiers + tsc
 bun run test:acceptance   # deterministic acceptance fixtures
 bun run verify:release-candidate
 bun run validate:cursor-marketplace
@@ -53,12 +53,12 @@ external target directory (build scripts accept one).
 
 - Work in a git worktree per change, on a branch cut from `origin/main`:
   `git worktree add -b feature/<slug> ../workit-wt/<slug> origin/main`.
-  Parallel agents each get their own worktree. Never commit on `main`.
+  Never commit on `main`.
 - Branch prefixes: `feature/`, `bugfix/`, `chore/`, `docs/`, `ci/`.
 - Conventional Commits, enforced by commitlint (opt-in hooks:
-  `bun run hooks:install`). The PR title is the squash commit subject, so it
-  must be a valid conventional commit (`feat(cli): …`, `fix!: …`); it drives the
-  release version.
+  `bun run hooks:install`). The PR title becomes the squash commit subject and
+  the release note, so it must be a valid conventional commit (`feat(cli): …`,
+  `fix!: …`); it drives the release version.
 - Before any GitHub remote mutation, confirm the effective identity with
   `gh api user --jq .login`; `gh auth status` can disagree with the credential
   actually used.
@@ -73,9 +73,8 @@ A push to `main` that passes CI calls the release workflow (semantic-release).
 Conventional Commits, and only when a package's published payload changed
 (anything under its `packages/<pkg>/` dir or the sources it bundles; a `docs:`
 or `chore:` change there still ships as a patch). Root docs, tests and tooling
-never release. Only changed packages are published, with npm provenance;
-release notes come from PR titles. Breaking changes need `!` or a
-`BREAKING CHANGE:` footer. Never edit versions or tags by hand.
+never release, and only changed packages are published. Never edit versions or
+tags by hand.
 
 Live release qualification (`docs/qualification/qualification.md`) needs
 explicit authorization: never run `scripts/run-v1-evaluation.ts` or fabricate
@@ -109,9 +108,9 @@ and compared by `test/acceptance/deterministic.test.ts`.
 8. Grants (and the `verification` mode) are read only from the user's
    `workspaces.json`; no repository file, MCP tool or host tool may raise them.
 9. Agent-facing tool schemas stay flat (depth 1): add fields in
-   `core/operation-input.ts`, not nested objects. The before-write gate gates
-   working-tree edits only, never Workit's own commands, history moves or the
-   paths that unblock it.
+   `core/operation-input.ts`, not nested objects.
+10. The before-write gate gates working-tree edits only, never Workit's own
+    commands, history moves or the paths that unblock it.
 
 ## Where a rule lives
 
@@ -124,6 +123,3 @@ and compared by `test/acceptance/deterministic.test.ts`.
 | Developing and releasing this repo | this file |
 | Install and usage | README, `docs/guides/`, package READMEs |
 | Release history | GitHub release notes and `CHANGELOG.md` |
-
-If a rule must change what an agent does in an installed project, it ships in
-a package; text that lives only here never gets there.
