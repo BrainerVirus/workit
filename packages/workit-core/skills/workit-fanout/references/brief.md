@@ -1,8 +1,11 @@
 # Worker brief template
 
-Every field is required. A brief with an empty field is not spawned. Point to
-files and ledger rows instead of pasting their content. Size the slice so the
-worker finishes it in about 150k tokens of context; split a larger one first.
+`workit fanout brief <slice>` renders this brief from the plan, the standing
+orders in force (`workit ledger standing list`) and the slice's scratch dir;
+pass its output verbatim. The template below is what it fills in. Every field
+is required. A brief with an empty field is not spawned. Point to files and
+ledger rows instead of pasting their content. Size the slice so the worker
+finishes it in about 150k tokens of context; split a larger one first.
 
 ```md
 MODE: <new | resume (a replacement continuing an existing branch)>
@@ -16,11 +19,12 @@ VERIFY: <exact commands, e.g. `workit check test`, the verify-<app> feature to d
 TIER: <mundane | standard | hard: how much model the slice needs>
 TIMEBOX: <wall clock or turn budget; past it without a new commit you will be replaced>
 SCRATCH: <your own temp dir: the one `fanout worktree create` printed, else `mktemp -d`; never a shared path>
-FORBIDDEN: <no edits outside SCOPE; no rebase, retarget, merge or force-push; no new dependencies; ...>
+FORBIDDEN: <no edits outside SCOPE; no new dependencies; ...>
+FAN-IN: <one PR per slice: no rebase, retarget, merge or force-push | integration: merge the integration tip before reporting, nothing else>
 REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,
   each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),
   anything out of scope as a follow-up, not a diff.
-STANDING: <the standing orders, verbatim: user preferences and every directive given so far>
+STANDING: <the standing orders, verbatim: `workit ledger standing add` records each one>
   export WORKIT_SESSION_ID=<lead>-w<n>   (set by the lead; a verifier brief gets <lead>-v<n>)
 ```
 
@@ -40,7 +44,8 @@ VERIFY: `workit check test`; verify-api feature "usage"
 TIER: standard
 TIMEBOX: 45 minutes
 SCRATCH: ../app-wt/usage-endpoint/.workit-scratch
-FORBIDDEN: no edits outside SCOPE; no schema migration; no rebase or force-push; no new packages
+FORBIDDEN: no edits outside SCOPE; no schema migration; no new packages
+FAN-IN: one PR per slice. Never rebase, retarget, merge or force-push: the lead owns topology.
 REPORT: as in the template
 STANDING: conventional commits; no comments that restate code; ask nothing, record rulings instead
 ```
@@ -55,7 +60,9 @@ stack); `worktree` defaults to `../<repo>-wt/<id>`. `owns` claims a shared
 file another slice's glob also matches. Globs that match no file yet are compared
 through a sample path. Use `/` as the separator; a backslash only escapes
 literal brackets: `"app/\\[id\\]/page.tsx"`. A `timebox` such as `45 minutes`
-is the slice's STUCK threshold in `workit fanout status`.
+is the slice's STUCK threshold in `workit fanout status`. `"fanIn":
+"integration"` (with an integration branch as `trunk`) is the one-PR mode in
+`orchestration.md`; the default `"prs"` lands one PR per slice.
 
 ```json
 {
@@ -90,7 +97,7 @@ is the slice's STUCK threshold in `workit fanout status`.
 }
 ```
 
-## Worker rules (paste into the brief when the host has no implementer agent)
+## Worker rules (`workit fanout brief` appends them as RULES)
 
 1. First command. `MODE: new`: `workit git branch <branch> --base <base>` (the
    worktree may start on a name that breaks branch policy). `MODE: resume`:

@@ -113,6 +113,8 @@ subagents do that.
 
 ```bash
 workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>]   # register slices; refuse gaps and overlap
+workit ledger standing add "<order>" | list | clear [<id>] [--fanout <n>] # the lead's standing orders for every worker
+workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>]  # the complete worker brief, verbatim
 workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
 workit fanout worktree create <slice> [--name <n>]                      # the slice's worktree and scratch dir
 workit fanout worktree release <slice> [--name <n>] [--force]           # record git status, then remove it
@@ -136,6 +138,28 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   `plan` is `blocked` until you pass `--track <name>` or `--trunk`. Without
   tracks it is origin's default branch, else `main`.
 - One lead owns a plan: re-planning overwrites the file without a lock.
+  The plan records a content `hash`. A re-plan with the same content
+  continues the run; one with changed content starts a new run, so ledger
+  rows from before it no longer link merged PRs to its slices.
+- `"fanIn": "integration"` is the one-PR mode: the trunk is an integration
+  branch (planning refuses it on origin's default branch), each worker merges
+  the integration tip into its branch before reporting, and the lead lands
+  slices with fast-forward merges, then ships the integration branch as one
+  PR. The default, `"prs"`, is one PR per slice, and workers never merge.
+- `ledger standing add "<order>"` records a standing order (a `standing` row)
+  for the fanout that `--fanout` names, else the one `fanout` commands would
+  pick. `list` shows the orders in force; `clear <id>` ends one and `clear`
+  ends them all (a `standing.cleared` row).
+- `brief <slice>` prints the worker brief: MODE, GOAL, SCOPE (with `owns`,
+  branch and base), CONTEXT, ACCEPTANCE, VERIFY, TIER, TIMEBOX (default 30
+  minutes), SCRATCH, FORBIDDEN, the fan-in rule, REPORT, the standing orders
+  in force, the worker's `WORKIT_SESSION_ID` (`<lead session>-w-<slice>`) and
+  the worker rules. MODE is `resume` when the branch exists, else `new`
+  (`--mode` overrides; `resume` needs the branch). SCRATCH is
+  `<worktree>/.workit-scratch` when the slice's worktree exists, else
+  `.workit-scratch/` at the worker's own worktree root; either way
+  `info/exclude` hides it from git. `--attempt <n>` (1-9) renders one attempt
+  of a race on `<branch>-try<n>` with its own session.
 - Slices are independent PRs off the trunk by default. A slice with exactly
   one `dependsOn` is stacked on that slice's branch.
 - `plan` exits 2 (`invalid_input`) and lists every empty or placeholder brief
@@ -162,9 +186,10 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   dependents stop waiting. Landed means its PR merged (squash merges
   included, even after the branch was deleted), asked through `gh`/`glab`.
   A merged PR whose branch is gone counts only when the ledger links the
-  branch to the slice (a `worktree create` row, or a row such as a verdict
-  recorded on the merged head) since the plan was first made, so an older
-  branch or fanout of the same name is not taken for it. Without the forge (`--offline`, no CLI, no login, or after
+  branch to the slice: a `worktree create` row made under the plan's current
+  hash, or a row such as a verdict recorded on the merged head since that
+  hash was first planned. An older branch, or an older fanout of the same
+  name, is not taken for it. Without the forge (`--offline`, no CLI, no login, or after
   the first timeout or unavailable answer in a run) git decides: the branch
   tip is on the trunk and its reflog shows a commit made on the branch (a
   branch only fast-forwarded to a newer trunk does not count), or its change
@@ -200,6 +225,6 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   worktree with `git worktree remove`. The branch is kept. It removes only a
   worktree that `create` made for this fanout, slice and path (its ledger row
   says so, no later release removed it, and git's admin dir for the worktree
-  is no older than the row), even with `--force`; never the main checkout, a worktree someone
+  has the id, inode and birth time the row recorded), even with `--force`; never the main checkout, a worktree someone
   else added there, or a plain directory. An empty directory that existed
   before `create` is left in place.

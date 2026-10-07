@@ -210,7 +210,9 @@ shape  →  implement  →  review  →  ship
 For independent slices, **fanout** runs one worker per isolated worktree with
 a fixed brief and file-scope manifest, and a non-author verifier per slice.
 `workit fanout plan` refuses incomplete briefs and overlapping scopes before
-any spawn, `workit fanout status` flags stuck workers and suggests a landing
+any spawn, `workit fanout brief` renders each worker's brief with the lead's
+standing orders (`workit ledger standing`), `workit fanout status` flags
+stuck workers and suggests a landing
 order, `workit fanout worktree create|release` isolates workers on hosts
 without native worktrees, and `workit fanout check` gates fan-in. See
 [parallel slices](docs/guides/delivery.md#parallel-slices-fanout).
@@ -257,12 +259,12 @@ Skills load automatically when the task fits, or explicitly: `/wk-<name>`
 | `workit check <name>` | Run a configured check and record observed evidence |
 | `workit test-audit [--diff] [--mutate]` | Flag tautological tests; optional diff-scoped mutation |
 | `workit knowledge lint` | Lint AGENTS.md budget, local links, scaffold-only and duplicated rules; register as `workit check knowledge` |
-| `workit ledger decision\|ruling\|verdict\|list\|check` | Decisions, rulings and SHA-keyed verdicts |
+| `workit ledger decision\|ruling\|verdict\|standing\|list\|check` | Decisions, rulings, SHA-keyed verdicts and a fanout's standing orders |
 | `workit git branch\|commit\|push` | Policy-checked branch/commit; leased push with verified remote tip |
 | `workit pr status\|create\|merge` | PR state and next action; SHA-bound create; gated merge |
 | `workit ci wait\|rerun` | Wait for CI on the PR head; rerun failed jobs once per head |
 | `workit stack plan\|status\|sync\|land` | Base-branch PR stacks |
-| `workit fanout plan\|check\|status\|worktree` | Register parallel slices (complete briefs, disjoint scopes); watch them (STUCK, PR, CI, verdict, landed); create and release slice worktrees; gate fan-in on scope, merge conflicts and landing order |
+| `workit fanout plan\|brief\|check\|status\|worktree` | Register parallel slices (complete briefs, disjoint scopes); render each worker's brief with the standing orders; watch them (STUCK, PR, CI, verdict, landed); create and release slice worktrees; gate fan-in on scope, merge conflicts and landing order |
 | `workit verify-delivery [push\|pr\|merge\|release]` | Confirm on the remote that it landed |
 | `workit youtrack note\|time\|meeting` | YouTrack comments and work time |
 | `workit changelog apply` | Add entries under the changelog's Unreleased section |
