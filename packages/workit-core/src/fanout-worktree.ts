@@ -367,7 +367,7 @@ export function createSliceWorktree(
     head,
     dirExisted,
     planCreatedAt: plan.createdAt,
-    planHash: plan.hash,
+    sliceHash: slice.hash,
     ...(admin ? { adminId: admin.id, adminIno: admin.ino, adminBirth: admin.birth } : {}),
     ...(baseSha ? { baseSha } : {}),
   });

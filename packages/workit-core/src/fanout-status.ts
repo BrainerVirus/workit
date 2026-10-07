@@ -20,7 +20,7 @@ import { checksState, gatingChecks, missingRequired, type ChecksState } from "./
 import type { ResolvedForge } from "./forge/resolve";
 import { checkVerdicts, readLedger, type ReadRow, type VerdictBasis } from "./ledger";
 import { sliceLandings } from "./fanout-check";
-import { forgeBreaker } from "./fanout-landed";
+import { forgeBreaker, inSliceRun } from "./fanout-landed";
 import {
   branchRef,
   fanoutFail,
@@ -123,9 +123,12 @@ function activity(cwd: string, plan: FanoutFile, slice: Slice, rows: readonly Re
     ]).stdout,
   );
   const reflog = moved ? isoOf(moved[1]) : null;
+  // Rows from an earlier definition of this slice are not its activity.
   const ledger = rows
     .filter(
-      (row) => row.branch === slice.branch || (row.fanout === plan.name && row.slice === slice.id),
+      (row) =>
+        (row.branch === slice.branch || (row.fanout === plan.name && row.slice === slice.id)) &&
+        inSliceRun(row, slice),
     )
     .map((row) => row.at);
   return {
@@ -136,7 +139,8 @@ function activity(cwd: string, plan: FanoutFile, slice: Slice, rows: readonly Re
       (row) =>
         row.type === "fanout.worktree.created" &&
         row.fanout === plan.name &&
-        row.slice === slice.id,
+        row.slice === slice.id &&
+        inSliceRun(row, slice),
     ),
   };
 }
@@ -267,7 +271,8 @@ export function fanoutStatus(
         (candidate) =>
           candidate.type === "fanout.worktree.created" &&
           candidate.fanout === plan.name &&
-          candidate.slice === id,
+          candidate.slice === id &&
+          inSliceRun(candidate, byId.get(id) as Slice),
       );
       row.state = created ? "active" : "not_started";
       if (!created) spawnable.push(id);

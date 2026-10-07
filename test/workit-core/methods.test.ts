@@ -353,6 +353,16 @@ test("agent-critical delivery rules stay stated", () => {
     [
       "fanout orchestration",
       fanoutOrchestration(),
+      "A lead that authored none of the slices may record them in its own session",
+    ],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
+      "`verification: independent` and high risk: never the lead's own session",
+    ],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
       "That merge is the only one a worker makes, and only in this mode",
     ],
     ["fanout orchestration", fanoutOrchestration(), "Only when the user wants one PR"],

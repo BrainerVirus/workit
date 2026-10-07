@@ -138,9 +138,14 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   `plan` is `blocked` until you pass `--track <name>` or `--trunk`. Without
   tracks it is origin's default branch, else `main`.
 - One lead owns a plan: re-planning overwrites the file without a lock.
-  The plan records a content `hash`. A re-plan with the same content
-  continues the run; one with changed content starts a new run, so ledger
-  rows from before it no longer link merged PRs to its slices.
+  Each slice records a `hash` of its own definition (brief, scope, branch,
+  base, dependencies). A re-plan that leaves a slice unchanged continues its
+  run; one that changes it starts a new run for that slice alone, so ledger
+  rows from before the change no longer link a merged PR to it or count as
+  its activity in `status`. Editing one slice never unlinks a merged sibling.
+  A new plan (not a re-plan) under a name that still has standing orders in
+  force warns and lists them, with `workit ledger standing clear --fanout
+  <n>` to drop them if they belong to an earlier run.
 - `"fanIn": "integration"` is the one-PR mode: the trunk is an integration
   branch (planning refuses it on origin's default branch), each worker merges
   the integration tip into its branch before reporting, and the lead lands
@@ -186,7 +191,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   dependents stop waiting. Landed means its PR merged (squash merges
   included, even after the branch was deleted), asked through `gh`/`glab`.
   A merged PR whose branch is gone counts only when the ledger links the
-  branch to the slice: a `worktree create` row made under the plan's current
+  branch to the slice: a `worktree create` row made under the slice's current
   hash, or a row such as a verdict recorded on the merged head since that
   hash was first planned. An older branch, or an older fanout of the same
   name, is not taken for it. Without the forge (`--offline`, no CLI, no login, or after

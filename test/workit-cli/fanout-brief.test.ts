@@ -285,3 +285,36 @@ test("fanout brief: given an integration-branch fanout, when rendered, then the 
   expect(data.text).toContain("No other merge, and no rebase, retarget or force-push.");
   expect(data.text).not.toContain("one PR per slice");
 });
+
+test("fanout plan: given standing orders still in force under a name, when a NEW plan takes that name, then it warns and lists them with the clear command; a re-plan does not warn again", async () => {
+  const { root, cwd } = repo();
+  await run(cwd, [
+    "ledger",
+    "standing",
+    "add",
+    "no new dependencies",
+    "--fanout",
+    "usage",
+    "--json",
+  ]);
+  await run(cwd, ["ledger", "standing", "add", "imitate runs.ts", "--fanout", "usage", "--json"]);
+
+  const created = await plan(cwd, root, "usage", [slice("a", ["a.ts"])]);
+  expect(created.code, created.stderr + created.stdout).toBe(0);
+  expect(created.json().data.warnings).toEqual([
+    '2 standing orders are already in force for fanout usage, and every brief will carry them: "no new dependencies"; "imitate runs.ts". From an earlier run? workit ledger standing clear --fanout usage',
+  ]);
+
+  const file = path.join(root, "usage-human.json");
+  writeFileSync(
+    file,
+    JSON.stringify({ name: "usage", trunk: "main", slices: [slice("a", ["a.ts"])] }),
+  );
+  const replanned = await run(cwd, ["fanout", "plan", file]);
+  expect(replanned.code).toBe(0);
+  expect(replanned.stdout).not.toContain("warning:");
+
+  // A name with nothing in force plans without a warning.
+  const other = await plan(cwd, root, "other", [slice("b", ["b.ts"])]);
+  expect(other.json().data.warnings).toEqual([]);
+});

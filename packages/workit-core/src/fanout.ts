@@ -18,10 +18,12 @@
 // deterministic suggestion: an owner for known shared files (lockfiles,
 // manifests, barrels, CI config), else a dependency that serializes them.
 //
-// The plan's `hash` covers its content (not its timestamps). A re-plan that
-// changes it starts a new run: `hashSince` moves to now, and only ledger rows
-// recorded under this hash (worktree rows carry `planHash`) or since then
-// link a gone branch's merged PR to a slice.
+// Each slice's `hash` covers its own definition (brief, scope, branch, base,
+// dependencies; not its worktree path). A re-plan that changes a slice starts
+// a new run for that slice alone: its `hashSince` moves to now, and only
+// ledger rows recorded under its hash (worktree rows carry `sliceHash`) or
+// since then link a gone branch's merged PR to it or count as its activity.
+// Its siblings keep their runs.
 //
 // `fanIn: "integration"` is the one-PR mode: the trunk is an integration
 // branch (never origin's default branch), workers merge its tip into their
@@ -33,7 +35,14 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { GIT_TIMEOUTS, gitCommonDir, pushRemoteName, resolveRef } from "./git/rev";
-import { appendObserved, defaultBase, storeRoot, type LedgerActor } from "./ledger";
+import {
+  activeStanding,
+  appendObserved,
+  defaultBase,
+  readLedger,
+  storeRoot,
+  type LedgerActor,
+} from "./ledger";
 import { stackFileName } from "./stack";
 
 export const FANOUT_VERSION = 1;
@@ -58,6 +67,10 @@ export type Slice = {
   forbidden: string[];
   context: string | null;
   timebox: string | null;
+  /** sliceHash of this definition: which run of the slice a ledger row belongs to. */
+  hash: string;
+  /** When a slice with this hash was first planned: older rows are not its run. */
+  hashSince: string;
 };
 
 export const FAN_IN_MODES = ["prs", "integration"] as const;
@@ -72,10 +85,6 @@ export type FanoutFile = {
   /** Extra shared-file globs on top of DEFAULT_SHARED. */
   shared: string[];
   slices: Slice[];
-  /** Content hash of the plan (planHash): which run a ledger row belongs to. */
-  hash: string;
-  /** When a plan with this hash was first recorded: older rows do not link to it. */
-  hashSince: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -410,6 +419,8 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       forbidden,
       context: optional("context"),
       timebox: optional("timebox"),
+      hash: "",
+      hashSince: "",
     });
   });
 
@@ -444,8 +455,6 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       fanIn: fanIn as FanInMode,
       shared,
       slices,
-      hash: "",
-      hashSince: "",
       createdAt: "",
       updatedAt: "",
     },
@@ -753,18 +762,10 @@ export function worktreeRoot(cwd: string): string {
   return path.join(path.dirname(main), `${path.basename(main)}-wt`);
 }
 
-/** sha256 (16 hex) of what the plan says, without its timestamps or hash. */
-export function planHash(
-  plan: Pick<FanoutFile, "name" | "trunk" | "fanIn" | "shared" | "slices">,
-): string {
-  const content = {
-    name: plan.name,
-    trunk: plan.trunk,
-    fanIn: plan.fanIn,
-    shared: plan.shared,
-    slices: plan.slices,
-  };
-  return createHash("sha256").update(JSON.stringify(content)).digest("hex").slice(0, 16);
+/** sha256 (16 hex) of the slice's definition: everything but its worktree path and hash. */
+export function sliceHash(slice: Slice): string {
+  const { worktree: _worktree, hash: _hash, hashSince: _since, ...definition } = slice;
+  return createHash("sha256").update(JSON.stringify(definition)).digest("hex").slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -816,8 +817,12 @@ function parseStored(raw: unknown): FanoutFile | null {
       forbidden: list(item.forbidden),
       context: typeof item.context === "string" ? item.context : null,
       timebox: typeof item.timebox === "string" ? item.timebox : null,
+      hash: text(item.hash),
+      // A plan written before slice hashes: its run began at createdAt.
+      hashSince: text(item.hashSince) || text(raw.createdAt),
     });
   }
+  for (const slice of slices) slice.hash ||= sliceHash(slice);
   const shared = globs(raw.shared);
   const ids = new Set(slices.map((slice) => slice.id));
   if (
@@ -836,9 +841,6 @@ function parseStored(raw: unknown): FanoutFile | null {
     fanIn,
     shared,
     slices,
-    // A plan written before hashes: its hash is computed, its run began at createdAt.
-    hash: text(raw.hash) || planHash({ name: raw.name, trunk: raw.trunk, fanIn, shared, slices }),
-    hashSince: text(raw.hashSince) || createdAt,
     createdAt,
     updatedAt: text(raw.updatedAt),
   };
@@ -936,7 +938,6 @@ export type PlanOutcome = {
   name: string;
   trunk: string;
   fanIn: FanInMode;
-  hash: string;
   file: string;
   created: boolean;
   slices: Array<
@@ -946,6 +947,8 @@ export type PlanOutcome = {
   waves: string[][];
   landingOrder: string[];
   notes: string[];
+  /** A new plan under a name that still has standing orders in force (an earlier run's?). */
+  warnings: string[];
 };
 
 /** Above this many slices in one wave, the lead queues the rest (4-6 in flight). */
@@ -1029,12 +1032,13 @@ export function planFanout(
   const previous = existing.ok ? existing.data : null;
   plan.createdAt = previous?.createdAt || now.toISOString();
   plan.updatedAt = now.toISOString();
-  plan.hash = planHash(plan);
-  // Same content: the same run. Changed content: a new run from now.
-  plan.hashSince =
-    previous && previous.hash === plan.hash
-      ? previous.hashSince || previous.createdAt || plan.updatedAt
-      : plan.updatedAt;
+  // Per slice: the same definition continues its run; a changed one starts anew.
+  for (const slice of plan.slices) {
+    slice.hash = sliceHash(slice);
+    const before = previous?.slices.find((old) => old.id === slice.id);
+    slice.hashSince =
+      before && before.hash === slice.hash ? before.hashSince || plan.updatedAt : plan.updatedAt;
+  }
   const written = writeFanout(cwd, plan);
   if (!written.ok) return written;
   appendObserved(cwd, {
@@ -1042,7 +1046,6 @@ export function planFanout(
     actor: input.actor,
     fanout: plan.name,
     trunk: plan.trunk,
-    planHash: plan.hash,
     fanIn: plan.fanIn,
     slices: plan.slices.length,
     ids: plan.slices.slice(0, 20).map((slice) => slice.id),
@@ -1050,6 +1053,15 @@ export function planFanout(
 
   const grouped = waves(plan.slices);
   const notes: string[] = [];
+  const warnings: string[] = [];
+  if (previous === null) {
+    const ledger = readLedger(cwd);
+    const inForce = ledger.ok ? activeStanding(ledger.value.rows, plan.name) : [];
+    if (inForce.length)
+      warnings.push(
+        `${inForce.length} standing order${inForce.length === 1 ? " is" : "s are"} already in force for fanout ${plan.name}, and every brief will carry ${inForce.length === 1 ? "it" : "them"}: ${inForce.map((row) => `"${String(row.what)}"`).join("; ")}. From an earlier run? workit ledger standing clear --fanout ${plan.name}`,
+      );
+  }
   if (!ref)
     notes.push(
       `trunk ${plan.trunk} does not resolve here; only sample paths of each glob were compared`,
@@ -1071,7 +1083,6 @@ export function planFanout(
       name: plan.name,
       trunk: plan.trunk,
       fanIn: plan.fanIn,
-      hash: plan.hash,
       file: written.data,
       created: previous === null,
       slices: plan.slices.map(({ id, branch, base, worktree, tier, dependsOn, scope, owns }) => ({
@@ -1088,6 +1099,7 @@ export function planFanout(
       waves: grouped,
       landingOrder: landingOrder(plan.slices),
       notes,
+      warnings,
     },
   };
 }

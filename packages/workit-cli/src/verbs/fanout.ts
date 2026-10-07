@@ -149,7 +149,7 @@ function plan(argv: string[], io: Io): number {
     return code;
   }
   return emit(io, ok(result.data), (data: PlanOutcome) => [
-    `${data.created ? "planned" : "re-planned"} fanout ${data.name} on ${data.trunk}${data.fanIn === "integration" ? " (integration branch: one PR)" : ""}: ${data.slices.length} slice${data.slices.length === 1 ? "" : "s"} · plan ${data.hash}`,
+    `${data.created ? "planned" : "re-planned"} fanout ${data.name} on ${data.trunk}${data.fanIn === "integration" ? " (integration branch: one PR)" : ""}: ${data.slices.length} slice${data.slices.length === 1 ? "" : "s"}`,
     ...data.slices.map(
       (slice) =>
         `  ${slice.id} [${slice.tier}] ${slice.branch} <- ${slice.base}${slice.dependsOn.length ? `  after ${slice.dependsOn.join(", ")}` : ""}\n      worktree ${slice.worktree}`,
@@ -161,6 +161,7 @@ function plan(argv: string[], io: Io): number {
     `waves: ${data.waves.map((wave) => wave.join(", ")).join("  |  ")}`,
     `landing order: ${data.landingOrder.join(", ")}`,
     ...data.notes.map((note) => `note: ${note}`),
+    ...data.warnings.map((warning) => `warning: ${warning}`),
   ]);
 }
 

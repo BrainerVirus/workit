@@ -59,11 +59,12 @@ it (`git branch <branch> <winner>`), have the verifier record the verdict on
 Follow the workspace `verification` setting (`workit grant show`); the
 worker never records a verdict on its own work.
 
-- Normal: a verifier that wrote none of the slices, or you when you wrote
-  none of them, records the verdicts.
-- `verification: independent`: a fresh verifier session
-  (`WORKIT_SESSION_ID=<lead>-v<n>`, or `--as verifier`).
-- High risk: a verifier per slice plus a review panel (below).
+- Normal: a verifier that wrote none of the slices records the verdicts. A
+  lead that authored none of the slices may record them in its own session.
+- `verification: independent` and high risk: never the lead's own session.
+  A separate verifier session records them (`WORKIT_SESSION_ID=<lead>-v<n>`,
+  or `--as verifier`); at high risk one verifier per slice, plus a review
+  panel (below).
 
 A batch verifier takes several slices on one surface in one session: for
 each branch it checks out the head, runs that slice's VERIFY, and records its

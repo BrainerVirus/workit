@@ -251,13 +251,12 @@ test("fanout status: given a verdict that linked feature/a's merged head before 
   expect(byId.a).toMatchObject({ state: "not_started", landed: null });
 });
 
-test("fanout status: given slice a's worktree made under this plan and its PR squash-merged with the branch gone, when re-planned under the same name with the same content it stays landed, and with changed content it is no longer linked", async () => {
+test("fanout status: given slice a's worktree made under its current definition and its PR squash-merged with the branch gone, when re-planned with sibling b edited it stays landed, and when a itself is edited it is no longer linked and its older rows are not its activity", async () => {
   const forge = forgeSetup();
   await stackPlan(forge);
   const created = await run(forge.cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(created.code, created.stderr + created.stdout).toBe(0);
-  const hash = rowsOf(forge.cwd, "fanout.planned").at(-1)?.planHash;
-  expect(rowsOf(forge.cwd, "fanout.worktree.created").at(-1)?.planHash).toBe(hash);
+  expect(rowsOf(forge.cwd, "fanout.worktree.created").at(-1)?.sliceHash).toMatch(/^[0-9a-f]{16}$/);
   expect((await run(forge.cwd, ["fanout", "worktree", "release", "a", "--json"])).code).toBe(0);
   forge.mergeExternally(11);
   forge.git("fetch", "-q", "origin");
@@ -269,19 +268,33 @@ test("fanout status: given slice a's worktree made under this plan and its PR sq
     landed: { how: "pr_merged", pr: 11 },
   });
 
-  await stackPlan(forge);
-  expect((await status(forge.cwd)).byId.a).toMatchObject({ state: "landed" });
+  await Bun.sleep(5);
+  await plan(forge.cwd, forge.root, [
+    slice("a", ["a.txt"]),
+    slice("b", ["b.txt"], { dependsOn: ["a"], goal: "ship b, now with paging" }),
+  ]);
+  expect((await status(forge.cwd)).byId.a).toMatchObject({
+    state: "landed",
+    landed: { how: "pr_merged", pr: 11 },
+  });
 
+  await Bun.sleep(5);
   await plan(forge.cwd, forge.root, [
     slice("a", ["a.txt"], { goal: "ship a again, differently" }),
-    slice("b", ["b.txt"], { dependsOn: ["a"] }),
+    slice("b", ["b.txt"], { dependsOn: ["a"], goal: "ship b, now with paging" }),
   ]);
-  const { byId } = await status(forge.cwd);
-  expect(byId.a).toMatchObject({ landed: null, pr: null, branchExists: false });
-  expect(byId.a.state).not.toBe("landed");
+  const { byId, data } = await status(forge.cwd);
+  expect(byId.a).toMatchObject({
+    state: "not_started",
+    landed: null,
+    pr: null,
+    branchExists: false,
+    lastActivityAt: null,
+  });
   expect(byId.a.notes).toEqual([
     "feature/a is gone; merged #11 is not linked to this slice in the ledger (an older branch of the same name?)",
   ]);
+  expect(data.spawnable).toContain("a");
 });
 
 test("fanout status: given gh hangs on every PR lookup, when shown, then it asks once, marks the forge down for the rest of the run, and git decides every slice", async () => {
