@@ -235,12 +235,66 @@ const pushAction = (args: string[]): RawAction | null => {
   return { kind: "push", targets, blindForce: force && !lease, remote };
 };
 
-const HELP = new Set(["--help", "-h", "help"]);
+/** Options whose next word is their value (never an option or subcommand). */
+const VALUE_OPTIONS: Record<RawInvocation["tool"], ReadonlySet<string>> = {
+  git: new Set([
+    "-m",
+    "--message",
+    "-F",
+    "--file",
+    "-C",
+    "-c",
+    "--reuse-message",
+    "--reedit-message",
+    "--author",
+    "--date",
+    "--trailer",
+    "-t",
+    "--template",
+    "--cleanup",
+    "--fixup",
+    "--squash",
+    "-o",
+    "--push-option",
+    "--repo",
+    "--receive-pack",
+    "--exec",
+  ]),
+  gh: new Set(
+    ["-b", "--body", "-F", "--body-file", "-t", "--title", "--subject", "-A", "--author-email"]
+      .concat(["-B", "--base", "-H", "--head", "-l", "--label", "-a", "--assignee"])
+      .concat(["-r", "--reviewer", "-m", "--milestone", "-p", "--project", "-T", "--template"])
+      .concat(["--match-head-commit", "-R", "--repo"]),
+  ),
+  glab: new Set(
+    ["-m", "--message", "--squash-message", "--sha", "-t", "--title", "-d", "--description"]
+      .concat(["-b", "--target-branch", "-s", "--source-branch", "-l", "--label"])
+      .concat(["-a", "--assignee", "--reviewer", "-R", "--repo"]),
+  ),
+};
+
+/**
+ * A help request: `help` as the subcommand (`git help push`, `gh pr help`),
+ * or `--help`/`-h` where an option can stand, never as an option's value
+ * (`git commit -m help` is a commit).
+ */
+const asksHelp = (invocation: RawInvocation): boolean => {
+  const { tool, args } = invocation;
+  if (args[0] === "help" || (tool !== "git" && args[1] === "help")) return true;
+  const values = VALUE_OPTIONS[tool];
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--") return false;
+    if (arg === "--help" || arg === "-h") return true;
+    if (values.has(arg)) index++;
+  }
+  return false;
+};
 
 /** The workit meaning of one invocation; null for read-only, help or unrelated ones. */
 export function rawAction(invocation: RawInvocation): RawAction | null {
   const args = invocation.args;
-  if (args.some((arg) => HELP.has(arg))) return null;
+  if (asksHelp(invocation)) return null;
   const [first, second] = args;
   if (invocation.tool === "git") {
     if (first === "commit")

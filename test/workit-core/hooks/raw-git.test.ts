@@ -166,6 +166,18 @@ test("classification: chains, cd, -C, env prefixes, quoting and bash -c find the
     ["git push --dry-run origin HEAD:main", [{ dir: null, action: null }]],
     ["git push -n origin HEAD:main", [{ dir: null, action: null }]],
     ["git commit --dry-run -m x", [{ dir: null, action: null }]],
+    ["git help push", [{ dir: null, action: null }]],
+    ["gh pr help", [{ dir: null, action: null }]],
+    // `help` or `-h` as an option's value is no help request.
+    ["git commit -m help", [{ dir: null, action: commit }]],
+    ["git commit -m -h", [{ dir: null, action: commit }]],
+    [
+      'gh pr create --title help --body "-h"',
+      [{ dir: null, action: { kind: "pr-create", forge: "gh" } }],
+    ],
+    ["glab mr merge 3 -m --help", [{ dir: null, action: { kind: "merge", forge: "glab" } }]],
+    ["git push origin help", [{ dir: null, action: push(["help"], "origin") }]],
+    ["git commit -m x -- --help", [{ dir: null, action: commit }]],
     // A subshell's cd ends with it; pushd/popd is a stack.
     [
       "(cd ../other && git status); git push",
@@ -311,6 +323,8 @@ test("G a Workit workspace, W routine raw delivery commands, T they run with a n
       ["gh pr view 4 && gh pr checks 4", "workit pr status"],
       ["glab mr create --fill", "workit pr create"],
     ];
+    // A commit whose message is "help" is still a commit.
+    nudges.push(["git commit -m help", "workit git commit -m"]);
     for (const [command, verb] of nudges) {
       const out = claudeOut(root, command);
       expect(out?.permissionDecision, command).toBeUndefined();
@@ -473,6 +487,17 @@ test("G Claude Pre/PostToolUse around a raw git commit, T commit.recorded names 
         { result: "verified", how: "ran it" },
       ).ok,
     ).toBe(true);
+  });
+});
+
+test("G a raw commit whose message is help, T it is still recorded for the session", async () => {
+  await withProtectedMain(() => {
+    const root = repo({ branch: "feature/x" });
+    let sha = "";
+    claudeCall(root, "git commit -m help", () => {
+      sha = commitFile(root, "help.txt");
+    });
+    expect(commitRows(root)).toEqual([expect.objectContaining({ sha, session: "s-lead" })]);
   });
 });
 
