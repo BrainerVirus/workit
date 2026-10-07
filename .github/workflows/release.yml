@@ -95,6 +95,19 @@ jobs:
           fi
           VERSION=$(node -p "require('./packages/workit-core/package.json').version")
           BRANCH="chore/manifest-sync-v${VERSION}"
+          # Back-to-back releases leave older sync PRs that conflict with this
+          # one and never merge; close every open sync PR for a lower version
+          # (and delete its branch) before opening the new one.
+          while IFS=$'\t' read -r OLD_PR OLD_HEAD; do
+            [[ -n "${OLD_PR}" ]] || continue
+            OLD_VERSION="${OLD_HEAD#chore/manifest-sync-v}"
+            [[ "${OLD_VERSION}" != "${VERSION}" ]] || continue
+            LOWEST=$(printf '%s\n%s\n' "${OLD_VERSION}" "${VERSION}" | sort -V | head -n1)
+            [[ "${LOWEST}" == "${OLD_VERSION}" ]] || continue
+            gh pr close "${OLD_PR}" --comment "Superseded by v${VERSION}" --delete-branch \
+              || echo "could not close superseded sync PR #${OLD_PR}"
+          done < <(gh pr list --state open --base main --limit 100 --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("chore/manifest-sync-")) | "\(.number)\t\(.headRefName)"')
           # A later non-releasing main push re-runs this step while the
           # previous sync PR is still open; that PR already carries the change.
           if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then

@@ -104,6 +104,16 @@ test(
     expect(syncRun).toContain("--auto --squash");
     expect(syncRun).toContain("--delete-branch");
     expect(syncStep.env?.GH_TOKEN ?? "").toContain("RELEASE_SYNC_TOKEN");
+    // Back-to-back releases: older open sync PRs are closed as superseded
+    // (with branch deletion) before the new sync PR is opened.
+    const supersede = syncRun.indexOf("gh pr close");
+    expect(supersede, "superseded sync PRs must be closed").toBeGreaterThanOrEqual(0);
+    expect(supersede).toBeLessThan(syncRun.indexOf("gh pr create"));
+    expect(syncRun).toMatch(/startswith\("chore\/manifest-sync-"\)/);
+    expect(syncRun).toContain("sort -V");
+    expect(syncRun).toMatch(
+      /gh pr close[^\n]*--comment "Superseded by v\$\{VERSION\}"[^\n]*--delete-branch/,
+    );
     // Deferred auto-merge does not reliably delete heads; a closed-PR cleanup
     // workflow must remove chore/manifest-sync-* branches after merge.
     const cleanup = read(".github/workflows/cleanup-manifest-sync-branch.yml");
