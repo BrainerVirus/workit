@@ -131,7 +131,7 @@ const fromResult = <T>(io: Io, result: LedgerResult<T>, human: (value: T) => str
 const usage = (io: Io, error: string): number =>
   emit(io, fail("invalid_input", error, { unblock: USAGE }));
 
-/** The CLI observed a passing `workit check test` on the verdict's branch and head. */
+/** The CLI observed a passing `workit check test` on the verdict's branch and clean head. */
 const passedTestOn = (cwd: string, verdict: VerdictRow): boolean => {
   const ledger = readLedger(cwd);
   return (
@@ -142,6 +142,7 @@ const passedTestOn = (cwd: string, verdict: VerdictRow): boolean => {
         row.observer === "workit_cli" &&
         row.name === "test" &&
         row.result === "passed" &&
+        row.dirty !== true &&
         row.branch === verdict.branch &&
         row.head === verdict.head,
     )

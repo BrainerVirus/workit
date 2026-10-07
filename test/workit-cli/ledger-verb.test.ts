@@ -201,6 +201,7 @@ test("an author session's verdict is blocked (exit 3) unless --self", async () =
   expect(refused.code).toBe(3);
   expect(refused.json()).toMatchObject({ ok: false, code: "blocked" });
   expect(refused.json().unblock).toContain("WORKIT_SESSION_ID");
+  expect(refused.json().unblock).toContain("--self");
   const self = await run(
     root,
     ["ledger", "verdict", "verified", "--how", "x", "--self", "--json"],
@@ -216,7 +217,7 @@ test("an author session's verdict is blocked (exit 3) unless --self", async () =
   expect(anonymous.json().data).toMatchObject({ self: true, selfReason: "no_session" });
 });
 
-test("Given no passing `workit check test` on the head, When an author records --self, Then it is recorded with a warning; after one, without", async () => {
+test("Given no passing `workit check test` on the head, When an author records --self, Then it is recorded with a warning (also after a dirty-tree run); after a clean one, without", async () => {
   const root = featureRepo();
   const env = { WORKIT_SESSION_ID: "s-author" };
   const argv = ["ledger", "verdict", "verified", "--how", "x", "--self", "--json"];
@@ -224,6 +225,18 @@ test("Given no passing `workit check test` on the head, When an author records -
   expect(unchecked.code).toBe(0);
   expect(unchecked.json().data).toMatchObject({ self: true });
   expect(unchecked.stderr).toContain("warning: no passing `workit check test` observed on");
+  const head = git(root, "rev-parse", "HEAD");
+  appendObserved(root, {
+    type: "check",
+    actor: { host: "cli", session: "s-author", agentId: null },
+    branch: "feature/x",
+    head,
+    dirty: true,
+    name: "test",
+    result: "passed",
+  });
+  const dirtyRun = await run(root, argv, env);
+  expect(dirtyRun.stderr).toContain("warning: no passing `workit check test` observed on");
   appendObserved(root, {
     type: "check",
     actor: { host: "cli", session: "s-author", agentId: null },
