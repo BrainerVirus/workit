@@ -6,9 +6,14 @@
 // not protect, so a feature PR is never pointed at a production branch by an
 // edit. `reply` and `resolve` act only on a thread `pr status` lists as
 // unresolved on that PR, so a stray id never lands on another PR.
+import { spawnSync } from "node:child_process";
 import { requireGrant } from "../autonomy";
 import { isProtectedTarget } from "../core/branch";
+import { recordedBaseKey, workspaceReleaseTracks } from "../core/release-tracks";
 import { vcsConfig } from "../core/vcs-config";
+import { GIT_TIMEOUTS } from "../git/rev";
+import { listStacks } from "../stack";
+import { checkNames } from "./pr-ops";
 import { selectPr } from "./report";
 import type { ResolvedForge } from "./resolve";
 import {
@@ -75,9 +80,78 @@ export type EditOutcome = {
   changed: string[];
 };
 
-/** Labels and reviewers are comma-free names (GitLab joins labels with commas). */
-const badName = (values: readonly string[]): string | undefined =>
-  values.find((value) => !value.trim() || value.includes(","));
+const git = (cwd: string, args: string[]): string | null => {
+  const run = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    timeout: GIT_TIMEOUTS.local,
+    killSignal: "SIGKILL",
+  });
+  return run.status === 0 ? run.stdout.trim() || null : null;
+};
+
+/**
+ * Where `pr edit --base` may point the PR: the head branch's default target
+ * (from the release track that owns the PR's current base, else the head's
+ * own track; an undetermined line refuses), or the head's stack parent —
+ * its recorded `workitBase` or a member of a stack it belongs to. A protected
+ * branch other than the default target never qualifies.
+ */
+function checkBase(cwd: string, meta: PrMeta, base: string): ForgeResult<void> {
+  const head = meta.headBranch;
+  if (!base || /\s/u.test(base) || base.startsWith("refs/") || base.startsWith("-"))
+    return failure("invalid_input", `--base must be a plain branch name, not "${base}"`);
+  if (base === head) return failure("invalid_input", `${head} cannot be its own base`);
+  const read = workspaceReleaseTracks(cwd);
+  if (read.error) return failure("blocked", read.error, "fix the workspace's releaseTracks");
+  const owners = read.tracks.filter((track) =>
+    [
+      track.integrationBranch,
+      track.productionBranch,
+      track.baseBranch,
+      track.pullRequestTarget,
+    ].includes(meta.base),
+  );
+  const config = vcsConfig("resolve", cwd, {
+    branch: head,
+    ...(owners.length === 1 ? { track: owners[0].name } : {}),
+  });
+  if (config.ok === false)
+    return failure("blocked", String(config.error), "fix ~/.config/workit/vcs.json");
+  const blocking = config.releaseTrack?.blocking;
+  if (blocking)
+    return failure(
+      "blocked",
+      String(blocking),
+      "retarget it on the forge yourself, or fix WORKFLOW_RELEASE_TRACK",
+    );
+  const target = String(config.defaultTargetBranch ?? "") || null;
+  if (base === target) return success(undefined);
+  const instead = target
+    ? `workit pr edit --pr ${meta.number} --base ${target}  # or retarget it on the forge yourself`
+    : "retarget it on the forge yourself";
+  if (isProtectedTarget(cwd, base))
+    return failure(
+      "blocked",
+      `protected_base: ${base} is protected by the workspace branch policy and is not ${head}'s default target${target ? ` (${target})` : ""}; workit never retargets a PR onto it`,
+      instead,
+    );
+  const stacks = listStacks(cwd);
+  const members = new Set<string>(
+    stacks.ok
+      ? stacks.data
+          .filter((stack) => stack.branches.some((entry) => entry.branch === head))
+          .flatMap((stack) => stack.branches.map((entry) => entry.branch))
+      : [],
+  );
+  const recorded = git(cwd, ["config", "--get", recordedBaseKey(head)]);
+  if (base === recorded || (members.has(base) && base !== head)) return success(undefined);
+  return failure(
+    "blocked",
+    `not_stack_parent: ${base} is neither ${head}'s default target${target ? ` (${target})` : ""} nor its stack parent; workit retargets only to those`,
+    instead,
+  );
+}
 
 export function editPullRequest(
   cwd: string,
@@ -95,28 +169,20 @@ export function editPullRequest(
   if (!changed.length) return failure("invalid_input", "nothing to edit");
   if (edit.title !== undefined && !edit.title.trim())
     return failure("invalid_input", "--title must not be empty");
-  const bad = badName([...edit.addLabels, ...edit.removeLabels, ...edit.addReviewers]);
-  if (bad !== undefined) return failure("invalid_input", `invalid label or reviewer "${bad}"`);
-  if (resolved.forge.kind === "gitlab" && edit.addReviewers.some((name) => name.includes("/")))
-    return failure("invalid_input", "GitLab reviewers are usernames, not teams");
+  const bad = checkNames(
+    resolved.forge.kind,
+    resolved.forge.repo,
+    [...edit.addLabels, ...edit.removeLabels],
+    edit.addReviewers,
+  );
+  if (bad) return failure("invalid_input", bad);
 
   const meta = openPr(cwd, resolved, input.pr);
   if (!meta.ok) return meta;
-  const { number, headBranch } = meta.data;
+  const { number } = meta.data;
   if (edit.base !== undefined) {
-    const base = edit.base;
-    if (base === headBranch)
-      return failure("invalid_input", `${headBranch} cannot be its own base`);
-    const config = vcsConfig("resolve", cwd, { branch: headBranch });
-    const target = config.ok === false ? null : String(config.defaultTargetBranch ?? "") || null;
-    if (base !== target && isProtectedTarget(cwd, base))
-      return failure(
-        "blocked",
-        `protected_base: ${base} is protected by the workspace branch policy and is not ${headBranch}'s default target${target ? ` (${target})` : ""}; workit never retargets a PR onto it`,
-        target
-          ? `workit pr edit --pr ${number} --base ${target}  # or retarget it on the forge yourself`
-          : "retarget it on the forge yourself",
-      );
+    const allowed = checkBase(cwd, meta.data, edit.base);
+    if (!allowed.ok) return allowed;
   }
   const done = resolved.forge.editPr(number, edit);
   if (!done.ok) return done;
@@ -185,7 +251,16 @@ export function replyToThread(
   const { number } = meta.data;
   const status = resolved.forge.prStatus(number);
   if (!status.ok) return status;
-  if (!status.data.threads.some((thread) => thread.id === input.thread))
+  const listed = status.data.threads.some((thread) => thread.id === input.thread);
+  // A list cut at the page cap may miss the thread: ask for it directly.
+  const open =
+    listed ||
+    (status.data.truncated &&
+      (() => {
+        const state = resolved.forge.threadState(number, input.thread);
+        return state.ok && state.data === "open";
+      })());
+  if (!open)
     return failure(
       "not_found",
       `thread ${input.thread} is not an unresolved thread of ${label(resolved, number)}`,

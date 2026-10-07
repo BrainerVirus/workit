@@ -173,11 +173,16 @@ const isBot = (author: GlUser): boolean =>
   author?.bot === true || /(?:^project_\d+_bot|bot$|\[bot\]$)/iu.test(author?.username ?? "");
 
 /** GitLab's draft markers at the start of an MR title. */
-const DRAFT_PREFIX = /^\s*(?:\[draft\]|\(draft\)|draft:|draft\s+-\s+)\s*/iu;
+const DRAFT_PREFIX = /^(?:\s*(?:\[draft\]|\(draft\)|draft:)\s*)+/iu;
 
-/** `title` with the draft marker added or removed (GitLab keeps draft in the title). */
-const draftTitle = (title: string, draft: boolean): string => {
-  const bare = title.replace(DRAFT_PREFIX, "");
+/**
+ * `title` with GitLab's draft markers (`Draft:`, `[Draft]`, `(Draft)`,
+ * repeated) replaced by one `Draft: ` or removed (GitLab keeps draft in the
+ * title). Null when nothing but markers is left.
+ */
+const draftTitle = (title: string, draft: boolean): string | null => {
+  const bare = title.replace(DRAFT_PREFIX, "").trim();
+  if (!bare) return null;
   return draft ? `Draft: ${bare}` : bare;
 };
 
@@ -604,7 +609,13 @@ export function createGitLabForge(options: {
     setDraft(iid, draft) {
       const mr = getMr(iid);
       if (!mr.ok) return mr;
-      return putMr(iid, ["-f", `title=${draftTitle(mr.data.title ?? "", draft)}`], `draft state`);
+      const title = draftTitle(mr.data.title ?? "", draft);
+      if (title === null)
+        return failure(
+          "invalid_input",
+          `merge request !${iid} has no title besides its draft marker`,
+        );
+      return putMr(iid, ["-f", `title=${title}`], `draft state`);
     },
 
     editPr(iid, edit) {
@@ -612,11 +623,12 @@ export function createGitLabForge(options: {
       if (!mr.ok) return mr;
       const fields: string[] = [];
       // A new title keeps the MR's draft state (it lives in the title).
-      if (edit.title !== undefined)
-        fields.push(
-          "-f",
-          `title=${draftTitle(edit.title, mr.data.draft ?? mr.data.work_in_progress ?? false)}`,
-        );
+      if (edit.title !== undefined) {
+        const title = draftTitle(edit.title, mr.data.draft ?? mr.data.work_in_progress ?? false);
+        if (title === null)
+          return failure("invalid_input", "--title must have text besides a draft marker");
+        fields.push("-f", `title=${title}`);
+      }
       if (edit.body !== undefined) fields.push("-f", `description=${edit.body}`);
       if (edit.base !== undefined) fields.push("-f", `target_branch=${edit.base}`);
       if (edit.addLabels.length) fields.push("-f", `add_labels=${edit.addLabels.join(",")}`);
@@ -641,7 +653,8 @@ export function createGitLabForge(options: {
             return failure("not_found", `GitLab user ${username} was not found`);
           ids.add(user.id);
         }
-        for (const id of ids) fields.push("-F", `reviewer_ids[]=${id}`);
+        // One JSON array: glab rejects `reviewer_ids[]=` keys in a JSON body.
+        fields.push("-F", `reviewer_ids=${JSON.stringify([...ids])}`);
       }
       return fields.length ? putMr(iid, fields, "edit") : success(undefined);
     },
@@ -687,6 +700,24 @@ export function createGitLabForge(options: {
       return open
         ? failure("failed", `discussion ${thread} on merge request !${iid} is still unresolved`)
         : success(undefined);
+    },
+
+    threadState(iid, thread) {
+      const discussion = apiJson<GlDiscussion>(
+        runner,
+        "glab",
+        apiHost,
+        api(`${project}/merge_requests/${iid}/discussions/${encodeURIComponent(thread)}`),
+        `discussion ${thread}`,
+      );
+      if (!discussion.ok) return discussion.code === "not_found" ? success(null) : discussion;
+      const notes = Array.isArray(discussion.data.notes) ? discussion.data.notes : [];
+      if (!notes.some((note) => note.resolvable === true)) return success(null);
+      return success(
+        notes.some((note) => note.resolvable === true && note.resolved !== true)
+          ? "open"
+          : "resolved",
+      );
     },
   };
 }

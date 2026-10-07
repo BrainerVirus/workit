@@ -47,10 +47,15 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 - `pr status` prints the command that clears `next` on a `do:` line
   (`nextHint` in `--json`), e.g. `workit pr ready --pr 12` for a draft.
 - `pr ready`, `pr edit` and `pr reply` need the `pr` grant and an open PR.
-  `pr edit --base` retargets only to the branch's default target or to a
-  branch the branch policy does not protect. On GitLab, draft state lives in
-  the title (`Draft:`), and a new title keeps it. `pr reply` acts only on a
-  thread `pr threads` lists for that PR.
+  `pr edit --base` takes a plain branch name and retargets only to the
+  branch's default target (from the release track that owns the PR's current
+  base; an undetermined line refuses) or to its stack parent (the base
+  `workit git branch` recorded, or a member of its stack), never to another
+  protected branch. Labels and reviewers are checked before any write: no
+  commas, GitLab reviewers are usernames, and a GitHub `org/team` must belong
+  to the repository's owner. On GitLab, draft state lives in the title
+  (`Draft:`, `[Draft]`, `(Draft)`), and a new title keeps it. `pr reply` acts
+  only on an unresolved thread of that PR.
 - With [release tracks](configuration.md#release-tracks), the default base of
   `git branch`, the default target of `pr create` and the default trunk of
   `stack plan` come from the track the branch belongs to; `pr merge` onto a

@@ -69,7 +69,7 @@ const writes = (calls: readonly Call[]) =>
   calls.filter(
     (call) =>
       (call.method !== "GET" && call.method !== "CLI" && call.endpoint !== "graphql") ||
-      (call.endpoint === "graphql" && call.op !== "status" && call.op !== "find"),
+      (call.endpoint === "graphql" && !["status", "find", "node"].includes(call.op ?? "")),
   );
 
 const GH_STATUS = 'graphql status {"owner":"o","name":"r","number":"12"}';
@@ -296,6 +296,7 @@ test("pr edit --base: given an unprotected parent branch, then the PR is retarge
     },
     { preset: "custom", allowed: ["feature/*"], protected: ["main", "production"] },
   );
+  repo.git("config", "branch.feature/x.workitBase", "feature/parent");
   const result = await run(["pr", "edit", "--base", "feature/parent"], repo.cwd);
   expect(result.code, result.stdout).toBe(0);
   expect(result.stdout).toBe(
@@ -304,6 +305,86 @@ test("pr edit --base: given an unprotected parent branch, then the PR is retarge
   expect(writes(runner.calls)).toEqual([
     expect.objectContaining({ method: "PATCH", vars: { base: "feature/parent" } }),
   ]);
+});
+
+test("pr edit --base: given an unprotected branch that is not the stack parent, then it is refused, naming the default target", async () => {
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    "GET repos/o/r/pulls/12": ghPull({}),
+  });
+  repo.git("config", "branch.feature/x.workitBase", "feature/parent");
+  const result = await run(["pr", "edit", "--base", "feature/other", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toStartWith("not_stack_parent: feature/other");
+  expect(result.json().unblock).toStartWith("workit pr edit --pr 12 --base main");
+  expect(writes(runner.calls)).toEqual([]);
+});
+
+test("pr edit --base: refs/ names and whitespace are usage errors", async () => {
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    "GET repos/o/r/pulls/12": ghPull({}),
+  });
+  for (const base of ["refs/heads/main", "main ", "feature/a b"]) {
+    const result = await run(["pr", "edit", `--base=${base}`, "--json"], repo.cwd);
+    expect(result.code, base).toBe(2);
+    expect(result.json().error, base).toContain("--base must be a plain branch name");
+  }
+  expect(writes(runner.calls)).toEqual([]);
+});
+
+const track = (integration: string, production: string) => ({
+  strategy: "gitflow",
+  productionBranch: production,
+  integrationBranch: integration,
+  naming: { feature: "feature/{name}", release: "release/{version}", hotfix: "hotfix/{name}" },
+  baseBranch: integration,
+  mergeBackBranches: [],
+  pullRequestTarget: integration,
+  tagNamespace: "",
+  versionSource: { kind: "git-tag" },
+  requiredChecks: [],
+});
+const TWO_TRACKS = { core: track("develop", "master"), nun: track("nun-develop", "nun-master") };
+
+test("pr edit --base (release tracks): given a PR on the nun line, then retargeting it to core's develop is refused, naming nun-develop", async () => {
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    ...octoToken,
+    "GET repos/o/r/pulls/12": ghPull({ base: { ref: "nun-develop" } }),
+  });
+  workspace(repo, {
+    vcs: { provider: "github", account: "octo", defaultTargetBranch: "develop" },
+    releaseTracks: TWO_TRACKS,
+  });
+  const result = await run(["pr", "edit", "--base", "develop", "--json"], repo.cwd);
+  expect(result.code, result.stdout).toBe(3);
+  expect(result.json().error).toStartWith("protected_base: develop");
+  expect(result.json().unblock).toStartWith("workit pr edit --pr 12 --base nun-develop");
+  expect(writes(runner.calls)).toEqual([]);
+});
+
+test("pr edit --base (release tracks): given a PR whose line can't be decided and a bad WORKFLOW_RELEASE_TRACK, then it is blocked", async () => {
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    ...octoToken,
+    "GET repos/o/r/pulls/12": ghPull({ base: { ref: "feature/parent" } }),
+  });
+  workspace(repo, {
+    vcs: { provider: "github", account: "octo", defaultTargetBranch: "develop" },
+    releaseTracks: TWO_TRACKS,
+  });
+  const saved = process.env.WORKFLOW_RELEASE_TRACK;
+  process.env.WORKFLOW_RELEASE_TRACK = "bogus";
+  try {
+    const result = await run(["pr", "edit", "--base", "develop", "--json"], repo.cwd);
+    expect(result.code, result.stdout).toBe(3);
+    expect(result.json().error).toContain("bogus");
+  } finally {
+    if (saved === undefined) delete process.env.WORKFLOW_RELEASE_TRACK;
+    else process.env.WORKFLOW_RELEASE_TRACK = saved;
+  }
+  expect(writes(runner.calls)).toEqual([]);
 });
 
 test("pr edit: nothing to change is a usage error", async () => {
@@ -351,8 +432,7 @@ test("pr edit (GitLab): a new title on a draft keeps Draft:, labels go as lists,
     ["description", "Fixes the edge case.\n"],
     ["add_labels", "bug,ui"],
     ["remove_labels", "wip"],
-    ["reviewer_ids[]", "3"],
-    ["reviewer_ids[]", "7"],
+    ["reviewer_ids", "[3,7]"],
   ]);
 });
 
@@ -585,4 +665,104 @@ test("pr status: a draft names `workit pr ready`, and threads name `workit pr th
   status = fixture("github/pr-failing-thread.json");
   const threads = await run(["pr", "status", "--log-lines", "0", "--json"], repo.cwd);
   expect(threads.json().data.nextHint).toStartWith("workit pr threads --pr 12; ");
+});
+
+// ---------------------------------------------------------------------------
+// GitLab draft titles
+
+test("pr ready (GitLab): repeated markers are all stripped; a title of only markers is refused", async () => {
+  let title = "[Draft] Draft: (draft) feat: x";
+  const { repo, runner } = setup("gitlab", {
+    ...gitlabBase(),
+    [`GET ${GL}/merge_requests/12`]: () => glMr({ title, draft: /draft/iu.test(title) }),
+    [`PUT ${GL}/merge_requests/12`]: (call) => {
+      title = call.vars.title;
+      return glMr({ title });
+    },
+  });
+  expect((await run(["pr", "ready"], repo.cwd)).code).toBe(0);
+  expect(writes(runner.calls).map((call) => call.vars.title)).toEqual(["feat: x"]);
+
+  title = "Draft: [Draft]";
+  const empty = await run(["pr", "ready", "--json"], repo.cwd);
+  expect(empty.code).toBe(2);
+  expect(empty.json().error).toContain("no title besides its draft marker");
+  expect(writes(runner.calls)).toHaveLength(1);
+});
+
+test("pr edit (GitLab): on a non-draft MR, a user's 'Draft - ' title is sent as written", async () => {
+  const { repo, runner } = setup("gitlab", {
+    ...gitlabBase(),
+    [`GET ${GL}/merge_requests/12`]: glMr({ title: "feat: x", draft: false }),
+    [`PUT ${GL}/merge_requests/12`]: glMr({}),
+  });
+  const result = await run(["pr", "edit", "--title", "Draft - cleanup notes"], repo.cwd);
+  expect(result.code, result.stdout).toBe(0);
+  expect(writes(runner.calls)[0].pairs).toEqual([["title", "Draft - cleanup notes"]]);
+});
+
+// ---------------------------------------------------------------------------
+// pr create reviewer validation happens before the PR is opened
+
+test("pr create: a team of another org (GitHub) or any team (GitLab) is refused before anything is opened", async () => {
+  const gh = setup("github", {
+    ...githubBase(),
+    "graphql find": fixture("github/find-none.json"),
+    "POST repos/o/r/pulls": created,
+  });
+  const other = await run(
+    ["pr", "create", "--title", "feat: x", "--reviewer", "elsewhere/core", "--json"],
+    gh.repo.cwd,
+  );
+  expect(other.code).toBe(2);
+  expect(other.json().error).toContain("team elsewhere/core is not in o");
+  const comma = await run(
+    ["pr", "create", "--title", "feat: x", "--label", "a,b", "--json"],
+    gh.repo.cwd,
+  );
+  expect(comma.code).toBe(2);
+  expect(writes(gh.runner.calls)).toEqual([]);
+
+  const gl = setup("gitlab", {
+    ...gitlabBase(),
+    [GL_FIND]: "[]",
+    [`POST ${GL}/merge_requests`]: glMr({}),
+  });
+  const team = await run(
+    ["pr", "create", "--title", "feat: x", "--reviewer", "group/team", "--json"],
+    gl.repo.cwd,
+  );
+  expect(team.code).toBe(2);
+  expect(team.json().error).toContain("GitLab reviewers are usernames");
+  expect(writes(gl.runner.calls)).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// a truncated thread list
+
+test("pr reply: given the thread list was cut at the page cap, then a thread not listed is read directly before refusing", async () => {
+  const doc = JSON.parse(fixture("github/pr-failing-thread.json"));
+  doc.data.repository.pullRequest.reviewThreads.pageInfo = { hasNextPage: true, endCursor: "c1" };
+  const page = JSON.stringify(doc);
+  let node: unknown = { isResolved: false, pullRequest: { number: 12 } };
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    "GET repos/o/r/pulls/12": ghPull({}),
+    "graphql status": page,
+    "graphql node": () => JSON.stringify({ data: { node } }),
+    "graphql resolveReviewThread": JSON.stringify({
+      data: { resolveReviewThread: { thread: { isResolved: true } } },
+    }),
+  });
+  const ok = await run(["pr", "reply", "--thread", "PRRT_far", "--resolve"], repo.cwd);
+  expect(ok.code, ok.stdout).toBe(0);
+  expect(writes(runner.calls).map((call) => call.vars)).toEqual([{ thread: "PRRT_far" }]);
+
+  node = { isResolved: false, pullRequest: { number: 99 } };
+  const elsewhere = await run(
+    ["pr", "reply", "--thread", "PRRT_other", "--resolve", "--json"],
+    repo.cwd,
+  );
+  expect(elsewhere.json().code).toBe("not_found");
+  expect(writes(runner.calls)).toHaveLength(1);
 });

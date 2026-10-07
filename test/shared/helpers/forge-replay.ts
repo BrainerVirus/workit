@@ -27,7 +27,7 @@ export type Call = {
   vars: Record<string, string>;
   /** Every `-f`/`-F` pair in order, so repeated array keys (`labels[]`) stay visible. */
   pairs: Array<[string, string]>;
-  /** "status" | "find", or the mutation's field name, for GraphQL calls. */
+  /** "status" | "find" | "node", or the mutation's field name, for GraphQL calls. */
   op: string | null;
   /** The per-call credential the runner was handed (tests assert on it). */
   token: string | undefined;
@@ -68,7 +68,9 @@ const parseCall = (bin: CliBin, args: readonly string[], token?: string): Call =
           ? (/\{\s*(\w+)\(/u.exec(value)?.[1] ?? "mutation")
           : value.includes("pullRequests(headRefName")
             ? "find"
-            : "status";
+            : value.includes("node(id:")
+              ? "node"
+              : "status";
       else {
         vars[key] = value;
         pairs.push([key, value]);
@@ -98,6 +100,9 @@ export function replayRunner(
   ): CliRun => {
     const call = parseCall(bin, args, options.token);
     calls.push(call);
+    // Like real glab: `key[]=` array fields are refused in a JSON body.
+    if (bin === "glab" && call.pairs.some(([key]) => key.endsWith("[]")))
+      return replyError(`glab: invalid key ${call.pairs.find(([key]) => key.endsWith("[]"))?.[0]}`);
     const keys =
       call.endpoint === "graphql"
         ? [`graphql ${call.op} ${JSON.stringify(call.vars)}`, `graphql ${call.op}`]

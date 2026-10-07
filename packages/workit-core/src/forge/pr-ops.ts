@@ -155,6 +155,34 @@ const indent = (text: string): string =>
     .map((line) => (line ? `  ${line}` : line))
     .join("\n");
 
+/**
+ * Labels and reviewers a PR write may send, checked before any forge call
+ * (so `pr create --label/--reviewer` never fails after the PR is open):
+ * comma-free names (GitLab joins labels with commas), GitLab reviewers are
+ * usernames, and a GitHub `org/team` belongs to the repository's owner.
+ */
+export function checkNames(
+  kind: "github" | "gitlab",
+  repo: string,
+  labels: readonly string[],
+  reviewers: readonly string[],
+): string | null {
+  const bad = [...labels, ...reviewers].find(
+    (value) => !value.trim() || value.includes(",") || value !== value.trim(),
+  );
+  if (bad !== undefined) return `invalid label or reviewer "${bad}"`;
+  const owner = repo.split("/")[0]?.toLowerCase() ?? "";
+  for (const reviewer of reviewers) {
+    if (!reviewer.includes("/")) continue;
+    if (kind === "gitlab") return `GitLab reviewers are usernames, not teams ("${reviewer}")`;
+    const [org = "", team = "", ...rest] = reviewer.split("/");
+    if (!team || rest.length) return `invalid team reviewer "${reviewer}" (use <org>/<team>)`;
+    if (org.toLowerCase() !== owner)
+      return `team ${reviewer} is not in ${owner}; GitHub only requests teams of the repository's owner`;
+  }
+  return null;
+}
+
 /** The pushed head of the current branch, bound before any forge write. */
 export function boundSource(
   cwd: string,
@@ -211,6 +239,13 @@ export async function createPullRequest(
   input: CreateInput,
   sleep: Sleep,
 ): Promise<ForgeResult<CreateOutcome>> {
+  const names = checkNames(
+    resolved.forge.kind,
+    resolved.forge.repo,
+    input.labels ?? [],
+    input.reviewers ?? [],
+  );
+  if (names) return failure("invalid_input", names);
   const grant = requireGrant(cwd, "pr");
   if (!grant.allowed) return grantBlocked(grant);
   const source = boundSource(cwd, resolved);

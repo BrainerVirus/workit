@@ -34,6 +34,8 @@ const DRAFT_MUTATION = `mutation($id: ID!) { convertPullRequestToDraft(input: { 
 const REPLY_MUTATION = `mutation($thread: ID!, $body: String!) { addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, body: $body }) { comment { url } } }`;
 const RESOLVE_MUTATION = `mutation($thread: ID!) { resolveReviewThread(input: { threadId: $thread }) { thread { isResolved } } }`;
 
+const THREAD_QUERY = `query($thread: ID!) { node(id: $thread) { ... on PullRequestReviewThread { isResolved pullRequest { number } } } }`;
+
 type RestPr = {
   number?: number;
   html_url?: string;
@@ -652,6 +654,19 @@ export function createGitHubForge(options: {
       return resolved.data.resolveReviewThread?.thread?.isResolved === true
         ? success(undefined)
         : failure("failed", `thread ${thread} on pull request #${number} is still unresolved`);
+    },
+
+    threadState(number, thread) {
+      const read = graphql<{
+        node?: { isResolved?: boolean; pullRequest?: { number?: number } | null } | null;
+      }>(THREAD_QUERY, { thread }, `thread ${thread}`);
+      if (!read.ok)
+        return read.code === "not_found" || /could not resolve to a node/iu.test(read.error)
+          ? success(null)
+          : read;
+      const node = read.data.node;
+      if (node?.pullRequest?.number !== number) return success(null);
+      return success(node.isResolved ? "resolved" : "open");
     },
   };
 }

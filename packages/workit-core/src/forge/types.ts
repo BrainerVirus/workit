@@ -193,4 +193,6 @@ export interface Forge {
   /** Reply to a review thread (GitHub review thread id, GitLab discussion id). */
   replyThread(n: number, thread: string, body: string): ForgeResult<{ url: string | null }>;
   resolveThread(n: number, thread: string): ForgeResult<void>;
+  /** One review thread of PR `n` read directly: null when it is not on that PR. */
+  threadState(n: number, thread: string): ForgeResult<"open" | "resolved" | null>;
 }
