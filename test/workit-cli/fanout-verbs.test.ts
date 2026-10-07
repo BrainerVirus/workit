@@ -856,6 +856,7 @@ test("workit help fanout prints every subcommand", async () => {
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("usage: workit fanout plan <plan.json>");
   expect(result.stdout).toContain("fanout check [<slice>…]");
+  expect(result.stdout).toContain("fanout brief <slice> [--mode new|resume] [--attempt <n>]");
   expect(result.stdout).toContain("fanout status [--name <n>] [--stuck-after 30m]");
   expect(result.stdout).toContain("fanout worktree create|release <slice>");
 });

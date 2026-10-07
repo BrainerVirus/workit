@@ -22,6 +22,15 @@ const skillText = (name: string) =>
     "utf8",
   );
 
+const fanoutOrchestration = () =>
+  readFileSync(
+    path.join(
+      import.meta.dir,
+      "../../packages/workit-core/skills/workit-fanout/references/orchestration.md",
+    ),
+    "utf8",
+  );
+
 const digest = "a".repeat(64);
 const requirement = (overrides: Partial<Requirement>): Requirement => ({
   id: digest,
@@ -311,7 +320,74 @@ test("agent-critical delivery rules stay stated", () => {
       "ad-hoc `workit check -- <cmd>` never satisfies the gate",
     ],
     ["workit-fanout", skillText("workit-fanout"), "refuse to spawn while a field is empty"],
-    ["workit-fanout", skillText("workit-fanout"), "Replace at most twice"],
+    // Fanout v2: one retry, then escalate; a rolling window; batch verifiers;
+    // the panel and the integration-tip merge only where they are allowed.
+    ["workit-fanout", skillText("workit-fanout"), "gets one retry with a fresh brief"],
+    [
+      "workit-fanout",
+      skillText("workit-fanout"),
+      "if that fails too, re-slice it, take it over, or report the gap",
+    ],
+    ["workit-fanout", skillText("workit-fanout"), "keep 4-6 in flight and refill from `spawnable`"],
+    ["workit-fanout", skillText("workit-fanout"), "Never hand-edit it"],
+    ["workit-fanout", skillText("workit-fanout"), "Verify by the workspace `verification` setting"],
+    [
+      "workit-fanout",
+      skillText("workit-fanout"),
+      "never yours (doctrine: the ledger only refuses authors)",
+    ],
+    ["fanout orchestration", fanoutOrchestration(), "This is doctrine, not enforced"],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
+      "the SubagentStart hook names each `verifier` and `reviewer` its own session",
+    ],
+    [
+      "workit-fanout",
+      skillText("workit-fanout"),
+      "One verifier may take a batch of slices, one verdict per branch",
+    ],
+    [
+      "workit-fanout",
+      skillText("workit-fanout"),
+      "A review panel on separate models only at high risk",
+    ],
+    [
+      "workit-fanout",
+      skillText("workit-fanout"),
+      "except the integration-tip merge in integration mode",
+    ],
+    ["fanout orchestration", fanoutOrchestration(), "| mundane | `sonnet` |"],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
+      "| scouting (read-only search, not a slice) | `haiku` |",
+    ],
+    ["fanout orchestration", fanoutOrchestration(), "| hard | omit it (inherits yours)"],
+    ["fanout orchestration", fanoutOrchestration(), "escalate instead of a third worker"],
+    ["fanout orchestration", fanoutOrchestration(), "keep the one with the best verdict"],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
+      "Every verdict is keyed to that branch's head SHA",
+    ],
+    ["fanout orchestration", fanoutOrchestration(), "At risk=high only"],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
+      "A lead that authored none of the slices may record them in its own session",
+    ],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
+      "`independent`, and any slice at high risk: a separate verifier session",
+    ],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
+      "That merge is the only one a worker makes, and only in this mode",
+    ],
+    ["fanout orchestration", fanoutOrchestration(), "Only when the user wants one PR"],
     ["workit-verify-app", skillText("workit-verify-app"), "Prove it end-to-end once"],
     ["workit-retro", skillText("workit-retro"), "never start it yourself"],
     ["workit-retro", skillText("workit-retro"), "2 or more cited occurrences"],

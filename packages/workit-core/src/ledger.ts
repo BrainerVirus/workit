@@ -130,8 +130,22 @@ export type VerdictRow = RowCommon & {
   evidenceRefs: string[];
 };
 export type HandoffRow = RowCommon & { type: "handoff"; note: string | null; next: string };
+/** A lead's standing order for every worker of a fanout ("no new dependencies"). */
+export type StandingRow = RowCommon & { type: "standing"; fanout: string; what: string };
+/** Ends one standing order (`target`), or every one recorded before it (null). */
+export type StandingClearedRow = RowCommon & {
+  type: "standing.cleared";
+  fanout: string;
+  target: string | null;
+};
 
-export type LedgerRow = DecisionRow | RulingRow | VerdictRow | HandoffRow;
+export type LedgerRow =
+  | DecisionRow
+  | RulingRow
+  | VerdictRow
+  | HandoffRow
+  | StandingRow
+  | StandingClearedRow;
 /** A row as read back: any known or future type, plus its position. */
 export type ReadRow = RowCommon &
   Record<string, unknown> & {
@@ -1077,6 +1091,142 @@ export function recordRuling(
 }
 
 /**
+ * May this row speak for the fanout's lead? With recorded leads (the current
+ * one and any it took over from) only their rows count; a plan from before
+ * leads (null) takes any session.
+ */
+const fromLead = (row: ReadRow, leads: readonly string[] | null): boolean =>
+  leads === null || (row.actor.session !== null && leads.includes(row.actor.session));
+
+/**
+ * The standing orders in force for `fanout`, oldest first (D17: odd rows are
+ * skipped). Given the plan's lead session, orders and clears recorded by any
+ * other session are ignored, so a worker can neither add nor clear one.
+ */
+export function activeStanding(
+  rows: readonly ReadRow[],
+  fanout: string,
+  leads: readonly string[] | null = null,
+): ReadRow[] {
+  const active: ReadRow[] = [];
+  for (const row of rows) {
+    if (row.fanout !== fanout || !fromLead(row, leads)) continue;
+    if (row.type === "standing" && typeof row.what === "string" && row.what.trim()) {
+      if (!row.superseded) active.push(row);
+    } else if (row.type === "standing.cleared") {
+      const target = str(row.target);
+      if (target === null) active.length = 0;
+      else {
+        const index = active.findIndex((order) => order.id === target);
+        if (index >= 0) active.splice(index, 1);
+      }
+    }
+  }
+  return active;
+}
+
+/**
+ * A worker or verifier session by the ids workit hands out: `fanout brief`'s
+ * `<lead>-w-<slice>[+try<n>]`, a verifier's `<lead>-v<n>`, the Claude Code
+ * hook's `<lead>:<agent id>` and `--as` ids (`<session>:<role>:<hex>`). Host
+ * session ids carry no colon. Used where no recorded lead decides: plans that
+ * predate `leadSession`, and `fanout plan --take-lead`.
+ */
+export const isDelegateSession = (session: string | null): boolean =>
+  session !== null &&
+  (/-w-[a-z0-9._-]+(?:\+try\d)?$/u.test(session) ||
+    /-v\d+$/u.test(session) ||
+    session.includes(":"));
+
+/**
+ * Standing orders come from the fanout's lead: the session that first made
+ * the plan (`lead`). A plan without one falls back to refusing the session
+ * ids handed to workers and verifiers.
+ */
+function leadOnly(context: RecordContext, lead: string | null): LedgerResult<void> {
+  const session = context.actor.session;
+  if (lead !== null ? session === lead : !isDelegateSession(session))
+    return { ok: true, value: undefined };
+  return err(
+    "blocked",
+    lead !== null
+      ? `session ${session ?? "(none)"} is not the fanout's lead (${lead}): standing orders come from the lead`
+      : `session ${session} is a worker or verifier: standing orders come from the lead`,
+    lead !== null
+      ? `the lead in a new session? workit fanout plan <plan.json> --take-lead from this session; a worker or verifier reports the order to the lead instead`
+      : "a worker or verifier reports the order to the lead instead",
+  );
+}
+
+export function recordStanding(
+  context: RecordContext,
+  input: { fanout: string; lead: string | null; what?: string },
+): LedgerResult<StandingRow> {
+  const what = required(input.what, "<order>");
+  if (!what.ok) return what;
+  // One order per line of every brief: a newline or control character would
+  // let an order forge other brief fields.
+  if (/\p{Cc}/u.test(what.value))
+    return err(
+      "invalid_input",
+      "a standing order is one line: no newlines or control characters",
+      'add each order separately: workit ledger standing add "<order>"',
+    );
+  const lead = leadOnly(context, input.lead);
+  if (!lead.ok) return lead;
+  const link = checkSupersede(context, "standing");
+  if (!link.ok) return link;
+  return appendRow<StandingRow>(
+    context.cwd,
+    {
+      ...common(context, noteKey(context)),
+      type: "standing",
+      fanout: input.fanout,
+      what: what.value,
+    },
+    { now: context.now },
+  );
+}
+
+/** Clear one standing order by id (it must be in force), or all of them; lead only. */
+export function clearStanding(
+  context: RecordContext,
+  input: {
+    fanout: string;
+    lead: string | null;
+    leads?: readonly string[] | null;
+    target: string | null;
+  },
+): LedgerResult<StandingClearedRow> {
+  const lead = leadOnly(context, input.lead);
+  if (!lead.ok) return lead;
+  if (input.target !== null) {
+    const ledger = readLedger(context.cwd);
+    if (!ledger.ok) return ledger;
+    if (
+      !activeStanding(ledger.value.rows, input.fanout, input.leads ?? null).some(
+        (row) => row.id === input.target,
+      )
+    )
+      return err(
+        "not_found",
+        `no standing order ${input.target} in force for fanout ${input.fanout}`,
+        `workit ledger standing list --fanout ${input.fanout}`,
+      );
+  }
+  return appendRow<StandingClearedRow>(
+    context.cwd,
+    {
+      ...common(context, noteKey(context)),
+      type: "standing.cleared",
+      fanout: input.fanout,
+      target: input.target,
+    },
+    { now: context.now },
+  );
+}
+
+/**
  * Record an agent-asserted verdict on a branch's committed head. Refused on a
  * dirty worktree (the head would not be what was judged) and, for an author
  * session, unless `--self`. Without a session the verdict is recorded as
@@ -1220,6 +1370,12 @@ export function summarizeRow(row: ReadRow): RowSummary {
       break;
     case "handoff":
       summary = `next: ${text("next")}${text("note") ? ` (note: ${text("note")})` : ""}`;
+      break;
+    case "standing":
+      summary = `${text("what")} (fanout ${text("fanout")})`;
+      break;
+    case "standing.cleared":
+      summary = `cleared ${text("target") || "every standing order"} (fanout ${text("fanout")})`;
       break;
     case "commit.recorded":
       summary = `${(row.head ?? "?").slice(0, 12)} ${text("subject")}${row.actor.session ? "" : " (no session)"}`;

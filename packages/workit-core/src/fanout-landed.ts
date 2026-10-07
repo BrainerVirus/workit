@@ -12,8 +12,10 @@
 //   commit (a squash merge that applied without the trunk touching the same
 //   lines). Anything else reads as not landed.
 // A merged PR whose branch is gone counts only when the ledger links that
-// branch to this slice (a worktree row, or a row recorded on its merged
-// head), so a reused branch name from older work is not taken for this slice.
+// branch to this slice: a worktree row made under the slice's current hash,
+// or a row recorded on its merged head since that hash was planned. A reused
+// branch name from older work, an older plan of the same name, or an earlier
+// definition of this slice never links; editing a sibling changes nothing.
 // A landing whose changed paths read on the trunk exactly as before it (a
 // revert) is not landed; the note says so.
 // The forge is asked through a breaker: after the first unavailable answer
@@ -184,24 +186,44 @@ function trunkPatchIds(ctx: LandingContext, fork: string): Set<string> {
   return ids;
 }
 
+/**
+ * Does `row` belong to the slice's current run? A worktree row made under its
+ * hash does; any other row only when recorded since that hash was planned.
+ */
+export function inSliceRun(
+  row: Record<string, unknown>,
+  slice: Pick<Slice, "hash" | "hashSince">,
+): boolean {
+  if (row.type === "fanout.worktree.created" && typeof row.sliceHash === "string" && slice.hash)
+    return row.sliceHash === slice.hash;
+  const since = Date.parse(slice.hashSince);
+  return Number.isNaN(since) || Date.parse(String(row.at)) >= since;
+}
+
 /** The ledger links `branch` to this slice: a worktree row, or a row recorded on `head`. */
 function linked(
   rows: readonly Record<string, unknown>[],
-  input: Pick<LandingInput, "fanout" | "since">,
+  input: Pick<LandingInput, "fanout" | "since" | "sliceHash">,
   slice: Pick<Slice, "id" | "branch">,
   head: string | null,
 ): boolean {
-  // Only rows from this run of the fanout: a plan of the same name made
-  // earlier must not lend its merged PRs to this one.
+  // Only rows from this run of the slice: a plan of the same name made
+  // earlier, or this slice re-planned with another definition, lends nothing.
   const since = input.since ? Date.parse(input.since) : Number.NaN;
-  return rows.some(
-    (row) =>
-      (Number.isNaN(since) || Date.parse(String(row.at)) >= since) &&
-      ((row.type === "fanout.worktree.created" &&
-        row.fanout === input.fanout &&
-        row.slice === slice.id) ||
-        (head !== null && row.branch === slice.branch && row.head === head)),
-  );
+  const recent = (row: Record<string, unknown>) =>
+    Number.isNaN(since) || Date.parse(String(row.at)) >= since;
+  return rows.some((row) => {
+    if (
+      row.type === "fanout.worktree.created" &&
+      row.fanout === input.fanout &&
+      row.slice === slice.id
+    )
+      // A row from before slice hashes falls back to its time.
+      return typeof row.sliceHash === "string" && input.sliceHash
+        ? row.sliceHash === input.sliceHash
+        : recent(row);
+    return recent(row) && head !== null && row.branch === slice.branch && row.head === head;
+  });
 }
 
 export type LandingInput = {
@@ -212,8 +234,10 @@ export type LandingInput = {
   /** Its dependency branch's tip (or merged head) for a stacked slice. */
   parentHead: string | null;
   fanout: string;
-  /** When this fanout plan was first made (FanoutFile.createdAt): older rows do not link. */
+  /** When this slice definition was first planned (Slice.hashSince): older rows do not link. */
   since: string | null;
+  /** The slice's definition hash: worktree rows link only under the same one. */
+  sliceHash: string | null;
   rows: readonly Record<string, unknown>[];
 };
 
@@ -298,7 +322,7 @@ export function sliceStart(
   cwd: string,
   rows: readonly Record<string, unknown>[],
   fanout: string,
-  slice: Pick<Slice, "id" | "branch">,
+  slice: Pick<Slice, "id" | "branch" | "hash" | "hashSince">,
 ): string | null {
   const reflog = branchCreatedAt(cwd, slice.branch);
   if (reflog) return reflog;
@@ -307,7 +331,8 @@ export function sliceStart(
       candidate.type === "fanout.worktree.created" &&
       candidate.fanout === fanout &&
       candidate.slice === slice.id &&
-      typeof candidate.baseSha === "string",
+      typeof candidate.baseSha === "string" &&
+      inSliceRun(candidate, slice),
   );
   return (row?.baseSha as string | undefined) ?? null;
 }

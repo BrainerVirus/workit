@@ -18,12 +18,33 @@
 // deterministic suggestion: an owner for known shared files (lockfiles,
 // manifests, barrels, CI config), else a dependency that serializes them.
 //
+// Each slice's `hash` covers what it is (goal, acceptance, verify, forbidden,
+// scope, owns, branch, base, dependencies), not how it is briefed (tier,
+// timebox, context) or where its worktree goes. A re-plan that changes a
+// slice starts a new run for that slice alone: its `hashSince` moves to now,
+// and only ledger rows recorded under its hash (worktree rows carry
+// `sliceHash`) or since then link a gone branch's merged PR to it or count as
+// its worktree. Liveness still reads every row. Its siblings keep their runs.
+//
+// `fanIn: "integration"` is the one-PR mode: the trunk is an integration
+// branch (never origin's default branch), workers merge its tip into their
+// branch before reporting, and the lead fast-forwards it.
+//
 // The CLI never spawns, waits or wakes anything: it only records and checks.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { GIT_TIMEOUTS, gitCommonDir, pushRemoteName, resolveRef } from "./git/rev";
-import { appendObserved, defaultBase, storeRoot, type LedgerActor } from "./ledger";
+import {
+  activeStanding,
+  appendObserved,
+  isDelegateSession,
+  defaultBase,
+  readLedger,
+  storeRoot,
+  type LedgerActor,
+} from "./ledger";
 import { stackFileName } from "./stack";
 
 export const FANOUT_VERSION = 1;
@@ -48,15 +69,28 @@ export type Slice = {
   forbidden: string[];
   context: string | null;
   timebox: string | null;
+  /** sliceHash of this definition: which run of the slice a ledger row belongs to. */
+  hash: string;
+  /** When a slice with this hash was first planned: older rows are not its run. */
+  hashSince: string;
 };
+
+export const FAN_IN_MODES = ["prs", "integration"] as const;
+export type FanInMode = (typeof FAN_IN_MODES)[number];
 
 export type FanoutFile = {
   v: number;
   name: string;
   trunk: string;
+  /** prs: one PR per slice (default); integration: slices fast-forward one integration branch. */
+  fanIn: FanInMode;
   /** Extra shared-file globs on top of DEFAULT_SHARED. */
   shared: string[];
   slices: Slice[];
+  /** The lead: the session that made the plan or took it over (`--take-lead`). */
+  leadSession: string | null;
+  /** Leads it took over from: their standing orders stay in force until cleared. */
+  formerLeads: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -308,6 +342,9 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
     if ("error" in normalized) problems.push(`shared "${entry}" ${normalized.error}`);
     else shared.push(normalized.pattern);
   }
+  const fanIn = raw.fanIn ?? "prs";
+  if (!(FAN_IN_MODES as readonly unknown[]).includes(fanIn))
+    problems.push(`fanIn must be one of ${FAN_IN_MODES.join(", ")}`);
   if (!Array.isArray(raw.slices) || raw.slices.length === 0)
     return { ok: false, problems: [...problems, "slices: list at least one slice"] };
 
@@ -388,6 +425,8 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       forbidden,
       context: optional("context"),
       timebox: optional("timebox"),
+      hash: "",
+      hashSince: "",
     });
   });
 
@@ -419,8 +458,11 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       v: FANOUT_VERSION,
       name: planName,
       trunk,
+      fanIn: fanIn as FanInMode,
       shared,
       slices,
+      leadSession: null,
+      formerLeads: [],
       createdAt: "",
       updatedAt: "",
     },
@@ -728,6 +770,29 @@ export function worktreeRoot(cwd: string): string {
   return path.join(path.dirname(main), `${path.basename(main)}-wt`);
 }
 
+/** Whose standing orders count: the lead and those it took over from; null before leads. */
+export const planLeads = (
+  plan: Pick<FanoutFile, "leadSession" | "formerLeads">,
+): string[] | null => (plan.leadSession ? [plan.leadSession, ...plan.formerLeads] : null);
+
+/**
+ * sha256 (16 hex) of the slice's definition. Brief-only fields (tier,
+ * timebox, context) and the worktree path are left out, so fixing a typo in
+ * them never re-dispatches landed work.
+ */
+export function sliceHash(slice: Slice): string {
+  const {
+    worktree: _worktree,
+    hash: _hash,
+    hashSince: _since,
+    tier: _tier,
+    timebox: _timebox,
+    context: _context,
+    ...definition
+  } = slice;
+  return createHash("sha256").update(JSON.stringify(definition)).digest("hex").slice(0, 16);
+}
+
 // ---------------------------------------------------------------------------
 // store
 
@@ -777,8 +842,12 @@ function parseStored(raw: unknown): FanoutFile | null {
       forbidden: list(item.forbidden),
       context: typeof item.context === "string" ? item.context : null,
       timebox: typeof item.timebox === "string" ? item.timebox : null,
+      hash: text(item.hash),
+      // A plan written before slice hashes: its run began at createdAt.
+      hashSince: text(item.hashSince) || text(raw.createdAt),
     });
   }
+  for (const slice of slices) slice.hash ||= sliceHash(slice);
   const shared = globs(raw.shared);
   const ids = new Set(slices.map((slice) => slice.id));
   if (
@@ -788,13 +857,18 @@ function parseStored(raw: unknown): FanoutFile | null {
     findCycle(slices)
   )
     return null;
+  const fanIn = raw.fanIn === "integration" ? "integration" : "prs";
+  const createdAt = text(raw.createdAt);
   return {
     v: typeof raw.v === "number" ? raw.v : FANOUT_VERSION,
     name: raw.name,
     trunk: raw.trunk,
+    fanIn,
     shared,
     slices,
-    createdAt: text(raw.createdAt),
+    leadSession: typeof raw.leadSession === "string" && raw.leadSession ? raw.leadSession : null,
+    formerLeads: list(raw.formerLeads),
+    createdAt,
     updatedAt: text(raw.updatedAt),
   };
 }
@@ -890,6 +964,7 @@ function writeFanout(cwd: string, plan: FanoutFile): FanoutResult<string> {
 export type PlanOutcome = {
   name: string;
   trunk: string;
+  fanIn: FanInMode;
   file: string;
   created: boolean;
   slices: Array<
@@ -899,6 +974,8 @@ export type PlanOutcome = {
   waves: string[][];
   landingOrder: string[];
   notes: string[];
+  /** A new plan under a name that still has standing orders in force (an earlier run's?). */
+  warnings: string[];
 };
 
 /** Above this many slices in one wave, the lead queues the rest (4-6 in flight). */
@@ -906,11 +983,31 @@ export const IN_FLIGHT_CAP = 6;
 
 export function planFanout(
   cwd: string,
-  input: { raw: unknown; name: string | null; trunk: string | null; actor: LedgerActor },
+  input: {
+    raw: unknown;
+    name: string | null;
+    trunk: string | null;
+    actor: LedgerActor;
+    /** Record this session as the lead (a lead resuming in a new session). */
+    takeLead?: boolean;
+  },
   now: Date = new Date(),
 ): FanoutResult<PlanOutcome> {
   const dir = fanoutsDir(cwd);
   if (!dir.ok) return dir;
+  const session = input.actor.session;
+  if (input.takeLead && !session)
+    return fanoutFail(
+      "blocked",
+      "--take-lead needs a session: WORKIT_SESSION_ID is not set",
+      "export WORKIT_SESSION_ID=<your session id>, then plan again with --take-lead",
+    );
+  if (input.takeLead && isDelegateSession(session))
+    return fanoutFail(
+      "blocked",
+      `session ${session} is a worker or verifier id; only a lead takes the lead`,
+      "run --take-lead from the lead's own session",
+    );
   const parsed = parsePlan(
     input.trunk && isRecord(input.raw) ? { ...input.raw, trunk: input.trunk } : input.raw,
     {
@@ -928,6 +1025,12 @@ export function planFanout(
       { problems: parsed.problems },
     );
   const plan = parsed.plan;
+  if (plan.fanIn === "integration" && plan.trunk === defaultTrunk(cwd))
+    return fanoutFail(
+      "invalid_input",
+      `fanIn "integration" needs an integration branch as the trunk, not ${plan.trunk}`,
+      `workit git branch <integration-branch> --base ${plan.trunk}, then plan with --trunk <integration-branch>`,
+    );
   const badBranches = plan.slices
     .filter((slice) => !gitRun(cwd, ["check-ref-format", "--branch", slice.branch]).ok)
     .map((slice) => `slice ${slice.id}: ${slice.branch} is not a valid branch name`);
@@ -975,20 +1078,60 @@ export function planFanout(
   const existing = readFanout(cwd, plan.name);
   const previous = existing.ok ? existing.data : null;
   plan.createdAt = previous?.createdAt || now.toISOString();
+  // A re-plan keeps the lead (and a plan from before leads stays without one)
+  // unless this session takes it over.
+  plan.leadSession = input.takeLead ? session : previous ? previous.leadSession : session;
+  plan.formerLeads = [
+    ...new Set([
+      ...(previous?.formerLeads ?? []),
+      ...(previous?.leadSession && previous.leadSession !== plan.leadSession
+        ? [previous.leadSession]
+        : []),
+    ]),
+  ].filter((former) => former !== plan.leadSession);
   plan.updatedAt = now.toISOString();
+  // Per slice: the same definition continues its run; a changed one starts anew.
+  for (const slice of plan.slices) {
+    slice.hash = sliceHash(slice);
+    const before = previous?.slices.find((old) => old.id === slice.id);
+    slice.hashSince =
+      before && before.hash === slice.hash ? before.hashSince || plan.updatedAt : plan.updatedAt;
+  }
   const written = writeFanout(cwd, plan);
   if (!written.ok) return written;
+  if (previous && plan.leadSession !== previous.leadSession)
+    appendObserved(cwd, {
+      type: "fanout.lead.changed",
+      actor: input.actor,
+      fanout: plan.name,
+      from: previous.leadSession,
+      to: plan.leadSession,
+    });
   appendObserved(cwd, {
     type: "fanout.planned",
     actor: input.actor,
     fanout: plan.name,
     trunk: plan.trunk,
+    fanIn: plan.fanIn,
     slices: plan.slices.length,
     ids: plan.slices.slice(0, 20).map((slice) => slice.id),
   });
 
   const grouped = waves(plan.slices);
   const notes: string[] = [];
+  const warnings: string[] = [];
+  if (!input.takeLead && previous?.leadSession && session && session !== previous.leadSession)
+    notes.push(
+      `the lead stays ${previous.leadSession}; this session is ${session}. Leading from this session now? workit fanout plan <plan.json> --take-lead`,
+    );
+  if (previous === null) {
+    const ledger = readLedger(cwd);
+    const inForce = ledger.ok ? activeStanding(ledger.value.rows, plan.name, planLeads(plan)) : [];
+    if (inForce.length)
+      warnings.push(
+        `${inForce.length} standing order${inForce.length === 1 ? " is" : "s are"} already in force for fanout ${plan.name}, and every brief will carry ${inForce.length === 1 ? "it" : "them"}: ${inForce.map((row) => `"${String(row.what)}"`).join("; ")}. From an earlier run? workit ledger standing clear --fanout ${plan.name}`,
+      );
+  }
   if (!ref)
     notes.push(
       `trunk ${plan.trunk} does not resolve here; only sample paths of each glob were compared`,
@@ -1009,6 +1152,7 @@ export function planFanout(
     data: {
       name: plan.name,
       trunk: plan.trunk,
+      fanIn: plan.fanIn,
       file: written.data,
       created: previous === null,
       slices: plan.slices.map(({ id, branch, base, worktree, tier, dependsOn, scope, owns }) => ({
@@ -1025,6 +1169,7 @@ export function planFanout(
       waves: grouped,
       landingOrder: landingOrder(plan.slices),
       notes,
+      warnings,
     },
   };
 }

@@ -293,7 +293,8 @@ export function sliceLandings(
         createdFrom: sliceStart(cwd, rows, plan.name, slice),
         parentHead,
         fanout: plan.name,
-        since: plan.createdAt || null,
+        since: slice.hashSince || plan.createdAt || null,
+        sliceHash: slice.hash || null,
         rows,
       }),
     );
