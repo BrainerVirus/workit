@@ -103,6 +103,7 @@ test("pr status --json returns the status document in the shared envelope", asyn
       behindBase: { behind: 3 },
       checks: { state: "failing" },
       next: "RESOLVE_THREADS",
+      babysit: "address-threads",
     },
   });
   expect(envelope.data.checks.failing[0].logTail.length).toBeGreaterThan(0);
@@ -114,6 +115,7 @@ test("pr status --json returns the status document in the shared envelope", asyn
   expect(human.stdout).toContain("x CI / test (ubuntu-latest) (failure)");
   expect(human.stdout).toContain("##[error]Process completed with exit code 1.");
   expect(human.stdout).toContain("- src/a.ts:10 @reviewer: Please handle the empty case");
+  expect(human.stdout).toContain("babysit: address-threads\n");
   expect(human.stdout).toEndWith("next: RESOLVE_THREADS\n");
 });
 

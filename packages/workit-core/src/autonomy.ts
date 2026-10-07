@@ -86,12 +86,83 @@ export const DEFAULT_GRANTS: Readonly<Grants> = Object.freeze({
 });
 
 /**
- * Where an unnamed request stops (skills read it): `commit` (default) ends at
- * a local commit; `pr` goes on to push and open the PR. User config only,
- * same rules as grants: raising commit → pr needs the user at a terminal.
+ * Where an unnamed request stops (skills read it), lowest to highest:
+ * `commit` (default) ends at a local commit; `pr` pushes and opens the PR;
+ * `green` opens the PR, then babysits it (CI, threads, base) until it is
+ * merge-ready, never merging; `merged` also lands it with `workit pr merge`,
+ * and only takes effect with the merge grant (otherwise it acts as `green`).
+ * User config only, same rules as grants: any step up needs the user at a
+ * terminal; stepping down is free.
  */
-export type DefaultEndpoint = "commit" | "pr";
+export const DEFAULT_ENDPOINTS = ["commit", "pr", "green", "merged"] as const;
+export type DefaultEndpoint = (typeof DEFAULT_ENDPOINTS)[number];
 export const DEFAULT_ENDPOINT: DefaultEndpoint = "commit";
+export const isDefaultEndpoint = (value: unknown): value is DefaultEndpoint =>
+  typeof value === "string" && (DEFAULT_ENDPOINTS as readonly string[]).includes(value);
+/** Whether `next` lets an unnamed request go further than `current`. */
+export const raisesEndpoint = (current: DefaultEndpoint, next: DefaultEndpoint): boolean =>
+  DEFAULT_ENDPOINTS.indexOf(next) > DEFAULT_ENDPOINTS.indexOf(current);
+
+/**
+ * The configured endpoint of one workspace entry. Lenient (D17): a value this
+ * version does not know falls back to `commit` and is reported in `issue`, so
+ * a newer Workit's endpoint never invalidates the file for an older one.
+ */
+function endpointOf(entry: unknown): { endpoint: DefaultEndpoint; issue?: string } {
+  const raw = (entry as { defaultEndpoint?: unknown } | null)?.defaultEndpoint;
+  if (raw === undefined) return { endpoint: DEFAULT_ENDPOINT };
+  if (isDefaultEndpoint(raw)) return { endpoint: raw };
+  return {
+    endpoint: DEFAULT_ENDPOINT,
+    issue: `defaultEndpoint ${JSON.stringify(raw)} is not one of ${DEFAULT_ENDPOINTS.join(", ")}; using ${DEFAULT_ENDPOINT}`,
+  };
+}
+
+/**
+ * What the configured endpoint means today: `merged` acts as `green` unless
+ * `workit pr merge` could pass its grant check (merge granted, and an account
+ * when grants are configured; see requireGrant).
+ */
+function effectiveEndpoint(
+  endpoint: DefaultEndpoint,
+  grants: Grants,
+  configured: readonly GrantKind[],
+  accountConfigured: boolean,
+): { endpoint: DefaultEndpoint; reason?: string } {
+  if (endpoint !== "merged") return { endpoint };
+  if (grants.merge === false) return { endpoint: "green", reason: "merge grant missing" };
+  if (configured.length > 0 && !accountConfigured)
+    return { endpoint: "green", reason: "vcs.account missing" };
+  return { endpoint };
+}
+
+/** The endpoint fields every grant view carries. */
+export type EndpointView = {
+  /** As configured (an unknown value reads as the default, see endpointIssue). */
+  defaultEndpoint: DefaultEndpoint;
+  /** What an agent acts on: `merged` without the merge grant is `green`. */
+  effectiveEndpoint: DefaultEndpoint;
+  /** Why the effective endpoint is lower than the configured one. */
+  endpointReason?: string;
+  /** A configured value this version does not know (reported, then ignored). */
+  endpointIssue?: string;
+};
+
+function endpointView(
+  entry: unknown,
+  grants: Grants,
+  configured: readonly GrantKind[],
+  accountConfigured: boolean,
+): EndpointView {
+  const { endpoint, issue } = endpointOf(entry);
+  const effective = effectiveEndpoint(endpoint, grants, configured, accountConfigured);
+  return {
+    defaultEndpoint: endpoint,
+    effectiveEndpoint: effective.endpoint,
+    ...(effective.reason ? { endpointReason: effective.reason } : {}),
+    ...(issue ? { endpointIssue: issue } : {}),
+  };
+}
 /**
  * How a normal-risk behavior change is verified (S17). `self` (default): an
  * observed passing `workit check test` plus the author's own `--self`
@@ -105,12 +176,9 @@ export const verificationOf = (entry: unknown): VerificationMode =>
     ? "independent"
     : "self";
 
-const endpointOf = (entry: unknown): DefaultEndpoint =>
-  (entry as { defaultEndpoint?: unknown } | null)?.defaultEndpoint === "pr" ? "pr" : "commit";
-
 export type AutonomySource = "autonomy" | "autoApprove" | "default";
 
-export type Autonomy = {
+export type Autonomy = EndpointView & {
   workspace: string | null;
   /** Every kind, with absent ones filled from DEFAULT_GRANTS. */
   grants: Grants;
@@ -118,7 +186,6 @@ export type Autonomy = {
   configured: GrantKind[];
   source: AutonomySource;
   accountConfigured: boolean;
-  defaultEndpoint: DefaultEndpoint;
   verification: VerificationMode;
   /** Set when the grants file was not read (see grantsOverride). */
   note?: string;
@@ -196,6 +263,7 @@ export function resolveAutonomy(cwd: string): Autonomy {
       source: "default",
       accountConfigured: false,
       defaultEndpoint: DEFAULT_ENDPOINT,
+      effectiveEndpoint: DEFAULT_ENDPOINT,
       verification: DEFAULT_VERIFICATION,
       note: override,
     };
@@ -205,16 +273,22 @@ export function resolveAutonomy(cwd: string): Autonomy {
     process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
   );
   const { grants, source } = configuredGrants(workspace);
+  const full = { ...DEFAULT_GRANTS, ...grants };
+  const configured = GRANT_KINDS.filter((kind) => grants[kind] !== undefined);
+  const accountConfigured = Boolean(workspace?.vcs?.account);
   return {
     workspace: workspace?.name ?? null,
-    grants: { ...DEFAULT_GRANTS, ...grants },
-    configured: GRANT_KINDS.filter((kind) => grants[kind] !== undefined),
+    grants: full,
+    configured,
     source,
-    accountConfigured: Boolean(workspace?.vcs?.account),
-    defaultEndpoint: endpointOf(workspace),
+    accountConfigured,
+    ...endpointView(workspace, full, configured, accountConfigured),
     verification: verificationOf(workspace),
   };
 }
+
+const accountOf = (entry: unknown): unknown =>
+  (entry as { vcs?: { account?: unknown } } | null)?.vcs?.account;
 
 const suggested = (kind: GrantKind): string => (kind === "merge" ? "verified" : "true");
 
@@ -290,16 +364,15 @@ export const raises = (kind: GrantKind, current: GrantValue, next: GrantValue): 
 };
 
 export type GrantWrite =
-  | {
+  | (EndpointView & {
       ok: true;
       path: string;
       backup: string | null;
       workspace: string;
       grants: Grants;
       configured: GrantKind[];
-      defaultEndpoint: DefaultEndpoint;
       verification: VerificationMode;
-    }
+    })
   | { ok: false; code: "not_found" | "invalid_input" | "failed"; error: string };
 
 /**
@@ -379,14 +452,16 @@ export function writeGrants(
       error: `failed to write ${current.path}: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+  const full = { ...DEFAULT_GRANTS, ...grants };
+  const configured = GRANT_KINDS.filter((kind) => grants[kind] !== undefined);
   return {
     ok: true,
     path: current.path,
     backup,
     workspace: workspaceName,
-    grants: { ...DEFAULT_GRANTS, ...grants },
-    configured: GRANT_KINDS.filter((kind) => grants[kind] !== undefined),
-    defaultEndpoint: endpointOf(entry),
+    grants: full,
+    configured,
+    ...endpointView(entry, full, configured, Boolean(accountOf(entry))),
     verification: verificationOf(entry),
   };
 }
@@ -394,14 +469,13 @@ export function writeGrants(
 /** Every workspace's grants, for `workit grant show --all`. */
 export function listGrants(dir: string = grantsDir()): {
   path: string;
-  workspaces: {
+  workspaces: (EndpointView & {
     name: string;
     glob: string;
     grants: Grants;
     configured: GrantKind[];
-    defaultEndpoint: DefaultEndpoint;
     verification: VerificationMode;
-  }[];
+  })[];
   error?: string;
 } {
   const current = readWorkspacesResult(dir);
@@ -411,12 +485,14 @@ export function listGrants(dir: string = grantsDir()): {
     path: current.path,
     workspaces: current.entries.map((entry) => {
       const { grants } = configuredGrants(entry);
+      const full = { ...DEFAULT_GRANTS, ...grants };
+      const configured = GRANT_KINDS.filter((kind) => grants[kind] !== undefined);
       return {
         name: entry.name,
         glob: entry.glob,
-        grants: { ...DEFAULT_GRANTS, ...grants },
-        configured: GRANT_KINDS.filter((kind) => grants[kind] !== undefined),
-        defaultEndpoint: endpointOf(entry),
+        grants: full,
+        configured,
+        ...endpointView(entry, full, configured, Boolean(entry.vcs?.account)),
         verification: verificationOf(entry),
       };
     }),

@@ -23,6 +23,7 @@ import { createGitHubForge } from "@/packages/workit-core/src/forge/github";
 import { createGitLabForge } from "@/packages/workit-core/src/forge/gitlab";
 import { logTail, redactText, shortBody } from "@/packages/workit-core/src/forge/redact";
 import {
+  babysitAction,
   executeRerun,
   nextAction,
   pollDelay,
@@ -174,6 +175,7 @@ describe("S10 pr status", () => {
       expect(doc.reviews.decision).toBe("review_required");
       expect(doc.mergeable).toBe("yes");
       expect(doc.next).toBe("RESOLVE_THREADS");
+      expect(doc.babysit).toBe("address-threads");
     }
     expect(shape(docs[0])).toEqual(shape(docs[1]));
     expect(docs.map((doc) => doc.forge)).toEqual(["github", "gitlab"]);
@@ -323,17 +325,20 @@ describe("S10 pr status", () => {
       behindBase: { behind: 3 },
       reviews: { decision: "approved" },
       next: "REBASE",
+      babysit: "update-branch",
     });
     const gitlab = repoFor("gitlab");
     const routes = gitlabRoutes(gitlabMr({ detailed_merge_status: "need_rebase" }));
     routes[`GET ${GL}/merge_requests/12/discussions?per_page=100&page=1`] = "[]";
     expect(statusOf(gitlab, routes)).toMatchObject({ rebaseRequired: true, next: "REBASE" });
-    // Behind but not required, nothing else open: READY.
+    // Behind but not required, nothing else open: READY to merge, but a
+    // babysitter keeps the branch updated with its base.
     const passing = repoFor("github");
     expect(statusOf(passing, githubRoutes("github/pr-passing.json"))).toMatchObject({
       rebaseRequired: false,
       behindBase: { behind: 3 },
       next: "READY",
+      babysit: "update-branch",
     });
   });
 
@@ -343,6 +348,7 @@ describe("S10 pr status", () => {
       state: "merged",
       behindBase: null,
       next: "MERGED",
+      babysit: "merged",
     });
   });
 
@@ -410,6 +416,7 @@ describe("S10 pr status", () => {
     expect(doc.checks.state).toBe("failing");
     expect(doc.checks.failing.map((check) => check.name)).toEqual(["pipeline"]);
     expect(doc.next).toBe("FIX_CI");
+    expect(doc.babysit).toBe("fix-ci");
     expect(waitVerdict(doc, { elapsedMs: 100_000 }).state).toBe("failed");
   });
 
@@ -1169,6 +1176,28 @@ describe("S10 redaction and verdicts", () => {
     expect(nextAction({ ...gl, checks: "none", mergeState: "ci_must_pass" })).toBe("WAITING_CI");
     expect(nextAction({ ...gl, mergeState: "draft_status" })).toBe("MARK_READY");
     expect(nextAction({ ...gl, mergeState: "jira_association_missing" })).toBe("NOT_MERGEABLE");
+  });
+
+  test("babysit maps next to one step and updates a stale branch only when nothing else is open", () => {
+    const behind = { behind: 2 };
+    const even = { behind: 0 };
+    expect(babysitAction("MERGED", "merged", behind)).toBe("merged");
+    expect(babysitAction("CLOSED", "closed", behind)).toBeNull();
+    expect(babysitAction("RESOLVE_CONFLICTS", "conflicts", even)).toBe("update-branch");
+    expect(babysitAction("REBASE", "behind_base_required", even)).toBe("update-branch");
+    // A fix or a wait in flight is not churned by a base update.
+    expect(babysitAction("RESOLVE_THREADS", "unresolved_threads", behind)).toBe("address-threads");
+    expect(babysitAction("ADDRESS_REVIEW", "changes_requested", even)).toBe("address-threads");
+    expect(babysitAction("FIX_CI", "checks_failing", behind)).toBe("fix-ci");
+    expect(babysitAction("WAITING_CI", "checks_pending", behind)).toBe("wait");
+    expect(babysitAction("IN_MERGE_QUEUE", "in_merge_queue", even)).toBe("wait");
+    expect(babysitAction("NOT_MERGEABLE", "mergeability_unknown", even)).toBe("wait");
+    // Nothing left for the agent: a human approval or a forge rule decides.
+    expect(babysitAction("REVIEW", "review_required", even)).toBe("ready");
+    expect(babysitAction("NOT_MERGEABLE", "merge_state_blocked", even)).toBe("ready");
+    expect(babysitAction("READY", null, null)).toBe("ready");
+    expect(babysitAction("READY", null, behind)).toBe("update-branch");
+    expect(babysitAction("REVIEW", "review_required", behind)).toBe("update-branch");
   });
 
   test("ci wait verdicts and the deterministic backoff", () => {

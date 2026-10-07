@@ -101,10 +101,10 @@ Autonomy contract:
   Stop only for a new consequential choice, a host denial, a conflicting edit
   or an unresolved blocker; report open gaps and uncertain workers.
 - No endpoint named: stop at a local commit on a policy-compliant branch and
-  state the next command. Push and open a PR only when the request implies
-  delivery (fix, implement, ship) and \`workit grant show\` reports
-  \`defaultEndpoint\` \`pr\`; otherwise the endpoint is \`commit\`. PRs open,
-  CI green and verified is the most autonomy allows, never the default target.
+  state the next command. If the request implies delivery (fix, implement,
+  ship), go to the effective endpoint in \`workit grant show\`: \`pr\` opens
+  the PR; \`green\` then babysits it without asking (workit-ship) until
+  merge-ready, never merging; \`merged\` also lands it.
   Merge and release need a workspace grant; a blocked verb names its unblock.
   Only the user raises a grant, from their own terminal (\`workit grant set\`);
   never edit workspaces.json or route around a grant_required.

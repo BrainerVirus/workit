@@ -11,6 +11,7 @@ import {
   resolveRuntimeWorkspaceVcs,
   selectReleaseTrack,
   validateWorkspaceGlob,
+  validateWorkspacesDocument,
   workspacesPath,
   type WorkspaceConfig,
 } from "@/packages/workit-core/src/core/workspaces";
@@ -660,5 +661,18 @@ test("multiple release tracks require an explicit selection and preserve each tr
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("defaultEndpoint: green and merged are valid, and an unknown value does not invalidate the file", () => {
+  const document = (defaultEndpoint: unknown) => ({
+    workspaces: [{ name: "w", glob: "/w/**", defaultEndpoint, autonomy: { merge: "verified" } }],
+  });
+  for (const value of ["commit", "pr", "green", "merged", "deployed", 3]) {
+    const result = validateWorkspacesDocument(document(value), "workspaces.json");
+    expect(result.status, String(value)).toBe("valid");
+    // The entry survives as written; autonomy.ts reports and ignores an unknown value.
+    expect(result.entries[0]?.defaultEndpoint).toBe(value);
+    expect(result.entries[0]?.autonomy).toEqual({ merge: "verified" });
   }
 });

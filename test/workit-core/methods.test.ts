@@ -9,6 +9,8 @@ import type {
 } from "@/packages/workit-core/src/core/task-contract";
 import { invariantBootstrap, selectMethods } from "@/packages/workit-core/src/core/methods";
 import { compactTaskContext } from "@/packages/workit-core/src/core/task-context";
+import { DEFAULT_ENDPOINT, DEFAULT_ENDPOINTS } from "@/packages/workit-core/src/autonomy";
+import { babysitAction, type NextAction } from "@/packages/workit-core/src/forge/report";
 import {
   WORKIT_METHOD_SKILLS,
   skillManifestNames,
@@ -275,7 +277,7 @@ test("agent-critical delivery rules stay stated", () => {
       bootstrap,
       "No endpoint named: stop at a local commit on a policy-compliant branch",
     ],
-    ["bootstrap", bootstrap, "never the default target"],
+    ["bootstrap", bootstrap, "go to the effective endpoint in `workit grant show`"],
     ["workit-ship", skillText("workit-ship"), "report that a rebase is needed and stop"],
     ["workit-fanout", skillText("workit-fanout"), "any file outside it stops the fan-in"],
     ["workit-fanout", skillText("workit-fanout"), "observe that it exited"],
@@ -326,4 +328,63 @@ test("method manifest matches the canonical skill directories", () => {
   expect(
     skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
   ).toEqual([...WORKIT_METHOD_SKILLS].toSorted());
+});
+
+// Babysit endpoints (defaultEndpoint green|merged): the doctrine an agent acts
+// on after opening a PR. Each phrase is a rule; dropping or inverting one fails.
+test("bootstrap routes every endpoint above commit and keeps green short of a merge", () => {
+  const bootstrap = invariantBootstrap();
+  for (const endpoint of DEFAULT_ENDPOINTS.filter((value) => value !== DEFAULT_ENDPOINT))
+    expect(bootstrap, endpoint).toContain(`\`${endpoint}\``);
+  for (const rule of [
+    "`green` then babysits it without asking (workit-ship)",
+    "never merging; `merged` also lands it",
+  ])
+    expect(bootstrap, rule).toMatch(phrase(rule));
+});
+
+test("workit-ship states the babysit loop, its verbs and its only stop conditions", () => {
+  const ship = skillText("workit-ship");
+  for (const rule of [
+    "after opening the PR keep babysitting without asking",
+    "until CI is green, every thread is resolved and the verification gate is met; never merge",
+    "then land it with `workit pr merge`",
+    "means the merge grant is missing: act as `green`",
+    "`wait` runs `workit ci wait` in the background where the host allows",
+    "one `workit ci rerun --failed --reason flake` per head",
+    "Stop early only for a new consequential choice, a host denial, a review comment that needs a product decision, or after 3 failed fix attempts on the same check",
+  ])
+    expect(ship, rule).toMatch(phrase(rule));
+  // The label it tells the agent to read is the one `workit grant show` prints.
+  expect(ship).toMatch(/`merged \(effective:\s+green/);
+  expect(skillText("workit-implement")).toMatch(
+    phrase("effective endpoint in `workit grant show` is `pr`, `green` or `merged`"),
+  );
+});
+
+test("workit-ship names every babysit step `workit pr status` can report", () => {
+  const ship = skillText("workit-ship");
+  const nexts: NextAction[] = [
+    "MERGED",
+    "CLOSED",
+    "RESOLVE_CONFLICTS",
+    "REBASE",
+    "RESOLVE_THREADS",
+    "FIX_CI",
+    "WAITING_CI",
+    "ADDRESS_REVIEW",
+    "REVIEW",
+    "MARK_READY",
+    "IN_MERGE_QUEUE",
+    "NOT_MERGEABLE",
+    "READY",
+  ];
+  const steps = new Set(
+    nexts.flatMap((next) =>
+      [null, { behind: 1 }].map((behind) => babysitAction(next, "mergeability_unknown", behind)),
+    ),
+  );
+  steps.delete(null);
+  expect(steps.size).toBe(6);
+  for (const step of steps) expect(ship, String(step)).toContain(`\`${step}\``);
 });

@@ -97,6 +97,7 @@ test("requireGrant: defaults apply when nothing is configured; explicit values a
       source: "autonomy",
       accountConfigured: true,
       defaultEndpoint: "commit",
+      effectiveEndpoint: "commit",
       verification: "self",
     });
     expect(requireGrant(cwd, "merge")).toMatchObject({
