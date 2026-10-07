@@ -235,6 +235,7 @@ Skills load automatically when the task fits, or explicitly: `/wk-<name>`
 | `fanout` | Run independent slices in parallel worktrees with per-slice verifiers |
 | `verify-app` | Generate the project's own `verify-<app>` skill that drives the real app |
 | `retro` | User-invoked: find repeated friction in recent sessions and propose cited fixes ranked by enforcer strength; never applies them |
+| `architecture` | User-invoked: rank cited deepening opportunities from churn and ledger friction, grill the chosen one into slices; also restructures AGENTS.md in reviewable passes and sweeps tests; never refactors without approval |
 
 ## CLI reference
 
