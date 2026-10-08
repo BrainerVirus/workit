@@ -49,7 +49,7 @@ const SKILL_HOST: Record<HostId, SkillHost> = {
 const PROMPT_INTENTS: ReadonlyArray<readonly [WorkitSkill, RegExp]> = [
   [
     "workit-debug",
-    /\b(flaky|regression|(?:is|are|got|looks) broken|debug (?:this|it|the|why)|fix (?:the|this|a) bug)\b/i,
+    /\b(flaky|regressed|(?:is|introduced) a regression|regression (?:in|after|since|from)|(?:is|are|got|looks) broken|debug (?:this|it|the|why)|fix (?:the|this|a) bug)\b/i,
   ],
   [
     "workit-continue",
@@ -61,14 +61,17 @@ const PROMPT_INTENTS: ReadonlyArray<readonly [WorkitSkill, RegExp]> = [
   ],
   [
     "workit-ship",
-    /\b(ship (?:it|this|the)|babysit|open (?:a|the) (?:PR|pr|MR|mr)|merge (?:the|this|my) (?:PR|pr|MR|mr|branch)|(?:get|until|make) CI (?:is )?green)\b/i,
+    /\b(ship (?:it|this|the)|babysit|open (?:a|the) (?:PR|pr|MR|mr)(?=\s*$|\s+(?:for|to|on|with|and)\b|[.!,;])|merge (?:the|this|my) (?:PR|pr|MR|mr|branch)|(?:get|until|make) CI (?:is )?green)\b/i,
   ],
   ["workit-bdd", /\b(BDD|TDD|acceptance criteria|Given\/When\/Then)(?![\w/])/],
   ["workit-test-audit", /\b(test audit|audit the tests|tautolog\w*|weak tests)\b/i],
   ["workit-deslop", /\b(deslop|slop|dead code)\b/i],
-  ["workit-fanout", /\b(fan(?: |-)?out|parallelize|parallel agents|swarm)\b/i],
+  [
+    "workit-fanout",
+    /\b(fan(?: |-)?out|parallelize|parallel agents|agent swarm|swarm of agents)\b/i,
+  ],
   ["workit-verify-app", /\b(verify the app|smoke test|prove it works)\b/i],
-  ["workit-retro", /\b(retro|retrospective)\b(?!\.\w)/i],
+  ["workit-retro", /\b((?:a|the) retro(?![-\w.])|retrospective)/i],
   ["workit-architecture", /\b(deepen (?:the )?modules|architecture (?:review|pass|audit))\b/i],
   [
     "workit-shape",
@@ -170,6 +173,8 @@ const READERS = new Set([
 export const skillReadIn = (command: string, dialect: ShellDialect = "posix"): string | null => {
   for (const { words } of segmentsOf(command, dialect)) {
     if (!READERS.has((words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase())) continue;
+    // `sed -i` edits the file; it does not load it.
+    if (words.some((word) => /^-i|^--in-place/.test(word))) continue;
     for (const word of words.slice(1)) {
       const skill = skillFileIn(word);
       if (skill) return skill;

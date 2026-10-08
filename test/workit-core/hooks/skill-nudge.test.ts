@@ -96,6 +96,14 @@ test("a prompt asks for a skill only in so many words: common words alone never 
     ["the bug label in github", null],
     ["resume.pdf parser", null],
     ["ask the reviewer", null],
+    ["add a retro-styled button", null],
+    ["fit a linear regression", null],
+    ["the docker swarm config", null],
+    ["open the PR description file", null],
+    ["this is a regression since 8.4", "workit-debug"],
+    ["open a PR for it", "workit-ship"],
+    ["let's do a retro", "workit-retro"],
+    ["spin up a swarm of agents", "workit-fanout"],
     ["here is the log:\n```\nthe build is broken: flaky\n```", null],
     ["thanks!", null],
   ];
@@ -243,6 +251,7 @@ test("a shell loads a skill only by reading its SKILL.md: never git, grep or an 
     "grep -n Check skills/workit-ship/SKILL.md",
     "git diff -- skills/workit-ship/SKILL.md",
     "vim skills/workit-ship/SKILL.md",
+    "sed -i s/a/b/ skills/workit-ship/SKILL.md",
     "cat skills/workit-ship/SKILL.md.orig",
   ])
     expect(skillReadIn(command), command).toBeNull();
