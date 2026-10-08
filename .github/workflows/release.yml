@@ -59,6 +59,13 @@ jobs:
           # npm publish (publish-changed-packages.ts) attaches a provenance
           # attestation via the job's OIDC token; auth is still NPM_TOKEN.
           NPM_CONFIG_PROVENANCE: "true"
+          # @semantic-release/npm bumps each package with `npm version`, which
+          # in a workspace reinstalls it. After the verify-time rewrite the
+          # adapters ask for ^<previous version>; on a major bump the
+          # workspace no longer satisfies that, so npm installs the previous
+          # release into packages/*/node_modules/@brainervirus and the
+          # prepare-time build bundles it (8.0.0 shipped 7.7.0's core).
+          NPM_CONFIG_WORKSPACES_UPDATE: "false"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPMJS }}
           # setup-node writes //registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}

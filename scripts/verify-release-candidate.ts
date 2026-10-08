@@ -5,6 +5,14 @@
 // never publishes, tags, or touches a registry or marketplace.
 import { packReleaseCandidate } from "../test/shared/helpers/packages.ts";
 import { verifyReleaseCandidateDeterministicSlice } from "../test/acceptance/harness.ts";
+import { verifyBundleSources } from "../packages/workit-core/scripts/verify-bundle-sources.ts";
+
+const bundleCheck = verifyBundleSources(process.cwd());
+if (bundleCheck.failures.length) {
+  console.error("adapter bundles would not inline the workspace's own sources:");
+  for (const failure of bundleCheck.failures) console.error(`  - ${failure}`);
+  process.exit(1);
+}
 
 const packs = packReleaseCandidate();
 for (const pack of packs) {
