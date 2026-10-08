@@ -19,6 +19,7 @@ export {
 export { shellPolicy } from "./policy";
 export { shellWrites, writeGate } from "./write-gate";
 export { callKey, noteRawCommit, rawGitPost, rawGitPre } from "./raw-git";
+export { promptNudge, recordSkillLoad, shellNudge, skillFileIn } from "./skill-nudge";
 export { isWriteTool, writePaths } from "./hosts/fields";
 export { dispatchHook, failureDecision, handleHook, type HookDeps } from "./handle";
 export { HOOK_ADAPTERS, runHookProcess } from "./run";

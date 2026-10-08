@@ -1,5 +1,5 @@
 {
-  "description": "Workit host hooks: task context on session start (incl. compaction restore and forks) and when it changes per turn, branch policy and raw git/forge steering (deny gate bypasses, nudge routine commands) on shell commands, the before-write gate on file edits and shell writes, recording raw git commits for the session after they run, and worktree guidance for subagents. Only events that change Claude's behavior are registered.",
+  "description": "Workit host hooks: task context on session start (incl. compaction restore and forks) and when it changes per turn, branch policy and raw git/forge steering (deny gate bypasses, nudge routine commands) on shell commands, the before-write gate on file edits and shell writes, recording raw git commits for the session after they run, worktree guidance for subagents, a one-line skill nudge on prompts and delivery commands, and recording each Workit skill load. Only events that change Claude's behavior are registered.",
   "hooks": {
     "SessionStart": [
       {
@@ -51,6 +51,17 @@
       },
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
         "hooks": [
           {
             "type": "command",

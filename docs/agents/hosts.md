@@ -35,6 +35,13 @@ registered, settles a pending marker on the next shell command). Keep the
 classification string-only: hook latency is guarded by the bundle size test
 and the Codex entry-size test in `test/workit-core/hooks/bundle.test.ts`.
 
+`src/hooks/skill-nudge.ts` (same hosts, same fail-open rule) adds the skill
+nudges: a prompt phrase table (`PROMPT_INTENTS`, phrases only, by precedence;
+the contract's single-word triggers stay for the model), the workit-ship line
+on delivery commands, and `skill.loaded` rows. Per-session nudge state is a
+marker in the workspace store's `hooks/`; nothing is written outside a Workit
+workspace. Claude Code's launcher fast path lets workit delivery verbs through.
+
 The acting session comes from `src/host-session.ts`: `WORKIT_SESSION_ID`, else
 the host's shell variable (`CODEX_THREAD_ID`, `OPENCODE_SESSION_ID`,
 `PI_SESSION_ID`). Cursor exposes no conversation id to the agent's shell, so

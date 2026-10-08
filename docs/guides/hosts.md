@@ -54,6 +54,27 @@ and never grant permission: host allow/deny rules stay authoritative.
 | Pi | `tool_call` block | appended to the bash result | `tool_result` | `PI_SESSION_ID` |
 | Cursor | `beforeShellExecution` | `agent_message` | on the session's next shell command | none: session context names the id to prefix |
 
+**Skill nudges.** The session contract names a trigger for each skill, but in
+a long or compacted session agents act without loading the skill. Inside a
+Workit workspace, in a main session (never a subagent):
+
+- A prompt that asks for a skill's work in so many words ("the login test is
+  flaky", "let's brainstorm the cache", "babysit it until CI is green") gets
+  one advisory line naming the skill and how this host loads it. Single
+  common words (plan, build, merge, CI) never trigger it. Claude Code
+  (`UserPromptSubmit`), OpenCode (session context, on a new user message) and
+  Pi (`before_agent_start`). Not yet on Codex (workit does not register its
+  `UserPromptSubmit` yet) or Cursor (no per-prompt context hook).
+- A delivery command (`git push`, `gh pr create|merge`, `glab mr
+  create|merge`, `workit pr create|merge`, `workit ci wait`, `workit git
+  push`) gets one line naming workit-ship, on every host's shell hook.
+- Each nudge fires at most once per session, and never once the session
+  loaded the skill. A load is recorded as a `skill.loaded` ledger row: Claude
+  Code's Skill tool and `/wk-*` commands, OpenCode's skill tool and `/wk-*`
+  commands, and a read of the skill's `SKILL.md` (Codex and Cursor shell
+  reads, Pi's read tool and `/skill:`). `workit ledger list --type
+  skill.loaded` shows which skills sessions used; `/wk-retro` reads it.
+
 `workit` reads `WORKIT_SESSION_ID` first (set it, even empty, to override),
 then the host's own variable from the table. Cursor puts no conversation id in
 the agent's shell (its `sessionStart` env reaches hooks only), so its session

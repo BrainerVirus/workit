@@ -101,11 +101,13 @@ test("hooks.json registers the designed events through the exec-form launcher, n
       }
   expect(hooks.SessionStart[0].matcher).toBe("startup|resume|clear|compact|fork");
   // Every Bash command: branch policy on git forms and the before-write gate
-  // on recognizable shell writes (S17); file-writing tools for the write gate.
+  // on recognizable shell writes (S17); file-writing tools for the write gate;
+  // the Skill tool records each Workit skill load.
   expect(hooks.PreToolUse.map((group) => [group.matcher, group.hooks[0].if])).toEqual([
     ["Bash", undefined],
     ["PowerShell", undefined],
     ["Edit|Write|MultiEdit|NotebookEdit", undefined],
+    ["Skill", undefined],
   ]);
   // No `if` filter: it misses `cd x && git commit`, `bash -c` and absolute git
   // paths. The launcher answers a PostToolUse without `commit` before the

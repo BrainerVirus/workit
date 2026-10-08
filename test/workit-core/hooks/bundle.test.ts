@@ -17,8 +17,10 @@ const HOOK_ENTRIES = [
 // it by 10 KB: close gates now evaluate CLI-observed checks (worktree tree key
 // from git/rev.ts, named-check config from check-config.ts). S15 raised it by
 // 20 KB: the append-only task event store (store/: log, patch, reduce, paths)
-// replaces whole-record snapshots and recovery copies.
-const BUDGET = 650_000;
+// replaces whole-record snapshots and recovery copies. The raw-git steering
+// and ledger hash chain left the Codex bundle at ~660 KB; skill nudges (the
+// trigger table, skill.loaded rows) add ~5 KB, so the ceiling is 670 KB.
+const BUDGET = 670_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {

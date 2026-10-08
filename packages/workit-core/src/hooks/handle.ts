@@ -10,6 +10,13 @@ import {
   rawGitPre,
   settlePendingCommit,
 } from "./raw-git";
+import {
+  promptNudge,
+  recordSkillLoad,
+  shipNudge,
+  skillReadIn,
+  withContextLine,
+} from "./skill-nudge";
 import { shellWrites, writeGate } from "./write-gate";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
@@ -79,9 +86,14 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
     case "context.turn": {
       if (!usable(descriptor.context.perTurn)) return NONE;
       const text = turnContextText(input, descriptor);
-      return text ? { kind: "context", text } : NONE;
+      return withContextLine(
+        text ? { kind: "context", text } : NONE,
+        promptNudge(input, event.prompt),
+      );
     }
     case "shell.pre": {
+      const skillRead = skillReadIn(event.command, event.dialect);
+      if (skillRead) recordSkillLoad(input, skillRead, "read");
       const canDeny = usable(descriptor.shellPolicy.deny);
       const policy = canDeny ? shellPolicy(input.cwd, event.command) : NONE;
       if (policy.kind !== "none") return policy;
@@ -102,7 +114,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
         event.command,
         postTool ? callKey(event.toolUseId, event.command) : NEXT_COMMAND,
       );
-      return raw;
+      return withContextLine(raw, shipNudge(input, event.command));
     }
     case "shell.post":
       if (usable(descriptor.events["shell.post"].support))
@@ -123,9 +135,12 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
         userMessage:
           "Workit context may be stale after compaction; re-run inspection or resume before acting.",
       };
-    // Host permission policy owns other tools; attestation, prompt and stop
-    // control arrive with the CLI-observed evidence model.
     case "tool.pre":
+      // Host permission policy owns other tools; a skill load is recorded.
+      if (event.skill) recordSkillLoad(input, event.skill, "tool");
+      return NONE;
+    // Attestation, prompt and stop control arrive with the CLI-observed
+    // evidence model.
     case "subagent.stop":
     case "prompt.submit":
     case "stop":

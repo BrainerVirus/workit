@@ -1784,6 +1784,9 @@ export function summarizeRow(row: ReadRow): RowSummary {
     case "standing.cleared":
       summary = `cleared ${text("target") || "every standing order"} (fanout ${text("fanout")})`;
       break;
+    case "skill.loaded":
+      summary = `${text("skill")} (${text("via") || "tool"})${row.actor.session ? "" : " (no session)"}`;
+      break;
     case "commit.recorded":
       summary = `${(row.head ?? "?").slice(0, 12)} ${text("subject")}${row.actor.session ? "" : " (no session)"}`;
       break;

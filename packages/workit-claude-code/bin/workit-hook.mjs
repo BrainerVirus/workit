@@ -36,10 +36,13 @@ const failOpen = (reason) => {
 // answer `{}` before the runtime loads: a shell command with no git/gh/glab,
 // no redirect and no writing verb can need none of them; with no Workit task
 // store for the checkout there is no task to gate a non-git edit on; and a
-// PostToolUse only matters after a `git commit`.
+// PostToolUse only matters after a `git commit`. A workit delivery verb
+// (`workit pr create`, `workit ci wait`) may get the workit-ship nudge.
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
 const RAW_TOOLS = /\b(?:git|gh|glab)\b/;
+const WORKIT_DELIVERY =
+  /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:-cli)?\s+(?:pr (?:create|merge)|ci wait|git push)\b/;
 const MAYBE_GATED =
   /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
 const SHELLS = new Set(["Bash", "PowerShell"]);
@@ -81,6 +84,7 @@ const fastAllow = (() => {
       return typeof command === "string" && !/\bcommit\b/.test(command);
     if (value?.hook_event_name !== "PreToolUse") return false;
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
+      if (WORKIT_DELIVERY.test(command)) return false;
       if (!MAYBE_GATED.test(command)) return true;
       return !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }

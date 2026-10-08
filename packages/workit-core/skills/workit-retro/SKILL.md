@@ -15,8 +15,8 @@ proposes and stops. Nothing changes until the user approves.
    `retro:` row in `workit ledger list --type decision`), else the last ~10
    sessions. State the window in one line.
 2. **Read through workit, cheapest first.** Every finding cites these:
-   - `workit ledger list --last 200`: rulings (ambiguities the agent had to
-     settle), failed or self verdicts, handoffs, check runs, CI reruns.
+   - `workit ledger list --last 200`: rulings, failed/self verdicts, handoffs,
+     check runs, CI reruns, `skill.loaded` rows (skipped skills: routing).
    - `workit pr status --pr <n>` for each recent PR: threads, failing checks.
    - `git log --oneline -50`, plus reverts and fixups after review.
    - `workit knowledge lint`: today's AGENTS.md and need-based files.
