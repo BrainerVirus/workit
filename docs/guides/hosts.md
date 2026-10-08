@@ -63,7 +63,8 @@ Workit workspace, in a main session (never a subagent):
   one advisory line naming the skill and how this host loads it. Single
   common words (plan, build, merge, CI) never trigger it. Claude Code
   (`UserPromptSubmit`), OpenCode (session context, on a new user message) and
-  Pi (`before_agent_start`); Codex and Cursor have no per-prompt context hook.
+  Pi (`before_agent_start`). Not yet on Codex (workit does not register its
+  `UserPromptSubmit` yet) or Cursor (no per-prompt context hook).
 - A delivery command (`git push`, `gh pr create|merge`, `glab mr
   create|merge`, `workit pr create|merge`, `workit ci wait`, `workit git
   push`) gets one line naming workit-ship, on every host's shell hook.
