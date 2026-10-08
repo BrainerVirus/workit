@@ -280,6 +280,10 @@ const render = (decision: HookDecision, native: string | null) => {
       json: cursorDeny(decision.reason),
       exitCode: native !== null && BLOCKING.has(native) ? 2 : 0,
     };
+  // beforeShellExecution has no context channel: a raw-git nudge rides on
+  // agent_message next to Cursor's required permission answer.
+  if (decision.kind === "context" && native === "beforeShellExecution")
+    return { json: { permission: "allow", agent_message: decision.text }, exitCode: 0 };
   if (decision.kind === "context")
     return { json: { additional_context: decision.text }, exitCode: 0 };
   if (decision.kind === "notice")
@@ -321,4 +325,10 @@ export const cursorAdapter: HostAdapter = {
     };
   },
   render,
+  // Cursor's shell carries no conversation id (sessionStart env reaches hooks
+  // only), so the agent is told the id its `workit` calls should act as.
+  addendum: (input) =>
+    input.session.id
+      ? `<workit-session>Cursor puts no session id in the shell: prefix workit commands that record authorship with WORKIT_SESSION_ID=${input.session.id} (e.g. \`WORKIT_SESSION_ID=${input.session.id} workit git commit -m …\`). A verifier uses its own id, never this one.</workit-session>`
+      : null,
 };

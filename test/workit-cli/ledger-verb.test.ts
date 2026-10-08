@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -321,4 +321,75 @@ test("ledger check names the newest verdict's result, and an ambiguous --pr says
   expect(human.stdout).toContain("verdict [feature/x]  failed [review]");
   await run(root, ["ledger", "verdict", "verified", "--how", "x"], { WORKIT_SESSION_ID: "" });
   expect((await run(root, ["handoff"])).stdout).toContain("verdict [feature/x] (self)  verified");
+});
+
+// ---------------------------------------------------------------------------
+// verification integrity (audit 2026-10-07)
+
+const authoredBy = (root: string, session: string) =>
+  appendObserved(root, {
+    type: "commit.recorded",
+    session,
+    actor: { host: "cli", session, agentId: null },
+    branch: "feature/x",
+  });
+
+test("Given the author lead, When a verdict names --session lead-v1, Then it is accepted but marked as a --session claim in ledger check, and --session lead is refused", async () => {
+  const root = featureRepo();
+  authoredBy(root, "lead");
+  const env = { WORKIT_SESSION_ID: "lead" };
+  const same = await run(
+    root,
+    ["ledger", "verdict", "verified", "--how", "x", "--session", "lead", "--json"],
+    env,
+  );
+  expect(same.code).toBe(3);
+  const claimed = await run(
+    root,
+    ["ledger", "verdict", "verified", "--how", "x", "--session", "lead-v1", "--json"],
+    env,
+  );
+  expect(claimed.code).toBe(0);
+  expect(claimed.json().data).toMatchObject({ sessionSource: "flag" });
+  const check = await run(root, ["ledger", "check"]);
+  expect(check.stdout).toContain("accepted; review: verified");
+  expect(check.stdout).toContain("session lead-v1 named by --session");
+  const fromEnv = await run(root, ["ledger", "verdict", "verified", "--how", "y", "--json"], {
+    WORKIT_SESSION_ID: "v2",
+  });
+  expect(fromEnv.json().data).toMatchObject({ sessionSource: "env" });
+});
+
+test("Given a session's own failure on the same code, When it records verified without --supersedes, Then the CLI says the verdict is shadowed and how to replace it", async () => {
+  const root = featureRepo();
+  const failed = await run(root, ["ledger", "verdict", "failed", "--how", "bug", "--json"]);
+  const id = failed.json().data.id as string;
+  const verified = await run(root, ["ledger", "verdict", "verified", "--how", "fine"]);
+  expect(verified.code).toBe(0);
+  expect(verified.stderr).toContain(`your failed verdict ${id} on the same code still stands`);
+  expect(verified.stderr).toContain(`--supersedes ${id}`);
+});
+
+test("Given a hand-appended ledger row, When `workit ledger verify-integrity` runs, Then it lists the row under unverified_rows, and ledger check warns without blocking", async () => {
+  const root = featureRepo();
+  expect((await run(root, ["ledger", "verdict", "verified", "--how", "ran it"])).code).toBe(0);
+  const clean = await run(root, ["ledger", "verify-integrity", "--json"]);
+  expect(clean.code).toBe(0);
+  expect(clean.json().data).toMatchObject({ intact: true, unverified_rows: [] });
+  const file = path.join(git(root, "rev-parse", "--git-common-dir"), "workit/ledger/ledger.jsonl");
+  appendFileSync(
+    path.resolve(root, file),
+    `${JSON.stringify({ v: 1, id: "hand-1", at: "2030-01-01T00:00:00.000Z", type: "decision", what: "x", branch: "feature/x", actor: {} })}\n`,
+  );
+  const report = await run(root, ["ledger", "verify-integrity", "--json"]);
+  expect(report.code).toBe(0);
+  expect(report.json().data).toMatchObject({
+    intact: false,
+    unverified_rows: [{ id: "hand-1", reason: "unsigned" }],
+  });
+  expect((await run(root, ["ledger", "verify-integrity"])).stdout).toContain("hand-1");
+  const check = await run(root, ["ledger", "check"]);
+  expect(check.code).toBe(0);
+  expect(check.stdout).toContain("accepted; review: verified");
+  expect(check.stdout).toContain("warning: ledger row hand-1");
 });

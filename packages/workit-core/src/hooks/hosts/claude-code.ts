@@ -135,6 +135,8 @@ type Parsed = { ok: true; event: HookEvent } | { ok: false; error: string };
 
 /** Claude's shell tools: Bash everywhere, PowerShell on Windows. */
 const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
+const dialectOf = (value: Record<string, unknown>) =>
+  value.tool_name === "PowerShell" ? ("powershell" as const) : ("posix" as const);
 const toolCommand = (value: Record<string, unknown>): string | null =>
   isRecord(value.tool_input) ? commandText(value.tool_input.command) : null;
 
@@ -163,7 +165,7 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
         return { ok: true, event: { kind: "tool.pre", tool: value.tool_name, toolUseId } };
       const command = toolCommand(value);
       return command
-        ? { ok: true, event: { kind: "shell.pre", command, toolUseId } }
+        ? { ok: true, event: { kind: "shell.pre", command, toolUseId, dialect: dialectOf(value) } }
         : { ok: false, error: `tool_input.command is required for ${value.tool_name}` };
     }
     case "PostToolUse": {
@@ -179,6 +181,7 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
           stdout: optionalText(response.stdout) ?? "",
           exitCode: typeof response.exit_code === "number" ? response.exit_code : null,
           toolUseId,
+          dialect: dialectOf(value),
         },
       };
     }
@@ -222,7 +225,14 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
   }
 };
 
-const CONTEXT_EVENTS = new Set(["SessionStart", "UserPromptSubmit", "SubagentStart"]);
+/** Events whose hookSpecificOutput takes additionalContext (PreToolUse: a raw-git nudge). */
+const CONTEXT_EVENTS = new Set([
+  "SessionStart",
+  "UserPromptSubmit",
+  "SubagentStart",
+  "PreToolUse",
+  "PostToolUse",
+]);
 
 /** Never emits `allow`: that would bypass the user's own permission prompt. */
 const render = (decision: HookDecision, native: string | null) => {

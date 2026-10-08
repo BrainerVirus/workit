@@ -1,0 +1,15 @@
+{
+  "session_id": "codex-session-1",
+  "cwd": "__CWD__",
+  "model": "gpt-5",
+  "permission_mode": "default",
+  "transcript_path": null,
+  "hook_event_name": "PostToolUse",
+  "turn_id": "turn-1",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git commit -m 'feat: x'"
+  },
+  "tool_use_id": "call-2",
+  "tool_response": "[feature/x 1a2b3c4] feat: x\n 1 file changed, 1 insertion(+)"
+}

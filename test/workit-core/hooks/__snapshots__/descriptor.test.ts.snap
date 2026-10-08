@@ -509,8 +509,8 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
         "support": "native",
       },
       "shell.post": {
-        "native": null,
-        "support": "undocumented",
+        "native": "PostToolUse",
+        "support": "native",
       },
       "shell.pre": {
         "native": "PreToolUse",
@@ -546,7 +546,7 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
     "perEventCost": "low",
     "provenance": {
       "agentIdOnTool": "partial",
-      "postToolObserve": "undocumented",
+      "postToolObserve": "native",
       "sessionId": "native",
     },
     "shellAvailable": "native",

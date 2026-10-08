@@ -32,14 +32,16 @@ const failOpen = (reason) => {
 };
 
 // Every Bash/PowerShell call and every file edit reaches this hook (branch
-// policy and the before-write gate). Two fast paths answer `{}` before the
-// runtime loads: a shell command with no git, no redirect and no writing verb
-// can need neither; and with no Workit task store for the checkout there is
-// no task to gate a non-git edit on.
+// policy, raw git/forge steering and the before-write gate). Fast paths
+// answer `{}` before the runtime loads: a shell command with no git/gh/glab,
+// no redirect and no writing verb can need none of them; with no Workit task
+// store for the checkout there is no task to gate a non-git edit on; and a
+// PostToolUse only matters after a `git commit`.
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
+const RAW_TOOLS = /\b(?:git|gh|glab)\b/;
 const MAYBE_GATED =
-  /\bgit\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
+  /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
 const SHELLS = new Set(["Bash", "PowerShell"]);
 const EDITS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
@@ -74,11 +76,13 @@ const hasTaskStore = (cwd) => {
 const fastAllow = (() => {
   try {
     const value = JSON.parse(payload);
-    if (value?.hook_event_name !== "PreToolUse") return false;
     const command = value?.tool_input?.command;
+    if (value?.hook_event_name === "PostToolUse")
+      return typeof command === "string" && !/\bcommit\b/.test(command);
+    if (value?.hook_event_name !== "PreToolUse") return false;
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (!MAYBE_GATED.test(command)) return true;
-      return !/\bgit\b/.test(command) && !hasTaskStore(String(value.cwd ?? "."));
+      return !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }
     return EDITS.has(value.tool_name) && !hasTaskStore(String(value.cwd ?? "."));
   } catch {

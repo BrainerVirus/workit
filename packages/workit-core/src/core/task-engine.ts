@@ -48,7 +48,18 @@ import {
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { normalizeOperationInput } from "./operation-input";
 import { latestJudgment } from "./policy/derive";
-import { normalizeJudgment } from "./policy/judgment";
+import {
+  givenReason,
+  judgeInputSummary,
+  liftedBlockers,
+  normalizeJudgment,
+  ownLiftedBlockers,
+} from "./policy/judgment";
+import { MAX_LINE_BYTES, appendObserved, observedRowBytes } from "../ledger";
+
+/** Refs kept in a `policy.judged` row (the task store keeps all of them). */
+const MAX_JUDGED_REFS = 5;
+import { currentBranch, headSha } from "../git/rev";
 import { resolveAutonomy, type VerificationMode } from "../autonomy";
 
 import { sameDirectoryIdentity, TaskStore } from "./task-store";
@@ -959,7 +970,8 @@ export class WorkitCore {
     if ((this.context.workerId ?? null) !== null)
       return failure("permission_denied", "helpers cannot change task requirements");
     this.fillRevisions(input, task.data);
-    const judged = normalizeJudgment(input.judgment, latestJudgment(task.data));
+    const previous = latestJudgment(task.data);
+    const judged = normalizeJudgment(input.judgment, previous);
     if (!judged.ok) return judged;
     const judgment = judged.data.judgment;
     const resolved = this.resolve(task.data, judgment);
@@ -967,6 +979,32 @@ export class WorkitCore {
     if (input.action === "preview") return success(null, null, resolved.data);
     if (input.action !== "assess")
       return failure("invalid_transition", "unsupported policy action");
+    // M6: a session lifting a before-write blocker it judged itself gives a
+    // reason; every assess is recorded in the ledger below either way.
+    const lifted = liftedBlockers(previous, judgment);
+    const why = givenReason(input.judgment);
+    const own = ownLiftedBlockers(task.data.judgments ?? [], lifted, this.context.caller.actor);
+    if (own.length && !why)
+      return failure(
+        "invalid_input",
+        `this session judged ${own.join(" and ")} true on this task; lifting it needs a reason: re-run with --why "<reason>" (recorded in the ledger)`,
+      );
+    // The audit row is sized before anything changes, so a blocker is never
+    // lifted with a reason too long to record.
+    const audit = this.judgedRow(
+      task.data.id,
+      input.judgment,
+      judgment,
+      resolved.data,
+      lifted,
+      why,
+    );
+    const bytes = observedRowBytes(audit);
+    if (bytes > MAX_LINE_BYTES)
+      return failure(
+        "invalid_input",
+        `the judgment is too long to record in the ledger (${bytes} bytes; the limit is ${MAX_LINE_BYTES}): shorten --why and pass details by --ref <path>`,
+      );
     const changed = this.store.mutateTask(
       task.data.id,
       input.expectedRevision,
@@ -1001,7 +1039,44 @@ export class WorkitCore {
       trustedNow(this.context),
     );
     if (!changed.ok) return changed;
+    // Best effort: the assessment already stands in the task store.
+    appendObserved(this.store.root, audit);
     return success(changed.data.revision, null, changed.data.policy);
+  }
+
+  /**
+   * The ledger row that makes a judge call auditable (M6): who judged, what
+   * was sent (the reason once, in `why`), what it resolved to, the
+   * requirements and the blockers it lifted. Refs are capped to keep the row
+   * within one ledger line.
+   */
+  private judgedRow(
+    taskId: string,
+    input: unknown,
+    judgment: Judgment,
+    policy: Policy | null,
+    lifted: readonly string[],
+    why: string | null,
+  ) {
+    const root = this.store.root;
+    const branch = currentBranch(root);
+    const { note: _note, refs, ...calls } = judgment;
+    return {
+      type: "policy.judged",
+      actor: {
+        host: this.context.caller.host,
+        session: this.context.caller.actor,
+        agentId: this.context.workerId ?? null,
+      },
+      branch,
+      head: branch ? headSha(root) : null,
+      taskId,
+      input: judgeInputSummary(input),
+      judgment: { ...calls, refs: refs.slice(0, MAX_JUDGED_REFS), refCount: refs.length },
+      requirements: (policy?.requirements ?? []).map((requirement) => requirement.ruleId),
+      lifted,
+      why,
+    };
   }
 
   evidence(request: unknown): Result<Entry<Evidence>> {

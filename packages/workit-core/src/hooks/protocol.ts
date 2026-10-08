@@ -17,7 +17,13 @@ export type HookEvent =
   | { kind: "session.start"; source: SessionSource }
   /** Per-turn injection (OpenCode session context, Pi before_agent_start, Claude UserPromptSubmit). */
   | { kind: "context.turn" }
-  | { kind: "shell.pre"; command: string; toolUseId: string | null }
+  | {
+      kind: "shell.pre";
+      command: string;
+      toolUseId: string | null;
+      /** The shell that runs `command`; posix when absent. */
+      dialect?: "posix" | "powershell";
+    }
   /** A pre-tool gate for a non-shell tool. Host permission policy owns these. */
   | { kind: "tool.pre"; tool: string; toolUseId: string | null }
   /** A file-writing tool (Edit, Write, apply_patch…): the before-write gate (S17). */
@@ -28,6 +34,7 @@ export type HookEvent =
       stdout: string;
       exitCode: number | null;
       toolUseId: string | null;
+      dialect?: "posix" | "powershell";
     }
   | { kind: "subagent.start"; agentId: string; agentType: string; task: string | null }
   | {

@@ -32,6 +32,7 @@ import {
   type FileLockSyncHandle,
   type FileLockSyncAcquireOptions,
 } from "@openclaw/fs-safe/file-lock";
+import { hostSessionFromEnv } from "../host-session";
 import { packageRoot } from "./package-root";
 import {
   SCHEMA_VERSION,
@@ -56,6 +57,7 @@ import {
   type WorkspaceRecord,
 } from "./task-contract";
 import {
+  TASK_STORE_LOCK,
   classifyLockOwner,
   clearAbandonedReclaimGuard,
   defaultLockTimeout,
@@ -351,9 +353,10 @@ const drop = (lock: string) => {
 
 const envActor = (): EventActor => {
   const value = (key: string) => process.env[key]?.trim() || null;
+  const acting = hostSessionFromEnv(process.env);
   return {
-    host: value("WORKIT_HOST") ?? "runtime",
-    session: value("WORKIT_SESSION_ID"),
+    host: acting.host ?? "runtime",
+    session: acting.session,
     agentId: value("WORKIT_AGENT_ID"),
   };
 };
@@ -2144,7 +2147,9 @@ export class TaskStore {
         try {
           ageMs = nowMs - fs.lstatSync(lockPath).mtimeMs;
         } catch {}
-        return classifyLockOwner(payload, ageMs).state === "stale";
+        return (
+          classifyLockOwner(payload, ageMs, localLockHost(), TASK_STORE_LOCK).state === "stale"
+        );
       },
       // The library re-checks the bytes before removal, so a lock replaced
       // after classification is never deleted.

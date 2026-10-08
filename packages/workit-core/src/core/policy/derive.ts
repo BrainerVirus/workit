@@ -226,7 +226,7 @@ const productDecision = (task: TaskRecord, ledger: LedgerView): RuleStatus => {
     : {
         met: false,
         reason:
-          'open product choice: ask the user, then `workit ledger decision "<choice>" --why "<reason>"` (or re-judge productChoiceOpen=false if it is not open)',
+          'open product choice: ask the user, then `workit ledger decision "<choice>" --why "<reason>"` (or, if it is not open, `workit policy assess --judge product-choice=no --why "<reason>"`)',
         decisionIds: [],
       };
 };

@@ -1,6 +1,7 @@
 // Shared plumbing for the forge verbs (`pr`, `ci`, `git push`, `verify-delivery`):
 // flag parsing, forge resolution + identity check, envelope mapping, and the
 // human rendering of a PR status document.
+import { readFileSync } from "node:fs";
 import type { ForgeRunner } from "@brainervirus/workit-core/src/forge/exec";
 import type { PrStatusDoc } from "@brainervirus/workit-core/src/forge/report";
 import {
@@ -16,15 +17,17 @@ import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
 export { parseDuration } from "@brainervirus/workit-core/src/duration";
 import { emit, fail, type Io } from "../output";
 
-/** Test seams: a recorded-fixture runner, a virtual clock and a fake npm. */
+/** Test seams: a recorded-fixture runner, a virtual clock, a fake npm and stdin. */
 export const forgeDeps: {
   runner: ForgeRunner | undefined;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   npm: NpmRunner | undefined;
+  readStdin: () => string;
 } = {
   runner: undefined,
   npm: undefined,
+  readStdin: () => readFileSync(0, "utf8"),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
 };

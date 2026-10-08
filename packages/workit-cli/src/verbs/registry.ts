@@ -82,7 +82,7 @@ export const FAMILY_ACTIONS: Record<Family, Record<string, string>> = {
 };
 
 const POLICY_JUDGE =
-  "--judge risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no [--ref <path>]…";
+  "--judge risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no [--ref <path>]… [--why <reason>]";
 
 // The implicit-task forms of `workit task` (verbs/task.ts), ahead of the family grammar.
 const TASK_IMPLICIT: SubcommandEntry[] = [
@@ -263,18 +263,40 @@ export const VERBS: readonly VerbEntry[] = [
     name: "pr",
     group: "delivery",
     summary:
-      "PR/MR state with failing log tails and next action; open a SHA-verified PR; merge only when READY, verified and granted",
+      "PR/MR state with failing log tails and next action; open a SHA-verified PR; mark ready, edit, list and answer review threads; merge only when READY, verified and granted",
     subcommands: [
       {
         name: "status",
         usage: "workit pr status [--pr <n> | --branch <b>] [--log-lines 60]",
-        summary: "PR/MR state, failing check log tails and the next action",
+        summary: "PR/MR state, failing check log tails, the next action and the command for it",
       },
       {
         name: "create",
         usage:
-          "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f>] | --fill) [--draft]",
+          "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--label <l>]… [--reviewer <login>]… [--draft]",
         summary: "Open a PR/MR for the pushed branch, verified against the local HEAD",
+      },
+      {
+        name: "ready",
+        usage: "workit pr ready [--pr <n>] [--undo]",
+        summary: "Mark a draft PR/MR ready for review (--undo: back to draft)",
+      },
+      {
+        name: "edit",
+        usage:
+          "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]",
+        summary:
+          "Change the title, body, labels, reviewers or base (the default target or the stack parent)",
+      },
+      {
+        name: "threads",
+        usage: "workit pr threads [--pr <n>]",
+        summary: "List unresolved review threads with their ids",
+      },
+      {
+        name: "reply",
+        usage: "workit pr reply [--pr <n>] --thread <id> [--body-file <f|->] [--resolve]",
+        summary: "Reply to an unresolved review thread and/or resolve it",
       },
       {
         name: "merge",
@@ -470,6 +492,12 @@ export const VERBS: readonly VerbEntry[] = [
         name: "check",
         usage: "workit ledger check [--pr <n> | --branch <b>]",
         summary: "Whether the branch head carries an accepted non-author verdict",
+      },
+      {
+        name: "verify-integrity",
+        usage: "workit ledger verify-integrity",
+        summary:
+          "Rows outside the CLI's hash chain (hand-written or changed); reports, never blocks",
       },
       {
         name: "standing",
