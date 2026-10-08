@@ -61,7 +61,7 @@ const PROMPT_INTENTS: ReadonlyArray<readonly [WorkitSkill, RegExp]> = [
   ],
   [
     "workit-ship",
-    /\b(ship (?:it|this|the)|babysit|open (?:a|the) (?:PR|pr|MR|mr)(?=\s*$|\s+(?:for|to|on|with|and)\b|[.!,;])|merge (?:the|this|my) (?:PR|pr|MR|mr|branch)|(?:get|until|make) CI (?:is )?green)\b/i,
+    /\b(ship (?:it|this|the)|babysit|open (?:a|the) (?:PR|pr|MR|mr)(?=\s*$|\s+(?:for|to|on|with|and|against|into|from|after|once)\b|[.!,;])|merge (?:the|this|my) (?:PR|pr|MR|mr|branch)|(?:get|until|make) CI (?:is )?green)\b/i,
   ],
   ["workit-bdd", /\b(BDD|TDD|acceptance criteria|Given\/When\/Then)(?![\w/])/],
   ["workit-test-audit", /\b(test audit|audit the tests|tautolog\w*|weak tests)\b/i],
@@ -71,7 +71,7 @@ const PROMPT_INTENTS: ReadonlyArray<readonly [WorkitSkill, RegExp]> = [
     /\b(fan(?: |-)?out|parallelize|parallel agents|agent swarm|swarm of agents)\b/i,
   ],
   ["workit-verify-app", /\b(verify the app|smoke test|prove it works)\b/i],
-  ["workit-retro", /\b((?:a|the) retro(?![-\w.])|retrospective)/i],
+  ["workit-retro", /\b((?:a|the) retro(?![-\w]|\.\w)|retrospective)/i],
   ["workit-architecture", /\b(deepen (?:the )?modules|architecture (?:review|pass|audit))\b/i],
   [
     "workit-shape",
@@ -174,7 +174,7 @@ export const skillReadIn = (command: string, dialect: ShellDialect = "posix"): s
   for (const { words } of segmentsOf(command, dialect)) {
     if (!READERS.has((words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase())) continue;
     // `sed -i` edits the file; it does not load it.
-    if (words.some((word) => /^-i|^--in-place/.test(word))) continue;
+    if (words.some((word) => /^(?:-i(?:\.\w+)?|--in-place(?:=.*)?)$/.test(word))) continue;
     for (const word of words.slice(1)) {
       const skill = skillFileIn(word);
       if (skill) return skill;
