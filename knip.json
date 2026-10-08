@@ -48,7 +48,12 @@
       "project": ["hooks/**/*.ts!", "mcp/**/*.ts!", "scripts/**/*.ts!"]
     },
     "packages/workit-codex": {
-      "entry": ["hooks/workit-hook.ts!", "scripts/launch-mcp.ts!", "scripts/build.ts!"],
+      "entry": [
+        "hooks/launcher.ts!",
+        "hooks/workit-hook.ts!",
+        "scripts/launch-mcp.ts!",
+        "scripts/build.ts!"
+      ],
       "project": ["hooks/**/*.ts!", "scripts/**/*.ts!"]
     },
     "packages/workit-pi": {

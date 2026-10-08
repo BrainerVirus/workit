@@ -51,6 +51,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { vcsConfig } from "./core/vcs-config";
 import { GIT_TIMEOUTS, currentBranch, headSha, patchId, worktreeTree } from "./git/rev";
+import { hostSessionFromEnv } from "./host-session";
 import { resolveStore } from "./store/paths";
 
 export const LEDGER_VERSION = 1;
@@ -362,15 +363,16 @@ export function ledgerPath(cwd: string): LedgerResult<string> {
 // ---------------------------------------------------------------------------
 // append
 
-/** The acting identity from the environment. */
+/** The acting identity from the environment (host-session.ts: WORKIT_SESSION_ID, else the host's own shell session id). */
 export function actorFromEnv(env: NodeJS.ProcessEnv): LedgerActor {
   const value = (key: string): string | null => {
     const raw = env[key]?.trim();
     return raw ? raw : null;
   };
+  const acting = hostSessionFromEnv(env);
   return {
-    host: value("WORKIT_HOST") ?? "cli",
-    session: value("WORKIT_SESSION_ID"),
+    host: acting.host ?? "cli",
+    session: acting.session,
     agentId: value("WORKIT_AGENT_ID"),
   };
 }
@@ -681,6 +683,18 @@ export function appendObserved(
   options: AppendOptions = {},
 ): LedgerResult<Record<string, unknown>> {
   return appendRaw(cwd, { ...row, observer: "workit_cli" }, options);
+}
+
+/**
+ * A row a host hook observed (a raw shell `git commit`), stamped
+ * `observer:"host_hook"`: weaker than the CLI's own observation, but enough
+ * to name the session that authored a commit (D18 honest-agent model).
+ */
+export function appendHookObserved(
+  cwd: string,
+  row: Record<string, unknown> & { type: string; actor: LedgerActor },
+): LedgerResult<Record<string, unknown>> {
+  return appendRaw(cwd, { ...row, observer: "host_hook" }, {});
 }
 
 // ---------------------------------------------------------------------------

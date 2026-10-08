@@ -41,7 +41,8 @@ forces one runtime; `WORKIT_SHIM_TRACE=1 workit …` prints which entry ran.
 | --- | --- |
 | `SessionStart` (startup, resume, clear, compact, fork) | Injects the Workit contract and the branch's task context; exports `WORKIT_HOST` and `WORKIT_SESSION_ID` to the session shell |
 | `UserPromptSubmit` | Re-injects task context only when it changed |
-| `PreToolUse` on `Bash`/`PowerShell` and `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | Denies protected or non-compliant branch operations, and working-tree edits while the branch task has an open product choice or needs a plan (the before-write gate), with `permissionDecision: "deny"` and the unblock; never answers `allow`, so your permission prompts stay in charge. Plain shell commands, and edits in a checkout without Workit tasks, are answered before the runtime loads |
+| `PreToolUse` on `Bash`/`PowerShell` and `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | Denies protected or non-compliant branch operations, and working-tree edits while the branch task has an open product choice or needs a plan (the before-write gate), and in a Workit workspace raw gate bypasses (`gh pr merge`, `glab mr merge`, a push onto a protected branch), with `permissionDecision: "deny"` and the unblock. Routine raw `git commit`/`git push`/`gh pr create` get an `additionalContext` nudge toward the workit verb ([hosts](hosts.md)). Never answers `allow`, so your permission prompts stay in charge. Plain shell commands, and edits in a checkout without Workit tasks, are answered before the runtime loads; so is a PostToolUse whose command has no `commit` |
+| `PostToolUse` on `Bash`/`PowerShell` | Records a raw `git commit` that moved HEAD (noted by PreToolUse) as the session's `commit.recorded` ledger row, so its own verdict is not independent |
 | `SubagentStart` | Tells the `implementer` it works in its own worktree; tells other subagents they are read-only |
 
 Hooks fail open: if the runtime cannot start (no Bun for a pin, missing

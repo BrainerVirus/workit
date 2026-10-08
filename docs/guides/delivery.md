@@ -9,24 +9,57 @@ observed in the run ledger. Each one checks the workspace
 ```bash
 workit git branch feature/x [--base <b>] [--track <t>]   # policy-checked name, from the fetched default target
 workit git commit -m "feat: x" -- <paths>       # convention-checked; --all takes every change
+workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last commit; -F <file|-> reads the message
+workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]
 ```
 
 - `git branch` and `git commit` apply the workspace branch and commit policy,
   never commit to a protected branch, and never sweep in changes you did not
-  name. Commits carry a `Workit-Session:` trailer.
+  name. Commits carry a `Workit-Session:` trailer. An amend keeps the old
+  commit's trailers (`--no-edit` keeps the whole message; a new `-m`/`-F`
+  message gets the old trailers carried over) and never repeats one.
+  `--amend` refuses a commit that is already on the default target or a
+  protected branch, and suggests a forced push only when the amended commit
+  was on the branch's own upstream. With no configured branch policy,
+  the repository's local and `origin` branches pick it (`workit doctor` shows
+  `preset: detected (…)`): `develop` means gitflow, `main` alone
+  github-flow, `master` alone trunk-based.
+- During a rebase, merge, cherry-pick or revert, `git branch`, `git commit`
+  and `git push` refuse and say how to continue or abort it. `git commit` is
+  allowed where a commit is the next step: an interactive rebase stopped at
+  `edit`, and a revert or merge without conflicts (`--no-commit`).
+- A failing hook's output is kept whole (head and tail past 200 lines, lines
+  cut at 1000 characters).
 - `git push` never pushes a protected branch and succeeds only when the remote
   tip equals the local SHA afterwards. It forces only with
   `--force-with-lease`, leased on the tip Workit itself last pushed (otherwise
   `--expect <sha>`), and refuses to drop remote commits you never had unless
-  you pass `--overwrite-unintegrated`.
+  you pass `--overwrite-unintegrated`. When the push is rejected because you
+  amended or rebased commits that were already pushed, it says to push with
+  `--force-with-lease`, not to fetch and rebase. Content that only matches by
+  patch (no merge commits) is named in the advice but still needs
+  `--overwrite-unintegrated`.
+- Before a push to GitHub or GitLab, `git push` checks that the forge login is
+  the workspace `vcs.account`, within 5 seconds in total. Evidence against the
+  account blocks the push: the forge names another account, gh has no login
+  for it, the credential is rejected, or `vcs.tokenFile` is broken. When
+  gh/glab is missing, slow or offline, or the remote is another forge
+  (Bitbucket, Gitea, an ssh alias workit cannot resolve), git pushes anyway
+  and prints `warning: identity check skipped: <why>` on stderr (`warnings`
+  in `--json`); the `push.verified` ledger row records the outcome under
+  `identity`.
 
 ## Pull requests and CI
 
 ```bash
-workit pr create (--title <t> | --fill) [--base <b> | --track <t>] [--draft]
-workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next and babysit step
-workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 4 still pending
+workit pr create (--title <t> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [--label <l>]… [--reviewer <login>]… [--draft]
+workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
+workit pr ready [--undo]               # mark the draft ready (or back to draft)
+workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
+workit pr threads                      # unresolved review threads, one line each with its id
+workit pr reply --thread <id> [--body-file <f|->] [--resolve]
+workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
 workit pr merge [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
@@ -36,6 +69,22 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   that SHA as the PR head. It ends with a `next:` line (`next` in `--json`):
   a non-author verifies the head, then what the effective endpoint does
   (stop, babysit, or land after verification).
+- `pr create --fill` takes the title from the oldest commit and the body from
+  the commit messages (one commit: its body; several: each subject with its
+  body), leaving out Workit's `Workit-Session:` trailer. `--body-file -` reads
+  the body from stdin.
+- `pr status` prints the command that clears `next` on a `do:` line
+  (`nextHint` in `--json`), e.g. `workit pr ready --pr 12` for a draft.
+- `pr ready`, `pr edit` and `pr reply` need the `pr` grant and an open PR.
+  `pr edit --base` takes a plain branch name and retargets only to the
+  branch's default target (from the release track that owns the PR's current
+  base; an undetermined line refuses) or to its stack parent (the base
+  `workit git branch` recorded, or the branch below it in its stack, never a
+  descendant or sibling), never to another protected branch. Labels and
+  reviewers are checked before any write: no commas, GitLab reviewers are
+  usernames, and a GitHub `org/team` must belong to the repository's owner. On GitLab, draft state lives in the title
+  (`Draft:`, `[Draft]`, `(Draft)`), and a new title keeps it. `pr reply` acts
+  only on an unresolved thread of that PR.
 - With [release tracks](configuration.md#release-tracks), the default base of
   `git branch`, the default target of `pr create` and the default trunk of
   `stack plan` come from the track the branch belongs to; `pr merge` onto a
@@ -50,6 +99,12 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   satisfies the gate.
 - `verify-delivery` answers "did it land?" from the remote, never from local
   state.
+- `ci wait --timeout` bounds the whole command, from resolving the forge and
+  checking the account to the last poll. A conflicting PR stops the wait at
+  once (`blocked: conflicts`): CI does not run on it.
+- A forge refusal (HTTP 405/422) shows the forge's own reason, such as "No
+  commits between main and feature/x". Network errors and 5xx answers exit 5
+  (`unavailable`, retry), not 1.
 
 ### Babysitting a PR
 
@@ -62,9 +117,9 @@ babysitting it without asking. `pr status` names the step in `babysit`:
 | `wait` | checks pending | runs `workit ci wait`, in the background where the host allows |
 | `wait-forge` | CI done, but the PR is in a merge queue or the forge is still computing mergeability | re-checks `workit pr status` in the background with backoff, at most 5 times, then stops and reports |
 | `fix-ci` | a gating check failed | one `workit ci rerun --failed --reason flake\|infra` for a clear flake or infra failure; otherwise reproduces with `workit check`, fixes and pushes |
-| `address-threads` | unresolved threads or changes requested | fixes or replies with a reasoned dismissal |
+| `address-threads` | unresolved threads or changes requested | lists them with `workit pr threads`, fixes or replies with a reasoned dismissal (`workit pr reply`) |
 | `update-branch` | conflicts or a rebase the forge requires | rebases its own branch (or `workit stack sync`) and pushes with `--force-with-lease` |
-| `mark-ready` | a draft with nothing else open (even with a review pending) | marks the PR ready for review |
+| `mark-ready` | a draft with nothing else open (even with a review pending) | runs `workit pr ready` |
 | `ready` | nothing left for the agent; a human approval may still be pending | stops (`green`), or lands with `workit pr merge` once the verdict is accepted (`merged`) |
 | `merged` | the PR is merged | observes it with `workit verify-delivery merge` |
 
@@ -81,7 +136,13 @@ the base keeps moving, or after 3 failed fix attempts on the same check.
 GitHub is read through `gh api`, GitLab through `glab api`. The forge is
 picked from the push remote, and the workspace account's credential is passed
 on every call without switching your active login. A login that is not the
-workspace `vcs.account` is `blocked` (exit 3) with a hint.
+workspace `vcs.account` is `blocked` (exit 3) with a hint. A linked worktree
+outside every workspace glob (`~/.codex/worktrees/…`, `../x`) uses the
+workspace of the checkout it was added from. A worktree inside a glob takes
+that glob's workspace, even when it differs from the main checkout's: the
+worktree's own path wins. A remote whose forge differs
+from the workspace `vcs.provider` blocks the PR and CI verbs (`forge_mismatch`)
+until a workspace with a narrower glob names the right provider.
 
 ## Stacks
 

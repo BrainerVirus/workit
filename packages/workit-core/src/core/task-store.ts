@@ -32,6 +32,7 @@ import {
   type FileLockSyncHandle,
   type FileLockSyncAcquireOptions,
 } from "@openclaw/fs-safe/file-lock";
+import { hostSessionFromEnv } from "../host-session";
 import { packageRoot } from "./package-root";
 import {
   SCHEMA_VERSION,
@@ -352,9 +353,10 @@ const drop = (lock: string) => {
 
 const envActor = (): EventActor => {
   const value = (key: string) => process.env[key]?.trim() || null;
+  const acting = hostSessionFromEnv(process.env);
   return {
-    host: value("WORKIT_HOST") ?? "runtime",
-    session: value("WORKIT_SESSION_ID"),
+    host: acting.host ?? "runtime",
+    session: acting.session,
     agentId: value("WORKIT_AGENT_ID"),
   };
 };

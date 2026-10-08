@@ -16,14 +16,17 @@ import {
 import {
   handleHook,
   PI_DESCRIPTOR,
+  rawGitPre,
   writePaths,
   type HookEvent,
+  type HookInput,
 } from "@brainervirus/workit-core/hooks";
 import type {
   ExtensionContext,
   AgentToolResult,
   ToolCallEvent,
   ToolDefinition,
+  ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { piContext } from "./context";
 
@@ -109,29 +112,38 @@ export const registerWorkitTools = (
   });
 };
 
+const hookInput = (ctx: ExtensionContext, event: HookEvent): HookInput => ({
+  host: "pi",
+  cwd: ctx.cwd,
+  session: {
+    id: process.env.WORKIT_PI_WORKER_SESSION || ctx.sessionManager?.getSessionId() || "",
+    agentId: null,
+    agentType: null,
+    parentId: null,
+  },
+  permissionMode: null,
+  transcriptPath: null,
+  event,
+});
+
 export const enforceToolPolicy = (
   event: ToolCallEvent,
   ctx: ExtensionContext,
 ): { block: true; reason: string } | undefined => {
-  // The shared hook handler: branch policy and the before-write gate (S17).
+  // The shared hook handler: branch policy, raw git/forge gate bypasses and
+  // the before-write gate (S17). Pi's tool_call can only block, so a raw-git
+  // nudge is added to the tool result instead (observeToolResult).
   const gate = (hookEvent: HookEvent) => {
-    const decision = handleHook(
-      {
-        host: "pi",
-        cwd: ctx.cwd,
-        session: { id: "", agentId: null, agentType: null, parentId: null },
-        permissionMode: null,
-        transcriptPath: null,
-        event: hookEvent,
-      },
-      { descriptor: PI_DESCRIPTOR, addendum: null },
-    );
+    const decision = handleHook(hookInput(ctx, hookEvent), {
+      descriptor: PI_DESCRIPTOR,
+      addendum: null,
+    });
     return decision.kind === "deny" ? { block: true as const, reason: decision.reason } : undefined;
   };
   if (event.toolName === "bash") {
     const command = (event.input as { command?: unknown } | undefined)?.command;
     return typeof command === "string"
-      ? gate({ kind: "shell.pre", command, toolUseId: null })
+      ? gate({ kind: "shell.pre", command, toolUseId: event.toolCallId ?? null })
       : undefined;
   }
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
@@ -143,4 +155,34 @@ export const enforceToolPolicy = (
     paths: writePaths(event.input),
     toolUseId: null,
   });
+};
+
+/**
+ * A finished bash call: a raw `git commit` is recorded for the session
+ * (tool_result is Pi's post-tool event), and a raw git/forge command gets
+ * the workit nudge appended to its output. Never throws.
+ */
+export const observeToolResult = (
+  event: ToolResultEvent,
+  ctx: ExtensionContext,
+): { content: ToolResultEvent["content"] } | undefined => {
+  try {
+    if (event.toolName !== "bash" || event.isError) return undefined;
+    const command = (event.input as { command?: unknown } | undefined)?.command;
+    if (typeof command !== "string") return undefined;
+    const post = hookInput(ctx, {
+      kind: "shell.post",
+      command,
+      stdout: "",
+      exitCode: null,
+      toolUseId: event.toolCallId,
+    });
+    handleHook(post, { descriptor: PI_DESCRIPTOR, addendum: null });
+    const nudge = rawGitPre(post, command);
+    return nudge.kind === "context"
+      ? { content: [...event.content, { type: "text", text: nudge.text }] }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 };

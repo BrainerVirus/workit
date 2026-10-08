@@ -71,8 +71,11 @@ Shell writes are recognized for redirects, `tee`, `sed -i`/`perl -i`,
 `cp`/`mv`/`rm`/`touch`/`mkdir`, `dd` and working-tree git (`apply`, `restore`,
 `checkout --`); interpreters and formatters are not detected.
 
-**Author ≠ verifier.** The acting session is `WORKIT_SESSION_ID`. Commits made
-with `workit git commit` carry a `Workit-Session:` trailer, so the authoring
+**Author ≠ verifier.** The acting session is `WORKIT_SESSION_ID`, else the
+host's own shell session id (Codex `CODEX_THREAD_ID`, OpenCode
+`OPENCODE_SESSION_ID`, Pi `PI_SESSION_ID`; see [hosts](hosts.md)). Commits made
+with `workit git commit` carry a `Workit-Session:` trailer, and the host hooks
+record raw `git commit`s for the session that ran them, so the authoring
 session's verdict is never accepted. A lead starts each verifier with its own
 id (`WORKIT_SESSION_ID=<lead>-v<n>`; on Claude Code the SubagentStart hook does
 this). `--as <role>` only keeps verifier ids distinct; it never makes the

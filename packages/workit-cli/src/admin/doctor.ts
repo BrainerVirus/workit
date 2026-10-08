@@ -31,7 +31,12 @@ import {
   describeReleaseTracks,
   releaseTracksReport,
 } from "@brainervirus/workit-core/src/core/release-tracks";
-import { getDiagnosticLogger, isConfigObject } from "@brainervirus/workit-core/src/core/config";
+import { repoBranchPreset } from "@brainervirus/workit-core/src/core/branch-policy";
+import {
+  getDiagnosticLogger,
+  isConfigObject,
+  readConfigFromDir,
+} from "@brainervirus/workit-core/src/core/config";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
@@ -44,6 +49,8 @@ import {
 import {
   readWorkspacesResult,
   resolveWorkspaceFrom,
+  resolveWorkspacePolicy,
+  type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces";
 import {
   CLAUDE_MARKETPLACE_NAME,
@@ -67,6 +74,7 @@ type DoctorCheckId =
   | "codex_pin"
   | "opencode_version"
   | "claude_plugin"
+  | "workit_on_path"
   | "assets"
   | "launcher"
   | "utility"
@@ -231,11 +239,24 @@ const pluginEntries = (cfg: Record<string, any> | null): string[] => {
   ];
 };
 
-const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
+// win32 executables carry an .exe suffix (bun.exe, git.exe), so probe both
+// names — statSync with the bare name would never find them.
+const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean =>
+  findOnPath(process.platform === "win32" ? [name, `${name}.exe`] : [name], env) !== null;
+
+/** Names a shell resolves for `name` on win32: one per PATHEXT extension
+ * (npm installs global bins as `workit.cmd`). Elsewhere just `name`. */
+const pathextNames = (name: string, env: NodeJS.ProcessEnv): string[] =>
+  process.platform === "win32"
+    ? (env.PATHEXT ?? process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+        .split(";")
+        .filter(Boolean)
+        .map((ext) => `${name}${ext.toLowerCase()}`)
+    : [name];
+
+/** Absolute path of the first executable among `names` on env.PATH, or null. */
+const findOnPath = (names: string[], env: NodeJS.ProcessEnv): string | null => {
   const dirs = (env.PATH ?? process.env.PATH ?? "").split(path.delimiter);
-  // win32 executables carry an .exe suffix (bun.exe, git.exe), so probe both
-  // names — statSync with the bare name would never find them.
-  const names = process.platform === "win32" ? [name, `${name}.exe`] : [name];
   for (const dir of dirs) {
     if (!dir) continue;
     for (const candidateName of names) {
@@ -243,13 +264,13 @@ const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
       try {
         const st = statSync(candidate);
         if (process.platform !== "win32" && (st.mode & 0o111) === 0) continue;
-        return true;
+        return candidate;
       } catch {
         /* keep scanning */
       }
     }
   }
-  return false;
+  return null;
 };
 
 const versionOf = (bin: string, env: NodeJS.ProcessEnv, timeout?: number): string | null => {
@@ -1219,6 +1240,23 @@ const checkMalformedConfig = (res: Resolved): DoctorCheck => {
   };
 };
 
+/** The effective branch preset, marked when the repository's branches chose it. */
+const branchPresetLine = (res: Resolved, workspace: WorkspaceConfig | null): string[] => {
+  try {
+    const resolved = resolveWorkspacePolicy(
+      readConfigFromDir(res.configDir),
+      workspace,
+      undefined,
+      () => repoBranchPreset(res.cwd),
+    );
+    if (resolved.status === "invalid") return [];
+    const { preset, detected } = resolved.branchPolicy;
+    return [`preset: ${detected ? `detected (${preset})` : preset}`];
+  } catch {
+    return [];
+  }
+};
+
 const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
   const result = readWorkspacesResult(res.configDir);
   const file = result.path;
@@ -1226,7 +1264,7 @@ const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
     return {
       id: "workspace_mismatch",
       status: "pass",
-      detail: "no workspaces configured",
+      detail: ["no workspaces configured", ...branchPresetLine(res, null)].join("; "),
     };
   if (result.status === "malformed" || result.status === "invalid")
     return {
@@ -1256,7 +1294,7 @@ const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
     // to. Reader issues or an undetermined track warn; a critical field fails.
     const tracks = releaseTracksReport(res.cwd);
     const lines = describeReleaseTracks(tracks);
-    const detail = [matched, ...lines].join("; ");
+    const detail = [matched, ...branchPresetLine(res, match), ...lines].join("; ");
     if (tracks.error)
       return {
         id: "workspace_mismatch",
@@ -1678,12 +1716,100 @@ const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: bool
   };
 };
 
+const CLI_PACKAGE = "@brainervirus/workit-cli";
+const SEMVER = /\d+\.\d+\.\d+/;
+
+// One probe per binary identity per process: a long-lived caller re-running
+// the doctor does not respawn an unchanged binary, and a replaced one re-probes.
+const WORKIT_PROBE_TIMEOUT_MS = 10_000;
+type WorkitProbe = { version: string | null; timedOut: boolean };
+const workitVersions = new Map<string, WorkitProbe>();
+const workitVersionAt = (bin: string, env: NodeJS.ProcessEnv): WorkitProbe => {
+  let key: string;
+  try {
+    const st = statSync(bin);
+    key = `${bin}:${st.ino}:${st.size}:${st.mtimeMs}`;
+  } catch {
+    return { version: null, timedOut: false };
+  }
+  const cached = workitVersions.get(key);
+  if (cached) return cached;
+  // win32 refuses to spawn a .cmd/.bat without a shell (CVE-2024-27980).
+  const viaShell = process.platform === "win32" && /\.(?:cmd|bat)$/i.test(bin);
+  const r = viaShell
+    ? spawnSync(`"${bin}" --version`, {
+        encoding: "utf8",
+        env,
+        timeout: WORKIT_PROBE_TIMEOUT_MS,
+        shell: true,
+      })
+    : spawnSync(bin, ["--version"], { encoding: "utf8", env, timeout: WORKIT_PROBE_TIMEOUT_MS });
+  const timedOut = r.error !== undefined && "code" in r.error && r.error.code === "ETIMEDOUT";
+  const version = r.status === 0 ? ((r.stdout ?? "").match(SEMVER)?.[0] ?? null) : null;
+  const probe = { version: timedOut ? null : version, timedOut };
+  workitVersions.set(key, probe);
+  return probe;
+};
+
+/**
+ * Agents and hooks shell out to `workit`, so the binary on PATH must run, and
+ * should not be older than the host plugins that call it. Advisory only: a
+ * missing or older CLI warns with the install command and never changes the
+ * exit code. Plugins republish only when their payload changes, so a CLI newer
+ * than a plugin is normal and passes.
+ */
+const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
+  const plugins = [
+    ...claudeWorkitInstalls(res.home, res.env, res.cwd).map((i) => ({
+      label: `Claude Code plugin ${i.id}`,
+      version: i.version,
+    })),
+    { label: "Cursor plugin", version: installedPluginVersion(res) },
+    { label: "OpenCode plugin", version: installedOpenCodeCacheVersion(res) },
+  ].filter((p): p is { label: string; version: string } => p.version !== null);
+  const newest = plugins.reduce<{ label: string; version: string } | null>(
+    (best, p) => (best && semverAtLeast(best.version, p.version) ? best : p),
+    null,
+  );
+  const target = newest?.version ?? "latest";
+  const fix = `npm i -g ${CLI_PACKAGE}@${target} (or run it without a global install: npx -y ${CLI_PACKAGE}@${target} <command>)`;
+  const bin = findOnPath(pathextNames("workit", res.env), res.env);
+  if (!bin) {
+    return { id: "workit_on_path", status: "warn", detail: "no workit on PATH", fix };
+  }
+  const { version, timedOut } = workitVersionAt(bin, res.env);
+  if (!version) {
+    return {
+      id: "workit_on_path",
+      status: "warn",
+      detail: timedOut
+        ? `${bin} does not run (\`workit --version\` timed out after ${WORKIT_PROBE_TIMEOUT_MS / 1000}s)`
+        : `${bin} does not run (\`workit --version\` failed)`,
+      fix,
+    };
+  }
+  if (newest && versionBehind(version, newest.version)) {
+    return {
+      id: "workit_on_path",
+      status: "warn",
+      detail: `workit ${version} at ${bin} is older than the ${newest.label} ${newest.version}`,
+      fix,
+    };
+  }
+  return {
+    id: "workit_on_path",
+    status: "pass",
+    detail: `workit ${version} at ${bin}${newest ? ` (newest host plugin ${newest.version})` : ""}`,
+  };
+};
+
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
   checkCodexPin,
   checkOpencodeVersion,
   checkClaudePlugin,
+  checkWorkitOnPath,
   checkAssets,
   checkLauncher,
   checkUtility,

@@ -12,17 +12,28 @@ const dist = path.join(target, "dist");
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 
-for (const [entry, output] of [
-  ["hooks/workit-hook.ts", "workit-hook.js"],
-  ["scripts/launch-mcp.ts", "launch-mcp.js"],
+// The hook entry is split: dist/workit-hook.js answers the calls that cannot
+// matter without loading the Workit runtime chunk (hooks/launcher.ts).
+for (const [entry, output, split] of [
+  ["hooks/launcher.ts", "workit-hook.js", true],
+  ["scripts/launch-mcp.ts", "launch-mcp.js", false],
 ] as const) {
   const result = spawnSync(
     process.execPath,
     [
       "build",
       path.join(packageDir, entry),
-      "--outfile",
-      path.join(dist, output),
+      ...(split
+        ? [
+            "--splitting",
+            "--outdir",
+            dist,
+            "--entry-naming",
+            output,
+            "--chunk-naming",
+            "workit-hook-[hash].js",
+          ]
+        : ["--outfile", path.join(dist, output)]),
       "--target",
       "node",
       "--format",

@@ -140,6 +140,28 @@ export type MergeResult = {
   mergeSha: string | null;
 };
 
+/** The editable fields of a PR/MR (`workit pr ready|edit`). */
+export type PrMeta = {
+  number: number;
+  url: string;
+  state: PrState;
+  draft: boolean;
+  title: string;
+  base: string;
+  headBranch: string;
+};
+
+/** What `workit pr edit` changes; unset fields are left alone. */
+export type PrEdit = {
+  title?: string;
+  body?: string;
+  base?: string;
+  addLabels: string[];
+  removeLabels: string[];
+  /** Logins; on GitHub `org/team` requests a team. */
+  addReviewers: string[];
+};
+
 /** A repository as the forge sees it: id and the repo it was forked from. */
 export type RepoInfo = { id: number | null; parent: string | null };
 
@@ -163,4 +185,14 @@ export interface Forge {
   merge(n: number, options: { sha: string; method: MergeMethod }): ForgeResult<MergeResult>;
   /** Retarget a PR/MR to another base branch (S12 stacks). */
   updateBase(n: number, base: string): ForgeResult<void>;
+  /** Title, draft flag, base and state of one PR/MR. */
+  prMeta(n: number): ForgeResult<PrMeta>;
+  /** Mark a draft ready (`draft: false`) or convert it back to a draft. */
+  setDraft(n: number, draft: boolean): ForgeResult<void>;
+  editPr(n: number, edit: PrEdit): ForgeResult<void>;
+  /** Reply to a review thread (GitHub review thread id, GitLab discussion id). */
+  replyThread(n: number, thread: string, body: string): ForgeResult<{ url: string | null }>;
+  resolveThread(n: number, thread: string): ForgeResult<void>;
+  /** One review thread of PR `n` read directly: null when it is not on that PR. */
+  threadState(n: number, thread: string): ForgeResult<"open" | "resolved" | null>;
 }

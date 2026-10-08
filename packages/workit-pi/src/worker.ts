@@ -228,6 +228,9 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     WORKIT_PI_TASK_ID: taskId ?? "",
     WORKIT_PI_WORKER_ID: workerId ?? "",
     WORKIT_PI_WORKER_SESSION: sessionId,
+    // The worker's `workit` calls (commits, verdicts) act as the worker, never as its lead.
+    WORKIT_HOST: "pi",
+    WORKIT_SESSION_ID: sessionId,
     WORKIT_PI_WORKER_ROLE: assignment.role,
     WORKIT_PI_WORKER_SCOPE: JSON.stringify(assignment.scope),
   };

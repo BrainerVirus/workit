@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -99,6 +99,45 @@ test("a host plugin or MCP bundle loads no setup/doctor/admin modules", () => {
         entry,
       ).toEqual([]);
     }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+// Codex runs its hook on every tool call plus PostToolUse after every shell
+// call. The entry answers the calls that cannot matter (non-git shell
+// commands, PostToolUse without a commit) before the runtime chunk loads, so
+// it must stay a few hundred bytes; the runtime still answers the rest.
+test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab commands", () => {
+  const out = mkdtempSync(path.join(tmpdir(), "workit-codex-entry-"));
+  try {
+    const built = spawnSync(
+      process.execPath,
+      [path.join(ROOT, "packages/workit-codex/scripts/build.ts"), out],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    expect(built.status, built.stderr).toBe(0);
+    const entry = path.join(out, "dist", "workit-hook.js");
+    expect(statSync(entry).size).toBeLessThanOrEqual(4_096);
+    const repo = path.join(out, "repo");
+    spawnSync("git", ["init", "-q", "-b", "feature/x", repo]);
+    mkdirSync(path.join(repo, ".git", "workit"));
+    const run = (payload: Record<string, unknown>) =>
+      JSON.parse(
+        spawnSync("node", [entry], {
+          input: JSON.stringify({ session_id: "t-1", cwd: repo, tool_name: "Bash", ...payload }),
+          encoding: "utf8",
+        }).stdout,
+      );
+    expect(
+      run({ hook_event_name: "PostToolUse", tool_input: { command: "ls" }, tool_response: "" }),
+    ).toEqual({ hookSpecificOutput: { hookEventName: "PostToolUse" } });
+    expect(run({ hook_event_name: "PreToolUse", tool_input: { command: "npm test" } })).toEqual({
+      hookSpecificOutput: { hookEventName: "PreToolUse" },
+    });
+    expect(
+      run({ hook_event_name: "PreToolUse", tool_input: { command: "gh pr merge 3" } }),
+    ).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
   } finally {
     rmSync(out, { recursive: true, force: true });
   }

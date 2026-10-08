@@ -86,10 +86,11 @@ test("hooks.json registers the designed events through the exec-form launcher, n
     }>
   >;
   expect(Object.keys(hooks).toSorted()).toEqual(
-    // Only events whose hook changes Claude's behavior are registered: Stop,
-    // SubagentStop and PostToolUse are no-ops until the evidence model lands,
-    // and PreCompact cannot inject context (SessionStart compact restores it).
-    ["PreToolUse", "SessionStart", "SubagentStart", "UserPromptSubmit"].toSorted(),
+    // Only events whose hook changes Claude's behavior are registered: Stop
+    // and SubagentStop are no-ops until the evidence model lands, and
+    // PreCompact cannot inject context (SessionStart compact restores it).
+    // PostToolUse records raw git commits for the session.
+    ["PostToolUse", "PreToolUse", "SessionStart", "SubagentStart", "UserPromptSubmit"].toSorted(),
   );
   for (const [event, groups] of Object.entries(hooks))
     for (const group of groups)
@@ -105,6 +106,12 @@ test("hooks.json registers the designed events through the exec-form launcher, n
     ["Bash", undefined],
     ["PowerShell", undefined],
     ["Edit|Write|MultiEdit|NotebookEdit", undefined],
+  ]);
+  // No `if` filter: it misses `cd x && git commit`, `bash -c` and absolute git
+  // paths. The launcher answers a PostToolUse without `commit` before the
+  // runtime loads.
+  expect(hooks.PostToolUse.map((group) => [group.matcher, group.hooks[0].if])).toEqual([
+    ["Bash|PowerShell", undefined],
   ]);
 });
 
