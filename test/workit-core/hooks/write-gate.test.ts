@@ -134,6 +134,16 @@ test("G a high-risk judgment, T Cursor and Pi deny code writes before a plan; tr
   ).toBeUndefined();
 });
 
+test("G an open product choice, W a Pi or OpenCode write names no file, T it is gated as an unknown target", () => {
+  const { root } = judged({ productChoiceOpen: "yes" });
+  const ctx = { cwd: root, isProjectTrusted: () => true } as never;
+  expect(enforceToolPolicy({ toolName: "write", input: {} } as never, ctx)).toMatchObject({
+    block: true,
+  });
+  expect(opencode(root, "edit", []).effect).toBe("deny");
+  expect(opencode(root, "edit", ["docs/notes.md"]).effect).toBe("allow");
+});
+
 const codexPatch = (root: string, patch?: string) =>
   dispatchHook(
     codexAdapter,
