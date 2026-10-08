@@ -48,6 +48,20 @@ test("given a CLI bundle that inlined a registry copy of core, the guard fails n
   expect(run.stderr).not.toContain("workit-mcp/dist");
 });
 
+test("given Windows-style module headers, the guard still tells a registry copy from workspace core", () => {
+  const root = fixture({
+    "packages/workit-cli/dist/index.js":
+      "// packages\\workit-cli\\node_modules\\@brainervirus\\workit-core\\src\\ledger.ts\n",
+    "packages/workit-mcp/dist/index.js": "// packages\\workit-core\\src\\ledger.ts\n",
+  });
+  const run = guard(root);
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain(
+    "packages/workit-cli/dist/index.js: 1 registry-copy modules, e.g. packages/workit-cli/node_modules/@brainervirus/workit-core/src/ledger.ts",
+  );
+  expect(run.stderr).not.toContain("workit-mcp/dist");
+});
+
 test("given bundles that inline workspace core, the guard passes", () => {
   const root = fixture({
     "packages/workit-cli/dist/index.js": `${CORE_BUNDLE}// node_modules/ink/build/index.js\n`,

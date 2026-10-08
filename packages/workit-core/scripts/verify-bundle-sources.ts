@@ -15,24 +15,29 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { join, relative, resolve, sep } from "node:path";
 import { RELEASE_PACKAGES } from "./analyze-release-scope";
 
-const REGISTRY_COPY = /^\/\/ (.*node_modules\/@brainervirus\/.+)$/gmu;
-const WORKSPACE_CORE = /^\/\/ packages\/workit-core\/src\//mu;
+// Separator-agnostic: a Windows build may write `\` in module headers.
+const REGISTRY_COPY = /^\/\/ (.*node_modules[\\/]@brainervirus[\\/].+)$/gmu;
+const WORKSPACE_CORE = /^\/\/ packages[\\/]workit-core[\\/]src[\\/]/mu;
 /** bun's unminified output averages well under 100 bytes a line; --minify is thousands. */
 const MINIFIED_BYTES_PER_LINE = 1000;
 
 const entries = (dir: string): string[] => (existsSync(dir) ? readdirSync(dir) : []);
+/** `root`-relative path with `/` separators, for messages on every OS. */
+const rel = (root: string, file: string): string => relative(root, file).split(sep).join("/");
+/** Windows paths compare case-insensitively. */
+const fold = (file: string): string => (process.platform === "win32" ? file.toLowerCase() : file);
 
 /** Installed @brainervirus packages a build could resolve instead of workspace source. */
 export function registryInstalls(root: string): string[] {
   const nested = entries(join(root, "packages")).flatMap((pkg) => {
     const scope = join(root, "packages", pkg, "node_modules", "@brainervirus");
-    return entries(scope).map((name) => relative(root, join(scope, name)));
+    return entries(scope).map((name) => rel(root, join(scope, name)));
   });
-  const packages = join(realpathSync(root), "packages") + sep;
+  const packages = fold(join(realpathSync(root), "packages") + sep);
   const scope = join(root, "node_modules", "@brainervirus");
   const hoisted = entries(scope)
-    .filter((name) => !realpathSync(join(scope, name)).startsWith(packages))
-    .map((name) => relative(root, join(scope, name)));
+    .filter((name) => !fold(realpathSync(join(scope, name))).startsWith(packages))
+    .map((name) => rel(root, join(scope, name)));
   return [...nested, ...hoisted];
 }
 
@@ -52,9 +57,9 @@ export function bundleSources(root: string): { scanned: string[]; problems: Bund
     bundles(join(root, "packages", pkg, "dist")),
   );
   const problems = scanned.flatMap((file): BundleProblem[] => {
-    const bundle = relative(root, file);
+    const bundle = rel(root, file);
     const text = readFileSync(file, "utf8");
-    const copies = [...text.matchAll(REGISTRY_COPY)].map((m) => m[1]);
+    const copies = [...text.matchAll(REGISTRY_COPY)].map((m) => m[1].replaceAll("\\", "/"));
     if (copies.length)
       return [{ bundle, problem: `${copies.length} registry-copy modules, e.g. ${copies[0]}` }];
     const minified = text.length / (text.split("\n").length || 1) > MINIFIED_BYTES_PER_LINE;
@@ -62,7 +67,7 @@ export function bundleSources(root: string): { scanned: string[]; problems: Bund
       return [{ bundle, problem: "no `// packages/workit-core/src/` module header" }];
     return [];
   });
-  return { scanned: scanned.map((file) => relative(root, file)), problems };
+  return { scanned: scanned.map((file) => rel(root, file)), problems };
 }
 
 /** Every failure under `root` as printable lines; empty when the release may proceed. */
