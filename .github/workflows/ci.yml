@@ -32,7 +32,49 @@ env:
 
 # Branch protection requires these check names: "fast checks",
 # "test (ubuntu-latest)", "test (macos-latest)", "test (windows-latest)".
+# A job skipped by a job-level `if` reports success, so a docs-only PR skips
+# the test legs and still satisfies every required check.
 jobs:
+  # Docs-only PRs (docs/** outside docs/qualification/, which acceptance tests
+  # read, or a root or .github/ *.md) skip the test legs. A push to main always
+  # runs everything: the release gates on it. Fails open: a missing output
+  # runs the tests.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          # The PR merge commit and its first parent (the base tip).
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Classify changed files
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" != pull_request ]]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only HEAD^1 HEAD)
+          printf '%s\n' "$files"
+          code=$(printf '%s\n' "$files" | grep -vE '^(docs/|[^/]+\.md$|\.github/[^/]+\.md$)' || true)
+          qualification=$(printf '%s\n' "$files" | grep -E '^docs/qualification/' || true)
+          if [[ -n "$files" && -z "$code" && -z "$qualification" ]]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Static gates that need no build: one install, all checks in parallel.
   fast:
     name: fast checks
@@ -48,6 +90,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore bun cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -108,8 +157,10 @@ jobs:
   # cannot silently escape CI.
   test:
     name: test (ubuntu-latest)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -124,9 +175,20 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      # The npm cache feeds the packaging suites' isolated npm installs
+      # (--prefer-offline); keyed by bun.lock like the bun cache.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_CURRENT }}
+          cache: npm
+          cache-dependency-path: bun.lock
+
+      - name: Restore bun cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -175,17 +237,15 @@ jobs:
 
   # workit-core owns the bash script/portability tests and the packed-artifact
   # gates (CA-26); both also run on macOS and Windows with the declared Node.
+  # `bun scripts/test.ts shard` picks the files and the per-test timeouts.
   portability:
-    name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    name: test (macos-latest)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    runs-on: macos-latest
+    timeout-minutes: 20
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-        node: [24.20.0]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -196,9 +256,20 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      # The npm cache feeds the packaging suites' isolated npm installs
+      # (--prefer-offline); keyed by bun.lock like the bun cache.
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ env.NODE_CURRENT }}
+          cache: npm
+          cache-dependency-path: bun.lock
+
+      - name: Restore bun cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -207,11 +278,82 @@ jobs:
         run: bun run build
 
       - name: Test workit-core and artifacts
-        run: bun test --timeout ${{ runner.os == 'Windows' && '60000' || '5000' }} test/workit-core test/artifacts
+        run: bun scripts/test.ts shard 1/1 test/workit-core test/artifacts
+
+  # The Windows run of the same suite is the critical path (~13 min serial),
+  # so it runs as three balanced shards; "test (windows-latest)" below
+  # aggregates them under the required check name.
+  windows-shard:
+    name: windows shard ${{ matrix.shard }}/3
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # The npm cache feeds the packaging suites' isolated npm installs
+      # (--prefer-offline); keyed by bun.lock like the bun cache.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_CURRENT }}
+          cache: npm
+          cache-dependency-path: bun.lock
+
+      - name: Restore bun cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Build packages
+        run: bun run build
+
+      - name: Test workit-core and artifacts (shard ${{ matrix.shard }}/3)
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: bun scripts/test.ts shard "$env:SHARD/3" test/workit-core test/artifacts
+
+  windows:
+    name: test (windows-latest)
+    needs: [changes, windows-shard]
+    # Always runs, so a failed, timed-out or cancelled shard fails this
+    # required check instead of skipping it (a skipped check counts as passing).
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every Windows shard
+        env:
+          SHARDS: ${{ needs.windows-shard.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+        run: |
+          echo "windows shards: $SHARDS (docs_only=$DOCS_ONLY)"
+          if [[ "$SHARDS" == success ]]; then exit 0; fi
+          if [[ "$SHARDS" == skipped && "$DOCS_ONLY" == true ]]; then exit 0; fi
+          exit 1
 
   # Release only after every gate passed for this exact commit on main.
   release:
-    needs: [fast, test, portability]
+    needs: [fast, test, portability, windows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write # GitHub Release
