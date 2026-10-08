@@ -7,6 +7,9 @@ import {
   CURSOR_PRETOOLUSE_MATCHER,
 } from "@/packages/workit-cli/src/admin/registration";
 
+const HOOK_COMMAND = 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-hook';
+const SESSION_COMMAND = 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-session-start';
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 test("build scripts derive their directory with fileURLToPath, not URL pathname", () => {
@@ -36,10 +39,10 @@ test("cursor MCP manifests stay package-relative (mcp.json and hooks-cursor.json
 test("committed hooks-cursor.json equals the canonical hook entries", () => {
   const pkg = path.join(repoRoot, "packages/workit-cursor");
   const hooks = JSON.parse(readFileSync(path.join(pkg, "hooks/hooks-cursor.json"), "utf8")).hooks;
+  expect(hooks.sessionStart).toEqual([{ command: SESSION_COMMAND }]);
   expect(hooks.preToolUse).toEqual([
-    { command: CURSOR_HOOK_RUN_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: true },
+    { command: CURSOR_HOOK_RUN_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false },
   ]);
-  expect(hooks.beforeShellExecution).toEqual([
-    { command: CURSOR_HOOK_RUN_COMMAND, failClosed: true },
-  ]);
+  for (const event of ["beforeShellExecution", "subagentStart", "subagentStop", "preCompact"])
+    expect(hooks[event], event).toEqual([{ command: HOOK_COMMAND, failClosed: false }]);
 });

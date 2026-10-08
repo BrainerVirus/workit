@@ -201,8 +201,36 @@ const isSubagentStart = (raw: unknown) =>
   raw !== null &&
   (raw as { hook_event_name?: unknown }).hook_event_name === "subagentStart";
 
+const BLOCKING_EVENTS = new Set(["preToolUse", "beforeShellExecution", "subagentStart"]);
+const nonEmptyString = (value: unknown) => typeof value === "string" && value.trim() !== "";
+
+/** A payload Workit cannot place, which says nothing about policy: no folder
+ * is open (`workspace_roots` empty), or no conversation id. Without a workspace
+ * or an actor there is no task store or session to check, so the hook steps
+ * aside with a note instead of denying every action. Null when the payload is
+ * complete enough to dispatch. */
+const degradedCursorHook = (raw: unknown): { json: Record<string, unknown> } | null => {
+  if (typeof raw !== "object" || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  const event = typeof value.hook_event_name === "string" ? value.hook_event_name : "";
+  const roots = value.workspace_roots;
+  const gap =
+    !Array.isArray(roots) || roots.length === 0
+      ? "no workspace folder is open"
+      : event !== "preCompact" &&
+          !nonEmptyString(value.conversation_id) &&
+          !nonEmptyString(value.session_id)
+        ? "the hook payload carries no conversation id"
+        : null;
+  if (!gap || !event) return null;
+  if (!BLOCKING_EVENTS.has(event)) return { json: {} };
+  const note = `[workit: ${gap}; Workit checks are skipped for this action]`;
+  return { json: { permission: "allow", user_message: note, agent_message: note } };
+};
+
 export const handleCursorHook = (raw: unknown): Record<string, unknown> =>
-  isSubagentStart(raw) ? handleSubagentStartHook(raw) : dispatchHook(cursorAdapter, raw).json;
+  degradedCursorHook(raw)?.json ??
+  (isSubagentStart(raw) ? handleSubagentStartHook(raw) : dispatchHook(cursorAdapter, raw).json);
 
 export const runCursorHook = async (): Promise<void> => {
   let text = "";
@@ -212,6 +240,12 @@ export const runCursorHook = async (): Promise<void> => {
     raw = JSON.parse(text || "{}");
   } catch {
     raw = undefined;
+  }
+  const degraded = degradedCursorHook(raw);
+  if (degraded) {
+    process.stdout.write(`${JSON.stringify(degraded.json)}\n`);
+    process.exitCode = 0;
+    return;
   }
   if (isSubagentStart(raw)) {
     let output: Record<string, unknown>;

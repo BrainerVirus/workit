@@ -898,7 +898,7 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
       "writeBoundary": "partial",
     },
     "label": "Cursor",
-    "perEventCost": "npx-network",
+    "perEventCost": "low",
     "provenance": {
       "agentIdOnTool": "undocumented",
       "postToolObserve": "undocumented",

@@ -10,6 +10,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +31,8 @@ import { readVcsConfig } from "@/packages/workit-core/src/core/vcs-config";
 import { readSetupState } from "@/packages/workit-cli/src/admin/setup-state";
 import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
 import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
+
+const SESSION_HOOK = 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-session-start';
 
 // The offline doctor engine (DG-07/DG-08, CA-09): one fixture tree, one broken
 // surface at a time, assert the typed check + nonzero exitCode, then repair the
@@ -252,16 +255,14 @@ test("reports stale_install when the installed preToolUse matcher drifts from ca
       hooks: {
         sessionStart: [
           {
-            command:
-              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+            command: SESSION_HOOK,
           },
         ],
         preToolUse: [
           {
-            command:
-              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+            command: 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-hook',
             matcher: "Write|Edit|Delete|Shell",
-            failClosed: true,
+            failClosed: false,
           },
         ],
       },
@@ -1094,13 +1095,16 @@ test(
       hooks: {
         sessionStart: [
           {
-            command:
-              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+            command: SESSION_HOOK,
           },
         ],
       },
     };
     const hookVariants: Array<[string, string]> = [
+      [
+        "legacy npx @latest launcher",
+        "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+      ],
       [
         "exact pin @0.8.5",
         "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
@@ -1165,9 +1169,7 @@ test(
       expect(check(run(), "launcher").status).toBe("fail");
       write(`node ${path.join(fixture.pluginDir, "dist", "missing.js")}`);
       expect(check(run(), "launcher").status).toBe("fail");
-      write(
-        "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-      );
+      write(SESSION_HOOK);
       expect(check(run(), "launcher").status).toBe("pass");
     } finally {
       writeConfig(
@@ -1177,8 +1179,7 @@ test(
           hooks: {
             sessionStart: [
               {
-                command:
-                  "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+                command: SESSION_HOOK,
               },
             ],
           },
@@ -2001,3 +2002,161 @@ test(
   },
   SLOW_TEST_TIMEOUT_MS,
 );
+
+test("cursor_hook reports the local launcher mode and its probe latency", () => {
+  const hook = check(run(), "cursor_hook");
+  expect(hook.status).toBe("pass");
+  expect(hook.detail).toContain(
+    `cursor hook launcher mode: local (${path.join(fixture.pluginDir, "dist", "workit-hook.js")})`,
+  );
+  expect(hook.detail).toMatch(/probe \d+ ms$/);
+});
+
+// Assembled at runtime so the tracked-file selector scan (manifests.test.ts)
+// never trips on the fixture bytes.
+const PINNED = ["@brainervirus/workit-cursor@", "4.5.6"].join("");
+
+test(
+  "cursor_hook reports npx-pinned (probed offline) and missing modes as warnings",
+  () => {
+    const bundled = path.join(fixture.pluginDir, "dist", "workit-hook.js");
+    const pluginPkg = path.join(fixture.pluginDir, "package.json");
+    const original = readFileSync(bundled, "utf8");
+    const bin = binDirWithRuntimes(path.join(fixture.root, "cursor-hook-bin"));
+    const argsLog = path.join(fixture.root, "npx-args");
+    rmSync(bundled);
+    writeConfig(
+      pluginPkg,
+      JSON.stringify({ name: "@brainervirus/workit-cursor", version: PINNED.split("@").pop() }),
+    );
+    // A spawnable npx stub per platform: a .cmd shim on Windows (the launcher
+    // runs it through cmd.exe), a shell script elsewhere.
+    const npx = path.join(bin, process.platform === "win32" ? "npx.cmd" : "npx");
+    writeConfig(
+      npx,
+      process.platform === "win32"
+        ? `@echo %*> "${argsLog}"\r\n@echo {}\r\n`
+        : `#!/bin/sh\necho "$@" > "${argsLog}"\necho '{}'\n`,
+      0o755,
+    );
+    // One PATH key: Windows env objects may carry `Path` beside `PATH`.
+    const env = {
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PATH"),
+      ),
+      PATH: bin,
+    };
+    try {
+      const pinned = check(run({ env }), "cursor_hook");
+      expect(pinned.status).toBe("warn");
+      expect(pinned.detail).toContain(`cursor hook launcher mode: npx-pinned (${PINNED})`);
+      expect(pinned.detail).toMatch(/probe \d+ ms/);
+      // The Windows shim sees each argument quoted (cmd /s /c "<escaped line>").
+      expect(readFileSync(argsLog, "utf8").trim().replaceAll('"', "")).toBe(
+        `-y --offline --package=${PINNED} workit-cursor-hook`,
+      );
+
+      rmSync(npx);
+      const missing = check(run({ env }), "cursor_hook");
+      expect(missing.status).toBe("warn");
+      expect(missing.detail).toContain("cursor hook launcher mode: missing");
+      expect(missing.fix).toContain("workit init");
+    } finally {
+      writeConfig(bundled, original);
+      rmSync(pluginPkg, { force: true });
+    }
+    expect(check(run(), "cursor_hook").status).toBe("pass");
+  },
+  { timeout: 30_000 },
+);
+
+test("cursor_hook flags an install that predates the pinned launcher", () => {
+  const launcher = path.join(fixture.pluginDir, "hooks", "launch.mjs");
+  const original = readFileSync(launcher, "utf8");
+  rmSync(launcher);
+  try {
+    const hook = check(run(), "cursor_hook");
+    expect(hook.status).toBe("warn");
+    expect(hook.detail).toContain("cursor hook launcher mode: missing");
+    expect(hook.detail).toContain("launch.mjs is absent");
+  } finally {
+    writeConfig(launcher, original);
+  }
+});
+
+test("cursor_hook accepts the absolute launcher path a local install writes", () => {
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const originalHooks = readFileSync(hooksFile, "utf8");
+  const launcher = `node "${path.join(fixture.pluginDir, "hooks", "launch.mjs")}"`;
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [{ command: `${launcher} workit-cursor-session-start` }],
+        beforeShellExecution: [{ command: `${launcher} workit-cursor-hook`, failClosed: false }],
+      },
+    }),
+  );
+  try {
+    const report = run();
+    expect(check(report, "cursor_hook").status).toBe("pass");
+    expect(check(report, "launcher").status).toBe("pass");
+    expect(check(report, "stale_install").status).toBe("pass");
+  } finally {
+    writeConfig(hooksFile, originalHooks);
+  }
+});
+
+test("cursor_hook reports stale when a registered hook does not run the launcher", () => {
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const originalHooks = readFileSync(hooksFile, "utf8");
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [{ command: SESSION_HOOK }],
+        beforeShellExecution: [
+          {
+            command:
+              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+            failClosed: true,
+          },
+        ],
+      },
+    }),
+  );
+  try {
+    const hook = check(run(), "cursor_hook");
+    expect(hook.status).toBe("warn");
+    expect(hook.detail).toContain("cursor hook launcher mode: stale");
+    expect(hook.detail).toContain("beforeShellExecution");
+    expect(hook.detail).toContain("stale_install");
+  } finally {
+    writeConfig(hooksFile, originalHooks);
+  }
+});
+
+test("cursor_hook warns when Cursor sessions started but no hook has run since", () => {
+  const session = path.join(fixture.stateDir, "cursor-session-last-start");
+  const heartbeat = path.join(fixture.stateDir, "cursor-hook-last-run");
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60_000);
+  writeConfig(session, "{}\n");
+  utimesSync(session, tenMinutesAgo, tenMinutesAgo);
+  try {
+    const silent = check(run(), "cursor_hook");
+    expect(silent.status).toBe("warn");
+    expect(silent.detail).toContain("no Workit hook has run since (none ever)");
+
+    writeConfig(heartbeat, "{}\n");
+    expect(check(run(), "cursor_hook").status).toBe("pass");
+
+    const hourAgo = new Date(Date.now() - 60 * 60_000);
+    utimesSync(heartbeat, hourAgo, hourAgo);
+    expect(check(run(), "cursor_hook").detail).toContain("no Workit hook has run since");
+  } finally {
+    rmSync(session, { force: true });
+    rmSync(heartbeat, { force: true });
+  }
+});

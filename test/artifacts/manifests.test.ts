@@ -79,7 +79,7 @@ test(
 );
 
 test(
-  "cursor hooks-cursor.json uses the documented single command string (CA-17)",
+  "cursor hooks-cursor.json runs every event through the pinned launcher: no @latest, no npx, never fail-closed",
   () => {
     const packs = packWorkspacePackages();
     for (const source of ["committed", "packed"] as const) {
@@ -89,19 +89,35 @@ test(
           : readTarballFile(byName(packs, CURSOR).tarball, "hooks/hooks-cursor.json");
       const hooks = JSON.parse(raw) as {
         version: number;
-        hooks: { sessionStart: { command: string; args?: string[] }[] };
+        hooks: Record<string, { command: string; args?: string[]; failClosed?: boolean }[]>;
       };
       expect(hooks.version, source).toBe(1);
-      const entry = hooks.hooks.sessionStart[0];
-      expect(entry.command, source).toBe(
-        "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-      );
-      expect(entry.args, source).toBeUndefined();
-      expect(JSON.stringify(entry), source).not.toContain("dist/");
-      expect(JSON.stringify(entry), source).not.toContain("run-server");
-      expect(JSON.stringify(entry), source).not.toMatch(/\$HOME/);
-      expect(JSON.stringify(entry), source).not.toMatch(/^\//);
+      expect(hooks.hooks.sessionStart, source).toEqual([
+        { command: 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-session-start' },
+      ]);
+      expect(Object.keys(hooks.hooks), source).toEqual([
+        "sessionStart",
+        "preToolUse",
+        "beforeShellExecution",
+        "subagentStart",
+        "subagentStop",
+        "preCompact",
+      ]);
+      for (const [event, entries] of Object.entries(hooks.hooks)) {
+        for (const entry of entries) {
+          expect(entry.command, `${source} ${event}`).toStartWith(
+            'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-',
+          );
+          expect(entry.args, `${source} ${event}`).toBeUndefined();
+          expect(entry.failClosed === true, `${source} ${event}`).toBe(false);
+        }
+      }
+      expect(raw, source).not.toContain("@latest");
+      expect(raw, source).not.toContain("npx");
     }
+    const files = listTarball(byName(packs, CURSOR).tarball);
+    expect(files).toContain("hooks/launch.mjs");
+    expect(files).toContain("hooks/launch-runtime.mjs");
   },
   { timeout: 60_000 },
 );

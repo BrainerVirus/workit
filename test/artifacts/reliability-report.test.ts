@@ -48,12 +48,13 @@ test(
     // Counts include both provider identity checks (pass with no Git remote)
     // and the workspace_lock check (pass with no metadata lock). No workit is
     // on the isolated PATH, so workit_on_path warns without failing.
+    // cursor_hook passes (no Cursor plugin install).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 17,
+      passed: 18,
       warned: 1,
       failed: 1,
-      total: 19,
+      total: 20,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -85,13 +86,14 @@ test(
       // node+bun on PATH but no git: exactly the utility check fails; codex_pin passes (absent).
       // Counts include both provider identity checks (pass with no Git remote)
       // and the workspace_lock check (pass with no metadata lock); workit_on_path
-      // warns (no workit on the isolated PATH).
+      // warns (no workit on the isolated PATH); cursor_hook passes (the
+      // fixture's bundled hook runs locally).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 17,
+        passed: 18,
         warned: 1,
         failed: 1,
-        total: 19,
+        total: 20,
         fixes: 1,
       });
     } finally {

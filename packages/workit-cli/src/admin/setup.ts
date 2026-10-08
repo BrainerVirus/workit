@@ -35,9 +35,11 @@ import { GITIGNORE_ENTRIES } from "@brainervirus/workit-core/src/core/gitignore"
 import { planHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
+  cursorHooksEntry,
   cursorMcpServerEntry,
   CURSOR_RUNTIME_PACKAGE,
   isWorkitPlugin,
+  mergeCursorHooks,
   mergeCursorMcp,
   mergeOpenCodePlugins,
   mergeCursorSettings,
@@ -947,20 +949,49 @@ function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
 // and write the same `.workit-root` marker so a re-sync from the same
 // source is a truthful Skipped. The shipped mcp.json is the Marketplace-safe
 // npx command (CA-17), so it is copied verbatim — no absolute dist derivation.
-const samePluginContent = (src: string, dest: string, relative = ""): boolean => {
+const CURSOR_HOOKS_FILE = path.join("hooks", "hooks-cursor.json");
+
+/** The shipped hooks-cursor.json reaches the launcher through
+ *  `${CURSOR_PLUGIN_ROOT}`; a local install writes the absolute launcher path
+ *  of `pluginDir` into every event so hooks never depend on Cursor expanding
+ *  the variable. Unparseable content is copied as is. */
+const localizedCursorHooks = (shipped: Buffer, pluginDir: string): Buffer => {
+  try {
+    const merged = mergeCursorHooks(
+      JSON.parse(shipped.toString("utf8")),
+      { command: cursorHooksEntry(pluginDir).command },
+      pluginDir,
+    );
+    return Buffer.from(`${JSON.stringify(merged.config, null, 2)}\n`);
+  } catch {
+    return shipped;
+  }
+};
+
+const samePluginContent = (
+  src: string,
+  dest: string,
+  pluginDir: string,
+  relative = "",
+): boolean => {
   try {
     for (const entry of readdirSync(src, { withFileTypes: true })) {
       if (entry.name === "node_modules") continue;
       const source = path.join(src, entry.name);
       const installed = path.join(dest, entry.name);
+      const rel = path.join(relative, entry.name);
       if (entry.isDirectory()) {
         if (
           !statSync(installed).isDirectory() ||
-          !samePluginContent(source, installed, path.join(relative, entry.name))
+          !samePluginContent(source, installed, pluginDir, rel)
         )
           return false;
-      } else if (!readFileSync(source).equals(readFileSync(installed))) {
-        return false;
+      } else {
+        const expected =
+          rel === CURSOR_HOOKS_FILE
+            ? localizedCursorHooks(readFileSync(source), pluginDir)
+            : readFileSync(source);
+        if (!expected.equals(readFileSync(installed))) return false;
       }
     }
     for (const entry of readdirSync(dest, { withFileTypes: true })) {
@@ -1002,7 +1033,9 @@ export function copyPluginDir(src: string, dest: string): SetupResultStatus {
   const marker = path.join(dest, ".workit-root");
   const destIsLink = existsSync(dest) && lstatSync(dest).isSymbolicLink();
   const synced =
-    !destIsLink && readFileSafe(marker)?.trim() === realSrc && samePluginContent(realSrc, dest);
+    !destIsLink &&
+    readFileSafe(marker)?.trim() === realSrc &&
+    samePluginContent(realSrc, dest, dest);
   if (synced) return "Skipped";
   const hadDir = existsSync(dest);
   const rules = preservedCursorRules(realSrc, dest);
@@ -1016,12 +1049,16 @@ export function copyPluginDir(src: string, dest: string): SetupResultStatus {
       recursive: true,
       filter: (entry) => !path.relative(realSrc, entry).split(path.sep).includes("node_modules"),
     });
+    const stagedHooks = path.join(stage, CURSOR_HOOKS_FILE);
+    if (existsSync(stagedHooks))
+      writeFileSync(stagedHooks, localizedCursorHooks(readFileSync(stagedHooks), dest));
     for (const [name, content] of rules) {
       mkdirSync(path.join(stage, "rules"), { recursive: true });
       writeFileSync(path.join(stage, "rules", name), content);
     }
     writeFileSync(path.join(stage, ".workit-root"), realSrc + "\n", "utf8");
-    if (!samePluginContent(realSrc, stage)) throw new Error("staged adapter content is incomplete");
+    if (!samePluginContent(realSrc, stage, dest))
+      throw new Error("staged adapter content is incomplete");
     if (lstatSync(stage).isSymbolicLink()) {
       throw new Error("staged adapter resolved to a symlink — refusing fragile cache install");
     }

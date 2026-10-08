@@ -3,36 +3,38 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start"
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-session-start"
       }
     ],
     "preToolUse": [
       {
-        "command": "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-hook",
         "matcher": "Write|Edit|Delete|Shell|Remove|ApplyPatch|Apply_Patch|Patch|Rename|Mkdir|Mv|Cp|Touch",
-        "failClosed": true
+        "failClosed": false
       }
     ],
     "beforeShellExecution": [
       {
-        "command": "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
-        "failClosed": true
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-hook",
+        "failClosed": false
       }
     ],
     "subagentStart": [
       {
-        "command": "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
-        "failClosed": true
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-hook",
+        "failClosed": false
       }
     ],
     "subagentStop": [
       {
-        "command": "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook"
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-hook",
+        "failClosed": false
       }
     ],
     "preCompact": [
       {
-        "command": "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook"
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-hook",
+        "failClosed": false
       }
     ]
   }

@@ -34,7 +34,9 @@
     "rules/workit-contract.mdc",
     "skills/",
     "commands/",
-    "hooks/hooks-cursor.json"
+    "hooks/hooks-cursor.json",
+    "hooks/launch.mjs",
+    "hooks/launch-runtime.mjs"
   ],
   "type": "module",
   "publishConfig": {
