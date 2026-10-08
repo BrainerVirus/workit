@@ -71,3 +71,110 @@ test("G a needed plan, W --ref cites it, T the judgment keeps its calls and reco
   expect(bad.code).not.toBe(0);
   expect(bad.json()).toMatchObject({ code: "invalid_input" });
 });
+
+// M6 (audit 2026-10-07): judge calls are auditable and a session cannot
+// silently lift the before-write blockers it judged.
+const workitAs = (cwd: string, session: string | null, ...args: string[]) => {
+  const env: NodeJS.ProcessEnv = { ...process.env, WORKFLOW_WORKSPACE_ROOT: "" };
+  if (session === null) delete env.WORKIT_SESSION_ID;
+  else env.WORKIT_SESSION_ID = session;
+  const result = spawnSync(
+    process.execPath,
+    [path.join(ROOT, "packages/workit-cli/src/main.ts"), ...args],
+    { cwd, encoding: "utf8", env },
+  );
+  return { code: result.status, stderr: result.stderr, json: () => JSON.parse(result.stdout) };
+};
+const judgedRows = (root: string) =>
+  workitAs(root, null, "ledger", "list", "--type", "policy.judged", "--json").json().data.rows;
+
+test("Given a judge call, When `policy assess --judge` runs, Then a ledger row records the session, the inputs and the resulting requirements", () => {
+  const root = repo();
+  const assessed = workitAs(root, "lead", "policy", "assess", "--judge", "plan=yes", "--json");
+  expect(assessed.code).toBe(0);
+  const rows = judgedRows(root);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({
+    type: "policy.judged",
+    observer: "workit_cli",
+    actor: { session: "lead" },
+    input: { plan: "yes" },
+    judgment: { needsPlan: true },
+    requirements: ["plan"],
+  });
+}, 30_000);
+
+test("Given lead judged product-choice=yes, When lead judges product-choice=no without --why, Then it is refused; with --why it is recorded with the reason", () => {
+  const root = repo();
+  expect(
+    workitAs(root, "lead", "policy", "assess", "--judge", "product-choice=yes", "--json").code,
+  ).toBe(0);
+  const silent = workitAs(
+    root,
+    "lead",
+    "policy",
+    "assess",
+    "--judge",
+    "product-choice=no",
+    "--json",
+  );
+  expect(silent.code).not.toBe(0);
+  expect(silent.json()).toMatchObject({ code: "invalid_input" });
+  expect(silent.json().error).toContain("--why");
+  const reasoned = workitAs(
+    root,
+    "lead",
+    "policy",
+    "assess",
+    "--judge",
+    "product-choice=no",
+    "--why",
+    "the user picked option B",
+    "--json",
+  );
+  expect(reasoned.code).toBe(0);
+  const rows = judgedRows(root);
+  expect(rows.at(-1)).toMatchObject({
+    actor: { session: "lead" },
+    lifted: ["productChoiceOpen"],
+    why: "the user picked option B",
+  });
+}, 30_000);
+
+test("Given lead judged product-choice=yes, When lead lifts it with a 1900-char --why, Then the policy.judged row records the reason once; a reason too long to record is refused and lifts nothing", () => {
+  const root = repo();
+  expect(
+    workitAs(root, "lead", "policy", "assess", "--judge", "product-choice=yes", "--json").code,
+  ).toBe(0);
+  const tooLong = workitAs(
+    root,
+    "lead",
+    "policy",
+    "assess",
+    "--judge",
+    "product-choice=no",
+    "--why",
+    "r".repeat(4200),
+    "--json",
+  );
+  expect(tooLong.code).not.toBe(0);
+  expect(tooLong.json()).toMatchObject({ code: "invalid_input" });
+  expect(judgedRows(root)).toHaveLength(1);
+  const why = "w".repeat(1900);
+  const lifted = workitAs(
+    root,
+    "lead",
+    "policy",
+    "assess",
+    "--judge",
+    "product-choice=no",
+    "--why",
+    why,
+    "--json",
+  );
+  expect(lifted.code).toBe(0);
+  const rows = judgedRows(root);
+  expect(rows).toHaveLength(2);
+  expect(rows[1]).toMatchObject({ lifted: ["productChoiceOpen"], why });
+  expect(JSON.stringify(rows[1]).split(why)).toHaveLength(2);
+}, 30_000);

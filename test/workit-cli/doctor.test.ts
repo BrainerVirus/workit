@@ -183,6 +183,32 @@ test("Given a lock held by a live process, When workit doctor --fix-lock runs, T
   }
 });
 
+test("Given a lock past the TTL whose pid is running but whose start time cannot be checked (Windows), When workit doctor runs, Then it reports stale as the store would, and --fix-lock clears it", () => {
+  const lockPath = lockPathFor(fixture.cwd);
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  writeFileSync(
+    lockPath,
+    JSON.stringify({
+      pid: process.pid,
+      processStart: null,
+      host: localLockHost(),
+      nonce: "reused",
+    }),
+  );
+  utimesSync(lockPath, new Date(0), new Date(0));
+  try {
+    const report = JSON.parse(runCli(["doctor", "--json"], fixture.cwd).stdout) as DoctorReport;
+    const check = report.checks.find((c) => c.id === "workspace_lock");
+    expect(check).toMatchObject({ status: "warn", fix: "workit doctor --fix-lock" });
+    expect(check?.detail).toContain("reused pid");
+    const fixed = runCli(["doctor", "--fix-lock"], fixture.cwd);
+    expect(fixed.stdout).toContain("fix-lock: cleared stale lock");
+    expect(existsSync(lockPath)).toBe(false);
+  } finally {
+    rmSync(storeOf(lockPath), { recursive: true, force: true });
+  }
+});
+
 test("Given WORKFLOW_WORKSPACE_ROOT points at another checkout, When workit doctor --fix-lock runs, Then it clears that checkout's stale lock", () => {
   const other = path.join(fixture.root, "other-workspace");
   mkdirSync(other, { recursive: true });

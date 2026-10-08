@@ -190,3 +190,57 @@ export const judgeTokens = (tokens: string[]): Json => {
   }
   return out;
 };
+
+/** The judgments that, while true, block working-tree writes (S17). */
+const BLOCKING = ["productChoiceOpen", "needsPlan"] as const;
+type Blocking = (typeof BLOCKING)[number];
+
+/** The before-write blockers a judgment lifts: true before, false now. */
+export const liftedBlockers = (previous: Judgment | null, next: Judgment): Blocking[] =>
+  BLOCKING.filter((field) => previous?.[field] === true && next[field] === false);
+
+/**
+ * Of the lifted blockers, those `session` itself judged true earlier on this
+ * task (M6): lifting your own blocker needs a recorded reason. Another
+ * session (a lead, the user's) may lift it; the ledger still records it.
+ */
+export const ownLiftedBlockers = (
+  history: ReadonlyArray<{ provenance: { session: unknown }; data: Judgment }>,
+  lifted: readonly Blocking[],
+  session: string,
+): Blocking[] => {
+  const handle = (value: unknown): unknown => (isObject(value) ? value.handle : undefined);
+  return lifted.filter((field) =>
+    history.some((entry) => handle(entry.provenance.session) === session && entry.data[field]),
+  );
+};
+
+/** The reason sent with this judgment (`--why`, `note=`), not one kept from before. */
+export const givenReason = (raw: unknown): string | null => {
+  if (!isObject(raw)) return null;
+  for (const [key, value] of Object.entries(raw))
+    if (ALIASES.note.includes(squash(key)) && typeof value === "string" && value.trim())
+      return value.trim();
+  return null;
+};
+
+/** Longest call value kept in a ledger summary of a judgment as sent. */
+const SUMMARY_VALUE_CHARS = 80;
+
+/**
+ * The judgment as sent, for the `policy.judged` ledger row: the calls only.
+ * The reason and refs are recorded elsewhere in the row, and long values are
+ * cut so the row fits one ledger line.
+ */
+export const judgeInputSummary = (raw: unknown): Json => {
+  const out: Json = {};
+  if (!isObject(raw)) return out;
+  for (const [key, value] of Object.entries(raw)) {
+    const name = squash(key);
+    if (ALIASES.note.includes(name) || ALIASES.refs.includes(name) || LEGACY_KEYS.has(key))
+      continue;
+    if (typeof value === "string") out[key.slice(0, 40)] = value.slice(0, SUMMARY_VALUE_CHARS);
+    else if (typeof value === "boolean" || typeof value === "number") out[key.slice(0, 40)] = value;
+  }
+  return out;
+};

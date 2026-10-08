@@ -19,7 +19,8 @@
 //   lines and rows without the required keys are skipped and counted, and the
 //   file is never rewritten. `seq` is the row's position among valid rows (a
 //   lock-free appender cannot allocate one); a row supersedes an older one by
-//   its `id`, and only a row of the same type from the same session may.
+//   its `id`, and only a row of the same type, session and branch (and verdict
+//   kind) may.
 // - Trust (D18): the threat model is honest mistakes and accidental
 //   self-certification, not adversarial agents. `ledger verdict` rows are
 //   `observer:"agent_asserted"`; `observer:"workit_cli"` is reserved for rows
@@ -33,12 +34,22 @@
 //   `fresh` (same head; verdicts on a dirty worktree are refused, so the head
 //   is the judged tree), `carried` (new head, same patch-id AND same exact
 //   diff: a rebase that only moved the base) or `stale`.
+// - Integrity (D18): every row the CLI appends carries `prevHash` (sha256 of
+//   the previous line) and `rowHash` (sha256 over `prevHash` and the row), a
+//   running chain. A row without it after the chain began, or whose hashes do
+//   not match, is reported as unverified (`workit ledger verify-integrity`, a
+//   warning in `ledger check`). Nothing is refused: this catches a hand edit
+//   made by mistake, it is not a defense against a forger.
+// - Branch renames: rows keyed to a branch's earlier names (from its reflog)
+//   count for it, up to the rename.
 //
-// Plain TS over the git binary: no zod, no task store, no config reads.
+// Plain TS over the git binary, plus the configured trunk (vcsConfig) for the
+// default base; no task store.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { vcsConfig } from "./core/vcs-config";
 import { GIT_TIMEOUTS, currentBranch, headSha, patchId, worktreeTree } from "./git/rev";
 import { hostSessionFromEnv } from "./host-session";
 import { resolveStore } from "./store/paths";
@@ -100,7 +111,7 @@ type RowCommon = CodeKey & {
   type: string;
   actor: LedgerActor;
   pr?: number;
-  /** The `id` of an older row of the same type and session that this one replaces. */
+  /** The `id` of an older row of the same type, session and branch (and kind) that this one replaces. */
   supersedes?: string;
 };
 
@@ -118,6 +129,12 @@ export type RulingRow = RowCommon & {
   refs: string[];
 };
 export type SelfReason = "flag" | "no_session";
+/**
+ * Where a verdict's session came from: the environment (the host's hook),
+ * `--session` (named by the caller, shown in `ledger check` so a human can
+ * spot a claimed verifier id) or `--as` (minted from the environment's).
+ */
+export type SessionSource = "env" | "flag" | "as";
 export type VerdictRow = RowCommon & {
   type: "verdict";
   kind: VerdictKind;
@@ -128,6 +145,7 @@ export type VerdictRow = RowCommon & {
   /** Not an independent verdict: `--self`, or no session to tell it from the author. */
   self: boolean;
   selfReason: SelfReason | null;
+  sessionSource: SessionSource;
   evidenceRefs: string[];
 };
 export type HandoffRow = RowCommon & { type: "handoff"; note: string | null; next: string };
@@ -147,6 +165,14 @@ export type LedgerRow =
   | HandoffRow
   | StandingRow
   | StandingClearedRow;
+/**
+ * A row's place in the hash chain: `verified` (the CLI wrote it and it is
+ * unchanged), `unverified` (see UnverifiedReason) or `legacy` (written before
+ * the ledger had a chain).
+ */
+export type RowIntegrity = "verified" | "unverified" | "legacy";
+/** unsigned: no chain fields (hand-appended) · hash_mismatch: edited · broken_link: a row before it was edited or removed. */
+export type UnverifiedReason = "unsigned" | "hash_mismatch" | "broken_link";
 /** A row as read back: any known or future type, plus its position. */
 export type ReadRow = RowCommon &
   Record<string, unknown> & {
@@ -154,6 +180,8 @@ export type ReadRow = RowCommon &
     superseded: boolean;
     /** The row names a `supersedes` target the reader refused (D18 supersede rules). */
     supersedeIgnored: boolean;
+    /** Set only when read with `{ integrity: true }`. */
+    integrity?: RowIntegrity;
   };
 
 export type LedgerError = {
@@ -223,13 +251,43 @@ export function branchHead(cwd: string, branch: string): string | null {
 }
 
 /**
- * The default base for patch-ids: origin's HEAD branch when known, else the
- * first of origin/main, origin/master, main, master that exists.
+ * The PR target of the release track the checkout is on, when the workspace
+ * configures tracks (as `fanout plan` and `stack plan` pick their trunk); a
+ * plain workspace default does not override origin's default branch.
+ */
+const trackTrunk = (cwd: string): string | null => {
+  try {
+    const resolved = vcsConfig("resolve", cwd);
+    if (resolved.ok === false || !resolved.releaseTrack || resolved.releaseTrack.blocking)
+      return null;
+    const target = String(resolved.defaultTargetBranch ?? "").trim();
+    return target && safeRef(target) ? target : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The default base for patch-ids and author trailers: the release track's PR
+ * target (origin's copy, else the local one) when tracks are configured, else
+ * origin's HEAD branch, else the first of origin/main, origin/master, main,
+ * master, origin/develop, develop that exists.
  */
 export function defaultBase(cwd: string): string | null {
+  const trunk = trackTrunk(cwd);
+  if (trunk)
+    for (const candidate of [`origin/${trunk}`, trunk])
+      if (resolveCommit(cwd, candidate)) return candidate;
   const originHead = git(cwd, ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]);
   if (originHead && resolveCommit(cwd, originHead)) return originHead;
-  for (const candidate of ["origin/main", "origin/master", "main", "master"])
+  for (const candidate of [
+    "origin/main",
+    "origin/master",
+    "main",
+    "master",
+    "origin/develop",
+    "develop",
+  ])
     if (resolveCommit(cwd, candidate)) return candidate;
   return null;
 }
@@ -466,10 +524,58 @@ export function withLedgerLock<T>(
 
 type AppendOptions = { now?: Date; forceLock?: boolean };
 
-function appendLine(file: string, line: string, options: AppendOptions): LedgerResult<void> {
+const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
+/** The chain hash of a row: over the previous line's hash and the row without `rowHash`. */
+const chainHash = (prevHash: string | null, body: string): string =>
+  sha256(`${prevHash ?? ""}\n${body}`);
+/** Enough tail to hold the previous row (rows are at most MAX_LINE_BYTES). */
+const TAIL_BYTES = 64 * 1024;
+
+/**
+ * The last complete (newline-terminated) non-empty line before `size`, read
+ * from the tail. An unterminated tail is a torn row or another appender's
+ * write still in flight, so it is not chained onto. A line longer than the
+ * window (a hand-written one) is read whole by widening the window, so the
+ * link stays exact.
+ */
+const lastLine = (fd: number, size: number): string | null => {
+  for (let span = Math.min(size, TAIL_BYTES); span > 0; span = Math.min(size, span * 2)) {
+    const buffer = Buffer.alloc(span);
+    fs.readSync(fd, buffer, 0, span, size - span);
+    const end = buffer.lastIndexOf(0x0a);
+    if (end < 0) {
+      if (span === size) return null;
+      continue;
+    }
+    // Skip blank lines (a fence) back to the last non-empty complete line.
+    let stop = end;
+    let text = "";
+    while (stop >= 0) {
+      const start = buffer.lastIndexOf(0x0a, stop - 1);
+      text = buffer.toString("utf8", start + 1, stop).trim();
+      if (text) {
+        // Its start must be inside the window (or be the file's start).
+        if (start >= 0 || span === size) return text;
+        break;
+      }
+      if (start < 0) {
+        if (span === size) return null;
+        break;
+      }
+      stop = start;
+    }
+    if (span === size) return text || null;
+  }
+  return null;
+};
+
+/** The line to write, given the file's current last line (null: empty file). */
+type LineBuilder = (previous: string | null) => LedgerResult<string>;
+
+function appendLine(file: string, build: LineBuilder, options: AppendOptions): LedgerResult<void> {
   const write = (): LedgerResult<void> => {
     // a+ = O_APPEND|O_RDWR: every write lands at the end, and we can still
-    // peek at the last byte to fence off a torn tail.
+    // peek at the tail to chain onto the last row and fence off a torn one.
     const fd = fs.openSync(file, "a+");
     try {
       const size = fs.fstatSync(fd).size;
@@ -479,7 +585,9 @@ function appendLine(file: string, line: string, options: AppendOptions): LedgerR
         fs.readSync(fd, last, 0, 1, size - 1);
         if (last[0] !== 0x0a) fence = "\n";
       }
-      const bytes = Buffer.from(fence + line);
+      const line = build(lastLine(fd, size));
+      if (!line.ok) return line;
+      const bytes = Buffer.from(fence + line.value);
       const written = fs.writeSync(fd, bytes);
       if (written !== bytes.length)
         return err(
@@ -510,22 +618,40 @@ function appendLine(file: string, line: string, options: AppendOptions): LedgerR
 
 export type NewRow<T extends LedgerRow> = Omit<T, "v" | "id" | "at">;
 
-const serialize = (row: object, now: Date) => {
-  const full = { v: LEDGER_VERSION, id: newId(), at: now.toISOString(), ...row };
+/**
+ * Serialize a row chained onto `previous` (the file's last complete line).
+ * Concurrent lock-free appenders may chain onto the same or an older line;
+ * the reader accepts a link to any earlier line.
+ */
+const sealed = (row: object, id: string, at: string, previous: string | null) => {
+  const { prevHash: _prev, rowHash: _row, ...fields } = row as Record<string, unknown>;
+  const prevHash = previous === null ? null : sha256(previous);
+  const body = { v: LEDGER_VERSION, id, at, ...fields, prevHash };
+  const full = { ...body, rowHash: chainHash(prevHash, JSON.stringify(body)) };
   return { full, line: `${JSON.stringify(full)}\n` };
 };
 
 function appendRaw<T>(cwd: string, row: object, options: AppendOptions): LedgerResult<T> {
-  const { full, line } = serialize(row, options.now ?? new Date());
-  const bytes = Buffer.byteLength(line);
-  if (bytes > MAX_LINE_BYTES)
-    return err(
-      "invalid_input",
-      `ledger row is ${bytes} bytes; the limit is ${MAX_LINE_BYTES}. Shorten the text and pass details by --ref <path|url>`,
-    );
   const file = ledgerPath(cwd);
   if (!file.ok) return file;
-  const written = appendLine(file.value, line, options);
+  const id = newId();
+  const at = (options.now ?? new Date()).toISOString();
+  let full: unknown = null;
+  const written = appendLine(
+    file.value,
+    (previous) => {
+      const next = sealed(row, id, at, previous);
+      const bytes = Buffer.byteLength(next.line);
+      if (bytes > MAX_LINE_BYTES)
+        return err(
+          "invalid_input",
+          `ledger row is ${bytes} bytes; the limit is ${MAX_LINE_BYTES}. Shorten the text and pass details by --ref <path|url>`,
+        );
+      full = next.full;
+      return { ok: true, value: next.line };
+    },
+    options,
+  );
   return written.ok ? { ok: true, value: full as T } : written;
 }
 
@@ -538,6 +664,12 @@ export function appendRow<T extends LedgerRow>(
   if ((row as { observer?: unknown }).observer === "workit_cli")
     return err("invalid_input", 'observer "workit_cli" is reserved for appendObserved');
   return appendRaw<T>(cwd, row, options);
+}
+
+/** The bytes `appendObserved` would write for `row` (its chain fields included). */
+export function observedRowBytes(row: Record<string, unknown>): number {
+  const sample = sealed({ ...row, observer: "workit_cli" }, newId(), new Date().toISOString(), "");
+  return Buffer.byteLength(sample.line);
 }
 
 /**
@@ -582,26 +714,63 @@ const normalizeActor = (value: unknown): LedgerActor => {
   };
 };
 
+type SupersedeRow = Pick<ReadRow, "type" | "actor"> & {
+  self?: unknown;
+  branch?: unknown;
+  kind?: unknown;
+  at?: unknown;
+};
+
 /**
- * May `by` supersede `target`? Same type, same known session, later in the
- * file, and a self verdict never replaces an independent one.
+ * May `by` supersede `target`? Same type, same known session, same branch
+ * (`onBranch`: the target belongs to `by`'s branch, which follows renames),
+ * for a verdict the same kind, later in the file, and a self verdict never
+ * replaces an independent one.
  */
 export function supersedeAllowed(
-  by: Pick<ReadRow, "type" | "actor"> & { self?: unknown },
-  target: Pick<ReadRow, "type" | "actor"> & { self?: unknown },
+  by: SupersedeRow,
+  target: SupersedeRow,
+  onBranch: (target: SupersedeRow) => boolean = (row) =>
+    (by.branch ?? null) === (row.branch ?? null),
 ): string | null {
   if (by.type !== target.type) return `a ${by.type} row cannot supersede a ${target.type} row`;
   if (!by.actor.session || by.actor.session !== target.actor.session)
     return "only the session that wrote a row can supersede it";
+  if (!onBranch(target))
+    return `the row is on another branch (${String(target.branch ?? "none")}); a row supersedes only one on its own branch`;
+  if (by.type === "verdict" && (by.kind ?? "review") !== (target.kind ?? "review"))
+    return `a ${String(by.kind ?? "review")} verdict cannot supersede a ${String(target.kind ?? "review")} verdict; record it with --kind ${String(target.kind ?? "review")}`;
   if (by.type === "verdict" && by.self === true && target.self !== true)
     return "a self verdict cannot replace an independent verdict";
   return null;
 }
 
-export type LedgerRead = { path: string; rows: ReadRow[]; skipped: number };
+export type UnverifiedRow = {
+  seq: number;
+  id: string;
+  type: string;
+  branch: string | null;
+  reason: UnverifiedReason;
+};
+/** The hash chain over the file: rows the CLI wrote, rows from before the chain, and the rest. */
+export type LedgerIntegrity = { chained: number; legacy: number; unverified: UnverifiedRow[] };
+export type LedgerRead = {
+  path: string;
+  rows: ReadRow[];
+  skipped: number;
+  /** Only when read with `{ integrity: true }` (hashing every line has a cost). */
+  integrity: LedgerIntegrity | null;
+};
 
-/** Every valid row in append order. A missing file is empty. */
-export function readLedger(cwd: string): LedgerResult<LedgerRead> {
+/**
+ * Every valid row in append order. A missing file is empty. `integrity`
+ * verifies the hash chain too (`ledger check`, `verify-integrity`); other
+ * readers, such as the write gate, skip that cost.
+ */
+export function readLedger(
+  cwd: string,
+  options: { integrity?: boolean } = {},
+): LedgerResult<LedgerRead> {
   const file = ledgerPath(cwd);
   if (!file.ok) return file;
   let text = "";
@@ -609,14 +778,32 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
     text = fs.readFileSync(file.value, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return { ok: true, value: { path: file.value, rows: [], skipped: 0 } };
+      return {
+        ok: true,
+        value: {
+          path: file.value,
+          rows: [],
+          skipped: 0,
+          integrity: options.integrity ? { chained: 0, legacy: 0, unverified: [] } : null,
+        },
+      };
     return err("unavailable", `cannot read ${file.value}: ${(error as Error).message}`);
   }
   const rows: ReadRow[] = [];
   let skipped = 0;
+  const integrity: LedgerIntegrity = { chained: 0, legacy: 0, unverified: [] };
+  // Hashes of every earlier line; null stands for the start of the file.
+  // Lock-free appenders racing on one file chain onto whatever line they saw
+  // last, which can be dozens of lines back, so any earlier line is a valid
+  // link. An edited row fails its own hash and breaks every link to it.
+  const earlier = new Set<string | null>([null]);
+  let chainStarted = false;
   for (const raw of text.split("\n")) {
     const trimmed = raw.trim();
     if (!trimmed) continue;
+    // Checked after this line is added: a row cannot name its own line.
+    const linked = (prevHash: string | null): boolean => earlier.has(prevHash);
+    if (options.integrity) earlier.add(sha256(trimmed));
     let parsed: unknown;
     try {
       parsed = JSON.parse(trimmed);
@@ -628,8 +815,21 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
       skipped += 1;
       continue;
     }
+    let rowIntegrity: RowIntegrity | undefined = options.integrity ? "verified" : undefined;
+    let reason: UnverifiedReason | null = null;
+    if (!options.integrity) {
+      // not verified on this read
+    } else if (typeof parsed.rowHash === "string") {
+      chainStarted = true;
+      const { rowHash, ...body } = parsed;
+      const prevHash = str(parsed.prevHash);
+      if (chainHash(prevHash, JSON.stringify(body)) !== rowHash) reason = "hash_mismatch";
+      else if (!linked(prevHash)) reason = "broken_link";
+    } else if (chainStarted) reason = "unsigned";
+    else rowIntegrity = "legacy";
+    if (reason) rowIntegrity = "unverified";
     const pr = typeof parsed.pr === "number" && Number.isInteger(parsed.pr) ? parsed.pr : undefined;
-    rows.push({
+    const row: ReadRow = {
       ...parsed,
       v: typeof parsed.v === "number" ? parsed.v : LEDGER_VERSION,
       id: parsed.id as string,
@@ -649,17 +849,42 @@ export function readLedger(cwd: string): LedgerResult<LedgerRead> {
       seq: rows.length + 1,
       superseded: false,
       supersedeIgnored: false,
-    });
+      ...(rowIntegrity ? { integrity: rowIntegrity } : {}),
+    };
+    rows.push(row);
+    if (!options.integrity) continue;
+    if (rowIntegrity === "verified") integrity.chained += 1;
+    else if (rowIntegrity === "legacy") integrity.legacy += 1;
+    else if (reason)
+      integrity.unverified.push({
+        seq: row.seq,
+        id: row.id,
+        type: row.type,
+        branch: row.branch,
+        reason,
+      });
   }
-  // Only a well-formed supersede link counts; anything else is ignored.
+  // Only a well-formed supersede link counts; anything else is ignored. A
+  // link across branch names is checked against the renames (reflog read
+  // only for such links, once per branch).
+  const scopes = new Map<string, BranchScope>();
+  const scopeOf = (branch: string): BranchScope => {
+    let scope = scopes.get(branch);
+    if (!scope) scopes.set(branch, (scope = branchScope(cwd, branch)));
+    return scope;
+  };
   const byId = new Map<string, ReadRow>();
   for (const row of rows) {
     const target = row.supersedes ? byId.get(row.supersedes) : undefined;
-    if (target && supersedeAllowed(row, target) === null) target.superseded = true;
+    if (target && supersedeAllowed(row, target, renameAwareBranch(scopeOf, row.branch)) === null)
+      target.superseded = true;
     else if (row.supersedes) row.supersedeIgnored = true;
     if (!byId.has(row.id)) byId.set(row.id, row);
   }
-  return { ok: true, value: { path: file.value, rows, skipped } };
+  return {
+    ok: true,
+    value: { path: file.value, rows, skipped, integrity: options.integrity ? integrity : null },
+  };
 }
 
 export type RowFilter = { branch?: string; pr?: number; type?: string; last?: number };
@@ -809,6 +1034,12 @@ export type VerdictCheck = {
   selfVerdict: ReadRow | null;
   verdicts: VerdictEntry[];
   authors: string[];
+  /**
+   * Things a human should read before trusting the result; none of them
+   * blocks (D18): unverified ledger rows on the branch, and an author's own
+   * failure newer than the accepted pass.
+   */
+  warnings: string[];
 };
 
 const isLiveVerdict = (row: ReadRow): boolean =>
@@ -828,22 +1059,80 @@ function trailerSessions(cwd: string, base: string | null, head: string | null):
     .filter(Boolean);
 }
 
+/** Does a row belong to a branch? Its own name, or an earlier name up to the rename. */
+export type BranchScope = (row: Pick<ReadRow, "branch" | "at">) => boolean;
+
+const RENAMED = /^branch: renamed refs\/heads\/(.+) to refs\/heads\/(.+)$/iu;
+
+/**
+ * The rows of `branch`, following `git branch -m` through the branch's
+ * reflog (git moves the reflog with the branch): a row keyed to an earlier
+ * name counts until that rename, so a name reused later does not leak in.
+ */
+export function branchScope(cwd: string, branch: string): BranchScope {
+  const renamedAt = new Map<string, number>();
+  // The branch's oldest reflog entry (its creation): rows of an older,
+  // deleted branch that once had one of its earlier names predate it.
+  let since = Number.NEGATIVE_INFINITY;
+  if (safeRef(branch)) {
+    const log = git(cwd, [
+      "log",
+      "-g",
+      "--date=unix",
+      "--format=%gd%x09%gs",
+      `refs/heads/${branch}`,
+      "--",
+    ]);
+    for (const line of (log ?? "").split("\n")) {
+      const [selector = "", subject = ""] = line.split("\t");
+      const seconds = Number(/@\{(\d+)\}$/u.exec(selector)?.[1]);
+      if (!Number.isFinite(seconds)) continue;
+      // Newest first: the last entry read is the oldest.
+      since = seconds * 1000;
+      const match = RENAMED.exec(subject);
+      if (!match || match[1] === branch) continue;
+      // Reflog times are whole seconds: the rename's second still counts.
+      const until = (seconds + 1) * 1000;
+      renamedAt.set(match[1], Math.max(renamedAt.get(match[1]) ?? 0, until));
+    }
+  }
+  return (row) => {
+    if (row.branch === branch) return true;
+    const until = row.branch === null ? undefined : renamedAt.get(row.branch);
+    if (until === undefined) return false;
+    const at = Date.parse(row.at);
+    return at >= since && at <= until;
+  };
+}
+
+/** `supersedeAllowed`'s branch test for rows on `branch`, following its renames. */
+const renameAwareBranch = (scopeOf: (branch: string) => BranchScope, branch: unknown) => {
+  return (target: SupersedeRow): boolean => {
+    const own = typeof branch === "string" ? branch : null;
+    const theirs = typeof target.branch === "string" ? target.branch : null;
+    if (own === theirs) return true;
+    if (own === null || theirs === null || typeof target.at !== "string") return false;
+    return scopeOf(own)({ branch: theirs, at: target.at });
+  };
+};
+
 /**
  * Sessions that authored `branch`: the union of `commit.recorded` /
- * `task.opened` ledger rows and `Workit-Session:` commit trailers on
- * `base..head`. Git author name/email is not used: every agent on
- * a machine shares it, so it cannot tell sessions apart.
+ * `task.opened` ledger rows (under its current or an earlier name) and
+ * `Workit-Session:` commit trailers on `base..head`. Git author name/email is
+ * not used: every agent on a machine shares it, so it cannot tell sessions
+ * apart.
  */
 export function authorSessions(
   cwd: string,
   rows: readonly ReadRow[],
   branch: string,
   range: { base: string | null; head: string | null } = { base: null, head: null },
+  scope: BranchScope = branchScope(cwd, branch),
 ): Set<string> {
   const sessions = new Set<string>();
   for (const row of rows) {
-    if (row.branch !== branch || (row.type !== "commit.recorded" && row.type !== "task.opened"))
-      continue;
+    if (!scope(row) || (row.type !== "commit.recorded" && row.type !== "task.opened")) continue;
     const session = str(row.session) ?? row.actor.session;
     if (session) sessions.add(session);
   }
@@ -861,7 +1150,8 @@ const independenceReasons = (row: ReadRow, authors: Set<string>): RejectReason[]
 
 /**
  * The effective verdict of one kind, walking rows in order: a self verdict
- * never displaces an independent one, and an independent failed/blocked
+ * never displaces a current independent one (a stale one it does, so the
+ * author's pass on new code is not hidden behind it), and an independent failed/blocked
  * verdict sticks, for the code it judged, until an independent verdict from a
  * different session (or its own session's supersede) replaces it. A verdict
  * from the same session on different code (`sameCode` false: a real change,
@@ -872,6 +1162,7 @@ function effectiveOf(
   rows: readonly ReadRow[],
   authors: Set<string>,
   sameCode: (failed: ReadRow, row: ReadRow) => boolean,
+  isCurrent: (row: ReadRow) => boolean,
 ): ReadRow | null {
   let effective: ReadRow | null = null;
   for (const row of rows) {
@@ -881,7 +1172,7 @@ function effectiveOf(
     }
     const rowIndependent = independenceReasons(row, authors).length === 0;
     const effIndependent = independenceReasons(effective, authors).length === 0;
-    if (effIndependent && !rowIndependent) continue;
+    if (effIndependent && !rowIndependent && isCurrent(effective)) continue;
     if (
       effIndependent &&
       FAILING.has(String(effective.result)) &&
@@ -939,6 +1230,7 @@ function restackCarries(
 export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRow[]): VerdictCheck {
   const head = branchHead(cwd, branch);
   const fallbackBase = defaultBase(cwd);
+  const scope = branchScope(cwd, branch);
   const keyCache = new Map<string, { patchId: string | null; diffHash: string | null }>();
   const keysAt = (base: string | null, at: string | null) => {
     if (!base || !at) return { patchId: null, diffHash: null };
@@ -951,26 +1243,38 @@ export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRo
     return key;
   };
   const keyFor = (base: string | null) => keysAt(base, head);
+  const basisOf = (row: ReadRow): Exclude<VerdictBasis, "none"> => {
+    const basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
+    return basis === "stale" && restackCarries(rows, branch, row.head, head) ? "carried" : basis;
+  };
   // A newer row is judged under the failure's own base, so a row recorded
-  // with a different --base cannot make unchanged code look changed.
-  const sameCode = (failed: ReadRow, row: ReadRow): boolean =>
-    verdictBasis(failed, {
-      head: row.head,
-      ...keysAt(failed.base ?? fallbackBase, row.head),
-    }) !== "stale" || restackCarries(rows, branch, failed.head, row.head);
-  const authors = authorSessions(cwd, rows, branch, { base: fallbackBase, head });
+  // with a different --base cannot make unchanged code look changed. When
+  // both rows were keyed against the same base commit, the newer row's own
+  // stored keys are that comparison already: no git call per row.
+  const sameCode = (failed: ReadRow, row: ReadRow): boolean => {
+    if (failed.head && failed.head === row.head) return true;
+    const base = failed.base ?? fallbackBase;
+    const stored =
+      (row.base ?? fallbackBase) === base && row.baseSha !== null && row.baseSha === failed.baseSha;
+    const keys = stored ? { patchId: row.patchId, diffHash: row.diffHash } : keysAt(base, row.head);
+    return (
+      verdictBasis(failed, { head: row.head, ...keys }) !== "stale" ||
+      restackCarries(rows, branch, failed.head, row.head)
+    );
+  };
+  const authors = authorSessions(cwd, rows, branch, { base: fallbackBase, head }, scope);
   const byKind = new Map<string, ReadRow[]>();
   for (const row of rows)
-    if (row.branch === branch && isLiveVerdict(row)) {
+    if (isLiveVerdict(row) && scope(row)) {
       const kind = typeof row.kind === "string" ? row.kind : "review";
       byKind.set(kind, [...(byKind.get(kind) ?? []), row]);
     }
   const verdicts: VerdictEntry[] = [];
+  const warnings: string[] = [];
   for (const [kind, list] of byKind) {
-    const row = effectiveOf(list, authors, sameCode);
+    const row = effectiveOf(list, authors, sameCode, (candidate) => basisOf(candidate) !== "stale");
     if (!row) continue;
-    let basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
-    if (basis === "stale" && restackCarries(rows, branch, row.head, head)) basis = "carried";
+    const basis = basisOf(row);
     const current = basis !== "stale";
     const independence = independenceReasons(row, authors);
     const reasons: RejectReason[] = [
@@ -987,7 +1291,25 @@ export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRo
       reasons,
       verdict: row,
     });
+    // The author's own failure never displaces an independent pass, but it
+    // must not vanish either.
+    if (reasons.length === 0)
+      for (const later of list)
+        if (
+          later.seq > row.seq &&
+          independenceReasons(later, authors).length > 0 &&
+          FAILING.has(String(later.result)) &&
+          basisOf(later) !== "stale"
+        )
+          warnings.push(
+            `the author's own (self) ${String(later.result)} ${kind} verdict ${later.id} by ${later.actor.session ?? "no session"} on the current code is newer than the accepted pass ${row.id}: read it before merging`,
+          );
   }
+  for (const row of rows)
+    if (row.integrity === "unverified" && scope(row))
+      warnings.push(
+        `ledger row ${row.id} (${row.type}) on ${row.branch ?? branch} is unverified: the workit CLI did not write it or it changed afterwards (workit ledger verify-integrity)`,
+      );
   verdicts.sort((a, b) => a.verdict.seq - b.verdict.seq);
   const newestCurrent = verdicts.findLast((entry) => entry.current) ?? verdicts.at(-1) ?? null;
   const failing = verdicts.find(
@@ -1028,6 +1350,7 @@ export function checkVerdicts(cwd: string, branch: string, rows: readonly ReadRo
     accepted,
     verdicts,
     authors: [...authors].toSorted(),
+    warnings,
   };
 }
 
@@ -1041,6 +1364,8 @@ export type RecordContext = {
   base?: string | null;
   pr?: number;
   supersedes?: string;
+  /** Where `actor.session` came from (verdicts record it). Default: the environment. */
+  sessionSource?: SessionSource;
   now?: Date;
 };
 
@@ -1072,13 +1397,23 @@ const required = (value: string | undefined | null, flag: string): LedgerResult<
 };
 
 /** Refuse a supersede link that the reader would ignore. */
-function checkSupersede(context: RecordContext, type: string, self?: boolean): LedgerResult<void> {
+function checkSupersede(
+  context: RecordContext,
+  type: string,
+  row: { self?: boolean; kind?: string; branch?: string | null } = {},
+): LedgerResult<void> {
   if (!context.supersedes) return { ok: true, value: undefined };
   const ledger = readLedger(context.cwd);
   if (!ledger.ok) return ledger;
-  const target = ledger.value.rows.find((row) => row.id === context.supersedes);
+  const target = ledger.value.rows.find((candidate) => candidate.id === context.supersedes);
   if (!target) return err("not_found", `no ledger row ${context.supersedes} to supersede`);
-  const problem = supersedeAllowed({ type, actor: context.actor, self }, target);
+  const branch =
+    row.branch === undefined ? (context.branch ?? currentBranch(context.cwd)) : row.branch;
+  const problem = supersedeAllowed(
+    { type, actor: context.actor, ...row, branch },
+    target,
+    renameAwareBranch((name) => branchScope(context.cwd, name), branch),
+  );
   return problem
     ? err("invalid_input", `--supersedes: ${problem}`)
     : { ok: true, value: undefined };
@@ -1270,6 +1605,23 @@ export function clearStanding(
 }
 
 /**
+ * Is `branch` checked out, with uncommitted changes, in another worktree of
+ * this repository? (`codeKey` sees only the cwd's own worktree.)
+ */
+function dirtyElsewhere(cwd: string, branch: string): boolean {
+  const list = git(cwd, ["worktree", "list", "--porcelain"]);
+  let worktree: string | null = null;
+  for (const line of (list ?? "").split("\n")) {
+    if (line.startsWith("worktree ")) worktree = line.slice("worktree ".length);
+    else if (line === `branch refs/heads/${branch}` && worktree) {
+      const status = gitRun(worktree, ["status", "--porcelain", "--untracked-files=normal"]);
+      return status.ok && status.stdout.trim().length > 0;
+    }
+  }
+  return false;
+}
+
+/**
  * Record an agent-asserted verdict on a branch's committed head. Refused on a
  * dirty worktree (the head would not be what was judged) and, for an author
  * session, unless `--self`. Without a session the verdict is recorded as
@@ -1316,7 +1668,7 @@ export function recordVerdict(
   if (!ledger.ok) return ledger;
   const key = codeKey(context.cwd, { branch, base: context.base });
   if (!key.head) return err("not_found", `branch "${branch}" has no commit to judge`);
-  if (key.dirty === true)
+  if (key.dirty === true || (key.dirty === null && dirtyElsewhere(context.cwd, branch)))
     return err(
       "blocked",
       `dirty_worktree: ${branch} has uncommitted changes, so its head is not what was judged`,
@@ -1341,7 +1693,7 @@ export function recordVerdict(
         ? "have a non-author session record the verdict: spawn a verifier with its own WORKIT_SESSION_ID=<lead>-v<n> (Claude Code: subagents get one from the SubagentStart hook); or, as the author, pass --self (self-reviewed, never accepted)"
         : "run the verifier as a separate session: the lead spawns it with its own WORKIT_SESSION_ID (Claude Code: subagents get one from the SubagentStart hook)",
     );
-  const link = checkSupersede(context, "verdict", self);
+  const link = checkSupersede(context, "verdict", { self, kind, branch });
   if (!link.ok) return link;
   return appendRow<VerdictRow>(
     context.cwd,
@@ -1355,6 +1707,7 @@ export function recordVerdict(
       observer: "agent_asserted",
       self,
       selfReason,
+      sessionSource: context.sessionSource ?? "env",
       evidenceRefs: input.evidenceRefs ?? [],
     },
     { now: context.now },
@@ -1387,7 +1740,12 @@ export type RowSummary = {
 };
 
 /** Row types that count only when an observing verb wrote them. */
-const OBSERVED_ONLY: ReadonlySet<string> = new Set(["check", "merge.unverified", ...PR_ROW_TYPES]);
+const OBSERVED_ONLY: ReadonlySet<string> = new Set([
+  "check",
+  "merge.unverified",
+  "policy.judged",
+  ...PR_ROW_TYPES,
+]);
 
 export function rowLabels(row: ReadRow): RowSummary["labels"] {
   const labels: RowSummary["labels"] = [];
@@ -1409,8 +1767,14 @@ export function summarizeRow(row: ReadRow): RowSummary {
       summary = `${text("what")} (why: ${text("why")}; cost if wrong: ${text("costIfWrong")})`;
       break;
     case "verdict":
-      summary = `${text("result")} [${text("kind") || "review"}] at ${(row.head ?? "?").slice(0, 12)}${row.self === true ? ` (self${text("selfReason") === "no_session" ? ": no session" : ""})` : ""}: ${text("how")}`;
+      summary = `${text("result")} [${text("kind") || "review"}] at ${(row.head ?? "?").slice(0, 12)}${row.self === true ? ` (self${text("selfReason") === "no_session" ? ": no session" : ""})` : ""}${text("sessionSource") === "flag" ? ` (session ${row.actor.session ?? "?"} named by --session)` : ""}: ${text("how")}`;
       break;
+    case "policy.judged": {
+      const lifted = Array.isArray(row.lifted) ? row.lifted.map(String) : [];
+      const requirements = Array.isArray(row.requirements) ? row.requirements.map(String) : [];
+      summary = `judged by ${row.actor.session ?? "no session"}: ${requirements.length ? requirements.join(", ") : "no requirements"}${lifted.length ? `; lifted ${lifted.join(", ")} (why: ${text("why") || "none given"})` : ""}`;
+      break;
+    }
     case "handoff":
       summary = `next: ${text("next")}${text("note") ? ` (note: ${text("note")})` : ""}`;
       break;

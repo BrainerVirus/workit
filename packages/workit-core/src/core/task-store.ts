@@ -57,6 +57,7 @@ import {
   type WorkspaceRecord,
 } from "./task-contract";
 import {
+  TASK_STORE_LOCK,
   classifyLockOwner,
   clearAbandonedReclaimGuard,
   defaultLockTimeout,
@@ -2146,7 +2147,9 @@ export class TaskStore {
         try {
           ageMs = nowMs - fs.lstatSync(lockPath).mtimeMs;
         } catch {}
-        return classifyLockOwner(payload, ageMs).state === "stale";
+        return (
+          classifyLockOwner(payload, ageMs, localLockHost(), TASK_STORE_LOCK).state === "stale"
+        );
       },
       // The library re-checks the bytes before removal, so a lock replaced
       // after classification is never deleted.

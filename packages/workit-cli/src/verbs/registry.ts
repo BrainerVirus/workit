@@ -82,7 +82,7 @@ export const FAMILY_ACTIONS: Record<Family, Record<string, string>> = {
 };
 
 const POLICY_JUDGE =
-  "--judge risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no [--ref <path>]…";
+  "--judge risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no [--ref <path>]… [--why <reason>]";
 
 // The implicit-task forms of `workit task` (verbs/task.ts), ahead of the family grammar.
 const TASK_IMPLICIT: SubcommandEntry[] = [
@@ -492,6 +492,12 @@ export const VERBS: readonly VerbEntry[] = [
         name: "check",
         usage: "workit ledger check [--pr <n> | --branch <b>]",
         summary: "Whether the branch head carries an accepted non-author verdict",
+      },
+      {
+        name: "verify-integrity",
+        usage: "workit ledger verify-integrity",
+        summary:
+          "Rows outside the CLI's hash chain (hand-written or changed); reports, never blocks",
       },
       {
         name: "standing",
