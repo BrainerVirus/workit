@@ -61,6 +61,7 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
     perTurn: "none",
     afterCompact: "partial",
     task: "single-active",
+    turnResend: "every-turn",
   },
   subagents: {
     identity: "native",

@@ -27,6 +27,7 @@ export const PI_DESCRIPTOR: HostDescriptor = {
     perTurn: "native",
     afterCompact: "native",
     task: "session-bound",
+    turnResend: "every-turn",
   },
   subagents: {
     identity: "none",

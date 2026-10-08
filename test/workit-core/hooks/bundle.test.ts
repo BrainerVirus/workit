@@ -19,8 +19,10 @@ const HOOK_ENTRIES = [
 // 20 KB: the append-only task event store (store/: log, patch, reduce, paths)
 // replaces whole-record snapshots and recovery copies. The raw-git steering
 // and ledger hash chain left the Codex bundle at ~660 KB; skill nudges (the
-// trigger table, skill.loaded rows) add ~5 KB, so the ceiling is 670 KB.
-const BUDGET = 670_000;
+// trigger table, skill.loaded rows) add ~5 KB; the core's change-only per-turn
+// context (lifted out of the Claude plugin for Codex) adds ~1.5 KB, so the
+// ceiling is 675 KB.
+const BUDGET = 675_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {

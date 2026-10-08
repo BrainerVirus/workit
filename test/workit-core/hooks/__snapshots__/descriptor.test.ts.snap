@@ -17,9 +17,9 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
       "surface": "PreToolUse",
     },
     {
-      "assurance": "agent_guided",
+      "assurance": "unavailable",
       "name": "native_subagents",
-      "reason": "Claude Code reports stable agent identities, but SubagentStart cannot block or bind",
+      "reason": "Claude Code subagent lifecycle hooks are unavailable",
       "refs": [
         {
           "handle": "SubagentStart",
@@ -152,14 +152,15 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
       "perTurn": "native",
       "sessionStart": "native",
       "task": "session-bound",
+      "turnResend": "every-turn",
     },
     "docs": [
       "https://code.claude.com/docs/en/hooks",
     ],
     "events": {
       "compact.pre": {
-        "native": "PreCompact",
-        "support": "partial",
+        "native": null,
+        "support": "none",
       },
       "context.turn": {
         "native": "UserPromptSubmit",
@@ -182,16 +183,16 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
         "support": "native",
       },
       "stop": {
-        "native": "Stop",
-        "support": "native",
+        "native": null,
+        "support": "none",
       },
       "subagent.start": {
         "native": "SubagentStart",
         "support": "native",
       },
       "subagent.stop": {
-        "native": "SubagentStop",
-        "support": "native",
+        "native": null,
+        "support": "none",
       },
       "tool.pre": {
         "native": "PreToolUse",
@@ -484,9 +485,10 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
     ],
     "context": {
       "afterCompact": "native",
-      "perTurn": "undocumented",
+      "perTurn": "native",
       "sessionStart": "native",
       "task": "single-active",
+      "turnResend": "on-change",
     },
     "docs": [
       "https://developers.openai.com/codex/hooks",
@@ -497,12 +499,12 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
         "support": "none",
       },
       "context.turn": {
-        "native": null,
-        "support": "undocumented",
+        "native": "UserPromptSubmit",
+        "support": "native",
       },
       "prompt.submit": {
-        "native": null,
-        "support": "undocumented",
+        "native": "UserPromptSubmit",
+        "support": "native",
       },
       "session.start": {
         "native": "SessionStart",
@@ -518,7 +520,7 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
       },
       "stop": {
         "native": null,
-        "support": "undocumented",
+        "support": "none",
       },
       "subagent.start": {
         "native": "SubagentStart",
@@ -533,8 +535,8 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
         "support": "native",
       },
       "write.pre": {
-        "native": null,
-        "support": "undocumented",
+        "native": "PreToolUse",
+        "support": "native",
       },
     },
     "host": "codex_cli",
@@ -564,7 +566,7 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
       "worktreeIsolation": "undocumented",
     },
     "transport": "hook-process",
-    "verifiedAgainst": "codex-cli 0.153.4; Codex Desktop 26.901.20858",
+    "verifiedAgainst": "codex-cli 0.160.1 (hook JSON schemas in the binary); Codex Desktop 26.901.20858",
   },
   "unobserved": [
     {
@@ -842,6 +844,7 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
       "perTurn": "none",
       "sessionStart": "native",
       "task": "single-active",
+      "turnResend": "every-turn",
     },
     "docs": [
       "https://cursor.com/docs/agent/hooks",
@@ -1100,6 +1103,7 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
       "perTurn": "native",
       "sessionStart": "none",
       "task": "session-bound",
+      "turnResend": "every-turn",
     },
     "docs": [
       "https://opencode.ai/v2/docs/build/plugins/",
@@ -1130,8 +1134,8 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
         "support": "native",
       },
       "stop": {
-        "native": "session.idle",
-        "support": "partial",
+        "native": null,
+        "support": "none",
       },
       "subagent.start": {
         "native": "tool.hook("execute.before") subagent",
@@ -1308,6 +1312,7 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
       "perTurn": "native",
       "sessionStart": "native",
       "task": "session-bound",
+      "turnResend": "every-turn",
     },
     "docs": [
       "https://github.com/earendil-works/pi-coding-agent",

@@ -1,7 +1,10 @@
 // Session context shared by every host: the contract bootstrap, the current
 // task's compact context, and the one-time offer of unfinished tasks.
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { invariantBootstrap } from "../core/methods";
+import { resolveStore } from "../store/paths";
 import { canonicalJson } from "../core/task-contract";
 import { isObservedCheck, type Freshness } from "../core/task-evaluation";
 import { worktreeSignal } from "../git/rev";
@@ -286,4 +289,100 @@ export const turnContextText = (input: HookInput, descriptor: HostDescriptor): s
   } catch {
     return null;
   }
+};
+
+// Change-only per-turn context. A hook-process host (Claude Code, Codex)
+// keeps each injected additionalContext in the transcript, so the task
+// context is resent only when it changed since the last injection for the
+// session. Each hook is a fresh process: the last digest lives in the
+// workspace store (`hooks/turn-<session hash>.json`). Every cache failure
+// answers "changed", so context is resent rather than lost.
+
+const TURN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const digestOf = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+/** The session's last-injected digest file, or null when it cannot be told apart or stored. */
+const turnMarker = (input: HookInput): string | null => {
+  if (!input.session.id) return null;
+  try {
+    const location = resolveStore(input.cwd);
+    if (location instanceof Error) return null;
+    const session = [input.host, input.session.id, input.session.agentId ?? ""].join("\0");
+    return path.join(location.dir, "hooks", `turn-${digestOf(session).slice(0, 32)}.json`);
+  } catch {
+    return null;
+  }
+};
+
+const writeTurnDigest = (file: string, digest: string): void => {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify({ digest })}\n`);
+  } catch {
+    // An unwritable store only means the context is sent every turn.
+  }
+};
+
+const clearTurnDigest = (file: string): void => {
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    // A stale digest only withholds one context equal to it.
+  }
+};
+
+/** Drops digests untouched for a week (sessions that ended). */
+const pruneTurnDigests = (dir: string, now: number): void => {
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.startsWith("turn-")) continue;
+      const file = path.join(dir, name);
+      try {
+        if (now - fs.statSync(file).mtimeMs > TURN_TTL_MS) fs.rmSync(file, { force: true });
+      } catch {
+        // Raced with another session: nothing to prune.
+      }
+    }
+  } catch {
+    // No hooks dir yet.
+  }
+};
+
+/**
+ * `text` when it differs from the last per-turn context injected for this
+ * session (recording it), else null.
+ */
+export const changedTurnContext = (input: HookInput, text: string | null): string | null => {
+  const file = turnMarker(input);
+  if (!text) {
+    // No context now: the next one is a change, even if it repeats an old one.
+    if (file) clearTurnDigest(file);
+    return null;
+  }
+  if (!file) return text;
+  const digest = digestOf(text);
+  try {
+    const previous = JSON.parse(fs.readFileSync(file, "utf8")) as { digest?: unknown };
+    if (previous.digest === digest) return null;
+  } catch {
+    // Missing or unreadable digest: treat as changed.
+  }
+  writeTurnDigest(file, digest);
+  return text;
+};
+
+/**
+ * A session start already injects the task context (inside the contract), so
+ * the per-turn digest is seeded with what the next prompt would carry: the
+ * first turn after a start, resume or compaction does not resend it. A
+ * session without task context clears its digest instead.
+ */
+export const seedTurnContext = (input: HookInput, descriptor: HostDescriptor): void => {
+  const file = turnMarker(input);
+  if (!file) return;
+  pruneTurnDigests(path.dirname(file), Date.now());
+  const text = turnContextText(input, descriptor);
+  if (text) writeTurnDigest(file, digestOf(text));
+  else clearTurnDigest(file);
 };

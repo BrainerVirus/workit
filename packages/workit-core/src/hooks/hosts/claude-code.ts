@@ -43,11 +43,14 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     "shell.post": { support: "native", native: "PostToolUse" },
     // SubagentStart output is additionalContext only: it cannot block or bind.
     "subagent.start": { support: "native", native: "SubagentStart" },
-    "subagent.stop": { support: "native", native: "SubagentStop" },
     "prompt.submit": { support: "native", native: "UserPromptSubmit" },
-    // PreCompact cannot inject context (only a systemMessage); restore runs on SessionStart source=compact.
-    "compact.pre": { support: "partial", native: "PreCompact" },
-    stop: { support: "native", native: "Stop" },
+    // Claude Code has SubagentStop, PreCompact and Stop, but the plugin
+    // registers none of them: events list what workit registers
+    // (docs/agents/hosts.md, Host parity). Compaction restore runs on
+    // SessionStart source=compact.
+    "subagent.stop": { support: "none", native: null },
+    "compact.pre": { support: "none", native: null },
+    stop: { support: "none", native: null },
   },
   shellPolicy: { deny: "native", channel: "permissionDecision", failClosed: false },
   context: {
@@ -55,6 +58,9 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     perTurn: "native",
     afterCompact: "native",
     task: "session-bound",
+    // The plugin's src/hook.ts dedups per-turn context itself (its own cache)
+    // until it moves onto the core's on-change resend.
+    turnResend: "every-turn",
   },
   subagents: {
     identity: "native",

@@ -19,7 +19,8 @@ import {
 import { fixture, startTask, tempRoot, withProtectedMain } from "./hook-fixtures";
 
 // Design §1.3: which native hook carries each protocol event, per host.
-// null means the host has no native hook for the event.
+// null means workit registers no native hook for the event (the host may
+// have one: docs/agents/hosts.md, Host parity, records it).
 const PARITY: Record<
   "claude_code" | "codex" | "cursor" | "opencode" | "pi",
   Partial<Record<HookEventKind, string | null>>
@@ -31,16 +32,16 @@ const PARITY: Record<
     "write.pre": "PreToolUse",
     "shell.post": "PostToolUse",
     "subagent.start": "SubagentStart",
-    "subagent.stop": "SubagentStop",
-    "compact.pre": "PreCompact",
-    stop: "Stop",
+    "subagent.stop": null,
+    "compact.pre": null,
+    stop: null,
   },
   codex: {
     "session.start": "SessionStart",
-    "context.turn": null,
+    "context.turn": "UserPromptSubmit",
     "shell.pre": "PreToolUse",
-    // PreToolUse does not see apply_patch edits: the write gate is advisory.
-    "write.pre": null,
+    // PreToolUse covers apply_patch edits: the write gate enforces.
+    "write.pre": "PreToolUse",
     // PostToolUse records raw `git commit`s for the session.
     "shell.post": "PostToolUse",
     "subagent.start": "SubagentStart",
@@ -68,7 +69,7 @@ const PARITY: Record<
     "subagent.start": 'tool.hook("execute.before") subagent',
     "subagent.stop": 'tool.hook("execute.after") subagent',
     "compact.pre": 'session.hook("compaction")',
-    stop: "session.idle",
+    stop: null,
   },
   pi: {
     "session.start": "session_start",
@@ -105,8 +106,9 @@ const FIXTURE_EVENTS: Array<
   [claudeCodeAdapter, "claude-code", "pre-compact", "compact.pre"],
   [claudeCodeAdapter, "claude-code", "stop", "stop"],
   [codexAdapter, "codex", "session-start", "session.start"],
+  [codexAdapter, "codex", "user-prompt-submit", "context.turn"],
   [codexAdapter, "codex", "pre-tool-use-bash", "shell.pre"],
-  [codexAdapter, "codex", "pre-tool-use-apply-patch", "tool.pre"],
+  [codexAdapter, "codex", "pre-tool-use-apply-patch", "write.pre"],
   [codexAdapter, "codex", "post-tool-use-bash", "shell.post"],
   [codexAdapter, "codex", "subagent-start", "subagent.start"],
   [codexAdapter, "codex", "subagent-stop", "subagent.stop"],
@@ -139,7 +141,9 @@ test("every host maps the same protocol events onto its documented native hooks"
       expect(parsed.ok, `${dir}/${name}`).toBe(true);
       if (!parsed.ok) continue;
       expect(parsed.input.event.kind, `${dir}/${name}`).toBe(kind);
-      expect(adapter.descriptor.events[kind].native, `${dir}/${name} native`).toBe(parsed.native);
+      // An event the adapter parses but workit does not register has no native hook.
+      const { native, support } = adapter.descriptor.events[kind];
+      expect(native, `${dir}/${name} native`).toBe(support === "none" ? null : parsed.native);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });

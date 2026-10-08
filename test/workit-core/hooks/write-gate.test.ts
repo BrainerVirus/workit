@@ -134,20 +134,56 @@ test("G a high-risk judgment, T Cursor and Pi deny code writes before a plan; tr
   ).toBeUndefined();
 });
 
-test("G Codex (no pre-write hook), T the session says the gate is advisory and edits are not denied", () => {
-  const { root } = judged({ productChoiceOpen: true });
+const codexPatch = (root: string, patch?: string) =>
+  dispatchHook(
+    codexAdapter,
+    fixture(
+      "codex",
+      "pre-tool-use-apply-patch",
+      root,
+      patch ? { tool_input: { command: patch } } : {},
+    ),
+    {},
+  ).json as {
+    hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+  };
+
+test("G an open product choice, W Codex apply_patch edits code, T denied with the decision unblock; docs stay writable and the session claims no advisory gate", () => {
+  const { root } = judged({ productChoiceOpen: "yes" });
   const start = dispatchHook(codexAdapter, fixture("codex", "session-start", root), {}).json as {
     hookSpecificOutput?: { additionalContext?: string };
   };
-  expect(start.hookSpecificOutput?.additionalContext).toContain("advisory");
-  const patch = dispatchHook(codexAdapter, fixture("codex", "pre-tool-use-apply-patch", root), {})
-    .json as { hookSpecificOutput?: { permissionDecision?: string } };
-  expect(patch.hookSpecificOutput?.permissionDecision).toBeUndefined();
-  const claudeStart = dispatchHook(
-    claudeCodeAdapter,
-    fixture("claude-code", "session-start-compact", root),
-  ).json as { hookSpecificOutput?: { additionalContext?: string } };
-  expect(claudeStart.hookSpecificOutput?.additionalContext).not.toContain("advisory here");
+  expect(start.hookSpecificOutput?.additionalContext).not.toContain("advisory here");
+  const denied = codexPatch(root);
+  expect(denied.hookSpecificOutput?.permissionDecision).toBe("deny");
+  expect(denied.hookSpecificOutput?.permissionDecisionReason).toContain(
+    'workit ledger decision "<choice>" --why "<reason>"',
+  );
+  // A rename into src/ is a code write even when the source is a doc.
+  expect(
+    codexPatch(
+      root,
+      "*** Begin Patch\n*** Update File: docs/a.md\n*** Move to: src/a.ts\n*** End Patch\n",
+    ).hookSpecificOutput?.permissionDecision,
+  ).toBe("deny");
+  expect(
+    codexPatch(root, "*** Begin Patch\n*** Add File: docs/notes.md\n+x\n*** End Patch\n")
+      .hookSpecificOutput?.permissionDecision,
+  ).toBeUndefined();
+  // Edit and Write are Codex matcher aliases; were they sent as names, they gate the same.
+  for (const tool_name of ["Edit", "Write"])
+    expect(
+      (
+        dispatchHook(
+          codexAdapter,
+          fixture("codex", "pre-tool-use-apply-patch", root, { tool_name }),
+          {},
+        ).json as { hookSpecificOutput?: { permissionDecision?: string } }
+      ).hookSpecificOutput?.permissionDecision,
+      tool_name,
+    ).toBe("deny");
+  decide(root);
+  expect(codexPatch(root).hookSpecificOutput?.permissionDecision).toBeUndefined();
 });
 
 test("shell write recognition: working-tree edits only, with their targets; never quotes or history moves", () => {

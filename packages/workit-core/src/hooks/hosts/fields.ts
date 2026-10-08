@@ -84,7 +84,7 @@ export const writePaths = (input: unknown): string[] => {
   const paths = PATH_KEYS.map((key) => input[key]).filter(nonEmpty);
   for (const value of Object.values(input))
     if (typeof value === "string")
-      for (const match of value.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm))
+      for (const match of value.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm))
         paths.push(match[1].trim());
   return [...new Set(paths)];
 };

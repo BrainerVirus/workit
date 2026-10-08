@@ -1,5 +1,10 @@
 // The one host-hook implementation: every host maps its native events here.
-import { sessionContextText, turnContextText } from "./context";
+import {
+  changedTurnContext,
+  seedTurnContext,
+  sessionContextText,
+  turnContextText,
+} from "./context";
 import type { HostDescriptor, Support } from "./descriptor";
 import { shellPolicy } from "./policy";
 import {
@@ -25,16 +30,24 @@ export type HookDeps = { descriptor: HostDescriptor; addendum: string | null };
 const usable = (value: Support) => value === "native" || value === "partial";
 const NONE: HookDecision = { kind: "none" };
 
+const resendsOnChange = (descriptor: HostDescriptor): boolean =>
+  descriptor.context.turnResend === "on-change" && usable(descriptor.context.perTurn);
+
 /** Sessions already offered unfinished tasks in this process. */
 const offered = new Set<string>();
 
-/** The Workit plugin's worktree-isolated implementer is the one Claude Code
- * subagent that writes. Claude namespaces plugin agents, so only the exact
- * `workit:implementer` is ours: a bare or other-plugin `implementer` is not. */
-const CLAUDE_WORKTREE_IMPLEMENTER = "workit:implementer";
-
-/** The plugin's read-only judges: each records verdicts as its own session. */
-const CLAUDE_JUDGES: ReadonlySet<string> = new Set(["workit:verifier", "workit:reviewer"]);
+/**
+ * The Workit agent role an agent type names, on any host. Claude Code
+ * namespaces plugin agents (`workit:implementer`); other hosts name custom
+ * agents freely (`workit-implementer`). A bare or other-plugin `implementer`
+ * is not ours. The implementer is the one subagent that writes; verifier and
+ * reviewer are read-only judges that record verdicts as their own session.
+ */
+const workitRole = (agentType: string): "implementer" | "judge" | null => {
+  const role = /^workit[:-](implementer|verifier|reviewer)$/.exec(agentType)?.[1];
+  if (!role) return null;
+  return role === "implementer" ? "implementer" : "judge";
+};
 
 /** `<lead session>:<agent id>`, safe for the ledger's session grammar. */
 const subagentSession = (session: string | null, agentId: string): string =>
@@ -45,22 +58,24 @@ const subagentSession = (session: string | null, agentId: string): string =>
     .slice(0, 128);
 
 const subagentStartText = (
-  host: HookInput["host"],
   session: string | null,
   descriptor: HostDescriptor,
   event: Extract<HookInput["event"], { kind: "subagent.start" }>,
 ): string => {
-  if (host === "claude_code" && event.agentType === CLAUDE_WORKTREE_IMPLEMENTER)
-    return `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) working in its own git worktree: it may edit and commit there, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
-  const readOnly = `Workit observed ${descriptor.label} subagent ${event.agentId} (${event.agentType}) as read-only/agent-guided.`;
-  if (
-    host === "claude_code" &&
-    event.agentType &&
-    CLAUDE_JUDGES.has(event.agentType) &&
-    event.agentId
-  )
-    return `${readOnly} Its own Workit session is ${subagentSession(session, event.agentId)}: record verdicts with \`workit ledger verdict <result> --session ${subagentSession(session, event.agentId)} ...\` so the ledger tells it apart from the author.`;
-  return readOnly;
+  const role = workitRole(event.agentType);
+  const who = `${descriptor.label} subagent ${event.agentId} (${event.agentType})`;
+  if (role === "implementer") {
+    // Only a host that isolates subagents in worktrees has already put it in one.
+    const where =
+      descriptor.subagents.worktreeIsolation === "native"
+        ? "working in its own git worktree: it may edit and commit there"
+        : "as an implementer: it edits and commits only in its own git worktree (the lead makes one with `workit fanout worktree create <slice>`), never in the lead's checkout";
+    return `Workit observed ${who} ${where}, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
+  }
+  const readOnly = `Workit observed ${who} as read-only/agent-guided.`;
+  if (role !== "judge" || !event.agentId) return readOnly;
+  const own = subagentSession(session, event.agentId);
+  return `${readOnly} Its own Workit session is ${own}: record verdicts with \`workit ledger verdict <result> --session ${own} ...\` so the ledger tells it apart from the author.`;
 };
 
 export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
@@ -78,14 +93,14 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
         ? null
         : `Workit cannot gate file writes on ${descriptor.label} (no pre-write hook): before-write requirements (an open product choice, a missing plan) are advisory here, so settle them before editing.`;
       const addendum = [deps.addendum, advisory].filter(Boolean).join("\n") || null;
-      return {
-        kind: "context",
-        text: sessionContextText(input, descriptor, { offer, addendum }),
-      };
+      const text = sessionContextText(input, descriptor, { offer, addendum });
+      if (resendsOnChange(descriptor)) seedTurnContext(input, descriptor);
+      return { kind: "context", text };
     }
     case "context.turn": {
       if (!usable(descriptor.context.perTurn)) return NONE;
-      const text = turnContextText(input, descriptor);
+      const current = turnContextText(input, descriptor);
+      const text = resendsOnChange(descriptor) ? changedTurnContext(input, current) : current;
       return withContextLine(
         text ? { kind: "context", text } : NONE,
         promptNudge(input, event.prompt),
@@ -127,7 +142,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
     case "subagent.start":
       return {
         kind: "context",
-        text: subagentStartText(input.host, input.session.id ?? null, descriptor, event),
+        text: subagentStartText(input.session.id ?? null, descriptor, event),
       };
     case "compact.pre":
       return {

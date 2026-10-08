@@ -27,6 +27,11 @@ export type HostDescriptor = {
     /** How the session's current task is chosen: by a session bound to the task
      * record, or the workspace's single active task when sessions never bind. */
     task: "session-bound" | "single-active";
+    /** `on-change`: the host keeps each injected context in the transcript, so
+     * the core resends per-turn context only when it changed; `every-turn`:
+     * the core sends it on every turn (an in-process system-prompt hook needs
+     * it each time, or the host plugin dedups itself). */
+    turnResend: "on-change" | "every-turn";
   };
   subagents: {
     identity: Support;
