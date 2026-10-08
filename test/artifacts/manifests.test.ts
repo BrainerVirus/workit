@@ -398,7 +398,10 @@ test(
     for (const os of SUPPORT_MATRIX.os) {
       expect(ci).toContain(os);
     }
-    expect(ci).toMatch(/node:\s*\[24\.20\.0\]/);
+    // Every OS leg installs the declared current Node through the env pin.
+    const nodeVersions = [...ci.matchAll(/node-version:\s*(.+)/g)].map((m) => m[1]?.trim());
+    expect(nodeVersions.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(nodeVersions)).toEqual(new Set(["${{ env.NODE_CURRENT }}"]));
     expect(ci).not.toMatch(/[Dd]eno/);
   },
   { timeout: 60_000 },
