@@ -1,0 +1,10 @@
+{
+  "session_id": "codex-session-1",
+  "cwd": "__CWD__",
+  "model": "gpt-5",
+  "permission_mode": "default",
+  "transcript_path": null,
+  "hook_event_name": "UserPromptSubmit",
+  "turn_id": "turn-2",
+  "prompt": "the parser is broken on empty input, fix the bug"
+}

@@ -27,6 +27,12 @@ export type HostDescriptor = {
     /** How the session's current task is chosen: by a session bound to the task
      * record, or the workspace's single active task when sessions never bind. */
     task: "session-bound" | "single-active";
+    /** `on-change`: the host keeps each injected context in the transcript, so
+     * the core resends per-turn context only when it changed; `every-turn`:
+     * the core sends it on every turn (an in-process system-prompt hook needs
+     * it each time, or the host plugin dedups itself); `per-session`: the
+     * host plugin sends it once per session and again after compaction. */
+    turnResend: "on-change" | "every-turn" | "per-session";
   };
   subagents: {
     identity: Support;
@@ -34,6 +40,9 @@ export type HostDescriptor = {
     blockStart: Support;
     worktreeIsolation: Support;
     maxConcurrency: number | "undocumented";
+    /** How a Workit agent type is spelled: plugin-namespaced (`workit:verifier`)
+     * on hosts that namespace plugin agents, else a plain `workit-verifier`. */
+    agentPrefix: "workit:" | "workit-";
   };
   provenance: { sessionId: Support; agentIdOnTool: Support; postToolObserve: Support };
   /** Host-native interaction boundaries workit can observe. */

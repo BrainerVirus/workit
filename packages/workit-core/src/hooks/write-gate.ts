@@ -207,13 +207,15 @@ const gateFor = (cwd: string): Gate | null => {
 /**
  * Deny a working-tree edit while the branch task has unmet before-write
  * requirements. `paths` are the files the tool writes, or null when unknown
- * (shell); an edit touching only exempt files is always allowed.
+ * (a shell write, a patch whose headers cannot be read); unknown or empty
+ * targets are gated, and an edit touching only exempt files is always allowed.
  */
 export function writeGate(cwd: string, paths: readonly string[] | null): HookDecision {
   try {
     const gate = gateFor(cwd);
     if (!gate || gate.blockers.length === 0) return NONE;
-    if (paths && paths.every((file) => exempt(cwd, gate.root, file, gate.plans))) return NONE;
+    if (paths?.length && paths.every((file) => exempt(cwd, gate.root, file, gate.plans)))
+      return NONE;
     const reasons = gate.blockers.map((item) => `${item.ruleId}: ${item.reason}`).join("; ");
     return {
       kind: "deny",

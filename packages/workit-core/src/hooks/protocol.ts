@@ -37,7 +37,13 @@ export type HookEvent =
       skill?: string | null;
     }
   /** A file-writing tool (Edit, Write, apply_patch…): the before-write gate (S17). */
-  | { kind: "write.pre"; tool: string; paths: string[]; toolUseId: string | null }
+  | {
+      kind: "write.pre";
+      tool: string;
+      /** The files written; null when they cannot be read (unknown targets, gated). */
+      paths: string[] | null;
+      toolUseId: string | null;
+    }
   | {
       kind: "shell.post";
       command: string;

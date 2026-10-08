@@ -1,16 +1,26 @@
 // Codex CLI and Desktop: command hooks (hooks/hooks.json) mapped onto the protocol.
 import type { HostDescriptor } from "../descriptor";
 import type { HookDecision, HookEvent, HookEventKind, HostAdapter } from "../protocol";
-import { commandText, existingDirectory, isRecord, nonEmpty, optionalText } from "./fields";
+import {
+  commandText,
+  existingDirectory,
+  isRecord,
+  isWriteTool,
+  nonEmpty,
+  optionalText,
+  writeTargets,
+} from "./fields";
 
 export type CodexHost = "codex_cli" | "codex_desktop";
 export type CodexHookEvent =
   | "SessionStart"
+  | "UserPromptSubmit"
   | "PreToolUse"
   | "PostToolUse"
   | "SubagentStart"
   | "SubagentStop";
-type SessionSource = "startup" | "resume" | "clear" | "compact";
+// The session-start.command.input schema in codex-cli 0.160.1 lists fork as a source.
+type SessionSource = "startup" | "resume" | "clear" | "compact" | "fork";
 
 export type CodexHookInput = {
   hook_event_name: CodexHookEvent;
@@ -21,6 +31,8 @@ export type CodexHookInput = {
   transcript_path: string | null;
   source?: SessionSource;
   turn_id?: string;
+  /** UserPromptSubmit: the prompt about to be sent. */
+  prompt?: string | null;
   tool_name?: string;
   tool_input?: unknown;
   /** The shell command as one string; argv arrays are joined. */
@@ -44,35 +56,43 @@ export function detectCodexSurface(env: NodeJS.ProcessEnv): CodexHost {
     : "codex_cli";
 }
 
-const undocumented = { support: "undocumented", native: null } as const;
-
 export const CODEX_DESCRIPTOR: HostDescriptor = {
   host: "codex_cli",
   label: "Codex",
-  verifiedAgainst: "codex-cli 0.153.4; Codex Desktop 26.901.20858",
+  // The hook JSON schemas embedded in the codex-cli 0.160.1 binary
+  // (pre-tool-use, user-prompt-submit, subagent-start .command.input/output)
+  // and the hooks page: "PreToolUse can intercept Bash, file edits performed
+  // through apply_patch, MCP tool calls…"; apply_patch arrives as tool_name
+  // "apply_patch" with the patch in tool_input.command (Edit and Write are
+  // matcher aliases only).
+  verifiedAgainst:
+    "codex-cli 0.160.1 (hook JSON schemas in the binary); Codex Desktop 26.901.20858",
   docs: ["https://developers.openai.com/codex/hooks"],
   transport: "hook-process",
   events: {
     "session.start": { support: "native", native: "SessionStart" },
-    "context.turn": undocumented,
+    "context.turn": { support: "native", native: "UserPromptSubmit" },
     "shell.pre": { support: "native", native: "PreToolUse" },
     "tool.pre": { support: "native", native: "PreToolUse" },
-    // Codex PreToolUse intercepts shell calls, not apply_patch edits: the
-    // before-write gate stays advisory rather than half-enforced.
-    "write.pre": { support: "undocumented", native: null },
+    // PreToolUse covers apply_patch; the files come from the patch body.
+    "write.pre": { support: "native", native: "PreToolUse" },
     "shell.post": { support: "native", native: "PostToolUse" },
     "subagent.start": { support: "native", native: "SubagentStart" },
     "subagent.stop": { support: "native", native: "SubagentStop" },
-    "prompt.submit": undocumented,
+    "prompt.submit": { support: "native", native: "UserPromptSubmit" },
+    // Codex has PreCompact and Stop, but workit registers neither yet: events
+    // list what workit registers (docs/agents/hosts.md, Host parity).
     "compact.pre": { support: "none", native: null },
-    stop: undocumented,
+    stop: { support: "none", native: null },
   },
   shellPolicy: { deny: "native", channel: "permissionDecision", failClosed: false },
   context: {
     sessionStart: "native",
-    perTurn: "undocumented",
+    perTurn: "native",
     afterCompact: "native",
     task: "single-active",
+    // UserPromptSubmit additionalContext stays in the thread as developer context.
+    turnResend: "on-change",
   },
   subagents: {
     identity: "native",
@@ -80,6 +100,7 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
     blockStart: "none",
     worktreeIsolation: "undocumented",
     maxConcurrency: "undocumented",
+    agentPrefix: "workit-",
   },
   provenance: { sessionId: "native", agentIdOnTool: "partial", postToolObserve: "native" },
   interaction: { questions: "none", writeBoundary: "partial" },
@@ -152,6 +173,7 @@ export const codexDescriptor = (host: CodexHost): HostDescriptor => ({ ...CODEX_
 
 const EVENTS: Record<CodexHookEvent, HookEventKind> = {
   SessionStart: "session.start",
+  UserPromptSubmit: "context.turn",
   PreToolUse: "shell.pre",
   PostToolUse: "shell.post",
   SubagentStart: "subagent.start",
@@ -159,7 +181,7 @@ const EVENTS: Record<CodexHookEvent, HookEventKind> = {
 };
 const SHELL_TOOLS = new Set(["bash", "unified-exec"]);
 const isShellTool = (name: unknown) => SHELL_TOOLS.has(String(name).toLowerCase());
-const SOURCES = new Set<string>(["startup", "resume", "clear", "compact"]);
+const SOURCES = new Set<string>(["startup", "resume", "clear", "compact", "fork"]);
 
 /**
  * Read a Codex payload, checking only what each mapping needs (D17): the
@@ -195,6 +217,7 @@ export const parseCodexHookInput = (value: unknown): CodexParseResult => {
         ? { source: SOURCES.has(String(value.source)) ? (value.source as SessionSource) : "resume" }
         : {}),
       ...(nonEmpty(value.turn_id) ? { turn_id: value.turn_id } : {}),
+      ...(event === "UserPromptSubmit" ? { prompt: optionalText(value.prompt) } : {}),
       ...(nonEmpty(value.tool_name) ? { tool_name: value.tool_name } : {}),
       ...(toolEvent ? { tool_input: value.tool_input } : {}),
       ...(event === "PostToolUse" && typeof value.tool_response === "string"
@@ -219,15 +242,21 @@ const protocolEvent = (input: CodexHookInput): HookEvent => {
   switch (input.hook_event_name) {
     case "SessionStart":
       return { kind: "session.start", source: input.source! };
+    case "UserPromptSubmit":
+      return { kind: "context.turn", prompt: input.prompt ?? null };
     case "PreToolUse": {
       const toolUseId = input.tool_use_id ?? null;
-      return isShellTool(input.tool_name)
-        ? {
-            kind: "shell.pre",
-            command: input.command ?? "",
-            toolUseId,
-          }
-        : { kind: "tool.pre", tool: input.tool_name!, toolUseId };
+      if (isShellTool(input.tool_name))
+        return { kind: "shell.pre", command: input.command ?? "", toolUseId };
+      // apply_patch: the files are the patch body's `*** … File:` headers.
+      if (isWriteTool(input.tool_name))
+        return {
+          kind: "write.pre",
+          tool: input.tool_name!,
+          paths: writeTargets(input.tool_input),
+          toolUseId,
+        };
+      return { kind: "tool.pre", tool: input.tool_name!, toolUseId };
     }
     case "PostToolUse": {
       const toolUseId = input.tool_use_id ?? null;
@@ -313,5 +342,5 @@ export const codexAdapter: HostAdapter = {
   },
   render,
   addendum: (input) =>
-    `<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run workit verbs with the workit CLI on the shell (node_modules/.bin/workit, or npx -y @brainervirus/workit-cli): check, git branch|commit|push, pr, ci, stack, ledger, handoff; task-family mutations take --json${input.session.id ? ` --actor ${input.session.id}` : ""}. workit acts as this thread (CODEX_THREAD_ID${input.session.id ? `=${input.session.id}` : ""}) unless WORKIT_SESSION_ID is set. A verifier or reviewer records workit ledger verdict under a session the lead assigns (WORKIT_HOST=codex_cli WORKIT_SESSION_ID=<lead>-v<n>), never the author's. Merge and release need a workspace grant (workit grant show); a question answer is not host permission.</workit-codex-mutations>`,
+    `<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run workit verbs with the workit CLI on the shell (node_modules/.bin/workit, or npx -y @brainervirus/workit-cli): check, git branch|commit|push, pr, ci, stack, ledger, handoff; task-family mutations take --json${input.session.id ? ` --actor ${input.session.id}` : ""}. workit acts as this thread (CODEX_THREAD_ID${input.session.id ? `=${input.session.id}` : ""}) unless WORKIT_SESSION_ID is set. A verifier or reviewer records workit ledger verdict under its own session, never the author's: a workit-verifier or workit-reviewer agent uses the --session its SubagentStart context names; any other uses one the lead assigns (WORKIT_HOST=codex_cli WORKIT_SESSION_ID=<lead>-v<n>). Merge and release need a workspace grant (workit grant show); a question answer is not host permission.</workit-codex-mutations>`,
 };

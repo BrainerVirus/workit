@@ -19,7 +19,8 @@ export const OPENCODE_DESCRIPTOR: HostDescriptor = {
     "subagent.stop": { support: "native", native: 'tool.hook("execute.after") subagent' },
     "prompt.submit": { support: "undocumented", native: null },
     "compact.pre": { support: "native", native: 'session.hook("compaction")' },
-    stop: { support: "partial", native: "session.idle" },
+    // OpenCode reports session.idle, but the plugin registers no stop hook yet.
+    stop: { support: "none", native: null },
   },
   shellPolicy: { deny: "native", channel: "effect", failClosed: false },
   context: {
@@ -27,6 +28,8 @@ export const OPENCODE_DESCRIPTOR: HostDescriptor = {
     perTurn: "native",
     afterCompact: "native",
     task: "session-bound",
+    // The context hook rebuilds the system prompt on every agent-loop call.
+    turnResend: "every-turn",
   },
   subagents: {
     identity: "native",
@@ -34,6 +37,7 @@ export const OPENCODE_DESCRIPTOR: HostDescriptor = {
     blockStart: "native",
     worktreeIsolation: "undocumented",
     maxConcurrency: "undocumented",
+    agentPrefix: "workit-",
   },
   provenance: { sessionId: "native", agentIdOnTool: "native", postToolObserve: "native" },
   interaction: { questions: "native", writeBoundary: "partial" },
