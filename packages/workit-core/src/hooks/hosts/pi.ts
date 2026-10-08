@@ -24,10 +24,12 @@ export const PI_DESCRIPTOR: HostDescriptor = {
   shellPolicy: { deny: "native", channel: "block", failClosed: false },
   context: {
     sessionStart: "native",
-    perTurn: "native",
+    // before_agent_start runs every turn, but the extension injects the task
+    // context once per session and again after compaction, never on change.
+    perTurn: "partial",
     afterCompact: "native",
     task: "session-bound",
-    turnResend: "every-turn",
+    turnResend: "per-session",
   },
   subagents: {
     identity: "none",
@@ -35,6 +37,7 @@ export const PI_DESCRIPTOR: HostDescriptor = {
     blockStart: "none",
     worktreeIsolation: "none",
     maxConcurrency: "undocumented",
+    agentPrefix: "workit-",
   },
   provenance: { sessionId: "native", agentIdOnTool: "none", postToolObserve: "native" },
   interaction: { questions: "native", writeBoundary: "native" },

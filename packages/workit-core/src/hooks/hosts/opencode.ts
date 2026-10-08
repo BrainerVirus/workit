@@ -37,6 +37,7 @@ export const OPENCODE_DESCRIPTOR: HostDescriptor = {
     blockStart: "native",
     worktreeIsolation: "undocumented",
     maxConcurrency: "undocumented",
+    agentPrefix: "workit-",
   },
   provenance: { sessionId: "native", agentIdOnTool: "native", postToolObserve: "native" },
   interaction: { questions: "native", writeBoundary: "partial" },

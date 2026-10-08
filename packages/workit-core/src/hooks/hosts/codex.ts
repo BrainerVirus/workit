@@ -8,7 +8,7 @@ import {
   isWriteTool,
   nonEmpty,
   optionalText,
-  writePaths,
+  writeTargets,
 } from "./fields";
 
 export type CodexHost = "codex_cli" | "codex_desktop";
@@ -19,7 +19,8 @@ export type CodexHookEvent =
   | "PostToolUse"
   | "SubagentStart"
   | "SubagentStop";
-type SessionSource = "startup" | "resume" | "clear" | "compact";
+// The session-start.command.input schema in codex-cli 0.160.1 lists fork as a source.
+type SessionSource = "startup" | "resume" | "clear" | "compact" | "fork";
 
 export type CodexHookInput = {
   hook_event_name: CodexHookEvent;
@@ -99,6 +100,7 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
     blockStart: "none",
     worktreeIsolation: "undocumented",
     maxConcurrency: "undocumented",
+    agentPrefix: "workit-",
   },
   provenance: { sessionId: "native", agentIdOnTool: "partial", postToolObserve: "native" },
   interaction: { questions: "none", writeBoundary: "partial" },
@@ -179,7 +181,7 @@ const EVENTS: Record<CodexHookEvent, HookEventKind> = {
 };
 const SHELL_TOOLS = new Set(["bash", "unified-exec"]);
 const isShellTool = (name: unknown) => SHELL_TOOLS.has(String(name).toLowerCase());
-const SOURCES = new Set<string>(["startup", "resume", "clear", "compact"]);
+const SOURCES = new Set<string>(["startup", "resume", "clear", "compact", "fork"]);
 
 /**
  * Read a Codex payload, checking only what each mapping needs (D17): the
@@ -251,7 +253,7 @@ const protocolEvent = (input: CodexHookInput): HookEvent => {
         return {
           kind: "write.pre",
           tool: input.tool_name!,
-          paths: writePaths(input.tool_input),
+          paths: writeTargets(input.tool_input),
           toolUseId,
         };
       return { kind: "tool.pre", tool: input.tool_name!, toolUseId };

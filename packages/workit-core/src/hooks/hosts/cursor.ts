@@ -2,7 +2,7 @@
 import path from "node:path";
 import type { HostDescriptor } from "../descriptor";
 import type { HookDecision, HookEvent, HookEventKind, HostAdapter } from "../protocol";
-import { existingDirectory, isRecord, isWriteTool, nonEmpty, writePaths } from "./fields";
+import { existingDirectory, isRecord, isWriteTool, nonEmpty, writeTargets } from "./fields";
 
 export type CursorHookEvent =
   | "sessionStart"
@@ -53,7 +53,8 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
     "prompt.submit": undocumented,
     // preCompact can only show a user message.
     "compact.pre": { support: "partial", native: "preCompact" },
-    stop: undocumented,
+    // Cursor has a stop hook (followup_message), but workit registers none yet.
+    stop: none,
   },
   shellPolicy: { deny: "native", channel: "exit2+json", failClosed: true },
   context: {
@@ -69,6 +70,7 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
     blockStart: "native",
     worktreeIsolation: "undocumented",
     maxConcurrency: "undocumented",
+    agentPrefix: "workit-",
   },
   provenance: {
     sessionId: "native",
@@ -221,7 +223,7 @@ const protocolEvent = (input: CursorHookInput): HookEvent => {
         ? {
             kind: "write.pre",
             tool: input.tool_name ?? "",
-            paths: writePaths(input.tool_input),
+            paths: writeTargets(input.tool_input),
             toolUseId: null,
           }
         : { kind: "tool.pre", tool: input.tool_name ?? "", toolUseId: null };

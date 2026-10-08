@@ -182,8 +182,37 @@ test("G an open product choice, W Codex apply_patch edits code, T denied with th
       ).hookSpecificOutput?.permissionDecision,
       tool_name,
     ).toBe("deny");
+  // Codex trims patch lines, so an indented header still writes src/a.ts; a
+  // body with no readable header has unknown targets. Both are gated.
+  for (const patch of [
+    "*** Begin Patch\n  *** Add File: src/a.ts\n+x\n*** End Patch\n",
+    "\t*** Begin Patch\n\t*** Update File: src/a.ts\n@@\n-a\n+b\n\t*** End Patch\n",
+    "not a patch at all",
+    "*** Begin Patch\n*** End Patch\n",
+  ])
+    expect(codexPatch(root, patch).hookSpecificOutput?.permissionDecision, patch).toBe("deny");
+  expect(
+    codexPatch(root, "*** Begin Patch\n   *** Add File: docs/notes.md\n+x\n*** End Patch\n")
+      .hookSpecificOutput?.permissionDecision,
+  ).toBeUndefined();
   decide(root);
   expect(codexPatch(root).hookSpecificOutput?.permissionDecision).toBeUndefined();
+});
+
+test("G an open product choice, W a Codex shell command writes a source file, T it is denied; reads and doc writes pass", () => {
+  const { root } = judged({ productChoiceOpen: "yes" });
+  const shell = (command: string) =>
+    (
+      dispatchHook(
+        codexAdapter,
+        fixture("codex", "pre-tool-use-bash", root, { tool_input: { command } }),
+        {},
+      ).json as { hookSpecificOutput?: { permissionDecision?: string } }
+    ).hookSpecificOutput?.permissionDecision;
+  for (const command of ["echo x > src/a.ts", "sed -i 's/a/b/' src/a.ts"])
+    expect(shell(command), command).toBe("deny");
+  for (const command of ["cat src/a.ts", "echo x > docs/notes.md"])
+    expect(shell(command), command).toBeUndefined();
 });
 
 test("shell write recognition: working-tree edits only, with their targets; never quotes or history moves", () => {

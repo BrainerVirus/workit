@@ -15,7 +15,7 @@ import {
   isWriteTool,
   nonEmpty,
   optionalText,
-  writePaths,
+  writeTargets,
 } from "./fields";
 
 type ClaudeHookEvent =
@@ -68,6 +68,8 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     blockStart: "none",
     worktreeIsolation: "native",
     maxConcurrency: "undocumented",
+    // Plugin agents are namespaced: `workit:implementer`, never a bare `workit-implementer`.
+    agentPrefix: "workit:",
   },
   provenance: { sessionId: "native", agentIdOnTool: "native", postToolObserve: "native" },
   interaction: { questions: "undocumented", writeBoundary: "partial" },
@@ -85,13 +87,14 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     },
     {
       name: "native_subagents",
-      surface: "SubagentStart/SubagentStop",
-      refs: ["SubagentStart", "SubagentStop"],
-      requires: ["event:subagent.start", "event:subagent.stop"],
-      observed: ["subagent.start", "subagent.stop"],
+      // SubagentStop is not registered: identity and guidance come from SubagentStart.
+      surface: "SubagentStart",
+      refs: ["SubagentStart"],
+      requires: ["event:subagent.start"],
+      observed: ["subagent.start"],
       assurance: "agent_guided",
       reason: "Claude Code reports stable agent identities, but SubagentStart cannot block or bind",
-      unavailableReason: "Claude Code subagent lifecycle hooks are unavailable",
+      unavailableReason: "Claude Code SubagentStart is unavailable",
     },
     {
       name: "fresh-context-review",
@@ -163,7 +166,7 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
           event: {
             kind: "write.pre",
             tool: value.tool_name,
-            paths: writePaths(value.tool_input),
+            paths: writeTargets(value.tool_input),
             toolUseId,
           },
         };

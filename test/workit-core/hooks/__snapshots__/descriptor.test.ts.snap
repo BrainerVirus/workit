@@ -17,22 +17,17 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
       "surface": "PreToolUse",
     },
     {
-      "assurance": "unavailable",
+      "assurance": "agent_guided",
       "name": "native_subagents",
-      "reason": "Claude Code subagent lifecycle hooks are unavailable",
+      "reason": "Claude Code reports stable agent identities, but SubagentStart cannot block or bind",
       "refs": [
         {
           "handle": "SubagentStart",
           "host": "claude_code",
           "kind": "host",
         },
-        {
-          "handle": "SubagentStop",
-          "host": "claude_code",
-          "kind": "host",
-        },
       ],
-      "surface": "SubagentStart/SubagentStop",
+      "surface": "SubagentStart",
     },
     {
       "assurance": "agent_guided",
@@ -91,19 +86,16 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
         "name": "native_subagents",
         "observed": [
           "subagent.start",
-          "subagent.stop",
         ],
         "reason": "Claude Code reports stable agent identities, but SubagentStart cannot block or bind",
         "refs": [
           "SubagentStart",
-          "SubagentStop",
         ],
         "requires": [
           "event:subagent.start",
-          "event:subagent.stop",
         ],
-        "surface": "SubagentStart/SubagentStop",
-        "unavailableReason": "Claude Code subagent lifecycle hooks are unavailable",
+        "surface": "SubagentStart",
+        "unavailableReason": "Claude Code SubagentStart is unavailable",
       },
       {
         "assurance": "agent_guided",
@@ -223,6 +215,7 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
     },
     "stopControl": "native",
     "subagents": {
+      "agentPrefix": "workit:",
       "blockStart": "none",
       "identity": "native",
       "maxConcurrency": "undocumented",
@@ -249,20 +242,15 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
     {
       "assurance": "unavailable",
       "name": "native_subagents",
-      "reason": "Claude Code subagent lifecycle hooks are unavailable",
+      "reason": "Claude Code SubagentStart is unavailable",
       "refs": [
         {
           "handle": "SubagentStart",
           "host": "claude_code",
           "kind": "host",
         },
-        {
-          "handle": "SubagentStop",
-          "host": "claude_code",
-          "kind": "host",
-        },
       ],
-      "surface": "SubagentStart/SubagentStop",
+      "surface": "SubagentStart",
     },
     {
       "assurance": "unavailable",
@@ -559,6 +547,7 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
     },
     "stopControl": "undocumented",
     "subagents": {
+      "agentPrefix": "workit-",
       "blockStart": "none",
       "identity": "native",
       "maxConcurrency": "undocumented",
@@ -876,7 +865,7 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
       },
       "stop": {
         "native": null,
-        "support": "undocumented",
+        "support": "none",
       },
       "subagent.start": {
         "native": "subagentStart",
@@ -915,6 +904,7 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
     },
     "stopControl": "undocumented",
     "subagents": {
+      "agentPrefix": "workit-",
       "blockStart": "native",
       "identity": "native",
       "maxConcurrency": "undocumented",
@@ -1174,6 +1164,7 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
     },
     "stopControl": "partial",
     "subagents": {
+      "agentPrefix": "workit-",
       "blockStart": "native",
       "identity": "native",
       "maxConcurrency": "undocumented",
@@ -1309,10 +1300,10 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
     ],
     "context": {
       "afterCompact": "native",
-      "perTurn": "native",
+      "perTurn": "partial",
       "sessionStart": "native",
       "task": "session-bound",
-      "turnResend": "every-turn",
+      "turnResend": "per-session",
     },
     "docs": [
       "https://github.com/earendil-works/pi-coding-agent",
@@ -1383,6 +1374,7 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
     },
     "stopControl": "none",
     "subagents": {
+      "agentPrefix": "workit-",
       "blockStart": "none",
       "identity": "none",
       "maxConcurrency": "undocumented",

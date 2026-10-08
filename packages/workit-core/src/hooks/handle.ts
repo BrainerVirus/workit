@@ -36,17 +36,27 @@ const resendsOnChange = (descriptor: HostDescriptor): boolean =>
 /** Sessions already offered unfinished tasks in this process. */
 const offered = new Set<string>();
 
+const ROLES: Readonly<Record<string, "implementer" | "judge">> = {
+  implementer: "implementer",
+  verifier: "judge",
+  reviewer: "judge",
+};
+
 /**
- * The Workit agent role an agent type names, on any host. Claude Code
- * namespaces plugin agents (`workit:implementer`); other hosts name custom
- * agents freely (`workit-implementer`). A bare or other-plugin `implementer`
- * is not ours. The implementer is the one subagent that writes; verifier and
- * reviewer are read-only judges that record verdicts as their own session.
+ * The Workit agent role an agent type names, spelled the host's way
+ * (`descriptor.subagents.agentPrefix`): Claude Code namespaces plugin agents
+ * (`workit:implementer`, so a bare `workit-implementer` is someone else's);
+ * other hosts name custom agents freely (`workit-implementer`). The
+ * implementer is the one subagent that writes; verifier and reviewer are
+ * read-only judges that record verdicts as their own session.
  */
-const workitRole = (agentType: string): "implementer" | "judge" | null => {
-  const role = /^workit[:-](implementer|verifier|reviewer)$/.exec(agentType)?.[1];
-  if (!role) return null;
-  return role === "implementer" ? "implementer" : "judge";
+const workitRole = (
+  descriptor: HostDescriptor,
+  agentType: string,
+): "implementer" | "judge" | null => {
+  const prefix = descriptor.subagents.agentPrefix;
+  const name = agentType.startsWith(prefix) ? agentType.slice(prefix.length) : "";
+  return Object.hasOwn(ROLES, name) ? ROLES[name] : null;
 };
 
 /** `<lead session>:<agent id>`, safe for the ledger's session grammar. */
@@ -62,7 +72,7 @@ const subagentStartText = (
   descriptor: HostDescriptor,
   event: Extract<HookInput["event"], { kind: "subagent.start" }>,
 ): string => {
-  const role = workitRole(event.agentType);
+  const role = workitRole(descriptor, event.agentType);
   const who = `${descriptor.label} subagent ${event.agentId} (${event.agentType})`;
   if (role === "implementer") {
     // Only a host that isolates subagents in worktrees has already put it in one.

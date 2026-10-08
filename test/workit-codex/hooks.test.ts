@@ -65,10 +65,13 @@ test("G an active task, W Codex prompts, T the task context is sent once, again 
   progress(root, id, "write the parser test");
   expect(turn(root)?.additionalContext).toContain("write the parser test");
   expect(turn(root)?.additionalContext).toBeUndefined();
-  // SessionStart (startup or compaction restore) injects the context itself.
-  for (const source of ["startup", "compact"]) {
+  // SessionStart (startup, compaction restore or fork) injects the context
+  // itself and reseeds the digest: the context changed since the last turn,
+  // yet the next turn does not resend it.
+  for (const source of ["startup", "compact", "fork"]) {
+    progress(root, id, `next after ${source}`);
     expect(codex("session-start", root, { source })?.additionalContext).toContain(
-      "codex per-turn task",
+      `next after ${source}`,
     );
     expect(turn(root)?.additionalContext, source).toBeUndefined();
   }
@@ -98,7 +101,7 @@ test("G a Codex SubagentStart, T Workit judges get their own session and the imp
   const root = repo();
   const start = (agent_type: string) =>
     codex("subagent-start", root, { agent_type })?.additionalContext ?? "";
-  for (const judge of ["workit-verifier", "workit-reviewer", "workit:verifier"]) {
+  for (const judge of ["workit-verifier", "workit-reviewer"]) {
     const text = start(judge);
     expect(text, judge).toContain("Its own Workit session is codex-session-1:agent-1");
     expect(text, judge).toContain("--session codex-session-1:agent-1");
@@ -109,18 +112,42 @@ test("G a Codex SubagentStart, T Workit judges get their own session and the imp
   expect(implementer).toContain("workit fanout worktree create");
   expect(implementer).toContain("workit git branch <branch> --base <base>");
   expect(implementer).not.toContain("read-only");
-  for (const other of ["worker", "explorer", "implementer", "verifier", "other:workit-verifier"]) {
+  for (const other of [
+    "worker",
+    "explorer",
+    "implementer",
+    "verifier",
+    "other:workit-verifier",
+    // Claude's namespaced spelling is not how Codex names custom agents.
+    "workit:verifier",
+    "workit:implementer",
+  ]) {
     const text = start(other);
     expect(text, other).toContain("read-only/agent-guided");
     expect(text, other).not.toContain("Its own Workit session");
   }
+});
+
+test("G a Claude Code SubagentStart, T only the plugin-namespaced workit:<role> agents get role guidance", () => {
+  const root = repo();
+  const claude = (agent_type: string) =>
+    (
+      dispatchHook(
+        claudeCodeAdapter,
+        fixture("claude-code", "subagent-start", root, { agent_type }),
+      ).json as Out
+    ).hookSpecificOutput?.additionalContext ?? "";
   // Claude Code's native worktree isolation keeps its own wording.
-  const claude = (
-    dispatchHook(
-      claudeCodeAdapter,
-      fixture("claude-code", "subagent-start", root, { agent_type: "workit:implementer" }),
-    ).json as Out
-  ).hookSpecificOutput?.additionalContext;
-  expect(claude).toContain("working in its own git worktree: it may edit and commit there");
-  expect(claude).not.toContain("workit fanout worktree");
+  const implementer = claude("workit:implementer");
+  expect(implementer).toContain("working in its own git worktree: it may edit and commit there");
+  expect(implementer).not.toContain("workit fanout worktree");
+  expect(claude("workit:verifier")).toContain("Its own Workit session is");
+  // Plugin agents are always namespaced: a bare workit-<role> is someone
+  // else's agent and is never told it is worktree-isolated.
+  for (const other of ["workit-implementer", "workit-verifier", "workit-reviewer"]) {
+    const text = claude(other);
+    expect(text, other).toContain("read-only/agent-guided");
+    expect(text, other).not.toContain("git worktree");
+    expect(text, other).not.toContain("Its own Workit session");
+  }
 });

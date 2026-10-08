@@ -16,7 +16,8 @@ needs a plan ([verification](verification.md)), working-tree edits are denied
 with the exact unblock on OpenCode (permission evaluate: edits and recognizable
 shell writes), Cursor (`preToolUse` write tools), Pi (`tool_call` write/edit
 and bash), Codex (`PreToolUse` on `apply_patch`, with the files read from the
-patch) and Claude Code.
+patch, and on recognizable shell writes such as `echo x > src/a.ts`) and
+Claude Code. A patch whose files cannot be read is treated as writing code.
 
 **Raw git and forge commands.** Workit's delivery rules (merge grant and
 verdict gate, protected branches, the session trailer) live in its own verbs,
