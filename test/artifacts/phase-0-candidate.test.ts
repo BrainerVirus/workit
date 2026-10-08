@@ -425,21 +425,15 @@ test.skipIf(!npmRegistryOk)(
       // Node 22.19 reports an `ini@7` EBADENGINE warning through the OpenCode ->
       // effect -> ini@7 path. The packed CLI must not pull that path, so a clean
       // install is warning-free regardless of Node version.
-      // The temp HOME would give npm a cold cache on every run (a slow network
-      // timed this install out on Windows), so it shares the runner's npm cache
-      // (restored by CI) and prefers cached metadata. The cache holds only
-      // content-addressed tarballs; no user .npmrc is read.
+      // On Linux and macOS the temp HOME would give npm a cold cache every run
+      // (Windows keeps it under LOCALAPPDATA), so the install shares the
+      // runner's npm cache, which CI restores. Tarballs come from the cache;
+      // metadata is still revalidated, so this stays a fresh-resolution check.
+      // No user .npmrc is read.
       const npmInstall = () =>
         spawnSync(
           "npm",
-          [
-            "install",
-            "--no-audit",
-            "--no-fund",
-            "--no-package-lock",
-            "--ignore-scripts",
-            "--prefer-offline",
-          ],
+          ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
           {
             cwd: install,
             env: isolatedEnv(home, { npm_config_cache: ambientNpmCache() }),
@@ -460,5 +454,6 @@ test.skipIf(!npmRegistryOk)(
       rmSync(home, { recursive: true, force: true });
     }
   },
-  270_000,
+  // Two 120 s install attempts plus packing.
+  300_000,
 );
