@@ -39,12 +39,12 @@ import {
 import { rerunLogPath } from "@/packages/workit-core/src/forge/reruns";
 import {
   fixture,
+  makeForgeRepo,
   replayRunner,
   replyError,
   type ForgeRepo,
   type Reply,
 } from "@/test/shared/helpers/forge-replay";
-import { makeForgeRepo } from "./forge-repo";
 
 // S10 (design §2.0, §2.1, §5): forge adapters behind one interface, replayed
 // from recorded gh/glab API fixtures. No test here reaches the network.
