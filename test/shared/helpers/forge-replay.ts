@@ -2,7 +2,7 @@
 // in place of the real CLIs, so forge tests never touch the network. Routes
 // match on the API endpoint (REST) or the GraphQL operation + variables, and
 // `{{HEAD}}` / `{{BASE}}` in a fixture are replaced with real test-repo SHAs.
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -119,13 +119,44 @@ export function replayRunner(
   return Object.assign(runner, { calls });
 }
 
+// Pinned so fixture repos behave the same on every runner: no CRLF rewriting
+// (Windows git defaults core.autocrlf=true) and no background auto-gc racing
+// the next command.
+const GIT_CONFIG = [
+  "-c",
+  "user.name=t",
+  "-c",
+  "user.email=t@t",
+  "-c",
+  "commit.gpgsign=false",
+  "-c",
+  "core.autocrlf=false",
+  "-c",
+  "gc.auto=0",
+];
+
+const runGit = (cwd: string, args: string[]): SpawnSyncReturns<string> =>
+  spawnSync("git", [...GIT_CONFIG, ...args], { cwd, encoding: "utf8" });
+
+// A Windows CI fixture `git commit` once failed with an empty stderr; the
+// status, signal and spawn error are what identify such a failure.
+const describeFailure = (args: string[], result: SpawnSyncReturns<string>): string =>
+  [
+    `git ${args.join(" ")} failed`,
+    `status=${result.status} signal=${result.signal ?? "none"}`,
+    result.error ? `error=${result.error.message}` : "",
+    `stderr=${result.stderr || "(empty)"}`,
+    `stdout=${result.stdout || "(empty)"}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
 const git = (cwd: string, ...args: string[]): string => {
-  const result = spawnSync(
-    "git",
-    ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args],
-    { cwd, encoding: "utf8" },
-  );
-  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  let result = runGit(cwd, args);
+  // Retry once only when git never ran to an exit code (spawn error or
+  // killed by a signal); a real non-zero exit fails immediately.
+  if (result.error || result.status === null) result = runGit(cwd, args);
+  if (result.status !== 0) throw new Error(describeFailure(args, result));
   return result.stdout.trim();
 };
 
@@ -153,6 +184,11 @@ export function makeForgeRepo(kind: "github" | "gitlab"): ForgeRepo {
   mkdirSync(cwd);
   git(root, "init", "-q", "--bare", "-b", "main", bare);
   git(cwd, "init", "-q", "-b", "main");
+  // Persist the same settings so git run by the code under test matches.
+  for (const dir of [bare, cwd]) {
+    git(dir, "config", "core.autocrlf", "false");
+    git(dir, "config", "gc.auto", "0");
+  }
   writeFileSync(path.join(cwd, "a.txt"), "a\n");
   git(cwd, "add", "-A");
   git(cwd, "commit", "-q", "-m", "base");

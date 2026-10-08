@@ -33,6 +33,18 @@ runs everything; `bun test <path>` runs one file.
   `test/shared/helpers/packages.ts`), so neither tier needs `bun run build`
   first.
 
+## CI shards
+
+The macOS and Windows legs run `bun scripts/test.ts shard <i>/<n>
+test/workit-core test/artifacts`: files are split by the measured Windows
+weights in `SHARD_WEIGHTS` (balance only; every file runs in some shard).
+Windows runs three shards, aggregated into the required `test (windows-latest)`
+check. On Windows the per-test default timeout is 15 s; files listed in
+`WINDOWS_SLOW_FILES` get 60 s. A test slower than that needs its own timeout
+argument, not a longer blanket. Jobs time out after 20 minutes; nothing
+retries a failed test. PRs touching only `docs/**` (outside
+`docs/qualification/`) or root/`.github/` Markdown skip the test legs.
+
 ## Opt-in suites
 
 - OpenCode v2 docker suites (`test/opencode-v2/{contract,lifecycle,matrix}.test.ts`) sit

@@ -52,6 +52,13 @@ if (!npmRegistryOk) {
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 
+// npm's default cache for the real user: what CI restores between runs.
+const ambientNpmCache = (): string =>
+  process.env.npm_config_cache ||
+  (process.platform === "win32" && process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, "npm-cache")
+    : path.join(os.homedir(), ".npm"));
+
 test(
   "isolatedEnv strips script-specific path overrides that could re-point at the repo",
   () => {
@@ -418,17 +425,27 @@ test.skipIf(!npmRegistryOk)(
       // Node 22.19 reports an `ini@7` EBADENGINE warning through the OpenCode ->
       // effect -> ini@7 path. The packed CLI must not pull that path, so a clean
       // install is warning-free regardless of Node version.
-      const res = spawnSync(
-        "npm",
-        ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
-        {
-          cwd: install,
-          env: isolatedEnv(home),
-          encoding: "utf8",
-          timeout: 120_000,
-          shell: process.platform === "win32",
-        },
-      );
+      // On Linux and macOS the temp HOME would give npm a cold cache every run
+      // (Windows keeps it under LOCALAPPDATA), so the install shares the
+      // runner's npm cache, which CI restores. Tarballs come from the cache;
+      // metadata is still revalidated, so this stays a fresh-resolution check.
+      // No user .npmrc is read.
+      const npmInstall = () =>
+        spawnSync(
+          "npm",
+          ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
+          {
+            cwd: install,
+            env: isolatedEnv(home, { npm_config_cache: ambientNpmCache() }),
+            encoding: "utf8",
+            timeout: 120_000,
+            shell: process.platform === "win32",
+          },
+        );
+      let res = npmInstall();
+      // One retry, only when npm was killed by the timeout (no exit status);
+      // any npm exit code, and every assertion below, is checked as-is.
+      if (res.status === null) res = npmInstall();
       expect(res.status, res.stdout + res.stderr).toBe(0);
       expect(res.stderr, res.stderr).not.toContain("EBADENGINE");
       expect(res.stderr, res.stderr).not.toContain("ini@7");
@@ -437,5 +454,6 @@ test.skipIf(!npmRegistryOk)(
       rmSync(home, { recursive: true, force: true });
     }
   },
-  180_000,
+  // Two 120 s install attempts plus packing.
+  300_000,
 );
