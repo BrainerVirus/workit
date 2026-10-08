@@ -734,6 +734,18 @@ test("pr status: a merged PR names the verdict its merge was accepted on, never 
     branch: "feature/x",
     head,
     pr: 12,
+    base: "release",
+    verdictId: "v-0",
+  });
+  // PR #12 on another base is a different PR.
+  expect((await run(["pr", "status"], repo.cwd)).stdout).toContain("merged outside workit");
+  appendObserved(repo.cwd, {
+    type: "pr.merged",
+    actor,
+    branch: "feature/x",
+    head,
+    pr: 12,
+    base: "main",
     verdictId: "v-1",
   });
   // The branch moves on after the merge: a re-check would read stale.
@@ -752,7 +764,8 @@ test("pr status: a merged PR names the verdict its merge was accepted on, never 
     head,
     pr: 12,
     verdictId: null,
-    unverified: { reason: "hotfix" },
+    base: "main",
+    unverified: "row-bypass-1",
   });
   expect((await run(["pr", "status"], repo.cwd)).stdout).toContain(
     `verdict: merged unverified at ${head.slice(0, 12)} (recorded bypass)`,

@@ -131,15 +131,17 @@ const mergedVerdictLine = (landed: MergeRecord | "untracked"): string =>
     ? "merged outside workit (no merge record)"
     : landed.unverified
       ? `merged unverified at ${(landed.head ?? "?").slice(0, 12)} (recorded bypass)`
-      : landed.verdictId
-        ? `merged with accepted verdict ${landed.verdictId} at ${(landed.head ?? "?").slice(0, 12)}`
-        : `merged at ${(landed.head ?? "?").slice(0, 12)} (no verdict required)`;
+      : `merged with accepted verdict ${landed.verdictId ?? "?"} at ${(landed.head ?? "?").slice(0, 12)}`;
 
 /**
  * S12: the S13 verdict for the PR's head branch (fresh, carried through a
  * rebase or restack, or stale), read-only. Null when the ledger is unreadable.
  */
-function verdictBlock(cwd: string, branch: string, doc: { state: string; number: number }) {
+function verdictBlock(
+  cwd: string,
+  branch: string,
+  doc: { state: string; number: number; base: string },
+) {
   const ledger = readLedger(cwd);
   if (!ledger.ok) return null;
   const check = checkVerdicts(cwd, branch, ledger.value.rows);
@@ -148,7 +150,13 @@ function verdictBlock(cwd: string, branch: string, doc: { state: string; number:
   let landed: MergeRecord | "untracked" | null = null;
   if (doc.state === "merged") {
     const row = ledger.value.rows.findLast(
-      (candidate) => candidate.type === "pr.merged" && candidate.pr === doc.number,
+      // Only the CLI's own merge record, for this PR on this base (one clone can
+      // merge PR #N on two forge repos).
+      (candidate) =>
+        candidate.type === "pr.merged" &&
+        candidate.observer === "workit_cli" &&
+        candidate.pr === doc.number &&
+        candidate.base === doc.base,
     );
     landed = row
       ? {
