@@ -5,6 +5,7 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
+import { appendObserved } from "@/packages/workit-core/src/ledger";
 import { STACK_VERSION, writeStack } from "@/packages/workit-core/src/stack";
 import {
   fixture,
@@ -716,6 +717,46 @@ test("pr status: a draft names `workit pr ready`, and threads name `workit pr th
   status = fixture("github/pr-failing-thread.json");
   const threads = await run(["pr", "status", "--log-lines", "0", "--json"], repo.cwd);
   expect(threads.json().data.nextHint).toStartWith("workit pr threads --pr 12; ");
+});
+
+test("pr status: a merged PR names the verdict its merge was accepted on, never a stale re-check of the moved branch", async () => {
+  const { repo } = setup("github", {
+    ...githubBase(),
+    [GH_STATUS]: fixture("github/pr-merged.json"),
+  });
+  const untracked = await run(["pr", "status"], repo.cwd);
+  expect(untracked.stdout).toContain("verdict: merged outside workit (no merge record)");
+  const head = repo.git("rev-parse", "HEAD");
+  const actor = { host: "cli", session: "s-lead", agentId: null };
+  appendObserved(repo.cwd, {
+    type: "pr.merged",
+    actor,
+    branch: "feature/x",
+    head,
+    pr: 12,
+    verdictId: "v-1",
+  });
+  // The branch moves on after the merge: a re-check would read stale.
+  repo.git("commit", "-q", "--allow-empty", "-m", "after merge");
+  const merged = await run(["pr", "status", "--json"], repo.cwd);
+  expect(merged.json().data.verdict.merge).toEqual({ head, verdictId: "v-1", unverified: false });
+  const human = await run(["pr", "status"], repo.cwd);
+  expect(human.stdout).toContain(
+    `verdict: merged with accepted verdict v-1 at ${head.slice(0, 12)}`,
+  );
+  expect(human.stdout).not.toContain("not accepted");
+  appendObserved(repo.cwd, {
+    type: "pr.merged",
+    actor,
+    branch: "feature/x",
+    head,
+    pr: 12,
+    verdictId: null,
+    unverified: { reason: "hotfix" },
+  });
+  expect((await run(["pr", "status"], repo.cwd)).stdout).toContain(
+    `verdict: merged unverified at ${head.slice(0, 12)} (recorded bypass)`,
+  );
 });
 
 // ---------------------------------------------------------------------------

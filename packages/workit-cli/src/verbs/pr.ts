@@ -103,16 +103,18 @@ async function status(argv: string[], io: Io): Promise<number> {
   const hint = nextHint(doc.next, doc.number);
   return emit(
     io,
-    ok({ ...doc, nextHint: hint, verdict: verdictBlock(io.cwd, doc.head.branch) }),
+    ok({ ...doc, nextHint: hint, verdict: verdictBlock(io.cwd, doc.head.branch, doc) }),
     (data) => {
       const lines = renderStatus(data);
       // `next:` stays the last line.
       lines.splice(
         lines.length - 1,
         0,
-        data.verdict
-          ? `verdict: ${data.verdict.accepted ? `accepted (${data.verdict.basis})` : data.verdict.review === "self-reviewed" ? "self-reviewed (author's own verdict; not independent)" : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
-          : "verdict: unknown (ledger unreadable)",
+        data.verdict?.merge
+          ? `verdict: ${mergedVerdictLine(data.verdict.merge)}`
+          : data.verdict
+            ? `verdict: ${data.verdict.accepted ? `accepted (${data.verdict.basis})` : data.verdict.review === "self-reviewed" ? "self-reviewed (author's own verdict; not independent)" : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
+            : "verdict: unknown (ledger unreadable)",
       );
       // The step that clears `next`, right above it.
       if (data.nextHint) lines.splice(lines.length - 1, 0, `do: ${data.nextHint}`);
@@ -121,15 +123,43 @@ async function status(argv: string[], io: Io): Promise<number> {
   );
 }
 
+/** How a merged PR landed, from its `pr.merged` row ("untracked": workit did not merge it). */
+type MergeRecord = { head: string | null; verdictId: string | null; unverified: boolean };
+
+const mergedVerdictLine = (landed: MergeRecord | "untracked"): string =>
+  landed === "untracked"
+    ? "merged outside workit (no merge record)"
+    : landed.unverified
+      ? `merged unverified at ${(landed.head ?? "?").slice(0, 12)} (recorded bypass)`
+      : landed.verdictId
+        ? `merged with accepted verdict ${landed.verdictId} at ${(landed.head ?? "?").slice(0, 12)}`
+        : `merged at ${(landed.head ?? "?").slice(0, 12)} (no verdict required)`;
+
 /**
  * S12: the S13 verdict for the PR's head branch (fresh, carried through a
  * rebase or restack, or stale), read-only. Null when the ledger is unreadable.
  */
-function verdictBlock(cwd: string, branch: string) {
+function verdictBlock(cwd: string, branch: string, doc: { state: string; number: number }) {
   const ledger = readLedger(cwd);
   if (!ledger.ok) return null;
   const check = checkVerdicts(cwd, branch, ledger.value.rows);
+  // A merged PR's verdict is the one its merge was accepted on: the branch
+  // has moved on or been deleted, so a fresh check would read as stale.
+  let landed: MergeRecord | "untracked" | null = null;
+  if (doc.state === "merged") {
+    const row = ledger.value.rows.findLast(
+      (candidate) => candidate.type === "pr.merged" && candidate.pr === doc.number,
+    );
+    landed = row
+      ? {
+          head: typeof row.head === "string" ? row.head : null,
+          verdictId: typeof row.verdictId === "string" ? row.verdictId : null,
+          unverified: row.unverified !== undefined && row.unverified !== null,
+        }
+      : "untracked";
+  }
   return {
+    merge: landed,
     accepted: check.accepted.accepted,
     review: check.review,
     basis: check.current.basis,
