@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (ledger integrity)
+
+- **`--supersedes` is scoped to one branch and kind.** A row supersedes only
+  a row of its own type, session, branch (renames followed) and, for verdicts,
+  kind. Old cross-branch or cross-kind supersede links are now ignored, so the
+  rows they hid count again; record a fresh verdict where `ledger check`
+  changes.
+- **Rows carry a hash chain.** `workit ledger verify-integrity` lists rows
+  outside it; `ledger check` warns (never blocks). Rows appended by an older
+  Workit install read as `unsigned` there until every host is upgraded.
+- **Lifting your own blocker needs `--why`.** `policy assess` records a
+  `policy.judged` ledger row; a session that judged `product-choice` or
+  `plan` yes passes `--why` to judge it no.
+
 ### Changed (breaking, merge needs a verdict)
 
 - **`merge: true` needs an accepted independent verdict.** `workit pr merge`

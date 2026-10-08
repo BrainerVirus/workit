@@ -8,5 +8,10 @@ minimumReleaseAge = 0
 
 [test]
 # Fail fast with one clear message when the PATH node is older than Node 24,
-# and remove run-scoped temp dirs (packed tarballs) once all files ran.
-preload = ["./test/shared/node-guard.ts", "./test/shared/temp-cleanup.ts"]
+# remove run-scoped temp dirs (packed tarballs) once all files ran, and give
+# the run its own Workit state dir so spawned processes never write the real one.
+preload = [
+  "./test/shared/node-guard.ts",
+  "./test/shared/temp-cleanup.ts",
+  "./test/shared/state-isolation.ts",
+]

@@ -21,7 +21,7 @@ import {
 } from "@brainervirus/workit-core/src/core";
 import { piContext, unfinishedTaskOffer, workitContext } from "../src/context";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
-import { enforceToolPolicy, registerWorkitTools } from "../src/tools";
+import { enforceToolPolicy, observeToolResult, registerWorkitTools } from "../src/tools";
 import { abandonedLaunches, cancelHint, clearLaunch, recordLaunch } from "../src/launches";
 import {
   cancelWorker,
@@ -510,6 +510,7 @@ export default function extension(pi: ExtensionAPI): void {
       toolCallId: event.toolCallId,
       isError: event.isError,
     });
+    return observeToolResult(event, ctx);
   });
   pi.on("session_shutdown", (_event, ctx) => {
     sessions.delete(ctx.sessionManager.getSessionId());

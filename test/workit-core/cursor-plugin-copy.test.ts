@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  copyFileSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -50,6 +51,30 @@ test("copyPluginDir materializes a real directory when the adapter root is a sym
     expect(copyPluginDir(linkPkg, dest)).toBe("Configured");
     expect(lstatSync(dest).isSymbolicLink()).toBe(false);
     expect(() => readlinkSync(dest)).toThrow();
+  } finally {
+    clean(root);
+  }
+});
+
+test("copyPluginDir writes absolute launcher paths into the hooks and stays idempotent", () => {
+  const root = tempDir("wk-cursor-copy-hooks-");
+  try {
+    const pkg = path.join(root, "pkg");
+    mkdirSync(path.join(pkg, "hooks"), { recursive: true });
+    copyFileSync(
+      path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks/hooks-cursor.json"),
+      path.join(pkg, "hooks", "hooks-cursor.json"),
+    );
+    const dest = path.join(root, "plugins", "local", "workit");
+    expect(copyPluginDir(pkg, dest)).toBe("Installed");
+    const text = readFileSync(path.join(dest, "hooks", "hooks-cursor.json"), "utf8");
+    expect(text).not.toContain("${CURSOR_PLUGIN_ROOT}");
+    const hooks = JSON.parse(text).hooks as Record<string, { command: string }[]>;
+    const launcher = `node "${path.join(dest, "hooks", "launch.mjs")}"`;
+    expect(hooks.sessionStart[0].command).toBe(`${launcher} workit-cursor-session-start`);
+    expect(hooks.beforeShellExecution[0].command).toBe(`${launcher} workit-cursor-hook`);
+    // The localized file is the expected installed content, not drift.
+    expect(copyPluginDir(pkg, dest)).toBe("Skipped");
   } finally {
     clean(root);
   }

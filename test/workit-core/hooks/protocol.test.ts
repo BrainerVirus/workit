@@ -41,7 +41,8 @@ const PARITY: Record<
     "shell.pre": "PreToolUse",
     // PreToolUse does not see apply_patch edits: the write gate is advisory.
     "write.pre": null,
-    "shell.post": null,
+    // PostToolUse records raw `git commit`s for the session.
+    "shell.post": "PostToolUse",
     "subagent.start": "SubagentStart",
     "subagent.stop": "SubagentStop",
     "compact.pre": null,
@@ -106,6 +107,7 @@ const FIXTURE_EVENTS: Array<
   [codexAdapter, "codex", "session-start", "session.start"],
   [codexAdapter, "codex", "pre-tool-use-bash", "shell.pre"],
   [codexAdapter, "codex", "pre-tool-use-apply-patch", "tool.pre"],
+  [codexAdapter, "codex", "post-tool-use-bash", "shell.post"],
   [codexAdapter, "codex", "subagent-start", "subagent.start"],
   [codexAdapter, "codex", "subagent-stop", "subagent.stop"],
   [cursorAdapter, "cursor", "session-start", "session.start"],

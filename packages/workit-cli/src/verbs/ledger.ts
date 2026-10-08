@@ -8,6 +8,7 @@
 //   workit ledger verdict  [<branch>]                 # current + accepted verdicts
 //   workit ledger list|show [--branch b] [--pr n] [--type t] [--last n]
 //   workit ledger check    [--pr n|--branch b]
+//   workit ledger verify-integrity                    # rows outside the CLI's hash chain
 //   workit ledger standing add "<order>" | list | clear [<id>]  [--fanout <name>]
 //                          # the lead's standing orders for a fanout's workers,
 //                          # recorded only by the session that first made the
@@ -20,7 +21,10 @@
 // `--session <id>` names the acting session explicitly; `--as <role>` mints a
 // fresh one (`<session or host>:<role>:<random>`) for a verifier or reviewer
 // subagent that shares its lead's environment, so no two verifiers ever share
-// an id and none collides with the author's. `--pr`
+// an id and none collides with the author's. A `--session` verdict is
+// recorded as `sessionSource: "flag"` and `ledger check` names it, so a human
+// can spot a claimed verifier id; `--session` equal to an author session is
+// refused like the author. `--pr`
 // must resolve to a branch through the CLI's own PR rows or a fetched forge
 // ref; it is never guessed from other rows.
 import { randomBytes } from "node:crypto";
@@ -29,6 +33,7 @@ import {
   VERDICT_RESULTS,
   actorFromEnv,
   branchForPr,
+  branchScope,
   activeStanding,
   checkVerdicts,
   clearStanding,
@@ -39,6 +44,8 @@ import {
   recordStanding,
   recordVerdict,
   summarizeRow,
+  supersedeAllowed,
+  type LedgerRead,
   type LedgerResult,
   type ReadRow,
   type RecordContext,
@@ -104,7 +111,11 @@ type Values = {
 const SESSION_SAFE = /^[A-Za-z0-9_.:@/+-]{1,128}$/;
 const ROLE_SAFE = /^[a-z][a-z0-9-]{0,31}$/;
 
-type Acting = { actor: RecordContext["actor"]; derivedFrom?: string | null };
+type Acting = {
+  actor: RecordContext["actor"];
+  source: NonNullable<RecordContext["sessionSource"]>;
+  derivedFrom?: string | null;
+};
 
 /**
  * The acting identity: --session, a fresh --as role id, else the environment.
@@ -118,17 +129,18 @@ const actorFor = (io: Io, values: Values): Acting | Error => {
   if (values.session !== undefined) {
     if (!SESSION_SAFE.test(values.session))
       return new Error("--session must be 1-128 characters of [A-Za-z0-9_.:@/+-]");
-    return { actor: { ...actor, session: values.session } };
+    return { actor: { ...actor, session: values.session }, source: "flag" };
   }
   if (values.as !== undefined) {
     if (!ROLE_SAFE.test(values.as)) return new Error("--as takes a lowercase role, e.g. verifier");
     const prefix = (actor.session ?? actor.host).slice(0, 96);
     return {
       actor: { ...actor, session: `${prefix}:${values.as}:${randomBytes(4).toString("hex")}` },
+      source: "as",
       derivedFrom: actor.session,
     };
   }
-  return { actor };
+  return { actor, source: "env" };
 };
 
 const positiveInt = (value: string | undefined, flag: string): number | undefined | Error => {
@@ -174,8 +186,55 @@ const verdictLines = (check: VerdictCheck): string[] => {
     lines.push(
       `  ${entry.kind}: ${entry.basis}${entry.accepted ? ", accepted" : ` (${entry.reasons.join(", ")})`}  ${summarizeRow(entry.verdict).summary}`,
     );
+  for (const warning of check.warnings) lines.push(`warning: ${warning}`);
   return lines;
 };
+
+/**
+ * Why a just-recorded verdict is not the one its kind now reads, or null
+ * when it is (a shadowed verdict was silently ignored before).
+ */
+const shadowedWhy = (cwd: string, row: VerdictRow): string | null => {
+  const ledger = readLedger(cwd);
+  if (!ledger.ok || !row.branch) return null;
+  const entry = checkVerdicts(cwd, row.branch, ledger.value.rows).verdicts.find(
+    (candidate) => candidate.kind === row.kind,
+  );
+  if (!entry || entry.verdict.id === row.id) return null;
+  const effective = entry.verdict;
+  if (effective.actor.session === row.actor.session) {
+    // The same rule `--supersedes` applies on write and read (renames followed).
+    const scope = branchScope(cwd, row.branch);
+    const problem = supersedeAllowed(row, effective, (target) =>
+      typeof target.at === "string"
+        ? scope({ branch: typeof target.branch === "string" ? target.branch : null, at: target.at })
+        : false,
+    );
+    const stands = `your ${String(effective.result)} verdict ${effective.id} on the same code still stands, so this ${row.result} verdict is not the one ${row.branch} reads`;
+    return problem
+      ? `${stands}; it cannot be superseded by this verdict (${problem})`
+      : `${stands}; to replace it, re-record with --supersedes ${effective.id}`;
+  }
+  return `${row.branch} still reads verdict ${effective.id} (${String(effective.result)} by ${effective.actor.session ?? "no session"})${row.self ? ": a self verdict never displaces an independent one" : ""}`;
+};
+
+const integrityLines = (data: {
+  intact: boolean;
+  chained: number;
+  legacy: number;
+  unverified_rows: NonNullable<LedgerRead["integrity"]>["unverified"];
+}): string[] =>
+  data.intact
+    ? [
+        `ledger intact: ${data.chained} chained row(s)${data.legacy ? `, ${data.legacy} from before the chain` : ""}`,
+      ]
+    : [
+        `${data.unverified_rows.length} unverified row(s) (not written by the workit CLI, or changed afterwards):`,
+        ...data.unverified_rows.map(
+          (row) =>
+            `  #${row.seq} ${row.id} ${row.type}${row.branch ? ` [${row.branch}]` : ""}: ${row.reason}`,
+        ),
+      ];
 
 /**
  * The branch a command targets: --branch, else the branch --pr resolves to
@@ -231,13 +290,45 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (last instanceof Error) return usage(io, last.message);
   const text = rest.join(" ");
   if (sub === undefined) return usage(io, "missing subcommand");
-  if (!["decision", "ruling", "verdict", "standing", "list", "show", "check"].includes(sub))
+  if (
+    ![
+      "decision",
+      "ruling",
+      "verdict",
+      "standing",
+      "list",
+      "show",
+      "check",
+      "verify-integrity",
+    ].includes(sub)
+  )
     return usage(io, `unknown ledger subcommand "${sub}"`);
   if (sub === "standing") return standing(io, values, rest);
 
-  const ledger = readLedger(io.cwd);
+  // The hash chain is verified only where it is reported.
+  const ledger = readLedger(io.cwd, {
+    integrity: sub === "check" || sub === "verdict" || sub === "verify-integrity",
+  });
   if (!ledger.ok) return failed(io, ledger);
   const { rows } = ledger.value;
+
+  // Reports, never refuses (D18): the chain catches a hand edit made by
+  // mistake, it does not stop a forger.
+  if (sub === "verify-integrity") {
+    if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
+    const integrity = ledger.value.integrity ?? { chained: 0, legacy: 0, unverified: [] };
+    return emit(
+      io,
+      ok({
+        path: ledger.value.path,
+        intact: integrity.unverified.length === 0,
+        chained: integrity.chained,
+        legacy: integrity.legacy,
+        unverified_rows: integrity.unverified,
+      }),
+      integrityLines,
+    );
+  }
 
   if (sub === "list" || sub === "show") {
     if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
@@ -289,6 +380,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const context: RecordContext = {
     cwd: io.cwd,
     actor,
+    sessionSource: acting.source,
     branch: target.value,
     base: values.base ?? null,
     ...(pr === undefined ? {} : { pr }),
@@ -336,6 +428,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
     io.stderr(
       `warning: no passing \`workit check test\` observed on ${(verdict.value.head ?? "this head").slice(0, 12)}; run it before a --self verdict\n`,
     );
+  const shadowed = verdict.ok ? shadowedWhy(io.cwd, verdict.value) : null;
+  if (shadowed) io.stderr(`warning: ${shadowed}\n`);
   return fromResult(
     io,
     verdict,

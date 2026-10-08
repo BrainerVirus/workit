@@ -111,6 +111,8 @@ test(
       ".cursor-plugin/plugin.json",
       "rules/workit-contract.mdc",
       "hooks/hooks-cursor.json",
+      "hooks/launch.mjs",
+      "hooks/launch-runtime.mjs",
     ]) {
       expect(entries, required).toContain(required);
     }

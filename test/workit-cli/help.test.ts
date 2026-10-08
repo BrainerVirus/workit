@@ -64,11 +64,11 @@ PARSERS.task = [...PARSERS.task, "verbs/task.ts"];
 
 // Flags a parser names but does not accept for this verb.
 const NOT_ACCEPTED: Record<string, string[]> = {
-  // parseTaskArgs reads --judge/--ref only when the family is policy.
+  // parseTaskArgs reads --judge/--ref/--why only when the family is policy.
   ...Object.fromEntries(
     TASK_FAMILY_NAMES.filter((name) => name !== "policy").map((name) => [
       name,
-      ["--judge", "--ref"],
+      ["--judge", "--ref", "--why"],
     ]),
   ),
   // `git push` names --force/-f only to refuse them.
