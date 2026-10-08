@@ -44,13 +44,11 @@ export const codexCapabilities = (host: CodexHost, availability: Availability = 
 export const handleCodexHook = (raw: unknown): Record<string, unknown> =>
   dispatchHook(codexAdapter, raw, process.env).json;
 
-export const runCodexHook = async (): Promise<void> => {
+export const runCodexHook = async (
+  stdin: AsyncIterable<unknown> | Iterable<unknown> = process.stdin,
+): Promise<void> => {
   warnOnSurfaceFallback();
-  process.exitCode = await runHookProcess(
-    detectCodexSurface(process.env),
-    process.stdin,
-    process.stdout,
-  );
+  process.exitCode = await runHookProcess(detectCodexSurface(process.env), stdin, process.stdout);
 };
 
 if (import.meta.main) await runCodexHook();
