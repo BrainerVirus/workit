@@ -42,7 +42,7 @@ let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
 const RAW_TOOLS = /\b(?:git|gh|glab)\b/;
 const WORKIT_DELIVERY =
-  /\bworkit(?:-cli)?\b.*\b(?:pr (?:create|merge)|ci (?:wait|status|watch)|push)\b/;
+  /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:-cli)?\s+(?:pr (?:create|merge)|ci wait|git push)\b/;
 const MAYBE_GATED =
   /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
 const SHELLS = new Set(["Bash", "PowerShell"]);

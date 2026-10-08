@@ -14,7 +14,7 @@ import {
   promptNudge,
   recordSkillLoad,
   shipNudge,
-  skillFileIn,
+  skillReadIn,
   withContextLine,
 } from "./skill-nudge";
 import { shellWrites, writeGate } from "./write-gate";
@@ -92,8 +92,8 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       );
     }
     case "shell.pre": {
-      const skillFile = skillFileIn(event.command);
-      if (skillFile) recordSkillLoad(input, skillFile, "read");
+      const skillRead = skillReadIn(event.command, event.dialect);
+      if (skillRead) recordSkillLoad(input, skillRead, "read");
       const canDeny = usable(descriptor.shellPolicy.deny);
       const policy = canDeny ? shellPolicy(input.cwd, event.command) : NONE;
       if (policy.kind !== "none") return policy;

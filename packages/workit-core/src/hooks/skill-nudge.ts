@@ -1,22 +1,28 @@
 // Skill routing at the moment it matters. The session-start contract names a
 // trigger for each skill, but in a long or compacted session that table loses
-// weight and agents act without loading the skill. Three deterministic aids:
-//   - a prompt that names a trigger gets one line naming the skill to load;
-//   - a delivery command (push, PR create, CI wait) gets one line naming
-//     workit-ship;
+// weight and agents act without loading the skill. Three deterministic aids,
+// inside a Workit workspace only:
+//   - a prompt that asks for a skill's work in so many words gets one
+//     advisory line naming the skill;
+//   - a delivery command (push, PR create or merge, CI wait) gets one line
+//     naming workit-ship;
 //   - each skill load is recorded as a `skill.loaded` ledger row, so a nudge
 //     stops once the skill is loaded and workit-retro can count skill use.
-// Neither nudge fires in a subagent or once the session loaded the skill.
+// A session is nudged about one skill at most once (a marker per session
+// in the workspace store), never in a subagent, never once it loaded the skill.
 // Every failure answers "no nudge": hooks fail open.
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import {
   skillLoadWording,
   WORKIT_METHOD_SKILLS,
   WORKIT_SKILL_ALIASES,
-  WORKIT_SKILL_TRIGGERS,
   type SkillHost,
   type WorkitSkill,
 } from "../core/skill-manifests";
 import { appendHookObserved, readLedger } from "../ledger";
+import { resolveStore } from "../store/paths";
 import type { HookDecision, HookInput, HostId } from "./protocol";
 import { inWorkitWorkspace, rawDelivery, rawGitPre } from "./raw-git";
 import { segmentsOf, type ShellDialect } from "./shell-words";
@@ -33,20 +39,46 @@ const SKILL_HOST: Record<HostId, SkillHost> = {
   pi: "pi",
 };
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/** An all-caps trigger (CI, BDD) matches its case only; any other, any case. */
-const TRIGGER_PATTERNS: ReadonlyArray<{ skill: WorkitSkill; trigger: string; pattern: RegExp }> =
-  WORKIT_METHOD_SKILLS.flatMap((skill) =>
-    WORKIT_SKILL_TRIGGERS[skill].map((trigger) => ({
-      skill,
-      trigger,
-      pattern: new RegExp(
-        `(?<![\\w/-])${escape(trigger)}(?![\\w-])`,
-        trigger === trigger.toUpperCase() ? "" : "i",
-      ),
-    })),
-  );
+/**
+ * Prompt phrasings that ask for a skill's work. The contract's single-word
+ * triggers (plan, build, merge, CI) are for the model's judgment; a hook
+ * cannot tell "plan the cache" from "what's in the plan?", so it matches
+ * phrases only. Ordered by precedence: a broken thing is debug work before
+ * it is a feature or a plan.
+ */
+const PROMPT_INTENTS: ReadonlyArray<readonly [WorkitSkill, RegExp]> = [
+  [
+    "workit-debug",
+    /\b(flaky|regression|(?:is|are|got|looks) broken|debug (?:this|it|the|why)|fix (?:the|this|a) bug)\b/i,
+  ],
+  [
+    "workit-continue",
+    /\b(pick up where|where (?:were|did) we|resume (?:the|this|my|our|work|where)|hand ?off)\b/i,
+  ],
+  [
+    "workit-review",
+    /\b(blast radius|code review|review (?:the|this|my|PR|pr|#\d+|branch|diff|changes))\b/i,
+  ],
+  [
+    "workit-ship",
+    /\b(ship (?:it|this|the)|babysit|open (?:a|the) (?:PR|pr|MR|mr)|merge (?:the|this|my) (?:PR|pr|MR|mr|branch)|(?:get|until|make) CI (?:is )?green)\b/i,
+  ],
+  ["workit-bdd", /\b(BDD|TDD|acceptance criteria|Given\/When\/Then)(?![\w/])/],
+  ["workit-test-audit", /\b(test audit|audit the tests|tautolog\w*|weak tests)\b/i],
+  ["workit-deslop", /\b(deslop|slop|dead code)\b/i],
+  ["workit-fanout", /\b(fan(?: |-)?out|parallelize|parallel agents|swarm)\b/i],
+  ["workit-verify-app", /\b(verify the app|smoke test|prove it works)\b/i],
+  ["workit-retro", /\b(retro|retrospective)\b(?!\.\w)/i],
+  ["workit-architecture", /\b(deepen (?:the )?modules|architecture (?:review|pass|audit))\b/i],
+  [
+    "workit-shape",
+    /\b(brainstorm\w*|grill me|should we|let'?s plan|plan (?:out|how|the|a|for)|(?:write|draft) (?:a|the) spec)\b/i,
+  ],
+  [
+    "workit-implement",
+    /\b(implement (?:the|this|a|it)|add (?:a|the) feature|build (?:a|an|the) (?:new )?(?:feature|command|verb|page|endpoint|component|cli|tool))\b/i,
+  ],
+];
 
 /** The workit skill a loaded name refers to (`workit:shape`, `workit-shape`, `wk-shape`). */
 export const workitSkillOf = (name: string): WorkitSkill | null => {
@@ -59,13 +91,44 @@ export const workitSkillOf = (name: string): WorkitSkill | null => {
     : null;
 };
 
-/** The first skill a prompt's text triggers, in table order, with the word that did. */
+/** The skill a prompt asks for, by precedence, with the phrase that did. */
 export const promptTrigger = (prompt: string): { skill: WorkitSkill; trigger: string } | null => {
   // Code blocks and quoted output carry words the user did not ask with.
   const text = prompt.replace(/```[\s\S]*?```/g, " ").slice(0, 4000);
-  for (const { skill, trigger, pattern } of TRIGGER_PATTERNS)
-    if (pattern.test(text)) return { skill, trigger };
+  for (const [skill, pattern] of PROMPT_INTENTS) {
+    const match = pattern.exec(text);
+    if (match) return { skill, trigger: match[1] ?? match[0] };
+  }
   return null;
+};
+
+/** Per-session nudge state: skills nudged or loaded, so each nudges once. */
+type Marker = { nudged: string[]; loaded: string[] };
+
+/** The marker in the workspace's store (null outside one: nothing is nudged or recorded there). */
+const markerFile = (input: HookInput, session: string): string | null => {
+  const location = resolveStore(input.cwd);
+  if (location instanceof Error || !location.shared) return null;
+  const name = createHash("sha256").update(`${input.host}\0${session}`).digest("hex").slice(0, 32);
+  return path.join(location.dir, "hooks", `skills-${name}.json`);
+};
+
+const readMarker = (file: string): Marker => {
+  try {
+    const value = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<Marker>;
+    return { nudged: value.nudged ?? [], loaded: value.loaded ?? [] };
+  } catch {
+    return { nudged: [], loaded: [] };
+  }
+};
+
+const writeMarker = (file: string, marker: Marker): void => {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(marker));
+  } catch {
+    // Fail open: without a marker a later nudge repeats.
+  }
 };
 
 /** Skills this session already loaded, from its `skill.loaded` rows. */
@@ -83,11 +146,39 @@ const loadedSkills = (cwd: string, session: string): Set<string> => {
   return loaded;
 };
 
-/** The workit skill whose SKILL.md a command or path reads (hosts that load skills as files). */
-export const skillFileIn = (text: string): string | null =>
-  /(?:^|[\s'"\\/])(workit-[a-z-]+)[\\/]SKILL\.md\b/.exec(text)?.[1] ?? null;
+const SKILL_FILE = /(?:^|[\\/])(workit-[a-z-]+)[\\/]SKILL\.md$/;
 
-/** Record that the session loaded a workit skill (`via`: the tool or the slash command). */
+/** The workit skill whose SKILL.md a path names (Pi's read tool). */
+export const skillFileIn = (file: string): string | null => SKILL_FILE.exec(file)?.[1] ?? null;
+
+/** Commands that read a file for the agent: a shell-loaded skill is one of these on its SKILL.md. */
+const READERS = new Set([
+  "cat",
+  "sed",
+  "head",
+  "tail",
+  "less",
+  "more",
+  "bat",
+  "nl",
+  "get-content",
+  "gc",
+  "type",
+]);
+
+/** The workit skill whose SKILL.md a shell command reads (Codex, Cursor); never git, grep or an editor. */
+export const skillReadIn = (command: string, dialect: ShellDialect = "posix"): string | null => {
+  for (const { words } of segmentsOf(command, dialect)) {
+    if (!READERS.has((words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase())) continue;
+    for (const word of words.slice(1)) {
+      const skill = skillFileIn(word);
+      if (skill) return skill;
+    }
+  }
+  return null;
+};
+
+/** Record that the session loaded a workit skill (`via`: the tool, a slash command, a file read). */
 export function recordSkillLoad(
   input: HookInput,
   name: string,
@@ -97,6 +188,12 @@ export function recordSkillLoad(
     const skill = workitSkillOf(name);
     const session = input.session.id;
     if (!skill || !session) return;
+    if (!inWorkitWorkspace(input.cwd)) return;
+    const file = markerFile(input, session);
+    if (!file) return;
+    const marker = readMarker(file);
+    if (marker.loaded.includes(skill)) return;
+    writeMarker(file, { ...marker, loaded: [...marker.loaded, skill] });
     if (loadedSkills(input.cwd, session).has(skill)) return;
     appendHookObserved(input.cwd, {
       type: "skill.loaded",
@@ -109,34 +206,60 @@ export function recordSkillLoad(
   }
 }
 
+/** The nudge for `skill` once per session: null when it was nudged or loaded. */
+const nudgeOnce = (
+  input: HookInput,
+  session: string,
+  skill: WorkitSkill,
+  line: string,
+): string | null => {
+  const file = markerFile(input, session);
+  if (!file) return null;
+  const marker = readMarker(file);
+  if (marker.nudged.includes(skill) || marker.loaded.includes(skill)) return null;
+  if (loadedSkills(input.cwd, session).has(skill)) return null;
+  writeMarker(file, { ...marker, nudged: [...marker.nudged, skill] });
+  return line;
+};
+
 const nudgeText = (input: HookInput, skill: WorkitSkill, why: string): string =>
   USER_INVOKED.has(skill)
-    ? `Workit: ${why} matches ${skill}, which the user starts; offer it (/${skill.replace(/^workit-/, "wk-")}) rather than loading it.`
-    : `Workit: ${why} matches ${skill}; ${skillLoadWording(SKILL_HOST[input.host], skill)} before acting.`;
+    ? `Workit: ${why} looks like ${skill} work, which the user starts; offer it (/${skill.replace(/^workit-/, "wk-")}) rather than loading it.`
+    : `Workit: ${why} looks like ${skill} work; if it is, ${skillLoadWording(SKILL_HOST[input.host], skill)} first.`;
 
-/** A main session's prompt: one line naming the triggered skill, unless already loaded. */
+/** A skill the prompt already loads: `/wk-shape`, `/workit:shape`, Pi's expanded
+ * `/skill:` block, or OpenCode's rewritten `/wk-*` command. */
+const promptLoads = (prompt: string): string | null =>
+  /^\s*\/(?:skill:)?([\w:-]+)/.exec(prompt)?.[1] ??
+  /^\s*<skill name="([\w:-]+)"/.exec(prompt)?.[1] ??
+  /^\s*Load the (workit-[a-z-]+) skill with the skill tool\b/.exec(prompt)?.[1] ??
+  null;
+
+/** A main session's prompt in a Workit workspace: one advisory line naming the skill it asks for. */
 export function promptNudge(input: HookInput, prompt: string | null | undefined): string | null {
   try {
     const session = input.session.id;
     if (!prompt || !session || input.session.agentId) return null;
-    // `/wk-shape`, `/workit:shape`, or Pi's expanded `/skill:` block.
-    const slash =
-      /^\s*\/(?:skill:)?([\w:-]+)/.exec(prompt)?.[1] ??
-      /^\s*<skill name="([\w:-]+)"/.exec(prompt)?.[1];
-    if (slash) {
-      // A slash command already loads its skill; record it, never nudge.
-      recordSkillLoad(input, slash, "slash");
+    const loads = promptLoads(prompt);
+    if (loads) {
+      // The prompt already loads its skill; record it, never nudge.
+      recordSkillLoad(input, loads, "slash");
       return null;
     }
     const hit = promptTrigger(prompt);
-    if (!hit || loadedSkills(input.cwd, session).has(hit.skill)) return null;
-    return nudgeText(input, hit.skill, `this request ("${hit.trigger}")`);
+    if (!hit || !inWorkitWorkspace(input.cwd)) return null;
+    return nudgeOnce(
+      input,
+      session,
+      hit.skill,
+      nudgeText(input, hit.skill, `this request ("${hit.trigger}")`),
+    );
   } catch {
     return null;
   }
 }
 
-const WORKIT_DELIVERY = /^(?:pr (?:create|merge)|ci (?:wait|status|watch)|git push)\b/;
+const WORKIT_DELIVERY = /^(?:pr (?:create|merge)|ci wait|git push)\b/;
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const LAUNCHERS = new Set([
   "npx",
@@ -186,8 +309,12 @@ export function shipNudge(input: HookInput, command: string): string | null {
     if (!session || input.session.agentId) return null;
     const dialect = input.event.kind === "shell.pre" ? (input.event.dialect ?? "posix") : "posix";
     if (!isDeliveryCommand(input.cwd, command, dialect)) return null;
-    if (loadedSkills(input.cwd, session).has("workit-ship")) return null;
-    return nudgeText(input, "workit-ship", "this delivery step");
+    return nudgeOnce(
+      input,
+      session,
+      "workit-ship",
+      nudgeText(input, "workit-ship", "this delivery step"),
+    );
   } catch {
     return null;
   }

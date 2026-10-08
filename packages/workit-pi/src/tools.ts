@@ -17,6 +17,7 @@ import {
   handleHook,
   PI_DESCRIPTOR,
   promptNudge,
+  rawGitPre,
   recordSkillLoad,
   shellNudge,
   skillFileIn,
@@ -193,7 +194,10 @@ export const observeToolResult = (
       toolUseId: event.toolCallId,
     });
     handleHook(post, { descriptor: PI_DESCRIPTOR, addendum: null });
-    const nudge = shellNudge(post, command);
+    // A Pi worker is a subagent: the raw-git nudge only, never a skill nudge.
+    const nudge = process.env.WORKIT_PI_WORKER_SESSION
+      ? rawGitPre(post, command)
+      : shellNudge(post, command);
     return nudge.kind === "context"
       ? { content: [...event.content, { type: "text", text: nudge.text }] }
       : undefined;
