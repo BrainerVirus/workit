@@ -65,7 +65,9 @@ jobs:
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          files=$(git diff --name-only HEAD^1 HEAD)
+          # --no-renames lists both sides of a move, so moving code into
+          # docs/ is never classified docs-only.
+          files=$(git diff --no-renames --name-only HEAD^1 HEAD)
           printf '%s\n' "$files"
           code=$(printf '%s\n' "$files" | grep -vE '^(docs/|[^/]+\.md$|\.github/[^/]+\.md$)' || true)
           qualification=$(printf '%s\n' "$files" | grep -E '^docs/qualification/' || true)
@@ -176,7 +178,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       # The npm cache feeds the packaging suites' isolated npm installs
-      # (--prefer-offline); keyed by bun.lock like the bun cache.
+      # (tarballs; metadata still revalidates); keyed by bun.lock.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_CURRENT }}
@@ -257,7 +259,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       # The npm cache feeds the packaging suites' isolated npm installs
-      # (--prefer-offline); keyed by bun.lock like the bun cache.
+      # (tarballs; metadata still revalidates); keyed by bun.lock.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_CURRENT }}
@@ -306,7 +308,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       # The npm cache feeds the packaging suites' isolated npm installs
-      # (--prefer-offline); keyed by bun.lock like the bun cache.
+      # (tarballs; metadata still revalidates); keyed by bun.lock.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_CURRENT }}
