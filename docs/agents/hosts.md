@@ -48,6 +48,40 @@ the host's shell variable (`CODEX_THREAD_ID`, `OPENCODE_SESSION_ID`,
 its session context names the id to prefix; that gap is documented in
 [the hosts guide](../guides/hosts.md), not papered over.
 
+## Host parity
+
+Every workit feature ships for all five hosts (Claude Code, OpenCode, Codex,
+Cursor, Pi) through each host's native mechanism, or records a host limit in
+this table. Check host capabilities against the installed host package or its
+docs, never against workit's own descriptors.
+
+A descriptor's `events` say what workit **registers** on that host. An event
+marked `native` or `partial` must be registered in the host's hooks config
+(Claude Code, Codex, Cursor) or plugin source (OpenCode, Pi), and a hook-process
+host registers nothing its descriptor does not map. Guard:
+`test/workit-core/hooks/descriptor-drift.test.ts`. A hook the host offers but
+workit does not register yet is marked `none` there and listed below as
+missing.
+
+N = native, P = partial, X = missing (the host has a mechanism workit does not
+use yet), L = host limit (the host has no mechanism for it).
+
+| Feature | Claude Code | OpenCode | Codex | Cursor | Pi |
+| --- | --- | --- | --- | --- | --- |
+| Session-start contract | N `SessionStart` | N per-call `session.hook("context")` (no start event) | N `SessionStart` | N `sessionStart` (fire-and-forget: may race the first turn) | N `session_start` / `before_agent_start` |
+| Per-turn task context | N `UserPromptSubmit`, resent on change (plugin cache) | N every agent-loop call | N `UserPromptSubmit`, resent on change (core) | L: `beforeSubmitPrompt` cannot add context | P: once per session and after compaction; X: on-change resend through `before_agent_start` |
+| Skill prompt nudge | N `UserPromptSubmit` | N session context | N `UserPromptSubmit` | L: no per-prompt context hook | N `before_agent_start` |
+| Delivery (ship) nudge, skill-load recording | N | N | N (`SKILL.md` reads) | N (`SKILL.md` reads) | N |
+| Branch policy / raw git deny + nudge | N `PreToolUse` | P: deny via permission effect; L: the nudge rides the result | N `PreToolUse` | P: deny works; nudge via `agent_message` (unverified); X: `postToolUse` context | P: `tool_call` blocks; L: the nudge rides `tool_result` |
+| Before-write gate | N `Edit`/`Write`/`MultiEdit`/`NotebookEdit` and shell writes | N permission `evaluate` | N `PreToolUse` on `apply_patch` (files from the patch) and shell writes | P `preToolUse` (paths when `tool_input` has them) | N `tool_call` |
+| Raw commit recording | N `PostToolUse` | N `execute.after` | N `PostToolUse` | P: settled on the next shell command; X: `afterShellExecution`/`postToolUse` | N `tool_result` |
+| Verifier/reviewer own session | N `SubagentStart` (`workit:verifier`, `workit:reviewer`) | P: native parent binding; X: `agent.transform` definitions | N `SubagentStart` (`workit-verifier`, `workit-reviewer` agent types); X: shipped agent definitions | P: role markers; L: `subagentStart` cannot add context | L: no host subagents (supervised workers) |
+| Implementer worktree guidance | N `SubagentStart` plus `isolation: worktree` | X: the `worktree` domain is unused | P `SubagentStart` text (`workit-implementer`); L: no native worktree isolation, the lead makes one | P: implementers denied at `subagentStart` | L: no host subagents |
+| Compaction restore | N `SessionStart` source=compact | N `session.hook("compaction")` | N `SessionStart` source=compact | P (L: `preCompact` only shows a user message) | N `session_compact` |
+| Stop control | X `Stop`/`SubagentStop` | X `session.idle` | X `Stop` | X `stop` followup | X `agent_end` |
+| `/wk-*` aliases | X: plugin commands are namespaced (`/workit:<name>`) | P `command.transform` (prose, not `prompt.skills`) | L: no plugin slash commands (`$workit-<name>`) | N `commands/wk-*.md` | N `registerCommand` |
+| Heartbeat / doctor | P plugin check | P version check | P version check; X: hook-trust check | N launcher heartbeat | X: no Pi doctor check |
+
 ## Design background
 
 `docs/workit-next/` holds the research, spec, slice plan and design for the

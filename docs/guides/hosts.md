@@ -15,8 +15,8 @@ revisions; nested payloads from older versions still work.
 needs a plan ([verification](verification.md)), working-tree edits are denied
 with the exact unblock on OpenCode (permission evaluate: edits and recognizable
 shell writes), Cursor (`preToolUse` write tools), Pi (`tool_call` write/edit
-and bash) and Claude Code. Codex's PreToolUse does not see `apply_patch`, so
-there the gate is advisory and the session context says so.
+and bash), Codex (`PreToolUse` on `apply_patch`, with the files read from the
+patch) and Claude Code.
 
 **Raw git and forge commands.** Workit's delivery rules (merge grant and
 verdict gate, protected branches, the session trailer) live in its own verbs,
@@ -61,10 +61,10 @@ Workit workspace, in a main session (never a subagent):
 - A prompt that asks for a skill's work in so many words ("the login test is
   flaky", "let's brainstorm the cache", "babysit it until CI is green") gets
   one advisory line naming the skill and how this host loads it. Single
-  common words (plan, build, merge, CI) never trigger it. Claude Code
-  (`UserPromptSubmit`), OpenCode (session context, on a new user message) and
-  Pi (`before_agent_start`). Not yet on Codex (workit does not register its
-  `UserPromptSubmit` yet) or Cursor (no per-prompt context hook).
+  common words (plan, build, merge, CI) never trigger it. Claude Code and
+  Codex (`UserPromptSubmit`), OpenCode (session context, on a new user
+  message) and Pi (`before_agent_start`). Not on Cursor (no per-prompt context
+  hook).
 - A delivery command (`git push`, `gh pr create|merge`, `glab mr
   create|merge`, `workit pr create|merge`, `workit ci wait`, `workit git
   push`) gets one line naming workit-ship, on every host's shell hook.
@@ -166,6 +166,16 @@ The plugin bundles documented lifecycle hooks and the shared MCP server.
 Reads run over MCP; mutations run through the CLI. Codex has no slash
 aliases: use `$workit-<name>` or the `/skills` picker. Native Codex
 permission and sandbox settings stay authoritative.
+
+The hooks give Codex the session contract (`SessionStart`, also after
+compaction), the task context on each prompt when it changed since the last
+injection plus the skill nudge (`UserPromptSubmit`), the before-write gate on
+`apply_patch` and branch/raw-git steering (`PreToolUse`), raw-commit recording
+(`PostToolUse`), and subagent guidance (`SubagentStart`). A custom agent named
+`workit-verifier` or `workit-reviewer` is told its own Workit session id for
+`workit ledger verdict --session`; one named `workit-implementer` is told to
+work only in its own worktree (`workit fanout worktree create <slice>`) on a
+policy-compliant branch. Codex runs plugin hooks only after you trust them.
 
 ## Pi
 
