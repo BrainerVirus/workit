@@ -84,6 +84,32 @@ test("given an unminified bundle with no workspace-core header, the guard fails"
   );
 });
 
+test("given a code-split entry, core in a chunk it imports counts and the chunks are not entries", () => {
+  const root = fixture({
+    "packages/workit-codex/dist/workit-hook.js":
+      '// packages/workit-codex/hooks/launcher.ts\nimport { a } from "./workit-hook-rt.js";\nawait import("./workit-hook-core.js");\n',
+    "packages/workit-codex/dist/workit-hook-rt.js": "var a = 1;\nexport { a };\n",
+    "packages/workit-codex/dist/workit-hook-core.js": `import { a } from "./workit-hook-rt.js";\n${CORE_BUNDLE}`,
+  });
+  const run = guard(root);
+  expect(run.stderr).toBe("");
+  expect(run.status).toBe(0);
+});
+
+test("given a code-split entry whose chunks inline no workspace core, the guard fails on the entry", () => {
+  const root = fixture({
+    "packages/workit-codex/dist/workit-hook.js":
+      '// packages/workit-codex/hooks/launcher.ts\nawait import("./workit-hook-x.js");\n',
+    "packages/workit-codex/dist/workit-hook-x.js": "// node_modules/zod/v4/core/util.js\n",
+  });
+  const run = guard(root);
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain(
+    "packages/workit-codex/dist/workit-hook.js: no `// packages/workit-core/src/` module header in it or its chunks (first header: packages/workit-codex/hooks/launcher.ts)",
+  );
+  expect(run.stderr).not.toContain("workit-hook-x.js:");
+});
+
 test("given a minified bundle (no headers to read), the bundle check leaves it to the install check", () => {
   const root = fixture({
     "packages/workit-claude-code/dist/workit-hook.js": `${"var a=1;".repeat(400)}\n`,

@@ -9,10 +9,11 @@
 //    the build; it also covers minified bundles, which carry no path headers);
 //  - bundles: bun prefixes each inlined module with a `// <path>` header; a
 //    header under node_modules/@brainervirus/ names a stale copy, and every
-//    non-minified bundle must inline core from packages/workit-core/src/.
+//    non-minified entry (with its split chunks) must inline core from
+//    packages/workit-core/src/.
 // `--installs-only` runs only the first check (prepareCmd, before the build).
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { RELEASE_PACKAGES } from "./analyze-release-scope";
 
 // Separator-agnostic: a Windows build may write `\` in module headers.
@@ -51,28 +52,52 @@ function bundles(dir: string): string[] {
 
 export type BundleProblem = { bundle: string; problem: string };
 
-/** Built adapter bundles under `root`, and what each one inlined wrongly. */
+/** Sibling chunks a split bundle imports (`from "./x.js"`, `import("./x.js")`). */
+const LOCAL_CHUNK = /(?:\bfrom|\bimport\s*\()\s*["']\.\/([^"']+\.js)["']/gu;
+
+/**
+ * Built adapter bundles under `root`, and what each one inlined wrongly. A
+ * code-split entry (codex's hook) inlines core through its chunks, so the
+ * core-header requirement applies to each entry together with the chunks it
+ * reaches; a chunk only another bundle imports is not an entry.
+ */
 export function bundleSources(root: string): { scanned: string[]; problems: BundleProblem[] } {
   const scanned = RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-core").flatMap((pkg) =>
     bundles(join(root, "packages", pkg, "dist")),
   );
+  const text = new Map(scanned.map((file) => [file, readFileSync(file, "utf8")]));
+  const chunks = (file: string): string[] =>
+    [...(text.get(file) ?? "").matchAll(LOCAL_CHUNK)]
+      .map((m) => join(dirname(file), m[1]))
+      .filter((chunk) => text.has(chunk));
+  const imported = new Set(scanned.flatMap(chunks));
+  const reachesCore = (entry: string): boolean => {
+    const seen = new Set<string>();
+    const queue = [entry];
+    while (queue.length) {
+      const file = queue.shift() as string;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      if (WORKSPACE_CORE.test(text.get(file) ?? "")) return true;
+      queue.push(...chunks(file));
+    }
+    return false;
+  };
   const problems = scanned.flatMap((file): BundleProblem[] => {
     const bundle = rel(root, file);
-    const text = readFileSync(file, "utf8");
-    const copies = [...text.matchAll(REGISTRY_COPY)].map((m) => m[1].replaceAll("\\", "/"));
+    const body = text.get(file) ?? "";
+    const copies = [...body.matchAll(REGISTRY_COPY)].map((m) => m[1].replaceAll("\\", "/"));
     if (copies.length)
       return [{ bundle, problem: `${copies.length} registry-copy modules, e.g. ${copies[0]}` }];
-    const minified = text.length / (text.split("\n").length || 1) > MINIFIED_BYTES_PER_LINE;
-    if (!minified && !WORKSPACE_CORE.test(text)) {
-      const first = /^\s*\/\/ (\S.*)$/mu.exec(text)?.[1] ?? "none";
-      return [
-        {
-          bundle,
-          problem: `no \`// packages/workit-core/src/\` module header (first header: ${first})`,
-        },
-      ];
-    }
-    return [];
+    const minified = body.length / (body.split("\n").length || 1) > MINIFIED_BYTES_PER_LINE;
+    if (minified || imported.has(file) || reachesCore(file)) return [];
+    const first = /^\s*\/\/ (\S.*)$/mu.exec(body)?.[1] ?? "none";
+    return [
+      {
+        bundle,
+        problem: `no \`// packages/workit-core/src/\` module header in it or its chunks (first header: ${first})`,
+      },
+    ];
   });
   return { scanned: scanned.map((file) => rel(root, file)), problems };
 }
