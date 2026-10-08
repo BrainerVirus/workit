@@ -148,7 +148,7 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
         ? { ok: true, event: { kind: "session.start", source: value.source as SessionSource } }
         : { ok: false, error: "SessionStart source is required" };
     case "UserPromptSubmit":
-      return { ok: true, event: { kind: "context.turn" } };
+      return { ok: true, event: { kind: "context.turn", prompt: optionalText(value.prompt) } };
     case "PreToolUse": {
       if (!nonEmpty(value.tool_name)) return { ok: false, error: "tool_name is required" };
       if (isWriteTool(value.tool_name))
@@ -159,6 +159,16 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
             tool: value.tool_name,
             paths: writePaths(value.tool_input),
             toolUseId,
+          },
+        };
+      if (value.tool_name === "Skill")
+        return {
+          ok: true,
+          event: {
+            kind: "tool.pre",
+            tool: value.tool_name,
+            toolUseId,
+            skill: isRecord(value.tool_input) ? optionalText(value.tool_input.skill) : null,
           },
         };
       if (!SHELL_TOOLS.has(value.tool_name))

@@ -16,7 +16,10 @@ import {
 import {
   handleHook,
   PI_DESCRIPTOR,
-  rawGitPre,
+  promptNudge,
+  recordSkillLoad,
+  shellNudge,
+  skillFileIn,
   writePaths,
   type HookEvent,
   type HookInput,
@@ -146,6 +149,18 @@ export const enforceToolPolicy = (
       ? gate({ kind: "shell.pre", command, toolUseId: event.toolCallId ?? null })
       : undefined;
   }
+  if (event.toolName === "read") {
+    // Pi loads a skill by reading its SKILL.md: record a Workit one.
+    const file = (event.input as { path?: unknown } | undefined)?.path;
+    const skill = typeof file === "string" ? skillFileIn(file) : null;
+    if (skill)
+      recordSkillLoad(
+        hookInput(ctx, { kind: "tool.pre", tool: "read", toolUseId: null }),
+        skill,
+        "read",
+      );
+    return undefined;
+  }
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
   // Pi project trust is host policy and stays enforced.
   if (!ctx.isProjectTrusted()) return { block: true, reason: "Pi project is not trusted" };
@@ -178,7 +193,7 @@ export const observeToolResult = (
       toolUseId: event.toolCallId,
     });
     handleHook(post, { descriptor: PI_DESCRIPTOR, addendum: null });
-    const nudge = rawGitPre(post, command);
+    const nudge = shellNudge(post, command);
     return nudge.kind === "context"
       ? { content: [...event.content, { type: "text", text: nudge.text }] }
       : undefined;
@@ -186,3 +201,9 @@ export const observeToolResult = (
     return undefined;
   }
 };
+
+/** A main session's new prompt: the line naming the skill its trigger word routes to. */
+export const skillPromptNudge = (prompt: string, ctx: ExtensionContext): string | null =>
+  process.env.WORKIT_PI_WORKER_SESSION
+    ? null
+    : promptNudge(hookInput(ctx, { kind: "context.turn", prompt }), prompt);

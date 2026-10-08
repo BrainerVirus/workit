@@ -101,6 +101,21 @@ for (const [label, plugin] of RUNTIMES) {
       );
       expect(ledger).toContain('"type":"commit.recorded"');
       expect(ledger).toContain('"observer":"host_hook"');
+      // A workit delivery verb passes the launcher fast path and names
+      // workit-ship until the Skill tool loads it; a prompt names its skill.
+      expect(bash("PreToolUse", "workit pr create --fill")?.additionalContext).toContain(
+        "`workit:ship`",
+      );
+      const hook = (payload: Record<string, unknown>) =>
+        runHook(plugin(), { ...fixture("claude-code", "pre-tool-use-bash", cwd), ...payload });
+      const prompt = hook({ hook_event_name: "UserPromptSubmit", prompt: "brainstorm the API" });
+      expect(outputProblem("UserPromptSubmit", prompt.json)).toBeNull();
+      expect((prompt.json as Specific).hookSpecificOutput?.additionalContext).toContain(
+        "`workit:shape`",
+      );
+      const skill = hook({ tool_name: "Skill", tool_input: { skill: "workit:ship" } });
+      expect(skill.json).toEqual({});
+      expect(bash("PreToolUse", "workit pr create --fill")).toBeUndefined();
     });
   }, 60_000);
 

@@ -16,7 +16,11 @@ export type SessionSource = "startup" | "resume" | "clear" | "compact" | "fork";
 export type HookEvent =
   | { kind: "session.start"; source: SessionSource }
   /** Per-turn injection (OpenCode session context, Pi before_agent_start, Claude UserPromptSubmit). */
-  | { kind: "context.turn" }
+  | {
+      kind: "context.turn";
+      /** The submitted prompt, on hosts whose per-turn event carries it. */
+      prompt?: string | null;
+    }
   | {
       kind: "shell.pre";
       command: string;
@@ -25,7 +29,13 @@ export type HookEvent =
       dialect?: "posix" | "powershell";
     }
   /** A pre-tool gate for a non-shell tool. Host permission policy owns these. */
-  | { kind: "tool.pre"; tool: string; toolUseId: string | null }
+  | {
+      kind: "tool.pre";
+      tool: string;
+      toolUseId: string | null;
+      /** The skill a skill-loading tool loads (Claude Code's Skill tool). */
+      skill?: string | null;
+    }
   /** A file-writing tool (Edit, Write, apply_patch…): the before-write gate (S17). */
   | { kind: "write.pre"; tool: string; paths: string[]; toolUseId: string | null }
   | {

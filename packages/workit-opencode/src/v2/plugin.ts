@@ -23,6 +23,7 @@ import { createV2Lifecycle } from "./lifecycle";
 import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from "./injection";
 import { evaluateShellPermission } from "./permissions";
 import { observeShellBefore, observeShellResult, type ShellWorkdirs } from "./shell";
+import { injectSkillNudge, observeSkillLoad } from "./skills";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
 
@@ -175,6 +176,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
   const shellWorkdirs: ShellWorkdirs = new Map();
   await ctx.tool.hook("execute.before", async (event) => {
     if (event.tool === "shell") return observeShellBefore(root, event, shellWorkdirs);
+    if (event.tool === "skill") return observeSkillLoad(root, event);
     if (event.tool !== "subagent") return;
     await lifecycle.executeBefore({
       tool: event.tool,
@@ -203,6 +205,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     const session = await sessionFacts(ctx, String(event.sessionID));
     injectAgentContext(root, session, lifecycle.directChildren, event.system);
     injectHistoryOffer(root, session, historyOfferSessions, event.system);
+    if (session) injectSkillNudge(root, session, event.messages, event.system);
     if (!staleSourcesWarned) {
       const changed = changedSourcesSinceLoad(sourceMarker);
       if (changed.length > 0) {

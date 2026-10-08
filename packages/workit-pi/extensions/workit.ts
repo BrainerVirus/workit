@@ -21,7 +21,12 @@ import {
 } from "@brainervirus/workit-core/src/core";
 import { piContext, unfinishedTaskOffer, workitContext } from "../src/context";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
-import { enforceToolPolicy, observeToolResult, registerWorkitTools } from "../src/tools";
+import {
+  enforceToolPolicy,
+  observeToolResult,
+  registerWorkitTools,
+  skillPromptNudge,
+} from "../src/tools";
 import { abandonedLaunches, cancelHint, clearLaunch, recordLaunch } from "../src/launches";
 import {
   cancelWorker,
@@ -469,13 +474,18 @@ export default function extension(pi: ExtensionAPI): void {
     sessions.delete(ctx.sessionManager.getSessionId());
     reconcileLostWorkers(ctx);
   });
-  pi.on("before_agent_start", (_event, ctx) => {
+  pi.on("before_agent_start", (event, ctx) => {
+    const nudge = skillPromptNudge(event.prompt, ctx);
     const id = ctx.sessionManager.getSessionId();
-    if (sessions.has(id)) return;
+    if (sessions.has(id))
+      return nudge
+        ? { message: { customType: "workit-skill", content: nudge, display: false } }
+        : undefined;
     sessions.add(id);
     const offer = historyOfferSessions.has(id) ? null : unfinishedTaskOffer(ctx);
     historyOfferSessions.add(id);
-    return { message: contextMessage(ctx, offer) };
+    const message = contextMessage(ctx, offer);
+    return { message: nudge ? { ...message, content: `${message.content}\n\n${nudge}` } : message };
   });
   pi.on("session_before_compact", () => undefined);
   pi.on("session_compact", (_event, ctx) => {

@@ -7,7 +7,7 @@ import {
   callKey,
   noteRawCommit,
   rawGitPost,
-  rawGitPre,
+  shellNudge,
   type HookInput,
 } from "@brainervirus/workit-core/hooks";
 
@@ -79,7 +79,7 @@ export const observeShellResult = (root: string, event: ShellAfterEvent): void =
     if (!shell) return;
     const input = hookInput(root, String(event.sessionID), String(event.id), shell);
     rawGitPost(input, shell.command, callKey(String(event.id), shell.command));
-    const nudge = rawGitPre(input, shell.command);
+    const nudge = shellNudge(input, shell.command);
     const result = event.result;
     if (nudge.kind !== "context" || !result) return;
     if (typeof result.content === "string")

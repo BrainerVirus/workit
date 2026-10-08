@@ -438,6 +438,19 @@ const actionsIn = (cwd: string, command: string, dialect: ShellDialect): Located
   return out;
 };
 
+/** Is `dir` in a repository Workit manages? */
+export const inWorkitWorkspace = (dir: string): boolean => {
+  const repo = repoAt(dir);
+  return repo !== null && isWorkitWorkspace(repo);
+};
+
+/** A raw push, PR/MR create or merge in a Workit workspace (help and dry runs excluded). */
+export const rawDelivery = (cwd: string, command: string, dialect: ShellDialect): boolean =>
+  mentionsRawTool(command) &&
+  actionsIn(cwd, command, dialect).some(
+    ({ action }) => action.kind !== "commit" && action.kind !== "pr-read",
+  );
+
 /** Cheap pre-filter: no git/gh/glab word, nothing to do. */
 const mentionsRawTool = (command: string) => /\b(?:git|gh|glab)\b/i.test(command);
 
