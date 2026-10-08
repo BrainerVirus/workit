@@ -63,8 +63,15 @@ export function bundleSources(root: string): { scanned: string[]; problems: Bund
     if (copies.length)
       return [{ bundle, problem: `${copies.length} registry-copy modules, e.g. ${copies[0]}` }];
     const minified = text.length / (text.split("\n").length || 1) > MINIFIED_BYTES_PER_LINE;
-    if (!minified && !WORKSPACE_CORE.test(text))
-      return [{ bundle, problem: "no `// packages/workit-core/src/` module header" }];
+    if (!minified && !WORKSPACE_CORE.test(text)) {
+      const first = /^\s*\/\/ (\S.*)$/mu.exec(text)?.[1] ?? "none";
+      return [
+        {
+          bundle,
+          problem: `no \`// packages/workit-core/src/\` module header (first header: ${first})`,
+        },
+      ];
+    }
     return [];
   });
   return { scanned: scanned.map((file) => rel(root, file)), problems };
