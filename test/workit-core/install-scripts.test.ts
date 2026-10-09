@@ -184,7 +184,7 @@ test(
       const launcher = `node "${path.join(pluginDir, "hooks", "launch.mjs")}"`;
       const hooks = JSON.parse(readFileSync(hooksFile, "utf8")).hooks as Record<
         string,
-        { command: string }[]
+        { command: string; loop_limit?: number; failClosed?: boolean }[]
       >;
       // sessionStart plus the six enforcement events, stop control included.
       expect(Object.keys(hooks)).toHaveLength(7);

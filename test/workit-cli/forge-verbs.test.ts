@@ -7,7 +7,12 @@ import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
-import { appendHookObserved, appendObserved, readLedger } from "@/packages/workit-core/src/ledger";
+import {
+  appendHookObserved,
+  appendObserved,
+  readLedger,
+  summarizeRow,
+} from "@/packages/workit-core/src/ledger";
 import {
   fixture,
   makeForgeRepo,
@@ -492,5 +497,8 @@ test("G ci wait sees pending checks, W the session stops under endpoint green, T
   checks = "github/pr-passing.json";
   expect((await run(["pr", "status", "--json"], repo.cwd, env)).code).toBe(0);
   expect(prStatusRows(repo.cwd).map((row) => row.checks)).toEqual(["pending", "passing"]);
+  expect(summarizeRow(prStatusRows(repo.cwd)[1]).summary).toMatch(
+    /^#12 checks passing at [0-9a-f]{12}$/,
+  );
   expect(stop()).toEqual({});
 });
