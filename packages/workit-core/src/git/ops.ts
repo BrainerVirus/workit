@@ -814,7 +814,7 @@ const SHA = /^[0-9a-f]{40,64}$/u;
 const SHA_PREFIX = /^[0-9a-f]{7,39}$/u;
 
 /** Resolve an abbreviated `--expect` against the known remote tips; refuse unknown or ambiguous. */
-function resolveExpectPrefix(
+export function resolveExpectPrefix(
   prefix: string,
   tips: ReadonlyArray<string | null | undefined>,
   label: string,

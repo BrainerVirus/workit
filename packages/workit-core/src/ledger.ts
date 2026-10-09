@@ -1609,9 +1609,10 @@ export function clearStanding(
  * this repository? (`codeKey` sees only the cwd's own worktree.)
  */
 function dirtyElsewhere(cwd: string, branch: string, head: string): boolean {
-  // A clean checkout of exactly the branch head (a verifier's detached worktree)
-  // judges that head, whatever state another checkout of the branch is in.
-  if (headSha(cwd) === head && worktreeTree(cwd)?.dirty === false) return false;
+  // A checkout of exactly the branch head (a verifier's detached worktree)
+  // judges what it holds: clean judges that head, whatever state another
+  // checkout of the branch is in; dirty (or unreadable) does not.
+  if (headSha(cwd) === head) return worktreeTree(cwd)?.dirty !== false;
   const list = git(cwd, ["worktree", "list", "--porcelain"]);
   let worktree: string | null = null;
   for (const line of (list ?? "").split("\n")) {

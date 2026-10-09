@@ -1,3 +1,4 @@
+import { resolveExpectPrefix } from "@/packages/workit-core/src/git/ops";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, rmSync, writeFileSync } from "node:fs";
@@ -750,4 +751,21 @@ test("Given no workit config, When doctor runs in a main-only repository, Then i
   );
   expect(doctor()).toContain("preset: gitflow");
   expect(doctor()).not.toContain("detected");
+});
+
+test("--expect prefixes resolve only to exactly one known tip: ambiguous, unknown, short and uppercase are refused", () => {
+  const a = "abc1234" + "0".repeat(33);
+  const b = "abc1234" + "f".repeat(33);
+  expect(resolveExpectPrefix("abc1234", [a, b], "origin/x")).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("is ambiguous"),
+  });
+  expect(resolveExpectPrefix("abc12340", [a, b], "origin/x")).toEqual({ ok: true, sha: a });
+  expect(resolveExpectPrefix("abc1234", [a, a, null], "origin/x")).toEqual({ ok: true, sha: a });
+  expect(resolveExpectPrefix("deadbee", [a], "origin/x")).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("matches no known tip"),
+  });
+  expect(resolveExpectPrefix("abc12", [a], "origin/x").ok).toBe(false);
+  expect(resolveExpectPrefix("ABC1234", [a], "origin/x").ok).toBe(false);
 });
