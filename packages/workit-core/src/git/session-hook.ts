@@ -80,13 +80,23 @@ fi
 [ -n "$session" ] || exit 0
 [ \${#session} -le 128 ] || exit 0
 case "$session" in *[!A-Za-z0-9_.:@/+-]*) exit 0 ;; esac
-body=$(sed '/^# -\\{24\\} >8 -\\{24\\}$/,$d' "$1" | git stripspace --strip-comments)
-[ -n "$body" ] || exit 0
-# A merge message has no final newline; interpret-trailers would glue the
-# trailer to the subject line.
-[ -z "$(tail -c 1 "$1")" ] || printf '\\n' >> "$1"
-git -c trailer.separators=: -c trailer.where=end interpret-trailers --in-place \\
-  --no-divider --if-exists addIfDifferent --trailer "Workit-Session: $session" "$1" || exit 0
+add_trailer() {
+  [ -f "$1" ] && [ -r "$1" ] || return 0
+  body=$(sed '/^# -\\{24\\} >8 -\\{24\\}$/,$d' "$1" | git stripspace --strip-comments)
+  [ -n "$body" ] || return 0
+  # A merge message has no final newline; interpret-trailers would glue the
+  # trailer to the subject line.
+  [ -z "$(tail -c 1 "$1")" ] || printf '\\n' >> "$1"
+  git -c trailer.separators=: -c trailer.where=end interpret-trailers --in-place \\
+    --no-divider --if-exists addIfDifferent --trailer "Workit-Session: $session" "$1" || return 0
+}
+# $1 is the message file. lefthook cannot quote a path it pastes in, so its
+# job passes '' and the file is found here: git hands the hook COMMIT_EDITMSG,
+# except \`git merge\`, which hands it MERGE_MSG. With source "merge" both are
+# updated: the one git did not hand over is stale or removed after the commit.
+case "\${1-}" in "" | "{1}") ;; *) add_trailer "$1"; exit 0 ;; esac
+add_trailer "$(git rev-parse --git-path COMMIT_EDITMSG)"
+[ "$2" != merge ] || add_trailer "$(git rev-parse --git-path MERGE_MSG)"
 exit 0
 `;
 
@@ -104,12 +114,14 @@ export const manualTrailerLine = (): string =>
  * The same for a lefthook `run:`, with no double quote in it: on Windows
  * lefthook starts `"sh" -c "<run>"` as one raw command line, so a `"` in the
  * run ends that argument early. `set -f` and an empty IFS keep the unquoted
- * `$h` one word (a path with spaces) and unglobbed. lefthook pastes `{1}`
- * in unquoted, and from a linked worktree it is an absolute path that may
- * hold a space, so it is single-quoted.
+ * `$h` one word (a path with spaces) and unglobbed. lefthook pastes `{1}` in
+ * raw, and from a linked worktree it is an absolute path that may hold a
+ * space or a quote, which no quoting survives; so the job passes '' and the
+ * helper finds the message file itself. `{2}` and `{3}` are a source word and
+ * a sha, safe unquoted.
  */
 export const lefthookTrailerRun = (): string =>
-  `set -f; IFS=; h=$(git rev-parse --git-common-dir 2>/dev/null)/${HELPER.join("/")}; [ ! -f $h ] || sh $h '{1}' {2} {3} || true`;
+  `set -f; IFS=; h=$(git rev-parse --git-common-dir 2>/dev/null)/${HELPER.join("/")}; [ ! -f $h ] || sh $h '' {2} {3} || true`;
 
 /** What marks a hook or config that already runs the helper. */
 const HELPER_REF = HELPER.join("/");
@@ -212,13 +224,17 @@ const lefthookConfig = (top: string): string | null =>
 // naming it. Control flow (an `exit` before the line, an `if false`) is out
 // of scope: this reads lines, it does not run them.
 const isComment = (line: string) => /^\s*#/.test(line);
+// `sh` in command position: line start or after `;`, `&`, `|`, `(`, `!`,
+// `then`, `do` or `else` (so `echo sh $h` does not count).
+const COMMAND_SH = String.raw`(?:^|[;&|(!]|\b(?:then|do|else)\s)\s*sh\s+`;
 const DIRECT_CALL = new RegExp(
-  String.raw`\bsh\s+(?:"[^"]*|\S*)${HELPER_REF.replaceAll(".", String.raw`\.`)}`,
+  String.raw`${COMMAND_SH}(?:"[^"]*|\S*)${HELPER_REF.replaceAll(".", String.raw`\.`)}`,
 );
+const VAR_CALL = new RegExp(String.raw`${COMMAND_SH}"?\$h\b`);
 const runsHelperText = (text: string): boolean => {
   const lines = text.split(/\r?\n/).filter((line) => !isComment(line));
   const assigned = lines.some((line) => /(?:^|[\s;])h=/.test(line) && line.includes(HELPER_REF));
-  return lines.some((line) => DIRECT_CALL.test(line) || (assigned && /\bsh\s+"?\$h\b/.test(line)));
+  return lines.some((line) => DIRECT_CALL.test(line) || (assigned && VAR_CALL.test(line)));
 };
 
 const LEFTHOOK_YAML = [

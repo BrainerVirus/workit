@@ -96,8 +96,10 @@ and how to fix it.
   hook itself. With lefthook, once it manages `prepare-commit-msg`, the check
   prints a job to merge into that hook's `jobs:` list. That job has no
   double quotes (lefthook on Windows passes `run:` to `sh -c "…"` unescaped)
-  and single-quotes `{1}`, which lefthook pastes in unquoted and which holds
-  a space when the repository path does. Once the line is there, the check
+  and passes `'' {2} {3}` instead of `{1}`: lefthook pastes `{1}` in raw,
+  and from a linked worktree it is an absolute path that may hold a space or
+  a quote. The helper then finds the message file itself (`COMMIT_EDITMSG`,
+  plus `MERGE_MSG` for a merge). Once the line is there, the check
   passes and names who runs it. A `lefthook install` that does not manage
   that slot leaves the Workit hook in place.
 - No hook is written when the hooks directory is outside the repository (a

@@ -533,24 +533,34 @@ test("Given lefthook, When --fix runs and lefthook reinstalls later, Then our ho
   expect(commit(root, "bad subject").status).not.toBe(0);
 });
 
-test("Given the printed lefthook job in a linked worktree whose path has a space, When committing there, Then the trailer is added", () => {
-  const root = path.join(tmp(), "with space", "repo");
-  mkdirSync(root, { recursive: true });
-  ok(root, ["init", "-q", "-b", "main"]);
-  ok(root, ["config", "commit.gpgsign", "false"]);
-  writeFileSync(path.join(root, "lefthook.yml"), TAKES_SLOT);
-  lefthook(root, "install");
-  const [, ...job] = installSessionHook(root).status.manual!.split("\n");
-  writeFileSync(path.join(root, "lefthook.yml"), `${job.join("\n")}\n`);
-  ok(root, ["add", "lefthook.yml"]);
-  ok(root, ["commit", "-q", "-m", "chore: lefthook"]);
-  lefthook(root, "install");
-  // From a linked worktree the common dir is absolute, with the space in it.
-  const wt = path.join(tmp(), "wt");
-  ok(root, ["worktree", "add", "-q", "-b", "spaced", wt]);
-  expect(commit(wt, "feat: spaced").status).toBe(0);
-  expect(sessions(wt)).toEqual(["Workit-Session: lead-1"]);
-});
+// lefthook pastes {1} raw; from a linked worktree it is an absolute path under
+// the main repo, so a space or a quote there must not break the job.
+for (const dir of ["with space", "it's", "a'b'c"])
+  test(`Given the printed lefthook job and a main repo under "${dir}", When committing from a linked worktree, Then the trailer is added and nothing aborts`, () => {
+    const root = path.join(tmp(), dir, "repo");
+    mkdirSync(root, { recursive: true });
+    ok(root, ["init", "-q", "-b", "main"]);
+    ok(root, ["config", "commit.gpgsign", "false"]);
+    writeFileSync(path.join(root, "lefthook.yml"), TAKES_SLOT);
+    lefthook(root, "install");
+    const [, ...job] = installSessionHook(root).status.manual!.split("\n");
+    writeFileSync(path.join(root, "lefthook.yml"), `${job.join("\n")}\n`);
+    ok(root, ["add", "lefthook.yml"]);
+    ok(root, ["commit", "-q", "-m", "chore: lefthook"]);
+    lefthook(root, "install");
+    const wt = path.join(tmp(), "wt");
+    ok(root, ["worktree", "add", "-q", "-b", "side", wt]);
+    ok(wt, ["commit", "-q", "--allow-empty", "-m", "feat: from wt"], S);
+    expect(sessions(wt)).toEqual(["Workit-Session: lead-1"]);
+    ok(wt, ["commit", "-q", "--allow-empty", "-m", "feat: no session"]);
+    expect(message(wt)).toBe("feat: no session");
+    // A merge in the worktree: git hands the hook MERGE_MSG there.
+    ok(wt, ["switch", "-q", "-c", "topic"]);
+    ok(wt, ["commit", "-q", "--allow-empty", "-m", "feat: topic"]);
+    ok(wt, ["switch", "-q", "side"]);
+    ok(wt, ["merge", "-q", "--no-ff", "--no-edit", "topic"], S);
+    expect(message(wt)).toBe("Merge branch 'topic' into side\n\nWorkit-Session: lead-1");
+  });
 
 test("Given lefthook running the printed job, Then merge, editor, template, opt-out and newline cases behave as with Workit's own hook", () => {
   const root = repo();
@@ -612,6 +622,12 @@ test("Given a hand-written hook that comments the line out or is not executable,
     [`#!/bin/sh\n# ${manualTrailerLine()}\n`, 0o755, BLOCKED],
     [`#!/bin/sh\n${manualTrailerLine()}\n`, 0o644, BLOCKED],
     [`#!/bin/sh\n${manualTrailerLine()}\n`, 0o755, MANUAL],
+    // Mentioned as an argument, not run.
+    [
+      `#!/bin/sh\nh="$(git rev-parse --git-common-dir)/workit/session-trailer.sh"\necho sh "$h"\n`,
+      0o755,
+      BLOCKED,
+    ],
   ];
   for (const [hook, mode, expected] of cases) {
     if (process.platform === "win32" && mode === 0o644) continue;
