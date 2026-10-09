@@ -9,7 +9,9 @@ export {
   type Support,
 } from "./descriptor";
 export {
+  changedTurnContext,
   currentTaskEntry,
+  seedTurnContext,
   sessionCompactContext,
   sessionContextText,
   turnContextText,

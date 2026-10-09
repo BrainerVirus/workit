@@ -19,7 +19,18 @@ import {
   type WorkspaceRecord,
   type Worker,
 } from "@brainervirus/workit-core/src/core";
-import { piContext, unfinishedTaskOffer, workitContext } from "../src/context";
+import {
+  changedTurnContext,
+  PI_DESCRIPTOR,
+  seedTurnContext,
+} from "@brainervirus/workit-core/hooks";
+import {
+  piContext,
+  turnContext,
+  turnInput,
+  unfinishedTaskOffer,
+  workitContext,
+} from "../src/context";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import {
   enforceToolPolicy,
@@ -103,9 +114,9 @@ const runtimeFor = (ctx: ExtensionContext) => ({
   root: ctx.cwd,
 });
 
-const contextMessage = (ctx: ExtensionContext, offer: string | null = null) => ({
+const contextMessage = (ctx: ExtensionContext, content: string) => ({
   customType: "workit-context",
-  content: `${workitContext(ctx)}${offer ? `\n\n${offer}` : ""}`,
+  content,
   display: false,
   details: { session: piContext(ctx).caller.actor },
 });
@@ -477,15 +488,26 @@ export default function extension(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event, ctx) => {
     const nudge = skillPromptNudge(event.prompt, ctx);
     const id = ctx.sessionManager.getSessionId();
-    if (sessions.has(id))
-      return nudge
-        ? { message: { customType: "workit-skill", content: nudge, display: false } }
-        : undefined;
-    sessions.add(id);
-    const offer = historyOfferSessions.has(id) ? null : unfinishedTaskOffer(ctx);
-    historyOfferSessions.add(id);
-    const message = contextMessage(ctx, offer);
-    return { message: nudge ? { ...message, content: `${message.content}\n\n${nudge}` } : message };
+    const trusted = ctx.isProjectTrusted();
+    const task = turnContext(ctx);
+    let content: string | null;
+    if (sessions.has(id)) {
+      // The session keeps each injected message: resend only on change.
+      content = trusted ? changedTurnContext(turnInput(ctx), task) : null;
+    } else {
+      sessions.add(id);
+      const offer = historyOfferSessions.has(id) ? null : unfinishedTaskOffer(ctx);
+      historyOfferSessions.add(id);
+      // The contract carries the task context: seed the digest so the next
+      // turn does not resend it.
+      if (trusted) seedTurnContext(turnInput(ctx), PI_DESCRIPTOR, task);
+      content = `${workitContext(ctx, task)}${offer ? `\n\n${offer}` : ""}`;
+    }
+    if (content)
+      return { message: contextMessage(ctx, nudge ? `${content}\n\n${nudge}` : content) };
+    return nudge
+      ? { message: { customType: "workit-skill", content: nudge, display: false } }
+      : undefined;
   });
   pi.on("session_before_compact", () => undefined);
   pi.on("session_compact", (_event, ctx) => {
