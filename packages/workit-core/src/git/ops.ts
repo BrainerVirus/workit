@@ -811,6 +811,32 @@ export type PushOutcome = {
 };
 
 const SHA = /^[0-9a-f]{40,64}$/u;
+const SHA_PREFIX = /^[0-9a-f]{7,39}$/u;
+
+/** Resolve an abbreviated `--expect` against the known remote tips; refuse unknown or ambiguous. */
+function resolveExpectPrefix(
+  prefix: string,
+  tips: ReadonlyArray<string | null | undefined>,
+  label: string,
+): { ok: true; sha: string } | { ok: false; code: "invalid_input"; error: string } {
+  const known = [...new Set(tips.filter((tip): tip is string => typeof tip === "string"))];
+  if (!SHA_PREFIX.test(prefix))
+    return {
+      ok: false,
+      code: "invalid_input",
+      error: "--expect must be a commit sha (full, or an abbreviation of at least 7 hex digits)",
+    };
+  const matches = known.filter((tip) => tip.startsWith(prefix));
+  if (matches.length === 1) return { ok: true, sha: matches[0] };
+  return {
+    ok: false,
+    code: "invalid_input",
+    error:
+      matches.length > 1
+        ? `--expect ${prefix} is ambiguous for ${label}; choose one of: ${matches.join(", ")}`
+        : `--expect ${prefix} matches no known tip of ${label}${known.length ? `; known: ${known.join(", ")}` : ""}; pass the full sha`,
+  };
+}
 
 export function executePush(
   cwd: string,
@@ -835,10 +861,18 @@ export function executePush(
     const args = ["push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no"];
     if (input.forceWithLease) {
       const explicit = input.expect !== undefined && input.expect !== null;
-      if (explicit && !SHA.test(input.expect as string))
-        return failure("invalid_input", "--expect must be a full commit sha");
+      let expectSha = input.expect ?? null;
+      if (explicit && !SHA.test(expectSha as string)) {
+        const resolved = resolveExpectPrefix(
+          expectSha as string,
+          [before.sha, recordedRemoteTip(cwd, plan)],
+          `${plan.remote}/${plan.branch}`,
+        );
+        if (!resolved.ok) return failure(resolved.code, resolved.error);
+        expectSha = resolved.sha;
+      }
       const integrate = `git fetch ${plan.remote} ${plan.branch} && git rebase ${plan.remote}/${plan.branch}  # or merge it; then: workit git push`;
-      const recorded = explicit ? (input.expect as string) : recordedRemoteTip(cwd, plan);
+      const recorded = explicit ? (expectSha as string) : recordedRemoteTip(cwd, plan);
       // A new branch needs no lease; otherwise workit must have recorded the tip.
       if (recorded === undefined && before.sha !== null)
         return failure(

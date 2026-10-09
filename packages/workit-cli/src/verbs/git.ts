@@ -237,8 +237,8 @@ async function push(argv: string[], io: Io): Promise<number> {
       "--expect and --overwrite-unintegrated only apply with --force-with-lease",
       PUSH_USAGE,
     );
-  if (expect !== null && !/^[0-9a-f]{40,64}$/u.test(expect))
-    return usage(io, "--expect must be a full commit sha", PUSH_USAGE);
+  if (expect !== null && !/^[0-9a-f]{7,64}$/u.test(expect))
+    return usage(io, "--expect must be a commit sha (at least 7 hex digits)", PUSH_USAGE);
 
   const plan = pushPreflight(io.cwd);
   if (!plan.ok) return forgeFail(io, plan);

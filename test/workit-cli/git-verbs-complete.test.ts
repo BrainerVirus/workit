@@ -255,6 +255,38 @@ test("Given a branch pushed with raw git and then amended with raw git, When wor
   expect(repo.remoteTip("feature/a")).toBe(repo.git("rev-parse", "HEAD"));
 });
 
+test("Given a lease with an abbreviated --expect, When it prefixes the remote tip it is used; an unknown or too-short prefix is refused", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/a");
+  repo.write("a.txt", "a\n");
+  repo.git("add", "a.txt");
+  repo.git("commit", "-qm", "feat: a");
+  repo.write("b.txt", "b\n");
+  repo.git("add", "b.txt");
+  repo.git("commit", "-qm", "feat: b");
+  repo.git("push", "-q", "origin", "feature/a");
+  const pushed = repo.git("rev-parse", "HEAD");
+  repo.git("reset", "-q", "--soft", "HEAD~1");
+  repo.git("commit", "-q", "--amend", "-m", "feat: a and b");
+  const short = await run(
+    ["git", "push", "--force-with-lease", "--expect", pushed.slice(0, 5), "--json"],
+    repo.cwd,
+  );
+  expect(short.code).not.toBe(0);
+  const unknown = await run(
+    ["git", "push", "--force-with-lease", "--expect", "0000000", "--json"],
+    repo.cwd,
+  );
+  expect(unknown.code).not.toBe(0);
+  expect(unknown.json().error).toContain(pushed);
+  const leased = await run(
+    ["git", "push", "--force-with-lease", "--expect", pushed.slice(0, 9), "--json"],
+    repo.cwd,
+  );
+  expect(leased.code).toBe(0);
+  expect(repo.remoteTip("feature/a")).toBe(repo.git("rev-parse", "HEAD"));
+});
+
 test("Given a remote commit with the same patch as a local one (rebased elsewhere), When workit pushes, Then the advice names the equivalence but the lease guard still needs --overwrite-unintegrated", async () => {
   const repo = setup();
   repo.git("switch", "-q", "-c", "feature/a");
