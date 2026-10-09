@@ -228,6 +228,13 @@ test("G endpoint commit, a protected branch, a detached HEAD or no remote, T the
   commit(remoteless, "d.txt");
   git(remoteless, "remote", "remove", "origin");
   expect(claudeStop(remoteless)).toEqual({});
+
+  // A repository Workit does not manage: no store, no matching workspace.
+  const plain = tempRoot("workit-stop-plain-");
+  roots.push(plain);
+  git(plain, "init", "-q", "-b", "feature/x");
+  git(plain, "commit", "-q", "--allow-empty", "-m", "init");
+  expect(claudeStop(plain)).toEqual({});
 });
 
 test("G a branch the CLI merged, W the remote branch is deleted (squash + --delete-branch, or pruned), T nothing is owed: no push, no verdict", () => {
@@ -251,6 +258,16 @@ test("G a branch the CLI merged, W the remote branch is deleted (squash + --dele
     prMerged(root, 5);
     expect(claudeStop(root), removal).toEqual({});
   }
+});
+
+test("G a session that only opened the PR (no commits of its own), W the CLI merged it at HEAD, T no verdict is owed", () => {
+  const root = repo("pr");
+  commit(root, "a.txt", "s-author");
+  git(root, "push", "-q", "-u", "origin", "feature/x");
+  prCreated(root, 4);
+  expect(claudeStop(root).reason).toContain("has no current verdict");
+  prMerged(root, 4);
+  expect(claudeStop(root)).toEqual({});
 });
 
 test("G an --unverified merge of this session's PR, T no verdict is owed; a new commit after the merge is owed again", () => {

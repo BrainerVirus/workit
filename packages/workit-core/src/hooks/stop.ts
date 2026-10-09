@@ -214,6 +214,8 @@ export function stopObligation(
 ): StopObligation | null {
   try {
     const session = input.session.id;
+    // Outside a Workit workspace there is no ledger either; the check only
+    // spares every other repository's Stop the git and ledger reads below.
     if (!session || input.session.agentId || !inWorkitWorkspace(input.cwd)) return null;
     const branch = currentBranch(input.cwd);
     if (!branch || guardedBranch(input.cwd, branch)) return null;
