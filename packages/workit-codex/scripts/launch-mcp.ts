@@ -1,9 +1,11 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { TaskStore, type OperationContext } from "@brainervirus/workit-core/src/core";
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix.ts";
 import { McpCapabilityUnavailableError, runStdioServer } from "@brainervirus/workit-mcp/src/server";
 import { codexCapabilities, detectCodexSurface, type CodexHost } from "../hooks/workit-hook";
+import { codexHomeFor, codexHomeOfInstall, installCodexAgents } from "./agents";
 
 export const codexQualification = (host: CodexHost) =>
   host === "codex_cli"
@@ -72,4 +74,34 @@ export const codexContextProvider = (
   },
 });
 
-if (import.meta.main) await runStdioServer(detectCodexSurface(process.env), codexContextProvider());
+/** The plugin root: dist/launch-mcp.js (or scripts/launch-mcp.ts) is one level down. */
+const pluginRoot = (): string => path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Codex plugins cannot ship custom agents, so each MCP start of an installed
+ * plugin copies the bundled workit-* agents into the owning Codex home's
+ * `agents/` (scripts/agents.ts). A checkout or unpacked tarball is not an
+ * install and copies nothing. Never fatal: the MCP server must still start.
+ */
+export const syncCodexAgents = (root: string): void => {
+  const codexHome = codexHomeOfInstall(root);
+  if (!codexHome) return;
+  try {
+    installCodexAgents(root, codexHome);
+  } catch {
+    // Agents are a convenience; `workit doctor` reports a missing copy.
+  }
+};
+
+if (import.meta.main) {
+  if (process.argv.includes("--install-agents")) {
+    // The fix `workit doctor` prints: copy the agents now and say what changed.
+    const root = pluginRoot();
+    const results = installCodexAgents(root, codexHomeFor(root, process.env));
+    for (const r of results) process.stdout.write(`${r.action} ${r.file}\n`);
+    if (results.length === 0) process.stdout.write(`no agents bundled in ${root}\n`);
+    process.exit(0);
+  }
+  syncCodexAgents(pluginRoot());
+  await runStdioServer(detectCodexSurface(process.env), codexContextProvider());
+}
