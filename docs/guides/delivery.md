@@ -94,10 +94,12 @@ and how to fix it.
   `h="$(git rev-parse --git-common-dir 2>/dev/null)/workit/session-trailer.sh"; [ ! -f "$h" ] || sh "$h" "$@" || true`.
   With husky 9 it goes in `.husky/prepare-commit-msg`; with husky 4-8, in the
   hook itself. With lefthook, once it manages `prepare-commit-msg`, the check
-  prints a job to merge into that hook's `jobs:` list (arguments
-  `{1} {2} {3}`). Once the line is there, the check passes and names who
-  runs it. A `lefthook install` that does not manage that slot leaves the
-  Workit hook in place.
+  prints a job to merge into that hook's `jobs:` list. That job has no
+  double quotes (lefthook on Windows passes `run:` to `sh -c "…"` unescaped)
+  and single-quotes `{1}`, which lefthook pastes in unquoted and which holds
+  a space when the repository path does. Once the line is there, the check
+  passes and names who runs it. A `lefthook install` that does not manage
+  that slot leaves the Workit hook in place.
 - No hook is written when the hooks directory is outside the repository (a
   global `core.hooksPath`) or in the working tree without being ignored; the
   check gives the line to add by hand.

@@ -21,6 +21,7 @@ import {
   type SessionHookState,
   inspectSessionHook,
   installSessionHook,
+  lefthookTrailerRun,
   manualTrailerLine,
 } from "@/packages/workit-core/src/git/session-hook";
 
@@ -45,7 +46,7 @@ afterEach(() => {
   }
 });
 const tmp = (): string => {
-  const dir = mkdtempSync(path.join(realpathSync(os.tmpdir()), "wk-session-hook-"));
+  const dir = mkdtempSync(path.join(realpathSync.native(os.tmpdir()), "wk-session-hook-"));
   dirs.push(dir);
   return dir;
 };
@@ -108,10 +109,13 @@ const sessions = (cwd: string, rev = "HEAD") =>
 const S = { WORKIT_SESSION_ID: "lead-1" };
 const commit = (root: string, msg: string, env: Record<string, string> = S) =>
   git(root, ["commit", "-q", "--allow-empty", "-m", msg], env);
+/** A path sh can read on every platform (Git for Windows sh accepts C:/…). */
+const posix = (file: string) => file.replaceAll("\\", "/");
 const editorScript = (body: string): string => {
   const file = path.join(tmp(), "editor.sh");
   writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-  return file;
+  // git runs the editor through sh, which would eat Windows backslashes.
+  return `sh '${posix(file)}'`;
 };
 
 // A user commit-msg check (what commitlint does): a subject must start with
@@ -434,10 +438,14 @@ test("Given lefthook's literal {2} placeholder for a missing source, When the he
   installSessionHook(root);
   const file = path.join(tmp(), "msg");
   writeFileSync(file, "feat: typed\n");
-  const r = sh("sh", root, [helperOf(root), file, "{2}", "{3}"], S);
-  expect(r.status).toBe(0);
+  // Quoted inside one sh script: on Windows, an argv `{2}` handed to sh.exe
+  // is brace-expanded by the MSYS runtime before sh sees it, which lefthook's
+  // quoted `sh -c "…"` command line never does.
+  const helper = (source: string) =>
+    sh("sh", root, ["-c", `sh '${posix(helperOf(root))}' '${posix(file)}' ${source}`], S);
+  expect(helper("'{2}' '{3}'").status).toBe(0);
   expect(readFileSync(file, "utf8")).toBe("feat: typed\n");
-  expect(sh("sh", root, [helperOf(root), file, "message"], S).status).toBe(0);
+  expect(helper("'message'").status).toBe(0);
   expect(readFileSync(file, "utf8")).toBe("feat: typed\n\nWorkit-Session: lead-1\n");
 });
 
@@ -508,7 +516,9 @@ test("Given lefthook, When --fix runs and lefthook reinstalls later, Then our ho
   );
   expect(instruction).toContain("rather than a second `prepare-commit-msg:` key");
   expect(instruction).toContain(`delete the stale ${hookOf(realpathSync(root))}.old`);
-  expect(job.at(-1)).toBe(`      run: ${manualTrailerLine("{1} {2} {3}")}`);
+  expect(job.at(-1)).toBe(`      run: ${lefthookTrailerRun()}`);
+  // lefthook on Windows wraps the run in `"sh" -c "…"` unescaped.
+  expect(lefthookTrailerRun()).not.toContain(`"`);
 
   // The job, merged into the user's config in place of theirs, adds the trailer.
   writeFileSync(config, `${COMMIT_MSG_ONLY(log)}${job.join("\n")}\n`);
@@ -521,6 +531,25 @@ test("Given lefthook, When --fix runs and lefthook reinstalls later, Then our ho
   expect(commit(root, "feat: job").status).toBe(0);
   expect(sessions(root)).toEqual(["Workit-Session: lead-1"]);
   expect(commit(root, "bad subject").status).not.toBe(0);
+});
+
+test("Given the printed lefthook job in a linked worktree whose path has a space, When committing there, Then the trailer is added", () => {
+  const root = path.join(tmp(), "with space", "repo");
+  mkdirSync(root, { recursive: true });
+  ok(root, ["init", "-q", "-b", "main"]);
+  ok(root, ["config", "commit.gpgsign", "false"]);
+  writeFileSync(path.join(root, "lefthook.yml"), TAKES_SLOT);
+  lefthook(root, "install");
+  const [, ...job] = installSessionHook(root).status.manual!.split("\n");
+  writeFileSync(path.join(root, "lefthook.yml"), `${job.join("\n")}\n`);
+  ok(root, ["add", "lefthook.yml"]);
+  ok(root, ["commit", "-q", "-m", "chore: lefthook"]);
+  lefthook(root, "install");
+  // From a linked worktree the common dir is absolute, with the space in it.
+  const wt = path.join(tmp(), "wt");
+  ok(root, ["worktree", "add", "-q", "-b", "spaced", wt]);
+  expect(commit(wt, "feat: spaced").status).toBe(0);
+  expect(sessions(wt)).toEqual(["Workit-Session: lead-1"]);
 });
 
 test("Given lefthook running the printed job, Then merge, editor, template, opt-out and newline cases behave as with Workit's own hook", () => {
@@ -595,14 +624,14 @@ test("Given a hand-written hook that comments the line out or is not executable,
 });
 
 test("Given lefthook configs where the job is commented out or under commit-msg, Then the slot stays blocked; a real prepare-commit-msg job is manual", () => {
-  const job = `      run: ${manualTrailerLine("{1} {2} {3}")}`;
+  const job = `      run: ${lefthookTrailerRun()}`;
   const theirs = 'prepare-commit-msg:\n  jobs:\n    - name: x\n      run: "true"\n';
   const cases: Array<[string, Outcome]> = [
     [`${theirs}#   - name: workit-session\n#${job}\n`, BLOCKED],
     [`${theirs}commit-msg:\n  jobs:\n    - name: workit-session\n${job}\n`, BLOCKED],
     [`${theirs}    - name: workit-session\n${job}\n`, MANUAL],
     [
-      `${theirs}    - name: workit-session\n      run: |\n        ${manualTrailerLine("{1} {2} {3}")}\n`,
+      `${theirs}    - name: workit-session\n      run: |\n        ${lefthookTrailerRun()}\n`,
       MANUAL,
     ],
   ];

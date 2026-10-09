@@ -91,14 +91,25 @@ exit 0
 `;
 
 /**
- * The line that runs the helper from a prepare-commit-msg hook. `args` are the
- * hook's own arguments (`"$@"` in a shell hook, `{1} {2} {3}` in lefthook).
- * Hooks run at the top of the work tree, where the relative common dir resolves.
- * A clone without the helper (a teammate who never ran `--fix`, while the
- * line sits in a committed husky hook) runs nothing and prints nothing.
+ * The line that runs the helper from a shell prepare-commit-msg hook, with the
+ * hook's own arguments. Hooks run at the top of the work tree, where the
+ * relative common dir resolves. A clone without the helper (a teammate who
+ * never ran `--fix`, while the line sits in a committed husky hook) runs
+ * nothing and prints nothing.
  */
-export const manualTrailerLine = (args = '"$@"'): string =>
-  `h="$(git rev-parse --git-common-dir 2>/dev/null)/${HELPER.join("/")}"; [ ! -f "$h" ] || sh "$h" ${args} || true`;
+export const manualTrailerLine = (): string =>
+  `h="$(git rev-parse --git-common-dir 2>/dev/null)/${HELPER.join("/")}"; [ ! -f "$h" ] || sh "$h" "$@" || true`;
+
+/**
+ * The same for a lefthook `run:`, with no double quote in it: on Windows
+ * lefthook starts `"sh" -c "<run>"` as one raw command line, so a `"` in the
+ * run ends that argument early. `set -f` and an empty IFS keep the unquoted
+ * `$h` one word (a path with spaces) and unglobbed. lefthook pastes `{1}`
+ * in unquoted, and from a linked worktree it is an absolute path that may
+ * hold a space, so it is single-quoted.
+ */
+export const lefthookTrailerRun = (): string =>
+  `set -f; IFS=; h=$(git rev-parse --git-common-dir 2>/dev/null)/${HELPER.join("/")}; [ ! -f $h ] || sh $h '{1}' {2} {3} || true`;
 
 /** What marks a hook or config that already runs the helper. */
 const HELPER_REF = HELPER.join("/");
@@ -207,7 +218,7 @@ const DIRECT_CALL = new RegExp(
 const runsHelperText = (text: string): boolean => {
   const lines = text.split(/\r?\n/).filter((line) => !isComment(line));
   const assigned = lines.some((line) => /(?:^|[\s;])h=/.test(line) && line.includes(HELPER_REF));
-  return lines.some((line) => DIRECT_CALL.test(line) || (assigned && /\bsh\s+"\$h"/.test(line)));
+  return lines.some((line) => DIRECT_CALL.test(line) || (assigned && /\bsh\s+"?\$h\b/.test(line)));
 };
 
 const LEFTHOOK_YAML = [
@@ -319,7 +330,7 @@ const manualFor = (input: ManualInput): string => {
       `${SESSION_HOOK_NAME}:`,
       "  jobs:",
       "    - name: workit-session",
-      `      run: ${manualTrailerLine("{1} {2} {3}")}`,
+      `      run: ${lefthookTrailerRun()}`,
     ].join("\n");
   return `add this line to ${target} (a new file needs \`#!/bin/sh\` as its first line and \`chmod +x\`)${stale}: ${manualTrailerLine()}`;
 };

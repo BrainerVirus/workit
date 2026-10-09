@@ -23,7 +23,7 @@ import {
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const cliEntry = path.join(repoRoot, "packages/workit-cli/src/main.ts");
-const scratch = mkdtempSync(path.join(realpathSync(os.tmpdir()), "wk-doctor-verb-"));
+const scratch = mkdtempSync(path.join(realpathSync.native(os.tmpdir()), "wk-doctor-verb-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 // Ambient variables that would point the doctor at the developer's real
