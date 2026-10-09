@@ -77,7 +77,7 @@ const CLAUDE_WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/]/;
  * runs git itself and workit for everything else.
  */
 const ISOLATED_GIT =
-  'Run git as plain, separate commands inside your worktree (`git switch -c <branch> <base>`, `git commit --trailer "Workit-Session=<your session>"`, `git push`), never `workit git …`: Claude Code\'s worktree isolation refuses a command that wraps git and cannot be turned off (https://code.claude.com/docs/en/worktrees#how-claude-code-enforces-isolation). Never dodge that check by renaming or re-wrapping git. Use workit for the non-git verbs (`workit check`, `workit ledger`, `workit pr`).';
+  'Run git as plain, separate commands inside your worktree (`git switch -c <branch> <base>`, `git commit --trailer "Workit-Session=<your session>"`, `git push`; `workit doctor --fix` can install a commit-msg hook that adds the trailer), never `workit git …`: Claude Code\'s worktree isolation refuses a command that wraps git and cannot be turned off (https://code.claude.com/docs/en/worktrees#how-claude-code-enforces-isolation). Never dodge that check by renaming or re-wrapping git. Use workit for the non-git verbs (`workit check`, `workit ledger`, `workit pr`).';
 
 const subagentStartText = (
   input: HookInput,
