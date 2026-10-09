@@ -48,13 +48,14 @@ test(
     // Counts include both provider identity checks (pass with no Git remote)
     // and the workspace_lock check (pass with no metadata lock). No workit is
     // on the isolated PATH, so workit_on_path warns without failing.
-    // cursor_hook passes (no Cursor plugin install).
+    // cursor_hook passes (no Cursor plugin install); codex_hooks, codex_agents
+    // and pi_extension pass (no Codex or Pi install).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 18,
+      passed: 21,
       warned: 1,
       failed: 1,
-      total: 20,
+      total: 23,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -90,10 +91,10 @@ test(
       // fixture's bundled hook runs locally).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 18,
+        passed: 21,
         warned: 1,
         failed: 1,
-        total: 20,
+        total: 23,
         fixes: 1,
       });
     } finally {
