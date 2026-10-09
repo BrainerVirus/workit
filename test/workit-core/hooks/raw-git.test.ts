@@ -83,8 +83,19 @@ type ClaudeOut = {
     additionalContext?: string;
   };
 };
+let sessions = 0;
+/** One PreToolUse call, by default in a fresh session: each nudge kind shows once per session. */
 const claudeOut = (cwd: string, command: string, extra: Record<string, unknown> = {}) =>
-  (claude(cwd, command, "PreToolUse", extra).json as ClaudeOut).hookSpecificOutput;
+  (
+    claude(cwd, command, "PreToolUse", { session_id: `s-${++sessions}`, ...extra })
+      .json as ClaudeOut
+  ).hookSpecificOutput;
+
+/** Pending raw-commit notes in a checkout's store. */
+const commitNotes = (root: string) =>
+  readdirSync(path.join(root, ".git", "workit", "hooks")).filter((name) =>
+    name.startsWith("commit-"),
+  );
 
 const commitRows = (root: string) => {
   const ledger = readLedger(root);
@@ -604,7 +615,8 @@ test("G Cursor (no post-tool event), W a raw commit, T the session's next shell 
     expect(commitRows(root)).toEqual([
       expect.objectContaining({ sha, session, branch: "feature/x" }),
     ]);
-    expect(readdirSync(path.join(root, ".git", "workit", "hooks"))).toEqual([]);
+    // The commit note is settled; only the per-session nudge marker remains.
+    expect(commitNotes(root)).toEqual([]);
   });
 });
 
@@ -619,7 +631,7 @@ test("G a commit run in a workspace from an unrelated repository, T the note liv
       }),
     );
     expect(existsSync(path.join(unrelated, ".git", "workit"))).toBe(false);
-    expect(readdirSync(path.join(workspace, ".git", "workit", "hooks"))).toHaveLength(1);
+    expect(commitNotes(workspace)).toHaveLength(1);
   });
 });
 
@@ -699,5 +711,43 @@ test("G an unwritable ledger, W a raw commit PostToolUse, T no error escapes and
     expect(out.error).toBeNull();
     expect(out.json).toEqual({});
     expect(existsSync(path.join(store, "ledger", "ledger.jsonl"))).toBe(false);
+  });
+});
+
+test("G one main session, W repeated raw gh pr view / push / commit, T each nudge kind shows once; a command running workit gets none; denies still apply", async () => {
+  await withProtectedMain(() => {
+    const root = repo({ branch: "feature/x" });
+    const say = (command: string, session = "s-throttle") =>
+      claudeOut(root, command, { session_id: session })?.additionalContext ?? "";
+    expect(say("gh pr view 4")).toContain("workit pr status");
+    expect(say("gh pr view 4")).toBe("");
+    expect(say("gh pr checks 4")).toBe("");
+    expect(say("git push -u origin feature/x")).toContain("workit git push");
+    expect(say("git push origin feature/x")).toBe("");
+    // A blind force push is its own kind: its warning still shows once.
+    expect(say("git push --force origin feature/x")).toContain("--force-with-lease");
+    expect(say("git commit -qam 'feat: x'")).toContain("workit git commit -m");
+    expect(say("git commit -qam 'feat: y'")).toBe("");
+    // Another session, or a subagent of this one, is nudged on its own.
+    expect(say("gh pr view 4", "s-other")).toContain("workit pr status");
+    expect(
+      claudeOut(root, "gh pr view 4", { session_id: "s-throttle", agent_id: "a1" })
+        ?.additionalContext,
+    ).toContain("workit pr status");
+    // A command that runs a workit verb itself gets no raw-git nudge (the
+    // once-per-session workit-ship skill line is a different nudge).
+    for (const [index, command] of [
+      "gh pr view 5 && workit pr merge --pr 5",
+      "workit git commit -m 'feat: z' && git push",
+      "npx -y @brainervirus/workit-cli pr create --fill; gh pr view",
+      "bash -c 'workit ci wait --pr 5 && gh pr view 5'",
+    ].entries())
+      expect(say(command, `s-verb-${index}`), command).not.toMatch(/(?:^|\n)workit: /);
+    // Denies are unaffected by the throttle and by a workit verb.
+    for (let index = 0; index < 2; index++)
+      expect(
+        claudeOut(root, "workit pr status && gh pr merge 4", { session_id: "s-throttle" })
+          ?.permissionDecision,
+      ).toBe("deny");
   });
 });

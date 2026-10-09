@@ -19,7 +19,10 @@ export const PI_DESCRIPTOR: HostDescriptor = {
     "subagent.stop": { support: "none", native: null },
     "prompt.submit": { support: "undocumented", native: null },
     "compact.pre": { support: "native", native: "session_before_compact" },
-    stop: { support: "none", native: null },
+    // agent_end carries the run's messages; pi.sendMessage(…, {triggerTurn})
+    // starts one more turn (pi-coding-agent 0.85.1 types.d.ts). The host has
+    // no loop guard: the extension continues at most once per run.
+    stop: { support: "native", native: "agent_end" },
   },
   shellPolicy: { deny: "native", channel: "block", failClosed: false },
   context: {
@@ -41,7 +44,7 @@ export const PI_DESCRIPTOR: HostDescriptor = {
   },
   provenance: { sessionId: "native", agentIdOnTool: "none", postToolObserve: "native" },
   interaction: { questions: "native", writeBoundary: "native" },
-  stopControl: "none",
+  stopControl: "native",
   shellAvailable: "native",
   perEventCost: "low",
   capabilities: [

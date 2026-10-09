@@ -1,4 +1,5 @@
 // Cursor: command hooks (hooks/hooks-cursor.json) mapped onto the protocol.
+import fs from "node:fs";
 import path from "node:path";
 import type { HostDescriptor } from "../descriptor";
 import type { HookDecision, HookEvent, HookEventKind, HostAdapter } from "../protocol";
@@ -10,7 +11,8 @@ export type CursorHookEvent =
   | "beforeShellExecution"
   | "subagentStart"
   | "subagentStop"
-  | "preCompact";
+  | "preCompact"
+  | "stop";
 
 export type CursorHookInput = {
   hook_event_name: CursorHookEvent;
@@ -26,6 +28,8 @@ export type CursorHookInput = {
   parent_conversation_id?: string;
   task?: string;
   status?: "completed" | "error" | "aborted";
+  loop_count?: number;
+  transcript_path?: string;
 };
 
 export type CursorParseResult = { ok: true; data: CursorHookInput } | { ok: false; error: string };
@@ -53,8 +57,11 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
     "prompt.submit": undocumented,
     // preCompact can only show a user message.
     "compact.pre": { support: "partial", native: "preCompact" },
-    // Cursor has a stop hook (followup_message), but workit registers none yet.
-    stop: none,
+    // stop (cursor-agent 2026.09.26): `{"followup_message"}` queues one more
+    // user turn; the input carries loop_count and transcript_path, not the
+    // last message (read from transcript_path). Registered with
+    // `loop_limit: 1`, so the continuation's own stop never runs the hook.
+    stop: { support: "native", native: "stop" },
   },
   shellPolicy: { deny: "native", channel: "exit2+json", failClosed: true },
   context: {
@@ -78,7 +85,7 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
     postToolObserve: "undocumented",
   },
   interaction: { questions: "none", writeBoundary: "partial" },
-  stopControl: "undocumented",
+  stopControl: "native",
   shellAvailable: "native",
   // Hooks run the plugin's launcher against a local runtime (bundled dist or a
   // global bin); only an install with neither falls back to a pinned,
@@ -155,6 +162,7 @@ const EVENTS: Record<CursorHookEvent, HookEventKind> = {
   subagentStart: "subagent.start",
   subagentStop: "subagent.stop",
   preCompact: "compact.pre",
+  stop: "stop",
 };
 
 /** Validate the keys each Cursor event needs; unknown keys are ignored. */
@@ -205,6 +213,15 @@ export const parseCursorHookInput = (value: unknown): CursorParseResult => {
         ? { parent_conversation_id: value.parent_conversation_id }
         : {}),
       ...(event === "subagentStart" && nonEmpty(value.task) ? { task: value.task } : {}),
+      ...(event === "stop"
+        ? {
+            ...(nonEmpty(value.status)
+              ? { status: value.status as CursorHookInput["status"] }
+              : {}),
+            ...(typeof value.loop_count === "number" ? { loop_count: value.loop_count } : {}),
+            ...(nonEmpty(value.transcript_path) ? { transcript_path: value.transcript_path } : {}),
+          }
+        : {}),
     },
   };
 };
@@ -244,6 +261,61 @@ const protocolEvent = (input: CursorHookInput): HookEvent => {
       };
     case "preCompact":
       return { kind: "compact.pre", trigger: "auto" };
+    case "stop":
+      return {
+        kind: "stop",
+        // Only a completed turn is continued; an aborted or failed one stops.
+        lastMessage:
+          (input.status ?? "completed") === "completed"
+            ? lastAssistantText(input.transcript_path)
+            : null,
+        // A followup_message turn reports loop_count > 0: one continue per turn.
+        stopHookActive: (input.loop_count ?? 0) > 0,
+      };
+  }
+};
+
+/** The transcript tail read for the last assistant message. */
+const TRANSCRIPT_TAIL_BYTES = 256 * 1024;
+
+/**
+ * The text of the last assistant entry in a Cursor agent transcript
+ * (`{"role":"assistant","message":{"content":[{"type":"text","text":…}]}}`
+ * per line), or null when it cannot be read.
+ */
+export const lastAssistantText = (file: string | null | undefined): string | null => {
+  if (!file || !path.isAbsolute(file)) return null;
+  try {
+    const size = fs.statSync(file).size;
+    const start = Math.max(0, size - TRANSCRIPT_TAIL_BYTES);
+    const buffer = Buffer.alloc(size - start);
+    const fd = fs.openSync(file, "r");
+    try {
+      fs.readSync(fd, buffer, 0, buffer.length, start);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const lines = buffer.toString("utf8").split("\n");
+    for (let index = lines.length - 1; index >= 0; index--) {
+      let entry: unknown;
+      try {
+        entry = JSON.parse(lines[index]);
+      } catch {
+        continue;
+      }
+      if (!isRecord(entry) || entry.role !== "assistant") continue;
+      const content = isRecord(entry.message) ? entry.message.content : entry.content;
+      if (typeof content === "string") return content;
+      if (!Array.isArray(content)) return null;
+      const text = content
+        .filter((part) => isRecord(part) && part.type === "text" && typeof part.text === "string")
+        .map((part) => (part as { text: string }).text)
+        .join("\n");
+      return text || null;
+    }
+    return null;
+  } catch {
+    return null;
   }
 };
 
@@ -291,6 +363,8 @@ const render = (decision: HookDecision, native: string | null) => {
     return { json: { additional_context: decision.text }, exitCode: 0 };
   if (decision.kind === "notice")
     return { json: { user_message: decision.userMessage }, exitCode: 0 };
+  if (decision.kind === "continue" && native === "stop")
+    return { json: { followup_message: decision.reason }, exitCode: 0 };
   return {
     json: native !== null && BLOCKING.has(native) ? { permission: "allow" } : {},
     exitCode: 0,

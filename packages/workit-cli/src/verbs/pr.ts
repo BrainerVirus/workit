@@ -97,6 +97,7 @@ async function status(argv: string[], io: Io): Promise<number> {
     branch: flags.values.branch ?? null,
     logLines: logLines ?? 60,
     identity: connected.data.identity,
+    actor: actorFromEnv(io.env),
   });
   if (!report.ok) return forgeFail(io, report);
   const doc = report.data.doc;

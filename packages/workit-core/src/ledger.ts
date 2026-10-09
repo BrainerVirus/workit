@@ -1801,6 +1801,9 @@ export function summarizeRow(row: ReadRow): RowSummary {
     case "pr.created":
       summary = `#${row.pr ?? "?"} -> ${text("base")} at ${(row.head ?? "?").slice(0, 12)}${row.created === false ? " (existing)" : ""}`;
       break;
+    case "pr.status":
+      summary = `#${row.pr ?? "?"} ${text("state") && text("state") !== "open" ? `${text("state")} ` : ""}checks ${text("checks") || "?"} at ${(row.head ?? "?").slice(0, 12)}`;
+      break;
     case "pr.merged":
       summary = `#${row.pr ?? "?"} ${text("method")} at ${(row.head ?? "?").slice(0, 12)}${text("mergeSha") ? ` -> ${text("mergeSha").slice(0, 12)}` : ""}`;
       break;

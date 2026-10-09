@@ -48,10 +48,21 @@ const startPackedMcp = (workspaceRoot: string) => {
   const config = JSON.parse(readFileSync(path.join(packed.root, ".mcp.json"), "utf8"));
   const server = config.mcpServers.workit;
   if (server.command !== "node") throw new Error(`unexpected MCP command: ${server.command}`);
+  // The launcher copies agents into $CODEX_HOME/agents: a scratch home keeps
+  // it away from the developer's real ~/.codex.
+  const home = mkdtempSync(path.join(tmpdir(), "workit-codex-home-"));
+  const cleanupPack = packed.cleanup;
+  packed.cleanup = () => {
+    cleanupPack();
+    rmSync(home, { recursive: true, force: true });
+  };
   const child = spawn(server.command, server.args, {
     cwd: path.resolve(packed.root, server.cwd),
     env: {
       ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      CODEX_HOME: path.join(home, ".codex"),
       WORKFLOW_WORKSPACE_ROOT: workspaceRoot,
       CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "",
       CODEX_ELECTRON_RESOURCES_PATH: "",

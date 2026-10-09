@@ -102,6 +102,13 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 - `ci wait --timeout` bounds the whole command, from resolving the forge and
   checking the account to the last poll. A conflicting PR stops the wait at
   once (`blocked: conflicts`): CI does not run on it.
+- `pr status` and each `ci wait` poll record an open PR's checks summary
+  (`passing`, `failing` or `pending`) at its head as a `pr.status` ledger row,
+  only when it changed, and the PR's state once it is merged or closed (a
+  merge in the forge UI included). Hooks read it without calling the forge: under a
+  `green` or `merged` endpoint, an agent that stops while those checks are
+  failing or pending is continued once with `workit ci wait --pr <n>`
+  ([stop control](hosts.md)).
 - A forge refusal (HTTP 405/422) shows the forge's own reason, such as "No
   commits between main and feature/x". Network errors and 5xx answers exit 5
   (`unavailable`, retry), not 1.

@@ -11,9 +11,6 @@
 // A session is nudged about one skill at most once (a marker per session
 // in the workspace store), never in a subagent, never once it loaded the skill.
 // Every failure answers "no nudge": hooks fail open.
-import { createHash } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import {
   skillLoadWording,
   WORKIT_METHOD_SKILLS,
@@ -22,9 +19,9 @@ import {
   type WorkitSkill,
 } from "../core/skill-manifests";
 import { appendHookObserved, readLedger } from "../ledger";
-import { resolveStore } from "../store/paths";
 import type { HookDecision, HookInput, HostId } from "./protocol";
-import { inWorkitWorkspace, rawDelivery, rawGitPre } from "./raw-git";
+import { inWorkitWorkspace, rawDelivery, rawGitPre, workitInvocations } from "./raw-git";
+import { readSessionMarker, sessionMarkerFile, writeSessionMarker } from "./session-marker";
 import { segmentsOf, type ShellDialect } from "./shell-words";
 
 /** Skills the user starts; a nudge says to offer them, never to load them. */
@@ -105,35 +102,6 @@ export const promptTrigger = (prompt: string): { skill: WorkitSkill; trigger: st
   return null;
 };
 
-/** Per-session nudge state: skills nudged or loaded, so each nudges once. */
-type Marker = { nudged: string[]; loaded: string[] };
-
-/** The marker in the workspace's store (null outside one: nothing is nudged or recorded there). */
-const markerFile = (input: HookInput, session: string): string | null => {
-  const location = resolveStore(input.cwd);
-  if (location instanceof Error || !location.shared) return null;
-  const name = createHash("sha256").update(`${input.host}\0${session}`).digest("hex").slice(0, 32);
-  return path.join(location.dir, "hooks", `skills-${name}.json`);
-};
-
-const readMarker = (file: string): Marker => {
-  try {
-    const value = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<Marker>;
-    return { nudged: value.nudged ?? [], loaded: value.loaded ?? [] };
-  } catch {
-    return { nudged: [], loaded: [] };
-  }
-};
-
-const writeMarker = (file: string, marker: Marker): void => {
-  try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(marker));
-  } catch {
-    // Fail open: without a marker a later nudge repeats.
-  }
-};
-
 /** Skills this session already loaded, from its `skill.loaded` rows. */
 const loadedSkills = (cwd: string, session: string): Set<string> => {
   const ledger = readLedger(cwd);
@@ -194,11 +162,11 @@ export function recordSkillLoad(
     const session = input.session.id;
     if (!skill || !session) return;
     if (!inWorkitWorkspace(input.cwd)) return;
-    const file = markerFile(input, session);
+    const file = sessionMarkerFile(input, session);
     if (!file) return;
-    const marker = readMarker(file);
+    const marker = readSessionMarker(file);
     if (marker.loaded.includes(skill)) return;
-    writeMarker(file, { ...marker, loaded: [...marker.loaded, skill] });
+    writeSessionMarker(file, { ...marker, loaded: [...marker.loaded, skill] });
     if (loadedSkills(input.cwd, session).has(skill)) return;
     appendHookObserved(input.cwd, {
       type: "skill.loaded",
@@ -218,12 +186,12 @@ const nudgeOnce = (
   skill: WorkitSkill,
   line: string,
 ): string | null => {
-  const file = markerFile(input, session);
+  const file = sessionMarkerFile(input, session);
   if (!file) return null;
-  const marker = readMarker(file);
+  const marker = readSessionMarker(file);
   if (marker.nudged.includes(skill) || marker.loaded.includes(skill)) return null;
   if (loadedSkills(input.cwd, session).has(skill)) return null;
-  writeMarker(file, { ...marker, nudged: [...marker.nudged, skill] });
+  writeSessionMarker(file, { ...marker, nudged: [...marker.nudged, skill] });
   return line;
 };
 
@@ -240,11 +208,22 @@ const promptLoads = (prompt: string): string | null =>
   /^\s*Load the (workit-[a-z-]+) skill with the skill tool\b/.exec(prompt)?.[1] ??
   null;
 
+/**
+ * A prompt that relays another agent's words, not the user's: Claude Code
+ * delivers subagent hand-backs, teammate messages and background-task
+ * notifications through UserPromptSubmit. A reviewer's report that says
+ * "regressed" is not a request for workit-debug.
+ */
+export const relayedMessage = (prompt: string): boolean =>
+  /^\s*(?:Another Claude session sent a message\b|<agent-message\s+from=|\[SYSTEM NOTIFICATION\b|<task-notification>)/.test(
+    prompt,
+  );
+
 /** A main session's prompt in a Workit workspace: one advisory line naming the skill it asks for. */
 export function promptNudge(input: HookInput, prompt: string | null | undefined): string | null {
   try {
     const session = input.session.id;
-    if (!prompt || !session || input.session.agentId) return null;
+    if (!prompt || !session || input.session.agentId || relayedMessage(prompt)) return null;
     const loads = promptLoads(prompt);
     if (loads) {
       // The prompt already loads its skill; record it, never nudge.
@@ -265,35 +244,13 @@ export function promptNudge(input: HookInput, prompt: string | null | undefined)
 }
 
 const WORKIT_DELIVERY = /^(?:pr (?:create|merge)|ci wait|git push)\b/;
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-const LAUNCHERS = new Set([
-  "npx",
-  "bunx",
-  "pnpx",
-  "-y",
-  "--yes",
-  "pnpm",
-  "dlx",
-  "exec",
-  "env",
-  "sudo",
-  "command",
-]);
-
-/** Does a segment list run a workit delivery verb (also inside `bash -c '…'`)? */
-const runsWorkitDelivery = (command: string, dialect: ShellDialect, depth = 0): boolean =>
-  segmentsOf(command, dialect).some(({ words }) => {
-    // The command word, past env assignments and package runners (`npx -y`).
-    const at = words.findIndex((word) => !/^\w+=/.test(word) && !LAUNCHERS.has(word));
-    if (at >= 0 && /(?:^|[\\/])workit(?:\.exe)?$|^@brainervirus\/workit-cli$/.test(words[at])) {
-      const args = words.slice(at + 1);
-      if (args.some((arg) => arg === "--help" || arg === "-h" || arg === "--dry-run")) return false;
-      return WORKIT_DELIVERY.test(args.join(" "));
-    }
-    const shell = SHELLS.has(words[at]?.split(/[\\/]/).at(-1) ?? "");
-    const script = shell && words[at + 1] === "-c" ? words[at + 2] : undefined;
-    return depth < 3 && script !== undefined && runsWorkitDelivery(script, "posix", depth + 1);
-  });
+/** Does the command run a workit delivery verb (also inside `bash -c '…'`), never help or a dry run? */
+const runsWorkitDelivery = (command: string, dialect: ShellDialect): boolean =>
+  workitInvocations(command, dialect).some(
+    (args) =>
+      !args.some((arg) => arg === "--help" || arg === "-h" || arg === "--dry-run") &&
+      WORKIT_DELIVERY.test(args.join(" ")),
+  );
 
 /**
  * Does the command deliver in a Workit workspace: a push, a PR/MR create or

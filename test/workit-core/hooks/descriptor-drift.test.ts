@@ -22,13 +22,17 @@ const read = (file: string) => readFileSync(path.join(PACKAGES, file), "utf8");
 const hooksConfig = (file: string): Set<string> =>
   new Set(Object.keys((JSON.parse(read(file)) as { hooks: Record<string, unknown> }).hooks));
 
-/** `ctx.<area>.hook("<name>", …)` registrations, named as the descriptor names them. */
+/** `ctx.<area>.hook("<name>", …)` registrations and `event.type === "<name>"`
+ * subscriptions, named as the descriptor names them. */
 const opencodeHooks = (file: string): Set<string> =>
-  new Set(
-    [...read(file).matchAll(/\bctx\.(\w+)\.hook\("([\w.]+)"/g)].map(
+  new Set([
+    ...[...read(file).matchAll(/\bctx\.(\w+)\.hook\("([\w.]+)"/g)].map(
       ([, area, name]) => `${area}.hook("${name}")`,
     ),
-  );
+    ...[...read(file).matchAll(/\bevent\.type === "([\w.]+)"/g)].map(
+      ([, name]) => `event("${name}")`,
+    ),
+  ]);
 
 /** `pi.on("<event>", …)` registrations. */
 const piHooks = (file: string): Set<string> =>
