@@ -1,9 +1,10 @@
 // `workit doctor` (DG-07): offline engine, human or --json report, exit code
 // reflects the health. Never writes the report to stderr (the logger owns that).
 // `--fix-lock` clears a stale .workit metadata lock first, so the report
-// reflects the cleaned state.
+// reflects the cleaned state. `--fix` installs the prepare-commit-msg hook that adds the
+// Workit-Session trailer to plain git commits, in a Workit workspace only.
 import pkg from "../../package.json" with { type: "json" };
-import { runDoctor } from "../admin/doctor";
+import { fixSessionHook, runDoctor } from "../admin/doctor";
 import { lintKnowledge } from "@brainervirus/workit-core/src/knowledge";
 import {
   clearStaleMetadataLock,
@@ -70,6 +71,19 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
     fixLock = clearStaleMetadataLock(root, { force });
   }
+  // --fix installs the prepare-commit-msg session hook, in a Workit workspace only.
+  let sessionHook: { action: string; detail: string } | null = null;
+  if (argv.includes("--fix")) {
+    try {
+      const fixed = fixSessionHook({ host: "cli", cwd: io.cwd, workspaceRoot: root });
+      sessionHook = { action: fixed.action, detail: fixed.detail };
+    } catch (error) {
+      sessionHook = {
+        action: "failed",
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
   const report = runDoctor({
     host: "cli",
     cwd: io.cwd,
@@ -97,7 +111,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         }
       : { unavailable: true };
     io.stdout(
-      `${JSON.stringify({ ...report, ...(fixLock ? { fixLock } : {}), knowledge: summary }, null, 2)}\n`,
+      `${JSON.stringify({ ...report, ...(fixLock ? { fixLock } : {}), ...(sessionHook ? { sessionHook } : {}), knowledge: summary }, null, 2)}\n`,
     );
     return report.exitCode;
   }
@@ -111,6 +125,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       `fix-lock: ${what}${fixLock.guardCleared ? "; removed abandoned reclaim guard" : ""}\n`,
     );
   }
+  if (sessionHook) io.stdout(`fix: session hook ${sessionHook.action}: ${sessionHook.detail}\n`);
   io.stdout(
     `workit doctor — ${report.ok ? "healthy" : "problems found"} (${report.offline ? "offline" : "online"})\n`,
   );

@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { createLogger } from "@/packages/workit-core/src/core/logger";
 import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
-import { packReleaseCandidate, SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
+import {
+  isolatedEnv,
+  packReleaseCandidate,
+  SLOW_TEST_TIMEOUT_MS,
+} from "@/test/shared/helpers/packages";
 import { buildReliabilityReport } from "@/test/shared/helpers/report";
 
 // Task 23 reliability-report gate: buildReliabilityReport() aggregates the
@@ -20,6 +24,15 @@ const CODEX = "@brainervirus/workit-codex";
 const PI = "@brainervirus/workit-pi";
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
+
+// A developer's exported CODEX_HOME or PI_CODING_AGENT_DIR would point the
+// Codex and Pi checks at a real install and change the pinned counts.
+const hermeticEnv = (home: string, bin: string): Record<string, string> => {
+  const env = isolatedEnv(home, { PATH: bin });
+  delete env.CODEX_HOME;
+  delete env.PI_CODING_AGENT_DIR;
+  return env;
+};
 
 test(
   "default report aggregates the deterministic candidate and an isolated doctor",
@@ -49,13 +62,14 @@ test(
     // and the workspace_lock check (pass with no metadata lock). No workit is
     // on the isolated PATH, so workit_on_path warns without failing.
     // cursor_hook passes (no Cursor plugin install); codex_hooks, codex_agents
-    // and pi_extension pass (no Codex or Pi install).
+    // and pi_extension pass (no Codex or Pi install); session_hook passes (no
+    // workspace configured).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 21,
+      passed: 22,
       warned: 1,
       failed: 1,
-      total: 23,
+      total: 24,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -81,20 +95,21 @@ test(
           opencodeConfig: fixture.opencodeConfig,
           cursorSettings: fixture.cursorSettings,
           cursorMcp: fixture.cursorMcp,
-          env: { ...process.env, PATH: bin },
+          env: hermeticEnv(fixture.home, bin),
         },
       });
       // node+bun on PATH but no git: exactly the utility check fails; codex_pin passes (absent).
+      // session_hook passes (no workspace configured).
       // Counts include both provider identity checks (pass with no Git remote)
       // and the workspace_lock check (pass with no metadata lock); workit_on_path
       // warns (no workit on the isolated PATH); cursor_hook passes (the
       // fixture's bundled hook runs locally).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 21,
+        passed: 22,
         warned: 1,
         failed: 1,
-        total: 23,
+        total: 24,
         fixes: 1,
       });
     } finally {

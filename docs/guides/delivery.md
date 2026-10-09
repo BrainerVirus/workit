@@ -25,6 +25,11 @@ workit git push [--set-upstream] [--force-with-lease]
   the repository's local and `origin` branches pick it (`workit doctor` shows
   `preset: detected (…)`): `develop` means gitflow, `main` alone
   github-flow, `master` alone trunk-based.
+- A plain `git commit` gets the same trailer from a `prepare-commit-msg`
+  hook, for agents that cannot run `workit git` (a Claude Code
+  worktree-isolated subagent). `workit doctor` warns (`session_hook`) when a Workit workspace
+  lacks it; `workit doctor --fix` installs it, and only in a Workit workspace.
+  See [the session hook](#session-trailer-hook).
 - During a rebase, merge, cherry-pick or revert, `git branch`, `git commit`
   and `git push` refuse and say how to continue or abort it. `git commit` is
   allowed where a commit is the next step: an interactive rebase stopped at
@@ -49,6 +54,63 @@ workit git push [--set-upstream] [--force-with-lease]
   and prints `warning: identity check skipped: <why>` on stderr (`warnings`
   in `--json`); the `push.verified` ledger row records the outcome under
   `identity`.
+
+### Session trailer hook
+
+`workit doctor --fix`, run inside a Workit workspace, writes a helper script
+to `<git-common-dir>/workit/session-trailer.sh` and installs a
+`prepare-commit-msg` hook that runs it, so a plain `git commit` gets
+`Workit-Session: <id>`. Outside a configured workspace it writes nothing, and
+plain `workit doctor` only reports (`session_hook`) whether the hook is there
+and how to fix it.
+
+- Git runs the hook for `-m`, `-F`, amend, merge and squash commits, also
+  with `--no-verify`, and before `commit-msg`, so a commitlint there sees the
+  trailer. Your own `commit-msg` checks keep running unchanged.
+- The id comes from the same variables `workit` reads: `WORKIT_SESSION_ID`
+  (set it empty to opt out), then `OPENCODE_SESSION_ID`, `PI_SESSION_ID` or
+  `CODEX_THREAD_ID` (see [hosts](hosts.md)). Cursor puts no session id in the
+  agent's shell, so its raw commits get a trailer only when the command sets
+  `WORKIT_SESSION_ID`.
+- The message is left unchanged with no session; an id outside
+  `[A-Za-z0-9_.:@/+-]` (1-128 characters); a plain editor commit (`git commit`
+  with no `-m`/`-F`: an emptied buffer must still abort); a commit template
+  (`commit -t`, `commit.template`: an unedited one must still abort); a
+  comment-only message; and during a rebase or cherry-pick (the replayed
+  commits keep their own trailers).
+- One edge remains: `git commit -e -m …`, `git commit --amend` and
+  `git merge -e` open the editor with the trailer already in the buffer, so
+  deleting the subject but leaving the trailer commits a trailer-only message
+  instead of aborting.
+- The same session's trailer is never added twice (amend, merge, squash, a
+  `workit git commit`); another session amending a commit adds its own, as
+  `workit git commit --amend` does.
+- The hook goes where git looks for hooks (`core.hooksPath` included), and
+  only into an empty `prepare-commit-msg` slot or over Workit's own older
+  hook. Another tool's hook there is never renamed or edited: `--fix` still
+  writes the helper, and the check names the one line to add yourself, which
+  runs the same helper and does nothing (silently) in a clone without it, so
+  a committed husky hook does not bother teammates who never ran `--fix`:
+  `h="$(git rev-parse --git-common-dir 2>/dev/null)/workit/session-trailer.sh"; [ ! -f "$h" ] || sh "$h" "$@" || true`.
+  With husky 9 it goes in `.husky/prepare-commit-msg`; with husky 4-8, in the
+  hook itself. With lefthook, once it manages `prepare-commit-msg`, the check
+  prints a job to merge into that hook's `jobs:` list. That job has no
+  double quotes (lefthook on Windows passes `run:` to `sh -c "…"` unescaped)
+  and passes `'' {2} {3}` instead of `{1}`: lefthook pastes `{1}` in raw,
+  and from a linked worktree it is an absolute path that may hold a space or
+  a quote. The helper then finds the message file itself (`COMMIT_EDITMSG`,
+  plus `MERGE_MSG` for a merge). Once the line is there, the check
+  passes and names who runs it. A `lefthook install` that does not manage
+  that slot leaves the Workit hook in place.
+- No hook is written when the hooks directory is outside the repository (a
+  global `core.hooksPath`) or in the working tree without being ignored; the
+  check gives the line to add by hand.
+- A relative `core.hooksPath` resolves per worktree, so each linked worktree
+  needs its own `--fix`; the default `.git/hooks` and the helper are shared by
+  all of them.
+- The hook and helper are POSIX `sh`; Git for Windows runs them with its
+  bundled `sh`. There is no uninstall verb: delete the `prepare-commit-msg`
+  hook (its header names Workit) and the helper.
 
 ## Pull requests and CI
 

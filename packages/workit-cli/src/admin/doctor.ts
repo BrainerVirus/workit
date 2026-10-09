@@ -64,6 +64,13 @@ import {
   validateCursorSkills,
   WORKIT_METHOD_SKILLS,
 } from "@brainervirus/workit-core/src/core/skill-manifests";
+import {
+  SESSION_HOOK_NAME,
+  inspectSessionHook,
+  installSessionHook,
+  type SessionHookInstall,
+  type SessionHookStatus,
+} from "@brainervirus/workit-core/src/git/session-hook";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
 // import the YouTrack/VCS stack just to label a credential state.
@@ -92,6 +99,7 @@ type DoctorCheckId =
   | "malformed_config"
   | "workspace_mismatch"
   | "workspace_lock"
+  | "session_hook"
   | "credential_metadata"
   | "github_identity"
   | "gitlab_identity"
@@ -2002,6 +2010,112 @@ const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
   };
 };
 
+/** The configured workspace this directory belongs to, or null (none, or unreadable config). */
+const matchedWorkspace = (res: Resolved): WorkspaceConfig | null => {
+  try {
+    return resolveWorkspaceFrom(
+      res.cwd,
+      res.configDir,
+      res.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+    );
+  } catch {
+    return null;
+  }
+};
+
+const SESSION_HOOK_FIX = "workit doctor --fix";
+
+/** The doctor's view of one inspected hook state (leftovers handled by the caller). */
+const sessionHookFinding = (hook: SessionHookStatus): Omit<DoctorCheck, "id"> => {
+  const slot = `${SESSION_HOOK_NAME} hook`;
+  switch (hook.state) {
+    case "not_git":
+      return { status: "pass", detail: `not inside a git work tree — skipping the ${slot}` };
+    case "installed":
+      return {
+        status: "pass",
+        detail: `${slot} ${hook.hookPath} adds the Workit-Session trailer to plain git commits`,
+      };
+    case "manual":
+      // The line runs nothing until the helper exists.
+      return hook.helperCurrent
+        ? {
+            status: "pass",
+            detail: `${hook.manualTarget} adds the Workit-Session trailer to plain git commits (via ${hook.via})`,
+          }
+        : {
+            status: "warn",
+            detail: `${hook.manualTarget} runs the Workit helper (via ${hook.via}), but ${hook.helperPath} is missing or an older version`,
+            fix: SESSION_HOOK_FIX,
+          };
+    case "missing":
+      return {
+        status: "warn",
+        detail: `no ${slot} at ${hook.hookPath}: plain git commits from an agent session get no Workit-Session trailer`,
+        fix: SESSION_HOOK_FIX,
+      };
+    case "outdated":
+      return {
+        status: "warn",
+        detail: `the Workit ${slot} at ${hook.hookPath} or its helper ${hook.helperPath} is missing or an older version`,
+        fix: SESSION_HOOK_FIX,
+      };
+    case "blocked":
+      return {
+        status: "warn",
+        detail: `plain git commits get no Workit-Session trailer and --fix will not install the ${slot}: ${hook.reason}`,
+        // The manual line runs the helper, which --fix writes even here.
+        fix: hook.helperCurrent
+          ? hook.manual
+          : `${SESSION_HOOK_FIX} (writes ${hook.helperPath}), then ${hook.manual}`,
+      };
+  }
+};
+
+/**
+ * Plain `git commit`s made by an agent that cannot run `workit git` (a Claude
+ * Code worktree-isolated subagent) get the Workit-Session trailer from a
+ * prepare-commit-msg hook. Checked in Workit workspaces only; advisory (warn).
+ */
+const checkSessionHook = (res: Resolved): DoctorCheck => {
+  if (!matchedWorkspace(res))
+    return {
+      id: "session_hook",
+      status: "pass",
+      detail: `not in a Workit workspace — skipping the ${SESSION_HOOK_NAME} session hook`,
+    };
+  const hook = inspectSessionHook(res.cwd, res.env);
+  const finding = sessionHookFinding(hook);
+  if (!hook.leftover) return { id: "session_hook", ...finding };
+  return {
+    id: "session_hook",
+    status: "warn",
+    detail: `${finding.detail}; ${hook.leftover}`,
+    fix: finding.fix ? `${finding.fix}; ${hook.leftover}` : hook.leftover,
+  };
+};
+
+export type SessionHookFix =
+  | (SessionHookInstall & { workspace: string })
+  | { action: "skipped"; detail: string; workspace: null };
+
+/**
+ * `workit doctor --fix`: install or refresh the prepare-commit-msg session
+ * hook, only when the directory is in a configured Workit workspace. Another
+ * tool's hook in that slot is never touched.
+ */
+export const fixSessionHook = (options: DoctorOptions = {}): SessionHookFix => {
+  const res = resolve(options);
+  const workspace = matchedWorkspace(res);
+  if (!workspace)
+    return {
+      action: "skipped",
+      detail: `${res.cwd} is not in a Workit workspace; no hook installed`,
+      workspace: null,
+    };
+  return { ...installSessionHook(res.cwd, res.env), workspace: workspace.name };
+};
+
 // Credential metadata: existence, mode, placeholder — never the value.
 const isPlaceholder = (p: string): boolean => {
   try {
@@ -2506,6 +2620,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkMalformedConfig,
   checkWorkspaceMismatch,
   checkWorkspaceLock,
+  checkSessionHook,
   checkCredentialMetadata,
   checkGithubIdentity,
   checkGitLabIdentity,

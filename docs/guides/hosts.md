@@ -134,6 +134,10 @@ in the same checkout, since no post-shell hook is registered yet. A
 `WORKIT_SESSION_ID` inherited from another host (its `WORKIT_HOST` names that
 host, as when Codex runs inside Claude Code's Bash) yields to the inner host's
 own id; to assign a verifier id there, set `WORKIT_HOST` to the inner host too.
+The `prepare-commit-msg` hook that `workit doctor --fix` installs resolves the
+session the same way, so plain `git commit`s on every host carry the trailer
+(Cursor only with `WORKIT_SESSION_ID` set); see
+[the session trailer hook](delivery.md#session-trailer-hook).
 
 ## OpenCode
 

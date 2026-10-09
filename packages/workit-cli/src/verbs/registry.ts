@@ -199,8 +199,9 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "doctor",
     group: "setup",
-    usage: "workit doctor [--fix-lock [--force [--yes]]]",
-    summary: "Verify the offline installation health (--fix-lock clears a stale workit store lock)",
+    usage: "workit doctor [--fix] [--fix-lock [--force [--yes]]]",
+    summary:
+      "Verify the offline installation health (--fix installs the session trailer hook; --fix-lock clears a stale workit store lock)",
     load: () => import("./doctor"),
   },
   {
