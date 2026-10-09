@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WORKIT_METHOD_SKILLS, copySkillForHost } from "../../workit-core/src/core/skill-manifests";
+import { renderCodexAgents } from "./agents";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const coreDir = path.resolve(packageDir, "..", "workit-core");
@@ -55,6 +56,13 @@ mkdirSync(skills, { recursive: true });
 for (const name of WORKIT_METHOD_SKILLS)
   copySkillForHost(path.join(coreDir, "skills", name), path.join(skills, name), "codex");
 
+// Codex custom agents, rendered from the canonical Claude Code agents.
+const agents = path.join(target, "agents");
+rmSync(agents, { recursive: true, force: true });
+mkdirSync(agents, { recursive: true });
+const rendered = renderCodexAgents(path.resolve(packageDir, "..", "workit-claude-code", "agents"));
+for (const [file, text] of rendered) writeFileSync(path.join(agents, file), text);
+
 console.log(
-  `codex: built Node entries and ${WORKIT_METHOD_SKILLS.length} method skills (${target})`,
+  `codex: built Node entries, ${WORKIT_METHOD_SKILLS.length} method skills and ${rendered.size} agents (${target})`,
 );

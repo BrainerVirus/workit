@@ -2,6 +2,7 @@
 // reflects the health. Never writes the report to stderr (the logger owns that).
 // `--fix-lock` clears a stale .workit metadata lock first, so the report
 // reflects the cleaned state.
+import pkg from "../../package.json" with { type: "json" };
 import { runDoctor } from "../admin/doctor";
 import { lintKnowledge } from "@brainervirus/workit-core/src/knowledge";
 import {
@@ -69,7 +70,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
     fixLock = clearStaleMetadataLock(root, { force });
   }
-  const report = runDoctor({ host: "cli", cwd: io.cwd, workspaceRoot: root });
+  const report = runDoctor({
+    host: "cli",
+    cwd: io.cwd,
+    workspaceRoot: root,
+    cliVersion: pkg.version,
+  });
   // Advisory only: knowledge findings never change the doctor's exit code.
   let knowledge: ReturnType<typeof lintKnowledge> | null = null;
   try {
@@ -111,7 +117,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
   for (const check of report.checks) {
     const mark = check.status === "fail" ? "FAIL" : check.status === "warn" ? "WARN" : "ok  ";
     io.stdout(`${mark} ${check.id} — ${check.detail}\n`);
-    if (check.fix) io.stdout(`     fix: ${check.fix}\n`);
+    // A multi-line fix (config lines to paste) stays under its check.
+    if (check.fix) io.stdout(`     fix: ${check.fix.replaceAll("\n", "\n          ")}\n`);
   }
   io.stdout(`${knowledgeLine}\n`);
   io.stdout(

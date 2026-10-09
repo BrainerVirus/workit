@@ -176,7 +176,33 @@ injection plus the skill nudge (`UserPromptSubmit`), the before-write gate on
 `workit-verifier` or `workit-reviewer` is told its own Workit session id for
 `workit ledger verdict --session`; one named `workit-implementer` is told to
 work only in its own worktree (`workit fanout worktree create <slice>`) on a
-policy-compliant branch. Codex runs plugin hooks only after you trust them.
+policy-compliant branch.
+
+The plugin ships those three agents. Codex plugins cannot register agents, so
+the plugin's MCP server copies `workit-verifier.toml`, `workit-reviewer.toml`
+and `workit-implementer.toml` into `~/.codex/agents/` (the Codex home that
+installed the plugin) each time it starts; Codex offers them from the next
+session. Their instructions come from the same source as the Claude Code
+agents. The verifier and reviewer run in a read-only sandbox, so they ask you
+to approve `workit check` and `workit ledger verdict`; the implementer never
+records a verdict. A file of the same name that you wrote yourself is never
+overwritten, nor is a symlink, nor a copy written by a newer plugin version
+(each copy's first line names the plugin version that wrote it).
+
+Codex runs plugin hooks only after you trust them: run `/hooks` in Codex, or
+pick "Trust all and continue" when Codex asks you to review hooks at startup.
+Trust them there, not by editing `config.toml` by hand: Codex's review shows
+what each hook runs, and a hand-added trust entry that duplicates one Codex
+already wrote breaks `config.toml`. `workit doctor` checks both:
+
+- `codex_hooks` warns when a workit hook is untrusted, changed since you
+  trusted it, or disabled, and names the hooks. The fix is `/hooks` (or the
+  startup "Trust all and continue").
+- `codex_agents` warns when the agents are missing or outdated in
+  `~/.codex/agents/`, or when one of them is a symlink. The fix is
+  `node "<plugin root>/dist/launch-mcp.js" --install-agents`, then a new
+  Codex session. A plugin too old to bundle agents gets
+  `codex plugin remove workit@<marketplace> && codex plugin add workit@<marketplace>`.
 
 ## Pi
 
@@ -191,6 +217,23 @@ read-only `workit_context`, and bundles a coordinator that launches fresh
 reviewer/investigator processes and scoped implementers. Pi project trust
 still gates mutations; shell writes are agent-guided (an extension is not an
 OS sandbox).
+
+`workit doctor` checks the extension (`pi_extension`) when Pi is installed. It
+reads the `packages` in `~/.pi/agent/settings.json` and `.pi/settings.json`
+(the project entry wins) and warns:
+
+- missing: no `@brainervirus/workit-pi` entry, or one Pi has not installed.
+  Fix: `pi install npm:@brainervirus/workit-pi` (add `-l` for a project
+  entry).
+- not loading: the entry's `extensions` filter drops `dist/workit.js`, or the
+  package has no built `dist/workit.js`. Fix: remove the filter (or enable the
+  extension in `pi config`), or reinstall the package; a local checkout gets
+  `cd <checkout> && bun run build`.
+- stale: the package is older than the workit CLI and a newer one is
+  published. Fix: `pi update npm:@brainervirus/workit-pi`, or
+  `pi install npm:@brainervirus/workit-pi@<version>` for a pinned entry. When
+  the registry is unreachable, or the entry is a local checkout, an older
+  package passes and the detail says it was not compared.
 
 ## Read-only context
 

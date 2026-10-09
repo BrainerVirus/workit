@@ -75,12 +75,12 @@ use yet), L = host limit (the host has no mechanism for it).
 | Branch policy / raw git deny + nudge | N `PreToolUse` | P: deny via permission effect; L: the nudge rides the result | N `PreToolUse` | P: deny works; nudge via `agent_message` (unverified); X: `postToolUse` context | P: `tool_call` blocks; L: the nudge rides `tool_result` |
 | Before-write gate | N `Edit`/`Write`/`MultiEdit`/`NotebookEdit` and shell writes | N permission `evaluate` | N `PreToolUse` on `apply_patch` (files from the patch) and shell writes | P `preToolUse` (a write with no readable path is gated as code) | N `tool_call` |
 | Raw commit recording | N `PostToolUse` | N `execute.after` | N `PostToolUse` | P: settled on the next shell command; X: `afterShellExecution`/`postToolUse` | N `tool_result` |
-| Verifier/reviewer own session | N `SubagentStart` (`workit:verifier`, `workit:reviewer`) | P: native parent binding; X: `agent.transform` definitions | N `SubagentStart` (`workit-verifier`, `workit-reviewer` agent types); X: shipped agent definitions | P: role markers; L: `subagentStart` cannot add context | L: no host subagents (supervised workers) |
-| Implementer worktree guidance | N `SubagentStart` plus `isolation: worktree` | X: the `worktree` domain is unused | P `SubagentStart` text (`workit-implementer`); L: no native worktree isolation, the lead makes one | P: implementers denied at `subagentStart` | L: no host subagents |
+| Verifier/reviewer own session | N `SubagentStart` (`workit:verifier`, `workit:reviewer`) | P: native parent binding; X: `agent.transform` definitions | N `SubagentStart` (`workit-verifier`, `workit-reviewer` agent types); P: shipped read-only (`sandbox_mode`) agents the MCP launcher copies into `$CODEX_HOME/agents/` (L: codex-cli 0.160.1 plugins cannot register agents) | P: role markers; L: `subagentStart` cannot add context | L: no host subagents (supervised workers) |
+| Implementer worktree guidance | N `SubagentStart` plus `isolation: worktree` | X: the `worktree` domain is unused | P `SubagentStart` text and the shipped `workit-implementer` agent; L: no native worktree isolation, the lead makes one | P: implementers denied at `subagentStart` | L: no host subagents |
 | Compaction restore | N `SessionStart` source=compact | N `session.hook("compaction")` | N `SessionStart` source=compact | P (L: `preCompact` only shows a user message) | N `session_compact` |
 | Stop control | X `Stop`/`SubagentStop` | X `session.idle` | X `Stop` | X `stop` followup | X `agent_end` |
 | `/wk-*` aliases | X: plugin commands are namespaced (`/workit:<name>`) | P `command.transform` (prose, not `prompt.skills`) | L: no plugin slash commands (`$workit-<name>`) | N `commands/wk-*.md` | N `registerCommand` |
-| Heartbeat / doctor | P plugin check | P version check | P version check; X: hook-trust check | N launcher heartbeat | X: no Pi doctor check |
+| Heartbeat / doctor | P plugin check | P version check | N version, hook-trust (`codex_hooks`) and agents (`codex_agents`) checks | N launcher heartbeat | N `pi_extension`: missing, not loading, older than workit |
 
 ## Design background
 
