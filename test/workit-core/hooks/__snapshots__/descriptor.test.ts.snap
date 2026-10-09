@@ -144,7 +144,7 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
       "perTurn": "native",
       "sessionStart": "native",
       "task": "session-bound",
-      "turnResend": "every-turn",
+      "turnResend": "on-change",
     },
     "docs": [
       "https://code.claude.com/docs/en/hooks",
@@ -1300,10 +1300,10 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
     ],
     "context": {
       "afterCompact": "native",
-      "perTurn": "partial",
+      "perTurn": "native",
       "sessionStart": "native",
       "task": "session-bound",
-      "turnResend": "per-session",
+      "turnResend": "on-change",
     },
     "docs": [
       "https://github.com/earendil-works/pi-coding-agent",

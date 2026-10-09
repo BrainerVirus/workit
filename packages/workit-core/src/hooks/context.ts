@@ -291,11 +291,11 @@ export const turnContextText = (input: HookInput, descriptor: HostDescriptor): s
   }
 };
 
-// Change-only per-turn context. A hook-process host (Claude Code, Codex)
-// keeps each injected additionalContext in the transcript, so the task
-// context is resent only when it changed since the last injection for the
-// session. Each hook is a fresh process: the last digest lives in the
-// workspace store (`hooks/turn-<session hash>.json`). Every cache failure
+// Change-only per-turn context. Claude Code, Codex and Pi keep each injected
+// context in the transcript, so the task context is resent only when it
+// changed since the last injection for the session. Each hook is a fresh
+// process (and a Pi session can resume in another one): the last digest
+// lives in the workspace store (`hooks/turn-<session hash>.json`). Every cache failure
 // answers "changed", so context is resent rather than lost.
 
 const TURN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -376,13 +376,17 @@ export const changedTurnContext = (input: HookInput, text: string | null): strin
  * A session start already injects the task context (inside the contract), so
  * the per-turn digest is seeded with what the next prompt would carry: the
  * first turn after a start, resume or compaction does not resend it. A
- * session without task context clears its digest instead.
+ * session without task context clears its digest instead. An in-process
+ * host that renders its own per-turn `text` seeds with it.
  */
-export const seedTurnContext = (input: HookInput, descriptor: HostDescriptor): void => {
+export const seedTurnContext = (
+  input: HookInput,
+  descriptor: HostDescriptor,
+  text: string | null = turnContextText(input, descriptor),
+): void => {
   const file = turnMarker(input);
   if (!file) return;
   pruneTurnDigests(path.dirname(file), Date.now());
-  const text = turnContextText(input, descriptor);
   if (text) writeTurnDigest(file, digestOf(text));
   else clearTurnDigest(file);
 };

@@ -97,6 +97,68 @@ test("Pi compaction leaves the host summary intact and restores once only after 
   await handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, ctx);
 });
 
+test("G a Pi session with a task, W the task context changes mid-session, T the next turn carries it once, never right after a start or compaction", async () => {
+  const { handlers, ctx, root } = await setup();
+  const turn = async (): Promise<string | undefined> => {
+    const result: any = await handlers.get("before_agent_start")!(
+      { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+      ctx,
+    );
+    return result?.message.content;
+  };
+  const store = new TaskStore(root);
+  const started = new WorkitCore(store, {
+    root,
+    caller: { host: "pi", actor: "pi-session" },
+    callerAttested: true,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  }).task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as { id: string }).id;
+  const progress = (nextAction: string) => {
+    const done = new WorkitCore(store, {
+      root,
+      caller: { host: "workit_cli", actor: "cli" },
+      callerAttested: true,
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-02T00:00:00Z",
+    }).task({
+      schemaVersion: 1,
+      action: "progress",
+      taskId,
+      progress: { summary: "progress", nextAction, blockers: [] },
+    });
+    if (!done.ok) throw new Error(done.error);
+  };
+  // The first turn carries the contract with the task context.
+  expect(await turn()).toContain("Current task context:");
+  expect(await turn()).toBeUndefined();
+  progress("write the parser test");
+  const changed = await turn();
+  expect(changed).toContain("write the parser test");
+  expect(changed).not.toContain("Workit is optional coordination");
+  expect(await turn()).toBeUndefined();
+  // A compaction restore re-sends the contract with the current context and
+  // reseeds the digest: the context changed since the last turn, yet the
+  // turn after the restore does not resend it.
+  progress("next after compaction");
+  await handlers.get("session_compact")!(
+    {
+      type: "session_compact",
+      compactionEntry: {},
+      fromExtension: false,
+      reason: "manual",
+      willRetry: false,
+    },
+    ctx,
+  );
+  expect(await turn()).toContain("next after compaction");
+  expect(await turn()).toBeUndefined();
+});
+
 test("Pi failed compaction does not trigger a restoration injection", async () => {
   const { handlers, ctx } = await setup();
   await handlers.get("before_agent_start")!(

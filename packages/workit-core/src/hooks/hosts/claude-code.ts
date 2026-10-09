@@ -58,9 +58,8 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     perTurn: "native",
     afterCompact: "native",
     task: "session-bound",
-    // The plugin's src/hook.ts dedups per-turn context itself (its own cache)
-    // until it moves onto the core's on-change resend.
-    turnResend: "every-turn",
+    // Each additionalContext stays in the transcript: resend only on change.
+    turnResend: "on-change",
   },
   subagents: {
     identity: "native",
