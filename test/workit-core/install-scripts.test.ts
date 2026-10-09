@@ -283,6 +283,11 @@ function copyCoreSources(stub: string) {
     path.join(repoRoot, "packages/workit-core/src/git/rev.ts"),
     path.join(stub, "packages/workit-core/src/git/rev.ts"),
   );
+  // doctor's session_hook check reads the commit-msg hook state.
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/src/git/session-hook.ts"),
+    path.join(stub, "packages/workit-core/src/git/session-hook.ts"),
+  );
   // store-lock.ts resolves the checkout lock through the task store layout.
   mkdirSync(path.join(stub, "packages/workit-core/src/store"), { recursive: true });
   cpSync(
