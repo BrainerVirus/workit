@@ -22,7 +22,6 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import cliPkg from "../../package.json" with { type: "json" };
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import { inspectMetadataLock } from "@brainervirus/workit-core/src/core/store-lock";
 import {
@@ -131,6 +130,9 @@ export type DoctorReport = {
 
 export type DoctorOptions = {
   host?: DoctorHost;
+  /** The running workit CLI's version (the verb passes it; admin/ never imports
+   *  the CLI package.json, so it also runs copied out of the package). */
+  cliVersion?: string;
   home?: string;
   configDir?: string;
   stateDir?: string;
@@ -174,6 +176,7 @@ type Resolved = {
   piAgentDir?: string;
   env: NodeJS.ProcessEnv;
   installer: boolean;
+  cliVersion: string | null;
 };
 
 const findDevFromCwd = (cwd: string): string | null => {
@@ -220,6 +223,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     piAgentDir: options.piAgentDir,
     env,
     installer: options.installer ?? false,
+    cliVersion: options.cliVersion ?? null,
   };
 };
 
@@ -994,8 +998,8 @@ const checkPiExtension = (res: Resolved): DoctorCheck & { registryProbed?: boole
       fix: `remove the "extensions" filter from the ${PI_PACKAGE} entry in ${entry.settingsFile}, or enable the extension with \`pi config${entry.scope === "project" ? " -l" : ""}\``,
     };
   const version = typeof pkg.version === "string" ? pkg.version : null;
-  const cli = cliPkg.version;
-  if (version && versionBehind(version, cli)) {
+  const cli = res.cliVersion;
+  if (version && cli && versionBehind(version, cli)) {
     // Pi packages publish only when their payload changes: older than the CLI
     // is stale only when a newer one is published. Without that evidence (a
     // local checkout, an unreachable registry) it passes and says so.

@@ -34,6 +34,7 @@ const freshHome = () => {
 const doctor = (home: string, cwd: string, env: Record<string, string> = {}) =>
   runDoctor({
     host: "cli",
+    cliVersion: cliPkg.version,
     home,
     cwd,
     configDir: path.join(home, "config"),
