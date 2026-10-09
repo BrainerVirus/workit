@@ -12,11 +12,13 @@ import {
   buildStatusDoc,
   executeRerun,
   pollDelay,
+  recordPrStatus,
   selectPr,
   waitVerdict,
   type PrStatusDoc,
   type WaitVerdict,
 } from "@brainervirus/workit-core/src/forge/report";
+import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import type { ForgePrStatus } from "@brainervirus/workit-core/src/forge/types";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import { emit, fail, ok, type Io } from "../output";
@@ -81,6 +83,7 @@ async function wait(argv: string[], io: Io): Promise<number> {
   const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
   if (!number.ok) return forgeFail(io, number);
 
+  const actor = actorFromEnv(io.env);
   let polls = 0;
   let errors = 0;
   let status: ForgePrStatus | null = null;
@@ -94,6 +97,7 @@ async function wait(argv: string[], io: Io): Promise<number> {
       status = read.data;
       const doc = buildStatusDoc(io.cwd, resolved, status, { logLines: 0, behind: false });
       if (!doc.ok) return forgeFail(io, doc);
+      recordPrStatus(io.cwd, doc.data, actor);
       verdict = waitVerdict(doc.data, { head, elapsedMs });
       if (verdict.state !== "waiting") break;
     } else {

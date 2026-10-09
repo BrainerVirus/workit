@@ -46,8 +46,10 @@ pre-tool call. Claude Code's launcher fast path lets workit delivery verbs throu
 
 `src/hooks/stop.ts` is the one stop policy: ledger and local git facts only
 (no forge call), at most one continue per turn, never in a subagent or when
-the last message asks the user a question. The CI obligation reads `pr.status`
-rows (`pr`, `head`, `checks`); no verb writes them yet.
+the last message asks the user a question. The CI obligation reads the newest
+`pr.status` row (`pr`, `branch`, `head`, `checks`), which `workit pr status`
+and every `workit ci wait` poll append when the PR's checks summary changed
+(`recordPrStatus` in `forge/report.ts`).
 
 The acting session comes from `src/host-session.ts`: `WORKIT_SESSION_ID`, else
 the host's shell variable (`CODEX_THREAD_ID`, `OPENCODE_SESSION_ID`,
@@ -86,7 +88,7 @@ use yet), L = host limit (the host has no mechanism for it).
 | Implementer worktree guidance | N `SubagentStart` plus `isolation: worktree`; plain git told up front (L: worktree isolation refuses `workit git …`, cannot be turned off) | X: the `worktree` domain is unused | P `SubagentStart` text and the shipped `workit-implementer` agent; L: no native worktree isolation, the lead makes one | P: implementers denied at `subagentStart` | L: no host subagents |
 | Compaction restore | N `SessionStart` source=compact | N `session.hook("compaction")` | N `SessionStart` source=compact | P (L: `preCompact` only shows a user message) | N `session_compact` |
 | Session trailer on raw commits | N: commit-msg hook installed by `workit doctor --fix` (via git) | N: commit-msg hook (via git) | N: commit-msg hook (via git) | L: no session id in the agent shell, so the trailer only appears when `WORKIT_SESSION_ID` is set | N: commit-msg hook (via git) |
-| Stop control | N `Stop` (`decision:block`, `stop_hook_active`); a subagent's stop is never blocked | P `session.idle` event, continued with `session.synthetic({resume: true})` (L: no stop hook or loop guard; resume semantics inferred from @opencode/client 2.0.18) | N `Stop` (`decision:block`, `stop_hook_active`) | X `stop` `followup_message` (`loop_count`; last message from `transcript_path`): the adapter maps and renders it, but `hooks-cursor.json` registers it only once the installer's canonical event list (`workit-cli` `admin/registration.ts`) does | N `agent_end` + `sendMessage({triggerTurn})` (L: no host loop guard; the extension keeps one) |
+| Stop control | N `Stop` (`decision:block`, `stop_hook_active`); a subagent's stop is never blocked | P `session.idle` event, continued with `session.synthetic({resume: true})` (L: no stop hook or loop guard; resume semantics inferred from @opencode/client 2.0.18) | N `Stop` (`decision:block`, `stop_hook_active`) | N `stop` `followup_message` (`loop_count`, registered with `loop_limit: 1`; last message read from `transcript_path`) | N `agent_end` + `sendMessage({triggerTurn})` (L: no host loop guard; the extension keeps one) |
 | `/wk-*` aliases | X: plugin commands are namespaced (`/workit:<name>`) | P `command.transform` (prose, not `prompt.skills`) | L: no plugin slash commands (`$workit-<name>`) | N `commands/wk-*.md` | N `registerCommand` |
 | Heartbeat / doctor | P plugin check | P version check | N version, hook-trust (`codex_hooks`) and agents (`codex_agents`) checks | N launcher heartbeat | N `pi_extension`: missing, not loading, older than workit |
 

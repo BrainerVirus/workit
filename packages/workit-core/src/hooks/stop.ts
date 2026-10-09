@@ -66,17 +66,22 @@ const gitLine = (cwd: string, args: string[]): string | null => {
 const sessionOf = (row: ReadRow): string | null =>
   (typeof row.session === "string" ? row.session : null) ?? row.actor.session;
 
-/** The newest PR the CLI opened for the branch, unless it was merged since. */
+/**
+ * The branch's open PR: the newest one the CLI opened or observed
+ * (`pr.created`, `pr.status`), unless it was merged since.
+ */
 const openPr = (rows: readonly ReadRow[]): number | null => {
-  const created = rows.findLast(
+  const seen = rows.findLast(
     (row) =>
-      row.type === "pr.created" && row.observer === "workit_cli" && typeof row.pr === "number",
+      (row.type === "pr.created" || row.type === "pr.status") &&
+      row.observer === "workit_cli" &&
+      typeof row.pr === "number",
   );
-  if (!created) return null;
+  if (!seen) return null;
   const merged = rows.some(
-    (row) => row.type === "pr.merged" && row.pr === created.pr && row.seq > created.seq,
+    (row) => row.type === "pr.merged" && row.pr === seen.pr && row.seq > seen.seq,
   );
-  return merged ? null : (created.pr as number);
+  return merged ? null : (seen.pr as number);
 };
 
 /** (a) Commits on HEAD the push remote does not have. */

@@ -89,7 +89,10 @@ test(
           : readTarballFile(byName(packs, CURSOR).tarball, "hooks/hooks-cursor.json");
       const hooks = JSON.parse(raw) as {
         version: number;
-        hooks: Record<string, { command: string; args?: string[]; failClosed?: boolean }[]>;
+        hooks: Record<
+          string,
+          { command: string; args?: string[]; failClosed?: boolean; loop_limit?: number }[]
+        >;
       };
       expect(hooks.version, source).toBe(1);
       expect(hooks.hooks.sessionStart, source).toEqual([

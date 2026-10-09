@@ -90,7 +90,10 @@ naming the obligation and the workit command that clears it:
   effective endpoint (`workit grant show`) is `pr`, `green` or `merged`:
   `workit git push`;
 - the branch's open PR with checks recorded failing or pending at its head
-  while the endpoint is `green` or `merged`: `workit ci wait --pr <n>`;
+  while the endpoint is `green` or `merged`: `workit ci wait --pr <n>`.
+  `workit pr status` and each `workit ci wait` poll record the checks summary
+  as a `pr.status` ledger row whenever it changes, so the hook never calls
+  the forge;
 - a PR this session opened (or a delivery it verified) whose head has no
   accepted non-author verdict: hand it to a verifier that did not author it.
 
@@ -104,7 +107,7 @@ only, never the forge, and any failure allows the stop.
 | --- | --- | --- | --- |
 | Claude Code | `Stop` | `{"decision":"block","reason"}` | `stop_hook_active` |
 | Codex | `Stop` | `{"decision":"block","reason"}` | `stop_hook_active` |
-| Cursor | `stop` (not registered yet: the adapter is ready, the plugin manifest does not list it) | `{"followup_message"}` (last message read from `transcript_path`) | `loop_count` |
+| Cursor | `stop` | `{"followup_message"}` (last message read from `transcript_path`) | `loop_count`, `loop_limit: 1` |
 | Pi | `agent_end` | `pi.sendMessage(…, {triggerTurn: true})` | the extension skips the next `agent_end` |
 | OpenCode | `session.idle` event | `session.synthetic({resume: true})` | the plugin skips the next idle |
 
