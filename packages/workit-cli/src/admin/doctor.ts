@@ -6,11 +6,13 @@
 // identity probes. Credentials are handled by gh/glab; token values never enter
 // the report, any fix text, or any log event.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -20,6 +22,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import cliPkg from "../../package.json" with { type: "json" };
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import { inspectMetadataLock } from "@brainervirus/workit-core/src/core/store-lock";
 import {
@@ -73,6 +76,9 @@ type DoctorCheckId =
   | "runtime"
   | "versions"
   | "codex_pin"
+  | "codex_hooks"
+  | "codex_agents"
+  | "pi_extension"
   | "opencode_version"
   | "claude_plugin"
   | "workit_on_path"
@@ -139,6 +145,10 @@ export type DoctorOptions = {
   cursorSettings?: string;
   cursorMcp?: string;
   cursorPluginDir?: string;
+  /** Codex home (default: CODEX_HOME, then ~/.codex). */
+  codexHome?: string;
+  /** Pi agent dir (default: PI_CODING_AGENT_DIR, then ~/.pi/agent). */
+  piAgentDir?: string;
   env?: NodeJS.ProcessEnv;
   /** Installer run: only registration/config checks count toward exitCode. */
   installer?: boolean;
@@ -160,6 +170,8 @@ type Resolved = {
   /** Where the Cursor hook launcher and MCP server leave their heartbeats
    *  (core's resolveStateDir, unless a state dir is given). */
   cursorHeartbeatDir: string;
+  codexHome?: string;
+  piAgentDir?: string;
   env: NodeJS.ProcessEnv;
   installer: boolean;
 };
@@ -204,6 +216,8 @@ const resolve = (options: DoctorOptions): Resolved => {
     cursorPluginDir:
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
     cursorHeartbeatDir: options.stateDir ?? (env.WORKFLOW_TOOLKIT_STATE || resolveStateDir()),
+    codexHome: options.codexHome,
+    piAgentDir: options.piAgentDir,
     env,
     installer: options.installer ?? false,
   };
@@ -496,6 +510,499 @@ const checkCodexPin = (res: Resolved): DoctorCheck => {
     status: "warn",
     detail: `codex CLI ${installed} differs from the qualified ${qualified}`,
     fix: `Reinstall the qualified Codex CLI ${qualified} or record fresh qualification evidence`,
+  };
+};
+
+// Codex plugin install ---------------------------------------------------------
+// Verified against codex-cli 0.160.1 on scratch homes: `codex plugin add`
+// records `[plugins."<plugin>@<marketplace>"] enabled = true` in
+// `$CODEX_HOME/config.toml` and installs under
+// `$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>`.
+
+/** The `[table]` key/values of a TOML file Codex writes; enough for the tables read here. */
+const readTomlTables = (file: string): Map<string, Record<string, string | boolean>> => {
+  const tables = new Map<string, Record<string, string | boolean>>();
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return tables;
+  }
+  const unquote = (raw: string): string => {
+    const s = raw.trim();
+    if (s.startsWith('"')) {
+      try {
+        return JSON.parse(s) as string;
+      } catch {
+        return s.slice(1, -1);
+      }
+    }
+    return s.startsWith("'") ? s.slice(1, -1) : s;
+  };
+  const SEGMENT = /\s*("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)\s*(?:\.|$)/y;
+  let current: Record<string, string | boolean> = {};
+  tables.set("", current);
+  for (const line of text.split(/\r?\n/)) {
+    const header = /^\s*\[([^[\]]+)\]\s*(?:#.*)?$/.exec(line);
+    if (header) {
+      const parts: string[] = [];
+      SEGMENT.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while (SEGMENT.lastIndex < header[1].length && (match = SEGMENT.exec(header[1])))
+        parts.push(unquote(match[1]));
+      const key = parts.join("\0");
+      current = tables.get(key) ?? {};
+      tables.set(key, current);
+      continue;
+    }
+    const pair = /^\s*("(?:[^"\\]|\\.)*"|[A-Za-z0-9_-]+)\s*=\s*(.+?)\s*$/.exec(line);
+    if (!pair) continue;
+    const value = pair[2].replace(/\s+#[^"']*$/, "");
+    current[unquote(pair[1])] =
+      value === "true" ? true : value === "false" ? false : unquote(value);
+  }
+  return tables;
+};
+
+type CodexWorkitInstall = {
+  id: string;
+  marketplace: string;
+  root: string | null;
+  version: string | null;
+  configFile: string;
+};
+
+const codexHomeOf = (res: Resolved): string =>
+  res.codexHome ?? (res.env.CODEX_HOME || path.join(res.home, ".codex"));
+
+/** Enabled `workit@<marketplace>` plugins and their newest cached install. */
+const codexWorkitInstalls = (res: Resolved): CodexWorkitInstall[] => {
+  const codexHome = codexHomeOf(res);
+  const configFile = path.join(codexHome, "config.toml");
+  const installs: CodexWorkitInstall[] = [];
+  for (const [key, table] of readTomlTables(configFile)) {
+    const [kind, id, ...rest] = key.split("\0");
+    if (
+      kind !== "plugins" ||
+      rest.length > 0 ||
+      !id?.startsWith("workit@") ||
+      table.enabled === false
+    )
+      continue;
+    const marketplace = id.slice("workit@".length);
+    const dir = path.join(codexHome, "plugins", "cache", marketplace, "workit");
+    let versions: string[] = [];
+    try {
+      versions = readdirSync(dir).filter((v) => existsSync(path.join(dir, v, ".codex-plugin")));
+    } catch {
+      versions = [];
+    }
+    const version = versions.reduce<string | null>(
+      (best, v) => (best && semverAtLeast(best, v) ? best : v),
+      null,
+    );
+    installs.push({
+      id,
+      marketplace,
+      root: version ? path.join(dir, version) : null,
+      version,
+      configFile,
+    });
+  }
+  return installs;
+};
+
+const snakeEvent = (event: string): string =>
+  event.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+
+/**
+ * The hash codex-cli 0.160.1 records as `trusted_hash` for one command hook:
+ * sha256 of the compact, key-sorted JSON `{event_name, hooks: [{async,
+ * command, timeout, type}], matcher?}` with Codex's defaults (async false,
+ * timeout 600). Derived and checked against `hooks/list` from `codex
+ * app-server` for every workit hook. Null for a handler shape it was not
+ * checked against: the doctor then only checks that a trust entry exists.
+ */
+const codexHookHash = (event: string, matcher: unknown, handler: Record<string, unknown>) => {
+  if (
+    handler.type !== "command" ||
+    typeof handler.command !== "string" ||
+    Object.keys(handler).some((k) => !["type", "command", "timeout", "async"].includes(k))
+  )
+    return null;
+  const hook = {
+    async: handler.async ?? false,
+    command: handler.command,
+    timeout: handler.timeout ?? 600,
+    type: "command",
+  };
+  const body = {
+    event_name: snakeEvent(event),
+    hooks: [hook],
+    ...(typeof matcher === "string" ? { matcher } : {}),
+  };
+  return `sha256:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
+};
+
+type CodexHookTrust = {
+  key: string;
+  hash: string | null;
+  state: "trusted" | "untrusted" | "modified" | "disabled";
+};
+
+const codexHookTrust = (
+  install: CodexWorkitInstall,
+  tables: Map<string, Record<string, string | boolean>>,
+): CodexHookTrust[] | null => {
+  const hooks = install.root
+    ? readJson(path.join(install.root, "hooks", "hooks.json"))?.hooks
+    : null;
+  if (!hooks || typeof hooks !== "object") return null;
+  const result: CodexHookTrust[] = [];
+  for (const [event, groups] of Object.entries(hooks as Record<string, unknown>)) {
+    if (!Array.isArray(groups)) continue;
+    groups.forEach((group: any, g: number) => {
+      const handlers: unknown[] = Array.isArray(group?.hooks) ? group.hooks : [];
+      handlers.forEach((handler, h) => {
+        const key = `${install.id}:hooks/hooks.json:${snakeEvent(event)}:${g}:${h}`;
+        const hash = codexHookHash(
+          event,
+          group?.matcher,
+          (handler ?? {}) as Record<string, unknown>,
+        );
+        const state = tables.get(["hooks", "state", key].join("\0"));
+        const trusted = typeof state?.trusted_hash === "string" ? state.trusted_hash : null;
+        result.push({
+          key,
+          hash,
+          state:
+            state?.enabled === false
+              ? "disabled"
+              : trusted === null
+                ? "untrusted"
+                : hash !== null && trusted !== hash
+                  ? "modified"
+                  : "trusted",
+        });
+      });
+    });
+  }
+  return result;
+};
+
+/**
+ * Codex skips plugin hooks until the user trusts the current definition
+ * (developers.openai.com/codex/plugins/build). codex-cli 0.160.1 records trust
+ * in config.toml as `[hooks.state."<plugin>:hooks/hooks.json:<event>:<group>:<handler>"]
+ * trusted_hash = "sha256:…"`; `/hooks` in the TUI and the startup "Hooks need
+ * review" prompt write it. An untrusted, changed or disabled workit hook warns.
+ */
+const checkCodexHooks = (res: Resolved): DoctorCheck => {
+  const installs = codexWorkitInstalls(res);
+  if (installs.length === 0)
+    return {
+      id: "codex_hooks",
+      status: "pass",
+      detail: "no Workit Codex plugin enabled — skipping",
+    };
+  const tables = readTomlTables(installs[0].configFile);
+  const problems: string[] = [];
+  const toTrust: CodexHookTrust[] = [];
+  let reinstall: string | undefined;
+  let total = 0;
+  for (const install of installs) {
+    const trust = codexHookTrust(install, tables);
+    if (!trust) {
+      problems.push(`${install.id}: no installed hooks/hooks.json`);
+      reinstall ??= `codex plugin remove ${install.id} && codex plugin add ${install.id}`;
+      continue;
+    }
+    total += trust.length;
+    for (const state of ["untrusted", "modified", "disabled"] as const) {
+      const hit = trust.filter((t) => t.state === state);
+      if (hit.length > 0)
+        problems.push(
+          `${install.id}: ${hit.length} of ${trust.length} hooks ${state === "modified" ? "changed since trusted" : state} (${hit.map((t) => t.key.split(":")[2]).join(", ")})`,
+        );
+    }
+    toTrust.push(...trust.filter((t) => t.state !== "trusted"));
+  }
+  if (problems.length === 0)
+    return {
+      id: "codex_hooks",
+      status: "pass",
+      detail: `${total} Workit Codex plugin hooks trusted (${installs.map((i) => `${i.id} ${i.version ?? "?"}`).join(", ")})`,
+    };
+  const settings = toTrust
+    .filter((t) => t.state !== "disabled" && t.hash)
+    .map((t) => `[hooks.state."${t.key}"]\ntrusted_hash = "${t.hash}"`);
+  const disabled = toTrust.some((t) => t.state === "disabled");
+  const fix =
+    reinstall ??
+    [
+      `Start \`codex\`, run \`/hooks\` and ${disabled ? "enable and " : ""}trust the workit hooks (or pick "Trust all and continue" at the startup hook review)`,
+      settings.length > 0 ? `or add to ${installs[0].configFile}:\n${settings.join("\n")}` : null,
+    ]
+      .filter(Boolean)
+      .join("; ");
+  return {
+    id: "codex_hooks",
+    status: "warn",
+    detail: `Codex skips untrusted plugin hooks — ${problems.join("; ")}`,
+    fix,
+  };
+};
+
+/** First line of a Workit-generated Codex agent (workit-codex scripts/agents.ts). */
+const CODEX_AGENT_MARKER = "# Generated by Workit";
+
+/**
+ * codex-cli 0.160.1 plugins cannot register agents, so the Workit plugin's MCP
+ * launcher copies its agents/*.toml into `$CODEX_HOME/agents/`, where Codex
+ * reads custom agents at session start. Missing or outdated copies warn.
+ */
+const checkCodexAgents = (res: Resolved): DoctorCheck => {
+  const installs = codexWorkitInstalls(res);
+  if (installs.length === 0)
+    return {
+      id: "codex_agents",
+      status: "pass",
+      detail: "no Workit Codex plugin enabled — skipping",
+    };
+  const agentsDir = path.join(codexHomeOf(res), "agents");
+  const problems: string[] = [];
+  const fixes: string[] = [];
+  const installed: string[] = [];
+  for (const install of installs) {
+    const source = install.root ? path.join(install.root, "agents") : null;
+    const files =
+      source && existsSync(source)
+        ? readdirSync(source)
+            .filter((f) => f.endsWith(".toml"))
+            .toSorted()
+        : [];
+    if (files.length === 0) {
+      problems.push(`${install.id} ${install.version ?? "?"} bundles no agents`);
+      fixes.push(`codex plugin remove ${install.id} && codex plugin add ${install.id}`);
+      continue;
+    }
+    const install_fix = `node ${JSON.stringify(path.join(install.root!, "dist", "launch-mcp.js"))} --install-agents, then start a new Codex session`;
+    let stale = false;
+    for (const file of files) {
+      const dest = path.join(agentsDir, file);
+      const want = readFileSync(path.join(source!, file), "utf8");
+      let have: string | null = null;
+      try {
+        have = readFileSync(dest, "utf8");
+      } catch {
+        have = null;
+      }
+      if (have === want) {
+        installed.push(file.replace(/\.toml$/, ""));
+        continue;
+      }
+      if (have !== null && !have.startsWith(CODEX_AGENT_MARKER)) {
+        problems.push(`${dest} is a user agent that shadows ${install.id}'s ${file}`);
+        fixes.push(`rename or remove ${dest}, then run ${install_fix}`);
+        continue;
+      }
+      problems.push(`${dest} ${have === null ? "missing" : "outdated"}`);
+      stale = true;
+    }
+    if (stale) fixes.push(install_fix);
+  }
+  if (problems.length === 0)
+    return {
+      id: "codex_agents",
+      status: "pass",
+      detail: `Codex agents ${installed.join(", ")} installed in ${agentsDir}`,
+    };
+  return {
+    id: "codex_agents",
+    status: "warn",
+    detail: problems.join("; "),
+    fix: [...new Set(fixes)].join("; "),
+  };
+};
+
+// Pi package -----------------------------------------------------------------
+// Verified against @earendil-works/pi-coding-agent 0.85.1 (docs/packages.md,
+// docs/settings.md, dist/core/package-manager.js): `pi install` records the
+// source in `packages` of `<agentDir>/settings.json` (or `.pi/settings.json`
+// with -l; the project entry wins), npm sources install to
+// `<agentDir>/npm/node_modules/<name>` (`.pi/npm/...` for a project), local
+// paths resolve against the settings file's directory, and an object entry's
+// `extensions` patterns filter what loads (`!x` excludes, `+x`/`-x` force).
+
+const PI_PACKAGE = "@brainervirus/workit-pi";
+const PI_EXTENSION = "dist/workit.js";
+
+type PiEntry = {
+  scope: "user" | "project";
+  settingsFile: string;
+  source: string;
+  filter: unknown;
+  root: string;
+  npm: { pinned: boolean } | null;
+};
+
+const piAgentDirOf = (res: Resolved): string => {
+  if (res.piAgentDir) return res.piAgentDir;
+  const env = res.env.PI_CODING_AGENT_DIR;
+  if (env) return env === "~" ? res.home : env.replace(/^~(?=\/|\\)/, res.home);
+  return path.join(res.home, ".pi", "agent");
+};
+
+const npmSpecName = (spec: string): { name: string; pinned: boolean } => {
+  const at = spec.indexOf("@", spec.startsWith("@") ? 1 : 0);
+  return at > 0 ? { name: spec.slice(0, at), pinned: true } : { name: spec, pinned: false };
+};
+
+const findPiEntry = (res: Resolved, agentDir: string): PiEntry | null => {
+  const scopes = [
+    {
+      scope: "project" as const,
+      settingsFile: path.join(res.cwd, ".pi", "settings.json"),
+      base: path.join(res.cwd, ".pi"),
+    },
+    { scope: "user" as const, settingsFile: path.join(agentDir, "settings.json"), base: agentDir },
+  ];
+  for (const { scope, settingsFile, base } of scopes) {
+    const packages = readJson(settingsFile)?.packages;
+    if (!Array.isArray(packages)) continue;
+    for (const entry of packages) {
+      const source =
+        typeof entry === "string" ? entry : typeof entry?.source === "string" ? entry.source : null;
+      if (!source) continue;
+      const filter = typeof entry === "object" ? entry : null;
+      if (source.startsWith("npm:")) {
+        const spec = npmSpecName(source.slice(4).trim());
+        if (spec.name !== PI_PACKAGE) continue;
+        const root = path.join(base, "npm", "node_modules", ...PI_PACKAGE.split("/"));
+        return { scope, settingsFile, source, filter, root, npm: { pinned: spec.pinned } };
+      }
+      if (/^(git:|https?:|ssh:|git@)/.test(source)) continue;
+      const local = path.resolve(base, source.replace(/^~(?=\/|\\)/, res.home));
+      if (readJson(path.join(local, "package.json"))?.name === PI_PACKAGE)
+        return { scope, settingsFile, source, filter, root: local, npm: null };
+    }
+  }
+  return null;
+};
+
+const globToRegExp = (pattern: string): RegExp =>
+  new RegExp(
+    `^${pattern
+      .replace(/^\.\//, "")
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .split(/\*\*\/?/)
+      .map((part) => part.replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]"))
+      .join(".*")}$`,
+  );
+
+/** Whether an entry's `extensions` filter keeps `file` (pi's applyPatterns, on one path). */
+const piFilterKeeps = (patterns: unknown, file: string): boolean => {
+  if (!Array.isArray(patterns)) return true;
+  const list = patterns.filter((p): p is string => typeof p === "string");
+  // `[]` disables every extension of the package.
+  if (list.length === 0) return false;
+  const name = path.posix.basename(file);
+  const matches = (p: string) => {
+    const re = globToRegExp(p);
+    return re.test(file) || re.test(name);
+  };
+  const exact = (p: string) => p.replace(/^\.\//, "") === file;
+  const includes = list.filter((p) => !/^[!+-]/.test(p));
+  let kept = includes.length === 0 || includes.some(matches);
+  if (list.some((p) => p.startsWith("!") && matches(p.slice(1)))) kept = false;
+  if (list.some((p) => p.startsWith("+") && exact(p.slice(1)))) kept = true;
+  if (list.some((p) => p.startsWith("-") && exact(p.slice(1)))) kept = false;
+  return kept;
+};
+
+/**
+ * Pi runs the Workit extension only when the package is listed, installed,
+ * not filtered out, and ships its entry; it should also be no older than the
+ * workit CLI running this check. Skipped when Pi is absent.
+ */
+const checkPiExtension = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
+  const agentDir = piAgentDirOf(res);
+  if (!existsSync(agentDir) && !commandOnPath("pi", res.env))
+    return { id: "pi_extension", status: "pass", detail: "Pi not installed — skipping" };
+  const installCmd = (scope: PiEntry["scope"] | "user", spec = `npm:${PI_PACKAGE}`) =>
+    `pi install ${spec}${scope === "project" ? " -l" : ""}`;
+  const entry = findPiEntry(res, agentDir);
+  if (!entry)
+    return {
+      id: "pi_extension",
+      status: "warn",
+      detail: `Workit Pi extension missing: no ${PI_PACKAGE} entry in ${path.join(agentDir, "settings.json")} or ${path.join(res.cwd, ".pi", "settings.json")}`,
+      fix: installCmd("user"),
+    };
+  const where = `${entry.source} (${entry.scope}, ${entry.settingsFile})`;
+  const rebuild = `cd ${JSON.stringify(entry.root)} && bun run build`;
+  const pkg = readJson(path.join(entry.root, "package.json"));
+  if (!pkg)
+    return {
+      id: "pi_extension",
+      status: "warn",
+      detail: `Workit Pi extension missing: ${where} is listed but not installed at ${entry.root}`,
+      fix: entry.npm
+        ? installCmd(entry.scope, entry.source)
+        : `restore ${entry.root}, then ${rebuild}`,
+    };
+  const declared = Array.isArray(pkg.pi?.extensions)
+    ? pkg.pi.extensions.some(
+        (e: unknown) => typeof e === "string" && e.replace(/^\.\//, "") === PI_EXTENSION,
+      )
+    : false;
+  if (!declared || !existsSync(path.join(entry.root, PI_EXTENSION)))
+    return {
+      id: "pi_extension",
+      status: "warn",
+      detail: `Workit Pi extension not loading: ${entry.root} ${declared ? `has no ${PI_EXTENSION}` : `does not declare ${PI_EXTENSION} in its pi manifest`}`,
+      fix: entry.npm ? installCmd(entry.scope, `npm:${PI_PACKAGE}`) : rebuild,
+    };
+  const filter = (entry.filter as { extensions?: unknown } | null)?.extensions;
+  if (!piFilterKeeps(filter, PI_EXTENSION))
+    return {
+      id: "pi_extension",
+      status: "warn",
+      detail: `Workit Pi extension not loading: the ${PI_PACKAGE} entry in ${entry.settingsFile} filters out ${PI_EXTENSION} (extensions: ${JSON.stringify(filter)})`,
+      fix: `remove the "extensions" filter from the ${PI_PACKAGE} entry in ${entry.settingsFile}, or enable the extension with \`pi config${entry.scope === "project" ? " -l" : ""}\``,
+    };
+  const version = typeof pkg.version === "string" ? pkg.version : null;
+  const cli = cliPkg.version;
+  if (version && versionBehind(version, cli)) {
+    // Pi packages publish only when their payload changes: older than the CLI
+    // is stale only if a newer one exists (or the registry cannot say).
+    const latest = entry.npm ? registryLatestVersion(res, PI_PACKAGE) : null;
+    const registryProbed = latest !== null && !res.env.WORKIT_DOCTOR_STALE_REGISTRY_VERSION;
+    if (!latest || versionBehind(version, latest)) {
+      const fix = !entry.npm
+        ? `git -C ${JSON.stringify(entry.root)} pull && ${rebuild}`
+        : entry.npm.pinned
+          ? installCmd(entry.scope, `npm:${PI_PACKAGE}@${latest ?? cli}`)
+          : `pi update npm:${PI_PACKAGE}`;
+      return {
+        id: "pi_extension",
+        status: "warn",
+        detail: `Workit Pi extension stale: ${PI_PACKAGE} ${version} from ${where} is older than workit ${cli}${latest ? ` (published ${latest})` : ""}`,
+        fix,
+        registryProbed,
+      };
+    }
+    return {
+      id: "pi_extension",
+      status: "pass",
+      detail: `Workit Pi extension ${version} from ${where} is the newest published (workit ${cli})`,
+      registryProbed,
+    };
+  }
+  return {
+    id: "pi_extension",
+    status: "pass",
+    detail: `Workit Pi extension ${version ?? "?"} from ${where} loads ${PI_EXTENSION}`,
   };
 };
 
@@ -1948,6 +2455,9 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
   checkCodexPin,
+  checkCodexHooks,
+  checkCodexAgents,
+  checkPiExtension,
   checkOpencodeVersion,
   checkClaudePlugin,
   checkWorkitOnPath,

@@ -111,7 +111,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
   for (const check of report.checks) {
     const mark = check.status === "fail" ? "FAIL" : check.status === "warn" ? "WARN" : "ok  ";
     io.stdout(`${mark} ${check.id} — ${check.detail}\n`);
-    if (check.fix) io.stdout(`     fix: ${check.fix}\n`);
+    // A multi-line fix (config lines to paste) stays under its check.
+    if (check.fix) io.stdout(`     fix: ${check.fix.replaceAll("\n", "\n          ")}\n`);
   }
   io.stdout(`${knowledgeLine}\n`);
   io.stdout(
