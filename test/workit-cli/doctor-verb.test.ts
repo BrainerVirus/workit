@@ -190,6 +190,9 @@ test("Given another tool's prepare-commit-msg hook, When `workit doctor --fix` r
     status: "pass",
     detail: `${hook} adds the Workit-Session trailer to plain git commits (via existing hook)`,
   });
+  // Commented out, the line only mentions the helper: the check warns again.
+  writeFileSync(hook, `${theirs}# ${manualTrailerLine()}\n`);
+  expect(check(doctor(box).report, "session_hook").status).toBe("warn");
   // Without --fix in a fresh repo, the check first names --fix for the helper.
   const plain = sandbox();
   const plainHook = gitRepo(plain);

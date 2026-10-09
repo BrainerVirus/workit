@@ -39,6 +39,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -194,6 +195,88 @@ const LEFTHOOK_CONFIGS = [
 const lefthookConfig = (top: string): string | null =>
   LEFTHOOK_CONFIGS.map((name) => path.join(top, name)).find((file) => existsSync(file)) ?? null;
 
+// Whether a hook, script or config really runs the helper, not just mentions
+// it. Shell text: a non-comment line invoking it, either directly
+// (`sh …/workit/session-trailer.sh`) or as `sh "$h"` after an `h=` line
+// naming it. Control flow (an `exit` before the line, an `if false`) is out
+// of scope: this reads lines, it does not run them.
+const isComment = (line: string) => /^\s*#/.test(line);
+const DIRECT_CALL = new RegExp(
+  String.raw`\bsh\s+(?:"[^"]*|\S*)${HELPER_REF.replaceAll(".", String.raw`\.`)}`,
+);
+const runsHelperText = (text: string): boolean => {
+  const lines = text.split(/\r?\n/).filter((line) => !isComment(line));
+  const assigned = lines.some((line) => /(?:^|[\s;])h=/.test(line) && line.includes(HELPER_REF));
+  return lines.some((line) => DIRECT_CALL.test(line) || (assigned && /\bsh\s+"\$h"/.test(line)));
+};
+
+const LEFTHOOK_YAML = [
+  "lefthook.yml",
+  "lefthook.yaml",
+  ".lefthook.yml",
+  ".lefthook.yaml",
+  "lefthook-local.yml",
+  "lefthook-local.yaml",
+  ".lefthook-local.yml",
+  ".lefthook-local.yaml",
+];
+const indentOf = (line: string) => line.length - line.trimStart().length;
+
+/**
+ * A small indentation-aware read of a lefthook YAML config (no YAML library
+ * in deps): a `run:` value under the top-level `prepare-commit-msg:` key, on
+ * a non-comment line (or its `|`/`>` block), that runs the helper.
+ * lefthook.json/.toml are not read, so they never count as manual.
+ */
+const lefthookRunsHelper = (text: string): boolean => {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^prepare-commit-msg:\s*(?:#.*)?$/.test(line));
+  if (start < 0) return false;
+  const block: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() && !isComment(line) && indentOf(line) === 0) break;
+    block.push(line);
+  }
+  return block.some((line, i) => {
+    if (isComment(line)) return false;
+    const runKey = /^(\s*)(?:-\s+)?run:\s*(.*)$/.exec(line);
+    if (!runKey) return false;
+    let value = runKey[2] ?? "";
+    if (/^[|>][-+]?\s*$/.test(value)) {
+      const body: string[] = [];
+      for (const next of block.slice(i + 1)) {
+        if (next.trim() && indentOf(next) <= indentOf(line)) break;
+        body.push(next);
+      }
+      value = body.join("\n");
+    }
+    return runsHelperText(value);
+  });
+};
+
+const isExecutable = (file: string): boolean => {
+  if (process.platform === "win32") return true;
+  try {
+    return (statSync(file).mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+};
+
+/** Whether the manual line is really in place for this owner. */
+const manualInPlace = (input: ManualInput, target: string): boolean => {
+  if (input.owner === "lefthook")
+    return LEFTHOOK_YAML.some((name) => {
+      const text = readText(path.join(input.top, name));
+      return text !== null && lefthookRunsHelper(text);
+    });
+  const text = readText(target);
+  if (text === null || !runsHelperText(text)) return false;
+  // husky v9's `h` runs the user script with `sh -e`, so it needs no +x; any
+  // other target is a hook git runs itself, which git skips unless executable.
+  return (input.owner === "husky" && target !== input.hookPath) || isExecutable(target);
+};
+
 /** husky v9 stubs source `h` beside them; v4-v8 hooks source `_/husky.sh`. */
 const isHuskyV9 = (text: string, hooksDir: string): boolean =>
   /\$\(dirname (?:-- )?"\$0"\)\/h"/.test(text) && existsSync(path.join(hooksDir, "h"));
@@ -282,7 +365,7 @@ export function inspectSessionHook(
     const manualTarget = manualTargetOf(input);
     const owned = text ? { owner } : {};
     // The user already added the line where it belongs.
-    if (readText(manualTarget)?.includes(HELPER_REF))
+    if (manualInPlace(input, manualTarget))
       return {
         state: "manual",
         ...base,

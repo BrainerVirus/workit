@@ -549,6 +549,70 @@ test("Given another hand-written prepare-commit-msg, When --fix runs, Then it is
   expectHookBehaviour(root);
 });
 
+// A hook, husky script or lefthook config that only mentions the helper is
+// not a manual fix: it stays blocked (doctor warns) and adds no trailer.
+const stateAfter = (root: string) => {
+  const state = inspectSessionHook(root).state;
+  ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: probe"], S);
+  return { state, trailers: sessions(root).length };
+};
+const BLOCKED = { state: "blocked", trailers: 0 };
+const MANUAL = { state: "manual", trailers: 1 };
+
+test("Given husky v9 scripts that only mention the helper, Then the slot stays blocked; the real line is manual", () => {
+  const cases: Array<[string, object]> = [
+    [`# ${manualTrailerLine()}\n`, BLOCKED],
+    ["# TODO: add workit/session-trailer.sh later\n", BLOCKED],
+    [`${manualTrailerLine()}\n`, MANUAL],
+    [`sh "$(git rev-parse --git-common-dir)/workit/session-trailer.sh" "$@" || true\n`, MANUAL],
+  ];
+  for (const [script, expected] of cases) {
+    const root = repo();
+    huskyInstall(root);
+    installSessionHook(root);
+    // Not executable: husky's `h` runs it with `sh -e`.
+    writeFileSync(path.join(root, ".husky", "prepare-commit-msg"), script, { mode: 0o644 });
+    expect(stateAfter(root), script).toEqual(expected);
+  }
+});
+
+test("Given a hand-written hook that comments the line out or is not executable, Then the slot stays blocked; the executable real line is manual", () => {
+  const cases: Array<[string, number, object]> = [
+    [`#!/bin/sh\n# ${manualTrailerLine()}\n`, 0o755, BLOCKED],
+    [`#!/bin/sh\n${manualTrailerLine()}\n`, 0o644, BLOCKED],
+    [`#!/bin/sh\n${manualTrailerLine()}\n`, 0o755, MANUAL],
+  ];
+  for (const [hook, mode, expected] of cases) {
+    if (process.platform === "win32" && mode === 0o644) continue;
+    const root = repo();
+    writeFileSync(hookOf(root), hook, { mode });
+    chmodSync(hookOf(root), mode);
+    installSessionHook(root);
+    expect(stateAfter(root), `${mode.toString(8)} ${hook}`).toEqual(expected);
+  }
+});
+
+test("Given lefthook configs where the job is commented out or under commit-msg, Then the slot stays blocked; a real prepare-commit-msg job is manual", () => {
+  const job = `      run: ${manualTrailerLine("{1} {2} {3}")}`;
+  const theirs = 'prepare-commit-msg:\n  jobs:\n    - name: x\n      run: "true"\n';
+  const cases: Array<[string, object]> = [
+    [`${theirs}#   - name: workit-session\n#${job}\n`, BLOCKED],
+    [`${theirs}commit-msg:\n  jobs:\n    - name: workit-session\n${job}\n`, BLOCKED],
+    [`${theirs}    - name: workit-session\n${job}\n`, MANUAL],
+    [
+      `${theirs}    - name: workit-session\n      run: |\n        ${manualTrailerLine("{1} {2} {3}")}\n`,
+      MANUAL,
+    ],
+  ];
+  for (const [config, expected] of cases) {
+    const root = repo();
+    writeFileSync(path.join(root, "lefthook.yml"), config);
+    lefthook(root, "install");
+    installSessionHook(root);
+    expect(stateAfter(root), config).toEqual(expected);
+  }
+});
+
 test("Given an older Workit hook, When installed, Then it is rewritten to the current script", () => {
   const root = repo();
   writeFileSync(hookOf(root), `#!/bin/sh\n${SESSION_HOOK_MARKER} v1\n`, { mode: 0o755 });
