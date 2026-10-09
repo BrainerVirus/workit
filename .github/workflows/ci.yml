@@ -136,15 +136,18 @@ jobs:
           for i in "${!names[@]}"; do
             (
               start=$(date +%s%N)
-              bash -c "${cmds[$i]}" >"$out/${names[$i]}.log" 2>&1
-              rc=$?
+              # `|| rc=$?`: under `bash -e` a failing check would end this
+              # subshell before its status file is written, hiding its log.
+              rc=0
+              bash -c "${cmds[$i]}" >"$out/${names[$i]}.log" 2>&1 || rc=$?
               echo "$rc $(( ($(date +%s%N) - start) / 1000000 ))" >"$out/${names[$i]}.status"
             ) &
           done
           wait
           failed=0
           for name in "${names[@]}"; do
-            read -r rc ms <"$out/$name.status"
+            rc=1 ms=0
+            [[ -f "$out/$name.status" ]] && read -r rc ms <"$out/$name.status"
             echo "::group::$name (exit $rc, ${ms} ms)"
             cat "$out/$name.log"
             echo "::endgroup::"
