@@ -4,21 +4,28 @@
 // `workit doctor` reports it; `workit doctor --fix` installs it, in a Workit
 // workspace only.
 //
+// - One source of truth: the trailer logic is SESSION_TRAILER_SCRIPT, written
+//   to `<git-common-dir>/workit/session-trailer.sh` (Workit-owned, never a hook
+//   slot, never the working tree). The hook Workit installs, and every line a
+//   user is told to add to a hook Workit does not own, is the same one-liner
+//   that runs it with the hook's arguments.
 // - Slot: prepare-commit-msg, not commit-msg. Git runs it for -m/-F, amend,
 //   merge and squash, even with --no-verify, and before commit-msg, so a
 //   commitlint there sees the trailer. commit-msg stays the user's.
 // - Where: `git rev-parse --git-path hooks`, so core.hooksPath is honoured.
-//   Workit writes only an empty slot or its own script. Another tool's hook in
+//   Workit writes only an empty slot or its own hook. Another tool's hook in
 //   the slot (husky, lefthook, a hand-written one) is never renamed, wrapped or
 //   edited: the state is `blocked` and `manual` names the line to add there.
 //   A hooks directory outside the repository (a global core.hooksPath), or one
-//   in the working tree that git does not ignore, is never written either.
+//   in the working tree that git does not ignore, gets no hook either.
 // - The session comes from the same variables as host-session.ts: WORKIT_SESSION_ID
 //   (unless WORKIT_HOST names another host than the shell's own), else
-//   OPENCODE_SESSION_ID, PI_SESSION_ID or CODEX_THREAD_ID. No session, an unsafe
-//   id, a comment-only message, a template message (`commit -t`, commit.template:
-//   git aborts an unedited template, a trailer would defeat that), or a rebase
-//   or cherry-pick replaying commits that keep their own trailers: unchanged.
+//   OPENCODE_SESSION_ID, PI_SESSION_ID or CODEX_THREAD_ID. The message is left
+//   unchanged with no session or an unsafe id; for a plain editor commit (no
+//   message source: the trailer would sit in the buffer, and a user who empties
+//   it would commit a trailer-only message instead of aborting); for a
+//   template (git aborts an unedited one); for a comment-only message; and in a
+//   rebase or cherry-pick replaying commits that keep their own trailers.
 // - `--if-exists addIfDifferent`: the same session's trailer is never repeated;
 //   another session that amends adds its own, as `workit git commit --amend` does.
 import { spawnSync } from "node:child_process";
@@ -37,16 +44,18 @@ import { GIT_TIMEOUTS } from "./rev";
 
 export const SESSION_HOOK_NAME = "prepare-commit-msg";
 export const SESSION_HOOK_MARKER = "# workit-session-trailer-hook";
+/** The helper under the git common dir that holds the trailer logic. */
+const HELPER = ["workit", "session-trailer.sh"] as const;
 /** Left by an unreleased build that chained commit-msg; reported, never used. */
 const LEGACY_CHAINED = "commit-msg.workit-chained";
 
 // LF only: Git for Windows runs hooks with its own sh, which reads LF scripts.
-export const SESSION_HOOK_SCRIPT = `#!/bin/sh
-${SESSION_HOOK_MARKER} v2
-# Workit (https://github.com/BrainerVirus/workit) installed this hook with
-# \`workit doctor --fix\`: it adds a Workit-Session trailer to commits made in an
-# agent session. To remove it, delete this file.
-case "\${2-}" in template) exit 0 ;; esac
+export const SESSION_TRAILER_SCRIPT = `#!/bin/sh
+# Workit (https://github.com/BrainerVirus/workit) wrote this file with
+# \`workit doctor --fix\`. A prepare-commit-msg hook runs it with its own
+# arguments to add a Workit-Session trailer to commits made in an agent session.
+# Not a hook itself; delete it together with the line that runs it.
+case "\${2-}" in "" | template) exit 0 ;; esac
 gitdir=$(git rev-parse --git-dir) || exit 0
 if [ -d "$gitdir/rebase-merge" ] || [ -d "$gitdir/rebase-apply" ] || [ -f "$gitdir/CHERRY_PICK_HEAD" ]; then
   exit 0
@@ -77,20 +86,33 @@ git -c trailer.separators=: -c trailer.where=end interpret-trailers --in-place \
 exit 0
 `;
 
-/** The one line to add to a prepare-commit-msg hook Workit does not own (`$1`: message file). */
-export const manualTrailerLine = (file = '"$1"'): string =>
-  `s="\${WORKIT_SESSION_ID:-\${OPENCODE_SESSION_ID:-\${PI_SESSION_ID:-$CODEX_THREAD_ID}}}"; [ -z "$s" ] || git interpret-trailers --in-place --if-exists addIfDifferent --trailer "Workit-Session: $s" ${file} || true`;
+/**
+ * The line that runs the helper from a prepare-commit-msg hook. `args` are the
+ * hook's own arguments (`"$@"` in a shell hook, `{1} {2} {3}` in lefthook).
+ * Hooks run at the top of the work tree, where the relative common dir resolves.
+ */
+export const manualTrailerLine = (args = '"$@"'): string =>
+  `sh "$(git rev-parse --git-common-dir)/${HELPER.join("/")}" ${args} || true`;
+
+export const SESSION_HOOK_SCRIPT = `#!/bin/sh
+${SESSION_HOOK_MARKER} v3
+# Workit (https://github.com/BrainerVirus/workit) installed this hook with
+# \`workit doctor --fix\`: it runs Workit's session-trailer helper, which adds a
+# Workit-Session trailer to commits made in an agent session. To remove it,
+# delete this file.
+${manualTrailerLine()}
+`;
 
 export type SessionHookState =
   /** Not inside a git work tree, or git is unavailable. */
   | "not_git"
-  /** This version of the Workit hook is installed. */
+  /** The current Workit hook and helper are installed. */
   | "installed"
-  /** An older Workit hook is installed; --fix rewrites it. */
+  /** An older Workit hook, or a missing or older helper; --fix rewrites them. */
   | "outdated"
   /** The slot is empty; --fix installs the hook. */
   | "missing"
-  /** --fix will not write; `reason` says why and `manual` what to do instead. */
+  /** --fix will not write the hook; `reason` says why and `manual` what to do instead. */
   | "blocked";
 
 /** Who owns the slot when it is blocked by another hook. */
@@ -100,9 +122,13 @@ export type SessionHookStatus = {
   state: SessionHookState;
   hooksDir: string | null;
   hookPath: string | null;
+  /** The helper the hook and the manual line run. */
+  helperPath: string | null;
+  /** Whether the helper on disk is the current script. */
+  helperCurrent: boolean;
   owner?: HookOwner;
   reason?: string;
-  /** The manual fix when --fix cannot install. */
+  /** The manual fix when --fix cannot install the hook. */
   manual?: string;
   /** Files left by the unreleased commit-msg design, with how to recover. */
   leftover?: string;
@@ -155,34 +181,46 @@ const lefthookConfig = (top: string): string | null =>
   LEFTHOOK_CONFIGS.map((name) => path.join(top, name)).find((file) => existsSync(file)) ?? null;
 
 /** husky v9 stubs source `h` beside them; v4-v8 hooks source `_/husky.sh`. */
-const isHusky = (text: string, hooksDir: string): boolean =>
-  text.includes("husky.sh") ||
-  (/\$\(dirname (?:-- )?"\$0"\)\/h"/.test(text) && existsSync(path.join(hooksDir, "h")));
+const isHuskyV9 = (text: string, hooksDir: string): boolean =>
+  /\$\(dirname (?:-- )?"\$0"\)\/h"/.test(text) && existsSync(path.join(hooksDir, "h"));
 
 const ownerOf = (text: string, hooksDir: string, top: string): HookOwner => {
-  if (isHusky(text, hooksDir)) return "husky";
+  if (text.includes("husky.sh") || isHuskyV9(text, hooksDir)) return "husky";
   if (/lefthook/i.test(text) || lefthookConfig(top)) return "lefthook";
   return "other";
 };
 
-const manualFor = (owner: HookOwner, hooksDir: string, top: string, hookPath: string): string => {
+type ManualInput = {
+  owner: HookOwner;
+  text: string;
+  hooksDir: string;
+  hookPath: string;
+  top: string;
+  /** Workit's earlier hook, moved aside by lefthook. */
+  displaced: string | null;
+};
+
+const manualFor = ({ owner, text, hooksDir, hookPath, top, displaced }: ManualInput): string => {
+  const stale = displaced ? `; delete the stale ${displaced} (nothing runs it)` : "";
   if (owner === "husky") {
-    // husky v9 runs <hooksPath>/../<hook>; its core.hooksPath is `.husky/_`.
-    const script = path.join(path.dirname(hooksDir), SESSION_HOOK_NAME);
-    return `add this line to ${script} (husky runs it): ${manualTrailerLine()}`;
+    // husky v9 points core.hooksPath at `.husky/_` and runs `.husky/<hook>`
+    // from the stub; husky v4-v8 hooks are the user's files themselves.
+    const script = isHuskyV9(text, hooksDir)
+      ? path.join(path.dirname(hooksDir), SESSION_HOOK_NAME)
+      : hookPath;
+    return `add this line to ${script} (create it if missing; husky runs it)${stale}: ${manualTrailerLine()}`;
   }
   if (owner === "lefthook") {
     const config = lefthookConfig(top) ?? path.join(top, "lefthook.yml");
     return [
-      `add this job to ${config}, then run \`lefthook install\`:`,
+      `merge this job into ${config} (add it to an existing \`${SESSION_HOOK_NAME}:\` \`jobs:\` list rather than a second \`${SESSION_HOOK_NAME}:\` key), then run \`lefthook install\`${stale}:`,
       `${SESSION_HOOK_NAME}:`,
       "  jobs:",
       "    - name: workit-session",
-      "      run: |",
-      `        ${manualTrailerLine("{1}")}`,
+      `      run: ${manualTrailerLine("{1} {2} {3}")}`,
     ].join("\n");
   }
-  return `add this line to ${hookPath}: ${manualTrailerLine()}`;
+  return `add this line to ${hookPath} (a new file needs \`#!/bin/sh\` as its first line and \`chmod +x\`)${stale}: ${manualTrailerLine()}`;
 };
 
 const leftoverOf = (hooksDir: string): string | undefined => {
@@ -203,7 +241,7 @@ export function inspectSessionHook(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
 ): SessionHookStatus {
-  const none = { hooksDir: null, hookPath: null };
+  const none = { hooksDir: null, hookPath: null, helperPath: null, helperCurrent: false };
   if (!existsSync(cwd)) return { state: "not_git", ...none };
   const top = run(cwd, ["rev-parse", "--show-toplevel"], env);
   if (!top.ok || !top.out) return { state: "not_git", ...none };
@@ -215,87 +253,121 @@ export function inspectSessionHook(
   const [commonDir, hooksDir] = paths.out.split(/\r?\n/);
   if (!paths.ok || !commonDir || !hooksDir) return { state: "not_git", ...none };
   const hookPath = path.join(hooksDir, SESSION_HOOK_NAME);
+  const helperPath = path.join(commonDir, ...HELPER);
+  const helperCurrent = readText(helperPath) === SESSION_TRAILER_SCRIPT;
   const leftover = leftoverOf(hooksDir);
-  const base = { hooksDir, hookPath, ...(leftover ? { leftover } : {}) };
-  const generic = manualFor("other", hooksDir, top.out, hookPath);
-  if (!inside(hooksDir, commonDir) && !inside(hooksDir, top.out))
+  const base = { hooksDir, hookPath, helperPath, helperCurrent, ...(leftover ? { leftover } : {}) };
+  const blocked = (reason: string, owner: HookOwner, text = "") => {
+    const old = `${hookPath}.old`;
+    const displaced = readText(old)?.includes(SESSION_HOOK_MARKER) ? old : null;
     return {
-      state: "blocked",
+      state: "blocked" as const,
       ...base,
-      reason: `core.hooksPath ${hooksDir} is outside the repository; a hook there runs in every repository that uses it`,
-      manual: generic,
+      ...(text ? { owner } : {}),
+      reason: displaced ? `${reason} (Workit's earlier hook was moved to ${old})` : reason,
+      manual: manualFor({ owner, text, hooksDir, hookPath, top: top.out, displaced }),
     };
+  };
+  if (!inside(hooksDir, commonDir) && !inside(hooksDir, top.out))
+    return blocked(
+      `core.hooksPath ${hooksDir} is outside the repository; a hook there runs in every repository that uses it`,
+      "other",
+    );
   const text = exists(hookPath) ? (readText(hookPath) ?? "") : null;
   if (text !== null) {
-    if (text === SESSION_HOOK_SCRIPT) return { state: "installed", ...base };
+    if (text === SESSION_HOOK_SCRIPT)
+      return { state: helperCurrent ? "installed" : "outdated", ...base };
     if (text.includes(SESSION_HOOK_MARKER)) return { state: "outdated", ...base };
     const owner = ownerOf(text, hooksDir, top.out);
-    const displaced =
-      exists(`${hookPath}.old`) && readText(`${hookPath}.old`)?.includes(SESSION_HOOK_MARKER);
-    return {
-      state: "blocked",
-      ...base,
+    return blocked(
+      `${hookPath} belongs to ${owner === "other" ? "another hook" : owner}; Workit never replaces it`,
       owner,
-      reason: `${hookPath} belongs to ${owner === "other" ? "another hook" : owner}${displaced ? ` (Workit's hook was moved to ${hookPath}.old)` : ""}; Workit never replaces it`,
-      manual: manualFor(owner, hooksDir, top.out, hookPath),
-    };
+      text,
+    );
   }
   if (!inside(hooksDir, commonDir)) {
     // A hooks directory in the working tree (a committed .githooks): a new
     // file there must be ignored, or it shows up in git status.
     const rel = path.relative(top.out, hookPath).split(path.sep).join("/");
     if (!run(top.out, ["check-ignore", "-q", "--", rel], env).ok)
-      return {
-        state: "blocked",
-        ...base,
-        reason: `${hooksDir} is in the working tree and not ignored; the hook would show up as a new file`,
-        manual: generic,
-      };
+      return blocked(
+        `${hooksDir} is in the working tree and not ignored; the hook would show up as a new file`,
+        "other",
+      );
   }
   return { state: "missing", ...base };
 }
 
+/**
+ * Write `content` through a staged file renamed into place. The finally only
+ * matters when the write or chmod throws after the staged file exists; a
+ * rename failure cannot be provoked through inspect (an unreadable or
+ * directory slot is reported blocked first), so that path is not tested.
+ */
+const writeExecutable = (file: string, content: string) => {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const staged = `${file}.workit-new`;
+  try {
+    writeFileSync(staged, content, { mode: 0o755 });
+    chmodSync(staged, 0o755);
+    renameSync(staged, file);
+  } finally {
+    rmSync(staged, { force: true });
+  }
+};
+
 export type SessionHookInstall = {
-  /** What --fix did: wrote the hook, rewrote an older one, or nothing. */
+  /** What --fix did to the hook slot: wrote the hook, rewrote an older one, or nothing. */
   action: "installed" | "updated" | "unchanged" | "skipped";
+  /** Whether the helper was (re)written. */
+  helperWritten: boolean;
   status: SessionHookStatus;
   detail: string;
 };
 
 /**
- * Install (or refresh) the hook for the repository at `cwd`. The caller decides
- * that `cwd` is a Workit workspace; this writes only an empty slot or Workit's
- * own script.
+ * Install (or refresh) the helper and the hook for the repository at `cwd`.
+ * The caller decides that `cwd` is a Workit workspace. The helper is written
+ * even when the slot is blocked, so the manual line works; the slot is written
+ * only when empty or holding Workit's own hook.
  */
 export function installSessionHook(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
 ): SessionHookInstall {
   const status = inspectSessionHook(cwd, env);
-  if (status.state === "installed")
-    return { action: "unchanged", status, detail: `hook already at ${status.hookPath}` };
-  if (status.state !== "missing" && status.state !== "outdated")
+  if (status.state === "not_git")
     return {
       action: "skipped",
+      helperWritten: false,
       status,
-      detail: status.reason ?? "not inside a git work tree",
+      detail: "not inside a git work tree",
     };
-  const hookPath = status.hookPath!;
-  // Written beside the slot, then renamed into it; a failed write leaves no
-  // stray file and the slot as it was.
-  const staged = `${hookPath}.workit-new`;
-  mkdirSync(status.hooksDir!, { recursive: true });
-  try {
-    writeFileSync(staged, SESSION_HOOK_SCRIPT, { mode: 0o755 });
-    chmodSync(staged, 0o755);
-    renameSync(staged, hookPath);
-  } finally {
-    rmSync(staged, { force: true });
-  }
-  const verb = status.state === "missing" ? "installed" : "updated";
+  const helperWritten = !status.helperCurrent;
+  if (helperWritten) writeExecutable(status.helperPath!, SESSION_TRAILER_SCRIPT);
+  const helper = helperWritten ? `; wrote ${status.helperPath}` : "";
+  if (status.state === "installed")
+    return {
+      action: "unchanged",
+      helperWritten,
+      status,
+      detail: `hook already at ${status.hookPath}`,
+    };
+  if (status.state === "blocked")
+    return {
+      action: "skipped",
+      helperWritten,
+      status: inspectSessionHook(cwd, env),
+      detail: `${status.reason}${helper}`,
+    };
+  const fresh = status.state === "missing";
+  const slotCurrent = readText(status.hookPath!) === SESSION_HOOK_SCRIPT;
+  if (!slotCurrent) writeExecutable(status.hookPath!, SESSION_HOOK_SCRIPT);
+  const verb = fresh ? "installed" : "updated";
   return {
     action: verb,
+    helperWritten,
     status: inspectSessionHook(cwd, env),
-    detail: `${verb} the Workit ${SESSION_HOOK_NAME} hook at ${hookPath}`,
+    detail: `${verb} the Workit ${SESSION_HOOK_NAME} hook at ${status.hookPath}${helper}`,
   };
 }

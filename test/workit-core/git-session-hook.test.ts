@@ -17,6 +17,7 @@ import path from "node:path";
 import {
   SESSION_HOOK_MARKER,
   SESSION_HOOK_SCRIPT,
+  SESSION_TRAILER_SCRIPT,
   inspectSessionHook,
   installSessionHook,
   manualTrailerLine,
@@ -24,8 +25,9 @@ import {
 
 // The prepare-commit-msg hook `workit doctor --fix` installs: a plain
 // `git commit` in an agent session gets the Workit-Session trailer, and
-// another tool's hook (husky, lefthook) is never touched. Every repository
-// here is a scratch repo under the OS temp dir.
+// another tool's hook (husky, lefthook) is never touched; the manual line for
+// those runs the same helper. Every repository here is a scratch repo under
+// the OS temp dir.
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const lefthookBin = path.join(repoRoot, "node_modules", ".bin");
@@ -69,6 +71,7 @@ const baseEnv = (): NodeJS.ProcessEnv => {
     GIT_AUTHOR_EMAIL: "test@example.invalid",
     GIT_COMMITTER_NAME: "Workit Test",
     GIT_COMMITTER_EMAIL: "test@example.invalid",
+    GIT_EDITOR: "true",
   };
 };
 
@@ -95,6 +98,7 @@ const repo = (): string => {
   return root;
 };
 const hookOf = (root: string) => path.join(root, ".git", "hooks", "prepare-commit-msg");
+const helperOf = (root: string) => path.join(root, ".git", "workit", "session-trailer.sh");
 const message = (cwd: string, rev = "HEAD") => ok(cwd, ["log", "-1", "--format=%B", rev]);
 const sessions = (cwd: string, rev = "HEAD") =>
   message(cwd, rev)
@@ -103,19 +107,70 @@ const sessions = (cwd: string, rev = "HEAD") =>
 const S = { WORKIT_SESSION_ID: "lead-1" };
 const commit = (root: string, msg: string, env: Record<string, string> = S) =>
   git(root, ["commit", "-q", "--allow-empty", "-m", msg], env);
+const editorScript = (body: string): string => {
+  const file = path.join(tmp(), "editor.sh");
+  writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  return file;
+};
 
 // A user commit-msg check (what commitlint does): a subject must start with
 // feat/fix/chore; it records whether it saw the trailer.
 const subjectCheck = (log: string) =>
   `#!/bin/sh\ngrep -q 'Workit-Session' "$1" && echo saw >> "${log}"\nhead -1 "$1" | grep -Eq '^(feat|fix|chore)'\n`;
 
-test("Given an empty slot, When installed, Then a plain commit in a session carries the trailer, even with --no-verify, and one outside a session is unchanged", () => {
+/**
+ * What the reviewer measured against the earlier manual line, for a repo
+ * where the trailer path (Workit's hook or a manual line) is set up: a
+ * merge keeps a blank line before the trailer, an emptied editor buffer and
+ * an unedited template still abort, the opt-out holds, and a newline in the
+ * id cannot forge another trailer.
+ */
+const expectHookBehaviour = (root: string) => {
+  ok(root, ["switch", "-q", "-c", "side"]);
+  writeFileSync(path.join(root, `side-${Date.now()}.txt`), "s\n");
+  ok(root, ["add", "-A"]);
+  ok(root, ["commit", "-q", "-m", "feat: side"], { WORKIT_SESSION_ID: "w-1" });
+  expect(sessions(root)).toEqual(["Workit-Session: w-1"]);
+  ok(root, ["switch", "-q", "main"]);
+  ok(root, ["merge", "-q", "--no-ff", "--no-edit", "side"], S);
+  expect(message(root)).toBe("Merge branch 'side'\n\nWorkit-Session: lead-1");
+  ok(root, ["branch", "-q", "-D", "side"]);
+
+  const head = ok(root, ["rev-parse", "HEAD"]);
+  const emptied = git(root, ["commit", "-q", "--allow-empty"], {
+    ...S,
+    GIT_EDITOR: editorScript(': > "$1"'),
+  });
+  expect(emptied.status, emptied.stdout).not.toBe(0);
+  expect(emptied.stderr).toContain("empty commit message");
+
+  const template = path.join(tmp(), "template");
+  writeFileSync(template, "feat: template subject\n");
+  const unedited = git(root, ["commit", "-q", "--allow-empty", "-t", template], S);
+  expect(unedited.status, unedited.stdout).not.toBe(0);
+  expect(unedited.stderr).toContain("did not edit the message");
+  expect(ok(root, ["rev-parse", "HEAD"])).toBe(head);
+
+  ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: opt-out"], {
+    WORKIT_SESSION_ID: "",
+    CODEX_THREAD_ID: "thread-1",
+  });
+  expect(message(root)).toBe("feat: opt-out");
+  ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: forged"], {
+    WORKIT_SESSION_ID: "x\nSigned-off-by: Mallory <m@example.invalid>",
+  });
+  expect(message(root)).toBe("feat: forged");
+};
+
+test("Given an empty slot, When installed, Then the hook runs the helper and a plain commit in a session carries the trailer, even with --no-verify", () => {
   const root = repo();
   expect(inspectSessionHook(root).state).toBe("missing");
   const done = installSessionHook(root);
-  expect(done.action).toBe("installed");
+  expect(done).toMatchObject({ action: "installed", helperWritten: true });
   expect(done.status.state).toBe("installed");
   expect(readFileSync(hookOf(root), "utf8")).toBe(SESSION_HOOK_SCRIPT);
+  expect(readFileSync(helperOf(root), "utf8")).toBe(SESSION_TRAILER_SCRIPT);
+  expect(SESSION_HOOK_SCRIPT).toContain(manualTrailerLine());
   expect(SESSION_HOOK_SCRIPT).toContain("Workit (https://github.com/BrainerVirus/workit)");
   if (process.platform !== "win32") expect(statSync(hookOf(root)).mode & 0o111).not.toBe(0);
   expect(readdirSync(path.dirname(hookOf(root))).filter((f) => f.includes("workit-new"))).toEqual(
@@ -132,9 +187,31 @@ test("Given an empty slot, When installed, Then a plain commit in a session carr
   expect(message(root)).toBe("feat: from file\n\nWorkit-Session: lead-1");
   ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: two"]);
   expect(message(root)).toBe("feat: two");
-  ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: three"], { WORKIT_SESSION_ID: "" });
-  expect(message(root)).toBe("feat: three");
-  expect(installSessionHook(root).action).toBe("unchanged");
+  expect(installSessionHook(root)).toMatchObject({ action: "unchanged", helperWritten: false });
+  expectHookBehaviour(root);
+});
+
+test("Given a plain editor commit, When the user writes a message, Then no trailer is put in the buffer", () => {
+  const root = repo();
+  installSessionHook(root);
+  ok(root, ["commit", "-q", "--allow-empty"], {
+    ...S,
+    GIT_EDITOR: editorScript('printf "feat: typed\\n" > "$1"'),
+  });
+  expect(message(root)).toBe("feat: typed");
+});
+
+test("Given a missing or older helper, When inspected and fixed, Then the hook is outdated and --fix rewrites the helper", () => {
+  const root = repo();
+  installSessionHook(root);
+  rmSync(helperOf(root));
+  expect(inspectSessionHook(root).state).toBe("outdated");
+  expect(commit(root, "feat: no helper").status).toBe(0);
+  expect(message(root)).toBe("feat: no helper");
+  writeFileSync(helperOf(root), "#!/bin/sh\nexit 0\n");
+  expect(inspectSessionHook(root).state).toBe("outdated");
+  expect(installSessionHook(root)).toMatchObject({ action: "updated", helperWritten: true });
+  expect(readFileSync(helperOf(root), "utf8")).toBe(SESSION_TRAILER_SCRIPT);
 });
 
 test("Given the trailer already present, When committing or amending, Then it is never duplicated and another session's amend adds its own", () => {
@@ -150,19 +227,14 @@ test("Given the trailer already present, When committing or amending, Then it is
   expect(sessions(root)).toEqual(["Workit-Session: lead-1", "Workit-Session: w-2"]);
 });
 
-test("Given merge and squash commits, When made in a session, Then each ends with exactly one trailer for the session", () => {
+test("Given a squash merge, When committed in a session, Then it ends with exactly one trailer for the session", () => {
   const root = repo();
   installSessionHook(root);
   ok(root, ["switch", "-q", "-c", "topic"]);
-  ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: x"], { WORKIT_SESSION_ID: "w-1" });
   writeFileSync(path.join(root, "f.txt"), "x\n");
   ok(root, ["add", "f.txt"]);
   ok(root, ["commit", "-q", "-m", "feat: y"], { WORKIT_SESSION_ID: "w-1" });
   ok(root, ["switch", "-q", "main"]);
-  ok(root, ["merge", "-q", "--no-ff", "--no-edit", "topic"], S);
-  expect(message(root)).toBe("Merge branch 'topic'\n\nWorkit-Session: lead-1");
-
-  ok(root, ["reset", "-q", "--hard", "HEAD~1"]);
   ok(root, ["merge", "-q", "--squash", "topic"], S);
   ok(root, ["commit", "-q", "--no-edit"], S);
   const squashed = message(root);
@@ -171,7 +243,8 @@ test("Given merge and squash commits, When made in a session, Then each ends wit
   expect(sessions(root)).toEqual(["Workit-Session: lead-1"]);
 });
 
-test("Given a rebase replaying another session's commits, When it runs in a session, Then the replayed commits keep only their own trailers", () => {
+// A worker's commit on `topic`, and `main` moved on, for the replay tests.
+const replaySetup = () => {
   const root = repo();
   installSessionHook(root);
   ok(root, ["switch", "-q", "-c", "topic"]);
@@ -182,16 +255,34 @@ test("Given a rebase replaying another session's commits, When it runs in a sess
   writeFileSync(path.join(root, "m.txt"), "m\n");
   ok(root, ["add", "m.txt"]);
   ok(root, ["commit", "-q", "-m", "feat: main"], S);
+  return root;
+};
+
+test("Given a rebase replaying another session's commits, When it runs in a session, Then the replayed commits keep only their own trailers", () => {
+  const root = replaySetup();
   ok(root, ["switch", "-q", "topic"]);
   ok(root, ["rebase", "-q", "main"], S);
   expect(sessions(root)).toEqual(["Workit-Session: w-1"]);
 });
 
-test("Given a comment-only message or an unedited template, When committing, Then the hook adds nothing and git still aborts", () => {
+test("Given an interactive rebase that rewords another session's commit, When it runs in a session, Then no trailer is added", () => {
+  const root = replaySetup();
+  ok(root, ["switch", "-q", "topic"]);
+  const reword = editorScript('sed "1s/^pick/reword/" "$1" > "$1.tmp" && mv "$1.tmp" "$1"');
+  ok(root, ["rebase", "-q", "-i", "main"], { ...S, GIT_SEQUENCE_EDITOR: reword });
+  expect(message(root)).toBe("feat: worker\n\nWorkit-Session: w-1");
+});
+
+test("Given a cherry-pick with -e of another session's commit, When it runs in a session, Then no trailer is added", () => {
+  const root = replaySetup();
+  ok(root, ["cherry-pick", "-e", "topic"], S);
+  expect(message(root)).toBe("feat: worker\n\nWorkit-Session: w-1");
+});
+
+test("Given a comment-only message, When committing, Then comments are stripped as usual and git still aborts", () => {
   const root = repo();
   installSessionHook(root);
-  const dir = tmp();
-  const file = path.join(dir, "msg");
+  const file = path.join(tmp(), "msg");
   writeFileSync(file, "feat: commented\n\nbody\n# a comment\n");
   ok(root, ["commit", "-q", "--allow-empty", "--cleanup=strip", "-F", file], S);
   expect(message(root)).toBe("feat: commented\n\nbody\n\nWorkit-Session: lead-1");
@@ -199,15 +290,6 @@ test("Given a comment-only message or an unedited template, When committing, The
   const empty = git(root, ["commit", "-q", "--allow-empty", "--cleanup=strip", "-F", file], S);
   expect(empty.status).not.toBe(0);
   expect(empty.stderr).toContain("empty commit message");
-
-  const template = path.join(dir, "template");
-  writeFileSync(template, "feat: template subject\n");
-  const unedited = git(root, ["commit", "-q", "--allow-empty", "-t", template], {
-    ...S,
-    GIT_EDITOR: "true",
-  });
-  expect(unedited.status).not.toBe(0);
-  expect(unedited.stderr).toContain("did not edit the message");
 });
 
 test("Given host session variables, When committing, Then the hook picks the session as host-session.ts does and skips unsafe ids", () => {
@@ -229,8 +311,6 @@ test("Given host session variables, When committing, Then the hook picks the ses
   expect(
     commitWith({ WORKIT_SESSION_ID: "mine", WORKIT_HOST: "codex_cli", CODEX_THREAD_ID: "in" }),
   ).toEqual(["Workit-Session: mine"]);
-  // Set but empty opts out of the host fallback.
-  expect(commitWith({ WORKIT_SESSION_ID: "", CODEX_THREAD_ID: "in" })).toEqual([]);
   expect(commitWith({ WORKIT_SESSION_ID: "bad id; rm -rf /" })).toEqual([]);
   expect(commitWith({ WORKIT_SESSION_ID: "x".repeat(129) })).toEqual([]);
 });
@@ -288,18 +368,19 @@ const huskyInstall = (root: string) => {
   return dir;
 };
 
-test("Given husky v9, When --fix runs, Then the husky stub is left alone, the user's commitlint still runs, and the manual line adds the trailer", () => {
+test("Given husky v9, When --fix runs, Then the husky stub is left alone, the helper is written, the user's commitlint still runs, and the manual line adds the trailer", () => {
   const root = repo();
   const stubs = huskyInstall(root);
   const log = path.join(tmp(), "saw");
   writeFileSync(path.join(root, ".husky", "commit-msg"), subjectCheck(log));
 
   const done = installSessionHook(root);
-  expect(done.action).toBe("skipped");
+  expect(done).toMatchObject({ action: "skipped", helperWritten: true });
+  expect(readFileSync(helperOf(root), "utf8")).toBe(SESSION_TRAILER_SCRIPT);
   expect(done.status).toMatchObject({ state: "blocked", owner: "husky" });
   const userScript = path.join(realpathSync(root), ".husky", "prepare-commit-msg");
   expect(done.status.manual).toBe(
-    `add this line to ${userScript} (husky runs it): ${manualTrailerLine()}`,
+    `add this line to ${userScript} (create it if missing; husky runs it): ${manualTrailerLine()}`,
   );
   for (const hook of HUSKY_HOOKS)
     expect(readFileSync(path.join(stubs, hook), "utf8")).toBe(HUSKY_STUB);
@@ -315,18 +396,48 @@ test("Given husky v9, When --fix runs, Then the husky stub is left alone, the us
   expect(ok(root, ["status", "--porcelain", "--untracked-files=no"])).toBe("");
 });
 
-test("Given lefthook, When --fix runs and lefthook reinstalls later, Then our hook keeps working beside lefthook's, and once lefthook takes the slot we report blocked with a snippet that works", () => {
+test("Given husky v9 with the manual line, Then merge, editor, template, opt-out and newline cases behave as with Workit's own hook", () => {
   const root = repo();
-  const log = path.join(tmp(), "saw");
-  const config = path.join(root, "lefthook.yml");
-  const commitMsgOnly = [
+  huskyInstall(root);
+  installSessionHook(root);
+  writeFileSync(path.join(root, ".husky", "prepare-commit-msg"), `${manualTrailerLine()}\n`);
+  expectHookBehaviour(root);
+});
+
+test("Given husky v4-v8 (hooks in .husky sourcing _/husky.sh), When --fix runs, Then the manual target is the hook itself", () => {
+  const root = repo();
+  ok(root, ["config", "core.hooksPath", ".husky"]);
+  mkdirSync(path.join(root, ".husky", "_"), { recursive: true });
+  writeFileSync(path.join(root, ".husky", "_", ".gitignore"), "*");
+  writeFileSync(path.join(root, ".husky", "_", "husky.sh"), "#!/usr/bin/env sh\n");
+  const hook = path.join(root, ".husky", "prepare-commit-msg");
+  writeFileSync(hook, '#!/usr/bin/env sh\n. "$(dirname -- "$0")/_/husky.sh"\n', { mode: 0o755 });
+  const status = installSessionHook(root).status;
+  expect(status).toMatchObject({ state: "blocked", owner: "husky" });
+  const target = path.join(realpathSync(root), ".husky", "prepare-commit-msg");
+  expect(status.manual).toBe(
+    `add this line to ${target} (create it if missing; husky runs it): ${manualTrailerLine()}`,
+  );
+  writeFileSync(hook, `${readFileSync(hook, "utf8")}${manualTrailerLine()}\n`);
+  expect(commit(root, "feat: husky8").status).toBe(0);
+  expect(sessions(root)).toEqual(["Workit-Session: lead-1"]);
+});
+
+const COMMIT_MSG_ONLY = (log: string) =>
+  [
     "commit-msg:",
     "  jobs:",
     "    - name: subject",
-    `      run: grep -q 'Workit-Session' {1} && echo saw >> '${log}'; head -1 {1} | grep -Eq '^(feat|fix|chore)'`,
+    `      run: grep -q 'Workit-Session' {1} && echo saw >> '${log}'; head -1 {1} | grep -Eq '^(feat|fix|chore|Merge)'`,
     "",
   ].join("\n");
-  writeFileSync(config, commitMsgOnly);
+const TAKES_SLOT = 'prepare-commit-msg:\n  jobs:\n    - name: other\n      run: "true"\n';
+
+test("Given lefthook, When --fix runs and lefthook reinstalls later, Then our hook keeps working beside lefthook's, and once lefthook takes the slot we report blocked with a job that works", () => {
+  const root = repo();
+  const log = path.join(tmp(), "saw");
+  const config = path.join(root, "lefthook.yml");
+  writeFileSync(config, COMMIT_MSG_ONLY(log));
   lefthook(root, "install");
   expect(installSessionHook(root).action).toBe("installed");
   expect(commit(root, "bad subject").status).not.toBe(0);
@@ -341,10 +452,7 @@ test("Given lefthook, When --fix runs and lefthook reinstalls later, Then our ho
   expect(sessions(root)).toEqual(["Workit-Session: lead-1"]);
 
   // lefthook takes prepare-commit-msg: ours becomes .old, which nothing runs.
-  writeFileSync(
-    config,
-    `${commitMsgOnly}prepare-commit-msg:\n  jobs:\n    - name: other\n      run: "true"\n`,
-  );
+  writeFileSync(config, `${COMMIT_MSG_ONLY(log)}${TAKES_SLOT}`);
   lefthook(root, "install");
   const blocked = inspectSessionHook(root);
   expect(blocked).toMatchObject({ state: "blocked", owner: "lefthook" });
@@ -352,31 +460,46 @@ test("Given lefthook, When --fix runs and lefthook reinstalls later, Then our ho
   const lefthookHook = readFileSync(hookOf(root), "utf8");
   expect(installSessionHook(root).action).toBe("skipped");
   expect(readFileSync(hookOf(root), "utf8")).toBe(lefthookHook);
-  const manual = blocked.manual!;
-  expect(manual.split("\n")[0]).toBe(
-    `add this job to ${path.join(realpathSync(root), "lefthook.yml")}, then run \`lefthook install\`:`,
+  const [instruction, ...job] = blocked.manual!.split("\n");
+  expect(instruction).toContain(
+    `merge this job into ${path.join(realpathSync(root), "lefthook.yml")}`,
   );
+  expect(instruction).toContain("rather than a second `prepare-commit-msg:` key");
+  expect(instruction).toContain(`delete the stale ${hookOf(realpathSync(root))}.old`);
+  expect(job.at(-1)).toBe(`      run: ${manualTrailerLine("{1} {2} {3}")}`);
 
-  // The snippet, merged into the user's config, adds the trailer.
-  const snippet = manual.split("\n").slice(2).join("\n");
-  writeFileSync(config, `${commitMsgOnly}prepare-commit-msg:\n${snippet}\n`);
+  // The job, merged into the user's config in place of theirs, adds the trailer.
+  writeFileSync(config, `${COMMIT_MSG_ONLY(log)}${job.join("\n")}\n`);
   lefthook(root, "install");
-  expect(commit(root, "feat: snippet").status).toBe(0);
+  expect(commit(root, "feat: job").status).toBe(0);
   expect(sessions(root)).toEqual(["Workit-Session: lead-1"]);
   expect(commit(root, "bad subject").status).not.toBe(0);
 });
 
-test("Given another hand-written prepare-commit-msg, When --fix runs, Then it is left byte for byte and the manual line names it", () => {
+test("Given lefthook running the printed job, Then merge, editor, template, opt-out and newline cases behave as with Workit's own hook", () => {
   const root = repo();
-  const own = "#!/bin/sh\n# mine\nexit 0\n";
+  const config = path.join(root, "lefthook.yml");
+  writeFileSync(config, TAKES_SLOT);
+  lefthook(root, "install");
+  const [, ...job] = installSessionHook(root).status.manual!.split("\n");
+  writeFileSync(config, `${job.join("\n")}\n`);
+  lefthook(root, "install");
+  expectHookBehaviour(root);
+});
+
+test("Given another hand-written prepare-commit-msg, When --fix runs, Then it is left byte for byte and the manual line, added to it, behaves like Workit's hook", () => {
+  const root = repo();
+  const own = "#!/bin/sh\n# mine\n";
   writeFileSync(hookOf(root), own, { mode: 0o755 });
   const done = installSessionHook(root);
   expect(done.status).toMatchObject({
     state: "blocked",
     owner: "other",
-    manual: `add this line to ${hookOf(realpathSync(root))}: ${manualTrailerLine()}`,
+    manual: `add this line to ${hookOf(realpathSync(root))} (a new file needs \`#!/bin/sh\` as its first line and \`chmod +x\`): ${manualTrailerLine()}`,
   });
   expect(readFileSync(hookOf(root), "utf8")).toBe(own);
+  writeFileSync(hookOf(root), `${own}${manualTrailerLine()}\n`);
+  expectHookBehaviour(root);
 });
 
 test("Given an older Workit hook, When installed, Then it is rewritten to the current script", () => {
@@ -399,14 +522,14 @@ test("Given files left by the earlier commit-msg design, When inspected, Then th
   expect(inspectSessionHook(root).leftover).toContain("delete it");
 });
 
-test("Given core.hooksPath outside the repository or in an unignored working-tree dir, When installed, Then nothing is written", () => {
+test("Given core.hooksPath outside the repository or in an unignored working-tree dir, When installed, Then no hook is written there", () => {
   const outside = repo();
   const global = tmp();
   ok(outside, ["config", "core.hooksPath", global]);
   const o = installSessionHook(outside);
   expect(o.status.state).toBe("blocked");
   expect(o.status.reason).toContain("outside the repository");
-  expect(existsSync(path.join(global, "prepare-commit-msg"))).toBe(false);
+  expect(readdirSync(global)).toEqual([]);
 
   // A committed .githooks directory without the slot: a new file there would
   // show up as untracked.
@@ -438,18 +561,23 @@ test("Given a hooks directory that cannot be written, When installed, Then it th
   ]);
 });
 
-test("Given a linked worktree, When installed from it, Then the hook lands in the shared hooks dir and covers the main checkout", () => {
+test("Given a linked worktree, When installed from it, Then the hook and helper are shared and commits in both checkouts carry the trailer", () => {
   const root = repo();
   const wt = path.join(tmp(), "wt");
   ok(root, ["worktree", "add", "-q", "-b", "side", wt]);
-  expect(installSessionHook(wt).status.hookPath).toBe(hookOf(realpathSync(root)));
+  expect(installSessionHook(wt).status).toMatchObject({
+    hookPath: hookOf(realpathSync(root)),
+    helperPath: helperOf(realpathSync(root)),
+  });
   ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: main"], S);
   expect(sessions(root)).toEqual(["Workit-Session: lead-1"]);
+  ok(wt, ["commit", "-q", "--allow-empty", "-m", "feat: wt"], S);
+  expect(sessions(wt)).toEqual(["Workit-Session: lead-1"]);
 });
 
 test("Given a directory that is not a git repository, When inspected or installed, Then nothing is written", () => {
   const dir = tmp();
   expect(inspectSessionHook(dir).state).toBe("not_git");
   expect(installSessionHook(dir).action).toBe("skipped");
-  expect(existsSync(path.join(dir, ".git"))).toBe(false);
+  expect(readdirSync(dir)).toEqual([]);
 });

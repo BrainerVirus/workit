@@ -178,7 +178,19 @@ test("Given another tool's prepare-commit-msg hook, When `workit doctor --fix` r
   expect(report.sessionHook?.action).toBe("skipped");
   const sessionHook = check(report, "session_hook");
   expect(sessionHook.status).toBe("warn");
-  expect(sessionHook.fix).toBe(`add this line to ${hook}: ${manualTrailerLine()}`);
+  // --fix already wrote the helper, so the fix is only the line to add.
+  expect(sessionHook.fix).toBe(
+    `add this line to ${hook} (a new file needs \`#!/bin/sh\` as its first line and \`chmod +x\`): ${manualTrailerLine()}`,
+  );
+  expect(existsSync(path.join(box.work, ".git", "workit", "session-trailer.sh"))).toBe(true);
+  // Without --fix in a fresh repo, the check first names --fix for the helper.
+  const plain = sandbox();
+  const plainHook = gitRepo(plain);
+  asWorkspace(plain);
+  writeFileSync(plainHook, theirs, { mode: 0o755 });
+  expect(check(doctor(plain).report, "session_hook").fix).toStartWith(
+    `workit doctor --fix (writes ${path.join(plain.work, ".git", "workit", "session-trailer.sh")}), then add this line to ${plainHook}`,
+  );
   expect(readFileSync(hook, "utf8")).toBe(theirs);
 }, 30_000);
 

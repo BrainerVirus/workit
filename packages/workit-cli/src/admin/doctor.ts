@@ -2045,14 +2045,17 @@ const sessionHookFinding = (hook: SessionHookStatus): Omit<DoctorCheck, "id"> =>
     case "outdated":
       return {
         status: "warn",
-        detail: `the Workit ${slot} at ${hook.hookPath} is an older version`,
+        detail: `the Workit ${slot} at ${hook.hookPath} or its helper ${hook.helperPath} is missing or an older version`,
         fix: SESSION_HOOK_FIX,
       };
     case "blocked":
       return {
         status: "warn",
         detail: `plain git commits get no Workit-Session trailer and --fix will not install the ${slot}: ${hook.reason}`,
-        fix: hook.manual,
+        // The manual line runs the helper, which --fix writes even here.
+        fix: hook.helperCurrent
+          ? hook.manual
+          : `${SESSION_HOOK_FIX} (writes ${hook.helperPath}), then ${hook.manual}`,
       };
   }
 };
