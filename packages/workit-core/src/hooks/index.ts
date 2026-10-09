@@ -20,6 +20,7 @@ export {
 } from "./context";
 export { shellPolicy } from "./policy";
 export { shellWrites, writeGate } from "./write-gate";
+export { asksUser, stopDecision, stopObligation, type StopObligation } from "./stop";
 export { callKey, noteRawCommit, rawGitPost, rawGitPre } from "./raw-git";
 export { promptNudge, recordSkillLoad, shellNudge, skillFileIn } from "./skill-nudge";
 export { isWriteTool, writePaths } from "./hosts/fields";

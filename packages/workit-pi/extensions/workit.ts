@@ -23,6 +23,7 @@ import {
   changedTurnContext,
   PI_DESCRIPTOR,
   seedTurnContext,
+  stopDecision,
 } from "@brainervirus/workit-core/hooks";
 import {
   piContext,
@@ -152,9 +153,34 @@ export const persistUncertainCancel = (
   return observeWorkerExit(lostBinding, handle, exit).ok;
 };
 
+/** The text of the last assistant message of a run (agent_end `messages`), or null. */
+export const lastAssistantText = (messages: readonly unknown[] | undefined): string | null => {
+  for (const message of (messages ?? []).toReversed()) {
+    if (typeof message !== "object" || message === null) continue;
+    const { role, content } = message as { role?: unknown; content?: unknown };
+    if (role !== "assistant") continue;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return null;
+    const text = content
+      .filter(
+        (part): part is { type: "text"; text: string } =>
+          typeof part === "object" &&
+          part !== null &&
+          (part as { type?: unknown }).type === "text" &&
+          typeof (part as { text?: unknown }).text === "string",
+      )
+      .map((part) => part.text)
+      .join("\n");
+    return text || null;
+  }
+  return null;
+};
+
 export default function extension(pi: ExtensionAPI): void {
   const sessions = new Set<string>();
   const historyOfferSessions = new Set<string>();
+  /** Sessions whose current run was started by a stop continuation. */
+  const continuedRuns = new Set<string>();
   const workers = new Map<string, WorkerHandle>();
   const bindings = new Map<string, WorkerLifecycleBinding>();
   const childWorker = process.env.WORKIT_PI_WORKER_ID;
@@ -508,6 +534,37 @@ export default function extension(pi: ExtensionAPI): void {
     return nudge
       ? { message: { customType: "workit-skill", content: nudge, display: false } }
       : undefined;
+  });
+  // Stop control: a run that ends with a provable unmet obligation gets one
+  // more turn naming it. Pi has no loop guard, so the run that continuation
+  // starts always ends freely. Never in a worker or an untrusted project.
+  pi.on("agent_end", (event, ctx) => {
+    try {
+      const id = ctx.sessionManager.getSessionId();
+      if (continuedRuns.delete(id) || childWorker || !ctx.isProjectTrusted()) return;
+      const send = (pi as { sendMessage?: unknown }).sendMessage;
+      if (typeof send !== "function") return;
+      const decision = stopDecision(
+        {
+          ...turnInput(ctx),
+          event: {
+            kind: "stop",
+            lastMessage: lastAssistantText(event.messages),
+            stopHookActive: false,
+          },
+        },
+        PI_DESCRIPTOR,
+      );
+      if (decision.kind !== "continue") return;
+      continuedRuns.add(id);
+      send.call(
+        pi,
+        { customType: "workit-stop", content: decision.reason, display: true },
+        { triggerTurn: true, deliverAs: "followUp" },
+      );
+    } catch {
+      // Fail open: the run stops.
+    }
   });
   pi.on("session_before_compact", () => undefined);
   pi.on("session_compact", (_event, ctx) => {

@@ -6,7 +6,8 @@
 //     remote onto a protected branch or the default target, naming the
 //     workit command;
 //   - lets routine raw commands run (`git commit`, a feature-branch push,
-//     `gh pr create|view|checks`, `glab mr create|view`) with a short nudge.
+//     `gh pr create|view|checks`, `glab mr create|view`) with a short nudge,
+//     once per kind per session, and none on a command that runs workit.
 // A raw `git commit` is recorded as the session's `commit.recorded` row so
 // the author's own verdict never reads as independent. The pre-tool hook
 // notes HEAD before the command (a marker in the commit's own repository);
@@ -29,6 +30,7 @@ import { pushRemoteName } from "../git/rev";
 import { appendHookObserved, readLedger } from "../ledger";
 import { resolveStore, resolveTaskKey, type StoreLocation } from "../store/paths";
 import type { HookDecision, HookInput } from "./protocol";
+import { readSessionMarker, sessionMarkerFile, writeSessionMarker } from "./session-marker";
 import { segmentsOf, type ShellDialect } from "./shell-words";
 
 const NONE: HookDecision = { kind: "none" };
@@ -172,6 +174,47 @@ export function rawInvocations(
       else if (!word.startsWith("-")) break;
     }
     found.push({ tool: "git", dir: here, args: words.slice(index) });
+  }
+  return found;
+}
+
+const LAUNCHERS = new Set([
+  "npx",
+  "bunx",
+  "pnpx",
+  "-y",
+  "--yes",
+  "pnpm",
+  "dlx",
+  "exec",
+  "env",
+  "sudo",
+  "command",
+]);
+const WORKIT_BIN = /(?:^|[\\/])workit(?:\.exe)?$|^@brainervirus\/workit-cli$/;
+
+/**
+ * The arguments of every workit CLI invocation in a shell command: past env
+ * assignments and package runners (`npx -y @brainervirus/workit-cli …`), and
+ * inside `bash -c '…'` scripts.
+ */
+export function workitInvocations(
+  command: string,
+  dialect: ShellDialect = "posix",
+  depth = 0,
+): string[][] {
+  const found: string[][] = [];
+  for (const { words } of segmentsOf(command, dialect)) {
+    const at = words.findIndex((word) => !/^\w+=/.test(word) && !LAUNCHERS.has(word));
+    if (at < 0) continue;
+    if (WORKIT_BIN.test(words[at])) {
+      found.push(words.slice(at + 1));
+      continue;
+    }
+    const shell = SHELLS.has(commandName(words[at]));
+    const script = shell && words[at + 1] === "-c" ? words[at + 2] : undefined;
+    if (depth < 3 && script !== undefined)
+      found.push(...workitInvocations(script, "posix", depth + 1));
   }
   return found;
 }
@@ -336,7 +379,7 @@ const isWorkitWorkspace = (repo: Repo): boolean => {
 };
 
 /** Protected by the branch policy, or the workspace's default target. */
-const guardedBranch = (dir: string, branch: string): boolean => {
+export const guardedBranch = (dir: string, branch: string): boolean => {
   try {
     const policy = resolveBranchPolicyFor(dir);
     return (
@@ -459,16 +502,53 @@ const dialectOf = (input: HookInput): ShellDialect =>
     ? input.event.dialect
     : undefined) ?? "posix";
 
+/** The nudge kind an action shows: each is shown once per session (agent). */
+const nudgeKind = (action: RawAction): string =>
+  action.kind === "commit" && action.amend
+    ? "commit-amend"
+    : action.kind === "push" && action.blindForce
+      ? "push-force"
+      : action.kind;
+
+/**
+ * The nudges a session (or one of its subagents) has not been shown yet,
+ * recorded as shown in the per-session marker. Without a session or a
+ * marker, every nudge shows: the throttle fails open to repeating.
+ */
+const unseenNudges = (input: HookInput, nudges: Map<string, string>, store: string): string[] => {
+  const session = input.session.id;
+  const file = session ? sessionMarkerFile(input, session, store) : null;
+  if (!file) return [...nudges.values()];
+  const marker = readSessionMarker(file);
+  const agent = input.session.agentId ? `${input.session.agentId}:` : "";
+  const fresh = [...nudges.keys()].filter((kind) => !marker.raw.includes(agent + kind));
+  if (fresh.length)
+    writeSessionMarker(file, {
+      ...marker,
+      raw: [...marker.raw, ...fresh.map((kind) => agent + kind)],
+    });
+  return fresh.map((kind) => nudges.get(kind) as string);
+};
+
 /**
  * The pre-tool decision for a shell command: deny a gate bypass inside a
  * Workit workspace, else a nudge (as context) for routine raw delivery
- * commands, else nothing. Never throws, never writes.
+ * commands, else nothing. Each nudge kind is shown once per session, and a
+ * command that runs a workit verb itself gets none (denies still apply).
+ * `nudge: false` asks for the deny alone and spends no nudge. Never throws.
  */
-export function rawGitPre(input: HookInput, command: string): HookDecision {
+export function rawGitPre(
+  input: HookInput,
+  command: string,
+  options: { nudge?: boolean } = {},
+): HookDecision {
   try {
     if (!mentionsRawTool(command)) return NONE;
-    const nudges: string[] = [];
-    for (const { action, repo } of actionsIn(input.cwd, command, dialectOf(input))) {
+    const dialect = dialectOf(input);
+    const nudges = new Map<string, string>();
+    let store: string | null = null;
+    for (const { action, repo } of actionsIn(input.cwd, command, dialect)) {
+      store ??= repo.location.dir;
       if (action.kind === "merge") return deny(refusal(action, null));
       if (action.kind === "push")
         for (const target of action.targets) {
@@ -477,9 +557,12 @@ export function rawGitPre(input: HookInput, command: string): HookDecision {
             return deny(refusal(action, branch));
         }
       const nudge = nudgeFor(action, input.host, input.session.id);
-      if (nudge && !nudges.includes(nudge)) nudges.push(nudge);
+      if (nudge && !nudges.has(nudgeKind(action))) nudges.set(nudgeKind(action), nudge);
     }
-    return nudges.length ? { kind: "context", text: nudges.join("\n") } : NONE;
+    if (options.nudge === false || !store || nudges.size === 0) return NONE;
+    if (workitInvocations(command, dialect).length > 0) return NONE;
+    const shown = unseenNudges(input, nudges, store);
+    return shown.length ? { kind: "context", text: shown.join("\n") } : NONE;
   } catch {
     return NONE;
   }

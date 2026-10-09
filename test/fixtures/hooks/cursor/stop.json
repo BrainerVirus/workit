@@ -1,0 +1,17 @@
+{
+  "conversation_id": "cursor-conv-1",
+  "session_id": "cursor-conv-1",
+  "generation_id": "gen-1",
+  "model": "auto",
+  "status": "completed",
+  "loop_count": 0,
+  "input_tokens": 100,
+  "output_tokens": 20,
+  "cache_read_tokens": 0,
+  "cache_write_tokens": 0,
+  "cursor_version": "2026.09.26-dd393fe",
+  "workspace_roots": ["__CWD__"],
+  "user_email": null,
+  "transcript_path": null,
+  "hook_event_name": "stop"
+}

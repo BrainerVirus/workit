@@ -50,6 +50,8 @@ export const evaluateShellPermission = (
         event: { kind: "shell.pre", command: resource, toolUseId: null },
       },
       resource,
+      // The nudge rides the tool result (shell.ts): only the deny is read here.
+      { nudge: false },
     );
     if (raw.kind === "deny") return deny(raw.reason);
     const writes = shellWrites(resource);

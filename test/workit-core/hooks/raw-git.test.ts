@@ -83,8 +83,19 @@ type ClaudeOut = {
     additionalContext?: string;
   };
 };
+let sessions = 0;
+/** One PreToolUse call, by default in a fresh session: each nudge kind shows once per session. */
 const claudeOut = (cwd: string, command: string, extra: Record<string, unknown> = {}) =>
-  (claude(cwd, command, "PreToolUse", extra).json as ClaudeOut).hookSpecificOutput;
+  (
+    claude(cwd, command, "PreToolUse", { session_id: `s-${++sessions}`, ...extra })
+      .json as ClaudeOut
+  ).hookSpecificOutput;
+
+/** Pending raw-commit notes in a checkout's store. */
+const commitNotes = (root: string) =>
+  readdirSync(path.join(root, ".git", "workit", "hooks")).filter((name) =>
+    name.startsWith("commit-"),
+  );
 
 const commitRows = (root: string) => {
   const ledger = readLedger(root);
@@ -604,7 +615,8 @@ test("G Cursor (no post-tool event), W a raw commit, T the session's next shell 
     expect(commitRows(root)).toEqual([
       expect.objectContaining({ sha, session, branch: "feature/x" }),
     ]);
-    expect(readdirSync(path.join(root, ".git", "workit", "hooks"))).toEqual([]);
+    // The commit note is settled; only the per-session nudge marker remains.
+    expect(commitNotes(root)).toEqual([]);
   });
 });
 
@@ -619,7 +631,7 @@ test("G a commit run in a workspace from an unrelated repository, T the note liv
       }),
     );
     expect(existsSync(path.join(unrelated, ".git", "workit"))).toBe(false);
-    expect(readdirSync(path.join(workspace, ".git", "workit", "hooks"))).toHaveLength(1);
+    expect(commitNotes(workspace)).toHaveLength(1);
   });
 });
 

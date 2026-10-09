@@ -22,6 +22,7 @@ import {
   skillReadIn,
   withContextLine,
 } from "./skill-nudge";
+import { stopDecision } from "./stop";
 import { shellWrites, writeGate } from "./write-gate";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
@@ -67,21 +68,35 @@ const subagentSession = (session: string | null, agentId: string): string =>
     .replace(/[^A-Za-z0-9_.:@/+-]/g, "-")
     .slice(0, 128);
 
+/** A Claude Code worktree path: `<repo>/.claude/worktrees/<name>`. */
+const CLAUDE_WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/]/;
+
+/**
+ * Claude Code's worktree isolation refuses any command that wraps git
+ * (`workit git …` included) and cannot be turned off, so an isolated agent
+ * runs git itself and workit for everything else.
+ */
+const ISOLATED_GIT =
+  'Run git as plain, separate commands inside your worktree (`git switch -c <branch> <base>`, `git commit --trailer "Workit-Session=<your session>"`, `git push`), never `workit git …`: Claude Code\'s worktree isolation refuses a command that wraps git and cannot be turned off (https://code.claude.com/docs/en/worktrees#how-claude-code-enforces-isolation). Never dodge that check by renaming or re-wrapping git. Use workit for the non-git verbs (`workit check`, `workit ledger`, `workit pr`).';
+
 const subagentStartText = (
-  session: string | null,
+  input: HookInput,
   descriptor: HostDescriptor,
   event: Extract<HookInput["event"], { kind: "subagent.start" }>,
 ): string => {
+  const session = input.session.id ?? null;
   const role = workitRole(descriptor, event.agentType);
   const who = `${descriptor.label} subagent ${event.agentId} (${event.agentType})`;
-  if (role === "implementer") {
-    // Only a host that isolates subagents in worktrees has already put it in one.
-    const where =
-      descriptor.subagents.worktreeIsolation === "native"
-        ? "working in its own git worktree: it may edit and commit there"
-        : "as an implementer: it edits and commits only in its own git worktree (the lead makes one with `workit fanout worktree create <slice>`), never in the lead's checkout";
-    return `Workit observed ${who} ${where}, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
-  }
+  const isolated =
+    descriptor.subagents.worktreeIsolation === "native" &&
+    (role === "implementer" || CLAUDE_WORKTREE.test(input.cwd));
+  if (role === "implementer" && isolated)
+    return `Workit observed ${who} working in its own git worktree: it may edit and commit there, within its brief's scope. ${ISOLATED_GIT} Use a policy-compliant branch (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
+  if (isolated)
+    return `${ISOLATED_GIT}\n${subagentStartText({ ...input, cwd: "" }, descriptor, event)}`;
+  if (role === "implementer")
+    // No host isolation: the lead makes the worktree, and workit git works there.
+    return `Workit observed ${who} as an implementer: it edits and commits only in its own git worktree (the lead makes one with \`workit fanout worktree create <slice>\`), never in the lead's checkout, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
   const readOnly = `Workit observed ${who} as read-only/agent-guided.`;
   if (role !== "judge" || !event.agentId) return readOnly;
   const own = subagentSession(session, event.agentId);
@@ -125,7 +140,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       // Without a post-tool event, the previous raw commit is recorded now.
       const postTool = usable(descriptor.events["shell.post"].support);
       if (!postTool) settlePendingCommit(input);
-      const raw = canDeny ? rawGitPre(input, event.command) : NONE;
+      const raw = canDeny ? rawGitPre(input, event.command, { nudge: false }) : NONE;
       if (raw.kind === "deny") return raw;
       const writes = usable(descriptor.events["write.pre"].support)
         ? shellWrites(event.command)
@@ -139,7 +154,13 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
         event.command,
         postTool ? callKey(event.toolUseId, event.command) : NEXT_COMMAND,
       );
-      return withContextLine(raw, shipNudge(input, event.command));
+      // An in-process plugin shows nudges on the tool result (shellNudge):
+      // spending the once-per-session nudge here would lose it.
+      if (descriptor.transport !== "hook-process") return NONE;
+      return withContextLine(
+        canDeny ? rawGitPre(input, event.command) : NONE,
+        shipNudge(input, event.command),
+      );
     }
     case "shell.post":
       if (usable(descriptor.events["shell.post"].support))
@@ -152,7 +173,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
     case "subagent.start":
       return {
         kind: "context",
-        text: subagentStartText(input.session.id ?? null, descriptor, event),
+        text: subagentStartText(input, descriptor, event),
       };
     case "compact.pre":
       return {
@@ -164,11 +185,12 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       // Host permission policy owns other tools; a skill load is recorded.
       if (event.skill) recordSkillLoad(input, event.skill, "tool");
       return NONE;
-    // Attestation, prompt and stop control arrive with the CLI-observed
-    // evidence model.
+    case "stop":
+      return usable(descriptor.events.stop.support) ? stopDecision(input, descriptor) : NONE;
+    // A subagent's stop is never blocked; attestation and prompt control
+    // arrive with the CLI-observed evidence model.
     case "subagent.stop":
     case "prompt.submit":
-    case "stop":
       return NONE;
   }
 }

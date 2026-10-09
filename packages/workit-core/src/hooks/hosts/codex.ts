@@ -18,7 +18,8 @@ export type CodexHookEvent =
   | "PreToolUse"
   | "PostToolUse"
   | "SubagentStart"
-  | "SubagentStop";
+  | "SubagentStop"
+  | "Stop";
 // The session-start.command.input schema in codex-cli 0.160.1 lists fork as a source.
 type SessionSource = "startup" | "resume" | "clear" | "compact" | "fork";
 
@@ -80,10 +81,12 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
     "subagent.start": { support: "native", native: "SubagentStart" },
     "subagent.stop": { support: "native", native: "SubagentStop" },
     "prompt.submit": { support: "native", native: "UserPromptSubmit" },
-    // Codex has PreCompact and Stop, but workit registers neither yet: events
-    // list what workit registers (docs/agents/hosts.md, Host parity).
+    // Codex has PreCompact, but workit does not register it: events list what
+    // workit registers (docs/agents/hosts.md, Host parity).
     "compact.pre": { support: "none", native: null },
-    stop: { support: "none", native: null },
+    // stop.command.input (codex-cli 0.160.1): stop_hook_active,
+    // last_assistant_message, turn_id; output `{"decision":"block","reason"}`.
+    stop: { support: "native", native: "Stop" },
   },
   shellPolicy: { deny: "native", channel: "permissionDecision", failClosed: false },
   context: {
@@ -104,7 +107,7 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
   },
   provenance: { sessionId: "native", agentIdOnTool: "partial", postToolObserve: "native" },
   interaction: { questions: "none", writeBoundary: "partial" },
-  stopControl: "undocumented",
+  stopControl: "native",
   shellAvailable: "native",
   perEventCost: "low",
   capabilities: [
@@ -178,6 +181,7 @@ const EVENTS: Record<CodexHookEvent, HookEventKind> = {
   PostToolUse: "shell.post",
   SubagentStart: "subagent.start",
   SubagentStop: "subagent.stop",
+  Stop: "stop",
 };
 const SHELL_TOOLS = new Set(["bash", "unified-exec"]);
 const isShellTool = (name: unknown) => SHELL_TOOLS.has(String(name).toLowerCase());
@@ -227,6 +231,12 @@ export const parseCodexHookInput = (value: unknown): CodexParseResult => {
       ...(nonEmpty(value.tool_use_id) ? { tool_use_id: value.tool_use_id } : {}),
       ...(nonEmpty(value.agent_id) ? { agent_id: value.agent_id } : {}),
       ...(nonEmpty(value.agent_type) ? { agent_type: value.agent_type } : {}),
+      ...(event === "Stop"
+        ? {
+            last_assistant_message: optionalText(value.last_assistant_message),
+            stop_hook_active: value.stop_hook_active === true,
+          }
+        : {}),
       ...(event === "SubagentStop"
         ? {
             agent_transcript_path: optionalText(value.agent_transcript_path),
@@ -287,6 +297,12 @@ const protocolEvent = (input: CodexHookInput): HookEvent => {
         lastMessage: input.last_assistant_message ?? null,
         stopHookActive: input.stop_hook_active ?? false,
       };
+    case "Stop":
+      return {
+        kind: "stop",
+        lastMessage: input.last_assistant_message ?? null,
+        stopHookActive: input.stop_hook_active ?? false,
+      };
   }
 };
 
@@ -295,7 +311,11 @@ const output = (event: string, extra: Record<string, unknown> = {}) => ({
 });
 
 const render = (decision: HookDecision, native: string | null) => {
-  if (native === "SubagentStop" || native === null) return { json: {}, exitCode: 0 };
+  // stop.command.output takes no hookSpecificOutput: a block with a reason continues.
+  if (native === "Stop" && decision.kind === "continue")
+    return { json: { decision: "block", reason: decision.reason }, exitCode: 0 };
+  if (native === "SubagentStop" || native === "Stop" || native === null)
+    return { json: {}, exitCode: 0 };
   if (decision.kind === "deny")
     return {
       json: output(native, {
