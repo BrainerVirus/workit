@@ -9,6 +9,7 @@ import {
   PI_DESCRIPTOR,
   sessionCompactContext,
   unfinishedTaskOffer as historyOffer,
+  type HookInput,
 } from "@brainervirus/workit-core/hooks";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -32,22 +33,49 @@ export const piContext = (ctx: ExtensionContext): OperationContext => ({
   now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
 });
 
-export const workitContext = (ctx: ExtensionContext): string => {
+/**
+ * The session's current task context as the per-turn message carries it, or
+ * null when the project is untrusted or no task applies.
+ */
+export const turnContext = (ctx: ExtensionContext): string | null => {
+  if (!ctx.isProjectTrusted()) return null;
+  try {
+    const text = sessionCompactContext(
+      new TaskStore(ctx.cwd),
+      { host: "pi", handle: ctx.sessionManager.getSessionId() },
+      piContext(ctx),
+    );
+    return text ? `Current task context: ${text}` : null;
+  } catch {
+    // Static contract guidance remains useful when state is unavailable.
+    return null;
+  }
+};
+
+/** The session in the shape the core's per-turn resend keys its digest by. */
+export const turnInput = (ctx: ExtensionContext): HookInput => ({
+  host: "pi",
+  cwd: ctx.cwd,
+  session: {
+    id: ctx.sessionManager.getSessionId(),
+    agentId: null,
+    agentType: null,
+    parentId: null,
+  },
+  permissionMode: null,
+  transcriptPath: null,
+  event: { kind: "context.turn" },
+});
+
+/** The session contract: bootstrap plus `taskContext` (see turnContext). */
+export const workitContext = (
+  ctx: ExtensionContext,
+  taskContext: string | null = turnContext(ctx),
+): string => {
   const session = ctx.sessionManager.getSessionId();
   if (!ctx.isProjectTrusted())
     return `${invariantBootstrap()}\n\nNative Pi session: ${session}. Project-local Workit state is unavailable until Pi trusts this project.`;
-  let taskContext: string | null = null;
-  try {
-    taskContext = sessionCompactContext(
-      new TaskStore(ctx.cwd),
-      { host: "pi", handle: session },
-      piContext(ctx),
-    );
-  } catch {
-    // Static contract guidance remains useful when state is unavailable.
-  }
-  const taskText = taskContext ? `\nCurrent task context: ${taskContext}` : "";
-  return `${invariantBootstrap()}\n\nNative Pi session: ${session}.${taskText}`;
+  return `${invariantBootstrap()}\n\nNative Pi session: ${session}.${taskContext ? `\n${taskContext}` : ""}`;
 };
 
 export const unfinishedTaskOffer = (ctx: ExtensionContext): string | null => {

@@ -24,12 +24,12 @@ export const PI_DESCRIPTOR: HostDescriptor = {
   shellPolicy: { deny: "native", channel: "block", failClosed: false },
   context: {
     sessionStart: "native",
-    // before_agent_start runs every turn, but the extension injects the task
-    // context once per session and again after compaction, never on change.
-    perTurn: "partial",
+    // before_agent_start runs every turn; its message stays in the session,
+    // so the extension resends the task context only when it changed.
+    perTurn: "native",
     afterCompact: "native",
     task: "session-bound",
-    turnResend: "per-session",
+    turnResend: "on-change",
   },
   subagents: {
     identity: "none",
