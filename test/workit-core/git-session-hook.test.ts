@@ -206,7 +206,9 @@ test("Given a missing or older helper, When inspected and fixed, Then the hook i
   installSessionHook(root);
   rmSync(helperOf(root));
   expect(inspectSessionHook(root).state).toBe("outdated");
-  expect(commit(root, "feat: no helper").status).toBe(0);
+  const silent = commit(root, "feat: no helper");
+  expect(silent.status).toBe(0);
+  expect(silent.stderr).toBe("");
   expect(message(root)).toBe("feat: no helper");
   writeFileSync(helperOf(root), "#!/bin/sh\nexit 0\n");
   expect(inspectSessionHook(root).state).toBe("outdated");
@@ -389,6 +391,12 @@ test("Given husky v9, When --fix runs, Then the husky stub is left alone, the he
 
   // The manual fix, applied as husky users write hooks.
   writeFileSync(userScript, `${manualTrailerLine()}\n`);
+  expect(inspectSessionHook(root)).toMatchObject({
+    state: "manual",
+    via: "husky",
+    manualTarget: userScript,
+  });
+  expect(installSessionHook(root)).toMatchObject({ action: "unchanged", helperWritten: false });
   expect(commit(root, "feat: husky").status).toBe(0);
   expect(sessions(root)).toEqual(["Workit-Session: lead-1"]);
   expect(readFileSync(log, "utf8")).toContain("saw");
@@ -402,6 +410,34 @@ test("Given husky v9 with the manual line, Then merge, editor, template, opt-out
   installSessionHook(root);
   writeFileSync(path.join(root, ".husky", "prepare-commit-msg"), `${manualTrailerLine()}\n`);
   expectHookBehaviour(root);
+});
+
+test("Given a teammate's clone with the committed husky line but no helper, When committing, Then the line is a silent no-op", () => {
+  const root = repo();
+  huskyInstall(root);
+  writeFileSync(path.join(root, ".husky", "prepare-commit-msg"), `${manualTrailerLine()}\n`);
+  expect(existsSync(helperOf(root))).toBe(false);
+  const r = commit(root, "feat: teammate");
+  expect(r.status).toBe(0);
+  expect(r.stderr).toBe("");
+  expect(message(root)).toBe("feat: teammate");
+});
+
+test("Given the manual line run outside a git repository, Then it prints nothing and exits 0", () => {
+  const r = sh("sh", tmp(), ["-c", manualTrailerLine(), "hook", "msg", "message"]);
+  expect(r).toMatchObject({ status: 0, stdout: "", stderr: "" });
+});
+
+test("Given lefthook's literal {2} placeholder for a missing source, When the helper runs, Then the message is left alone", () => {
+  const root = repo();
+  installSessionHook(root);
+  const file = path.join(tmp(), "msg");
+  writeFileSync(file, "feat: typed\n");
+  const r = sh("sh", root, [helperOf(root), file, "{2}", "{3}"], S);
+  expect(r.status).toBe(0);
+  expect(readFileSync(file, "utf8")).toBe("feat: typed\n");
+  expect(sh("sh", root, [helperOf(root), file, "message"], S).status).toBe(0);
+  expect(readFileSync(file, "utf8")).toBe("feat: typed\n\nWorkit-Session: lead-1\n");
 });
 
 test("Given husky v4-v8 (hooks in .husky sourcing _/husky.sh), When --fix runs, Then the manual target is the hook itself", () => {
@@ -419,6 +455,11 @@ test("Given husky v4-v8 (hooks in .husky sourcing _/husky.sh), When --fix runs, 
     `add this line to ${target} (create it if missing; husky runs it): ${manualTrailerLine()}`,
   );
   writeFileSync(hook, `${readFileSync(hook, "utf8")}${manualTrailerLine()}\n`);
+  expect(inspectSessionHook(root)).toMatchObject({
+    state: "manual",
+    via: "husky",
+    manualTarget: target,
+  });
   expect(commit(root, "feat: husky8").status).toBe(0);
   expect(sessions(root)).toEqual(["Workit-Session: lead-1"]);
 });
@@ -471,6 +512,11 @@ test("Given lefthook, When --fix runs and lefthook reinstalls later, Then our ho
   // The job, merged into the user's config in place of theirs, adds the trailer.
   writeFileSync(config, `${COMMIT_MSG_ONLY(log)}${job.join("\n")}\n`);
   lefthook(root, "install");
+  expect(inspectSessionHook(root)).toMatchObject({
+    state: "manual",
+    via: "lefthook",
+    manualTarget: path.join(realpathSync(root), "lefthook.yml"),
+  });
   expect(commit(root, "feat: job").status).toBe(0);
   expect(sessions(root)).toEqual(["Workit-Session: lead-1"]);
   expect(commit(root, "bad subject").status).not.toBe(0);
@@ -499,6 +545,7 @@ test("Given another hand-written prepare-commit-msg, When --fix runs, Then it is
   });
   expect(readFileSync(hookOf(root), "utf8")).toBe(own);
   writeFileSync(hookOf(root), `${own}${manualTrailerLine()}\n`);
+  expect(inspectSessionHook(root)).toMatchObject({ state: "manual", via: "existing hook" });
   expectHookBehaviour(root);
 });
 

@@ -78,9 +78,10 @@ and how to fix it.
   (`commit -t`, `commit.template`: an unedited one must still abort); a
   comment-only message; and during a rebase or cherry-pick (the replayed
   commits keep their own trailers).
-- One edge remains: `git commit --amend` and `git merge -e` open the editor
-  with the trailer already in the buffer, so deleting everything but the
-  trailer there commits a trailer-only message instead of aborting.
+- One edge remains: `git commit -e -m …`, `git commit --amend` and
+  `git merge -e` open the editor with the trailer already in the buffer, so
+  deleting the subject but leaving the trailer commits a trailer-only message
+  instead of aborting.
 - The same session's trailer is never added twice (amend, merge, squash, a
   `workit git commit`); another session amending a commit adds its own, as
   `workit git commit --amend` does.
@@ -88,13 +89,15 @@ and how to fix it.
   only into an empty `prepare-commit-msg` slot or over Workit's own older
   hook. Another tool's hook there is never renamed or edited: `--fix` still
   writes the helper, and the check names the one line to add yourself, which
-  runs the same helper:
-  `sh "$(git rev-parse --git-common-dir)/workit/session-trailer.sh" "$@" || true`.
+  runs the same helper and does nothing (silently) in a clone without it, so
+  a committed husky hook does not bother teammates who never ran `--fix`:
+  `h="$(git rev-parse --git-common-dir 2>/dev/null)/workit/session-trailer.sh"; [ ! -f "$h" ] || sh "$h" "$@" || true`.
   With husky 9 it goes in `.husky/prepare-commit-msg`; with husky 4-8, in the
   hook itself. With lefthook, once it manages `prepare-commit-msg`, the check
   prints a job to merge into that hook's `jobs:` list (arguments
-  `{1} {2} {3}`). A `lefthook install` that does not manage that slot leaves
-  the Workit hook in place.
+  `{1} {2} {3}`). Once the line is there, the check passes and names who
+  runs it. A `lefthook install` that does not manage that slot leaves the
+  Workit hook in place.
 - No hook is written when the hooks directory is outside the repository (a
   global `core.hooksPath`) or in the working tree without being ignored; the
   check gives the line to add by hand.

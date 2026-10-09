@@ -183,6 +183,13 @@ test("Given another tool's prepare-commit-msg hook, When `workit doctor --fix` r
     `add this line to ${hook} (a new file needs \`#!/bin/sh\` as its first line and \`chmod +x\`): ${manualTrailerLine()}`,
   );
   expect(existsSync(path.join(box.work, ".git", "workit", "session-trailer.sh"))).toBe(true);
+  expect(readFileSync(hook, "utf8")).toBe(theirs);
+  // Once the user adds the line, the check passes.
+  writeFileSync(hook, `${theirs}${manualTrailerLine()}\n`);
+  expect(check(doctor(box).report, "session_hook")).toMatchObject({
+    status: "pass",
+    detail: `${hook} adds the Workit-Session trailer to plain git commits (via existing hook)`,
+  });
   // Without --fix in a fresh repo, the check first names --fix for the helper.
   const plain = sandbox();
   const plainHook = gitRepo(plain);
@@ -191,7 +198,6 @@ test("Given another tool's prepare-commit-msg hook, When `workit doctor --fix` r
   expect(check(doctor(plain).report, "session_hook").fix).toStartWith(
     `workit doctor --fix (writes ${path.join(plain.work, ".git", "workit", "session-trailer.sh")}), then add this line to ${plainHook}`,
   );
-  expect(readFileSync(hook, "utf8")).toBe(theirs);
 }, 30_000);
 
 test("Given a git repository that is not a Workit workspace, When `workit doctor --fix` runs, Then nothing is installed", () => {

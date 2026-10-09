@@ -15,7 +15,9 @@
 // - Where: `git rev-parse --git-path hooks`, so core.hooksPath is honoured.
 //   Workit writes only an empty slot or its own hook. Another tool's hook in
 //   the slot (husky, lefthook, a hand-written one) is never renamed, wrapped or
-//   edited: the state is `blocked` and `manual` names the line to add there.
+//   edited: the state is `blocked` and `manual` names the line to add there;
+//   once that hook (or husky script, or lefthook config) runs the helper, the
+//   state is `manual`.
 //   A hooks directory outside the repository (a global core.hooksPath), or one
 //   in the working tree that git does not ignore, gets no hook either.
 // - The session comes from the same variables as host-session.ts: WORKIT_SESSION_ID
@@ -55,7 +57,8 @@ export const SESSION_TRAILER_SCRIPT = `#!/bin/sh
 # \`workit doctor --fix\`. A prepare-commit-msg hook runs it with its own
 # arguments to add a Workit-Session trailer to commits made in an agent session.
 # Not a hook itself; delete it together with the line that runs it.
-case "\${2-}" in "" | template) exit 0 ;; esac
+# lefthook passes a missing argument as its literal placeholder.
+case "\${2-}" in "" | "{2}" | template) exit 0 ;; esac
 gitdir=$(git rev-parse --git-dir) || exit 0
 if [ -d "$gitdir/rebase-merge" ] || [ -d "$gitdir/rebase-apply" ] || [ -f "$gitdir/CHERRY_PICK_HEAD" ]; then
   exit 0
@@ -90,12 +93,17 @@ exit 0
  * The line that runs the helper from a prepare-commit-msg hook. `args` are the
  * hook's own arguments (`"$@"` in a shell hook, `{1} {2} {3}` in lefthook).
  * Hooks run at the top of the work tree, where the relative common dir resolves.
+ * A clone without the helper (a teammate who never ran `--fix`, while the
+ * line sits in a committed husky hook) runs nothing and prints nothing.
  */
 export const manualTrailerLine = (args = '"$@"'): string =>
-  `sh "$(git rev-parse --git-common-dir)/${HELPER.join("/")}" ${args} || true`;
+  `h="$(git rev-parse --git-common-dir 2>/dev/null)/${HELPER.join("/")}"; [ ! -f "$h" ] || sh "$h" ${args} || true`;
+
+/** What marks a hook or config that already runs the helper. */
+const HELPER_REF = HELPER.join("/");
 
 export const SESSION_HOOK_SCRIPT = `#!/bin/sh
-${SESSION_HOOK_MARKER} v3
+${SESSION_HOOK_MARKER} v4
 # Workit (https://github.com/BrainerVirus/workit) installed this hook with
 # \`workit doctor --fix\`: it runs Workit's session-trailer helper, which adds a
 # Workit-Session trailer to commits made in an agent session. To remove it,
@@ -113,7 +121,9 @@ export type SessionHookState =
   /** The slot is empty; --fix installs the hook. */
   | "missing"
   /** --fix will not write the hook; `reason` says why and `manual` what to do instead. */
-  | "blocked";
+  | "blocked"
+  /** Another tool's hook or config already runs the helper (`via`, `manualTarget`). */
+  | "manual";
 
 /** Who owns the slot when it is blocked by another hook. */
 export type HookOwner = "husky" | "lefthook" | "other";
@@ -130,6 +140,10 @@ export type SessionHookStatus = {
   reason?: string;
   /** The manual fix when --fix cannot install the hook. */
   manual?: string;
+  /** Where the manual line goes (or already is): a husky script, a lefthook config, a hook. */
+  manualTarget?: string;
+  /** For `manual`: who runs the helper. */
+  via?: "husky" | "lefthook" | "existing hook";
   /** Files left by the unreleased commit-msg design, with how to recover. */
   leftover?: string;
 };
@@ -200,27 +214,31 @@ type ManualInput = {
   displaced: string | null;
 };
 
-const manualFor = ({ owner, text, hooksDir, hookPath, top, displaced }: ManualInput): string => {
+/** The file the manual line goes in for this owner. */
+const manualTargetOf = ({ owner, text, hooksDir, hookPath, top }: ManualInput): string => {
+  // husky v9 points core.hooksPath at `.husky/_` and runs `.husky/<hook>`
+  // from the stub; husky v4-v8 hooks are the user's files themselves.
+  if (owner === "husky" && isHuskyV9(text, hooksDir))
+    return path.join(path.dirname(hooksDir), SESSION_HOOK_NAME);
+  if (owner === "lefthook") return lefthookConfig(top) ?? path.join(top, "lefthook.yml");
+  return hookPath;
+};
+
+const manualFor = (input: ManualInput): string => {
+  const { owner, displaced } = input;
+  const target = manualTargetOf(input);
   const stale = displaced ? `; delete the stale ${displaced} (nothing runs it)` : "";
-  if (owner === "husky") {
-    // husky v9 points core.hooksPath at `.husky/_` and runs `.husky/<hook>`
-    // from the stub; husky v4-v8 hooks are the user's files themselves.
-    const script = isHuskyV9(text, hooksDir)
-      ? path.join(path.dirname(hooksDir), SESSION_HOOK_NAME)
-      : hookPath;
-    return `add this line to ${script} (create it if missing; husky runs it)${stale}: ${manualTrailerLine()}`;
-  }
-  if (owner === "lefthook") {
-    const config = lefthookConfig(top) ?? path.join(top, "lefthook.yml");
+  if (owner === "husky")
+    return `add this line to ${target} (create it if missing; husky runs it)${stale}: ${manualTrailerLine()}`;
+  if (owner === "lefthook")
     return [
-      `merge this job into ${config} (add it to an existing \`${SESSION_HOOK_NAME}:\` \`jobs:\` list rather than a second \`${SESSION_HOOK_NAME}:\` key), then run \`lefthook install\`${stale}:`,
+      `merge this job into ${target} (add it to an existing \`${SESSION_HOOK_NAME}:\` \`jobs:\` list rather than a second \`${SESSION_HOOK_NAME}:\` key), then run \`lefthook install\`${stale}:`,
       `${SESSION_HOOK_NAME}:`,
       "  jobs:",
       "    - name: workit-session",
       `      run: ${manualTrailerLine("{1} {2} {3}")}`,
     ].join("\n");
-  }
-  return `add this line to ${hookPath} (a new file needs \`#!/bin/sh\` as its first line and \`chmod +x\`)${stale}: ${manualTrailerLine()}`;
+  return `add this line to ${target} (a new file needs \`#!/bin/sh\` as its first line and \`chmod +x\`)${stale}: ${manualTrailerLine()}`;
 };
 
 const leftoverOf = (hooksDir: string): string | undefined => {
@@ -257,15 +275,28 @@ export function inspectSessionHook(
   const helperCurrent = readText(helperPath) === SESSION_TRAILER_SCRIPT;
   const leftover = leftoverOf(hooksDir);
   const base = { hooksDir, hookPath, helperPath, helperCurrent, ...(leftover ? { leftover } : {}) };
-  const blocked = (reason: string, owner: HookOwner, text = "") => {
+  const blocked = (reason: string, owner: HookOwner, text = ""): SessionHookStatus => {
     const old = `${hookPath}.old`;
     const displaced = readText(old)?.includes(SESSION_HOOK_MARKER) ? old : null;
+    const input = { owner, text, hooksDir, hookPath, top: top.out, displaced };
+    const manualTarget = manualTargetOf(input);
+    const owned = text ? { owner } : {};
+    // The user already added the line where it belongs.
+    if (readText(manualTarget)?.includes(HELPER_REF))
+      return {
+        state: "manual",
+        ...base,
+        ...owned,
+        manualTarget,
+        via: owner === "other" ? "existing hook" : owner,
+      };
     return {
-      state: "blocked" as const,
+      state: "blocked",
       ...base,
-      ...(text ? { owner } : {}),
+      ...owned,
       reason: displaced ? `${reason} (Workit's earlier hook was moved to ${old})` : reason,
-      manual: manualFor({ owner, text, hooksDir, hookPath, top: top.out, displaced }),
+      manual: manualFor(input),
+      manualTarget,
     };
   };
   if (!inside(hooksDir, commonDir) && !inside(hooksDir, top.out))
@@ -352,6 +383,13 @@ export function installSessionHook(
       helperWritten,
       status,
       detail: `hook already at ${status.hookPath}`,
+    };
+  if (status.state === "manual")
+    return {
+      action: "unchanged",
+      helperWritten,
+      status: inspectSessionHook(cwd, env),
+      detail: `${status.manualTarget} already runs the helper (via ${status.via})${helper}`,
     };
   if (status.state === "blocked")
     return {

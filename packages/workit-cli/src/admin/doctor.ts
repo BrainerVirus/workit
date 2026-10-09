@@ -2036,6 +2036,18 @@ const sessionHookFinding = (hook: SessionHookStatus): Omit<DoctorCheck, "id"> =>
         status: "pass",
         detail: `${slot} ${hook.hookPath} adds the Workit-Session trailer to plain git commits`,
       };
+    case "manual":
+      // The line runs nothing until the helper exists.
+      return hook.helperCurrent
+        ? {
+            status: "pass",
+            detail: `${hook.manualTarget} adds the Workit-Session trailer to plain git commits (via ${hook.via})`,
+          }
+        : {
+            status: "warn",
+            detail: `${hook.manualTarget} runs the Workit helper (via ${hook.via}), but ${hook.helperPath} is missing or an older version`,
+            fix: SESSION_HOOK_FIX,
+          };
     case "missing":
       return {
         status: "warn",
