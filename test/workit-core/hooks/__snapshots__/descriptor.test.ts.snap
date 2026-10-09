@@ -144,7 +144,7 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
       "perTurn": "native",
       "sessionStart": "native",
       "task": "session-bound",
-      "turnResend": "every-turn",
+      "turnResend": "on-change",
     },
     "docs": [
       "https://code.claude.com/docs/en/hooks",

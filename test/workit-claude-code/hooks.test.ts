@@ -26,6 +26,25 @@ import {
 import { installedPlugin, outputProblem, PLUGIN_DIR, runHook } from "./plugin-helpers";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { recordDecision } from "@/packages/workit-core/src/ledger";
+import { resolveStore } from "@/packages/workit-core/src/store/paths";
+
+/** Moves `taskId` forward, which changes its compact context. */
+const progress = (root: string, taskId: string, nextAction: string) => {
+  const done = new WorkitCore(new TaskStore(root), {
+    root,
+    caller: { host: "workit_cli", actor: "cli" },
+    callerAttested: true,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-02T00:00:00Z",
+  }).task({
+    schemaVersion: 1,
+    action: "progress",
+    taskId,
+    progress: { summary: "progress", nextAction, blockers: [] },
+  });
+  if (!done.ok) throw new Error(done.error);
+};
 
 const FIXTURES = path.resolve(import.meta.dir, "../fixtures/hooks/claude-code");
 const NAMES = readdirSync(FIXTURES).map((name) => name.replace(/\.json$/, ""));
@@ -189,35 +208,40 @@ test("given SessionStart source compact, context is restored with the Claude add
 
 test("given an unchanged task, UserPromptSubmit re-injects context only when it changed, never right after SessionStart", () => {
   const cwd = root();
-  const data = mkdtempSync(path.join(tmpdir(), "workit-claude-data-"));
-  roots.push(data);
-  const env = { CLAUDE_PLUGIN_DATA: data };
   const turn = () =>
-    runHook(PLUGIN_DIR, fixture("claude-code", "user-prompt-submit", cwd), env).json as Specific;
+    runHook(PLUGIN_DIR, fixture("claude-code", "user-prompt-submit", cwd)).json as Specific;
   const start = (source: string) =>
-    runHook(PLUGIN_DIR, fixture("claude-code", "session-start-compact", cwd, { source }), env)
+    runHook(PLUGIN_DIR, fixture("claude-code", "session-start-compact", cwd, { source }))
       .json as Specific;
   // No task bound: nothing to inject.
   expect(turn()).toEqual({});
-  startTask(cwd, { host: "claude_code", actor: "claude-session-1" }, "per-turn task");
+  const id = startTask(cwd, { host: "claude_code", actor: "claude-session-1" }, "per-turn task");
   // The task appeared after the session started: the next turn carries it once.
   expect(turn().hookSpecificOutput?.additionalContext).toContain("per-turn task");
   expect(turn()).toEqual({});
-  // SessionStart (startup or compaction restore) injects the context itself,
-  // so the first turn after it does not resend it.
+  // The task context changed: the next turn carries it, once.
+  progress(cwd, id, "write the parser test");
+  expect(turn().hookSpecificOutput?.additionalContext).toContain("write the parser test");
+  expect(turn()).toEqual({});
+  // SessionStart (startup or compaction restore) injects the context itself
+  // and reseeds the digest: the context changed since the last turn, yet the
+  // first turn after it does not resend it.
   for (const source of ["startup", "compact"]) {
-    expect(start(source).hookSpecificOutput?.additionalContext).toContain("per-turn task");
+    progress(cwd, id, `next after ${source}`);
+    expect(start(source).hookSpecificOutput?.additionalContext).toContain(`next after ${source}`);
     expect(turn(), source).toEqual({});
   }
-  // Caches of sessions untouched for a week are pruned on the next start.
-  const ctx = path.join(data, "ctx");
-  const stale = path.join(ctx, "old-session.json");
+  // Digests of sessions untouched for a week are pruned on the next start.
+  const location = resolveStore(cwd);
+  if (location instanceof Error) throw location;
+  const hooks = path.join(location.dir, "hooks");
+  const stale = path.join(hooks, "turn-old-session.json");
   writeFileSync(stale, '{"digest":"x"}\n');
   const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
   utimesSync(stale, eightDaysAgo, eightDaysAgo);
   start("startup");
   expect(existsSync(stale)).toBe(false);
-  expect(readdirSync(ctx)).toHaveLength(1);
+  expect(readdirSync(hooks).filter((name) => name.startsWith("turn-"))).toHaveLength(1);
 });
 
 test("a protected-branch deny is structured JSON on stdout with exit 0 and nothing on stderr", async () => {
