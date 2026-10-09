@@ -92,14 +92,14 @@ export type SessionHookStatus = {
   reason?: string;
 };
 
-const run = (cwd: string, args: string[]) => {
+const run = (cwd: string, args: string[], env: NodeJS.ProcessEnv) => {
   const r = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
     timeout: GIT_TIMEOUTS.local,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    env: { ...env, GIT_TERMINAL_PROMPT: "0" },
   });
   return { ok: r.status === 0, out: (r.stdout ?? "").trim() };
 };
@@ -127,18 +127,19 @@ const exists = (file: string): boolean => {
 };
 
 /** Where the commit-msg hook of the repository at `cwd` lives, and what it is. */
-export function inspectSessionHook(cwd: string): SessionHookStatus {
+export function inspectSessionHook(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): SessionHookStatus {
   const none = { hooksDir: null, hookPath: null, chained: null };
   if (!existsSync(cwd)) return { state: "not_git", ...none };
-  const top = run(cwd, ["rev-parse", "--show-toplevel"]);
+  const top = run(cwd, ["rev-parse", "--show-toplevel"], env);
   if (!top.ok || !top.out) return { state: "not_git", ...none };
-  const paths = run(cwd, [
-    "rev-parse",
-    "--path-format=absolute",
-    "--git-common-dir",
-    "--git-path",
-    "hooks",
-  ]);
+  const paths = run(
+    cwd,
+    ["rev-parse", "--path-format=absolute", "--git-common-dir", "--git-path", "hooks"],
+    env,
+  );
   const [commonDir, hooksDir] = paths.out.split(/\r?\n/);
   if (!paths.ok || !commonDir || !hooksDir) return { state: "not_git", ...none };
   const hookPath = path.join(hooksDir, "commit-msg");
@@ -155,13 +156,13 @@ export function inspectSessionHook(cwd: string): SessionHookStatus {
     // A hooks directory in the working tree (husky, a committed .githooks):
     // Workit's files must neither replace a tracked hook nor show up as new files.
     const rel = path.relative(top.out, hookPath).split(path.sep).join("/");
-    if (run(top.out, ["ls-files", "--error-unmatch", "--", rel]).ok)
+    if (run(top.out, ["ls-files", "--error-unmatch", "--", rel], env).ok)
       return {
         state: "blocked",
         ...base,
         reason: `${hookPath} is tracked by git; moving it would change the repository`,
       };
-    if (!run(top.out, ["check-ignore", "-q", "--", rel]).ok)
+    if (!run(top.out, ["check-ignore", "-q", "--", rel], env).ok)
       return {
         state: "blocked",
         ...base,
@@ -193,8 +194,11 @@ export type SessionHookInstall = {
  * that `cwd` is a Workit workspace; this never overwrites a hook that is not
  * Workit's.
  */
-export function installSessionHook(cwd: string): SessionHookInstall {
-  const status = inspectSessionHook(cwd);
+export function installSessionHook(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): SessionHookInstall {
+  const status = inspectSessionHook(cwd, env);
   const write = (file: string) => {
     writeFileSync(file, SESSION_HOOK_SCRIPT, { mode: 0o755 });
     chmodSync(file, 0o755);
@@ -217,7 +221,7 @@ export function installSessionHook(cwd: string): SessionHookInstall {
       write(status.hookPath!);
       return {
         action: "updated",
-        status: inspectSessionHook(cwd),
+        status: inspectSessionHook(cwd, env),
         detail: `rewrote the Workit commit-msg hook at ${status.hookPath}`,
       };
     case "missing":
@@ -225,7 +229,7 @@ export function installSessionHook(cwd: string): SessionHookInstall {
       write(status.hookPath!);
       return {
         action: "installed",
-        status: inspectSessionHook(cwd),
+        status: inspectSessionHook(cwd, env),
         detail: `installed the Workit commit-msg hook at ${status.hookPath}`,
       };
     case "foreign": {
@@ -237,7 +241,7 @@ export function installSessionHook(cwd: string): SessionHookInstall {
       renameSync(staged, status.hookPath!);
       return {
         action: "chained",
-        status: inspectSessionHook(cwd),
+        status: inspectSessionHook(cwd, env),
         detail: `moved the existing commit-msg hook to ${chained} (it runs first) and installed the Workit hook at ${status.hookPath}`,
       };
     }
