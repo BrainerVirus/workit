@@ -1,10 +1,19 @@
 // workit doctor host checks on scratch homes: Codex plugin hook trust and
 // agents (codex-cli 0.160.1), and the Pi extension (pi-coding-agent 0.85.1).
 import { afterAll, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runDoctor, type DoctorCheck } from "@/packages/workit-cli/src/admin/doctor";
+import { installCodexAgents } from "@/packages/workit-codex/scripts/agents";
 import cliPkg from "@/packages/workit-cli/package.json" with { type: "json" };
 
 const repo = path.resolve(import.meta.dir, "../..");
@@ -71,6 +80,7 @@ const codexInstall = (
   mkdirSync(path.join(root, ".codex-plugin"), { recursive: true });
   mkdirSync(path.join(root, "hooks"), { recursive: true });
   writeFileSync(path.join(root, ".codex-plugin", "plugin.json"), '{"name":"workit"}');
+  writeFileSync(path.join(root, "package.json"), '{"version":"8.5.2"}');
   writeFileSync(path.join(root, "hooks", "hooks.json"), JSON.stringify(HOOKS));
   if (opts.agents !== false)
     cpSync(path.join(repo, "packages/workit-codex/agents"), path.join(root, "agents"), {
@@ -96,15 +106,25 @@ test("Given no Workit Codex plugin, When doctor runs, Then the Codex checks pass
   expect(check(report, "codex_hooks").detail).toContain("skipping");
 });
 
-test("Given the Codex plugin hooks untrusted, When doctor runs, Then it warns with /hooks and the exact trust settings Codex records", () => {
-  const { home, cwd, codexHome } = codexInstall();
+// Trust goes through Codex's own review: the fix never offers config lines to
+// paste (a second [hooks.state."…"] table is a duplicate key that breaks config.toml).
+const expectReviewFix = (fix: string | undefined) => {
+  expect(fix).toContain("run `/hooks`");
+  expect(fix).toContain('"Trust all and continue"');
+  expect(fix).not.toContain("trusted_hash");
+  expect(fix).not.toContain("hooks.state");
+  expect(fix).not.toContain("sha256:");
+  expect(fix).not.toContain("config.toml");
+};
+
+test("Given the Codex plugin hooks untrusted, When doctor runs, Then it names them and points to Codex's /hooks review", () => {
+  const { home, cwd } = codexInstall();
   const hooks = check(doctor(home, cwd), "codex_hooks");
   expect(hooks.status).toBe("warn");
-  expect(hooks.detail).toContain("6 of 6 hooks untrusted");
-  expect(hooks.fix).toContain("run `/hooks`");
-  expect(hooks.fix).toContain(path.join(codexHome, "config.toml"));
-  for (const [event, hash] of Object.entries(OBSERVED))
-    expect(hooks.fix).toContain(`[hooks.state."${key(event)}"]\ntrusted_hash = "${hash}"`);
+  expect(hooks.detail).toContain(
+    "6 of 6 hooks untrusted (session_start, user_prompt_submit, pre_tool_use, post_tool_use, subagent_start, subagent_stop)",
+  );
+  expectReviewFix(hooks.fix);
 });
 
 test("Given every Codex plugin hook trusted with Codex's own hash, When doctor runs, Then it passes", () => {
@@ -121,13 +141,14 @@ test("Given a hook trusted under an older definition or disabled, When doctor ru
   const modified = check(doctor(changed.home, changed.cwd), "codex_hooks");
   expect(modified.status).toBe("warn");
   expect(modified.detail).toContain("1 of 6 hooks changed since trusted (pre_tool_use)");
-  expect(modified.fix).toContain(`trusted_hash = "${OBSERVED.pre_tool_use}"`);
+  expectReviewFix(modified.fix);
   const { session_start: _, ...rest } = OBSERVED;
   const off = codexInstall({ trust: rest, disabled: ["session_start"] });
   const disabled = check(doctor(off.home, off.cwd), "codex_hooks");
   expect(disabled.status).toBe("warn");
   expect(disabled.detail).toContain("hooks disabled (session_start)");
   expect(disabled.fix).toContain("enable and trust");
+  expectReviewFix(disabled.fix);
 });
 
 test("Given the plugin's agents not yet in the Codex home, When doctor runs, Then it warns with the install command; installed copies pass", () => {
@@ -138,10 +159,26 @@ test("Given the plugin's agents not yet in the Codex home, When doctor runs, The
   expect(missing.fix).toBe(
     `node ${JSON.stringify(path.join(root, "dist", "launch-mcp.js"))} --install-agents, then start a new Codex session`,
   );
-  cpSync(path.join(root, "agents"), path.join(codexHome, "agents"), { recursive: true });
+  // What the MCP launcher writes (version-stamped markers) is what the doctor expects.
+  installCodexAgents(root, codexHome);
   const ok = check(doctor(home, cwd), "codex_agents");
   expect(ok.status, ok.detail).toBe("pass");
   expect(ok.detail).toContain("workit-implementer, workit-reviewer, workit-verifier");
+  // A copy a newer plugin version wrote is fine; an unversioned old copy is outdated.
+  const verifier = path.join(codexHome, "agents", "workit-verifier.toml");
+  const stamped = readFileSync(verifier, "utf8");
+  writeFileSync(verifier, stamped.replace("Workit 8.5.2 ", "Workit 99.0.0 "));
+  expect(check(doctor(home, cwd), "codex_agents").status).toBe("pass");
+  writeFileSync(verifier, stamped.replace("Workit 8.5.2 ", "Workit "));
+  const outdated = check(doctor(home, cwd), "codex_agents");
+  expect(outdated.detail).toContain(`${verifier} outdated`);
+  rmSync(verifier);
+  symlinkSync(path.join(home, "elsewhere.toml"), verifier);
+  const linked = check(doctor(home, cwd), "codex_agents");
+  expect(linked.status).toBe("warn");
+  expect(linked.detail).toContain(`${verifier} is a symlink`);
+  rmSync(verifier);
+  installCodexAgents(root, codexHome);
   writeFileSync(
     path.join(codexHome, "agents", "workit-reviewer.toml"),
     'name = "workit-reviewer"\n',
@@ -241,6 +278,19 @@ test("Given a Workit Pi package older than workit, When doctor runs, Then it war
   expect(newest.status, newest.detail).toBe("pass");
 });
 
+test("Given an older Workit Pi package and an unreachable registry, When doctor runs, Then it passes and says the registry was unreachable", () => {
+  const old = older(cliPkg.version);
+  const { home, cwd } = piHome({ entry: `npm:${PI}`, version: old });
+  const pi = check(
+    doctor(home, cwd, { WORKIT_DOCTOR_STALE_REGISTRY_CMD: "/nonexistent/npm" }),
+    "pi_extension",
+  );
+  expect(pi.status, pi.detail).toBe("pass");
+  expect(pi.detail).toContain("registry unreachable");
+  expect(pi.detail).not.toContain("stale");
+  expect(pi.fix).toBeUndefined();
+});
+
 test("Given the Workit Pi extension filtered out or not built, When doctor runs, Then it warns not loading with the fix", () => {
   for (const extensions of [[], ["!dist/*"], ["-dist/workit.js"], ["other.js"]]) {
     const { home, cwd } = piHome({
@@ -286,4 +336,13 @@ test("Given a local-path Pi install of the checkout, When doctor runs, Then it i
   expect(unbuilt.fix).toBe(`cd ${JSON.stringify(checkout)} && bun run build`);
   writeFileSync(path.join(checkout, "dist", "workit.js"), "export default () => {};\n");
   expect(check(doctor(home, cwd), "pi_extension").status).toBe("pass");
+  // A checkout older than workit has no registry evidence of staleness: it passes.
+  const old = older(cliPkg.version);
+  writeFileSync(
+    path.join(checkout, "package.json"),
+    JSON.stringify({ name: PI, version: old, pi: { extensions: ["./dist/workit.js"] } }),
+  );
+  const behind = check(doctor(home, cwd), "pi_extension");
+  expect(behind.status, behind.detail).toBe("pass");
+  expect(behind.detail).toContain("not compared with the registry");
 });

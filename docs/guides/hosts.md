@@ -186,19 +186,20 @@ session. Their instructions come from the same source as the Claude Code
 agents. The verifier and reviewer run in a read-only sandbox, so they ask you
 to approve `workit check` and `workit ledger verdict`; the implementer never
 records a verdict. A file of the same name that you wrote yourself is never
-overwritten.
+overwritten, nor is a symlink, nor a copy written by a newer plugin version
+(each copy's first line names the plugin version that wrote it).
 
 Codex runs plugin hooks only after you trust them: run `/hooks` in Codex, or
 pick "Trust all and continue" when Codex asks you to review hooks at startup.
-`workit doctor` checks both:
+Trust them there, not by editing `config.toml` by hand: Codex's review shows
+what each hook runs, and a hand-added trust entry that duplicates one Codex
+already wrote breaks `config.toml`. `workit doctor` checks both:
 
 - `codex_hooks` warns when a workit hook is untrusted, changed since you
-  trusted it, or disabled. The fix names `/hooks` and prints the exact
-  `[hooks.state."workit@<marketplace>:hooks/hooks.json:<event>:0:0"]`
-  `trusted_hash = "sha256:…"` lines that Codex itself records in
-  `~/.codex/config.toml`.
+  trusted it, or disabled, and names the hooks. The fix is `/hooks` (or the
+  startup "Trust all and continue").
 - `codex_agents` warns when the agents are missing or outdated in
-  `~/.codex/agents/`. The fix is
+  `~/.codex/agents/`, or when one of them is a symlink. The fix is
   `node "<plugin root>/dist/launch-mcp.js" --install-agents`, then a new
   Codex session. A plugin too old to bundle agents gets
   `codex plugin remove workit@<marketplace> && codex plugin add workit@<marketplace>`.
@@ -230,7 +231,9 @@ reads the `packages` in `~/.pi/agent/settings.json` and `.pi/settings.json`
   `cd <checkout> && bun run build`.
 - stale: the package is older than the workit CLI and a newer one is
   published. Fix: `pi update npm:@brainervirus/workit-pi`, or
-  `pi install npm:@brainervirus/workit-pi@<version>` for a pinned entry.
+  `pi install npm:@brainervirus/workit-pi@<version>` for a pinned entry. When
+  the registry is unreachable, or the entry is a local checkout, an older
+  package passes and the detail says it was not compared.
 
 ## Read-only context
 

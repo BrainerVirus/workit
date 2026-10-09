@@ -2,18 +2,33 @@
 // in the plugin's agents/ dir, and copied into the Codex home by the MCP
 // launcher because codex-cli 0.160.1 plugins cannot register agents.
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   CODEX_AGENT_MARKER,
   CODEX_AGENT_ROLES,
+  agentMarkerVersion,
   codexAgentFile,
   codexHomeFor,
   codexHomeOfInstall,
   installCodexAgents,
   renderCodexAgents,
+  stampCodexAgent,
 } from "@/packages/workit-codex/scripts/agents";
+import { syncCodexAgents } from "@/packages/workit-codex/scripts/launch-mcp";
 
 const repo = path.resolve(import.meta.dir, "../..");
 const packageRoot = path.join(repo, "packages/workit-codex");
@@ -107,12 +122,102 @@ test("Given a Codex home, When the agents install, Then missing files are writte
     "workit-reviewer.toml": "kept-user-file",
     "workit-verifier.toml": "updated",
   });
+  const version = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")).version;
   expect(readFileSync(verifier, "utf8")).toBe(
-    readFileSync(path.join(packageRoot, "agents", "workit-verifier.toml"), "utf8"),
+    stampCodexAgent(
+      readFileSync(path.join(packageRoot, "agents", "workit-verifier.toml"), "utf8"),
+      version,
+    ),
   );
+  expect(agentMarkerVersion(readFileSync(verifier, "utf8"))).toBe(version);
   expect(readFileSync(reviewer, "utf8")).toContain("# mine");
+  expect(readdirSync(path.join(codexHome, "agents")).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   const empty = path.join(scratch, "no-agents");
   mkdirSync(empty, { recursive: true });
   expect(installCodexAgents(empty, codexHome)).toEqual([]);
   expect(existsSync(path.join(scratch, "no-agents", "agents"))).toBe(false);
+});
+
+/** A plugin install at `<home>/.codex/plugins/cache/<mkt>/workit/<version>` with the bundled agents. */
+const pluginAt = (name: string, version: string) => {
+  const codexHome = path.join(scratch, name, ".codex");
+  const root = path.join(codexHome, "plugins", "cache", "workflow-toolkit", "workit", version);
+  cpSync(path.join(packageRoot, "agents"), path.join(root, "agents"), { recursive: true });
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ version }));
+  return { codexHome, root, agents: path.join(codexHome, "agents") };
+};
+
+test("Given a dangling symlink where an agent goes, When the agents install, Then nothing is written through it", () => {
+  const { codexHome, root, agents } = pluginAt("symlink", "9.0.0");
+  mkdirSync(agents, { recursive: true });
+  const outside = path.join(scratch, "symlink", "outside.toml");
+  const link = path.join(agents, "workit-verifier.toml");
+  symlinkSync(outside, link);
+  const actions = Object.fromEntries(
+    installCodexAgents(root, codexHome).map((r) => [path.basename(r.file), r.action]),
+  );
+  expect(actions["workit-verifier.toml"]).toBe("skipped-symlink");
+  expect(existsSync(outside)).toBe(false);
+  expect(lstatSync(link).isSymbolicLink()).toBe(true);
+  expect(actions["workit-reviewer.toml"]).toBe("installed");
+});
+
+test("Given two plugin versions, When each installs the agents, Then the older never overwrites the newer's copy", () => {
+  const newer = pluginAt("versions", "9.1.0");
+  const older = path.join(
+    newer.codexHome,
+    "plugins",
+    "cache",
+    "workflow-toolkit",
+    "workit",
+    "9.0.0",
+  );
+  cpSync(path.join(packageRoot, "agents"), path.join(older, "agents"), { recursive: true });
+  writeFileSync(path.join(older, "package.json"), JSON.stringify({ version: "9.0.0" }));
+  installCodexAgents(newer.root, newer.codexHome);
+  const verifier = path.join(newer.agents, "workit-verifier.toml");
+  expect(agentMarkerVersion(readFileSync(verifier, "utf8"))).toBe("9.1.0");
+  expect(installCodexAgents(older, newer.codexHome).map((r) => r.action)).toEqual([
+    "kept-newer-version",
+    "kept-newer-version",
+    "kept-newer-version",
+  ]);
+  expect(agentMarkerVersion(readFileSync(verifier, "utf8"))).toBe("9.1.0");
+  // An unversioned marker is refreshed and stamped; a newer plugin then takes it back.
+  writeFileSync(verifier, `${CODEX_AGENT_MARKER} from an older plugin\nname = "workit-verifier"\n`);
+  const refreshed = installCodexAgents(older, newer.codexHome);
+  expect(refreshed.find((r) => r.file === verifier)?.action).toBe("updated");
+  expect(agentMarkerVersion(readFileSync(verifier, "utf8"))).toBe("9.0.0");
+  const retaken = installCodexAgents(newer.root, newer.codexHome);
+  expect(retaken.find((r) => r.file === verifier)?.action).toBe("updated");
+});
+
+test("Given the MCP launcher sync, When the root is not a Codex install, Then it writes nothing", () => {
+  const home = path.join(scratch, "not-install");
+  const root = path.join(home, "checkout", "workit-codex");
+  cpSync(path.join(packageRoot, "agents"), path.join(root, "agents"), { recursive: true });
+  syncCodexAgents(root);
+  syncCodexAgents(packageRoot);
+  expect(existsSync(path.join(home, "agents"))).toBe(false);
+  expect(existsSync(path.join(home, "checkout", "agents"))).toBe(false);
+  expect(existsSync(path.join(home, ".codex"))).toBe(false);
+});
+
+test("Given the MCP launcher sync, When the Codex agents dir is unwritable, Then it does not throw", () => {
+  if (process.platform === "win32" || process.getuid?.() === 0) return;
+  const { codexHome, root, agents } = pluginAt("unwritable", "9.0.0");
+  mkdirSync(agents, { recursive: true });
+  chmodSync(agents, 0o500);
+  try {
+    expect(() => syncCodexAgents(root)).not.toThrow();
+    expect(readdirSync(agents)).toEqual([]);
+  } finally {
+    chmodSync(agents, 0o700);
+  }
+  syncCodexAgents(root);
+  expect(readdirSync(path.join(codexHome, "agents")).toSorted()).toEqual([
+    "workit-implementer.toml",
+    "workit-reviewer.toml",
+    "workit-verifier.toml",
+  ]);
 });
