@@ -264,7 +264,7 @@ test("Given the Workit Pi extension filtered out or not built, When doctor runs,
   const unbuilt = piHome({ entry: `npm:${PI}`, version: cliPkg.version, dist: false });
   const pi = check(doctor(unbuilt.home, unbuilt.cwd), "pi_extension");
   expect(pi.detail).toContain("not loading");
-  expect(pi.fix).toBe(`pi install npm:${PI}`);
+  expect(pi.fix).toBe(`pi remove npm:${PI} && pi install npm:${PI}`);
 });
 
 test("Given a local-path Pi install of the checkout, When doctor runs, Then it is identified by package name", () => {

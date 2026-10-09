@@ -961,7 +961,10 @@ const checkPiExtension = (res: Resolved): DoctorCheck & { registryProbed?: boole
       id: "pi_extension",
       status: "warn",
       detail: `Workit Pi extension not loading: ${entry.root} ${declared ? `has no ${PI_EXTENSION}` : `does not declare ${PI_EXTENSION} in its pi manifest`}`,
-      fix: entry.npm ? installCmd(entry.scope, `npm:${PI_PACKAGE}`) : rebuild,
+      // npm leaves an installed same-version package as is: remove it first.
+      fix: entry.npm
+        ? `pi remove ${entry.source}${entry.scope === "project" ? " -l" : ""} && ${installCmd(entry.scope, entry.source)}`
+        : rebuild,
     };
   const filter = (entry.filter as { extensions?: unknown } | null)?.extensions;
   if (!piFilterKeeps(filter, PI_EXTENSION))
