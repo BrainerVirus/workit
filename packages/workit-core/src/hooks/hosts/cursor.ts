@@ -59,10 +59,9 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
     "compact.pre": { support: "partial", native: "preCompact" },
     // stop (cursor-agent 2026.09.26): `{"followup_message"}` queues one more
     // user turn; the input carries loop_count and transcript_path, not the
-    // last message. The adapter maps and renders it, but the manifest does
-    // not register it yet: the installer's canonical event list
-    // (workit-cli admin/registration.ts) must add it first.
-    stop: none,
+    // last message (read from transcript_path). Registered with
+    // `loop_limit: 1`, so the continuation's own stop never runs the hook.
+    stop: { support: "native", native: "stop" },
   },
   shellPolicy: { deny: "native", channel: "exit2+json", failClosed: true },
   context: {

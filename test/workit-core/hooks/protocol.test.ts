@@ -58,7 +58,7 @@ const PARITY: Record<
     "subagent.start": "subagentStart",
     "subagent.stop": "subagentStop",
     "compact.pre": "preCompact",
-    stop: null,
+    stop: "stop",
   },
   opencode: {
     "session.start": null,

@@ -10,10 +10,8 @@ import {
   asksUser,
   claudeCodeAdapter,
   codexAdapter,
-  CURSOR_DESCRIPTOR,
   cursorAdapter,
   dispatchHook,
-  type HostAdapter,
 } from "@/packages/workit-core/src/hooks/index";
 import {
   appendHookObserved,
@@ -235,15 +233,6 @@ test("G Codex Stop, W an unmet obligation, T decision block; stop_hook_active al
   expect(stop({ last_assistant_message: "Want me to push?" })).toEqual({});
 });
 
-/** Cursor's adapter with `stop` registered (the shipped manifest does not register it yet). */
-const cursorWithStop: HostAdapter = {
-  ...cursorAdapter,
-  descriptor: {
-    ...CURSOR_DESCRIPTOR,
-    events: { ...CURSOR_DESCRIPTOR.events, stop: { support: "native", native: "stop" } },
-  },
-};
-
 test("G Cursor stop, W an unmet obligation and a transcript, T followup_message once; loop_count, a question or no transcript allow", () => {
   const root = repo("pr");
   commit(root, "a.txt", "cursor-conv-1");
@@ -259,16 +248,11 @@ test("G Cursor stop, W an unmet obligation and a transcript, T followup_message 
     );
   const stop = (extra: Record<string, unknown> = {}) =>
     dispatchHook(
-      cursorWithStop,
+      cursorAdapter,
       fixture("cursor", "stop", root, { transcript_path: transcript, ...extra }),
     ).json;
   say("Committed the change.");
   expect(stop()).toEqual({ followup_message: expect.stringContaining("workit git push") });
-  // The shipped descriptor does not register stop yet: never answered.
-  expect(
-    dispatchHook(cursorAdapter, fixture("cursor", "stop", root, { transcript_path: transcript }))
-      .json,
-  ).toEqual({});
   expect(stop({ loop_count: 1 })).toEqual({});
   expect(stop({ status: "aborted" })).toEqual({});
   expect(stop({ transcript_path: null })).toEqual({});
