@@ -196,11 +196,24 @@ test("Given the MCP launcher sync, When the root is not a Codex install, Then it
   const home = path.join(scratch, "not-install");
   const root = path.join(home, "checkout", "workit-codex");
   cpSync(path.join(packageRoot, "agents"), path.join(root, "agents"), { recursive: true });
-  syncCodexAgents(root);
-  syncCodexAgents(packageRoot);
+  // A gate that fell back to the environment's Codex home would write here
+  // (and, outside a test, into the user's real ~/.codex).
+  const envHome = path.join(scratch, "not-install-env-home");
+  const saved = { HOME: process.env.HOME, CODEX_HOME: process.env.CODEX_HOME };
+  process.env.HOME = envHome;
+  process.env.CODEX_HOME = path.join(envHome, ".codex");
+  try {
+    syncCodexAgents(root);
+    syncCodexAgents(packageRoot);
+  } finally {
+    for (const [key, value] of Object.entries(saved))
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+  }
   expect(existsSync(path.join(home, "agents"))).toBe(false);
   expect(existsSync(path.join(home, "checkout", "agents"))).toBe(false);
   expect(existsSync(path.join(home, ".codex"))).toBe(false);
+  expect(existsSync(envHome)).toBe(false);
 });
 
 test("Given the MCP launcher sync, When the Codex agents dir is unwritable, Then it does not throw", () => {
