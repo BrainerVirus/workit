@@ -864,8 +864,8 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
         "support": "native",
       },
       "stop": {
-        "native": "stop",
-        "support": "native",
+        "native": null,
+        "support": "none",
       },
       "subagent.start": {
         "native": "subagentStart",

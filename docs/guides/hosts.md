@@ -30,6 +30,9 @@ workspace (a repository with a Workit store, or one `workspaces.json` matches):
   run instead: `workit pr merge`, `workit git push [--force-with-lease]`.
 - `git commit`, a feature-branch `git push`, `gh pr create|view|checks` and
   `glab mr create|view` run, with a one-line nudge naming the workit verb.
+  Each kind of nudge (commit, amend, push, force push, PR create, PR read)
+  shows once per session; a command that also runs a workit verb (`gh pr view
+  4 && workit pr merge --pr 4`) gets none. Denies are not throttled.
   Read-only git (`status`, `log`, `diff`, `fetch`) gets nothing.
 - A raw `git commit` (or `--amend`) is recorded as the session's
   `commit.recorded` ledger row, so that session's own verdict is never
@@ -69,12 +72,49 @@ Workit workspace, in a main session (never a subagent):
 - A delivery command (`git push`, `gh pr create|merge`, `glab mr
   create|merge`, `workit pr create|merge`, `workit ci wait`, `workit git
   push`) gets one line naming workit-ship, on every host's shell hook.
+- A prompt that relays another agent's words (a subagent hand-back, a
+  teammate message, a task notification) is never nudged: only the user's own
+  words route.
 - Each nudge fires at most once per session, and never once the session
   loaded the skill. A load is recorded as a `skill.loaded` ledger row: Claude
   Code's Skill tool and `/wk-*` commands, OpenCode's skill tool and `/wk-*`
   commands, and a read of the skill's `SKILL.md` (Codex and Cursor shell
   reads, Pi's read tool and `/skill:`). `workit ledger list --type
   skill.loaded` shows which skills sessions used; `/wk-retro` reads it.
+
+**Stop control.** When the main agent ends its turn with an obligation the
+ledger or git can prove unmet, the host continues it once with a message
+naming the obligation and the workit command that clears it:
+
+- a commit of this session not on the push remote while the workspace's
+  effective endpoint (`workit grant show`) is `pr`, `green` or `merged`:
+  `workit git push`;
+- the branch's open PR with checks recorded failing or pending at its head
+  while the endpoint is `green` or `merged`: `workit ci wait --pr <n>`;
+- a PR this session opened (or a delivery it verified) whose head has no
+  accepted non-author verdict: hand it to a verifier that did not author it.
+
+The continuation's own stop is always allowed, so an agent that cannot finish
+says so and stops. A stop is never blocked in a subagent, outside a Workit
+workspace, on a protected branch, or when the agent's last message asks the
+user a question (or cannot be read). The check reads the ledger and local git
+only, never the forge, and any failure allows the stop.
+
+| Host | Event | Continue | One per turn |
+| --- | --- | --- | --- |
+| Claude Code | `Stop` | `{"decision":"block","reason"}` | `stop_hook_active` |
+| Codex | `Stop` | `{"decision":"block","reason"}` | `stop_hook_active` |
+| Cursor | `stop` (not registered yet: the adapter is ready, the plugin manifest does not list it) | `{"followup_message"}` (last message read from `transcript_path`) | `loop_count` |
+| Pi | `agent_end` | `pi.sendMessage(…, {triggerTurn: true})` | the extension skips the next `agent_end` |
+| OpenCode | `session.idle` event | `session.synthetic({resume: true})` | the plugin skips the next idle |
+
+**Worktree-isolated Claude Code subagents.** Claude Code's worktree isolation
+refuses any command that wraps git, `workit git …` included, and cannot be
+turned off. A `workit:implementer`, or any agent running in a
+`.claude/worktrees/` checkout, is told up front to run git as plain separate
+commands there (`git switch -c`, `git commit --trailer
+"Workit-Session=<session>"`, `git push`) and workit for the non-git verbs
+(`workit check`, `workit ledger`, `workit pr`).
 
 `workit` reads `WORKIT_SESSION_ID` first (set it, even empty, to override),
 then the host's own variable from the table. Cursor puts no conversation id in

@@ -79,20 +79,20 @@ Behavior in S8 (no model change):
 - `session.start` / `context.turn` emit `<workit-contract>` + bootstrap addendum + task context + history offer, reusing hot-path's `sessionCompactContext` / `unfinishedTaskOffer`.
 - `shell.pre` applies branch policy.
 - `subagent.start` emits read-only context. Cursor keeps its worker-assign path behind a descriptor flag.
-- `stop`, `prompt.submit` and `shell.post` are no-ops until S9/S15.
+- `prompt.submit` is a no-op; `shell.post` records raw commits; `stop` continues a turn once on a ledger-provable unmet obligation (`hooks/stop.ts`).
 
 ### 1.3 Host mapping
 
 | Protocol | Claude Code (`hooks/hooks.json`) | Codex (`workit-codex/hooks/workit-hook.ts`) | Cursor (`workit-cursor/hooks/workit-hook.ts`) | OpenCode V2 (`src/v2/plugin.ts`) | Pi (`extensions/workit.ts`) |
 |---|---|---|---|---|---|
 | session.start | `SessionStart` (matcher `startup\|resume\|clear\|compact`) → `hookSpecificOutput.additionalContext`; also append `export WORKIT_HOST=claude_code WORKIT_SESSION_ID=…` to `$CLAUDE_ENV_FILE` | `SessionStart` → `additionalContext` | `sessionStart` → `additional_context` | n/a (per-turn) | `session_start` |
-| context.turn | `UserPromptSubmit` → `additionalContext`, only when the task revision changed (cache in `${CLAUDE_PLUGIN_DATA}/ctx/<session>.json`; each hook is a new process, so the in-memory cache in `session-context.ts` is useless) | undocumented → none | none | `session.hook("context")` → `injectAgentContext` | `before_agent_start` → `{message}` |
+| context.turn | `UserPromptSubmit` → `additionalContext`, only when the task context changed (the core's per-session digest in the workspace store, `hooks/turn-<session hash>.json`; each hook is a new process) | `UserPromptSubmit` → `additionalContext`, resent on change (core) | none | `session.hook("context")` → `injectAgentContext` | `before_agent_start` → `{message}`, resent on change (core) |
 | shell.pre | `PreToolUse` matchers `Bash` (`"if":"Bash(git *)"`) and `PowerShell` (`"if":"PowerShell(git *)"`, Windows) → `permissionDecision:"deny"`, `permissionDecisionReason`. **Never emit `allow`**: it would bypass the user's permission prompt | `PreToolUse` (bash/unified-exec) → deny | `beforeShellExecution` → `{permission:"deny",agent_message}`, exit 2 (**new**) | `permission.hook("evaluate")` → `event.effect="deny"` (`v2/permissions.ts`) | `tool_call` bash → `{block,reason}` (exists) |
 | shell.post | `PostToolUse` matcher `Bash`, `"if":"Bash(workit *)"`, input has `tool_response` + `agent_id` | undocumented | undocumented | `tool.execute.after` (bash) | `tool_result` |
 | subagent.start | `SubagentStart` (`agent_id`,`agent_type`) → `additionalContext` only | `SubagentStart` | `subagentStart` (can deny) | `tool.execute.before` tool=`subagent` | n/a (supervisor) |
 | subagent.stop | `SubagentStop` (`agent_transcript_path`, `last_assistant_message`) → `decision:"block"` + `reason` to continue | `SubagentStop` | `subagentStop` (no stable id) | `tool.execute.after` | worker protocol |
 | compact.pre | `PreCompact` → none (restore via SessionStart compact) | n/a | `preCompact` → `user_message` | `session.hook("compaction")` → append context | `session_before_compact` |
-| stop | `Stop` → top-level `{"decision":"block","reason":…}` (guard `stop_hook_active`) | undocumented | undocumented | `session.idle` event (partial) | none |
+| stop | `Stop` → top-level `{"decision":"block","reason":…}` (guard `stop_hook_active`) | `Stop` → `{"decision":"block","reason":…}` (guard `stop_hook_active`) | `stop` → `{"followup_message":…}` (guard `loop_count`) | `session.idle` event → `session.synthetic({resume: true})` (partial) | `agent_end` → `sendMessage({triggerTurn: true})` |
 
 Verified from the 2.1.288 binary:
 - Common input: `session_id, transcript_path, cwd, prompt_id?, permission_mode?, agent_id?, agent_type?`.

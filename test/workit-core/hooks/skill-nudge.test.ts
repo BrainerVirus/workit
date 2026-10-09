@@ -189,6 +189,21 @@ test("G a prompt that loads its skill (slash, OpenCode's /wk-* rewrite, Pi's /sk
   });
 });
 
+test("G a prompt that relays another agent's words (hand-back, teammate message, task notification), T no nudge and the nudge stays unspent", async () => {
+  await withProtectedMain(() => {
+    const root = repo();
+    const relayed = [
+      'Another Claude session sent a message while you were working:\n<agent-message from="a65">\nThe parser regressed after the refactor; fix the bug in lexer.ts.\n</agent-message>',
+      'Review done.\n<agent-message from="reviewer-1">the dialog test is flaky and regressed</agent-message>',
+      "[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>\n<summary>verifier: the build is broken</summary>\n</task-notification>",
+      "<task-notification><status>completed</status><result>this is a regression since 8.4</result></task-notification>",
+    ];
+    for (const text of relayed) expect(prompt(root, text), text).toBe("");
+    // The user's own words still route, and the nudge was not spent above.
+    expect(prompt(root, "the dialog test is flaky")).toContain("`workit:debug`");
+  });
+});
+
 test("G a delivery command, T the ship line rides with the raw-git nudge, once per session, and not after workit-ship loads", async () => {
   await withProtectedMain(() => {
     const root = repo();

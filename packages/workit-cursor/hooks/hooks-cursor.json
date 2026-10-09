@@ -31,13 +31,6 @@
         "failClosed": false
       }
     ],
-    "stop": [
-      {
-        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-hook",
-        "loop_limit": 1,
-        "failClosed": false
-      }
-    ],
     "preCompact": [
       {
         "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-hook",
