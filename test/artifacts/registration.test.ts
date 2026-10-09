@@ -362,7 +362,12 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
     "hooks.beforeShellExecution",
     "hooks.subagentStart",
     "hooks.subagentStop",
+    "hooks.stop",
     "hooks.preCompact",
+  ]);
+  // Stop control continues a turn at most once: loop_limit 1.
+  expect((config.hooks as Record<string, unknown>).stop).toEqual([
+    { command: HOOK_COMMAND, loop_limit: 1, failClosed: false },
   ]);
 });
 
@@ -381,6 +386,7 @@ test("mergeCursorHooks is idempotent on canonical input", () => {
       beforeShellExecution: [{ command: HOOK_COMMAND, failClosed: false }],
       subagentStart: [{ command: HOOK_COMMAND, failClosed: false }],
       subagentStop: [{ command: HOOK_COMMAND, failClosed: false }],
+      stop: [{ command: HOOK_COMMAND, loop_limit: 1, failClosed: false }],
       preCompact: [{ command: HOOK_COMMAND, failClosed: false }],
     },
   };
@@ -426,6 +432,13 @@ test("cursorHookDrift flags the legacy fail-closed npx @latest entries an older 
       },
     }),
   ).toEqual(["beforeShellExecution", "subagentStart"]);
+  // A stop hook without loop_limit 1 could continue a turn more than once.
+  expect(
+    cursorHookDrift({
+      version: 1,
+      hooks: { stop: [{ command: HOOK_COMMAND, failClosed: false }] },
+    }),
+  ).toEqual(["stop"]);
 });
 
 test("cursorMcpServerEntry launches the published package via npx", () => {
@@ -464,6 +477,7 @@ test("a local install's hook entries carry the absolute launcher path, which dri
     "beforeShellExecution",
     "subagentStart",
     "subagentStop",
+    "stop",
     "preCompact",
   ]);
 });

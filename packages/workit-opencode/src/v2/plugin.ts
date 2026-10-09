@@ -24,6 +24,7 @@ import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from 
 import { evaluateShellPermission } from "./permissions";
 import { observeShellBefore, observeShellResult, type ShellWorkdirs } from "./shell";
 import { injectSkillNudge, observeSkillLoad } from "./skills";
+import { createStopControl } from "./stop";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
 
@@ -222,11 +223,18 @@ const setup = async (ctx: Context): Promise<() => void> => {
   });
   const registeredSkills = await registerSkills(ctx as never);
   await registerCommands(ctx as never, registeredSkills);
+  const stopControl = createStopControl(root, {
+    getSession: (sessionID) => sessionFacts(ctx, sessionID),
+    messages: async (sessionID) => await ctx.session.context({ sessionID }),
+    resume: (sessionID, text) =>
+      ctx.session.synthetic({ sessionID, text, delivery: "queue", resume: true }),
+  });
   const subscription = new AbortController();
   void (async () => {
     try {
       for await (const event of ctx.event.subscribe({ signal: subscription.signal })) {
         await lifecycle.handleEvent(event);
+        if (event.type === "session.idle") void stopControl.onIdle(String(event.data.sessionID));
       }
     } catch {
       // Subscription end and abort are normal teardown; event delivery must

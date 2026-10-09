@@ -6,6 +6,13 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
+import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
+import {
+  appendHookObserved,
+  appendObserved,
+  readLedger,
+  summarizeRow,
+} from "@/packages/workit-core/src/ledger";
 import {
   fixture,
   makeForgeRepo,
@@ -408,4 +415,90 @@ test("Given gh missing, Then exit 5 with an install hint", async () => {
   } finally {
     rmSync(empty, { recursive: true, force: true });
   }
+});
+
+const prStatusRows = (cwd: string) => {
+  const ledger = readLedger(cwd);
+  return ledger.ok ? ledger.value.rows.filter((row) => row.type === "pr.status") : [];
+};
+
+test("G ci wait sees pending checks, W the session stops under endpoint green, T the stop is continued once naming workit ci wait; passing checks clear it", async () => {
+  let checks = "github/pr-pending.json";
+  const { repo } = setup(() => fixture(checks));
+  const env = { ...process.env, WORKIT_SESSION_ID: "s-lead", WORKIT_HOST: "claude_code" };
+  // Four pending polls record one row: only a change is recorded.
+  const waited = await run(
+    ["ci", "wait", "--timeout", "2m", "--interval", "30s", "--json"],
+    repo.cwd,
+    env,
+  );
+  expect(waited.code).toBe(4);
+  expect(prStatusRows(repo.cwd)).toEqual([
+    expect.objectContaining({
+      observer: "workit_cli",
+      branch: "feature/x",
+      head: repo.head,
+      pr: 12,
+      repo: "o/r",
+      checks: "pending",
+      actor: expect.objectContaining({ session: "s-lead" }),
+    }),
+  ]);
+  // The session committed on feature/x (pushed), and the workspace endpoint is green.
+  appendHookObserved(repo.cwd, {
+    type: "commit.recorded",
+    actor: { host: "claude_code", session: "s-lead", agentId: null },
+    branch: "feature/x",
+    head: repo.head,
+    sha: repo.head,
+    session: "s-lead",
+    agentId: null,
+    subject: "feature",
+    files: ["feature.txt"],
+    fileCount: 1,
+  });
+  appendObserved(repo.cwd, {
+    type: "pr.created",
+    actor: { host: "claude_code", session: "s-other", agentId: null },
+    branch: "feature/x",
+    head: repo.head,
+    pr: 12,
+    base: "main",
+    url: "https://github.com/o/r/pull/12",
+    forge: "github",
+    repo: "o/r",
+    created: true,
+  });
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        { name: "w", glob: `${repo.root.replaceAll("\\", "/")}/**`, defaultEndpoint: "green" },
+      ],
+    }),
+  );
+  const stop = (extra: Record<string, unknown> = {}) =>
+    dispatchHook(claudeCodeAdapter, {
+      hook_event_name: "Stop",
+      session_id: "s-lead",
+      cwd: repo.cwd,
+      transcript_path: null,
+      stop_hook_active: false,
+      last_assistant_message: "Pushed; CI is running.",
+      ...extra,
+    }).json;
+  expect(stop()).toEqual({
+    decision: "block",
+    reason: expect.stringContaining("PR #12's checks were last seen pending"),
+  });
+  expect((stop() as { reason: string }).reason).toContain("`workit ci wait --pr 12`");
+  expect(stop({ stop_hook_active: true })).toEqual({});
+  // pr status reading passing checks records the change; the stop is free.
+  checks = "github/pr-passing.json";
+  expect((await run(["pr", "status", "--json"], repo.cwd, env)).code).toBe(0);
+  expect(prStatusRows(repo.cwd).map((row) => row.checks)).toEqual(["pending", "passing"]);
+  expect(summarizeRow(prStatusRows(repo.cwd)[1]).summary).toMatch(
+    /^#12 checks passing at [0-9a-f]{12}$/,
+  );
+  expect(stop()).toEqual({});
 });

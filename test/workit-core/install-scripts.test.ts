@@ -184,9 +184,13 @@ test(
       const launcher = `node "${path.join(pluginDir, "hooks", "launch.mjs")}"`;
       const hooks = JSON.parse(readFileSync(hooksFile, "utf8")).hooks as Record<
         string,
-        { command: string }[]
+        { command: string; loop_limit?: number; failClosed?: boolean }[]
       >;
-      expect(Object.keys(hooks)).toHaveLength(6);
+      // sessionStart plus the six enforcement events, stop control included.
+      expect(Object.keys(hooks)).toHaveLength(7);
+      expect(hooks.stop).toEqual([
+        { command: `${launcher} workit-cursor-hook`, loop_limit: 1, failClosed: false },
+      ]);
       for (const [event, [entry]] of Object.entries(hooks))
         expect(entry.command, event).toStartWith(`${launcher} workit-cursor-`);
       // A second run over the healthy install rewrites nothing.

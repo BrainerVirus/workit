@@ -89,7 +89,10 @@ test(
           : readTarballFile(byName(packs, CURSOR).tarball, "hooks/hooks-cursor.json");
       const hooks = JSON.parse(raw) as {
         version: number;
-        hooks: Record<string, { command: string; args?: string[]; failClosed?: boolean }[]>;
+        hooks: Record<
+          string,
+          { command: string; args?: string[]; failClosed?: boolean; loop_limit?: number }[]
+        >;
       };
       expect(hooks.version, source).toBe(1);
       expect(hooks.hooks.sessionStart, source).toEqual([
@@ -101,7 +104,15 @@ test(
         "beforeShellExecution",
         "subagentStart",
         "subagentStop",
+        "stop",
         "preCompact",
+      ]);
+      expect(hooks.hooks.stop, source).toEqual([
+        {
+          command: 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cursor-hook',
+          loop_limit: 1,
+          failClosed: false,
+        },
       ]);
       for (const [event, entries] of Object.entries(hooks.hooks)) {
         for (const entry of entries) {

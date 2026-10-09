@@ -235,6 +235,7 @@ const CURSOR_HOOK_EVENTS = [
   "beforeShellExecution",
   "subagentStart",
   "subagentStop",
+  "stop",
   "preCompact",
 ] as const;
 
@@ -253,9 +254,12 @@ const canonicalHookEntry = (
   pluginDir?: string,
 ): Record<string, unknown> => {
   const command = `${cursorHookLauncher(pluginDir)} workit-cursor-hook`;
-  return event === "preToolUse"
-    ? { command, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false }
-    : { command, failClosed: false };
+  if (event === "preToolUse")
+    return { command, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false };
+  // Stop control continues a turn at most once: Cursor skips the hook once
+  // loop_count reaches loop_limit (default 5).
+  if (event === "stop") return { command, loop_limit: 1, failClosed: false };
+  return { command, failClosed: false };
 };
 
 /**
@@ -281,6 +285,7 @@ export function cursorHookDrift(installed: unknown, pluginDir?: string): string[
       !isRecord(entry) ||
       !commands.includes(entry.command) ||
       entry.failClosed === true ||
+      (event === "stop" && entry.loop_limit !== canonical.loop_limit) ||
       (event === "preToolUse" && entry.matcher !== canonical.matcher)
     )
       drift.push(event);

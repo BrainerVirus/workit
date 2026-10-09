@@ -31,6 +31,12 @@ test("Codex plugin ships the current manifest layout and the canonical method sk
         hooks: [{ type: "command", command: "node ${PLUGIN_ROOT}/dist/workit-hook.js" }],
       },
     ]);
+  // Stop control runs git and reads the ledger: bounded like Claude Code's Stop.
+  expect(hooks.hooks.Stop).toEqual([
+    {
+      hooks: [{ type: "command", command: "node ${PLUGIN_ROOT}/dist/workit-hook.js", timeout: 10 }],
+    },
+  ]);
   const mcp = JSON.parse(readFileSync(path.join(packageRoot, ".mcp.json"), "utf8"));
   expect(mcp.mcpServers.workit).toMatchObject({ args: ["dist/launch-mcp.js"], cwd: "." });
 });

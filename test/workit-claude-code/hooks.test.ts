@@ -275,7 +275,26 @@ test("SubagentStart gives the worktree implementer write guidance and keeps othe
     expect(text, agent).toContain("working in its own git worktree");
     expect(text, agent).toContain("policy-compliant branch");
     expect(text, agent).not.toContain("read-only");
+    // Claude Code's worktree isolation refuses a wrapper naming git: plain git
+    // up front, workit for the non-git verbs, never a renamed dodge.
+    expect(text, agent).toContain("Run git as plain, separate commands inside your worktree");
+    expect(text, agent).toContain("never `workit git …`");
+    expect(text, agent).toContain("how-claude-code-enforces-isolation");
+    expect(text, agent).toContain("`workit check`, `workit ledger`, `workit pr`");
+    expect(text, agent).toContain("Never dodge that check by renaming");
+    expect(text, agent).not.toContain("workit git branch");
   }
+  // Any agent running in a .claude/worktrees/ checkout gets the same git rule first.
+  const worktree = path.join(cwd, ".claude", "worktrees", "agent-1");
+  mkdirSync(worktree, { recursive: true });
+  const explorer = (
+    runHook(
+      PLUGIN_DIR,
+      fixture("claude-code", "subagent-start", worktree, { agent_type: "general-purpose" }),
+    ).json as Specific
+  ).hookSpecificOutput?.additionalContext;
+  expect(explorer?.startsWith("Run git as plain, separate commands")).toBe(true);
+  expect(context("Explore")).not.toContain("Run git as plain");
   // Only the Workit plugin's own implementer: a bare or another plugin's
   // `implementer` cannot be told apart from an unrelated agent.
   for (const agent of [

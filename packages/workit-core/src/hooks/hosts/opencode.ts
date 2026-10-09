@@ -19,8 +19,11 @@ export const OPENCODE_DESCRIPTOR: HostDescriptor = {
     "subagent.stop": { support: "native", native: 'tool.hook("execute.after") subagent' },
     "prompt.submit": { support: "undocumented", native: null },
     "compact.pre": { support: "native", native: 'session.hook("compaction")' },
-    // OpenCode reports session.idle, but the plugin registers no stop hook yet.
-    stop: { support: "none", native: null },
+    // No stop hook: the plugin's event subscription sees session.idle and
+    // resumes the session with `ctx.session.synthetic({resume: true})`
+    // (@opencode/client 2.0.18). Partial: the continuation lands after the
+    // session went idle, and resume semantics are inferred from the schema.
+    stop: { support: "partial", native: 'event("session.idle")' },
   },
   shellPolicy: { deny: "native", channel: "effect", failClosed: false },
   context: {

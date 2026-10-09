@@ -34,7 +34,7 @@ const PARITY: Record<
     "subagent.start": "SubagentStart",
     "subagent.stop": null,
     "compact.pre": null,
-    stop: null,
+    stop: "Stop",
   },
   codex: {
     "session.start": "SessionStart",
@@ -47,7 +47,7 @@ const PARITY: Record<
     "subagent.start": "SubagentStart",
     "subagent.stop": "SubagentStop",
     "compact.pre": null,
-    stop: null,
+    stop: "Stop",
   },
   cursor: {
     "session.start": "sessionStart",
@@ -58,7 +58,7 @@ const PARITY: Record<
     "subagent.start": "subagentStart",
     "subagent.stop": "subagentStop",
     "compact.pre": "preCompact",
-    stop: null,
+    stop: "stop",
   },
   opencode: {
     "session.start": null,
@@ -69,7 +69,7 @@ const PARITY: Record<
     "subagent.start": 'tool.hook("execute.before") subagent',
     "subagent.stop": 'tool.hook("execute.after") subagent',
     "compact.pre": 'session.hook("compaction")',
-    stop: null,
+    stop: 'event("session.idle")',
   },
   pi: {
     "session.start": "session_start",
@@ -80,7 +80,7 @@ const PARITY: Record<
     "subagent.start": null,
     "subagent.stop": null,
     "compact.pre": "session_before_compact",
-    stop: null,
+    stop: "agent_end",
   },
 };
 
@@ -112,12 +112,14 @@ const FIXTURE_EVENTS: Array<
   [codexAdapter, "codex", "post-tool-use-bash", "shell.post"],
   [codexAdapter, "codex", "subagent-start", "subagent.start"],
   [codexAdapter, "codex", "subagent-stop", "subagent.stop"],
+  [codexAdapter, "codex", "stop", "stop"],
   [cursorAdapter, "cursor", "session-start", "session.start"],
   [cursorAdapter, "cursor", "before-shell-execution", "shell.pre"],
   [cursorAdapter, "cursor", "pre-tool-use", "write.pre"],
   [cursorAdapter, "cursor", "subagent-start", "subagent.start"],
   [cursorAdapter, "cursor", "subagent-stop", "subagent.stop"],
   [cursorAdapter, "cursor", "pre-compact", "compact.pre"],
+  [cursorAdapter, "cursor", "stop", "stop"],
 ];
 
 test("every host maps the same protocol events onto its documented native hooks", () => {

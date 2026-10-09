@@ -2,6 +2,7 @@
 // forge-neutral status document, the `next` priority, the CI-wait verdict,
 // and rerun planning with the rerun-once rule.
 import { aheadBehind, currentBranch, fetchRefs, hasCommit, headSha, resolveRef } from "../git/rev";
+import { appendObserved, readLedger, type LedgerActor } from "../ledger";
 import type { ResolvedForge } from "./resolve";
 import { rerunCounts, recordReruns, withRerunLock, type RerunRow } from "./reruns";
 import {
@@ -425,11 +426,59 @@ export function buildStatusDoc(
   });
 }
 
-/** Select, read and document one PR/MR. */
+/**
+ * Record what the forge said about a PR as a CLI-observed `pr.status` row
+ * (pr, branch, head, state: open|merged|closed, checks), only when it
+ * differs from the newest row for that PR, so polling never floods the
+ * ledger. Hooks read it without calling the forge: an open PR's checks
+ * (passing|failing|pending; one without gating checks is not recorded), and
+ * a PR merged or closed outside workit (the forge UI). Never fails the verb:
+ * a ledger error only loses the row.
+ */
+export function recordPrStatus(cwd: string, doc: PrStatusDoc, actor: LedgerActor): void {
+  const checks = doc.checks.state;
+  const state = doc.state;
+  if (state !== "open" && state !== "merged" && state !== "closed") return;
+  if (state === "open" && checks !== "passing" && checks !== "failing" && checks !== "pending")
+    return;
+  try {
+    const ledger = readLedger(cwd);
+    if (!ledger.ok) return;
+    const last = ledger.value.rows.findLast(
+      (row) =>
+        row.type === "pr.status" &&
+        row.observer === "workit_cli" &&
+        row.pr === doc.number &&
+        row.repo === doc.repo,
+    );
+    if (
+      last &&
+      last.head === doc.head.sha &&
+      last.checks === checks &&
+      (last.state ?? "open") === state
+    )
+      return;
+    appendObserved(cwd, {
+      type: "pr.status",
+      actor,
+      branch: doc.head.branch,
+      head: doc.head.sha,
+      pr: doc.number,
+      repo: doc.repo,
+      forge: doc.forge,
+      state,
+      checks,
+    });
+  } catch {
+    // The row is an observation for hooks; the verb's answer stands without it.
+  }
+}
+
+/** Select, read and document one PR/MR (recorded as a `pr.status` row when `actor` is given). */
 export function prStatusReport(
   cwd: string,
   resolved: ResolvedForge,
-  options: ReportOptions & { identity?: PrStatusDoc["identity"] } = {},
+  options: ReportOptions & { identity?: PrStatusDoc["identity"]; actor?: LedgerActor } = {},
 ): ForgeResult<{ doc: PrStatusDoc; raw: ForgePrStatus }> {
   const number = selectPr(cwd, resolved, options);
   if (!number.ok) return number;
@@ -441,6 +490,7 @@ export function prStatusReport(
     identity: options.identity,
   });
   if (!doc.ok) return doc;
+  if (options.actor) recordPrStatus(cwd, doc.data, options.actor);
   return success({ doc: doc.data, raw: status.data });
 }
 
