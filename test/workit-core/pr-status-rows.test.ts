@@ -52,12 +52,20 @@ test("an open PR's checks are recorded once per change, per head", () => {
   ]);
 });
 
-test("a closed or merged PR, or one without gating checks, is not recorded", () => {
+test("an open PR without gating checks is not recorded; a merge or close the forge reports is, once", () => {
   const root = repo();
-  recordPrStatus(root, doc("closed", "failing"), actor);
-  recordPrStatus(root, doc("merged", "pending"), actor);
   recordPrStatus(root, doc("open", "none"), actor);
   expect(rows(root)).toEqual([]);
+  recordPrStatus(root, doc("open", "passing"), actor);
+  recordPrStatus(root, doc("merged", "passing"), actor);
+  recordPrStatus(root, doc("merged", "passing"), actor);
+  recordPrStatus(root, doc("closed", "none"), actor);
+  recordPrStatus(root, doc("draft", "none"), actor);
+  expect(rows(root).map((row) => [row.state, row.checks])).toEqual([
+    ["open", "passing"],
+    ["merged", "passing"],
+    ["closed", "none"],
+  ]);
 });
 
 test("a failure while recording stays inside: the verb's answer stands", () => {

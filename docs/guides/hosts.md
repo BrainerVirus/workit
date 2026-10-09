@@ -100,8 +100,10 @@ naming the obligation and the workit command that clears it:
 The continuation's own stop is always allowed, so an agent that cannot finish
 says so and stops. A stop is never blocked in a subagent, outside a Workit
 workspace, on a protected branch, after a run the user interrupted or that
-failed, once `workit pr merge` recorded the branch as merged (even with its
-remote branch deleted, or merged `--unverified`), or when the agent's last
+failed, once the branch landed (`workit pr merge` recorded it, or `workit pr
+status`/`ci wait` saw the forge report it merged, even with its remote branch
+deleted or merged `--unverified`; with no merge recorded, an upstream that is
+gone after a prune counts as landed; a PR closed unmerged does not), or when the agent's last
 message asks the user anything: a question mark (also `？`, `؟`, `¿`), an
 offer such as "want me to" or "let me know", or a `[y/N]` prompt, in its last
 paragraphs. Another session's commits never count. The check reads the

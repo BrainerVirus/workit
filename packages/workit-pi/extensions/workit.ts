@@ -551,8 +551,6 @@ export default function extension(pi: ExtensionAPI): void {
     try {
       const id = ctx.sessionManager.getSessionId();
       if (continuedRuns.delete(id) || childWorker || !ctx.isProjectTrusted()) return;
-      // A run Pi will retry on its own is not over.
-      if ((event as { willRetry?: unknown }).willRetry === true) return;
       const send = (pi as { sendMessage?: unknown }).sendMessage;
       if (typeof send !== "function") return;
       const decision = stopDecision(

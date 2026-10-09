@@ -18,6 +18,7 @@ import {
   appendObserved,
   recordVerdict,
 } from "@/packages/workit-core/src/ledger";
+import { recordPrStatus, type PrStatusDoc } from "@/packages/workit-core/src/forge/report";
 import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { fixture, tempRoot } from "./hook-fixtures";
 
@@ -169,6 +170,8 @@ test("a turn that asks the user anything in its last paragraphs is a question; a
     "Shall I continue (y/n)",
     "Proceed [y/N]",
     "Tests pass. Would you like a PR as well.",
+    // The question in the second-last paragraph still counts.
+    "Should I push now?\n\nTests pass on CI.",
   ])
     expect(asksUser(asked), asked).toBe(true);
   for (const told of [
@@ -177,6 +180,10 @@ test("a turn that asks the user anything in its last paragraphs is a question; a
     "Stopping as you asked.",
     "Was it flaky? No: the fixture was stale.\n\nFixed the fixture.\n\nAll 40 tests pass.",
     "See https://example.com/x?a=1 for the log.",
+    // Only the last two paragraphs are read.
+    "Should I push?\n\nNo need: done.\n\nPushed and opened the PR.",
+    // An unclosed code fence runs to the end: its text is code, not a question.
+    "Done.\n\n```\nwhy?",
   ])
     expect(asksUser(told), told).toBe(false);
   expect(asksUser(null)).toBe(false);
@@ -241,7 +248,8 @@ test("G a branch the CLI merged, W the remote branch is deleted (squash + --dele
   for (const removal of ["delete", "prune"] as const) {
     const root = repo("merged");
     commit(root, "a.txt");
-    git(root, "push", "-q", "-u", "origin", "feature/x");
+    // No upstream configured: only the merge record can say it landed.
+    git(root, "push", "-q", "origin", "feature/x");
     prCreated(root, 5);
     recordVerdict(
       { cwd: root, actor: actor("s-verifier"), branch: "feature/x" },
@@ -255,9 +263,83 @@ test("G a branch the CLI merged, W the remote branch is deleted (squash + --dele
     }
     // Before the merge is recorded, the commit reads unpushed.
     expect(claudeStop(root).reason, removal).toContain("`workit git push`");
+    // A hook-observed merge row proves nothing: only the CLI's counts.
+    appendHookObserved(root, {
+      type: "pr.merged",
+      actor: actor(SESSION),
+      branch: "feature/x",
+      head: git(root, "rev-parse", "HEAD"),
+      pr: 5,
+    });
+    expect(claudeStop(root).reason, removal).toContain("`workit git push`");
     prMerged(root, 5);
     expect(claudeStop(root), removal).toEqual({});
   }
+});
+
+test("G a merge in the forge UI (no CLI merge row), W the forge deleted the branch and a fetch pruned it, T the gone upstream says it landed; while the upstream exists the push is owed", () => {
+  const root = repo("merged");
+  commit(root, "a.txt");
+  git(root, "push", "-q", "-u", "origin", "feature/x");
+  prCreated(root, 5);
+  recordVerdict(
+    { cwd: root, actor: actor("s-verifier"), branch: "feature/x" },
+    { result: "verified", how: "drove the CLI" },
+  );
+  commit(root, "b.txt");
+  expect(claudeStop(root).reason).toContain("`workit git push`");
+  git(path.join(path.dirname(root), "origin.git"), "branch", "-q", "-D", "feature/x");
+  git(root, "fetch", "-q", "--prune", "origin");
+  expect(claudeStop(root)).toEqual({});
+});
+
+/** What `workit pr status` / `ci wait` record when the forge reports the PR `state`. */
+const forgeSaw = (root: string, pr: number, state: "merged" | "closed") =>
+  recordPrStatus(
+    root,
+    {
+      forge: "github",
+      repo: "o/r",
+      number: pr,
+      state,
+      head: { branch: "feature/x", sha: git(root, "rev-parse", "HEAD") },
+      checks: { state: "passing" },
+    } as unknown as PrStatusDoc,
+    actor(SESSION),
+  );
+
+test("G a merge in the forge UI, branch not pruned, W pr status records the merge, T no verdict is owed; a PR closed unmerged still owes one", () => {
+  const merged = repo("pr");
+  commit(merged, "a.txt");
+  git(merged, "push", "-q", "-u", "origin", "feature/x");
+  prCreated(merged, 5);
+  expect(claudeStop(merged).reason).toContain("has no current verdict");
+  forgeSaw(merged, 5, "merged");
+  expect(claudeStop(merged)).toEqual({});
+
+  const closed = repo("green");
+  commit(closed, "a.txt");
+  git(closed, "push", "-q", "-u", "origin", "feature/x");
+  prCreated(closed, 6);
+  prStatus(closed, 6, "failing");
+  forgeSaw(closed, 6, "closed");
+  // Closed is no merge, and no open PR has failing checks any more.
+  const reason = claudeStop(closed).reason ?? "";
+  expect(reason).toContain("has no current verdict");
+  expect(reason).not.toContain("checks were last seen");
+});
+
+test("G a branch reused after its CLI merge, W this session commits again, T only the new commit is owed", () => {
+  const root = repo("pr");
+  commit(root, "a.txt");
+  git(root, "push", "-q", "-u", "origin", "feature/x");
+  prCreated(root, 5);
+  prMerged(root, 5);
+  git(root, "push", "-q", "origin", "--delete", "feature/x");
+  commit(root, "c.txt");
+  expect(claudeStop(root).reason).toContain(
+    "feature/x has 1 commit(s) of this session not on origin",
+  );
 });
 
 test("G a session that only opened the PR (no commits of its own), W the CLI merged it at HEAD, T no verdict is owed", () => {

@@ -427,19 +427,19 @@ export function buildStatusDoc(
 }
 
 /**
- * Record what the forge said about an open PR's checks as a CLI-observed
- * `pr.status` row (pr, branch, head, checks: passing|failing|pending), only
- * when it differs from the newest row for that PR and head, so polling never
- * floods the ledger. Hooks read it (stop control) without calling the forge.
- * A PR with no gating checks, or a closed one, is not recorded. Never fails
- * the verb: a ledger error only loses the row.
+ * Record what the forge said about a PR as a CLI-observed `pr.status` row
+ * (pr, branch, head, state: open|merged|closed, checks), only when it
+ * differs from the newest row for that PR, so polling never floods the
+ * ledger. Hooks read it without calling the forge: an open PR's checks
+ * (passing|failing|pending; one without gating checks is not recorded), and
+ * a PR merged or closed outside workit (the forge UI). Never fails the verb:
+ * a ledger error only loses the row.
  */
 export function recordPrStatus(cwd: string, doc: PrStatusDoc, actor: LedgerActor): void {
   const checks = doc.checks.state;
-  if (
-    doc.state !== "open" ||
-    (checks !== "passing" && checks !== "failing" && checks !== "pending")
-  )
+  const state = doc.state;
+  if (state !== "open" && state !== "merged" && state !== "closed") return;
+  if (state === "open" && checks !== "passing" && checks !== "failing" && checks !== "pending")
     return;
   try {
     const ledger = readLedger(cwd);
@@ -451,7 +451,13 @@ export function recordPrStatus(cwd: string, doc: PrStatusDoc, actor: LedgerActor
         row.pr === doc.number &&
         row.repo === doc.repo,
     );
-    if (last && last.head === doc.head.sha && last.checks === checks) return;
+    if (
+      last &&
+      last.head === doc.head.sha &&
+      last.checks === checks &&
+      (last.state ?? "open") === state
+    )
+      return;
     appendObserved(cwd, {
       type: "pr.status",
       actor,
@@ -460,6 +466,7 @@ export function recordPrStatus(cwd: string, doc: PrStatusDoc, actor: LedgerActor
       pr: doc.number,
       repo: doc.repo,
       forge: doc.forge,
+      state,
       checks,
     });
   } catch {

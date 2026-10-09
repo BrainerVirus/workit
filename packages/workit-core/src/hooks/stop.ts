@@ -11,9 +11,11 @@
 //       or merged;
 //   (c) verdict: the session opened the PR (or verified delivery) but the
 //       head carries no accepted non-author verdict.
-// A branch that landed (a CLI `pr.merged` row for HEAD, or for a head that
-// contains this session's commits) owes nothing: its remote branch may be
-// deleted, and an `--unverified` merge was the user's call.
+// A branch that landed owes nothing: a recorded merge (`workit pr merge`, or
+// `pr status`/`ci wait` seeing the forge report it merged) of HEAD or of a
+// head that contains this session's commits, or, with no merge recorded, an
+// upstream that is gone. Its remote branch may be deleted, and an
+// `--unverified` merge was the user's call.
 // A stop is never blocked: in a subagent, outside a Workit workspace, when
 // the host says this stop already follows a continuation (one continue per
 // turn), or when the agent's last message asks the user a question. Reads
@@ -95,6 +97,14 @@ const sessionOf = (row: ReadRow): string | null =>
  * The branch's open PR: the newest one the CLI opened or observed
  * (`pr.created`, `pr.status`), unless it was merged since.
  */
+/** A `pr.status` row's PR state; rows written before it was recorded are open. */
+const prState = (row: ReadRow): string => (typeof row.state === "string" ? row.state : "open");
+
+/** A CLI row saying the PR ended: `workit pr merge`, or the forge reporting it merged or closed. */
+const ended = (row: ReadRow): boolean =>
+  row.observer === "workit_cli" &&
+  (row.type === "pr.merged" || (row.type === "pr.status" && prState(row) !== "open"));
+
 const openPr = (rows: readonly ReadRow[]): number | null => {
   const seen = rows.findLast(
     (row) =>
@@ -102,42 +112,63 @@ const openPr = (rows: readonly ReadRow[]): number | null => {
       row.observer === "workit_cli" &&
       typeof row.pr === "number",
   );
-  if (!seen) return null;
-  const merged = rows.some(
-    (row) => row.type === "pr.merged" && row.pr === seen.pr && row.seq > seen.seq,
-  );
-  return merged ? null : (seen.pr as number);
+  if (!seen || ended(seen)) return null;
+  const closed = rows.some((row) => ended(row) && row.pr === seen.pr && row.seq > seen.seq);
+  return closed ? null : (seen.pr as number);
 };
 
 /**
- * Has the branch landed? A CLI `pr.merged` row for the current HEAD, or one
- * whose merged head already contains every commit of this session on HEAD:
- * the merge record and the branch both say done, so nothing is left to push
- * (the remote branch may be deleted) or to verify (an `--unverified` merge
- * was the user's call).
+ * The heads the ledger records as merged: `workit pr merge` (`pr.merged`), or
+ * the forge reporting the PR merged (`pr.status` state merged, as `workit pr
+ * status` and `workit ci wait` record a merge done in the forge UI). A PR
+ * closed without merging is not one. Newest last, at most three.
+ */
+const mergedHeads = (rows: readonly ReadRow[]): string[] =>
+  [
+    ...new Set(
+      rows
+        .filter(
+          (row) =>
+            row.observer === "workit_cli" &&
+            typeof row.head === "string" &&
+            (row.type === "pr.merged" || (row.type === "pr.status" && prState(row) === "merged")),
+        )
+        .map((row) => row.head as string),
+    ),
+  ].slice(-3);
+
+/** Is `sha` a commit in the local object store? */
+const localCommit = (cwd: string, sha: string): boolean =>
+  /^[0-9a-f]{7,64}$/.test(sha) && gitList(cwd, ["cat-file", "-e", `${sha}^{commit}`]) !== null;
+
+/** The branch's configured upstream was deleted on the remote and pruned. */
+const upstreamGone = (cwd: string, branch: string): boolean =>
+  gitLine(cwd, ["for-each-ref", "--format=%(upstream:track)", `refs/heads/${branch}`]) === "[gone]";
+
+/**
+ * Has the branch landed? A recorded merge (`mergedHeads`) of the current
+ * HEAD, or of a head that already contains every commit of this session on
+ * HEAD: the merge record and the branch both say done, so nothing is left to
+ * push (the remote branch may be deleted) or to verify (an `--unverified`
+ * merge was the user's call). With no merge recorded, an upstream that is
+ * gone (the forge deleted the merged branch and a fetch pruned it) says the
+ * same. New commits of this session after a recorded merge are not landed.
  */
 const landed = (
   cwd: string,
+  branch: string,
   rows: readonly ReadRow[],
   head: string | null,
   mine: ReadonlySet<string>,
 ): boolean => {
-  const merged = rows.filter(
-    (row) =>
-      row.type === "pr.merged" && row.observer === "workit_cli" && typeof row.head === "string",
-  );
-  if (!head || merged.length === 0) return false;
-  if (merged.some((row) => row.head === head)) return true;
+  if (!head) return false;
+  const merged = mergedHeads(rows);
+  if (merged.length === 0) return upstreamGone(cwd, branch);
+  if (merged.includes(head)) return true;
   if (mine.size === 0) return false;
-  return merged.slice(-3).some((row) => {
+  return merged.some((at) => {
     // Commits on HEAD the merged head lacks; null when it is not a local commit.
-    const after = gitList(cwd, [
-      "rev-list",
-      `--max-count=${UNPUSHED_SCAN}`,
-      "HEAD",
-      "--not",
-      row.head as string,
-    ]);
+    const after = gitList(cwd, ["rev-list", `--max-count=${UNPUSHED_SCAN}`, "HEAD", "--not", at]);
     return after !== null && !after.some((sha) => mine.has(sha));
   });
 };
@@ -146,14 +177,16 @@ const landed = (
 const UNPUSHED_SCAN = 500;
 
 /**
- * (a) This session's recorded commits on HEAD that the push remote does not
- * have. Another session's or the user's commits never count.
+ * (a) This session's recorded commits on HEAD that neither the push remote
+ * nor a recorded merge holds. Another session's or the user's commits never
+ * count, nor do commits already merged before the branch was reused.
  */
 const unpushed = (
   cwd: string,
   branch: string,
   endpoint: string,
   mine: ReadonlySet<string>,
+  merged: readonly string[],
 ): StopObligation | null => {
   const remote = pushRemoteName(cwd, branch);
   if (!remote || mine.size === 0) return null;
@@ -163,6 +196,7 @@ const unpushed = (
     "HEAD",
     "--not",
     `--remotes=${remote}`,
+    ...merged.filter((sha) => localCommit(cwd, sha)),
   ]);
   const count = (listed ?? []).filter((sha) => mine.has(sha)).length;
   if (count === 0) return null;
@@ -182,7 +216,7 @@ const redChecks = (
   const status = rows.findLast(
     (row) => row.type === "pr.status" && row.observer === "workit_cli" && row.pr === pr,
   );
-  const state = status && status.head === head ? status.checks : null;
+  const state = status && status.head === head && prState(status) === "open" ? status.checks : null;
   if (state !== "failing" && state !== "pending") return null;
   return {
     kind: "checks",
@@ -237,10 +271,10 @@ export function stopObligation(
     );
     if (commits.size === 0 && !delivered) return null;
     const head = gitLine(input.cwd, ["rev-parse", "HEAD"]);
-    if (landed(input.cwd, rows, head, commits)) return null;
+    if (landed(input.cwd, branch, rows, head, commits)) return null;
     const endpoint = resolveAutonomy(input.cwd).effectiveEndpoint;
     if (endpoint !== "commit") {
-      const left = unpushed(input.cwd, branch, endpoint, commits);
+      const left = unpushed(input.cwd, branch, endpoint, commits, mergedHeads(rows));
       if (left) return left;
     }
     const pr = openPr(rows);

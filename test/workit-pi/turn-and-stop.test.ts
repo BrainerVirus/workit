@@ -211,10 +211,9 @@ test("G a Pi run that ends with an unpushed commit under endpoint pr, W agent_en
   await end("Done.");
   await end("Should I push it now?");
   expect(sent).toHaveLength(2);
-  // Esc (aborted), an error, or a run Pi will retry is never overridden.
+  // Esc (aborted) or an error is never overridden.
   await end("Committed the change.", "aborted");
   await end("Committed the change.", "error");
-  await end("Committed the change.", "stop", { willRetry: true });
   expect(sent).toHaveLength(2);
   // The same run ending normally is continued: the guards above held it.
   await end("Committed the change.");
