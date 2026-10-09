@@ -65,10 +65,11 @@ import {
   WORKIT_METHOD_SKILLS,
 } from "@brainervirus/workit-core/src/core/skill-manifests";
 import {
-  CHAINED_HOOK_NAME,
+  SESSION_HOOK_NAME,
   inspectSessionHook,
   installSessionHook,
   type SessionHookInstall,
+  type SessionHookStatus,
 } from "@brainervirus/workit-core/src/git/session-hook";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
@@ -2023,66 +2024,60 @@ const matchedWorkspace = (res: Resolved): WorkspaceConfig | null => {
 };
 
 const SESSION_HOOK_FIX = "workit doctor --fix";
-const MANUAL_SESSION_HOOK =
-  'have the repository\'s commit-msg hook run `git interpret-trailers --in-place --if-exists addIfDifferent --trailer "Workit-Session: $WORKIT_SESSION_ID" "$1"` when WORKIT_SESSION_ID is set';
 
-/**
- * Plain `git commit`s made by an agent that cannot run `workit git` (a Claude
- * Code worktree-isolated subagent) get the Workit-Session trailer from a
- * commit-msg hook. Checked in Workit workspaces only; advisory (warn).
- */
-const checkSessionHook = (res: Resolved): DoctorCheck => {
-  const workspace = matchedWorkspace(res);
-  if (!workspace)
-    return {
-      id: "session_hook",
-      status: "pass",
-      detail: "not in a Workit workspace — skipping the commit-msg session hook",
-    };
-  const hook = inspectSessionHook(res.cwd, res.env);
-  const chained = hook.chained ? `; runs ${hook.chained} first` : "";
+/** The doctor's view of one inspected hook state (leftovers handled by the caller). */
+const sessionHookFinding = (hook: SessionHookStatus): Omit<DoctorCheck, "id"> => {
+  const slot = `${SESSION_HOOK_NAME} hook`;
   switch (hook.state) {
     case "not_git":
-      return {
-        id: "session_hook",
-        status: "pass",
-        detail: "not inside a git work tree — skipping the commit-msg session hook",
-      };
+      return { status: "pass", detail: `not inside a git work tree — skipping the ${slot}` };
     case "installed":
       return {
-        id: "session_hook",
         status: "pass",
-        detail: `commit-msg hook ${hook.hookPath} adds the Workit-Session trailer to plain git commits${chained}`,
+        detail: `${slot} ${hook.hookPath} adds the Workit-Session trailer to plain git commits`,
       };
     case "missing":
       return {
-        id: "session_hook",
         status: "warn",
-        detail: `no commit-msg hook at ${hook.hookPath}: plain git commits from an agent session get no Workit-Session trailer`,
+        detail: `no ${slot} at ${hook.hookPath}: plain git commits from an agent session get no Workit-Session trailer`,
         fix: SESSION_HOOK_FIX,
       };
     case "outdated":
       return {
-        id: "session_hook",
         status: "warn",
-        detail: `the Workit commit-msg hook at ${hook.hookPath} is an older version`,
-        fix: SESSION_HOOK_FIX,
-      };
-    case "foreign":
-      return {
-        id: "session_hook",
-        status: "warn",
-        detail: `commit-msg hook ${hook.hookPath} is not Workit's, so plain git commits get no Workit-Session trailer; --fix moves it to ${CHAINED_HOOK_NAME} and runs it first`,
+        detail: `the Workit ${slot} at ${hook.hookPath} is an older version`,
         fix: SESSION_HOOK_FIX,
       };
     case "blocked":
       return {
-        id: "session_hook",
         status: "warn",
-        detail: `the Workit commit-msg hook cannot be installed: ${hook.reason}`,
-        fix: MANUAL_SESSION_HOOK,
+        detail: `plain git commits get no Workit-Session trailer and --fix will not install the ${slot}: ${hook.reason}`,
+        fix: hook.manual,
       };
   }
+};
+
+/**
+ * Plain `git commit`s made by an agent that cannot run `workit git` (a Claude
+ * Code worktree-isolated subagent) get the Workit-Session trailer from a
+ * prepare-commit-msg hook. Checked in Workit workspaces only; advisory (warn).
+ */
+const checkSessionHook = (res: Resolved): DoctorCheck => {
+  if (!matchedWorkspace(res))
+    return {
+      id: "session_hook",
+      status: "pass",
+      detail: `not in a Workit workspace — skipping the ${SESSION_HOOK_NAME} session hook`,
+    };
+  const hook = inspectSessionHook(res.cwd, res.env);
+  const finding = sessionHookFinding(hook);
+  if (!hook.leftover) return { id: "session_hook", ...finding };
+  return {
+    id: "session_hook",
+    status: "warn",
+    detail: `${finding.detail}; ${hook.leftover}`,
+    fix: finding.fix ? `${finding.fix}; ${hook.leftover}` : hook.leftover,
+  };
 };
 
 export type SessionHookFix =
@@ -2090,9 +2085,9 @@ export type SessionHookFix =
   | { action: "skipped"; detail: string; workspace: null };
 
 /**
- * `workit doctor --fix`: install or refresh the commit-msg session hook, only
- * when the directory is in a configured Workit workspace. An existing hook is
- * chained, never overwritten.
+ * `workit doctor --fix`: install or refresh the prepare-commit-msg session
+ * hook, only when the directory is in a configured Workit workspace. Another
+ * tool's hook in that slot is never touched.
  */
 export const fixSessionHook = (options: DoctorOptions = {}): SessionHookFix => {
   const res = resolve(options);

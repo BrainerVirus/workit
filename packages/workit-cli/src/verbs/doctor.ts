@@ -1,7 +1,7 @@
 // `workit doctor` (DG-07): offline engine, human or --json report, exit code
 // reflects the health. Never writes the report to stderr (the logger owns that).
 // `--fix-lock` clears a stale .workit metadata lock first, so the report
-// reflects the cleaned state. `--fix` installs the commit-msg hook that adds the
+// reflects the cleaned state. `--fix` installs the prepare-commit-msg hook that adds the
 // Workit-Session trailer to plain git commits, in a Workit workspace only.
 import pkg from "../../package.json" with { type: "json" };
 import { fixSessionHook, runDoctor } from "../admin/doctor";
@@ -71,7 +71,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
     fixLock = clearStaleMetadataLock(root, { force });
   }
-  // --fix installs the commit-msg session hook, in a Workit workspace only.
+  // --fix installs the prepare-commit-msg session hook, in a Workit workspace only.
   let sessionHook: { action: string; detail: string } | null = null;
   if (argv.includes("--fix")) {
     try {

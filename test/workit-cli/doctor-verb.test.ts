@@ -17,7 +17,7 @@ import path from "node:path";
 import cliPkg from "@/packages/workit-cli/package.json" with { type: "json" };
 import type { DoctorCheck, DoctorReport } from "@/packages/workit-cli/src/admin/doctor";
 import {
-  CHAINED_HOOK_NAME,
+  manualTrailerLine,
   SESSION_HOOK_SCRIPT,
 } from "@/packages/workit-core/src/git/session-hook";
 
@@ -92,7 +92,7 @@ const gitRepo = (box: Sandbox) => {
   git(box, ["init", "-q", "-b", "main"]);
   git(box, ["config", "commit.gpgsign", "false"]);
   git(box, ["commit", "-q", "--allow-empty", "-m", "chore: init"]);
-  return path.join(box.work, ".git", "hooks", "commit-msg");
+  return path.join(box.work, ".git", "hooks", "prepare-commit-msg");
 };
 const asWorkspace = (box: Sandbox) =>
   writeFileSync(
@@ -144,28 +144,42 @@ test("Given a Workit workspace without the hook, When `workit doctor` runs witho
   const { report } = doctor(box);
   const sessionHook = check(report, "session_hook");
   expect(sessionHook).toMatchObject({ status: "warn", fix: "workit doctor --fix" });
-  expect(sessionHook.detail).toContain(`no commit-msg hook at ${hook}`);
+  expect(sessionHook.detail).toContain(`no prepare-commit-msg hook at ${hook}`);
   expect(existsSync(hook)).toBe(false);
 }, 30_000);
 
-test("Given a Workit workspace with a lefthook-style commit-msg hook, When `workit doctor --fix` runs, Then the hook is chained and plain commits carry the session trailer", () => {
+test("Given a Workit workspace with the user's own commit-msg check, When `workit doctor --fix` runs, Then the hook is installed beside it and plain commits carry the session trailer", () => {
   const box = sandbox();
   const hook = gitRepo(box);
   asWorkspace(box);
-  const lefthook = '#!/bin/sh\n# lefthook stand-in\ngrep -q "^feat" "$1"\n';
-  writeFileSync(hook, lefthook, { mode: 0o755 });
-  expect(check(doctor(box).report, "session_hook").detail).toContain("is not Workit's");
+  const commitMsg = path.join(path.dirname(hook), "commit-msg");
+  const userCheck = '#!/bin/sh\ngrep -q "^feat" "$1"\n';
+  writeFileSync(commitMsg, userCheck, { mode: 0o755 });
 
   const fixed = doctor(box, ["--fix"]);
-  expect(fixed.report.sessionHook?.action).toBe("chained");
+  expect(fixed.report.sessionHook?.action).toBe("installed");
   expect(check(fixed.report, "session_hook").status).toBe("pass");
   expect(readFileSync(hook, "utf8")).toBe(SESSION_HOOK_SCRIPT);
-  expect(readFileSync(path.join(path.dirname(hook), CHAINED_HOOK_NAME), "utf8")).toBe(lefthook);
+  expect(readFileSync(commitMsg, "utf8")).toBe(userCheck);
 
   git(box, ["commit", "-q", "--allow-empty", "-m", "feat: raw"], { WORKIT_SESSION_ID: "sub-7" });
   expect(git(box, ["log", "-1", "--format=%B"])).toBe("feat: raw\n\nWorkit-Session: sub-7");
   expect(() => git(box, ["commit", "-q", "--allow-empty", "-m", "nope"])).toThrow();
   expect(doctor(box, ["--fix"]).report.sessionHook?.action).toBe("unchanged");
+}, 30_000);
+
+test("Given another tool's prepare-commit-msg hook, When `workit doctor --fix` runs, Then it is left alone and the check gives the manual line", () => {
+  const box = sandbox();
+  const hook = gitRepo(box);
+  asWorkspace(box);
+  const theirs = "#!/bin/sh\n# someone else's\nexit 0\n";
+  writeFileSync(hook, theirs, { mode: 0o755 });
+  const { report } = doctor(box, ["--fix"]);
+  expect(report.sessionHook?.action).toBe("skipped");
+  const sessionHook = check(report, "session_hook");
+  expect(sessionHook.status).toBe("warn");
+  expect(sessionHook.fix).toBe(`add this line to ${hook}: ${manualTrailerLine()}`);
+  expect(readFileSync(hook, "utf8")).toBe(theirs);
 }, 30_000);
 
 test("Given a git repository that is not a Workit workspace, When `workit doctor --fix` runs, Then nothing is installed", () => {
