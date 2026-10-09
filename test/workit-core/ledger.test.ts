@@ -530,6 +530,39 @@ test("a verdict on a dirty worktree is refused", () => {
   }
 });
 
+test("a verdict from a clean detached worktree at the head is recorded though the branch's own checkout is dirty", () => {
+  const root = featureRepo();
+  const detached = path.join(root, "..", `${path.basename(root)}-detached`);
+  git(root, "worktree", "add", "-q", "--detach", detached, "feature/x");
+  writeFileSync(path.join(root, "feature.txt"), "uncommitted\n");
+  const verdict = value(
+    recordVerdict(
+      { cwd: detached, actor: actor("s-reviewer"), branch: "feature/x" },
+      { result: "verified", how: "ran it" },
+    ),
+  );
+  expect(verdict.head).toBe(git(root, "rev-parse", "feature/x").trim());
+  const refused = recordVerdict(reviewer()(root), { result: "verified", how: "x" });
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) expect(refused.error).toContain("dirty_worktree");
+});
+
+test("a detached worktree at the head that is itself dirty (untracked or staged) still refuses the verdict", () => {
+  for (const change of ["untracked", "staged"] as const) {
+    const root = featureRepo();
+    const detached = path.join(root, "..", `${path.basename(root)}-detached-${change}`);
+    git(root, "worktree", "add", "-q", "--detach", detached, "feature/x");
+    writeFileSync(path.join(detached, "extra.txt"), "not judged\n");
+    if (change === "staged") git(detached, "add", "extra.txt");
+    const refused = recordVerdict(
+      { cwd: detached, actor: actor("s-reviewer"), branch: "feature/x" },
+      { result: "verified", how: "x" },
+    );
+    expect(refused.ok, change).toBe(false);
+    if (!refused.ok) expect(refused.error, change).toContain("dirty_worktree");
+  }
+});
+
 // ---------------------------------------------------------------------------
 // trust: authors, self, accepted (H3, H5, H6)
 

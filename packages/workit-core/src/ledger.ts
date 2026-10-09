@@ -1608,7 +1608,11 @@ export function clearStanding(
  * Is `branch` checked out, with uncommitted changes, in another worktree of
  * this repository? (`codeKey` sees only the cwd's own worktree.)
  */
-function dirtyElsewhere(cwd: string, branch: string): boolean {
+function dirtyElsewhere(cwd: string, branch: string, head: string): boolean {
+  // A checkout of exactly the branch head (a verifier's detached worktree)
+  // judges what it holds: clean judges that head, whatever state another
+  // checkout of the branch is in; dirty (or unreadable) does not.
+  if (headSha(cwd) === head) return worktreeTree(cwd)?.dirty !== false;
   const list = git(cwd, ["worktree", "list", "--porcelain"]);
   let worktree: string | null = null;
   for (const line of (list ?? "").split("\n")) {
@@ -1668,7 +1672,7 @@ export function recordVerdict(
   if (!ledger.ok) return ledger;
   const key = codeKey(context.cwd, { branch, base: context.base });
   if (!key.head) return err("not_found", `branch "${branch}" has no commit to judge`);
-  if (key.dirty === true || (key.dirty === null && dirtyElsewhere(context.cwd, branch)))
+  if (key.dirty === true || (key.dirty === null && dirtyElsewhere(context.cwd, branch, key.head)))
     return err(
       "blocked",
       `dirty_worktree: ${branch} has uncommitted changes, so its head is not what was judged`,

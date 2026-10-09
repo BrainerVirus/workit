@@ -1,3 +1,4 @@
+import { resolveExpectPrefix } from "@/packages/workit-core/src/git/ops";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, rmSync, writeFileSync } from "node:fs";
@@ -249,6 +250,38 @@ test("Given a branch pushed with raw git and then amended with raw git, When wor
   expect(result.json().unblock).toBe(`workit git push --force-with-lease --expect ${pushed}`);
   const leased = await run(
     ["git", "push", "--force-with-lease", "--expect", pushed, "--json"],
+    repo.cwd,
+  );
+  expect(leased.code).toBe(0);
+  expect(repo.remoteTip("feature/a")).toBe(repo.git("rev-parse", "HEAD"));
+});
+
+test("Given a lease with an abbreviated --expect, When it prefixes the remote tip it is used; an unknown or too-short prefix is refused", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/a");
+  repo.write("a.txt", "a\n");
+  repo.git("add", "a.txt");
+  repo.git("commit", "-qm", "feat: a");
+  repo.write("b.txt", "b\n");
+  repo.git("add", "b.txt");
+  repo.git("commit", "-qm", "feat: b");
+  repo.git("push", "-q", "origin", "feature/a");
+  const pushed = repo.git("rev-parse", "HEAD");
+  repo.git("reset", "-q", "--soft", "HEAD~1");
+  repo.git("commit", "-q", "--amend", "-m", "feat: a and b");
+  const short = await run(
+    ["git", "push", "--force-with-lease", "--expect", pushed.slice(0, 5), "--json"],
+    repo.cwd,
+  );
+  expect(short.code).not.toBe(0);
+  const unknown = await run(
+    ["git", "push", "--force-with-lease", "--expect", "0000000", "--json"],
+    repo.cwd,
+  );
+  expect(unknown.code).not.toBe(0);
+  expect(unknown.json().error).toContain(pushed);
+  const leased = await run(
+    ["git", "push", "--force-with-lease", "--expect", pushed.slice(0, 9), "--json"],
     repo.cwd,
   );
   expect(leased.code).toBe(0);
@@ -718,4 +751,21 @@ test("Given no workit config, When doctor runs in a main-only repository, Then i
   );
   expect(doctor()).toContain("preset: gitflow");
   expect(doctor()).not.toContain("detected");
+});
+
+test("--expect prefixes resolve only to exactly one known tip: ambiguous, unknown, short and uppercase are refused", () => {
+  const a = "abc1234" + "0".repeat(33);
+  const b = "abc1234" + "f".repeat(33);
+  expect(resolveExpectPrefix("abc1234", [a, b], "origin/x")).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("is ambiguous"),
+  });
+  expect(resolveExpectPrefix("abc12340", [a, b], "origin/x")).toEqual({ ok: true, sha: a });
+  expect(resolveExpectPrefix("abc1234", [a, a, null], "origin/x")).toEqual({ ok: true, sha: a });
+  expect(resolveExpectPrefix("deadbee", [a], "origin/x")).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("matches no known tip"),
+  });
+  expect(resolveExpectPrefix("abc12", [a], "origin/x").ok).toBe(false);
+  expect(resolveExpectPrefix("ABC1234", [a], "origin/x").ok).toBe(false);
 });
