@@ -2022,7 +2022,7 @@ const matchedWorkspace = (res: Resolved): WorkspaceConfig | null => {
   }
 };
 
-export const SESSION_HOOK_FIX = "workit doctor --fix";
+const SESSION_HOOK_FIX = "workit doctor --fix";
 const MANUAL_SESSION_HOOK =
   'have the repository\'s commit-msg hook run `git interpret-trailers --in-place --if-exists addIfDifferent --trailer "Workit-Session: $WORKIT_SESSION_ID" "$1"` when WORKIT_SESSION_ID is set';
 
