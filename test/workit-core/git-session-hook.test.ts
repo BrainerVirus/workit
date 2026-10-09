@@ -18,6 +18,7 @@ import {
   SESSION_HOOK_MARKER,
   SESSION_HOOK_SCRIPT,
   SESSION_TRAILER_SCRIPT,
+  type SessionHookState,
   inspectSessionHook,
   installSessionHook,
   manualTrailerLine,
@@ -556,11 +557,12 @@ const stateAfter = (root: string) => {
   ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: probe"], S);
   return { state, trailers: sessions(root).length };
 };
-const BLOCKED = { state: "blocked", trailers: 0 };
-const MANUAL = { state: "manual", trailers: 1 };
+type Outcome = { state: SessionHookState; trailers: number };
+const BLOCKED: Outcome = { state: "blocked", trailers: 0 };
+const MANUAL: Outcome = { state: "manual", trailers: 1 };
 
 test("Given husky v9 scripts that only mention the helper, Then the slot stays blocked; the real line is manual", () => {
-  const cases: Array<[string, object]> = [
+  const cases: Array<[string, Outcome]> = [
     [`# ${manualTrailerLine()}\n`, BLOCKED],
     ["# TODO: add workit/session-trailer.sh later\n", BLOCKED],
     [`${manualTrailerLine()}\n`, MANUAL],
@@ -577,7 +579,7 @@ test("Given husky v9 scripts that only mention the helper, Then the slot stays b
 });
 
 test("Given a hand-written hook that comments the line out or is not executable, Then the slot stays blocked; the executable real line is manual", () => {
-  const cases: Array<[string, number, object]> = [
+  const cases: Array<[string, number, Outcome]> = [
     [`#!/bin/sh\n# ${manualTrailerLine()}\n`, 0o755, BLOCKED],
     [`#!/bin/sh\n${manualTrailerLine()}\n`, 0o644, BLOCKED],
     [`#!/bin/sh\n${manualTrailerLine()}\n`, 0o755, MANUAL],
@@ -595,7 +597,7 @@ test("Given a hand-written hook that comments the line out or is not executable,
 test("Given lefthook configs where the job is commented out or under commit-msg, Then the slot stays blocked; a real prepare-commit-msg job is manual", () => {
   const job = `      run: ${manualTrailerLine("{1} {2} {3}")}`;
   const theirs = 'prepare-commit-msg:\n  jobs:\n    - name: x\n      run: "true"\n';
-  const cases: Array<[string, object]> = [
+  const cases: Array<[string, Outcome]> = [
     [`${theirs}#   - name: workit-session\n#${job}\n`, BLOCKED],
     [`${theirs}commit-msg:\n  jobs:\n    - name: workit-session\n${job}\n`, BLOCKED],
     [`${theirs}    - name: workit-session\n${job}\n`, MANUAL],
