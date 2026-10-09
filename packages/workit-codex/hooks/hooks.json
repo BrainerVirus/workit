@@ -31,7 +31,9 @@
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "node ${PLUGIN_ROOT}/dist/workit-hook.js" }]
+        "hooks": [
+          { "type": "command", "command": "node ${PLUGIN_ROOT}/dist/workit-hook.js", "timeout": 10 }
+        ]
       }
     ],
     "SubagentStop": [

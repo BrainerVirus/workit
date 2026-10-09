@@ -100,14 +100,15 @@ const setup = async (root: string, trusted = true) => {
         ctx,
       )) as { message?: { customType: string; content: string } } | undefined
     )?.message;
-  const end = async (text: string) =>
+  const end = async (text: string, stopReason = "stop", extra: Record<string, unknown> = {}) =>
     handlers.get("agent_end")!(
       {
         type: "agent_end",
         messages: [
           { role: "user", content: [{ type: "text", text: "go" }] },
-          { role: "assistant", content: [{ type: "text", text }] },
+          { role: "assistant", content: [{ type: "text", text }], stopReason },
         ],
+        ...extra,
       },
       ctx,
     );
@@ -210,6 +211,14 @@ test("G a Pi run that ends with an unpushed commit under endpoint pr, W agent_en
   await end("Done.");
   await end("Should I push it now?");
   expect(sent).toHaveLength(2);
+  // Esc (aborted), an error, or a run Pi will retry is never overridden.
+  await end("Committed the change.", "aborted");
+  await end("Committed the change.", "error");
+  await end("Committed the change.", "stop", { willRetry: true });
+  expect(sent).toHaveLength(2);
+  // The same run ending normally is continued: the guards above held it.
+  await end("Committed the change.");
+  expect(sent).toHaveLength(3);
   const untrusted = await setup(root, false);
   await untrusted.end("Committed the change.");
   expect(untrusted.sent).toEqual([]);

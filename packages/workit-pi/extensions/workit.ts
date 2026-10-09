@@ -153,12 +153,21 @@ export const persistUncertainCancel = (
   return observeWorkerExit(lostBinding, handle, exit).ok;
 };
 
-/** The text of the last assistant message of a run (agent_end `messages`), or null. */
+/**
+ * The text of the last assistant message of a run (agent_end `messages`), or
+ * null. A run the user aborted (Esc) or that ended in an error reads as null:
+ * its stop is never overridden.
+ */
 export const lastAssistantText = (messages: readonly unknown[] | undefined): string | null => {
   for (const message of (messages ?? []).toReversed()) {
     if (typeof message !== "object" || message === null) continue;
-    const { role, content } = message as { role?: unknown; content?: unknown };
+    const { role, content, stopReason } = message as {
+      role?: unknown;
+      content?: unknown;
+      stopReason?: unknown;
+    };
     if (role !== "assistant") continue;
+    if (stopReason === "aborted" || stopReason === "error") return null;
     if (typeof content === "string") return content;
     if (!Array.isArray(content)) return null;
     const text = content
@@ -542,6 +551,8 @@ export default function extension(pi: ExtensionAPI): void {
     try {
       const id = ctx.sessionManager.getSessionId();
       if (continuedRuns.delete(id) || childWorker || !ctx.isProjectTrusted()) return;
+      // A run Pi will retry on its own is not over.
+      if ((event as { willRetry?: unknown }).willRetry === true) return;
       const send = (pi as { sendMessage?: unknown }).sendMessage;
       if (typeof send !== "function") return;
       const decision = stopDecision(

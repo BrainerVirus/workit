@@ -4,13 +4,16 @@
 // obligation and the workit command that clears it. The obligations, for the
 // session's branch (the checked-out branch, on which this session recorded a
 // commit or opened a PR):
-//   (a) unpushed: a commit not on the push remote while the effective
-//       endpoint is pr, green or merged;
+//   (a) unpushed: a commit this session recorded, not on the push remote,
+//       while the effective endpoint is pr, green or merged;
 //   (b) checks: the branch's open PR has failing or pending checks recorded
 //       for its current head (`pr.status` rows) while the endpoint is green
 //       or merged;
 //   (c) verdict: the session opened the PR (or verified delivery) but the
 //       head carries no accepted non-author verdict.
+// A branch that landed (a CLI `pr.merged` row for HEAD, or for a head that
+// contains this session's commits) owes nothing: its remote branch may be
+// deleted, and an `--unverified` merge was the user's call.
 // A stop is never blocked: in a subagent, outside a Workit workspace, when
 // the host says this stop already follows a continuation (one continue per
 // turn), or when the agent's last message asks the user a question. Reads
@@ -32,27 +35,47 @@ export type StopObligation = {
   reason: string;
 };
 
-/** The trailing lines that may carry a question to the user. */
-const QUESTION_TAIL = 6;
+/** A question mark (Latin, full-width, Arabic) ending a sentence, or Spanish's opening one. */
+const QUESTION = /[?？؟](?=[\s*_`"')\]>]*(?:\s|$))|¿/;
+/** An offer or a request for permission. */
+const OFFER =
+  /\b(?:let me know|want me to|should I|shall I|would you like|do you want|if you(?:'d| would) like|may I|can I go ahead)\b/i;
+/** A `[y/N]`, `(y/n)` or `[Y/n]` prompt. */
+const YES_NO = /[[(]\s*y(?:es)?\s*\/\s*n(?:o)?\s*[\])]/i;
+/** A list item: `- a`, `* a`, `1. a`, `2) a`, `a) a`. */
+const LIST_ITEM = /^\s*(?:[-*+•]|\d+[.)]|[a-z][.)])\s+/i;
 
 /**
- * Does the message end by asking the user something? A question mark ending
- * one of its last lines (past closing markup, quotes or brackets) counts: a
- * stop that waits on the user is never blocked, so this errs towards "yes".
+ * Does the message end by asking the user something? The last two
+ * paragraphs (past code blocks and a trailing option list) are read for a
+ * question mark, an offer ("want me to", "shall I", "let me know") or a
+ * yes/no prompt: a stop that waits on the user is never blocked, so this
+ * errs towards "yes".
  */
 export const asksUser = (message: string | null | undefined): boolean => {
   if (!message) return false;
-  const lines = message
-    .replace(/```[\s\S]*?```/g, " ")
-    .split("\n")
-    .map((line) => line.trim().replace(/[\s*_`"')\]>]+$/, ""))
+  const paragraphs = message
+    .replace(/```[\s\S]*?(?:```|$)/g, "\n\n")
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
     .filter(Boolean);
-  return lines.slice(-QUESTION_TAIL).some((line) => line.endsWith("?") || line.endsWith("？"));
+  // A trailing option list belongs to the question before it.
+  while (
+    paragraphs.length > 1 &&
+    paragraphs
+      .at(-1)!
+      .split("\n")
+      .every((line) => LIST_ITEM.test(line))
+  )
+    paragraphs.pop();
+  const tail = paragraphs.slice(-2).join("\n");
+  return QUESTION.test(tail) || OFFER.test(tail) || YES_NO.test(tail);
 };
 
 const short = (sha: string | null | undefined) => (sha ?? "?").slice(0, 12);
 
-const gitLine = (cwd: string, args: string[]): string | null => {
+/** A git command's output lines, or null when it fails. */
+const gitList = (cwd: string, args: string[]): string[] | null => {
   const run = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
@@ -60,8 +83,10 @@ const gitLine = (cwd: string, args: string[]): string | null => {
     windowsHide: true,
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
   });
-  return run.status === 0 ? run.stdout.trim() || null : null;
+  return run.status === 0 ? run.stdout.split("\n").filter(Boolean) : null;
 };
+
+const gitLine = (cwd: string, args: string[]): string | null => gitList(cwd, args)?.[0] ?? null;
 
 const sessionOf = (row: ReadRow): string | null =>
   (typeof row.session === "string" ? row.session : null) ?? row.actor.session;
@@ -84,17 +109,66 @@ const openPr = (rows: readonly ReadRow[]): number | null => {
   return merged ? null : (seen.pr as number);
 };
 
-/** (a) Commits on HEAD the push remote does not have. */
-const unpushed = (cwd: string, branch: string, endpoint: string): StopObligation | null => {
-  const remote = pushRemoteName(cwd, branch);
-  if (!remote) return null;
-  const count = Number(
-    gitLine(cwd, ["rev-list", "--count", "HEAD", "--not", `--remotes=${remote}`]),
+/**
+ * Has the branch landed? A CLI `pr.merged` row for the current HEAD, or one
+ * whose merged head already contains every commit of this session on HEAD:
+ * the merge record and the branch both say done, so nothing is left to push
+ * (the remote branch may be deleted) or to verify (an `--unverified` merge
+ * was the user's call).
+ */
+const landed = (
+  cwd: string,
+  rows: readonly ReadRow[],
+  head: string | null,
+  mine: ReadonlySet<string>,
+): boolean => {
+  const merged = rows.filter(
+    (row) =>
+      row.type === "pr.merged" && row.observer === "workit_cli" && typeof row.head === "string",
   );
-  if (!Number.isFinite(count) || count === 0) return null;
+  if (!head || merged.length === 0) return false;
+  if (merged.some((row) => row.head === head)) return true;
+  if (mine.size === 0) return false;
+  return merged.slice(-3).some((row) => {
+    // Commits on HEAD the merged head lacks; null when it is not a local commit.
+    const after = gitList(cwd, [
+      "rev-list",
+      `--max-count=${UNPUSHED_SCAN}`,
+      "HEAD",
+      "--not",
+      row.head as string,
+    ]);
+    return after !== null && !after.some((sha) => mine.has(sha));
+  });
+};
+
+/** How far back (a) looks for unpushed commits. */
+const UNPUSHED_SCAN = 500;
+
+/**
+ * (a) This session's recorded commits on HEAD that the push remote does not
+ * have. Another session's or the user's commits never count.
+ */
+const unpushed = (
+  cwd: string,
+  branch: string,
+  endpoint: string,
+  mine: ReadonlySet<string>,
+): StopObligation | null => {
+  const remote = pushRemoteName(cwd, branch);
+  if (!remote || mine.size === 0) return null;
+  const listed = gitList(cwd, [
+    "rev-list",
+    `--max-count=${UNPUSHED_SCAN}`,
+    "HEAD",
+    "--not",
+    `--remotes=${remote}`,
+  ]);
+  const count = (listed ?? []).filter((sha) => mine.has(sha)).length;
+  if (count === 0) return null;
   return {
     kind: "unpushed",
-    reason: `${branch} has ${count} commit(s) not on ${remote}, and this workspace's endpoint is \`${endpoint}\` (\`workit grant show\`): push them with \`workit git push\`${endpoint === "pr" ? ", then open or update the PR (`workit pr create --fill`)" : ""}.`,
+    reason: `${branch} has ${count} commit(s) of this session not on ${remote}, and this workspace's endpoint is \`${endpoint}\` (\`workit grant show\`): push them with \`workit git push\`${endpoint === "pr" ? ", then open or update the PR (`workit pr create --fill`)" : ""}.`,
   };
 };
 
@@ -129,7 +203,7 @@ const unverified = (
   const verifier = `${descriptor.subagents.agentPrefix}verifier`;
   return {
     kind: "verdict",
-    reason: `the head ${short(check.head)} of ${branch}, which this session delivered, has ${has}: hand it to a session that did not author it (the ${verifier} agent records \`workit ledger verdict <result> --branch ${branch} --how "<evidence>"\`), or tell the user it is unverified. Never record a verdict on your own work.`,
+    reason: `the head ${short(check.head)} of ${branch}, which this session delivered, has ${has}: if no verifier is already running on it, hand it to a session that did not author it (the ${verifier} agent records \`workit ledger verdict <result> --branch ${branch} --how "<evidence>"\`), or tell the user it is unverified. Never record a verdict on your own work.`,
   };
 };
 
@@ -148,20 +222,26 @@ export function stopObligation(
     const all = ledger.value.rows;
     const rows = all.filter((row) => row.branch === branch);
     const mine = rows.filter((row) => sessionOf(row) === session);
-    const committed = mine.some((row) => row.type === "commit.recorded");
+    const commits = new Set(
+      mine
+        .filter((row) => row.type === "commit.recorded")
+        .map((row) => (typeof row.sha === "string" ? row.sha : row.head))
+        .filter((sha): sha is string => typeof sha === "string"),
+    );
     const delivered = mine.some(
       (row) =>
         row.observer === "workit_cli" &&
         (row.type === "pr.created" || row.type === "delivery.verified"),
     );
-    if (!committed && !delivered) return null;
+    if (commits.size === 0 && !delivered) return null;
+    const head = gitLine(input.cwd, ["rev-parse", "HEAD"]);
+    if (landed(input.cwd, rows, head, commits)) return null;
     const endpoint = resolveAutonomy(input.cwd).effectiveEndpoint;
     if (endpoint !== "commit") {
-      const left = unpushed(input.cwd, branch, endpoint);
+      const left = unpushed(input.cwd, branch, endpoint, commits);
       if (left) return left;
     }
     const pr = openPr(rows);
-    const head = gitLine(input.cwd, ["rev-parse", "HEAD"]);
     if ((endpoint === "green" || endpoint === "merged") && pr !== null && head) {
       const left = redChecks(rows, pr, head, endpoint);
       if (left) return left;

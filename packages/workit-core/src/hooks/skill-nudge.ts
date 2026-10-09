@@ -215,10 +215,9 @@ const promptLoads = (prompt: string): string | null =>
  * "regressed" is not a request for workit-debug.
  */
 export const relayedMessage = (prompt: string): boolean =>
-  /^\s*Another Claude session sent a message\b/.test(prompt) ||
-  /<agent-message\s+from=/.test(prompt) ||
-  /\[SYSTEM NOTIFICATION\b/.test(prompt) ||
-  /<task-notification>/.test(prompt);
+  /^\s*(?:Another Claude session sent a message\b|<agent-message\s+from=|\[SYSTEM NOTIFICATION\b|<task-notification>)/.test(
+    prompt,
+  );
 
 /** A main session's prompt in a Workit workspace: one advisory line naming the skill it asks for. */
 export function promptNudge(input: HookInput, prompt: string | null | undefined): string | null {
