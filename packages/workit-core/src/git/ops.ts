@@ -37,11 +37,16 @@ import {
   type BranchKind,
   type FlowRoute,
 } from "../core/branch";
+import { releaseTagPrefixOf } from "../core/branch-policy";
 import { detectCommitFlavor, matchCommitFlavor } from "../core/commit-flavors";
 import { pushTargetIsStable } from "../core/pr-create";
-import { recordBranchBase, trackBranchName } from "../core/release-tracks";
+import { readReleaseTracks, recordBranchBase, trackBranchName } from "../core/release-tracks";
 import { vcsConfig, type ResolvedReleaseTrack } from "../core/vcs-config";
-import { workspaceTrailers } from "../core/workspaces";
+import {
+  resolveRuntimeReleaseTracks,
+  resolveRuntimeWorkspacePolicy,
+  workspaceTrailers,
+} from "../core/workspaces";
 import { redactText } from "../forge/redact";
 import { failure, success, type ForgeResult } from "../forge/types";
 import { appendObserved, readLedger, type LedgerActor } from "../ledger";
@@ -71,7 +76,7 @@ type Run = {
   stderr: string;
 };
 
-const git = (
+export const git = (
   cwd: string,
   args: string[],
   options: { timeoutMs?: number; env?: NodeJS.ProcessEnv; input?: string } = {},
@@ -97,7 +102,7 @@ const git = (
 };
 
 /** The last meaningful lines of git's stderr, redacted, for an error message. */
-const gitError = (run: { stderr: string; stdout?: string }, max = 3): string => {
+export const gitError = (run: { stderr: string; stdout?: string }, max = 3): string => {
   const lines = redactText(`${run.stderr}\n${run.stdout ?? ""}`)
     .split(/\r?\n/u)
     .map((value) => value.trim())
@@ -147,7 +152,7 @@ type InProgress = {
 };
 
 /** The multi-step git operation the checkout is in the middle of, if any. */
-function operationInProgress(cwd: string): InProgress | null {
+export function operationInProgress(cwd: string): InProgress | null {
   const markers: [string, Operation][] = [
     ["rebase-merge", "rebase"],
     ["rebase-apply", "rebase"],
@@ -186,7 +191,7 @@ function operationInProgress(cwd: string): InProgress | null {
 }
 
 /** A refusal that names the operation in progress and how to finish or leave it. */
-function inProgressFailure<T>(operation: Operation, verb: string): ForgeResult<T> {
+export function inProgressFailure<T>(operation: Operation, verb: string): ForgeResult<T> {
   const command = operation === "am" ? "git am" : `git ${operation}`;
   return failure(
     "blocked",
@@ -1136,15 +1141,103 @@ export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & {
   refs: ReleaseRef[];
   /** The branch a pushed tag's commit must already be on (or a branch in this push). */
   production: string | null;
+  /** Release tracks' production branches, which a track's tag may be on instead. */
+  trackProductions: string[];
 };
 
-/** A release tag: `v` and a digit (`v4.1.0`, `v2`). */
-const RELEASE_TAG = /^v\d/u;
+/**
+ * One release line: the branches a release or hotfix finishes onto. The
+ * workspace's own (git-flow production and develop, else the trunk) or a
+ * release track's.
+ */
+export type ReleaseLine = {
+  /** The release track's name; null for the workspace's own branches. */
+  track: string | null;
+  production: string;
+  integration: string;
+  /** Where a finished release merges back (git-flow: develop). */
+  mergeBack: string[];
+  /** The release tag prefix: the track's tagNamespace, then the workspace prefix. */
+  tagPrefix: string;
+  /** git-flow merges a release locally; elsewhere the trunk moves only through a PR. */
+  gitflow: boolean;
+  /** A track's branch-name templates (`release/nun-{version}`). */
+  naming: { release?: string; hotfix?: string };
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * The workspace's release lines: its own first, then one per release track
+ * (core/release-tracks.ts reads them leniently). The tag prefix is the
+ * branch policy's (releaseTagPrefixOf); a track adds its `tagNamespace`. A
+ * track's `strategy`, else the workspace preset, decides whether it is git-flow.
+ */
+export function releaseLinesOf(cwd: string): ReleaseLine[] {
+  const { preset, branches, production } = releaseBranchesOf(cwd);
+  let policyPrefix: unknown;
+  try {
+    const selected = resolveRuntimeWorkspacePolicy(
+      cwd,
+      "branch",
+      process.env.WORKFLOW_PROFILE?.trim() || undefined,
+    ).policy as Record<string, unknown> | undefined;
+    policyPrefix = selected?.releaseTagPrefix;
+  } catch {
+    policyPrefix = undefined;
+  }
+  const prefix = releaseTagPrefixOf(cwd, policyPrefix);
+  const trunk = production ?? "main";
+  const lines: ReleaseLine[] = [
+    {
+      track: null,
+      production: branches[0] ?? trunk,
+      integration: branches[1] ?? trunk,
+      mergeBack: branches[1] ? [branches[1]] : [],
+      tagPrefix: prefix,
+      gitflow: branches.length > 0,
+      naming: {},
+    },
+  ];
+  let raw: unknown;
+  try {
+    raw = resolveRuntimeReleaseTracks(cwd)?.releaseTracks;
+  } catch {
+    return lines;
+  }
+  for (const track of readReleaseTracks(raw).tracks) {
+    const entry = isRecord(raw) && isRecord(raw[track.name]) ? raw[track.name] : {};
+    const strategy = typeof entry.strategy === "string" ? entry.strategy : preset;
+    const namespace = typeof entry.tagNamespace === "string" ? entry.tagNamespace.trim() : "";
+    lines.push({
+      track: track.name,
+      production: track.productionBranch,
+      integration: track.integrationBranch,
+      // git-flow always merges a release back into the integration branch.
+      mergeBack: track.mergeBackBranches.length
+        ? track.mergeBackBranches
+        : [track.integrationBranch],
+      tagPrefix: `${namespace}${prefix}`,
+      gitflow: strategy === "gitflow",
+      naming: { release: track.naming.release, hotfix: track.naming.hotfix },
+    });
+  }
+  return lines;
+}
+
+/** A release tag: a line's prefix and a digit (`v4.1.0`, `1.4.0` with an empty prefix, `nun/v2`). */
+const isReleaseTag = (tag: string, lines: readonly ReleaseLine[]): boolean =>
+  lines.some(
+    (line) => tag.startsWith(line.tagPrefix) && /^\d/u.test(tag.slice(line.tagPrefix.length)),
+  );
 
 /**
  * What `workit git push --release` may push: the git-flow production and
- * develop branches and `v*` tags, nothing else, each by its local ref. Everything else stays on the feature-branch
- * path (`workit git push`, `workit pr create`).
+ * develop branches (and a git-flow release track's production, integration
+ * and merge-back branches) and release tags (the policy's tag prefix and a
+ * digit), nothing else, each by its local ref. Everything else stays on the
+ * feature-branch path (`workit git push`, `workit pr create`).
  */
 export function releasePushPreflight(
   cwd: string,
@@ -1154,7 +1247,16 @@ export function releasePushPreflight(
   if (progress) return inProgressFailure(progress.operation, "push");
   const wanted = [...new Set(names)];
   if (!wanted.length) return failure("invalid_input", "name the release refs to push");
-  const { preset, branches, production } = releaseBranchesOf(cwd);
+  const { preset, production } = releaseBranchesOf(cwd);
+  const lines = releaseLinesOf(cwd);
+  const tracks = lines.filter((line) => line.track !== null && line.gitflow);
+  const branches = [
+    ...new Set([
+      ...releaseBranchesOf(cwd).branches,
+      ...tracks.flatMap((line) => [line.production, line.integration, ...line.mergeBack]),
+    ]),
+  ];
+  const tagShape = `${lines[0].tagPrefix}<version>`;
   const refs: ReleaseRef[] = [];
   for (const raw of wanted) {
     if (raw.startsWith("-") || raw.includes(":"))
@@ -1172,11 +1274,11 @@ export function releasePushPreflight(
         `workit git push --release refs/heads/${raw}  # or refs/tags/${raw}`,
       );
     if (tag) {
-      if (!RELEASE_TAG.test(tagName))
+      if (!isReleaseTag(tagName, lines))
         return failure(
           "blocked",
-          `release_push_refused: tag ${tagName} is not a release tag (v<version>)`,
-          "git tag -a v<version> -m <message>  # then: workit git push --release v<version>",
+          `release_push_refused: tag ${tagName} is not a release tag (${tagShape})`,
+          `git tag -a ${tagShape} -m <message>  # then: workit git push --release ${tagShape}`,
         );
       refs.push({ kind: "tag", name: tagName, ref: `refs/tags/${tagName}`, sha: tag });
       continue;

@@ -95,3 +95,18 @@ export const repoBranchPreset = (workspaceRoot: string): BranchPreset | null => 
   const detected = detectBranchPolicy(workspaceRoot);
   return detected.developBranch || detected.allowed.length ? detected.preset : null;
 };
+
+/**
+ * The release tag prefix (`v` in `v1.4.0`): the branch policy's
+ * `releaseTagPrefix` when it names one, else git-flow's own
+ * `gitflow.prefix.versiontag` (set but empty is a valid prefix: tags like
+ * `1.4.0`), else `v`.
+ */
+export const releaseTagPrefixOf = (workspaceRoot: string, policyPrefix?: unknown): string => {
+  if (typeof policyPrefix === "string") return policyPrefix.trim();
+  const r = spawnSync("git", ["config", "--get", "gitflow.prefix.versiontag"], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  });
+  return r.status === 0 ? (r.stdout ?? "").trim() : "v";
+};
