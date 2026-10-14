@@ -29,9 +29,9 @@ for (const pkg of [
 ]) {
   const file = resolve(root, `packages/${pkg}/package.json`);
   const data = JSON.parse(readFileSync(file, "utf8"));
-  // devDependencies too: the Claude Code plugin bundles core and the CLI into
-  // dist/, so they are build-time only, but a published manifest must still
-  // never carry workspace:*.
+  // devDependencies too: every adapter bundles core (and the MCP server) into
+  // dist/, so they are build-time only (N19) and npm never installs them, but
+  // a published manifest must still never carry workspace:*.
   const groups = [data.dependencies, data.devDependencies].filter(Boolean);
   if (groups.length === 0) continue;
   for (const deps of groups)
