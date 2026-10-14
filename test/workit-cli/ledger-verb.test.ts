@@ -340,7 +340,7 @@ const claudeLead = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
 test("Given the author lead on Claude Code, When a verifier subagent names the --session lead:<agent id> its SubagentStart hook issued, Then it is accepted but marked as a --session claim in ledger check, and --session lead is refused", async () => {
   const root = featureRepo();
   authoredBy(root, "lead");
-  recordIssuedSession(root, "lead", "lead:a1b2");
+  const token = recordIssuedSession(root, "lead", "lead:a1b2") ?? "";
   const env = claudeLead;
   const same = await run(
     root,
@@ -350,11 +350,22 @@ test("Given the author lead on Claude Code, When a verifier subagent names the -
   expect(same.code).toBe(3);
   const claimed = await run(
     root,
-    ["ledger", "verdict", "verified", "--how", "x", "--session", "lead:a1b2", "--json"],
+    [
+      "ledger",
+      "verdict",
+      "verified",
+      "--how",
+      "x",
+      "--session",
+      "lead:a1b2",
+      "--token",
+      token,
+      "--json",
+    ],
     env,
   );
   expect(claimed.code).toBe(0);
-  expect(claimed.json().data).toMatchObject({ sessionSource: "flag" });
+  expect(claimed.json().data).toMatchObject({ sessionSource: "flag", sessionBound: true });
   const check = await run(root, ["ledger", "check"]);
   expect(check.stdout).toContain("accepted; review: verified");
   expect(check.stdout).toContain("session lead:a1b2 named by --session");
@@ -398,7 +409,7 @@ test("Given no host session (CI, a plain terminal), When a verdict names a sessi
 
 test("Given the verifier session each skill documents per host, When it records a verdict on another session's branch, Then it is accepted and independent", async () => {
   const shapes: Array<[string, NodeJS.ProcessEnv, string[], string | null]> = [
-    ["claude", claudeLead, ["--session", "lead:a1"], "lead:a1"],
+    ["claude", claudeLead, ["--session", "lead:a1-verb"], "lead:a1-verb"],
     [
       "codex agent",
       { CODEX_THREAD_ID: "t-lead", WORKIT_SESSION_ID: undefined },
@@ -429,8 +440,10 @@ test("Given the verifier session each skill documents per host, When it records 
   for (const [label, env, extra, issued] of shapes) {
     const root = featureRepo();
     authoredBy(root, "implementer-1");
-    if (issued) recordIssuedSession(root, issued.slice(0, issued.lastIndexOf(":")), issued);
-    const result = await verdict(root, env, ...extra);
+    const token = issued
+      ? recordIssuedSession(root, issued.slice(0, issued.lastIndexOf(":")), issued)
+      : null;
+    const result = await verdict(root, env, ...extra, ...(token ? ["--token", token] : []));
     expect(result.code, label).toBe(0);
     expect(result.json().data.self, label).toBe(false);
   }

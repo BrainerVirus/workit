@@ -7,7 +7,7 @@
 //   - Pi: PI_SESSION_ID (the bash tool exposes the Pi session id);
 //   - Codex CLI and Desktop: CODEX_THREAD_ID (the thread id hooks get as session_id).
 // Cursor puts no conversation id in its shell; its hook names the id to use.
-import { createHash } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "./core/logger";
@@ -87,11 +87,12 @@ const ISSUED_PER_LEAD = 64;
 
 /**
  * Written into each issued-id file. A hook bundle that contains this string
- * records issued ids per lead in the user's state dir (`/2`; `/1` hooks of
- * 8.10-8.12 wrote them per repository, which breaks cross-repo verdicts); `workit doctor` looks for it in the installed Claude
- * Code and Codex hooks to catch a plugin older than the CLI.
+ * records issued ids per lead in the user's state dir with a token only the
+ * subagent is told (`/3`; `/2` files carry no token, `/1` hooks of 8.10-8.12
+ * wrote them per repository); `workit doctor` looks for it in the installed
+ * Claude Code and Codex hooks to catch a plugin older than the CLI.
  */
-export const ISSUED_SESSIONS_MARKER = "workit-issued-sessions/2";
+export const ISSUED_SESSIONS_MARKER = "workit-issued-sessions/3";
 
 const hash = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 32);
@@ -100,6 +101,13 @@ const hash = (value: string): string =>
 // started in one repository delegates review of others, and the verifier
 // records its verdict from whichever repository it reviews (#294).
 const userIssuedRoot = (): string => path.join(resolveStateDir(), "issued");
+/**
+ * Token hashes, one file per issued id under `<state>/issued-tokens/<lead
+ * hash>/`: a tree hooks older than tokens never write, so an old cached
+ * plugin hook that rewrites a record in `issued/` cannot strip its token.
+ * Once a lead has one, every id under it needs a token (sticky binding).
+ */
+const userTokenRoot = (): string => path.join(resolveStateDir(), "issued-tokens");
 
 /**
  * Hooks of 8.10-8.12 wrote issued ids into `<store>/hooks/issued` of the
@@ -126,7 +134,13 @@ function migrateRepoIssued(cwd: string | undefined): void {
       const to = path.join(userIssuedRoot(), lead);
       fs.mkdirSync(to, { recursive: true, mode: 0o700 });
       for (const id of fs.readdirSync(from)) {
-        fs.copyFileSync(path.join(from, id), path.join(to, id));
+        // Never over an existing per-user record: a legacy in-repo copy must
+        // not replace a token-bound one (EEXIST just drops the legacy copy).
+        try {
+          fs.copyFileSync(path.join(from, id), path.join(to, id), fs.constants.COPYFILE_EXCL);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        }
         fs.rmSync(path.join(from, id), { force: true });
       }
       removeIfEmpty(from);
@@ -170,14 +184,40 @@ const PLUGIN_UPDATE: Readonly<Record<string, string>> = {
   codex: "codex plugin remove workit@workit && codex plugin add workit@workit",
 };
 
-/** Remember that a SubagentStart hook issued `issued` to a subagent of `lead`. Fails open. */
-export function recordIssuedSession(cwd: string, lead: string, issued: string): void {
+const tokenHash = (token: string): string => createHash("sha256").update(token).digest("hex");
+
+/**
+ * Remember that a SubagentStart hook issued `issued` to a subagent of `lead`,
+ * and return the token that binds the id to that subagent: the hook hands it
+ * only to the subagent, and only its sha256 is stored, so a lead or sibling
+ * that reads the id in the ledger cannot act as it (audit mv83zyg6 P1).
+ * Each id is issued once: a SubagentStart fired again for an id already
+ * issued (a lead replaying the hook) gets no new token (review mv8daa5d P1).
+ * Null when nothing was issued: already issued, or the write failed (fails open).
+ */
+export function recordIssuedSession(cwd: string, lead: string, issued: string): string | null {
+  const token = randomBytes(18).toString("base64url");
   try {
     migrateRepoIssued(cwd);
+    const own = hash(issued);
+    const tokens = path.join(userTokenRoot(), hash(lead));
+    fs.mkdirSync(tokens, { recursive: true, mode: 0o700 });
+    // `wx`: the first SubagentStart for an id wins; any later one fails here.
+    fs.writeFileSync(path.join(tokens, own), `${tokenHash(token)}\n`, { mode: 0o600, flag: "wx" });
     const dir = path.join(userIssuedRoot(), hash(lead));
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const own = hash(issued);
-    fs.writeFileSync(path.join(dir, own), ISSUED_SESSIONS_MARKER);
+    fs.writeFileSync(path.join(dir, own), `${ISSUED_SESSIONS_MARKER}\n`, { mode: 0o600 });
+    pruneIssued(dir, own, tokens);
+    return token;
+  } catch {
+    // Already issued (EEXIST), or a failed write: no token is handed out.
+    return null;
+  }
+}
+
+/** Keep the newest ISSUED_PER_LEAD ids of one lead (and their token hashes); `own` is never pruned. */
+function pruneIssued(dir: string, own: string, tokens: string): void {
+  try {
     const entries = fs.readdirSync(dir);
     if (entries.length <= ISSUED_PER_LEAD) return;
     // Oldest first; the id just issued is never the one pruned.
@@ -185,21 +225,74 @@ export function recordIssuedSession(cwd: string, lead: string, issued: string): 
       .filter((name) => name !== own)
       .map((name) => ({ name, at: fs.statSync(path.join(dir, name)).mtimeMs }))
       .toSorted((a, b) => a.at - b.at);
-    for (const { name } of byAge.slice(0, entries.length - ISSUED_PER_LEAD))
+    for (const { name } of byAge.slice(0, entries.length - ISSUED_PER_LEAD)) {
       fs.rmSync(path.join(dir, name), { force: true });
+      fs.rmSync(path.join(tokens, name), { force: true });
+    }
   } catch {
     // Fail open: an unrecorded id is refused later, never a broken hook.
   }
 }
 
-const wasIssued = (cwd: string | undefined, lead: string, claimed: string): boolean => {
+/** The issued-id file's text, or null when no hook issued `claimed`. */
+const issuedRecord = (cwd: string | undefined, claimed: string): string | null => {
+  const cut = claimed.lastIndexOf(":");
+  if (cut <= 0) return null;
   migrateRepoIssued(cwd);
   try {
-    return fs.existsSync(path.join(userIssuedRoot(), hash(lead), hash(claimed)));
+    return fs.readFileSync(
+      path.join(userIssuedRoot(), hash(claimed.slice(0, cut)), hash(claimed)),
+      "utf8",
+    );
   } catch {
-    return false;
+    return null;
   }
 };
+
+const TOKEN_HASH = /^([0-9a-f]{64})$/mu;
+
+/** The stored token hash for `claimed`, and whether its lead has any token at all. */
+const issuedToken = (claimed: string): { stored: string | null; leadBound: boolean } => {
+  const cut = claimed.lastIndexOf(":");
+  if (cut <= 0) return { stored: null, leadBound: false };
+  const dir = path.join(userTokenRoot(), hash(claimed.slice(0, cut)));
+  try {
+    const text = fs.readFileSync(path.join(dir, hash(claimed)), "utf8");
+    return { stored: TOKEN_HASH.exec(text)?.[1] ?? null, leadBound: true };
+  } catch {
+    return { stored: null, leadBound: safeList(dir).length > 0 };
+  }
+};
+
+/**
+ * How a SubagentStart hook issued `claimed` (`<lead>:<agent id>`): `token`
+ * (it must be presented, `--token`), `legacy` (a hook older than tokens
+ * recorded it) or null (never issued). Binding is sticky: once its lead has
+ * any token-bound id, a token-less record (an old cached hook rewriting one,
+ * or issuing a new one) reads `token` with no token that can match.
+ */
+export type IssuedBinding = "token" | "legacy";
+export function issuedBinding(cwd: string | undefined, claimed: string): IssuedBinding | null {
+  const record = issuedRecord(cwd, claimed);
+  const { stored, leadBound } = issuedToken(claimed);
+  if (stored) return "token";
+  if (record === null) return null;
+  return leadBound ? "token" : "legacy";
+}
+
+/** Whether `token` is the one the hook gave the subagent it issued `claimed` to. */
+export function issuedTokenMatches(
+  cwd: string | undefined,
+  claimed: string,
+  token: string | null | undefined,
+): boolean {
+  migrateRepoIssued(cwd);
+  const { stored } = issuedToken(claimed);
+  if (!stored || !token) return false;
+  const given = Buffer.from(tokenHash(token.trim()));
+  const want = Buffer.from(stored);
+  return given.length === want.length && timingSafeEqual(given, want);
+}
 
 const leadOf = (session: string): string => session.slice(0, session.lastIndexOf(":"));
 
@@ -230,12 +323,17 @@ export type SessionClaimRefusal = { error: string; unblock: string };
  * workspace's record of hook-issued ids):
  *   - no host session (CI, a plain terminal): any id; `--session X` and
  *     WORKIT_SESSION_ID=X are the same declaration;
- *   - the shell's own session (a declared `<lead>:<x>` on Claude Code only
- *     when its SubagentStart hook issued it);
+ *   - the shell's own session; a declared `<lead>:<x>` (any WORKIT_HOST but
+ *     cli) only when a SubagentStart hook issued it;
  *   - on a host that sets the id, `<lead>:<this session>`: a child naming its
  *     own host session;
  *   - `<this session>:<agent id>` only when this lead's SubagentStart hook
  *     issued it (Claude Code, Codex).
+ * An issued id the hook bound to a token is accepted only with that token
+ * (`options.token`): a lead or sibling that read the id cannot reuse it.
+ * `options.flag`: named by `--session`. On a host that is only for an issued
+ * id; a shell's own or derived session comes from its environment, so a
+ * `--session` the gate would not accept is refused here, not later.
  * Anything else is a forged id: a verdict recorded under it would make author
  * is not verifier a naming convention.
  */
@@ -243,6 +341,7 @@ export function sessionClaimRefusal(
   env: NodeJS.ProcessEnv,
   claimed: string,
   cwd?: string,
+  options: { token?: string | null; flag?: boolean } = {},
 ): SessionClaimRefusal | null {
   const real = realHostSession(env);
   const host = family(real.host);
@@ -254,16 +353,27 @@ export function sessionClaimRefusal(
       unblock: `record the verdict from the ${real.host} session's own shell, where ${HOST_SET_VARIABLE[host]} is set`,
     };
   if (real.kind === "none" || !real.session) return null;
-  let issuedClaim = false;
-  if (claimed === real.session) {
-    const declaredChild =
-      real.kind === "declared" && host === "claude_code" && claimed.includes(":");
-    if (!declaredChild || wasIssued(cwd, leadOf(claimed), claimed)) return null;
-    issuedClaim = true;
-  } else if (real.kind === "derived" && claimed.endsWith(`:${real.session}`)) return null;
-  else if (claimed.startsWith(`${real.session}:`)) {
-    if (wasIssued(cwd, real.session, claimed)) return null;
-    issuedClaim = true;
+  const ownShell =
+    (claimed === real.session && !(real.kind === "declared" && claimed.includes(":"))) ||
+    (real.kind === "derived" && claimed.endsWith(`:${real.session}`));
+  if (ownShell)
+    return options.flag
+      ? {
+          error: `session_flag: --session ${claimed} names this shell's own ${real.host} session; on a host only an issued subagent id is passed as --session`,
+          unblock: "drop --session: the shell's own session is already the acting one",
+        }
+      : null;
+  const issuedClaim = claimed === real.session || claimed.startsWith(`${real.session}:`);
+  if (issuedClaim) {
+    const binding = issuedBinding(cwd, claimed);
+    if (binding === "legacy") return null;
+    if (binding === "token")
+      return issuedTokenMatches(cwd, claimed, options.token)
+        ? null
+        : {
+            error: `unbound_session: ${claimed} was issued to a subagent, and this call did not present the token its SubagentStart hook gave it`,
+            unblock: `only that subagent acts as ${claimed}: it passes --token exactly as its SubagentStart context names it (or WORKIT_SESSION_TOKEN); anyone else spawns their own verifier`,
+          };
   }
   const error = `forged_session: ${claimed} is neither this shell's session (${real.session}) nor an id its host issued to a child of it`;
   // A well-formed subagent id, but no hook here ever recorded one: the hook
@@ -278,7 +388,7 @@ export function sessionClaimRefusal(
     error,
     unblock: ownChildShell
       ? `record the verdict from the verifier's own ${host === "pi" ? "Pi worker" : "OpenCode child session"} shell, where WORKIT_SESSION_ID is already set; never set WORKIT_SESSION_ID or --session by hand`
-      : "never name a session yourself: spawn a verifier or reviewer subagent and pass exactly the --session its SubagentStart context names, or pass --as verifier",
+      : "never name a session yourself: spawn a verifier or reviewer subagent and pass exactly the --session and --token its SubagentStart context names, or pass --as verifier",
   };
 }
 

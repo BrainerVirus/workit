@@ -2560,7 +2560,7 @@ const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: bool
  * a minimal copy of core); test/workit-cli/doctor-issued-sessions.test.ts
  * pins the two equal.
  */
-export const HOOK_ISSUED_MARKER = "workit-issued-sessions/2";
+export const HOOK_ISSUED_MARKER = "workit-issued-sessions/3";
 
 /** Whether some built hook file under `<root>/dist` records SubagentStart ids. */
 const hookRecordsIssued = (root: string): boolean | null => {

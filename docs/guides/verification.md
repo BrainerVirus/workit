@@ -82,7 +82,7 @@ A verifier never names its own session. Each host gives it one:
 
 | Host | Verifier session |
 | --- | --- |
-| Claude Code, Codex | `<lead>:<agent id>` from the SubagentStart hook (`workit:verifier`, `workit:reviewer`; Codex `workit-verifier`, `workit-reviewer`), passed exactly as `--session`; any other Codex verifier passes `--as verifier` |
+| Claude Code, Codex | `<lead>:<agent id>` and a token from the SubagentStart hook (`workit:verifier`, `workit:reviewer`; Codex `workit-verifier`, `workit-reviewer`), passed exactly as `--session` and `--token`; any other Codex verifier passes `--as verifier` |
 | OpenCode | a child session's shell already has `WORKIT_SESSION_ID=<lead>:<child>` (plugin `shell.hook("create.before")`); its `OPENCODE_SESSION_ID` is the child's own id |
 | Pi | a supervised worker's shell already has `WORKIT_SESSION_ID=<lead>:<worker session>`; its `PI_SESSION_ID` is the worker's own id |
 | Cursor, CI, a plain terminal | declared: `WORKIT_SESSION_ID=<lead>:verifier-<random hex>` (Cursor's hook cannot reach a subagent) |
@@ -100,8 +100,36 @@ one of these:
   Codex). The hook records each id it issues per lead in the user's Workit
   state dir (`issued/`, the newest 64 per lead), so a verifier can record its
   verdict from any repository the lead delegated to, and a `<lead>:v1` the lead made up
-  is refused. On Claude Code the same holds for a declared
-  `WORKIT_SESSION_ID=<lead>:<x>`.
+  is refused. The same holds for a declared `WORKIT_SESSION_ID=<lead>:<x>`
+  under any `WORKIT_HOST` other than `cli`.
+
+An issued id is bound to its subagent: the hook mints a random token, hands it
+only to that subagent in its SubagentStart context, and stores only the
+token's sha256. `ledger verdict` accepts the id only with `--token <token>`
+(or `WORKIT_SESSION_TOKEN`), so a lead or sibling that read the id in the
+ledger cannot record under it (`unbound_session`), nor supersede that
+reviewer's failure. The row then carries `sessionBound: true`. Each id is
+issued once: a SubagentStart fired again for an id already issued mints no
+new token. The token hash lives in its own tree (`<state>/issued-tokens/`),
+which hooks older than tokens never write, and binding is sticky: once a lead
+has any token-bound id, a token-less record under it (an old cached plugin
+hook rewriting one, or issuing a new id) is refused as `unbound_session`. Only
+a lead that never had a token keeps the old path, where an id an older hook
+issued (`workit-issued-sessions/2`) is accepted without one; `workit doctor`
+reports that plugin as out of date. The token needs a CLI at least as new as
+the plugin: the SubagentStart text says to update an older CLI that rejects
+`--token`.
+
+On a host, `--session` takes only an issued id. Naming the shell's own
+session (`--session <lead>` on Claude Code, an OpenCode child's
+`<lead>:<child>`, a Pi worker's id, a Codex thread id) is refused as
+`session_flag`: drop `--session`, the shell's own session already acts. Every
+recorded verdict prints the gates' reading of its branch (`gate: <branch>
+accepted` or `not accepted (<reasons>)`; `data.gate` in JSON), so a verdict
+that does not count is never silent.
+
+An issued id never authors code: `workit git commit` refuses it
+(`judge_session`) and runs the same claim check as a verdict.
 
 A made-up `<lead>-v1` is refused as `--session` on Claude Code, Codex,
 OpenCode and Pi, and as `WORKIT_SESSION_ID` where the host sets its own
@@ -143,12 +171,21 @@ Limits (the check stops casual forgery, not a determined one; see
   documented `<lead>-v<n>` form. `CLAUDE_CODE_SESSION_ID` could close this
   gap; it is not used yet.
 - OpenCode, Pi, Codex: the host variable is checked, but a caller that removes
-  both it and `WORKIT_HOST` from its environment looks like a plain terminal.
-- Any host: `WORKIT_HOST=cli` or an unset `WORKIT_HOST`, with no host variable,
-  is a plain terminal, where any id is declared.
-- Cursor, CI and a plain terminal are declared by design.
+  both it and `WORKIT_HOST` from its environment looks like a plain terminal,
+  and one that sets a host's variable itself (`OPENCODE_SESSION_ID=x`) is
+  believed.
+- Any host: unsetting `WORKIT_HOST` or overriding it to `cli`, with no host
+  variable, makes a plain terminal, where any id is declared.
+- Cursor, CI and a plain terminal are declared by design; Cursor's hook
+  cannot reach a subagent, so it issues no ids or tokens.
 - Claude Code, Codex: the issued-id record is plain files in the user's state
-  dir. A caller that writes there deliberately can mark any id as issued.
+  dir. A caller that writes there deliberately can mark any id as issued or
+  plant a token hash it chose. The token itself sits in the subagent's
+  transcript, which a caller that reads the host's transcript files can find.
+- Claude Code, Codex: anyone who can run the hook bundle can mint a new id
+  and its token (a SubagentStart with an agent id never used), and record an
+  independent verdict under it. Issue-once only stops re-minting an id that
+  already exists.
 
 Verdicts are SHA-keyed and carry over a rebase when
 the patch-id and diff are unchanged. A dirty tree is refused, also when the
@@ -164,10 +201,56 @@ independent pass, but `ledger check` shows it as a warning.
 **Integrity.** Each row the CLI writes carries `prevHash`/`rowHash`, a sha256
 chain over the file. `workit ledger verify-integrity` lists rows outside it
 (`unsigned`: appended by hand; `hash_mismatch`: edited; `broken_link`: a row
-before it was edited or removed) as `unverified_rows`, and `ledger check`
-warns about any on the branch. Neither blocks: the chain catches mistakes, it
-is not a defense against someone forging rows. Rows written before the chain
-existed read as legacy.
+before it was edited or removed; `duplicate_id`: a copy of an earlier row) as
+`unverified_rows`, and `ledger check` warns about any on the branch. Rows
+written before the chain existed read as legacy.
+
+Appends are never refused, but every verdict gate (`pr merge`, `stack land`,
+`pr status`, `ledger verdict`, the stop hook, fanout checks) reads the chain.
+
+While any row anywhere in the ledger reads `hash_mismatch` or `broken_link`
+(an edited row, or one removed or moved: honest appends never produce
+either), no verdict is accepted at all: reason `ledger_tampered`. `workit
+ledger verify-integrity` lists the broken rows. To repair, once the edit is
+understood, move the ledger file aside (`mv <ledger> <ledger>.tampered-<date>`;
+the unblock names the path) and record the verdicts again.
+
+These verdicts are never accepted as independent:
+
+- a verdict row outside the chain, legacy rows included: reason `unsigned`,
+  `hash_mismatch`, `broken_link` or `duplicate_id`;
+- a `--session` verdict recorded on a host (Claude Code, Codex, OpenCode, Pi)
+  whose id no SubagentStart hook issued, or a `<lead>:<x>` environment id on
+  a declared host (Claude Code, Cursor or any `WORKIT_HOST` but `cli`) that
+  none issued: reason `unissued_session`;
+- such an issued id recorded without its token (an older CLI, or another
+  session reusing it): reason `unbound_session`.
+
+`--session` from CI or a plain terminal, `--as`, and an OpenCode, Pi or Codex
+shell's own session stay accepted. A row the gate cannot trust also cannot
+retire another: its `--supersedes` is ignored. A failure counts as the
+author's own only when chained rows written before it made its session an
+author, so authorship gained afterwards (a forged row, a commit or empty amend
+under the reviewer's id, a trailer) never discounts it. An unverified
+`stack.restacked` row never carries a pass onto new code. The chain is a
+keyless sha256: it stops a row appended, edited, removed or moved by hand,
+not someone who recomputes the hashes, deletes the newest rows, or moves the
+whole ledger aside. Moving the ledger aside (the documented repair) also
+drops every independent failure in it: re-record those before merging.
+
+The ledger file is created `0600`; an older, wider one is tightened on the
+next append (POSIX). On OpenCode, Pi and the MCP server, which run Workit in
+their own process, a held ledger lock (network filesystems only) is waited
+on for at most 250 ms and returns `busy`; the CLI waits up to 5 s.
+
+**Merges.** `workit pr merge` records `pr.merge.intent` before the forge
+write (a merge that cannot record it never starts), `pr.merged`
+(`verified: false`) as soon as the forge accepts the merge, then confirms it
+with `pr.merge.verified`. If the merge call errors although the forge merged,
+`pr status` reads the intent. If the forge cannot be read back, the merge
+fails as `merge_unverified` naming the `pr.merged` row, and `pr status`, the
+stop hook and `verify-delivery merged` still see the merge. A confirmation row
+that cannot be written is printed (`confirmed.error` in JSON).
 
 ## Task context across branches
 

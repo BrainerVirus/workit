@@ -49,6 +49,7 @@ import {
 } from "../core/workspaces";
 import { redactText } from "../forge/redact";
 import { failure, success, type ForgeResult } from "../forge/types";
+import { issuedBinding, sessionClaimRefusal } from "../host-session";
 import { appendObserved, readLedger, type LedgerActor } from "../ledger";
 import {
   GIT_TIMEOUTS,
@@ -649,6 +650,25 @@ export function gitCommit(
       "invalid_input",
       "WORKIT_SESSION_ID must be 1-128 characters of [A-Za-z0-9_.:@/+-]",
     );
+  // A commit names its author session (commit.recorded, the trailer): the
+  // same claim check as a verdict, and an id issued to a verifier or
+  // reviewer never authors code (audit mv83zyg6 P2b).
+  if (session) {
+    const env = input.env ?? process.env;
+    if (issuedBinding(cwd, session) !== null)
+      return failure(
+        "blocked",
+        `judge_session: ${session} was issued to a verifier or reviewer subagent; it records verdicts and never authors commits`,
+        "commit from the implementer's or the lead's own session (unset WORKIT_SESSION_ID back to the shell's)",
+      );
+    const refusal = sessionClaimRefusal(env, session, cwd);
+    if (refusal)
+      return failure(
+        "blocked",
+        refusal.error,
+        "commit from the session this shell really is: never set WORKIT_SESSION_ID by hand for a commit (unset it, or use the id the host put in this shell)",
+      );
+  }
   // A commit that only rewords (amend) or is empty on purpose needs no change.
   const changeRequired = !input.amend && !input.allowEmpty;
 

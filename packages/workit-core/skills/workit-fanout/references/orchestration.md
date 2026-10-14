@@ -72,11 +72,12 @@ Which session id a verdict carries, per host:
 
 - Claude Code: subagents inherit your `WORKIT_SESSION_ID`, so the
   SubagentStart hook names each `verifier` and `reviewer` its own session
-  (`<lead>:<agent id>`), passed exactly as `--session`: the hook records the
-  ids it issues, and only those are accepted. An `implementer` is issued
+  (`<lead>:<agent id>`) and a token only that subagent sees, passed exactly as
+  `--session` and `--token`: the hook records the ids it issues, and only
+  those, with their token, are accepted. An `implementer` is issued
   none: it keeps your id in its env for its workit commands and commits.
 - Codex: the `workit-verifier` and `workit-reviewer` agents get the same
-  issued `--session` from SubagentStart; any other verifier passes
+  issued `--session` and `--token` from SubagentStart; any other verifier passes
   `--as verifier`.
 - OpenCode: a child session's shell already has
   `WORKIT_SESSION_ID=<lead>:<child>`; Pi: a supervised worker's shell has

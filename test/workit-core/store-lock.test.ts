@@ -11,11 +11,15 @@ import {
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import {
+  defaultLockTimeout,
+  hostAwareLockTimeout,
   localLockHost,
   lockPathFor,
   parseProcStatStart,
   processStartOf,
+  setDefaultLockTimeout,
 } from "@/packages/workit-core/src/core/store-lock";
+import { appendRow, ledgerPath } from "@/packages/workit-core/src/ledger";
 import { join, resolve } from "node:path";
 import { TaskStore } from "@/packages/workit-core/src/core/task-store";
 import { stackLockStale } from "@/packages/workit-core/src/stack";
@@ -462,3 +466,36 @@ for (const simulateWindows of [false, true])
       }
     },
   );
+
+test("Given a live holder of the ledger lock, When an in-process host appends, Then it waits at most 250 ms and gets busy; the CLI keeps its longer wait", () => {
+  const budget = defaultLockTimeout();
+  const root = mkdtempSync(join(tmpdir(), "workit-ledger-lock-"));
+  spawnSync("git", ["init", "-q"], { cwd: root });
+  try {
+    setDefaultLockTimeout(250); // in-process hosts never raise it
+    const file = ledgerPath(root);
+    if (!file.ok) throw new Error(file.error);
+    mkdirSync(`${file.value}.lock`, { recursive: true });
+    writeFileSync(join(`${file.value}.lock`, "owner"), "live-holder");
+    const started = Date.now();
+    const result = appendRow(
+      root,
+      {
+        type: "decision",
+        what: "w",
+        why: "y",
+        refs: [],
+        actor: { host: "opencode", session: "s", agentId: null },
+      } as never,
+      { forceLock: true },
+    );
+    const waited = Date.now() - started;
+    expect(result).toMatchObject({ ok: false, code: "busy" });
+    expect(waited).toBeLessThan(1_500);
+    expect(hostAwareLockTimeout(5_000)).toBe(250);
+    setDefaultLockTimeout(2_000); // what the CLI does for its own process
+    expect(hostAwareLockTimeout(5_000)).toBe(5_000);
+  } finally {
+    setDefaultLockTimeout(budget);
+  }
+});

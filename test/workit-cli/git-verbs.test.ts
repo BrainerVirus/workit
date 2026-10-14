@@ -731,7 +731,7 @@ test.skipIf(process.platform === "win32")(
     sshForgeRemote(repo, "git@github.com:o/r.git");
     const token = "ghp_S3cretS3cretS3cretS3cretS3cret0000";
     const tokenFile = path.join(repo.root, "token");
-    writeFileSync(tokenFile, `${token}\n`);
+    writeFileSync(tokenFile, `${token}\n`, { mode: 0o600 });
     workspace(repo, { vcs: { provider: "github", account: "octo", tokenFile } });
     const runner = replayRunner({
       "GET user": replyError(`gh: Bad credentials for token ${token} (HTTP 401)`),

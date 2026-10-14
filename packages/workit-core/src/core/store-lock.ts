@@ -44,8 +44,16 @@ export const RECLAIM_GUARD_TTL_MS = 30_000;
  * wait blocks the calling thread, so in-process hosts (OpenCode, MCP, Pi) keep
  * the short default; the CLI raises it for its own process.
  */
-let defaultLockTimeoutMs = 250;
+export const IN_PROCESS_LOCK_TIMEOUT_MS = 250;
+let defaultLockTimeoutMs = IN_PROCESS_LOCK_TIMEOUT_MS;
 export const defaultLockTimeout = (): number => defaultLockTimeoutMs;
+/**
+ * The wait for a lock that a CLI process may hold longer (the ledger's
+ * network-filesystem lock): `cliMs` once the process raised the default
+ * (the CLI does), else the in-process cap.
+ */
+export const hostAwareLockTimeout = (cliMs: number): number =>
+  defaultLockTimeoutMs > IN_PROCESS_LOCK_TIMEOUT_MS ? cliMs : IN_PROCESS_LOCK_TIMEOUT_MS;
 export const setDefaultLockTimeout = (ms: number): void => {
   defaultLockTimeoutMs = ms;
 };

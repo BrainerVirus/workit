@@ -32,8 +32,11 @@ const HOOK_ENTRIES = [
 // bypasses (#281: aliases, eval/xargs/brace bodies, pwsh, forge API merges,
 // remote and refspec resolution, tokenizing every command) adds ~18 KB
 // (Cursor ~710 KB); bounded shell analysis and the review's bypass closures
-// add ~6 KB (Cursor ~716 KB), so the ceiling is 720 KB.
-const BUDGET = 720_000;
+// add ~6 KB (Cursor ~716 KB); the ledger's verdict-gate trust checks and
+// issued-id tokens (#289) add ~6 KB (Cursor ~722 KB); issuing each id once
+// with sticky token binding (#289 round 3) measures 722,478 bytes, so the
+// ceiling is 723 KB.
+const BUDGET = 723_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {
