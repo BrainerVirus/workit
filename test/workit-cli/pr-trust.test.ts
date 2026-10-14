@@ -71,7 +71,10 @@ const rows = (cwd: string, type: string) => {
 const GH_STATUS = 'graphql status {"owner":"o","name":"r","number":"12"}';
 
 /** After the merge call, status reads are `after` (merged, or failing). */
-const setup = (after: { value: "merged" | "failing" | "open" } = { value: "merged" }) => {
+const setup = (
+  after: { value: "merged" | "failing" | "open" } = { value: "merged" },
+  options: { mergeCallFails?: boolean } = {},
+) => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
@@ -109,6 +112,8 @@ const setup = (after: { value: "merged" | "failing" | "open" } = { value: "merge
             : replyError("HTTP 502: Bad Gateway (https://api.github.com/graphql)"),
     "PUT repos/o/r/pulls/12/merge": () => {
       merged = true;
+      // The forge merged, but the call's reply was lost (a timeout, a 502).
+      if (options.mergeCallFails) return replyError("HTTP 502: Bad Gateway", 1);
       return JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" });
     },
   };
@@ -165,29 +170,57 @@ test("Given a --session verdict an older CLI recorded on Claude Code for an id n
   const refused = await run(["pr", "merge", "--json"], repo.cwd);
   expect(refused.json().error).toContain("unissued_session");
   expect(writes(runner.calls)).toEqual([]);
+  // Issued later, with a token: the old row never presented it.
   recordIssuedSession(repo.cwd, "lead-1", "lead-1:verifier-v1");
-  expect((await run(["pr", "merge", "--json"], repo.cwd)).code).toBe(0);
+  const unbound = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(unbound.json().error).toContain("unbound_session");
+  expect(writes(runner.calls)).toEqual([]);
 });
 
-for (const [label, argv, env, prepare] of [
+const issuedFlags = (cwd: string, lead: string, id: string): string[] => [
+  "--session",
+  id,
+  "--token",
+  recordIssuedSession(cwd, lead, id) ?? "",
+];
+for (const [label, argv, env] of [
   [
-    "a host-issued Claude Code subagent id (--session)",
-    ["--session", "lead-2:agent-3"],
+    "a host-issued Claude Code subagent id (--session and --token)",
+    (cwd: string) => issuedFlags(cwd, "lead-2", "lead-2:agent-3"),
     { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead-2" },
-    (cwd: string) => recordIssuedSession(cwd, "lead-2", "lead-2:agent-3"),
   ],
-  ["Codex --as verifier", ["--as", "verifier"], { CODEX_THREAD_ID: "thread-9" }, () => {}],
-  ["CI --session (no host)", ["--session", "ci-verifier"], {}, () => {}],
+  [
+    "a host-issued Codex agent id (--session and --token)",
+    (cwd: string) => issuedFlags(cwd, "thread-9", "thread-9:agent-4"),
+    { CODEX_THREAD_ID: "thread-9" },
+  ],
+  ["Codex --as verifier", () => ["--as", "verifier"], { CODEX_THREAD_ID: "thread-9" }],
+  [
+    "an OpenCode child session (its own shell)",
+    () => [],
+    {
+      WORKIT_HOST: "opencode",
+      OPENCODE_SESSION_ID: "child-9",
+      WORKIT_SESSION_ID: "lead-O:child-9",
+    },
+  ],
+  [
+    "a Pi worker (its own shell)",
+    () => [],
+    { WORKIT_HOST: "pi", PI_SESSION_ID: "w-1", WORKIT_SESSION_ID: "lead-P:w-1" },
+  ],
+  ["a Cursor verifier (declared id)", () => [], { WORKIT_SESSION_ID: "lead-C:verifier-ab12" }],
+  ["CI --session (no host)", () => ["--session", "ci-verifier"], {}],
 ] as const)
-  test(`Given ${label}, When the verdict is recorded and pr merge runs, Then it merges`, async () => {
+  test(`Given ${label}, When the verdict is recorded and pr merge runs, Then the gate line says accepted and it merges`, async () => {
     const { repo } = setup();
-    prepare(repo.cwd);
     const recorded = await run(
-      ["ledger", "verdict", "verified", "--how", "drove it", ...argv],
+      ["ledger", "verdict", "verified", "--how", "drove it", ...argv(repo.cwd)],
       repo.cwd,
       { ...env },
     );
     expect(recorded.code, recorded.stdout).toBe(0);
+    expect(recorded.stdout).toContain("gate: feature/x accepted");
     const merged = await run(["pr", "merge", "--json"], repo.cwd);
     expect(merged.code, merged.stdout).toBe(0);
   });
@@ -243,4 +276,171 @@ test("Given the forge accepts the merge, When the post-merge read confirms it, T
   expect(rows(repo.cwd, "pr.merge.verified")).toEqual([
     expect.objectContaining({ merged: merged.id, pr: 12, mergeSha: repo.base }),
   ]);
+});
+
+const claude = (session = "lead-A") => ({ WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: session });
+
+test("Given an issued reviewer id read in the ledger, When the lead records under it without the token (with or without --supersedes), Then it is refused as unbound_session and nothing merges (P1)", async () => {
+  const { repo, runner } = setup();
+  const token = recordIssuedSession(repo.cwd, "lead-A", "lead-A:rev-1") ?? "";
+  const failed = await run(
+    [
+      "ledger",
+      "verdict",
+      "failed",
+      "--how",
+      "bad",
+      "--session",
+      "lead-A:rev-1",
+      "--token",
+      token,
+      "--json",
+    ],
+    repo.cwd,
+    claude(),
+  );
+  expect(failed.code, failed.stdout).toBe(0);
+  const failure = failed.json().data.id as string;
+  for (const extra of [[], ["--supersedes", failure], ["--token", "guessed"]]) {
+    const reused = await run(
+      [
+        "ledger",
+        "verdict",
+        "verified",
+        "--how",
+        "lgtm",
+        "--session",
+        "lead-A:rev-1",
+        ...extra,
+        "--json",
+      ],
+      repo.cwd,
+      claude(),
+    );
+    expect(reused.code, JSON.stringify(extra)).toBe(3);
+    expect(reused.json().error).toContain("unbound_session");
+  }
+  const merge = await run(["pr", "merge", "--json"], repo.cwd, claude());
+  expect(merge.code).toBe(3);
+  expect(writes(runner.calls)).toEqual([]);
+});
+
+test("Given a reviewer's issued id, When a commit is made under it through workit git commit (an empty amend), Then it is refused: a judge id never authors (P2b)", async () => {
+  const { repo } = setup();
+  recordIssuedSession(repo.cwd, "lead-A", "lead-A:rev-2");
+  const amend = await run(["git", "commit", "--amend", "--no-edit", "--json"], repo.cwd, {
+    ...claude("lead-A:rev-2"),
+    GIT_AUTHOR_NAME: "a",
+    GIT_AUTHOR_EMAIL: "a@b",
+    GIT_COMMITTER_NAME: "a",
+    GIT_COMMITTER_EMAIL: "a@b",
+  });
+  expect(amend.code, amend.stdout).toBe(3);
+  expect(amend.json().error).toContain("judge_session");
+  expect(rows(repo.cwd, "commit.recorded")).toEqual([]);
+});
+
+for (const [label, argv, env, error] of [
+  ["its own Claude Code session", ["--session", "lead-A"], claude(), "session_flag"],
+  [
+    "an OpenCode child's own session",
+    ["--session", "lead-O:child-9"],
+    {
+      WORKIT_HOST: "opencode",
+      OPENCODE_SESSION_ID: "child-9",
+      WORKIT_SESSION_ID: "lead-O:child-9",
+    },
+    "session_flag",
+  ],
+  [
+    "a Pi worker's own session",
+    ["--session", "lead-P:w-1"],
+    { WORKIT_HOST: "pi", PI_SESSION_ID: "w-1", WORKIT_SESSION_ID: "lead-P:w-1" },
+    "session_flag",
+  ],
+  [
+    "a Codex thread's own id",
+    ["--session", "thread-9"],
+    { CODEX_THREAD_ID: "thread-9" },
+    "session_flag",
+  ],
+  [
+    "an unissued <lead>:<x> id from the environment under WORKIT_HOST=cursor (P5)",
+    [],
+    { WORKIT_HOST: "cursor", WORKIT_SESSION_ID: "lead-A:nobody" },
+    "forged_session",
+  ],
+] as const)
+  test(`Given ${label}, When a verdict is recorded, Then it is refused at record time (${error}), not read as unissued later`, async () => {
+    const { repo } = setup();
+    const recorded = await run(
+      ["ledger", "verdict", "verified", "--how", "x", ...argv, "--json"],
+      repo.cwd,
+      { ...env },
+    );
+    expect(recorded.code, recorded.stdout).toBe(3);
+    expect(recorded.json().error).toContain(error);
+    expect(rows(repo.cwd, "verdict")).toEqual([]);
+  });
+
+test("Given a verdict the gate does not accept (the author's own), When it is recorded, Then the output names the gate's reading and why", async () => {
+  const { repo } = setup();
+  const own = await run(["ledger", "verdict", "verified", "--how", "mine", "--self"], repo.cwd);
+  expect(own.code).toBe(0);
+  expect(own.stdout).toContain("gate: feature/x not accepted (self)");
+  const json = await run(
+    ["ledger", "verdict", "verified", "--how", "mine", "--self", "--json"],
+    repo.cwd,
+  );
+  expect(json.json().data.gate).toMatchObject({ accepted: false, reasons: ["self"] });
+});
+
+test("Given an accepted verdict, When the forge merges but the merge call itself fails, Then the merge intent recorded before it lets pr status see a workit merge", async () => {
+  const { repo } = setup({ value: "merged" }, { mergeCallFails: true });
+  expect(
+    (
+      await run(["ledger", "verdict", "verified", "--how", "ok"], repo.cwd, {
+        WORKIT_SESSION_ID: "reviewer-2",
+      })
+    ).code,
+  ).toBe(0);
+  const merge = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(merge.code).not.toBe(0);
+  const [intent] = rows(repo.cwd, "pr.merge.intent");
+  expect(intent).toMatchObject({ observer: "workit_cli", pr: 12, head: repo.head });
+  expect(merge.json().error).toContain(intent.id);
+  expect(rows(repo.cwd, "pr.merged")).toEqual([]);
+  const status = await run(["pr", "status"], repo.cwd);
+  expect(status.stdout).toContain("merge intent recorded");
+  expect(status.stdout).not.toContain("merged outside workit");
+});
+
+test("Given a merged PR, When the only pr.merged row was appended by hand, Then pr status reads it as merged outside workit (M21)", async () => {
+  const { repo } = setup({ value: "merged" });
+  // The PR reads merged on the forge from the start.
+  Object.assign(forgeDeps, {
+    runner: replayRunner(
+      {
+        "GET user": fixture("github/user.json"),
+        "GET repos/o/r": fixture("github/repo.json"),
+        "GET repos/o/r/branches/main": fixture("github/branch-main.json"),
+        "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
+        "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
+        "graphql find": fixture("github/find-pr.json"),
+        [GH_STATUS]: fixture("github/pr-merged.json"),
+      },
+      repo.subs,
+    ),
+  });
+  expect(
+    (await run(["ledger", "verdict", "verified", "--how", "mine", "--self"], repo.cwd)).code,
+  ).toBe(0);
+  const file = ledgerPath(repo.cwd);
+  if (!file.ok) throw new Error(file.error);
+  appendFileSync(
+    file.value,
+    `${JSON.stringify({ v: 1, id: "forged-merge", at: new Date().toISOString(), type: "pr.merged", observer: "workit_cli", branch: "feature/x", head: repo.head, pr: 12, base: "main", verdictId: "made-up", actor: { host: "cli", session: "x", agentId: null } })}\n`,
+  );
+  const status = await run(["pr", "status"], repo.cwd);
+  expect(status.stdout).toContain("merged outside workit (no merge record)");
 });

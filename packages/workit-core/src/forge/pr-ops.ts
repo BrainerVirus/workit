@@ -35,6 +35,7 @@ import { currentBranch, fetchRefs, GIT_TIMEOUTS, remoteRefTip, resolveRef } from
 import {
   appendObserved,
   checkVerdicts,
+  tamperedUnblock,
   readLedger,
   type LedgerActor,
   type VerdictCheck,
@@ -366,6 +367,8 @@ export type MergeOutcome = {
   grant: { source: AutonomySource };
   deletedBranch: boolean | { error: string };
   recorded: { id: string } | { error: string };
+  /** The `pr.merge.verified` row confirming `recorded`, or why it was not written. */
+  confirmed: { id: string } | { error: string };
   /**
    * Release tracks: when the PR landed on a track's production branch, the
    * branches it must flow back into (mergeBackBranches); empty otherwise.
@@ -420,7 +423,9 @@ export type MergeRefusal = {
     | "already_merged"
     | "closed"
     | "protected_branch"
-    | "base_mismatch";
+    | "base_mismatch"
+    | "ledger_tampered"
+    | "intent_unrecorded";
   next?: string;
   blockers?: string[];
   verdict?: Pick<VerdictCheck, "head" | "accepted" | "authors">;
@@ -682,6 +687,12 @@ export async function mergePullRequest(
       `git fetch && git switch ${branch} && git merge --ff-only @{u}  # then re-verify that head`,
       { reason: "head_mismatch", verdict: summary },
     );
+  else if (!covered && check.accepted.reasons.includes("ledger_tampered"))
+    return refuse(
+      `ledger_tampered: a ledger row was edited, removed or moved, so no verdict for ${label} is accepted until it is repaired`,
+      tamperedUnblock(cwd),
+      { reason: "ledger_tampered", verdict: summary },
+    );
   else if (!covered)
     return refuse(
       `NEEDS_VERDICT: ${label} has no accepted independent verdict for ${head.slice(0, 12)} (${check.accepted.reasons.join(", ")})`,
@@ -691,12 +702,38 @@ export async function mergePullRequest(
 
   const squashMessage = squashMessageFor(cwd, resolved, input, doc);
   if (squashMessage && !squashMessage.ok) return squashMessage;
+  // The intent goes in before the forge write: a merge call that errors after
+  // the forge did merge still leaves a record `pr status` reads. A merge that
+  // cannot be recorded never starts.
+  const intent = appendObserved(cwd, {
+    type: "pr.merge.intent",
+    actor: input.actor,
+    branch,
+    head,
+    pr: doc.number,
+    base: doc.base,
+    method: input.method,
+    verdictId: verdict.verdictId,
+    ...(unverified ? { unverified: unverified.recorded } : {}),
+    grant: grant.source,
+  });
+  if (!intent.ok)
+    return refuse(
+      `intent_unrecorded: the merge intent for ${label} could not be recorded (${intent.error}); nothing was merged`,
+      "fix the ledger (workit ledger check), then merge again",
+      { reason: "intent_unrecorded" },
+    );
+  const intentId = String(intent.value.id);
   const merged = resolved.forge.merge(doc.number, {
     sha: head,
     method: input.method,
     ...(squashMessage ? { squashMessage: squashMessage.data } : {}),
   });
-  if (!merged.ok) return merged;
+  if (!merged.ok)
+    return {
+      ...merged,
+      error: `${merged.error} (merge intent ${intentId} is recorded: if the forge merged anyway, workit pr status reads it)`,
+    };
   // Recorded as soon as the forge accepts it (N3): a failed read below must
   // not leave a merge that `pr status`, the stop hook and `verify-delivery
   // merged` cannot see. The post-verify then confirms it in its own row.
@@ -712,6 +749,7 @@ export async function mergePullRequest(
     verdictId: verdict.verdictId,
     ...(unverified ? { unverified: unverified.recorded } : {}),
     grant: grant.source,
+    intent: intentId,
     verified: false,
   });
   const recorded = row.ok ? { id: String(row.value.id) } : { error: row.error };
@@ -731,17 +769,25 @@ export async function mergePullRequest(
       unblock: `workit verify-delivery merged --pr ${doc.number}`,
       recorded,
     };
-  if ("id" in recorded)
-    appendObserved(cwd, {
-      type: "pr.merge.verified",
-      actor: input.actor,
-      branch,
-      head,
-      pr: doc.number,
-      base: doc.base,
-      merged: recorded.id,
-      mergeSha: merged.data.mergeSha,
-    });
+  const confirmation =
+    "id" in recorded
+      ? appendObserved(cwd, {
+          type: "pr.merge.verified",
+          actor: input.actor,
+          branch,
+          head,
+          pr: doc.number,
+          base: doc.base,
+          merged: recorded.id,
+          mergeSha: merged.data.mergeSha,
+        })
+      : null;
+  const confirmed: MergeOutcome["confirmed"] =
+    confirmation === null
+      ? { error: "no pr.merged row to confirm" }
+      : confirmation.ok
+        ? { id: String(confirmation.value.id) }
+        : { error: confirmation.error };
 
   let deletedBranch: MergeOutcome["deletedBranch"] = false;
   if (input.deleteBranch) {
@@ -767,6 +813,7 @@ export async function mergePullRequest(
       grant: { source: grant.source },
       deletedBranch,
       recorded,
+      confirmed,
       mergeBack: mergeBack.branches,
       mergeBackTrack: mergeBack.track,
     },
