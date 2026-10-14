@@ -953,3 +953,45 @@ test("G one main session, W repeated raw gh pr view / push / commit, T each nudg
       ).toBe("deny");
   });
 });
+
+test("G Claude Code's PowerShell tool, W a raw push hides in an assignment, a script block, a continued line or Start-Process, T it is denied (review mv828t3f)", async () => {
+  await withProtectedMain(() => {
+    const root = repo({ branch: "feature/x" });
+    const ps = (command: string) =>
+      claudeOut(root, command, { tool_name: "PowerShell" })?.permissionDecision;
+    for (const command of [
+      "$null = git push origin HEAD:main",
+      "$out = git push origin HEAD:main 2>&1",
+      "git push `\n origin HEAD:main",
+      "Invoke-Expression -Command 'git push origin HEAD:main'",
+      "Invoke-Command -ScriptBlock { git push origin HEAD:main }",
+      "Invoke-Command { git push origin HEAD:main }",
+      "1 | ForEach-Object { git push origin HEAD:main }",
+      "1 | % { git push origin HEAD:main }",
+      ". { git push origin HEAD:main }",
+      "try { git push origin HEAD:main } catch {}",
+      "Start-Process git -ArgumentList 'push','origin','HEAD:main' -Wait",
+      "$r = gh pr merge 1",
+      "<# note #> git push origin HEAD:main",
+    ])
+      expect(ps(command), command).toBe("deny");
+    for (const command of [
+      "git status # git push origin HEAD:main",
+      "$h = @{ a = 1 }; git log -1",
+      "Start-Process notepad -ArgumentList 'x.txt'",
+    ])
+      expect(ps(command), command).toBeUndefined();
+  });
+});
+
+test("G a permissive branch policy, W a push onto heads/main, T it is denied as main (heads/ reaches refs/heads/)", async () => {
+  await withProtectedMain((configDir) => {
+    writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
+    );
+    const root = repo({ branch: "feature/x" });
+    expect(claudeOut(root, "git push origin HEAD:heads/main")?.permissionDecision).toBe("deny");
+    expect(claudeOut(root, "git push origin HEAD:heads-up")?.permissionDecision).toBeUndefined();
+  });
+});

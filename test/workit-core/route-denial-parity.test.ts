@@ -374,3 +374,150 @@ test("all adapters enforce the branch policy on every raw branch-creation form",
     }
   }
 });
+
+test("Given a Workit workspace, When a command hides its git under a comment quote, a brace list, another directory spelling or shell construct (review mv828t3f), Then all five hosts deny it", async () => {
+  const root = workspace();
+  try {
+    const origin = path.join(root, ".git", "origin.git").replaceAll("\\", "/");
+    const top = root.replaceAll("\\", "/");
+    for (const command of [
+      // A quote inside a comment no longer hides the rest.
+      "true # don't worry\ngit push origin HEAD:main",
+      // Bash drops the empty word: this runs `git push`.
+      "{git,} push origin HEAD:main",
+      // --all and --branches push the local main too.
+      "git push --all origin",
+      "git push --branches origin",
+      // The repository named from another directory, or as the cwd.
+      `cd /tmp && git --git-dir=${top}/.git push origin HEAD:main`,
+      `cd /tmp && GIT_DIR=${top}/.git git push origin HEAD:main`,
+      `export GIT_DIR=${top}/.git; cd /tmp && git push origin HEAD:main`,
+      'git -C "$PWD" push origin HEAD:main',
+      'git -C "$(git rev-parse --show-toplevel)" push origin HEAD:main',
+      'cd "$PWD" && git push origin HEAD:main',
+      // State set earlier in the same command.
+      `git remote add up ${origin} && git push up HEAD:main`,
+      "git config alias.zz 'push origin HEAD:main' && git zz",
+      // A computed name whose literal default is main.
+      'git push origin "HEAD:${UNSET:-main}"',
+      // Shell constructs that run their command.
+      "function f { git push origin HEAD:main; }; f",
+      "coproc git push origin HEAD:main",
+      "trap 'git push origin HEAD:main' EXIT",
+      "source <(echo 'git push origin HEAD:main')",
+      "bash <(echo 'git push origin HEAD:main')",
+      "(( x = 1 << 2 ))\ngit push origin HEAD:main",
+      "sudo -iu root git push origin HEAD:main",
+      "taskset 1 git push origin HEAD:main",
+      "script -qc 'git push origin HEAD:main' /dev/null",
+      "parallel git push origin ::: HEAD:main",
+      "watch -n1 git push origin HEAD:main",
+      // Other git pushes.
+      "git subtree push --prefix=x origin main",
+      `git send-pack ${origin} HEAD:refs/heads/main`,
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
+    for (const command of [
+      "git status # then git push origin HEAD:main",
+      "((echo hi) )",
+      "git push origin HEAD:$BRANCH",
+      'git push origin "HEAD:${TARGET:-feature/x}"',
+      "git config --get alias.zz",
+      "git remote add up ../elsewhere.git && git push up HEAD:main",
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(false));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Given a GitHub origin, When a push names it with other case, a leading slash or www, Then all five hosts deny a push onto main", async () => {
+  const root = workspace();
+  try {
+    git(root, "remote", "set-url", "origin", "https://github.com/Owner/Repo.git");
+    for (const command of [
+      "git push https://github.com/owner/repo HEAD:main",
+      "git push git@github.com:/Owner/Repo.git HEAD:main",
+      "git push https://www.github.com/Owner/Repo HEAD:main",
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
+    expect(await denialsByHost(root, "git push https://github.com/owner/fork HEAD:main")).toEqual(
+      allHosts(false),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Given a Workit workspace, When a forge merge stands behind -R, a doubled slash or a stdin body, Then all five hosts deny it", async () => {
+  const root = workspace();
+  try {
+    for (const command of [
+      "gh pr -R o/r merge 1",
+      "gh pr --repo o/r merge 1",
+      "glab mr -R o/r merge 1",
+      "gh api -X PUT repos/o/r/pulls/1//merge",
+      "gh api -iXPUT repos/o/r/pulls/1/merge",
+      "gh api graphql -F query=@- <<'EOF'\nmutation { mergePullRequest(input:{pullRequestId:\"x\"}) { clientMutationId } }\nEOF",
+      `echo '{"query":"mutation { mergePullRequest(input:{pullRequestId:1}){clientMutationId} }"}' | gh api graphql --input -`,
+      "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input:{pullRequestId:\"x\"}) { clientMutationId } }'",
+      'glab api graphql -f query=\'mutation { mergeRequestAccept(input:{projectPath:"o/r", iid:"1"}) { errors } }\'',
+      "stdbuf -oL git push origin HEAD:main",
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
+    for (const command of [
+      "gh pr -R o/r view 1",
+      "gh api graphql -F query=@- <<<'query { viewer { login } }'",
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(false));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Given a PR body in a quoted heredoc substitution, When it mentions raw commands in backticks after `1)` or `:)`, Then no host denies it (review M1)", async () => {
+  const root = workspace();
+  try {
+    for (const command of [
+      "gh pr create --title 'x' --body \"$(cat <<'EOF'\n## Summary\n1) Run `gh pr merge` only via workit\n2) `git push origin HEAD:main` is denied\nEOF\n)\"",
+      "workit pr create --title x --body \"$(cat <<'EOF'\nNote :) then `gh pr merge 1` here\nEOF\n)\"",
+      'gh pr create --title x --body "$(cat <<\'EOF\'\nquote "it\'s" (see 3) `git push origin main`\nEOF\n)"',
+      'gh pr create --title x --body "$(cat <<EOF\na) b) c) `gh pr merge 2`\nEOF\n)"',
+      "gh pr create --title x --body \"$(printf '%s\\n' '1) `gh pr merge 1`')\"",
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(false));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Given a pathological command, When any host analyzes it, Then it answers within 50 ms, and one it cannot analyze is denied with an unblock (review B1)", async () => {
+  const root = workspace();
+  try {
+    const bomb = `echo ${"{a,b}".repeat(22)}; git push origin HEAD:main`;
+    const nested = `echo ${"{".repeat(3000)}a,b${"}".repeat(3000)}; git push origin HEAD:main`;
+    for (const command of [bomb, nested]) {
+      const started = performance.now();
+      expect(claudeDenies(root, command)).toBe(true);
+      expect(performance.now() - started).toBeLessThan(50);
+      expect(await denialsByHost(root, command)).toEqual(allHosts(true));
+    }
+    const deep = `echo ${"$(".repeat(100)}true${")".repeat(100)}`;
+    expect(await denialsByHost(root, deep)).toEqual(allHosts(true));
+    const reason = String(await opencodeDenial(root, deep));
+    expect(reason).toContain("could not analyze");
+    const claude = dispatchHook(claudeCodeAdapter, {
+      hook_event_name: "PreToolUse",
+      session_id: "session-1",
+      cwd: root,
+      tool_name: "Bash",
+      tool_input: { command: deep },
+      tool_use_id: "toolu_1",
+    }).json.hookSpecificOutput as { permissionDecisionReason?: string };
+    expect(claude.permissionDecisionReason).toContain("Split it into simpler commands");
+    // An everyday brace list still expands and runs.
+    expect(await denialsByHost(root, "mkdir -p src/{core,hooks}/{a,b}")).toEqual(allHosts(false));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
