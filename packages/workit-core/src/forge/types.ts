@@ -140,6 +140,13 @@ export type CreatePrInput = {
   draft: boolean;
 };
 
+export type MergeOptions = {
+  sha: string;
+  method: MergeMethod;
+  /** Squash only: the commit message the forge writes instead of its default. */
+  squashMessage?: { subject: string; body: string };
+};
+
 export type MergeResult = {
   /** The merge (or squash/rebase tip) commit the forge reported, when it did. */
   mergeSha: string | null;
@@ -187,7 +194,7 @@ export interface Forge {
    * Merge with the head guard: the forge refuses (`blocked`, head_moved) when
    * the PR head is no longer `sha`.
    */
-  merge(n: number, options: { sha: string; method: MergeMethod }): ForgeResult<MergeResult>;
+  merge(n: number, options: MergeOptions): ForgeResult<MergeResult>;
   /** Retarget a PR/MR to another base branch (S12 stacks). */
   updateBase(n: number, base: string): ForgeResult<void>;
   /** Title, draft flag, base and state of one PR/MR. */

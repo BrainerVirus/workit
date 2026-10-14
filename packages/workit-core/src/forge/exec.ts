@@ -31,6 +31,8 @@ export type ForgeRunner = (
     timeoutMs: number;
     /** Credential for this call (GH_TOKEN / GITLAB_TOKEN); never logged. */
     token?: string;
+    /** Written to stdin (a JSON body for `api --input -`); argv has a size limit. */
+    input?: string;
   },
 ) => CliRun;
 
@@ -90,7 +92,9 @@ export function systemRunner(
       timeout: options.timeoutMs,
       killSignal: "SIGKILL",
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      ...(options.input === undefined
+        ? { stdio: ["ignore", "pipe", "pipe"] as const }
+        : { input: options.input, stdio: ["pipe", "pipe", "pipe"] as const }),
     });
     const error: NodeJS.ErrnoException | undefined = result.error;
     return {
@@ -248,8 +252,10 @@ export function apiWrite<T>(
   args: readonly string[],
   what: string,
   timeoutMs: number = FORGE_TIMEOUTS.api,
+  /** A request body sent on stdin (pair it with `--input -`). */
+  input?: string,
 ): ForgeResult<T> {
-  const run = runner(bin, args, { timeoutMs });
+  const run = runner(bin, args, input === undefined ? { timeoutMs } : { timeoutMs, input });
   if (run.status !== 0) {
     const text = redactText(`${run.stderr}\n${run.stdout}`).trim();
     const reason = forgeReason(run);

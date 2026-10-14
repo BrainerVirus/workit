@@ -7,6 +7,7 @@
 // merge: only when `pr status` reads READY, an accepted independent verdict
 // covers the head (S13) and the merge grant allows it; head-SHA guarded.
 // `--unverified --reason` (merge: true only) bypasses the verdict, recorded.
+// `--subject`/`--body` (squash only) set the squash commit message.
 // ready/edit/threads/reply: the lifecycle steps `next` names (audit M13).
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -60,7 +61,7 @@ const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60
 const CREATE_USAGE =
   "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--label <l>]… [--reviewer <login>]… [--draft] [--json]";
 const MERGE_USAGE =
-  "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>] [--json]";
+  "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch] [--unverified --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
 const EDIT_USAGE =
   "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--json]";
@@ -322,6 +323,9 @@ async function merge(argv: string[], io: Io): Promise<number> {
     "delete-branch": "boolean",
     unverified: "boolean",
     reason: "value",
+    subject: "value",
+    body: "value",
+    "body-file": "value",
   });
   if (typeof flags === "string") return usage(io, flags, MERGE_USAGE);
   const unverified = unverifiedFlag(flags);
@@ -333,6 +337,19 @@ async function merge(argv: string[], io: Io): Promise<number> {
   const method = (flags.values.method ?? "squash") as MergeMethod;
   if (!METHODS.has(method))
     return usage(io, "--method must be squash, merge or rebase", MERGE_USAGE);
+  const { subject } = flags.values;
+  if (flags.values.body !== undefined && flags.values["body-file"] !== undefined)
+    return usage(io, "pass --body or --body-file, not both", MERGE_USAGE);
+  let body = flags.values.body;
+  if (flags.values["body-file"] !== undefined) {
+    const read = readBodyFile(io, flags.values["body-file"]);
+    if (typeof read === "string") return usage(io, read, MERGE_USAGE);
+    body = read.body;
+  }
+  if ((subject !== undefined || body !== undefined) && method !== "squash")
+    return usage(io, "--subject and --body set a squash message; use --method squash", MERGE_USAGE);
+  if (subject !== undefined && (!subject.trim() || subject.includes("\n")))
+    return usage(io, "--subject must be one non-empty line", MERGE_USAGE);
 
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
@@ -345,6 +362,8 @@ async function merge(argv: string[], io: Io): Promise<number> {
       deleteBranch: flags.booleans.has("delete-branch"),
       actor: actorFromEnv(io.env),
       ...(unverified ? { unverified } : {}),
+      ...(subject !== undefined ? { subject } : {}),
+      ...(body !== undefined ? { body } : {}),
     },
     forgeDeps.sleep,
   );

@@ -556,6 +556,7 @@ export function createGitLabForge(options: {
     },
 
     merge(iid, mergeOptions) {
+      const squash = mergeOptions.method === "squash" ? mergeOptions.squashMessage : undefined;
       // GitLab's merge method is a project setting; squash is per request.
       if (mergeOptions.method === "rebase")
         return failure(
@@ -573,12 +574,27 @@ export function createGitLabForge(options: {
           "-X",
           "PUT",
           `${project}/merge_requests/${iid}/merge`,
-          "-f",
-          `sha=${mergeOptions.sha}`,
-          "-F",
-          `squash=${mergeOptions.method === "squash" ? "true" : "false"}`,
+          ...(squash
+            ? ["--input", "-"]
+            : [
+                "-f",
+                `sha=${mergeOptions.sha}`,
+                "-F",
+                `squash=${mergeOptions.method === "squash" ? "true" : "false"}`,
+              ]),
         ],
         `merge of merge request !${iid}`,
+        undefined,
+        // The squash message rides stdin: argv has a size limit (E2BIG).
+        squash
+          ? JSON.stringify({
+              sha: mergeOptions.sha,
+              squash: true,
+              squash_commit_message: squash.body
+                ? `${squash.subject}\n\n${squash.body}`
+                : squash.subject,
+            })
+          : undefined,
       );
       if (!merged.ok) return merged;
       const value = merged.data;

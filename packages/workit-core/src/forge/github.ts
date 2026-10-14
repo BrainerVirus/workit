@@ -528,6 +528,7 @@ export function createGitHubForge(options: {
     },
 
     merge(number, mergeOptions) {
+      const squash = mergeOptions.method === "squash" ? mergeOptions.squashMessage : undefined;
       // sha= is GitHub's atomic head guard: 409 when the head moved.
       const merged = apiWrite<{ sha?: string; merged?: boolean; message?: string }>(
         runner,
@@ -538,12 +539,21 @@ export function createGitHubForge(options: {
           "-X",
           "PUT",
           `repos/${repo}/pulls/${number}/merge`,
-          "-f",
-          `sha=${mergeOptions.sha}`,
-          "-f",
-          `merge_method=${mergeOptions.method}`,
+          ...(squash
+            ? ["--input", "-"]
+            : ["-f", `sha=${mergeOptions.sha}`, "-f", `merge_method=${mergeOptions.method}`]),
         ],
         `merge of pull request #${number}`,
+        undefined,
+        // The squash message rides stdin: argv has a size limit (E2BIG).
+        squash
+          ? JSON.stringify({
+              sha: mergeOptions.sha,
+              merge_method: mergeOptions.method,
+              commit_title: squash.subject,
+              commit_message: squash.body,
+            })
+          : undefined,
       );
       if (!merged.ok) return merged;
       if (merged.data.merged === false)

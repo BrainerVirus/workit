@@ -16,6 +16,9 @@
 // The merge call carries the head SHA (GitHub `sha=`, GitLab `sha=`), so a
 // head that moves after the gates refuses instead of merging unverified code.
 // --delete-branch deletes with a lease on that same SHA.
+// A squash with --subject/--body, or in a workspace with `trailers: false`,
+// sends its own message (the PR title and the branch's commits by default,
+// on stdin) with `Workit-Session:` lines dropped from each trailer block.
 import {
   requireGrant,
   resolveAutonomy,
@@ -24,8 +27,9 @@ import {
 } from "../autonomy";
 import { branchKindOf, flowRoute, gitFlowOf, isProtectedTarget } from "../core/branch";
 import { vcsConfig } from "../core/vcs-config";
+import { workspaceTrailers } from "../core/workspaces";
 import { workspaceReleaseTracks } from "../core/release-tracks";
-import { deleteRemoteBranch } from "../git/ops";
+import { deleteRemoteBranch, stripSessionTrailers } from "../git/ops";
 import { spawnSync } from "node:child_process";
 import { currentBranch, fetchRefs, GIT_TIMEOUTS, remoteRefTip, resolveRef } from "../git/rev";
 import {
@@ -343,6 +347,9 @@ export type MergeInput = {
   expect?: { base: string; branch: string };
   /** Merge without a verdict (`merge: true` only); the reason is recorded. */
   unverified?: { reason: string };
+  /** Squash commit subject and body (`--subject`, `--body`); unset parts use the defaults. */
+  subject?: string;
+  body?: string;
 };
 
 export type MergeOutcome = {
@@ -467,6 +474,90 @@ export function nextHint(next: string, number: number): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * The squash message workit sends, or null to leave the forge default: only a
+ * squash with --subject/--body or in a workspace with `trailers: false`.
+ * Defaults: the PR title (GitHub appends `(#n)` like its own default) and the
+ * branch's commits as GitHub lists them; Workit-Session lines never survive.
+ */
+function squashMessageFor(
+  cwd: string,
+  resolved: ResolvedForge,
+  input: MergeInput,
+  doc: PrStatusDoc,
+): ForgeResult<{ subject: string; body: string }> | null {
+  if (input.method !== "squash") return null;
+  if (input.subject === undefined && input.body === undefined && workspaceTrailers(cwd).enabled)
+    return null;
+  let subject = input.subject?.trim() ?? "";
+  if (!subject) {
+    const meta = resolved.forge.prMeta(doc.number);
+    if (!meta.ok) return meta;
+    subject =
+      resolved.forge.kind === "github" ? `${meta.data.title} (#${doc.number})` : meta.data.title;
+  }
+  // An explicit body is kept byte for byte but for its trailer block.
+  const body =
+    input.body === undefined
+      ? squashCommitList(cwd, resolved, doc.base, doc.head.sha)
+      : stripSessionTrailers(input.body, { subject: false });
+  return success({ subject, body });
+}
+
+/** Bounds of the generated squash body: a forge message, not an archive. */
+const SQUASH_LIST_MAX_COMMITS = 100;
+const SQUASH_LIST_MAX_CHARS = 60_000;
+
+/**
+ * `* subject` and body of each non-merge commit on `base..head`, oldest
+ * first, from the local clone ("" when absent); each commit loses its
+ * Workit-Session trailers, and past the bounds the rest is counted.
+ */
+function squashCommitList(
+  cwd: string,
+  resolved: ResolvedForge,
+  base: string,
+  head: string,
+): string {
+  const from =
+    resolveRef(cwd, `refs/remotes/${resolved.baseRemote}/${base}`) ??
+    resolveRef(cwd, `refs/heads/${base}`);
+  if (!from) return "";
+  const log = spawnSync(
+    "git",
+    ["log", "--reverse", "--no-merges", "--format=%B%x1e", `${from}..${head}`],
+    {
+      cwd,
+      encoding: "utf8",
+      timeout: GIT_TIMEOUTS.local,
+      killSignal: "SIGKILL",
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
+  if (log.status !== 0) return "";
+  const entries = log.stdout
+    .split("\x1e")
+    .map((message) => stripSessionTrailers(message.replace(/^\n+/u, ""), { subject: true }))
+    .filter((message) => message.trim())
+    .map((message) => {
+      const [subject = "", ...rest] = message.trimEnd().split("\n");
+      const body = rest.join("\n").replace(/^\n+/u, "");
+      return body ? `* ${subject}\n\n${body}` : `* ${subject}`;
+    });
+  const listed: string[] = [];
+  let size = 0;
+  for (const entry of entries) {
+    if (listed.length >= SQUASH_LIST_MAX_COMMITS || size + entry.length > SQUASH_LIST_MAX_CHARS)
+      break;
+    listed.push(entry);
+    size += entry.length + 2;
+  }
+  const more = entries.length - listed.length;
+  return [...listed, ...(more ? [`… and ${more} more commit${more === 1 ? "" : "s"}`] : [])].join(
+    "\n\n",
+  );
 }
 
 export async function mergePullRequest(
@@ -596,7 +687,13 @@ export async function mergePullRequest(
       { reason: "needs_verdict", verdict: summary },
     );
 
-  const merged = resolved.forge.merge(doc.number, { sha: head, method: input.method });
+  const squashMessage = squashMessageFor(cwd, resolved, input, doc);
+  if (squashMessage && !squashMessage.ok) return squashMessage;
+  const merged = resolved.forge.merge(doc.number, {
+    sha: head,
+    method: input.method,
+    ...(squashMessage ? { squashMessage: squashMessage.data } : {}),
+  });
   if (!merged.ok) return merged;
   // Post-verify: the forge must report the PR merged.
   let state = "open";
