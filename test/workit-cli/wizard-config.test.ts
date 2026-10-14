@@ -1117,6 +1117,13 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     .find(existsSync);
   if (!gitBin) throw new Error("Git must be available for the runInit host fixture");
   symlinkSync(gitBin, path.join(bin, "git"));
+  // The dev pointer below makes the post-apply doctor require bun; the doctor
+  // looks for it on PATH and under its own (temp) HOME only.
+  const bunBin = process.env.PATH?.split(path.delimiter)
+    .map((entry) => path.join(entry, "bun"))
+    .find(existsSync);
+  if (!bunBin) throw new Error("Bun must be on PATH for the runInit host fixture");
+  symlinkSync(bunBin, path.join(bin, "bun"));
   writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
   const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
