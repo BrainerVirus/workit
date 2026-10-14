@@ -382,6 +382,10 @@ test("Given a branch cut from a local branch with a slash in its name, Then the 
   git(root, "switch", "-q", "-c", "feature/child", "feature/base");
   // feature/base has no task; `base` must not be taken for it.
   expect(turn(root)).toBeNull();
+  // Nor once feature/base is deleted: `feature` is no remote, so the start
+  // keeps its full name.
+  git(root, "branch", "-q", "-D", "feature/base");
+  expect(turn(root)).toBeNull();
 });
 
 test("Given a worker on a closed task, When it is cancelled without a task id, Then the closed task is not used", () => {

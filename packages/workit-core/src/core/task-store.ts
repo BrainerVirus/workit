@@ -329,8 +329,8 @@ const REFLOG_LINE = /^[0-9a-f]+ ([0-9a-f]+) .* (\d+) [+-]\d{4}\t(.*)$/u;
 /**
  * The branch `branch` was cut from, read from git's reflogs (no git process).
  * Only the branch log's first line counts, and only when it is the creation
- * entry (old sha all zeros) "branch: Created from <start>": an expired,
- * rewritten or missing log says nothing. A branch created from HEAD takes
+ * entry "branch: Created from <start>": an expired, rewritten or missing log
+ * says nothing. A branch created from HEAD takes
  * the worktree HEAD log's checkout made by that creation (same new sha, same
  * or next second) onto the branch or one of its earlier names (`aliases`, it
  * may have been renamed since). A remote start (`origin/develop`) is
@@ -344,7 +344,9 @@ const branchStart = (
   const first = readText(
     path.join(path.dirname(location.dir), "logs", "refs", "heads", branch),
   ).split("\n", 1)[0];
-  const created = /^0+ /u.test(first) ? REFLOG_LINE.exec(first) : null;
+  // A "Created from" message only ever starts a log (git deletes the log
+  // with the branch), so the first line alone decides.
+  const created = REFLOG_LINE.exec(first);
   const start = created && /^branch: Created from (\S+)$/u.exec(created[3])?.[1];
   if (!created || !start) return null;
   if (start !== "HEAD") return start;
