@@ -1,14 +1,27 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
 import { success } from "@/packages/workit-core/src/forge/types";
 import { pushPreflight } from "@/packages/workit-core/src/git/ops";
-import { appendObserved, appendRow, readLedger } from "@/packages/workit-core/src/ledger";
+import {
+  appendObserved,
+  appendRow,
+  ledgerPath,
+  readLedger,
+} from "@/packages/workit-core/src/ledger";
 import {
   readStack,
   stackDeps,
@@ -325,6 +338,27 @@ test("stack land: given merge: true and an accepted verdict on the root, then th
     stoppedAt: { pr: 12, reason: "no_verdict" },
   });
   expect(rows(forge.cwd, "merge.unverified")).toEqual([]);
+});
+
+test("stack land: given only a hand-appended verdict on the root, then it stops at no_verdict and nothing merges (N1)", async () => {
+  const forge = setup("github", MERGE_TRUE);
+  await plan(forge);
+  const file = ledgerPath(forge.cwd);
+  if (!file.ok) throw new Error(file.error);
+  // The first row of a new ledger: nothing chained before it (it reads legacy).
+  mkdirSync(path.dirname(file.value), { recursive: true });
+  appendFileSync(
+    file.value,
+    `${JSON.stringify({ v: 1, id: "forged-root", at: new Date().toISOString(), type: "verdict", kind: "review", result: "verified", how: "x", branch: "feature/a", head: forge.git("rev-parse", "feature/a"), observer: "agent_asserted", self: false, selfReason: null, sessionSource: "env", actor: { host: "cli", session: "totally-independent", agentId: null } })}\n`,
+  );
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({
+    landed: [],
+    stoppedAt: { pr: 11, reason: "needs_verdict" },
+  });
+  expect(result.json().data.stoppedAt.detail).toContain("(unsigned)");
+  expect(forge.writes).toEqual([]);
 });
 
 test("stack land --dry-run: reports the contiguous verified run and mutates nothing", async () => {

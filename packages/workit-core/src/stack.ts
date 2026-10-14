@@ -1180,7 +1180,7 @@ export function qualify(
 export function stackStatus(ctx: Ctx, stack: StackFile): StackResult<StatusOutcome> {
   const mismatch = repoMismatch(ctx, stack);
   if (mismatch) return mismatch;
-  const ledger = readLedger(ctx.cwd);
+  const ledger = readLedger(ctx.cwd, { integrity: true });
   if (!ledger.ok) return stackFail(ledger.code, ledger.error, ledger.unblock);
   const remote = remoteFor(ctx.cwd, ctx.resolved, stack.trunk);
   const trunkSha = trunkTip(ctx.cwd, remote, stack.trunk);
@@ -1823,7 +1823,7 @@ export async function landStack(
     absorb(synced.data);
   }
   const ledgerRows = () => {
-    const ledger = readLedger(ctx.cwd);
+    const ledger = readLedger(ctx.cwd, { integrity: true });
     return ledger.ok ? ledger.value.rows : [];
   };
   const simulated = new Set<string>();
