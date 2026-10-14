@@ -221,14 +221,21 @@ test("Given a well-formed subagent id and no issued-id record on the machine, Th
       "lead:agent-1",
       cwd,
     );
-    expect(claude?.error).toContain("no SubagentStart hook on this machine has recorded");
+    expect(claude?.error).toContain(
+      "no SubagentStart hook has recorded an issued id for this lead",
+    );
     expect(claude?.unblock).toContain("older than this CLI");
     expect(claude?.unblock).toContain("claude plugin update workit@workit");
     expect(claude?.unblock).toContain("relaunch the verifier");
     const codex = sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-1", cwd);
     expect(codex?.unblock).toContain("codex plugin add workit@workit");
-    // Once any hook recorded an id, a missing one is just not issued.
+    // Another lead's record says nothing about this one's hook.
     recordIssuedSession(cwd, "other-lead", "other-lead:a");
+    expect(sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-1", cwd)?.unblock).toContain(
+      "older than this CLI",
+    );
+    // Once this lead's hook recorded an id, a missing one is just not issued.
+    recordIssuedSession(cwd, "t-1", "t-1:agent-9");
     const after = sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-1", cwd);
     expect(after?.unblock).not.toContain("older than this CLI");
     // A malformed claim never blames the plugin.
@@ -255,8 +262,11 @@ test("Given a lead started in repo A, When its verifier records a verdict from r
     mkdirSync(repoA);
     mkdirSync(repoB);
     recordIssuedSession(repoA, "lead", "lead:verifier-1");
+    // Nothing is written into the lead's repository any more.
+    expect(existsSync(path.join(repoA, ".workit", "hooks", "issued"))).toBe(false);
     const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
-    for (const where of [repoA, repoB, cwd])
+    // Other repositories first: none of them may depend on a read in repoA.
+    for (const where of [repoB, cwd, repoA])
       expect(sessionClaimRefusal(env, "lead:verifier-1", where), where).toBeNull();
     // Still bound to the lead that was issued the id, and never to an invented one.
     expect(
@@ -289,6 +299,31 @@ test("an id an 8.10-8.12 hook recorded in the repository's store is moved to the
     // Once moved, it counts from any directory, and invented ids still do not.
     expect(sessionClaimRefusal(env, "lead:old-1", os.tmpdir())).toBeNull();
     expect(sessionClaimRefusal(env, "lead:old-2", cwd)?.error).toContain("forged_session");
+  } finally {
+    restoreState();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a migration moves every readable lead, skips stray entries, and keeps ids an old hook writes after it", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  freshState(cwd);
+  try {
+    const { createHash } = require("node:crypto") as typeof import("node:crypto");
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 32);
+    const old = path.join(cwd, ".workit", "hooks", "issued");
+    for (const lead of ["a", "b"]) {
+      mkdirSync(path.join(old, hash(lead)), { recursive: true });
+      writeFileSync(path.join(old, hash(lead), hash(`${lead}:x`)), "workit-issued-sessions/1");
+    }
+    writeFileSync(path.join(old, "stray"), "");
+    const env = (lead: string) => ({ WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: lead });
+    expect(sessionClaimRefusal(env("a"), "a:x", cwd)).toBeNull();
+    expect(sessionClaimRefusal(env("b"), "b:x", os.tmpdir())).toBeNull();
+    // The stray entry keeps the old root; the next old-hook write is migrated later.
+    mkdirSync(path.join(old, hash("c")), { recursive: true });
+    writeFileSync(path.join(old, hash("c"), hash("c:x")), "workit-issued-sessions/1");
+    expect(sessionClaimRefusal(env("c"), "c:x", cwd)).toBeNull();
   } finally {
     restoreState();
     rmSync(cwd, { recursive: true, force: true });
