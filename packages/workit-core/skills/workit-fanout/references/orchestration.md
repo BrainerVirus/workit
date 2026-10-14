@@ -72,12 +72,18 @@ Which session id a verdict carries, per host:
 
 - Claude Code: subagents inherit your `WORKIT_SESSION_ID`, so the
   SubagentStart hook names each `verifier` and `reviewer` its own session
-  (`<lead>:<agent id>`), passed as `--session`; that one wins over any
-  `<lead>-v<n>` in a brief. An `implementer` uses the session its brief
-  exports for its workit commands.
-- Other hosts: the session the brief sets wins: `export
-  WORKIT_SESSION_ID=<lead>-w-<slice>` from `workit fanout brief` for a
-  worker, `<lead>-v<n>` (or `--as verifier`) for a verifier you start.
+  (`<lead>:<agent id>`), passed as `--session`. An `implementer` uses the
+  session its brief exports for its workit commands.
+- Codex: the `workit-verifier` and `workit-reviewer` agents get the same
+  `--session` from SubagentStart; any other verifier passes `--as verifier`.
+- OpenCode: a child session's shell already has
+  `WORKIT_SESSION_ID=<lead>:<child>`; Pi: a supervised worker's shell has
+  `<lead>:<worker session>`. Set nothing for a verifier there.
+- Cursor (no session id in the shell): the brief sets the verifier's
+  `WORKIT_SESSION_ID=<lead>:<n>`.
+- A worker's commits use `export WORKIT_SESSION_ID=<lead>-w-<slice>` from
+  `workit fanout brief`. A verdict under a hand-minted id such as `<lead>-v1`
+  is refused as `forged_session` wherever the host sets a session id.
 
 A batch verifier takes several slices on one surface in one session: for
 each branch it checks out the head, runs that slice's VERIFY, and records its

@@ -8,6 +8,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+// A host shell running the suite (OpenCode, Pi, Codex, a Claude Code-launched
+// host) exports its own session id, which the CLI treats as the real session:
+// a test's own WORKIT_SESSION_ID would then read as forged. Tests that need a
+// host session set these themselves.
+for (const key of ["OPENCODE_SESSION_ID", "PI_SESSION_ID", "CODEX_THREAD_ID", "WORKIT_HOST"])
+  delete process.env[key];
+
 if (!process.env.WORKFLOW_TOOLKIT_STATE) {
   const dir = mkdtempSync(path.join(tmpdir(), "wk-test-state-"));
   process.env.WORKFLOW_TOOLKIT_STATE = dir;

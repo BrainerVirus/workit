@@ -36,26 +36,12 @@ const featureRepo = (): string => {
   return root;
 };
 
-// The suite may itself run inside a host shell: its session variables would
-// be this shell's real session, so every run starts without them.
-const HOST_SESSION_VARS = [
-  "OPENCODE_SESSION_ID",
-  "PI_SESSION_ID",
-  "CODEX_THREAD_ID",
-  "WORKIT_HOST",
-];
-const hostFree = (): NodeJS.ProcessEnv => {
-  const env = { ...process.env };
-  for (const key of HOST_SESSION_VARS) delete env[key];
-  return env;
-};
-
 const run = async (cwd: string, argv: string[], env: NodeJS.ProcessEnv = {}) => {
   let stdout = "";
   let stderr = "";
   const code = await main(argv, {
     cwd,
-    env: { ...hostFree(), WORKIT_SESSION_ID: "s-reviewer", ...env },
+    env: { ...process.env, WORKIT_SESSION_ID: "s-reviewer", ...env },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   });
@@ -388,6 +374,30 @@ test("Given a lead session, When it records a verdict under a hand-minted <lead>
   const unrooted = await verdict(root, { WORKIT_SESSION_ID: "" }, "--session", "anyone");
   expect(unrooted.code).toBe(3);
   expect(unrooted.json().error).toContain("no host session");
+});
+
+test("Given the verifier session each skill documents per host, When it records a verdict on another session's branch, Then it is accepted and independent", async () => {
+  const shapes: Array<[string, NodeJS.ProcessEnv, string[]]> = [
+    ["claude", { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" }, ["--session", "lead:a1"]],
+    [
+      "codex agent",
+      { CODEX_THREAD_ID: "t-lead", WORKIT_SESSION_ID: undefined },
+      ["--session", "t-lead:a2"],
+    ],
+    [
+      "codex --as",
+      { CODEX_THREAD_ID: "t-lead", WORKIT_SESSION_ID: undefined },
+      ["--as", "verifier"],
+    ],
+    ["cursor", { WORKIT_HOST: "cursor", WORKIT_SESSION_ID: "lead:3" }, []],
+  ];
+  for (const [label, env, extra] of shapes) {
+    const root = featureRepo();
+    authoredBy(root, "implementer-1");
+    const result = await verdict(root, env, ...extra);
+    expect(result.code, label).toBe(0);
+    expect(result.json().data.self, label).toBe(false);
+  }
 });
 
 test("Given OpenCode, When the lead hand-mints a verifier id, Then it is refused; When the child session's own shell records it under <lead>:<child>, Then it is accepted", async () => {
