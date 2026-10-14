@@ -252,17 +252,17 @@ test("G a Workit workspace, W gh pr merge, glab mr merge or a push onto main, T 
       expect(out?.permissionDecision, command).toBe("deny");
       expect(out?.permissionDecisionReason, command).toContain("workit pr merge");
     }
-    for (const command of [
-      "git push --force origin HEAD:main",
-      "git push origin feature/x:main",
-      "git push origin --delete main",
-      "git push --repo=origin HEAD:main",
+    // A forced push or a delete is never a release; a plain push of the
+    // protected trunk (custom: its protected branch) names the release push.
+    for (const [command, named] of [
+      ["git push --force origin HEAD:main", "workit git push --force-with-lease"],
+      ["git push origin --delete main", "workit git push --force-with-lease"],
+      ["git push origin feature/x:main", "workit git push --release main"],
+      ["git push --repo=origin HEAD:main", "workit git push --release main"],
     ]) {
       const out = claudeOut(root, command);
       expect(out?.permissionDecision, command).toBe("deny");
-      expect(out?.permissionDecisionReason, command).toContain(
-        "workit git push --force-with-lease",
-      );
+      expect(out?.permissionDecisionReason, command).toContain(named);
     }
     // A bare push targets the checked-out branch: refused on main, nudged on a feature branch.
     const onMain = repo();
@@ -271,26 +271,41 @@ test("G a Workit workspace, W gh pr merge, glab mr merge or a push onto main, T 
   });
 });
 
-test("G git-flow, W a raw push onto main or develop, T the deny names workit git push --release and the release grant", async () => {
+test("per preset, W a raw push onto a release branch, T the deny names workit git push --release and the release grant", async () => {
   await withProtectedMain((configDir) => {
-    writeFileSync(
-      path.join(configDir, "config.json"),
-      JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
-    );
-    const root = repo();
-    git(root, "branch", "develop");
-    for (const branch of ["main", "develop"]) {
-      const out = claudeOut(root, `git push origin ${branch}`);
-      expect(out?.permissionDecision, branch).toBe("deny");
-      expect(out?.permissionDecisionReason, branch).toContain(
-        `workit git push --release ${branch} [--release v<version>]`,
-      );
-      expect(out?.permissionDecisionReason, branch).toContain("release=true");
+    const table: Array<[Record<string, unknown>, string[], string[]]> = [
+      [{ preset: "gitflow" }, ["main", "develop"], []],
+      [{ preset: "github-flow" }, ["main"], []],
+      [
+        { preset: "custom", allowed: ["task/*"], protected: ["main", "stable"] },
+        ["main", "stable"],
+        ["develop"],
+      ],
+    ];
+    for (const [branchPolicy, release, other] of table) {
+      writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ branchPolicy }));
+      const root = repo();
+      for (const name of ["develop", "stable"]) git(root, "branch", name);
+      const label = String(branchPolicy.preset);
+      for (const branch of release) {
+        const out = claudeOut(root, `git push origin ${branch}`);
+        expect(out?.permissionDecision, `${label} ${branch}`).toBe("deny");
+        expect(out?.permissionDecisionReason, `${label} ${branch}`).toContain(
+          `workit git push --release ${branch} [--release v<version>]`,
+        );
+        expect(out?.permissionDecisionReason, branch).toContain("release=true");
+      }
+      // custom: develop is its default target, protected but not a release branch.
+      for (const branch of other) {
+        const out = claudeOut(root, `git push origin ${branch}`);
+        expect(out?.permissionDecision, `${label} ${branch}`).toBe("deny");
+        expect(out?.permissionDecisionReason).not.toContain("--release");
+      }
+      // A blind force is never a release push.
+      const forced = claudeOut(root, "git push --force origin main");
+      expect(forced?.permissionDecisionReason).toContain("workit git push --force-with-lease");
+      expect(forced?.permissionDecisionReason).not.toContain("--release");
     }
-    // A blind force is never a release push.
-    const forced = claudeOut(root, "git push --force origin main");
-    expect(forced?.permissionDecisionReason).toContain("workit git push --force-with-lease");
-    expect(forced?.permissionDecisionReason).not.toContain("--release");
   });
 });
 

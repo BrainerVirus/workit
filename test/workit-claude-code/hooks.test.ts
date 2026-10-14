@@ -263,9 +263,15 @@ test("a protected-branch deny is structured JSON on stdout with exit 0 and nothi
   });
 }, 30_000);
 
-test("SubagentStart tells the worktree implementer that plain git is expected but branch names stay policy-checked, naming the kinds and the base", async () => {
+test("SubagentStart tells the worktree implementer, per preset, that plain git is expected but branch names stay policy-checked, naming that preset's kinds and bases", async () => {
   await withProtectedMain((configDir) => {
     const cwd = root();
+    // main + develop, so git-flow sees its integration branch.
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd });
+    git("init", "-q", "-b", "main");
+    git("commit", "-q", "--allow-empty", "-m", "init");
+    git("branch", "develop");
     const context = () =>
       (
         runHook(
@@ -273,45 +279,43 @@ test("SubagentStart tells the worktree implementer that plain git is expected bu
           fixture("claude-code", "subagent-start", cwd, { agent_type: "workit:implementer" }),
         ).json as Specific
       ).hookSpecificOutput?.additionalContext ?? "";
-    const custom = context();
-    expect(custom).toContain(
-      "Plain git is expected here, and the branch name is still policy-checked",
-    );
-    expect(custom).toContain(
-      "`git switch -c`, `git checkout -b`, `git branch` or `git worktree add -b`",
-    );
-    expect(custom).toContain(
-      "Allowed branch kinds here: feature/ (fix/ is bugfix/, chore/ is feature/",
-    );
-    expect(custom).toContain("Branch from origin/develop.");
-    // git-flow (develop + main): the kinds and where each starts.
-    writeFileSync(
-      path.join(configDir, "config.json"),
-      JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
-    );
-    Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd });
-    Bun.spawnSync(
+    const table: Array<[Record<string, unknown>, string[], RegExp | null]> = [
       [
-        "git",
-        "-c",
-        "user.email=t@t",
-        "-c",
-        "user.name=t",
-        "commit",
-        "-q",
-        "--allow-empty",
-        "-m",
-        "init",
+        { preset: "gitflow" },
+        [
+          "Allowed branch kinds here: feature/, bugfix/, hotfix/, release/ (fix/ is bugfix/, chore/ is feature/); any other prefix is denied.",
+          "git-flow: feature/, bugfix/ and release/ start from origin/develop, hotfix/ from origin/main",
+        ],
+        null,
       ],
-      { cwd },
-    );
-    Bun.spawnSync(["git", "branch", "develop"], { cwd });
-    const flow = context();
-    expect(flow).toContain("Allowed branch kinds here: feature/, bugfix/, hotfix/, release/");
-    expect(flow).toContain(
-      "git-flow: feature/, bugfix/ and release/ start from origin/develop, hotfix/ from origin/main",
-    );
-    expect(flow).not.toContain("workit git branch");
+      [
+        { preset: "github-flow" },
+        ["Any non-protected branch name is allowed here.", "Branch from origin/main."],
+        /git-flow|origin\/develop/,
+      ],
+      [
+        { preset: "custom", allowed: ["task/*", "release/*"], protected: ["main"] },
+        [
+          "Allowed branch kinds here: task/, release/; any other prefix is denied.",
+          "Branch from origin/develop.",
+        ],
+        /git-flow|feature\/|bugfix\/|fix\//,
+      ],
+    ];
+    for (const [branchPolicy, expected, absent] of table) {
+      writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ branchPolicy }));
+      const text = context();
+      const label = String(branchPolicy.preset);
+      expect(text, label).toContain(
+        "Plain git is expected here, and the branch name is still policy-checked",
+      );
+      expect(text, label).toContain(
+        "`git switch -c`, `git checkout -b`, `git branch` or `git worktree add -b`",
+      );
+      for (const line of expected) expect(text, label).toContain(line);
+      if (absent) expect(text, label).not.toMatch(absent);
+      expect(text, label).not.toContain("workit git branch");
+    }
   });
 });
 

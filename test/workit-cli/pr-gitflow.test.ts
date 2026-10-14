@@ -66,8 +66,15 @@ const routes = (): Record<string, Reply> => ({
 });
 
 /** feature/x pushed; a local develop makes git-flow's integration branch exist. */
-const setup = (preset: "gitflow" | "github-flow", extra: Record<string, Reply> = {}) => {
-  writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ branchPolicy: { preset } }));
+const POLICIES = {
+  gitflow: { preset: "gitflow" },
+  "github-flow": { preset: "github-flow" },
+  custom: { preset: "custom", allowed: ["feature/*", "release/*"], protected: ["main"] },
+} as const;
+
+const setup = (preset: keyof typeof POLICIES, extra: Record<string, Reply> = {}) => {
+  const branchPolicy = POLICIES[preset];
+  writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ branchPolicy }));
   const repo = makeForgeRepo("github");
   repos.push(repo);
   repo.git("branch", "develop", "main");
@@ -79,7 +86,7 @@ const setup = (preset: "gitflow" | "github-flow", extra: Record<string, Reply> =
           name: "w",
           glob: `${repo.root.replaceAll("\\", "/")}/**`,
           vcs: { provider: "github", account: "octo" },
-          branchPolicy: { preset },
+          branchPolicy,
         },
       ],
     }),
@@ -190,4 +197,42 @@ test("Given a release branch with an open PR into main, When pr create --base de
   expect(backMerge.code, backMerge.stdout + backMerge.stderr).toBe(0);
   expect(backMerge.json().data).toMatchObject({ number: 13, base: "develop", created: true });
   expect(posted(runner.calls)?.vars).toMatchObject({ base: "develop" });
+});
+
+test("per preset, When pr create runs on feature and release branches, Then the target follows the preset and only git-flow refuses --base main or reminds about merging back", async () => {
+  const table = {
+    gitflow: {
+      feature: "develop",
+      release: "main",
+      featureMain: "gitflow_target",
+      mergeBack: true,
+    },
+    "github-flow": { feature: "main", release: "main", featureMain: null, mergeBack: false },
+    custom: { feature: "develop", release: "develop", featureMain: null, mergeBack: false },
+  } as const;
+  for (const [preset, expected] of Object.entries(table) as Array<
+    [keyof typeof table, (typeof table)[keyof typeof table]]
+  >) {
+    {
+      const { repo } = setup(preset);
+      const target = await run(["pr", "create", "--title", "feat: x", "--json"], repo.cwd);
+      expect(target.code, `${preset}: ${target.stdout}`).toBe(0);
+      expect(target.json().data.base, preset).toBe(expected.feature);
+      const intoMain = await run(
+        ["pr", "create", "--base", "main", "--title", "feat: x", "--json"],
+        repo.cwd,
+      );
+      if (expected.featureMain)
+        expect(intoMain.json().error, preset).toContain(expected.featureMain);
+      else expect(intoMain.code, `${preset}: ${intoMain.stdout}`).toBe(0);
+      repos.splice(0).forEach((done) => done.cleanup());
+    }
+    const { repo } = setup(preset);
+    onBranch(repo, "release/4.1.0");
+    const release = await run(["pr", "create", "--title", "chore: release"], repo.cwd);
+    expect(release.code, `${preset}: ${release.stdout}`).toBe(0);
+    expect(release.stdout, preset).toContain(`release/4.1.0 -> ${expected.release}`);
+    expect(release.stdout.includes("merge back:"), preset).toBe(expected.mergeBack);
+    repos.splice(0).forEach((done) => done.cleanup());
+  }
 });

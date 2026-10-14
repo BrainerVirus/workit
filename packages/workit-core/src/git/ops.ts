@@ -28,6 +28,7 @@ import {
   gitFlowOf,
   isProtectedTarget,
   releaseBranch,
+  releaseBranchesOf,
   resolveCommitPolicyFor,
   validateBranchNameFor,
   validateCommitMessageFor,
@@ -1054,8 +1055,7 @@ export function releasePushPreflight(
   if (progress) return inProgressFailure(progress.operation, "push");
   const wanted = [...new Set(names)];
   if (!wanted.length) return failure("invalid_input", "name the release refs to push");
-  const flow = gitFlowOf(cwd);
-  const branches = flow ? [flow.production, flow.develop] : [];
+  const { preset, branches } = releaseBranchesOf(cwd);
   const refs: ReleaseRef[] = [];
   for (const raw of wanted) {
     if (raw.startsWith("-") || raw.includes(":"))
@@ -1086,12 +1086,12 @@ export function releasePushPreflight(
     if (!branches.some((name) => name.toLowerCase() === branchName.toLowerCase()))
       return failure(
         "blocked",
-        `release_push_refused: ${branchName} is not a git-flow release branch (${branches.length ? branches.join(", ") : "the workspace branch policy is not git-flow"})`,
+        `release_push_refused: ${branchName} is not a release branch of the ${preset} policy (${branches.length ? branches.join(", ") : "none"})`,
         "workit git push  # a feature, bugfix, release or hotfix branch, then: workit pr create",
       );
     refs.push({ kind: "branch", name: branchName, ref: `refs/heads/${branchName}`, sha: branch });
   }
-  const remote = pushRemoteName(cwd, flow?.production ?? null);
+  const remote = pushRemoteName(cwd, refs.find((ref) => ref.kind === "branch")?.name ?? null);
   if (!remote)
     return failure(
       "not_found",

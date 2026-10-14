@@ -9,7 +9,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import {
+  allowedKinds,
   BRANCH_KINDS,
+  branchPolicySnapshotFor,
   suggestBranchName,
   type BranchKind,
 } from "@brainervirus/workit-core/src/core/branch";
@@ -39,6 +41,25 @@ const USAGE = "workit git branch|commit|push ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
 
+/**
+ * The closest kind this workspace's policy allows (`chore` -> feature in
+ * git-flow), or, when the policy names kinds `--kind` cannot spell (a custom
+ * `task/*`) or none (github-flow), the name to pass instead.
+ */
+function kindHint(cwd: string, kind: string): string {
+  let kinds: string[] = [...BRANCH_KINDS];
+  try {
+    kinds = allowedKinds(branchPolicySnapshotFor(cwd).namePolicy.allowed);
+  } catch {}
+  const spellable = kinds.filter((name) => (BRANCH_KINDS as readonly string[]).includes(name));
+  if (spellable.length)
+    return `did you mean --kind ${suggestBranchName(`${kind}/x`, spellable)?.split("/")[0]}?`;
+  const named = suggestBranchName(`${kind}/<slug>`, kinds);
+  return named
+    ? `this workspace allows ${kinds.map((name) => `${name}/`).join(", ")}: pass a name, e.g. workit git branch ${named}`
+    : `this workspace allows any non-protected name: pass one, e.g. workit git branch ${kind}/<slug>`;
+}
+
 async function branch(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
     base: "value",
@@ -56,7 +77,7 @@ async function branch(argv: string[], io: Io): Promise<number> {
   if (kind !== undefined && !(BRANCH_KINDS as readonly string[]).includes(kind))
     return usage(
       io,
-      `--kind must be ${BRANCH_KINDS.join(", ")}; did you mean --kind ${suggestBranchName(`${kind}/x`, BRANCH_KINDS)?.split("/")[0]}?`,
+      `--kind must be ${BRANCH_KINDS.join(", ")}; ${kindHint(io.cwd, kind)}`,
       BRANCH_USAGE,
     );
   if (kind !== undefined && flags.positionals.length)

@@ -3,6 +3,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
+import { shellBranchPolicyViolation } from "@/packages/workit-core/src/core/route-intent";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remote";
@@ -224,7 +225,7 @@ test("Given the release grant, When --release names a feature branch, a non-v ta
   const feature = await run(["git", "push", "--release", "feature/a", "--json"], repo.cwd);
   expect(feature.code).toBe(3);
   expect(feature.json().error).toContain(
-    "release_push_refused: feature/a is not a git-flow release branch (main, develop)",
+    "release_push_refused: feature/a is not a release branch of the gitflow policy (main, develop)",
   );
   repo.git("tag", "build-7");
   const tag = await run(["git", "push", "--release", "build-7", "--json"], repo.cwd);
@@ -243,16 +244,161 @@ test("Given the release grant, When --release names a feature branch, a non-v ta
   expect(rows(repo.cwd, "release.pushed")).toEqual([]);
 });
 
-test("Given github-flow, When --release names main, Then it is refused: only git-flow has release branches", async () => {
-  const repo = flowRepo({ branchPolicy: { preset: "github-flow" } });
-  workspace(repo, { autonomy: { release: true } });
-  const refused = await run(["git", "push", "--release", "main", "--json"], repo.cwd);
-  expect(refused.code).toBe(3);
-  expect(refused.json().error).toContain("the workspace branch policy is not git-flow");
-  // A v tag still pushes under the grant.
-  repo.git("tag", "v0.1.0");
-  const tag = await run(["git", "push", "--release", "v0.1.0", "--json"], repo.cwd);
-  expect(tag.code, tag.stdout + tag.stderr).toBe(0);
+// ---------------------------------------------------------------------------
+// Every behaviour per preset: git-flow, github-flow and custom (task/* and
+// release/* allowed, main and stable protected, develop the default target).
+
+const PRESETS = {
+  gitflow: GITFLOW,
+  "github-flow": { branchPolicy: { preset: "github-flow" } },
+  custom: {
+    branchPolicy: {
+      preset: "custom",
+      allowed: ["task/*", "release/*"],
+      protected: ["main", "stable"],
+    },
+  },
+} as const;
+type Preset = keyof typeof PRESETS;
+const ALL: Preset[] = ["gitflow", "github-flow", "custom"];
+
+/** One case per preset: the expected outcome, or null when the case does not apply. */
+const each = async (
+  cases: Record<Preset, unknown>,
+  check: (repo: RemoteRepo, expected: unknown, preset: Preset) => Promise<void>,
+) => {
+  for (const preset of ALL) {
+    const repo = flowRepo(PRESETS[preset]);
+    await check(repo, cases[preset], preset);
+    for (const done of repos.splice(0)) done.cleanup();
+  }
+};
+
+test("per preset, When each kind branches with no --base, Then the base is the preset's (git-flow route, github-flow main, custom default target) or the kind is refused with the preset's own kinds", async () => {
+  const table: Record<Preset, Record<string, string>> = {
+    gitflow: { feature: "develop", bugfix: "develop", release: "develop", hotfix: "main" },
+    "github-flow": { feature: "main", bugfix: "main", release: "main", hotfix: "main" },
+    custom: {
+      feature: 'use "task/x"',
+      bugfix: 'use "task/x"',
+      release: "develop",
+      hotfix: 'use "task/x"',
+    },
+  };
+  await each(table, async (repo, expected, preset) => {
+    for (const [kind, outcome] of Object.entries(expected as Record<string, string>)) {
+      const result = await run(
+        ["git", "branch", "--kind", kind, "--slug", "x", "--json"],
+        repo.cwd,
+      );
+      if (outcome.startsWith("use ")) {
+        expect(result.code, `${preset} ${kind}`).toBe(3);
+        expect(result.json().error, `${preset} ${kind}`).toContain(outcome);
+        expect(result.json().error).toContain("the allowed kinds are task/, release/");
+        // The correction names only the custom kinds.
+        expect(result.json().unblock).not.toMatch(/feature|bugfix|hotfix/);
+      } else {
+        expect(result.code, `${preset} ${kind}: ${result.stdout}`).toBe(0);
+        expect(result.json().data.base, `${preset} ${kind}`).toBe(outcome);
+        repo.git("switch", "-q", "main");
+      }
+    }
+  });
+});
+
+test("per preset, When --base main is explicit for a feature-like branch, Then only git-flow refuses it", async () => {
+  await each(
+    { gitflow: "gitflow_base", "github-flow": null, custom: null },
+    async (repo, expected, preset) => {
+      const name = preset === "custom" ? "task/m" : "feature/m";
+      const result = await run(["git", "branch", name, "--base", "main", "--json"], repo.cwd);
+      if (expected) {
+        expect(result.code, preset).toBe(3);
+        expect(result.json().error).toContain(String(expected));
+      } else {
+        expect(result.code, `${preset}: ${result.stdout}`).toBe(0);
+        expect(result.json().data.base).toBe("main");
+      }
+    },
+  );
+});
+
+test("Given custom with a configured default target, When a kind branches with no --base, Then it starts there", async () => {
+  const repo = flowRepo(PRESETS.custom);
+  repo.git("push", "-q", "origin", "main:refs/heads/integration");
+  workspace(repo, { vcs: { provider: "github", defaultTargetBranch: "integration" } });
+  expect((await baseOf(repo, ["--kind", "release", "--slug", "2.0.0"])).base).toBe("integration");
+});
+
+test("per preset, When --kind is not a kind, Then the hint uses the preset's own allowed kinds", async () => {
+  await each(
+    {
+      gitflow: "did you mean --kind feature?",
+      "github-flow": "this workspace allows any non-protected name",
+      custom: "did you mean --kind release?",
+    },
+    async (repo, expected, preset) => {
+      const result = await run(["git", "branch", "--kind", "chore", "--slug", "x"], repo.cwd);
+      expect(result.code, preset).toBe(2);
+      expect(result.stderr, preset).toContain(String(expected));
+    },
+  );
+  // A custom policy whose kinds --kind cannot spell gets a name to pass.
+  const repo = flowRepo({
+    branchPolicy: { preset: "custom", allowed: ["task/*"], protected: ["main"] },
+  });
+  const result = await run(["git", "branch", "--kind", "chore", "--slug", "x"], repo.cwd);
+  expect(result.stderr).toContain(
+    "this workspace allows task/: pass a name, e.g. workit git branch task/<slug>",
+  );
+  expect(result.stderr).not.toContain("did you mean --kind");
+});
+
+test("per preset, When raw git creates chore/x, Then the deny suggests the preset's own closest name (github-flow allows it)", async () => {
+  await each(
+    { gitflow: 'use "feature/x"', "github-flow": null, custom: 'use "task/x"' },
+    async (repo, expected, preset) => {
+      const verdict = shellBranchPolicyViolation(
+        repo.cwd,
+        "cd . && git switch -c chore/x origin/main",
+      );
+      if (expected === null) expect(verdict, preset).toEqual({ ok: true });
+      else {
+        expect(verdict?.ok, preset).toBe(false);
+        if (verdict?.ok === false) {
+          expect(verdict.correction, preset).toContain(String(expected));
+          if (preset === "custom") expect(verdict.correction).not.toMatch(/feature|bugfix|hotfix/);
+        }
+      }
+    },
+  );
+});
+
+test("per preset, Given the release grant, When --release names each long-lived branch and a v tag, Then git-flow pushes main and develop, github-flow main, custom its protected branches", async () => {
+  const table: Record<Preset, Record<string, boolean>> = {
+    gitflow: { main: true, develop: true, stable: false },
+    "github-flow": { main: true, develop: false, stable: false },
+    custom: { main: true, develop: false, stable: true },
+  };
+  await each(table, async (repo, expected, preset) => {
+    workspace(repo, { autonomy: { release: true } });
+    repo.git("branch", "stable", "main");
+    repo.git("tag", "v0.1.0");
+    for (const [branch, allowed] of Object.entries(expected as Record<string, boolean>)) {
+      const result = await run(["git", "push", "--release", branch, "--json"], repo.cwd);
+      if (allowed) expect(result.code, `${preset} ${branch}: ${result.stdout}`).toBe(0);
+      else {
+        expect(result.code, `${preset} ${branch}`).toBe(3);
+        expect(result.json().error).toContain(`is not a release branch of the ${preset} policy`);
+      }
+    }
+    const tag = await run(["git", "push", "--release", "v0.1.0", "--json"], repo.cwd);
+    expect(tag.code, `${preset} tag: ${tag.stdout}`).toBe(0);
+    // Plain workit git push on main names --release in every preset.
+    const plain = await run(["git", "push", "--json"], repo.cwd);
+    expect(plain.json().unblock, preset).toContain("workit git push --release main");
+  });
+  const repo = flowRepo(PRESETS["github-flow"]);
   const usage = await run(["git", "push", "--release", "--set-upstream"], repo.cwd);
   expect(usage.code).toBe(2);
 });

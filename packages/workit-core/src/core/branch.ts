@@ -219,6 +219,17 @@ export const suggestBranchName = (name: string, kinds: readonly string[]): strin
 
 const kindList = (kinds: readonly string[]) => kinds.map((kind) => `${kind}/`).join(", ");
 
+/** ` (fix/ is bugfix/, chore/ is feature/)`, naming only the kinds this policy allows. */
+const aliasNote = (kinds: readonly string[]): string => {
+  const notes = [
+    ["fix", "bugfix"],
+    ["chore", "feature"],
+  ]
+    .filter(([, kind]) => kinds.includes(kind))
+    .map(([alias, kind]) => `${alias}/ is ${kind}/`);
+  return notes.length ? ` (${notes.join(", ")})` : "";
+};
+
 export const validateBranchNamePolicy = (
   name: string,
   policy: BranchNamePolicy,
@@ -243,7 +254,7 @@ export const validateBranchNamePolicy = (
     const suggestion = suggestBranchName(name, kinds);
     const correction =
       suggestion && policy.allowed.some((pattern) => pattern.test(suggestion))
-        ? `use ${JSON.stringify(suggestion)}; the allowed kinds are ${kindList(kinds)} (workit git branch --kind <kind> --slug <slug>)`
+        ? `use ${JSON.stringify(suggestion)}; the allowed kinds are ${kindList(kinds)} (workit git branch ${suggestion})`
         : `choose a branch matching one of: ${allowed.join(", ")}`;
     return {
       ok: false,
@@ -423,14 +434,30 @@ export const flowRoute = (flow: GitFlow, kind: BranchKind): FlowRoute =>
       ? { kind, base: flow.develop, target: flow.production, mergeBack: flow.develop }
       : { kind, base: flow.develop, target: flow.develop, mergeBack: null };
 
-/** The git-flow production or develop branch: what `--release` may push. */
-export const releaseBranch = (cwd: string, branch: string): boolean => {
-  const flow = gitFlowOf(cwd);
-  return (
-    flow !== null &&
-    [flow.production, flow.develop].some((name) => name.toLowerCase() === branch.toLowerCase())
-  );
+/**
+ * The long-lived branches `workit git push --release` may push, per preset:
+ * git-flow production and develop; github-flow and trunk-based their trunk
+ * (main, master); custom its configured protected branches. Empty when the
+ * policy cannot be read.
+ */
+export const releaseBranchesOf = (cwd: string): { preset: string; branches: string[] } => {
+  try {
+    const resolved = resolveBranchPolicyFor(cwd);
+    const flow = resolved.preset === "gitflow" ? gitFlowOf(cwd) : null;
+    const branches = flow
+      ? [flow.production, flow.develop]
+      : resolved.preset === "custom"
+        ? [...resolved.protected]
+        : [resolved.defaultTargetBranch];
+    return { preset: resolved.preset, branches };
+  } catch {
+    return { preset: "unknown", branches: [] };
+  }
 };
+
+/** A branch `workit git push --release` may push here. */
+export const releaseBranch = (cwd: string, branch: string): boolean =>
+  releaseBranchesOf(cwd).branches.some((name) => name.toLowerCase() === branch.toLowerCase());
 
 /** `origin/develop`, `refs/remotes/origin/develop`, `refs/heads/develop` -> develop. */
 export const shortBranch = (ref: string): string =>
@@ -474,7 +501,7 @@ export const branchGuidance = (cwd: string): string | null => {
       resolved.ok === false ? null : String(resolved.defaultTargetBranch ?? "") || null;
     const flow = resolved.releaseTrack?.track ? null : gitFlowOf(cwd, integration);
     const allowed = kinds.length
-      ? `Allowed branch kinds here: ${kindList(kinds)} (fix/ is bugfix/, chore/ is feature/; any other prefix is denied).`
+      ? `Allowed branch kinds here: ${kindList(kinds)}${aliasNote(kinds)}; any other prefix is denied.`
       : "Any non-protected branch name is allowed here.";
     const base = flow
       ? `git-flow: feature/, bugfix/ and release/ start from origin/${flow.develop}, hotfix/ from origin/${flow.production}; feature/ and bugfix/ land on ${flow.develop}, release/ and hotfix/ on ${flow.production}.`

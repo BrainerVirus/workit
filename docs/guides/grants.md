@@ -21,7 +21,7 @@ repository.
 | `pr` | allowed | `workit pr create` |
 | `rerun` | allowed | `workit ci rerun` |
 | `merge` | needs a grant | `workit pr merge`, `stack land`. Both need an accepted independent verdict. `true` also allows `--unverified --reason "<why>"`, a bypass recorded in the ledger; `"verified"` never does (see [Merging](#merging)) |
-| `release` | needs a grant | `workit git push --release <ref>`: finishing a git-flow release or hotfix by pushing main, develop and `v*` tags, which `workit git push` refuses. Fast-forward only, a tag never moves; the `push` grant and its account check apply too (see [Releasing](#releasing)) |
+| `release` | needs a grant | `workit git push --release <ref>`: finishing a release or hotfix by pushing the preset's release branches (git-flow main and develop, github-flow main, custom protected branches) and `v*` tags, which `workit git push` refuses. Fast-forward only, a tag never moves; the `push` grant and its account check apply too (see [Releasing](#releasing)) |
 | `defaultEndpoint` | `commit` | Where an unnamed delivery request stops, lowest to highest: `commit`, `pr`, `green`, `merged` (skills read it; see [Default endpoint](#default-endpoint)) |
 | `verification` | `self` | What a normal-risk behavior change needs: `self` (observed `workit check test` plus the author's own `--self` verdict, shown as self-reviewed) or `independent` (a verdict from a session that did not author it). High risk always needs an independent live `verified` verdict |
 
@@ -32,13 +32,14 @@ Protected-branch pushes stay denied.
 ## Releasing
 
 `release: true` (`workit grant set <workspace> release=true`, from your own
-terminal) lets an agent finish a git-flow release or hotfix:
+terminal) lets an agent finish a release or hotfix:
 
 ```bash
 workit git push --release main --release develop --release v4.1.0
 ```
 
-Only the git-flow production and develop branches and `v<digit>…` tags are
+Only the preset's release branches (git-flow production and develop,
+github-flow main, custom `protected` branches) and `v<digit>…` tags are
 accepted; branches move fast-forward only and a tag only when the remote lacks
 it, in one atomic push that is verified and recorded as `release.pushed`.
 Without the grant the push is refused with `grant_required` and this unblock.

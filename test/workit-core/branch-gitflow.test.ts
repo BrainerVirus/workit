@@ -49,7 +49,7 @@ test("a disallowed prefix names the allowed kinds and the closest name; a policy
     ok: false,
     rule: "allowed_pattern",
     correction:
-      'use "bugfix/login"; the allowed kinds are feature/, bugfix/, hotfix/, release/ (workit git branch --kind <kind> --slug <slug>)',
+      'use "bugfix/login"; the allowed kinds are feature/, bugfix/, hotfix/, release/ (workit git branch bugfix/login)',
   });
   const custom = validateBranchNamePolicy("chore/x", policy(["team-*"]), "w");
   expect(custom.ok === false && custom.correction).toBe(

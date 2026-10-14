@@ -8,19 +8,34 @@ observed in the run ledger. Each one checks the workspace
 
 ```bash
 workit git branch feature/x [--base <b>] [--track <t>]   # policy-checked name, from the fetched default target
-workit git branch --kind feature|bugfix|release|hotfix --slug <s>   # the kind picks the base (git-flow below)
+workit git branch --kind feature|bugfix|release|hotfix --slug <s>   # the kind picks the base (per preset, below)
 workit git commit -m "feat: x" -- <paths>       # convention-checked; --all takes every change
 workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last commit; -F <file|-> reads the message
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]
-workit git push --release main [--release develop] [--release v<version>]   # finish a git-flow release or hotfix (release grant)
+workit git push --release main [--release develop] [--release v<version>]   # finish a release or hotfix (release grant)
 ```
 
-### Branch kinds and git-flow
+### Branch kinds per preset
 
-With the `gitflow` preset (configured, or detected from a `develop` branch),
-each kind has a fixed route, used when `--base` (or `pr create --base`) is
-left out:
+Where a branch starts and its PR lands when `--base` (or `pr create --base`)
+is left out, per branch-policy preset:
+
+| Kind | git-flow | github-flow | custom |
+| --- | --- | --- | --- |
+| `feature/`, `bugfix/` | develop → develop | main → main | default target → default target, if the policy allows the kind |
+| `release/` | develop → main, then merge back | main → main | the same, if allowed |
+| `hotfix/` | main → main, then merge back | main → main | the same, if allowed |
+
+github-flow allows any name, so every kind (and any other name) starts from
+and lands on main; trunk-based does the same on its trunk. custom starts every
+allowed kind from its default target (`vcs.defaultTargetBranch`, else
+`develop`) and refuses a kind its `allowed` patterns do not cover, naming its
+own kinds (`custom: task/*` suggests `task/x`, never a git-flow kind). Only
+git-flow refuses an explicit base or PR target (below) and reminds about
+merging back.
+
+The git-flow route in detail:
 
 | Kind | Starts from | PR lands on | Then |
 | --- | --- | --- | --- |
@@ -45,18 +60,23 @@ develop; `pr merge` of one into main reports `merge back` (`mergeBack` in
 opens the back-merge PR: an open PR is reused only when both its head and its
 base match.
 
-A name with a prefix the policy does not allow is refused with the allowed
-kinds and the closest name (`fix/` → `bugfix/`, `chore/`, `docs/`, `refactor/`
-→ `feature/`); `--kind chore` suggests `--kind feature`.
+A name with a prefix the policy does not allow is refused with that policy's
+allowed kinds and the closest of them (git-flow: `fix/` → `bugfix/`, `chore/`,
+`docs/`, `refactor/` → `feature/`; custom: the nearest of its own kinds, else
+its first). `--kind chore` suggests the closest kind the policy allows; when
+the policy's kinds are not ones `--kind` takes (a custom `task/*`), it names
+the branch to pass instead, and github-flow says any non-protected name works.
 
 ### Release push
 
-`workit git push` never pushes a protected branch. Finishing a git-flow
-release or hotfix needs main, develop and the release tag on the remote, so
+`workit git push` never pushes a protected branch. Finishing a release or
+hotfix can need protected branches and the release tag on the remote, so
 `workit git push --release <ref>` (repeat `--release` for each ref) pushes:
 
-- only the git-flow production and develop branches, and tags `v<digit>…`;
-  any other branch or tag is refused (`release_push_refused`);
+- only the preset's release branches: git-flow production and develop,
+  github-flow main (trunk-based: master), custom its configured `protected`
+  branches; and tags `v<digit>…` in every preset. Any other branch or tag is
+  refused (`release_push_refused`, naming the preset and its branches);
 - branches fast-forward only (never forced, `non_fast_forward` otherwise), and
   a tag only when the remote lacks it or already has it at that commit
   (`tag_exists`: a release tag never moves);
@@ -66,7 +86,7 @@ release or hotfix needs main, develop and the release tag on the remote, so
 It needs the `release` grant (off by default; `workit grant set <workspace>
 release=true` from your own terminal) and the `push` grant with its account
 check. Inside a Workit workspace, every host's pre-shell hook denies a raw
-`git push` onto main or develop, and a raw tag push (`git push origin v1.0`,
+`git push` onto one of those release branches, and a raw tag push (`git push origin v1.0`,
 `refs/tags/…`, `--tags`, `--follow-tags`), naming this command and the grant.
 It also denies a raw push onto a branch name the policy does not allow
 (`HEAD:chore/x`, `HEAD:refs/heads/chore/x`, `-u origin chore/x`, or the
