@@ -554,11 +554,13 @@ test("Given a worker assigned on one branch, When `workit worker cancel` runs on
     const cancelled = capture();
     expect(
       await runTaskCommand(
+        // The positional form #264 asked for.
         [
           "worker",
           "cancel",
+          workerId,
           "--payload",
-          JSON.stringify({ workerId, reason: "moved on" }),
+          JSON.stringify({ reason: "moved on" }),
           "--json",
         ],
         { cwd: root, out: cancelled.out, err: cancelled.err },
@@ -568,6 +570,53 @@ test("Given a worker assigned on one branch, When `workit worker cancel` runs on
       ok: true,
       data: { id: workerId, data: { state: "stopped" } },
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the positional worker id maps to workerId, conflicts with a different payload workerId, and is refused where no worker is named", async () => {
+  const root = fixture();
+  const workerId = "00000000-0000-4000-8000-0000000000aa";
+  try {
+    const conflict = capture();
+    expect(
+      await runTaskCommand(
+        [
+          "worker",
+          "report",
+          workerId,
+          "--payload",
+          JSON.stringify({ workerId: "00000000-0000-4000-8000-0000000000bb" }),
+          "--json",
+        ],
+        { cwd: root, out: conflict.out, err: conflict.err },
+      ),
+    ).toBe(1);
+    expect(JSON.parse(conflict.read().stdout)).toMatchObject({
+      ok: false,
+      error: "payload workerId conflicts with the explicit flag",
+    });
+
+    const extra = capture();
+    expect(
+      await runTaskCommand(["worker", "cancel", workerId, "again"], {
+        cwd: root,
+        out: extra.out,
+        err: extra.err,
+      }),
+    ).toBe(2);
+    expect(extra.read().stderr).toContain("unknown argument: again");
+
+    const assign = capture();
+    expect(
+      await runTaskCommand(["worker", "assign", workerId], {
+        cwd: root,
+        out: assign.out,
+        err: assign.err,
+      }),
+    ).toBe(2);
+    expect(assign.read().stderr).toContain(`unknown argument: ${workerId}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

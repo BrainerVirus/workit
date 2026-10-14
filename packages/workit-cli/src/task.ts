@@ -173,6 +173,7 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   let workspaceRevision: string | null | undefined;
   let view: string | undefined;
   let actor: string | undefined;
+  let workerId: string | undefined;
   let json = jsonRequested;
   const judge: string[] = [];
   const seen = new Set<string>();
@@ -210,6 +211,16 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
       if (token === "--json") json = true;
       continue;
     }
+    // `worker cancel|report <workerId>`: the worker id as a positional (#264).
+    if (
+      family === "worker" &&
+      (action === "cancel" || action === "report") &&
+      workerId === undefined &&
+      !argv[i].startsWith("-")
+    ) {
+      workerId = argv[i];
+      continue;
+    }
     if (
       !["--payload", "--task", "--revision", "--workspace-revision", "--view", "--actor"].includes(
         token,
@@ -240,6 +251,7 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   for (const [key, value] of [
     ["action", action],
     ...(taskId === undefined ? [] : [["taskId", taskId] as const]),
+    ...(workerId === undefined ? [] : [["workerId", workerId] as const]),
     ...(revision === undefined ? [] : [["expectedRevision", revision] as const]),
     ...(workspaceRevision === undefined
       ? []

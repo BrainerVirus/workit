@@ -122,7 +122,9 @@ const familySubcommands = (name: Family): SubcommandEntry[] => {
       usage:
         name === "policy" && action !== "explain"
           ? `workit policy ${action} ${POLICY_JUDGE} ${FAMILY_OPTIONS}`
-          : `workit ${name} ${action} ${FAMILY_OPTIONS}`,
+          : name === "worker" && action !== "assign"
+            ? `workit worker ${action} [<workerId>] ${FAMILY_OPTIONS}`
+            : `workit ${name} ${action} ${FAMILY_OPTIONS}`,
       summary,
     }));
   return [...implicit, ...grammar];
