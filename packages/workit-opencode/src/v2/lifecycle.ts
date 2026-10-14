@@ -159,14 +159,16 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       : null;
   };
 
-  const oldestOfSingleTask = <
-    T extends { id: string },
-    E extends { id: string; recordedAt: string },
-  >(
+  /** The task bound to this checkout's branch right now (#264), if any. */
+  const currentTaskId = (store: TaskStore): string | null => {
+    const report = store.keyReport();
+    return report.ok ? (report.data.bound[0]?.id ?? null) : null;
+  };
+
+  const oldest = <T extends { id: string }, E extends { id: string; recordedAt: string }>(
     items: { task: T; entry: E }[],
   ): { task: T; entry: E } | null => {
-    const tasks = new Set(items.map((item) => item.task.id));
-    if (tasks.size !== 1 || items.length === 0) return null;
+    if (items.length === 0) return null;
     return [...items].toSorted((a, b) =>
       a.entry.recordedAt < b.entry.recordedAt
         ? -1
@@ -185,6 +187,37 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       ? `workit_worker {"action":"cancel","workerId":"${workerId}","reason":"launch not observed"}`
       : 'workit_worker {"action":"cancel","workerId":"<id>","reason":"launch not observed"} for the stuck worker';
     return `recovery_required: a previous native subagent launch is unsettled; wait for it to settle, or ${cancel} before launching again`;
+  };
+
+  /**
+   * Why no worker is attributable (#264): the coordinator's workers left
+   * assigned or running on other tasks, each with the exact cancel call.
+   */
+  const unboundLaunch = (coordinator: string): string => {
+    const base =
+      "recovery_required: no assigned Workit worker is attributable to this coordinator on the current branch's task; assign one with workit_worker before launching a native task";
+    const store = new TaskStore(root);
+    const listed = store.listTasks();
+    if (!listed.ok) return base;
+    const current = currentTaskId(store);
+    const stale = listed.data.flatMap((task) =>
+      task.status === "active" && task.id !== current
+        ? task.workers
+            .filter(
+              (worker) =>
+                (worker.data.state === "assigned" || worker.data.state === "running") &&
+                worker.provenance.session?.kind === "host" &&
+                worker.provenance.session.handle === coordinator,
+            )
+            .map(
+              (worker) =>
+                `workit_worker {"action":"cancel","taskId":"${task.id}","workerId":"${worker.id}","reason":"stale worker from another branch"}`,
+            )
+        : [],
+    );
+    return stale.length > 0
+      ? `${base}. Workers of this coordinator are still open on other tasks; cancel any that are stale: ${stale.join("; ")}`
+      : base;
   };
 
   const prepareDispatch = (
@@ -212,7 +245,13 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
         )
         .map((entry) => ({ task, entry })),
     );
-    const next = oldestOfSingleTask(eligible);
+    // The oldest assigned worker on the current branch's task, else the
+    // oldest across every task (#264): a stale worker left on another
+    // branch's task never blocks a launch here, and when the current task is
+    // managed it never captures one either; the lead assigns one here.
+    const current = currentTaskId(store);
+    const onCurrent = managed.some((task) => task.id === current);
+    const next = oldest(onCurrent ? eligible.filter((item) => item.task.id === current) : eligible);
     if (!next) return "unbound";
     dispatches.set(coordinator, {
       taskId: next.task.id,
@@ -473,11 +512,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       if (prepared === "unsettled") {
         throw new Error(unsettledLaunch(coordinator));
       }
-      if (prepared === "unbound") {
-        throw new Error(
-          "recovery_required: no assigned Workit worker is attributable to this coordinator; assign one with workit_worker before launching a native task",
-        );
-      }
+      if (prepared === "unbound") throw new Error(unboundLaunch(coordinator));
     } catch (error) {
       if (inflight.get(coordinator) === event.id) inflight.delete(coordinator);
       throw error;
