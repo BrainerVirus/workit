@@ -47,6 +47,8 @@ export type CheckConfig = {
   gates: Partial<Record<"testing" | "verification", string[]>>;
   /** Set when the config exists but cannot be used; gates then fail closed. */
   error: string | null;
+  /** The raw `resources` block of workit.checks.json (heavy-check limits; core/resources.ts reads it). */
+  resources?: unknown;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -228,7 +230,7 @@ export function loadCheckConfig(cwd: string): CheckConfig {
       gates[gate as (typeof GATES)[number]] = names as string[];
     }
   }
-  return { source: CHECKS_FILE, root, checks, gates, error: null };
+  return { source: CHECKS_FILE, root, checks, gates, error: null, resources: parsed.resources };
 }
 
 const sameArgv = (left: readonly string[], right: readonly string[]): boolean =>

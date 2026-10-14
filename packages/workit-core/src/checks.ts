@@ -169,6 +169,11 @@ export type RunOptions = {
   onStderr?: (text: string) => void;
   /** For tests: the platform whose spawn rules apply (default: process.platform). */
   platform?: NodeJS.Platform;
+  /**
+   * POSIX only: argv that runs the command (e.g. a `systemd-run … --` scope
+   * prefix). A --shell command then runs as `<wrapper> /bin/sh -c <cmd>`.
+   */
+  wrapper?: readonly string[];
 };
 
 // cmd.exe metacharacters (the cross-spawn set).
@@ -272,7 +277,12 @@ export function runCheckCommand(argv: readonly string[], options: RunOptions): P
   const buffer = new TailBuffer(MAX_LOG_BYTES);
   const redactor = new StreamRedactor((text) => buffer.push(text));
   const env = options.env ?? process.env;
-  const plan = planSpawn(argv, { platform, env, cwd: options.cwd, shell: options.shell });
+  const wrapped = Boolean(options.wrapper?.length) && platform !== "win32";
+  const command = wrapped
+    ? [...options.wrapper!, ...(options.shell ? ["/bin/sh", "-c", argv[0]] : argv)]
+    : argv;
+  const shell = wrapped ? false : options.shell;
+  const plan = planSpawn(command, { platform, env, cwd: options.cwd, shell });
   return new Promise((resolve) => {
     let settled = false;
     let timedOut = false;

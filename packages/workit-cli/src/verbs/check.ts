@@ -1,8 +1,8 @@
 // `workit check` (design §2.1 S9, §2.2; D5, D14, D18): run a command and
 // record what the CLI itself observed.
 //
-//   workit check <name> [--timeout <s>] [--task <id>] [--json]          # the configured command
-//   workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
+//   workit check <name> [--timeout <s>] [--task <id>] [--no-lease] [--json]   # the configured command
+//   workit check [--name <n>] [--shell] [--heavy] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
 //
 // - The command runs without a shell (with --shell, pass one command string);
 //   its output streams through (to stderr under --json, so stdout stays one
@@ -18,10 +18,17 @@
 //   configured runs satisfy gates; `workit check -- true` never does.
 // - The tree key is taken before and after the run: a command that changed
 //   the worktree leaves stale evidence (`modifiedWorktree`).
-// - Exit code: the command's own (4 on --timeout, 2 on usage). When the
+// - A heavy check (a named check listed in `resources.heavy`, default
+//   test/build/typecheck; an ad-hoc one only with --heavy) first takes a
+//   machine-wide lease (core/resources.ts), waiting for a free slot, and on
+//   Linux with a delegated user systemd runs in its own `systemd-run --user
+//   --scope` with MemoryMax and CPUQuota. `--json` reports `lease` and `scope`.
+// - Exit code: the command's own (4 on --timeout or a lease wait that timed
+//   out, 2 on usage). When the
 //   command passed but the evidence could not be recorded, the recording
 //   error's code (busy 4, unavailable 5) so a green run is never mistaken for
 //   recorded evidence.
+import os from "node:os";
 import path from "node:path";
 import {
   CHECKS_FILE,
@@ -51,9 +58,24 @@ import {
 } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, type EnvelopeCode, type Io } from "../output";
 import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
+import {
+  SCOPE_START_FAILURE,
+  acquireLease,
+  describeHolder,
+  firstNotice,
+  heldLease,
+  leaseDir,
+  noteLeaseScope,
+  resolveResourceSettings,
+  scopePrefix,
+  scopeSupport,
+  type HeldLease,
+  type LeaseHolder,
+  type ResourceSettings,
+} from "@brainervirus/workit-core/src/core/resources";
 
 const USAGE =
-  "workit check <name> | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--json] -- <cmd…>";
+  "workit check <name> [--no-lease] | workit check [--name <n>] [--shell] [--heavy] [--timeout <s>] [--task <id>] [--json] -- <cmd…>";
 /** Tail lines kept on the task record (the envelope carries TAIL_LINES). */
 const RECORD_TAIL_LINES = 20;
 const RECORD_TAIL_CHARS = 200;
@@ -61,6 +83,8 @@ const RECORD_TAIL_CHARS = 200;
 type Options = {
   name: string | null;
   shell: boolean;
+  heavy: boolean;
+  noLease: boolean;
   timeoutMs: number;
   task: string | null;
   base: string | null;
@@ -74,6 +98,8 @@ function parse(argv: readonly string[]): Options | Error {
   const options: Options = {
     name: null,
     shell: false,
+    heavy: false,
+    noLease: false,
     timeoutMs: 0,
     task: null,
     base: null,
@@ -92,6 +118,11 @@ function parse(argv: readonly string[]): Options | Error {
     if (flag === "--json") continue;
     if (flag === "--shell") {
       options.shell = true;
+      continue;
+    }
+    if (flag === "--heavy" || flag === "--no-lease") {
+      if (flag === "--heavy") options.heavy = true;
+      else options.noLease = true;
       continue;
     }
     if (flag === "--name" || flag === "--task" || flag === "--base" || flag === "--timeout") {
@@ -254,6 +285,141 @@ function boundedArgv(argv: readonly string[]): { argv: string[]; truncated: bool
   return { argv: cut, truncated };
 }
 
+/** `resources` of the workspaces.json entry matching `cwd`, read from io.env's config dir. */
+async function workspaceResources(io: Io): Promise<{ value: unknown; warning: string | null }> {
+  const env = io.env;
+  const dir =
+    env.WORKFLOW_TOOLKIT_CONFIG ??
+    env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
+    path.join(env.XDG_CONFIG_HOME || path.join(env.HOME || os.homedir(), ".config"), "workit");
+  try {
+    const { resolveWorkspaceFrom } = await import("@brainervirus/workit-core/src/core/workspaces");
+    const workspace = resolveWorkspaceFrom(
+      io.cwd,
+      dir,
+      env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+    ) as Record<string, unknown> | null;
+    return { value: workspace?.resources, warning: null };
+  } catch (error) {
+    return { value: undefined, warning: `workspaces.json: ${(error as Error).message}` };
+  }
+}
+
+type LeaseReport = {
+  slot: number | null;
+  waitedMs: number;
+  /** The first holder this run waited on; null when the lease was free. */
+  holder: LeaseHolder | null;
+  reclaimed: Array<LeaseHolder & { reason: string }>;
+  /** Set when an outer heavy check already holds the lease for this process tree. */
+  inherited: boolean;
+};
+type ScopeReport =
+  | { unit: string; memoryMax: string; cpuQuota: string }
+  | { unit: string | null; reason: string };
+
+type HeavyRun = {
+  lease: HeldLease | null;
+  leaseReport: LeaseReport | null;
+  scope: ScopeReport;
+  wrapper: string[] | null;
+  env: NodeJS.ProcessEnv;
+};
+
+/**
+ * Take the machine lease (or reuse an outer run's) and pick the scope for a
+ * heavy check. A number is the exit code when the wait timed out.
+ */
+async function prepareHeavy(
+  io: Io,
+  settings: ResourceSettings,
+  label: string,
+  runCwd: string,
+): Promise<HeavyRun | number> {
+  const session = hostSessionFromEnv(io.env).session;
+  const dir = leaseDir(io.env);
+  const outer = heldLease(dir, io.env.WORKIT_LEASE);
+  if (outer)
+    return {
+      lease: null,
+      leaseReport: { slot: null, waitedMs: 0, holder: null, reclaimed: [], inherited: true },
+      scope: { unit: outer.scope, reason: "inherited from the outer heavy check" },
+      wrapper: null,
+      env: io.env,
+    };
+  const acquired = await acquireLease({
+    dir,
+    slots: settings.slots,
+    check: label,
+    cwd: runCwd,
+    session,
+    waitMs: settings.waitMs,
+    pollMs: 1000,
+    onWait: (holders) =>
+      io.stderr(
+        `workit: waiting for the heavy-check lease (${settings.slots} slot${settings.slots === 1 ? "" : "s"}): held by ${holders.map((holder) => describeHolder(holder)).join("; ")}\n`,
+      ),
+  });
+  if (!acquired.ok && acquired.reason === "timeout") {
+    const holders = acquired.holders.map((holder) => describeHolder(holder)).join("; ");
+    emit(
+      io,
+      fail(
+        "busy",
+        `the heavy-check lease stayed busy for ${Math.round(acquired.waitedMs / 1000)} s`,
+        {
+          data: { lease: { waitedMs: acquired.waitedMs, holders: acquired.holders } },
+          unblock: `wait for ${holders || "the holders"} to finish, then run it again`,
+        },
+      ),
+    );
+    return 4;
+  }
+  let lease: HeldLease | null = null;
+  if (acquired.ok) lease = acquired.lease;
+  // Fail open: an unwritable state dir must not stop the check.
+  else io.stderr(`workit: running without the heavy-check lease: ${acquired.error}\n`);
+  for (const stale of lease?.reclaimed ?? [])
+    io.stderr(
+      `workit: reclaimed a stale heavy-check lease (${stale.reason}): ${describeHolder(stale)}\n`,
+    );
+  const leaseReport: LeaseReport | null = lease
+    ? {
+        slot: lease.slot,
+        waitedMs: lease.waitedMs,
+        holder: lease.waitedOn[0] ?? null,
+        reclaimed: lease.reclaimed,
+        inherited: false,
+      }
+    : null;
+  const env = lease ? { ...io.env, WORKIT_LEASE: lease.record.id } : io.env;
+  const support = settings.scope
+    ? scopeSupport(io.env)
+    : ({ ok: false, reason: "resources.scope is false" } as const);
+  if (!support.ok) {
+    if (settings.scope && firstNotice(io.env, session, "no-scope"))
+      io.stderr(
+        `workit: heavy checks run without a memory/CPU limit here: ${support.reason} (said once per session)\n`,
+      );
+    return {
+      lease,
+      leaseReport,
+      scope: { unit: null, reason: support.reason },
+      wrapper: null,
+      env,
+    };
+  }
+  const unit = `workit-check-${(lease?.record.id ?? "nolease0").slice(0, 8)}-${process.pid}`;
+  if (lease) noteLeaseScope(lease, `${unit}.scope`);
+  return {
+    lease,
+    leaseReport,
+    scope: { unit: `${unit}.scope`, memoryMax: settings.memoryMax, cpuQuota: settings.cpuQuota },
+    wrapper: scopePrefix(unit, settings),
+    env,
+  };
+}
+
 export async function run(argv: string[], io: Io): Promise<number> {
   const options = parse(argv);
   if (options instanceof Error)
@@ -318,14 +484,50 @@ export async function run(argv: string[], io: Io): Promise<number> {
     : branchKey;
   const signal = key.tree === null ? null : worktreeSignal(io.cwd);
 
-  const result = await runCheckCommand(command, {
-    cwd: runCwd,
-    shell: options.shell,
-    timeoutMs: options.timeoutMs,
-    env: io.env,
-    onStdout: io.json ? io.stderr : io.stdout,
-    onStderr: io.stderr,
-  });
+  // Heavy checks queue for the machine lease and run in their own scope.
+  let heavy: HeavyRun | null = null;
+  if (!options.noLease && (options.heavy || options.command === null)) {
+    const workspace = await workspaceResources(io);
+    const { settings, warnings } = resolveResourceSettings([
+      { label: CHECKS_FILE, value: config.resources },
+      { label: "workspaces.json", value: workspace.value },
+    ]);
+    for (const warning of [workspace.warning, ...warnings])
+      if (warning) io.stderr(`workit: resources: ${warning}\n`);
+    if (options.heavy || (name !== null && settings.heavy.includes(name))) {
+      const prepared = await prepareHeavy(io, settings, name ?? command.join(" "), runCwd);
+      if (typeof prepared === "number") return prepared;
+      heavy = prepared;
+    }
+  }
+  const runOnce = (wrapper: string[] | null) =>
+    runCheckCommand(command, {
+      cwd: runCwd,
+      shell: options.shell,
+      timeoutMs: options.timeoutMs,
+      env: heavy?.env ?? io.env,
+      onStdout: io.json ? io.stderr : io.stdout,
+      onStderr: io.stderr,
+      ...(wrapper ? { wrapper } : {}),
+    });
+  let result: Awaited<ReturnType<typeof runCheckCommand>>;
+  try {
+    result = await runOnce(heavy?.wrapper ?? null);
+    // systemd-run itself failed (no bus, unit refused) before the command ran: run it plainly.
+    const lines = tailLines(result.log, 2);
+    if (
+      heavy?.wrapper &&
+      result.exitCode !== 0 &&
+      lines.length === 1 &&
+      SCOPE_START_FAILURE.test(lines[0])
+    ) {
+      io.stderr(`workit: the memory/CPU scope could not start (${lines[0]}); running without it\n`);
+      heavy.scope = { unit: null, reason: `systemd-run failed: ${lines[0]}` };
+      result = await runOnce(null);
+    }
+  } finally {
+    heavy?.lease?.release();
+  }
   // Fail safe: a command that changed the worktree leaves stale evidence.
   const treeAfter = key.tree === null ? null : (worktreeTree(io.cwd)?.key ?? null);
   const modifiedWorktree = key.tree !== null && treeAfter !== key.tree;
@@ -417,6 +619,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
     outputBytes: result.outputBytes,
     logTruncated: result.truncated,
     task: task.task,
+    lease: heavy?.leaseReport ?? null,
+    scope: heavy?.scope ?? null,
     ...(task.note ? { taskNote: task.note } : {}),
     satisfies: task.satisfies,
     stillUnsatisfied: task.stillUnsatisfied,
