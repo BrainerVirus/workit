@@ -161,7 +161,7 @@ const input = (root: string, event: HookInput["event"], host: HookInput["host"] 
   event,
 });
 
-test("shell.pre denies only noncompliant literal branch creation, with the correction", async () => {
+test("shell.pre denies noncompliant branch creation in any form, with the correction", async () => {
   await withProtectedMain(() => {
     const root = tempRoot();
     try {
@@ -172,8 +172,9 @@ test("shell.pre denies only noncompliant literal branch creation, with the corre
       expect(denied.kind).toBe("deny");
       expect(denied.kind === "deny" && denied.reason).toContain("protected_ref");
       expect(denied.kind === "deny" && denied.reason).toContain("choose a non-protected branch");
-      for (const command of ["git switch -c feature/raw", "git status", 'git checkout -b "main"'])
+      for (const command of ["git switch -c feature/raw", "git status"])
         expect(shell(command), command).toEqual({ kind: "none" });
+      expect(shell('git checkout -b "main"').kind).toBe("deny");
       // A host that cannot render a deny never claims one.
       expect(
         handleHook(

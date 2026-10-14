@@ -176,7 +176,10 @@ test("Given a finished git-flow release and no release grant, When pushed, Then 
   const plain = await run(["git", "push", "--json"], repo.cwd);
   expect(plain.code).toBe(3);
   expect(plain.json().unblock).toContain("workit git push --release main");
-  const refused = await run(["git", "push", "--release", "main", "v1.0.0", "--json"], repo.cwd);
+  const refused = await run(
+    ["git", "push", "--release", "main", "--release", "v1.0.0", "--json"],
+    repo.cwd,
+  );
   expect(refused.code).toBe(3);
   expect(refused.json()).toMatchObject({ code: "blocked", data: { reason: "grant_required" } });
   expect(refused.json().error).toContain("release is not granted");
@@ -193,7 +196,7 @@ test("Given the release grant, When main, develop and the v tag are pushed with 
   const developHead = repo.git("rev-parse", "HEAD");
   repo.git("switch", "-q", "main");
   const pushed = await run(
-    ["git", "push", "--release", "main", "develop", "v1.0.0", "--json"],
+    ["git", "push", "--release", "main", "--release", "develop", "--release", "v1.0.0", "--json"],
     repo.cwd,
   );
   expect(pushed.code, pushed.stdout + pushed.stderr).toBe(0);
@@ -208,7 +211,7 @@ test("Given the release grant, When main, develop and the v tag are pushed with 
   expect(row).toMatchObject({ observer: "workit_cli", grant: "autonomy", remote: "origin" });
   expect(row?.refs).toHaveLength(3);
   // Again: nothing moves, still verified.
-  const again = await run(["git", "push", "--release"], repo.cwd);
+  const again = await run(["git", "push", "--release", "main", "--release", "v1.0.0"], repo.cwd);
   expect(again.code).toBe(0);
   expect(again.stdout).toContain("is already at");
 });

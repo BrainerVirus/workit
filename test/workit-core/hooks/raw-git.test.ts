@@ -279,7 +279,7 @@ test("G git-flow, W a raw push onto main or develop, T the deny names workit git
       const out = claudeOut(root, `git push origin ${branch}`);
       expect(out?.permissionDecision, branch).toBe("deny");
       expect(out?.permissionDecisionReason, branch).toContain(
-        `workit git push --release ${branch} [v<version>]`,
+        `workit git push --release ${branch} [--release v<version>]`,
       );
       expect(out?.permissionDecisionReason, branch).toContain("release=true");
     }

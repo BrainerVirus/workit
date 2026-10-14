@@ -4,7 +4,7 @@
 //   workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]
 //   workit git commit (-m <msg> | -F <file|->) [--amend [--no-edit]] [--allow-empty] [--all | [--] <paths…>]
 //   workit git push [--set-upstream] [--force-with-lease [--expect <sha>]]
-//   workit git push --release [<main|develop|v-tag>…]
+//   workit git push --release <main|develop|v-tag>…  (repeatable)
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
@@ -34,7 +34,7 @@ const BRANCH_USAGE =
 const COMMIT_USAGE =
   "workit git commit -m|--message <msg>… | -F|--file <file|-> [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>] [--json]";
 const PUSH_USAGE =
-  "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--json]\n       workit git push --release [<production|develop|v<version> tag>…] [--json]";
+  "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…] [--json]";
 const USAGE = "workit git branch|commit|push ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
@@ -230,13 +230,18 @@ async function push(argv: string[], io: Io): Promise<number> {
     "force-with-lease": "boolean",
     "overwrite-unintegrated": "boolean",
     expect: "value",
-    release: "boolean",
+    release: "list",
   });
   if (typeof flags === "string") return usage(io, flags, PUSH_USAGE);
-  if (flags.booleans.has("release")) {
-    if (flags.booleans.size > 1 || flags.values.expect !== undefined)
-      return usage(io, "--release takes only ref names", PUSH_USAGE);
-    return releasePush(flags.positionals, io);
+  const release = flags.lists.release;
+  if (release) {
+    if (flags.booleans.size || flags.values.expect !== undefined || flags.positionals.length)
+      return usage(
+        io,
+        "--release takes only ref names (repeat it: --release main --release v1.2.0)",
+        PUSH_USAGE,
+      );
+    return releasePush(release, io);
   }
   if (flags.positionals.length)
     return usage(

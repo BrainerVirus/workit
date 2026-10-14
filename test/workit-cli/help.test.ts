@@ -330,9 +330,9 @@ test("given --json, then help is an envelope carrying the usage and the text", (
       group: "delivery",
       subcommand: "push",
       usage:
-        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]]",
+        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…]",
       usages: [
-        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]]",
+        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…]",
       ],
     },
   });

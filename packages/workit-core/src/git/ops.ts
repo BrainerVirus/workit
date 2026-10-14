@@ -1043,8 +1043,7 @@ const RELEASE_TAG = /^v\d/u;
 
 /**
  * What `workit git push --release` may push: the git-flow production and
- * develop branches and `v*` tags, nothing else, each by its local ref. No
- * names push the current branch. Everything else stays on the feature-branch
+ * develop branches and `v*` tags, nothing else, each by its local ref. Everything else stays on the feature-branch
  * path (`workit git push`, `workit pr create`).
  */
 export function releasePushPreflight(
@@ -1053,13 +1052,12 @@ export function releasePushPreflight(
 ): ForgeResult<ReleasePushPlan> {
   const progress = operationInProgress(cwd);
   if (progress) return inProgressFailure(progress.operation, "push");
-  const wanted = names.length ? [...new Set(names)] : [currentBranch(cwd)].filter(Boolean);
-  if (!wanted.length)
-    return failure("invalid_input", "HEAD is detached; name the release refs to push");
+  const wanted = [...new Set(names)];
+  if (!wanted.length) return failure("invalid_input", "name the release refs to push");
   const flow = gitFlowOf(cwd);
   const branches = flow ? [flow.production, flow.develop] : [];
   const refs: ReleaseRef[] = [];
-  for (const raw of wanted as string[]) {
+  for (const raw of wanted) {
     if (raw.startsWith("-") || raw.includes(":"))
       return failure("invalid_input", `${raw} is not a ref name (refspecs are not accepted)`);
     const tagName = raw.replace(/^refs\/tags\//u, "");

@@ -13,7 +13,7 @@ workit git commit -m "feat: x" -- <paths>       # convention-checked; --all take
 workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last commit; -F <file|-> reads the message
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]
-workit git push --release [main|develop|v<version>…]   # finish a git-flow release or hotfix (release grant)
+workit git push --release main [--release develop] [--release v<version>]   # finish a git-flow release or hotfix (release grant)
 ```
 
 ### Branch kinds and git-flow
@@ -51,7 +51,7 @@ kinds and the closest name (`fix/` → `bugfix/`, `chore/`, `docs/`, `refactor/`
 
 `workit git push` never pushes a protected branch. Finishing a git-flow
 release or hotfix needs main, develop and the release tag on the remote, so
-`workit git push --release [<ref>…]` (no refs: the current branch) pushes:
+`workit git push --release <ref>` (repeat `--release` for each ref) pushes:
 
 - only the git-flow production and develop branches, and tags `v<digit>…`;
   any other branch or tag is refused (`release_push_refused`);
