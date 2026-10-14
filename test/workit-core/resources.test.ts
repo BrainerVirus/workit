@@ -262,13 +262,13 @@ test("G a session told once, T the no-scope notice does not repeat for it but do
   expect(firstNotice(env, "s-2", "no-scope")).toBe(true);
 });
 
+/** Does a scope actually start here? (The skip guard for the real systemd path.) */
+const probe = scopePrefix(`workit-probe-${process.pid}`, { memoryMax: "1G", cpuQuota: "50%" });
 const userSystemd =
   process.platform === "linux" &&
   scopeSupport(process.env).ok &&
-  spawnSync("systemd-run", ["--user", "--scope", "--quiet", "--collect", "--", "true"], {
-    stdio: "ignore",
-    timeout: 10_000,
-  }).status === 0;
+  spawnSync(probe[0], [...probe.slice(1), "true"], { stdio: "ignore", timeout: 10_000 }).status ===
+    0;
 
 test.skipIf(!userSystemd)(
   "G a delegated user systemd, T the command runs in its own scope with MemoryMax and CPUQuota applied",

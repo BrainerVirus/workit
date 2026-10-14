@@ -15,6 +15,7 @@ import {
   taskRecordSchema,
 } from "@/packages/workit-core/src/core/task-contract";
 import { readLedger } from "@/packages/workit-core/src/ledger";
+import { scopePrefix, scopeSupport } from "@/packages/workit-core/src/core/resources";
 import { SIGNAL_TTL_MS, sessionCompactContext } from "@/packages/workit-core/src/hooks/context";
 import { evaluateEvidence } from "@/packages/workit-core/src/core/task-evaluation";
 import { rawRecordOf, rewriteTaskLog } from "../workit-core/store-files";
@@ -727,12 +728,13 @@ test("G workspaces.json resources mark lint heavy, T `workit check lint` takes t
   expect(lint.json().data.lease).toMatchObject({ slot: 0, inherited: false });
 });
 
+/** Does a scope actually start here? (The skip guard for the real systemd path.) */
+const probe = scopePrefix(`workit-probe-${process.pid}`, { memoryMax: "1G", cpuQuota: "50%" });
 const userSystemd =
   process.platform === "linux" &&
-  spawnSync("systemd-run", ["--user", "--scope", "--quiet", "--collect", "--", "true"], {
-    stdio: "ignore",
-    timeout: 10_000,
-  }).status === 0;
+  scopeSupport(process.env).ok &&
+  spawnSync(probe[0], [...probe.slice(1), "true"], { stdio: "ignore", timeout: 10_000 }).status ===
+    0;
 
 test.skipIf(!userSystemd)(
   "G a delegated user systemd, T `workit check test` runs in a workit scope with the configured limits",
