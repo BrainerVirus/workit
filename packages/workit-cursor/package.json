@@ -45,7 +45,7 @@
   "scripts": {
     "build": "bun scripts/build.ts"
   },
-  "dependencies": {
+  "devDependencies": {
     "@brainervirus/workit-core": "workspace:*",
     "@brainervirus/workit-mcp": "workspace:*"
   },

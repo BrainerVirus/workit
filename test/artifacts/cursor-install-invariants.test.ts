@@ -144,7 +144,8 @@ test(
       expect(healthy.result.status, healthy.result.stderr).toBe(0);
       expect(healthy.report.checks.find((check: any) => check.id === "assets").status).toBe("pass");
       const opencode = runDoctor({ host: "opencode", home, cwd: fixture, env: isolatedEnv(home) });
-      expect(opencode.checks.find((check) => check.id === "assets")?.status).toBe("warn");
+      // An installed OpenCode adapter has no checkout to compare: info, not WARN.
+      expect(opencode.checks.find((check) => check.id === "assets")?.status).toBe("info");
 
       for (const damaged of [path.join(plugin, "skills/workit-shape/SKILL.md")]) {
         const contents = readFileSync(damaged);

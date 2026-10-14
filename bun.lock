@@ -34,7 +34,7 @@
     },
     "packages/workit-claude-code": {
       "name": "@brainervirus/workit-claude-code",
-      "version": "2.6.0",
+      "version": "8.11.0",
       "devDependencies": {
         "@brainervirus/workit-cli": "workspace:*",
         "@brainervirus/workit-core": "workspace:*",
@@ -42,35 +42,36 @@
     },
     "packages/workit-cli": {
       "name": "@brainervirus/workit-cli",
-      "version": "2.6.0",
+      "version": "8.11.0",
       "bin": {
         "workit": "./dist/index.js",
       },
       "dependencies": {
         "@babel/parser": "7.29.9",
-        "@brainervirus/workit-core": "workspace:*",
         "@brainervirus/workit-cursor": "workspace:*",
-        "@brainervirus/workit-opencode": "workspace:*",
         "@inkjs/ui": "2.0.0",
         "ink": "7.1.1",
         "react": "19.2.8",
       },
+      "devDependencies": {
+        "@brainervirus/workit-core": "workspace:*",
+      },
     },
     "packages/workit-codex": {
       "name": "@brainervirus/workit-codex",
-      "version": "2.6.0",
+      "version": "8.11.0",
       "bin": {
         "workit-codex-hook": "./dist/workit-hook.js",
         "workit-codex-mcp": "./dist/launch-mcp.js",
       },
-      "dependencies": {
+      "devDependencies": {
         "@brainervirus/workit-core": "workspace:*",
         "@brainervirus/workit-mcp": "workspace:*",
       },
     },
     "packages/workit-core": {
       "name": "@brainervirus/workit-core",
-      "version": "2.6.0",
+      "version": "8.11.0",
       "dependencies": {
         "@openclaw/fs-safe": "0.8.1",
         "zod": "4.6.5",
@@ -78,20 +79,20 @@
     },
     "packages/workit-cursor": {
       "name": "@brainervirus/workit-cursor",
-      "version": "2.6.0",
+      "version": "8.11.0",
       "bin": {
         "workit-cursor-hook": "./dist/workit-hook.js",
         "workit-cursor-mcp": "./dist/mcp-server.js",
         "workit-cursor-session-start": "./dist/cursor-session-start.js",
       },
-      "dependencies": {
+      "devDependencies": {
         "@brainervirus/workit-core": "workspace:*",
         "@brainervirus/workit-mcp": "workspace:*",
       },
     },
     "packages/workit-mcp": {
       "name": "@brainervirus/workit-mcp",
-      "version": "2.6.0",
+      "version": "8.11.0",
       "bin": {
         "workit-mcp": "./dist/index.js",
       },
@@ -103,17 +104,15 @@
     },
     "packages/workit-opencode": {
       "name": "@brainervirus/workit-opencode",
-      "version": "2.6.0",
-      "dependencies": {
-        "@brainervirus/workit-core": "workspace:*",
-      },
+      "version": "8.11.0",
       "devDependencies": {
+        "@brainervirus/workit-core": "workspace:*",
         "@opencode/plugin": "2.0.18",
       },
     },
     "packages/workit-pi": {
       "name": "@brainervirus/workit-pi",
-      "version": "2.6.0",
+      "version": "8.11.0",
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "0.85.1",
       },

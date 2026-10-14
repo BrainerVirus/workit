@@ -61,3 +61,20 @@ makes the author independent. Each verifier runs under its own session id.
 - `--supersedes` now links only rows of the same branch and verdict kind, so
   old cross-branch or cross-kind links are ignored and the rows they hid
   count again. Record a fresh verdict if `ledger check` changes.
+
+## Install and doctor (after 8.12)
+
+- `workit init` finds adapters wherever npm put them, including the nested
+  `node_modules` of a global `npm i -g @brainervirus/workit-cli`, and accepts
+  the OpenCode plugin that OpenCode installed itself. The CLI no longer pulls
+  in `@brainervirus/workit-opencode`; OpenCode installs it from the pin.
+- `workit init` no longer reads adapters from the `~/.local/share/workit`
+  clone: nothing kept it at the CLI's version.
+- Project files (`.gitignore`, `CHANGELOG.md`, `README.md` and the rest) go to
+  the git toplevel of the workspace root. Outside a repository `workit init`
+  adds none and names the repositories to `cd` into.
+- `workit doctor` reports some rows as `info` instead of WARN: no dev
+  checkout, a Codex CLI newer than the qualified one, and a `node` on PATH
+  older than Node 24 while workit itself runs on 24+. flock is checked only for a dev
+  checkout. The `--json` report has the new `info` status; it counts as
+  passed.

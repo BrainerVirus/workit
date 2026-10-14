@@ -13,6 +13,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -32,7 +33,7 @@ import {
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces";
 import { GITIGNORE_ENTRIES } from "@brainervirus/workit-core/src/core/gitignore";
-import { planHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
+import { planHygieneFiles, projectTarget } from "@brainervirus/workit-core/src/core/hygiene";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   cursorHooksEntry,
@@ -53,6 +54,7 @@ import {
   isPiWorkitInstalled,
   isClaudeWorkitInstalled,
   claudeConfigDir,
+  openCodeInstalledPlugin,
   planHostInstall,
   runHostInstall,
   type HostCommandRunner,
@@ -138,6 +140,9 @@ export type SetupPreview = {
   /** Selected platform adapters to register on Apply (WZ-09). */
   platforms: string[];
   state: SetupState;
+  /** Project files were requested outside a git repository: nothing is
+   *  planned there, and this names the way out (`cd <repo>`). */
+  projectRefused?: string;
 };
 
 const YT_OVERRIDES: { envKey: string; affects: string }[] = [
@@ -248,6 +253,7 @@ export function buildSetupPreview(
   const blocked: string[] = [];
   const mutations: SetupMutation[] = [];
   const preserved: string[] = [];
+  let projectRefused: string | undefined;
   const overrides = activeSetupOverrides(env);
 
   for (const entry of [state.config, state.youtrack, state.vcs, state.workspaces]) {
@@ -414,8 +420,10 @@ export function buildSetupPreview(
       }
     }
 
-    if (values.applyProject) {
-      const root = path.resolve(opts.cwd ?? process.cwd());
+    const target = values.applyProject ? projectTarget(opts.cwd ?? process.cwd()) : null;
+    if (target && !target.ok) projectRefused = target.refused;
+    if (target?.ok) {
+      const root = target.root;
       const gitignorePath = path.join(root, ".gitignore");
       const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
       const existingLines = new Set(
@@ -442,6 +450,7 @@ export function buildSetupPreview(
     preserved,
     platforms: values.platforms ?? [],
     state,
+    ...(projectRefused === undefined ? {} : { projectRefused }),
   };
 }
 
@@ -791,10 +800,13 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
   }
 }
 
-// Package-native adapter resolution: the packaged CLI/core resolve the adapter
-// packages from the same install (node_modules sibling), a dev checkout
-// (WORKFLOW_TOOLKIT_DEV / packages/workit-<host> walking up from cwd), or the
-// share clone (~/.local/share/workit) — mirroring the install scripts.
+// Package-native adapter resolution, in order: an explicit dev checkout
+// (WORKFLOW_TOOLKIT_DEV, authoritative when set), the package as Node resolves
+// it from the running CLI (nested `npm i -g` node_modules, hoisted siblings, a
+// workspace link), the host's own install (Cursor's staged bootstrap,
+// OpenCode's plugin cache), then a dev checkout found walking up from cwd. No
+// share clone (~/.local/share/workit): nothing keeps it at the CLI's version,
+// so it would install an older adapter as current.
 const isAdapter = (root: string, platform: Platform): boolean => {
   try {
     const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
@@ -806,9 +818,27 @@ const isAdapter = (root: string, platform: Platform): boolean => {
   }
 };
 
+/** Every directory Node would load `@brainervirus/workit-<platform>` from for
+ *  the running CLI, nearest first. It probes the package directory itself, so
+ *  a package without a resolvable main (Cursor) or behind an exports map that
+ *  hides package.json (OpenCode) still counts. */
+const nodeResolvedAdapters = (platform: Platform): string[] => {
+  const name = `@brainervirus/workit-${platform}`;
+  const require = createRequire(path.join(packageRoot(), "package.json"));
+  return (require.resolve.paths(name) ?? []).map((dir) => path.join(dir, name));
+};
+
+const realRoot = (root: string): string => {
+  try {
+    return realpathSync(root);
+  } catch {
+    return root;
+  }
+};
+
 function adapterRoot(
   platform: Platform,
-  res: ResolvedApply,
+  res: Pick<ResolvedApply, "home" | "cwd" | "env" | "dev">,
   preferInstalledAdapter = false,
 ): string | null {
   const candidates: string[] = [];
@@ -829,9 +859,12 @@ function adapterRoot(
     // not a reason to fall through to the running process's own install.
     candidates.push(path.join(res.dev, "packages", `workit-${platform}`));
   } else {
-    // node_modules sibling (packed install) or monorepo sibling (source)
-    candidates.push(path.join(packageRoot(), "..", `workit-${platform}`));
-    // dev checkout walking up from cwd
+    candidates.push(...nodeResolvedAdapters(platform));
+    if (platform === "cursor") candidates.push(stagedCursor);
+    if (platform === "opencode") {
+      const cached = openCodeInstalledPlugin(res.home, res.env);
+      if (cached) candidates.push(cached.root);
+    }
     let dir = path.resolve(res.cwd);
     while (true) {
       candidates.push(path.join(dir, "packages", `workit-${platform}`));
@@ -840,12 +873,8 @@ function adapterRoot(
       dir = parent;
     }
   }
-  candidates.push(
-    path.join(res.home, ".local", "share", "workit", "packages", `workit-${platform}`),
-  );
-  if (platform === "cursor") candidates.push(stagedCursor);
   for (const candidate of candidates) {
-    if (isAdapter(candidate, platform)) return candidate;
+    if (isAdapter(candidate, platform)) return realRoot(candidate);
   }
   return null;
 }
@@ -873,8 +902,13 @@ export const resolveOpenCodePin = (
 const opencodePin = (root: string, res: ResolvedApply): string | null =>
   resolveOpenCodePin(root, { dev: res.dev });
 
-function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
-  const resolvedPin = opencodePin(root, res);
+// A published install registers the npm pin and OpenCode installs the package
+// itself, so it needs no local adapter; only a dev checkout pins a file.
+const registersNpmPin = (platform: Platform, res: ResolvedApply): boolean =>
+  platform === "opencode" && !res.dev;
+
+function applyOpenCode(root: string | null, res: ResolvedApply): SetupResultEntry {
+  const resolvedPin = root === null ? OPENCODE_NPM_PIN : opencodePin(root, res);
   if (!resolvedPin) {
     return {
       platform: "opencode",
@@ -1199,7 +1233,8 @@ function verifyPlatform(platform: Platform, res: ResolvedApply): DoctorReport | 
 const failedDetail = (report: DoctorReport): string =>
   report.checks
     .filter((c) => c.status === "fail")
-    .map((c) => `${c.id}: ${c.detail}`)
+    // Some details already lead with their id (`stale_install: …`).
+    .map((c) => (c.detail.startsWith(`${c.id}:`) ? c.detail : `${c.id}: ${c.detail}`))
     .join("; ");
 
 export function applySetupPreview(
@@ -1377,6 +1412,10 @@ export function applySetupPreview(
       root = adapterRoot(platform, res, options.preferInstalledAdapter);
       rootFor.set(platform, root);
     }
+    if (root === null && registersNpmPin(platform, res)) {
+      entries.push(applyOpenCode(null, res));
+      continue;
+    }
     if (root === null) {
       entries.push({
         platform,
@@ -1429,6 +1468,14 @@ export function applySetupPreview(
       detail: "existing credential preserved",
     });
   }
+  if (preview.projectRefused) {
+    entries.push({
+      platform: "core",
+      file: path.resolve(res.cwd),
+      status: "Skipped",
+      detail: preview.projectRefused,
+    });
+  }
 
   // Post-apply verification per platform (read-only): a registered host whose
   // writes succeeded is verified by the shared offline doctor.
@@ -1436,7 +1483,7 @@ export function applySetupPreview(
   for (const platform of preview.platforms) {
     if (platform !== "opencode" && platform !== "cursor") continue;
     const root = rootFor.get(platform);
-    if (root === null || root === undefined) continue;
+    if (root === undefined || (root === null && !registersNpmPin(platform, res))) continue;
     if (!entries.some((e) => e.platform === platform && e.status !== "Failed")) continue;
     const report = verifyPlatform(platform, res);
     if (!report) continue;

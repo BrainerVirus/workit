@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -6,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -21,6 +23,7 @@ import {
   type ToolkitConfig,
 } from "@/packages/workit-core/src/core/config";
 import { readSetupState } from "@/packages/workit-cli/src/admin/setup-state";
+import { applySetupPreview } from "@/packages/workit-cli/src/admin/setup";
 import { planHygieneFiles, ensureHygieneFiles } from "@/packages/workit-core/src/core/hygiene";
 import {
   buildSetupPreview,
@@ -354,6 +357,7 @@ test("createInitialDraft derives policy from the preset, never divergent values 
 
 test("buildSetupPreview emits exact typed mutations for every section (WZ-08)", () => {
   const dir = tempDir();
+  expect(spawnSync("git", ["init", "-q"], { cwd: dir }).status).toBe(0);
   try {
     const preview = buildSetupPreview(
       values({
@@ -394,6 +398,44 @@ test("buildSetupPreview emits exact typed mutations for every section (WZ-08)", 
     expect((gi as { entries: string[] }).entries).toContain("docs/*/sdd/");
   } finally {
     clean(dir);
+  }
+});
+
+// #265: `workit init` from a folder holding several projects (not a repo)
+// scaffolded CHANGELOG.md, README.md, .gitignore… into that folder.
+test("project files outside a git repository are refused with the child repos to cd into", () => {
+  const dir = tempDir();
+  const parent = tempDir();
+  try {
+    for (const child of ["alpha", "beta"]) {
+      mkdirSync(path.join(parent, child));
+      expect(spawnSync("git", ["init", "-q"], { cwd: path.join(parent, child) }).status).toBe(0);
+    }
+    mkdirSync(path.join(parent, "notes"));
+    const preview = buildSetupPreview(values({ applyProject: true }), {
+      dir,
+      cwd: parent,
+      env: {},
+    });
+    expect(preview.ok).toBe(true);
+    const touchesParent = preview.mutations.filter(
+      (m) =>
+        m.type === "append-gitignore" || (m.type === "create-file" && m.path.startsWith(parent)),
+    );
+    expect(touchesParent).toEqual([]);
+    expect(preview.projectRefused).toContain(`${parent} is not a git repository`);
+    expect(preview.projectRefused).toContain(`cd ${path.join(parent, "alpha")}`);
+    expect(preview.projectRefused).toContain(`cd ${path.join(parent, "beta")}`);
+    expect(preview.projectRefused).not.toContain("notes");
+
+    const result = applySetupPreview(preview, { configDir: dir, cwd: parent, env: {} });
+    const refused = result.entries.find((e) => e.file === parent);
+    expect(refused?.status).toBe("Skipped");
+    expect(refused?.detail).toContain(`cd ${path.join(parent, "alpha")}`);
+    expect(readdirSync(parent).toSorted()).toEqual(["alpha", "beta", "notes"]);
+  } finally {
+    clean(dir);
+    clean(parent);
   }
 });
 
@@ -1053,8 +1095,13 @@ class ExitSentinel extends Error {
 // detected OpenCode executable makes the host choice available while keeping
 // the fixture independent of the developer's installed Codex/Pi apps.
 test("runInit apply resolves its cwd from the base path, never the process cwd", async () => {
-  const base = mkdtempSync(path.join(os.tmpdir(), "wk-t6-drive-"));
-  const root = path.join(base, "root");
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-t6-drive-")));
+  // The base path is a subdirectory of a repository: project files land at
+  // the repository's toplevel (#265), never in the process cwd.
+  const repo = path.join(base, "repo");
+  mkdirSync(repo);
+  expect(spawnSync("git", ["init", "-q"], { cwd: repo }).status).toBe(0);
+  const root = path.join(repo, "root");
   const cwdDir = path.join(base, "cwd");
   const configDir = path.join(base, "config");
   const home = path.join(base, "home");
@@ -1070,6 +1117,13 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     .find(existsSync);
   if (!gitBin) throw new Error("Git must be available for the runInit host fixture");
   symlinkSync(gitBin, path.join(bin, "git"));
+  // The dev pointer below makes the post-apply doctor require bun; the doctor
+  // looks for it on PATH and under its own (temp) HOME only.
+  const bunBin = process.env.PATH?.split(path.delimiter)
+    .map((entry) => path.join(entry, "bun"))
+    .find(existsSync);
+  if (!bunBin) throw new Error("Bun must be on PATH for the runInit host fixture");
+  symlinkSync(bunBin, path.join(bin, "bun"));
   writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
   const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
@@ -1152,8 +1206,9 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     }
     expect(exitCode, chunks.join("")).toBe(0);
     const joined = chunks.join("");
-    expect(joined).toContain(path.join(root, ".gitignore"));
-    expect(existsSync(path.join(root, ".gitignore"))).toBe(true);
+    expect(joined).toContain(path.join(repo, ".gitignore"));
+    expect(existsSync(path.join(repo, ".gitignore"))).toBe(true);
+    expect(existsSync(path.join(root, ".gitignore"))).toBe(false);
     expect(existsSync(path.join(cwdDir, ".gitignore"))).toBe(false);
   } finally {
     cleanupLiveInkInstances();

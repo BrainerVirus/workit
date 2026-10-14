@@ -178,6 +178,73 @@ export const isPiWorkitInstalled = (
   }
 };
 
+const OPENCODE_PLUGIN_SCOPE = "@brainervirus";
+const OPENCODE_PLUGIN_NAME = "workit-opencode";
+
+const packageVersionAt = (root: string, name: string): string | null => {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
+      name?: unknown;
+      version?: unknown;
+    };
+    return pkg.name === name && typeof pkg.version === "string" ? pkg.version : null;
+  } catch {
+    return null;
+  }
+};
+
+const compareVersions = (a: string, b: string): number => {
+  const pa = a.split(/[.+-]/).map((n) => Number(n) || 0);
+  const pb = b.split(/[.+-]/).map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+};
+
+/** OpenCode's own cache root (`$XDG_CACHE_HOME/opencode`, default `~/.cache/opencode`). */
+const openCodeCacheDir = (home: string, env: NodeJS.ProcessEnv = process.env): string =>
+  path.join(env.XDG_CACHE_HOME || path.join(home, ".cache"), "opencode");
+
+const subdirs = (dir: string): string[] => {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(dir, entry.name));
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * The newest workit-opencode package OpenCode installed for itself for the
+ * floating pin Workit writes (`@latest`). OpenCode 2.x keeps each resolve under
+ * `npm/<scope>/<name>@latest/<stamp>/node_modules`, 1.x under
+ * `packages/<scope>/<name>@latest/node_modules` (both measured on installed
+ * hosts). An exact-version pin's cache is not the floating install. Read-only.
+ */
+export const openCodeInstalledPlugin = (
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { root: string; version: string } | null => {
+  const name = `${OPENCODE_PLUGIN_SCOPE}/${OPENCODE_PLUGIN_NAME}`;
+  const cache = openCodeCacheDir(home, env);
+  const specDirs = (layout: string): string[] =>
+    subdirs(path.join(cache, layout, OPENCODE_PLUGIN_SCOPE)).filter(
+      (dir) => path.basename(dir) === `${OPENCODE_PLUGIN_NAME}@latest`,
+    );
+  const installs = [...specDirs("npm").flatMap(subdirs), ...specDirs("packages")].map((dir) =>
+    path.join(dir, "node_modules", OPENCODE_PLUGIN_SCOPE, OPENCODE_PLUGIN_NAME),
+  );
+  let best: { root: string; version: string } | null = null;
+  for (const root of installs) {
+    const version = packageVersionAt(root, name);
+    if (version && (!best || compareVersions(version, best.version) > 0)) best = { root, version };
+  }
+  return best;
+};
+
 const isCanonicalCodexPackage = (root: string): boolean => {
   for (const file of [
     path.join(root, ".codex-plugin", "plugin.json"),

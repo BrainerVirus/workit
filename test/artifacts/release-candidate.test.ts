@@ -118,8 +118,14 @@ test(
     ).version;
     for (const name of [MCP, OPENCODE, CURSOR, CODEX, CLI]) {
       const pkg = JSON.parse(readTarballFile(byName(packs, name).tarball, "package.json"));
-      expect(pkg.dependencies?.[CORE], `${name} → ${CORE}`).toBe(`^${coreVersion}`);
-      for (const [dep, range] of Object.entries(pkg.dependencies ?? {})) {
+      // N19: only workit-mcp loads core at runtime (it exports src/); the
+      // adapters bundle it into dist/ and declare it for the build only.
+      const group = name === MCP ? pkg.dependencies : pkg.devDependencies;
+      expect(group?.[CORE], `${name} → ${CORE}`).toBe(`^${coreVersion}`);
+      for (const [dep, range] of Object.entries({
+        ...pkg.dependencies,
+        ...pkg.devDependencies,
+      })) {
         if (dep.startsWith("@brainervirus/")) {
           expect(range, `${name} → ${dep}`).toBe(`^${coreVersion}`);
         }
@@ -209,17 +215,18 @@ test(
   SLOW_TEST_TIMEOUT_MS,
 );
 
-// The packed CLI manifest declares BOTH adapters at the same release version,
-// so a manifest-driven install carries the full setup closure.
+// The packed CLI manifest declares the Cursor adapter (init copies its files)
+// at the release version. OpenCode installs workit-opencode itself from the
+// pin, so the CLI does not carry it (N19).
 test(
-  "packed CLI manifest declares both adapters at the core release version",
+  "packed CLI manifest declares the Cursor adapter at the core release version",
   () => {
     const packs = packReleaseCandidate();
     const coreVersion = JSON.parse(
       readTarballFile(byName(packs, CORE).tarball, "package.json"),
     ).version;
     const cli = JSON.parse(readTarballFile(byName(packs, CLI).tarball, "package.json"));
-    expect(cli.dependencies["@brainervirus/workit-opencode"]).toBe(`^${coreVersion}`);
+    expect(cli.dependencies["@brainervirus/workit-opencode"]).toBeUndefined();
     expect(cli.dependencies["@brainervirus/workit-cursor"]).toBe(`^${coreVersion}`);
     expect(JSON.stringify(cli.dependencies)).not.toContain("workspace:");
   },

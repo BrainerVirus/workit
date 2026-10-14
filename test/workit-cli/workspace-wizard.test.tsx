@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1152,10 +1161,15 @@ test("with WORKFLOW_WORKSPACE_ROOT set, current-project and previews derive from
   }
 });
 
-test("Step 6 prints the resolved basePath as the exact hygiene target", async () => {
+// #265: the target is the git toplevel of the base path, so a base path inside
+// a repository (here a subdirectory) scaffolds at the repository root.
+test("Step 6 prints the git toplevel of the resolved basePath as the exact hygiene target", async () => {
   const configDir = tmp("wk-ws-step6-cfg-");
   const project = tmp("wk-ws-step6-proj-");
-  const root = tmp("wk-ws-step6-root-");
+  const repo = realpathSync(tmp("wk-ws-step6-repo-"));
+  expect(spawnSync("git", ["init", "-q"], { cwd: repo }).status).toBe(0);
+  const root = path.join(repo, "sub");
+  mkdirSync(root);
   const previous = process.cwd();
   process.chdir(project);
   process.env.WORKFLOW_WORKSPACE_ROOT = root;
@@ -1165,11 +1179,11 @@ test("Step 6 prints the resolved basePath as the exact hygiene target", async ()
     await gotoWorkspaces(tty);
     await tty.keys(ENTER); // Done -> project
     const proj = tty.lastFrame();
-    expect(proj).toContain(`Apply gitignore + hygiene in ${root}?`);
+    expect(proj).toContain(`Apply gitignore + hygiene in ${repo}?`);
     expect(proj).not.toContain(project);
     await tty.keys("y"); // -> summary
     // CA-07: the planned gitignore mutation resolves against the displayed dir
-    expect(tty.lastFrame()).toContain(`append ${path.join(root, ".gitignore")}`);
+    expect(tty.lastFrame()).toContain(`append ${path.join(repo, ".gitignore")}`);
     tty.unmount(); // never apply
   } finally {
     process.chdir(previous);
@@ -1177,6 +1191,6 @@ test("Step 6 prints the resolved basePath as the exact hygiene target", async ()
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
-    clean(root);
+    clean(repo);
   }
 });

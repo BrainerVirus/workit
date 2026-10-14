@@ -59,6 +59,7 @@ import {
 import {
   CLAUDE_MARKETPLACE_NAME,
   claudeWorkitInstalls,
+  openCodeInstalledPlugin,
   type ClaudeWorkitInstall,
 } from "./host-install";
 import {
@@ -111,7 +112,9 @@ type DoctorCheckId =
   | "gitlab_identity"
   | "log_writable";
 
-type DoctorCheckStatus = "pass" | "warn" | "fail";
+/** `info` is a true fact that needs no action (a normal install has no dev
+ *  checkout, a newer host CLI than qualified); it counts as passed. */
+type DoctorCheckStatus = "pass" | "info" | "warn" | "fail";
 
 export type DoctorCheck = {
   id: DoctorCheckId;
@@ -179,7 +182,8 @@ type Resolved = {
   workspaceRoot: string;
   dev: string | null;
   opencodeConfig: string;
-  opencodePackageCacheDir: string;
+  /** Explicit OpenCode package cache (test seam); null reads OpenCode's own cache. */
+  opencodePackageCacheDir: string | null;
   cursorSettings: string;
   cursorMcp: string;
   cursorPluginDir: string;
@@ -214,7 +218,9 @@ const resolve = (options: DoctorOptions): Resolved => {
   const stateDir =
     options.stateDir ?? env.WORKFLOW_TOOLKIT_STATE ?? path.join(home, ".local", "state", "workit");
   const cwd = options.cwd ?? process.cwd();
-  const dev = options.dev ?? env.WORKFLOW_TOOLKIT_DEV ?? findDevFromCwd(cwd);
+  // An empty WORKFLOW_TOOLKIT_DEV is unset: every row must agree on whether
+  // there is a dev checkout (`""` read as one by some rows and none by others).
+  const dev = options.dev?.trim() || env.WORKFLOW_TOOLKIT_DEV?.trim() || findDevFromCwd(cwd);
   return {
     host: options.host ?? "cli",
     home,
@@ -225,9 +231,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     dev,
     opencodeConfig:
       options.opencodeConfig ?? path.join(home, ".config", "opencode", "opencode.json"),
-    opencodePackageCacheDir:
-      options.opencodePackageCacheDir ??
-      path.join(home, ".cache", "opencode", "packages", "@brainervirus", "workit-opencode@latest"),
+    opencodePackageCacheDir: options.opencodePackageCacheDir ?? null,
     cursorSettings: options.cursorSettings ?? path.join(home, ".cursor", "settings.json"),
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
     cursorPluginDir:
@@ -334,7 +338,8 @@ const semverAtLeast = (version: string, min: string): boolean => {
 const resolveBun = (env: NodeJS.ProcessEnv): string | null => {
   if (env.BUN && existsSync(env.BUN)) return env.BUN;
   for (const candidate of [
-    path.join(os.homedir(), ".bun/bin/bun"),
+    // The doctor's own HOME (a temp home in tests), not the process owner's.
+    path.join(env.HOME || os.homedir(), ".bun/bin/bun"),
     "/usr/local/bin/bun",
     "/usr/bin/bun",
   ]) {
@@ -345,19 +350,37 @@ const resolveBun = (env: NodeJS.ProcessEnv): string | null => {
 
 // Installation checks ---------------------------------------------------------
 
+// The runtime that matters is the one running workit (process.execPath)
+// against the CLI's engines floor (SUPPORT_MATRIX.node.minimum mirrors it). A
+// different `node` first on PATH (a version manager's default) is reported, not
+// failed: it does not run this CLI.
 const checkRuntime = (res: Resolved): DoctorCheck => {
-  const node = versionOf("node", res.env);
-  const nodeOk = node !== null && semverAtLeast(node, SUPPORT_MATRIX.node.minimum);
+  const running = `v${process.versions.node}`;
+  const runningOk = semverAtLeast(running, SUPPORT_MATRIX.node.minimum);
+  const pathNode = versionOf("node", res.env);
   const bun = resolveBun(res.env);
   const bunVersion = bun ? versionOf(bun, res.env) : null;
   const bunOk = bunVersion !== null;
   const needsBun = res.dev !== null;
-  if (!nodeOk) {
+  if (!runningOk) {
     return {
       id: "runtime",
       status: "fail",
-      detail: `node ${SUPPORT_MATRIX.node.minimum}+ required (found ${node ?? "none on PATH"})`,
+      detail: `node ${SUPPORT_MATRIX.node.minimum}+ required (workit runs under ${running} at ${process.execPath})`,
       fix: `Install Node ${SUPPORT_MATRIX.node.minimum}+ (declared support: ${SUPPORT_MATRIX.node.minimum}/current)`,
+    };
+  }
+  const pathNote =
+    pathNode !== null && pathNode !== running
+      ? `; node on PATH is ${pathNode}${semverAtLeast(pathNode, SUPPORT_MATRIX.node.minimum) ? "" : ` (below ${SUPPORT_MATRIX.node.minimum}; it does not run this CLI)`}`
+      : "";
+  if (pathNode === null) {
+    // Host hooks and the Cursor launcher start `node` from PATH.
+    return {
+      id: "runtime",
+      status: "warn",
+      detail: `workit runs under node ${running}, but no node is on PATH for host hooks`,
+      fix: `Put Node ${SUPPORT_MATRIX.node.minimum}+ on PATH (host hooks launch \`node\`)`,
     };
   }
   if (!bunOk && needsBun) {
@@ -368,18 +391,11 @@ const checkRuntime = (res: Resolved): DoctorCheck => {
       fix: `Install bun ${SUPPORT_MATRIX.bun} (curl -fsSL https://bun.sh/install | bash)`,
     };
   }
-  if (!bunOk) {
-    return {
-      id: "runtime",
-      status: "warn",
-      detail: "bun not found on PATH — not required for published artifacts",
-      fix: "Install bun for development/installer use",
-    };
-  }
+  const pathOld = !semverAtLeast(pathNode, SUPPORT_MATRIX.node.minimum);
   return {
     id: "runtime",
-    status: "pass",
-    detail: `node ${node} (>=${SUPPORT_MATRIX.node.minimum}), bun ${bunVersion ?? "n/a"}`,
+    status: bunOk && !pathOld ? "pass" : "info",
+    detail: `node ${running} (>=${SUPPORT_MATRIX.node.minimum})${pathNote}, ${bunOk ? `bun ${bunVersion}` : "no bun (needed only for a dev checkout)"}`,
   };
 };
 
@@ -387,8 +403,8 @@ const checkVersions = (res: Resolved): DoctorCheck => {
   if (!res.dev) {
     return {
       id: "versions",
-      status: "warn",
-      detail: "no dev checkout found (WORKFLOW_TOOLKIT_DEV) — skipping version parity",
+      status: "info",
+      detail: "installed package, not a dev checkout — version parity applies to checkouts only",
     };
   }
   const corePkg = readJson(path.join(res.dev, "packages/workit-core/package.json"));
@@ -402,7 +418,10 @@ const checkVersions = (res: Resolved): DoctorCheck => {
   const refs = new Set<string>();
   for (const name of ["workit-opencode", "workit-cursor", "workit-cli"]) {
     const pkg = readJson(path.join(res.dev, "packages", name, "package.json"));
-    const dep = pkg?.dependencies?.["@brainervirus/workit-core"];
+    // Adapters bundle core into dist/, so it is a devDependency (N19).
+    const dep =
+      pkg?.dependencies?.["@brainervirus/workit-core"] ??
+      pkg?.devDependencies?.["@brainervirus/workit-core"];
     if (typeof dep === "string") refs.add(dep);
   }
   if (refs.size === 0) {
@@ -498,8 +517,8 @@ const checkOpencodeVersion = (res: Resolved): DoctorCheck => {
 };
 
 // The Codex CLI is a qualification host, not a runtime dependency: evidence
-// covers exactly SUPPORT_MATRIX.codex.cli. A drifted install keeps working,
-// but warns so a fresh install never silently outruns the qualification pin.
+// covers exactly SUPPORT_MATRIX.codex.cli. A newer install keeps working and is
+// reported as info; only an older one than the evidence warns.
 const checkCodexPin = (res: Resolved): DoctorCheck => {
   const qualified = SUPPORT_MATRIX.codex.cli;
   if (!commandOnPath("codex", res.env))
@@ -523,10 +542,18 @@ const checkCodexPin = (res: Resolved): DoctorCheck => {
       status: "pass",
       detail: `codex CLI ${installed} matches the qualified pin`,
     };
+  // A host CLI newer than the evidence is the normal drift of an updating
+  // install: say which version was qualified, ask for nothing.
+  if (semverAtLeast(installed, qualified))
+    return {
+      id: "codex_pin",
+      status: "info",
+      detail: `codex CLI ${installed} is newer than the qualified ${qualified}`,
+    };
   return {
     id: "codex_pin",
     status: "warn",
-    detail: `codex CLI ${installed} differs from the qualified ${qualified}`,
+    detail: `codex CLI ${installed} is older than the qualified ${qualified}`,
     fix: `Reinstall the qualified Codex CLI ${qualified} or record fresh qualification evidence`,
   };
 };
@@ -1100,8 +1127,8 @@ const checkAssets = (res: Resolved): DoctorCheck => {
     if (!dev && res.host === "opencode") {
       return {
         id: "assets",
-        status: "warn",
-        detail: "no dev checkout found (WORKFLOW_TOOLKIT_DEV) — skipping asset check",
+        status: "info",
+        detail: "installed package — OpenCode loads the published assets, no checkout to compare",
       };
     }
     return {
@@ -1286,8 +1313,9 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
   if (!dev && res.host !== "cursor") {
     return {
       id: "launcher",
-      status: "warn",
-      detail: "no dev checkout found (WORKFLOW_TOOLKIT_DEV) — skipping non-Cursor launcher checks",
+      status: "info",
+      detail:
+        "installed package — non-Cursor launchers ship inside each host plugin, no checkout to check",
     };
   }
   return {
@@ -1430,18 +1458,23 @@ const checkUtility = (res: Resolved): DoctorCheck => {
       fix: "Install git and ensure it is on PATH",
     };
   }
-  if (process.platform !== "win32" && !commandOnPath("flock", res.env)) {
+  // flock serves only sync-runtime.sh, the dev checkout's runtime sync; a
+  // published install never runs it.
+  if (res.dev && process.platform !== "win32" && !commandOnPath("flock", res.env)) {
     return {
       id: "utility",
       status: "warn",
-      detail: "flock (util-linux) not found — sync-runtime requires it for locking",
-      fix: "Install util-linux (flock)",
+      detail: "flock not found — the dev checkout's sync-runtime requires it for locking",
+      fix:
+        process.platform === "darwin"
+          ? "brew install flock (Homebrew's util-linux is keg-only and leaves flock off PATH)"
+          : "Install util-linux (flock)",
     };
   }
   return {
     id: "utility",
     status: "pass",
-    detail: "git (and flock where required) on PATH",
+    detail: res.dev ? "git and flock on PATH" : "git on PATH",
   };
 };
 
@@ -1597,17 +1630,29 @@ const installedPluginVersion = (res: Resolved): string | null => {
   return typeof pkg?.version === "string" && pkg.version ? pkg.version : null;
 };
 
-const installedOpenCodeCacheVersion = (res: Resolved): string | null => {
-  const pkg = readJson(
-    path.join(
-      res.opencodePackageCacheDir,
-      "node_modules",
-      "@brainervirus",
-      "workit-opencode",
-      "package.json",
-    ),
-  );
-  return typeof pkg?.version === "string" && pkg.version ? pkg.version : null;
+/** The workit-opencode version OpenCode cached for itself and the cache entry
+ *  to remove for a re-resolve (the `<name>@<spec>` directory). */
+const installedOpenCodeCache = (res: Resolved): { version: string; dir: string } | null => {
+  if (res.opencodePackageCacheDir !== null) {
+    const pkg = readJson(
+      path.join(
+        res.opencodePackageCacheDir,
+        "node_modules",
+        "@brainervirus",
+        "workit-opencode",
+        "package.json",
+      ),
+    );
+    return typeof pkg?.version === "string" && pkg.version
+      ? { version: pkg.version, dir: res.opencodePackageCacheDir }
+      : null;
+  }
+  const found = openCodeInstalledPlugin(res.home, res.env);
+  if (!found) return null;
+  // workit-opencode@latest/[<stamp>/]node_modules/@brainervirus/workit-opencode
+  let dir = path.dirname(path.dirname(path.dirname(found.root)));
+  if (path.basename(dir) !== "workit-opencode@latest") dir = path.dirname(dir);
+  return { version: found.version, dir };
 };
 
 /** OpenCode freezes the first `@latest` resolve in its package cache — detect lag. */
@@ -1642,8 +1687,9 @@ const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbe
       detail: `opencode pin ${pin} is an exact version — not compared to registry latest`,
     };
   }
-  const installed = installedOpenCodeCacheVersion(res);
-  if (installed === null) {
+  const cache = installedOpenCodeCache(res);
+  const installed = cache?.version ?? null;
+  if (cache === null || installed === null) {
     return {
       id: "stale_install",
       status: "pass",
@@ -1658,7 +1704,7 @@ const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbe
       registryProbed: true,
       detail:
         "registry_unreachable: cannot compare OpenCode @latest cache against published workit-opencode",
-      fix: `Retry when npm is reachable, or remove ${res.opencodePackageCacheDir} and restart OpenCode to re-resolve`,
+      fix: `Retry when npm is reachable, or remove ${cache.dir} and restart OpenCode to re-resolve`,
     };
   }
   if (!semverAtLeast(installed, expected)) {
@@ -1667,7 +1713,7 @@ const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbe
       status: "fail",
       registryProbed: true,
       detail: `stale_install: OpenCode @latest cache has workit-opencode ${installed} behind published ${expected}`,
-      fix: `Remove ${res.opencodePackageCacheDir} and restart OpenCode — it re-resolves @latest on the next launch`,
+      fix: `Remove ${cache.dir} and restart OpenCode — it re-resolves @latest on the next launch`,
     };
   }
   return {
@@ -2677,7 +2723,7 @@ const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
       version: i.version,
     })),
     { label: "Cursor plugin", version: installedPluginVersion(res) },
-    { label: "OpenCode plugin", version: installedOpenCodeCacheVersion(res) },
+    { label: "OpenCode plugin", version: installedOpenCodeCache(res)?.version ?? null },
   ].filter((p): p is { label: string; version: string } => p.version !== null);
   const newest = plugins.reduce<{ label: string; version: string } | null>(
     (best, p) => (best && semverAtLeast(best.version, p.version) ? best : p),
@@ -2775,7 +2821,7 @@ export const runDoctor = (options: DoctorOptions = {}): DoctorReport => {
 
   const failed = checks.filter((c) => c.status === "fail").length;
   const warned = checks.filter((c) => c.status === "warn").length;
-  const passed = checks.filter((c) => c.status === "pass").length;
+  const passed = checks.filter((c) => c.status === "pass" || c.status === "info").length;
   const exitCode = failed > 0 ? 1 : 0;
   const offline = !raw.some((c) => "registryProbed" in c && c.registryProbed);
   const report: DoctorReport = {
