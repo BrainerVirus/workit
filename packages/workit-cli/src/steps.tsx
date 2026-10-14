@@ -36,7 +36,15 @@ import {
   detectBranchPolicy,
   repoBranchPreset,
 } from "@brainervirus/workit-core/src/core/branch-policy.ts";
-import { projectTarget } from "@brainervirus/workit-core/src/core/hygiene.ts";
+import { projectTarget, type ProjectTarget } from "@brainervirus/workit-core/src/core/hygiene.ts";
+
+// Every keypress re-renders the project step: spawn `git rev-parse` once per
+// base path, not once per frame.
+let lastProjectTarget: { base: string; target: ProjectTarget } | null = null;
+const projectTargetFor = (base: string): ProjectTarget => {
+  if (lastProjectTarget?.base !== base) lastProjectTarget = { base, target: projectTarget(base) };
+  return lastProjectTarget.target;
+};
 import {
   createInitialDraft,
   reducer,
@@ -1399,8 +1407,10 @@ function Screen({
       // CA-07: print the exact directory Apply will touch — the git toplevel
       // of the resolved base path, never an implicit process.cwd(). Outside a
       // repository nothing is offered: the refusal names the way out.
-      const target = projectTarget(resolveBasePath(draft.values));
+      const target = projectTargetFor(resolveBasePath(draft.values));
       if (!target.ok) {
+        // y carries the refusal into the summary and the Apply output (a
+        // Skipped row naming `cd <repo>`); n leaves project files out silently.
         return (
           <Box flexDirection="column" gap={1}>
             <Text bold>Step 6 — Project setup</Text>
@@ -1409,7 +1419,7 @@ function Screen({
               defaultChoice="confirm"
               submitOnEnter={false}
               onConfirm={() => {
-                dispatch({ type: "set", field: "applyProject", value: false });
+                dispatch({ type: "set", field: "applyProject", value: true });
                 dispatch({ type: "next" });
               }}
               onCancel={() => {
@@ -1417,7 +1427,10 @@ function Screen({
                 dispatch({ type: "next" });
               }}
             />
-            <Text dimColor>y or n to continue without project files · b Back · Esc Cancel</Text>
+            <Text dimColor>
+              y to keep this note in the summary · n to skip it · either adds no project files · b
+              Back · Esc Cancel
+            </Text>
           </Box>
         );
       }
@@ -1535,7 +1548,12 @@ function Screen({
             VCS provider: <Text color="green">{draft.values.vcsProvider}</Text>
           </Text>
           <Text>
-            Project hygiene: <Text color="green">{draft.values.applyProject ? "yes" : "no"}</Text>
+            Project hygiene:{" "}
+            {preview.projectRefused ? (
+              <Text color="yellow">skipped — {preview.projectRefused}</Text>
+            ) : (
+              <Text color="green">{draft.values.applyProject ? "yes" : "no"}</Text>
+            )}
           </Text>
           {preview.overrides.length > 0 && (
             <Box flexDirection="column" gap={0}>

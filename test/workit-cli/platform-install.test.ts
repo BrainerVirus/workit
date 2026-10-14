@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -31,6 +31,10 @@ import { isolatedEnv } from "@/test/shared/helpers/packages";
 // to a nonzero exitCode.
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// Apply runs the offline doctor after each host write (git/node probes);
+// single tests measured past bun's 5 s default on a loaded machine.
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 20_000);
 
 const tempDir = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const clean = (dir: string) => rmSync(dir, { recursive: true, force: true });

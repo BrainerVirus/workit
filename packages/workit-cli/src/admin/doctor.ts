@@ -218,7 +218,9 @@ const resolve = (options: DoctorOptions): Resolved => {
   const stateDir =
     options.stateDir ?? env.WORKFLOW_TOOLKIT_STATE ?? path.join(home, ".local", "state", "workit");
   const cwd = options.cwd ?? process.cwd();
-  const dev = options.dev ?? env.WORKFLOW_TOOLKIT_DEV ?? findDevFromCwd(cwd);
+  // An empty WORKFLOW_TOOLKIT_DEV is unset: every row must agree on whether
+  // there is a dev checkout (`""` read as one by some rows and none by others).
+  const dev = options.dev?.trim() || env.WORKFLOW_TOOLKIT_DEV?.trim() || findDevFromCwd(cwd);
   return {
     host: options.host ?? "cli",
     home,
@@ -336,7 +338,8 @@ const semverAtLeast = (version: string, min: string): boolean => {
 const resolveBun = (env: NodeJS.ProcessEnv): string | null => {
   if (env.BUN && existsSync(env.BUN)) return env.BUN;
   for (const candidate of [
-    path.join(os.homedir(), ".bun/bin/bun"),
+    // The doctor's own HOME (a temp home in tests), not the process owner's.
+    path.join(env.HOME || os.homedir(), ".bun/bin/bun"),
     "/usr/local/bin/bun",
     "/usr/bin/bun",
   ]) {
@@ -1646,9 +1649,9 @@ const installedOpenCodeCache = (res: Resolved): { version: string; dir: string }
   }
   const found = openCodeInstalledPlugin(res.home, res.env);
   if (!found) return null;
-  // <spec>/[<stamp>/]node_modules/@brainervirus/workit-opencode
+  // workit-opencode@latest/[<stamp>/]node_modules/@brainervirus/workit-opencode
   let dir = path.dirname(path.dirname(path.dirname(found.root)));
-  if (!path.basename(dir).startsWith("workit-opencode")) dir = path.dirname(dir);
+  if (path.basename(dir) !== "workit-opencode@latest") dir = path.dirname(dir);
   return { version: found.version, dir };
 };
 

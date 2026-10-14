@@ -1233,7 +1233,8 @@ function verifyPlatform(platform: Platform, res: ResolvedApply): DoctorReport | 
 const failedDetail = (report: DoctorReport): string =>
   report.checks
     .filter((c) => c.status === "fail")
-    .map((c) => `${c.id}: ${c.detail}`)
+    // Some details already lead with their id (`stale_install: …`).
+    .map((c) => (c.detail.startsWith(`${c.id}:`) ? c.detail : `${c.id}: ${c.detail}`))
     .join("; ");
 
 export function applySetupPreview(

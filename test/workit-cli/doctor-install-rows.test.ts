@@ -39,10 +39,10 @@ const minimalBin = (): string => {
 const bin = process.platform === "win32" ? "" : minimalBin();
 
 const installedEnv = (home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv => {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: bin, ...extra };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: bin };
   for (const key of ["WORKFLOW_TOOLKIT_DEV", "XDG_CACHE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"])
     delete env[key];
-  return env;
+  return { ...env, ...extra };
 };
 
 const doctorFor = (name: string, host: "cli" | "opencode", extra: Record<string, string> = {}) => {
@@ -122,5 +122,21 @@ test.skipIf(process.platform === "win32")(
     expect(stale.status).toBe("fail");
     expect(stale.detail).toContain("8.9.0");
     expect(stale.fix).toContain(spec);
+  },
+);
+
+// An exported-but-empty WORKFLOW_TOOLKIT_DEV is no dev checkout for every row:
+// the runtime row used to read "" as a checkout that needs bun and FAIL, while
+// the utility and versions rows read it as none.
+test.skipIf(process.platform === "win32")(
+  "Given WORKFLOW_TOOLKIT_DEV is empty and no bun is installed, When doctor runs, Then runtime agrees there is no dev checkout",
+  () => {
+    // No bun: not on the minimal PATH, not in the temp HOME, no BUN override.
+    const doctor = doctorFor("empty-dev", "opencode", { WORKFLOW_TOOLKIT_DEV: "", BUN: "" });
+    const report = doctor.run();
+    expect(row(report, "runtime").status).not.toBe("fail");
+    expect(row(report, "runtime").detail).toContain("no bun");
+    expect(row(report, "versions").status).toBe("info");
+    expect(row(report, "utility").detail).toBe("git on PATH");
   },
 );

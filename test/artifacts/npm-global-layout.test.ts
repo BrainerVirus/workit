@@ -37,6 +37,9 @@ if (!npmRegistryOk) {
   console.error("skipping npm-global layout gate: `npm ping` failed — registry unreachable");
 }
 
+const NETWORK_ERROR =
+  /E(?:AI_AGAIN|CONNRESET|CONNREFUSED|NOTFOUND|TIMEDOUT|NETUNREACH|SOCKETTIMEOUT)|network|\bE5\d\d\b|fetch failed/i;
+
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
 
@@ -90,6 +93,14 @@ test.skipIf(!npmRegistryOk)(
         env,
         timeout: 300_000,
       });
+      // The registry answered `npm ping` but can still drop the install (a
+      // flaky network, an outage mid-run): that is not a layout failure.
+      if (install.status !== 0 && NETWORK_ERROR.test(`${install.stderr}${install.stdout}`)) {
+        console.error(
+          `skipping npm-global layout gate: npm install hit the network\n${install.stderr}`,
+        );
+        return;
+      }
       expect(install.status, install.stderr).toBe(0);
       const globalRoot = spawnSync("npm", ["root", "-g"], { encoding: "utf8", env }).stdout.trim();
       const cliDir = path.join(globalRoot, CLI);
@@ -122,10 +133,13 @@ test.skipIf(!npmRegistryOk)(
       expect(spawnSync("git", ["init", "-q"], { cwd: repo }).status).toBe(0);
       const configDir = path.join(home, ".config", "workit");
       mkdirSync(configDir, { recursive: true });
-      // Pin the registry probe to the candidate version: a newer published
-      // release must not turn this layout gate into a stale-cache report.
+      // Init and doctor run offline: a registry fallback (npm-staging the
+      // Cursor adapter) cannot hide a resolution regression. The registry
+      // probe is pinned to the candidate version, so a newer published release
+      // cannot turn this layout gate into a stale-cache report.
       const setupEnv = {
         ...env,
+        npm_config_offline: "true",
         WORKFLOW_TOOLKIT_CONFIG: configDir,
         WORKIT_DOCTOR_STALE_REGISTRY_VERSION: JSON.parse(
           readFileSync(path.join(cached, "package.json"), "utf8"),
@@ -181,6 +195,12 @@ test.skipIf(!npmRegistryOk)(
         CURSOR,
       );
       expect(existsSync(path.join(repo, ".gitignore"))).toBe(true);
+      // The nested adapter was used as installed: init never fell back to
+      // staging a registry copy (that path is offline-blocked above anyway).
+      expect(JSON.stringify(result.entries)).not.toContain(".workit-package-bootstrap");
+      expect(
+        existsSync(path.join(home, ".cursor", "plugins", "local", ".workit-package-bootstrap")),
+      ).toBe(false);
 
       const doctor = spawnSync(
         process.execPath.endsWith("bun") ? "node" : process.execPath,

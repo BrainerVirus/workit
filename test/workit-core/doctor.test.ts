@@ -1,5 +1,10 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
+
+// Every doctor run spawns git/node/host probes; on a loaded machine single
+// tests measured past bun's 5 s default (2026-10-14). Windows keeps the 60 s
+// scripts/test.ts gives this file.
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 20_000);
 import { spawnSync } from "node:child_process";
 import {
   existsSync,

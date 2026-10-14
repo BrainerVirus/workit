@@ -218,10 +218,11 @@ const subdirs = (dir: string): string[] => {
 };
 
 /**
- * The newest workit-opencode package OpenCode installed for itself. OpenCode
- * 2.x keeps each resolve under `npm/<scope>/<name>[@<spec>]/<stamp>/node_modules`,
- * 1.x under `packages/<scope>/<name>[@<spec>]/node_modules` (both measured on
- * installed hosts). Read-only.
+ * The newest workit-opencode package OpenCode installed for itself for the
+ * floating pin Workit writes (`@latest`). OpenCode 2.x keeps each resolve under
+ * `npm/<scope>/<name>@latest/<stamp>/node_modules`, 1.x under
+ * `packages/<scope>/<name>@latest/node_modules` (both measured on installed
+ * hosts). An exact-version pin's cache is not the floating install. Read-only.
  */
 export const openCodeInstalledPlugin = (
   home: string,
@@ -230,10 +231,9 @@ export const openCodeInstalledPlugin = (
   const name = `${OPENCODE_PLUGIN_SCOPE}/${OPENCODE_PLUGIN_NAME}`;
   const cache = openCodeCacheDir(home, env);
   const specDirs = (layout: string): string[] =>
-    subdirs(path.join(cache, layout, OPENCODE_PLUGIN_SCOPE)).filter((dir) => {
-      const base = path.basename(dir);
-      return base === OPENCODE_PLUGIN_NAME || base.startsWith(`${OPENCODE_PLUGIN_NAME}@`);
-    });
+    subdirs(path.join(cache, layout, OPENCODE_PLUGIN_SCOPE)).filter(
+      (dir) => path.basename(dir) === `${OPENCODE_PLUGIN_NAME}@latest`,
+    );
   const installs = [...specDirs("npm").flatMap(subdirs), ...specDirs("packages")].map((dir) =>
     path.join(dir, "node_modules", OPENCODE_PLUGIN_SCOPE, OPENCODE_PLUGIN_NAME),
   );
