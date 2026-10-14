@@ -108,9 +108,17 @@ only to that subagent in its SubagentStart context, and stores only the
 token's sha256. `ledger verdict` accepts the id only with `--token <token>`
 (or `WORKIT_SESSION_TOKEN`), so a lead or sibling that read the id in the
 ledger cannot record under it (`unbound_session`), nor supersede that
-reviewer's failure. The row then carries `sessionBound: true`. An id issued
-by a hook older than tokens (`workit-issued-sessions/2` records) is still
-accepted without one; `workit doctor` reports that plugin as out of date.
+reviewer's failure. The row then carries `sessionBound: true`. Each id is
+issued once: a SubagentStart fired again for an id already issued mints no
+new token. The token hash lives in its own tree (`<state>/issued-tokens/`),
+which hooks older than tokens never write, and binding is sticky: once a lead
+has any token-bound id, a token-less record under it (an old cached plugin
+hook rewriting one, or issuing a new id) is refused as `unbound_session`. Only
+a lead that never had a token keeps the old path, where an id an older hook
+issued (`workit-issued-sessions/2`) is accepted without one; `workit doctor`
+reports that plugin as out of date. The token needs a CLI at least as new as
+the plugin: the SubagentStart text says to update an older CLI that rejects
+`--token`.
 
 On a host, `--session` takes only an issued id. Naming the shell's own
 session (`--session <lead>` on Claude Code, an OpenCode child's
@@ -171,10 +179,13 @@ Limits (the check stops casual forgery, not a determined one; see
 - Cursor, CI and a plain terminal are declared by design; Cursor's hook
   cannot reach a subagent, so it issues no ids or tokens.
 - Claude Code, Codex: the issued-id record is plain files in the user's state
-  dir. A caller that writes there deliberately can mark any id as issued, or
-  rewrite a record to the token-less `/2` form. The token itself sits in the
-  subagent's transcript, which a caller that reads the host's transcript
-  files can find.
+  dir. A caller that writes there deliberately can mark any id as issued or
+  plant a token hash it chose. The token itself sits in the subagent's
+  transcript, which a caller that reads the host's transcript files can find.
+- Claude Code, Codex: anyone who can run the hook bundle can mint a new id
+  and its token (a SubagentStart with an agent id never used), and record an
+  independent verdict under it. Issue-once only stops re-minting an id that
+  already exists.
 
 Verdicts are SHA-keyed and carry over a rebase when
 the patch-id and diff are unchanged. A dirty tree is refused, also when the
@@ -224,7 +235,8 @@ under the reviewer's id, a trailer) never discounts it. An unverified
 `stack.restacked` row never carries a pass onto new code. The chain is a
 keyless sha256: it stops a row appended, edited, removed or moved by hand,
 not someone who recomputes the hashes, deletes the newest rows, or moves the
-whole ledger aside.
+whole ledger aside. Moving the ledger aside (the documented repair) also
+drops every independent failure in it: re-record those before merging.
 
 The ledger file is created `0600`; an older, wider one is tightened on the
 next append (POSIX). On OpenCode, Pi and the MCP server, which run Workit in

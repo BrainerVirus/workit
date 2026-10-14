@@ -101,6 +101,13 @@ const hash = (value: string): string =>
 // started in one repository delegates review of others, and the verifier
 // records its verdict from whichever repository it reviews (#294).
 const userIssuedRoot = (): string => path.join(resolveStateDir(), "issued");
+/**
+ * Token hashes, one file per issued id under `<state>/issued-tokens/<lead
+ * hash>/`: a tree hooks older than tokens never write, so an old cached
+ * plugin hook that rewrites a record in `issued/` cannot strip its token.
+ * Once a lead has one, every id under it needs a token (sticky binding).
+ */
+const userTokenRoot = (): string => path.join(resolveStateDir(), "issued-tokens");
 
 /**
  * Hooks of 8.10-8.12 wrote issued ids into `<store>/hooks/issued` of the
@@ -127,7 +134,13 @@ function migrateRepoIssued(cwd: string | undefined): void {
       const to = path.join(userIssuedRoot(), lead);
       fs.mkdirSync(to, { recursive: true, mode: 0o700 });
       for (const id of fs.readdirSync(from)) {
-        fs.copyFileSync(path.join(from, id), path.join(to, id));
+        // Never over an existing per-user record: a legacy in-repo copy must
+        // not replace a token-bound one (EEXIST just drops the legacy copy).
+        try {
+          fs.copyFileSync(path.join(from, id), path.join(to, id), fs.constants.COPYFILE_EXCL);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        }
         fs.rmSync(path.join(from, id), { force: true });
       }
       removeIfEmpty(from);
@@ -178,30 +191,32 @@ const tokenHash = (token: string): string => createHash("sha256").update(token).
  * and return the token that binds the id to that subagent: the hook hands it
  * only to the subagent, and only its sha256 is stored, so a lead or sibling
  * that reads the id in the ledger cannot act as it (audit mv83zyg6 P1).
- * Fails open: null when nothing was recorded.
+ * Each id is issued once: a SubagentStart fired again for an id already
+ * issued (a lead replaying the hook) gets no new token (review mv8daa5d P1).
+ * Null when nothing was issued: already issued, or the write failed (fails open).
  */
 export function recordIssuedSession(cwd: string, lead: string, issued: string): string | null {
   const token = randomBytes(18).toString("base64url");
   try {
     migrateRepoIssued(cwd);
+    const own = hash(issued);
+    const tokens = path.join(userTokenRoot(), hash(lead));
+    fs.mkdirSync(tokens, { recursive: true, mode: 0o700 });
+    // `wx`: the first SubagentStart for an id wins; any later one fails here.
+    fs.writeFileSync(path.join(tokens, own), `${tokenHash(token)}\n`, { mode: 0o600, flag: "wx" });
     const dir = path.join(userIssuedRoot(), hash(lead));
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const own = hash(issued);
-    fs.writeFileSync(
-      path.join(dir, own),
-      `${ISSUED_SESSIONS_MARKER}\ntoken:${tokenHash(token)}\n`,
-      { mode: 0o600 },
-    );
-    pruneIssued(dir, own);
+    fs.writeFileSync(path.join(dir, own), `${ISSUED_SESSIONS_MARKER}\n`, { mode: 0o600 });
+    pruneIssued(dir, own, tokens);
     return token;
   } catch {
-    // Fail open: an unrecorded id is refused later, never a broken hook.
+    // Already issued (EEXIST), or a failed write: no token is handed out.
     return null;
   }
 }
 
-/** Keep the newest ISSUED_PER_LEAD ids of one lead; `own` is never pruned. */
-function pruneIssued(dir: string, own: string): void {
+/** Keep the newest ISSUED_PER_LEAD ids of one lead (and their token hashes); `own` is never pruned. */
+function pruneIssued(dir: string, own: string, tokens: string): void {
   try {
     const entries = fs.readdirSync(dir);
     if (entries.length <= ISSUED_PER_LEAD) return;
@@ -210,8 +225,10 @@ function pruneIssued(dir: string, own: string): void {
       .filter((name) => name !== own)
       .map((name) => ({ name, at: fs.statSync(path.join(dir, name)).mtimeMs }))
       .toSorted((a, b) => a.at - b.at);
-    for (const { name } of byAge.slice(0, entries.length - ISSUED_PER_LEAD))
+    for (const { name } of byAge.slice(0, entries.length - ISSUED_PER_LEAD)) {
       fs.rmSync(path.join(dir, name), { force: true });
+      fs.rmSync(path.join(tokens, name), { force: true });
+    }
   } catch {
     // Fail open: an unrecorded id is refused later, never a broken hook.
   }
@@ -232,18 +249,35 @@ const issuedRecord = (cwd: string | undefined, claimed: string): string | null =
   }
 };
 
-const TOKEN_LINE = /^token:([0-9a-f]{64})$/mu;
+const TOKEN_HASH = /^([0-9a-f]{64})$/mu;
+
+/** The stored token hash for `claimed`, and whether its lead has any token at all. */
+const issuedToken = (claimed: string): { stored: string | null; leadBound: boolean } => {
+  const cut = claimed.lastIndexOf(":");
+  if (cut <= 0) return { stored: null, leadBound: false };
+  const dir = path.join(userTokenRoot(), hash(claimed.slice(0, cut)));
+  try {
+    const text = fs.readFileSync(path.join(dir, hash(claimed)), "utf8");
+    return { stored: TOKEN_HASH.exec(text)?.[1] ?? null, leadBound: true };
+  } catch {
+    return { stored: null, leadBound: safeList(dir).length > 0 };
+  }
+};
 
 /**
  * How a SubagentStart hook issued `claimed` (`<lead>:<agent id>`): `token`
  * (it must be presented, `--token`), `legacy` (a hook older than tokens
- * recorded it) or null (never issued).
+ * recorded it) or null (never issued). Binding is sticky: once its lead has
+ * any token-bound id, a token-less record (an old cached hook rewriting one,
+ * or issuing a new one) reads `token` with no token that can match.
  */
 export type IssuedBinding = "token" | "legacy";
 export function issuedBinding(cwd: string | undefined, claimed: string): IssuedBinding | null {
   const record = issuedRecord(cwd, claimed);
+  const { stored, leadBound } = issuedToken(claimed);
+  if (stored) return "token";
   if (record === null) return null;
-  return TOKEN_LINE.test(record) ? "token" : "legacy";
+  return leadBound ? "token" : "legacy";
 }
 
 /** Whether `token` is the one the hook gave the subagent it issued `claimed` to. */
@@ -252,7 +286,8 @@ export function issuedTokenMatches(
   claimed: string,
   token: string | null | undefined,
 ): boolean {
-  const stored = TOKEN_LINE.exec(issuedRecord(cwd, claimed) ?? "")?.[1];
+  migrateRepoIssued(cwd);
+  const { stored } = issuedToken(claimed);
   if (!stored || !token) return false;
   const given = Buffer.from(tokenHash(token.trim()));
   const want = Buffer.from(stored);

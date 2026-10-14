@@ -2,7 +2,7 @@
 // rows and a merge whose post-merge reads fail (audit 2026-10-13 N1, N3),
 // over recorded GitHub API shapes (fake gh).
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { appendFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -443,4 +443,43 @@ test("Given a merged PR, When the only pr.merged row was appended by hand, Then 
   );
   const status = await run(["pr", "status"], repo.cwd);
   expect(status.stdout).toContain("merged outside workit (no merge record)");
+});
+
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "Given an accepted verdict, When the merge intent cannot be recorded, Then nothing is merged (intent_unrecorded, R07)",
+  async () => {
+    const { repo, runner } = setup();
+    expect(
+      (
+        await run(["ledger", "verdict", "verified", "--how", "ok"], repo.cwd, {
+          WORKIT_SESSION_ID: "reviewer-2",
+        })
+      ).code,
+    ).toBe(0);
+    const file = ledgerPath(repo.cwd);
+    if (!file.ok) throw new Error(file.error);
+    chmodSync(file.value, 0o400);
+    try {
+      const merge = await run(["pr", "merge", "--json"], repo.cwd);
+      expect(merge.code).toBe(3);
+      expect(merge.json()).toMatchObject({ data: { reason: "intent_unrecorded" } });
+      expect(writes(runner.calls)).toEqual([]);
+    } finally {
+      chmodSync(file.value, 0o600);
+    }
+  },
+);
+
+test("Given a hand-minted <lead>:<x> id in a Claude Code shell, When workit git commit runs, Then it is refused and the unblock talks about commits", async () => {
+  const { repo } = setup();
+  writeFileSync(path.join(repo.cwd, "y.txt"), "y\n");
+  const commit = await run(
+    ["git", "commit", "-m", "chore: y", "--json", "--", "y.txt"],
+    repo.cwd,
+    claude("lead-A:nobody"),
+  );
+  expect(commit.code, commit.stdout).toBe(3);
+  expect(commit.json().error).toContain("forged_session");
+  expect(commit.json().unblock).toContain("commit");
+  expect(commit.json().unblock).not.toContain("verdict");
 });

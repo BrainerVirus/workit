@@ -2,11 +2,13 @@
 // so commits and verdicts made from Codex, OpenCode and Pi shells carry the
 // session their hooks see.
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -308,7 +310,6 @@ test("an id an 8.10-8.12 hook recorded in the repository's store is moved to the
   freshState(cwd);
   try {
     // The old layout: <store>/hooks/issued/<sha256(lead)[:32]>/<sha256(id)[:32]>.
-    const { createHash } = require("node:crypto") as typeof import("node:crypto");
     const hash = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 32);
     const dir = path.join(cwd, ".workit", "hooks", "issued", hash("lead"));
     mkdirSync(dir, { recursive: true });
@@ -329,7 +330,6 @@ test("a migration moves every readable lead, skips stray entries, and keeps ids 
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
   freshState(cwd);
   try {
-    const { createHash } = require("node:crypto") as typeof import("node:crypto");
     const hash = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 32);
     const old = path.join(cwd, ".workit", "hooks", "issued");
     for (const lead of ["a", "b"]) {
@@ -344,6 +344,75 @@ test("a migration moves every readable lead, skips stray entries, and keeps ids 
     mkdirSync(path.join(old, hash("c")), { recursive: true });
     writeFileSync(path.join(old, hash("c"), hash("c:x")), "workit-issued-sessions/1");
     expect(sessionClaimRefusal(env("c"), "c:x", cwd)).toBeNull();
+  } finally {
+    restoreState();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// Review mv8daa5d: an issued id must stay bound to its first subagent.
+const digest = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 32);
+const claudeLeadEnv = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
+
+test("Given an issued reviewer id, When SubagentStart fires again for it (a lead replaying the hook), Then no new token is minted and only the first token binds it (P1)", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  freshState(cwd);
+  try {
+    const first = recordIssuedSession(cwd, "lead", "lead:rev-1");
+    expect(first).not.toBeNull();
+    expect(recordIssuedSession(cwd, "lead", "lead:rev-1")).toBeNull();
+    expect(sessionClaimRefusal(claudeLeadEnv, "lead:rev-1", cwd, { token: first })).toBeNull();
+  } finally {
+    restoreState();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Given a lead with token-bound ids, When an old cached plugin hook rewrites a record as /2 or issues a token-less id, Then a token-less claim stays refused (sticky binding, P2)", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  const state = freshState(cwd);
+  try {
+    const token = recordIssuedSession(cwd, "lead", "lead:rev-1");
+    const leadDir = path.join(state, "issued", digest("lead"));
+    // What an 8.12 hook writes: the record file, with no token.
+    writeFileSync(path.join(leadDir, digest("lead:rev-1")), "workit-issued-sessions/2");
+    writeFileSync(path.join(leadDir, digest("lead:rev-9")), "workit-issued-sessions/2");
+    for (const id of ["lead:rev-1", "lead:rev-9"])
+      expect(sessionClaimRefusal(claudeLeadEnv, id, cwd)?.error, id).toContain("unbound_session");
+    expect(sessionClaimRefusal(claudeLeadEnv, "lead:rev-1", cwd, { token })).toBeNull();
+    // A lead that never had a token keeps the legacy path.
+    const other = path.join(state, "issued", digest("old-lead"));
+    mkdirSync(other, { recursive: true });
+    writeFileSync(path.join(other, digest("old-lead:v")), "workit-issued-sessions/2");
+    expect(
+      sessionClaimRefusal(
+        { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "old-lead" },
+        "old-lead:v",
+        cwd,
+      ),
+    ).toBeNull();
+  } finally {
+    restoreState();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Given a token-bound id, When a legacy in-repo record for the same id is migrated, Then it never replaces the per-user record nor unbinds the id (P3)", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  const state = freshState(cwd);
+  try {
+    const token = recordIssuedSession(cwd, "lead", "lead:rev-1");
+    const record = path.join(state, "issued", digest("lead"), digest("lead:rev-1"));
+    const before = readFileSync(record, "utf8");
+    const legacy = path.join(cwd, ".workit", "hooks", "issued", digest("lead"));
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(path.join(legacy, digest("lead:rev-1")), "workit-issued-sessions/1");
+    expect(sessionClaimRefusal(claudeLeadEnv, "lead:rev-1", cwd)?.error).toContain(
+      "unbound_session",
+    );
+    expect(readFileSync(record, "utf8")).toBe(before);
+    expect(existsSync(path.join(legacy, digest("lead:rev-1")))).toBe(false);
+    expect(sessionClaimRefusal(claudeLeadEnv, "lead:rev-1", cwd, { token })).toBeNull();
   } finally {
     restoreState();
     rmSync(cwd, { recursive: true, force: true });

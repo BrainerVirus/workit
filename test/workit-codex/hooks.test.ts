@@ -175,6 +175,16 @@ test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issu
     const codexToken = tokenIn(codex("subagent-start", root, { agent_type: "workit-verifier" }));
     expect(claudeToken).not.toBeNull();
     expect(codexToken).not.toBeNull();
+    // A replayed SubagentStart for the same agent mints nothing new (mv8daa5d P1),
+    // and the first text says an older CLI needs updating, not a dead end.
+    const replay = codex("subagent-start", root, { agent_type: "workit-verifier" });
+    expect(tokenIn(replay)).toBeNull();
+    expect(JSON.stringify(replay)).toContain("codex-session-1:agent-1");
+    const fresh = codex("subagent-start", root, {
+      agent_type: "workit-verifier",
+      agent_id: "agent-5",
+    });
+    expect(JSON.stringify(fresh)).toContain("workit upgrade --cli");
     expect(
       sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root, { token: claudeToken }),
     ).toBeNull();

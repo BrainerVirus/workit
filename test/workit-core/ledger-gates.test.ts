@@ -259,8 +259,9 @@ test("Given a --session verdict an older CLI recorded on Claude Code, When no Su
 
 test("Given an id a hook issued before tokens existed, When an older CLI recorded it by --session, Then it is still accepted (legacy registry entry)", () => {
   const root = featureRepo();
-  recordIssuedSession(root, "lead-9", "lead-9:agent-1");
+  // What an 8.12 hook wrote: a record and no token, for a lead with none.
   const digest = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 32);
+  mkdirSync(path.join(resolveStateDir(), "issued", digest("lead-9")), { recursive: true });
   writeFileSync(
     path.join(resolveStateDir(), "issued", digest("lead-9"), digest("lead-9:agent-1")),
     "workit-issued-sessions/2",

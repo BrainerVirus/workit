@@ -657,7 +657,12 @@ export function gitCommit(
         "commit from the implementer's or the lead's own session (unset WORKIT_SESSION_ID back to the shell's)",
       );
     const refusal = sessionClaimRefusal(env, session, cwd);
-    if (refusal) return failure("blocked", refusal.error, refusal.unblock);
+    if (refusal)
+      return failure(
+        "blocked",
+        refusal.error,
+        "commit from the session this shell really is: never set WORKIT_SESSION_ID by hand for a commit (unset it, or use the id the host put in this shell)",
+      );
   }
   // A commit that only rewords (amend) or is empty on purpose needs no change.
   const changeRequired = !input.amend && !input.allowEmpty;

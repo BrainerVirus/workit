@@ -409,7 +409,7 @@ test("Given no host session (CI, a plain terminal), When a verdict names a sessi
 
 test("Given the verifier session each skill documents per host, When it records a verdict on another session's branch, Then it is accepted and independent", async () => {
   const shapes: Array<[string, NodeJS.ProcessEnv, string[], string | null]> = [
-    ["claude", claudeLead, ["--session", "lead:a1"], "lead:a1"],
+    ["claude", claudeLead, ["--session", "lead:a1-verb"], "lead:a1-verb"],
     [
       "codex agent",
       { CODEX_THREAD_ID: "t-lead", WORKIT_SESSION_ID: undefined },
