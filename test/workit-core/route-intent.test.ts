@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   shellBranchPolicyViolation,
   shellBranchTarget,
+  shellBranchTargets,
 } from "@/packages/workit-core/src/core/route-intent";
 
 const previous = {
@@ -72,6 +73,18 @@ test("recognizes every raw branch-creation form agents use, wherever the option 
   ]) {
     expect(shellBranchTarget(command), command).toBe(target);
   }
+});
+
+test("Windows paths: posix sees C:/… (a backslash escapes), PowerShell keeps C:\\…; both name the directory git runs in", () => {
+  expect(shellBranchTargets("cd C:/Users/me/repo/sub && git switch -c chore/x")).toEqual([
+    { branch: "chore/x", dir: "C:/Users/me/repo/sub" },
+  ]);
+  expect(
+    shellBranchTargets(String.raw`cd C:\Users\me\repo\sub; git switch -c chore/x`, "powershell"),
+  ).toEqual([{ branch: "chore/x", dir: String.raw`C:\Users\me\repo\sub` }]);
+  expect(
+    shellBranchTargets(String.raw`git -C C:\Users\me\repo switch -c chore/x`, "powershell"),
+  ).toEqual([{ branch: "chore/x", dir: String.raw`C:\Users\me\repo` }]);
 });
 
 test("leaves non-creating and unknowable commands to the host", () => {
@@ -176,13 +189,18 @@ test("Given a workspace policy on one repo, When git runs in its subdirectory or
       }),
     );
     expect(shellBranchPolicyViolation(elsewhere, "git switch -c chore/x")).toEqual({ ok: true });
-    for (const [cwd, command] of [
-      [elsewhere, `cd ${repo}/sub && git switch -c chore/x`],
-      [join(repo, "sub"), "git switch -c chore/x"],
-      [elsewhere, `git -C ${linked} switch -c chore/x`],
-      [linked, "git branch chore/x"],
-    ]) {
-      const verdict = shellBranchPolicyViolation(cwd, command);
+    // A POSIX shell (Git Bash on Windows) sees C:/… paths: a backslash there is
+    // an escape. PowerShell keeps the native backslash path.
+    const posix = (dir: string) => dir.replaceAll("\\", "/");
+    for (const [cwd, command, dialect] of [
+      [elsewhere, `cd ${posix(repo)}/sub && git switch -c chore/x`, "posix"],
+      [join(repo, "sub"), "git switch -c chore/x", "posix"],
+      [elsewhere, `git -C ${posix(linked)} switch -c chore/x`, "posix"],
+      [linked, "git branch chore/x", "posix"],
+      [elsewhere, `cd ${join(repo, "sub")}; git switch -c chore/x`, "powershell"],
+      [elsewhere, `git -C ${linked} switch -c chore/x`, "powershell"],
+    ] as const) {
+      const verdict = shellBranchPolicyViolation(cwd, command, dialect);
       expect(verdict?.ok, command).toBe(false);
       if (verdict?.ok === false) expect(verdict.correction).toContain('use "feature/x"');
     }
