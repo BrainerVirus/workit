@@ -22,7 +22,7 @@ import {
   type AutonomySource,
   type DefaultEndpoint,
 } from "../autonomy";
-import { isProtectedTarget } from "../core/branch";
+import { branchKindOf, flowRoute, gitFlowOf, isProtectedTarget } from "../core/branch";
 import { vcsConfig } from "../core/vcs-config";
 import { workspaceReleaseTracks } from "../core/release-tracks";
 import { deleteRemoteBranch } from "../git/ops";
@@ -366,13 +366,26 @@ export type MergeOutcome = {
 /**
  * The merge-back a merge into `base` owes: the track whose production branch
  * `base` is, by ownership alone (no --track, no WORKFLOW_RELEASE_TRACK, no
- * history). Best effort: a config problem never stops the pr.merged record.
+ * history); without tracks, a git-flow release/* or hotfix/* landing on the
+ * production branch owes develop. Best effort: a config problem never stops
+ * the pr.merged record.
  */
-const mergeBackFor = (cwd: string, base: string): { track: string | null; branches: string[] } => {
+const mergeBackFor = (
+  cwd: string,
+  base: string,
+  head: string,
+): { track: string | null; branches: string[] } => {
   try {
-    const owners = workspaceReleaseTracks(cwd).tracks.filter(
-      (track) => track.productionBranch === base,
-    );
+    const read = workspaceReleaseTracks(cwd);
+    if (!read.tracks.length) {
+      const flow = gitFlowOf(cwd);
+      const kind = branchKindOf(head);
+      const route = flow && kind ? flowRoute(flow, kind) : null;
+      return route?.mergeBack && route.target === base
+        ? { track: "git-flow", branches: [route.mergeBack] }
+        : { track: null, branches: [] };
+    }
+    const owners = read.tracks.filter((track) => track.productionBranch === base);
     if (owners.length !== 1) return { track: null, branches: [] };
     return {
       track: owners[0].name,
@@ -604,7 +617,7 @@ export async function mergePullRequest(
     deletedBranch =
       deleted.ok || (gone && gone.ok && gone.sha === null) ? true : { error: deleted.error };
   }
-  const mergeBack = mergeBackFor(cwd, doc.base);
+  const mergeBack = mergeBackFor(cwd, doc.base, branch);
   const row = appendObserved(cwd, {
     type: "pr.merged",
     actor: input.actor,

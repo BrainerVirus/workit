@@ -24,7 +24,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveBranchPolicyFor } from "../core/branch";
+import { releaseBranch, resolveBranchPolicyFor } from "../core/branch";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
 import { pushRemoteName } from "../git/rev";
 import { appendHookObserved, readLedger } from "../ledger";
@@ -432,9 +432,13 @@ const headSha = (repo: Repo): string | null => {
 
 const quote = (text: string) => `\`${text}\``;
 
-const refusal = (action: RawAction, branch: string | null): string => {
+const refusal = (action: RawAction, branch: string | null, dir?: string): string => {
   if (action.kind === "merge")
     return `workit: raw ${quote(action.forge === "gh" ? "gh pr merge" : "glab mr merge")} bypasses the merge grant and the verdict gate. Run ${quote("workit pr merge")} instead (it checks both; ${quote("workit help pr")}).`;
+  // Finishing a git-flow release or hotfix: the production and develop pushes
+  // have their own granted verb.
+  if (dir && branch && !(action.kind === "push" && action.blindForce) && releaseBranch(dir, branch))
+    return `workit: raw ${quote("git push")} onto ${branch}, a protected git-flow branch, bypasses workit's protected-branch check. To finish a release or hotfix, push it with ${quote(`workit git push --release ${branch} [v<version>]`)}: it pushes ${branch} (fast-forward only) and the release tag, verifies the remote and records it, under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}). Feature work goes through ${quote("workit git push")} and ${quote("workit pr merge")}.`;
   return `workit: raw ${quote("git push")}${action.kind === "push" && action.blindForce ? " --force" : ""} onto ${branch}, a protected branch or the default target, bypasses workit's protected-branch check. Push your feature branch with ${quote("workit git push")} (${quote("workit git push --force-with-lease")} to rewrite it) and land it with ${quote("workit pr merge")}.`;
 };
 
@@ -554,7 +558,7 @@ export function rawGitPre(
         for (const target of action.targets) {
           const branch = target ?? repo.branch;
           if (branch && guardedBranch(repo.dir, branch) && toPushRemote(repo, action.remote))
-            return deny(refusal(action, branch));
+            return deny(refusal(action, branch, repo.dir));
         }
       const nudge = nudgeFor(action, input.host, input.session.id);
       if (nudge && !nudges.has(nudgeKind(action))) nudges.set(nudgeKind(action), nudge);

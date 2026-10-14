@@ -1,19 +1,28 @@
 // `workit git branch|commit|push` (design §2.1 S11). Flag parsing, the forge
 // identity check and the grant seam; the rules live in core git/ops.ts.
 //
-//   workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]
+//   workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]
 //   workit git commit (-m <msg> | -F <file|->) [--amend [--no-edit]] [--allow-empty] [--all | [--] <paths…>]
 //   workit git push [--set-upstream] [--force-with-lease [--expect <sha>]]
+//   workit git push --release [<main|develop|v-tag>…]
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import {
+  BRANCH_KINDS,
+  suggestBranchName,
+  type BranchKind,
+} from "@brainervirus/workit-core/src/core/branch";
+import {
   executePush,
+  executeReleasePush,
   gitBranch,
   gitCommit,
   pushPreflight,
+  releasePushPreflight,
   type BranchOutcome,
   type CommitOutcome,
+  type ReleasePushOutcome,
 } from "@brainervirus/workit-core/src/git/ops";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { ensureImplicitTask } from "./implicit-task";
@@ -21,11 +30,11 @@ import { emit, fail, ok, type Io } from "../output";
 import { forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
 
 const BRANCH_USAGE =
-  "workit git branch <name> | --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
+  "workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
 const COMMIT_USAGE =
   "workit git commit -m|--message <msg>… | -F|--file <file|-> [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>] [--json]";
 const PUSH_USAGE =
-  "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--json]";
+  "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--json]\n       workit git push --release [<production|develop|v<version> tag>…] [--json]";
 const USAGE = "workit git branch|commit|push ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
@@ -44,17 +53,19 @@ async function branch(argv: string[], io: Io): Promise<number> {
     return usage(io, `unexpected argument ${flags.positionals[1]}`, BRANCH_USAGE);
   if ((kind === undefined) !== (slug === undefined))
     return usage(io, "--kind and --slug go together", BRANCH_USAGE);
-  if (kind !== undefined && !["feature", "bugfix", "hotfix"].includes(kind))
-    return usage(io, "--kind must be feature, bugfix or hotfix", BRANCH_USAGE);
+  if (kind !== undefined && !(BRANCH_KINDS as readonly string[]).includes(kind))
+    return usage(
+      io,
+      `--kind must be ${BRANCH_KINDS.join(", ")}; did you mean --kind ${suggestBranchName(`${kind}/x`, BRANCH_KINDS)?.split("/")[0]}?`,
+      BRANCH_USAGE,
+    );
   if (kind !== undefined && flags.positionals.length)
     return usage(io, "pass a name or --kind/--slug, not both", BRANCH_USAGE);
   if (kind === undefined && !flags.positionals[0])
     return usage(io, "missing branch name", BRANCH_USAGE);
   // --kind/--slug names come from the release track's naming (core).
   const result = gitBranch(io.cwd, {
-    ...(kind !== undefined
-      ? { kind: kind as "feature" | "bugfix" | "hotfix", slug }
-      : { name: flags.positionals[0] }),
+    ...(kind !== undefined ? { kind: kind as BranchKind, slug } : { name: flags.positionals[0] }),
     base: flags.values.base ?? null,
     track: flags.values.track ?? null,
     carry: flags.booleans.has("carry"),
@@ -219,8 +230,14 @@ async function push(argv: string[], io: Io): Promise<number> {
     "force-with-lease": "boolean",
     "overwrite-unintegrated": "boolean",
     expect: "value",
+    release: "boolean",
   });
   if (typeof flags === "string") return usage(io, flags, PUSH_USAGE);
+  if (flags.booleans.has("release")) {
+    if (flags.booleans.size > 1 || flags.values.expect !== undefined)
+      return usage(io, "--release takes only ref names", PUSH_USAGE);
+    return releasePush(flags.positionals, io);
+  }
   if (flags.positionals.length)
     return usage(
       io,
@@ -283,6 +300,52 @@ async function push(argv: string[], io: Io): Promise<number> {
       ? `pushed ${data.branch} ${short(data.previous)} -> ${short(data.sha)} to ${data.remote}${data.forced ? " (force-with-lease)" : ""}; remote tip verified`
       : `${data.remote}/${data.branch} is already at ${short(data.sha)}; remote tip verified`,
     ...(data.upstream ? [`upstream: ${data.remote}/${data.branch}`] : []),
+  ]);
+}
+
+/**
+ * `--release`: finish a git-flow release or hotfix by pushing the production
+ * and develop branches and the `v*` tag, which `workit git push` refuses.
+ * Needs the `release` grant (never a default) and the `push` grant.
+ */
+async function releasePush(names: string[], io: Io): Promise<number> {
+  const plan = releasePushPreflight(io.cwd, names);
+  if (!plan.ok) return forgeFail(io, plan);
+  const release = requireGrant(io.cwd, "release");
+  if (!release.allowed)
+    return emit(
+      io,
+      fail("blocked", release.error, {
+        unblock: release.unblock,
+        data: { reason: release.reason },
+      }),
+    );
+  const firstBranch = plan.data.refs.find((ref) => ref.kind === "branch")?.name;
+  const identity = plan.data.local ? null : pushIdentity(io, firstBranch ?? plan.data.refs[0].name);
+  if (identity && !identity.ok) return forgeFail(io, identity);
+  const checked = identity?.data ?? null;
+  const pushGrant = requireGrant(io.cwd, "push", { forge: checked?.forge != null });
+  if (!pushGrant.allowed)
+    return emit(
+      io,
+      fail("blocked", pushGrant.error, {
+        unblock: pushGrant.unblock,
+        data: { reason: pushGrant.reason },
+      }),
+    );
+  const result = executeReleasePush(io.cwd, plan.data, {
+    actor: actorFromEnv(io.env),
+    grant: release.source,
+    ...(checked ? { identity: { ...checked } } : {}),
+  });
+  if (!result.ok) return forgeFail(io, result);
+  return emit(io, ok({ ...result.data, identity: checked }), (data: ReleasePushOutcome) => [
+    ...data.refs.map((ref) =>
+      ref.pushed
+        ? `pushed ${ref.name} ${short(ref.previous)} -> ${short(ref.sha)} to ${data.remote}; remote tip verified`
+        : `${data.remote} ${ref.name} is already at ${short(ref.sha)}; remote tip verified`,
+    ),
+    ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
   ]);
 }
 

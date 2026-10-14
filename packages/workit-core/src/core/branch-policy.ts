@@ -13,7 +13,7 @@ const PREFIXES = {
  * Local branch names plus origin's remote-tracking ones (`origin/develop`
  * counts as `develop`; a fork or mirror remote's branches do not).
  */
-const branchNames = (workspaceRoot: string): Set<string> => {
+export const branchNames = (workspaceRoot: string): Set<string> => {
   const r = spawnSync(
     "git",
     ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"],
@@ -31,6 +31,13 @@ const branchNames = (workspaceRoot: string): Set<string> => {
       ),
   );
 };
+
+/**
+ * The git-flow production branch: main when it exists (locally or on
+ * origin), else master, else main.
+ */
+export const productionBranchOf = (names: ReadonlySet<string>): string =>
+  names.has("main") ? "main" : names.has("master") ? "master" : "main";
 
 export const detectBranchPolicy = (workspaceRoot: string) => {
   const names = branchNames(workspaceRoot);

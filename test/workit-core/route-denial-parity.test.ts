@@ -132,27 +132,37 @@ const claudeDenies = (root: string, command: string): boolean => {
   return output?.permissionDecision === "deny";
 };
 
-test("all adapters enforce only recognized noncompliant branch targets", async () => {
+test("all adapters enforce the branch policy on every raw branch-creation form", async () => {
   for (const hasTask of [false, true]) {
     const root = mkdtempSync(path.join(tmpdir(), "workit-parity-"));
     try {
       if (hasTask) startTask(root, "opencode");
-      for (const [command, denied] of [
-        ["git checkout -b main", true],
-        ["git switch -c feature/raw", false],
-        ["git checkout -b feature/raw", false],
-        ["git status --short", false],
-        ["gh pr create --fill", false],
-        ["git worktree add ../other", false],
-        ['git checkout -b "main"', false],
+      for (const [command, rule] of [
+        ["git checkout -b main", "protected_ref"],
+        ["git switch -c feature/raw", null],
+        ["git checkout -b feature/raw", null],
+        ["git status --short", null],
+        ["gh pr create --fill", null],
+        ["git worktree add ../other", null],
+        ['git checkout -b "main"', "protected_ref"],
+        // The 2026-10 ui-kit form that slipped through: a compound command
+        // with cd, a start point and a trailing --no-track.
+        [
+          "cd sub && git fetch origin develop -q && git switch -c chore/x origin/develop --no-track; git log --oneline -1",
+          "allowed_pattern",
+        ],
+        ["GIT_TRACE=0 git branch chore/y origin/main", "allowed_pattern"],
+        ["git worktree add -b fix/z ../wt origin/main", "allowed_pattern"],
+        ["cd sub && git switch -c feature/ok origin/develop --no-track", null],
       ] as const) {
+        const denied = rule !== null;
         const opencode = await opencodeDenial(root, command);
         const pi = piDenial(root, command);
         expect(opencode !== null, `opencode ${command}`).toBe(denied);
         expect(pi !== null, `pi ${command}`).toBe(denied);
-        if (denied) {
-          expect(opencode, `opencode ${command}`).toContain("protected_ref");
-          expect(pi, `pi ${command}`).toContain("protected_ref");
+        if (rule) {
+          expect(opencode, `opencode ${command}`).toContain(rule);
+          expect(pi, `pi ${command}`).toContain(rule);
         }
         expect(codexDenies(root, command), `codex ${command}`).toBe(denied);
         expect(cursorDenies(root, command), `cursor ${command}`).toBe(denied);

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { repoBranchPreset } from "./branch-policy";
+import { branchNames, productionBranchOf, repoBranchPreset } from "./branch-policy";
 import { matchCommitFlavor } from "./commit-flavors";
 import { gitContext } from "./git";
 import {
@@ -142,14 +142,94 @@ export type CommitMessagePolicyCheck =
       error: string;
     };
 
+/** Prefixes agents reach for, mapped to the git-flow kind that means the same. */
+const KIND_SYNONYMS: Readonly<Record<string, string>> = {
+  fix: "bugfix",
+  fixes: "bugfix",
+  bug: "bugfix",
+  bugs: "bugfix",
+  bugfixes: "bugfix",
+  feat: "feature",
+  features: "feature",
+  chore: "feature",
+  docs: "feature",
+  doc: "feature",
+  refactor: "feature",
+  test: "feature",
+  tests: "feature",
+  ci: "feature",
+  build: "feature",
+  perf: "feature",
+  style: "feature",
+  deps: "feature",
+  task: "feature",
+  enhancement: "feature",
+  hot: "hotfix",
+  hotfixes: "hotfix",
+  releases: "release",
+  rel: "release",
+};
+
+/** The `<kind>/` prefixes an allowed-pattern list names (`feature/*` -> feature). */
+export const allowedKinds = (allowed: readonly RegExp[]): string[] => [
+  ...new Set(
+    allowed
+      // RegExp#source escapes the slash: `^feature\/.*$`.
+      .map((pattern) => /^\^([\w.-]+)\\?\/\.\*\$$/u.exec(pattern.source)?.[1]?.toLowerCase())
+      .filter((kind): kind is string => Boolean(kind)),
+  ),
+];
+
+const editDistance = (a: string, b: string): number => {
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    let previous = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const saved = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1));
+      previous = saved;
+    }
+  }
+  return row[b.length];
+};
+
+/**
+ * The allowed name closest to `name`: its prefix mapped through the usual
+ * synonyms (fix/ -> bugfix/, chore/ -> feature/), else the kind within two
+ * edits, else feature/ (or the first kind); the rest of the name is kept.
+ * Null when the policy names no kinds.
+ */
+export const suggestBranchName = (name: string, kinds: readonly string[]): string | null => {
+  if (!kinds.length) return null;
+  const slash = name.indexOf("/");
+  const prefix = slash > 0 ? name.slice(0, slash).toLowerCase() : "";
+  const rest = (slash > 0 ? name.slice(slash + 1) : name) || "name";
+  const synonym = KIND_SYNONYMS[prefix];
+  const near = kinds
+    .map((kind) => ({ kind, distance: editDistance(prefix, kind) }))
+    .filter((entry) => prefix && entry.distance <= 2)
+    .toSorted((a, b) => a.distance - b.distance)[0]?.kind;
+  const kind =
+    (synonym && kinds.includes(synonym) ? synonym : null) ??
+    near ??
+    (kinds.includes("feature") ? "feature" : kinds[0]);
+  return `${kind}/${rest}`;
+};
+
+const kindList = (kinds: readonly string[]) => kinds.map((kind) => `${kind}/`).join(", ");
+
 export const validateBranchNamePolicy = (
   name: string,
   policy: BranchNamePolicy,
   source: string,
 ): BranchNamePolicyCheck => {
   const allowed = policy.allowed.map((pattern) => `/${pattern.source}/${pattern.flags}`);
+  const kinds = allowedKinds(policy.allowed);
   if (policy.protected.has(name.toLowerCase())) {
-    const correction = `choose a non-protected branch matching one of: ${allowed.join(", ")}`;
+    const correction = kinds.length
+      ? `choose a non-protected branch of an allowed kind (${kindList(kinds)}), e.g. ${kinds[0]}/<slug>: workit git branch --kind ${kinds[0]} --slug <slug>`
+      : `choose a non-protected branch matching one of: ${allowed.join(", ")}`;
     return {
       ok: false,
       rule: "protected_ref",
@@ -160,7 +240,11 @@ export const validateBranchNamePolicy = (
     };
   }
   if (!policy.allowed.some((pattern) => pattern.test(name))) {
-    const correction = `choose a branch matching one of: ${allowed.join(", ")}`;
+    const suggestion = suggestBranchName(name, kinds);
+    const correction =
+      suggestion && policy.allowed.some((pattern) => pattern.test(suggestion))
+        ? `use ${JSON.stringify(suggestion)}; the allowed kinds are ${kindList(kinds)} (workit git branch --kind <kind> --slug <slug>)`
+        : `choose a branch matching one of: ${allowed.join(", ")}`;
     return {
       ok: false,
       rule: "allowed_pattern",
@@ -271,6 +355,135 @@ export const resolveBranchPolicyFor = (workspaceRoot: string, profileName?: stri
 /** Commit-flavor equivalent using the same profile and provenance chain. */
 export const resolveCommitPolicyFor = (workspaceRoot: string, profileName?: string) =>
   effectiveWorkspacePolicy(workspaceRoot, "commit", profileName).commitPolicy;
+
+// ---------------------------------------------------------------------------
+// git-flow routes: where each branch kind starts and lands
+
+export const BRANCH_KINDS = ["feature", "bugfix", "release", "hotfix"] as const;
+export type BranchKind = (typeof BRANCH_KINDS)[number];
+
+/** The git-flow kind a branch name's prefix names (`release/4.1.0` -> release), or null. */
+export const branchKindOf = (name: string | null | undefined): BranchKind | null => {
+  const prefix = name?.split("/", 1)[0]?.toLowerCase() ?? "";
+  return name?.includes("/") && (BRANCH_KINDS as readonly string[]).includes(prefix)
+    ? (prefix as BranchKind)
+    : null;
+};
+
+export type GitFlow = {
+  /** The integration branch: the workspace's `developBranch`, else develop. */
+  develop: string;
+  /** The production branch: main, else master. */
+  production: string;
+  /** The develop branch exists locally or on origin. */
+  developExists: boolean;
+};
+
+export type FlowRoute = {
+  kind: BranchKind;
+  /** Where a new branch of this kind starts. */
+  base: string;
+  /** Where its PR lands. */
+  target: string;
+  /** The branch that must receive the landed work afterwards (release/hotfix -> develop). */
+  mergeBack: string | null;
+};
+
+/**
+ * The repository's git-flow branches when the resolved branch policy is the
+ * gitflow preset; null for github-flow, trunk-based or custom (they route
+ * every kind to the default target). `integration` is the resolved default
+ * target: used as develop when the workspace names no developBranch and it
+ * is not the production branch.
+ */
+export const gitFlowOf = (root: string, integration?: string | null): GitFlow | null => {
+  try {
+    if (resolveBranchPolicyFor(root).preset !== "gitflow") return null;
+    const selected = resolveRuntimeWorkspacePolicy(
+      root,
+      "branch",
+      process.env.WORKFLOW_PROFILE?.trim() || undefined,
+    ).policy as WorkspaceBranchPolicy | undefined;
+    const names = branchNames(root);
+    const production = productionBranchOf(names);
+    const develop =
+      selected?.developBranch?.trim() ||
+      (integration && integration.toLowerCase() !== production ? integration : "develop");
+    return { develop, production, developExists: names.has(develop) };
+  } catch {
+    return null;
+  }
+};
+
+/** git-flow: feature, bugfix and release start from develop; hotfix from production. */
+export const flowRoute = (flow: GitFlow, kind: BranchKind): FlowRoute =>
+  kind === "hotfix"
+    ? { kind, base: flow.production, target: flow.production, mergeBack: flow.develop }
+    : kind === "release"
+      ? { kind, base: flow.develop, target: flow.production, mergeBack: flow.develop }
+      : { kind, base: flow.develop, target: flow.develop, mergeBack: null };
+
+/** The git-flow production or develop branch: what `--release` may push. */
+export const releaseBranch = (cwd: string, branch: string): boolean => {
+  const flow = gitFlowOf(cwd);
+  return (
+    flow !== null &&
+    [flow.production, flow.develop].some((name) => name.toLowerCase() === branch.toLowerCase())
+  );
+};
+
+/** `origin/develop`, `refs/remotes/origin/develop`, `refs/heads/develop` -> develop. */
+export const shortBranch = (ref: string): string =>
+  ref.replace(/^refs\/heads\//u, "").replace(/^(?:refs\/remotes\/)?origin\//u, "");
+
+/**
+ * A git-flow mismatch: an explicit base or PR target that is the other
+ * long-lived branch than the kind's route (a feature from main, a hotfix
+ * from develop). Only once develop exists, so a main-only repository on the
+ * gitflow preset keeps working. Null when it fits.
+ */
+export const flowMismatch = (
+  flow: GitFlow | null,
+  kind: BranchKind | null,
+  ref: string,
+  role: "base" | "target",
+): string | null => {
+  if (!flow || !kind || !flow.developExists) return null;
+  const route = flowRoute(flow, kind);
+  const expected = role === "base" ? route.base : route.target;
+  const given = shortBranch(ref).toLowerCase();
+  const longLived = [flow.develop, flow.production].map((name) => name.toLowerCase());
+  // A release or hotfix PR into develop is the git-flow back-merge.
+  const backMerge = role === "target" && route.mergeBack?.toLowerCase() === given;
+  if (!longLived.includes(given) || given === expected.toLowerCase() || backMerge) return null;
+  return role === "base"
+    ? `gitflow_base: git-flow starts ${kind}/* from ${expected}, not ${shortBranch(ref)}`
+    : `gitflow_target: git-flow lands ${kind}/* on ${expected}, not ${shortBranch(ref)}`;
+};
+
+/**
+ * One line for an agent about to create a branch at `cwd`: the allowed kinds
+ * and where each starts. Plain text (no `workit git` command), so it fits an
+ * agent that runs git itself. Null when the policy cannot be read.
+ */
+export const branchGuidance = (cwd: string): string | null => {
+  try {
+    const kinds = allowedKinds(branchPolicySnapshotFor(cwd).namePolicy.allowed);
+    const resolved = vcsConfig("resolve", cwd);
+    const integration =
+      resolved.ok === false ? null : String(resolved.defaultTargetBranch ?? "") || null;
+    const flow = resolved.releaseTrack?.track ? null : gitFlowOf(cwd, integration);
+    const allowed = kinds.length
+      ? `Allowed branch kinds here: ${kindList(kinds)} (fix/ is bugfix/, chore/ is feature/; any other prefix is denied).`
+      : "Any non-protected branch name is allowed here.";
+    const base = flow
+      ? `git-flow: feature/, bugfix/ and release/ start from origin/${flow.develop}, hotfix/ from origin/${flow.production}; feature/ and bugfix/ land on ${flow.develop}, release/ and hotfix/ on ${flow.production}.`
+      : `Branch from origin/${String(resolved.baseBranch ?? integration ?? "main")}.`;
+    return `${allowed} ${base}`;
+  } catch {
+    return null;
+  }
+};
 
 const policy = (root: string) => resolveBranchPolicyFor(root);
 const allowedBranch = (root: string, name: string) =>
