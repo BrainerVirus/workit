@@ -8,6 +8,7 @@ import {
   test,
 } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -781,7 +782,7 @@ describe("S10 forge resolution and identity", () => {
 
     // A workspace tokenFile wins, is never printed, and a mismatch names the file fix.
     const tokenFile = path.join(configDir, "gh.token");
-    writeFileSync(tokenFile, "ghp_fileTokenValue\n");
+    writeFileSync(tokenFile, "ghp_fileTokenValue\n", { mode: 0o600 });
     writeWorkspace(github, { provider: "github", account: "someone", tokenFile });
     const filed = connect(github, githubRoutes());
     expect(filed.resolved.credential).toBe("workspace_token_file");
@@ -793,9 +794,29 @@ describe("S10 forge resolution and identity", () => {
     rmSync(tokenFile);
   });
 
+  test.skipIf(process.platform === "win32")(
+    "Given a vcs.tokenFile other users can read, When the forge resolves, Then it is refused with a chmod 600 unblock and the token is never read",
+    () => {
+      const tokenFile = path.join(configDir, "shared.token");
+      writeFileSync(tokenFile, "ghp_groupReadableValue\n", { mode: 0o640 });
+      chmodSync(tokenFile, 0o640);
+      const github = repoFor("github");
+      writeWorkspace(github, { provider: "github", account: "someone", tokenFile });
+      const refused = resolveForge(github.cwd, { runner: replayRunner(githubRoutes()) });
+      expect(refused).toMatchObject({ ok: false, code: "blocked" });
+      expect(!refused.ok && refused.error).toContain("readable by group or other (mode 0640)");
+      expect(!refused.ok && refused.unblock).toBe(`chmod 600 ${tokenFile}`);
+      expect(JSON.stringify(refused)).not.toContain("ghp_groupReadableValue");
+      // 0400 has no group/other bits: accepted.
+      chmodSync(tokenFile, 0o400);
+      expect(connect(github, githubRoutes()).resolved.credential).toBe("workspace_token_file");
+      rmSync(tokenFile, { force: true });
+    },
+  );
+
   test("a tokenFile token is sent only to a verified host, never to a look-alike (github.evil.com)", () => {
     const tokenFile = path.join(configDir, "work.token");
-    writeFileSync(tokenFile, "ghp_workPatValue\n");
+    writeFileSync(tokenFile, "ghp_workPatValue\n", { mode: 0o600 });
     const evil = repoFor("github");
     evil.git("remote", "set-url", "--push", "origin", "https://github.evil.com/o/r.git");
     writeWorkspace(evil, { provider: "github", tokenFile });
@@ -1170,12 +1191,29 @@ describe("S10 redaction and verdicts", () => {
     ["sshpass -p", "sshpass -p hunter22 ssh host", "hunter22"],
     ["mysql -p", "mysql -u root -pSuperSecret db", "SuperSecret"],
   ];
+  // Every documented GitLab token prefix (prefixes joined at runtime).
+  for (const prefix of ["glptt", "glft", "gloas", "glsoat"])
+    REDACTION_CASES.push([prefix, `${[prefix, "-"].join("")}${a(24, "k")}`, a(24, "k")]);
   for (const [label, input, secret] of REDACTION_CASES)
     test(`redacts ${label}`, () => {
       const out = redactText(input);
       expect(out).not.toContain(secret);
       expect(out).toContain("[REDACTED");
     });
+
+  test("Given CI log words that start with gl and a dash, When redacted, Then they survive while real GitLab tokens do not", () => {
+    const log = [
+      "running global-setup-teardown-hook for suite",
+      "loaded glob-pattern-matcher-for-workspaces",
+      "glyph-rendering-benchmark-results ok",
+    ].join("\n");
+    expect(redactText(log)).toBe(log);
+    expect(logTail(log, 10).join("\n")).toContain("global-setup-teardown-hook");
+    const token = `${GL_PAT}${a(20, "Q")}`;
+    expect(redactText(`global-setup-teardown-hook ${token}`)).toBe(
+      "global-setup-teardown-hook [REDACTED]",
+    );
+  });
 
   test("ordinary log text, shas and prose survive redaction", () => {
     for (const keep of [

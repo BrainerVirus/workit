@@ -8,8 +8,9 @@ const R = "[REDACTED]";
 const TOKEN_PATTERNS: readonly RegExp[] = [
   // GitHub tokens (classic, fine-grained, app, OAuth, refresh).
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/gu,
-  // GitLab tokens: glpat-, glrt-, gldt-, glcbt-, glptt-, glft-, gloas-, …
-  /\bgl[a-z]{1,8}-[A-Za-z0-9_-]{16,}/gu,
+  // GitLab tokens, by their documented prefixes only (a bare `gl…-` also
+  // matches words such as `global-setup-teardown-hook` in CI logs).
+  /\b(?:glpat|glrt|gldt|glcbt|glptt|glft|gloas|glsoat)-[A-Za-z0-9_-]{20,}/gu,
   /\bnpm_[A-Za-z0-9]{30,}/gu,
   /\bxox[abposr]-[A-Za-z0-9-]{10,}/gu,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/gu,
