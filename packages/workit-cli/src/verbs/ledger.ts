@@ -4,7 +4,7 @@
 //   workit ledger ruling   "<what>" --why "<why>" --cost-if-wrong "<…>" [--ref …]
 //   workit ledger verdict  <result> --how "<method/evidence>" [--kind unit|live|perf|review]
 //                          [--pr n|--branch b] [--base <ref>] [--surface ui|cli|api]
-//                          [--evidence <ref>…] [--self] [--session <id> | --as <role>]
+//                          [--evidence <ref>…] [--self] [--session <id> [--token <t>] | --as <role>]
 //   workit ledger verdict  [<branch>]                 # current + accepted verdicts
 //   workit ledger list|show [--branch b] [--pr n] [--type t] [--last n]
 //   workit ledger check    [--pr n|--branch b]
@@ -26,7 +26,11 @@
 // child of it (`<lead>:<child>`, sessionClaimRefusal): a hand-minted
 // `<lead>-v1` is a forged id. A `--session` verdict is recorded as
 // `sessionSource: "flag"` and `ledger check` names it; `--session` equal to an
-// author session is refused like the author. `--pr`
+// author session is refused like the author. On a host, `--session` takes
+// only an id a SubagentStart hook issued, with the `--token` (or
+// WORKIT_SESSION_TOKEN) it gave that subagent; the row then carries
+// `sessionBound: true`. Every recorded verdict prints what the gates read
+// for its branch (accepted, or not and why). `--pr`
 // must resolve to a branch through the CLI's own PR rows or a fetched forge
 // ref; it is never guessed from other rows.
 import { randomBytes } from "node:crypto";
@@ -61,7 +65,10 @@ import {
   type FanoutFile,
 } from "@brainervirus/workit-core/src/fanout";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
-import { sessionClaimRefusal } from "@brainervirus/workit-core/src/host-session";
+import {
+  issuedTokenMatches,
+  sessionClaimRefusal,
+} from "@brainervirus/workit-core/src/host-session";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 
@@ -86,6 +93,7 @@ const OPTIONS = {
   last: { type: "string" },
   supersedes: { type: "string" },
   session: { type: "string" },
+  token: { type: "string" },
   as: { type: "string" },
   fanout: { type: "string" },
   json: { type: "boolean" },
@@ -107,6 +115,7 @@ type Values = {
   last?: string;
   supersedes?: string;
   session?: string;
+  token?: string;
   as?: string;
   fanout?: string;
 };
@@ -423,18 +432,27 @@ export async function run(argv: string[], io: Io): Promise<number> {
   // An independent verdict acts only as this shell's own host session or a
   // host-derived child of it; a self verdict is never accepted, so it is not checked.
   const claimed = values.self === true ? null : claimedSession(acting);
-  const refusal = claimed === null ? null : sessionClaimRefusal(io.env, claimed, io.cwd);
+  const token = values.token ?? io.env.WORKIT_SESSION_TOKEN ?? null;
+  const refusal =
+    claimed === null
+      ? null
+      : sessionClaimRefusal(io.env, claimed, io.cwd, { token, flag: acting.source === "flag" });
   if (refusal) return emit(io, fail("blocked", refusal.error, { unblock: refusal.unblock }));
+  // Bound: the id's own subagent presented the token its hook gave it.
+  const bound = claimed !== null && issuedTokenMatches(io.cwd, claimed, token);
   const verdict = await recorded(
-    recordVerdict(context, {
-      result: rest[0],
-      kind: values.kind,
-      how: values.how,
-      surface: values.surface ?? null,
-      self: values.self === true,
-      evidenceRefs: values.evidence,
-      ...("derivedFrom" in acting ? { derivedFrom: acting.derivedFrom } : {}),
-    }),
+    recordVerdict(
+      { ...context, ...(bound ? { sessionBound: true } : {}) },
+      {
+        result: rest[0],
+        kind: values.kind,
+        how: values.how,
+        surface: values.surface ?? null,
+        self: values.self === true,
+        evidenceRefs: values.evidence,
+        ...("derivedFrom" in acting ? { derivedFrom: acting.derivedFrom } : {}),
+      },
+    ),
   );
   if (verdict.ok && verdict.value.selfReason === "flag" && !passedTestOn(io.cwd, verdict.value))
     io.stderr(
@@ -442,15 +460,34 @@ export async function run(argv: string[], io: Io): Promise<number> {
     );
   const shadowed = verdict.ok ? shadowedWhy(io.cwd, verdict.value) : null;
   if (shadowed) io.stderr(`warning: ${shadowed}\n`);
-  return fromResult(
-    io,
-    verdict,
-    (row) =>
+  // What the gates read now, so a verdict that does not count never passes silently.
+  const withGate: LedgerResult<VerdictRow & { gate: GateReading | null }> = verdict.ok
+    ? { ok: true, value: { ...verdict.value, gate: gateReading(io.cwd, verdict.value) } }
+    : verdict;
+  return fromResult(io, withGate, (row) =>
+    [
       `recorded verdict ${row.id}: ${row.result} [${row.kind}] for ${row.branch} @ ${(row.head ?? "").slice(0, 12)} as ${actor.session ?? "no session"}${row.self ? ` (self${row.selfReason === "no_session" ? ": WORKIT_SESSION_ID unset" : ""}; never accepted)` : ""}`,
+      row.gate
+        ? `gate: ${row.branch} ${row.gate.accepted ? `accepted (verdict ${row.gate.verdictId ?? "?"})` : `not accepted (${row.gate.reasons.join(", ")})`}`
+        : "gate: unknown (ledger unreadable)",
+    ].join("\n"),
   );
 }
 
-/** The fanout a standing order belongs to: --fanout, else the plan `fanout` commands would pick. */
+type GateReading = { accepted: boolean; reasons: string[]; verdictId: string | null };
+
+/** The merge gates' reading of `row`'s branch right after it was recorded. */
+const gateReading = (cwd: string, row: VerdictRow): GateReading | null => {
+  const ledger = readLedger(cwd, { integrity: true });
+  if (!ledger.ok || !row.branch) return null;
+  const { accepted } = checkVerdicts(cwd, row.branch, ledger.value.rows);
+  return {
+    accepted: accepted.accepted,
+    reasons: accepted.reasons,
+    verdictId: typeof accepted.verdict?.id === "string" ? accepted.verdict.id : null,
+  };
+};
+
 /**
  * The fanout a standing order belongs to: --fanout, else the plan `fanout`
  * commands would pick. `plan` is null only for a --fanout with no plan file

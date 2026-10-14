@@ -181,6 +181,21 @@ function resolveCredential(
         `token_host_unverified: push host ${derived.host} only looks like ${kind}; workspace ${workspace?.name ?? "?"} vcs.tokenFile is not sent to it`,
         `if ${apiHost} is your ${kind} server, set ${kind}.host in ~/.config/workit/vcs.json (or vcs.host for the workspace); otherwise fix the push remote`,
       );
+    // Like youtrack.token: a token other users can read is refused (N14).
+    if (process.platform !== "win32") {
+      let mode = 0;
+      try {
+        mode = fs.statSync(tokenFile.trim()).mode;
+      } catch {
+        // unreadable: reported below
+      }
+      if ((mode & 0o077) !== 0)
+        return failure(
+          "blocked",
+          `workspace ${workspace?.name ?? "?"} vcs.tokenFile is readable by group or other (mode ${(mode & 0o777).toString(8).padStart(4, "0")})`,
+          `chmod 600 ${tokenFile.trim()}`,
+        );
+    }
     let token = "";
     try {
       token = fs.readFileSync(tokenFile.trim(), "utf8").trim();
