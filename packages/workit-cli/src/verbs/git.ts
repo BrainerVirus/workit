@@ -338,7 +338,7 @@ async function push(argv: string[], io: Io): Promise<number> {
 
 /**
  * `--release`: finish a git-flow release or hotfix by pushing the production
- * and develop branches and the `v*` tag, which `workit git push` refuses.
+ * and develop branches and the release tag (`v*` or git-flow's configured prefix), which `workit git push` refuses.
  * Needs the `release` grant (never a default) and the `push` grant.
  */
 async function releasePush(names: string[], io: Io): Promise<number> {

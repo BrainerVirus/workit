@@ -2,7 +2,15 @@
 // so commits and verdicts made from Codex, OpenCode and Pi shells carry the
 // session their hooks see.
 import { expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, utimesSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -13,6 +21,19 @@ import {
   sessionClaimRefusal,
 } from "@/packages/workit-core/src/host-session";
 import { actorFromEnv } from "@/packages/workit-core/src/ledger";
+
+/** A fresh per-user state dir (where issued ids live) for one test; returns its path. */
+function freshState(cwd: string): string {
+  const state = path.join(cwd, "state");
+  process.env.WORKFLOW_TOOLKIT_STATE = state;
+  return state;
+}
+
+const runState = process.env.WORKFLOW_TOOLKIT_STATE;
+const restoreState = () => {
+  if (runState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = runState;
+};
 
 test("the acting session: WORKIT_SESSION_ID when set (even empty), else the host's shell variable", () => {
   const table: Array<[NodeJS.ProcessEnv, { host: string | null; session: string | null }]> = [
@@ -91,6 +112,7 @@ test("a child session id keeps the child's own id whole and fits the ledger's gr
 
 test("a verdict session claim: the real session, a child naming its own host session, or a hook-issued id; anything invented is forged", () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  freshState(cwd);
   try {
     recordIssuedSession(cwd, "lead", "lead:agent-7");
     recordIssuedSession(cwd, "t-1", "t-1:agent-2");
@@ -131,17 +153,17 @@ test("a verdict session claim: the real session, a child naming its own host ses
       // The unblock never invites naming an id by hand.
       expect(refusal?.unblock, claimed).not.toContain("<agent id>");
     }
-    // Without the workspace's record nothing counts as issued.
-    expect(
-      sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-2", undefined),
-    ).not.toBeNull();
+    // The record is per lead, not per repository: it holds without a workspace too (#294).
+    expect(sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-2", undefined)).toBeNull();
   } finally {
+    restoreState();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
 
 test("the issued-session record stays bounded per lead and keeps the newest ids", () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  freshState(cwd);
   try {
     for (let i = 0; i < 70; i++) recordIssuedSession(cwd, "lead", `lead:a${i}`);
     const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
@@ -149,24 +171,27 @@ test("the issued-session record stays bounded per lead and keeps the newest ids"
     const kept = Array.from({ length: 70 }, (_, i) => sessionClaimRefusal(env, `lead:a${i}`, cwd));
     expect(kept.filter((refusal) => refusal === null)).toHaveLength(64);
   } finally {
+    restoreState();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
 
 test("the prune never drops the id just issued, even when it is the oldest by mtime", () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  const state = freshState(cwd);
   try {
     for (let i = 0; i < 64; i++) recordIssuedSession(cwd, "lead", `lead:a${i}`);
     // Clock skew: every recorded file looks newer than the next write.
     const future = new Date(Date.now() + 3_600_000);
-    for (const dir of readdirSync(path.join(cwd, ".workit", "hooks", "issued"))) {
-      const leadDir = path.join(cwd, ".workit", "hooks", "issued", dir);
+    for (const dir of readdirSync(path.join(state, "issued"))) {
+      const leadDir = path.join(state, "issued", dir);
       for (const file of readdirSync(leadDir)) utimesSync(path.join(leadDir, file), future, future);
     }
     recordIssuedSession(cwd, "lead", "lead:newest");
     const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
     expect(sessionClaimRefusal(env, "lead:newest", cwd)).toBeNull();
   } finally {
+    restoreState();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -187,22 +212,30 @@ test("a host that always sets its own variable, named by WORKIT_HOST without it,
   expect(sessionClaimRefusal({ WORKIT_HOST: "cli", WORKIT_SESSION_ID: "c" }, "anyone")).toBeNull();
 });
 
-test("Given a well-formed subagent id and no issued-id record in the workspace, Then the refusal names the stale plugin hook and its update", () => {
+test("Given a well-formed subagent id and no issued-id record on the machine, Then the refusal names the stale plugin hook and its update", () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  freshState(cwd);
   try {
     const claude = sessionClaimRefusal(
       { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" },
       "lead:agent-1",
       cwd,
     );
-    expect(claude?.error).toContain("no SubagentStart hook in this workspace has recorded");
+    expect(claude?.error).toContain(
+      "no SubagentStart hook has recorded an issued id for this lead",
+    );
     expect(claude?.unblock).toContain("older than this CLI");
     expect(claude?.unblock).toContain("claude plugin update workit@workit");
     expect(claude?.unblock).toContain("relaunch the verifier");
     const codex = sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-1", cwd);
     expect(codex?.unblock).toContain("codex plugin add workit@workit");
-    // Once any hook recorded an id, a missing one is just not issued.
+    // Another lead's record says nothing about this one's hook.
     recordIssuedSession(cwd, "other-lead", "other-lead:a");
+    expect(sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-1", cwd)?.unblock).toContain(
+      "older than this CLI",
+    );
+    // Once this lead's hook recorded an id, a missing one is just not issued.
+    recordIssuedSession(cwd, "t-1", "t-1:agent-9");
     const after = sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-1", cwd);
     expect(after?.unblock).not.toContain("older than this CLI");
     // A malformed claim never blames the plugin.
@@ -215,6 +248,84 @@ test("Given a well-formed subagent id and no issued-id record in the workspace, 
       rmSync(invented, { recursive: true, force: true });
     }
   } finally {
+    restoreState();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Given a lead started in repo A, When its verifier records a verdict from repo B or a plain directory, Then the hook-issued id is accepted there too (#294)", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  freshState(cwd);
+  try {
+    const repoA = path.join(cwd, "ui-kit");
+    const repoB = path.join(cwd, "frontend");
+    mkdirSync(repoA);
+    mkdirSync(repoB);
+    recordIssuedSession(repoA, "lead", "lead:verifier-1");
+    // Nothing is written into the lead's repository any more.
+    expect(existsSync(path.join(repoA, ".workit", "hooks", "issued"))).toBe(false);
+    const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
+    // Other repositories first: none of them may depend on a read in repoA.
+    for (const where of [repoB, cwd, repoA])
+      expect(sessionClaimRefusal(env, "lead:verifier-1", where), where).toBeNull();
+    // Still bound to the lead that was issued the id, and never to an invented one.
+    expect(
+      sessionClaimRefusal(
+        { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "other" },
+        "other:verifier-1",
+        repoB,
+      )?.error,
+    ).toContain("forged_session");
+    expect(sessionClaimRefusal(env, "lead:verifier-2", repoB)?.error).toContain("forged_session");
+  } finally {
+    restoreState();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("an id an 8.10-8.12 hook recorded in the repository's store is moved to the per-user registry and the old directory removed", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  freshState(cwd);
+  try {
+    // The old layout: <store>/hooks/issued/<sha256(lead)[:32]>/<sha256(id)[:32]>.
+    const { createHash } = require("node:crypto") as typeof import("node:crypto");
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 32);
+    const dir = path.join(cwd, ".workit", "hooks", "issued", hash("lead"));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, hash("lead:old-1")), "workit-issued-sessions/1");
+    const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
+    expect(sessionClaimRefusal(env, "lead:old-1", cwd)).toBeNull();
+    expect(existsSync(path.join(cwd, ".workit", "hooks", "issued"))).toBe(false);
+    // Once moved, it counts from any directory, and invented ids still do not.
+    expect(sessionClaimRefusal(env, "lead:old-1", os.tmpdir())).toBeNull();
+    expect(sessionClaimRefusal(env, "lead:old-2", cwd)?.error).toContain("forged_session");
+  } finally {
+    restoreState();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a migration moves every readable lead, skips stray entries, and keeps ids an old hook writes after it", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  freshState(cwd);
+  try {
+    const { createHash } = require("node:crypto") as typeof import("node:crypto");
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 32);
+    const old = path.join(cwd, ".workit", "hooks", "issued");
+    for (const lead of ["a", "b"]) {
+      mkdirSync(path.join(old, hash(lead)), { recursive: true });
+      writeFileSync(path.join(old, hash(lead), hash(`${lead}:x`)), "workit-issued-sessions/1");
+    }
+    writeFileSync(path.join(old, "stray"), "");
+    const env = (lead: string) => ({ WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: lead });
+    expect(sessionClaimRefusal(env("a"), "a:x", cwd)).toBeNull();
+    expect(sessionClaimRefusal(env("b"), "b:x", os.tmpdir())).toBeNull();
+    // The stray entry keeps the old root; the next old-hook write is migrated later.
+    mkdirSync(path.join(old, hash("c")), { recursive: true });
+    writeFileSync(path.join(old, hash("c"), hash("c:x")), "workit-issued-sessions/1");
+    expect(sessionClaimRefusal(env("c"), "c:x", cwd)).toBeNull();
+  } finally {
+    restoreState();
     rmSync(cwd, { recursive: true, force: true });
   }
 });
