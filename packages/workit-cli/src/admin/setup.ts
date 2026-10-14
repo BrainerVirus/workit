@@ -13,6 +13,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -53,6 +54,7 @@ import {
   isPiWorkitInstalled,
   isClaudeWorkitInstalled,
   claudeConfigDir,
+  openCodeInstalledPlugin,
   planHostInstall,
   runHostInstall,
   type HostCommandRunner,
@@ -791,10 +793,13 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
   }
 }
 
-// Package-native adapter resolution: the packaged CLI/core resolve the adapter
-// packages from the same install (node_modules sibling), a dev checkout
-// (WORKFLOW_TOOLKIT_DEV / packages/workit-<host> walking up from cwd), or the
-// share clone (~/.local/share/workit) — mirroring the install scripts.
+// Package-native adapter resolution, in order: an explicit dev checkout
+// (WORKFLOW_TOOLKIT_DEV, authoritative when set), the package as Node resolves
+// it from the running CLI (nested `npm i -g` node_modules, hoisted siblings, a
+// workspace link), the host's own install (Cursor's staged bootstrap,
+// OpenCode's plugin cache), then a dev checkout found walking up from cwd. No
+// share clone (~/.local/share/workit): nothing keeps it at the CLI's version,
+// so it would install an older adapter as current.
 const isAdapter = (root: string, platform: Platform): boolean => {
   try {
     const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
@@ -806,9 +811,27 @@ const isAdapter = (root: string, platform: Platform): boolean => {
   }
 };
 
-function adapterRoot(
+/** Every directory Node would load `@brainervirus/workit-<platform>` from for
+ *  the running CLI, nearest first. It probes the package directory itself, so
+ *  a package without a resolvable main (Cursor) or behind an exports map that
+ *  hides package.json (OpenCode) still counts. */
+const nodeResolvedAdapters = (platform: Platform): string[] => {
+  const name = `@brainervirus/workit-${platform}`;
+  const require = createRequire(path.join(packageRoot(), "package.json"));
+  return (require.resolve.paths(name) ?? []).map((dir) => path.join(dir, name));
+};
+
+const realRoot = (root: string): string => {
+  try {
+    return realpathSync(root);
+  } catch {
+    return root;
+  }
+};
+
+export function adapterRoot(
   platform: Platform,
-  res: ResolvedApply,
+  res: Pick<ResolvedApply, "home" | "cwd" | "env" | "dev">,
   preferInstalledAdapter = false,
 ): string | null {
   const candidates: string[] = [];
@@ -829,9 +852,12 @@ function adapterRoot(
     // not a reason to fall through to the running process's own install.
     candidates.push(path.join(res.dev, "packages", `workit-${platform}`));
   } else {
-    // node_modules sibling (packed install) or monorepo sibling (source)
-    candidates.push(path.join(packageRoot(), "..", `workit-${platform}`));
-    // dev checkout walking up from cwd
+    candidates.push(...nodeResolvedAdapters(platform));
+    if (platform === "cursor") candidates.push(stagedCursor);
+    if (platform === "opencode") {
+      const cached = openCodeInstalledPlugin(res.home, res.env);
+      if (cached) candidates.push(cached.root);
+    }
     let dir = path.resolve(res.cwd);
     while (true) {
       candidates.push(path.join(dir, "packages", `workit-${platform}`));
@@ -840,12 +866,8 @@ function adapterRoot(
       dir = parent;
     }
   }
-  candidates.push(
-    path.join(res.home, ".local", "share", "workit", "packages", `workit-${platform}`),
-  );
-  if (platform === "cursor") candidates.push(stagedCursor);
   for (const candidate of candidates) {
-    if (isAdapter(candidate, platform)) return candidate;
+    if (isAdapter(candidate, platform)) return realRoot(candidate);
   }
   return null;
 }

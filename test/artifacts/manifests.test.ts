@@ -289,6 +289,51 @@ test(
   { timeout: 60_000 },
 );
 
+// N19: every host plugin manifest ships the package's own version, committed
+// and packed, so a release sync that skips one of them fails here.
+test(
+  "every host plugin.json carries its package version, committed and packed",
+  () => {
+    const packs = packWorkspacePackages();
+    for (const [dir, manifest] of [
+      ["workit-cursor", ".cursor-plugin/plugin.json"],
+      ["workit-codex", ".codex-plugin/plugin.json"],
+      ["workit-claude-code", ".claude-plugin/plugin.json"],
+    ] as const) {
+      const pkg = json<{ name: string; version: string }>(`packages/${dir}/package.json`);
+      const committed = json<{ version?: string }>(`packages/${dir}/${manifest}`);
+      expect(committed.version, `${dir} committed`).toBe(pkg.version);
+      const packed = JSON.parse(readTarballFile(byName(packs, pkg.name).tarball, manifest)) as {
+        version?: string;
+      };
+      expect(packed.version, `${dir} packed`).toBe(pkg.version);
+    }
+  },
+  { timeout: 60_000 },
+);
+
+// N19: dist/ bundles workit-core (and workit-mcp) into every adapter, so a
+// runtime dependency on them only makes npm install a copy nothing loads and
+// nests node_modules under a global CLI. workit-mcp keeps core: it exports
+// src/ that imports core. The CLI names workit-opencode only as a pin string.
+test(
+  "adapters that bundle workspace packages declare them as devDependencies only",
+  () => {
+    for (const dir of ["workit-cli", "workit-codex", "workit-cursor", "workit-opencode"]) {
+      const pkg = json<{
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      }>(`packages/${dir}/package.json`);
+      const runtime = Object.keys(pkg.dependencies ?? {}).filter((name) =>
+        name.startsWith("@brainervirus/"),
+      );
+      expect(runtime, dir).toEqual(dir === "workit-cli" ? [CURSOR] : []);
+      expect(pkg.devDependencies?.["@brainervirus/workit-core"], dir).toBe("workspace:*");
+    }
+  },
+  { timeout: 60_000 },
+);
+
 test(
   "root .cursor-plugin/marketplace.json indexes packages/workit-cursor (CA-13)",
   () => {
