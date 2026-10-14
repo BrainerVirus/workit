@@ -59,6 +59,12 @@ test("recognizes every raw branch-creation form agents use, wherever the option 
     ["git branch -m old feature/x", "feature/x"],
     ["git worktree add -b feature/x ../wt origin/main", "feature/x"],
     ["git worktree add ../wt -B feature/x", "feature/x"],
+    ["git worktree add -bfeature/x ../wt", "feature/x"],
+    ["git worktree add ../feature/x", "x"],
+    ["git worktree add --lock --reason why ../wt-x", "wt-x"],
+    ["git switch -cfeature/x", "feature/x"],
+    ["git switch --orphan feature/x", "feature/x"],
+    ["git checkout -bfeature/x origin/main", "feature/x"],
     // Wrappers, chains, directories and quoting (the raw-git tokenizer).
     ['git switch -c "feature/x"', "feature/x"],
     ["git switch -c feature/x && echo done", "feature/x"],
@@ -102,7 +108,8 @@ test("leaves non-creating and unknowable commands to the host", () => {
     "echo 'git switch -c main'",
     "git switch -c $BRANCH",
     "git switch -c `echo main`",
-    "git worktree add ../feature/x",
+    "git worktree add --detach ../wt",
+    "git worktree add ../wt main",
     "git worktree list",
     "gh pr create --fill",
     "gh pr merge 1",
@@ -113,15 +120,58 @@ test("leaves non-creating and unknowable commands to the host", () => {
   }
 });
 
+/** A POSIX shell (Git Bash on Windows) sees C:/… paths: a backslash there is an escape. */
+const posix = (dir: string) => dir.replaceAll("\\", "/");
+
+/** A git repository with a Workit store: a Workit workspace. */
+const workitRepo = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), "workit-shell-policy-root-"));
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
+  spawnSync(
+    "git",
+    ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"],
+    { cwd: dir },
+  );
+  mkdirSync(join(dir, ".git", "workit"), { recursive: true });
+  return dir;
+};
+
+test("Given a scratch or new repository, When a command changes into it, Then the cwd workspace's policy never judges it; an existing name is never new", () => {
+  const root = workitRepo();
+  const scratch = mkdtempSync(join(tmpdir(), "workit-shell-scratch-"));
+  try {
+    // Directly in the workspace: judged.
+    expect(shellBranchPolicyViolation(root, "git switch -c chore/x")?.ok).toBe(false);
+    for (const command of [
+      'cd "$(mktemp -d)" && git init && git checkout -b chore/x',
+      "git init newrepo && cd newrepo && git switch -c wip",
+      "git clone ../origin.git fresh && cd fresh && git switch -c wip",
+      "for d in a b; do (cd $d && git switch -c chore/x); done",
+      // An existing directory outside every Workit workspace.
+      `cd ${posix(scratch)} && git checkout -b chore/x`,
+      `git -C ${posix(scratch)} switch -c chore/x`,
+    ])
+      expect(shellBranchPolicyViolation(root, command), command).toBeNull();
+    // A branch that already exists is not a new name: resetting it is fine.
+    spawnSync("git", ["branch", "my-legacy"], { cwd: root });
+    expect(shellBranchPolicyViolation(root, "git branch -f my-legacy HEAD")).toBeNull();
+    expect(shellBranchPolicyViolation(root, "git checkout -B my-legacy")).toBeNull();
+    expect(shellBranchPolicyViolation(root, "git branch -f my-new HEAD")?.ok).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 test("Given the ui-kit chore/* chain (8.4.1 let it through), When checked, Then it is denied with the allowed kinds and the closest name", () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-shell-policy-root-"));
+  const root = workitRepo();
   try {
     writeFileSync(
       join(configDir, "config.json"),
       JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
     );
     // Verbatim shape from the 2026-10-09 transcript (claude-uikit-d598a8cf F2).
-    const command = `cd ${root} && git fetch origin develop -q && git switch -c chore/untrack-agents origin/develop --no-track; git log --oneline -1; git ls-files .agents | wc -l`;
+    const command = `cd ${posix(root)} && git fetch origin develop -q && git switch -c chore/untrack-agents origin/develop --no-track; git log --oneline -1; git ls-files .agents | wc -l`;
     const verdict = shellBranchPolicyViolation(root, command);
     expect(verdict?.ok).toBe(false);
     if (verdict?.ok === false) {
@@ -189,9 +239,7 @@ test("Given a workspace policy on one repo, When git runs in its subdirectory or
       }),
     );
     expect(shellBranchPolicyViolation(elsewhere, "git switch -c chore/x")).toEqual({ ok: true });
-    // A POSIX shell (Git Bash on Windows) sees C:/… paths: a backslash there is
-    // an escape. PowerShell keeps the native backslash path.
-    const posix = (dir: string) => dir.replaceAll("\\", "/");
+    // PowerShell keeps the native backslash path.
     for (const [cwd, command, dialect] of [
       [elsewhere, `cd ${posix(repo)}/sub && git switch -c chore/x`, "posix"],
       [join(repo, "sub"), "git switch -c chore/x", "posix"],

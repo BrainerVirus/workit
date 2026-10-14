@@ -13,10 +13,10 @@
 //   agent from raising its own ceiling by accident, not an adversarial one —
 //   a process that drives a pseudo-terminal or edits the file directly can
 //   still defeat it; the host's permission prompt is the hard boundary.
-// - `release` gates `workit git push --release`: pushing the preset's release
-//   branches (git-flow production and develop, github-flow main, custom
-//   protected) and `v*` tags to finish a release or hotfix (fast-forward
-//   only, a tag never moves). It needs `push` too.
+// - `release` gates `workit git push --release`: pushing the git-flow
+//   production and develop branches (fast-forward only) and `v*` tags whose
+//   commit already landed (a tag never moves). Outside git-flow it pushes
+//   tags only. It needs `push` too.
 // - Defaults (D4) when a kind is absent: push, pr and rerun are allowed;
 //   merge and release need an explicit grant. The default ceiling is a stack
 //   opened, CI green and independently verified: "verified, ready".
@@ -28,7 +28,8 @@
 // - Explicitly configured grants require an account (design §2.0 Identity):
 //   a workspace with grants but no `vcs.account` cannot push, open or merge
 //   through a forge, so a personal grant never rides a work credential.
-// - Protected-branch pushes stay denied by the git verbs, and the host
+// - Protected-branch pushes stay denied by the git verbs (except the git-flow
+//   release push above), and the host
 //   permission prompt applies in addition: a host deny always wins.
 import { copyFileSync, existsSync } from "node:fs";
 import os from "node:os";

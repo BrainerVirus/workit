@@ -90,7 +90,7 @@ test("grant show: a workspace without grants reports the D4 defaults", async () 
   // The release grant is enforced: the text names the verb it gates.
   const text = (await run(["show"], headless, {}, false)).text();
   expect(text).toContain(
-    "release false     default (workit git push --release: the preset's release branches and v* tags)",
+    "release false     default (workit git push --release: git-flow main and develop, landed v* tags)",
   );
   expect(text).not.toContain("not enforced");
   const named = await run(["show", "w"], headless);

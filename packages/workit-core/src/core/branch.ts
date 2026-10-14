@@ -435,23 +435,27 @@ export const flowRoute = (flow: GitFlow, kind: BranchKind): FlowRoute =>
       : { kind, base: flow.develop, target: flow.develop, mergeBack: null };
 
 /**
- * The long-lived branches `workit git push --release` may push, per preset:
- * git-flow production and develop; github-flow and trunk-based their trunk
- * (main, master); custom its configured protected branches. Empty when the
- * policy cannot be read.
+ * What `workit git push --release` may push, per preset: git-flow its
+ * production and develop branches; github-flow, trunk-based and custom no
+ * branch (only tags). `production` is the branch a release tag's commit must
+ * already be on (git-flow production, else the default target). Empty when
+ * the policy cannot be read.
  */
-export const releaseBranchesOf = (cwd: string): { preset: string; branches: string[] } => {
+export const releaseBranchesOf = (
+  cwd: string,
+): { preset: string; branches: string[]; production: string | null } => {
   try {
     const resolved = resolveBranchPolicyFor(cwd);
     const flow = resolved.preset === "gitflow" ? gitFlowOf(cwd) : null;
-    const branches = flow
-      ? [flow.production, flow.develop]
-      : resolved.preset === "custom"
-        ? [...resolved.protected]
-        : [resolved.defaultTargetBranch];
-    return { preset: resolved.preset, branches };
+    // Outside git-flow a protected trunk only moves through a reviewed PR:
+    // --release pushes tags there, nothing else.
+    return {
+      preset: resolved.preset,
+      branches: flow ? [flow.production, flow.develop] : [],
+      production: flow ? flow.production : resolved.defaultTargetBranch,
+    };
   } catch {
-    return { preset: "unknown", branches: [] };
+    return { preset: "unknown", branches: [], production: null };
   }
 };
 
@@ -495,22 +499,45 @@ export const flowMismatch = (
  */
 export const branchGuidance = (cwd: string): string | null => {
   try {
-    const kinds = allowedKinds(branchPolicySnapshotFor(cwd).namePolicy.allowed);
+    const patterns = branchPolicySnapshotFor(cwd).namePolicy.allowed;
+    const kinds = allowedKinds(patterns);
+    const kindShaped = new Set(kinds.map((kind) => branchGlobPattern(`${kind}/*`).source));
+    const anyName = patterns.some((pattern) => pattern.source === "^.*$");
+    const others = patterns
+      .filter((pattern) => !kindShaped.has(pattern.source))
+      .map((pattern) => globOf(pattern));
+    const allowed = anyName
+      ? "Any non-protected branch name is allowed here."
+      : `${kinds.length ? `Allowed branch kinds here: ${kindList(kinds)}${aliasNote(kinds)}` : "Allowed branch names here:"}${others.length ? `${kinds.length ? "; also" : ""} names matching ${others.join(", ")}` : ""}; anything else is denied.`;
     const resolved = vcsConfig("resolve", cwd);
     const integration =
       resolved.ok === false ? null : String(resolved.defaultTargetBranch ?? "") || null;
     const flow = resolved.releaseTrack?.track ? null : gitFlowOf(cwd, integration);
-    const allowed = kinds.length
-      ? `Allowed branch kinds here: ${kindList(kinds)}${aliasNote(kinds)}; any other prefix is denied.`
-      : "Any non-protected branch name is allowed here.";
-    const base = flow
-      ? `git-flow: feature/, bugfix/ and release/ start from origin/${flow.develop}, hotfix/ from origin/${flow.production}; feature/ and bugfix/ land on ${flow.develop}, release/ and hotfix/ on ${flow.production}.`
-      : `Branch from origin/${String(resolved.baseBranch ?? integration ?? "main")}.`;
+    if (flow?.developExists)
+      return `${allowed} git-flow: feature/, bugfix/ and release/ start from origin/${flow.develop}, hotfix/ from origin/${flow.production}; feature/ and bugfix/ land on ${flow.develop}, release/ and hotfix/ on ${flow.production}.`;
+    // Name only a base that exists: a preset default (custom's develop,
+    // github-flow's main) may not.
+    const names = branchNames(cwd);
+    const configured = String(resolved.baseBranch ?? integration ?? "") || null;
+    const trunk = productionBranchOf(names);
+    const base =
+      configured && names.has(configured)
+        ? `Branch from origin/${configured}.`
+        : names.has(trunk)
+          ? `Branch from origin/${trunk}${configured ? ` (the default target ${configured} does not exist here)` : ""}.`
+          : "No base branch exists here yet; pass the base explicitly.";
     return `${allowed} ${base}`;
   } catch {
     return null;
   }
 };
+
+/** An allowed pattern back as its glob (`^fix-.*$` -> fix-*). */
+const globOf = (pattern: RegExp): string =>
+  pattern.source
+    .replace(/^\^|\$$/gu, "")
+    .replaceAll(".*", "*")
+    .replace(/\\(.)/gu, "$1");
 
 const policy = (root: string) => resolveBranchPolicyFor(root);
 const allowedBranch = (root: string, name: string) =>

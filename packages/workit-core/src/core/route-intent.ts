@@ -1,6 +1,7 @@
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { rawInvocations } from "../hooks/raw-git";
+import { inWorkitWorkspace, rawInvocations } from "../hooks/raw-git";
 import type { ShellDialect } from "../hooks/shell-words";
 import { validateBranchNameFor, type BranchNamePolicyCheck } from "./branch";
 
@@ -20,7 +21,7 @@ const BRANCH_NO_CREATE = new Set(
 /** `git branch -m|-c [<old>] <new>`: a rename or copy creates `<new>`. */
 const BRANCH_RENAME = new Set(["-m", "-M", "--move", "-c", "-C", "--copy"]);
 
-/** The value of `flag` in `args` (`-c x`, `--create=x`), or null. */
+/** The value of `flag` in `args` (`-c x`, `-cx`, `--create=x`), or null. */
 const flagValue = (args: readonly string[], flags: ReadonlySet<string>): string | null => {
   for (let index = 1; index < args.length; index++) {
     const arg = args[index];
@@ -28,8 +29,33 @@ const flagValue = (args: readonly string[], flags: ReadonlySet<string>): string 
     if (flags.has(arg)) return args[index + 1] ?? null;
     const eq = arg.indexOf("=");
     if (arg.startsWith("--") && eq > 0 && flags.has(arg.slice(0, eq))) return arg.slice(eq + 1);
+    // An attached short value: `-cchore/x`.
+    if (!arg.startsWith("--") && arg.length > 2 && flags.has(arg.slice(0, 2))) return arg.slice(2);
   }
   return null;
+};
+
+/** `git worktree add` options that take a value. */
+const WORKTREE_VALUES = new Set(["--reason"]);
+
+/**
+ * `git worktree add [-b|-B <b>] <path> [<commit-ish>]`: the -b name, or, with
+ * only a path (no -b, -B, --detach or commit-ish), the branch git names after
+ * the path's last component.
+ */
+const worktreeTarget = (args: readonly string[]): string | null => {
+  const named = flagValue(args, WORKTREE_CREATE);
+  if (named !== null) return named;
+  const positionals: string[] = [];
+  for (let index = 1; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--detach" || arg === "-d") return null;
+    if (WORKTREE_VALUES.has(arg)) index++;
+    else if (!arg.startsWith("-")) positionals.push(arg);
+  }
+  if (positionals.length !== 1) return null;
+  const base = positionals[0].split(/[\\/]/u).findLast(Boolean) ?? "";
+  return base && base !== "." && base !== ".." ? base : null;
 };
 
 /** The branch `git branch …` creates (plain, rename or copy), or null. */
@@ -67,7 +93,7 @@ export const gitBranchCreation = (args: readonly string[]): string | null => {
         : sub === "branch"
           ? branchCommandTarget(args)
           : sub === "worktree" && second === "add"
-            ? flagValue(args.slice(1), WORKTREE_CREATE)
+            ? worktreeTarget(args.slice(1))
             : null;
   return target && !target.startsWith("-") && !UNKNOWABLE.test(target) ? target : null;
 };
@@ -101,23 +127,39 @@ export const shellBranchTargets = (
 export const shellBranchTarget = (command: string): string | null =>
   shellBranchTargets(command)[0]?.branch ?? null;
 
+/** The branch already exists in `dir`: resetting or checking it out is not a new name. */
+const localBranchExists = (dir: string, branch: string): boolean =>
+  spawnSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+    cwd: dir,
+    stdio: "ignore",
+    timeout: 5_000,
+  }).status === 0;
+
 /**
- * The branch policy verdict for every branch a shell command creates, each
- * checked in the directory git runs in (a linked worktree resolves to its
- * main checkout's workspace). Null when the command creates no branch; the
- * first violation otherwise.
+ * The branch policy verdict for every new branch a shell command creates,
+ * each checked in the directory git runs in (a linked worktree resolves to
+ * its main checkout's workspace). A command that runs in the hook's cwd is
+ * judged there. One that changes directory is judged only when that
+ * directory is known, already exists and is in a Workit workspace: a scratch
+ * repository (`cd "$(mktemp -d)"`, `git init x && cd x`, a fresh clone) is
+ * not the cwd workspace's business. A name that already exists locally is
+ * skipped (`git branch -f legacy HEAD`). Null when no new branch is judged;
+ * the first violation otherwise.
  */
 export const shellBranchPolicyViolation = (
   root: string,
   command: string,
   dialect: ShellDialect = "posix",
 ): BranchNamePolicyCheck | null => {
-  const targets = shellBranchTargets(command, dialect);
-  if (!targets.length) return null;
-  for (const target of targets) {
-    const dir = target.dir ? path.resolve(root, target.dir) : root;
-    const check = validateBranchNameFor(existsSync(dir) ? dir : root, target.branch);
+  let judged = false;
+  for (const target of shellBranchTargets(command, dialect)) {
+    if (target.dir === undefined) continue;
+    const dir = target.dir === null ? root : path.resolve(root, target.dir);
+    if (target.dir !== null && (!existsSync(dir) || !inWorkitWorkspace(dir))) continue;
+    if (localBranchExists(dir, target.branch)) continue;
+    judged = true;
+    const check = validateBranchNameFor(dir, target.branch);
     if (!check.ok) return check;
   }
-  return { ok: true };
+  return judged ? { ok: true } : null;
 };

@@ -36,10 +36,11 @@ export const evaluateShellPermission = (
   }
   if (event.action !== "shell") return;
   for (const resource of resources) {
-    const decision = shellPolicy(root, resource);
-    if (decision.kind === "deny") return deny(decision.reason);
-    // The shell tool's workdir, noted by execute.before for this session.
+    // The shell tool's workdir, noted by execute.before for this session; its
+    // shell is bash (POSIX), like the other hosts' Bash tools.
     const cwd = (event.sessionID && workdirs.get(event.sessionID)) || root;
+    const decision = shellPolicy(cwd, resource, "posix");
+    if (decision.kind === "deny") return deny(decision.reason);
     const raw = rawGitPre(
       {
         host: "opencode",

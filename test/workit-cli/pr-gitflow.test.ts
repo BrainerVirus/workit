@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -37,12 +37,12 @@ afterEach(() => {
   for (const repo of repos.splice(0)) repo.cleanup();
 });
 
-const run = async (argv: string[], cwd: string) => {
+const run = async (argv: string[], cwd: string, session = "author-1") => {
   let stdout = "";
   let stderr = "";
   const io: Partial<Io> = {
     cwd,
-    env: { ...process.env, WORKIT_SESSION_ID: "author-1" },
+    env: { ...process.env, WORKIT_SESSION_ID: session },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   };
@@ -235,4 +235,178 @@ test("per preset, When pr create runs on feature and release branches, Then the 
     expect(release.stdout.includes("merge back:"), preset).toBe(expected.mergeBack);
     repos.splice(0).forEach((done) => done.cleanup());
   }
+});
+
+// ---------------------------------------------------------------------------
+// The forge lookup: head AND base, a missing base field fails open (reuse),
+// and no base named with open PRs into several bases is never guessed.
+
+const RELEASE = "release/4.1.0";
+
+const githubFind = (nodes: Array<Record<string, unknown>>) =>
+  JSON.stringify({ data: { repository: { pullRequests: { nodes } } } });
+const githubNode = (number: number, base: string | undefined) => ({
+  number,
+  url: `https://github.com/o/r/pull/${number}`,
+  state: "OPEN",
+  ...(base === undefined ? {} : { baseRefName: base }),
+  headRefName: RELEASE,
+  headRepositoryOwner: { login: "o" },
+  headRefOid: "{{HEAD}}",
+});
+
+const GL = "projects/group%2Fproject";
+const GL_FIND = `GET ${GL}/merge_requests?source_branch=${encodeURIComponent(RELEASE)}&order_by=created_at&sort=desc&per_page=20`;
+const gitlabMr = (iid: number, target: string | undefined) => ({
+  iid,
+  state: "opened",
+  source_branch: RELEASE,
+  web_url: `https://gitlab.com/group/project/-/merge_requests/${iid}`,
+  sha: "{{HEAD}}",
+  ...(target === undefined ? {} : { target_branch: target }),
+  source_project_id: 34675721,
+});
+
+/** A git-flow checkout on release/4.1.0 (pushed) against GitLab. */
+const gitlabSetup = (find: unknown[]) => {
+  writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ branchPolicy: POLICIES.gitflow }),
+  );
+  const repo = makeForgeRepo("gitlab");
+  repos.push(repo);
+  repo.git("branch", "develop", "main");
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "w",
+          glob: `${repo.root.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "gitlab", account: "octo" },
+          branchPolicy: POLICIES.gitflow,
+        },
+      ],
+    }),
+  );
+  const runner = replayRunner(
+    {
+      "GET user": fixture("gitlab/user.json"),
+      [`GET ${GL}`]: fixture("gitlab/project.json"),
+      [`GET ${GL}/repository/branches/main`]: fixture("gitlab/branch-main.json"),
+      [GL_FIND]: JSON.stringify(find),
+      [`POST ${GL}/merge_requests`]: JSON.stringify(gitlabMr(13, "develop")),
+    },
+    repo.subs,
+  );
+  Object.assign(forgeDeps, { runner, sleep: async () => {}, now: () => 0 });
+  onBranch(repo, RELEASE);
+  return { repo, runner };
+};
+
+const glPosted = (calls: readonly Call[]) =>
+  calls.find((call) => call.method === "POST" && call.endpoint === `${GL}/merge_requests`);
+
+test("GitLab: an open MR into main is reused for main; --base develop opens the back-merge MR", async () => {
+  const { repo, runner } = gitlabSetup([gitlabMr(12, "main")]);
+  const reused = await run(["pr", "create", "--title", "chore: release", "--json"], repo.cwd);
+  expect(reused.code, reused.stdout + reused.stderr).toBe(0);
+  expect(reused.json().data).toMatchObject({ number: 12, base: "main", created: false });
+  expect(glPosted(runner.calls)).toBeUndefined();
+  const backMerge = await run(
+    ["pr", "create", "--base", "develop", "--title", "chore: back-merge", "--json"],
+    repo.cwd,
+  );
+  expect(backMerge.code, backMerge.stdout + backMerge.stderr).toBe(0);
+  expect(backMerge.json().data).toMatchObject({ number: 13, created: true });
+  expect(glPosted(runner.calls)?.vars).toMatchObject({ target_branch: "develop" });
+});
+
+test("a forge reply without the base field fails open: the open PR or MR is reused, on GitHub and GitLab", async () => {
+  {
+    const { repo, runner } = setup("gitflow", {
+      "graphql find": githubFind([githubNode(12, undefined)]),
+    });
+    onBranch(repo, RELEASE);
+    const reused = await run(
+      ["pr", "create", "--base", "develop", "--title", "chore: x", "--json"],
+      repo.cwd,
+    );
+    expect(reused.code, reused.stdout + reused.stderr).toBe(0);
+    expect(reused.json().data).toMatchObject({ number: 12, created: false });
+    expect(posted(runner.calls)).toBeUndefined();
+    repos.splice(0).forEach((done) => done.cleanup());
+  }
+  const { repo, runner } = gitlabSetup([gitlabMr(12, undefined)]);
+  const reused = await run(
+    ["pr", "create", "--base", "develop", "--title", "chore: x", "--json"],
+    repo.cwd,
+  );
+  expect(reused.code, reused.stdout + reused.stderr).toBe(0);
+  expect(reused.json().data).toMatchObject({ number: 12, created: false });
+  expect(glPosted(runner.calls)).toBeUndefined();
+});
+
+test("Given open PRs into main and develop, When pr status or pr merge run without --pr, Then the ambiguity is reported, never the newest guessed", async () => {
+  {
+    const { repo } = setup("gitflow", {
+      "graphql find": githubFind([githubNode(13, "develop"), githubNode(12, "main")]),
+    });
+    onBranch(repo, RELEASE);
+    grantMerge();
+    for (const verb of ["status", "merge"]) {
+      const result = await run(["pr", verb, "--json"], repo.cwd);
+      expect(result.code, verb).toBe(3);
+      expect(result.json().error, verb).toBe(
+        `ambiguous_pr: ${RELEASE} has open pull requests #13 -> develop, #12 -> main`,
+      );
+      expect(result.json().unblock).toContain("--pr 13");
+    }
+    repos.splice(0).forEach((done) => done.cleanup());
+  }
+  const { repo } = gitlabSetup([gitlabMr(13, "develop"), gitlabMr(12, "main")]);
+  const result = await run(["pr", "status", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain(
+    "ambiguous_pr: release/4.1.0 has open merge requests !13 -> develop, !12 -> main",
+  );
+});
+
+/** Add the merge grant to the workspace setup() wrote. */
+const grantMerge = () => {
+  const ws = path.join(configDir, "workspaces.json");
+  const doc = JSON.parse(readFileSync(ws, "utf8"));
+  doc.workspaces[0].autonomy = { merge: "verified" };
+  writeFileSync(ws, JSON.stringify(doc));
+};
+
+test("Given git-flow, When pr merge lands a release PR on main, Then it reports the merge back into develop", async () => {
+  let landed = false;
+  const { repo } = setup("gitflow", {
+    "graphql find": githubFind([githubNode(12, "main")]),
+    'graphql status {"owner":"o","name":"r","number":"12"}': () =>
+      fixture(landed ? "github/pr-merged.json" : "github/pr-passing.json").replaceAll(
+        '"feature/x"',
+        `"${RELEASE}"`,
+      ),
+    "PUT repos/o/r/pulls/12/merge": () => {
+      landed = true;
+      return JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" });
+    },
+  });
+  onBranch(repo, RELEASE);
+  grantMerge();
+  const verdict = await run(
+    ["ledger", "verdict", "verified", "--how", "exercised it"],
+    repo.cwd,
+    "reviewer-2",
+  );
+  expect(verdict.code, verdict.stdout + verdict.stderr).toBe(0);
+  const merged = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(merged.code, merged.stdout + merged.stderr).toBe(0);
+  expect(merged.json().data).toMatchObject({
+    base: "main",
+    mergeBack: ["develop"],
+    mergeBackTrack: "git-flow",
+  });
 });

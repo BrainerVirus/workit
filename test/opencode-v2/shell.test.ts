@@ -491,7 +491,7 @@ test("permission evaluate validates only literal noncompliant branch targets", a
 
     const worktree = {
       action: "shell",
-      resources: ["git worktree add ../x"],
+      resources: ["git worktree add --detach ../x"],
       effect: "allow",
       message: undefined as string | undefined,
     };

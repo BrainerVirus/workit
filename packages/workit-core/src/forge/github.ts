@@ -371,7 +371,16 @@ export function createGitHubForge(options: {
             node.headRepositoryOwner?.login.toLowerCase() === match.owner.toLowerCase()) ||
             (match.sha !== null && node.headRefOid === match.sha)),
       );
-      const pick = ours.find((node) => node.state === "OPEN") ?? ours[0];
+      const open = ours.filter((node) => node.state === "OPEN");
+      // No base named and open PRs into several bases (a git-flow release
+      // into main and its back-merge into develop): never guess.
+      if (!match.base && new Set(open.map((node) => node.baseRefName)).size > 1)
+        return failure(
+          "blocked",
+          `ambiguous_pr: ${head} has open pull requests ${open.map((node) => `#${node.number} -> ${node.baseRefName}`).join(", ")}`,
+          `pass --pr <n>, e.g. --pr ${open[0].number}`,
+        );
+      const pick = open[0] ?? ours[0];
       if (!pick) return success(null);
       const ref: PrRef = {
         number: pick.number,

@@ -331,7 +331,14 @@ export function createGitLabForge(options: {
           ((match.projectId !== null && mr.source_project_id === match.projectId) ||
             (match.sha !== null && mr.sha === match.sha)),
       );
-      const pick = matches.find((mr) => mr.state === "opened") ?? matches[0];
+      const open = matches.filter((mr) => mr.state === "opened");
+      if (!match.base && new Set(open.map((mr) => mr.target_branch)).size > 1)
+        return failure(
+          "blocked",
+          `ambiguous_pr: ${head} has open merge requests ${open.map((mr) => `!${mr.iid} -> ${mr.target_branch}`).join(", ")}`,
+          `pass --pr <n>, e.g. --pr ${open[0].iid}`,
+        );
+      const pick = open[0] ?? matches[0];
       return success(
         pick
           ? {

@@ -225,7 +225,7 @@ test("Given the release grant, When --release names a feature branch, a non-v ta
   const feature = await run(["git", "push", "--release", "feature/a", "--json"], repo.cwd);
   expect(feature.code).toBe(3);
   expect(feature.json().error).toContain(
-    "release_push_refused: feature/a is not a release branch of the gitflow policy (main, develop)",
+    "release_push_refused: feature/a is not a git-flow release branch (main, develop)",
   );
   repo.git("tag", "build-7");
   const tag = await run(["git", "push", "--release", "build-7", "--json"], repo.cwd);
@@ -360,7 +360,7 @@ test("per preset, When raw git creates chore/x, Then the deny suggests the prese
     async (repo, expected, preset) => {
       const verdict = shellBranchPolicyViolation(
         repo.cwd,
-        "cd . && git switch -c chore/x origin/main",
+        "git fetch -q && git switch -c chore/x origin/main",
       );
       if (expected === null) expect(verdict, preset).toEqual({ ok: true });
       else {
@@ -374,31 +374,87 @@ test("per preset, When raw git creates chore/x, Then the deny suggests the prese
   );
 });
 
-test("per preset, Given the release grant, When --release names each long-lived branch and a v tag, Then git-flow pushes main and develop, github-flow main, custom its protected branches", async () => {
-  const table: Record<Preset, Record<string, boolean>> = {
-    gitflow: { main: true, develop: true, stable: false },
-    "github-flow": { main: true, develop: false, stable: false },
-    custom: { main: true, develop: false, stable: true },
+test("per preset, Given the release grant, When --release names a branch or a v tag, Then only git-flow pushes main and develop; every preset pushes a landed tag and refuses an unmerged one", async () => {
+  const table: Record<Preset, Record<string, string | null>> = {
+    gitflow: {
+      main: null,
+      develop: null,
+      stable: "is not a git-flow release branch (main, develop)",
+    },
+    "github-flow": {
+      main: "the github-flow policy lands main only through a reviewed PR",
+      develop: "the github-flow policy lands develop only through a reviewed PR",
+    },
+    custom: {
+      main: "the custom policy lands main only through a reviewed PR",
+      stable: "the custom policy lands stable only through a reviewed PR",
+    },
   };
   await each(table, async (repo, expected, preset) => {
     workspace(repo, { autonomy: { release: true } });
     repo.git("branch", "stable", "main");
-    repo.git("tag", "v0.1.0");
-    for (const [branch, allowed] of Object.entries(expected as Record<string, boolean>)) {
+    // custom's default target is develop: its tags must already be there.
+    const landed = preset === "custom" ? "develop" : "main";
+    repo.git("tag", "v0.1.0", landed);
+    for (const [branch, refusal] of Object.entries(expected as Record<string, string | null>)) {
       const result = await run(["git", "push", "--release", branch, "--json"], repo.cwd);
-      if (allowed) expect(result.code, `${preset} ${branch}: ${result.stdout}`).toBe(0);
+      if (refusal === null) expect(result.code, `${preset} ${branch}: ${result.stdout}`).toBe(0);
       else {
         expect(result.code, `${preset} ${branch}`).toBe(3);
-        expect(result.json().error).toContain(`is not a release branch of the ${preset} policy`);
+        expect(result.json().error, `${preset} ${branch}`).toContain(refusal);
+        if (preset !== "gitflow")
+          expect(result.json().unblock).toContain(`workit pr create --base ${branch}`);
       }
     }
     const tag = await run(["git", "push", "--release", "v0.1.0", "--json"], repo.cwd);
     expect(tag.code, `${preset} tag: ${tag.stdout}`).toBe(0);
-    // Plain workit git push on main names --release in every preset.
+    // A tag on an unmerged feature commit is never a release.
+    repo.git("switch", "-q", "-c", "feature/unmerged");
+    repo.write("unmerged.txt", "x\n");
+    repo.git("add", "-A");
+    repo.git("commit", "-qm", "feat: unmerged");
+    repo.git("tag", "v9.0.0");
+    const unmerged = await run(["git", "push", "--release", "v9.0.0", "--json"], repo.cwd);
+    expect(unmerged.code, preset).toBe(3);
+    expect(unmerged.json().error, preset).toContain("tag_unreleased: v9.0.0");
+    expect(repo.git("ls-remote", "--tags", "origin", "v9.0.0")).toBe("");
+    repo.git("switch", "-q", "main");
+    // Plain workit git push on main names --release only in git-flow.
     const plain = await run(["git", "push", "--json"], repo.cwd);
-    expect(plain.json().unblock, preset).toContain("workit git push --release main");
+    if (preset === "gitflow")
+      expect(plain.json().unblock).toContain("workit git push --release main");
+    else expect(plain.json().unblock, preset).not.toContain("--release");
   });
   const repo = flowRepo(PRESETS["github-flow"]);
   const usage = await run(["git", "push", "--release", "--set-upstream"], repo.cwd);
   expect(usage.code).toBe(2);
+});
+
+test("Given the release grant but push=false, When --release runs, Then the push grant refuses it and nothing moves", async () => {
+  const repo = flowRepo(GITFLOW);
+  workspace(repo, { autonomy: { release: true, push: false } });
+  const head = finishRelease(repo);
+  const refused = await run(["git", "push", "--release", "main", "--json"], repo.cwd);
+  expect(refused.code).toBe(3);
+  expect(refused.json()).toMatchObject({ data: { reason: "grant_required" } });
+  expect(refused.json().error).toContain("push is not granted");
+  expect(repo.remoteTip("main")).not.toBe(head);
+});
+
+test("Given a remote that rejects the tag, When main and the tag go in one --release push, Then it is atomic: main does not move either", async () => {
+  const repo = flowRepo(GITFLOW);
+  workspace(repo, { autonomy: { release: true } });
+  const before = repo.remoteTip("main");
+  finishRelease(repo);
+  // A per-ref update hook: refuses tags, accepts branches.
+  const hook = path.join(repo.bare, "hooks", "update");
+  writeFileSync(hook, '#!/bin/sh\ncase "$1" in refs/tags/*) exit 1 ;; esac\nexit 0\n', {
+    mode: 0o755,
+  });
+  const pushed = await run(
+    ["git", "push", "--release", "main", "--release", "v1.0.0", "--json"],
+    repo.cwd,
+  );
+  expect(pushed.code).not.toBe(0);
+  expect(repo.remoteTip("main")).toBe(before);
 });

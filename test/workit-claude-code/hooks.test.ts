@@ -263,49 +263,89 @@ test("a protected-branch deny is structured JSON on stdout with exit 0 and nothi
   });
 }, 30_000);
 
-test("SubagentStart tells the worktree implementer, per preset, that plain git is expected but branch names stay policy-checked, naming that preset's kinds and bases", async () => {
+test("SubagentStart tells the worktree implementer, per preset, that plain git is expected but branch names stay policy-checked, naming that preset's kinds and only bases that exist", async () => {
   await withProtectedMain((configDir) => {
-    const cwd = root();
-    // main + develop, so git-flow sees its integration branch.
-    const git = (...args: string[]) =>
-      Bun.spawnSync(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd });
-    git("init", "-q", "-b", "main");
-    git("commit", "-q", "--allow-empty", "-m", "init");
-    git("branch", "develop");
-    const context = () =>
+    /** A repository whose first branch is `trunk`, plus `extra` branches. */
+    const checkout = (trunk: string, extra: string[] = []) => {
+      const cwd = root();
+      const git = (...args: string[]) =>
+        Bun.spawnSync(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd });
+      git("init", "-q", "-b", trunk);
+      git("commit", "-q", "--allow-empty", "-m", "init");
+      for (const name of extra) git("branch", name);
+      return cwd;
+    };
+    const context = (cwd: string) =>
       (
         runHook(
           PLUGIN_DIR,
           fixture("claude-code", "subagent-start", cwd, { agent_type: "workit:implementer" }),
         ).json as Specific
       ).hookSpecificOutput?.additionalContext ?? "";
-    const table: Array<[Record<string, unknown>, string[], RegExp | null]> = [
+    const custom = { preset: "custom", allowed: ["task/*", "release/*"], protected: ["main"] };
+    const table: Array<[string, Record<string, unknown>, string, string[], RegExp | null]> = [
       [
+        "git-flow",
         { preset: "gitflow" },
+        checkout("main", ["develop"]),
         [
-          "Allowed branch kinds here: feature/, bugfix/, hotfix/, release/ (fix/ is bugfix/, chore/ is feature/); any other prefix is denied.",
+          "Allowed branch kinds here: feature/, bugfix/, hotfix/, release/ (fix/ is bugfix/, chore/ is feature/); anything else is denied.",
           "git-flow: feature/, bugfix/ and release/ start from origin/develop, hotfix/ from origin/main",
         ],
         null,
       ],
       [
+        "github-flow",
         { preset: "github-flow" },
+        checkout("main", ["develop"]),
         ["Any non-protected branch name is allowed here.", "Branch from origin/main."],
         /git-flow|origin\/develop/,
       ],
       [
-        { preset: "custom", allowed: ["task/*", "release/*"], protected: ["main"] },
+        "github-flow on a master repo",
+        { preset: "github-flow" },
+        checkout("master"),
+        ["Branch from origin/master (the default target main does not exist here)."],
+        /origin\/main/,
+      ],
+      [
+        "custom with develop",
+        custom,
+        checkout("main", ["develop"]),
         [
-          "Allowed branch kinds here: task/, release/; any other prefix is denied.",
+          "Allowed branch kinds here: task/, release/; anything else is denied.",
           "Branch from origin/develop.",
         ],
         /git-flow|feature\/|bugfix\/|fix\//,
       ],
+      [
+        "custom without develop",
+        custom,
+        checkout("main"),
+        ["Branch from origin/main (the default target develop does not exist here)."],
+        /origin\/develop/,
+      ],
+      [
+        "custom with a non-kind pattern",
+        { preset: "custom", allowed: ["task/*", "fix-*"], protected: ["main"] },
+        checkout("main"),
+        ["Allowed branch kinds here: task/; also names matching fix-*; anything else is denied."],
+        null,
+      ],
+      [
+        "custom with no kind at all",
+        { preset: "custom", allowed: ["fix-*"], protected: ["main"] },
+        checkout("trunk"),
+        [
+          "Allowed branch names here: names matching fix-*; anything else is denied.",
+          "No base branch exists here yet; pass the base explicitly.",
+        ],
+        null,
+      ],
     ];
-    for (const [branchPolicy, expected, absent] of table) {
+    for (const [label, branchPolicy, cwd, expected, absent] of table) {
       writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ branchPolicy }));
-      const text = context();
-      const label = String(branchPolicy.preset);
+      const text = context(cwd);
       expect(text, label).toContain(
         "Plain git is expected here, and the branch name is still policy-checked",
       );

@@ -1037,7 +1037,11 @@ export type ReleaseRef = {
   sha: string;
 };
 
-export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & { refs: ReleaseRef[] };
+export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & {
+  refs: ReleaseRef[];
+  /** The branch a pushed tag's commit must already be on (or a branch in this push). */
+  production: string | null;
+};
 
 /** A release tag: `v` and a digit (`v4.1.0`, `v2`). */
 const RELEASE_TAG = /^v\d/u;
@@ -1055,7 +1059,7 @@ export function releasePushPreflight(
   if (progress) return inProgressFailure(progress.operation, "push");
   const wanted = [...new Set(names)];
   if (!wanted.length) return failure("invalid_input", "name the release refs to push");
-  const { preset, branches } = releaseBranchesOf(cwd);
+  const { preset, branches, production } = releaseBranchesOf(cwd);
   const refs: ReleaseRef[] = [];
   for (const raw of wanted) {
     if (raw.startsWith("-") || raw.includes(":"))
@@ -1086,8 +1090,12 @@ export function releasePushPreflight(
     if (!branches.some((name) => name.toLowerCase() === branchName.toLowerCase()))
       return failure(
         "blocked",
-        `release_push_refused: ${branchName} is not a release branch of the ${preset} policy (${branches.length ? branches.join(", ") : "none"})`,
-        "workit git push  # a feature, bugfix, release or hotfix branch, then: workit pr create",
+        branches.length
+          ? `release_push_refused: ${branchName} is not a git-flow release branch (${branches.join(", ")})`
+          : `release_push_refused: the ${preset} policy lands ${branchName} only through a reviewed PR; workit git push --release pushes v<version> tags there, not branches`,
+        branches.length
+          ? "workit git push  # a feature, bugfix, release or hotfix branch, then: workit pr create"
+          : `workit pr create --base ${branchName}  # then tag the merged commit and: workit git push --release v<version>`,
       );
     refs.push({ kind: "branch", name: branchName, ref: `refs/heads/${branchName}`, sha: branch });
   }
@@ -1112,7 +1120,7 @@ export function releasePushPreflight(
       `push_target_rewritten: the push URL of "${remote}" is rewritten by a url.*.insteadOf rule, so the destination is not the one checked`,
       "git config --get-regexp '^url\\.'  # remove the rewrite for this remote",
     );
-  return success({ refs, remote, url: redactRemote(raw), rawUrl: raw, local });
+  return success({ refs, remote, url: redactRemote(raw), rawUrl: raw, local, production });
 }
 
 export type ReleasePushOutcome = {
@@ -1156,6 +1164,30 @@ export function executeReleasePush(
         `non_fast_forward: ${plan.remote}/${ref.name} (${before.sha.slice(0, 12)}) is not part of local ${ref.name}; a release push never rewrites it`,
         `git fetch ${plan.remote} ${ref.name} && git switch ${ref.name} && git merge --ff-only ${plan.remote}/${ref.name}  # then: workit git push --release ${ref.name}`,
       );
+  }
+  // A release tag marks a commit the production branch already has (or a
+  // branch this push moves): never an unmerged feature commit.
+  const tags = plan.refs.filter((ref) => ref.kind === "tag");
+  if (tags.length) {
+    let productionTip: string | null = null;
+    if (plan.production) {
+      const tip = remoteRefTip(cwd, plan.rawUrl, `refs/heads/${plan.production}`);
+      if (!tip.ok) return failure(tip.code, tip.error);
+      productionTip = tip.sha;
+    }
+    const contains = (tip: string, sha: string) =>
+      git(cwd, ["merge-base", "--is-ancestor", sha, tip]).ok;
+    for (const tag of tags) {
+      const released =
+        (productionTip !== null && contains(productionTip, tag.sha)) ||
+        plan.refs.some((ref) => ref.kind === "branch" && contains(ref.sha, tag.sha));
+      if (!released)
+        return failure(
+          "blocked",
+          `tag_unreleased: ${tag.name} (${tag.sha.slice(0, 12)}) is not on ${plan.remote}/${plan.production ?? "the production branch"}${plan.refs.some((ref) => ref.kind === "branch") ? " or a branch in this push" : ""}; a release tag marks a commit that already landed`,
+          `land it through a PR first (workit pr create), git fetch ${plan.remote}, then tag the merged commit`,
+        );
+    }
   }
   const pending = plan.refs.filter((ref) => previous.get(ref.ref) !== ref.sha);
   if (pending.length) {

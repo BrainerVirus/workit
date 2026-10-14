@@ -393,7 +393,9 @@ test("PreToolUse blocks noncompliant literal branches and leaves other commands 
       permissionDecision: "deny",
     });
     expectHostPermissionUnchanged(bash(root, "gh pr create --fill").hookSpecificOutput);
-    expectHostPermissionUnchanged(bash(root, "git worktree add ../other").hookSpecificOutput);
+    expectHostPermissionUnchanged(
+      bash(root, "git worktree add --detach ../other").hookSpecificOutput,
+    );
     expectHostPermissionUnchanged(bash(root, "git status --short").hookSpecificOutput);
   });
 });

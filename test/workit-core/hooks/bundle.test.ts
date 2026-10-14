@@ -24,8 +24,10 @@ const HOOK_ENTRIES = [
 // control (stop.ts plus the endpoint resolution in autonomy.ts) adds ~6 KB
 // (Cursor ~678 KB), so the ceiling was 682 KB. Raw branch-policy checks on
 // every shell form, git-flow routes, kind suggestions and the subagent branch
-// guidance add ~6 KB (Cursor ~684 KB), so the ceiling is 686 KB.
-const BUDGET = 686_000;
+// guidance add ~6 KB (Cursor ~684 KB); the raw-push new-name, tag and
+// --mirror checks and per-preset guidance add ~4 KB (Cursor ~688 KB), so the
+// ceiling is 690 KB.
+const BUDGET = 690_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {

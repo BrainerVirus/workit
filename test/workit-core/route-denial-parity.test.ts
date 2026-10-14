@@ -143,16 +143,21 @@ test("all adapters enforce the branch policy on every raw branch-creation form",
         ["git checkout -b feature/raw", null],
         ["git status --short", null],
         ["gh pr create --fill", null],
-        ["git worktree add ../other", null],
+        ["git worktree add --detach ../other", null],
+        // A path alone names the branch after it.
+        ["git worktree add ../other", "allowed_pattern"],
         ['git checkout -b "main"', "protected_ref"],
         // The 2026-10 ui-kit form that slipped through: a compound command
         // with cd, a start point and a trailing --no-track.
         [
-          "cd sub && git fetch origin develop -q && git switch -c chore/x origin/develop --no-track; git log --oneline -1",
+          "git fetch origin develop -q && git switch -c chore/x origin/develop --no-track; git log --oneline -1",
           "allowed_pattern",
         ],
         ["GIT_TRACE=0 git branch chore/y origin/main", "allowed_pattern"],
         ["git worktree add -b fix/z ../wt origin/main", "allowed_pattern"],
+        ["git switch -cchore/attached", "allowed_pattern"],
+        // A directory that does not exist yet (a clone, git init) is not judged.
+        ["git init fresh && cd fresh && git switch -c wip", null],
         ["cd sub && git switch -c feature/ok origin/develop --no-track", null],
       ] as const) {
         const denied = rule !== null;
