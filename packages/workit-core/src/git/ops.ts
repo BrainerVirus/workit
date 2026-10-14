@@ -1146,6 +1146,7 @@ export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & {
 };
 
 /**
+<<<<<<< HEAD
  * One release line: the branches a release or hotfix finishes onto. The
  * workspace's own (git-flow production and develop, else the trunk) or a
  * release track's.
@@ -1207,7 +1208,8 @@ export function releaseLinesOf(cwd: string): ReleaseLine[] {
     return lines;
   }
   for (const track of readReleaseTracks(raw).tracks) {
-    const entry = isRecord(raw) && isRecord(raw[track.name]) ? raw[track.name] : {};
+    const value = isRecord(raw) ? raw[track.name] : undefined;
+    const entry: Record<string, unknown> = isRecord(value) ? value : {};
     const strategy = typeof entry.strategy === "string" ? entry.strategy : preset;
     const namespace = typeof entry.tagNamespace === "string" ? entry.tagNamespace.trim() : "";
     lines.push({
@@ -1317,7 +1319,15 @@ export function releasePushPreflight(
       `push_target_rewritten: the push URL of "${remote}" is rewritten by a url.*.insteadOf rule, so the destination is not the one checked`,
       "git config --get-regexp '^url\\.'  # remove the rewrite for this remote",
     );
-  return success({ refs, remote, url: redactRemote(raw), rawUrl: raw, local, production });
+  return success({
+    refs,
+    remote,
+    url: redactRemote(raw),
+    rawUrl: raw,
+    local,
+    production,
+    trackProductions: tracks.map((line) => line.production),
+  });
 }
 
 export type ReleasePushOutcome = {
@@ -1366,17 +1376,19 @@ export function executeReleasePush(
   // branch this push moves): never an unmerged feature commit.
   const tags = plan.refs.filter((ref) => ref.kind === "tag");
   if (tags.length) {
-    let productionTip: string | null = null;
-    if (plan.production) {
-      const tip = remoteRefTip(cwd, plan.rawUrl, `refs/heads/${plan.production}`);
+    const productionTips: string[] = [];
+    for (const production of new Set(
+      [plan.production, ...plan.trackProductions].filter((name): name is string => !!name),
+    )) {
+      const tip = remoteRefTip(cwd, plan.rawUrl, `refs/heads/${production}`);
       if (!tip.ok) return failure(tip.code, tip.error);
-      productionTip = tip.sha;
+      if (tip.sha) productionTips.push(tip.sha);
     }
     const contains = (tip: string, sha: string) =>
       git(cwd, ["merge-base", "--is-ancestor", sha, tip]).ok;
     for (const tag of tags) {
       const released =
-        (productionTip !== null && contains(productionTip, tag.sha)) ||
+        productionTips.some((tip) => contains(tip, tag.sha)) ||
         plan.refs.some((ref) => ref.kind === "branch" && contains(ref.sha, tag.sha));
       if (!released)
         return failure(
