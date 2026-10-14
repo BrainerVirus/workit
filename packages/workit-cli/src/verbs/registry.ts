@@ -174,7 +174,8 @@ function withSubcommands(
 const VERIFY_OPTIONS =
   "[--expect pushed|pr|merged|released] [--pr <n> | --branch <b>] [--sha <sha>] [--tag <t>] [--package <name[@version]>]";
 
-const LEDGER_ACTOR = "[--branch <b> | --pr <n>] [--supersedes <id>] [--session <id> | --as <role>]";
+const LEDGER_ACTOR =
+  "[--branch <b> | --pr <n>] [--supersedes <id>] [--session <id> [--token <t>] | --as <role>]";
 
 export const VERBS: readonly VerbEntry[] = [
   {
@@ -514,7 +515,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "standing",
-        usage: `workit ledger standing add "<order>" | standing list | standing clear [<id>]  [--fanout <name>] [--supersedes <id>] [--session <id> | --as <role>]`,
+        usage: `workit ledger standing add "<order>" | standing list | standing clear [<id>]  [--fanout <name>] [--supersedes <id>] [--session <id> [--token <t>] | --as <role>]`,
         summary: "The lead's standing orders for a fanout's workers",
       },
       {
