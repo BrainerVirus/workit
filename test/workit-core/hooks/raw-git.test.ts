@@ -113,11 +113,13 @@ const classify = (command: string, dialect: "posix" | "powershell" = "posix") =>
   }));
 
 const commit = { kind: "commit" as const, amend: false };
+/** A push; `[null]` alone is a bare push, which push.default resolves later. */
 const push = (targets: Array<string | null>, remote: string | null, blindForce = false) => ({
   kind: "push" as const,
   targets,
   blindForce,
   remote,
+  ...(targets.length === 1 && targets[0] === null ? { implicit: true as const } : {}),
 });
 
 test("classification: chains, cd, -C, env prefixes, quoting and bash -c find the raw command and its directory", () => {
@@ -862,7 +864,7 @@ test("G OpenCode and Pi shell calls around a raw commit, T recorded for the sess
 // ---------------------------------------------------------------------------
 // fail open
 
-test("G an unreadable branch policy on fail-closed Cursor, W a push onto main, T the hook still answers allow (fail open)", async () => {
+test("G an unreadable branch policy on Cursor, W a push onto main, T the hook still answers allow (fail open)", async () => {
   await withProtectedMain((configDir) => {
     const root = repo({ branch: "feature/x" });
     writeFileSync(path.join(configDir, "workspaces.json"), "{ not json");

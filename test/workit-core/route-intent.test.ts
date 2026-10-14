@@ -81,6 +81,91 @@ test("recognizes every raw branch-creation form agents use, wherever the option 
   }
 });
 
+test("Given a branch named through another git verb, a compound command, a nested script or shell quoting, When parsed, Then the branch is found as the direct form would be", () => {
+  const encoded = Buffer.from("git switch -c chore/x", "utf16le").toString("base64");
+  for (const [command, target] of [
+    // Other verbs that write refs/heads/<b>.
+    ["git stash branch chore/x", "chore/x"],
+    ["git stash branch chore/x stash@{1}", "chore/x"],
+    ["git update-ref refs/heads/chore/x HEAD", "chore/x"],
+    ["git update-ref -m why refs/heads/chore/x HEAD", "chore/x"],
+    ["git update-ref --stdin <<EOF\ncreate refs/heads/chore/x HEAD\nEOF", "chore/x"],
+    ["echo 'update refs/heads/chore/x HEAD' | git update-ref --stdin", "chore/x"],
+    ["git fetch origin main:chore/x", "chore/x"],
+    ["git fetch --depth 1 origin +refs/heads/main:refs/heads/chore/x", "chore/x"],
+    ["git pull origin main:chore/x", "chore/x"],
+    ["git push . HEAD:chore/x", "chore/x"],
+    ["git symbolic-ref HEAD refs/heads/chore/x", "chore/x"],
+    ["git symbolic-ref -m why HEAD refs/heads/chore/x", "chore/x"],
+    ["git subtree split --prefix lib -b chore/x", "chore/x"],
+    // Compound commands, variables and nested scripts.
+    ['eval "git switch -c chore/x"', "chore/x"],
+    ["echo chore/x | xargs git switch -c", "chore/x"],
+    ["printf 'chore/x\\n' | xargs -I{} git checkout -b {}", "chore/x"],
+    ["{ git switch -c chore/x; }", "chore/x"],
+    ["if git fetch; then git switch -c chore/x; fi", "chore/x"],
+    ["while false; do :; done; until true; do git switch -c chore/x; done", "chore/x"],
+    ['for b in chore/x; do git switch -c "$b"; done', "chore/x"],
+    ["B=chore/x; git switch -c $B", "chore/x"],
+    ["export B=chore/x && git switch -c ${B}", "chore/x"],
+    ["find . -maxdepth 0 -exec git switch -c chore/x \\;", "chore/x"],
+    ['pwsh -Command "git switch -c chore/x"', "chore/x"],
+    ["powershell.exe -NoProfile -ExecutionPolicy Bypass -c git switch -c chore/x", "chore/x"],
+    [`pwsh -EncodedCommand ${encoded}`, "chore/x"],
+    ["cmd /c git switch -c chore/x", "chore/x"],
+    ["bash <<'EOF'\ngit switch -c chore/x\nEOF", "chore/x"],
+    ["bash <<< 'git switch -c chore/x'", "chore/x"],
+    ["echo 'git switch -c chore/x' | sh", "chore/x"],
+    ['echo "$(git switch -c chore/x)"', "chore/x"],
+    ["echo `git switch -c chore/x`", "chore/x"],
+    ["cat <(git switch -c chore/x)", "chore/x"],
+    // Quoting, escapes and option spellings git accepts.
+    ["g''it switch -c chore/x", "chore/x"],
+    ["\\git switch -c chore/x", "chore/x"],
+    ["git switch -c $'chore/x'", "chore/x"],
+    ["git switch -c $'chore\\x2fx'", "chore/x"],
+    ["git switch -c \\\nchore/x", "chore/x"],
+    ["git branch {chore/x,HEAD}", "chore/x"],
+    ["git switch --cre chore/x", "chore/x"],
+    ["git switch --force-c=chore/x", "chore/x"],
+    ["git checkout -fb chore/x", "chore/x"],
+    ["git checkout -qfbchore/x", "chore/x"],
+    ["git worktree add -fb chore/x ../wt", "chore/x"],
+    ["git branch -fm old chore/x", "chore/x"],
+    ["git branch --mov old chore/x", "chore/x"],
+    // A here-string is not a heredoc: the next line still runs.
+    ["cat <<< hi\ngit switch -c chore/x", "chore/x"],
+  ]) {
+    expect(shellBranchTarget(command), JSON.stringify(command)).toBe(target);
+  }
+  for (const command of [
+    "git update-ref -d refs/heads/chore/x",
+    "git update-ref refs/remotes/origin/x HEAD",
+    "git update-ref --stdin",
+    "git fetch origin main",
+    "git fetch origin 'refs/heads/*:refs/remotes/origin/*'",
+    "git fetch --all",
+    "git pull --rebase origin main",
+    "git push origin HEAD:chore/x",
+    "git symbolic-ref HEAD",
+    "git symbolic-ref --short HEAD",
+    "git stash list",
+    "git stash",
+    "git branch -vv",
+    "git branch --del chore/x",
+    "git branch -dr origin/x",
+    "cat file | xargs git switch -c",
+    "for b in $(cat list); do git switch -c $b; done",
+    'echo "git switch -c chore/x"',
+    "echo 'git switch -c chore/x' > notes.md",
+    "pwsh -File build.ps1",
+    "bash script.sh",
+    "cat <<EOF\ngit switch -c chore/x\nEOF",
+  ]) {
+    expect(shellBranchTarget(command), JSON.stringify(command)).toBeNull();
+  }
+});
+
 test("Windows paths: posix sees C:/… (a backslash escapes), PowerShell keeps C:\\…; both name the directory git runs in", () => {
   expect(shellBranchTargets("cd C:/Users/me/repo/sub && git switch -c chore/x")).toEqual([
     { branch: "chore/x", dir: "C:/Users/me/repo/sub" },

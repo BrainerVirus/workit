@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
@@ -131,6 +132,185 @@ const claudeDenies = (root: string, command: string): boolean => {
   const output = result.json.hookSpecificOutput as { permissionDecision?: string } | undefined;
   return output?.permissionDecision === "deny";
 };
+
+/** Whether each of the five hosts denies `command` run in `root`, by host. */
+const denialsByHost = async (root: string, command: string) => ({
+  opencode: (await opencodeDenial(root, command)) !== null,
+  pi: piDenial(root, command) !== null,
+  codex: codexDenies(root, command),
+  cursor: cursorDenies(root, command),
+  claude_code: claudeDenies(root, command),
+});
+
+const allHosts = (denied: boolean) => ({
+  opencode: denied,
+  pi: denied,
+  codex: denied,
+  cursor: denied,
+  claude_code: denied,
+});
+
+/** Run git in `cwd` with a fixed identity; throws on failure. */
+const git = (cwd: string, ...args: string[]) => {
+  const run = spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], {
+    cwd,
+    encoding: "utf8",
+  });
+  if (run.status !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr}`);
+  return run.stdout.trim();
+};
+
+/**
+ * A Workit workspace on feature/x with an `origin` (a local bare repository)
+ * that has main and feature/x, and `backup`, a second name for origin.
+ */
+const workspace = (): string => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-parity-ws-"));
+  git(root, "init", "-q", "-b", "main");
+  git(root, "commit", "-q", "--allow-empty", "-m", "init");
+  git(root, "switch", "-q", "-c", "feature/x");
+  const origin = path.join(root, ".git", "origin.git");
+  git(root, "init", "-q", "--bare", origin);
+  git(root, "remote", "add", "origin", origin);
+  git(root, "remote", "add", "backup", origin);
+  git(root, "push", "-q", "origin", "main", "feature/x");
+  git(root, "fetch", "-q", "origin");
+  mkdirSync(path.join(root, ".git", "workit"), { recursive: true });
+  return root;
+};
+
+test("Given a Workit workspace, When gh api or glab api merges a PR/MR (any flag order, -X/--method, fields, {owner}/{repo}), Then all five hosts deny it naming workit pr merge", async () => {
+  const root = workspace();
+  try {
+    for (const command of [
+      "gh api -X PUT repos/o/r/pulls/1/merge",
+      "gh api repos/o/r/pulls/1/merge -X PUT",
+      "gh api --method PUT repos/{owner}/{repo}/pulls/12/merge -f merge_method=squash",
+      "gh api --method=PUT /repos/o/r/pulls/3/merge",
+      "gh api -XPOST repos/:owner/:repo/pulls/3/merge",
+      // Fields without -X make it a POST.
+      "gh api repos/o/r/pulls/3/merge -f merge_method=squash",
+      // --help as another option's value is not a help request.
+      "gh api -H --help -X PUT repos/o/r/pulls/3/merge",
+      "gh api repos/o/r/merges -f base=main -f head=feature/x",
+      `gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: "x"}) { clientMutationId } }'`,
+      "glab api -X PUT projects/1/merge_requests/1/merge",
+      "glab api --method POST projects/group%2Frepo/merge_requests/7/merge",
+      "glab api projects/:id/merge_requests/2/merge --method=PUT",
+    ]) {
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
+      const reason = String(await opencodeDenial(root, command));
+      expect(reason, command).toContain("workit pr merge");
+      expect(reason, command).toContain("api` merge");
+    }
+    // Reads and other API calls keep running.
+    for (const command of [
+      "gh api repos/o/r/pulls/3/merge",
+      "gh api -X GET repos/o/r/pulls/3/merge",
+      "gh api repos/o/r/pulls/3",
+      "gh api graphql -f query='query { viewer { login } }'",
+      "gh api -X PATCH repos/o/r/pulls/3 -f title=x",
+      "glab api projects/1/merge_requests/1",
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(false));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Given a Workit workspace, When a git alias, push.default, remote.<name>.push, a glob refspec or another name for origin pushes onto main, Then all five hosts deny it", async () => {
+  const root = workspace();
+  try {
+    git(root, "config", "alias.pp", "push");
+    git(root, "config", "branch.feature/x.remote", "origin");
+    git(root, "config", "branch.feature/x.merge", "refs/heads/main");
+    const origin = path.join(root, ".git", "origin.git").replaceAll("\\", "/");
+    for (const command of [
+      "git pp origin HEAD:main",
+      "git -c alias.p=push p origin HEAD:main",
+      "git -c alias.p='!git push origin HEAD:main' p",
+      "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p origin HEAD:main",
+      "git -c help.autocorrect=immediate puhs origin HEAD:main",
+      // feature/x tracks main: push.default=upstream pushes onto it.
+      "git -c push.default=upstream push",
+      "git -c push.default=matching push origin",
+      "git -c remote.origin.push=HEAD:main push",
+      "git push origin 'refs/heads/*:refs/heads/*'",
+      "git push backup HEAD:main",
+      `git push '${origin}' HEAD:main`,
+      `git -c url.${path.posix.dirname(origin)}/.insteadOf=zz: push zz:origin.git HEAD:main`,
+      "git push origin HEAD:heads/main",
+      // Quoting and nested scripts hide the tool's name from a text match.
+      "g''it push origin HEAD:main",
+      "pwsh -c git push origin HEAD:main",
+      "echo 'git push origin HEAD:main' | bash",
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
+    for (const command of [
+      "git pp origin feature/x",
+      "git push",
+      "git push origin",
+      "git -c push.default=current push",
+      "git push origin 'refs/heads/feature/*:refs/heads/feature/*'",
+      "git push backup feature/x",
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(false));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Given a Workit workspace, When a deferred branch-creation form (#277 ruling mv7kwhzy) names a new off-policy branch, Then all five hosts deny it; an existing or compliant name passes", async () => {
+  const root = workspace();
+  try {
+    git(root, "config", "alias.nb", "switch -c");
+    const encoded = Buffer.from("git switch -c chore/x", "utf16le").toString("base64");
+    for (const command of [
+      "git nb chore/x",
+      "git -c alias.nb='switch -c' nb chore/x",
+      "git -c alias.nb='!git switch -c' nb chore/x",
+      "git stash branch chore/x",
+      "git update-ref refs/heads/chore/x HEAD",
+      "printf 'create refs/heads/chore/x HEAD\\n' | git update-ref --stdin",
+      "git fetch origin main:chore/x",
+      "git fetch origin +refs/heads/main:refs/heads/chore/x",
+      "git pull origin main:chore/x",
+      "git fetch . HEAD:chore/x",
+      "git push . HEAD:chore/x",
+      "git symbolic-ref HEAD refs/heads/chore/x",
+      'eval "git switch -c chore/x"',
+      "echo chore/x | xargs git switch -c",
+      "echo chore/x | xargs -I{} git checkout -b {}",
+      "{ git switch -c chore/x; }",
+      "if true; then git switch -c chore/x; fi",
+      'for b in chore/x; do git switch -c "$b"; done',
+      "B=chore/x; git switch -c $B",
+      'pwsh -Command "git switch -c chore/x"',
+      "powershell -NoProfile -c git checkout -b chore/x",
+      `pwsh -EncodedCommand ${encoded}`,
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
+    for (const command of [
+      "git nb feature/ok",
+      "git stash branch feature/ok",
+      "git update-ref refs/heads/feature/x HEAD",
+      "git update-ref -d refs/heads/chore/old",
+      "git fetch origin main:feature/x",
+      "git fetch origin main",
+      "git fetch origin 'refs/heads/*:refs/remotes/origin/*'",
+      "git symbolic-ref HEAD",
+      "git symbolic-ref HEAD refs/heads/main",
+      "echo feature/ok | xargs git switch -c",
+      "for b in a b; do git log -1 $b; done",
+      'pwsh -Command "git status"',
+      "git stash list",
+      'echo "git switch -c chore/x"',
+    ])
+      expect(await denialsByHost(root, command), command).toEqual(allHosts(false));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("all adapters enforce the branch policy on every raw branch-creation form", async () => {
   for (const hasTask of [false, true]) {
