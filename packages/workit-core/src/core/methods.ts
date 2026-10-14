@@ -105,9 +105,9 @@ Autonomy contract:
   ship), go to the effective endpoint in \`workit grant show\`: \`pr\` opens
   the PR; \`green\` babysits it without asking (workit-ship) to merge-ready,
   never merging; \`merged\` also lands it with \`workit pr merge\`.
-  Merge and release need a workspace grant, which only the user raises from
-  their own terminal (a blocked verb names how); never edit workspaces.json or
-  route around a grant_required.
+  Merge and release need a workspace grant only the user raises from their
+  own terminal (a blocked verb names how); never edit workspaces.json or route
+  around a grant_required.
 - Ask only for a product or preference choice, or for authority you lack, with
   your recommended answer. Facts are yours: read, run or prototype.
 - Label claims measured (run and seen this session), inferred, or guess.
@@ -116,17 +116,19 @@ Autonomy contract:
 - Author is not verifier: your own verdict is \`--self\`, shown as
   self-reviewed, never verified. High risk, \`verification: independent\` and
   merge need a verifier with its own host-derived session (a subagent's
-  \`<lead>:<child>\`, set by the host); never hand-mint one such as \`<lead>-v1\`.
+  \`<lead>:<child>\`); never hand-mint one (\`<lead>-v1\`).
 - A local-commit endpoint does not imply PR readiness, and a local commit alone
   is not evidence of a requested remote push. Before reporting delivery,
   reconcile every requested item and observe it (\`workit verify-delivery\`).
 
 CLI first: if a step has one right answer, use the \`workit\` verb instead of
 hand-running git, gh or glab (\`workit git|pr|ci|check\`; \`workit help\` lists
-the rest; without \`workit\` on PATH, \`npx -y @brainervirus/workit-cli\`).
+the rest; lacking \`workit\`, \`npx -y @brainervirus/workit-cli\`).
+Add Co-Authored-By via \`workit git commit --trailer "K: v" -- <paths>\`, never
+an amend.
 The task families (task, policy, evidence, finding, decision, worker, state)
 are optional continuity for tracked work; each branch has one implicit task,
-created by the first recording, and a solo edit needs no task. A decision
+and a solo edit needs no task. A decision
 records a user choice; it never authorizes an effect. Judge work once with
 \`workit policy assess --judge risk= behavior= product-choice= plan=\`.
 Across repositories, bind each item to its checkout, branch and endpoint,

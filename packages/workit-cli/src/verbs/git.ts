@@ -2,7 +2,8 @@
 // identity check and the grant seam; the rules live in core git/ops.ts.
 //
 //   workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]
-//   workit git commit (-m <msg> | -F <file|->) [--amend [--no-edit]] [--allow-empty] [--all | [--] <paths…>]
+//   workit git commit (-m <msg> | -F <file|->) [--trailer "K: v"]… [--amend [--no-edit]] [--allow-empty] [--all | [--] <paths…>]
+//   workit git trailers  (prints on|off: whether this workspace writes Workit-Session trailers)
 //   workit git push [--set-upstream] [--force-with-lease [--expect <sha>]]
 //   workit git push --release <main|develop|v-tag>…  (repeatable)
 import { readFileSync } from "node:fs";
@@ -26,6 +27,7 @@ import {
   type CommitOutcome,
   type ReleasePushOutcome,
 } from "@brainervirus/workit-core/src/git/ops";
+import { workspaceTrailers } from "@brainervirus/workit-core/src/core/workspaces";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
@@ -34,10 +36,10 @@ import { forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
 const BRANCH_USAGE =
   "workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
 const COMMIT_USAGE =
-  "workit git commit -m|--message <msg>… | -F|--file <file|-> [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>] [--json]";
+  "workit git commit -m|--message <msg>… | -F|--file <file|-> [--trailer <key: value>]… [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>] [--json]";
 const PUSH_USAGE =
   "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…] [--json]";
-const USAGE = "workit git branch|commit|push ... (workit help git)";
+const USAGE = "workit git branch|commit|push|trailers ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
 
@@ -104,6 +106,7 @@ async function branch(argv: string[], io: Io): Promise<number> {
 type CommitArgs = {
   messages: string[];
   files: string[];
+  trailers: string[];
   all: boolean;
   amend: boolean;
   noEdit: boolean;
@@ -124,6 +127,7 @@ const COMMIT_SWITCHES: Record<
 
 /**
  * `-m` (repeatable, joined like git), `-F`/`--file` (`-` reads stdin),
+ * `--trailer` (repeatable),
  * `--amend`, `--no-edit`, `--allow-empty`, `--all`/`-a`, paths positionally
  * or after `--`.
  */
@@ -131,6 +135,7 @@ function parseCommit(argv: readonly string[]): CommitArgs | string {
   const out: CommitArgs = {
     messages: [],
     files: [],
+    trailers: [],
     all: false,
     amend: false,
     noEdit: false,
@@ -153,20 +158,21 @@ function parseCommit(argv: readonly string[]): CommitArgs | string {
       [
         ["-m", "--message", out.messages],
         ["-F", "--file", out.files],
+        [null, "--trailer", out.trailers],
       ] as const
     ).find(
       ([shortName, longName]) =>
         arg === shortName ||
         arg === longName ||
         arg.startsWith(`${longName}=`) ||
-        (arg.startsWith(shortName) && arg.length > 2),
+        (shortName !== null && arg.startsWith(shortName) && arg.length > 2),
     );
     if (valued) {
       const [shortName, longName, into] = valued;
       if (arg === shortName || arg === longName) {
         const value = argv[++index];
         if (value === undefined)
-          return `${arg} requires a ${shortName === "-m" ? "message" : "file"}`;
+          return `${arg} requires a ${shortName === "-m" ? "message" : shortName === "-F" ? "file" : "Key: value trailer"}`;
         into.push(value);
       } else
         into.push(arg.startsWith(`${longName}=`) ? arg.slice(longName.length + 1) : arg.slice(2));
@@ -222,6 +228,7 @@ async function commit(argv: string[], io: Io): Promise<number> {
     paths: parsed.paths,
     amend: parsed.amend,
     allowEmpty: parsed.allowEmpty,
+    trailers: parsed.trailers,
     actor: actorFromEnv(io.env),
     env: io.env,
   });
@@ -375,11 +382,23 @@ async function releasePush(names: string[], io: Io): Promise<number> {
   ]);
 }
 
+/**
+ * `workit git trailers`: `on` or `off`, whether commits in this workspace
+ * carry the Workit-Session trailer. The session hook's helper asks this.
+ */
+function trailers(argv: string[], io: Io): number {
+  const extra = argv.find((arg) => arg !== "--json");
+  if (extra !== undefined) return usage(io, `unexpected argument ${extra}`, "workit git trailers");
+  const state = workspaceTrailers(io.cwd);
+  return emit(io, ok(state), (data) => (data.enabled ? "on" : "off"));
+}
+
 export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv;
   if (sub === "branch") return branch(rest, io);
   if (sub === "commit") return commit(rest, io);
   if (sub === "push") return push(rest, io);
+  if (sub === "trailers") return trailers(rest, io);
   return usage(
     io,
     sub && !sub.startsWith("-") ? `unknown git subcommand "${sub}"` : "missing git subcommand",

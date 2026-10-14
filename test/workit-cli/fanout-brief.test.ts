@@ -569,3 +569,113 @@ test("fanout plan --take-lead: given a worker id, a hook-named verifier id or no
   );
   expect(stored.leadSession).toBe("lead-1");
 });
+
+// ---------------------------------------------------------------------------
+// per-host identity and git rules
+
+const HOST_VARS = [
+  "WORKIT_HOST",
+  "WORKIT_SESSION_ID",
+  "OPENCODE_SESSION_ID",
+  "PI_SESSION_ID",
+  "CODEX_THREAD_ID",
+  "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+  "CODEX_ELECTRON_RESOURCES_PATH",
+];
+
+const briefOn = async (cwd: string, host: string | null, ...args: string[]) => {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of HOST_VARS) delete env[key];
+  env.WORKIT_SESSION_ID = "lead-1";
+  if (host) env.WORKIT_HOST = host;
+  let stdout = "";
+  let stderr = "";
+  const code = await main(["fanout", "brief", ...args, "--json"], {
+    cwd,
+    env,
+    stdout: (text) => void (stdout += text),
+    stderr: (text) => void (stderr += text),
+  });
+  expect(code, stderr + stdout).toBe(0);
+  return JSON.parse(stdout).data as { text: string; session: string | null };
+};
+
+const planned = async () => {
+  const { root, cwd } = repo();
+  await plan(cwd, root, "usage", [slice("a", ["a.ts"])]);
+  return cwd;
+};
+
+test("fanout brief: given a Claude Code lead, when a new brief is rendered, then it points at the env WORKIT_SESSION_ID instead of exporting one and RULES 1 and 3 use plain git with the two trailers", async () => {
+  const cwd = await planned();
+  const data = await briefOn(cwd, "claude_code", "a");
+  expect(data.session).toBeNull();
+  expect(data.text).not.toContain("export WORKIT_SESSION_ID");
+  expect(data.text).not.toContain("lead-1-w-a");
+  expect(data.text).toContain(
+    "  Session: your env already has WORKIT_SESSION_ID (the lead's id; SubagentStart issues ids only to verifiers and reviewers). Use it as is, in your Workit-Session trailer and workit commands; never export or hand-mint one.",
+  );
+  expect(data.text).toContain('"Workit-Session: <the WORKIT_SESSION_ID in your env>"');
+  expect(data.text).not.toContain("context names");
+  expect(data.text).toContain(
+    "  1. First command: `git fetch origin && git switch -c feature/a origin/main`",
+  );
+  expect(data.text).toContain('plain `git commit -m <msg> --trailer "Workit-Session: ');
+  expect(data.text).toContain('--trailer "<your host attribution trailer>" -- <paths in SCOPE>`');
+  expect(data.text).not.toMatch(/workit git (branch|commit)/u);
+  expect(data.text).toContain("  2. Decide ambiguities yourself: `workit ledger ruling");
+});
+
+test("fanout brief: given a Claude Code lead, when the resume and race-attempt variants are rendered, then both follow the same plain-git, no-export rules", async () => {
+  const cwd = await planned();
+  git(cwd, "branch", "feature/a");
+  const resume = await briefOn(cwd, "claude_code", "a");
+  expect(resume.text).toContain("MODE: resume");
+  expect(resume.text).toContain("  1. First command: `git switch feature/a`");
+  expect(resume.text).not.toMatch(/workit git (branch|commit)/u);
+  expect(resume.text).not.toContain("export WORKIT_SESSION_ID");
+  const attempt = await briefOn(cwd, "claude_code", "a", "--attempt", "2");
+  expect(attempt.session).toBeNull();
+  expect(attempt.text).toContain("git fetch origin && git switch -c feature/a-try2 origin/main");
+  expect(attempt.text).not.toContain("+try2");
+  expect(attempt.text).not.toContain("export WORKIT_SESSION_ID");
+  expect(attempt.text).not.toMatch(/workit git (branch|commit)/u);
+});
+
+test.each([["opencode"], ["pi"], ["codex_cli"], ["codex_desktop"]])(
+  "fanout brief: given a %s lead, when rendered, then the worker exports no id (its host derives it) and RULES keep workit git",
+  async (host) => {
+    const cwd = await planned();
+    const data = await briefOn(cwd, host, "a");
+    expect(data.session).toBeNull();
+    expect(data.text).not.toContain("export WORKIT_SESSION_ID");
+    expect(data.text).toContain(
+      "  Session: your host already sets WORKIT_SESSION_ID in your shell; export nothing and never hand-mint one.",
+    );
+    expect(data.text).toContain("`workit git branch feature/a --base main`");
+    expect(data.text).toContain("`workit git commit -m <msg> -- <paths in SCOPE>`");
+    const retry = await briefOn(cwd, host, "a", "--attempt", "1");
+    expect(retry.text).not.toContain("export WORKIT_SESSION_ID");
+    expect(retry.text).toContain("`workit git branch feature/a-try1 --base main`");
+  },
+);
+
+test.each([["cursor"], ["cli"], [null]])(
+  "fanout brief: given a %s lead (no host-issued ids), when rendered, then the worker declares <lead>-w-<slice> (+try<n> for an attempt) and RULES keep workit git",
+  async (host) => {
+    const cwd = await planned();
+    const data = await briefOn(cwd, host, "a");
+    expect(data.session).toBe("lead-1-w-a");
+    expect(data.text).toContain("  export WORKIT_SESSION_ID=lead-1-w-a");
+    expect(data.text).toContain("`workit git branch feature/a --base main`");
+    expect(data.text).toContain("`workit git commit -m <msg> -- <paths in SCOPE>`");
+    const attempt = await briefOn(cwd, host, "a", "--attempt", "2");
+    expect(attempt.session).toBe("lead-1-w-a+try2");
+    expect(attempt.text).toContain("  export WORKIT_SESSION_ID=lead-1-w-a+try2");
+    git(cwd, "branch", "feature/a");
+    const resume = await briefOn(cwd, host, "a");
+    expect(resume.text).toContain("  export WORKIT_SESSION_ID=lead-1-w-a");
+    expect(resume.text).toContain("  1. First command: `git switch feature/a`");
+    expect(resume.text).toContain("`workit git commit -m <msg>");
+  },
+);
