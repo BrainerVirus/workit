@@ -1207,7 +1207,7 @@ describe("S10 redaction and verdicts", () => {
     REDACTION_CASES.push([prefix, `${[prefix, "-"].join("")}${a(24, "k")}`, a(24, "k")]);
   REDACTION_CASES.push([
     "gitlab session cookie",
-    `Cookie: ${["_gitlab", "_session="].join("")}${a(32, "f")}`,
+    `curl -b ${["_gitlab", "_session="].join("")}${a(32, "f")} https://gitlab.example.com`,
     a(32, "f"),
   ]);
   for (const [label, input, secret] of REDACTION_CASES)
