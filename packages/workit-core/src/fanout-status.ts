@@ -18,7 +18,8 @@
 import { parseDuration } from "./duration";
 import { checksState, gatingChecks, missingRequired, type ChecksState } from "./forge/report";
 import type { ResolvedForge } from "./forge/resolve";
-import { checkVerdicts, readLedger, type ReadRow, type VerdictBasis } from "./ledger";
+import { workspaceTierModel } from "./core/workspaces";
+import { actorFromEnv, checkVerdicts, readLedger, type ReadRow, type VerdictBasis } from "./ledger";
 import { sliceLandings } from "./fanout-check";
 import { forgeBreaker, inSliceRun } from "./fanout-landed";
 import {
@@ -74,6 +75,8 @@ export type StatusOutcome = {
   landingOrder: string[];
   /** Not started; every dependency landed (or, stacked, its parent has an accepted verdict). */
   spawnable: string[];
+  /** The model `fanout.tierModels` names for each spawnable slice's TIER on this host. */
+  spawnModels: Record<string, string>;
   stuck: string[];
   next: string;
   notes: string[];
@@ -85,6 +88,8 @@ export type StatusOptions = {
   forgeError?: string | null;
   stuckAfterMs?: number | null;
   now?: Date;
+  /** The lead's host, for `fanout.tierModels`; default: the environment's (WORKIT_HOST…). */
+  host?: string | null;
 };
 
 /** A TIMEBOX such as `45 minutes`, `2h` or `1h30m`, in ms; null without a unit or otherwise. */
@@ -279,6 +284,16 @@ export function fanoutStatus(
     if (row.waitsFor.length && !suggested.includes(id))
       row.reasons.push(`waits for ${row.waitsFor.join(", ")}`);
   }
+  const host = options.host === undefined ? actorFromEnv(process.env).host : options.host;
+  const spawnModels: Record<string, string> = {};
+  for (const id of spawnable) {
+    const tier = plan.slices.find((slice) => slice.id === id)?.tier;
+    const model = tier ? workspaceTierModel(cwd, tier, host) : null;
+    if (model) spawnModels[id] = model.model;
+  }
+  const spawnList = spawnable
+    .map((id) => (spawnModels[id] ? `${id} (model ${spawnModels[id]})` : id))
+    .join(", ");
   const stuck = order.filter((id) => out.get(id)?.stuck);
   const down = breaker.down();
   if (down)
@@ -300,7 +315,7 @@ export function fanoutStatus(
       : noPr.length
         ? `open PRs for ${noPr.join(", ")}: workit git push && workit pr create --fill on each branch`
         : spawnable.length
-          ? `spawn ${spawnable.join(", ")} (workit fanout worktree create <slice> on hosts without native worktrees)`
+          ? `spawn ${spawnList} (workit fanout worktree create <slice> on hosts without native worktrees)`
           : order.every((id) => out.get(id)?.landed)
             ? "every slice has landed"
             : "wait for workers, then workit fanout status again";
@@ -317,6 +332,7 @@ export function fanoutStatus(
       slices: order.map((id) => out.get(id) as SliceStatusRow),
       landingOrder: suggested,
       spawnable,
+      spawnModels,
       stuck,
       next,
       notes,
