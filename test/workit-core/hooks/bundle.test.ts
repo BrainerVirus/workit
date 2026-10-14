@@ -22,8 +22,12 @@ const HOOK_ENTRIES = [
 // trigger table, skill.loaded rows) add ~5 KB; the core's change-only per-turn
 // context (lifted out of the Claude plugin for Codex) adds ~1.5 KB; stop
 // control (stop.ts plus the endpoint resolution in autonomy.ts) adds ~6 KB
-// (Cursor ~678 KB), so the ceiling is 682 KB.
-const BUDGET = 682_000;
+// (Cursor ~678 KB), so the ceiling was 682 KB. Task attribution across
+// branches (#264, #267) adds ~5 KB: base-branch resolution from the reflogs
+// with its remote check and per-turn memo, inherited decisions, and the exact
+// worker retry hint in the core so every host gets it (Cursor ~683 KB). The
+// ceiling is 686 KB, matching #277; lazy schemas (#273) should win it back.
+const BUDGET = 686_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {

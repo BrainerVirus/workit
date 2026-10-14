@@ -360,39 +360,6 @@ const contextFor = (
 type RequirementEvaluation = { requirementId: string; status: string; reason: string };
 
 /**
- * A failed `worker cancel|report` sent without a task id names the exact
- * command for the worker's own task (#264), or how to find it, so a retry
- * never depends on the branch checked out. The core resolves the task from
- * the worker id; the hint lives here to keep it out of the hook bundles.
- */
-function withWorkerRetry(
-  result: Result<unknown>,
-  parsed: { family: OperationFamily; action: string; request: Record<string, unknown> },
-  root: string,
-): Result<unknown> {
-  const { action, request } = parsed;
-  const { workerId, reason, report } = request;
-  if (
-    result.ok ||
-    result.code === "invalid_input" ||
-    parsed.family !== "worker" ||
-    (action !== "cancel" && action !== "report") ||
-    request.taskId !== undefined ||
-    typeof workerId !== "string"
-  )
-    return result;
-  const owner = new TaskStore(root).taskForWorker(workerId);
-  const taskId = owner.ok ? owner.data : null;
-  const rest = JSON.stringify({ reason, report });
-  const payload = rest === "{}" ? "" : ` --payload '${rest.replace(/'/gu, "'\\''")}'`;
-  const command = `workit worker ${action} ${workerId} --task ${taskId ?? "<task-id>"}${payload}`;
-  return {
-    ...result,
-    error: `${result.error}; ${taskId ? "" : "find its task with `workit task status --all`, then "}run \`${command}\``,
-  };
-}
-
-/**
  * A recorded policy with each requirement's current status, so the output
  * tells what is already met from what is still owed (S17 review L11).
  */
@@ -518,12 +485,7 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
           context: JSON.parse(compactTaskContext(viewed.data as any)),
         });
     }
-  } else
-    result = withWorkerRetry(
-      dispatch(core, parsed.parsed.family, parsed.parsed.request),
-      parsed.parsed,
-      root,
-    );
+  } else result = dispatch(core, parsed.parsed.family, parsed.parsed.request);
   if (parsed.parsed.family === "policy" && parsed.parsed.action === "assess")
     result = withRequirementStatus(core, result, parsed.parsed.request.taskId);
   if (parsed.parsed.json) jsonResult(outOf(deps), result);

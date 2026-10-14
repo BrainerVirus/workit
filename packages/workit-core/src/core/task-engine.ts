@@ -392,6 +392,16 @@ const TASK_SCOPED_ACTIONS: ReadonlySet<string> = new Set([
 ]);
 /** Worker actions that name their worker: they resolve to that worker's task. */
 const WORKER_ADDRESSED_ACTIONS: ReadonlySet<string> = new Set(["worker.cancel", "worker.report"]);
+/**
+ * The exact CLI command that runs worker `request` (cancel or report, with a
+ * valid workerId) on `taskId`, so a retry never depends on the branch.
+ */
+const workerCommand = (taskId: string, request: unknown): string => {
+  const { action, workerId, reason, report } = request as Record<string, unknown>;
+  const rest = JSON.stringify({ reason, report });
+  const payload = rest === "{}" ? "" : ` --payload '${rest.replace(/'/gu, "'\\''")}'`;
+  return `workit worker ${String(action)} ${String(workerId)} --task ${taskId}${payload}`;
+};
 /** Recording actions that create the implicit task on first use. */
 const CREATING_ACTIONS: ReadonlySet<string> = new Set([
   "task.revise",
@@ -726,8 +736,11 @@ export class WorkitCore {
       const owner = this.store.taskForWorker(workerId);
       if (!owner.ok) return owner;
       if (owner.data) return success(null, null, { ...request, taskId: owner.data });
-      // The CLI adds the exact retry command (see task.ts workerRetryHint).
-      if (addressed) return failure("not_found", `worker ${workerId as string} is on no open task`);
+      if (addressed)
+        return failure(
+          "not_found",
+          `worker ${workerId as string} is on no open task; find its task with \`workit task status --all\`, then run \`${workerCommand("<task-id>", request)}\``,
+        );
     }
     const create = CREATING_ACTIONS.has(action) && (this.context.workerId ?? null) === null;
     const found = this.store.implicitTask({
@@ -1623,7 +1636,16 @@ export class WorkitCore {
     const resolved = this.implicitTask("worker", request);
     if (!resolved.ok) return resolved;
     const value = resolved.data;
-    return this.retryOmittedRevisions(value, () => this.workerOnce(value));
+    const result = this.retryOmittedRevisions(value, () => this.workerOnce(value));
+    // A cancel/report whose task was resolved from the worker id names the
+    // exact command for that task (every host and the CLI see the same text).
+    const { action, taskId } = (value ?? {}) as { action?: unknown; taskId?: unknown };
+    return result.ok ||
+      (request as { taskId?: unknown } | null)?.taskId !== undefined ||
+      typeof taskId !== "string" ||
+      !WORKER_ADDRESSED_ACTIONS.has(`worker.${String(action)}`)
+      ? result
+      : { ...result, error: `${result.error}; run \`${workerCommand(taskId, value)}\`` };
   }
 
   private workerOnce(request: unknown): Result<Entry<Worker>> {
