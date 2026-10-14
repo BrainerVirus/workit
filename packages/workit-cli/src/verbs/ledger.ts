@@ -17,14 +17,16 @@
 //
 // Every write accepts --supersedes <id> (same type, same session only), plus
 // --branch/--pr to key it. Verdicts are agent-asserted; the acting session is
-// WORKIT_SESSION_ID, and without one a verdict is recorded as self.
-// `--session <id>` names the acting session explicitly; `--as <role>` mints a
-// fresh one (`<session or host>:<role>:<random>`) for a verifier or reviewer
-// subagent that shares its lead's environment, so no two verifiers ever share
-// an id and none collides with the author's. A `--session` verdict is
-// recorded as `sessionSource: "flag"` and `ledger check` names it, so a human
-// can spot a claimed verifier id; `--session` equal to an author session is
-// refused like the author. `--pr`
+// WORKIT_SESSION_ID or the host's own shell session (host-session.ts), and
+// without one a verdict is recorded as self. `--session <id>` names the acting
+// session explicitly; `--as <role>` mints a fresh one
+// (`<session or host>:<role>:<random>`) for a verifier or reviewer subagent
+// that shares its lead's environment. An independent verdict is refused
+// unless its session is this shell's real host session or a host-derived
+// child of it (`<lead>:<child>`, sessionClaimRefusal): a hand-minted
+// `<lead>-v1` is a forged id. A `--session` verdict is recorded as
+// `sessionSource: "flag"` and `ledger check` names it; `--session` equal to an
+// author session is refused like the author. `--pr`
 // must resolve to a branch through the CLI's own PR rows or a fetched forge
 // ref; it is never guessed from other rows.
 import { randomBytes } from "node:crypto";
@@ -59,6 +61,7 @@ import {
   type FanoutFile,
 } from "@brainervirus/workit-core/src/fanout";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
+import { sessionClaimRefusal } from "@brainervirus/workit-core/src/host-session";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 
@@ -142,6 +145,10 @@ const actorFor = (io: Io, values: Values): Acting | Error => {
   }
   return { actor, source: "env" };
 };
+
+/** The session a verdict claims to act as: an --as id is checked by the session it derives from. */
+const claimedSession = (acting: Acting): string | null =>
+  acting.source === "as" ? (acting.derivedFrom ?? null) : acting.actor.session;
 
 const positiveInt = (value: string | undefined, flag: string): number | undefined | Error => {
   if (value === undefined) return undefined;
@@ -413,6 +420,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
     );
   if (rest.length !== 1)
     return usage(io, `ledger verdict takes one result: ${VERDICT_RESULTS.join("|")}`);
+  // An independent verdict acts only as this shell's own host session or a
+  // host-derived child of it; a self verdict is never accepted, so it is not checked.
+  const claimed = values.self === true ? null : claimedSession(acting);
+  const refusal = claimed === null ? null : sessionClaimRefusal(io.env, claimed);
+  if (refusal) return emit(io, fail("blocked", refusal.error, { unblock: refusal.unblock }));
   const verdict = await recorded(
     recordVerdict(context, {
       result: rest[0],

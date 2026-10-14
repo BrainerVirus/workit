@@ -36,12 +36,26 @@ const featureRepo = (): string => {
   return root;
 };
 
+// The suite may itself run inside a host shell: its session variables would
+// be this shell's real session, so every run starts without them.
+const HOST_SESSION_VARS = [
+  "OPENCODE_SESSION_ID",
+  "PI_SESSION_ID",
+  "CODEX_THREAD_ID",
+  "WORKIT_HOST",
+];
+const hostFree = (): NodeJS.ProcessEnv => {
+  const env = { ...process.env };
+  for (const key of HOST_SESSION_VARS) delete env[key];
+  return env;
+};
+
 const run = async (cwd: string, argv: string[], env: NodeJS.ProcessEnv = {}) => {
   let stdout = "";
   let stderr = "";
   const code = await main(argv, {
     cwd,
-    env: { ...process.env, WORKIT_SESSION_ID: "s-reviewer", ...env },
+    env: { ...hostFree(), WORKIT_SESSION_ID: "s-reviewer", ...env },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   });
@@ -334,7 +348,7 @@ const authoredBy = (root: string, session: string) =>
     branch: "feature/x",
   });
 
-test("Given the author lead, When a verdict names --session lead-v1, Then it is accepted but marked as a --session claim in ledger check, and --session lead is refused", async () => {
+test("Given the author lead, When a verifier subagent names its hook-derived --session lead:<agent id>, Then it is accepted but marked as a --session claim in ledger check, and --session lead is refused", async () => {
   const root = featureRepo();
   authoredBy(root, "lead");
   const env = { WORKIT_SESSION_ID: "lead" };
@@ -346,18 +360,94 @@ test("Given the author lead, When a verdict names --session lead-v1, Then it is 
   expect(same.code).toBe(3);
   const claimed = await run(
     root,
-    ["ledger", "verdict", "verified", "--how", "x", "--session", "lead-v1", "--json"],
+    ["ledger", "verdict", "verified", "--how", "x", "--session", "lead:a1b2", "--json"],
     env,
   );
   expect(claimed.code).toBe(0);
   expect(claimed.json().data).toMatchObject({ sessionSource: "flag" });
   const check = await run(root, ["ledger", "check"]);
   expect(check.stdout).toContain("accepted; review: verified");
-  expect(check.stdout).toContain("session lead-v1 named by --session");
+  expect(check.stdout).toContain("session lead:a1b2 named by --session");
   const fromEnv = await run(root, ["ledger", "verdict", "verified", "--how", "y", "--json"], {
     WORKIT_SESSION_ID: "v2",
   });
   expect(fromEnv.json().data).toMatchObject({ sessionSource: "env" });
+});
+
+const verdict = (root: string, env: NodeJS.ProcessEnv, ...extra: string[]) =>
+  run(root, ["ledger", "verdict", "verified", "--how", "x", ...extra, "--json"], env);
+
+test("Given a lead session, When it records a verdict under a hand-minted <lead>-v1 id, Then it is refused as a forged session with an actionable unblock", async () => {
+  const root = featureRepo();
+  authoredBy(root, "lead");
+  const flag = await verdict(root, { WORKIT_SESSION_ID: "lead" }, "--session", "lead-v1");
+  expect(flag.code).toBe(3);
+  expect(flag.json().error).toContain("forged_session: lead-v1");
+  expect(flag.json().unblock).toContain("--session lead:<agent id>");
+  // No real session to derive a claimed id from.
+  const unrooted = await verdict(root, { WORKIT_SESSION_ID: "" }, "--session", "anyone");
+  expect(unrooted.code).toBe(3);
+  expect(unrooted.json().error).toContain("no host session");
+});
+
+test("Given OpenCode, When the lead hand-mints a verifier id, Then it is refused; When the child session's own shell records it under <lead>:<child>, Then it is accepted", async () => {
+  const root = featureRepo();
+  authoredBy(root, "ses_lead");
+  const lead = { WORKIT_HOST: "opencode", OPENCODE_SESSION_ID: "ses_lead" };
+  // The F6 pattern: an inline WORKIT_SESSION_ID in the lead's own shell.
+  const minted = await verdict(root, { ...lead, WORKIT_SESSION_ID: "ses_lead-v61" });
+  expect(minted.code).toBe(3);
+  expect(minted.json().error).toContain("forged_session");
+  expect(minted.json().unblock).toContain("OpenCode child session");
+  // A lead cannot mint a child id either: children prove themselves from their own shell.
+  const childClaim = await verdict(
+    root,
+    { ...lead, WORKIT_SESSION_ID: undefined },
+    "--session",
+    "ses_lead:ses_child",
+  );
+  expect(childClaim.code).toBe(3);
+  const child = await verdict(root, {
+    WORKIT_HOST: "opencode",
+    OPENCODE_SESSION_ID: "ses_child",
+    WORKIT_SESSION_ID: "ses_lead:ses_child",
+  });
+  expect(child.code).toBe(0);
+  expect(child.json().data).toMatchObject({
+    self: false,
+    actor: { host: "opencode", session: "ses_lead:ses_child" },
+  });
+  expect((await run(root, ["ledger", "check"])).stdout).toContain("accepted; review: verified");
+});
+
+test("Given an OpenCode child that authored as <lead>:<child>, When it judges under its bare host session, Then it is still the author", async () => {
+  const root = featureRepo();
+  authoredBy(root, "ses_lead:ses_child");
+  const bare = await verdict(root, {
+    WORKIT_HOST: "opencode",
+    OPENCODE_SESSION_ID: "ses_child",
+    WORKIT_SESSION_ID: undefined,
+  });
+  expect(bare.code).toBe(3);
+  expect(bare.json().error).toContain("author_verdict");
+});
+
+test("Given a Pi worker shell, When it records a verdict under its host-derived <lead>:<worker session>, Then it is accepted, and --self still records a self verdict from a forged id", async () => {
+  const root = featureRepo();
+  authoredBy(root, "pi-lead");
+  const worker = await verdict(root, {
+    WORKIT_HOST: "pi",
+    PI_SESSION_ID: "pi-worker-w1",
+    WORKIT_SESSION_ID: "pi-lead:pi-worker-w1",
+  });
+  expect(worker.code).toBe(0);
+  const self = await verdict(
+    root,
+    { WORKIT_HOST: "pi", PI_SESSION_ID: "pi-lead", WORKIT_SESSION_ID: "pi-lead-v1" },
+    "--self",
+  );
+  expect(self.code).toBe(0);
+  expect(self.json().data).toMatchObject({ self: true, selfReason: "flag" });
 });
 
 test("Given a session's own failure on the same code, When it records verified without --supersedes, Then the CLI says the verdict is shadowed and how to replace it", async () => {
