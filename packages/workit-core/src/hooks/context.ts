@@ -74,6 +74,13 @@ export const currentTaskEntry = (
  * CLI (`workit_cli`, which creates implicit tasks) are tooling, not
  * conversations.
  */
+/** Whether a host conversation other than `session` is bound to the task. */
+const otherConversation = (entry: TaskIndexEntry, session: SessionHandle): boolean =>
+  entry.sessions.some(
+    (item) =>
+      item.host !== "workit_cli" && !(item.host === session.host && item.handle === session.handle),
+  );
+
 const implicitTaskEntry = (
   store: TaskStore,
   entries: TaskIndexEntry[],
@@ -81,13 +88,7 @@ const implicitTaskEntry = (
 ): TaskIndexEntry | null => {
   const open = entries.filter(
     (entry) =>
-      entry.key !== null &&
-      entry.status !== "closed" &&
-      !entry.sessions.some(
-        (item) =>
-          item.host !== "workit_cli" &&
-          !(item.host === session.host && item.handle === session.handle),
-      ),
+      entry.key !== null && entry.status !== "closed" && !otherConversation(entry, session),
   );
   if (open.length === 0) return null;
   const key = store.currentKey();
@@ -174,23 +175,37 @@ export function sessionCompactContext(
   const entry =
     currentTaskEntry(listed.data, session, selection) ??
     implicitTaskEntry(store, listed.data, session);
-  return entry ? entryCompactContext(store, entry, session, context) : null;
+  return entryCompactContext(store, entry, session, context);
 }
 
 function entryCompactContext(
   store: TaskStore,
-  entry: TaskIndexEntry,
+  entry: TaskIndexEntry | null,
   session: SessionHandle,
   context: OperationContext,
 ): string | null {
+  // The task of the branch this one was cut from: its decisions stay in view
+  // (labelled with their origin) instead of vanishing on a switch. Another
+  // conversation's task is never injected.
+  const found = store.originTaskEntry();
+  const origin =
+    found.ok &&
+    found.data &&
+    found.data.entry.id !== entry?.id &&
+    !otherConversation(found.data.entry, session)
+      ? found.data
+      : null;
+  if (!entry && !origin) return null;
   const workspace = store.readWorkspace();
-  if (!workspace.ok || !workspace.data) return null;
+  if (!workspace.ok || (entry && !workspace.data)) return null;
   const slot = `${store.root}\0${session.host}\0${session.handle}`;
   const key = canonicalJson({
-    task: entry.id,
-    revision: entry.revision,
-    file: entry.file,
-    workspace: workspace.data.revision,
+    task: entry?.id ?? null,
+    revision: entry?.revision ?? null,
+    file: entry?.file ?? null,
+    // The origin task's log signature changes with every write to it.
+    origin: origin && origin.entry.file,
+    workspace: workspace.data?.revision ?? null,
     caller: context.caller,
     workerId: context.workerId ?? null,
     capabilities: context.capabilities,
@@ -205,18 +220,22 @@ function entryCompactContext(
     (hit.signal === null || hit.signal === recentSignal(store.root))
   )
     return hit.value;
-  const task = store.readTask(entry.id);
-  if (!task.ok) return null;
+  const task = entry ? store.readTask(entry.id) : null;
+  if (task && !task.ok) return null;
   const freshness: Freshness = { mode: "signal", current: () => recentSignal(store.root) };
-  const observed = task.data.evidence.some(isObservedCheck);
-  const files = task.data.decisions.flatMap((decision) =>
+  const observed = task?.data.evidence.some(isObservedCheck) ?? false;
+  const files = (task?.data.decisions ?? []).flatMap((decision) =>
     decision.data.binding.contentRefs.flatMap((ref) =>
       ref.kind === "file" ? [path.resolve(store.root, ref.path)] : [],
     ),
   );
   const observedFiles = filesKey(files);
-  const compact = new WorkitCore(store, context).compactContext(entry.id, freshness);
-  if (!compact.ok) return null;
+  const compact = new WorkitCore(store, context).compactContext(
+    entry?.id ?? null,
+    freshness,
+    origin && { origin: origin.origin, taskId: origin.entry.id },
+  );
+  if (!compact.ok || !compact.data) return null;
   cache.delete(slot);
   cache.set(slot, {
     key,
@@ -264,9 +283,12 @@ export const sessionContextText = (
     const entry =
       currentTaskEntry(listed.data, session, descriptor.context.task) ??
       implicitTaskEntry(store, listed.data, session);
-    const text = entry
-      ? entryCompactContext(store, entry, session, hookOperationContext(input, descriptor))
-      : null;
+    const text = entryCompactContext(
+      store,
+      entry,
+      session,
+      hookOperationContext(input, descriptor),
+    );
     if (text) compact = `\n<workit-task-context>${text}</workit-task-context>`;
     if (options.offer) offer = unfinishedTaskOffer(listed.data, session, entry?.id ?? null);
   } catch {

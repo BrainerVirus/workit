@@ -314,6 +314,70 @@ const isNewerVersion = (candidate: string, current: string): boolean => {
 };
 const validId = (value: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+
+const readText = (file: string): string => {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+};
+
+/** `<old> <new> <ident> <unix seconds> <tz>\t<message>`: new sha, seconds, message. */
+const REFLOG_LINE = /^[0-9a-f]+ ([0-9a-f]+) .* (\d+) [+-]\d{4}\t(.*)$/u;
+
+/**
+ * The branch `branch` was cut from, read from git's reflogs (no git process).
+ * Only the branch log's first line counts, and only when it is the creation
+ * entry "branch: Created from <start>": an expired, rewritten or missing log
+ * says nothing. A branch created from HEAD takes
+ * the worktree HEAD log's checkout made by that creation (same new sha, same
+ * or next second) onto the branch or one of its earlier names (`aliases`, it
+ * may have been renamed since). A remote start (`origin/develop`) is
+ * returned as written.
+ */
+const branchStart = (
+  location: StoreLocation,
+  branch: string,
+  aliases: readonly string[],
+): string | null => {
+  const first = readText(
+    path.join(path.dirname(location.dir), "logs", "refs", "heads", branch),
+  ).split("\n", 1)[0];
+  // A "Created from" message only ever starts a log (git deletes the log
+  // with the branch), so the first line alone decides.
+  const created = REFLOG_LINE.exec(first);
+  const start = created && /^branch: Created from (\S+)$/u.exec(created[3])?.[1];
+  if (!created || !start) return null;
+  if (start !== "HEAD") return start;
+  if (!location.git) return null;
+  for (const line of readText(path.join(location.git.gitDir, "logs", "HEAD")).split("\n")) {
+    const entry = REFLOG_LINE.exec(line);
+    const moved = entry && /^checkout: moving from (\S+) to (\S+)$/u.exec(entry[3]);
+    const seconds = entry ? Number(entry[2]) - Number(created[2]) : -1;
+    if (
+      moved &&
+      entry[1] === created[1] &&
+      seconds >= 0 &&
+      seconds <= 1 &&
+      aliases.includes(moved[2])
+    )
+      return moved[1];
+  }
+  return null;
+};
+
+/** Whether `ref` (`refs/remotes/origin/develop`) exists, loose or packed. */
+const refExists = (common: string, ref: string): boolean =>
+  fs.existsSync(path.join(common, ref)) ||
+  readText(path.join(common, "packed-refs")).includes(` ${ref}\n`);
+
+/** Resolved bases per checkout and branch, reused while the reflogs they came
+ * from are unchanged (one entry per branch a process looked at). */
+const origins = new Map<
+  string,
+  { signature: string; name: string | null; renames: ReturnType<typeof branchRenames> }
+>();
 export const sameDirectoryIdentity = (left: string, right: string): boolean => {
   if (!path.isAbsolute(left) || !path.isAbsolute(right)) return false;
   const normalizedLeft = path.resolve(left);
@@ -656,6 +720,94 @@ export class TaskStore {
     const bound = this.openTasksForKey(key.data.key);
     if (!bound.ok) return bound;
     return success(null, null, { key: key.data, bound: bound.data });
+  }
+
+  /**
+   * The open task of this checkout that worker `workerId` is assigned to,
+   * whichever branch it is bound to: worker commands follow the worker, not
+   * the branch checked out now (#264). Null when no open task has it.
+   */
+  taskForWorker(workerId: unknown): Result<Id | null> {
+    if (typeof workerId !== "string" || !validId(workerId))
+      return failure(
+        "invalid_input",
+        "needs a worker id: `workit worker cancel|report <workerId>`",
+      );
+    const listed = this.listTaskIndex();
+    if (!listed.ok) return listed;
+    for (const entry of listed.data) {
+      if (entry.status === "closed") continue;
+      const loaded = this.load(entry.id);
+      if (!loaded.ok) return loaded;
+      if (loaded.data?.record.workers.some((worker) => worker.id === workerId))
+        return success(null, null, entry.id);
+    }
+    return success(null, null, null);
+  }
+
+  /**
+   * The open task whose decisions the current branch inherits: the task of
+   * the branch it was cut from (`origin/develop` counts as `develop`), in any
+   * checkout of this repository, labelled with its origin ("branch develop").
+   * Null off a branch, or when git's reflogs do not name a base.
+   */
+  originTaskEntry(): Result<{ origin: string; entry: TaskIndexEntry } | null> {
+    const key = this.currentKey();
+    const location = this.location();
+    const branch = key.ok ? key.data.branch : null;
+    if (!branch || !location.ok) return success(null, null, null);
+    const common = path.dirname(location.data.dir);
+    const heads = path.join(common, "logs", "refs", "heads");
+    const headLog = location.data.git ? path.join(location.data.git.gitDir, "logs", "HEAD") : "";
+    // Per-turn path: reading a long HEAD log and every branch log costs tens
+    // of ms, so the resolution is reused until one of these files changes.
+    const signatures = [
+      path.join(heads, branch),
+      headLog,
+      heads,
+      path.join(common, "packed-refs"),
+    ].map((file) => fileSignature(file) ?? "-");
+    const slot = `${location.data.dir}\0${headLog}\0${branch}`;
+    let resolved = origins.get(slot);
+    if (resolved?.signature !== signatures.join("|")) {
+      const renames = branchRenames(location.data);
+      // The branch's earlier names, newest first: a rename keeps its log.
+      const aliases = [branch];
+      for (const rename of renames.toReversed())
+        if (rename.to === aliases.at(-1)) aliases.push(rename.from);
+      const start = branchStart(location.data, branch, aliases);
+      const slash = start?.indexOf("/") ?? -1;
+      // `origin/develop` is the remote's `develop`: strip the remote only for
+      // a remote-tracking ref or a configured remote, never for a local
+      // branch or tag that has a slash in its name.
+      const remote =
+        slash > 0 &&
+        !refExists(common, `refs/heads/${start}`) &&
+        (refExists(common, `refs/remotes/${start}`) ||
+          readText(path.join(common, "config")).includes(`[remote "${start!.slice(0, slash)}"]`));
+      const name = start && (remote ? start.slice(slash + 1) : start);
+      // Logs only grow (their size is in the signature), so no racy check.
+      resolved = {
+        signature: signatures.join("|"),
+        name: name && !aliases.includes(name) ? name : null,
+        renames,
+      };
+      origins.set(slot, resolved);
+    }
+    const entry = resolved.name ? this.openTasksForKey(resolved.name, resolved.renames) : null;
+    if (entry && !entry.ok) return entry;
+    return success(
+      null,
+      null,
+      entry?.data[0] ? { origin: `branch ${resolved.name}`, entry: entry.data[0] } : null,
+    );
+  }
+
+  /** The record of an indexed task (`taskId` from the index) in any checkout of
+   * this store: read-only, no binding check. */
+  readStoreTask(taskId: Id): Result<TaskRecord | null> {
+    const loaded = this.load(taskId);
+    return loaded.ok ? success(null, null, loaded.data?.record ?? null) : loaded;
   }
 
   // -------------------------------------------------------------------------
@@ -1442,11 +1594,14 @@ export class TaskStore {
    * task follows its branch through `git branch -m`: it counts for the new
    * name, and a branch created later under the old name starts fresh.
    */
-  private openTasksForKey(key: string): Result<TaskIndexEntry[]> {
+  private openTasksForKey(
+    key: string,
+    known?: ReturnType<typeof branchRenames>,
+  ): Result<TaskIndexEntry[]> {
     const all = this.listStoreIndex();
     if (!all.ok) return all;
-    const location = this.location();
-    const renames = location.ok ? branchRenames(location.data) : [];
+    const location = known ? null : this.location();
+    const renames = known ?? (location?.ok ? branchRenames(location.data) : []);
     return success(
       null,
       null,

@@ -496,3 +496,158 @@ test("--actor stamps the session handle a hook can match and --confirm is accept
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("Given a worker assigned on one branch, When `workit worker cancel` runs on another without --task, Then it cancels the worker on its own task, and a failure names the exact --task command", async () => {
+  const root = fixture();
+  const git = (...args: string[]) => {
+    const run = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    if (run.status !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr}`);
+  };
+  try {
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "test@example.invalid");
+    git("config", "user.name", "Workit Test");
+    git("config", "commit.gpgsign", "false");
+    writeFileSync(path.join(root, "fixture.txt"), "fixture\n");
+    git("add", "fixture.txt");
+    git("commit", "-qm", "fixture");
+    git("switch", "-q", "-c", "feature/a");
+    const assignment = {
+      role: "implementer",
+      objective: "slice",
+      scope,
+      decisionIds: [],
+      requirementIds: [],
+      candidateId: null,
+      stoppingCondition: "report",
+    };
+    const assigned = capture();
+    expect(
+      await runTaskCommand(
+        ["worker", "assign", "--payload", JSON.stringify({ assignment }), "--json"],
+        { cwd: root, out: assigned.out, err: assigned.err },
+      ),
+    ).toBe(0);
+    const workerId = JSON.parse(assigned.read().stdout).data.id as string;
+    git("switch", "-q", "-c", "feature/b");
+
+    const stale = capture();
+    expect(
+      await runTaskCommand(
+        [
+          "worker",
+          "cancel",
+          "--revision",
+          "00000000-0000-4000-8000-0000000000ff",
+          "--payload",
+          JSON.stringify({ workerId, reason: "stale" }),
+        ],
+        { cwd: root, out: stale.out, err: stale.err },
+      ),
+    ).toBe(1);
+    expect(stale.read().stderr).toMatch(
+      new RegExp(
+        `workit worker cancel ${workerId} --task [0-9a-f-]{36} --payload '\\{"reason":"stale"\\}'`,
+      ),
+    );
+
+    const cancelled = capture();
+    expect(
+      await runTaskCommand(
+        // The positional form #264 asked for.
+        [
+          "worker",
+          "cancel",
+          workerId,
+          "--payload",
+          JSON.stringify({ reason: "moved on" }),
+          "--json",
+        ],
+        { cwd: root, out: cancelled.out, err: cancelled.err },
+      ),
+    ).toBe(0);
+    expect(JSON.parse(cancelled.read().stdout)).toMatchObject({
+      ok: true,
+      data: { id: workerId, data: { state: "stopped" } },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the positional worker id maps to workerId, conflicts with a different payload workerId, and is refused where no worker is named", async () => {
+  const root = fixture();
+  const workerId = "00000000-0000-4000-8000-0000000000aa";
+  try {
+    const conflict = capture();
+    expect(
+      await runTaskCommand(
+        [
+          "worker",
+          "report",
+          workerId,
+          "--payload",
+          JSON.stringify({ workerId: "00000000-0000-4000-8000-0000000000bb" }),
+          "--json",
+        ],
+        { cwd: root, out: conflict.out, err: conflict.err },
+      ),
+    ).toBe(1);
+    expect(JSON.parse(conflict.read().stdout)).toMatchObject({
+      ok: false,
+      error: "payload workerId conflicts with the positional worker id",
+    });
+
+    // After `--` the one argument is still the worker id.
+    const dashed = capture();
+    expect(
+      await runTaskCommand(["worker", "cancel", "--json", "--", workerId], {
+        cwd: root,
+        out: dashed.out,
+        err: dashed.err,
+      }),
+    ).toBe(1);
+    expect(JSON.parse(dashed.read().stdout)).toMatchObject({
+      ok: false,
+      code: "not_found",
+      error: expect.stringContaining(`workit worker cancel ${workerId} --task <task-id>\``),
+    });
+
+    // No worker id at all: invalid input naming the form, before any lookup.
+    const missing = capture();
+    expect(
+      await runTaskCommand(["worker", "cancel", "--json"], {
+        cwd: root,
+        out: missing.out,
+        err: missing.err,
+      }),
+    ).toBe(1);
+    expect(JSON.parse(missing.read().stdout)).toMatchObject({
+      ok: false,
+      code: "invalid_input",
+      error: expect.stringContaining("workit worker cancel|report <workerId>"),
+    });
+
+    const extra = capture();
+    expect(
+      await runTaskCommand(["worker", "cancel", workerId, "again"], {
+        cwd: root,
+        out: extra.out,
+        err: extra.err,
+      }),
+    ).toBe(2);
+    expect(extra.read().stderr).toContain("unknown argument: again");
+
+    const assign = capture();
+    expect(
+      await runTaskCommand(["worker", "assign", workerId], {
+        cwd: root,
+        out: assign.out,
+        err: assign.err,
+      }),
+    ).toBe(2);
+    expect(assign.read().stderr).toContain(`unknown argument: ${workerId}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
