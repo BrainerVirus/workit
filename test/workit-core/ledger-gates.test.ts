@@ -320,6 +320,18 @@ test("Given a forged pass and a legitimate independent pass, When checked, Then 
   expect(result.warnings.join("\n")).toContain("unverified");
 });
 
+test("Given the author's own self verdict, When a forged pass is appended after it, Then the branch still reads self-reviewed with the author's verdict", () => {
+  const root = featureRepo();
+  const own = value(
+    recordVerdict(by(root, "author"), { result: "tests-verified", how: "suite", self: true }),
+  );
+  append(root, forgedVerdict(root));
+  const result = check(root);
+  expect(result.review).toBe("self-reviewed");
+  expect(result.selfVerdict?.id).toBe(own.id);
+  expect(result.accepted.reasons).toEqual(["self"]);
+});
+
 test("Given a forged verdict, When `workit ledger verdict` reports the branch, Then it says not accepted (unsigned)", async () => {
   const root = featureRepo();
   chainStarted(root);
