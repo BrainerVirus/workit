@@ -99,6 +99,49 @@ test("a broken Codex payload passes through with a stderr diagnostic instead of 
   }
 });
 
+test("Given a Cursor shell payload Workit cannot parse, When the hook runs, Then it answers allow with the reason on stderr; a parsed deny still denies (audit N7)", async () => {
+  await withProtectedMain(async () => {
+    const root = tempRoot();
+    try {
+      const run = async (payload: unknown) => {
+        let stdout = "";
+        let stderr = "";
+        const code = await runHookProcess(
+          "cursor",
+          Readable.from([JSON.stringify(payload)]),
+          { write: (chunk: string) => (stdout += chunk) },
+          { write: (chunk: string) => (stderr += chunk) },
+          {},
+        );
+        return { code, json: JSON.parse(stdout) as Record<string, unknown>, stderr };
+      };
+      // A renamed identity field and a workspace root that is gone.
+      for (const broken of [
+        { conversation_id: undefined, session_id: undefined, conversationId: "c-1" },
+        { workspace_roots: [path.join(root, "gone")] },
+      ]) {
+        const out = await run(
+          fixture("cursor", "before-shell-execution", root, {
+            command: "git checkout -b main",
+            ...broken,
+          }),
+        );
+        expect(out.code).toBe(0);
+        expect(out.json).toEqual({ permission: "allow" });
+        expect(out.stderr).toContain("[workit] hook input rejected");
+      }
+      const denied = await run(
+        fixture("cursor", "before-shell-execution", root, { command: "git checkout -b main" }),
+      );
+      expect(denied.code).toBe(2);
+      expect(denied.json).toMatchObject({ permission: "deny" });
+      expect(denied.stderr).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // A task's on-disk record is its event log; these replace it with one
 // opening event (as another runtime might leave it) and replay it raw.
 const writeRecord = (root: string, id: string, record: unknown): string => {
