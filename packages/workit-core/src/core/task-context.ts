@@ -73,11 +73,20 @@ type CompactDecision = {
   digest: string;
   choice: string;
   references: CompactReference[];
+  /** Where an inherited decision was recorded ("branch develop"); absent for the task's own. */
+  origin?: string;
 };
 type CompactMethod = Pick<SelectedMethod, "id" | "assurance"> & { reason: string };
+/** Decisions of a task the current one inherits from (its base branch's task). */
+export type InheritedDecisions = {
+  origin: string;
+  taskId: string;
+  decisions: TaskView["task"]["decisions"];
+};
 export type CompactTaskContext = {
   objective: string;
-  status: TaskView["task"]["status"];
+  /** Null when the checkout has no task yet and only inherited decisions apply. */
+  status: TaskView["task"]["status"] | null;
   decisions: CompactDecision[];
   methods: CompactMethod[];
   gaps: string[];
@@ -128,26 +137,96 @@ const compactReference = (ref: Ref): CompactReference => {
   return { kind: ref.kind };
 };
 
-export function compactTaskContext(view: TaskView): string {
-  const decisions: CompactDecision[] = view.task.decisions
-    .slice()
-    .toSorted((left, right) => {
-      const leftAt = compactTimestamp(left.recordedAt);
-      const rightAt = compactTimestamp(right.recordedAt);
-      if (leftAt !== rightAt) return leftAt > rightAt ? -1 : 1;
-      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
-    })
-    .slice(0, COMPACT_MAX_ITEMS)
-    .map((entry) => ({
-      id: entry.id,
-      purpose: entry.data.purpose,
-      status: entry.data.response,
-      digest: entry.data.digest,
-      choice:
-        compactDecisionChoice(entry) ||
-        `task.inspect taskId=${view.task.id} view=full; decision=${entry.id}`,
-      references: entry.data.binding.contentRefs.slice(0, 1).map(compactReference),
-    }));
+type TaskDecision = TaskView["task"]["decisions"][number];
+const newestDecisionFirst = (left: TaskDecision, right: TaskDecision): number => {
+  const leftAt = compactTimestamp(left.recordedAt);
+  const rightAt = compactTimestamp(right.recordedAt);
+  if (leftAt !== rightAt) return leftAt > rightAt ? -1 : 1;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+};
+const compactDecision = (
+  entry: TaskDecision,
+  taskId: string,
+  origin: string | null,
+): CompactDecision => ({
+  id: entry.id,
+  purpose: entry.data.purpose,
+  status: entry.data.response,
+  digest: entry.data.digest,
+  choice:
+    compactDecisionChoice(entry) || `task.inspect taskId=${taskId} view=full; decision=${entry.id}`,
+  references: entry.data.binding.contentRefs.slice(0, 1).map(compactReference),
+  ...(origin === null ? {} : { origin: compactText(origin, COMPACT_TEXT_BYTES)! }),
+});
+/**
+ * The task's own decisions (newest first), then the live (unrevoked)
+ * decisions it inherits, nearest origin first, at most COMPACT_MAX_ITEMS.
+ */
+const compactDecisions = (
+  own: { taskId: string; decisions: TaskDecision[] } | null,
+  inherited: InheritedDecisions[],
+): CompactDecision[] =>
+  [
+    ...(own
+      ? own.decisions
+          .toSorted(newestDecisionFirst)
+          .map((entry) => compactDecision(entry, own.taskId, null))
+      : []),
+    ...inherited.flatMap((source) =>
+      source.decisions
+        .filter((entry) => entry.data.revoked === null)
+        .toSorted(newestDecisionFirst)
+        .map((entry) => compactDecision(entry, source.taskId, source.origin)),
+    ),
+  ].slice(0, COMPACT_MAX_ITEMS);
+
+/** One gap for every stale evidence row, with the one command that lists them. */
+const staleEvidenceGap = (count: number, taskId: string): string =>
+  `${count} stale evidence ${count === 1 ? "row" : "rows"}; inspect: workit task inspect --task ${taskId} --view full`;
+
+/** Shrink `context` until it fits COMPACT_MAX_BYTES (gaps, then decisions, then methods). */
+const encodeBounded = (context: CompactTaskContext): string => {
+  let encoded = JSON.stringify(context);
+  while (
+    compactBytes(encoded) > COMPACT_MAX_BYTES &&
+    (context.decisions.length || context.methods.length || context.gaps.length)
+  ) {
+    if (context.gaps.length) context.gaps.pop();
+    else if (context.decisions.length) context.decisions.pop();
+    else context.methods.pop();
+    encoded = JSON.stringify(context);
+  }
+  if (compactBytes(encoded) > COMPACT_MAX_BYTES) {
+    context.objective = compactText(context.objective, 64) ?? "";
+    context.nextAction = compactText(context.nextAction, 64);
+    encoded = JSON.stringify(context);
+  }
+  return encoded;
+};
+
+/**
+ * Compact context for a checkout with no task of its own yet: only the
+ * decisions it inherits from the branches it was cut from. Empty string when
+ * there are none.
+ */
+export function compactInheritedContext(label: string, inherited: InheritedDecisions[]): string {
+  const decisions = compactDecisions(null, inherited);
+  if (decisions.length === 0) return "";
+  return encodeBounded({
+    objective: compactText(`no task for ${label} yet`, COMPACT_TEXT_BYTES) ?? "",
+    status: null,
+    decisions,
+    methods: [],
+    gaps: [],
+    nextAction: null,
+  });
+}
+
+export function compactTaskContext(view: TaskView, inherited: InheritedDecisions[] = []): string {
+  const decisions = compactDecisions(
+    { taskId: view.task.id, decisions: view.task.decisions },
+    inherited,
+  );
   const methods: CompactMethod[] = view.task.policy
     ? selectMethods(view.task.policy, view.capabilities).map((method) => ({
         id: method.id,
@@ -155,11 +234,10 @@ export function compactTaskContext(view: TaskView): string {
         reason: compactText(method.reason, COMPACT_TEXT_BYTES) ?? "",
       }))
     : [];
+  const stale = view.evidence.filter((entry) => entry.status === "stale").length;
   const gaps = Array.from(
     new Set([
-      ...view.evidence
-        .filter((entry) => entry.status === "stale")
-        .map((entry) => `stale evidence: ${entry.evidenceId}`),
+      ...(stale ? [staleEvidenceGap(stale, view.task.id)] : []),
       ...view.requirements
         .filter((entry) => entry.status !== "satisfied")
         .map((entry) => entry.reason),
@@ -177,22 +255,7 @@ export function compactTaskContext(view: TaskView): string {
     gaps,
     nextAction: compactText(view.task.progress.nextAction, COMPACT_TEXT_BYTES),
   };
-  let encoded = JSON.stringify(context);
-  while (
-    compactBytes(encoded) > COMPACT_MAX_BYTES &&
-    (context.decisions.length || context.methods.length || context.gaps.length)
-  ) {
-    if (context.gaps.length) context.gaps.pop();
-    else if (context.decisions.length) context.decisions.pop();
-    else context.methods.pop();
-    encoded = JSON.stringify(context);
-  }
-  if (compactBytes(encoded) > COMPACT_MAX_BYTES) {
-    context.objective = compactText(context.objective, 64) ?? "";
-    context.nextAction = compactText(context.nextAction, 64);
-    encoded = JSON.stringify(context);
-  }
-  return encoded;
+  return encodeBounded(context);
 }
 
 export const exportDigest = (bundle: {

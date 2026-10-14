@@ -496,3 +496,79 @@ test("--actor stamps the session handle a hook can match and --confirm is accept
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("Given a worker assigned on one branch, When `workit worker cancel` runs on another without --task, Then it cancels the worker on its own task, and a failure names the exact --task command", async () => {
+  const root = fixture();
+  const git = (...args: string[]) => {
+    const run = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    if (run.status !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr}`);
+  };
+  try {
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "test@example.invalid");
+    git("config", "user.name", "Workit Test");
+    git("config", "commit.gpgsign", "false");
+    writeFileSync(path.join(root, "fixture.txt"), "fixture\n");
+    git("add", "fixture.txt");
+    git("commit", "-qm", "fixture");
+    git("switch", "-q", "-c", "feature/a");
+    const assignment = {
+      role: "implementer",
+      objective: "slice",
+      scope,
+      decisionIds: [],
+      requirementIds: [],
+      candidateId: null,
+      stoppingCondition: "report",
+    };
+    const assigned = capture();
+    expect(
+      await runTaskCommand(
+        ["worker", "assign", "--payload", JSON.stringify({ assignment }), "--json"],
+        { cwd: root, out: assigned.out, err: assigned.err },
+      ),
+    ).toBe(0);
+    const workerId = JSON.parse(assigned.read().stdout).data.id as string;
+    git("switch", "-q", "-c", "feature/b");
+
+    const stale = capture();
+    expect(
+      await runTaskCommand(
+        [
+          "worker",
+          "cancel",
+          "--revision",
+          "00000000-0000-4000-8000-0000000000ff",
+          "--payload",
+          JSON.stringify({ workerId, reason: "stale" }),
+        ],
+        { cwd: root, out: stale.out, err: stale.err },
+      ),
+    ).toBe(1);
+    expect(stale.read().stderr).toMatch(
+      new RegExp(
+        `workit worker cancel --task [0-9a-f-]{36} --payload '\\{"workerId":"${workerId}","reason":"stale"\\}'`,
+      ),
+    );
+
+    const cancelled = capture();
+    expect(
+      await runTaskCommand(
+        [
+          "worker",
+          "cancel",
+          "--payload",
+          JSON.stringify({ workerId, reason: "moved on" }),
+          "--json",
+        ],
+        { cwd: root, out: cancelled.out, err: cancelled.err },
+      ),
+    ).toBe(0);
+    expect(JSON.parse(cancelled.read().stdout)).toMatchObject({
+      ok: true,
+      data: { id: workerId, data: { state: "stopped" } },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
