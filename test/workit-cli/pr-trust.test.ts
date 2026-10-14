@@ -2,7 +2,8 @@
 // rows and a merge whose post-merge reads fail (audit 2026-10-13 N1, N3),
 // over recorded GitHub API shapes (fake gh).
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { appendFileSync, chmodSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -19,6 +20,19 @@ import {
   type ForgeRepo,
   type Reply,
 } from "@/test/shared/helpers/forge-replay";
+
+// Issued ids are issued once per user state dir: this file gets its own, so
+// ids other test files issue under the same names never collide with these.
+const runState = process.env.WORKFLOW_TOOLKIT_STATE;
+const ownState = mkdtempSync(path.join(os.tmpdir(), "wk-state-"));
+beforeAll(() => {
+  process.env.WORKFLOW_TOOLKIT_STATE = ownState;
+});
+afterAll(() => {
+  if (runState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = runState;
+  rmSync(ownState, { recursive: true, force: true });
+});
 
 setDefaultTimeout(60_000);
 

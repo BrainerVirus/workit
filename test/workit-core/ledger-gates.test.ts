@@ -3,7 +3,7 @@
 // hook issued is never an accepted independent verdict, and it cannot retire,
 // discount or carry another row. Legitimate flows (host-issued subagent ids,
 // --as, CI --session, chained rows from an older CLI) still pass.
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
@@ -36,6 +36,19 @@ import {
   type LedgerResult,
   type SessionSource,
 } from "@/packages/workit-core/src/ledger";
+
+// Issued ids are issued once per user state dir: this file gets its own, so
+// ids other test files issue under the same names never collide with these.
+const runState = process.env.WORKFLOW_TOOLKIT_STATE;
+const ownState = mkdtempSync(path.join(os.tmpdir(), "wk-state-"));
+beforeAll(() => {
+  process.env.WORKFLOW_TOOLKIT_STATE = ownState;
+});
+afterAll(() => {
+  if (runState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = runState;
+  rmSync(ownState, { recursive: true, force: true });
+});
 
 const dirs: string[] = [];
 afterEach(() => {

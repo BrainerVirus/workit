@@ -2,7 +2,7 @@
 // another session, a failing reviewer made an author afterwards, rows
 // deleted or moved, and the gate behaviors the first round left untested
 // (mutants M12, M14, M16, M22, M32).
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -20,6 +20,19 @@ import {
 } from "@/packages/workit-core/src/ledger";
 import { useConfigHome } from "@/test/shared/grant-home";
 import { fixture } from "./hooks/hook-fixtures";
+
+// Issued ids are issued once per user state dir: this file gets its own, so
+// ids other test files issue under the same names never collide with these.
+const runState = process.env.WORKFLOW_TOOLKIT_STATE;
+const ownState = mkdtempSync(path.join(os.tmpdir(), "wk-state-"));
+beforeAll(() => {
+  process.env.WORKFLOW_TOOLKIT_STATE = ownState;
+});
+afterAll(() => {
+  if (runState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = runState;
+  rmSync(ownState, { recursive: true, force: true });
+});
 
 const dirs: string[] = [];
 afterEach(() => {
