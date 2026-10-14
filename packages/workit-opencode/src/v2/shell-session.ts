@@ -12,8 +12,14 @@
 //     OPENCODE_SESSION_ID.
 import { childSessionId } from "@brainervirus/workit-core/src/host-session";
 
-/** Shell tool calls seen in `execute.before` and not yet created, by command text. */
-export type PendingShells = Map<string, string[]>;
+/**
+ * Shell tool calls seen in `execute.before` and not yet created, by command
+ * text. `mixed` marks a queue that has held two different sessions at once:
+ * which create belongs to which call is then unknown, so every shell of that
+ * command gets no derived id until the queue drains.
+ */
+type PendingQueue = { sessions: string[]; mixed: boolean };
+export type PendingShells = Map<string, PendingQueue>;
 
 const PENDING_LIMIT = 256;
 
@@ -30,8 +36,10 @@ export const noteShellCall = (
 ): void => {
   const command = commandText(event.input);
   if (!command) return;
-  const queue = pending.get(command) ?? [];
-  queue.push(String(event.sessionID));
+  const sessionID = String(event.sessionID);
+  const queue = pending.get(command) ?? { sessions: [], mixed: false };
+  if (queue.sessions.some((other) => other !== sessionID)) queue.mixed = true;
+  queue.sessions.push(sessionID);
   pending.set(command, queue);
   if (pending.size > PENDING_LIMIT) pending.delete(pending.keys().next().value!);
 };
@@ -44,9 +52,9 @@ export const settleShellCall = (
   const command = commandText(event.input);
   const queue = command ? pending.get(command) : undefined;
   if (!command || !queue) return;
-  const index = queue.indexOf(String(event.sessionID));
-  if (index >= 0) queue.splice(index, 1);
-  if (queue.length === 0) pending.delete(command);
+  const index = queue.sessions.indexOf(String(event.sessionID));
+  if (index >= 0) queue.sessions.splice(index, 1);
+  if (queue.sessions.length === 0) pending.delete(command);
 };
 
 export type ShellCreate = { command: string; env: Record<string, string | undefined> };
@@ -54,8 +62,9 @@ export type ShellCreate = { command: string; env: Record<string, string | undefi
 /**
  * `shell.create.before`: set the Workit session variables for the shell about
  * to run. `parentOf` resolves a session's parent (undefined for a lead).
- * Two calls of the same command from different sessions in flight at once
- * are ambiguous: the shell then gets no derived id, never a wrong one.
+ * Once the same command has been in flight from two different sessions at
+ * once, its shells get no derived id until its queue drains, never a wrong
+ * one (they fall back to their own OPENCODE_SESSION_ID).
  */
 export const applyShellSession = async (
   pending: PendingShells,
@@ -65,10 +74,10 @@ export const applyShellSession = async (
   event.env.WORKIT_HOST = "opencode";
   delete event.env.WORKIT_SESSION_ID;
   const queue = pending.get(event.command);
-  if (!queue || queue.length === 0) return;
-  const sessionID = queue.shift()!;
-  if (queue.length === 0) pending.delete(event.command);
-  if (queue.some((other) => other !== sessionID)) return;
+  if (!queue || queue.sessions.length === 0) return;
+  const sessionID = queue.sessions.shift()!;
+  if (queue.sessions.length === 0) pending.delete(event.command);
+  if (queue.mixed) return;
   const parent = await parentOf(sessionID);
   if (parent) event.env.WORKIT_SESSION_ID = childSessionId(parent, sessionID);
 };

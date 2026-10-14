@@ -12,6 +12,7 @@ import {
   dispatchHook,
 } from "@/packages/workit-core/src/hooks/index";
 import { fixture, startTask, tempRoot } from "@/test/workit-core/hooks/hook-fixtures";
+import { sessionClaimRefusal } from "@/packages/workit-core/src/host-session";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -150,4 +151,27 @@ test("G a Claude Code SubagentStart, T only the plugin-namespaced workit:<role> 
     expect(text, other).not.toContain("git worktree");
     expect(text, other).not.toContain("Its own Workit session");
   }
+});
+
+test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issued is accepted for a verdict, and a lead's invented <lead>:v1 is refused", () => {
+  const root = repo();
+  const claudeLead = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "claude-session-1" };
+  const codexLead = { CODEX_THREAD_ID: "codex-session-1" };
+  // Before any SubagentStart nothing under the lead is issued.
+  expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).not.toBeNull();
+  dispatchHook(
+    claudeCodeAdapter,
+    fixture("claude-code", "subagent-start", root, { agent_type: "workit:verifier" }),
+  );
+  codex("subagent-start", root, { agent_type: "workit-verifier" });
+  expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).toBeNull();
+  expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root)).toBeNull();
+  for (const [env, invented] of [
+    [claudeLead, "claude-session-1:v1"],
+    [codexLead, "codex-session-1:v1"],
+  ] as const)
+    expect(sessionClaimRefusal(env, invented, root)?.error).toContain("forged_session");
+  // A non-judge subagent is issued nothing.
+  codex("subagent-start", root, { agent_type: "worker", agent_id: "agent-2" });
+  expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-2", root)).not.toBeNull();
 });

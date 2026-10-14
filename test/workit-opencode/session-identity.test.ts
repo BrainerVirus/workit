@@ -37,7 +37,10 @@ const repository = () => {
 };
 
 /** The OpenCode V2 plugin context the plugin touches, with a scripted session table. */
-const harness = async (root: string, sessions: Record<string, { parentID?: string }>) => {
+const harness = async (
+  root: string,
+  sessions: Record<string, { parentID?: string; directory?: string }>,
+) => {
   const registered: Registered[] = [];
   const toolHooks = new Map<string, (event: any) => Promise<void>>();
   const shellHooks = new Map<string, (event: any) => Promise<void> | void>();
@@ -47,7 +50,11 @@ const harness = async (root: string, sessions: Record<string, { parentID?: strin
     session: {
       get: async ({ sessionID }: { sessionID: string }) =>
         sessions[sessionID]
-          ? { id: sessionID, ...sessions[sessionID], location: { directory: root } }
+          ? {
+              id: sessionID,
+              ...(sessions[sessionID].parentID ? { parentID: sessions[sessionID].parentID } : {}),
+              location: { directory: sessions[sessionID].directory ?? root },
+            }
           : null,
       hook: noop,
       context: async () => [],
@@ -136,14 +143,24 @@ test("Given OpenCode V2, When the lead and a child run workit in their shells, T
   }
 });
 
-test("Given the same command in flight from two sessions, Then the shell gets no derived id rather than a wrong one", async () => {
+test("Given the same command in flight from two sessions, Then none of its shells gets a derived id until its queue drains, never a wrong one", async () => {
   const pending: PendingShells = new Map();
+  const create = async () => {
+    const event = { command: "ls", env: {} as Record<string, string | undefined> };
+    await applyShellSession(pending, event, async () => "ses_lead");
+    return event.env;
+  };
   noteShellCall(pending, { sessionID: "ses_a", input: { command: "ls" } });
   noteShellCall(pending, { sessionID: "ses_b", input: { command: "ls" } });
-  const event = { command: "ls", env: {} as Record<string, string | undefined> };
-  await applyShellSession(pending, event, async () => "ses_lead");
-  expect(event.env).toEqual({ WORKIT_HOST: "opencode" });
+  // Which create is whose is unknown: both shells get no derived id.
+  expect(await create()).toEqual({ WORKIT_HOST: "opencode" });
+  expect(await create()).toEqual({ WORKIT_HOST: "opencode" });
+  expect(pending.size).toBe(0);
+  // Drained: a lone call is attributed again.
+  noteShellCall(pending, { sessionID: "ses_b", input: { command: "ls" } });
+  expect(await create()).toEqual({ WORKIT_HOST: "opencode", WORKIT_SESSION_ID: "ses_lead:ses_b" });
   // A denied call that never created a shell is forgotten.
+  noteShellCall(pending, { sessionID: "ses_b", input: { command: "ls" } });
   settleShellCall(pending, { sessionID: "ses_b", input: { command: "ls" } });
   expect(pending.size).toBe(0);
 });
@@ -188,6 +205,51 @@ test("Given an OpenCode child session without a Workit worker, When it records a
   } finally {
     plugin.cleanup();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Given a grandchild session, or a child whose lead runs in another workspace, When it records a finding without a worker, Then it is denied", async () => {
+  const root = repository();
+  const elsewhere = mkdtempSync(path.join(os.tmpdir(), "workit-v2-elsewhere-"));
+  const plugin = await harness(root, {
+    ses_lead: {},
+    ses_child: { parentID: "ses_lead" },
+    ses_grandchild: { parentID: "ses_child" },
+    ses_foreign_lead: { directory: elsewhere },
+    ses_foreign_child: { parentID: "ses_foreign_lead" },
+  });
+  try {
+    const started = new WorkitCore(new TaskStore(root), {
+      root,
+      caller: { host: "opencode", actor: "ses_lead" },
+      capabilities: [],
+      constraints: [],
+      now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    }).task(
+      taskStartRequest({
+        intent: { objective: "identity", scope: scope({ paths: ["."] }), authorityRefs: [] },
+      }),
+    );
+    expect(started.ok).toBe(true);
+    const finding = {
+      schemaVersion: 1,
+      action: "record",
+      claim: "x",
+      consequence: "y",
+      scope: scope(),
+      candidateId: null,
+      refs: [],
+    };
+    for (const session of ["ses_grandchild", "ses_foreign_child"]) {
+      const denied = await plugin.call("workit_finding", finding, session);
+      expect(denied.ok, session).toBe(false);
+      expect(denied.error, session).toContain("no validated Workit worker");
+    }
+    expect((await plugin.call("workit_finding", finding, "ses_child")).ok).toBe(true);
+  } finally {
+    plugin.cleanup();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
   }
 });
 

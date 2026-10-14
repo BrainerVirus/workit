@@ -423,7 +423,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   // An independent verdict acts only as this shell's own host session or a
   // host-derived child of it; a self verdict is never accepted, so it is not checked.
   const claimed = values.self === true ? null : claimedSession(acting);
-  const refusal = claimed === null ? null : sessionClaimRefusal(io.env, claimed);
+  const refusal = claimed === null ? null : sessionClaimRefusal(io.env, claimed, io.cwd);
   if (refusal) return emit(io, fail("blocked", refusal.error, { unblock: refusal.unblock }));
   const verdict = await recorded(
     recordVerdict(context, {

@@ -32,6 +32,7 @@ each runs in its own git worktree with a fixed brief, and its file scope is
 checked at fan-in with `git diff --name-only <base>...<branch>`, not enforced
 while it works. Verifiers and reviewers stay read-only and record
 `workit ledger verdict` under a session the lead assigns
-(`WORKIT_SESSION_ID=<lead>:<n>` in the brief: Cursor's shell carries no
-session id, so this declared child id is the verifier's session), never the
+(`WORKIT_SESSION_ID=<lead>:verifier-<random hex>` in the brief, a fresh
+suffix per verifier: Cursor's shell carries no session id, so this declared
+child id is the verifier's session), never the
 author's.

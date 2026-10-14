@@ -128,3 +128,45 @@ test("Given a stale assigned worker on branch A and none on branch B's task, Whe
     value.cleanup();
   }
 });
+
+test("Given a stale assigned worker on branch A, When the lead launches from a fresh branch B with no task (the #264 repro), Then it is refused: start B's task first, and A's worker is not captured", async () => {
+  const value = fixture();
+  try {
+    const taskA = value.taskWithWorker();
+    const workerA = value.workers(taskA)[0].id;
+    value.switchTo("feature/b");
+    const refused = value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "lead",
+      id: "call_b",
+      input: {},
+    });
+    await expect(refused).rejects.toThrow(/this branch has no Workit task yet; start it/);
+    await expect(refused).rejects.toThrow(`"taskId":"${taskA}","workerId":"${workerA}"`);
+    expect(value.workers(taskA)[0].data.state).toBe("assigned");
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("Given workers left on two other branches' tasks, When the lead launches from a fresh branch, Then neither is captured and both cancel calls are named", async () => {
+  const value = fixture();
+  try {
+    const taskA = value.taskWithWorker();
+    value.switchTo("feature/c");
+    const taskC = value.taskWithWorker();
+    value.switchTo("feature/d");
+    const refused = value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "lead",
+      id: "call_d",
+      input: {},
+    });
+    await expect(refused).rejects.toThrow(`"taskId":"${taskA}"`);
+    await expect(refused).rejects.toThrow(`"taskId":"${taskC}"`);
+    expect(value.workers(taskA)[0].data.state).toBe("assigned");
+    expect(value.workers(taskC)[0].data.state).toBe("assigned");
+  } finally {
+    value.cleanup();
+  }
+});

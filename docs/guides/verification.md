@@ -78,43 +78,56 @@ with `workit git commit` carry a `Workit-Session:` trailer, and the host hooks
 record raw `git commit`s for the session that ran them, so the authoring
 session's verdict is never accepted.
 
-A verifier never gets a hand-minted id. Each host derives one:
+A verifier never names its own session. Each host gives it one:
 
 | Host | Verifier session |
 | --- | --- |
-| Claude Code, Codex, Cursor | `<lead>:<agent id>` from the SubagentStart hook, passed as `--session` |
+| Claude Code, Codex | `<lead>:<agent id>` from the SubagentStart hook (`workit:verifier`, `workit:reviewer`; Codex `workit-verifier`, `workit-reviewer`), passed exactly as `--session`; any other Codex verifier passes `--as verifier` |
 | OpenCode | a child session's shell already has `WORKIT_SESSION_ID=<lead>:<child>` (plugin `shell.hook("create.before")`); its `OPENCODE_SESSION_ID` is the child's own id |
 | Pi | a supervised worker's shell already has `WORKIT_SESSION_ID=<lead>:<worker session>`; its `PI_SESSION_ID` is the worker's own id |
+| Cursor, CI, a plain terminal | declared: `WORKIT_SESSION_ID=<lead>:verifier-<random hex>` (Cursor's hook cannot reach a subagent) |
 
 An independent verdict is refused (`forged_session`) unless its session is
-the shell's real host session or a host-derived child of it. The real session
-is the host's own variable when it sets one (`OPENCODE_SESSION_ID`,
-`PI_SESSION_ID`, `CODEX_THREAD_ID`). Otherwise it is the `WORKIT_SESSION_ID`
-the host's hook exported (Claude Code, Cursor, a plain terminal).
+one of these:
 
-A derived child is one of:
+- the shell's own session: the host's variable when it sets one
+  (`OPENCODE_SESSION_ID`, `PI_SESSION_ID`, `CODEX_THREAD_ID`), else the
+  `WORKIT_SESSION_ID` Claude Code's SessionStart exported with
+  `WORKIT_HOST=claude_code`;
+- `<lead>:<this session>`, a child naming its own host session (only where the
+  host sets the variable);
+- `<lead>:<agent id>` that this lead's SubagentStart hook issued (Claude Code,
+  Codex). The hook records each id it issues in the workspace store
+  (`hooks/issued/`, the newest 64 per lead), so a `<lead>:v1` the lead made up
+  is refused. On Claude Code the same holds for a declared
+  `WORKIT_SESSION_ID=<lead>:<x>`.
 
-- `<lead>:<this session>`, a child naming its own id;
-- `<this session>:<agent id>`, on hosts whose subagents share the lead's
-  shell (Claude Code, Codex, Cursor).
+A made-up `<lead>-v1` is refused as `--session` on Claude Code, Codex,
+OpenCode and Pi, and as `WORKIT_SESSION_ID` where the host sets its own
+variable (Codex, OpenCode, Pi). A `--self` verdict is never accepted, so it
+is not checked.
 
-OpenCode and Pi children run their own shell, so a lead there cannot mint one.
-A hand-minted `<lead>-v1` is refused as `--session` on every host, and as
-`WORKIT_SESSION_ID` wherever the host sets its own session id (OpenCode, Pi,
-Codex). A `--self` verdict is
-never accepted, so it is not checked.
+With no host session at all (CI, a plain terminal, Cursor's prefixed
+commands: no host variable and no `WORKIT_HOST`), the session is only
+declared: `--session X` and `WORKIT_SESSION_ID=X` are the same declaration and
+both are accepted. Nothing there can tell a verifier from the author but the
+id itself.
 
-Author matching compares the host session behind a derived id: a child that
-committed as `<lead>:<child>` is still the author under its bare `<child>`.
+Author matching also catches a derived form: a bare host session and its
+`<lead>:<session>` form are the same author (an OpenCode child that committed
+as `<lead>:<child>` and judges as `<child>`). Two derived ids never match on a
+shared last segment.
 
-`--as <role>` only keeps verifier ids distinct; it never makes the author
-independent. `--session <id>` equal to an author session is refused. An
-accepted `--session` is recorded as `sessionSource: flag`, and `ledger check`
-prints "named by --session".
+`--as <role>` only keeps verifier ids distinct; it is checked by the session it
+derives from and never makes the author independent. `--session <id>` equal
+to an author session is refused. An accepted `--session` is recorded as
+`sessionSource: flag`, and `ledger check` prints "named by --session".
 
-On hosts where the id is declared rather than derived (Claude Code, Cursor), a
-caller that edits its own environment can still pick any id: there the check
-stops casual forgery, not a determined one.
+Limits: on Claude Code a caller that rewrites its own environment
+(`WORKIT_SESSION_ID=lead-v1`, no colon) still declares any id; Cursor, CI and
+a plain terminal are declared by design. There the check stops casual
+forgery, not a determined one. Reading `CLAUDE_CODE_SESSION_ID` could close
+the Claude Code gap; it is not used yet.
 
 Verdicts are SHA-keyed and carry over a rebase when
 the patch-id and diff are unchanged. A dirty tree is refused, also when the

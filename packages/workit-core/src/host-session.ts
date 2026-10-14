@@ -7,6 +7,10 @@
 //   - Pi: PI_SESSION_ID (the bash tool exposes the Pi session id);
 //   - Codex CLI and Desktop: CODEX_THREAD_ID (the thread id hooks get as session_id).
 // Cursor puts no conversation id in its shell; its hook names the id to use.
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { resolveStore } from "./store/paths";
 
 export type HostSession = { host: string | null; session: string | null };
 
@@ -53,20 +57,74 @@ export function hostSessionFromEnv(env: NodeJS.ProcessEnv): HostSession {
 }
 
 /**
- * The session the host itself vouches for in this shell: its own shell
- * variable (OPENCODE_SESSION_ID, PI_SESSION_ID, CODEX_THREAD_ID), which a
- * caller cannot replace by exporting WORKIT_SESSION_ID. Hosts that put no id
- * in the shell (Claude Code, Cursor, a plain terminal) fall back to the
- * WORKIT_SESSION_ID their hooks export: there the id is declared, not derived.
+ * Where this shell's session comes from:
+ *   - `derived`: the host's own shell variable (OPENCODE_SESSION_ID,
+ *     PI_SESSION_ID, CODEX_THREAD_ID), which a caller cannot replace by
+ *     exporting WORKIT_SESSION_ID;
+ *   - `declared`: a host that puts no id in the shell but names itself
+ *     (WORKIT_HOST, e.g. Claude Code's SessionStart export) declares it in
+ *     WORKIT_SESSION_ID;
+ *   - `none`: no host at all (CI, a plain terminal, Cursor's prefixed
+ *     commands): whatever session the caller names is only declared.
  */
-export function realHostSession(env: NodeJS.ProcessEnv): HostSession & { derived: boolean } {
+export type RealSession = HostSession & { kind: "derived" | "declared" | "none" };
+
+export function realHostSession(env: NodeJS.ProcessEnv): RealSession {
   for (const [key, host] of HOST_SESSION_VARS) {
     const session = env[key]?.trim();
-    if (session) return { host: host(env), session, derived: true };
+    if (session) return { host: host(env), session, kind: "derived" };
   }
   const declared = hostSessionFromEnv(env);
-  return { ...declared, derived: false };
+  const hosted = declared.host !== null && declared.host !== "cli";
+  return { ...declared, kind: hosted ? "declared" : "none" };
 }
+
+// Ids a SubagentStart hook gave a lead's subagents (`<lead>:<agent id>`): one
+// empty file per id under `<store>/hooks/issued/<lead hash>/`, so concurrent
+// hooks never lose each other's write, bounded per lead.
+const ISSUED_PER_LEAD = 64;
+
+const hash = (value: string): string =>
+  createHash("sha256").update(value).digest("hex").slice(0, 32);
+
+const issuedDir = (cwd: string, lead: string): string | null => {
+  const location = resolveStore(cwd);
+  return location instanceof Error ? null : path.join(location.dir, "hooks", "issued", hash(lead));
+};
+
+/** Remember that a SubagentStart hook issued `issued` to a subagent of `lead`. Fails open. */
+export function recordIssuedSession(cwd: string, lead: string, issued: string): void {
+  try {
+    const dir = issuedDir(cwd, lead);
+    if (!dir) return;
+    fs.mkdirSync(dir, { recursive: true });
+    const own = hash(issued);
+    fs.writeFileSync(path.join(dir, own), "");
+    const entries = fs.readdirSync(dir);
+    if (entries.length <= ISSUED_PER_LEAD) return;
+    // Oldest first; the id just issued is never the one pruned.
+    const byAge = entries
+      .filter((name) => name !== own)
+      .map((name) => ({ name, at: fs.statSync(path.join(dir, name)).mtimeMs }))
+      .toSorted((a, b) => a.at - b.at);
+    for (const { name } of byAge.slice(0, entries.length - ISSUED_PER_LEAD))
+      fs.rmSync(path.join(dir, name), { force: true });
+  } catch {
+    // Fail open: an unrecorded id is refused later, never a broken hook.
+  }
+}
+
+const wasIssued = (cwd: string | undefined, lead: string, claimed: string): boolean => {
+  if (cwd === undefined) return false;
+  try {
+    const dir = issuedDir(cwd, lead);
+    return dir !== null && fs.existsSync(path.join(dir, hash(claimed)));
+  } catch {
+    return false;
+  }
+};
+
+const leadOf = (session: string): string => session.slice(0, session.lastIndexOf(":"));
 
 /**
  * Hosts whose child sessions run their own shell with their own host session
@@ -91,33 +149,39 @@ export function childSessionId(lead: string, child: string): string {
 export type SessionClaimRefusal = { error: string; unblock: string };
 
 /**
- * Whether `claimed` may act as this shell's session: the host session itself,
- * a host-derived child id ending in it (`<lead>:<this session>`), or, on hosts
- * whose subagents share the lead's shell (Claude Code, Codex, Cursor), a child
- * id the lead's hook derived from it (`<this session>:<agent id>`). Anything
- * else is a forged id: a verdict recorded under it would make author is not
- * verifier a naming convention.
+ * Whether `claimed` may act as this shell's session (`cwd` locates the
+ * workspace's record of hook-issued ids):
+ *   - no host session (CI, a plain terminal): any id; `--session X` and
+ *     WORKIT_SESSION_ID=X are the same declaration;
+ *   - the shell's own session (a declared `<lead>:<x>` on Claude Code only
+ *     when its SubagentStart hook issued it);
+ *   - on a host that sets the id, `<lead>:<this session>`: a child naming its
+ *     own host session;
+ *   - `<this session>:<agent id>` only when this lead's SubagentStart hook
+ *     issued it (Claude Code, Codex).
+ * Anything else is a forged id: a verdict recorded under it would make author
+ * is not verifier a naming convention.
  */
 export function sessionClaimRefusal(
   env: NodeJS.ProcessEnv,
   claimed: string,
+  cwd?: string,
 ): SessionClaimRefusal | null {
   const real = realHostSession(env);
-  if (!real.session)
-    return {
-      error: `session ${claimed} cannot be checked: this shell has no host session (no OPENCODE_SESSION_ID, PI_SESSION_ID, CODEX_THREAD_ID or WORKIT_SESSION_ID)`,
-      unblock:
-        "run the verdict from the host session's own shell; on a host that puts no session id in its shell, export WORKIT_SESSION_ID=<the id its hook gave this session>",
-    };
-  if (claimed === real.session || claimed.endsWith(`:${real.session}`)) return null;
+  if (real.kind === "none" || !real.session) return null;
   const host = family(real.host);
+  if (claimed === real.session) {
+    const declaredChild =
+      real.kind === "declared" && host === "claude_code" && claimed.includes(":");
+    if (!declaredChild || wasIssued(cwd, leadOf(claimed), claimed)) return null;
+  } else if (real.kind === "derived" && claimed.endsWith(`:${real.session}`)) return null;
+  else if (claimed.startsWith(`${real.session}:`) && wasIssued(cwd, real.session, claimed))
+    return null;
   const ownChildShell = host !== null && OWN_CHILD_SHELL.has(host);
-  if (claimed.startsWith(`${real.session}:`) && !ownChildShell) return null;
-  const source = real.derived ? `the host's own session` : "WORKIT_SESSION_ID";
   return {
-    error: `forged_session: ${claimed} is not this shell's session (${source} is ${real.session}) nor a host-derived child of it`,
+    error: `forged_session: ${claimed} is neither this shell's session (${real.session}) nor an id its host issued to a child of it`,
     unblock: ownChildShell
-      ? `record the verdict from the verifier's own ${host === "pi" ? "Pi worker" : "OpenCode child session"} shell: its WORKIT_SESSION_ID is already its host-derived id (<lead>:<child>); never set WORKIT_SESSION_ID or --session by hand`
-      : `drop the hand-minted id: a verifier subagent passes the id its SubagentStart hook gave it (--session ${real.session}:<agent id>), or use --as verifier for a fresh derived id`,
+      ? `record the verdict from the verifier's own ${host === "pi" ? "Pi worker" : "OpenCode child session"} shell, where WORKIT_SESSION_ID is already set; never set WORKIT_SESSION_ID or --session by hand`
+      : "never name a session yourself: spawn a verifier or reviewer subagent and pass exactly the --session its SubagentStart context names, or pass --as verifier",
   };
 }

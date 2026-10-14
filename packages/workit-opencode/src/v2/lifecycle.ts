@@ -194,12 +194,14 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
    * assigned or running on other tasks, each with the exact cancel call.
    */
   const unboundLaunch = (coordinator: string): string => {
-    const base =
-      "recovery_required: no assigned Workit worker is attributable to this coordinator on the current branch's task; assign one with workit_worker before launching a native task";
     const store = new TaskStore(root);
+    const current = currentTaskId(store);
+    const base =
+      current === null
+        ? 'recovery_required: this branch has no Workit task yet; start it (workit_task start, or `workit task start "<objective>"`), then assign a worker on it with workit_worker before launching a native task'
+        : "recovery_required: no assigned Workit worker is attributable to this coordinator on the current branch's task; assign one with workit_worker before launching a native task";
     const listed = store.listTasks();
     if (!listed.ok) return base;
-    const current = currentTaskId(store);
     const stale = listed.data.flatMap((task) =>
       task.status === "active" && task.id !== current
         ? task.workers
@@ -245,13 +247,11 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
         )
         .map((entry) => ({ task, entry })),
     );
-    // The oldest assigned worker on the current branch's task, else the
-    // oldest across every task (#264): a stale worker left on another
-    // branch's task never blocks a launch here, and when the current task is
-    // managed it never captures one either; the lead assigns one here.
+    // Only the current branch's task binds a launch (#264): a worker left on
+    // another branch's task never blocks or captures one. Without a task
+    // here the lead starts this branch's task and assigns a worker first.
     const current = currentTaskId(store);
-    const onCurrent = managed.some((task) => task.id === current);
-    const next = oldest(onCurrent ? eligible.filter((item) => item.task.id === current) : eligible);
+    const next = oldest(eligible.filter((item) => item.task.id === current));
     if (!next) return "unbound";
     dispatches.set(coordinator, {
       taskId: next.task.id,

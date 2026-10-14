@@ -1144,18 +1144,20 @@ export function authorSessions(
 const HOST_DERIVED_SESSIONS =
   "Claude Code, Codex and Cursor: `--session <lead>:<agent id>` from the SubagentStart hook; OpenCode child sessions and Pi workers: WORKIT_SESSION_ID=<lead>:<child> already set in their shell";
 
-/** The session a host vouches for: the child part of a host-derived `<lead>:<child>` id. */
-const sessionLeaf = (session: string): string => session.slice(session.lastIndexOf(":") + 1);
+/** Whether `derived` is a host-derived `<lead>:<bare>` id for the bare host session `bare`. */
+const derivesFrom = (derived: string, bare: string): boolean =>
+  !bare.includes(":") && derived.endsWith(`:${bare}`);
 
 /**
- * Whether `session` is one of the authors: the same id, or the same host
- * session under another derived form (an OpenCode child that committed as
- * `<lead>:<child>` and judges as `<child>` is still the author).
+ * Whether `session` is one of the authors: the same id, or one is a bare host
+ * session and the other its derived `<lead>:<session>` form (an OpenCode
+ * child that committed as `<lead>:<child>` and judges as `<child>` is still
+ * the author). Two derived ids never match on a shared last segment.
  */
 const authoredBy = (authors: Set<string>, session: string): boolean => {
   if (authors.has(session)) return true;
-  const leaf = sessionLeaf(session);
-  for (const author of authors) if (sessionLeaf(author) === leaf) return true;
+  for (const author of authors)
+    if (derivesFrom(author, session) || derivesFrom(session, author)) return true;
   return false;
 };
 
