@@ -147,9 +147,11 @@ const familyHas = (family: OperationFamily, action: string): boolean =>
   (TASK_ACTIONS[family] as readonly string[]).includes(action);
 
 function inject(request: Record<string, unknown>, key: string, value: unknown): Result<null> {
+  // The worker id is the only value given as a positional (`worker cancel <workerId>`).
+  const given = key === "workerId" ? "positional worker id" : "explicit flag";
   if (key in request && !same(request[key], value))
-    return failure("invalid_input", `payload ${key} conflicts with the explicit flag`, {
-      fields: [{ path: key, reason: "explicit flag conflicts with payload" }],
+    return failure("invalid_input", `payload ${key} conflicts with the ${given}`, {
+      fields: [{ path: key, reason: `${given} conflicts with payload` }],
     });
   request[key] = value;
   return success(null, null, null);
@@ -173,12 +175,19 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   let workspaceRevision: string | null | undefined;
   let view: string | undefined;
   let actor: string | undefined;
+  let workerId: string | undefined;
+  const takesWorkerId = family === "worker" && (action === "cancel" || action === "report");
   let json = jsonRequested;
   const judge: string[] = [];
   const seen = new Set<string>();
   for (let i = 2; i < argv.length; i += 1) {
     if (argv[i] === "--") {
       const extra = argv.slice(i + 1);
+      // `worker cancel -- <workerId>`: an id that could read as an option.
+      if (takesWorkerId && workerId === undefined && extra.length === 1) {
+        workerId = extra[0];
+        break;
+      }
       if (extra.length)
         return parseUsage(
           `${family} ${actionName} takes no positional arguments (got: ${extra.join(" ")})`,
@@ -208,6 +217,11 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
       seen.add(token);
       // --confirm is accepted and ignored (≤4.x consent flag; D2).
       if (token === "--json") json = true;
+      continue;
+    }
+    // `worker cancel|report <workerId>`: the worker id as a positional (#264).
+    if (takesWorkerId && workerId === undefined && !argv[i].startsWith("-")) {
+      workerId = argv[i];
       continue;
     }
     if (
@@ -240,6 +254,7 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   for (const [key, value] of [
     ["action", action],
     ...(taskId === undefined ? [] : [["taskId", taskId] as const]),
+    ...(workerId === undefined ? [] : [["workerId", workerId] as const]),
     ...(revision === undefined ? [] : [["expectedRevision", revision] as const]),
     ...(workspaceRevision === undefined
       ? []

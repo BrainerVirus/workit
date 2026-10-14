@@ -101,6 +101,45 @@ warns about any on the branch. Neither blocks: the chain catches mistakes, it
 is not a defense against someone forging rows. Rows written before the chain
 existed read as legacy.
 
+## Task context across branches
+
+Each branch has its own implicit task (`workit task status`), and the host
+hooks inject that task's compact context on session start and whenever it
+changes. Some of that state reaches beyond the branch:
+
+- **Inherited decisions.** A branch also shows the task decisions recorded on
+  the branch it was cut from. Workit reads the base from git's reflogs: the
+  first entry of the branch's own log, which must be its creation
+  ("Created from <base>"). `origin/develop` counts as `develop` when
+  `origin` is a remote; a local branch such as `feature/base` keeps its full
+  name. For a branch created from HEAD, the base is the branch HEAD moved
+  from in the checkout that created it (same commit, same moment), also
+  after a rename. The base stays the one the branch was created from:
+  rebasing it onto another branch later does not change it. Inherited
+  decisions come after the branch's own, each labelled with its
+  origin (`"origin": "branch develop"`). Revoked decisions are left out. They
+  show before the branch has a task of its own
+  (`"objective": "no task on this branch yet"`). They come from the base task
+  in any worktree of the repository, so they stay in view when you switch
+  between `develop` and a feature branch. Only one level is inherited: a
+  branch cut from `feature/a`, which was cut from `develop`, sees
+  `feature/a`'s decisions, not `develop`'s. Workit never injects a base task
+  that is bound to another host conversation. A branch inherits nothing once
+  its creation entry is gone from its reflog (`git reflog expire`, by default
+  after 90 days, or `gc`), or when it was fetched rather than created
+  locally. For a branch created from HEAD, the same applies once the HEAD log
+  no longer holds that checkout.
+- **Stale evidence.** Evidence goes stale when the worktree changes after it
+  was observed (see [`workit check`](#workit-check-observed-evidence)). The
+  context shows the count and the command that lists the stale rows, not the
+  evidence ids: `stale evidence: 3; workit task inspect --task <id> --view full`.
+- **Workers.** A worker belongs to the task it was assigned on.
+  `workit worker cancel <workerId>` and `workit worker report <workerId>` find
+  that task from the worker id whatever branch is checked out, so `--task` is
+  optional. The rest of the request still goes in `--payload`
+  (`{"reason": "…"}` or `{"report": …}`). If the command fails, the error
+  names the exact `--task <id>` command to retry with.
+
 ## `workit test-audit`
 
 ```bash
