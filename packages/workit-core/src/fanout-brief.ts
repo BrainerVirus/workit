@@ -7,6 +7,10 @@
 // `<branch>-try<n>` (refused when another slice has that branch), worktree
 // `<worktree>+try<n>` and session `<lead>-w-<slice>+try<n>`: slice ids cannot
 // contain `+`, so no attempt collides with another slice's path or session.
+// The lead's host (WORKIT_HOST, or its own session variable) picks the identity
+// and git rules: Claude Code workers use the WORKIT_SESSION_ID in their env (the lead's: SubagentStart issues ids only to judges) and plain
+// git; OpenCode, Pi and Codex workers export nothing (the host derives the id);
+// Cursor, CI and plain terminals export `<lead>-w-<slice>`.
 // The lead must have a WORKIT_SESSION_ID: worker ids derive from it. A
 // worker id longer than the ledger's 128 characters hashes its slice part. The fan-in line follows the plan's `fanIn`:
 // one PR per slice forbids every merge; integration mode has the worker merge
@@ -36,7 +40,8 @@ export type BriefOutcome = {
   tier: string;
   /** Absolute when the slice's worktree exists, else relative to the worker's worktree root. */
   scratch: string;
-  session: string;
+  /** The id a worker exports, or null when its host issues or derives it. */
+  session: string | null;
   standing: Array<{ id: string; what: string }>;
   text: string;
 };
@@ -49,15 +54,61 @@ const REPORT = [
   "  anything out of scope as a follow-up, not a diff.",
 ];
 
-const rules = (mode: BriefMode, branch: string, base: string): string[] => [
-  "RULES:",
-  mode === "new"
-    ? `  1. First command: \`workit git branch ${branch} --base ${base}\` (your worktree may start on another name).`
-    : `  1. First command: \`git switch ${branch}\`, then continue from its head.`,
-  '  2. Decide ambiguities yourself: `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`; stop only for an irreversible, security-sensitive or out-of-worktree action.',
-  "  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`; push only if this brief says so.",
-  "  4. Never record a verdict on your own work.",
-];
+/**
+ * How a worker's identity is settled on the lead's host (host-session.ts,
+ * docs/agents/hosts.md):
+ *   - `issued`: Claude Code. SubagentStart issues ids only to verifiers and
+ *     reviewers, so an implementer keeps the lead's WORKIT_SESSION_ID from its
+ *     env; worktree isolation refuses every `workit git` form, so it uses
+ *     plain git and never mints an id;
+ *   - `derived`: OpenCode, Pi, Codex. The worker's shell carries the host's own
+ *     session id, which exporting WORKIT_SESSION_ID cannot replace;
+ *   - `declared`: Cursor, CI, a plain terminal. Nothing vouches for an id, so
+ *     the brief declares `<lead>-w-<slice>`.
+ */
+export type BriefIdentity = "issued" | "derived" | "declared";
+
+const identityOf = (host: string | null): BriefIdentity => {
+  const family = host?.replace(/_(?:cli|desktop)$/, "") ?? "";
+  if (family === "claude_code") return "issued";
+  if (family === "opencode" || family === "pi" || family === "codex") return "derived";
+  return "declared";
+};
+
+const identityLines = (identity: BriefIdentity, session: string): string[] => {
+  if (identity === "issued")
+    return [
+      "  Session: your env already has WORKIT_SESSION_ID (the lead's id; SubagentStart issues ids only to verifiers and reviewers). Use it as is, in your Workit-Session trailer and workit commands; never export or hand-mint one.",
+    ];
+  if (identity === "derived")
+    return [
+      "  Session: your host already sets WORKIT_SESSION_ID in your shell; export nothing and never hand-mint one.",
+    ];
+  return [`  export WORKIT_SESSION_ID=${session}`];
+};
+
+const rules = (
+  identity: BriefIdentity,
+  mode: BriefMode,
+  branch: string,
+  base: string,
+): string[] => {
+  const plain = identity === "issued";
+  let first = `  1. First command: \`workit git branch ${branch} --base ${base}\` (your worktree may start on another name).`;
+  if (mode === "resume")
+    first = `  1. First command: \`git switch ${branch}\`, then continue from its head.`;
+  else if (plain)
+    first = `  1. First command: \`git fetch origin && git switch -c ${branch} origin/${base}\` (plain git: worktree isolation refuses every \`workit git\` form).`;
+  return [
+    "RULES:",
+    first,
+    '  2. Decide ambiguities yourself: `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`; stop only for an irreversible, security-sensitive or out-of-worktree action.',
+    plain
+      ? '  3. Commit with plain `git commit -m <msg> --trailer "Workit-Session: <the WORKIT_SESSION_ID in your env>" --trailer "<your host attribution trailer>" -- <paths in SCOPE>`; push only if this brief says so.'
+      : "  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`; push only if this brief says so.",
+    "  4. Never record a verdict on your own work.",
+  ];
+};
 
 /** A session id fragment that the ledger accepts ([A-Za-z0-9_.:@/+-]). */
 const sessionSafe = (text: string): string => text.replace(/[^A-Za-z0-9_.:@/+-]/gu, "-");
@@ -119,7 +170,9 @@ export function renderBrief(
     id: row.id,
     what: String(row.what),
   }));
-  const session = workerSession(sessionSafe(input.actor.session), slice.id, input.attempt);
+  const identity = identityOf(input.actor.host);
+  const minted = workerSession(sessionSafe(input.actor.session), slice.id, input.attempt);
+  const session = identity === "declared" ? minted : null;
   const fanIn =
     plan.fanIn === "integration"
       ? [
@@ -156,8 +209,8 @@ export function renderBrief(
     ...(standing.length
       ? standing.map((order) => `  - ${order.what}`)
       : ["  - none recorded beyond this brief"]),
-    `  export WORKIT_SESSION_ID=${session}`,
-    ...rules(mode, branch, slice.base),
+    ...identityLines(identity, minted),
+    ...rules(identity, mode, branch, slice.base),
   ];
   return {
     ok: true,
