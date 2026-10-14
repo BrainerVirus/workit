@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
@@ -32,6 +32,19 @@ beforeAll(() => {
         allowed: ["feature/*"],
         protected: ["main"],
       },
+    }),
+  );
+  // Every host runs in one checkout here: the live-session guard (#274) would
+  // refuse the second host's session, which is not what these tests measure.
+  const temp = [tmpdir(), realpathSync.native(tmpdir())];
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [...new Set(temp)].map((dir, index) => ({
+        name: `parity-${index}`,
+        glob: `${dir.replaceAll("\\", "/")}/workit-parity-*/**`,
+        liveSessionGuard: false,
+      })),
     }),
   );
 });

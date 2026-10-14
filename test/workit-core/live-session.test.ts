@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  checkoutKey,
   claimLiveSession,
   hostPid,
   leadOf,
@@ -136,7 +145,7 @@ test("G macOS (ps for the process table), W the owning session writes again and 
     return null;
   };
   const root = checkout();
-  seed(root, { session: "lead-1", leads: ["lead-1"] });
+  seed(root, { session: "lead-1", leads: ["lead-1"], pidStart: "Mon Jan  1 00:00:00 2026" });
   const self = liveOwner(
     { host: "claude_code", session: { id: "lead-1:agent-2", parentId: null } },
     "hook-process",
@@ -208,4 +217,21 @@ test("G a live foreign marker, W another session claims, T the marker is untouch
   const later = new Date(now.getTime() + 31_000);
   claimLiveSession(path.join(fresh, "a.ts"), owner("mine", 1), { now: later });
   expect(JSON.parse(readFileSync(markerFile(fresh), "utf8")).heartbeatAt).toBe(later.toISOString());
+});
+
+test("G a checkout reached through a symlink, W the marker is seeded under one spelling and looked up under another, T both name one marker", () => {
+  const root = checkout();
+  const link = path.join(os.tmpdir(), `wk-live-link-${process.pid}-${Date.now()}`);
+  dirs.push(link);
+  symlinkSync(root, link, process.platform === "win32" ? "junction" : "dir");
+  expect(markerFile(link)).toBe(markerFile(root));
+  seed(link, {});
+  expect(liveConflict(path.join(root, "x"), owner("mine", 1))?.marker.session).toBe("foreign");
+});
+
+test("checkoutKey: on Windows one lower-cased, backslashed spelling", () => {
+  const key = checkoutKey("/Tmp/Some/Repo-Not-There", "win32");
+  expect(key).toBe(key.toLowerCase());
+  expect(key).not.toContain("/");
+  expect(checkoutKey("/Tmp/Some/Repo-Not-There", "linux")).toContain("/Tmp/Some/Repo-Not-There");
 });

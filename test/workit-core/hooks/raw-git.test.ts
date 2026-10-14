@@ -444,8 +444,14 @@ test("each host renders the deny on its own channel and the nudge without granti
       },
     });
 
+    // Each host in its own checkout: the live-session guard (#274) refuses a
+    // second host's session where it cannot tell processes apart (Windows).
+    const cursorRoot = repo({ branch: "feature/x" });
     const cursor = (command: string) =>
-      dispatchHook(cursorAdapter, fixture("cursor", "before-shell-execution", root, { command }));
+      dispatchHook(
+        cursorAdapter,
+        fixture("cursor", "before-shell-execution", cursorRoot, { command }),
+      );
     const denied = cursor("gh pr merge 1");
     expect(denied.exitCode).toBe(2);
     expect(denied.json).toMatchObject({

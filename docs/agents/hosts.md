@@ -132,10 +132,17 @@ use yet), L = host limit (the host has no mechanism for it).
 | Heartbeat / doctor | P plugin check | P version check | N version, hook-trust (`codex_hooks`) and agents (`codex_agents`) checks | N launcher heartbeat | N `pi_extension`: missing, not loading, older than workit |
 | Hook older than the CLI (`hook_issued_sessions`) | N: the installed hook bundle is read for `ISSUED_SESSIONS_MARKER` | L: issues no subagent ids (children derive theirs) | N: every hook chunk in the plugin cache is read for the marker | L: `subagentStart` cannot add context, so no ids are issued | L: no host subagents; workers derive theirs |
 
-Live-session guard, every host: where the host process cannot be read
-(Windows: no process ancestry), a marker lasts until its 15-minute
-heartbeat and a session of the same host as the owner is never refused,
-so the guard only separates different hosts there (L).
+Live-session guard limits:
+
+- **Windows, every host:** there's no process ancestry, so a hook process's
+  owner is its direct parent. A launcher that exits with the hook (Cursor's
+  `launch.mjs`, `cmd`) reads as gone, and the guard then fails open (L).
+- **Markers without a pid:** they last until their 15-minute heartbeat, and a
+  session of the same host as the owner is never refused (L).
+- **Codex:** a shell command is judged against the session's `cwd` from the
+  hook payload. A command that sets only its own `workdir` (no `cd`) is judged
+  against the session cwd, not that workdir. The installed codex binary names a
+  `workdir` field, but nothing shows `PreToolUse` `tool_input` carries it (X).
 
 ## Design background
 

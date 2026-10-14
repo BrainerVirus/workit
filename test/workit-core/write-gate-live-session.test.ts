@@ -369,3 +369,24 @@ test("G an owned checkout, W the override is not the guarded command's own prefi
     true,
   );
 });
+
+test("G an owned and a free checkout, W writes follow popd, a ( … ) group or an unknown-target edit, T each is judged in the directory it runs in", () => {
+  const owned = repo();
+  own(owned);
+  const free = repo();
+  for (const command of [
+    `pushd ${owned} && popd && echo x > src/a.ts`,
+    `(cd ${owned}) && echo x > src/a.ts`,
+    `cd ${owned} && cd ${free} && patch -p1 < fix.diff`,
+  ])
+    expect(decisionOf(claudeShell(free, command)), command).not.toBe("deny");
+  for (const command of [
+    `pushd ${free} && popd && touch src/a.ts`,
+    `(cd ${owned}; echo x > src/a.ts)`,
+    `cd ${owned} && patch -p1 < fix.diff`,
+  ])
+    expect(
+      decisionOf(claudeShell(command.startsWith("pushd") ? owned : free, command)),
+      command,
+    ).toBe("deny");
+});

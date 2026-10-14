@@ -118,14 +118,13 @@ export const hostPid = (transport: string): number | null => {
   if (transport !== "hook-process") return process.pid;
   const key = `${liveProbe.platform}\0${process.ppid}`;
   if (PIDS.has(key)) return PIDS.get(key) ?? null;
-  let pid: number | null = process.ppid;
+  // Windows: no ancestry to walk, so the hook's own parent. A launcher that
+  // exits with the hook (a shell, Cursor's launch.mjs) then reads as gone,
+  // and the marker as expired: the guard fails open there.
+  let pid = process.ppid;
   for (let hop = 0; hop < 4; hop++) {
     const info = processInfo(pid);
-    if (!info) {
-      if (liveProbe.platform === "win32") pid = null;
-      break;
-    }
-    if (!WRAPPER.test(info.command) || info.ppid <= 1) break;
+    if (!info || !WRAPPER.test(info.command) || info.ppid <= 1) break;
     pid = info.ppid;
   }
   PIDS.set(key, pid);
@@ -181,8 +180,23 @@ export const markerFile = (top: string): string =>
   path.join(
     resolveStateDir(),
     "live-sessions",
-    `${createHash("sha256").update(top).digest("hex").slice(0, 32)}.json`,
+    `${createHash("sha256").update(checkoutKey(top)).digest("hex").slice(0, 32)}.json`,
   );
+
+/**
+ * One spelling per checkout, however the path was written: resolved through
+ * symlinks and Windows 8.3 short names (`RUNNER~1`), native separators, and
+ * on Windows a lower-cased path (drive letter included).
+ */
+export const checkoutKey = (top: string, platform: string = process.platform): string => {
+  let key = path.resolve(top);
+  try {
+    key = fs.realpathSync.native(key);
+  } catch {
+    // a path that does not exist keeps its resolved spelling
+  }
+  return platform === "win32" ? key.replaceAll("/", "\\").toLowerCase() : key;
+};
 
 const readMarker = (file: string): LiveMarker | null => {
   try {
@@ -262,7 +276,8 @@ export const liveConflict = (
     if (!checkout) return null;
     const file = markerFile(checkout);
     const marker = readMarker(file);
-    if (!marker || !isLive(marker, deps)) return null;
+    // Ids first: the owner's own marker never costs a process-table read.
+    if (!marker || sameLead(marker, owner) || !isLive(marker, deps)) return null;
     if (sameOwner(marker, owner, deps.machine ?? os.hostname())) return null;
     return { marker, file, ageMs: ageOf(marker, deps.now ?? new Date()), checkout };
   } catch {
@@ -285,9 +300,12 @@ export const claimLiveSession = (target: string, owner: LiveOwner, deps: LiveDep
     const now = deps.now ?? new Date();
     const machine = deps.machine ?? os.hostname();
     const current = readMarker(file);
-    if (current && isLive(current, deps)) {
-      if (sameLead(current, owner) && ageOf(current, now) < HEARTBEAT_EVERY_MS) return;
-      if (!sameOwner(current, owner, machine)) return;
+    if (current) {
+      const age = ageOf(current, now);
+      // One's own fresh marker: nothing to read or write.
+      if (sameLead(current, owner) && age >= 0 && age < HEARTBEAT_EVERY_MS) return;
+      if (!sameLead(current, owner) && isLive(current, deps) && !sameOwner(current, owner, machine))
+        return;
     }
     const pid = owner.pid();
     const marker: LiveMarker = {
