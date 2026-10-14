@@ -25,7 +25,8 @@ ceremony; do it yourself. Workit never spawns agents; you do.
    it; change the plan or the standing orders and render again.
 4. **Spawn in a rolling window**, in the background, each in its own worktree:
    keep 4-6 in flight and refill from `spawnable` in `workit fanout status` as
-   each one finishes. Pick the model from TIER (`references/orchestration.md`).
+   each one finishes. Pick the model from the brief's `model:` line (workspace
+   `fanout.tierModels`), else from TIER (`references/orchestration.md`).
    Claude Code: the `implementer` agent; elsewhere first `workit fanout
    worktree create <slice>`.
 5. **Judge liveness by side effects only:** `workit fanout status` (head age,
@@ -53,7 +54,8 @@ ceremony; do it yourself. Workit never spawns agents; you do.
    status` order, release the worktrees you made, and `workit ledger standing
    clear`. Only you touch topology: workers never rebase, retarget or merge,
    except the integration-tip merge in integration mode. Then ship
-   (read the `workit-ship` skill's SKILL.md and follow it).
+   (read the `workit-ship` skill's SKILL.md and follow it) only as far as the workspace's `defaultEndpoint`, which
+   `workit grant show` prints.
 
 ## Example
 
