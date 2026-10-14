@@ -25,6 +25,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { releaseBranch, resolveBranchPolicyFor, validateBranchNameFor } from "../core/branch";
+import { releaseTagPrefixOf } from "../core/branch-policy";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
 import { appendHookObserved, readLedger } from "../ledger";
 import { resolveStore, resolveTaskKey, type StoreLocation } from "../store/paths";
@@ -1340,7 +1341,7 @@ const refusal = (action: RawAction, branch: string | null, dir?: string): string
   // custom protected branch): the push has its own granted verb.
   const plainPush = action.kind === "push" && !action.blindForce && !action.deletes;
   if (dir && branch && plainPush && releaseBranch(dir, branch))
-    return `workit: raw ${quote("git push")} onto ${branch}, a protected release branch, bypasses workit's protected-branch check. To finish a release or hotfix, push it with ${quote(`workit git push --release ${branch} [--release v<version>]`)}: it pushes ${branch} (fast-forward only) and the release tag, verifies the remote and records it, under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}). Feature work goes through ${quote("workit git push")} and ${quote("workit pr merge")}.`;
+    return `workit: raw ${quote("git push")} onto ${branch}, a protected release branch, bypasses workit's protected-branch check. To finish a release or hotfix, push it with ${quote(`workit git push --release ${branch} [--release ${releaseTagPrefixOf(dir)}<version>]`)}: it pushes ${branch} (fast-forward only) and the release tag, verifies the remote and records it, under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}). Feature work goes through ${quote("workit git push")} and ${quote("workit pr merge")}.`;
   return `workit: raw ${quote("git push")}${action.kind === "push" && action.blindForce ? " --force" : ""} onto ${branch}, a protected branch or the default target, bypasses workit's protected-branch check. Push your feature branch with ${quote("workit git push")} (${quote("workit git push --force-with-lease")} to rewrite it) and land it with ${quote("workit pr merge")}.`;
 };
 
@@ -1459,14 +1460,15 @@ const isTag = (facts: RefFacts, name: string): boolean =>
  * the release grant: denied with the workit command. `--follow-tags` only
  * nudges (it pushes annotated tags the pushed commits already reach).
  */
-const tagRefusal = (action: PushAction, facts: RefFacts): string | null => {
+const tagRefusal = (action: PushAction, facts: RefFacts, dir: string): string | null => {
   const tags = [
     ...(action.tags ?? []),
     ...action.targets.filter((name): name is string => name !== null && isTag(facts, name)),
   ];
   if (!tags.length && !action.allTags) return null;
-  const named = tags.length ? tags.join(" --release ") : "v<version>";
-  return `workit: raw ${quote(`git push${action.allTags ? " --tags" : ""}`)} of ${tags.length ? `tag ${tags.join(", ")}` : "tags"} bypasses the release grant. Push a release tag with ${quote(`workit git push --release ${named}`)} (v<version> tags whose commit the production branch already has; a tag never moves), under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}).`;
+  const shape = `${releaseTagPrefixOf(dir)}<version>`;
+  const named = tags.length ? tags.join(" --release ") : shape;
+  return `workit: raw ${quote(`git push${action.allTags ? " --tags" : ""}`)} of ${tags.length ? `tag ${tags.join(", ")}` : "tags"} bypasses the release grant. Push a release tag with ${quote(`workit git push --release ${named}`)} (${shape} tags whose commit the production branch already has; a tag never moves), under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}).`;
 };
 
 /** The remote's branches (`ls-remote --heads`, bounded); null when it cannot be read. */
@@ -1557,7 +1559,7 @@ const pushRefusal = (action: PushAction, repo: Repo, config: GitConfig): string 
     if (guarded) return refusal(action, guarded, repo.dir);
   }
   return (
-    tagRefusal(pushed, facts) ??
+    tagRefusal(pushed, facts, repo.dir) ??
     (action.deletes ? null : offPolicyPush(pushed, repo, facts, remote))
   );
 };

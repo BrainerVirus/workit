@@ -743,5 +743,38 @@ export function createGitLabForge(options: {
           : "resolved",
       );
     },
+
+    findRelease(tag) {
+      const found = apiJson<{ tag_name?: string; _links?: { self?: string } }>(
+        runner,
+        "glab",
+        apiHost,
+        api(`${project}/releases/${encodeURIComponent(tag)}`),
+        `release ${tag}`,
+      );
+      if (!found.ok) return found.code === "not_found" ? success(null) : found;
+      return success({
+        tag: found.data.tag_name ?? tag,
+        url: safeUrl(found.data["_links"]?.self ?? null),
+      });
+    },
+
+    createRelease(input) {
+      // The notes ride stdin: argv has a size limit (E2BIG).
+      const created = apiWrite<{ tag_name?: string; _links?: { self?: string } }>(
+        runner,
+        "glab",
+        apiHost,
+        ["api", "-X", "POST", `${project}/releases`, "--input", "-"],
+        `release ${input.tag}`,
+        undefined,
+        JSON.stringify({ tag_name: input.tag, name: input.name, description: input.body }),
+      );
+      if (!created.ok) return created;
+      return success({
+        tag: created.data.tag_name ?? input.tag,
+        url: safeUrl(created.data["_links"]?.self ?? null),
+      });
+    },
   };
 }
