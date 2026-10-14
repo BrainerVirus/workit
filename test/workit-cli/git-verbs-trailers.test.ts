@@ -4,7 +4,9 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { fixSessionHook, runDoctor } from "@/packages/workit-cli/src/admin/doctor";
+import { invariantBootstrap } from "@/packages/workit-core/src/core/methods";
 import { readLedger } from "@/packages/workit-core/src/ledger";
+import { getWorkitBootstrap } from "@/packages/workit-opencode/src/bootstrap";
 import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remote";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
@@ -152,14 +154,21 @@ test("Given a malformed --trailer or one naming Workit-Session, Then the commit 
   const repo = setup({});
   repo.write("a.txt", "a\n");
   const head = repo.git("rev-parse", "HEAD");
-  for (const trailer of ["no colon here", "Workit-Session: forged", "K: v\nWorkit-Session: x"]) {
+  for (const [trailer, error] of [
+    ["no colon here", 'is not one "Key: value" line'],
+    ["Workit-Session: forged", "--trailer cannot set Workit-Session"],
+    ["K: v\nWorkit-Session: x", 'is not one "Key: value" line'],
+  ]) {
     const result = await run(
       ["git", "commit", "-m", "feat: a", "--trailer", trailer, "--all"],
       repo.cwd,
     );
     expect(result.code, trailer).toBe(2);
+    expect(result.stderr).toContain(error);
   }
-  expect((await run(["git", "commit", "-m", "feat: a", "--trailer"], repo.cwd)).code).toBe(2);
+  const missing = await run(["git", "commit", "-m", "feat: a", "--trailer"], repo.cwd);
+  expect(missing.code).toBe(2);
+  expect(missing.stderr).toContain("--trailer requires a Key: value trailer");
   expect(repo.git("rev-parse", "HEAD")).toBe(head);
 });
 
@@ -173,4 +182,12 @@ test("Given a workspace with trailers: false, When doctor runs, Then it does not
   const fixed = fixSessionHook(options);
   expect(fixed).toMatchObject({ action: "skipped", workspace: "work" });
   expect(fixed.detail).toContain("trailers: false; no hook installed");
+});
+
+test("Given the contract every host loads, Then it tells agents to add trailers with --trailer instead of amending", () => {
+  for (const text of [invariantBootstrap(), getWorkitBootstrap() ?? ""]) {
+    expect(text).toMatch(
+      /Trailers \(Co-Authored-By\): `workit git commit --trailer "K: v" --all`, not\s+an amend\./,
+    );
+  }
 });

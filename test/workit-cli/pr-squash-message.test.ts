@@ -187,22 +187,20 @@ test("Given --subject and --body (GitHub), When squash-merging, Then the forge g
   });
 });
 
-test("Given a workspace with trailers: false (GitHub), When squash-merging without flags, Then the PR title and the commits are sent without Workit-Session", async () => {
-  const { repo, runner } = setup("github", github, { trailers: false });
-  await verdict(repo);
-  const result = await run(["pr", "merge", "--json"], repo.cwd);
+test("Given a workspace with trailers: false (GitHub), When squash-merging without flags, Then the PR title and the commits are sent without Workit-Session; a workspace that keeps trailers leaves the forge default", async () => {
+  const off = setup("github", github, { trailers: false });
+  await verdict(off.repo);
+  const result = await run(["pr", "merge", "--json"], off.repo.cwd);
   expect(result.code, result.stderr).toBe(0);
-  expect(mergeCall(runner.calls)?.vars).toMatchObject({
+  expect(mergeCall(off.runner.calls)?.vars).toMatchObject({
     commit_title: "feat: the PR title (#12)",
     commit_message: DEFAULT_BODY,
   });
-});
 
-test("Given a workspace that keeps trailers and no flags, When squash-merging, Then the forge default message is left alone", async () => {
-  const { repo, runner, head } = setup("github", github);
-  await verdict(repo);
-  expect((await run(["pr", "merge", "--json"], repo.cwd)).code).toBe(0);
-  expect(mergeCall(runner.calls)?.vars).toEqual({ sha: head, merge_method: "squash" });
+  const on = setup("github", github);
+  await verdict(on.repo);
+  expect((await run(["pr", "merge", "--json"], on.repo.cwd)).code).toBe(0);
+  expect(mergeCall(on.runner.calls)?.vars).toEqual({ sha: on.head, merge_method: "squash" });
 });
 
 test("Given a workspace with trailers: false (GitLab), When squash-merging, Then squash_commit_message is the MR title and stripped commits; --subject/--body override it", async () => {
@@ -230,14 +228,15 @@ test("Given a workspace with trailers: false (GitLab), When squash-merging, Then
 
 test("pr merge: --subject/--body with a non-squash method, or a multi-line subject, is a usage error and nothing is called", async () => {
   const { repo, runner } = setup("github", github);
-  for (const argv of [
-    ["--method", "merge", "--subject", "s"],
-    ["--method", "rebase", "--body", "b"],
-    ["--subject", "a\nb"],
-    ["--body", "b", "--body-file", "-"],
-  ]) {
+  for (const [argv, error] of [
+    [["--method", "merge", "--subject", "s"], "use --method squash"],
+    [["--method", "rebase", "--body", "b"], "use --method squash"],
+    [["--subject", "a\nb"], "--subject must be one non-empty line"],
+    [["--body", "b", "--body-file", "-"], "pass --body or --body-file, not both"],
+  ] as const) {
     const result = await run(["pr", "merge", ...argv], repo.cwd);
     expect(result.code, argv.join(" ")).toBe(2);
+    expect(result.stderr).toContain(error);
   }
   expect(mergeCall(runner.calls)).toBeUndefined();
 });
