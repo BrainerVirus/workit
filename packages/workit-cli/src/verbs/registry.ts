@@ -380,6 +380,38 @@ export const VERBS: readonly VerbEntry[] = [
     ],
     load: () => import("./git"),
   }),
+  withSubcommands({
+    name: "release",
+    group: "delivery",
+    summary:
+      "git-flow releases without the git-flow binary: start a local release branch, finish it (merge, tag, merge back, push, forge release), publish it only when asked",
+    subcommands: [
+      {
+        name: "start",
+        usage: "workit release start <version> [--hotfix] [--track <t>]",
+        summary:
+          "Cut release/<version> (hotfix/<version> from production) locally; never pushes it",
+      },
+      {
+        name: "finish",
+        usage: "workit release finish [<version>] [--track <t>] [--dry-run]",
+        summary:
+          "Merge into production, tag, merge back, delete the branch, push production, merge-back branches and the tag, publish the forge release; resumes an interrupted finish",
+      },
+      {
+        name: "publish",
+        usage: "workit release publish [<version>]",
+        summary: "Push the release branch (opt-in: others commit to it or CI runs on it)",
+      },
+    ],
+    examples: [
+      "workit release start 1.4.0",
+      'workit git commit -m "chore(release): 1.4.0" -- package.json CHANGELOG.md',
+      "workit release finish --dry-run",
+      "workit release finish",
+    ],
+    load: () => import("./release"),
+  }),
   withSubcommands(
     {
       name: "verify-delivery",

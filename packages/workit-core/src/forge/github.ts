@@ -689,5 +689,35 @@ export function createGitHubForge(options: {
       if (node?.pullRequest?.number !== number) return success(null);
       return success(node.isResolved ? "resolved" : "open");
     },
+
+    findRelease(tag) {
+      const found = rest<{ tag_name?: string; html_url?: string }>(
+        `repos/${repo}/releases/tags/${encodeRef(tag)}`,
+        `release ${tag}`,
+      );
+      if (!found.ok) return found.code === "not_found" ? success(null) : found;
+      return success({
+        tag: found.data.tag_name ?? tag,
+        url: safeUrl(found.data.html_url ?? null),
+      });
+    },
+
+    createRelease(input) {
+      // The notes ride stdin: argv has a size limit (E2BIG).
+      const created = apiWrite<{ tag_name?: string; html_url?: string }>(
+        runner,
+        "gh",
+        apiHost,
+        ["api", "-X", "POST", `repos/${repo}/releases`, "--input", "-"],
+        `release ${input.tag}`,
+        undefined,
+        JSON.stringify({ tag_name: input.tag, name: input.name, body: input.body }),
+      );
+      if (!created.ok) return created;
+      return success({
+        tag: created.data.tag_name ?? input.tag,
+        url: safeUrl(created.data.html_url ?? null),
+      });
+    },
   };
 }
