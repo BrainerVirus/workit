@@ -373,6 +373,7 @@ export default function extension(pi: ExtensionAPI): void {
     const handle = launchSupervisedWorker(worker.data.assignment, {
       runtime: runtimeFor(ctx),
       binding,
+      leadSession: ctx.sessionManager.getSessionId(),
       prompt: request.prompt,
       onPrepare: (pending) => {
         child = pending;
