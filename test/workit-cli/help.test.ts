@@ -50,6 +50,7 @@ const PARSERS: Record<string, string[]> = {
   pr: ["verbs/pr.ts"],
   ci: ["verbs/ci.ts"],
   git: ["verbs/git.ts"],
+  release: ["verbs/release.ts"],
   "verify-delivery": ["verbs/verify-delivery.ts"],
   stack: ["verbs/stack.ts"],
   fanout: ["verbs/fanout.ts"],
@@ -73,6 +74,8 @@ const NOT_ACCEPTED: Record<string, string[]> = {
   ),
   // `git push` names --force/-f only to refuse them.
   git: ["--force", "-f"],
+  // `release finish` passes --release to the in-process `git push`.
+  release: ["--release"],
 };
 
 const GLOBAL = new Set(["--json", "--cwd", "--help", "-h"]);

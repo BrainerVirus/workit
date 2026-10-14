@@ -304,6 +304,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   pr: [["status"]],
   ci: [["wait"]],
   git: [["push"]],
+  release: [["finish"], ["start"]],
   "verify-delivery": [["push"]],
   stack: [["plan"]],
   fanout: [["plan"], ["check"]],

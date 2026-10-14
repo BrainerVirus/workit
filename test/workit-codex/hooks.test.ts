@@ -164,13 +164,40 @@ test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issu
     const codexLead = { CODEX_THREAD_ID: "codex-session-1" };
     // Before any SubagentStart nothing under the lead is issued.
     expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).not.toBeNull();
-    dispatchHook(
-      claudeCodeAdapter,
-      fixture("claude-code", "subagent-start", root, { agent_type: "workit:verifier" }),
+    const tokenIn = (output: unknown): string | null =>
+      /--token (\S+)/u.exec(JSON.stringify(output))?.[1] ?? null;
+    const claudeToken = tokenIn(
+      dispatchHook(
+        claudeCodeAdapter,
+        fixture("claude-code", "subagent-start", root, { agent_type: "workit:verifier" }),
+      ).json,
     );
-    codex("subagent-start", root, { agent_type: "workit-verifier" });
-    expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).toBeNull();
-    expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root)).toBeNull();
+    const codexToken = tokenIn(codex("subagent-start", root, { agent_type: "workit-verifier" }));
+    expect(claudeToken).not.toBeNull();
+    expect(codexToken).not.toBeNull();
+    // A replayed SubagentStart for the same agent mints nothing new (mv8daa5d P1),
+    // and the first text says an older CLI needs updating, not a dead end.
+    const replay = codex("subagent-start", root, { agent_type: "workit-verifier" });
+    expect(tokenIn(replay)).toBeNull();
+    expect(JSON.stringify(replay)).toContain("codex-session-1:agent-1");
+    const fresh = codex("subagent-start", root, {
+      agent_type: "workit-verifier",
+      agent_id: "agent-5",
+    });
+    expect(JSON.stringify(fresh)).toContain("workit upgrade --cli");
+    expect(
+      sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root, { token: claudeToken }),
+    ).toBeNull();
+    expect(
+      sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root, { token: codexToken }),
+    ).toBeNull();
+    // The lead read the id, not the token: it cannot act as its verifier.
+    expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)?.error).toContain(
+      "unbound_session",
+    );
+    expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root)?.error).toContain(
+      "unbound_session",
+    );
     for (const [env, invented] of [
       [claudeLead, "claude-session-1:v1"],
       [codexLead, "codex-session-1:v1"],

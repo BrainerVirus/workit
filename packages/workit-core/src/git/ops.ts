@@ -37,13 +37,19 @@ import {
   type BranchKind,
   type FlowRoute,
 } from "../core/branch";
+import { releaseTagPrefixOf } from "../core/branch-policy";
 import { detectCommitFlavor, matchCommitFlavor } from "../core/commit-flavors";
 import { pushTargetIsStable } from "../core/pr-create";
-import { recordBranchBase, trackBranchName } from "../core/release-tracks";
+import { readReleaseTracks, recordBranchBase, trackBranchName } from "../core/release-tracks";
 import { vcsConfig, type ResolvedReleaseTrack } from "../core/vcs-config";
-import { workspaceTrailers } from "../core/workspaces";
+import {
+  resolveRuntimeReleaseTracks,
+  resolveRuntimeWorkspacePolicy,
+  workspaceTrailers,
+} from "../core/workspaces";
 import { redactText } from "../forge/redact";
 import { failure, success, type ForgeResult } from "../forge/types";
+import { issuedBinding, sessionClaimRefusal } from "../host-session";
 import { appendObserved, readLedger, type LedgerActor } from "../ledger";
 import {
   GIT_TIMEOUTS,
@@ -71,7 +77,7 @@ type Run = {
   stderr: string;
 };
 
-const git = (
+export const git = (
   cwd: string,
   args: string[],
   options: { timeoutMs?: number; env?: NodeJS.ProcessEnv; input?: string } = {},
@@ -97,7 +103,7 @@ const git = (
 };
 
 /** The last meaningful lines of git's stderr, redacted, for an error message. */
-const gitError = (run: { stderr: string; stdout?: string }, max = 3): string => {
+export const gitError = (run: { stderr: string; stdout?: string }, max = 3): string => {
   const lines = redactText(`${run.stderr}\n${run.stdout ?? ""}`)
     .split(/\r?\n/u)
     .map((value) => value.trim())
@@ -147,7 +153,7 @@ type InProgress = {
 };
 
 /** The multi-step git operation the checkout is in the middle of, if any. */
-function operationInProgress(cwd: string): InProgress | null {
+export function operationInProgress(cwd: string): InProgress | null {
   const markers: [string, Operation][] = [
     ["rebase-merge", "rebase"],
     ["rebase-apply", "rebase"],
@@ -186,7 +192,7 @@ function operationInProgress(cwd: string): InProgress | null {
 }
 
 /** A refusal that names the operation in progress and how to finish or leave it. */
-function inProgressFailure<T>(operation: Operation, verb: string): ForgeResult<T> {
+export function inProgressFailure<T>(operation: Operation, verb: string): ForgeResult<T> {
   const command = operation === "am" ? "git am" : `git ${operation}`;
   return failure(
     "blocked",
@@ -644,6 +650,25 @@ export function gitCommit(
       "invalid_input",
       "WORKIT_SESSION_ID must be 1-128 characters of [A-Za-z0-9_.:@/+-]",
     );
+  // A commit names its author session (commit.recorded, the trailer): the
+  // same claim check as a verdict, and an id issued to a verifier or
+  // reviewer never authors code (audit mv83zyg6 P2b).
+  if (session) {
+    const env = input.env ?? process.env;
+    if (issuedBinding(cwd, session) !== null)
+      return failure(
+        "blocked",
+        `judge_session: ${session} was issued to a verifier or reviewer subagent; it records verdicts and never authors commits`,
+        "commit from the implementer's or the lead's own session (unset WORKIT_SESSION_ID back to the shell's)",
+      );
+    const refusal = sessionClaimRefusal(env, session, cwd);
+    if (refusal)
+      return failure(
+        "blocked",
+        refusal.error,
+        "commit from the session this shell really is: never set WORKIT_SESSION_ID by hand for a commit (unset it, or use the id the host put in this shell)",
+      );
+  }
   // A commit that only rewords (amend) or is empty on purpose needs no change.
   const changeRequired = !input.amend && !input.allowEmpty;
 
@@ -1130,31 +1155,116 @@ export type ReleaseRef = {
   ref: string;
   /** The commit it points at (a tag peeled). */
   sha: string;
+  /** A tag's line production branch: the tag's commit must be on it. */
+  production?: string | null;
 };
 
 export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & {
   refs: ReleaseRef[];
-  /** The branch a pushed tag's commit must already be on (or a branch in this push). */
+  /** The workspace's production branch (git-flow production, else the default target). */
   production: string | null;
 };
 
 /**
- * The release tag prefix: git-flow's own `gitflow.prefix.versiontag` when the
- * repository sets it (an empty value means bare `4.1.0` tags), else `v`.
+ * One release line: the branches a release or hotfix finishes onto. The
+ * workspace's own (git-flow production and develop, else the trunk) or a
+ * release track's.
  */
-const releaseTagPrefix = (cwd: string): string => {
-  const configured = git(cwd, ["config", "--get", "gitflow.prefix.versiontag"]);
-  return configured.ok ? configured.stdout.trim() : "v";
+export type ReleaseLine = {
+  /** The release track's name; null for the workspace's own branches. */
+  track: string | null;
+  production: string;
+  integration: string;
+  /** Where a finished release merges back (git-flow: develop). */
+  mergeBack: string[];
+  /** The release tag prefix: the track's tagNamespace, then the workspace prefix. */
+  tagPrefix: string;
+  /** git-flow merges a release locally; elsewhere the trunk moves only through a PR. */
+  gitflow: boolean;
+  /** A track's branch-name templates (`release/nun-{version}`). */
+  naming: { release?: string; hotfix?: string };
 };
 
-/** A release tag: the prefix and a digit (`v4.1.0`, `v2`, or `4.1.0` with an empty prefix). */
-const isReleaseTag = (name: string, prefix: string): boolean =>
-  name.startsWith(prefix) && /^\d/u.test(name.slice(prefix.length));
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * The workspace's release lines: its own first, then one per release track
+ * (core/release-tracks.ts reads them leniently). The tag prefix is the
+ * branch policy's (releaseTagPrefixOf); a track adds its `tagNamespace`. A
+ * track's `strategy`, else the workspace preset, decides whether it is git-flow.
+ */
+export function releaseLinesOf(cwd: string): ReleaseLine[] {
+  const { preset, branches, production } = releaseBranchesOf(cwd);
+  let policyPrefix: unknown;
+  try {
+    const selected = resolveRuntimeWorkspacePolicy(
+      cwd,
+      "branch",
+      process.env.WORKFLOW_PROFILE?.trim() || undefined,
+    ).policy as Record<string, unknown> | undefined;
+    policyPrefix = selected?.releaseTagPrefix;
+  } catch {
+    policyPrefix = undefined;
+  }
+  const prefix = releaseTagPrefixOf(cwd, policyPrefix);
+  const trunk = production ?? "main";
+  const lines: ReleaseLine[] = [
+    {
+      track: null,
+      production: branches[0] ?? trunk,
+      integration: branches[1] ?? trunk,
+      mergeBack: branches[1] ? [branches[1]] : [],
+      tagPrefix: prefix,
+      gitflow: branches.length > 0,
+      naming: {},
+    },
+  ];
+  let raw: unknown;
+  try {
+    raw = resolveRuntimeReleaseTracks(cwd)?.releaseTracks;
+  } catch {
+    return lines;
+  }
+  for (const track of readReleaseTracks(raw).tracks) {
+    const value = isRecord(raw) ? raw[track.name] : undefined;
+    const entry: Record<string, unknown> = isRecord(value) ? value : {};
+    const strategy = typeof entry.strategy === "string" ? entry.strategy : preset;
+    const namespace = typeof entry.tagNamespace === "string" ? entry.tagNamespace.trim() : "";
+    lines.push({
+      track: track.name,
+      production: track.productionBranch,
+      integration: track.integrationBranch,
+      // git-flow always merges a release back into the integration branch.
+      mergeBack: track.mergeBackBranches.length
+        ? track.mergeBackBranches
+        : [track.integrationBranch],
+      tagPrefix: `${namespace}${prefix}`,
+      gitflow: strategy === "gitflow",
+      naming: { release: track.naming.release, hotfix: track.naming.hotfix },
+    });
+  }
+  return lines;
+}
+
+/**
+ * The line a release tag belongs to: its prefix and a digit (`v4.1.0`,
+ * `1.4.0` with an empty prefix, `nun/v2`); the longest matching prefix wins.
+ * Null for any other tag.
+ */
+const lineOfTag = (tag: string, lines: readonly ReleaseLine[]): ReleaseLine | null =>
+  lines
+    .filter(
+      (line) => tag.startsWith(line.tagPrefix) && /^\d/u.test(tag.slice(line.tagPrefix.length)),
+    )
+    .toSorted((a, b) => b.tagPrefix.length - a.tagPrefix.length)[0] ?? null;
 
 /**
  * What `workit git push --release` may push: the git-flow production and
- * develop branches and release tags (`v*`, or git-flow's configured prefix), nothing else, each by its local ref. Everything else stays on the feature-branch
- * path (`workit git push`, `workit pr create`).
+ * develop branches (and a git-flow release track's production, integration
+ * and merge-back branches) and release tags (the policy's tag prefix and a
+ * digit), nothing else, each by its local ref. Everything else stays on the
+ * feature-branch path (`workit git push`, `workit pr create`).
  */
 export function releasePushPreflight(
   cwd: string,
@@ -1164,7 +1274,16 @@ export function releasePushPreflight(
   if (progress) return inProgressFailure(progress.operation, "push");
   const wanted = [...new Set(names)];
   if (!wanted.length) return failure("invalid_input", "name the release refs to push");
-  const { preset, branches, production } = releaseBranchesOf(cwd);
+  const { preset, production } = releaseBranchesOf(cwd);
+  const lines = releaseLinesOf(cwd);
+  const tracks = lines.filter((line) => line.track !== null && line.gitflow);
+  const branches = [
+    ...new Set([
+      ...releaseBranchesOf(cwd).branches,
+      ...tracks.flatMap((line) => [line.production, line.integration, ...line.mergeBack]),
+    ]),
+  ];
+  const tagShape = `${lines[0].tagPrefix}<version>`;
   const refs: ReleaseRef[] = [];
   for (const raw of wanted) {
     if (raw.startsWith("-") || raw.includes(":"))
@@ -1182,14 +1301,20 @@ export function releasePushPreflight(
         `workit git push --release refs/heads/${raw}  # or refs/tags/${raw}`,
       );
     if (tag) {
-      const prefix = releaseTagPrefix(cwd);
-      if (!isReleaseTag(tagName, prefix))
+      const line = lineOfTag(tagName, lines);
+      if (!line)
         return failure(
           "blocked",
-          `release_push_refused: tag ${tagName} is not a release tag (${prefix}<version>, from ${prefix === "v" ? "the default" : "gitflow.prefix.versiontag"})`,
-          `git tag -a ${prefix}<version> -m <message>  # then: workit git push --release ${prefix}<version>`,
+          `release_push_refused: tag ${tagName} is not a release tag (${tagShape})`,
+          `git tag -a ${tagShape} -m <message>  # then: workit git push --release ${tagShape}`,
         );
-      refs.push({ kind: "tag", name: tagName, ref: `refs/tags/${tagName}`, sha: tag });
+      refs.push({
+        kind: "tag",
+        name: tagName,
+        ref: `refs/tags/${tagName}`,
+        sha: tag,
+        production: line.track === null ? production : line.production,
+      });
       continue;
     }
     if (!branch) return failure("not_found", `${raw} is not a local branch or tag`);
@@ -1198,10 +1323,10 @@ export function releasePushPreflight(
         "blocked",
         branches.length
           ? `release_push_refused: ${branchName} is not a git-flow release branch (${branches.join(", ")})`
-          : `release_push_refused: the ${preset} policy lands ${branchName} only through a reviewed PR; workit git push --release pushes v<version> tags there, not branches`,
+          : `release_push_refused: the ${preset} policy lands ${branchName} only through a reviewed PR; workit git push --release pushes ${tagShape} tags there, not branches`,
         branches.length
           ? "workit git push  # a feature, bugfix, release or hotfix branch, then: workit pr create"
-          : `workit pr create --base ${branchName}  # then tag the merged commit and: workit git push --release v<version>`,
+          : `workit pr create --base ${branchName}  # then tag the merged commit and: workit git push --release ${tagShape}`,
       );
     refs.push({ kind: "branch", name: branchName, ref: `refs/heads/${branchName}`, sha: branch });
   }
@@ -1226,7 +1351,14 @@ export function releasePushPreflight(
       `push_target_rewritten: the push URL of "${remote}" is rewritten by a url.*.insteadOf rule, so the destination is not the one checked`,
       "git config --get-regexp '^url\\.'  # remove the rewrite for this remote",
     );
-  return success({ refs, remote, url: redactRemote(raw), rawUrl: raw, local, production });
+  return success({
+    refs,
+    remote,
+    url: redactRemote(raw),
+    rawUrl: raw,
+    local,
+    production,
+  });
 }
 
 export type ReleasePushOutcome = {
@@ -1271,29 +1403,32 @@ export function executeReleasePush(
         `git fetch ${plan.remote} ${ref.name} && git switch ${ref.name} && git merge --ff-only ${plan.remote}/${ref.name}  # then: workit git push --release ${ref.name}`,
       );
   }
-  // A release tag marks a commit the production branch already has (or a
-  // branch this push moves): never an unmerged feature commit.
+  // A release tag marks a commit its line's production branch already has
+  // (on the remote, or as this push moves it): never an unmerged feature
+  // commit, and never another line's production (a nun/ tag on master).
   const tags = plan.refs.filter((ref) => ref.kind === "tag");
-  if (tags.length) {
-    let productionTip: string | null = null;
-    if (plan.production) {
-      const tip = remoteRefTip(cwd, plan.rawUrl, `refs/heads/${plan.production}`);
+  const contains = (tip: string, sha: string) =>
+    git(cwd, ["merge-base", "--is-ancestor", sha, tip]).ok;
+  for (const tag of tags) {
+    const production = tag.production ?? plan.production;
+    let remoteTip: string | null = null;
+    if (production) {
+      const tip = remoteRefTip(cwd, plan.rawUrl, `refs/heads/${production}`);
       if (!tip.ok) return failure(tip.code, tip.error);
-      productionTip = tip.sha;
+      remoteTip = tip.sha;
     }
-    const contains = (tip: string, sha: string) =>
-      git(cwd, ["merge-base", "--is-ancestor", sha, tip]).ok;
-    for (const tag of tags) {
-      const released =
-        (productionTip !== null && contains(productionTip, tag.sha)) ||
-        plan.refs.some((ref) => ref.kind === "branch" && contains(ref.sha, tag.sha));
-      if (!released)
-        return failure(
-          "blocked",
-          `tag_unreleased: ${tag.name} (${tag.sha.slice(0, 12)}) is not on ${plan.remote}/${plan.production ?? "the production branch"}${plan.refs.some((ref) => ref.kind === "branch") ? " or a branch in this push" : ""}; a release tag marks a commit that already landed`,
-          `land it through a PR first (workit pr create), git fetch ${plan.remote}, then tag the merged commit`,
-        );
-    }
+    const pushed = plan.refs.find(
+      (ref) => ref.kind === "branch" && ref.name.toLowerCase() === production?.toLowerCase(),
+    );
+    const released =
+      (remoteTip !== null && contains(remoteTip, tag.sha)) ||
+      (pushed !== undefined && contains(pushed.sha, tag.sha));
+    if (!released)
+      return failure(
+        "blocked",
+        `tag_unreleased: ${tag.name} (${tag.sha.slice(0, 12)}) is not on ${plan.remote}/${production ?? "the production branch"}${pushed ? ` or the ${production} in this push` : ""}; a release tag marks a commit that already landed on its line's production branch`,
+        `land it through a PR first (workit pr create), git fetch ${plan.remote}, then tag the merged commit`,
+      );
   }
   const pending = plan.refs.filter((ref) => previous.get(ref.ref) !== ref.sha);
   if (pending.length) {

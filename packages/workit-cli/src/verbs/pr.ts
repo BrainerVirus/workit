@@ -133,14 +133,20 @@ async function status(argv: string[], io: Io): Promise<number> {
 }
 
 /** How a merged PR landed, from its `pr.merged` row ("untracked": workit did not merge it). */
-type MergeRecord = { head: string | null; verdictId: string | null; unverified: boolean };
+type MergeRecord = {
+  head: string | null;
+  verdictId: string | null;
+  unverified: boolean;
+  /** Only the intent row: the merge call failed, yet the forge merged. */
+  intentOnly?: boolean;
+};
 
 const mergedVerdictLine = (landed: MergeRecord | "untracked"): string =>
   landed === "untracked"
     ? "merged outside workit (no merge record)"
     : landed.unverified
       ? `merged unverified at ${(landed.head ?? "?").slice(0, 12)} (recorded bypass)`
-      : `merged with accepted verdict ${landed.verdictId ?? "?"} at ${(landed.head ?? "?").slice(0, 12)}`;
+      : `merged with accepted verdict ${landed.verdictId ?? "?"} at ${(landed.head ?? "?").slice(0, 12)}${landed.intentOnly ? " (merge intent recorded; the merge call itself failed)" : ""}`;
 
 /**
  * S12: the S13 verdict for the PR's head branch (fresh, carried through a
@@ -151,27 +157,33 @@ function verdictBlock(
   branch: string,
   doc: { state: string; number: number; base: string },
 ) {
-  const ledger = readLedger(cwd);
+  const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return null;
   const check = checkVerdicts(cwd, branch, ledger.value.rows);
   // A merged PR's verdict is the one its merge was accepted on: the branch
   // has moved on or been deleted, so a fresh check would read as stale.
   let landed: MergeRecord | "untracked" | null = null;
   if (doc.state === "merged") {
-    const row = ledger.value.rows.findLast(
-      // Only the CLI's own merge record, for this PR on this base (one clone can
-      // merge PR #N on two forge repos).
-      (candidate) =>
-        candidate.type === "pr.merged" &&
-        candidate.observer === "workit_cli" &&
-        candidate.pr === doc.number &&
-        candidate.base === doc.base,
-    );
+    // Only the CLI's own chained merge record, for this PR on this base (one
+    // clone can merge PR #N on two forge repos); else its merge intent, written
+    // before a merge call that failed although the forge merged.
+    const mine = (type: string) =>
+      ledger.value.rows.findLast(
+        (candidate) =>
+          candidate.type === type &&
+          candidate.observer === "workit_cli" &&
+          candidate.integrity !== "unverified" &&
+          candidate.pr === doc.number &&
+          candidate.base === doc.base,
+      );
+    const merged = mine("pr.merged");
+    const row = merged ?? mine("pr.merge.intent");
     landed = row
       ? {
           head: typeof row.head === "string" ? row.head : null,
           verdictId: typeof row.verdictId === "string" ? row.verdictId : null,
           unverified: row.unverified !== undefined && row.unverified !== null,
+          ...(merged ? {} : { intentOnly: true }),
         }
       : "untracked";
   }
@@ -372,7 +384,12 @@ async function merge(argv: string[], io: Io): Promise<number> {
       io,
       fail(result.code, result.error, {
         unblock: result.unblock,
-        data: "refusal" in result && result.refusal ? result.refusal : {},
+        data:
+          "refusal" in result && result.refusal
+            ? result.refusal
+            : "recorded" in result && result.recorded
+              ? { recorded: result.recorded }
+              : {},
       }),
     );
   return emit(io, ok(result.data), (data: MergeOutcome) => [
@@ -391,6 +408,9 @@ async function merge(argv: string[], io: Io): Promise<number> {
         ? [`branch not deleted: ${data.deletedBranch.error}`]
         : []),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
+    ...("error" in data.confirmed && !("error" in data.recorded)
+      ? [`ledger: merge not confirmed in the ledger (${data.confirmed.error})`]
+      : []),
   ]);
 }
 

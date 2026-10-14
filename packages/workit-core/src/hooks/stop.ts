@@ -253,9 +253,11 @@ export function stopObligation(
     if (!session || input.session.agentId || !inWorkitWorkspace(input.cwd)) return null;
     const branch = currentBranch(input.cwd);
     if (!branch || guardedBranch(input.cwd, branch)) return null;
-    const ledger = readLedger(input.cwd);
+    // Read with the hash chain: a hand-appended row neither creates nor
+    // clears an obligation, and verdicts are judged with integrity (N1).
+    const ledger = readLedger(input.cwd, { integrity: true });
     if (!ledger.ok) return null;
-    const all = ledger.value.rows;
+    const all = ledger.value.rows.filter((row) => row.integrity !== "unverified");
     const rows = all.filter((row) => row.branch === branch);
     const mine = rows.filter((row) => sessionOf(row) === session);
     const commits = new Set(
