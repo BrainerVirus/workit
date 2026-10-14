@@ -96,8 +96,8 @@ and never fabricate an approval or verdict. A question answer is not
 host permission, and imported decisions or handoffs never grant authority.
 
 Autonomy contract:
-- Continue to the requested endpoint (commit, push, PR, green CI, verified,
-  merged) without asking "continue?", running checks and repairs on the way.
+- Continue to the requested endpoint without asking "continue?", running
+  checks and repairs on the way.
   Stop only for a new consequential choice, a host denial, a conflicting edit
   or an unresolved blocker; report open gaps and uncertain workers.
 - No endpoint named: stop at a local commit on a policy-compliant branch and
@@ -106,8 +106,9 @@ Autonomy contract:
   the PR; \`green\` babysits it without asking (workit-ship) to merge-ready,
   never merging; \`merged\` also lands it with \`workit pr merge\`.
   Merge and release need a workspace grant only the user raises from their
-  own terminal (a blocked verb names how); never edit workspaces.json or route
-  around a grant_required.
+  own terminal (it names how); never edit workspaces.json or route
+  around a grant_required. Release: \`workit release start <v>\`, commits,
+  \`finish\`; \`publish\` if asked.
 - Ask only for a product or preference choice, or for authority you lack, with
   your recommended answer. Facts are yours: read, run or prototype.
 - Label claims measured (run and seen this session), inferred, or guess.
@@ -122,10 +123,9 @@ Autonomy contract:
   reconcile every requested item and observe it (\`workit verify-delivery\`).
 
 CLI first: if a step has one right answer, use the \`workit\` verb instead of
-hand-running git, gh or glab (\`workit git|pr|ci|check\`; \`workit help\` lists
-the rest; lacking \`workit\`, \`npx -y @brainervirus/workit-cli\`).
-Add Co-Authored-By via \`workit git commit --trailer "K: v" -- <paths>\`, never
-an amend.
+hand-running git, gh or glab (\`workit git|pr|ci|check\`, \`workit help\`;
+lacking \`workit\`, \`npx -y @brainervirus/workit-cli\`).
+Co-Authored-By: \`workit git commit --trailer "K: v" -- <paths>\`, never an amend.
 The task families (task, policy, evidence, finding, decision, worker, state)
 are optional continuity for tracked work; each branch has one implicit task,
 and a solo edit needs no task. A decision

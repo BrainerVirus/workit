@@ -70,17 +70,86 @@ its first). `--kind chore` suggests the closest kind the policy allows; when
 the policy's kinds are not ones `--kind` takes (a custom `task/*`), it names
 the branch to pass instead, and github-flow says any non-protected name works.
 
+### Releases: start, finish, publish
+
+`workit release` runs a git-flow release or hotfix without the git-flow
+binary, with `git flow release finish` semantics. The release branch stays
+local: the version bump, changelog, docs and late fixes are ordinary
+`workit git commit`s on it.
+
+```bash
+workit release start 1.4.0 [--hotfix] [--track <t>]   # release/1.4.0 from develop (hotfix/ from main), local only
+workit git commit -m "chore(release): 1.4.0" -- package.json CHANGELOG.md
+workit release finish [1.4.0] [--track <t>] [--dry-run]
+workit release publish [1.4.0]                         # opt-in: the only verb that pushes the release branch
+```
+
+`start` refuses while another release (or hotfix) of the same line is open
+(`release_exists`), when the tag already exists, and when the local base has
+commits its remote lacks (`base_unpushed`); it branches from the fetched
+remote base and records `release.started`.
+
+`finish` first checks: no merge or rebase in progress, no uncommitted changes
+to tracked files, production and every merge-back branch not behind their
+remote (`branch_behind`; a missing local branch is created from the remote),
+the release branch not behind its published copy, the tag free locally and on
+the remote (`tag_exists`), and the `release` and `push` grants (`--dry-run`
+stops here and lists each step as done or todo). Then, each step recorded as a
+ledger row:
+
+1. `git merge --no-ff` of the release branch into production
+   (`release.merged`);
+2. an annotated tag `<prefix><version>` on that merge, its message the
+   version's `CHANGELOG.md` section (`## [1.4.0]`, `## 1.4.0` or
+   semantic-release's `# [1.4.0](…)`), else `Release <version>`
+   (`release.tagged`);
+3. `git merge --no-ff` of the tag into develop and every merge-back branch of
+   the track (`release.merged_back`): git-flow merges back through the tag;
+4. `git branch -d` of the release branch (`release.branch_deleted`);
+5. the atomic `workit git push --release` of production, the merge-back
+   branches and the tag (`release.pushed`). The release branch is never in
+   it; a published one is deleted on the remote at the tip it had, as
+   git-flow does;
+6. a GitHub or GitLab release on the tag with the changelog section
+   (`release.forge_released`; none for a local-path remote);
+7. `verify-delivery released` on the tag (`delivery.verified`), then
+   `release.finished`.
+
+An interrupted finish (a merge conflict, a failed push, a forge error) prints
+the `resume` command (`workit release finish <version>`). The rerun reads the
+repository and the ledger: a merge already in production, an existing tag, a
+merge-back branch that already holds the tag and a deleted branch are skipped,
+and an existing forge release is found rather than created again. On a merge
+conflict, resolve it and `git merge --continue` first.
+
+The tag prefix is git-flow's `gitflow.prefix.versiontag` (empty means bare
+`1.4.0` tags), else `v`; a
+release track adds its `tagNamespace` (`nun/v1.4.0`). On a release track
+(`--track`, or the checkout's), the branch follows the track's naming
+(`release/nun-{version}`), starts from its integration branch, lands on its
+production branch and merges back into its `mergeBackBranches` (default: its
+integration branch).
+
+Outside git-flow (github-flow, trunk-based, custom, or a track whose
+`strategy` is not gitflow) the trunk moves only through review, so `finish`
+pushes the release branch and opens a release PR into the trunk instead; tag
+the merged commit and push it with `workit git push --release <tag>`.
+
 ### Release push
 
 `workit git push` never pushes a protected branch. Finishing a release or
 hotfix can need protected branches and the release tag on the remote, so
 `workit git push --release <ref>` (repeat `--release` for each ref) pushes:
 
-- in git-flow, the production and develop branches; in github-flow,
+- in git-flow, the production and develop branches (and a git-flow release
+  track's production, integration and merge-back branches); in github-flow,
   trunk-based and custom, no branch (a protected trunk moves only through a
-  reviewed PR); and release tags (`v<digit>…`, or `<prefix><digit>…` when `gitflow.prefix.versiontag` is set, empty included) in every preset whose commit is already
-  on the remote production branch (git-flow production, else the default
-  target) or on a branch in the same push (`tag_unreleased` otherwise). Any
+  reviewed PR); and release tags (`v<digit>…`, or `<prefix><digit>…` when
+  `gitflow.prefix.versiontag` is set, empty included; a track's tags start
+  with its `tagNamespace`, e.g. `nun/v1.0.0`) in every preset whose commit is
+  already on the remote production branch (git-flow production, a track's
+  production, else the default target) or on a branch in the same push
+  (`tag_unreleased` otherwise). Any
   other branch or tag is refused (`release_push_refused`, with a preset's own
   unblock);
 - branches fast-forward only (never forced, `non_fast_forward` otherwise), and

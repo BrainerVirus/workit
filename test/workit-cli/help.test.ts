@@ -50,6 +50,7 @@ const PARSERS: Record<string, string[]> = {
   pr: ["verbs/pr.ts"],
   ci: ["verbs/ci.ts"],
   git: ["verbs/git.ts"],
+  release: ["verbs/release.ts"],
   "verify-delivery": ["verbs/verify-delivery.ts"],
   stack: ["verbs/stack.ts"],
   fanout: ["verbs/fanout.ts"],
