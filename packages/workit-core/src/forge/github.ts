@@ -27,7 +27,7 @@ const CONTEXTS = `contexts(first: 100, after: $contexts) { pageInfo { hasNextPag
 
 export const PR_STATUS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $threads: String, $contexts: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PR_FIELDS} ${THREADS} commits(last: 1) { nodes { commit { oid statusCheckRollup { state ${CONTEXTS} } } } } } } }`;
 
-export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number url state headRefName headRefOid headRepositoryOwner { login } } } } }`;
+export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number url state baseRefName headRefName headRefOid headRepositoryOwner { login } } } } }`;
 
 const READY_MUTATION = `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
 const DRAFT_MUTATION = `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
@@ -351,6 +351,7 @@ export function createGitHubForge(options: {
               number: number;
               url: string;
               state: string;
+              baseRefName?: string;
               headRefName: string;
               headRefOid: string | null;
               headRepositoryOwner: { login: string } | null;
@@ -365,11 +366,21 @@ export function createGitHubForge(options: {
       const ours = nodes.filter(
         (node) =>
           node.headRefName === head &&
+          (!match.base || node.baseRefName === undefined || node.baseRefName === match.base) &&
           ((match.owner !== null &&
             node.headRepositoryOwner?.login.toLowerCase() === match.owner.toLowerCase()) ||
             (match.sha !== null && node.headRefOid === match.sha)),
       );
-      const pick = ours.find((node) => node.state === "OPEN") ?? ours[0];
+      const open = ours.filter((node) => node.state === "OPEN");
+      // No base named and open PRs into several bases (a git-flow release
+      // into main and its back-merge into develop): never guess.
+      if (!match.base && new Set(open.map((node) => node.baseRefName)).size > 1)
+        return failure(
+          "blocked",
+          `ambiguous_pr: ${head} has open pull requests ${open.map((node) => `#${node.number} -> ${node.baseRefName}`).join(", ")}`,
+          `pass --pr <n>, e.g. --pr ${open[0].number}`,
+        );
+      const pick = open[0] ?? ours[0];
       if (!pick) return success(null);
       const ref: PrRef = {
         number: pick.number,

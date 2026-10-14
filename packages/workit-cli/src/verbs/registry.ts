@@ -344,8 +344,9 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "branch",
         usage:
-          "workit git branch <name> | git branch --kind feature|bugfix|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]",
-        summary: "Create and switch to a branch from the trunk or a release track",
+          "workit git branch <name> | git branch --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]",
+        summary:
+          "Create and switch to a branch from the trunk, the git-flow route of its kind or a release track",
       },
       {
         name: "commit",
@@ -357,8 +358,9 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "push",
         usage:
-          "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]]",
-        summary: "Push the current branch and verify the remote tip (never a blind --force)",
+          "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…]",
+        summary:
+          "Push the current branch and verify the remote tip (never a blind --force); --release finishes a git-flow release",
       },
     ],
     examples: [

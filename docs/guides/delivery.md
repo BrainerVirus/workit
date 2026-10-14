@@ -8,11 +8,99 @@ observed in the run ledger. Each one checks the workspace
 
 ```bash
 workit git branch feature/x [--base <b>] [--track <t>]   # policy-checked name, from the fetched default target
+workit git branch --kind feature|bugfix|release|hotfix --slug <s>   # the kind picks the base (per preset, below)
 workit git commit -m "feat: x" -- <paths>       # convention-checked; --all takes every change
 workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last commit; -F <file|-> reads the message
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]
+workit git push --release main [--release develop] [--release v<version>]   # finish a release or hotfix (release grant)
 ```
+
+### Branch kinds per preset
+
+Where a branch starts and its PR lands when `--base` (or `pr create --base`)
+is left out, per branch-policy preset:
+
+| Kind | git-flow | github-flow | custom |
+| --- | --- | --- | --- |
+| `feature/`, `bugfix/` | develop → develop | main → main | default target → default target, if the policy allows the kind |
+| `release/` | develop → main, then merge back | main → main | the same, if allowed |
+| `hotfix/` | main → main, then merge back | main → main | the same, if allowed |
+
+github-flow allows any name, so every kind (and any other name) starts from
+and lands on main; trunk-based does the same on its trunk. custom starts every
+allowed kind from its default target (`vcs.defaultTargetBranch`, else
+`develop`) and refuses a kind its `allowed` patterns do not cover, naming its
+own kinds (`custom: task/*` suggests `task/x`, never a git-flow kind). Only
+git-flow refuses an explicit base or PR target (below) and reminds about
+merging back.
+
+The git-flow route in detail:
+
+| Kind | Starts from | PR lands on | Then |
+| --- | --- | --- | --- |
+| `feature/`, `bugfix/` | develop | develop | |
+| `release/` | develop | main | merge main back into develop, tag `v<version>` |
+| `hotfix/` | main | main | merge main back into develop, tag `v<version>` |
+
+develop is the workspace's `branchPolicy.developBranch`, else the default
+target when it is not the production branch, else `develop`; production is
+`main`, else `master`. A positional name routes by its prefix
+(`workit git branch release/4.1.0`). Once develop exists, an explicit
+`--base` or PR `--base` that is the other long-lived branch is refused
+(`gitflow_base` / `gitflow_target`: a feature from main, a hotfix from
+develop); a release or hotfix PR into develop (the back-merge) is allowed, and
+a stack parent stays a valid base. github-flow, trunk-based and custom route
+every kind to the default target; [release tracks](configuration.md#release-tracks)
+take precedence over all of this.
+
+`pr create` on a release or hotfix branch reminds you to merge back into
+develop; `pr merge` of one into main reports `merge back` (`mergeBack` in
+`--json`). `pr create --base develop` on the same release or hotfix branch
+opens the back-merge PR: an open PR is reused only when both its head and its
+base match (a forge reply without the base field is matched on head alone).
+Once a branch has open PRs into two bases, `pr status`, `pr merge` and the
+other PR verbs without `--pr` refuse with `ambiguous_pr`, naming both, rather
+than pick one.
+
+A name with a prefix the policy does not allow is refused with that policy's
+allowed kinds and the closest of them (git-flow: `fix/` → `bugfix/`, `chore/`,
+`docs/`, `refactor/` → `feature/`; custom: the nearest of its own kinds, else
+its first). `--kind chore` suggests the closest kind the policy allows; when
+the policy's kinds are not ones `--kind` takes (a custom `task/*`), it names
+the branch to pass instead, and github-flow says any non-protected name works.
+
+### Release push
+
+`workit git push` never pushes a protected branch. Finishing a release or
+hotfix can need protected branches and the release tag on the remote, so
+`workit git push --release <ref>` (repeat `--release` for each ref) pushes:
+
+- in git-flow, the production and develop branches; in github-flow,
+  trunk-based and custom, no branch (a protected trunk moves only through a
+  reviewed PR); and tags `v<digit>…` in every preset whose commit is already
+  on the remote production branch (git-flow production, else the default
+  target) or on a branch in the same push (`tag_unreleased` otherwise). Any
+  other branch or tag is refused (`release_push_refused`, with a preset's own
+  unblock);
+- branches fast-forward only (never forced, `non_fast_forward` otherwise), and
+  a tag only when the remote lacks it or already has it at that commit
+  (`tag_exists`: a release tag never moves);
+- in one atomic push, then verifies every remote tip and records one
+  `release.pushed` ledger row.
+
+It needs the `release` grant (off by default; `workit grant set <workspace>
+release=true` from your own terminal) and the `push` grant with its account
+check. Inside a Workit workspace, every host's pre-shell hook denies a raw
+`git push` onto git-flow main or develop and a raw tag push (`git push origin
+v1.0`, `refs/tags/…`, `--tags`), naming this command and the grant;
+`--follow-tags` is left alone. Outside git-flow a raw push of the trunk gets
+the plain protected-branch deny. `--mirror` is denied. A raw push that would
+create a branch name the policy does not allow (`HEAD:chore/x`,
+`HEAD:refs/heads/chore/x`, `-u origin chore/x`, the current branch, or any
+local branch under `--all`/`--branches`) is denied with the allowed kinds and
+the closest name; a branch the remote already has (a legacy or bot branch),
+and a delete (`--delete`, `:chore/old`), is never judged.
 
 - `git branch` and `git commit` apply the workspace branch and commit policy,
   never commit to a protected branch, and never sweep in changes you did not
@@ -25,6 +113,20 @@ workit git push [--set-upstream] [--force-with-lease]
   the repository's local and `origin` branches pick it (`workit doctor` shows
   `preset: detected (…)`): `develop` means gitflow, `main` alone
   github-flow, `master` alone trunk-based.
+- Raw branch creation is checked too: every host's pre-shell hook denies
+  `git switch -c|-C`, `git checkout -b|-B`, `git branch [-m|-c]` and
+  `git worktree add -b|-B` (attached values like `-bchore/x` too, and
+  `git worktree add ../x`, which names the branch `x`) onto a protected or
+  off-policy name, in any `&&`/`;`/`|` chain, after `cd` or `git -C`, behind
+  env assignments or wrappers, quoted or not, from a subdirectory or a linked
+  worktree (the directory git runs in picks the workspace policy). Only new
+  names are judged: a branch that already exists there (`git branch -f
+  legacy HEAD`) is not. A command that changes into a directory is judged
+  only when that directory already exists in a Workit workspace, so a scratch
+  repository (`cd "$(mktemp -d)"`, `git init x && cd x`, a fresh clone) is
+  left alone. A Claude Code
+  worktree-isolated subagent, which must use plain git, gets the allowed kinds
+  and bases in its start context.
 - A plain `git commit` gets the same trailer from a `prepare-commit-msg`
   hook, for agents that cannot run `workit git` (a Claude Code
   worktree-isolated subagent). `workit doctor` warns (`session_hook`) when a Workit workspace

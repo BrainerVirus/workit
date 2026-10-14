@@ -21,11 +21,19 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  branchKindOf,
   classifyBranchDirt,
+  flowMismatch,
+  flowRoute,
+  gitFlowOf,
   isProtectedTarget,
+  releaseBranch,
+  releaseBranchesOf,
   resolveCommitPolicyFor,
   validateBranchNameFor,
   validateCommitMessageFor,
+  type BranchKind,
+  type FlowRoute,
 } from "../core/branch";
 import { detectCommitFlavor, matchCommitFlavor } from "../core/commit-flavors";
 import { pushTargetIsStable } from "../core/pr-create";
@@ -221,12 +229,14 @@ export type BranchOutcome = {
   notes: string[];
   /** The release track the base and name came from; null without tracks. */
   releaseTrack: ResolvedReleaseTrack | null;
+  /** The git-flow route the base came from; null outside git-flow or with a release track. */
+  flow: FlowRoute | null;
 };
 
 export type BranchInput = {
   /** An explicit branch name; else `kind` + `slug` through the track's naming. */
   name?: string;
-  kind?: "feature" | "bugfix" | "hotfix";
+  kind?: BranchKind;
   slug?: string;
   base?: string | null;
   carry?: boolean;
@@ -272,6 +282,21 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
   if (!policy.ok) return failure("blocked", policy.error, policy.correction);
   if (resolveRef(cwd, `refs/heads/${name}`))
     return failure("failed", `branch_exists: ${name} already exists`, `git switch ${name}`);
+  // git-flow (no release track): the kind decides the base, and an explicit
+  // base that is the other long-lived branch is refused.
+  const kind = input.kind ?? branchKindOf(name);
+  const flow =
+    resolved.ok !== false && !releaseTrack?.track
+      ? gitFlowOf(cwd, String(resolved.defaultTargetBranch ?? "") || null)
+      : null;
+  const route = flow && kind ? flowRoute(flow, kind) : null;
+  const mismatch = explicitBase ? flowMismatch(flow, kind, explicitBase, "base") : null;
+  if (mismatch && route)
+    return failure(
+      "blocked",
+      mismatch,
+      `workit git branch ${input.kind ? `--kind ${kind} --slug ${input.slug}` : name}  # without --base it starts from ${route.base}`,
+    );
 
   let base = explicitBase;
   let defaultTarget: string | null = null;
@@ -287,12 +312,16 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
     defaultTarget = String(resolved.defaultTargetBranch ?? "") || null;
     defaultBase = String(resolved.baseBranch ?? "") || defaultTarget;
   }
-  base ??= defaultBase;
+  base ??= route?.base ?? defaultBase;
   if (!base)
     return failure("invalid_input", "no default target branch is configured; pass --base <branch>");
   if (base.startsWith("-")) return failure("invalid_input", "--base must not start with -");
 
   const notes: string[] = [...(releaseTrack?.warnings ?? [])];
+  if (route?.mergeBack)
+    notes.push(
+      `git-flow: ${route.kind}/* lands on ${route.target} (workit pr create targets it), then ${route.target} merges back into ${route.mergeBack}`,
+    );
   const remotes = remoteNames(cwd);
   const remote = remotes.includes("origin") ? "origin" : pushRemoteName(cwd);
   const localTip = resolveRef(cwd, `refs/heads/${base}`);
@@ -351,6 +380,7 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
     carried: dirt !== "clean",
     notes,
     releaseTrack,
+    flow: route,
   });
 }
 
@@ -691,8 +721,10 @@ export function pushPreflight(
   if (isProtectedTarget(cwd, branch))
     return failure(
       "blocked",
-      `protected_branch: ${branch} is protected by the workspace branch policy; workit never pushes to it`,
-      "workit git branch <feature/name>  # push a feature branch and open a PR",
+      `protected_branch: ${branch} is protected by the workspace branch policy; workit git push never pushes to it`,
+      releaseBranch(cwd, branch)
+        ? `workit git push --release ${branch}  # finishing a release or hotfix; needs the release grant`
+        : "workit git branch <feature/name>  # push a feature branch and open a PR",
     );
   const sha = resolveRef(cwd, `refs/heads/${branch}`);
   if (!sha) return failure("not_found", `branch ${branch} has no commit to push`);
@@ -988,6 +1020,229 @@ export function executePush(
     forced,
     delivered: true,
     upstream,
+    recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// release push: finishing a git-flow release or hotfix
+
+export type ReleaseRef = {
+  kind: "branch" | "tag";
+  /** The short name (`main`, `v4.1.0`). */
+  name: string;
+  /** The full ref (`refs/heads/main`, `refs/tags/v4.1.0`). */
+  ref: string;
+  /** The commit it points at (a tag peeled). */
+  sha: string;
+};
+
+export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & {
+  refs: ReleaseRef[];
+  /** The branch a pushed tag's commit must already be on (or a branch in this push). */
+  production: string | null;
+};
+
+/** A release tag: `v` and a digit (`v4.1.0`, `v2`). */
+const RELEASE_TAG = /^v\d/u;
+
+/**
+ * What `workit git push --release` may push: the git-flow production and
+ * develop branches and `v*` tags, nothing else, each by its local ref. Everything else stays on the feature-branch
+ * path (`workit git push`, `workit pr create`).
+ */
+export function releasePushPreflight(
+  cwd: string,
+  names: readonly string[],
+): ForgeResult<ReleasePushPlan> {
+  const progress = operationInProgress(cwd);
+  if (progress) return inProgressFailure(progress.operation, "push");
+  const wanted = [...new Set(names)];
+  if (!wanted.length) return failure("invalid_input", "name the release refs to push");
+  const { preset, branches, production } = releaseBranchesOf(cwd);
+  const refs: ReleaseRef[] = [];
+  for (const raw of wanted) {
+    if (raw.startsWith("-") || raw.includes(":"))
+      return failure("invalid_input", `${raw} is not a ref name (refspecs are not accepted)`);
+    const tagName = raw.replace(/^refs\/tags\//u, "");
+    const branchName = raw.replace(/^refs\/heads\//u, "");
+    const tag = raw.startsWith("refs/heads/") ? null : resolveRef(cwd, `refs/tags/${tagName}`);
+    const branch = raw.startsWith("refs/tags/")
+      ? null
+      : resolveRef(cwd, `refs/heads/${branchName}`);
+    if (tag && branch)
+      return failure(
+        "invalid_input",
+        `${raw} names both a branch and a tag`,
+        `workit git push --release refs/heads/${raw}  # or refs/tags/${raw}`,
+      );
+    if (tag) {
+      if (!RELEASE_TAG.test(tagName))
+        return failure(
+          "blocked",
+          `release_push_refused: tag ${tagName} is not a release tag (v<version>)`,
+          "git tag -a v<version> -m <message>  # then: workit git push --release v<version>",
+        );
+      refs.push({ kind: "tag", name: tagName, ref: `refs/tags/${tagName}`, sha: tag });
+      continue;
+    }
+    if (!branch) return failure("not_found", `${raw} is not a local branch or tag`);
+    if (!branches.some((name) => name.toLowerCase() === branchName.toLowerCase()))
+      return failure(
+        "blocked",
+        branches.length
+          ? `release_push_refused: ${branchName} is not a git-flow release branch (${branches.join(", ")})`
+          : `release_push_refused: the ${preset} policy lands ${branchName} only through a reviewed PR; workit git push --release pushes v<version> tags there, not branches`,
+        branches.length
+          ? "workit git push  # a feature, bugfix, release or hotfix branch, then: workit pr create"
+          : `workit pr create --base ${branchName}  # then tag the merged commit and: workit git push --release v<version>`,
+      );
+    refs.push({ kind: "branch", name: branchName, ref: `refs/heads/${branchName}`, sha: branch });
+  }
+  const remote = pushRemoteName(cwd, refs.find((ref) => ref.kind === "branch")?.name ?? null);
+  if (!remote)
+    return failure(
+      "not_found",
+      "no push remote is configured for this repository",
+      "git remote add origin <url>",
+    );
+  const raw = pushUrl(cwd, remote);
+  if (!raw)
+    return failure(
+      "blocked",
+      `remote "${remote}" has no single push URL`,
+      `git remote get-url --push --all ${remote}  # keep exactly one push URL`,
+    );
+  const local = parseRemoteUrl(raw)?.protocol === "file";
+  if (!local && !pushTargetIsStable(cwd, raw))
+    return failure(
+      "blocked",
+      `push_target_rewritten: the push URL of "${remote}" is rewritten by a url.*.insteadOf rule, so the destination is not the one checked`,
+      "git config --get-regexp '^url\\.'  # remove the rewrite for this remote",
+    );
+  return success({ refs, remote, url: redactRemote(raw), rawUrl: raw, local, production });
+}
+
+export type ReleasePushOutcome = {
+  remote: string;
+  url: string;
+  refs: Array<ReleaseRef & { previous: string | null; pushed: boolean }>;
+  recorded: { id: string } | { error: string };
+};
+
+/**
+ * Push the planned release refs in one atomic push: a branch only fast
+ * forward, a tag only when the remote lacks it (a release tag never moves),
+ * never forced. Success only when every remote tip observed afterwards is the
+ * local one; recorded as one `release.pushed` row.
+ */
+export function executeReleasePush(
+  cwd: string,
+  plan: ReleasePushPlan,
+  input: {
+    actor: LedgerActor;
+    grant: string;
+    timeoutMs?: number;
+    identity?: Record<string, unknown>;
+  },
+): ForgeResult<ReleasePushOutcome> {
+  const previous = new Map<string, string | null>();
+  for (const ref of plan.refs) {
+    const before = remoteRefTip(cwd, plan.rawUrl, ref.ref);
+    if (!before.ok) return failure(before.code, before.error);
+    previous.set(ref.ref, before.sha);
+    if (before.sha === null || before.sha === ref.sha) continue;
+    if (ref.kind === "tag")
+      return failure(
+        "blocked",
+        `tag_exists: ${plan.remote} already has ${ref.name} at ${before.sha.slice(0, 12)}, not ${ref.sha.slice(0, 12)}; a release tag never moves`,
+        `git tag -d ${ref.name}  # tag the next version instead`,
+      );
+    if (!git(cwd, ["merge-base", "--is-ancestor", before.sha, ref.sha]).ok)
+      return failure(
+        "failed",
+        `non_fast_forward: ${plan.remote}/${ref.name} (${before.sha.slice(0, 12)}) is not part of local ${ref.name}; a release push never rewrites it`,
+        `git fetch ${plan.remote} ${ref.name} && git switch ${ref.name} && git merge --ff-only ${plan.remote}/${ref.name}  # then: workit git push --release ${ref.name}`,
+      );
+  }
+  // A release tag marks a commit the production branch already has (or a
+  // branch this push moves): never an unmerged feature commit.
+  const tags = plan.refs.filter((ref) => ref.kind === "tag");
+  if (tags.length) {
+    let productionTip: string | null = null;
+    if (plan.production) {
+      const tip = remoteRefTip(cwd, plan.rawUrl, `refs/heads/${plan.production}`);
+      if (!tip.ok) return failure(tip.code, tip.error);
+      productionTip = tip.sha;
+    }
+    const contains = (tip: string, sha: string) =>
+      git(cwd, ["merge-base", "--is-ancestor", sha, tip]).ok;
+    for (const tag of tags) {
+      const released =
+        (productionTip !== null && contains(productionTip, tag.sha)) ||
+        plan.refs.some((ref) => ref.kind === "branch" && contains(ref.sha, tag.sha));
+      if (!released)
+        return failure(
+          "blocked",
+          `tag_unreleased: ${tag.name} (${tag.sha.slice(0, 12)}) is not on ${plan.remote}/${plan.production ?? "the production branch"}${plan.refs.some((ref) => ref.kind === "branch") ? " or a branch in this push" : ""}; a release tag marks a commit that already landed`,
+          `land it through a PR first (workit pr create), git fetch ${plan.remote}, then tag the merged commit`,
+        );
+    }
+  }
+  const pending = plan.refs.filter((ref) => previous.get(ref.ref) !== ref.sha);
+  if (pending.length) {
+    const run = gitNetwork(
+      cwd,
+      [
+        "push",
+        "--porcelain",
+        "--atomic",
+        "--no-follow-tags",
+        "--recurse-submodules=no",
+        plan.remote,
+        ...pending.map((ref) =>
+          ref.kind === "tag" ? `${ref.ref}:${ref.ref}` : `${ref.sha}:${ref.ref}`,
+        ),
+      ],
+      input.timeoutMs ?? PUSH_TIMEOUT_MS,
+    );
+    if (!run.ok)
+      return run.timedOut
+        ? failure("unavailable", `git push to ${plan.url} timed out`)
+        : failure("failed", `git push to ${plan.url} failed:\n${gitOutput(run)}`);
+  }
+  for (const ref of plan.refs) {
+    const after = remoteRefTip(cwd, plan.rawUrl, ref.ref);
+    if (!after.ok) return failure(after.code, `push sent but not verified: ${after.error}`);
+    if (after.sha !== ref.sha)
+      return failure(
+        "failed",
+        `push_unverified: ${plan.remote} ${ref.ref} is at ${after.sha?.slice(0, 12) ?? "(absent)"}, not ${ref.sha.slice(0, 12)}`,
+      );
+  }
+  const refs = plan.refs.map((ref) => ({
+    ...ref,
+    previous: previous.get(ref.ref) ?? null,
+    pushed: pending.includes(ref),
+  }));
+  const row = appendObserved(cwd, {
+    type: "release.pushed",
+    actor: input.actor,
+    remote: plan.remote,
+    url: plan.url,
+    refs: refs.map(({ ref, sha, previous: before, pushed }) => ({
+      ref,
+      sha,
+      previous: before,
+      pushed,
+    })),
+    grant: input.grant,
+    ...(input.identity ? { identity: input.identity } : {}),
+  });
+  return success({
+    remote: plan.remote,
+    url: plan.url,
+    refs,
     recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
   });
 }

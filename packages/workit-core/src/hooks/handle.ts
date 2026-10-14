@@ -6,6 +6,7 @@ import {
   turnContextText,
 } from "./context";
 import type { HostDescriptor, Support } from "./descriptor";
+import { branchGuidance } from "../core/branch";
 import { recordIssuedSession } from "../host-session";
 import { shellPolicy } from "./policy";
 import {
@@ -91,13 +92,14 @@ const subagentStartText = (
   const isolated =
     descriptor.subagents.worktreeIsolation === "native" &&
     (role === "implementer" || CLAUDE_WORKTREE.test(input.cwd));
+  const guide = role === "implementer" ? branchGuidance(input.cwd) : null;
   if (role === "implementer" && isolated)
-    return `Workit observed ${who} working in its own git worktree: it may edit and commit there, within its brief's scope. ${ISOLATED_GIT} Use a policy-compliant branch (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
+    return `Workit observed ${who} working in its own git worktree: it may edit and commit there, within its brief's scope. ${ISOLATED_GIT} Plain git is expected here, and the branch name is still policy-checked: a raw \`git switch -c\`, \`git checkout -b\`, \`git branch\` or \`git worktree add -b\` onto a protected or non-compliant name is denied, so use a policy-compliant branch.${guide ? ` ${guide}` : " (e.g. feature/<slug>)"} Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
   if (isolated)
     return `${ISOLATED_GIT}\n${subagentStartText({ ...input, cwd: "" }, descriptor, event)}`;
   if (role === "implementer")
     // No host isolation: the lead makes the worktree, and workit git works there.
-    return `Workit observed ${who} as an implementer: it edits and commits only in its own git worktree (the lead makes one with \`workit fanout worktree create <slice>\`), never in the lead's checkout, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (e.g. feature/<slug>); branch policy hooks still deny protected or non-compliant branches. Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
+    return `Workit observed ${who} as an implementer: it edits and commits only in its own git worktree (the lead makes one with \`workit fanout worktree create <slice>\`), never in the lead's checkout, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (or \`--kind <kind> --slug <slug>\`, which picks the base); branch policy hooks still deny protected or non-compliant branches, raw git included.${guide ? ` ${guide}` : " (e.g. feature/<slug>)"} Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
   const readOnly = `Workit observed ${who} as read-only/agent-guided.`;
   if (role !== "judge" || !event.agentId) return readOnly;
   const own = subagentSession(session, event.agentId);
@@ -139,7 +141,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       const skillRead = skillReadIn(event.command, event.dialect);
       if (skillRead) recordSkillLoad(input, skillRead, "read");
       const canDeny = usable(descriptor.shellPolicy.deny);
-      const policy = canDeny ? shellPolicy(input.cwd, event.command) : NONE;
+      const policy = canDeny ? shellPolicy(input.cwd, event.command, event.dialect) : NONE;
       if (policy.kind !== "none") return policy;
       // Without a post-tool event, the previous raw commit is recorded now.
       const postTool = usable(descriptor.events["shell.post"].support);

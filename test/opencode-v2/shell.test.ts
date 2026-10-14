@@ -491,7 +491,7 @@ test("permission evaluate validates only literal noncompliant branch targets", a
 
     const worktree = {
       action: "shell",
-      resources: ["git worktree add ../x"],
+      resources: ["git worktree add --detach ../x"],
       effect: "allow",
       message: undefined as string | undefined,
     };
@@ -523,14 +523,15 @@ test("permission evaluate validates only literal noncompliant branch targets", a
     await evaluate(activeTaskValid);
     expect(activeTaskValid.effect).toBe("allow");
 
-    const unsupported = {
+    // Quoted names and compound commands are tokenized like raw-git: denied too.
+    const quoted = {
       action: "shell",
       resources: ['git checkout -b "main"'],
       effect: "ask",
       message: undefined as string | undefined,
     };
-    await evaluate(unsupported);
-    expect(unsupported.effect).toBe("ask");
+    await evaluate(quoted);
+    expect(quoted.effect).toBe("deny");
 
     const compound = {
       action: "shell",
@@ -539,7 +540,7 @@ test("permission evaluate validates only literal noncompliant branch targets", a
       message: undefined as string | undefined,
     };
     await evaluate(compound);
-    expect(compound.effect).toBe("allow");
+    expect(compound.effect).toBe("deny");
 
     // Non-shell actions are never touched.
     const edit = { action: "edit", resources: ["file.txt"], effect: "allow" };

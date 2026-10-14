@@ -22,7 +22,7 @@ import {
   type AutonomySource,
   type DefaultEndpoint,
 } from "../autonomy";
-import { isProtectedTarget } from "../core/branch";
+import { branchKindOf, flowRoute, gitFlowOf, isProtectedTarget } from "../core/branch";
 import { vcsConfig } from "../core/vcs-config";
 import { workspaceReleaseTracks } from "../core/release-tracks";
 import { deleteRemoteBranch } from "../git/ops";
@@ -211,6 +211,7 @@ async function verifiedHead(
   sha: string,
   first: PrRef,
   sleep: Sleep,
+  base: string,
 ): Promise<ForgeResult<PrRef>> {
   let ref = first;
   for (const delay of [0, ...VERIFY_DELAYS_MS]) {
@@ -220,6 +221,7 @@ async function verifiedHead(
       owner: resolved.headRepo.split("/")[0] ?? null,
       projectId: resolved.headProjectId,
       sha,
+      base,
     });
     if (!found.ok) return found;
     if (found.data && found.data.number === first.number) ref = found.data;
@@ -258,10 +260,13 @@ export async function createPullRequest(
       "pass --base <branch>",
     );
 
+  // Head AND base: a release branch with an open PR into main still gets
+  // its back-merge PR into develop.
   const existing = resolved.forge.findPr(branch, {
     owner: resolved.headRepo.split("/")[0] ?? null,
     projectId: resolved.headProjectId,
     sha,
+    base: input.base,
   });
   if (!existing.ok) return existing;
   let created = false;
@@ -281,7 +286,7 @@ export async function createPullRequest(
     ref = made.data;
     created = true;
   }
-  const verified = await verifiedHead(resolved, branch, sha, ref, sleep);
+  const verified = await verifiedHead(resolved, branch, sha, ref, sleep, input.base);
   if (!verified.ok) return verified;
   const row = appendObserved(cwd, {
     type: "pr.created",
@@ -366,13 +371,26 @@ export type MergeOutcome = {
 /**
  * The merge-back a merge into `base` owes: the track whose production branch
  * `base` is, by ownership alone (no --track, no WORKFLOW_RELEASE_TRACK, no
- * history). Best effort: a config problem never stops the pr.merged record.
+ * history); without tracks, a git-flow release/* or hotfix/* landing on the
+ * production branch owes develop. Best effort: a config problem never stops
+ * the pr.merged record.
  */
-const mergeBackFor = (cwd: string, base: string): { track: string | null; branches: string[] } => {
+const mergeBackFor = (
+  cwd: string,
+  base: string,
+  head: string,
+): { track: string | null; branches: string[] } => {
   try {
-    const owners = workspaceReleaseTracks(cwd).tracks.filter(
-      (track) => track.productionBranch === base,
-    );
+    const read = workspaceReleaseTracks(cwd);
+    if (!read.tracks.length) {
+      const flow = gitFlowOf(cwd);
+      const kind = branchKindOf(head);
+      const route = flow && kind ? flowRoute(flow, kind) : null;
+      return route?.mergeBack && route.target === base
+        ? { track: "git-flow", branches: [route.mergeBack] }
+        : { track: null, branches: [] };
+    }
+    const owners = read.tracks.filter((track) => track.productionBranch === base);
     if (owners.length !== 1) return { track: null, branches: [] };
     return {
       track: owners[0].name,
@@ -604,7 +622,7 @@ export async function mergePullRequest(
     deletedBranch =
       deleted.ok || (gone && gone.ok && gone.sha === null) ? true : { error: deleted.error };
   }
-  const mergeBack = mergeBackFor(cwd, doc.base);
+  const mergeBack = mergeBackFor(cwd, doc.base, branch);
   const row = appendObserved(cwd, {
     type: "pr.merged",
     actor: input.actor,

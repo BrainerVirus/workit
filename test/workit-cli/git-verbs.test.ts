@@ -115,7 +115,12 @@ test("git branch: protected and off-pattern names are blocked (exit 3) and nothi
   const offPattern = await run(["git", "branch", "wip-x", "--base", "main"], repo.cwd);
   expect(offPattern.code).toBe(3);
   expect(offPattern.stderr).toContain("allowed_pattern");
-  expect(offPattern.stderr).toContain("unblock: choose a branch matching one of");
+  expect(offPattern.stderr).toContain('unblock: use "feature/wip-x"');
+  expect(offPattern.stderr).toContain("the allowed kinds are feature/, bugfix/, hotfix/, release/");
+  // An agent's habitual prefixes map to the git-flow kind.
+  const fix = await run(["git", "branch", "fix/login", "--base", "main"], repo.cwd);
+  expect(fix.code).toBe(3);
+  expect(fix.stderr).toContain('use "bugfix/login"');
   expect(repo.git("branch", "--list")).toBe("* main");
   // --kind/--slug compose the same checked name.
   const composed = await run(
@@ -124,7 +129,10 @@ test("git branch: protected and off-pattern names are blocked (exit 3) and nothi
   );
   expect(composed.code).toBe(0);
   expect(repo.git("branch", "--show-current")).toBe("bugfix/login");
-  expect((await run(["git", "branch", "--kind", "chore", "--slug", "x"], repo.cwd)).code).toBe(2);
+  const chore = await run(["git", "branch", "--kind", "chore", "--slug", "x"], repo.cwd);
+  expect(chore.code).toBe(2);
+  expect(chore.stderr).toContain("--kind must be feature, bugfix, release, hotfix");
+  expect(chore.stderr).toContain("did you mean --kind feature?");
 });
 
 test("git branch: tracked dirt needs --carry; an existing branch or a local stack parent", async () => {

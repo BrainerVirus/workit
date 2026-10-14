@@ -167,7 +167,11 @@ test("classification: chains, cd, -C, env prefixes, quoting and bash -c find the
     ["git push --repo=origin HEAD:main", [{ dir: null, action: push(["main"], "origin") }]],
     ["git push --repo origin main", [{ dir: null, action: push(["main"], "origin") }]],
     ["git push", [{ dir: null, action: push([null], null) }]],
-    ["git push origin --tags", [{ dir: null, action: push([], "origin") }]],
+    ["git push origin --tags", [{ dir: null, action: { ...push([], "origin"), allTags: true } }]],
+    [
+      "git push origin HEAD:refs/tags/v1 --delete",
+      [{ dir: null, action: { ...push([], "origin"), tags: ["v1"], deletes: true } }],
+    ],
     ["echo git commit", []],
     ["grep -r 'git push' .", []],
     // Help and dry runs change nothing.
@@ -248,10 +252,12 @@ test("G a Workit workspace, W gh pr merge, glab mr merge or a push onto main, T 
       expect(out?.permissionDecision, command).toBe("deny");
       expect(out?.permissionDecisionReason, command).toContain("workit pr merge");
     }
+    // Outside git-flow the protected trunk only moves through a PR.
     for (const command of [
       "git push --force origin HEAD:main",
       "git push origin feature/x:main",
       "git push origin --delete main",
+      "git push origin :main",
       "git push --repo=origin HEAD:main",
     ]) {
       const out = claudeOut(root, command);
@@ -259,11 +265,50 @@ test("G a Workit workspace, W gh pr merge, glab mr merge or a push onto main, T 
       expect(out?.permissionDecisionReason, command).toContain(
         "workit git push --force-with-lease",
       );
+      expect(out?.permissionDecisionReason, command).not.toContain("--release");
     }
     // A bare push targets the checked-out branch: refused on main, nudged on a feature branch.
     const onMain = repo();
     expect(claudeOut(onMain, "git push")?.permissionDecision).toBe("deny");
     expect(claudeOut(root, "git push")?.permissionDecision).toBeUndefined();
+  });
+});
+
+test("per preset, W a raw push onto a protected branch, T only git-flow main and develop name workit git push --release; elsewhere the trunk moves through a PR", async () => {
+  await withProtectedMain((configDir) => {
+    const table: Array<[Record<string, unknown>, string[], string[]]> = [
+      [{ preset: "gitflow" }, ["main", "develop"], []],
+      [{ preset: "github-flow" }, [], ["main"]],
+      [
+        { preset: "custom", allowed: ["task/*"], protected: ["main", "stable"] },
+        [],
+        ["main", "stable", "develop"],
+      ],
+    ];
+    for (const [branchPolicy, release, other] of table) {
+      writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ branchPolicy }));
+      const root = repo();
+      for (const name of ["develop", "stable"]) git(root, "branch", name);
+      const label = String(branchPolicy.preset);
+      for (const branch of release) {
+        const out = claudeOut(root, `git push origin ${branch}`);
+        expect(out?.permissionDecision, `${label} ${branch}`).toBe("deny");
+        expect(out?.permissionDecisionReason, `${label} ${branch}`).toContain(
+          `workit git push --release ${branch} [--release v<version>]`,
+        );
+        expect(out?.permissionDecisionReason, branch).toContain("release=true");
+      }
+      for (const branch of other) {
+        const out = claudeOut(root, `git push origin ${branch}`);
+        expect(out?.permissionDecision, `${label} ${branch}`).toBe("deny");
+        expect(out?.permissionDecisionReason).toContain("land it with `workit pr merge`");
+        expect(out?.permissionDecisionReason).not.toContain("--release");
+      }
+      // A blind force is never a release push.
+      const forced = claudeOut(root, "git push --force origin main");
+      expect(forced?.permissionDecisionReason).toContain("workit git push --force-with-lease");
+      expect(forced?.permissionDecisionReason).not.toContain("--release");
+    }
   });
 });
 
@@ -320,6 +365,12 @@ test("G Claude Code's PowerShell tool, W git -C <path with a backslash> push ont
     expect(powershell?.permissionDecision).toBe("deny");
     // Bash reads `a\b` as `ab`, which is no repository.
     expect(claude(parent, command).json).toEqual({});
+    // The branch policy reads the same dialect (event.dialect reaches shellPolicy).
+    const create = String.raw`git -C a\b switch -c chore/x`;
+    const created = claudeOut(parent, create, { tool_name: "PowerShell" });
+    expect(created?.permissionDecision).toBe("deny");
+    expect(created?.permissionDecisionReason).toContain("branch_policy_denied");
+    expect(claudeOut(parent, create)?.permissionDecision).toBeUndefined();
   });
 });
 
@@ -439,6 +490,129 @@ test("each host renders the deny on its own channel and the nudge without granti
         ctx as never,
       ),
     ).toBeUndefined();
+  });
+});
+
+test("G a Workit workspace, W a raw push onto an off-policy name or of a tag, T every host denies it with the closest name or the release command", async () => {
+  await withProtectedMain(() => {
+    const root = repo({ branch: "feature/x" });
+    git(root, "tag", "v1.0");
+    // A real origin: a branch the remote already has is never judged.
+    const origin = path.join(root, "origin.git");
+    git(root, "init", "-q", "--bare", origin);
+    git(root, "remote", "add", "origin", origin);
+    const denials = (command: string): string[] => {
+      const reasons: string[] = [];
+      const claudeReason = claudeOut(root, command)?.permissionDecisionReason;
+      reasons.push(String(claudeReason));
+      const codexOut = dispatchHook(
+        codexAdapter,
+        fixture("codex", "pre-tool-use-bash", root, { tool_input: { command } }),
+        {},
+      ).json as { hookSpecificOutput?: { permissionDecisionReason?: string } };
+      reasons.push(String(codexOut.hookSpecificOutput?.permissionDecisionReason));
+      const cursorOut = dispatchHook(
+        cursorAdapter,
+        fixture("cursor", "before-shell-execution", root, { command }),
+      );
+      expect(cursorOut.exitCode, `cursor ${command}`).toBe(2);
+      reasons.push(String((cursorOut.json as { agent_message?: string }).agent_message));
+      const event = { sessionID: "ses_1", action: "shell", resources: [command], effect: "allow" };
+      evaluateShellPermission(root, event);
+      expect(event.effect, `opencode ${command}`).toBe("deny");
+      reasons.push(String((event as { message?: string }).message));
+      const pi = enforceToolPolicy(
+        { toolName: "bash", input: { command } } as never,
+        {
+          cwd: root,
+          isProjectTrusted: () => true,
+          sessionManager: { getSessionId: () => "pi-1" },
+        } as never,
+      ) as { reason?: string } | undefined;
+      reasons.push(String(pi?.reason));
+      return reasons;
+    };
+    for (const command of [
+      "git push origin HEAD:refs/heads/chore/x",
+      "git push origin HEAD:chore/x",
+      "git push -u origin chore/x",
+    ])
+      for (const reason of denials(command)) {
+        expect(reason, command).toContain('allowed_pattern: branch "chore/x"');
+        expect(reason, command).toContain('use "feature/x"');
+      }
+    for (const command of ["git push origin v1.0", "git push origin refs/tags/v1.0"])
+      for (const reason of denials(command))
+        expect(reason, command).toContain("workit git push --release v1.0");
+    for (const reason of denials("git push --tags"))
+      expect(reason).toContain("workit git push --release v<version>");
+    // --all and --branches expand to the local branches new on the remote.
+    git(root, "branch", "chore/local");
+    for (const command of ["git push --all origin", "git push --branches"])
+      for (const reason of denials(command))
+        expect(reason, command).toContain('allowed_pattern: branch "chore/local"');
+    git(root, "branch", "-D", "chore/local");
+    for (const reason of denials("git push --mirror origin")) expect(reason).toContain("--mirror");
+    const allowed = (command: string) =>
+      expect(claudeOut(root, command)?.permissionDecision, command).toBeUndefined();
+    // Deleting an off-policy branch is not a new name; a compliant push still runs.
+    allowed("git push origin --delete chore/old");
+    allowed("git push origin :chore/old");
+    allowed("git push -u origin feature/x");
+    // --follow-tags only pushes tags the pushed commits reach: not a tag push.
+    allowed("git push --follow-tags origin feature/x");
+    // A branch the remote already has (a bot or legacy name) is not new:
+    // seen through the tracking ref, or through ls-remote when never fetched.
+    git(root, "branch", "dependabot/npm/x");
+    git(root, "push", "-q", "origin", "dependabot/npm/x");
+    git(root, "fetch", "-q", "origin");
+    allowed("git push origin dependabot/npm/x");
+    allowed("git push --force-with-lease origin dependabot/npm/x");
+    git(root, "branch", "my-legacy");
+    git(root, "push", "-q", origin, "my-legacy");
+    expect(() =>
+      git(root, "rev-parse", "--verify", "-q", "refs/remotes/origin/my-legacy"),
+    ).toThrow();
+    allowed("git push origin my-legacy");
+    git(root, "switch", "-q", "my-legacy");
+    allowed("git push");
+    git(root, "switch", "-q", "feature/x");
+  });
+});
+
+test("G OpenCode, W a raw branch creation, T the branch policy is read in the shell tool's workdir like the other hosts", async () => {
+  await withProtectedMain((configDir) => {
+    const work = repo({ branch: "feature/x" });
+    const other = repo({ branch: "feature/x" });
+    // Only `work` has a workspace policy that refuses chore/*.
+    writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
+    );
+    writeFileSync(
+      path.join(configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "work",
+            glob: `${work.replaceAll("\\", "/")}/**`,
+            branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+          },
+        ],
+      }),
+    );
+    const opencode = (workdirs?: Map<string, string>) => {
+      const event = {
+        sessionID: "ses_1",
+        action: "shell",
+        resources: ["git switch -c chore/x"],
+        effect: "allow",
+      };
+      evaluateShellPermission(other, event, workdirs);
+      return event.effect;
+    };
+    expect(opencode()).toBe("allow");
+    expect(opencode(new Map([["ses_1", work]]))).toBe("deny");
   });
 });
 

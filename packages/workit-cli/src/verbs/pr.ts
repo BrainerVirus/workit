@@ -32,6 +32,13 @@ import {
 import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
+import {
+  branchKindOf,
+  flowMismatch,
+  flowRoute,
+  gitFlowOf,
+  type FlowRoute,
+} from "@brainervirus/workit-core/src/core/branch";
 import { actorFromEnv, checkVerdicts, readLedger } from "@brainervirus/workit-core/src/ledger";
 import {
   vcsConfig,
@@ -213,10 +220,24 @@ async function create(argv: string[], io: Io): Promise<number> {
       CREATE_USAGE,
     );
   let base: string | null = flags.values.base ?? null;
-  // Without --base the target is the release track's PR target (or the
-  // workspace default when no tracks are configured).
+  const branch = currentBranch(io.cwd);
+  const kind = branchKindOf(branch);
+  // Without --base the target is the release track's PR target, else the
+  // git-flow route of the branch's kind (release/hotfix -> production,
+  // feature/bugfix -> develop), else the workspace default.
   let releaseTrack: ResolvedReleaseTrack | null = null;
-  if (!base) {
+  let route: FlowRoute | null = null;
+  if (base) {
+    const flow = gitFlowOf(io.cwd);
+    const mismatch = flowMismatch(flow, kind, base, "target");
+    if (mismatch && flow && kind)
+      return emit(
+        io,
+        fail("blocked", mismatch, {
+          unblock: `workit pr create …  # without --base it targets ${flowRoute(flow, kind).target}`,
+        }),
+      );
+  } else {
     const resolved = vcsConfig("resolve", io.cwd, { track: flags.values.track ?? null });
     if (resolved.ok === false)
       return emit(
@@ -235,11 +256,13 @@ async function create(argv: string[], io: Io): Promise<number> {
         }),
       );
     base = String(resolved.defaultTargetBranch ?? "") || null;
+    const flow = releaseTrack?.track ? null : gitFlowOf(io.cwd, base);
+    route = flow && kind ? flowRoute(flow, kind) : null;
+    if (route) base = route.target;
   }
   if (!base)
     return usage(io, "no default target branch is configured; pass --base <b>", CREATE_USAGE);
 
-  const branch = currentBranch(io.cwd);
   const connected = connect(io, branch);
   if (!connected.ok) return forgeFail(io, connected);
   let title = flags.values.title ?? "";
@@ -268,13 +291,22 @@ async function create(argv: string[], io: Io): Promise<number> {
     forgeDeps.sleep,
   );
   if (!result.ok) return forgeFail(io, result);
-  const created = releaseTrack ? { ...result.data, releaseTrack } : result.data;
+  const created = {
+    ...result.data,
+    ...(releaseTrack ? { releaseTrack } : {}),
+    ...(route ? { flow: route } : {}),
+  };
   return emit(io, ok(created), (data: CreateOutcome & { releaseTrack?: ResolvedReleaseTrack }) => [
     `${data.created ? "opened" : "found open"} ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number}${data.draft && data.created ? " (draft)" : ""}: ${data.branch} -> ${data.base}  ${data.url}`,
     ...(data.releaseTrack?.name
       ? [`release track: ${data.releaseTrack.name} (${data.releaseTrack.detail})`]
       : []),
     ...(data.releaseTrack?.warnings ?? []).map((warning) => `note: ${warning}`),
+    ...(route?.mergeBack
+      ? [
+          `merge back: git-flow: once ${data.branch} lands on ${route.target}, bring ${route.target} into ${route.mergeBack} (workit pr create --base ${route.mergeBack} opens the back-merge PR from ${data.branch}, or merge locally and run workit git push --release ${route.mergeBack}); tag the release and push it with workit git push --release <tag>`,
+        ]
+      : []),
     `head ${data.head.slice(0, 12)} verified on the forge`,
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     `next: ${data.next}`,

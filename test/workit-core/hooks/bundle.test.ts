@@ -23,11 +23,13 @@ const HOOK_ENTRIES = [
 // context (lifted out of the Claude plugin for Codex) adds ~1.5 KB; stop
 // control (stop.ts plus the endpoint resolution in autonomy.ts) adds ~6 KB
 // (Cursor ~678 KB), so the ceiling was 682 KB. Task attribution across
-// branches (#264, #267) adds ~5 KB: base-branch resolution from the reflogs
-// with its remote check and per-turn memo, inherited decisions, and the exact
-// worker retry hint in the core so every host gets it (Cursor ~683 KB). The
-// ceiling is 686 KB, matching #277; lazy schemas (#273) should win it back.
-const BUDGET = 686_000;
+// branches (#264, #267: base resolution, inherited decisions, the core worker
+// retry hint) adds ~5 KB; raw branch-policy checks on every shell form, git-flow
+// routes, the raw-push new-name, tag and --mirror checks and per-preset
+// guidance (#266) add ~10 KB; real session identity (#276) adds the issued-id
+// registry. Measured Cursor ~692 KB, so the ceiling is 696 KB; lazy
+// schemas (#273) should win it back.
+const BUDGET = 696_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {

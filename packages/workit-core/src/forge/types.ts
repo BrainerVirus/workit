@@ -42,6 +42,11 @@ export type PrMatch = {
   projectId: number | null;
   /** A PR whose head is exactly this commit is ours whatever its owner. */
   sha: string | null;
+  /**
+   * Only a PR into this base: one head may have PRs into several bases (a
+   * git-flow release into main and its back-merge into develop).
+   */
+  base?: string | null;
 };
 
 /** One CI check (GitHub check run / commit status, GitLab job or bridge). */

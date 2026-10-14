@@ -388,9 +388,14 @@ test("PreToolUse blocks noncompliant literal branches and leaves other commands 
     expect(reason).toContain("main");
     expect(reason).toContain("choose a non-protected branch");
     expectHostPermissionUnchanged(bash(root, "git checkout -b feature/raw").hookSpecificOutput);
-    expectHostPermissionUnchanged(bash(root, 'git checkout -b "main"').hookSpecificOutput);
+    // Quoted names and compound commands go through the same tokenizer as raw-git.
+    expect(bash(root, 'git checkout -b "main"').hookSpecificOutput).toMatchObject({
+      permissionDecision: "deny",
+    });
     expectHostPermissionUnchanged(bash(root, "gh pr create --fill").hookSpecificOutput);
-    expectHostPermissionUnchanged(bash(root, "git worktree add ../other").hookSpecificOutput);
+    expectHostPermissionUnchanged(
+      bash(root, "git worktree add --detach ../other").hookSpecificOutput,
+    );
     expectHostPermissionUnchanged(bash(root, "git status --short").hookSpecificOutput);
   });
 });

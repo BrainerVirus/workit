@@ -106,7 +106,7 @@ const describe = (
 ): string[] => [
   ...GRANT_KINDS.map(
     (kind) =>
-      `  ${kind.padEnd(8)}${String(grants[kind]).padEnd(10)}${configured.includes(kind) ? "configured" : "default"}${kind === "release" ? " (no consumer yet: reserved, not enforced)" : ""}`,
+      `  ${kind.padEnd(8)}${String(grants[kind]).padEnd(10)}${configured.includes(kind) ? "configured" : "default"}${kind === "release" ? " (workit git push --release: git-flow main and develop, landed v* tags)" : ""}`,
   ),
   `  default endpoint: ${endpointLabel(endpoint)} (an unnamed request stops at ${STOPS_AT[endpoint.effectiveEndpoint]})`,
   ...(endpoint.endpointIssue ? [`  note: ${endpoint.endpointIssue}`] : []),
