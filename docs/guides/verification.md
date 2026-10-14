@@ -97,8 +97,9 @@ one of these:
 - `<lead>:<this session>`, a child naming its own host session (only where the
   host sets the variable);
 - `<lead>:<agent id>` that this lead's SubagentStart hook issued (Claude Code,
-  Codex). The hook records each id it issues in the workspace store
-  (`hooks/issued/`, the newest 64 per lead), so a `<lead>:v1` the lead made up
+  Codex). The hook records each id it issues per lead in the user's Workit
+  state dir (`issued/`, the newest 64 per lead), so a verifier can record its
+  verdict from any repository the lead delegated to, and a `<lead>:v1` the lead made up
   is refused. On Claude Code the same holds for a declared
   `WORKIT_SESSION_ID=<lead>:<x>`.
 
@@ -146,8 +147,8 @@ Limits (the check stops casual forgery, not a determined one; see
 - Any host: `WORKIT_HOST=cli` or an unset `WORKIT_HOST`, with no host variable,
   is a plain terminal, where any id is declared.
 - Cursor, CI and a plain terminal are declared by design.
-- Claude Code, Codex: the issued-id record is plain files in the workspace
-  store. A caller that writes there deliberately can mark any id as issued.
+- Claude Code, Codex: the issued-id record is plain files in the user's state
+  dir. A caller that writes there deliberately can mark any id as issued.
 
 Verdicts are SHA-keyed and carry over a rebase when
 the patch-id and diff are unchanged. A dirty tree is refused, also when the
