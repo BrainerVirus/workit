@@ -484,8 +484,11 @@ test("each host renders the deny on its own channel and the nudge without granti
     expect(opencode("git push").effect).toBe("allow");
     expect(opencode("git push", new Map([["ses_1", onMain]])).effect).toBe("deny");
 
+    // Pi gets its own checkout: on Windows (no pid start time) OpenCode's
+    // live-session marker in `shared` would refuse a different host.
+    const piRoot = repo({ branch: "feature/x" });
     const ctx = {
-      cwd: shared,
+      cwd: piRoot,
       isProjectTrusted: () => true,
       sessionManager: { getSessionId: () => "pi-1" },
     };

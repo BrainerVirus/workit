@@ -294,7 +294,9 @@ const POPD = new Set(["popd", "pop-location"]);
 /** A `cd` operand resolved against `dir`; undefined when it cannot be known. */
 const cdInto = (dir: string | undefined, words: string[]): string | undefined => {
   const target = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
-  if (dir === undefined || target === "-" || (target && /[$`*?~]/.test(target))) return undefined;
+  // Only a leading `~` expands; a mid-path `~` is literal (Windows 8.3
+  // short names like RUNNER~1).
+  if (dir === undefined || target === "-" || (target && /^~|[$`*?]/.test(target))) return undefined;
   return target === undefined ? os.homedir() : path.resolve(dir, target);
 };
 

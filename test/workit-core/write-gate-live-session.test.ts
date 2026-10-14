@@ -319,6 +319,22 @@ test("G an owned checkout and a free one, W the command changes directory first,
   expect(decisionOf(claudeShell(free, "cd $SOMEWHERE && git commit -m x"))).not.toBe("deny");
 });
 
+test("G an owned checkout whose path has a mid-path ~ (a Windows 8.3 short name like RUNNER~1), W a command cds there and writes, T denied", () => {
+  const parent = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-live-tilde-")));
+  roots.push(parent);
+  const owned = path.join(parent, "RUNNER~1");
+  mkdirSync(owned);
+  git(owned, "init", "-q", "-b", "main");
+  git(owned, "commit", "-q", "--allow-empty", "-m", "init");
+  mkdirSync(path.join(owned, "src"));
+  own(owned);
+  const free = repo();
+  for (const command of [`cd ${q(owned)} && echo x > src/a.ts`, `(cd ${q(owned)}; touch src/a.ts)`])
+    expect(decisionOf(claudeShell(free, command)), command).toBe("deny");
+  // A leading ~ still expands to an unknown home directory: skipped, not denied.
+  expect(decisionOf(claudeShell(free, "cd ~/elsewhere && echo x > a.ts"))).not.toBe("deny");
+});
+
 test("G an owned checkout, W git or workit runs through a shell, a substitution, env -i, git.exe or npx, T still denied", () => {
   const root = repo();
   own(root);
