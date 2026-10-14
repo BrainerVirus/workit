@@ -174,6 +174,12 @@ export type PrEdit = {
   addReviewers: string[];
 };
 
+/** A GitHub release or GitLab release for a tag. */
+export type ForgeRelease = { tag: string; url: string | null };
+
+/** What `workit release finish` asks the forge for: a release on an existing tag. */
+export type CreateReleaseInput = { tag: string; name: string; body: string };
+
 /** A repository as the forge sees it: id and the repo it was forked from. */
 export type RepoInfo = { id: number | null; parent: string | null };
 
@@ -207,4 +213,8 @@ export interface Forge {
   resolveThread(n: number, thread: string): ForgeResult<void>;
   /** One review thread of PR `n` read directly: null when it is not on that PR. */
   threadState(n: number, thread: string): ForgeResult<"open" | "resolved" | null>;
+  /** The release for `tag`, or null when the forge has none. */
+  findRelease(tag: string): ForgeResult<ForgeRelease | null>;
+  /** Publish a release on an existing tag (never creates the tag). */
+  createRelease(input: CreateReleaseInput): ForgeResult<ForgeRelease>;
 }
