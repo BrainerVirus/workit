@@ -32,7 +32,8 @@ const HOOK_ENTRIES = [
 // bypasses (#281: aliases, eval/xargs/brace bodies, pwsh, forge API merges,
 // remote and refspec resolution, tokenizing every command) adds ~18 KB
 // (Cursor ~710 KB); bounded shell analysis and the review's bypass closures
-// add ~6 KB (Cursor ~716 KB), so the ceiling is 720 KB.
+// add ~6 KB (Cursor ~716 KB); the ledger's verdict-gate trust checks and
+// issued-id tokens (#289) add ~BUDGETKB.
 const BUDGET = 720_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 

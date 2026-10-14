@@ -64,13 +64,24 @@ is recorded, `sessionClaimRefusal` checks the claimed session (env,
 `--session`, or the base of `--as`):
 
 - `none`: accepted; `--session X` and `WORKIT_SESSION_ID=X` are one rule.
-- The shell's own session. On Claude Code, a declared `<lead>:<x>` is
-  accepted only if it was issued.
+- The shell's own session. Under any declared `WORKIT_HOST`, a
+  `<lead>:<x>` is accepted only if it was issued.
 - `<lead>:<real>` where the host sets the variable.
 - `<real>:<agent id>` only if issued.
+- An issued id whose record holds a token hash only with that token
+  (`--token`/`WORKIT_SESSION_TOKEN`, `unbound_session` otherwise).
+- With `flag` (`--session`) on a host, only an issued id: the shell's own or
+  derived session is refused as `session_flag`.
+
+`workit git commit` runs the same check on its acting session and refuses an
+issued id (`judge_session`). The gate (`ledger.ts` `sessionTrust`) re-checks
+recorded rows: `unissued_session`, and `unbound_session` for a token-backed id
+whose row lacks `sessionBound: true`.
 
 "Issued" means the SubagentStart handler (`handle.ts`, Claude Code and Codex
-judges) recorded the id it gave with `recordIssuedSession`. Each id is one
+judges) recorded the id it gave with `recordIssuedSession`, which also mints
+a random token: the handler puts it in that subagent's context only, and the
+file stores its sha256 (`workit-issued-sessions/3`). Each id is one
 file under `<state>/issued/<lead hash>/` (the per-user state dir, so it holds
 across every repository the lead delegates to), at most 64 per lead, and the
 write fails open. Ids that 8.10-8.12 hooks wrote into a repository's
@@ -120,7 +131,7 @@ use yet), L = host limit (the host has no mechanism for it).
 | Before-write gate | N `Edit`/`Write`/`MultiEdit`/`NotebookEdit` and shell writes | N permission `evaluate` | N `PreToolUse` on `apply_patch` (files from the patch) and shell writes | P `preToolUse` (a write with no readable path is gated as code) | N `tool_call` |
 | Raw commit recording | N `PostToolUse` | N `execute.after` | N `PostToolUse` | P: settled on the next shell command; X: `afterShellExecution`/`postToolUse` | N `tool_result` |
 | Verifier/reviewer own session | N `SubagentStart` (`workit:verifier`, `workit:reviewer`) | N: child shell gets `WORKIT_SESSION_ID=<lead>:<child>` (`shell.hook("create.before")`), and a child without a worker records evidence and findings under it; native parent binding; X: `agent.transform` definitions | N `SubagentStart` (`workit-verifier`, `workit-reviewer` agent types); P: shipped read-only (`sandbox_mode`) agents the MCP launcher copies into `$CODEX_HOME/agents/` (L: codex-cli 0.160.1 plugins cannot register agents) | P: role markers; L: `subagentStart` cannot add context | N: supervised worker shell gets `WORKIT_SESSION_ID=<lead>:<worker session>`; L: no host subagents |
-| Real session for verdicts (`forged_session` refusal) | P: subagent `<lead>:<agent id>` accepted only when SubagentStart issued it; L: the lead's own id is the declared `WORKIT_SESSION_ID` (no host-set id in the shell; `CLAUDE_CODE_SESSION_ID` unused), so an inline colon-less id such as `<lead>-v<n>` is still declared; L: the issued-id record is per-user state files a deliberate write can forge | N `OPENCODE_SESSION_ID` (set by the shell tool); children `<lead>:<child>`; `WORKIT_HOST=opencode` without it is refused; L: removing both reads as a plain terminal | P `CODEX_THREAD_ID` for the thread; subagent `<lead>:<agent id>` only when SubagentStart issued it (L: unverified whether a subagent's shell gets its own thread id; `--as verifier` otherwise); `WORKIT_HOST=codex_*` without it is refused; L: the issued-id record is forgeable by a deliberate write | L: no session id in the agent shell and no `WORKIT_HOST`: declared, not checked | N `PI_SESSION_ID` (bash tool); workers `<lead>:<worker session>`; `WORKIT_HOST=pi` without it is refused |
+| Real session for verdicts (`forged_session` refusal) | P: subagent `<lead>:<agent id>` accepted only when SubagentStart issued it, with the token it handed that subagent; L: the token sits in the subagent transcript on disk; L: the lead's own id is the declared `WORKIT_SESSION_ID` (no host-set id in the shell; `CLAUDE_CODE_SESSION_ID` unused), so an inline colon-less id such as `<lead>-v<n>` is still declared; L: the issued-id record is per-user state files a deliberate write can forge | N `OPENCODE_SESSION_ID` (set by the shell tool); children `<lead>:<child>`; `WORKIT_HOST=opencode` without it is refused; L: removing both reads as a plain terminal | P `CODEX_THREAD_ID` for the thread; subagent `<lead>:<agent id>` only when SubagentStart issued it, with its token (L: unverified whether a subagent's shell gets its own thread id; `--as verifier` otherwise); `WORKIT_HOST=codex_*` without it is refused; L: the issued-id record is forgeable by a deliberate write | L: no session id in the agent shell and no `WORKIT_HOST`: declared, not checked | N `PI_SESSION_ID` (bash tool); workers `<lead>:<worker session>`; `WORKIT_HOST=pi` without it is refused |
 | Implementer worktree guidance | N `SubagentStart` plus `isolation: worktree`; plain git told up front (L: worktree isolation refuses `workit git …`, cannot be turned off) | X: the `worktree` domain is unused | P `SubagentStart` text and the shipped `workit-implementer` agent; L: no native worktree isolation, the lead makes one | P: implementers denied at `subagentStart` | L: no host subagents |
 | Compaction restore | N `SessionStart` source=compact | N `session.hook("compaction")` | N `SessionStart` source=compact | P (L: `preCompact` only shows a user message) | N `session_compact` |
 | Session trailer on raw commits | N: prepare-commit-msg hook installed by `workit doctor --fix` (via git) | N: prepare-commit-msg hook (via git) | N: prepare-commit-msg hook (via git) | L: no session id in the agent shell, so the trailer only appears when `WORKIT_SESSION_ID` is set | N: prepare-commit-msg hook (via git) |

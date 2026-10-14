@@ -114,8 +114,10 @@ test("a verdict session claim: the real session, a child naming its own host ses
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
   freshState(cwd);
   try {
-    recordIssuedSession(cwd, "lead", "lead:agent-7");
-    recordIssuedSession(cwd, "t-1", "t-1:agent-2");
+    const tokens: Record<string, string | null> = {
+      "lead:agent-7": recordIssuedSession(cwd, "lead", "lead:agent-7"),
+      "t-1:agent-2": recordIssuedSession(cwd, "t-1", "t-1:agent-2"),
+    };
     const accepted: Array<[NodeJS.ProcessEnv, string]> = [
       [{ OPENCODE_SESSION_ID: "ses_c" }, "ses_c"],
       [{ OPENCODE_SESSION_ID: "ses_c" }, "ses_l:ses_c"],
@@ -130,9 +132,19 @@ test("a verdict session claim: the real session, a child naming its own host ses
     ];
     for (const [env, claimed] of accepted)
       expect(
-        sessionClaimRefusal(env, claimed, cwd),
+        sessionClaimRefusal(env, claimed, cwd, { token: tokens[claimed] ?? null }),
         `${claimed} ${JSON.stringify(env)}`,
       ).toBeNull();
+    // An issued id is bound to its subagent: without its token, or with another, it is refused.
+    for (const token of [null, "guessed", tokens["t-1:agent-2"]])
+      expect(
+        sessionClaimRefusal(
+          { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" },
+          "lead:agent-7",
+          cwd,
+          { token },
+        )?.error,
+      ).toContain("unbound_session");
     const refused: Array<[NodeJS.ProcessEnv, string]> = [
       [{ OPENCODE_SESSION_ID: "ses_l" }, "ses_l-v61"],
       // OpenCode and Pi children have their own shell: a lead never mints one.
@@ -154,7 +166,11 @@ test("a verdict session claim: the real session, a child naming its own host ses
       expect(refusal?.unblock, claimed).not.toContain("<agent id>");
     }
     // The record is per lead, not per repository: it holds without a workspace too (#294).
-    expect(sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-2", undefined)).toBeNull();
+    expect(
+      sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-2", undefined, {
+        token: tokens["t-1:agent-2"],
+      }),
+    ).toBeNull();
   } finally {
     restoreState();
     rmSync(cwd, { recursive: true, force: true });
@@ -165,10 +181,14 @@ test("the issued-session record stays bounded per lead and keeps the newest ids"
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
   freshState(cwd);
   try {
-    for (let i = 0; i < 70; i++) recordIssuedSession(cwd, "lead", `lead:a${i}`);
+    const tokens = Array.from({ length: 70 }, (_, i) =>
+      recordIssuedSession(cwd, "lead", `lead:a${i}`),
+    );
     const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
-    expect(sessionClaimRefusal(env, "lead:a69", cwd)).toBeNull();
-    const kept = Array.from({ length: 70 }, (_, i) => sessionClaimRefusal(env, `lead:a${i}`, cwd));
+    expect(sessionClaimRefusal(env, "lead:a69", cwd, { token: tokens[69] })).toBeNull();
+    const kept = Array.from({ length: 70 }, (_, i) =>
+      sessionClaimRefusal(env, `lead:a${i}`, cwd, { token: tokens[i] }),
+    );
     expect(kept.filter((refusal) => refusal === null)).toHaveLength(64);
   } finally {
     restoreState();
@@ -187,9 +207,9 @@ test("the prune never drops the id just issued, even when it is the oldest by mt
       const leadDir = path.join(state, "issued", dir);
       for (const file of readdirSync(leadDir)) utimesSync(path.join(leadDir, file), future, future);
     }
-    recordIssuedSession(cwd, "lead", "lead:newest");
+    const token = recordIssuedSession(cwd, "lead", "lead:newest");
     const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
-    expect(sessionClaimRefusal(env, "lead:newest", cwd)).toBeNull();
+    expect(sessionClaimRefusal(env, "lead:newest", cwd, { token })).toBeNull();
   } finally {
     restoreState();
     rmSync(cwd, { recursive: true, force: true });
@@ -261,13 +281,13 @@ test("Given a lead started in repo A, When its verifier records a verdict from r
     const repoB = path.join(cwd, "frontend");
     mkdirSync(repoA);
     mkdirSync(repoB);
-    recordIssuedSession(repoA, "lead", "lead:verifier-1");
+    const token = recordIssuedSession(repoA, "lead", "lead:verifier-1");
     // Nothing is written into the lead's repository any more.
     expect(existsSync(path.join(repoA, ".workit", "hooks", "issued"))).toBe(false);
     const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
     // Other repositories first: none of them may depend on a read in repoA.
     for (const where of [repoB, cwd, repoA])
-      expect(sessionClaimRefusal(env, "lead:verifier-1", where), where).toBeNull();
+      expect(sessionClaimRefusal(env, "lead:verifier-1", where, { token }), where).toBeNull();
     // Still bound to the lead that was issued the id, and never to an invented one.
     expect(
       sessionClaimRefusal(

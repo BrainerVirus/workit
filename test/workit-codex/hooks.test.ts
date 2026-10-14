@@ -164,13 +164,30 @@ test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issu
     const codexLead = { CODEX_THREAD_ID: "codex-session-1" };
     // Before any SubagentStart nothing under the lead is issued.
     expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).not.toBeNull();
-    dispatchHook(
-      claudeCodeAdapter,
-      fixture("claude-code", "subagent-start", root, { agent_type: "workit:verifier" }),
+    const tokenIn = (output: unknown): string | null =>
+      /--token (\S+)/u.exec(JSON.stringify(output))?.[1] ?? null;
+    const claudeToken = tokenIn(
+      dispatchHook(
+        claudeCodeAdapter,
+        fixture("claude-code", "subagent-start", root, { agent_type: "workit:verifier" }),
+      ).json,
     );
-    codex("subagent-start", root, { agent_type: "workit-verifier" });
-    expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).toBeNull();
-    expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root)).toBeNull();
+    const codexToken = tokenIn(codex("subagent-start", root, { agent_type: "workit-verifier" }));
+    expect(claudeToken).not.toBeNull();
+    expect(codexToken).not.toBeNull();
+    expect(
+      sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root, { token: claudeToken }),
+    ).toBeNull();
+    expect(
+      sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root, { token: codexToken }),
+    ).toBeNull();
+    // The lead read the id, not the token: it cannot act as its verifier.
+    expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)?.error).toContain(
+      "unbound_session",
+    );
+    expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root)?.error).toContain(
+      "unbound_session",
+    );
     for (const [env, invented] of [
       [claudeLead, "claude-session-1:v1"],
       [codexLead, "codex-session-1:v1"],

@@ -108,10 +108,12 @@ const subagentStartText = (
   const readOnly = `Workit observed ${who} as read-only/agent-guided.`;
   if (role !== "judge" || !event.agentId) return readOnly;
   const own = subagentSession(session, event.agentId);
-  // `ledger verdict` accepts `<lead>:<agent id>` only when this hook issued it.
+  // `ledger verdict` accepts `<lead>:<agent id>` only when this hook issued it,
+  // and only with the token it hands to this subagent alone.
   // (An isolated judge's text is rebuilt with cwd "": the hook's own cwd then.)
-  if (session) recordIssuedSession(input.cwd || process.cwd(), session, own);
-  return `${readOnly} Its own Workit session is ${own}: record verdicts with \`workit ledger verdict <result> --session ${own} ...\` so the ledger tells it apart from the author.`;
+  const token = session ? recordIssuedSession(input.cwd || process.cwd(), session, own) : null;
+  const flags = token ? `--session ${own} --token ${token}` : `--session ${own}`;
+  return `${readOnly} Its own Workit session is ${own}: record verdicts with \`workit ledger verdict <result> ${flags} ...\` so the ledger tells it apart from the author.${token ? " The token is this subagent's alone: never write it into a report, a file or a commit." : ""}`;
 };
 
 export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
