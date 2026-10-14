@@ -36,6 +36,7 @@ import {
   detectBranchPolicy,
   repoBranchPreset,
 } from "@brainervirus/workit-core/src/core/branch-policy.ts";
+import { projectTarget } from "@brainervirus/workit-core/src/core/hygiene.ts";
 import {
   createInitialDraft,
   reducer,
@@ -1394,15 +1395,37 @@ function Screen({
           <Text dimColor>Enter to save · Esc Back</Text>
         </Box>
       );
-    case "project":
-      // CA-07: print the exact directory Apply will touch — the resolved base
-      // path, never an implicit process.cwd().
+    case "project": {
+      // CA-07: print the exact directory Apply will touch — the git toplevel
+      // of the resolved base path, never an implicit process.cwd(). Outside a
+      // repository nothing is offered: the refusal names the way out.
+      const target = projectTarget(resolveBasePath(draft.values));
+      if (!target.ok) {
+        return (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Step 6 — Project setup</Text>
+            <Text color="yellow">Skipped: {target.refused}</Text>
+            <ConfirmInput
+              defaultChoice="confirm"
+              submitOnEnter={false}
+              onConfirm={() => {
+                dispatch({ type: "set", field: "applyProject", value: false });
+                dispatch({ type: "next" });
+              }}
+              onCancel={() => {
+                dispatch({ type: "set", field: "applyProject", value: false });
+                dispatch({ type: "next" });
+              }}
+            />
+            <Text dimColor>y or n to continue without project files · b Back · Esc Cancel</Text>
+          </Box>
+        );
+      }
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 6 — Project setup</Text>
           <Text dimColor>
-            Apply gitignore + hygiene in {resolveBasePath(draft.values)}? (Existing files are never
-            overwritten.)
+            Apply gitignore + hygiene in {target.root}? (Existing files are never overwritten.)
           </Text>
           <ConfirmInput
             defaultChoice="cancel"
@@ -1419,6 +1442,7 @@ function Screen({
           <Text dimColor>y to add project files · n to skip · b Back · Esc Cancel</Text>
         </Box>
       );
+    }
     case "summary": {
       const policy = effectivePolicy(draft.values);
       // WZ-08: the summary renders the authoritative preview (read-only) — the

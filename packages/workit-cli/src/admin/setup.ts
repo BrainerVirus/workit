@@ -33,7 +33,7 @@ import {
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces";
 import { GITIGNORE_ENTRIES } from "@brainervirus/workit-core/src/core/gitignore";
-import { planHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
+import { planHygieneFiles, projectTarget } from "@brainervirus/workit-core/src/core/hygiene";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   cursorHooksEntry,
@@ -140,6 +140,9 @@ export type SetupPreview = {
   /** Selected platform adapters to register on Apply (WZ-09). */
   platforms: string[];
   state: SetupState;
+  /** Project files were requested outside a git repository: nothing is
+   *  planned there, and this names the way out (`cd <repo>`). */
+  projectRefused?: string;
 };
 
 const YT_OVERRIDES: { envKey: string; affects: string }[] = [
@@ -250,6 +253,7 @@ export function buildSetupPreview(
   const blocked: string[] = [];
   const mutations: SetupMutation[] = [];
   const preserved: string[] = [];
+  let projectRefused: string | undefined;
   const overrides = activeSetupOverrides(env);
 
   for (const entry of [state.config, state.youtrack, state.vcs, state.workspaces]) {
@@ -416,8 +420,10 @@ export function buildSetupPreview(
       }
     }
 
-    if (values.applyProject) {
-      const root = path.resolve(opts.cwd ?? process.cwd());
+    const target = values.applyProject ? projectTarget(opts.cwd ?? process.cwd()) : null;
+    if (target && !target.ok) projectRefused = target.refused;
+    if (target?.ok) {
+      const root = target.root;
       const gitignorePath = path.join(root, ".gitignore");
       const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
       const existingLines = new Set(
@@ -444,6 +450,7 @@ export function buildSetupPreview(
     preserved,
     platforms: values.platforms ?? [],
     state,
+    ...(projectRefused === undefined ? {} : { projectRefused }),
   };
 }
 
@@ -895,8 +902,13 @@ export const resolveOpenCodePin = (
 const opencodePin = (root: string, res: ResolvedApply): string | null =>
   resolveOpenCodePin(root, { dev: res.dev });
 
-function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
-  const resolvedPin = opencodePin(root, res);
+// A published install registers the npm pin and OpenCode installs the package
+// itself, so it needs no local adapter; only a dev checkout pins a file.
+const registersNpmPin = (platform: Platform, res: ResolvedApply): boolean =>
+  platform === "opencode" && !res.dev;
+
+function applyOpenCode(root: string | null, res: ResolvedApply): SetupResultEntry {
+  const resolvedPin = root === null ? OPENCODE_NPM_PIN : opencodePin(root, res);
   if (!resolvedPin) {
     return {
       platform: "opencode",
@@ -1399,6 +1411,10 @@ export function applySetupPreview(
       root = adapterRoot(platform, res, options.preferInstalledAdapter);
       rootFor.set(platform, root);
     }
+    if (root === null && registersNpmPin(platform, res)) {
+      entries.push(applyOpenCode(null, res));
+      continue;
+    }
     if (root === null) {
       entries.push({
         platform,
@@ -1451,6 +1467,14 @@ export function applySetupPreview(
       detail: "existing credential preserved",
     });
   }
+  if (preview.projectRefused) {
+    entries.push({
+      platform: "core",
+      file: path.resolve(res.cwd),
+      status: "Skipped",
+      detail: preview.projectRefused,
+    });
+  }
 
   // Post-apply verification per platform (read-only): a registered host whose
   // writes succeeded is verified by the shared offline doctor.
@@ -1458,7 +1482,7 @@ export function applySetupPreview(
   for (const platform of preview.platforms) {
     if (platform !== "opencode" && platform !== "cursor") continue;
     const root = rootFor.get(platform);
-    if (root === null || root === undefined) continue;
+    if (root === undefined || (root === null && !registersNpmPin(platform, res))) continue;
     if (!entries.some((e) => e.platform === platform && e.status !== "Failed")) continue;
     const report = verifyPlatform(platform, res);
     if (!report) continue;
