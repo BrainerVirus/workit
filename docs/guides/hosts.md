@@ -256,6 +256,10 @@ already wrote breaks `config.toml`. `workit doctor` checks both:
   `node "<plugin root>/dist/launch-mcp.js" --install-agents`, then a new
   Codex session. A plugin too old to bundle agents gets
   `codex plugin remove workit@<marketplace> && codex plugin add workit@<marketplace>`.
+- `hook_issued_sessions` (Codex and Claude Code) warns when the plugin hook
+  is older than the CLI. Such a hook records no SubagentStart session ids, so
+  `workit ledger verdict --session <lead>:<agent id>` is refused. The fix is
+  to update the plugin, then relaunch the verifier.
 
 ## Pi
 

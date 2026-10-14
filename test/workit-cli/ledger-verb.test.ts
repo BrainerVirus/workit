@@ -449,6 +449,28 @@ test("Given --as from an OpenCode or Pi shell whose WORKIT_SESSION_ID is hand-mi
   }
 });
 
+test("Given a verdict recorded before its author's commit row, When the author is the same host session in the other form, Then ledger check does not accept it, in both directions", async () => {
+  for (const [verifier, author] of [
+    ["ses_child", "ses_lead:ses_child"],
+    ["ses_lead:ses_child", "ses_child"],
+  ]) {
+    const root = featureRepo();
+    expect((await verdict(root, { WORKIT_SESSION_ID: verifier })).code).toBe(0);
+    authoredBy(root, author);
+    const check = await run(root, ["ledger", "check"]);
+    expect(check.stdout, `${verifier} vs ${author}`).not.toContain("accepted; review: verified");
+    expect(check.stdout, `${verifier} vs ${author}`).toContain("author_session");
+  }
+});
+
+test("Given an author <lead>:<child>, When a plain terminal judges as the bare <child>, Then it is the author", async () => {
+  const root = featureRepo();
+  authoredBy(root, "ses_lead:ses_child");
+  const bare = await verdict(root, { WORKIT_SESSION_ID: "ses_child" });
+  expect(bare.code).toBe(3);
+  expect(bare.json().error).toContain("author_verdict");
+});
+
 test("Given two derived ids that only share a last segment, When one authored, Then the other is not the author; a bare id and its derived form are", async () => {
   const root = featureRepo();
   authoredBy(root, "a:verifier:1234");

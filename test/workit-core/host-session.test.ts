@@ -2,7 +2,7 @@
 // so commits and verdicts made from Codex, OpenCode and Pi shells carry the
 // session their hooks see.
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -148,6 +148,72 @@ test("the issued-session record stays bounded per lead and keeps the newest ids"
     expect(sessionClaimRefusal(env, "lead:a69", cwd)).toBeNull();
     const kept = Array.from({ length: 70 }, (_, i) => sessionClaimRefusal(env, `lead:a${i}`, cwd));
     expect(kept.filter((refusal) => refusal === null)).toHaveLength(64);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("the prune never drops the id just issued, even when it is the oldest by mtime", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  try {
+    for (let i = 0; i < 64; i++) recordIssuedSession(cwd, "lead", `lead:a${i}`);
+    // Clock skew: every recorded file looks newer than the next write.
+    const future = new Date(Date.now() + 3_600_000);
+    for (const dir of readdirSync(path.join(cwd, ".workit", "hooks", "issued"))) {
+      const leadDir = path.join(cwd, ".workit", "hooks", "issued", dir);
+      for (const file of readdirSync(leadDir)) utimesSync(path.join(leadDir, file), future, future);
+    }
+    recordIssuedSession(cwd, "lead", "lead:newest");
+    const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" };
+    expect(sessionClaimRefusal(env, "lead:newest", cwd)).toBeNull();
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a host that always sets its own variable, named by WORKIT_HOST without it, cannot vouch for any id; WORKIT_HOST=cli is no host", () => {
+  // `env -u OPENCODE_SESSION_ID` / `env -u CODEX_THREAD_ID` in that host's shell.
+  for (const env of [
+    { WORKIT_HOST: "opencode", WORKIT_SESSION_ID: "ses_lead-v1" },
+    { WORKIT_HOST: "opencode" },
+    { WORKIT_HOST: "codex_cli", WORKIT_SESSION_ID: "t-1-v1" },
+    { WORKIT_HOST: "codex_desktop" },
+    { WORKIT_HOST: "pi", WORKIT_SESSION_ID: "pi-lead-v1" },
+  ])
+    expect(sessionClaimRefusal(env, "anyone")?.error, JSON.stringify(env)).toContain(
+      "forged_session",
+    );
+  expect(realHostSession({ WORKIT_HOST: "cli", WORKIT_SESSION_ID: "c" }).kind).toBe("none");
+  expect(sessionClaimRefusal({ WORKIT_HOST: "cli", WORKIT_SESSION_ID: "c" }, "anyone")).toBeNull();
+});
+
+test("Given a well-formed subagent id and no issued-id record in the workspace, Then the refusal names the stale plugin hook and its update", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  try {
+    const claude = sessionClaimRefusal(
+      { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" },
+      "lead:agent-1",
+      cwd,
+    );
+    expect(claude?.error).toContain("no SubagentStart hook in this workspace has recorded");
+    expect(claude?.unblock).toContain("older than this CLI");
+    expect(claude?.unblock).toContain("claude plugin update workit@workit");
+    expect(claude?.unblock).toContain("relaunch the verifier");
+    const codex = sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-1", cwd);
+    expect(codex?.unblock).toContain("codex plugin add workit@workit");
+    // Once any hook recorded an id, a missing one is just not issued.
+    recordIssuedSession(cwd, "other-lead", "other-lead:a");
+    const after = sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1:agent-1", cwd);
+    expect(after?.unblock).not.toContain("older than this CLI");
+    // A malformed claim never blames the plugin.
+    const invented = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+    try {
+      expect(
+        sessionClaimRefusal({ CODEX_THREAD_ID: "t-1" }, "t-1-v1", invented)?.unblock,
+      ).not.toContain("older than this CLI");
+    } finally {
+      rmSync(invented, { recursive: true, force: true });
+    }
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

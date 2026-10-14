@@ -87,6 +87,7 @@ type DoctorCheckId =
   | "pi_extension"
   | "opencode_version"
   | "claude_plugin"
+  | "hook_issued_sessions"
   | "workit_on_path"
   | "assets"
   | "launcher"
@@ -2513,6 +2514,80 @@ const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: bool
   };
 };
 
+/**
+ * host-session.ts ISSUED_SESSIONS_MARKER, kept as a literal so the doctor does
+ * not pull the store layer into its import graph (the installer runs it from
+ * a minimal copy of core); test/workit-cli/doctor-issued-sessions.test.ts
+ * pins the two equal.
+ */
+export const HOOK_ISSUED_MARKER = "workit-issued-sessions/1";
+
+/** Whether some built hook file under `<root>/dist` records SubagentStart ids. */
+const hookRecordsIssued = (root: string): boolean | null => {
+  let files: string[];
+  try {
+    files = readdirSync(path.join(root, "dist")).filter((f) => f.endsWith(".js"));
+  } catch {
+    return null;
+  }
+  if (files.length === 0) return null;
+  return files.some((file) => {
+    try {
+      return readFileSync(path.join(root, "dist", file), "utf8").includes(HOOK_ISSUED_MARKER);
+    } catch {
+      return false;
+    }
+  });
+};
+
+/**
+ * The CLI and the host plugin update on their own schedules. A Claude Code or
+ * Codex plugin hook older than this CLI records no SubagentStart session ids,
+ * and `ledger verdict` then refuses every real verifier's `--session`. Checked
+ * by content (the hook bundle carries ISSUED_SESSIONS_MARKER), not by version:
+ * a plugin is republished only when its own sources change. Cursor, OpenCode
+ * and Pi issue no ids (host limits in docs/agents/hosts.md).
+ */
+const checkHookIssuedSessions = (res: Resolved): DoctorCheck => {
+  const hooks = [
+    ...claudeWorkitInstalls(res.home, res.env, res.cwd).map((install) => ({
+      label: `Claude Code ${install.id} ${install.version ?? "?"}`,
+      root: install.installPath,
+      fix: `claude plugin marketplace update ${CLAUDE_MARKETPLACE_NAME} && claude plugin update ${install.id}`,
+    })),
+    ...codexWorkitInstalls(res).flatMap((install) =>
+      install.root
+        ? [
+            {
+              label: `Codex ${install.id} ${install.version ?? "?"}`,
+              root: install.root,
+              fix: `codex plugin remove ${install.id} && codex plugin add ${install.id}`,
+            },
+          ]
+        : [],
+    ),
+  ];
+  if (hooks.length === 0)
+    return {
+      id: "hook_issued_sessions",
+      status: "pass",
+      detail: "no Workit Claude Code or Codex plugin hook installed — skipping",
+    };
+  const stale = hooks.filter((hook) => hookRecordsIssued(hook.root) === false);
+  if (stale.length === 0)
+    return {
+      id: "hook_issued_sessions",
+      status: "pass",
+      detail: `plugin hooks record SubagentStart session ids (${hooks.map((h) => h.label).join(", ")})`,
+    };
+  return {
+    id: "hook_issued_sessions",
+    status: "warn",
+    detail: `${stale.map((h) => h.label).join(", ")}: the plugin hook is older than this CLI and records no SubagentStart session ids, so \`workit ledger verdict --session <lead>:<agent id>\` is refused`,
+    fix: `${[...new Set(stale.map((h) => h.fix))].join("; ")}; then relaunch the verifier`,
+  };
+};
+
 const CLI_PACKAGE = "@brainervirus/workit-cli";
 const SEMVER = /\d+\.\d+\.\d+/;
 
@@ -2609,6 +2684,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkPiExtension,
   checkOpencodeVersion,
   checkClaudePlugin,
+  checkHookIssuedSessions,
   checkWorkitOnPath,
   checkAssets,
   checkLauncher,

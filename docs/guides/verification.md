@@ -123,11 +123,31 @@ derives from and never makes the author independent. `--session <id>` equal
 to an author session is refused. An accepted `--session` is recorded as
 `sessionSource: flag`, and `ledger check` prints "named by --session".
 
-Limits: on Claude Code a caller that rewrites its own environment
-(`WORKIT_SESSION_ID=lead-v1`, no colon) still declares any id; Cursor, CI and
-a plain terminal are declared by design. There the check stops casual
-forgery, not a determined one. Reading `CLAUDE_CODE_SESSION_ID` could close
-the Claude Code gap; it is not used yet.
+A host that always sets its own variable (OpenCode, Pi, Codex) but is named
+by `WORKIT_HOST` without it (`env -u OPENCODE_SESSION_ID`) cannot vouch for
+any id: the verdict is refused.
+
+If a well-formed `<lead>:<agent id>` is refused and no hook in the workspace
+has ever recorded an issued id, the refusal names the likely cause. The CLI
+and the host plugin update separately, and a plugin hook older than the CLI
+records nothing. Update the plugin (`claude plugin update workit@workit`, or
+reinstall the Codex plugin) and relaunch the verifier. `workit doctor`
+reports the same skew as `hook_issued_sessions`.
+
+Limits (the check stops casual forgery, not a determined one; see
+[the host parity table](../agents/hosts.md#host-parity)):
+
+- Claude Code: the lead's own session is the declared `WORKIT_SESSION_ID`.
+  A caller can still export a colon-less id inline, including the old
+  documented `<lead>-v<n>` form. `CLAUDE_CODE_SESSION_ID` could close this
+  gap; it is not used yet.
+- OpenCode, Pi, Codex: the host variable is checked, but a caller that removes
+  both it and `WORKIT_HOST` from its environment looks like a plain terminal.
+- Any host: `WORKIT_HOST=cli` or an unset `WORKIT_HOST`, with no host variable,
+  is a plain terminal, where any id is declared.
+- Cursor, CI and a plain terminal are declared by design.
+- Claude Code, Codex: the issued-id record is plain files in the workspace
+  store. A caller that writes there deliberately can mark any id as issued.
 
 Verdicts are SHA-keyed and carry over a rebase when
 the patch-id and diff are unchanged. A dirty tree is refused, also when the
