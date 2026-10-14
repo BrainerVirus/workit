@@ -364,13 +364,28 @@ const gitInvocation = (
  * env prefixes, compound commands (`if`, `for`, `{ …; }`), literal
  * variables and loop lists, command substitutions, `bash -c '…'`, `eval`,
  * `xargs`, `find -exec`, `pwsh -Command`/`-EncodedCommand`, `cmd /c` and
- * shells fed a heredoc or a literal pipe.
+ * shells fed a heredoc or a literal pipe. One hook call asks several
+ * times for the same command: the last answers are kept.
  */
 export function rawInvocations(
   command: string,
   dialect: ShellDialect = "posix",
   depth = 0,
-): RawInvocation[] {
+): readonly RawInvocation[] {
+  if (depth > 0) return walk(command, dialect, depth);
+  const key = `${dialect}\0${command}`;
+  const cached = RECENT.get(key);
+  if (cached) return cached;
+  const found = walk(command, dialect, depth);
+  RECENT.set(key, found);
+  if (RECENT.size > 8) RECENT.delete(RECENT.keys().next().value as string);
+  return found;
+}
+
+/** The invocations of the last few commands parsed (pure: same text, same answer). */
+const RECENT = new Map<string, readonly RawInvocation[]>();
+
+function walk(command: string, dialect: ShellDialect, depth: number): RawInvocation[] {
   const found: RawInvocation[] = [];
   let dir: Dir = null;
   const groups: Array<{ dir: Dir; stack: Dir[] }> = [];

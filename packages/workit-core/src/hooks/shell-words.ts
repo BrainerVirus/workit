@@ -149,6 +149,10 @@ const substitutions = (body: string): string[] => {
   return found;
 };
 
+/** Characters that are only ever part of a word, per dialect. */
+const PLAIN_POSIX = /[^\s'"\\`$(){},<>|;&]+/uy;
+const PLAIN_POWERSHELL = /[^\s'"`()<>|;&]+/uy;
+
 /** Tokenize `command` into simple-command segments. */
 export const segmentsOf = (command: string, dialect: ShellDialect = "posix"): Segment[] => {
   const posix = dialect === "posix";
@@ -162,7 +166,7 @@ export const segmentsOf = (command: string, dialect: ShellDialect = "posix"): Se
   const escape = posix ? "\\" : "`";
   const flushWord = () => {
     if (!inWord) return;
-    const text = literal(word);
+    const text = MARKERS.test(word) ? literal(word) : word;
     if (pending === "redirect") {
       if (!text.startsWith("&")) current.redirects.push(text);
     } else if (pending === "heredoc")
@@ -186,7 +190,17 @@ export const segmentsOf = (command: string, dialect: ShellDialect = "posix"): Se
     pending = null;
     segments.push({ words: [], redirects: [], group: kind });
   };
+  const plain = posix ? PLAIN_POSIX : PLAIN_POWERSHELL;
   for (let index = 0; index < command.length; index++) {
+    // A run of characters no rule treats specially joins the word at once.
+    plain.lastIndex = index;
+    const run = plain.exec(command);
+    if (run) {
+      word += run[0];
+      inWord = true;
+      index += run[0].length - 1;
+      continue;
+    }
     const char = command[index];
     const next = command[index + 1];
     if (posix && char === "\\" && next === "\n") index++;
