@@ -101,7 +101,7 @@ const setup = async (tierModels: unknown) => {
 
 const TIER_MODELS = {
   mundane: "sonnet",
-  standard: { claude_code: "opus", opencode: "anthropic/claude-opus-4" },
+  standard: { claude_code: "opus", opencode: "anthropic/claude-opus-4", codex: "gpt-5-codex" },
 };
 
 test("G tierModels with a model for every host and one per host, W the lead renders briefs, T each brief names its tier's model for that host", async () => {
@@ -121,6 +121,10 @@ test("G tierModels with a model for every host and one per host, W the lead rend
   expect(opencode.json().data.text).toContain("  model: anthropic/claude-opus-4  (");
 
   // A tier the repo workspace leaves unset inherits from the enclosing one.
+  // Codex CLI and Desktop share the `codex` key.
+  const codex = await run(cwd, ["fanout", "brief", "api", "--json"], "codex_desktop");
+  expect(codex.json().data.model).toBe("gpt-5-codex");
+
   const hard = await run(cwd, ["fanout", "brief", "core", "--json"], "pi");
   expect(hard.json().data.model).toBe("opus");
   expect(hard.json().data.text).toContain("(fanout.tierModels in workspace outer)");
