@@ -122,7 +122,15 @@ test.skipIf(!npmRegistryOk)(
       expect(spawnSync("git", ["init", "-q"], { cwd: repo }).status).toBe(0);
       const configDir = path.join(home, ".config", "workit");
       mkdirSync(configDir, { recursive: true });
-      const setupEnv = { ...env, WORKFLOW_TOOLKIT_CONFIG: configDir };
+      // Pin the registry probe to the candidate version: a newer published
+      // release must not turn this layout gate into a stale-cache report.
+      const setupEnv = {
+        ...env,
+        WORKFLOW_TOOLKIT_CONFIG: configDir,
+        WORKIT_DOCTOR_STALE_REGISTRY_VERSION: JSON.parse(
+          readFileSync(path.join(cached, "package.json"), "utf8"),
+        ).version,
+      };
 
       // init's setup engine, built the way the CLI bundles it and loaded from
       // the installed package, so it resolves adapters from that install.
@@ -177,17 +185,7 @@ test.skipIf(!npmRegistryOk)(
       const doctor = spawnSync(
         process.execPath.endsWith("bun") ? "node" : process.execPath,
         [path.join(cliDir, "dist", "index.js"), "doctor", "--json"],
-        {
-          cwd: repo,
-          encoding: "utf8",
-          env: {
-            ...setupEnv,
-            WORKIT_DOCTOR_STALE_REGISTRY_VERSION: JSON.parse(
-              readFileSync(path.join(cached, "package.json"), "utf8"),
-            ).version,
-          },
-          timeout: 120_000,
-        },
+        { cwd: repo, encoding: "utf8", env: setupEnv, timeout: 120_000 },
       );
       const report = JSON.parse(doctor.stdout) as Report;
       const row = (id: string) => report.checks.find((c) => c.id === id)!;
