@@ -1248,15 +1248,23 @@ const tagRefusal = (action: PushAction, facts: RefFacts): string | null => {
   return `workit: raw ${quote(`git push${action.allTags ? " --tags" : ""}`)} of ${tags.length ? `tag ${tags.join(", ")}` : "tags"} bypasses the release grant. Push a release tag with ${quote(`workit git push --release ${named}`)} (v<version> tags whose commit the production branch already has; a tag never moves), under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}).`;
 };
 
-/** The remote already has the branch (ls-remote, bounded; unreachable answers yes: fail open). */
-const remoteHas = (repo: Repo, remote: string, branch: string): boolean => {
-  const listed = spawnSync("git", ["ls-remote", "--heads", remote, `refs/heads/${branch}`], {
+/** The remote's branches (`ls-remote --heads`, bounded); null when it cannot be read. */
+const remoteHeads = (repo: Repo, remote: string): Set<string> | null => {
+  const listed = spawnSync("git", ["ls-remote", "--heads", remote], {
     cwd: repo.dir,
     encoding: "utf8",
     timeout: 3_000,
+    windowsHide: true,
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   });
-  return listed.status !== 0 || (listed.stdout ?? "").trim() !== "";
+  if (listed.status !== 0) return null;
+  return new Set(
+    (listed.stdout ?? "")
+      .split("\n")
+      .map((line) => line.split("\t")[1] ?? "")
+      .filter((ref) => ref.startsWith("refs/heads/"))
+      .map((ref) => ref.slice(11)),
+  );
 };
 
 /**
@@ -1269,13 +1277,18 @@ const offPolicyPush = (action: PushAction, repo: Repo, facts: RefFacts, remote: 
   const names = action.allBranches
     ? [...facts.heads]
     : action.targets.map((target) => target ?? repo.branch);
+  // Asked only when a tracking ref is missing, and listed once per push.
+  // Unreachable answers yes: fail open.
+  let listed: Set<string> | null | undefined;
+  const remoteHas = (branch: string) =>
+    (listed === undefined ? (listed = remoteHeads(repo, remote)) : listed)?.has(branch) ?? true;
   for (const branch of names) {
     // A name the shell computes is not judged (like `git switch -c $B`).
     if (!branch || /[$`]/.test(branch)) continue;
     if (action.deleted?.includes(branch) || isTag(facts, branch)) continue;
     if (facts.remoteHeads.has(branch)) continue;
     const check = validateBranchNameFor(repo.dir, branch);
-    if (check.ok || check.rule !== "allowed_pattern" || remoteHas(repo, remote, branch)) continue;
+    if (check.ok || check.rule !== "allowed_pattern" || remoteHas(branch)) continue;
     return `workit: raw ${quote("git push")} onto ${branch}: ${check.error}`;
   }
   return null;

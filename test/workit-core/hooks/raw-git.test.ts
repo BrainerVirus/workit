@@ -495,34 +495,49 @@ test("each host renders the deny on its own channel and the nudge without granti
   });
 });
 
-test("G a Workit workspace, W a raw push onto an off-policy name or of a tag, T every host denies it with the closest name or the release command", async () => {
-  await withProtectedMain(() => {
-    const root = repo({ branch: "feature/x" });
-    git(root, "tag", "v1.0");
-    // A real origin: a branch the remote already has is never judged.
-    const origin = path.join(root, "origin.git");
-    git(root, "init", "-q", "--bare", origin);
-    git(root, "remote", "add", "origin", origin);
-    const denials = (command: string): string[] => {
-      const reasons: string[] = [];
-      const claudeReason = claudeOut(root, command)?.permissionDecisionReason;
-      reasons.push(String(claudeReason));
-      const codexOut = dispatchHook(
+/**
+ * A Workit workspace on feature/x with a tag and a real (local, bare)
+ * origin: a branch the remote already has is never judged.
+ */
+const pushWorkspace = () => {
+  const root = repo({ branch: "feature/x" });
+  git(root, "tag", "v1.0");
+  const origin = path.join(root, "origin.git");
+  git(root, "init", "-q", "--bare", origin);
+  git(root, "remote", "add", "origin", origin);
+  return { root, origin };
+};
+
+type PushHost = "claude_code" | "codex" | "cursor" | "opencode" | "pi";
+
+/** The deny reason one host gives for `command` in `root` (it must deny). */
+const denialOn = (host: PushHost, root: string, command: string): string => {
+  switch (host) {
+    case "claude_code":
+      return String(claudeOut(root, command)?.permissionDecisionReason);
+    case "codex": {
+      const out = dispatchHook(
         codexAdapter,
         fixture("codex", "pre-tool-use-bash", root, { tool_input: { command } }),
         {},
       ).json as { hookSpecificOutput?: { permissionDecisionReason?: string } };
-      reasons.push(String(codexOut.hookSpecificOutput?.permissionDecisionReason));
-      const cursorOut = dispatchHook(
+      return String(out.hookSpecificOutput?.permissionDecisionReason);
+    }
+    case "cursor": {
+      const out = dispatchHook(
         cursorAdapter,
         fixture("cursor", "before-shell-execution", root, { command }),
       );
-      expect(cursorOut.exitCode, `cursor ${command}`).toBe(2);
-      reasons.push(String((cursorOut.json as { agent_message?: string }).agent_message));
+      expect(out.exitCode, `cursor ${command}`).toBe(2);
+      return String((out.json as { agent_message?: string }).agent_message);
+    }
+    case "opencode": {
       const event = { sessionID: "ses_1", action: "shell", resources: [command], effect: "allow" };
       evaluateShellPermission(root, event);
       expect(event.effect, `opencode ${command}`).toBe("deny");
-      reasons.push(String((event as { message?: string }).message));
+      return String((event as { message?: string }).message);
+    }
+    case "pi": {
       const pi = enforceToolPolicy(
         { toolName: "bash", input: { command } } as never,
         {
@@ -531,30 +546,41 @@ test("G a Workit workspace, W a raw push onto an off-policy name or of a tag, T 
           sessionManager: { getSessionId: () => "pi-1" },
         } as never,
       ) as { reason?: string } | undefined;
-      reasons.push(String(pi?.reason));
-      return reasons;
-    };
-    for (const command of [
-      "git push origin HEAD:refs/heads/chore/x",
-      "git push origin HEAD:chore/x",
-      "git push -u origin chore/x",
-    ])
-      for (const reason of denials(command)) {
+      return String(pi?.reason);
+    }
+  }
+};
+
+// One test per host: each pays its own git spawns (slow on Windows CI).
+for (const host of ["claude_code", "codex", "cursor", "opencode", "pi"] as const)
+  test(`G a Workit workspace, W a raw push onto an off-policy name or of a tag, T ${host} denies it with the closest name or the release command`, async () => {
+    await withProtectedMain(() => {
+      const { root } = pushWorkspace();
+      const denial = (command: string) => denialOn(host, root, command);
+      for (const command of [
+        "git push origin HEAD:refs/heads/chore/x",
+        "git push origin HEAD:chore/x",
+        "git push -u origin chore/x",
+      ]) {
+        const reason = denial(command);
         expect(reason, command).toContain('allowed_pattern: branch "chore/x"');
         expect(reason, command).toContain('use "feature/x"');
       }
-    for (const command of ["git push origin v1.0", "git push origin refs/tags/v1.0"])
-      for (const reason of denials(command))
-        expect(reason, command).toContain("workit git push --release v1.0");
-    for (const reason of denials("git push --tags"))
-      expect(reason).toContain("workit git push --release v<version>");
-    // --all and --branches expand to the local branches new on the remote.
-    git(root, "branch", "chore/local");
-    for (const command of ["git push --all origin", "git push --branches"])
-      for (const reason of denials(command))
-        expect(reason, command).toContain('allowed_pattern: branch "chore/local"');
-    git(root, "branch", "-D", "chore/local");
-    for (const reason of denials("git push --mirror origin")) expect(reason).toContain("--mirror");
+      for (const command of ["git push origin v1.0", "git push origin refs/tags/v1.0"])
+        expect(denial(command), command).toContain("workit git push --release v1.0");
+      expect(denial("git push --tags")).toContain("workit git push --release v<version>");
+      // --all and --branches expand to the local branches new on the remote.
+      git(root, "branch", "chore/local");
+      for (const command of ["git push --all origin", "git push --branches"])
+        expect(denial(command), command).toContain('allowed_pattern: branch "chore/local"');
+      git(root, "branch", "-D", "chore/local");
+      expect(denial("git push --mirror origin")).toContain("--mirror");
+    });
+  });
+
+test("G a Workit workspace, W a raw push of a compliant, deleted or already-remote name, T it runs", async () => {
+  await withProtectedMain(() => {
+    const { root, origin } = pushWorkspace();
     const allowed = (command: string) =>
       expect(claudeOut(root, command)?.permissionDecision, command).toBeUndefined();
     // Deleting an off-policy branch is not a new name; a compliant push still runs.
