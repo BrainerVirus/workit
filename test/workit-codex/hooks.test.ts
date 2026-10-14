@@ -155,23 +155,32 @@ test("G a Claude Code SubagentStart, T only the plugin-namespaced workit:<role> 
 
 test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issued is accepted for a verdict, and a lead's invented <lead>:v1 is refused", () => {
   const root = repo();
-  const claudeLead = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "claude-session-1" };
-  const codexLead = { CODEX_THREAD_ID: "codex-session-1" };
-  // Before any SubagentStart nothing under the lead is issued.
-  expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).not.toBeNull();
-  dispatchHook(
-    claudeCodeAdapter,
-    fixture("claude-code", "subagent-start", root, { agent_type: "workit:verifier" }),
-  );
-  codex("subagent-start", root, { agent_type: "workit-verifier" });
-  expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).toBeNull();
-  expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root)).toBeNull();
-  for (const [env, invented] of [
-    [claudeLead, "claude-session-1:v1"],
-    [codexLead, "codex-session-1:v1"],
-  ] as const)
-    expect(sessionClaimRefusal(env, invented, root)?.error).toContain("forged_session");
-  // A non-judge subagent is issued nothing.
-  codex("subagent-start", root, { agent_type: "worker", agent_id: "agent-2" });
-  expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-2", root)).not.toBeNull();
+  // Issued ids are per user (#294): give this test its own state dir so ids
+  // other tests issued under the same fixture lead don't count here.
+  const runState = process.env.WORKFLOW_TOOLKIT_STATE;
+  process.env.WORKFLOW_TOOLKIT_STATE = path.join(root, ".state");
+  try {
+    const claudeLead = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "claude-session-1" };
+    const codexLead = { CODEX_THREAD_ID: "codex-session-1" };
+    // Before any SubagentStart nothing under the lead is issued.
+    expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).not.toBeNull();
+    dispatchHook(
+      claudeCodeAdapter,
+      fixture("claude-code", "subagent-start", root, { agent_type: "workit:verifier" }),
+    );
+    codex("subagent-start", root, { agent_type: "workit-verifier" });
+    expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).toBeNull();
+    expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root)).toBeNull();
+    for (const [env, invented] of [
+      [claudeLead, "claude-session-1:v1"],
+      [codexLead, "codex-session-1:v1"],
+    ] as const)
+      expect(sessionClaimRefusal(env, invented, root)?.error).toContain("forged_session");
+    // A non-judge subagent is issued nothing.
+    codex("subagent-start", root, { agent_type: "worker", agent_id: "agent-2" });
+    expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-2", root)).not.toBeNull();
+  } finally {
+    if (runState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+    else process.env.WORKFLOW_TOOLKIT_STATE = runState;
+  }
 });
