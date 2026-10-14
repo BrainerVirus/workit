@@ -76,13 +76,45 @@ host's own shell session id (Codex `CODEX_THREAD_ID`, OpenCode
 `OPENCODE_SESSION_ID`, Pi `PI_SESSION_ID`; see [hosts](hosts.md)). Commits made
 with `workit git commit` carry a `Workit-Session:` trailer, and the host hooks
 record raw `git commit`s for the session that ran them, so the authoring
-session's verdict is never accepted. A lead starts each verifier with its own
-id (`WORKIT_SESSION_ID=<lead>-v<n>`; on Claude Code the SubagentStart hook does
-this). `--as <role>` only keeps verifier ids distinct; it never makes the
-author independent. `--session <id>` equal to an author session is refused;
-any other id is accepted but recorded as `sessionSource: flag`, and
-`ledger check` prints "named by --session" so you can tell a claimed verifier
-id from one the host set. Verdicts are SHA-keyed and carry over a rebase when
+session's verdict is never accepted.
+
+A verifier never gets a hand-minted id. Each host derives one:
+
+| Host | Verifier session |
+| --- | --- |
+| Claude Code, Codex, Cursor | `<lead>:<agent id>` from the SubagentStart hook, passed as `--session` |
+| OpenCode | a child session's shell already has `WORKIT_SESSION_ID=<lead>:<child>` (plugin `shell.hook("create.before")`); its `OPENCODE_SESSION_ID` is the child's own id |
+| Pi | a supervised worker's shell already has `WORKIT_SESSION_ID=<lead>:<worker session>`; its `PI_SESSION_ID` is the worker's own id |
+
+An independent verdict is refused (`forged_session`) unless its session is
+the shell's real host session or a host-derived child of it. The real session
+is the host's own variable when it sets one (`OPENCODE_SESSION_ID`,
+`PI_SESSION_ID`, `CODEX_THREAD_ID`). Otherwise it is the `WORKIT_SESSION_ID`
+the host's hook exported (Claude Code, Cursor, a plain terminal).
+
+A derived child is one of:
+
+- `<lead>:<this session>`, a child naming its own id;
+- `<this session>:<agent id>`, on hosts whose subagents share the lead's
+  shell (Claude Code, Codex, Cursor).
+
+OpenCode and Pi children run their own shell, so a lead there cannot mint one.
+A hand-minted `<lead>-v1` is refused on every host. A `--self` verdict is
+never accepted, so it is not checked.
+
+Author matching compares the host session behind a derived id: a child that
+committed as `<lead>:<child>` is still the author under its bare `<child>`.
+
+`--as <role>` only keeps verifier ids distinct; it never makes the author
+independent. `--session <id>` equal to an author session is refused. An
+accepted `--session` is recorded as `sessionSource: flag`, and `ledger check`
+prints "named by --session".
+
+On hosts where the id is declared rather than derived (Claude Code, Cursor), a
+caller that edits its own environment can still pick any id: there the check
+stops casual forgery, not a determined one.
+
+Verdicts are SHA-keyed and carry over a rebase when
 the patch-id and diff are unchanged. A dirty tree is refused, also when the
 branch is checked out in another worktree. Verdicts and author rows follow a
 `git branch -m` rename (through the branch's reflog).
