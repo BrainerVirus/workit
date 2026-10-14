@@ -598,6 +598,9 @@ test("G a Workit workspace, W a raw push of a compliant, deleted or already-remo
     allowed("git push --force-with-lease origin dependabot/npm/x");
     git(root, "branch", "my-legacy");
     git(root, "push", "-q", origin, "my-legacy");
+    // Newer git updates the tracking ref when the pushed URL matches a
+    // configured remote; drop it so the name is only seen through ls-remote.
+    git(root, "update-ref", "-d", "refs/remotes/origin/my-legacy");
     expect(() =>
       git(root, "rev-parse", "--verify", "-q", "refs/remotes/origin/my-legacy"),
     ).toThrow();
