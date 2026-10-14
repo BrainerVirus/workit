@@ -434,6 +434,8 @@ export type MergeResult =
       error: string;
       unblock?: string;
       refusal?: MergeRefusal;
+      /** merge_unverified: the `pr.merged` row (verified:false) written when the forge accepted it. */
+      recorded?: { id: string } | { error: string };
     };
 
 const refuse = (error: string, unblock: string, refusal: MergeRefusal): MergeResult => ({
@@ -635,7 +637,7 @@ export async function mergePullRequest(
         { reason: "protected_branch" },
       );
   }
-  const ledger = readLedger(cwd);
+  const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return ledger;
   const check = checkVerdicts(cwd, branch, ledger.value.rows);
   const summary = { head: check.head, accepted: check.accepted, authors: check.authors };
@@ -695,31 +697,9 @@ export async function mergePullRequest(
     ...(squashMessage ? { squashMessage: squashMessage.data } : {}),
   });
   if (!merged.ok) return merged;
-  // Post-verify: the forge must report the PR merged.
-  let state = "open";
-  for (const delay of [0, ...VERIFY_DELAYS_MS]) {
-    if (delay) await sleep(delay);
-    const after = resolved.forge.prStatus(doc.number);
-    if (after.ok) state = after.data.state;
-    if (state === "merged") break;
-  }
-  if (state !== "merged")
-    return {
-      ok: false,
-      code: "failed",
-      error: `merge_unverified: the forge accepted the merge of ${label} but still reports it ${state}`,
-      unblock: `workit verify-delivery merged --pr ${doc.number}`,
-    };
-
-  let deletedBranch: MergeOutcome["deletedBranch"] = false;
-  if (input.deleteBranch) {
-    const deleted = deleteRemoteBranch(cwd, resolved.remote, branch, head);
-    // The forge may delete merged branches itself; gone is deleted.
-    const gone = !deleted.ok && remoteRefTip(cwd, resolved.remote, `refs/heads/${branch}`);
-    deletedBranch =
-      deleted.ok || (gone && gone.ok && gone.sha === null) ? true : { error: deleted.error };
-  }
-  const mergeBack = mergeBackFor(cwd, doc.base, branch);
+  // Recorded as soon as the forge accepts it (N3): a failed read below must
+  // not leave a merge that `pr status`, the stop hook and `verify-delivery
+  // merged` cannot see. The post-verify then confirms it in its own row.
   const row = appendObserved(cwd, {
     type: "pr.merged",
     actor: input.actor,
@@ -732,7 +712,46 @@ export async function mergePullRequest(
     verdictId: verdict.verdictId,
     ...(unverified ? { unverified: unverified.recorded } : {}),
     grant: grant.source,
+    verified: false,
   });
+  const recorded = row.ok ? { id: String(row.value.id) } : { error: row.error };
+  // Post-verify: the forge must report the PR merged.
+  let state = "open";
+  for (const delay of [0, ...VERIFY_DELAYS_MS]) {
+    if (delay) await sleep(delay);
+    const after = resolved.forge.prStatus(doc.number);
+    if (after.ok) state = after.data.state;
+    if (state === "merged") break;
+  }
+  if (state !== "merged")
+    return {
+      ok: false,
+      code: "failed",
+      error: `merge_unverified: the forge accepted the merge of ${label} but still reports it ${state}${"id" in recorded ? `; recorded as pr.merged ${recorded.id} (verified: false)` : `; the pr.merged row could not be written (${recorded.error})`}`,
+      unblock: `workit verify-delivery merged --pr ${doc.number}`,
+      recorded,
+    };
+  if ("id" in recorded)
+    appendObserved(cwd, {
+      type: "pr.merge.verified",
+      actor: input.actor,
+      branch,
+      head,
+      pr: doc.number,
+      base: doc.base,
+      merged: recorded.id,
+      mergeSha: merged.data.mergeSha,
+    });
+
+  let deletedBranch: MergeOutcome["deletedBranch"] = false;
+  if (input.deleteBranch) {
+    const deleted = deleteRemoteBranch(cwd, resolved.remote, branch, head);
+    // The forge may delete merged branches itself; gone is deleted.
+    const gone = !deleted.ok && remoteRefTip(cwd, resolved.remote, `refs/heads/${branch}`);
+    deletedBranch =
+      deleted.ok || (gone && gone.ok && gone.sha === null) ? true : { error: deleted.error };
+  }
+  const mergeBack = mergeBackFor(cwd, doc.base, branch);
   return {
     ok: true,
     data: {
@@ -747,7 +766,7 @@ export async function mergePullRequest(
       unverified,
       grant: { source: grant.source },
       deletedBranch,
-      recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
+      recorded,
       mergeBack: mergeBack.branches,
       mergeBackTrack: mergeBack.track,
     },

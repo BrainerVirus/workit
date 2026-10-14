@@ -151,7 +151,7 @@ function verdictBlock(
   branch: string,
   doc: { state: string; number: number; base: string },
 ) {
-  const ledger = readLedger(cwd);
+  const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return null;
   const check = checkVerdicts(cwd, branch, ledger.value.rows);
   // A merged PR's verdict is the one its merge was accepted on: the branch
@@ -164,6 +164,7 @@ function verdictBlock(
       (candidate) =>
         candidate.type === "pr.merged" &&
         candidate.observer === "workit_cli" &&
+        candidate.integrity !== "unverified" &&
         candidate.pr === doc.number &&
         candidate.base === doc.base,
     );
@@ -372,7 +373,12 @@ async function merge(argv: string[], io: Io): Promise<number> {
       io,
       fail(result.code, result.error, {
         unblock: result.unblock,
-        data: "refusal" in result && result.refusal ? result.refusal : {},
+        data:
+          "refusal" in result && result.refusal
+            ? result.refusal
+            : "recorded" in result && result.recorded
+              ? { recorded: result.recorded }
+              : {},
       }),
     );
   return emit(io, ok(result.data), (data: MergeOutcome) => [
