@@ -99,7 +99,9 @@ A derived child is one of:
   shell (Claude Code, Codex, Cursor).
 
 OpenCode and Pi children run their own shell, so a lead there cannot mint one.
-A hand-minted `<lead>-v1` is refused on every host. A `--self` verdict is
+A hand-minted `<lead>-v1` is refused as `--session` on every host, and as
+`WORKIT_SESSION_ID` wherever the host sets its own session id (OpenCode, Pi,
+Codex). A `--self` verdict is
 never accepted, so it is not checked.
 
 Author matching compares the host session behind a derived id: a child that
