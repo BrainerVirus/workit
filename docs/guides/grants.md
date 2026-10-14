@@ -57,6 +57,19 @@ ledger check`; `type-check-only` never counts). Without one,
 `pr merge` refuses with `NEEDS_VERDICT` and `stack land` stops at
 `no_verdict`; the unblock names the verifier route.
 
+A raw merge skips both checks, so inside a Workit workspace the shell hook
+denies it on every host and names `workit pr merge`: `gh pr merge`, `glab mr
+merge`, and `gh api`/`glab api` writes to a merge endpoint
+(`repos/{owner}/{repo}/pulls/<n>/merge`, `repos/<o>/<r>/merges`,
+`projects/<id>/merge_requests/<iid>/merge`, with `-X`/`--method` or fields
+in any order) or a GraphQL merge mutation. The same hook applies the
+protected-branch and branch-name checks to raw `git push` and branch
+creation through git aliases, `push.default`, glob refspecs, `stash branch`,
+`update-ref`, `fetch <src>:<dst>`, `symbolic-ref`, and commands nested in
+`eval`, `xargs`, `if`/`for` bodies, `bash -c` or `pwsh -Command`. Names a
+shell computes at run time, scripts and other interpreters are host limits;
+server-side branch protection stays the backstop.
+
 Only under `merge: true` can you merge without a verdict, and only by
 asking for it: `workit pr merge --unverified --reason "<why>"` (or `workit
 stack land --unverified --reason "<why>"`). `--reason` is required. Before

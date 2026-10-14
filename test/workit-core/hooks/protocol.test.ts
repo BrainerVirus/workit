@@ -280,14 +280,15 @@ test("fail policy: pre-tool parse errors deny only on fail-closed hosts; start e
     expect(codex.error).toBe("tool_input.command is required for shell tools");
     expect(codex.json).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse" } });
     expect(codex.exitCode).toBe(0);
-    // Cursor declares failClosed: the same failure denies with exit 2.
+    // Cursor fails open too (audit N7): the same failure answers allow.
     const cursor = dispatchHook(
       cursorAdapter,
       fixture("cursor", "before-shell-execution", root, { workspace_roots: [] }),
       {},
     );
-    expect(cursor.json).toMatchObject({ permission: "deny" });
-    expect(cursor.exitCode).toBe(2);
+    expect(cursor.error).toBe("a workspace root is required");
+    expect(cursor.json).toEqual({ permission: "allow" });
+    expect(cursor.exitCode).toBe(0);
     // Claude is not fail-closed and never emits allow.
     const claude = dispatchHook(
       claudeCodeAdapter,

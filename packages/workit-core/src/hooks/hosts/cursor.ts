@@ -63,7 +63,9 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
     // `loop_limit: 1`, so the continuation's own stop never runs the hook.
     stop: { support: "native", native: "stop" },
   },
-  shellPolicy: { deny: "native", channel: "exit2+json", failClosed: true },
+  // Fails open like every host: a payload Workit cannot parse (a renamed
+  // field in a Cursor release) must not block every shell command.
+  shellPolicy: { deny: "native", channel: "exit2+json", failClosed: false },
   context: {
     sessionStart: "native",
     perTurn: "none",
