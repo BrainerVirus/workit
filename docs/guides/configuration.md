@@ -41,6 +41,21 @@ not. An unknown value is reported by `workit grant show` and read as
 { "name": "personal", "glob": "/home/you/projects/personal/**", "defaultEndpoint": "green" }
 ```
 
+Set it per repository with a narrower workspace: the narrowest glob wins, so
+one repository can stop at a PR while the rest of `personal` stops at
+`green`. Agents read the effective value with `workit grant show`; you do
+not have to repeat it in a host's memory or rules file.
+
+```json
+{
+  "workspaces": [
+    { "name": "personal", "glob": "/home/you/projects/personal/**", "defaultEndpoint": "green" },
+    { "name": "infra", "glob": "/home/you/projects/personal/infra/**", "defaultEndpoint": "pr" },
+    { "name": "work", "glob": "/home/you/projects/work/**", "defaultEndpoint": "commit" }
+  ]
+}
+```
+
 A workspace's `trailers` (default `true`) says whether commits carry the
 `Workit-Session:` trailer. Set `"trailers": false` on a workspace (a work
 repository whose history should not name agent sessions) and edit it yourself
@@ -72,6 +87,105 @@ squash message in any workspace; the body is sent as given, apart from
 To add your own trailers (Co-Authored-By) in the same commit, use
 `workit git commit --trailer "Co-Authored-By: Name <email>"` (repeatable)
 instead of amending afterwards.
+
+### Model per fanout tier
+
+A workspace's `fanout.tierModels` names the model a fanout worker gets for
+its slice's TIER (`mundane`, `standard`, `hard`). Give one model name for
+every host, or an object keyed by host (`claude_code`, `opencode`, `codex`,
+`cursor`, `pi`, plus an optional `default`) where model names differ.
+`workit fanout brief` adds a `model:` line under `TIER:`, and `workit fanout
+status` names the model next to each slice it lists to spawn
+(`spawnModels` in `--json`). A tier or host with no entry, or a value that is
+not a name, gets no model line: the fanout skill's TIER guidance applies. A
+nested workspace inherits each tier it leaves unset from the enclosing one.
+
+```json
+{
+  "name": "personal",
+  "glob": "/home/you/projects/personal/**",
+  "fanout": {
+    "tierModels": {
+      "mundane": { "claude_code": "sonnet", "opencode": "anthropic/claude-sonnet-4-5" },
+      "standard": "opus",
+      "hard": "opus"
+    }
+  }
+}
+```
+
+The lead's host comes from its environment (`WORKIT_HOST` or the host's own
+session variable). Hosts that cannot pick a model per spawn (Codex, Cursor,
+Pi) still show it, so you can start the worker on that model yourself.
+
+### Live-session guard
+
+Two agent sessions editing one checkout overwrite each other's work. The
+hooks every host already runs record which session last wrote in a checkout
+(its session, host, process id and its start time, and a heartbeat, in
+`<state dir>/live-sessions/`). When a different session then edits a file
+or runs a mutating command there (`git commit`, `switch`, `reset`, `stash`,
+`rebase`, a shell redirect, `rm`, `workit git commit` and the like), its
+write hook denies it, naming the owning session, its host and how long ago
+it was last active. Writes under `.git` count too.
+
+- **What stays allowed:** read-only commands (`git status`, `log`, `diff`,
+  `cat`), `git worktree add`, `--help`, `-h` and dry runs (`--dry-run`, and
+  `-n` for `add`, `clean`, `rm` and `mv`; `git commit -n` still commits).
+- **Where a command runs:** the guard judges the directory each command
+  actually runs in: `cd` and `pushd` earlier in the line, `( … )` groups,
+  `git -C`, and git run through `bash -c`, `$(…)`, `env`, `eval`, `xargs`,
+  `find -exec`, PowerShell or `cmd /c`. So `cd <your worktree> && git
+  commit` is allowed from an owned checkout. A directory it cannot know
+  (`cd $X`) is skipped, not denied.
+- **The owner is never refused**, nor are its subagents and fanout workers
+  (ids `<lead>:<agent>` and `<lead>-w-<slice>`), nor any session running in
+  the same host process.
+- **Each checkout is separate**, so worktrees of one repository each have
+  their own owner. Work in a worktree of your own to work next to a live
+  session.
+- **A marker expires** when the owning process has exited (a reused pid with
+  another start time counts as exited), or 15 minutes after its last write.
+  The owner rewrites it at most every 30 seconds. Two sessions that claim a
+  free checkout at the same instant race: the last write wins, and the other
+  session is refused from its next write on.
+- **To release a checkout** once you know its session is finished, delete
+  the marker file the deny names, or run one command as
+  `WORKIT_LIVE_SESSION=override <command>`. The override counts only as the
+  leading assignment of a single simple command (not inside quotes, not on
+  another command of a `&&` chain), and in a Workit workspace it leaves a
+  `live_session.override` row in the ledger.
+- **Turn the guard off** per workspace with `"liveSessionGuard": false`. A
+  nested workspace inherits the setting.
+- **It fails open.** An unreadable or corrupt marker store never blocks a
+  write.
+
+```json
+{ "name": "scratch", "glob": "/home/you/scratch/**", "liveSessionGuard": false }
+```
+
+The guard runs on every host through the hooks it already has: Claude Code
+and Codex use `PreToolUse`, Cursor uses `preToolUse` and
+`beforeShellExecution`, OpenCode uses its `permission` hook, and Pi uses
+`tool_call`. Host limits:
+
+- **Cursor** does not put the parent conversation on a subagent's tool
+  events, so the guard recognizes that subagent by the Cursor process it
+  runs in, not by its id.
+- **Windows** has no process ancestry to read, so a marker records no owner
+  process. It lasts until its heartbeat expires, and any session of the same
+  host as the owner is allowed, because the guard cannot tell that host's
+  subagents, or a session after `/clear`, from another window. On Windows the
+  guard therefore only separates different hosts. The same holds anywhere a
+  marker's process start time cannot be read.
+- **Codex** shell commands are judged in the session's directory. If a
+  command carries its own `workdir` and does no `cd`, the guard still judges
+  it against the session directory; that per-command `workdir` is not read.
+- **Writes the host's hooks never see** are not guarded: an interpreter or
+  formatter writing files from a script, or edits made outside an agent.
+
+Two heavy checks on one machine are kept apart separately, by the
+[machine-wide check lease](delivery.md#heavy-checks-share-the-machine).
 
 GitHub and GitLab use your `gh auth login` / `glab auth login`; Workit stores
 no forge tokens of its own.

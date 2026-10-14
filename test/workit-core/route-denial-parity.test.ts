@@ -110,7 +110,9 @@ const codexDenies = (root: string, command: string): boolean => {
 const cursorDenies = (root: string, command: string): boolean => {
   const result = handleCursorHook({
     hook_event_name: "beforeShellExecution",
-    conversation_id: "conversation-1",
+    // The session the other hook-process hosts use: the live-session guard
+    // (#274) sees one owner in this shared checkout, not a second session.
+    conversation_id: "session-1",
     workspace_roots: [root],
     cwd: root,
     command,

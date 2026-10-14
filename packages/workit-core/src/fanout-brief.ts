@@ -17,6 +17,7 @@
 // the integration tip before reporting, and nothing else. It only reads, apart
 // from hiding `.workit-scratch/` in the repository's info/exclude.
 import { createHash } from "node:crypto";
+import { workspaceTierModel } from "./core/workspaces";
 import { activeStanding, readLedger, type LedgerActor } from "./ledger";
 import { branchRef, fanoutFail, planLeads, type FanoutFile, type FanoutResult } from "./fanout";
 import {
@@ -38,6 +39,8 @@ export type BriefOutcome = {
   branch: string;
   base: string;
   tier: string;
+  /** The model `fanout.tierModels` names for the tier on the lead's host, else null. */
+  model: string | null;
   /** Absolute when the slice's worktree exists, else relative to the worker's worktree root. */
   scratch: string;
   /** The id a worker exports, or null when its host issues or derives it. */
@@ -171,6 +174,7 @@ export function renderBrief(
     what: String(row.what),
   }));
   const identity = identityOf(input.actor.host);
+  const model = workspaceTierModel(cwd, slice.tier, input.actor.host);
   const minted = workerSession(sessionSafe(input.actor.session), slice.id, input.attempt);
   const session = identity === "declared" ? minted : null;
   const fanIn =
@@ -200,6 +204,9 @@ export function renderBrief(
     ...slice.acceptance.map((line) => `  - ${line}`),
     `VERIFY: ${slice.verify.join("; ")}`,
     `TIER: ${slice.tier}`,
+    ...(model
+      ? [`  model: ${model.model}  (fanout.tierModels in workspace ${model.workspace})`]
+      : []),
     `TIMEBOX: ${slice.timebox ?? DEFAULT_TIMEBOX}; past it without a new commit you will be replaced`,
     scratchLine,
     `FORBIDDEN: ${slice.forbidden.join("; ")}`,
@@ -222,6 +229,7 @@ export function renderBrief(
       branch,
       base: slice.base,
       tier: slice.tier,
+      model: model?.model ?? null,
       scratch,
       session,
       standing,

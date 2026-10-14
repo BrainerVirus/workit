@@ -5,8 +5,10 @@ and fans in. Workit records and checks; the host's own subagents run the work.
 
 ## TIER to model
 
-TIER is a field of each slice and of its brief. Map it where the host lets you
-pick a model per spawn; nothing in the workspace config routes it.
+TIER is a field of each slice and of its brief. When the workspace sets
+`fanout.tierModels`, the brief has a `model:` line under TIER and `workit
+fanout status` names the model next to each spawnable slice: use that model.
+Without one, map TIER where the host lets you pick a model per spawn:
 
 | TIER | Claude Code (`model` on the Agent call) | Hosts without a per-spawn model |
 | --- | --- | --- |

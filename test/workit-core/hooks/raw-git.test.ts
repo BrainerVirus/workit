@@ -444,8 +444,14 @@ test("each host renders the deny on its own channel and the nudge without granti
       },
     });
 
+    // Each host in its own checkout: the live-session guard (#274) refuses a
+    // second host's session where it cannot tell processes apart (Windows).
+    const cursorRoot = repo({ branch: "feature/x" });
     const cursor = (command: string) =>
-      dispatchHook(cursorAdapter, fixture("cursor", "before-shell-execution", root, { command }));
+      dispatchHook(
+        cursorAdapter,
+        fixture("cursor", "before-shell-execution", cursorRoot, { command }),
+      );
     const denied = cursor("gh pr merge 1");
     expect(denied.exitCode).toBe(2);
     expect(denied.json).toMatchObject({
@@ -460,9 +466,12 @@ test("each host renders the deny on its own channel and the nudge without granti
       agent_message: expect.stringMatching(/WORKIT_SESSION_ID=\S+ workit git commit/),
     });
 
+    // The in-process hosts get their own checkout: the live-session guard
+    // (#274) refuses one host's session in a checkout another host's owns.
+    const shared = repo({ branch: "feature/x" });
     const opencode = (command: string, workdirs?: Map<string, string>) => {
       const event = { sessionID: "ses_1", action: "shell", resources: [command], effect: "allow" };
-      evaluateShellPermission(root, event, workdirs);
+      evaluateShellPermission(shared, event, workdirs);
       return event as typeof event & { message?: string };
     };
     expect(opencode("gh pr merge 1")).toMatchObject({
@@ -475,8 +484,11 @@ test("each host renders the deny on its own channel and the nudge without granti
     expect(opencode("git push").effect).toBe("allow");
     expect(opencode("git push", new Map([["ses_1", onMain]])).effect).toBe("deny");
 
+    // Pi gets its own checkout: on Windows (no pid start time) OpenCode's
+    // live-session marker in `shared` would refuse a different host.
+    const piRoot = repo({ branch: "feature/x" });
     const ctx = {
-      cwd: root,
+      cwd: piRoot,
       isProjectTrusted: () => true,
       sessionManager: { getSessionId: () => "pi-1" },
     };

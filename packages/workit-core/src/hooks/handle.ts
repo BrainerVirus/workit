@@ -26,7 +26,8 @@ import {
   withContextLine,
 } from "./skill-nudge";
 import { stopDecision } from "./stop";
-import { shellWrites, writeGate } from "./write-gate";
+import { liveOwner } from "../core/live-session";
+import { shellGate, writeGate } from "./write-gate";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
 export type HookDeps = { descriptor: HostDescriptor; addendum: string | null };
@@ -156,10 +157,10 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       if (!postTool) settlePendingCommit(input);
       const raw = canDeny ? rawGitPre(input, event.command, { nudge: false }) : NONE;
       if (raw.kind === "deny") return raw;
-      const writes = usable(descriptor.events["write.pre"].support)
-        ? shellWrites(event.command)
-        : { writes: false, targets: null };
-      const gate = writes.writes ? writeGate(input.cwd, writes.targets) : NONE;
+      // The before-write gate and the live-session guard (#274).
+      const gate = usable(descriptor.events["write.pre"].support)
+        ? shellGate(input.cwd, event.command, liveOwner(input, descriptor.transport), event.dialect)
+        : NONE;
       if (gate.kind === "deny") return gate;
       // The command will run: note HEAD so the post-tool hook (or the next
       // command, without one) can tell whether a raw commit moved it.
@@ -182,7 +183,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       return NONE;
     case "write.pre":
       return usable(descriptor.events["write.pre"].support)
-        ? writeGate(input.cwd, event.paths)
+        ? writeGate(input.cwd, event.paths, liveOwner(input, descriptor.transport))
         : NONE;
     case "subagent.start":
       return {
