@@ -149,6 +149,16 @@ const workspaceConfigSchema = z
      * authorship lives in the ledger only (`commit.recorded`).
      */
     trailers: z.boolean().optional(),
+    /**
+     * Whether the live-session guard denies edits in a checkout another live
+     * agent session owns (default true; core/live-session.ts).
+     */
+    liveSessionGuard: z.boolean().optional(),
+    /**
+     * Fanout settings. `tierModels` names the model per slice TIER, as one
+     * name or per host family; read leniently (workspaceTierModel).
+     */
+    fanout: z.object({ tierModels: z.unknown().optional() }).passthrough().optional(),
     /** Autonomy grants (D15): only ever set here, by the user. */
     autonomy: z
       .object(
@@ -695,35 +705,94 @@ export const resolveRuntimeReleaseTracks = (
     : null;
 };
 
+type RuntimeEntry = Record<string, unknown> & { name: string };
+
+/**
+ * The workspace selected for cwd and the entry a setting comes from: the
+ * selected workspace when `has(entry)`, else the nearest enclosing workspace
+ * that also matches cwd (a repo workspace nested in `work`). Read leniently:
+ * no workspace, or an unreadable workspaces.json, reads as null.
+ */
+const inheritedSetting = (
+  cwd: string,
+  dir: string | undefined,
+  has: (entry: RuntimeEntry) => boolean,
+): { workspace: string; source: RuntimeEntry | null } | null => {
+  let matched: ReturnType<typeof matchRuntimeWorkspace>;
+  try {
+    matched = matchRuntimeWorkspace(cwd, dir);
+  } catch {
+    return null;
+  }
+  if (!matched) return null;
+  const { selected, matches } = matched;
+  const enclosing = matches
+    .filter((entry) => entry !== selected)
+    .toSorted((a, b) => globSpecificity(b.glob) - globSpecificity(a.glob));
+  return { workspace: selected.name, source: [selected, ...enclosing].find(has) ?? null };
+};
+
 /**
  * Whether commits in cwd's workspace carry the `Workit-Session:` trailer.
  * The selected workspace's own `trailers` wins; unset, it inherits from the
- * nearest enclosing workspace that also matches cwd (a repo workspace nested
- * in `work`), and defaults to true. Read leniently: no workspace, or an
- * unreadable workspaces.json, keeps the trailer. `from` names the entry the
- * value came from (null for the default).
+ * nearest enclosing workspace that also matches cwd, and defaults to true.
+ * No workspace, or an unreadable workspaces.json, keeps the trailer. `from`
+ * names the entry the value came from (null for the default).
  */
 export const workspaceTrailers = (
   cwd: string,
   dir?: string,
 ): { enabled: boolean; workspace: string | null; from: string | null } => {
-  let matched: ReturnType<typeof matchRuntimeWorkspace>;
-  try {
-    matched = matchRuntimeWorkspace(cwd, dir);
-  } catch {
-    return { enabled: true, workspace: null, from: null };
-  }
-  if (!matched) return { enabled: true, workspace: null, from: null };
-  const { selected, matches } = matched;
-  const enclosing = matches
-    .filter((entry) => entry !== selected)
-    .toSorted((a, b) => globSpecificity(b.glob) - globSpecificity(a.glob));
-  const source = [selected, ...enclosing].find((entry) => typeof entry.trailers === "boolean");
+  const found = inheritedSetting(cwd, dir, (entry) => typeof entry.trailers === "boolean");
   return {
-    enabled: source?.trailers !== false,
-    workspace: selected.name,
-    from: source?.name ?? null,
+    enabled: found?.source?.trailers !== false,
+    workspace: found?.workspace ?? null,
+    from: found?.source?.name ?? null,
   };
+};
+
+/**
+ * Whether the live-session guard runs for cwd's workspace (`liveSessionGuard`,
+ * default true; inherited like `trailers`). An unreadable workspaces.json
+ * keeps it on: the guard itself fails open on any state error.
+ */
+export const workspaceLiveSessionGuard = (cwd: string, dir?: string): boolean =>
+  inheritedSetting(cwd, dir, (entry) => typeof entry.liveSessionGuard === "boolean")?.source
+    ?.liveSessionGuard !== false;
+
+const hostFamily = (host: string): string => host.replace(/_(?:cli|desktop)$/u, "");
+
+/**
+ * The model `fanout.tierModels` names for a tier on a host, or null (the
+ * fanout skill's TIER guidance applies). A tier maps to one model name for
+ * every host, or to `{ <host>: <model> }` keyed by host family (claude_code,
+ * opencode, codex, cursor, pi) with an optional `default`. Inherited like
+ * `trailers`, per tier; anything malformed reads as unset.
+ */
+export const workspaceTierModel = (
+  cwd: string,
+  tier: string,
+  host: string | null,
+  dir?: string,
+): { model: string; workspace: string } | null => {
+  const pick = (entry: RuntimeEntry): string | null => {
+    const fanout = entry.fanout as { tierModels?: unknown } | undefined;
+    const models = fanout?.tierModels;
+    if (!models || typeof models !== "object" || !Object.hasOwn(models, tier)) return null;
+    const value = (models as Record<string, unknown>)[tier];
+    if (typeof value === "string") return value.trim() || null;
+    if (!value || typeof value !== "object") return null;
+    const byHost = value as Record<string, unknown>;
+    const family = host ? hostFamily(host) : null;
+    const named =
+      (family && Object.hasOwn(byHost, family) ? byHost[family] : undefined) ??
+      (host && Object.hasOwn(byHost, host) ? byHost[host] : undefined) ??
+      (Object.hasOwn(byHost, "default") ? byHost.default : undefined);
+    return typeof named === "string" && named.trim() ? named.trim() : null;
+  };
+  const found = inheritedSetting(cwd, dir, (entry) => pick(entry) !== null);
+  const model = found?.source ? pick(found.source) : null;
+  return model && found?.source ? { model, workspace: found.source.name } : null;
 };
 
 const resolveRuntimeWorkspaceCandidate = (
