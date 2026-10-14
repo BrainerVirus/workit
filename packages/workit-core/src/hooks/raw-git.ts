@@ -53,10 +53,36 @@ export type RawInvocation = {
   stdin?: string;
 };
 
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "mksh", "yash", "fish"]);
 const POWERSHELLS = new Set(["pwsh", "powershell"]);
 const EVALS = new Set(["eval", "iex", "invoke-expression"]);
-const PREFIXES = new Set(["sudo", "command", "env", "nohup", "time", "exec", "nice", "&"]);
+/**
+ * Wrappers that run the command after their options: the options that take
+ * a value, and how many operands come before the command (`timeout 30`).
+ */
+const WRAPPERS: Record<string, { values: string; operands?: number }> = {
+  sudo: { values: "-u -g -h -p -C -D -R -T -r -t -U --user --group --host --prompt --chdir" },
+  doas: { values: "-u -C" },
+  command: { values: "" },
+  builtin: { values: "" },
+  env: { values: "-u -C --unset --chdir" },
+  nohup: { values: "" },
+  setsid: { values: "" },
+  time: { values: "-f -o --format --output" },
+  exec: { values: "-a" },
+  nice: { values: "-n --adjustment" },
+  ionice: { values: "-c -n -p --class --classdata" },
+  stdbuf: { values: "-i -o -e --input --output --error" },
+  chronic: { values: "" },
+  unbuffer: { values: "" },
+  wsl: { values: "-d -u --cd --distribution --user" },
+  timeout: { values: "-s -k --signal --kill-after", operands: 1 },
+  flock: { values: "-w -E --timeout --conflict-exit-code", operands: 1 },
+  "&": { values: "" },
+};
+const WRAPPER_VALUES = new Map(
+  Object.entries(WRAPPERS).map(([name, wrapper]) => [name, new Set(wrapper.values.split(" "))]),
+);
 /** Shell keywords that open a compound command: the command follows them. */
 const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{"]);
 const DECLARATIONS = new Set(["export", "local", "declare", "readonly", "typeset"]);
@@ -124,13 +150,14 @@ const stripPrefixes = (input: string[]): { words: string[]; env: Record<string, 
       if (GIT_CONFIG_ENV.test(assignment[1])) env[assignment[1]] = assignment[2];
       words = words.slice(1);
     } else if (KEYWORDS.has(first)) words = words.slice(1);
-    else if (PREFIXES.has(first)) {
+    else if (Object.hasOwn(WRAPPERS, commandName(first))) {
+      const name = commandName(first);
+      const values = WRAPPER_VALUES.get(name)!;
       words = words.slice(1);
-      while (words[0]?.startsWith("-")) words = words.slice(words[0] === "-u" ? 2 : 1);
-    } else if (first === "timeout") {
-      words = words.slice(1);
-      while (words[0]?.startsWith("-")) words = words.slice(1);
-      words = words.slice(1);
+      while (words[0]?.startsWith("-") && words[0] !== "--")
+        words = words.slice(values.has(words[0]) ? 2 : 1);
+      if (words[0] === "--") words = words.slice(1);
+      words = words.slice(WRAPPERS[name].operands ?? 0);
     } else return { words, env };
   }
 };
@@ -283,7 +310,7 @@ const POWERSHELL_VALUES =
  * names match case-insensitively and by unambiguous prefix. Null for a
  * script file or an interactive shell.
  */
-const powershellScript = (words: string[]): string | null => {
+const powershellScript = (words: string[], stdin?: string): string | null => {
   for (let index = 1; index < words.length; index++) {
     const word = words[index];
     if (!/^[-/]/.test(word)) return null;
@@ -298,7 +325,8 @@ const powershellScript = (words: string[]): string | null => {
     }
     if (flag === "cwa" || (flag.length >= 8 && "commandwithargs".startsWith(flag)))
       return words[index + 1] ?? null;
-    if ("command".startsWith(flag)) return words.slice(index + 1).join(" ");
+    if ("command".startsWith(flag))
+      return words[index + 1] === "-" ? (stdin ?? null) : words.slice(index + 1).join(" ");
     if (POWERSHELL_VALUES.test(`-${flag}`)) {
       if (flag === "f" || flag === "file") return null;
       index++;
@@ -320,8 +348,21 @@ const cmdScript = (words: string[]): string | null => {
 /** The script a posix shell runs: `-c '…'`, else its stdin when it has no script operand. */
 const shellScript = (words: string[], stdin: string | undefined): string | undefined => {
   const flag = words.findIndex((word, index) => index > 0 && SCRIPT_FLAG.test(word));
-  if (flag > 0) return words[flag + 1];
+  if (flag > 0) return words[flag + 1] === "--" ? words[flag + 2] : words[flag + 1];
   return words.slice(1).every((word) => word.startsWith("-")) ? stdin : undefined;
+};
+
+/** `env -S 'cmd args'` (`--split-string`): the command line it splits, or null. */
+const splitString = (line: string[]): string | null => {
+  if (commandName(line[0]) !== "env") return null;
+  for (let index = 1; index < line.length; index++) {
+    const word = line[index];
+    if (word === "-S" || word === "--split-string") return line.slice(index + 1).join(" ");
+    if (word.startsWith("--split-string=")) return line.slice(index).join(" ").slice(15);
+    if (/^-S./.test(word)) return [word.slice(2), ...line.slice(index + 1)].join(" ");
+    if (!word.startsWith("-") && !ASSIGNMENT.test(word)) return null;
+  }
+  return null;
 };
 
 /**
@@ -397,6 +438,8 @@ function walk(command: string, dialect: ShellDialect, depth: number): RawInvocat
       found.push({ ...invocation, dir: rebase(dir, invocation.dir) });
   };
   const visit = (line: string[], stdin: string | undefined, hops: number) => {
+    const split = splitString(line);
+    if (split !== null) return nested(split, "posix");
     const { words, env } = stripPrefixes(line);
     const name = commandName(words[0]);
     if (!name) return;
@@ -410,7 +453,7 @@ function walk(command: string, dialect: ShellDialect, depth: number): RawInvocat
     } else if (POPD.has(name)) dir = stack.length ? stack.pop() : undefined;
     else if (EVALS.has(name)) nested(words.slice(1).join(" "), dialect);
     else if (SHELLS.has(name)) nested(shellScript(words, stdin), "posix");
-    else if (POWERSHELLS.has(name)) nested(powershellScript(words), "powershell");
+    else if (POWERSHELLS.has(name)) nested(powershellScript(words, stdin), "powershell");
     else if (name === "cmd") nested(cmdScript(words), "powershell");
     else if (name === "xargs" || name === "find") {
       if (hops >= MAX_DEPTH) return;
@@ -524,8 +567,13 @@ const PUSH_VALUE_OPTIONS = new Set(["-o", "--push-option", "--receive-pack", "--
 type PushTarget = { name: string | null | undefined; tag?: string };
 
 /** The destination of one push refspec: a branch, `null` for HEAD, undefined for another namespace. */
+/** `$(git branch --show-current)` and its spellings: the current branch. */
+const CURRENT_BRANCH =
+  /^\$\(\s*git\s+(?:branch\s+--show-current|rev-parse\s+--abbrev-ref\s+HEAD|symbolic-ref\s+--short\s+HEAD)\s*\)$/;
+
 const pushDestination = (destination: string): PushTarget => {
-  if (destination === "HEAD" || destination === "@") return { name: null };
+  if (destination === "HEAD" || destination === "@" || CURRENT_BRANCH.test(destination))
+    return { name: null };
   if (destination.startsWith("refs/heads/")) return { name: destination.slice(11) };
   if (destination.startsWith("refs/tags/")) return { name: undefined, tag: destination.slice(10) };
   if (destination.startsWith("refs/")) return { name: undefined };
@@ -574,6 +622,8 @@ export const pushAction = (args: string[]): RawAction | null => {
   let allBranches = false;
   let mirror = false;
   let remote: string | null = null;
+  // The last of --dry-run (or an abbreviation, or -n) and --no-dry-run wins.
+  let dryRun = false;
   const positionals: string[] = [];
   for (let index = 1; index < args.length; index++) {
     const arg = args[index];
@@ -581,8 +631,10 @@ export const pushAction = (args: string[]): RawAction | null => {
       positionals.push(...args.slice(index + 1));
       break;
     }
-    if (arg === "--dry-run" || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(arg)) return null;
-    if (arg === "--repo") remote = args[++index] ?? null;
+    if (/^--dr(?:y(?:-(?:r(?:un?)?)?)?)?$/.test(arg) || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(arg))
+      dryRun = true;
+    else if (/^--no-dr(?:y(?:-(?:r(?:un?)?)?)?)?$/.test(arg)) dryRun = false;
+    else if (arg === "--repo") remote = args[++index] ?? null;
     else if (arg.startsWith("--repo=")) remote = arg.slice("--repo=".length);
     else if (PUSH_VALUE_OPTIONS.has(arg)) index++;
     else if (arg === "--force" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(arg)) force = true;
@@ -593,6 +645,7 @@ export const pushAction = (args: string[]): RawAction | null => {
     else if (arg === "--mirror") mirror = wholesale = true;
     else if (!arg.startsWith("-")) positionals.push(arg);
   }
+  if (dryRun) return null;
   // `--repo` names the remote; positionals are then all refspecs.
   const specs = remote === null ? positionals.slice(1) : positionals;
   remote ??= positionals[0] ?? null;
@@ -931,6 +984,14 @@ const autocorrected = (name: string, config: GitConfig): string | null => {
 
 const shellQuote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 
+/** A `!` alias's `$1`…`$9`, `$@` and `$*` with the arguments git hands it. */
+const positional = (script: string, args: readonly string[]): string => {
+  const word = (arg: string) => (/^[\w./@+:=-]+$/.test(arg) ? arg : shellQuote(arg));
+  return script
+    .replace(/\$\{?([1-9])\}?/g, (_, n: string) => word(args[Number(n) - 1] ?? ""))
+    .replace(/\$\{?[@*]\}?/g, args.map(word).join(" "));
+};
+
 /**
  * A git invocation as git runs it once its alias is resolved: aliases from
  * the repository and user config, `-c alias.x=…` and GIT_CONFIG_* all count,
@@ -967,16 +1028,18 @@ export const expandGitAliases = (
   const rest = invocation.args.slice(1);
   const expanded = alias.startsWith("!")
     ? // A shell alias inherits the outer -c options and environment.
-      rawInvocations([alias.slice(1), ...rest.map(shellQuote)].join(" ")).map((inner) => ({
-        ...inner,
-        dir: rebase(invocation.dir, inner.dir),
-        ...(inner.tool === "git" && (invocation.config || inner.config)
-          ? { config: [...(invocation.config ?? []), ...(inner.config ?? [])] }
-          : {}),
-        ...(inner.tool === "git" && (invocation.env || inner.env)
-          ? { env: { ...invocation.env, ...inner.env } }
-          : {}),
-      }))
+      rawInvocations([positional(alias.slice(1), rest), ...rest.map(shellQuote)].join(" ")).map(
+        (inner) => ({
+          ...inner,
+          dir: rebase(invocation.dir, inner.dir),
+          ...(inner.tool === "git" && (invocation.config || inner.config)
+            ? { config: [...(invocation.config ?? []), ...(inner.config ?? [])] }
+            : {}),
+          ...(inner.tool === "git" && (invocation.env || inner.env)
+            ? { env: { ...invocation.env, ...inner.env } }
+            : {}),
+        }),
+      )
     : [
         gitInvocation(
           [...(segmentsOf(alias)[0]?.words ?? []), ...rest],
@@ -1052,7 +1115,8 @@ const pushRemoteOf = (config: GitConfig, branch: string | null): string | null =
  * remote, an insteadOf rewrite, the URL spelled out).
  */
 const toPushRemote = (repo: Repo, remote: string | null, config: GitConfig): boolean => {
-  if (remote === null) return true;
+  // None, or one the shell computes (`"$(git remote get-url origin)"`): it may well be it.
+  if (remote === null || /[$`]/.test(remote)) return true;
   // No known push remote: the named one may well be it.
   const pushRemote = pushRemoteOf(config, repo.branch);
   if (pushRemote === null || pushRemote === remote) return true;
@@ -1206,7 +1270,9 @@ const offPolicyPush = (action: PushAction, repo: Repo, facts: RefFacts, remote: 
     ? [...facts.heads]
     : action.targets.map((target) => target ?? repo.branch);
   for (const branch of names) {
-    if (!branch || action.deleted?.includes(branch) || isTag(facts, branch)) continue;
+    // A name the shell computes is not judged (like `git switch -c $B`).
+    if (!branch || /[$`]/.test(branch)) continue;
+    if (action.deleted?.includes(branch) || isTag(facts, branch)) continue;
     if (facts.remoteHeads.has(branch)) continue;
     const check = validateBranchNameFor(repo.dir, branch);
     if (check.ok || check.rule !== "allowed_pattern" || remoteHas(repo, remote, branch)) continue;

@@ -244,6 +244,12 @@ test("Given a Workit workspace, When a git alias, push.default, remote.<name>.pu
       "g''it push origin HEAD:main",
       "pwsh -c git push origin HEAD:main",
       "echo 'git push origin HEAD:main' | bash",
+      // A dry run undone, wrappers with option values, a computed remote.
+      "git push --dry-run --no-dry-run origin HEAD:main",
+      "nice -n 5 git push origin HEAD:main",
+      "timeout -s KILL 30 git push origin HEAD:main",
+      "env -S 'git push origin HEAD:main'",
+      'git push "$(git remote get-url origin)" HEAD:main',
     ])
       expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
     for (const command of [
@@ -253,6 +259,8 @@ test("Given a Workit workspace, When a git alias, push.default, remote.<name>.pu
       "git -c push.default=current push",
       "git push origin 'refs/heads/feature/*:refs/heads/feature/*'",
       "git push backup feature/x",
+      "git push --dry-run origin HEAD:main",
+      "git push -u origin $(git branch --show-current)",
     ])
       expect(await denialsByHost(root, command), command).toEqual(allHosts(false));
   } finally {
@@ -288,10 +296,15 @@ test("Given a Workit workspace, When a deferred branch-creation form (#277 rulin
       'pwsh -Command "git switch -c chore/x"',
       "powershell -NoProfile -c git checkout -b chore/x",
       `pwsh -EncodedCommand ${encoded}`,
+      `git -c alias.nb='!f() { git switch -c "$1"; }; f' nb chore/x`,
+      "echo 'git switch -c chore/x' | pwsh -Command -",
+      "x=$(git switch -c chore/x)",
+      "bash -c -- 'git switch -c chore/x'",
     ])
       expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
     for (const command of [
       "git nb feature/ok",
+      `git -c alias.nb='!f() { git switch -c "$1"; }; f' nb feature/ok`,
       "git stash branch feature/ok",
       "git update-ref refs/heads/feature/x HEAD",
       "git update-ref -d refs/heads/chore/old",

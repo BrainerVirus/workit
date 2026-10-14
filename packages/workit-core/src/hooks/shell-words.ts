@@ -153,6 +153,22 @@ const substitutions = (body: string): string[] => {
 const PLAIN_POSIX = /[^\s'"\\`$(){},<>|;&]+/uy;
 const PLAIN_POWERSHELL = /[^\s'"`()<>|;&]+/uy;
 
+/** The index of the `)` closing the `(` at `start` (quotes skipped), or the end. */
+const closingParen = (command: string, start: number): number => {
+  let depth = 0;
+  for (let index = start; index < command.length; index++) {
+    const char = command[index];
+    if (char === "\\") index++;
+    else if (char === "'" || char === '"') {
+      const end = closingQuote(command, index, "posix");
+      if (end < 0) return command.length;
+      index = end;
+    } else if (char === "(") depth++;
+    else if (char === ")" && --depth === 0) return index;
+  }
+  return command.length;
+};
+
 /** Tokenize `command` into simple-command segments. */
 export const segmentsOf = (command: string, dialect: ShellDialect = "posix"): Segment[] => {
   const posix = dialect === "posix";
@@ -161,7 +177,6 @@ export const segmentsOf = (command: string, dialect: ShellDialect = "posix"): Se
   let word = "";
   let inWord = false;
   let pending: "redirect" | "input" | "heredoc" | "herestring" | null = null;
-  let backtick = false;
   const heredocs: Array<{ delimiter: string; owner: Segment }> = [];
   const escape = posix ? "\\" : "`";
   const flushWord = () => {
@@ -219,8 +234,14 @@ export const segmentsOf = (command: string, dialect: ShellDialect = "posix"): Se
       inWord = true;
       index = end < 0 ? command.length : end;
     } else if (posix && char === "`") {
-      group(backtick ? "close" : "open");
-      backtick = !backtick;
+      // A command substitution stays part of its word; its command is read apart.
+      let end = index + 1;
+      while (end < command.length && command[end] !== "`") end += command[end] === "\\" ? 2 : 1;
+      const inner = command.slice(index + 1, end);
+      (current.subs ??= []).push(inner.replace(/\\(.)/g, "$1"));
+      word += `\`${inner}\``;
+      inWord = true;
+      index = end;
     } else if (char === escape && index + 1 < command.length) {
       word += command[++index];
       inWord = true;
@@ -235,8 +256,15 @@ export const segmentsOf = (command: string, dialect: ShellDialect = "posix"): Se
         index += (at < 0 ? lines : lines.slice(0, at + 1)).join("\n").length + 1;
       }
     } else if (/\s/.test(char)) flushWord();
-    else if (char === "(" || char === ")") {
-      // `$(` opens a command substitution: the `$` is not a word.
+    else if (char === "(" && posix && inWord && word.endsWith("$")) {
+      // `$( … )` stays part of its word (`"$(…)"`, `x$(…)y`); its command is read apart.
+      const end = closingParen(command, index);
+      const inner = command.slice(index + 1, end);
+      (current.subs ??= []).push(inner);
+      word += `(${inner})`;
+      index = end;
+    } else if (char === "(" || char === ")") {
+      // PowerShell `$(`: the `$` is not a word.
       if (char === "(" && inWord && word.endsWith("$")) {
         word = word.slice(0, -1);
         inWord = word !== "";
