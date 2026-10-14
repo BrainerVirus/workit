@@ -28,8 +28,12 @@ const HOOK_ENTRIES = [
 // routes, the raw-push new-name, tag and --mirror checks and per-preset
 // guidance (#266) add ~10 KB; real session identity (#276) adds the issued-id
 // registry. Measured Cursor ~692 KB, so the ceiling is 696 KB; lazy
-// schemas (#273) should win it back.
-const BUDGET = 696_000;
+// schemas (#273) should win it back. Closing the raw-git and forge-API deny
+// bypasses (#281: aliases, eval/xargs/brace bodies, pwsh, forge API merges,
+// remote and refspec resolution, tokenizing every command) adds ~18 KB
+// (Cursor ~710 KB); bounded shell analysis and the review's bypass closures
+// add ~6 KB (Cursor ~716 KB), so the ceiling is 720 KB.
+const BUDGET = 720_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {

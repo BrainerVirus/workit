@@ -900,7 +900,7 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
     "shellPolicy": {
       "channel": "exit2+json",
       "deny": "native",
-      "failClosed": true,
+      "failClosed": false,
     },
     "stopControl": "native",
     "subagents": {

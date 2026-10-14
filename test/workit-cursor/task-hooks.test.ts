@@ -36,7 +36,8 @@ test("Cursor hook rejects malformed trust-boundary inputs", () => {
       tool_name: "Write",
       tool_input: { file_path: "src/index.ts" },
     }),
-  ).toMatchObject({ permission: "deny" });
+    // Hooks fail open (N7, #281): an unparseable payload is allowed and logged.
+  ).toMatchObject({ permission: "allow" });
   expect(
     parseCursorHookInput({
       hook_event_name: "preToolUse",
@@ -180,7 +181,7 @@ test("a blocking payload with no workspace or no conversation id is allowed with
   ).toEqual({});
 });
 
-test("a blocking payload that is placeable but inconsistent still exits fail-closed", () => {
+test("a blocking payload that is placeable but inconsistent fails open with a logged reason", () => {
   const result = runHookProcess({
     hook_event_name: "beforeShellExecution",
     workspace_roots: [process.cwd()],
@@ -188,8 +189,9 @@ test("a blocking payload that is placeable but inconsistent still exits fail-clo
     session_id: "conv-b",
     command: "ls",
   });
-  expect(result.status).toBe(2);
-  expect(result.stdout).toContain('"permission":"deny"');
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain('"permission":"allow"');
+  expect(result.stderr).toContain("[workit] hook input rejected");
 });
 
 test("subagent starts are assigned once inside an active task and stops without identity stay observational", () => {
