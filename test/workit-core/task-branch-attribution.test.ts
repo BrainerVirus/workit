@@ -168,7 +168,7 @@ test("Given decisions recorded on develop, When working on a feature branch cut 
   git(root, "switch", "-q", "-c", "feature/x");
   // No task on the feature branch yet: the inherited decisions alone.
   const inherited = turn(root);
-  expect(inherited?.objective).toContain("feature/x");
+  expect(inherited?.objective).toBe("no task on this branch yet");
   expect(inherited?.decisions).toEqual([
     expect.objectContaining({
       choice: "use the shared table component",
@@ -230,8 +230,6 @@ test("Given stale evidence, Then the compact context shows one counted gap with 
     evidence,
   } as unknown as TaskView;
   const gaps = (JSON.parse(compactTaskContext(view)) as { gaps: string[] }).gaps;
-  expect(gaps).toEqual([
-    `10 stale evidence rows; inspect: workit task inspect --task ${taskId} --view full`,
-  ]);
+  expect(gaps).toEqual([`stale evidence: 10; workit task inspect --task ${taskId} --view full`]);
   for (const entry of evidence) expect(gaps.join("\n")).not.toContain(entry.evidenceId);
 });

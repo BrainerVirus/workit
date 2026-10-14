@@ -317,7 +317,7 @@ test("compact context is bounded, redacts approved text, and reports stale evide
   // Stale evidence is one counted gap with the command that lists it, not the ids.
   expect(compact).not.toContain("evidence-stale");
   expect(JSON.parse(compact).gaps).toContain(
-    `1 stale evidence row; inspect: workit task inspect --task ${value.task.id} --view full`,
+    `stale evidence: 1; workit task inspect --task ${value.task.id} --view full`,
   );
   expect(compact.match(/run checks/g)?.length).toBe(1);
 });

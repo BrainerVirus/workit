@@ -178,52 +178,34 @@ export function sessionCompactContext(
   return entryCompactContext(store, entry, session, context);
 }
 
-/**
- * The tasks of the branches the checked-out branch was cut from, whose
- * decisions the context carries with their origin, so a decision recorded on
- * `develop` stays in view on a feature branch cut from it (and does not
- * vanish and come back with each switch). Another conversation's task is
- * never injected.
- */
-const originEntries = (
-  store: TaskStore,
-  session: SessionHandle,
-): Array<{ origin: string; entry: TaskIndexEntry }> => {
-  const origins = store.originTaskEntries();
-  return origins.ok ? origins.data.filter((item) => !otherConversation(item.entry, session)) : [];
-};
-
-/** "branch feature/x": what a checkout without a task of its own is called. */
-const checkoutLabel = (store: TaskStore): string => {
-  const key = store.currentKey();
-  if (!key.ok) return "this checkout";
-  return key.data.branch ? `branch ${key.data.branch}` : "this checkout";
-};
-
 function entryCompactContext(
   store: TaskStore,
   entry: TaskIndexEntry | null,
   session: SessionHandle,
   context: OperationContext,
 ): string | null {
-  const origins = originEntries(store, session).filter((item) => item.entry.id !== entry?.id);
-  if (!entry && origins.length === 0) return null;
+  // The task of the branch this one was cut from: its decisions stay in view
+  // (labelled with their origin) instead of vanishing on a switch. Another
+  // conversation's task is never injected.
+  const found = store.originTaskEntry();
+  const origin =
+    found.ok &&
+    found.data &&
+    found.data.entry.id !== entry?.id &&
+    !otherConversation(found.data.entry, session)
+      ? found.data
+      : null;
+  if (!entry && !origin) return null;
   const workspace = store.readWorkspace();
-  if (!workspace.ok || !workspace.data) return null;
-  const label = entry ? null : checkoutLabel(store);
+  if (!workspace.ok || (entry && !workspace.data)) return null;
   const slot = `${store.root}\0${session.host}\0${session.handle}`;
   const key = canonicalJson({
     task: entry?.id ?? null,
     revision: entry?.revision ?? null,
     file: entry?.file ?? null,
-    label,
-    origins: origins.map((item) => [
-      item.origin,
-      item.entry.id,
-      item.entry.revision,
-      item.entry.file,
-    ]),
-    workspace: workspace.data.revision,
+    // The origin task's log signature changes with every write to it.
+    origin: origin && origin.entry.file,
+    workspace: workspace.data?.revision ?? null,
     caller: context.caller,
     workerId: context.workerId ?? null,
     capabilities: context.capabilities,
@@ -251,8 +233,7 @@ function entryCompactContext(
   const compact = new WorkitCore(store, context).compactContext(
     entry?.id ?? null,
     freshness,
-    origins.map((item) => ({ origin: item.origin, taskId: item.entry.id })),
-    label ?? undefined,
+    origin && { origin: origin.origin, taskId: origin.entry.id },
   );
   if (!compact.ok || !compact.data) return null;
   cache.delete(slot);

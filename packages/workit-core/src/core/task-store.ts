@@ -325,31 +325,24 @@ const readText = (file: string): string => {
 
 /**
  * The branch `branch` was cut from, read from git's reflogs (no git process):
- * its own log's "branch: Created from <start>" entry, or, when it was created
+ * its own log's "branch: Created from <start>" entry or, when it was created
  * from HEAD, the worktree HEAD log's "checkout: moving from <base> to
- * <branch>". A remote start (`origin/develop`) is returned as written; the
- * caller also tries it without the remote. Null when the logs do not say.
+ * <branch>". A remote start (`origin/develop`) is returned as written. Null
+ * when the logs do not say.
  */
 const branchStart = (location: StoreLocation, branch: string): string | null => {
-  if (!location.shared) return null;
-  const common = path.dirname(location.dir);
-  const created = /\tbranch: Created from (\S+)\s*$/mu.exec(
-    readText(path.join(common, "logs", "refs", "heads", ...branch.split("/"))),
-  );
-  const start = created?.[1].replace(/^refs\/(heads|remotes)\//u, "") ?? null;
-  const detached = (name: string) => name === "HEAD" || /^[0-9a-f]{7,64}$/u.test(name);
-  if (start && !detached(start)) return start;
-  const headLog = location.git ? path.join(location.git.gitDir, "logs", "HEAD") : null;
-  if (!headLog) return null;
-  const escaped = branch.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const moved = new RegExp(`\\tcheckout: moving from (\\S+) to ${escaped}\\s*$`, "mu").exec(
-    readText(headLog),
-  );
-  return moved && !detached(moved[1]) && moved[1] !== branch ? moved[1] : null;
+  const created = /\tbranch: Created from (\S+)$/mu.exec(
+    readText(path.join(path.dirname(location.dir), "logs", "refs", "heads", branch)),
+  )?.[1];
+  if (created && created !== "HEAD") return created;
+  // A sha (a detached start) names no task, so it needs no filtering.
+  return location.git
+    ? (readText(path.join(location.git.gitDir, "logs", "HEAD"))
+        .split("\n")
+        .map((line) => /\tcheckout: moving from (\S+) to (\S+)$/u.exec(line))
+        .find((match) => match?.[2] === branch)?.[1] ?? null)
+    : null;
 };
-
-/** How deep `originTaskEntries` follows a chain of branches cut from branches. */
-const ORIGIN_DEPTH = 3;
 export const sameDirectoryIdentity = (left: string, right: string): boolean => {
   if (!path.isAbsolute(left) || !path.isAbsolute(right)) return false;
   const normalizedLeft = path.resolve(left);
@@ -700,16 +693,10 @@ export class TaskStore {
    * the branch checked out now (#264). Null when no open task has it.
    */
   taskForWorker(workerId: string): Result<Id | null> {
-    if (!validId(workerId)) return success(null, null, null);
     const listed = this.listTaskIndex();
     if (!listed.ok) return listed;
-    const open = listed.data.filter((entry) => entry.status !== "closed").toSorted(oldestFirst);
-    const observed = open.find((entry) =>
-      entry.sessions.some((session) => session.workerId === workerId),
-    );
-    if (observed) return success(null, null, observed.id);
-    // A worker never observed has no session in the index: read the records.
-    for (const entry of open) {
+    for (const entry of listed.data) {
+      if (entry.status === "closed") continue;
       const loaded = this.load(entry.id);
       if (!loaded.ok) return loaded;
       if (loaded.data?.record.workers.some((worker) => worker.id === workerId))
@@ -719,52 +706,30 @@ export class TaskStore {
   }
 
   /**
-   * Open tasks whose decisions the current branch inherits: the task of the
-   * branch it was cut from (and of that branch's own base, up to
-   * ORIGIN_DEPTH), in any checkout of this repository, nearest first, each
-   * labelled with its origin ("branch develop"). Empty off a branch, or when
-   * git's reflogs do not name a base.
+   * The open task whose decisions the current branch inherits: the task of
+   * the branch it was cut from (`origin/develop` counts as `develop`), in any
+   * checkout of this repository, labelled with its origin ("branch develop").
+   * Null off a branch, or when git's reflogs do not name a base.
    */
-  originTaskEntries(): Result<Array<{ origin: string; entry: TaskIndexEntry }>> {
+  originTaskEntry(): Result<{ origin: string; entry: TaskIndexEntry } | null> {
     const key = this.currentKey();
-    if (!key.ok) return key;
-    if (key.data.kind !== "branch" || !key.data.branch) return success(null, null, []);
     const location = this.location();
-    if (!location.ok) return location;
-    const origins: Array<{ origin: string; entry: TaskIndexEntry }> = [];
-    const seen = new Set([key.data.branch]);
-    let branch = key.data.branch;
-    for (let depth = 0; depth < ORIGIN_DEPTH; depth += 1) {
-      const start = branchStart(location.data, branch);
-      if (start === null) break;
-      // `origin/develop` names the remote branch; its task is keyed `develop`.
-      const names = [start, ...(start.includes("/") ? [start.slice(start.indexOf("/") + 1)] : [])];
-      let found: { name: string; entry: TaskIndexEntry | null } | null = null;
-      for (const name of names) {
-        if (seen.has(name)) continue;
-        const entry = this.openTaskForKey(name);
-        if (!entry.ok) return entry;
-        if (entry.data || found === null) found = { name, entry: entry.data };
-        if (entry.data) break;
-      }
-      if (!found) break;
-      seen.add(found.name);
-      if (found.entry) origins.push({ origin: `branch ${found.name}`, entry: found.entry });
-      branch = found.name;
+    if (!key.ok || !location.ok || !key.data.branch) return success(null, null, null);
+    const start = branchStart(location.data, key.data.branch);
+    for (const name of start ? [start, start.slice(start.indexOf("/") + 1)] : []) {
+      if (name === key.data.branch) continue;
+      const entry = this.openTaskForKey(name);
+      if (!entry.ok) return entry;
+      if (entry.data) return success(null, null, { origin: `branch ${name}`, entry: entry.data });
     }
-    return success(null, null, origins);
+    return success(null, null, null);
   }
 
-  /** A task record from any checkout of this store (read-only; no binding check). */
-  readStoreTask(taskId: Id): Result<TaskRecord> {
-    if (!validId(taskId)) return failure("invalid_input", "task ID is invalid", { taskId });
-    const ready = this.ready();
-    if (!ready.ok) return ready;
+  /** The record of an indexed task (`taskId` from the index) in any checkout of
+   * this store: read-only, no binding check. */
+  readStoreTask(taskId: Id): Result<TaskRecord | null> {
     const loaded = this.load(taskId);
-    if (!loaded.ok) return loaded;
-    return loaded.data
-      ? success(null, null, loaded.data.record)
-      : failure("not_found", "task not found", { taskId });
+    return loaded.ok ? success(null, null, loaded.data?.record ?? null) : loaded;
   }
 
   // -------------------------------------------------------------------------

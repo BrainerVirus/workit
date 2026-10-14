@@ -66,7 +66,6 @@ import { sameDirectoryIdentity, TaskStore } from "./task-store";
 import { checkoutRootOf } from "../store/paths";
 import { defaultLockTimeout } from "./store-lock";
 import {
-  compactInheritedContext,
   compactTaskContext,
   exportDigest,
   type InheritedDecisions,
@@ -393,17 +392,11 @@ const TASK_SCOPED_ACTIONS: ReadonlySet<string> = new Set([
 ]);
 /** Worker actions that name their worker: they resolve to that worker's task. */
 const WORKER_ADDRESSED_ACTIONS: ReadonlySet<string> = new Set(["worker.cancel", "worker.report"]);
-/** The exact CLI command that runs worker `action` (`worker.cancel`) on `taskId`. */
-const workerRetryCommand = (action: string, taskId: string, request: object): string => {
-  const {
-    schemaVersion: _version,
-    action: _action,
-    taskId: _task,
-    expectedRevision: _revision,
-    expectedWorkspaceRevision: _workspace,
-    ...payload
-  } = request as Record<string, unknown>;
-  return `workit worker ${action.slice("worker.".length)} --task ${taskId} --payload '${JSON.stringify(payload).replace(/'/gu, "'\\''")}'`;
+/** The exact CLI command that runs worker `request` (cancel or report) on `taskId`. */
+const workerCommand = (taskId: string, request: unknown): string => {
+  const { action, workerId, reason, report } = request as Record<string, string>;
+  const payload = JSON.stringify({ workerId, reason, report }).replace(/'/gu, "'\\''");
+  return `workit worker ${action} --task ${taskId} --payload '${payload}'`;
 };
 /** Recording actions that create the implicit task on first use. */
 const CREATING_ACTIONS: ReadonlySet<string> = new Set([
@@ -730,19 +723,18 @@ export class WorkitCore {
     // A worker belongs to the task it was assigned on, whatever branch is
     // checked out now (#264): worker.cancel/report follow the named worker,
     // a helper's own calls follow its worker id.
-    const workerId = WORKER_ADDRESSED_ACTIONS.has(action)
-      ? typeof (value as { workerId?: unknown }).workerId === "string"
-        ? (value as { workerId: string }).workerId
-        : null
+    const addressed = WORKER_ADDRESSED_ACTIONS.has(action);
+    const workerId = addressed
+      ? (value as { workerId: string }).workerId
       : (this.context.workerId ?? null);
     if (workerId !== null) {
       const owner = this.store.taskForWorker(workerId);
       if (!owner.ok) return owner;
       if (owner.data) return success(null, null, { ...request, taskId: owner.data });
-      if (WORKER_ADDRESSED_ACTIONS.has(action))
+      if (addressed)
         return failure(
           "not_found",
-          `worker ${workerId} is not on an open task of this checkout; find its task with \`workit task status --all\`, then run \`${workerRetryCommand(action, "<task-id>", value)}\``,
+          `worker ${workerId} is on no open task (list: \`workit task status --all\`); run \`${workerCommand("<task-id>", request)}\``,
         );
     }
     const create = CREATING_ACTIONS.has(action) && (this.context.workerId ?? null) === null;
@@ -1642,19 +1634,12 @@ export class WorkitCore {
     const result = this.retryOmittedRevisions(value, () => this.workerOnce(value));
     // A worker command whose task was resolved for the caller names the
     // exact command for that task, so a retry never depends on the branch.
-    const given = typeof request === "object" && request !== null ? request : {};
-    const resolvedTask = (value as { taskId?: unknown; action?: unknown } | null) ?? {};
-    if (
-      result.ok ||
-      "taskId" in given ||
-      typeof resolvedTask.taskId !== "string" ||
-      !WORKER_ADDRESSED_ACTIONS.has(`worker.${String(resolvedTask.action)}`)
-    )
-      return result;
-    return {
-      ...result,
-      error: `${result.error}; for this worker's task run \`${workerRetryCommand(`worker.${String(resolvedTask.action)}`, resolvedTask.taskId, value as object)}\``,
-    };
+    const { action, taskId } = (value ?? {}) as { action?: string; taskId: string };
+    return result.ok ||
+      (request as { taskId?: unknown } | null)?.taskId !== undefined ||
+      !WORKER_ADDRESSED_ACTIONS.has(`worker.${action}`)
+      ? result
+      : { ...result, error: `${result.error}; run \`${workerCommand(taskId, value)}\`` };
   }
 
   private workerOnce(request: unknown): Result<Entry<Worker>> {
@@ -1941,33 +1926,26 @@ export class WorkitCore {
    * judged against the last recorded candidate, and live staleness is
    * detected by evidence, close, resume, and full inspection, which capture.
    */
-  /**
-   * The per-turn compact context of `taskId`, with the decisions of the
-   * `origins` tasks (the tasks of the branches this one was cut from, see
-   * TaskStore.originTaskEntries) labelled with their origin. With a null
-   * `taskId` only the inherited decisions are shown, for `label` (e.g.
-   * "branch feature/x") before its own task exists.
-   */
   compactContext(
     taskId: string | null,
     freshness?: Freshness,
-    origins: Array<{ origin: string; taskId: string }> = [],
-    label = "this checkout",
+    /** The base branch's task (TaskStore.originTaskEntry), whose decisions are inherited. */
+    origin: { origin: string; taskId: string } | null = null,
   ): Result<string> {
     const root = this.contextRootError();
     if (!root.ok) return root;
-    const inherited: InheritedDecisions[] = [];
-    for (const origin of origins) {
-      if (origin.taskId === taskId) continue;
-      const record = this.store.readStoreTask(origin.taskId);
-      if (!record.ok) continue;
-      inherited.push({
-        origin: origin.origin,
-        taskId: record.data.id,
-        decisions: record.data.decisions,
-      });
-    }
-    if (taskId === null) return success(null, null, compactInheritedContext(label, inherited));
+    const base = origin && this.store.readStoreTask(origin.taskId);
+    const inherited: InheritedDecisions | null =
+      base?.ok && base.data
+        ? { origin: origin!.origin, taskId: base.data.id, decisions: base.data.decisions }
+        : null;
+    // No task of its own yet: only what the branch inherits.
+    if (taskId === null)
+      return success(
+        null,
+        null,
+        inherited?.decisions.length ? compactTaskContext(null, inherited) : "",
+      );
     const task = this.store.readTask(taskId);
     if (!task.ok) return task;
     const helper = this.helperTaskGuard(task.data, true);
