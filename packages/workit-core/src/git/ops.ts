@@ -1138,12 +1138,22 @@ export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & {
   production: string | null;
 };
 
-/** A release tag: `v` and a digit (`v4.1.0`, `v2`). */
-const RELEASE_TAG = /^v\d/u;
+/**
+ * The release tag prefix: git-flow's own `gitflow.prefix.versiontag` when the
+ * repository sets it (an empty value means bare `4.1.0` tags), else `v`.
+ */
+const releaseTagPrefix = (cwd: string): string => {
+  const configured = git(cwd, ["config", "--get", "gitflow.prefix.versiontag"]);
+  return configured.ok ? configured.stdout.trim() : "v";
+};
+
+/** A release tag: the prefix and a digit (`v4.1.0`, `v2`, or `4.1.0` with an empty prefix). */
+const isReleaseTag = (name: string, prefix: string): boolean =>
+  name.startsWith(prefix) && /^\d/u.test(name.slice(prefix.length));
 
 /**
  * What `workit git push --release` may push: the git-flow production and
- * develop branches and `v*` tags, nothing else, each by its local ref. Everything else stays on the feature-branch
+ * develop branches and release tags (`v*`, or git-flow's configured prefix), nothing else, each by its local ref. Everything else stays on the feature-branch
  * path (`workit git push`, `workit pr create`).
  */
 export function releasePushPreflight(
@@ -1172,11 +1182,12 @@ export function releasePushPreflight(
         `workit git push --release refs/heads/${raw}  # or refs/tags/${raw}`,
       );
     if (tag) {
-      if (!RELEASE_TAG.test(tagName))
+      const prefix = releaseTagPrefix(cwd);
+      if (!isReleaseTag(tagName, prefix))
         return failure(
           "blocked",
-          `release_push_refused: tag ${tagName} is not a release tag (v<version>)`,
-          "git tag -a v<version> -m <message>  # then: workit git push --release v<version>",
+          `release_push_refused: tag ${tagName} is not a release tag (${prefix}<version>, from ${prefix === "v" ? "the default" : "gitflow.prefix.versiontag"})`,
+          `git tag -a ${prefix}<version> -m <message>  # then: workit git push --release ${prefix}<version>`,
         );
       refs.push({ kind: "tag", name: tagName, ref: `refs/tags/${tagName}`, sha: tag });
       continue;

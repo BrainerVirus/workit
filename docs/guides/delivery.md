@@ -78,7 +78,7 @@ hotfix can need protected branches and the release tag on the remote, so
 
 - in git-flow, the production and develop branches; in github-flow,
   trunk-based and custom, no branch (a protected trunk moves only through a
-  reviewed PR); and tags `v<digit>…` in every preset whose commit is already
+  reviewed PR); and release tags (`v<digit>…`, or `<prefix><digit>…` when `gitflow.prefix.versiontag` is set, empty included) in every preset whose commit is already
   on the remote production branch (git-flow production, else the default
   target) or on a branch in the same push (`tag_unreleased` otherwise). Any
   other branch or tag is refused (`release_push_refused`, with a preset's own

@@ -21,7 +21,7 @@ repository.
 | `pr` | allowed | `workit pr create` |
 | `rerun` | allowed | `workit ci rerun` |
 | `merge` | needs a grant | `workit pr merge`, `stack land`. Both need an accepted independent verdict. `true` also allows `--unverified --reason "<why>"`, a bypass recorded in the ledger; `"verified"` never does (see [Merging](#merging)) |
-| `release` | needs a grant | `workit git push --release <ref>`: finishing a release or hotfix by pushing the git-flow main and develop branches and `v*` tags whose commit already landed, which `workit git push` refuses; outside git-flow, tags only. Fast-forward only, a tag never moves; the `push` grant and its account check apply too (see [Releasing](#releasing)) |
+| `release` | needs a grant | `workit git push --release <ref>`: finishing a release or hotfix by pushing the git-flow main and develop branches and release tags (`v*`, or the prefix in `gitflow.prefix.versiontag`, which may be empty) whose commit already landed, which `workit git push` refuses; outside git-flow, tags only. Fast-forward only, a tag never moves; the `push` grant and its account check apply too (see [Releasing](#releasing)) |
 | `defaultEndpoint` | `commit` | Where an unnamed delivery request stops, lowest to highest: `commit`, `pr`, `green`, `merged` (skills read it; see [Default endpoint](#default-endpoint)) |
 | `verification` | `self` | What a normal-risk behavior change needs: `self` (observed `workit check test` plus the author's own `--self` verdict, shown as self-reviewed) or `independent` (a verdict from a session that did not author it). High risk always needs an independent live `verified` verdict |
 
@@ -40,7 +40,7 @@ terminal) lets an agent finish a release or hotfix:
 workit git push --release main --release develop --release v4.1.0
 ```
 
-Only the git-flow production and develop branches and `v<digit>…` tags are
+Only the git-flow production and develop branches and release tags (`v<digit>…`, or git-flow's `gitflow.prefix.versiontag` prefix, empty for bare `4.1.0`) are
 accepted (outside git-flow, tags only); branches move fast-forward only, a
 tag's commit must already be on the production branch (or on a branch in the
 same push), and a tag moves only when the remote lacks it, in one atomic push that is verified and recorded as `release.pushed`.
