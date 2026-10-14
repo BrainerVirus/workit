@@ -1,8 +1,9 @@
 // Live-session markers (#274): which agent session last wrote in a checkout,
 // so another session's write gate can refuse to edit a checkout a live agent
 // owns. One marker per checkout (a worktree's top level: worktrees of one
-// repository are distinct checkouts) in the repository's shared store,
-// `<store>/live-sessions/<hash of the checkout>.json`, holding the owner's
+// repository are distinct checkouts) in the per-user state dir, so nothing is
+// written into a repository Workit does not manage:
+// `<state>/live-sessions/<hash of the checkout>.json`, holding the owner's
 // session, lead, host, process id, machine and heartbeat. The hooks each host
 // already runs write it on every allowed edit or mutating command.
 //
@@ -17,6 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveStore } from "../store/paths";
+import { resolveStateDir } from "./logger";
 
 export const LIVE_SESSION_TTL_MS = 15 * 60_000;
 /** Rewrite a live marker of one's own at most this often. */
@@ -128,8 +130,8 @@ export const liveOwner = (
   };
 };
 
-/** The checkout (worktree top level) holding `target`, and its repository store; null outside git. */
-export const checkoutOf = (target: string): { top: string; store: string } | null => {
+/** The checkout (worktree top level) holding `target`; null outside git. */
+const checkoutOf = (target: string): string | null => {
   let dir = path.resolve(target);
   // A path that does not exist yet: its nearest existing ancestor.
   while (!fs.existsSync(dir) && path.dirname(dir) !== dir) dir = path.dirname(dir);
@@ -142,14 +144,15 @@ export const checkoutOf = (target: string): { top: string; store: string } | nul
   } catch {
     // keep git's spelling
   }
-  return { top, store: location.dir };
+  return top;
 };
 
-export const markerFile = (checkout: { top: string; store: string }): string =>
+/** The marker file of a checkout. */
+export const markerFile = (top: string): string =>
   path.join(
-    checkout.store,
+    resolveStateDir(),
     "live-sessions",
-    `${createHash("sha256").update(checkout.top).digest("hex").slice(0, 32)}.json`,
+    `${createHash("sha256").update(top).digest("hex").slice(0, 32)}.json`,
   );
 
 const readMarker = (file: string): LiveMarker | null => {
@@ -212,7 +215,7 @@ export const liveConflict = (
     const marker = readMarker(file);
     if (!marker || !isLive(marker, deps)) return null;
     if (sameOwner(marker, owner, deps.machine ?? os.hostname())) return null;
-    return { marker, file, ageMs: ageOf(marker, deps.now ?? new Date()), checkout: checkout.top };
+    return { marker, file, ageMs: ageOf(marker, deps.now ?? new Date()), checkout };
   } catch {
     return null;
   }
@@ -246,7 +249,7 @@ export const claimLiveSession = (target: string, owner: LiveOwner, deps: LiveDep
       host: owner.host,
       pid: owner.pid,
       machine,
-      checkout: checkout.top,
+      checkout,
       heartbeatAt: now.toISOString(),
     };
     fs.mkdirSync(path.dirname(file), { recursive: true });

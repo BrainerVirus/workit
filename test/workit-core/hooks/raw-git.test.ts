@@ -458,9 +458,12 @@ test("each host renders the deny on its own channel and the nudge without granti
       agent_message: expect.stringMatching(/WORKIT_SESSION_ID=\S+ workit git commit/),
     });
 
+    // The in-process hosts get their own checkout: the live-session guard
+    // (#274) refuses one host's session in a checkout another host's owns.
+    const shared = repo({ branch: "feature/x" });
     const opencode = (command: string, workdirs?: Map<string, string>) => {
       const event = { sessionID: "ses_1", action: "shell", resources: [command], effect: "allow" };
-      evaluateShellPermission(root, event, workdirs);
+      evaluateShellPermission(shared, event, workdirs);
       return event as typeof event & { message?: string };
     };
     expect(opencode("gh pr merge 1")).toMatchObject({
@@ -474,7 +477,7 @@ test("each host renders the deny on its own channel and the nudge without granti
     expect(opencode("git push", new Map([["ses_1", onMain]])).effect).toBe("deny");
 
     const ctx = {
-      cwd: root,
+      cwd: shared,
       isProjectTrusted: () => true,
       sessionManager: { getSessionId: () => "pi-1" },
     };

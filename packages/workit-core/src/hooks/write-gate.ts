@@ -9,9 +9,17 @@ import path from "node:path";
 import { fileSignature, TaskStore } from "../core/task-store";
 import { latestJudgment, writeBlockers, type WriteBlocker } from "../core/policy/derive";
 import { applicableDecision } from "../core/task-evaluation";
+import {
+  claimLiveSession,
+  liveConflict,
+  type LiveConflict,
+  type LiveDeps,
+  type LiveOwner,
+} from "../core/live-session";
+import { workspaceLiveSessionGuard } from "../core/workspaces";
 import { ledgerPath } from "../ledger";
 import type { HookDecision } from "./protocol";
-import { segmentsOf } from "./shell-words";
+import { segmentsOf, type ShellDialect } from "./shell-words";
 
 const NONE: HookDecision = { kind: "none" };
 
@@ -204,13 +212,183 @@ const gateFor = (cwd: string): Gate | null => {
   return gate;
 };
 
+// --- the live-session guard (#274) ------------------------------------------
+
+/** git subcommands that change a checkout's files, index or HEAD. */
+const MUTATING_GIT = new Set([
+  "add",
+  "am",
+  "apply",
+  "checkout",
+  "cherry-pick",
+  "clean",
+  "commit",
+  "merge",
+  "mv",
+  "pull",
+  "rebase",
+  "reset",
+  "restore",
+  "revert",
+  "rm",
+  "stash",
+  "switch",
+]);
+/** `workit git` verbs that commit or move HEAD in the checkout. */
+const MUTATING_WORKIT_GIT = new Set(["commit", "branch", "sync"]);
+
+/** A placeholder file name that stands for its directory (an unknown write, a git command). */
+const DIR_TARGET = ".workit-live-target";
+
+/** A one-command override: `WORKIT_LIVE_SESSION=override <command>`. */
+const OVERRIDE = "WORKIT_LIVE_SESSION=override";
+
+/**
+ * The directory a git command mutates (`-C <dir>` honored, else cwd), or null
+ * when it only reads. `workit git commit|branch|sync` count too.
+ */
+const gitMutationDir = (cwd: string, input: string[]): string | null => {
+  let words = input;
+  while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) words = words.slice(1);
+  const name = (words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+  if (name === "workit" && words[1] === "git")
+    return MUTATING_WORKIT_GIT.has(words[2] ?? "") ? cwd : null;
+  if (name !== "git") return null;
+  let dir = cwd;
+  for (let index = 1; index < words.length; index++) {
+    const word = words[index];
+    if (word === "-C") dir = path.resolve(dir, words[++index] ?? ".");
+    else if (word === "-c" || word === "--git-dir" || word === "--work-tree") index++;
+    else if (!word.startsWith("-")) {
+      if (!MUTATING_GIT.has(word)) return null;
+      // `git stash list|show` only reads.
+      if (word === "stash" && ["list", "show"].includes(words[index + 1] ?? "")) return null;
+      return dir;
+    }
+  }
+  return null;
+};
+
+const HOST_LABELS: Readonly<Record<string, string>> = {
+  claude_code: "Claude Code",
+  opencode: "OpenCode",
+  codex_cli: "Codex CLI",
+  codex_desktop: "Codex Desktop",
+  cursor: "Cursor",
+  pi: "Pi",
+};
+
+const ageText = (ms: number): string => {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  return seconds < 120 ? `${seconds}s` : `${Math.round(seconds / 60)} min`;
+};
+
+const liveDeny = ({ marker, checkout, ageMs, file }: LiveConflict): HookDecision => {
+  const unblock = `Work in your own worktree (\`git worktree add <path> -b <branch>\`, or \`workit fanout worktree create <slice>\`). Only if the user confirms that session is finished: release it with \`rm '${file}'\`, or prefix one command with ${OVERRIDE}.`;
+  return {
+    kind: "deny",
+    reason: `workit live-session guard: ${checkout} belongs to another live agent session, ${HOST_LABELS[marker.host] ?? marker.host} session ${marker.session}${marker.pid === null ? "" : ` (pid ${marker.pid})`}, last active ${ageText(ageMs)} ago. Do not edit a checkout another session is working in; read-only commands stay allowed. ${unblock}`,
+    unblock,
+  };
+};
+
+/** Targets outside `.git` (the markers live there), one per directory. */
+const guarded = (targets: readonly string[]): string[] => {
+  const seen = new Set<string>();
+  return targets.filter((target) => {
+    const dir = path.dirname(target);
+    if (target.split(/[\\/]/).includes(".git") || seen.has(dir)) return false;
+    seen.add(dir);
+    return true;
+  });
+};
+
+/**
+ * Deny when a target's checkout belongs to another live session and its
+ * workspace keeps `liveSessionGuard` on. Fails open.
+ */
+const liveGate = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps): HookDecision => {
+  try {
+    for (const target of guarded(targets)) {
+      const conflict = liveConflict(target, owner, deps);
+      if (conflict && workspaceLiveSessionGuard(conflict.checkout)) return liveDeny(conflict);
+    }
+  } catch {
+    // Fail open.
+  }
+  return NONE;
+};
+
+const claimAll = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps): void => {
+  for (const target of guarded(targets)) claimLiveSession(target, owner, deps);
+};
+
+/** The absolute paths an edit touches: its files, or cwd itself when unknown. */
+const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
+  paths?.length ? paths.map((file) => path.resolve(cwd, file)) : [path.join(cwd, DIR_TARGET)];
+
 /**
  * Deny a working-tree edit while the branch task has unmet before-write
  * requirements. `paths` are the files the tool writes, or null when unknown
  * (a shell write, a patch whose headers cannot be read); unknown or empty
  * targets are gated, and an edit touching only exempt files is always allowed.
+ * With `owner` (the hook's session), the live-session guard runs first, and
+ * an allowed edit refreshes the owner's marker in each checkout it touches.
  */
-export function writeGate(cwd: string, paths: readonly string[] | null): HookDecision {
+export function writeGate(
+  cwd: string,
+  paths: readonly string[] | null,
+  owner?: LiveOwner | null,
+  deps?: LiveDeps,
+): HookDecision {
+  if (!owner) return beforeWriteGate(cwd, paths);
+  const targets = liveTargets(cwd, paths);
+  const live = liveGate(owner, targets, deps);
+  if (live.kind !== "none") return live;
+  const decision = beforeWriteGate(cwd, paths);
+  if (decision.kind === "none") claimAll(owner, targets, deps);
+  return decision;
+}
+
+/**
+ * The write gates on one shell command: the live-session guard on its writes
+ * and mutating git commands (`git commit`, `switch`, `reset`…; `-C` honored;
+ * a `WORKIT_LIVE_SESSION=override` prefix skips it), then the before-write
+ * gate on its writes. An allowed mutation refreshes the owner's marker.
+ */
+export function shellGate(
+  cwd: string,
+  command: string,
+  owner: LiveOwner | null,
+  dialect: ShellDialect = "posix",
+  deps?: LiveDeps,
+): HookDecision {
+  const writes = shellWrites(command);
+  let targets: string[] = [];
+  let overridden = false;
+  if (owner) {
+    try {
+      const segments = segmentsOf(command, dialect);
+      overridden = segments.some((segment) => segment.words.includes(OVERRIDE));
+      const dirs = segments.flatMap((segment) => {
+        const dir = gitMutationDir(cwd, segment.words);
+        return dir === null ? [] : [path.join(dir, DIR_TARGET)];
+      });
+      targets = [...(writes.writes ? liveTargets(cwd, writes.targets) : []), ...dirs];
+    } catch {
+      targets = [];
+    }
+  }
+  if (owner && targets.length && !overridden) {
+    const live = liveGate(owner, targets, deps);
+    if (live.kind !== "none") return live;
+  }
+  const decision = writes.writes ? beforeWriteGate(cwd, writes.targets) : NONE;
+  if (owner && targets.length && decision.kind === "none") claimAll(owner, targets, deps);
+  return decision;
+}
+
+function beforeWriteGate(cwd: string, paths: readonly string[] | null): HookDecision {
   try {
     const gate = gateFor(cwd);
     if (!gate || gate.blockers.length === 0) return NONE;

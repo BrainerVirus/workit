@@ -1,4 +1,10 @@
-import { rawGitPre, shellPolicy, shellWrites, writeGate } from "@brainervirus/workit-core/hooks";
+import {
+  liveOwner,
+  rawGitPre,
+  shellGate,
+  shellPolicy,
+  writeGate,
+} from "@brainervirus/workit-core/hooks";
 
 export type PermissionEvaluationEvent = {
   sessionID?: string;
@@ -13,7 +19,8 @@ const WRITE_ACTIONS = new Set(["edit", "write", "patch"]);
 /**
  * Branch policy on direct literal branch-creation commands, raw git/forge
  * gate bypasses (`gh pr merge`, a push onto a protected branch), and the
- * before-write gate (S17) on edits and recognizable shell writes. Every
+ * before-write gate (S17) on edits and recognizable shell writes, and the
+ * live-session guard (#274) on edits, shell writes and mutating git. Every
  * other permission keeps the host's own decision.
  */
 export const evaluateShellPermission = (
@@ -29,8 +36,13 @@ export const evaluateShellPermission = (
   const resources = event.resources.filter(
     (resource): resource is string => typeof resource === "string",
   );
+  // OpenCode runs every session (and its subagents) in this server process.
+  const owner = liveOwner(
+    { host: "opencode", session: { id: event.sessionID ?? "", parentId: null } },
+    "in-process-plugin",
+  );
   if (WRITE_ACTIONS.has(event.action)) {
-    const decision = writeGate(root, resources);
+    const decision = writeGate(root, resources, owner);
     if (decision.kind === "deny") deny(decision.reason);
     return;
   }
@@ -55,8 +67,7 @@ export const evaluateShellPermission = (
       { nudge: false },
     );
     if (raw.kind === "deny") return deny(raw.reason);
-    const writes = shellWrites(resource);
-    const gated = writes.writes ? writeGate(root, writes.targets) : null;
-    if (gated?.kind === "deny") return deny(gated.reason);
+    const gated = shellGate(cwd, resource, owner);
+    if (gated.kind === "deny") return deny(gated.reason);
   }
 };
