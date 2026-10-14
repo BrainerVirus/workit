@@ -25,7 +25,7 @@ REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,
   each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),
   anything out of scope as a follow-up, not a diff.
 STANDING: <the standing orders, verbatim: `workit ledger standing add` records each one>
-  export WORKIT_SESSION_ID=<lead>-w<n>   (set by the lead for a worker's commits; a verifier brief sets none: the host derives it)
+  <identity line, per the lead's host: see "Identity and git rules per host" below>
 ```
 
 ## Worked example
@@ -97,17 +97,32 @@ is the slice's STUCK threshold in `workit fanout status`. `"fanIn":
 }
 ```
 
+## Identity and git rules per host
+
+`workit fanout brief` renders the identity line and RULES 1 and 3 for the
+lead's host (`WORKIT_HOST`, or the host's own session variable):
+
+| Lead's host | Identity line | RULES 1 and 3 |
+| --- | --- | --- |
+| Claude Code | `Session: your env already has WORKIT_SESSION_ID (the lead's id)`; no `export`, no hand-minted id (SubagentStart issues `<lead>:<agent id>` only to verifiers and reviewers, never to an implementer, so the worker's commits carry the lead's id) | plain git: `git fetch origin && git switch -c <branch> origin/<base>` and `git commit -m <msg> --trailer "Workit-Session: <the env WORKIT_SESSION_ID>" --trailer "<host attribution>" -- <paths in SCOPE>`, because worktree isolation refuses every `workit git` form |
+| OpenCode, Pi, Codex | `Session: your host already sets WORKIT_SESSION_ID in your shell`; export nothing (the host derives the id and an export cannot replace it) | `workit git branch <branch> --base <base>`, `workit git commit -m <msg> -- <paths in SCOPE>` |
+| Cursor, CI, a plain terminal | `export WORKIT_SESSION_ID=<lead>-w-<slice>` (`+try<n>` for a race attempt): declared, not checked | the same `workit git` forms |
+
+`MODE: resume` is `git switch <branch>` on every host (the branch exists; the
+lead removed the dead worker's worktree after its exit, so the switch
+succeeds), then continue from its head. A race attempt (`--attempt <n>`)
+follows its host's row with the branch `<branch>-try<n>`.
+
 ## Worker rules (`workit fanout brief` appends them as RULES)
 
-1. First command. `MODE: new`: `workit git branch <branch> --base <base>` (the
-   worktree may start on a name that breaks branch policy). `MODE: resume`:
-   `git switch <branch>` (the branch exists; the lead removed the dead
-   worker's worktree after its exit, so the switch succeeds), then continue
-   from its head.
+1. First command: create the branch (`MODE: new`; the worktree may start on a
+   name that breaks branch policy) or `git switch` to it (`MODE: resume`),
+   as the table above says for your host.
 2. Decide ambiguities yourself and record them:
    `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`.
    Stop only for an irreversible action, a security-sensitive one, or a side
    effect outside the worktree.
-3. Commit with `workit git commit -m "<msg>" -- <paths in SCOPE>`; push only if
-   the brief says so.
+3. Commit as the table says (`workit git commit -m "<msg>" -- <paths in SCOPE>`,
+   or plain git with the trailers on Claude Code); push only if the brief says
+   so.
 4. Never record a verdict on your own work.
