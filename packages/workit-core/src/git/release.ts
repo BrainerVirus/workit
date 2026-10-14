@@ -586,7 +586,13 @@ export function finishLocally(
   const ran: string[] = [];
   const base = { version: plan.version, release: plan.branch, tag: plan.tag, track: plan.track };
   let tagTarget = plan.tagTarget;
-  if (plan.openRelease)
+  // Once per release: a resumed finish reads the target back from this row.
+  if (
+    plan.openRelease &&
+    !releaseRows(cwd).some(
+      (row) => row.type === "release.hotfix_target" && row.release === plan.branch,
+    )
+  )
     record(cwd, actor, {
       type: "release.hotfix_target",
       ...base,

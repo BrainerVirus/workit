@@ -454,8 +454,13 @@ test("Given an open release branch, When a hotfix finishes, Then it merges back 
   repo.git("add", "-A");
   repo.git("commit", "-qm", "fix: the widget");
   const fix = repo.git("rev-parse", "HEAD");
+  // Interrupted at the push, then resumed: the target is recorded once.
+  repo.git("remote", "set-url", "origin", path.join(repo.root, "missing.git"));
+  expect((await run(["release", "finish", "1.0.1"], repo.cwd)).code).not.toBe(0);
+  repo.git("remote", "set-url", "origin", repo.bare);
   const finished = await run(["release", "finish", "1.0.1", "--json"], repo.cwd);
   expect(finished.code, finished.stdout + finished.stderr).toBe(0);
+  expect(rows(repo.cwd, "release.hotfix_target")).toHaveLength(1);
   expect(repo.git("merge-base", "--is-ancestor", fix, "release/1.1.0")).toBe("");
   expect(repo.git("rev-parse", "develop")).toBe(develop);
   expect(repo.remoteTip("release/1.1.0")).toBeNull();

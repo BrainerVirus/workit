@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { releaseTagPrefixOf } from "@/packages/workit-core/src/core/branch-policy";
 import { changelogSection } from "@/packages/workit-core/src/git/release";
 import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remote";
@@ -26,6 +28,21 @@ test("Given no policy prefix, Then git-flow's versiontag wins (empty included), 
   r.git("config", "gitflow.prefix.versiontag", "rel-");
   expect(releaseTagPrefixOf(r.cwd)).toBe("rel-");
   expect(releaseTagPrefixOf(r.cwd, "x")).toBe("x");
+});
+
+test("Given the ship skill, Then it keeps the stack rule, the retro rule at any endpoint and the release route", () => {
+  const ship = readFileSync(
+    path.join(import.meta.dir, "../../packages/workit-core/skills/workit-ship/SKILL.md"),
+    "utf8",
+  ).replace(/\s+/gu, " ");
+  for (const rule of [
+    "Finish the whole stack before babysitting any PR.",
+    '`workit pr create --title "<title>" --body-file <f|->`',
+    "a check red 3+ times, at any endpoint: offer `/wk-retro`",
+    "`workit release start <v>`, commits, `finish`",
+    "`release publish` only if asked.",
+  ])
+    expect(ship, rule).toContain(rule);
 });
 
 test("Given Keep a Changelog and semantic-release headings, Then only the version's section is returned", () => {

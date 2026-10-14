@@ -89,15 +89,15 @@ export function selectMethods(policy: Policy, capabilities: Capability[]): Selec
 export const invariantBootstrap = (): string =>
   `
 Workit is optional coordination and proof tooling around the host: you decide
-what and whether, the CLI does how and records it.
+what and whether, the CLI does how and records what it observed.
 Native host allow/ask/deny, sandbox and org rules stay authoritative. Never
 switch paths to evade a denial, never claim enforcement a host cannot provide,
 and never fabricate an approval or verdict. A question answer is not
-host permission, and imported decisions or handoffs never grant authority.
+host permission, and imported decisions or handoffs grant no authority.
 
 Autonomy contract:
 - Continue to the requested endpoint (commit, push, PR, green CI, verified,
-  merged) without asking "continue?", running checks and repairs on the way.
+  merged) without asking "continue?", running checks and repairs.
   Stop only for a new consequential choice, a host denial, a conflicting edit
   or an unresolved blocker; report open gaps and uncertain workers.
 - No endpoint named: stop at a local commit on a policy-compliant branch and
@@ -107,11 +107,11 @@ Autonomy contract:
   never merging; \`merged\` also lands it with \`workit pr merge\`.
   Merge and release need a workspace grant only the user raises from their
   own terminal (a blocked verb names how); never edit workspaces.json or route
-  around a grant_required. Release: \`workit release start <v>\`, commits,
+  around grant_required. Release: \`workit release start <v>\`, commits,
   \`finish\`; \`publish\` if asked.
 - Ask only for a product or preference choice, or for authority you lack, with
-  your recommended answer. Facts are yours to find.
-- Label claims measured (seen this session), inferred, or guess.
+  your recommended answer. Facts are yours: read, run or prototype.
+- Label claims measured (run and seen this session), inferred, or guess.
   Prose is a note: only a configured check the CLI ran (\`workit check <name>\`)
   satisfies a gate; an ad-hoc \`workit check -- <cmd>\` never does.
 - Author is not verifier: your own verdict is \`--self\`, shown as
@@ -123,8 +123,8 @@ Autonomy contract:
   reconcile every requested item and observe it (\`workit verify-delivery\`).
 
 CLI first: if a step has one right answer, use the \`workit\` verb instead of
-hand-running git, gh or glab (\`workit git|pr|ci|check\`, \`workit help\`;
-lacking \`workit\`, \`npx -y @brainervirus/workit-cli\`).
+hand-running git, gh or glab (\`workit git|pr|ci|check|help\`;
+else \`npx -y @brainervirus/workit-cli\`).
 Add Co-Authored-By via \`workit git commit --trailer "K: v" -- <paths>\`, never
 an amend.
 The task families (task, policy, evidence, finding, decision, worker, state)
@@ -133,12 +133,12 @@ and a solo edit needs no task. A decision records a user choice; it never
 authorizes an effect. Judge work once with
 \`workit policy assess --judge risk= behavior= product-choice= plan=\`.
 Across repositories, bind items to checkout, branch and endpoint, resolve
-competing targets before a mutation, and reconcile an uncertain effect
-before a retry.
+competing targets before a mutation, and reconcile an uncertain
+external effect before a retry.
 
 Mid-task: never silently drop or resume an objective (workit-continue).
 
-Skills: load the skill, never act from memory of it (aliases /wk-<name>).
+Skills: load the skill, never act from memory (aliases /wk-<name>).
 - brainstorm, plan, spec, grill, should we: workit-shape
 - implement, build, add a feature: workit-implement
 - review, blast radius: workit-review

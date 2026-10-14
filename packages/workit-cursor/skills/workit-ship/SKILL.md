@@ -12,9 +12,8 @@ Ship runs when delivery was requested, or when the effective endpoint in
 and report the grant it names. PR creation does not start babysitting (a
 `green` or `merged` endpoint does), and a babysit request does not authorize
 merge: Stop at PR-ready (`babysit` `ready`) unless the user, or `merged` on a
-request that named no endpoint, set merge. "Do the release":
-`workit release start <v>`, commits on it, `workit release finish`
-(references/release.md); `workit release publish` only if asked.
+request that named no endpoint, set merge. `release publish` only if asked.
+Release: `workit release start <v>`, commits, `finish` (references/release.md).
 
 **Babysit endpoints.** After opening the PR keep babysitting without asking
 until CI is green, every thread is resolved and the verification gate is met;
@@ -33,10 +32,11 @@ denial, a review comment that needs a product decision, a required update
 that repeats because the base keeps moving, or after 3 failed fix attempts on
 the same check.
 
-1. **Open.** `workit git push`, `workit pr create --title "<t>" --body-file -`
-   (idempotent; body: `references/pr-body.md`; edits: `workit pr edit`). A
-   stack: `workit stack plan <bottom> ... <top>`, then per branch
-   `workit pr create --base <parent> --fill`, then `workit stack sync`.
+1. **Open.** `workit git push`, then `workit pr create --title "<title>"
+   --body-file <f|->` (idempotent; body: `references/pr-body.md`; edits:
+   `workit pr edit`). A stack: `workit stack plan <bottom> ... <top>`, one
+   `workit pr create --base <parent> --fill` per branch, then
+   `workit stack sync`. Finish the whole stack before babysitting any PR.
 2. **Read state** with `workit pr status --json`. `REVIEW` alone is a pending
    human approval: the stop point unless merge is granted.
 3. **Conflicts or a required rebase.** Rewrite only a branch this session or
