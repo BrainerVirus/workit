@@ -46,12 +46,24 @@ A workspace's `trailers` (default `true`) says whether commits carry the
 repository whose history should not name agent sessions) and edit it yourself
 in `workspaces.json`: `workit git commit` then writes no trailer and records
 the author in the ledger only (`commit.recorded`), so a verdict from the same
-session is still refused as the author's. The session hook adds nothing there
-(it asks `workit git trailers`, which prints `on` or `off`), `workit doctor`
-neither suggests nor installs it, and `workit pr merge` sends its own squash
-message: the PR title and the branch's commits, with `Workit-Session:` lines
-stripped. `workit pr merge --subject <s> --body <b>` sets that squash message
-in any workspace.
+session is still refused as the author's, and an amend drops the old
+commit's `Workit-Session:` lines. A workspace nested inside another (a repo
+workspace under `work`) that does not set `trailers` inherits it from the
+nearest enclosing workspace; its own setting wins.
+
+The session hook adds nothing there: `workit git commit` tells it so, and a
+plain `git commit` makes it ask `workit git trailers` (prints `on` or `off`).
+Without `workit` on PATH the hook cannot ask and still adds the trailer, so
+`workit doctor` warns while a Workit hook or helper is installed in such a
+workspace and `workit doctor --fix` removes them (only Workit's own; another
+tool's hook and the line you added to it stay, and run nothing without the
+helper).
+
+`workit pr merge` there sends its own squash message: the PR title and the
+branch's commits (at most 100), with `Workit-Session:` lines dropped from each
+commit's trailer block. `workit pr merge --subject <s> --body <b>` sets that
+squash message in any workspace; the body is sent as given, apart from
+`Workit-Session:` lines in its final trailer block.
 
 ```json
 { "name": "work", "glob": "/home/you/projects/work/**", "trailers": false }

@@ -438,6 +438,49 @@ const SESSION_SAFE = /^[\w.:@/+-]{1,128}$/u;
 /** A `--trailer` the caller adds: one `Key: value` line. */
 const EXTRA_TRAILER = /^[A-Za-z0-9][A-Za-z0-9-]*: *\S[^\n\r]*$/u;
 
+const SESSION_KEY = /^workit-session\s*:/iu;
+/** A trailer line (`Key: value`, no leading space) as git reads one. */
+const TRAILER_LINE = /^[A-Za-z0-9][A-Za-z0-9-]*\s*:/u;
+
+/**
+ * `text` without the `Workit-Session:` lines of its trailer block: the last
+ * paragraph, when every line in it is a trailer or a folded continuation
+ * (leading whitespace) of one. Anything else, an indented line included, is
+ * prose and is left alone; the rest of the text is returned byte for byte.
+ * With `subject`, the first paragraph is a subject and never a trailer
+ * block (a commit message); without it (a PR body) it can be.
+ */
+export function stripSessionTrailers(text: string, options: { subject: boolean }): string {
+  const end = text.length - (/\s*$/u.exec(text)?.[0].length ?? 0);
+  const lines = text.slice(0, end).split("\n");
+  let start = lines.length;
+  while (start > 0 && lines[start - 1]?.trim() !== "") start -= 1;
+  if (start === 0 && options.subject) return text;
+  const block = lines.slice(start);
+  if (!block.length || !TRAILER_LINE.test(block[0] ?? "")) return text;
+  if (!block.every((line) => TRAILER_LINE.test(line) || /^\s+\S/u.test(line))) return text;
+  const kept: string[] = [];
+  let dropping = false;
+  for (const line of block) {
+    if (TRAILER_LINE.test(line)) dropping = SESSION_KEY.test(line);
+    if (!dropping) kept.push(line);
+  }
+  if (kept.length === block.length) return text;
+  let head = lines.slice(0, start);
+  if (!kept.length) {
+    let cut = head.length;
+    while (cut > 0 && head[cut - 1]?.trim() === "") cut -= 1;
+    head = head.slice(0, cut);
+  }
+  return [...head, ...kept].join("\n") + text.slice(end);
+}
+
+/** The values of the `Workit-Session:` trailers among `trailers`. */
+const sessionValues = (trailers: readonly string[]): string[] =>
+  trailers
+    .filter((trailer) => SESSION_KEY.test(trailer))
+    .map((trailer) => trailer.slice(trailer.indexOf(":") + 1).trim());
+
 // Fixed trailer syntax, whatever the user's trailer.* config says.
 const TRAILER_CONFIG = ["-c", "trailer.separators=:", "-c", "trailer.where=end"];
 
@@ -581,6 +624,7 @@ export function gitCommit(
   }
   let message = given;
   let carried: string[] = [];
+  let previousTrailers: string[] = [];
   if (given) {
     const lint = lintCommitMessage(cwd, given);
     if (!lint.ok) return failure("blocked", lint.error, lint.correction);
@@ -590,7 +634,8 @@ export function gitCommit(
     if (!kept.ok)
       return failure("failed", `could not read the message of ${branch}: ${gitError(kept)}`);
     // --no-edit keeps the message whole; a new message carries the old trailers over.
-    if (given) carried = messageTrailers(cwd, kept.stdout.trim());
+    previousTrailers = messageTrailers(cwd, kept.stdout.trim());
+    if (given) carried = previousTrailers;
     else message = kept.stdout.trim();
   }
   const session = input.actor.session;
@@ -610,16 +655,36 @@ export function gitCommit(
   const args = ["commit", "--no-edit"];
   if (input.amend) args.push("--amend");
   if (input.allowEmpty || emptyAmend) args.push("--allow-empty");
-  // Off (`trailers: false`): authorship is the commit.recorded row alone.
-  const sessionTrailer = Boolean(session) && workspaceTrailers(cwd).enabled;
-  args.push(
-    "-m",
-    withTrailers(cwd, message, [
-      ...carried,
-      ...extra,
-      ...(sessionTrailer ? [`Workit-Session: ${session}`] : []),
-    ]),
+  // Off (`trailers: false`): authorship is the commit.recorded row alone,
+  // and an amend drops the Workit-Session trailers the old commit had.
+  const trailersOn = workspaceTrailers(cwd).enabled;
+  const sessionTrailer = Boolean(session) && trailersOn;
+  if (!trailersOn) {
+    carried = carried.filter((trailer) => !SESSION_KEY.test(trailer));
+    if (!given) message = stripSessionTrailers(message, { subject: true });
+  }
+  const finalMessage = withTrailers(cwd, message, [
+    ...carried,
+    ...extra,
+    ...(sessionTrailer ? [`Workit-Session: ${session}`] : []),
+  ]);
+  // Only workit writes Workit-Session: the acting session's, or (trailers
+  // on) the amended commit's own. A message line or a `trailer.<alias>.key`
+  // config that expands a --trailer into the key never forges one.
+  const allowed = new Set([
+    ...(trailersOn ? sessionValues(previousTrailers) : []),
+    ...(sessionTrailer && session ? [session] : []),
+  ]);
+  const forged = sessionValues(messageTrailers(cwd, finalMessage)).find(
+    (value) => !allowed.has(value),
   );
+  if (forged !== undefined)
+    return failure(
+      "invalid_input",
+      `forged_session_trailer: the message would carry "Workit-Session: ${forged}", which workit did not add; workit writes that trailer itself`,
+      "drop the Workit-Session line (or the trailer.<alias>.key config that expands into it)",
+    );
+  args.push("-m", finalMessage);
   if (paths.length) {
     if (paths.some((value) => value.startsWith("-") || !value.trim()))
       return failure("invalid_input", "paths must not be empty or start with -");
@@ -660,7 +725,8 @@ export function gitCommit(
   }
   const committed = git(cwd, args, {
     timeoutMs: COMMIT_TIMEOUT_MS,
-    env: input.env,
+    // Decided here: the session hook's helper skips its own `workit git trailers` call.
+    env: { ...(input.env ?? process.env), WORKIT_TRAILERS: trailersOn ? "on" : "off" },
   });
   if (!committed.ok)
     return failure(

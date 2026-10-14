@@ -17,8 +17,8 @@
 // head that moves after the gates refuses instead of merging unverified code.
 // --delete-branch deletes with a lease on that same SHA.
 // A squash with --subject/--body, or in a workspace with `trailers: false`,
-// sends its own message (the PR title and the branch's commits by default)
-// with every `Workit-Session:` trailer stripped from the body.
+// sends its own message (the PR title and the branch's commits by default,
+// on stdin) with `Workit-Session:` lines dropped from each trailer block.
 import {
   requireGrant,
   resolveAutonomy,
@@ -29,7 +29,7 @@ import { branchKindOf, flowRoute, gitFlowOf, isProtectedTarget } from "../core/b
 import { vcsConfig } from "../core/vcs-config";
 import { workspaceTrailers } from "../core/workspaces";
 import { workspaceReleaseTracks } from "../core/release-tracks";
-import { deleteRemoteBranch } from "../git/ops";
+import { deleteRemoteBranch, stripSessionTrailers } from "../git/ops";
 import { spawnSync } from "node:child_process";
 import { currentBranch, fetchRefs, GIT_TIMEOUTS, remoteRefTip, resolveRef } from "../git/rev";
 import {
@@ -95,13 +95,6 @@ const createNext = (cwd: string): string => {
 
 /** Workit's own commit trailer: provenance for the ledger, not PR prose. */
 const SESSION_TRAILER = /^Workit-Session:.*$/gimu;
-
-/** `text` without `Workit-Session:` lines (and the blank runs they leave). */
-export const stripSessionTrailers = (text: string): string =>
-  text
-    .replace(SESSION_TRAILER, "")
-    .replace(/\n{3,}/gu, "\n\n")
-    .trim();
 
 /**
  * `--fill`: the title and body from the branch's commits on top of the base
@@ -505,11 +498,23 @@ function squashMessageFor(
     subject =
       resolved.forge.kind === "github" ? `${meta.data.title} (#${doc.number})` : meta.data.title;
   }
-  const body = input.body ?? squashCommitList(cwd, resolved, doc.base, doc.head.sha);
-  return success({ subject, body: stripSessionTrailers(body) });
+  // An explicit body is kept byte for byte but for its trailer block.
+  const body =
+    input.body === undefined
+      ? squashCommitList(cwd, resolved, doc.base, doc.head.sha)
+      : stripSessionTrailers(input.body, { subject: false });
+  return success({ subject, body });
 }
 
-/** `* subject` and body of each commit on `base..head`, from the local clone ("" when absent). */
+/** Bounds of the generated squash body: a forge message, not an archive. */
+const SQUASH_LIST_MAX_COMMITS = 100;
+const SQUASH_LIST_MAX_CHARS = 60_000;
+
+/**
+ * `* subject` and body of each non-merge commit on `base..head`, oldest
+ * first, from the local clone ("" when absent); each commit loses its
+ * Workit-Session trailers, and past the bounds the rest is counted.
+ */
 function squashCommitList(
   cwd: string,
   resolved: ResolvedForge,
@@ -522,15 +527,37 @@ function squashCommitList(
   if (!from) return "";
   const log = spawnSync(
     "git",
-    ["log", "--reverse", "--no-merges", "--format=* %s%n%n%b%x1e", `${from}..${head}`],
-    { cwd, encoding: "utf8", timeout: GIT_TIMEOUTS.local, killSignal: "SIGKILL" },
+    ["log", "--reverse", "--no-merges", "--format=%B%x1e", `${from}..${head}`],
+    {
+      cwd,
+      encoding: "utf8",
+      timeout: GIT_TIMEOUTS.local,
+      killSignal: "SIGKILL",
+      maxBuffer: 64 * 1024 * 1024,
+    },
   );
   if (log.status !== 0) return "";
-  return log.stdout
+  const entries = log.stdout
     .split("\x1e")
-    .map((entry) => stripSessionTrailers(entry))
-    .filter(Boolean)
-    .join("\n\n");
+    .map((message) => stripSessionTrailers(message.replace(/^\n+/u, ""), { subject: true }))
+    .filter((message) => message.trim())
+    .map((message) => {
+      const [subject = "", ...rest] = message.trimEnd().split("\n");
+      const body = rest.join("\n").replace(/^\n+/u, "");
+      return body ? `* ${subject}\n\n${body}` : `* ${subject}`;
+    });
+  const listed: string[] = [];
+  let size = 0;
+  for (const entry of entries) {
+    if (listed.length >= SQUASH_LIST_MAX_COMMITS || size + entry.length > SQUASH_LIST_MAX_CHARS)
+      break;
+    listed.push(entry);
+    size += entry.length + 2;
+  }
+  const more = entries.length - listed.length;
+  return [...listed, ...(more ? [`… and ${more} more commit${more === 1 ? "" : "s"}`] : [])].join(
+    "\n\n",
+  );
 }
 
 export async function mergePullRequest(

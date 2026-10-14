@@ -639,8 +639,14 @@ const runtimeWorkspaceIndexSchema = z
 /** The workspaces.json entry matching cwd, checked only for name/glob (D17). */
 const matchRuntimeWorkspace = (
   cwd: string,
-): { file: string; selected: Record<string, unknown> & { name: string } } | null => {
-  const file = path.join(configDir(), "workspaces.json");
+  dir: string = configDir(),
+): {
+  file: string;
+  selected: Record<string, unknown> & { name: string };
+  /** Every entry whose glob matches cwd, the selected one included. */
+  matches: Array<Record<string, unknown> & { name: string; glob: string }>;
+} | null => {
+  const file = path.join(dir, "workspaces.json");
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");
@@ -672,7 +678,7 @@ const matchRuntimeWorkspace = (
   const matches = matchingEntries(cwd, entries ?? []);
   const workspaceName = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
   const selected = selectWorkspaceMatch(matches, cwd, workspaceName);
-  return selected ? { file, selected } : null;
+  return selected ? { file, selected, matches } : null;
 };
 
 /**
@@ -690,20 +696,33 @@ export const resolveRuntimeReleaseTracks = (
 };
 
 /**
- * Whether commits in cwd's workspace carry the `Workit-Session:` trailer:
- * false only when the matching workspace sets `trailers: false`. Read
- * leniently: no workspace, or an unreadable workspaces.json, keeps the trailer.
+ * Whether commits in cwd's workspace carry the `Workit-Session:` trailer.
+ * The selected workspace's own `trailers` wins; unset, it inherits from the
+ * nearest enclosing workspace that also matches cwd (a repo workspace nested
+ * in `work`), and defaults to true. Read leniently: no workspace, or an
+ * unreadable workspaces.json, keeps the trailer. `from` names the entry the
+ * value came from (null for the default).
  */
-export const workspaceTrailers = (cwd: string): { enabled: boolean; workspace: string | null } => {
+export const workspaceTrailers = (
+  cwd: string,
+  dir?: string,
+): { enabled: boolean; workspace: string | null; from: string | null } => {
   let matched: ReturnType<typeof matchRuntimeWorkspace>;
   try {
-    matched = matchRuntimeWorkspace(cwd);
+    matched = matchRuntimeWorkspace(cwd, dir);
   } catch {
-    return { enabled: true, workspace: null };
+    return { enabled: true, workspace: null, from: null };
   }
+  if (!matched) return { enabled: true, workspace: null, from: null };
+  const { selected, matches } = matched;
+  const enclosing = matches
+    .filter((entry) => entry !== selected)
+    .toSorted((a, b) => globSpecificity(b.glob) - globSpecificity(a.glob));
+  const source = [selected, ...enclosing].find((entry) => typeof entry.trailers === "boolean");
   return {
-    enabled: matched?.selected.trailers !== false,
-    workspace: matched?.selected.name ?? null,
+    enabled: source?.trailers !== false,
+    workspace: selected.name,
+    from: source?.name ?? null,
   };
 };
 

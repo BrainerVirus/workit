@@ -106,7 +106,7 @@ Autonomy contract:
   the PR; \`green\` babysits it without asking (workit-ship) to merge-ready,
   never merging; \`merged\` also lands it with \`workit pr merge\`.
   Merge and release need a workspace grant only the user raises from their
-  terminal (a blocked verb names how); never edit workspaces.json or route
+  own terminal (a blocked verb names how); never edit workspaces.json or route
   around a grant_required.
 - Ask only for a product or preference choice, or for authority you lack, with
   your recommended answer. Facts are yours: read, run or prototype.
@@ -123,8 +123,8 @@ Autonomy contract:
 
 CLI first: if a step has one right answer, use the \`workit\` verb instead of
 hand-running git, gh or glab (\`workit git|pr|ci|check\`; \`workit help\` lists
-the rest; without \`workit\` on PATH, \`npx -y @brainervirus/workit-cli\`).
-Trailers (Co-Authored-By): \`workit git commit --trailer "K: v" --all\`, not
+the rest; lacking \`workit\`, \`npx -y @brainervirus/workit-cli\`).
+Add Co-Authored-By via \`workit git commit --trailer "K: v" -- <paths>\`, never
 an amend.
 The task families (task, policy, evidence, finding, decision, worker, state)
 are optional continuity for tracked work; each branch has one implicit task,

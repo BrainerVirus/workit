@@ -28,9 +28,12 @@
 //   it would commit a trailer-only message instead of aborting); for a
 //   template (git aborts an unedited one); for a comment-only message; and in a
 //   rebase or cherry-pick replaying commits that keep their own trailers.
-// - A workspace with `trailers: false`: the helper asks `workit git trailers`
-//   (when workit is on PATH) and adds nothing on `off`; doctor neither
-//   suggests nor installs the hook there. Without workit the trailer is added.
+// - A workspace with `trailers: false`: the helper adds nothing when
+//   WORKIT_TRAILERS=off (set by `workit git commit`) or `workit git trailers`
+//   prints `off` (asked with a timeout when workit is on PATH). Without
+//   workit it fails open and adds the trailer, so doctor warns about any
+//   Workit hook or helper left there and `--fix` removes them
+//   (removeSessionHook); another tool's hook and its manual line stay.
 // - `--if-exists addIfDifferent`: the same session's trailer is never repeated;
 //   another session that amends adds its own, as `workit git commit --amend` does.
 import { spawnSync } from "node:child_process";
@@ -84,9 +87,18 @@ fi
 [ \${#session} -le 128 ] || exit 0
 case "$session" in *[!A-Za-z0-9_.:@/+-]*) exit 0 ;; esac
 # A workspace with \`trailers: false\` keeps authorship in the ledger only.
-if command -v workit >/dev/null 2>&1; then
-  [ "$(workit git trailers 2>/dev/null)" != off ] || exit 0
-fi
+# \`workit git commit\` decides it already (WORKIT_TRAILERS); otherwise ask
+# workit, bounded, and add the trailer when it cannot answer.
+case "\${WORKIT_TRAILERS-}" in
+  off) exit 0 ;;
+  on) ;;
+  *)
+    if command -v workit >/dev/null 2>&1; then
+      t=; ! command -v timeout >/dev/null 2>&1 || t="timeout 5"
+      [ "$($t workit git trailers 2>/dev/null)" != off ] || exit 0
+    fi
+    ;;
+esac
 add_trailer() {
   [ -f "$1" ] && [ -r "$1" ] || return 0
   body=$(sed '/^# -\\{24\\} >8 -\\{24\\}$/,$d' "$1" | git stripspace --strip-comments)
@@ -524,5 +536,54 @@ export function installSessionHook(
     helperWritten,
     status: inspectSessionHook(cwd, env),
     detail: `${verb} the Workit ${SESSION_HOOK_NAME} hook at ${status.hookPath}${helper}`,
+  };
+}
+
+export type SessionHookRemoval = {
+  /** Whether Workit's own hook or helper was deleted. */
+  action: "removed" | "unchanged" | "skipped";
+  /** The files deleted: Workit's hook (only one carrying its marker) and the helper. */
+  removed: string[];
+  status: SessionHookStatus;
+  detail: string;
+};
+
+/** Whether `status` finds Workit's own hook (any version) in the slot. */
+export const workitHookIn = (status: SessionHookStatus): boolean =>
+  status.hookPath !== null && (readText(status.hookPath)?.includes(SESSION_HOOK_MARKER) ?? false);
+
+/** Whether the helper exists for `status`, current or not. */
+export const helperIn = (status: SessionHookStatus): boolean =>
+  status.helperPath !== null && exists(status.helperPath);
+
+/**
+ * For a workspace with `trailers: false`: delete Workit's own hook (only a
+ * slot holding its marker) and the helper. Another tool's hook, a husky
+ * script or a lefthook job that runs the helper is never edited; without the
+ * helper its manual line runs nothing.
+ */
+export function removeSessionHook(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): SessionHookRemoval {
+  const status = inspectSessionHook(cwd, env);
+  if (status.state === "not_git")
+    return { action: "skipped", removed: [], status, detail: "not inside a git work tree" };
+  const removed: string[] = [];
+  if (workitHookIn(status)) {
+    rmSync(status.hookPath!, { force: true });
+    removed.push(status.hookPath!);
+  }
+  if (helperIn(status)) {
+    rmSync(status.helperPath!, { force: true });
+    removed.push(status.helperPath!);
+  }
+  return {
+    action: removed.length ? "removed" : "unchanged",
+    removed,
+    status: inspectSessionHook(cwd, env),
+    detail: removed.length
+      ? `removed ${removed.join(" and ")}`
+      : "no Workit session hook or helper to remove",
   };
 }

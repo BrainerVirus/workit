@@ -68,6 +68,7 @@ const SESSION_VARS = new Set([
   "OPENCODE_SESSION_ID",
   "PI_SESSION_ID",
   "CODEX_THREAD_ID",
+  "WORKIT_TRAILERS",
 ]);
 const baseEnv = (): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {};
@@ -757,6 +758,42 @@ test("Given a workspace with trailers off, When a session commits through the ho
   ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: on"], { ...S, WK_TRAILERS: "on" });
   expect(message(root)).toBe("feat: on\n\nWorkit-Session: lead-1");
 });
+
+test("Given WORKIT_TRAILERS from `workit git commit`, When the hook runs, Then it follows that answer without asking workit", () => {
+  const root = repo();
+  installSessionHook(root);
+  // The stub would answer the opposite: it is never asked.
+  ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: off"], {
+    ...S,
+    WK_TRAILERS: "on",
+    WORKIT_TRAILERS: "off",
+  });
+  expect(message(root)).toBe("feat: off");
+  ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: on"], {
+    ...S,
+    WK_TRAILERS: "off",
+    WORKIT_TRAILERS: "on",
+  });
+  expect(message(root)).toBe("feat: on\n\nWorkit-Session: lead-1");
+});
+
+test.skipIf(process.platform === "win32" || !existsSync("/usr/bin/timeout"))(
+  "Given a workit that hangs, When the hook asks it, Then the call is cut off and the commit still finishes with the trailer",
+  () => {
+    const root = repo();
+    installSessionHook(root);
+    const bin = tmp();
+    writeFileSync(path.join(bin, "workit"), "#!/bin/sh\nsleep 30\necho off\n", { mode: 0o755 });
+    const started = Date.now();
+    ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: slow"], {
+      ...S,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+    });
+    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(message(root)).toBe("feat: slow\n\nWorkit-Session: lead-1");
+  },
+  30_000,
+);
 
 test.skipIf(process.platform === "win32")(
   "Given workspaces.json with trailers: false, When the hook asks the real CLI, Then the commit has no trailer, and a workspace without it keeps the trailer",
