@@ -547,7 +547,7 @@ test("Given a worker assigned on one branch, When `workit worker cancel` runs on
     ).toBe(1);
     expect(stale.read().stderr).toMatch(
       new RegExp(
-        `workit worker cancel --task [0-9a-f-]{36} --payload '\\{"workerId":"${workerId}","reason":"stale"\\}'`,
+        `workit worker cancel ${workerId} --task [0-9a-f-]{36} --payload '\\{"reason":"stale"\\}'`,
       ),
     );
 
@@ -595,7 +595,37 @@ test("the positional worker id maps to workerId, conflicts with a different payl
     ).toBe(1);
     expect(JSON.parse(conflict.read().stdout)).toMatchObject({
       ok: false,
-      error: "payload workerId conflicts with the explicit flag",
+      error: "payload workerId conflicts with the positional worker id",
+    });
+
+    // After `--` the one argument is still the worker id.
+    const dashed = capture();
+    expect(
+      await runTaskCommand(["worker", "cancel", "--json", "--", workerId], {
+        cwd: root,
+        out: dashed.out,
+        err: dashed.err,
+      }),
+    ).toBe(1);
+    expect(JSON.parse(dashed.read().stdout)).toMatchObject({
+      ok: false,
+      code: "not_found",
+      error: expect.stringContaining(`workit worker cancel ${workerId} --task <task-id>\``),
+    });
+
+    // No worker id at all: invalid input naming the form, before any lookup.
+    const missing = capture();
+    expect(
+      await runTaskCommand(["worker", "cancel", "--json"], {
+        cwd: root,
+        out: missing.out,
+        err: missing.err,
+      }),
+    ).toBe(1);
+    expect(JSON.parse(missing.read().stdout)).toMatchObject({
+      ok: false,
+      code: "invalid_input",
+      error: expect.stringContaining("workit worker cancel|report <workerId>"),
     });
 
     const extra = capture();

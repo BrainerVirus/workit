@@ -145,8 +145,8 @@ const newestDecisionFirst = (left: TaskDecision, right: TaskDecision): number =>
   return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 };
 /**
- * The task's own decisions (newest first), then the live (unrevoked) ones it
- * inherits (origin set), at most COMPACT_MAX_ITEMS.
+ * The task's own decisions (newest first), then the ones it inherits (origin
+ * set; the engine passes only unrevoked ones), at most COMPACT_MAX_ITEMS.
  */
 const compactDecisions = (
   sources: Array<{ origin: string | null; taskId: string; decisions: TaskDecision[] } | null>,
@@ -154,21 +154,18 @@ const compactDecisions = (
   sources
     .flatMap((source) =>
       source
-        ? source.decisions
-            .filter((entry) => source.origin === null || entry.data.revoked === null)
-            .toSorted(newestDecisionFirst)
-            .map((entry) => ({
-              id: entry.id,
-              purpose: entry.data.purpose,
-              status: entry.data.response,
-              digest: entry.data.digest,
-              choice:
-                compactDecisionChoice(entry) ||
-                `task.inspect taskId=${source.taskId} view=full; decision=${entry.id}`,
-              references: entry.data.binding.contentRefs.slice(0, 1).map(compactReference),
-              // Undefined (dropped from the JSON) for the task's own decisions.
-              origin: source.origin ?? undefined,
-            }))
+        ? source.decisions.toSorted(newestDecisionFirst).map((entry) => ({
+            id: entry.id,
+            purpose: entry.data.purpose,
+            status: entry.data.response,
+            digest: entry.data.digest,
+            choice:
+              compactDecisionChoice(entry) ||
+              `task.inspect taskId=${source.taskId} view=full; decision=${entry.id}`,
+            references: entry.data.binding.contentRefs.slice(0, 1).map(compactReference),
+            // Undefined (dropped from the JSON) for the task's own decisions.
+            origin: source.origin ?? undefined,
+          }))
         : [],
     )
     .slice(0, COMPACT_MAX_ITEMS);

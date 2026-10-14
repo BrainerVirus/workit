@@ -147,9 +147,11 @@ const familyHas = (family: OperationFamily, action: string): boolean =>
   (TASK_ACTIONS[family] as readonly string[]).includes(action);
 
 function inject(request: Record<string, unknown>, key: string, value: unknown): Result<null> {
+  // The worker id is the only value given as a positional (`worker cancel <workerId>`).
+  const given = key === "workerId" ? "positional worker id" : "explicit flag";
   if (key in request && !same(request[key], value))
-    return failure("invalid_input", `payload ${key} conflicts with the explicit flag`, {
-      fields: [{ path: key, reason: "explicit flag conflicts with payload" }],
+    return failure("invalid_input", `payload ${key} conflicts with the ${given}`, {
+      fields: [{ path: key, reason: `${given} conflicts with payload` }],
     });
   request[key] = value;
   return success(null, null, null);
@@ -174,12 +176,18 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   let view: string | undefined;
   let actor: string | undefined;
   let workerId: string | undefined;
+  const takesWorkerId = family === "worker" && (action === "cancel" || action === "report");
   let json = jsonRequested;
   const judge: string[] = [];
   const seen = new Set<string>();
   for (let i = 2; i < argv.length; i += 1) {
     if (argv[i] === "--") {
       const extra = argv.slice(i + 1);
+      // `worker cancel -- <workerId>`: an id that could read as an option.
+      if (takesWorkerId && workerId === undefined && extra.length === 1) {
+        workerId = extra[0];
+        break;
+      }
       if (extra.length)
         return parseUsage(
           `${family} ${actionName} takes no positional arguments (got: ${extra.join(" ")})`,
@@ -212,12 +220,7 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
       continue;
     }
     // `worker cancel|report <workerId>`: the worker id as a positional (#264).
-    if (
-      family === "worker" &&
-      (action === "cancel" || action === "report") &&
-      workerId === undefined &&
-      !argv[i].startsWith("-")
-    ) {
+    if (takesWorkerId && workerId === undefined && !argv[i].startsWith("-")) {
       workerId = argv[i];
       continue;
     }
@@ -357,6 +360,39 @@ const contextFor = (
 type RequirementEvaluation = { requirementId: string; status: string; reason: string };
 
 /**
+ * A failed `worker cancel|report` sent without a task id names the exact
+ * command for the worker's own task (#264), or how to find it, so a retry
+ * never depends on the branch checked out. The core resolves the task from
+ * the worker id; the hint lives here to keep it out of the hook bundles.
+ */
+function withWorkerRetry(
+  result: Result<unknown>,
+  parsed: { family: OperationFamily; action: string; request: Record<string, unknown> },
+  root: string,
+): Result<unknown> {
+  const { action, request } = parsed;
+  const { workerId, reason, report } = request;
+  if (
+    result.ok ||
+    result.code === "invalid_input" ||
+    parsed.family !== "worker" ||
+    (action !== "cancel" && action !== "report") ||
+    request.taskId !== undefined ||
+    typeof workerId !== "string"
+  )
+    return result;
+  const owner = new TaskStore(root).taskForWorker(workerId);
+  const taskId = owner.ok ? owner.data : null;
+  const rest = JSON.stringify({ reason, report });
+  const payload = rest === "{}" ? "" : ` --payload '${rest.replace(/'/gu, "'\\''")}'`;
+  const command = `workit worker ${action} ${workerId} --task ${taskId ?? "<task-id>"}${payload}`;
+  return {
+    ...result,
+    error: `${result.error}; ${taskId ? "" : "find its task with `workit task status --all`, then "}run \`${command}\``,
+  };
+}
+
+/**
  * A recorded policy with each requirement's current status, so the output
  * tells what is already met from what is still owed (S17 review L11).
  */
@@ -482,7 +518,12 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
           context: JSON.parse(compactTaskContext(viewed.data as any)),
         });
     }
-  } else result = dispatch(core, parsed.parsed.family, parsed.parsed.request);
+  } else
+    result = withWorkerRetry(
+      dispatch(core, parsed.parsed.family, parsed.parsed.request),
+      parsed.parsed,
+      root,
+    );
   if (parsed.parsed.family === "policy" && parsed.parsed.action === "assess")
     result = withRequirementStatus(core, result, parsed.parsed.request.taskId);
   if (parsed.parsed.json) jsonResult(outOf(deps), result);

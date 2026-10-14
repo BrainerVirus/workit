@@ -392,12 +392,6 @@ const TASK_SCOPED_ACTIONS: ReadonlySet<string> = new Set([
 ]);
 /** Worker actions that name their worker: they resolve to that worker's task. */
 const WORKER_ADDRESSED_ACTIONS: ReadonlySet<string> = new Set(["worker.cancel", "worker.report"]);
-/** The exact CLI command that runs worker `request` (cancel or report) on `taskId`. */
-const workerCommand = (taskId: string, request: unknown): string => {
-  const { action, workerId, reason, report } = request as Record<string, string>;
-  const payload = JSON.stringify({ workerId, reason, report }).replace(/'/gu, "'\\''");
-  return `workit worker ${action} --task ${taskId} --payload '${payload}'`;
-};
 /** Recording actions that create the implicit task on first use. */
 const CREATING_ACTIONS: ReadonlySet<string> = new Set([
   "task.revise",
@@ -724,18 +718,16 @@ export class WorkitCore {
     // checked out now (#264): worker.cancel/report follow the named worker,
     // a helper's own calls follow its worker id.
     const addressed = WORKER_ADDRESSED_ACTIONS.has(action);
-    const workerId = addressed
-      ? (value as { workerId: string }).workerId
+    // A missing or malformed id is invalid_input (from taskForWorker).
+    const workerId: unknown = addressed
+      ? (value as { workerId?: unknown }).workerId
       : (this.context.workerId ?? null);
     if (workerId !== null) {
       const owner = this.store.taskForWorker(workerId);
       if (!owner.ok) return owner;
       if (owner.data) return success(null, null, { ...request, taskId: owner.data });
-      if (addressed)
-        return failure(
-          "not_found",
-          `worker ${workerId} is on no open task (list: \`workit task status --all\`); run \`${workerCommand("<task-id>", request)}\``,
-        );
+      // The CLI adds the exact retry command (see task.ts workerRetryHint).
+      if (addressed) return failure("not_found", `worker ${workerId as string} is on no open task`);
     }
     const create = CREATING_ACTIONS.has(action) && (this.context.workerId ?? null) === null;
     const found = this.store.implicitTask({
@@ -1631,15 +1623,7 @@ export class WorkitCore {
     const resolved = this.implicitTask("worker", request);
     if (!resolved.ok) return resolved;
     const value = resolved.data;
-    const result = this.retryOmittedRevisions(value, () => this.workerOnce(value));
-    // A worker command whose task was resolved for the caller names the
-    // exact command for that task, so a retry never depends on the branch.
-    const { action, taskId } = (value ?? {}) as { action?: string; taskId: string };
-    return result.ok ||
-      (request as { taskId?: unknown } | null)?.taskId !== undefined ||
-      !WORKER_ADDRESSED_ACTIONS.has(`worker.${action}`)
-      ? result
-      : { ...result, error: `${result.error}; run \`${workerCommand(taskId, value)}\`` };
+    return this.retryOmittedRevisions(value, () => this.workerOnce(value));
   }
 
   private workerOnce(request: unknown): Result<Entry<Worker>> {
@@ -1937,7 +1921,12 @@ export class WorkitCore {
     const base = origin && this.store.readStoreTask(origin.taskId);
     const inherited: InheritedDecisions | null =
       base?.ok && base.data
-        ? { origin: origin!.origin, taskId: base.data.id, decisions: base.data.decisions }
+        ? {
+            origin: origin!.origin,
+            taskId: base.data.id,
+            // A revoked decision no longer applies to anything cut from the base.
+            decisions: base.data.decisions.filter((entry) => entry.data.revoked === null),
+          }
         : null;
     // No task of its own yet: only what the branch inherits.
     if (taskId === null)

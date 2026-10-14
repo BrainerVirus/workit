@@ -4,9 +4,10 @@
 // counted gap with one command.
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runTaskCommand } from "@/packages/workit-cli/src/task";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import type { Provenance, TaskView } from "@/packages/workit-core/src/core/task-contract";
 import { compactTaskContext } from "@/packages/workit-core/src/core/task-context";
@@ -86,39 +87,44 @@ test("Given a worker assigned on branch A and the checkout switched to B, When i
   expect(record.data.workers.find((entry) => entry.id === workerId)?.data.state).toBe("stopped");
 });
 
-test("Given a cancel resolved from the worker that then fails, Then the error names the exact --task command for the worker's task", () => {
+/** `workit <argv> --json` through the CLI's task command, in `root`. */
+const cli = async (root: string, argv: string[]) => {
+  let stdout = "";
+  const code = await runTaskCommand([...argv, "--json"], {
+    cwd: root,
+    out: { write: (chunk: string) => void (stdout += chunk) },
+    err: { write: () => undefined },
+  });
+  return { code, json: JSON.parse(stdout) as { ok: boolean; code?: string; error?: string } };
+};
+
+test("Given a cancel resolved from the worker that then fails, Then the error names the exact --task command for the worker's task", async () => {
   const root = repo("feature/a");
   const { workerId, taskId } = assignOnCurrentBranch(root);
   git(root, "switch", "-q", "-c", "feature/b");
-  const failed = coreFor(root).worker({
-    schemaVersion: 1,
-    action: "cancel",
+  const failed = await cli(root, [
+    "worker",
+    "cancel",
     workerId,
-    reason: "stale",
-    expectedRevision: "00000000-0000-4000-8000-0000000000ff",
-  });
-  expect(failed.ok).toBe(false);
-  if (failed.ok) return;
-  expect(failed.error).toContain(
-    `workit worker cancel --task ${taskId} --payload '{"workerId":"${workerId}","reason":"stale"}'`,
+    "--revision",
+    "00000000-0000-4000-8000-0000000000ff",
+    "--payload",
+    JSON.stringify({ reason: "it's stale" }),
+  ]);
+  expect(failed.code).toBe(1);
+  expect(failed.json.error).toContain(
+    `run \`workit worker cancel ${workerId} --task ${taskId} --payload '{"reason":"it'\\''s stale"}'\``,
   );
 });
 
-test("Given a worker on no open task, When it is cancelled without a task id, Then the error says how to find its task and the exact command to run", () => {
+test("Given a worker on no open task, When it is cancelled without a task id, Then the error says how to find its task and the exact command to run", async () => {
   const root = repo("feature/a");
   assignOnCurrentBranch(root);
   const unknown = "00000000-0000-4000-8000-0000000000aa";
-  const failed = coreFor(root).worker({
-    schemaVersion: 1,
-    action: "cancel",
-    workerId: unknown,
-    reason: "gone",
-  });
-  expect(failed).toMatchObject({ ok: false, code: "not_found" });
-  if (failed.ok) return;
-  expect(failed.error).toContain("workit task status --all");
-  expect(failed.error).toContain(
-    `workit worker cancel --task <task-id> --payload '{"workerId":"${unknown}","reason":"gone"}'`,
+  const failed = await cli(root, ["worker", "cancel", unknown]);
+  expect(failed.json).toMatchObject({ ok: false, code: "not_found" });
+  expect(failed.json.error).toBe(
+    `worker ${unknown} is on no open task; find its task with \`workit task status --all\`, then run \`workit worker cancel ${unknown} --task <task-id>\``,
   );
 });
 
@@ -232,4 +238,200 @@ test("Given stale evidence, Then the compact context shows one counted gap with 
   const gaps = (JSON.parse(compactTaskContext(view)) as { gaps: string[] }).gaps;
   expect(gaps).toEqual([`stale evidence: 10; workit task inspect --task ${taskId} --view full`]);
   for (const entry of evidence) expect(gaps.join("\n")).not.toContain(entry.evidenceId);
+});
+
+// --- Review mv7eee3w: the safety claims, each with a test that fails without it.
+
+const decide = (root: string, text: string, who: Provenance = provenance) => {
+  const store = new TaskStore(root);
+  const task = store.implicitTask({ provenance: who, create: true });
+  const workspace = store.readWorkspace();
+  if (!task.ok || !task.data || !workspace.ok || !workspace.data) throw new Error("no task");
+  const recorded = coreFor(root).decision({
+    schemaVersion: 1,
+    action: "record",
+    taskId: task.data.task.id,
+    purpose: "design",
+    binding: {
+      taskId: task.data.task.id,
+      workspaceId: workspace.data.id,
+      scope: task.data.task.intent.data.scope,
+      presented: text,
+      contentRefs: [],
+    },
+    response: "approved",
+    requirementIds: [],
+  });
+  if (!recorded.ok) throw new Error(recorded.error);
+  return { taskId: task.data.task.id, decisionId: recorded.data.id };
+};
+const conversation = (handle: string): Provenance => ({
+  kind: "agent_reported",
+  host: "claude_code",
+  session: { kind: "host", host: "claude_code", handle },
+  workerId: null,
+});
+const choices = (root: string) =>
+  turn(root)?.decisions.map((entry) => [entry.choice, entry.origin ?? null]) ?? null;
+const commit = (root: string, message: string) =>
+  git(root, "commit", "-q", "--allow-empty", "-m", message);
+
+test("Given a decision revoked on the base branch, Then a branch cut from it does not inherit it", () => {
+  const root = repo("develop");
+  const { taskId, decisionId } = decide(root, "use the old client");
+  const revoked = coreFor(root).decision({
+    schemaVersion: 1,
+    action: "revoke",
+    taskId,
+    decisionId,
+    reason: "superseded",
+  });
+  expect(revoked.ok).toBe(true);
+  git(root, "switch", "-q", "-c", "feature/x");
+  expect(turn(root)).toBeNull();
+});
+
+test("Given the base branch's task is bound to another conversation, Then its decisions are not injected", () => {
+  const root = repo("develop");
+  decide(root, "someone else's call", conversation("conversation-2"));
+  git(root, "switch", "-q", "-c", "feature/x");
+  expect(turn(root)).toBeNull();
+});
+
+test("Given this conversation's own task is the base task, Then its decisions show once, as its own", () => {
+  const root = repo("develop");
+  decide(root, "our call", conversation(session.handle));
+  git(root, "switch", "-q", "-c", "feature/x");
+  // The session-bound task is develop's: it is both current and the origin.
+  expect(choices(root)).toEqual([["our call", null]]);
+});
+
+test("Given the base task gets a new decision, Then the next turn shows it (the base is part of the cache key)", () => {
+  const root = repo("develop");
+  const { taskId } = decide(root, "first");
+  git(root, "switch", "-q", "-c", "feature/x");
+  expect(choices(root)).toEqual([["first", "branch develop"]]);
+  const workspace = new TaskStore(root).readWorkspace();
+  if (!workspace.ok || !workspace.data) throw new Error("no workspace");
+  const base = new TaskStore(root).readTask(taskId);
+  if (!base.ok) throw new Error(base.error);
+  const second = coreFor(root).decision({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    purpose: "design",
+    binding: {
+      taskId,
+      workspaceId: workspace.data.id,
+      scope: base.data.intent.data.scope,
+      presented: "second",
+      contentRefs: [],
+    },
+    response: "approved",
+    requirementIds: [],
+  });
+  expect(second.ok).toBe(true);
+  // Both land in the same second, so their order is by id: compare as a set.
+  expect(choices(root)?.toSorted()).toEqual([
+    ["first", "branch develop"],
+    ["second", "branch develop"],
+  ]);
+});
+
+test("Given a branch name deleted and recreated from HEAD on another base, Then the base is the current branch's, not the old one's", () => {
+  const root = repo("develop");
+  decide(root, "develop rule");
+  git(root, "checkout", "-q", "-b", "feature/x");
+  git(root, "switch", "-q", "main");
+  commit(root, "main moves on");
+  decide(root, "main rule");
+  git(root, "branch", "-q", "-D", "feature/x");
+  git(root, "checkout", "-q", "-b", "feature/x");
+  expect(choices(root)).toEqual([["main rule", "branch main"]]);
+});
+
+test("Given a branch created from HEAD and renamed onto a name an older branch used, Then its base comes from its own creation", () => {
+  const root = repo("develop");
+  decide(root, "develop rule");
+  git(root, "checkout", "-q", "-b", "feature/b");
+  git(root, "switch", "-q", "main");
+  commit(root, "main moves on");
+  decide(root, "main rule");
+  git(root, "branch", "-q", "-D", "feature/b");
+  git(root, "checkout", "-q", "-b", "feature/a");
+  git(root, "branch", "-m", "feature/b");
+  expect(choices(root)).toEqual([["main rule", "branch main"]]);
+});
+
+test("Given a branch whose creation entry is gone from its reflog, Then it inherits nothing", () => {
+  const root = repo("develop");
+  decide(root, "develop rule");
+  git(root, "switch", "-q", "-c", "feature/x");
+  commit(root, "work");
+  expect(choices(root)).toEqual([["develop rule", "branch develop"]]);
+  // Expiry drops the oldest entries: the first line is no longer the creation.
+  const log = path.join(root, ".git", "logs", "refs", "heads", "feature", "x");
+  writeFileSync(log, readFileSync(log, "utf8").split("\n").slice(1).join("\n"));
+  expect(turn(root)).toBeNull();
+});
+
+test("Given a branch cut from a local branch with a slash in its name, Then the name is not read as remote/branch", () => {
+  const root = repo("base");
+  decide(root, "rule of the branch named base");
+  git(root, "switch", "-q", "-c", "feature/base");
+  git(root, "switch", "-q", "-c", "feature/child", "feature/base");
+  // feature/base has no task; `base` must not be taken for it.
+  expect(turn(root)).toBeNull();
+});
+
+test("Given a worker on a closed task, When it is cancelled without a task id, Then the closed task is not used", () => {
+  const root = repo("feature/a");
+  const { workerId, taskId } = assignOnCurrentBranch(root);
+  const core = coreFor(root);
+  expect(core.worker({ schemaVersion: 1, action: "cancel", workerId, reason: "done" }).ok).toBe(
+    true,
+  );
+  const closed = core.task({
+    schemaVersion: 1,
+    action: "close",
+    taskId,
+    outcome: "stopped",
+    summary: "abandoned",
+  });
+  expect(closed.ok).toBe(true);
+  expect(
+    core.worker({ schemaVersion: 1, action: "cancel", workerId, reason: "again" }),
+  ).toMatchObject({ ok: false, code: "not_found" });
+});
+
+test("Given a helper session after the checkout moved to another branch's task, Then its own calls resolve to the task it was assigned on", () => {
+  const root = repo("feature/a");
+  const { workerId, taskId } = assignOnCurrentBranch(root);
+  git(root, "switch", "-q", "-c", "feature/b");
+  assignOnCurrentBranch(root);
+  const helper = new WorkitCore(new TaskStore(root), {
+    root,
+    caller: caller({ actor: "helper" }),
+    capabilities: [],
+    constraints: [],
+    workerId,
+    now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+  });
+  expect(helper.task({ schemaVersion: 1, action: "inspect" })).toMatchObject({
+    ok: true,
+    data: { id: taskId },
+  });
+});
+
+test("Given a worker command without a usable worker id, Then it is invalid input naming the form, not a lookup", () => {
+  const root = repo("feature/a");
+  assignOnCurrentBranch(root);
+  for (const workerId of [undefined, "not-a-uuid"])
+    expect(
+      coreFor(root).worker({ schemaVersion: 1, action: "cancel", workerId, reason: "x" }),
+    ).toMatchObject({
+      ok: false,
+      code: "invalid_input",
+      error: expect.stringContaining("workit worker cancel|report <workerId>"),
+    });
 });

@@ -109,9 +109,14 @@ changes. Some of that state reaches beyond the branch:
 
 - **Inherited decisions.** A branch also shows the task decisions recorded on
   the branch it was cut from. Workit reads the base from git's reflogs: the
-  branch's own "Created from <base>" entry (`origin/develop` counts as
-  `develop`), or, for a branch created from HEAD, the checkout that created
-  it. Inherited decisions come after the branch's own, each labelled with its
+  first entry of the branch's own log, which must be its creation
+  ("Created from <base>"). `origin/develop` counts as `develop` when
+  `origin` is a remote; a local branch such as `feature/base` keeps its full
+  name. For a branch created from HEAD, the base is the branch HEAD moved
+  from in the checkout that created it (same commit, same moment), also
+  after a rename. The base stays the one the branch was created from:
+  rebasing it onto another branch later does not change it. Inherited
+  decisions come after the branch's own, each labelled with its
   origin (`"origin": "branch develop"`). Revoked decisions are left out. They
   show before the branch has a task of its own
   (`"objective": "no task on this branch yet"`). They come from the base task
@@ -119,8 +124,11 @@ changes. Some of that state reaches beyond the branch:
   between `develop` and a feature branch. Only one level is inherited: a
   branch cut from `feature/a`, which was cut from `develop`, sees
   `feature/a`'s decisions, not `develop`'s. Workit never injects a base task
-  that is bound to another host conversation. A branch whose reflog has
-  expired, or that was fetched rather than created locally, inherits nothing.
+  that is bound to another host conversation. A branch inherits nothing once
+  its creation entry is gone from its reflog (`git reflog expire`, by default
+  after 90 days, or `gc`), or when it was fetched rather than created
+  locally. For a branch created from HEAD, the same applies once the HEAD log
+  no longer holds that checkout.
 - **Stale evidence.** Evidence goes stale when the worktree changes after it
   was observed (see [`workit check`](#workit-check-observed-evidence)). The
   context shows the count and the command that lists the stale rows, not the
