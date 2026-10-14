@@ -8,9 +8,12 @@ const R = "[REDACTED]";
 const TOKEN_PATTERNS: readonly RegExp[] = [
   // GitHub tokens (classic, fine-grained, app, OAuth, refresh).
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/gu,
-  // GitLab tokens, by their documented prefixes only (a bare `gl…-` also
-  // matches words such as `global-setup-teardown-hook` in CI logs).
-  /\b(?:glpat|glrt|gldt|glcbt|glptt|glft|gloas|glsoat)-[A-Za-z0-9_-]{20,}/gu,
+  // GitLab tokens, by every prefix GitLab documents
+  // (https://docs.gitlab.com/security/tokens/#token-prefixes) and only those:
+  // a bare `gl…-` also matches words such as `global-setup-teardown-hook`.
+  /\b(?:glpat|gloas|gldt|glrtr|glrt|glcbt|glptt|glft|glimt|glagent|glwt|glsoat|glffct)-[A-Za-z0-9_-]{20,}/gu,
+  // GitLab's session cookie.
+  /\b_gitlab_session=[A-Za-z0-9%_-]{16,}/gu,
   /\bnpm_[A-Za-z0-9]{30,}/gu,
   /\bxox[abposr]-[A-Za-z0-9-]{10,}/gu,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/gu,

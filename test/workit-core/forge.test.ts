@@ -1192,8 +1192,24 @@ describe("S10 redaction and verdicts", () => {
     ["mysql -p", "mysql -u root -pSuperSecret db", "SuperSecret"],
   ];
   // Every documented GitLab token prefix (prefixes joined at runtime).
-  for (const prefix of ["glptt", "glft", "gloas", "glsoat"])
+  // Every prefix in GitLab's token table (docs.gitlab.com/security/tokens/#token-prefixes).
+  for (const prefix of [
+    "glptt",
+    "glft",
+    "gloas",
+    "glsoat",
+    "glrtr",
+    "glimt",
+    "glagent",
+    "glwt",
+    "glffct",
+  ])
     REDACTION_CASES.push([prefix, `${[prefix, "-"].join("")}${a(24, "k")}`, a(24, "k")]);
+  REDACTION_CASES.push([
+    "gitlab session cookie",
+    `Cookie: ${["_gitlab", "_session="].join("")}${a(32, "f")}`,
+    a(32, "f"),
+  ]);
   for (const [label, input, secret] of REDACTION_CASES)
     test(`redacts ${label}`, () => {
       const out = redactText(input);
@@ -1213,6 +1229,9 @@ describe("S10 redaction and verdicts", () => {
     expect(redactText(`global-setup-teardown-hook ${token}`)).toBe(
       "global-setup-teardown-hook [REDACTED]",
     );
+    // Shorter than any GitLab token body (20+): a word, not a secret.
+    const word = `${["glrt", "-"].join("")}runner-registration`;
+    expect(redactText(`step ${word} done`)).toBe(`step ${word} done`);
   });
 
   test("ordinary log text, shas and prose survive redaction", () => {
