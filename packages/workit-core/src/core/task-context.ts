@@ -73,11 +73,20 @@ type CompactDecision = {
   digest: string;
   choice: string;
   references: CompactReference[];
+  /** Where an inherited decision was recorded ("branch develop"); absent for the task's own. */
+  origin?: string;
 };
 type CompactMethod = Pick<SelectedMethod, "id" | "assurance"> & { reason: string };
+/** Decisions of a task the current one inherits from (its base branch's task). */
+export type InheritedDecisions = {
+  origin: string;
+  taskId: string;
+  decisions: TaskView["task"]["decisions"];
+};
 export type CompactTaskContext = {
   objective: string;
-  status: TaskView["task"]["status"];
+  /** Null when the checkout has no task yet and only inherited decisions apply. */
+  status: TaskView["task"]["status"] | null;
   decisions: CompactDecision[];
   methods: CompactMethod[];
   gaps: string[];
@@ -128,54 +137,83 @@ const compactReference = (ref: Ref): CompactReference => {
   return { kind: ref.kind };
 };
 
-export function compactTaskContext(view: TaskView): string {
-  const decisions: CompactDecision[] = view.task.decisions
-    .slice()
-    .toSorted((left, right) => {
-      const leftAt = compactTimestamp(left.recordedAt);
-      const rightAt = compactTimestamp(right.recordedAt);
-      if (leftAt !== rightAt) return leftAt > rightAt ? -1 : 1;
-      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
-    })
-    .slice(0, COMPACT_MAX_ITEMS)
-    .map((entry) => ({
-      id: entry.id,
-      purpose: entry.data.purpose,
-      status: entry.data.response,
-      digest: entry.data.digest,
-      choice:
-        compactDecisionChoice(entry) ||
-        `task.inspect taskId=${view.task.id} view=full; decision=${entry.id}`,
-      references: entry.data.binding.contentRefs.slice(0, 1).map(compactReference),
-    }));
-  const methods: CompactMethod[] = view.task.policy
+type TaskDecision = TaskView["task"]["decisions"][number];
+const newestDecisionFirst = (left: TaskDecision, right: TaskDecision): number => {
+  const leftAt = compactTimestamp(left.recordedAt);
+  const rightAt = compactTimestamp(right.recordedAt);
+  if (leftAt !== rightAt) return leftAt > rightAt ? -1 : 1;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+};
+/**
+ * The task's own decisions (newest first), then the ones it inherits (origin
+ * set; the engine passes only unrevoked ones), at most COMPACT_MAX_ITEMS.
+ */
+const compactDecisions = (
+  sources: Array<{ origin: string | null; taskId: string; decisions: TaskDecision[] } | null>,
+): CompactDecision[] =>
+  sources
+    .flatMap((source) =>
+      source
+        ? source.decisions.toSorted(newestDecisionFirst).map((entry) => ({
+            id: entry.id,
+            purpose: entry.data.purpose,
+            status: entry.data.response,
+            digest: entry.data.digest,
+            choice:
+              compactDecisionChoice(entry) ||
+              `task.inspect taskId=${source.taskId} view=full; decision=${entry.id}`,
+            references: entry.data.binding.contentRefs.slice(0, 1).map(compactReference),
+            // Undefined (dropped from the JSON) for the task's own decisions.
+            origin: source.origin ?? undefined,
+          }))
+        : [],
+    )
+    .slice(0, COMPACT_MAX_ITEMS);
+
+/**
+ * The compact context of `view`'s task plus the decisions it inherits; with
+ * a null `view` (the branch has no task of its own yet) only the inherited
+ * decisions. Stale evidence is one counted gap with the command that lists it.
+ */
+export function compactTaskContext(
+  view: TaskView | null,
+  inherited: InheritedDecisions | null = null,
+): string {
+  const decisions = compactDecisions([
+    view && { origin: null, taskId: view.task.id, decisions: view.task.decisions },
+    inherited,
+  ]);
+  const methods: CompactMethod[] = view?.task.policy
     ? selectMethods(view.task.policy, view.capabilities).map((method) => ({
         id: method.id,
         assurance: method.assurance,
         reason: compactText(method.reason, COMPACT_TEXT_BYTES) ?? "",
       }))
     : [];
+  const stale = view?.evidence.filter((entry) => entry.status === "stale").length;
   const gaps = Array.from(
     new Set([
-      ...view.evidence
-        .filter((entry) => entry.status === "stale")
-        .map((entry) => `stale evidence: ${entry.evidenceId}`),
-      ...view.requirements
+      ...(stale
+        ? [`stale evidence: ${stale}; workit task inspect --task ${view.task.id} --view full`]
+        : []),
+      ...(view?.requirements ?? [])
         .filter((entry) => entry.status !== "satisfied")
         .map((entry) => entry.reason),
-      ...view.task.progress.blockers.map((entry) => entry.reason),
+      ...(view?.task.progress.blockers ?? []).map((entry) => entry.reason),
     ]),
   )
     .toSorted()
     .slice(0, COMPACT_MAX_ITEMS)
     .map((gap) => compactText(gap, COMPACT_TEXT_BYTES)!);
   const context: CompactTaskContext = {
-    objective: compactText(view.task.intent.data.objective, COMPACT_TEXT_BYTES) ?? "",
-    status: view.task.status,
+    objective: view
+      ? (compactText(view.task.intent.data.objective, COMPACT_TEXT_BYTES) ?? "")
+      : "no task on this branch yet",
+    status: view?.task.status ?? null,
     decisions,
     methods,
     gaps,
-    nextAction: compactText(view.task.progress.nextAction, COMPACT_TEXT_BYTES),
+    nextAction: compactText(view?.task.progress.nextAction ?? null, COMPACT_TEXT_BYTES),
   };
   let encoded = JSON.stringify(context);
   while (

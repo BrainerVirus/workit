@@ -115,7 +115,8 @@ Autonomy contract:
   satisfies a gate; an ad-hoc \`workit check -- <cmd>\` never does.
 - Author is not verifier: your own verdict is \`--self\`, shown as
   self-reviewed, never verified. High risk, \`verification: independent\` and
-  merge need a verifier with its own session (\`WORKIT_SESSION_ID=<lead>-v<n>\`).
+  merge need a verifier with its own host-derived session (a subagent's
+  \`<lead>:<child>\`, set by the host); never hand-mint one such as \`<lead>-v1\`.
 - A local-commit endpoint does not imply PR readiness, and a local commit alone
   is not evidence of a requested remote push. Before reporting delivery,
   reconcile every requested item and observe it (\`workit verify-delivery\`).

@@ -33,8 +33,9 @@ description: Build a requested change in small verified steps - follow local pat
    `workit ledger verdict tests-verified --self --how "<what you ran>"`; it
    reads self-reviewed, never verified. High risk, a workspace with
    `verification: independent` (`workit grant show`) or a verified merge needs
-   a fresh verifier with its own session (`WORKIT_SESSION_ID=<yours>-v1`;
-   Claude Code: the `verifier` agent). Before saying done, reconcile
+   a fresh verifier with its own host-derived session (Claude Code and Codex:
+   the `verifier` agent; OpenCode: a child session; Pi: a supervised worker),
+   never a hand-minted id. Before saying done, reconcile
    every named deliverable against the target checkout and observe it (for a push:
    `workit verify-delivery push`).
 

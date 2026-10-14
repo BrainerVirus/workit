@@ -57,6 +57,39 @@ the host's shell variable (`CODEX_THREAD_ID`, `OPENCODE_SESSION_ID`,
 its session context names the id to prefix; that gap is documented in
 [the hosts guide](../guides/hosts.md), not papered over.
 
+`realHostSession` classifies the shell's session: `derived` (the host's own
+variable), `declared` (`WORKIT_SESSION_ID` under a `WORKIT_HOST`, Claude
+Code) or `none` (CI, a plain terminal, Cursor). Before an independent verdict
+is recorded, `sessionClaimRefusal` checks the claimed session (env,
+`--session`, or the base of `--as`):
+
+- `none`: accepted; `--session X` and `WORKIT_SESSION_ID=X` are one rule.
+- The shell's own session. On Claude Code, a declared `<lead>:<x>` is
+  accepted only if it was issued.
+- `<lead>:<real>` where the host sets the variable.
+- `<real>:<agent id>` only if issued.
+
+"Issued" means the SubagentStart handler (`handle.ts`, Claude Code and Codex
+judges) recorded the id it gave with `recordIssuedSession`. Each id is one
+file under `<store>/hooks/issued/<lead hash>/`, at most 64 per lead, and the
+write fails open. `childSessionId` builds the `<lead>:<child>` shape.
+
+The OpenCode plugin and the Pi launcher set that shape in a child's or
+worker's shell:
+
+- OpenCode: `v2/shell-session.ts` correlates `shell.hook("create.before")`,
+  which has no session id, with the shell tool's `execute.before` by command
+  text. It runs before OpenCode's tool callback sets `OPENCODE_SESSION_ID`
+  (opencode v2.0.28 binary: `env.OPENCODE_SESSION_ID=B.sessionID` after
+  `trigger("shell","create.before")`).
+- Pi: the worker is spawned with `--session-id <worker session>`, and Pi's bash
+  tool exports `PI_SESSION_ID` from it (`@earendil-works/pi-coding-agent`
+  `dist/core/tools/bash.js`).
+
+An OpenCode child without a Workit worker may record evidence and findings
+under its derived id (`v2/child-identity.ts`). Everything else still needs a
+validated worker.
+
 ## Host parity
 
 Every workit feature ships for all five hosts (Claude Code, OpenCode, Codex,
@@ -84,13 +117,15 @@ use yet), L = host limit (the host has no mechanism for it).
 | Branch policy / raw git deny + nudge | N `PreToolUse` | P: deny via permission effect; L: the nudge rides the result | N `PreToolUse` | P: deny works; nudge via `agent_message` (unverified); X: `postToolUse` context | P: `tool_call` blocks; L: the nudge rides `tool_result` |
 | Before-write gate | N `Edit`/`Write`/`MultiEdit`/`NotebookEdit` and shell writes | N permission `evaluate` | N `PreToolUse` on `apply_patch` (files from the patch) and shell writes | P `preToolUse` (a write with no readable path is gated as code) | N `tool_call` |
 | Raw commit recording | N `PostToolUse` | N `execute.after` | N `PostToolUse` | P: settled on the next shell command; X: `afterShellExecution`/`postToolUse` | N `tool_result` |
-| Verifier/reviewer own session | N `SubagentStart` (`workit:verifier`, `workit:reviewer`) | P: native parent binding; X: `agent.transform` definitions | N `SubagentStart` (`workit-verifier`, `workit-reviewer` agent types); P: shipped read-only (`sandbox_mode`) agents the MCP launcher copies into `$CODEX_HOME/agents/` (L: codex-cli 0.160.1 plugins cannot register agents) | P: role markers; L: `subagentStart` cannot add context | L: no host subagents (supervised workers) |
+| Verifier/reviewer own session | N `SubagentStart` (`workit:verifier`, `workit:reviewer`) | N: child shell gets `WORKIT_SESSION_ID=<lead>:<child>` (`shell.hook("create.before")`), and a child without a worker records evidence and findings under it; native parent binding; X: `agent.transform` definitions | N `SubagentStart` (`workit-verifier`, `workit-reviewer` agent types); P: shipped read-only (`sandbox_mode`) agents the MCP launcher copies into `$CODEX_HOME/agents/` (L: codex-cli 0.160.1 plugins cannot register agents) | P: role markers; L: `subagentStart` cannot add context | N: supervised worker shell gets `WORKIT_SESSION_ID=<lead>:<worker session>`; L: no host subagents |
+| Real session for verdicts (`forged_session` refusal) | P: subagent `<lead>:<agent id>` accepted only when SubagentStart issued it; L: the lead's own id is the declared `WORKIT_SESSION_ID` (no host-set id in the shell; `CLAUDE_CODE_SESSION_ID` unused), so an inline colon-less id such as `<lead>-v<n>` is still declared; L: the issued-id record is workspace files a deliberate write can forge | N `OPENCODE_SESSION_ID` (set by the shell tool); children `<lead>:<child>`; `WORKIT_HOST=opencode` without it is refused; L: removing both reads as a plain terminal | P `CODEX_THREAD_ID` for the thread; subagent `<lead>:<agent id>` only when SubagentStart issued it (L: unverified whether a subagent's shell gets its own thread id; `--as verifier` otherwise); `WORKIT_HOST=codex_*` without it is refused; L: the issued-id record is forgeable by a deliberate write | L: no session id in the agent shell and no `WORKIT_HOST`: declared, not checked | N `PI_SESSION_ID` (bash tool); workers `<lead>:<worker session>`; `WORKIT_HOST=pi` without it is refused |
 | Implementer worktree guidance | N `SubagentStart` plus `isolation: worktree`; plain git told up front (L: worktree isolation refuses `workit git …`, cannot be turned off) | X: the `worktree` domain is unused | P `SubagentStart` text and the shipped `workit-implementer` agent; L: no native worktree isolation, the lead makes one | P: implementers denied at `subagentStart` | L: no host subagents |
 | Compaction restore | N `SessionStart` source=compact | N `session.hook("compaction")` | N `SessionStart` source=compact | P (L: `preCompact` only shows a user message) | N `session_compact` |
 | Session trailer on raw commits | N: commit-msg hook installed by `workit doctor --fix` (via git) | N: commit-msg hook (via git) | N: commit-msg hook (via git) | L: no session id in the agent shell, so the trailer only appears when `WORKIT_SESSION_ID` is set | N: commit-msg hook (via git) |
 | Stop control | N `Stop` (`decision:block`, `stop_hook_active`); a subagent's stop is never blocked | P `session.idle` event, continued with `session.synthetic({resume: true})` only after `outcome: succeeded` (L: no stop hook or loop guard; resume semantics inferred from @opencode/client 2.0.18) | N `Stop` (`decision:block`, `stop_hook_active`) | N `stop` `followup_message` (`loop_count`, registered with `loop_limit: 1`; last message read from `transcript_path`) | N `agent_end` + `sendMessage({triggerTurn})`, never after `stopReason` `aborted`/`error` (L: no host loop guard; the extension keeps one) |
 | `/wk-*` aliases | X: plugin commands are namespaced (`/workit:<name>`) | P `command.transform` (prose, not `prompt.skills`) | L: no plugin slash commands (`$workit-<name>`) | N `commands/wk-*.md` | N `registerCommand` |
 | Heartbeat / doctor | P plugin check | P version check | N version, hook-trust (`codex_hooks`) and agents (`codex_agents`) checks | N launcher heartbeat | N `pi_extension`: missing, not loading, older than workit |
+| Hook older than the CLI (`hook_issued_sessions`) | N: the installed hook bundle is read for `ISSUED_SESSIONS_MARKER` | L: issues no subagent ids (children derive theirs) | N: every hook chunk in the plugin cache is read for the marker | L: `subagentStart` cannot add context, so no ids are issued | L: no host subagents; workers derive theirs |
 
 ## Design background
 

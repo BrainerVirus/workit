@@ -7,6 +7,7 @@ import {
 } from "./context";
 import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
+import { recordIssuedSession } from "../host-session";
 import { shellPolicy } from "./policy";
 import {
   callKey,
@@ -102,6 +103,9 @@ const subagentStartText = (
   const readOnly = `Workit observed ${who} as read-only/agent-guided.`;
   if (role !== "judge" || !event.agentId) return readOnly;
   const own = subagentSession(session, event.agentId);
+  // `ledger verdict` accepts `<lead>:<agent id>` only when this hook issued it.
+  // (An isolated judge's text is rebuilt with cwd "": the hook's own cwd then.)
+  if (session) recordIssuedSession(input.cwd || process.cwd(), session, own);
   return `${readOnly} Its own Workit session is ${own}: record verdicts with \`workit ledger verdict <result> --session ${own} ...\` so the ledger tells it apart from the author.`;
 };
 

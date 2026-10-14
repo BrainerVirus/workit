@@ -25,7 +25,7 @@ REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,
   each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),
   anything out of scope as a follow-up, not a diff.
 STANDING: <the standing orders, verbatim: `workit ledger standing add` records each one>
-  export WORKIT_SESSION_ID=<lead>-w<n>   (set by the lead; a verifier brief gets <lead>-v<n>)
+  export WORKIT_SESSION_ID=<lead>-w<n>   (set by the lead for a worker's commits; a verifier brief sets none: the host derives it)
 ```
 
 ## Worked example
