@@ -152,3 +152,22 @@ test("G tierModels, W fanout status lists spawnable slices, T it names each one'
   const human = await run(cwd, ["fanout", "status", "--offline"], "cursor");
   expect(human.stdout).toContain("spawn docs (model sonnet), api (model gpt-5), core (model opus)");
 });
+
+test("G tierModels with unknown tiers, unknown hosts and non-string values, W grant show runs, T each is reported as ignored", async () => {
+  const cwd = await setup({
+    mundane: 42,
+    huge: "opus",
+    standard: { claude_code: "opus", vscode: "x" },
+  });
+  const shown = await run(cwd, ["grant", "show", "--json"], "claude_code");
+  expect(shown.code, shown.stderr + shown.stdout).toBe(0);
+  expect(shown.json().data.tierModelIssues).toEqual([
+    "workspace app fanout.tierModels.mundane: not a model name or a per-host object; ignored",
+    "workspace app fanout.tierModels.huge: unknown tier; ignored",
+    "workspace app fanout.tierModels.standard.vscode: unknown host; ignored",
+  ]);
+  const human = await run(cwd, ["grant", "show"], "claude_code");
+  expect(human.stdout).toContain(
+    "note: workspace app fanout.tierModels.huge: unknown tier; ignored",
+  );
+});

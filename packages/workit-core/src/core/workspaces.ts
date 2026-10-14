@@ -762,6 +762,57 @@ export const workspaceLiveSessionGuard = (cwd: string, dir?: string): boolean =>
 
 const hostFamily = (host: string): string => host.replace(/_(?:cli|desktop)$/u, "");
 
+const TIER_KEYS = new Set(["mundane", "standard", "hard"]);
+const TIER_HOSTS = new Set([
+  "claude_code",
+  "opencode",
+  "codex",
+  "codex_cli",
+  "codex_desktop",
+  "cursor",
+  "pi",
+  "default",
+]);
+
+/**
+ * What `fanout.tierModels` in cwd's workspaces holds that Workit ignores: an
+ * unknown tier or host key, or a value that is not a model name. Read
+ * leniently (each one is skipped, never an error); `workit grant show`
+ * reports them.
+ */
+export const workspaceTierModelIssues = (cwd: string, dir?: string): string[] => {
+  let matched: ReturnType<typeof matchRuntimeWorkspace>;
+  try {
+    matched = matchRuntimeWorkspace(cwd, dir);
+  } catch {
+    return [];
+  }
+  const issues: string[] = [];
+  for (const entry of matched?.matches ?? []) {
+    const models = (entry.fanout as { tierModels?: unknown } | undefined)?.tierModels;
+    if (models === undefined) continue;
+    const where = `workspace ${entry.name} fanout.tierModels`;
+    if (!models || typeof models !== "object" || Array.isArray(models)) {
+      issues.push(`${where} is not an object; ignored`);
+      continue;
+    }
+    for (const [tier, value] of Object.entries(models)) {
+      if (!TIER_KEYS.has(tier)) issues.push(`${where}.${tier}: unknown tier; ignored`);
+      else if (typeof value === "string") {
+        if (!value.trim()) issues.push(`${where}.${tier}: empty model name; ignored`);
+      } else if (!value || typeof value !== "object" || Array.isArray(value))
+        issues.push(`${where}.${tier}: not a model name or a per-host object; ignored`);
+      else
+        for (const [host, model] of Object.entries(value)) {
+          if (!TIER_HOSTS.has(host)) issues.push(`${where}.${tier}.${host}: unknown host; ignored`);
+          else if (typeof model !== "string" || !model.trim())
+            issues.push(`${where}.${tier}.${host}: not a model name; ignored`);
+        }
+    }
+  }
+  return issues;
+};
+
 /**
  * The model `fanout.tierModels` names for a tier on a host, or null (the
  * fanout skill's TIER guidance applies). A tier maps to one model name for
