@@ -263,6 +263,58 @@ test("a protected-branch deny is structured JSON on stdout with exit 0 and nothi
   });
 }, 30_000);
 
+test("SubagentStart tells the worktree implementer that plain git is expected but branch names stay policy-checked, naming the kinds and the base", async () => {
+  await withProtectedMain((configDir) => {
+    const cwd = root();
+    const context = () =>
+      (
+        runHook(
+          PLUGIN_DIR,
+          fixture("claude-code", "subagent-start", cwd, { agent_type: "workit:implementer" }),
+        ).json as Specific
+      ).hookSpecificOutput?.additionalContext ?? "";
+    const custom = context();
+    expect(custom).toContain(
+      "Plain git is expected here, and the branch name is still policy-checked",
+    );
+    expect(custom).toContain(
+      "`git switch -c`, `git checkout -b`, `git branch` or `git worktree add -b`",
+    );
+    expect(custom).toContain(
+      "Allowed branch kinds here: feature/ (fix/ is bugfix/, chore/ is feature/",
+    );
+    expect(custom).toContain("Branch from origin/develop.");
+    // git-flow (develop + main): the kinds and where each starts.
+    writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
+    );
+    Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd });
+    Bun.spawnSync(
+      [
+        "git",
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+      ],
+      { cwd },
+    );
+    Bun.spawnSync(["git", "branch", "develop"], { cwd });
+    const flow = context();
+    expect(flow).toContain("Allowed branch kinds here: feature/, bugfix/, hotfix/, release/");
+    expect(flow).toContain(
+      "git-flow: feature/, bugfix/ and release/ start from origin/develop, hotfix/ from origin/main",
+    );
+    expect(flow).not.toContain("workit git branch");
+  });
+});
+
 test("SubagentStart gives the worktree implementer write guidance and keeps other agents read-only", () => {
   const cwd = root();
   const context = (agent_type: string) =>

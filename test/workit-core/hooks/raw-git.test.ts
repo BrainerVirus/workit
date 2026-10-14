@@ -267,6 +267,29 @@ test("G a Workit workspace, W gh pr merge, glab mr merge or a push onto main, T 
   });
 });
 
+test("G git-flow, W a raw push onto main or develop, T the deny names workit git push --release and the release grant", async () => {
+  await withProtectedMain((configDir) => {
+    writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
+    );
+    const root = repo();
+    git(root, "branch", "develop");
+    for (const branch of ["main", "develop"]) {
+      const out = claudeOut(root, `git push origin ${branch}`);
+      expect(out?.permissionDecision, branch).toBe("deny");
+      expect(out?.permissionDecisionReason, branch).toContain(
+        `workit git push --release ${branch} [v<version>]`,
+      );
+      expect(out?.permissionDecisionReason, branch).toContain("release=true");
+    }
+    // A blind force is never a release push.
+    const forced = claudeOut(root, "git push --force origin main");
+    expect(forced?.permissionDecisionReason).toContain("workit git push --force-with-lease");
+    expect(forced?.permissionDecisionReason).not.toContain("--release");
+  });
+});
+
 test("G help, a dry run or a fork remote, T never denied", async () => {
   await withProtectedMain(() => {
     const root = repo({ branch: "feature/x" });

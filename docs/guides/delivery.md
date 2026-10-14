@@ -8,11 +8,63 @@ observed in the run ledger. Each one checks the workspace
 
 ```bash
 workit git branch feature/x [--base <b>] [--track <t>]   # policy-checked name, from the fetched default target
+workit git branch --kind feature|bugfix|release|hotfix --slug <s>   # the kind picks the base (git-flow below)
 workit git commit -m "feat: x" -- <paths>       # convention-checked; --all takes every change
 workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last commit; -F <file|-> reads the message
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]
+workit git push --release [main|develop|v<version>…]   # finish a git-flow release or hotfix (release grant)
 ```
+
+### Branch kinds and git-flow
+
+With the `gitflow` preset (configured, or detected from a `develop` branch),
+each kind has a fixed route, used when `--base` (or `pr create --base`) is
+left out:
+
+| Kind | Starts from | PR lands on | Then |
+| --- | --- | --- | --- |
+| `feature/`, `bugfix/` | develop | develop | |
+| `release/` | develop | main | merge main back into develop, tag `v<version>` |
+| `hotfix/` | main | main | merge main back into develop, tag `v<version>` |
+
+develop is the workspace's `branchPolicy.developBranch`, else the default
+target when it is not the production branch, else `develop`; production is
+`main`, else `master`. A positional name routes by its prefix
+(`workit git branch release/4.1.0`). Once develop exists, an explicit
+`--base` or PR `--base` that is the other long-lived branch is refused
+(`gitflow_base` / `gitflow_target`: a feature from main, a hotfix from
+develop); a release or hotfix PR into develop (the back-merge) is allowed, and
+a stack parent stays a valid base. github-flow, trunk-based and custom route
+every kind to the default target; [release tracks](configuration.md#release-tracks)
+take precedence over all of this.
+
+`pr create` on a release or hotfix branch reminds you to merge back into
+develop; `pr merge` of one into main reports `merge back` (`mergeBack` in
+`--json`). Workit does not open the back-merge PR itself.
+
+A name with a prefix the policy does not allow is refused with the allowed
+kinds and the closest name (`fix/` → `bugfix/`, `chore/`, `docs/`, `refactor/`
+→ `feature/`); `--kind chore` suggests `--kind feature`.
+
+### Release push
+
+`workit git push` never pushes a protected branch. Finishing a git-flow
+release or hotfix needs main, develop and the release tag on the remote, so
+`workit git push --release [<ref>…]` (no refs: the current branch) pushes:
+
+- only the git-flow production and develop branches, and tags `v<digit>…`;
+  any other branch or tag is refused (`release_push_refused`);
+- branches fast-forward only (never forced, `non_fast_forward` otherwise), and
+  a tag only when the remote lacks it or already has it at that commit
+  (`tag_exists`: a release tag never moves);
+- in one atomic push, then verifies every remote tip and records one
+  `release.pushed` ledger row.
+
+It needs the `release` grant (off by default; `workit grant set <workspace>
+release=true` from your own terminal) and the `push` grant with its account
+check. A raw `git push` onto main or develop is denied with this command in
+the message.
 
 - `git branch` and `git commit` apply the workspace branch and commit policy,
   never commit to a protected branch, and never sweep in changes you did not
@@ -25,6 +77,14 @@ workit git push [--set-upstream] [--force-with-lease]
   the repository's local and `origin` branches pick it (`workit doctor` shows
   `preset: detected (…)`): `develop` means gitflow, `main` alone
   github-flow, `master` alone trunk-based.
+- Raw branch creation is checked too: every host's pre-shell hook denies
+  `git switch -c|-C`, `git checkout -b|-B`, `git branch [-m|-c]` and
+  `git worktree add -b|-B` onto a protected or off-policy name, in any
+  `&&`/`;`/`|` chain, after `cd` or `git -C`, behind env assignments or
+  wrappers, quoted or not, from a subdirectory or a linked worktree (the
+  directory git runs in picks the workspace policy). A Claude Code
+  worktree-isolated subagent, which must use plain git, gets the allowed kinds
+  and bases in its start context.
 - A plain `git commit` gets the same trailer from a `prepare-commit-msg`
   hook, for agents that cannot run `workit git` (a Claude Code
   worktree-isolated subagent). `workit doctor` warns (`session_hook`) when a Workit workspace
