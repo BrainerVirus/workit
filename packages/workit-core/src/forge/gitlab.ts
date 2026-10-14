@@ -327,6 +327,7 @@ export function createGitLabForge(options: {
       const matches = list.data.filter(
         (mr) =>
           mr.source_branch === head &&
+          (!match.base || mr.target_branch === undefined || mr.target_branch === match.base) &&
           ((match.projectId !== null && mr.source_project_id === match.projectId) ||
             (match.sha !== null && mr.sha === match.sha)),
       );

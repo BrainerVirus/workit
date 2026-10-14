@@ -304,7 +304,7 @@ async function create(argv: string[], io: Io): Promise<number> {
     ...(data.releaseTrack?.warnings ?? []).map((warning) => `note: ${warning}`),
     ...(route?.mergeBack
       ? [
-          `merge back: git-flow: once ${data.branch} lands on ${route.target}, bring ${route.target} into ${route.mergeBack} (a PR from ${route.target} to ${route.mergeBack}, or merge locally and run workit git push --release ${route.mergeBack}); tag the release and push it with workit git push --release <tag>`,
+          `merge back: git-flow: once ${data.branch} lands on ${route.target}, bring ${route.target} into ${route.mergeBack} (workit pr create --base ${route.mergeBack} opens the back-merge PR from ${data.branch}, or merge locally and run workit git push --release ${route.mergeBack}); tag the release and push it with workit git push --release <tag>`,
         ]
       : []),
     `head ${data.head.slice(0, 12)} verified on the forge`,

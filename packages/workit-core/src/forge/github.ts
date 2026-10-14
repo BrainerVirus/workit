@@ -27,7 +27,7 @@ const CONTEXTS = `contexts(first: 100, after: $contexts) { pageInfo { hasNextPag
 
 export const PR_STATUS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $threads: String, $contexts: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PR_FIELDS} ${THREADS} commits(last: 1) { nodes { commit { oid statusCheckRollup { state ${CONTEXTS} } } } } } } }`;
 
-export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number url state headRefName headRefOid headRepositoryOwner { login } } } } }`;
+export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number url state baseRefName headRefName headRefOid headRepositoryOwner { login } } } } }`;
 
 const READY_MUTATION = `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
 const DRAFT_MUTATION = `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
@@ -351,6 +351,7 @@ export function createGitHubForge(options: {
               number: number;
               url: string;
               state: string;
+              baseRefName?: string;
               headRefName: string;
               headRefOid: string | null;
               headRepositoryOwner: { login: string } | null;
@@ -365,6 +366,7 @@ export function createGitHubForge(options: {
       const ours = nodes.filter(
         (node) =>
           node.headRefName === head &&
+          (!match.base || node.baseRefName === undefined || node.baseRefName === match.base) &&
           ((match.owner !== null &&
             node.headRepositoryOwner?.login.toLowerCase() === match.owner.toLowerCase()) ||
             (match.sha !== null && node.headRefOid === match.sha)),

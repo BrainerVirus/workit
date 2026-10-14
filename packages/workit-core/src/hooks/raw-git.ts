@@ -24,7 +24,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { releaseBranch, resolveBranchPolicyFor } from "../core/branch";
+import { releaseBranch, resolveBranchPolicyFor, validateBranchNameFor } from "../core/branch";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
 import { pushRemoteName } from "../git/rev";
 import { appendHookObserved, readLedger } from "../ledger";
@@ -230,6 +230,12 @@ export type RawAction =
       blindForce: boolean;
       /** The remote named on the command line; null pushes to the default one. */
       remote: string | null;
+      /** Tags named as `refs/tags/<t>` destinations (bare names are told apart later). */
+      tags?: string[];
+      /** `--tags` or `--follow-tags`: every (annotated) tag goes along. */
+      allTags?: true;
+      /** `--delete`/`-d`: the refspecs are deleted, not pushed. */
+      deletes?: true;
     }
   | { kind: "merge"; forge: "gh" | "glab" }
   | { kind: "pr-create"; forge: "gh" | "glab" }
@@ -242,6 +248,8 @@ const pushAction = (args: string[]): RawAction | null => {
   let force = false;
   let lease = false;
   let wholesale = false;
+  let allTags = false;
+  let deletes = false;
   let remote: string | null = null;
   const positionals: string[] = [];
   for (let index = 1; index < args.length; index++) {
@@ -256,13 +264,18 @@ const pushAction = (args: string[]): RawAction | null => {
     else if (PUSH_VALUE_OPTIONS.has(arg)) index++;
     else if (arg === "--force" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(arg)) force = true;
     else if (arg.startsWith("--force-with-lease") || arg === "--force-if-includes") lease = true;
-    else if (["--all", "--mirror", "--branches", "--tags"].includes(arg)) wholesale = true;
+    else if (arg === "--delete" || arg === "-d") deletes = true;
+    else if (arg === "--tags" || arg === "--follow-tags") {
+      allTags = true;
+      wholesale ||= arg === "--tags";
+    } else if (["--all", "--mirror", "--branches"].includes(arg)) wholesale = true;
     else if (!arg.startsWith("-")) positionals.push(arg);
   }
   // `--repo` names the remote; positionals are then all refspecs.
   const specs = remote === null ? positionals.slice(1) : positionals;
   remote ??= positionals[0] ?? null;
   const targets: Array<string | null> = [];
+  const tags: string[] = [];
   for (const raw of specs) {
     if (raw.startsWith("+")) force = true;
     const spec = raw.replace(/^\+/, "");
@@ -271,11 +284,20 @@ const pushAction = (args: string[]): RawAction | null => {
     if (!destination) continue;
     if (destination === "HEAD") targets.push(null);
     else if (destination.startsWith("refs/heads/")) targets.push(destination.slice(11));
+    else if (destination.startsWith("refs/tags/")) tags.push(destination.slice(10));
     else if (!destination.startsWith("refs/")) targets.push(destination);
   }
   // No refspec pushes the current branch (push.default simple/current).
   if (specs.length === 0 && !wholesale) targets.push(null);
-  return { kind: "push", targets, blindForce: force && !lease, remote };
+  return {
+    kind: "push",
+    targets,
+    blindForce: force && !lease,
+    remote,
+    ...(tags.length ? { tags } : {}),
+    ...(allTags ? { allTags: true as const } : {}),
+    ...(deletes ? { deletes: true as const } : {}),
+  };
 };
 
 /** Options whose next word is their value (never an option or subcommand). */
@@ -442,6 +464,43 @@ const refusal = (action: RawAction, branch: string | null, dir?: string): string
   return `workit: raw ${quote("git push")}${action.kind === "push" && action.blindForce ? " --force" : ""} onto ${branch}, a protected branch or the default target, bypasses workit's protected-branch check. Push your feature branch with ${quote("workit git push")} (${quote("workit git push --force-with-lease")} to rewrite it) and land it with ${quote("workit pr merge")}.`;
 };
 
+/** A local tag of that name and no local branch: a bare refspec pushes the tag. */
+const isLocalTag = (repo: Repo, name: string): boolean => {
+  const has = (ref: string) =>
+    spawnSync("git", ["show-ref", "--verify", "--quiet", ref], {
+      cwd: repo.dir,
+      stdio: "ignore",
+      timeout: 5_000,
+    }).status === 0;
+  return !name.startsWith("-") && has(`refs/tags/${name}`) && !has(`refs/heads/${name}`);
+};
+
+/**
+ * A raw tag push (`git push origin v1.0`, `refs/tags/v1.0`, `--tags`,
+ * `--follow-tags`) skips the release grant: denied with the workit command.
+ */
+const tagRefusal = (action: Extract<RawAction, { kind: "push" }>, repo: Repo): string | null => {
+  const tags = [
+    ...(action.tags ?? []),
+    ...action.targets.filter((name): name is string => name !== null && isLocalTag(repo, name)),
+  ];
+  if (!tags.length && !action.allTags) return null;
+  const named = tags.length ? tags.join(" --release ") : "v<version>";
+  return `workit: raw ${quote(`git push${action.allTags ? " --tags" : ""}`)} of ${tags.length ? `tag ${tags.join(", ")}` : "tags"} bypasses the release grant. Push a release tag with ${quote(`workit git push --release ${named}`)} (v<version> tags only; a tag never moves), under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}).`;
+};
+
+/** A pushed branch name the workspace policy does not allow, with the closest allowed name. */
+const offPolicyPush = (action: Extract<RawAction, { kind: "push" }>, repo: Repo): string | null => {
+  for (const target of action.targets) {
+    const branch = target ?? repo.branch;
+    if (!branch || (target !== null && isLocalTag(repo, target))) continue;
+    const check = validateBranchNameFor(repo.dir, branch);
+    if (!check.ok && check.rule === "allowed_pattern")
+      return `workit: raw ${quote("git push")} onto ${branch}: ${check.error}`;
+  }
+  return null;
+};
+
 const nudgeFor = (action: RawAction, host: HookInput["host"], session: string): string | null => {
   switch (action.kind) {
     case "commit": {
@@ -554,12 +613,17 @@ export function rawGitPre(
     for (const { action, repo } of actionsIn(input.cwd, command, dialect)) {
       store ??= repo.location.dir;
       if (action.kind === "merge") return deny(refusal(action, null));
-      if (action.kind === "push")
+      if (action.kind === "push" && toPushRemote(repo, action.remote)) {
         for (const target of action.targets) {
           const branch = target ?? repo.branch;
-          if (branch && guardedBranch(repo.dir, branch) && toPushRemote(repo, action.remote))
+          if (branch && guardedBranch(repo.dir, branch))
             return deny(refusal(action, branch, repo.dir));
         }
+        const tagDeny = tagRefusal(action, repo);
+        if (tagDeny) return deny(tagDeny);
+        const nameDeny = action.deletes ? null : offPolicyPush(action, repo);
+        if (nameDeny) return deny(nameDeny);
+      }
       const nudge = nudgeFor(action, input.host, input.session.id);
       if (nudge && !nudges.has(nudgeKind(action))) nudges.set(nudgeKind(action), nudge);
     }

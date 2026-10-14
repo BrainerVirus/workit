@@ -87,6 +87,12 @@ test("grant show: a workspace without grants reports the D4 defaults", async () 
     source: "default",
     defaultEndpoint: "commit",
   });
+  // The release grant is enforced: the text names the verb it gates.
+  const text = (await run(["show"], headless, {}, false)).text();
+  expect(text).toContain(
+    "release false     default (workit git push --release: git-flow main, develop and v* tags)",
+  );
+  expect(text).not.toContain("not enforced");
   const named = await run(["show", "w"], headless);
   expect(named.json().data.workspaces).toEqual([
     expect.objectContaining({ name: "w", configured: [], grants: expect.any(Object) }),

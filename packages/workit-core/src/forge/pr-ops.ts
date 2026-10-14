@@ -211,6 +211,7 @@ async function verifiedHead(
   sha: string,
   first: PrRef,
   sleep: Sleep,
+  base: string,
 ): Promise<ForgeResult<PrRef>> {
   let ref = first;
   for (const delay of [0, ...VERIFY_DELAYS_MS]) {
@@ -220,6 +221,7 @@ async function verifiedHead(
       owner: resolved.headRepo.split("/")[0] ?? null,
       projectId: resolved.headProjectId,
       sha,
+      base,
     });
     if (!found.ok) return found;
     if (found.data && found.data.number === first.number) ref = found.data;
@@ -258,10 +260,13 @@ export async function createPullRequest(
       "pass --base <branch>",
     );
 
+  // Head AND base: a release branch with an open PR into main still gets
+  // its back-merge PR into develop.
   const existing = resolved.forge.findPr(branch, {
     owner: resolved.headRepo.split("/")[0] ?? null,
     projectId: resolved.headProjectId,
     sha,
+    base: input.base,
   });
   if (!existing.ok) return existing;
   let created = false;
@@ -281,7 +286,7 @@ export async function createPullRequest(
     ref = made.data;
     created = true;
   }
-  const verified = await verifiedHead(resolved, branch, sha, ref, sleep);
+  const verified = await verifiedHead(resolved, branch, sha, ref, sleep, input.base);
   if (!verified.ok) return verified;
   const row = appendObserved(cwd, {
     type: "pr.created",

@@ -41,7 +41,9 @@ take precedence over all of this.
 
 `pr create` on a release or hotfix branch reminds you to merge back into
 develop; `pr merge` of one into main reports `merge back` (`mergeBack` in
-`--json`). Workit does not open the back-merge PR itself.
+`--json`). `pr create --base develop` on the same release or hotfix branch
+opens the back-merge PR: an open PR is reused only when both its head and its
+base match.
 
 A name with a prefix the policy does not allow is refused with the allowed
 kinds and the closest name (`fix/` → `bugfix/`, `chore/`, `docs/`, `refactor/`
@@ -63,8 +65,13 @@ release or hotfix needs main, develop and the release tag on the remote, so
 
 It needs the `release` grant (off by default; `workit grant set <workspace>
 release=true` from your own terminal) and the `push` grant with its account
-check. A raw `git push` onto main or develop is denied with this command in
-the message.
+check. Inside a Workit workspace, every host's pre-shell hook denies a raw
+`git push` onto main or develop, and a raw tag push (`git push origin v1.0`,
+`refs/tags/…`, `--tags`, `--follow-tags`), naming this command and the grant.
+It also denies a raw push onto a branch name the policy does not allow
+(`HEAD:chore/x`, `HEAD:refs/heads/chore/x`, `-u origin chore/x`, or the
+current branch), with the allowed kinds and the closest name; deleting such a
+branch (`--delete`) is not refused.
 
 - `git branch` and `git commit` apply the workspace branch and commit policy,
   never commit to a protected branch, and never sweep in changes you did not

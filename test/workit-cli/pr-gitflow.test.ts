@@ -66,7 +66,7 @@ const routes = (): Record<string, Reply> => ({
 });
 
 /** feature/x pushed; a local develop makes git-flow's integration branch exist. */
-const setup = (preset: "gitflow" | "github-flow") => {
+const setup = (preset: "gitflow" | "github-flow", extra: Record<string, Reply> = {}) => {
   writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ branchPolicy: { preset } }));
   const repo = makeForgeRepo("github");
   repos.push(repo);
@@ -84,7 +84,7 @@ const setup = (preset: "gitflow" | "github-flow") => {
       ],
     }),
   );
-  const runner = replayRunner(routes(), repo.subs);
+  const runner = replayRunner({ ...routes(), ...extra }, repo.subs);
   Object.assign(forgeDeps, { runner, sleep: async () => {}, now: () => 0 });
   return { repo, runner };
 };
@@ -153,4 +153,41 @@ test("Given git-flow, When a release PR names develop explicitly, Then the back-
   );
   expect(created.code, created.stdout + created.stderr).toBe(0);
   expect(created.json().data.base).toBe("develop");
+});
+
+test("Given a release branch with an open PR into main, When pr create --base develop runs, Then it opens the back-merge PR instead of reusing the main one", async () => {
+  const openIntoMain = JSON.stringify({
+    data: {
+      repository: {
+        pullRequests: {
+          nodes: [
+            {
+              number: 12,
+              url: "https://github.com/o/r/pull/12",
+              state: "OPEN",
+              baseRefName: "main",
+              headRefName: "release/4.1.0",
+              headRepositoryOwner: { login: "o" },
+              headRefOid: "{{HEAD}}",
+            },
+          ],
+        },
+      },
+    },
+  });
+  const { repo, runner } = setup("gitflow", { "graphql find": openIntoMain });
+  onBranch(repo, "release/4.1.0");
+  // Into main: the open PR is reused, nothing is posted.
+  const reused = await run(["pr", "create", "--title", "chore: release", "--json"], repo.cwd);
+  expect(reused.code, reused.stdout + reused.stderr).toBe(0);
+  expect(reused.json().data).toMatchObject({ number: 12, base: "main", created: false });
+  expect(posted(runner.calls)).toBeUndefined();
+  // Into develop: a new PR, not #12.
+  const backMerge = await run(
+    ["pr", "create", "--base", "develop", "--title", "chore: back-merge", "--json"],
+    repo.cwd,
+  );
+  expect(backMerge.code, backMerge.stdout + backMerge.stderr).toBe(0);
+  expect(backMerge.json().data).toMatchObject({ number: 13, base: "develop", created: true });
+  expect(posted(runner.calls)?.vars).toMatchObject({ base: "develop" });
 });

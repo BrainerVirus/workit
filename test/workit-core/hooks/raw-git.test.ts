@@ -167,7 +167,11 @@ test("classification: chains, cd, -C, env prefixes, quoting and bash -c find the
     ["git push --repo=origin HEAD:main", [{ dir: null, action: push(["main"], "origin") }]],
     ["git push --repo origin main", [{ dir: null, action: push(["main"], "origin") }]],
     ["git push", [{ dir: null, action: push([null], null) }]],
-    ["git push origin --tags", [{ dir: null, action: push([], "origin") }]],
+    ["git push origin --tags", [{ dir: null, action: { ...push([], "origin"), allTags: true } }]],
+    [
+      "git push origin HEAD:refs/tags/v1 --delete",
+      [{ dir: null, action: { ...push([], "origin"), tags: ["v1"], deletes: true } }],
+    ],
     ["echo git commit", []],
     ["grep -r 'git push' .", []],
     // Help and dry runs change nothing.
@@ -462,6 +466,63 @@ test("each host renders the deny on its own channel and the nudge without granti
         ctx as never,
       ),
     ).toBeUndefined();
+  });
+});
+
+test("G a Workit workspace, W a raw push onto an off-policy name or of a tag, T every host denies it with the closest name or the release command", async () => {
+  await withProtectedMain(() => {
+    const root = repo({ branch: "feature/x" });
+    git(root, "tag", "v1.0");
+    const denials = (command: string): string[] => {
+      const reasons: string[] = [];
+      const claudeReason = claudeOut(root, command)?.permissionDecisionReason;
+      reasons.push(String(claudeReason));
+      const codexOut = dispatchHook(
+        codexAdapter,
+        fixture("codex", "pre-tool-use-bash", root, { tool_input: { command } }),
+        {},
+      ).json as { hookSpecificOutput?: { permissionDecisionReason?: string } };
+      reasons.push(String(codexOut.hookSpecificOutput?.permissionDecisionReason));
+      const cursorOut = dispatchHook(
+        cursorAdapter,
+        fixture("cursor", "before-shell-execution", root, { command }),
+      );
+      expect(cursorOut.exitCode, `cursor ${command}`).toBe(2);
+      reasons.push(String((cursorOut.json as { agent_message?: string }).agent_message));
+      const event = { sessionID: "ses_1", action: "shell", resources: [command], effect: "allow" };
+      evaluateShellPermission(root, event);
+      expect(event.effect, `opencode ${command}`).toBe("deny");
+      reasons.push(String((event as { message?: string }).message));
+      const pi = enforceToolPolicy(
+        { toolName: "bash", input: { command } } as never,
+        {
+          cwd: root,
+          isProjectTrusted: () => true,
+          sessionManager: { getSessionId: () => "pi-1" },
+        } as never,
+      ) as { reason?: string } | undefined;
+      reasons.push(String(pi?.reason));
+      return reasons;
+    };
+    for (const command of [
+      "git push origin HEAD:refs/heads/chore/x",
+      "git push origin HEAD:chore/x",
+      "git push -u origin chore/x",
+    ])
+      for (const reason of denials(command)) {
+        expect(reason, command).toContain('allowed_pattern: branch "chore/x"');
+        expect(reason, command).toContain('use "feature/x"');
+      }
+    for (const command of ["git push origin v1.0", "git push origin refs/tags/v1.0"])
+      for (const reason of denials(command))
+        expect(reason, command).toContain("workit git push --release v1.0");
+    for (const reason of denials("git push --tags"))
+      expect(reason).toContain("workit git push --release v<version>");
+    // Deleting an off-policy branch is not a new name; a compliant push still runs.
+    expect(
+      claudeOut(root, "git push origin --delete chore/old")?.permissionDecision,
+    ).toBeUndefined();
+    expect(claudeOut(root, "git push -u origin feature/x")?.permissionDecision).toBeUndefined();
   });
 });
 

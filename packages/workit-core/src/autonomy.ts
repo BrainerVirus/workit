@@ -13,7 +13,9 @@
 //   agent from raising its own ceiling by accident, not an adversarial one —
 //   a process that drives a pseudo-terminal or edits the file directly can
 //   still defeat it; the host's permission prompt is the hard boundary.
-// - `release` has no consuming verb yet; it is reserved, not enforced.
+// - `release` gates `workit git push --release`: pushing the git-flow
+//   production and develop branches and `v*` tags to finish a release or
+//   hotfix (fast-forward only, a tag never moves). It needs `push` too.
 // - Defaults (D4) when a kind is absent: push, pr and rerun are allowed;
 //   merge and release need an explicit grant. The default ceiling is a stack
 //   opened, CI green and independently verified: "verified, ready".
