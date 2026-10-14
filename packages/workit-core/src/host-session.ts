@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveStateDir } from "./core/logger";
 import { resolveStore } from "./store/paths";
 
 export type HostSession = { host: string | null; session: string | null };
@@ -80,7 +81,7 @@ export function realHostSession(env: NodeJS.ProcessEnv): RealSession {
 }
 
 // Ids a SubagentStart hook gave a lead's subagents (`<lead>:<agent id>`): one
-// empty file per id under `<store>/hooks/issued/<lead hash>/`, so concurrent
+// empty file per id under `<state>/issued/<lead hash>/`, so concurrent
 // hooks never lose each other's write, bounded per lead.
 const ISSUED_PER_LEAD = 64;
 
@@ -94,22 +95,42 @@ export const ISSUED_SESSIONS_MARKER = "workit-issued-sessions/1";
 const hash = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 32);
 
-const issuedRoot = (cwd: string): string | null => {
-  const location = resolveStore(cwd);
-  return location instanceof Error ? null : path.join(location.dir, "hooks", "issued");
-};
+// Issued ids live in the per-user state dir, keyed by lead session: a lead
+// started in one repository delegates review of others, and the verifier
+// records its verdict from whichever repository it reviews (#294).
+const userIssuedRoot = (): string => path.join(resolveStateDir(), "issued");
 
-const issuedDir = (cwd: string, lead: string): string | null => {
-  const root = issuedRoot(cwd);
-  return root === null ? null : path.join(root, hash(lead));
-};
+/**
+ * Hooks of 8.10-8.12 wrote issued ids into `<store>/hooks/issued` of the
+ * lead's repository. Move any such ids into the per-user registry and remove
+ * the old directory, once per repository. Fails open.
+ */
+function migrateRepoIssued(cwd: string | undefined): void {
+  if (cwd === undefined) return;
+  try {
+    const location = resolveStore(cwd);
+    if (location instanceof Error) return;
+    const old = path.join(location.dir, "hooks", "issued");
+    if (!fs.existsSync(old)) return;
+    for (const lead of fs.readdirSync(old)) {
+      const from = path.join(old, lead);
+      const to = path.join(userIssuedRoot(), lead);
+      fs.mkdirSync(to, { recursive: true });
+      for (const id of fs.readdirSync(from))
+        fs.copyFileSync(path.join(from, id), path.join(to, id));
+    }
+    fs.rmSync(old, { recursive: true, force: true });
+  } catch {
+    // Fail open: an id left behind is refused later, never a broken hook.
+  }
+}
 
-/** No hook in this workspace has ever recorded an issued id (an older plugin hook, most likely). */
+/** No hook has ever recorded an issued id (an older plugin hook, most likely). */
 const noIssuedRecord = (cwd: string | undefined): boolean => {
   if (cwd === undefined) return false;
   try {
-    const root = issuedRoot(cwd);
-    return root !== null && !fs.existsSync(root);
+    migrateRepoIssued(cwd);
+    return !fs.existsSync(userIssuedRoot());
   } catch {
     return false;
   }
@@ -124,8 +145,8 @@ const PLUGIN_UPDATE: Readonly<Record<string, string>> = {
 /** Remember that a SubagentStart hook issued `issued` to a subagent of `lead`. Fails open. */
 export function recordIssuedSession(cwd: string, lead: string, issued: string): void {
   try {
-    const dir = issuedDir(cwd, lead);
-    if (!dir) return;
+    migrateRepoIssued(cwd);
+    const dir = path.join(userIssuedRoot(), hash(lead));
     fs.mkdirSync(dir, { recursive: true });
     const own = hash(issued);
     fs.writeFileSync(path.join(dir, own), ISSUED_SESSIONS_MARKER);
@@ -144,10 +165,9 @@ export function recordIssuedSession(cwd: string, lead: string, issued: string): 
 }
 
 const wasIssued = (cwd: string | undefined, lead: string, claimed: string): boolean => {
-  if (cwd === undefined) return false;
+  migrateRepoIssued(cwd);
   try {
-    const dir = issuedDir(cwd, lead);
-    return dir !== null && fs.existsSync(path.join(dir, hash(claimed)));
+    return fs.existsSync(path.join(userIssuedRoot(), hash(lead), hash(claimed)));
   } catch {
     return false;
   }
@@ -222,7 +242,7 @@ export function sessionClaimRefusal(
   // most likely predates this CLI (CLI and plugin update separately).
   if (issuedClaim && noIssuedRecord(cwd) && host !== null && PLUGIN_UPDATE[host])
     return {
-      error: `${error}; no SubagentStart hook in this workspace has recorded an issued id`,
+      error: `${error}; no SubagentStart hook on this machine has recorded an issued id`,
       unblock: `the workit plugin hook is probably older than this CLI and does not record the ids it issues: update the plugin (${PLUGIN_UPDATE[host]}), then relaunch the verifier so its SubagentStart runs the new hook (workit doctor checks this as hook_issued_sessions)`,
     };
   const ownChildShell = host !== null && OWN_CHILD_SHELL.has(host);
