@@ -836,7 +836,7 @@ const realRoot = (root: string): string => {
   }
 };
 
-export function adapterRoot(
+function adapterRoot(
   platform: Platform,
   res: Pick<ResolvedApply, "home" | "cwd" | "env" | "dev">,
   preferInstalledAdapter = false,

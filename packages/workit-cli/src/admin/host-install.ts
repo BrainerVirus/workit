@@ -204,7 +204,7 @@ const compareVersions = (a: string, b: string): number => {
 };
 
 /** OpenCode's own cache root (`$XDG_CACHE_HOME/opencode`, default `~/.cache/opencode`). */
-export const openCodeCacheDir = (home: string, env: NodeJS.ProcessEnv = process.env): string =>
+const openCodeCacheDir = (home: string, env: NodeJS.ProcessEnv = process.env): string =>
   path.join(env.XDG_CACHE_HOME || path.join(home, ".cache"), "opencode");
 
 const subdirs = (dir: string): string[] => {
