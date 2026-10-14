@@ -14,7 +14,7 @@
 //   a process that drives a pseudo-terminal or edits the file directly can
 //   still defeat it; the host's permission prompt is the hard boundary.
 // - `release` gates `workit git push --release`: pushing the git-flow
-//   production and develop branches (fast-forward only) and `v*` tags whose
+//   production and develop branches (fast-forward only) and release tags (`v*` or git-flow's prefix) whose
 //   commit already landed (a tag never moves). Outside git-flow it pushes
 //   tags only. It needs `push` too.
 // - Defaults (D4) when a kind is absent: push, pr and rerun are allowed;

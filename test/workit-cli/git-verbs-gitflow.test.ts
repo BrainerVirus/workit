@@ -244,6 +244,41 @@ test("Given the release grant, When --release names a feature branch, a non-v ta
   expect(rows(repo.cwd, "release.pushed")).toEqual([]);
 });
 
+test("Given git-flow configured with no tag prefix (gitflow.prefix.versiontag empty), When --release names the bare 4.2.0 tag, Then it lands; a non-version tag is still refused", async () => {
+  const repo = flowRepo(GITFLOW);
+  workspace(repo, { autonomy: { release: true } });
+  repo.git("config", "gitflow.prefix.versiontag", "");
+  const head = finishRelease(repo, "4.2.0");
+  const pushed = await run(
+    ["git", "push", "--release", "main", "--release", "4.2.0", "--json"],
+    repo.cwd,
+  );
+  expect(pushed.code, pushed.stdout + pushed.stderr).toBe(0);
+  expect(pushed.json().data.refs).toMatchObject([
+    { kind: "branch", name: "main", sha: head, pushed: true },
+    { kind: "tag", name: "4.2.0", ref: "refs/tags/4.2.0", sha: head, pushed: true },
+  ]);
+  repo.git("tag", "build-7");
+  const other = await run(["git", "push", "--release", "build-7", "--json"], repo.cwd);
+  expect(other.json().error).toContain("is not a release tag (<version>");
+  // A v tag is not this repository's convention once the prefix is empty.
+  repo.git("tag", "v4.2.1");
+  const v = await run(["git", "push", "--release", "v4.2.1", "--json"], repo.cwd);
+  expect(v.json().error).toContain("is not a release tag");
+});
+
+test("Given git-flow with a custom tag prefix (release-), When --release names release-1.0.0, Then it lands", async () => {
+  const repo = flowRepo(GITFLOW);
+  workspace(repo, { autonomy: { release: true } });
+  repo.git("config", "gitflow.prefix.versiontag", "release-");
+  finishRelease(repo, "release-1.0.0");
+  const pushed = await run(
+    ["git", "push", "--release", "main", "--release", "release-1.0.0", "--json"],
+    repo.cwd,
+  );
+  expect(pushed.code, pushed.stdout + pushed.stderr).toBe(0);
+});
+
 // ---------------------------------------------------------------------------
 // Every behaviour per preset: git-flow, github-flow and custom (task/* and
 // release/* allowed, main and stable protected, develop the default target).
