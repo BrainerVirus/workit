@@ -1,7 +1,7 @@
 ---
 name: verifier
 description: Independently verifies a workit candidate (branch, commit or PR) on its real surface and records a SHA-keyed verdict in the ledger. Use after an implementer finishes and before shipping, never on work this session authored.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Skill
 disallowedTools: Write, Edit, NotebookEdit
 ---
 

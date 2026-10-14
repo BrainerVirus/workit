@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Fresh-context reviewer for a workit branch or PR - spec fidelity and standards as separate axes, test quality and blast radius - that records findings and a non-author verdict. Use for independent review of a diff, branch or PR.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Skill
 disallowedTools: Write, Edit, NotebookEdit
 ---
 

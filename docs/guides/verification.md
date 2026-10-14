@@ -164,10 +164,39 @@ independent pass, but `ledger check` shows it as a warning.
 **Integrity.** Each row the CLI writes carries `prevHash`/`rowHash`, a sha256
 chain over the file. `workit ledger verify-integrity` lists rows outside it
 (`unsigned`: appended by hand; `hash_mismatch`: edited; `broken_link`: a row
-before it was edited or removed) as `unverified_rows`, and `ledger check`
-warns about any on the branch. Neither blocks: the chain catches mistakes, it
-is not a defense against someone forging rows. Rows written before the chain
-existed read as legacy.
+before it was edited or removed; `duplicate_id`: a copy of an earlier row) as
+`unverified_rows`, and `ledger check` warns about any on the branch. Rows
+written before the chain existed read as legacy.
+
+Appends are never refused, but every verdict gate (`pr merge`, `stack land`,
+`pr status`, `ledger verdict`, the stop hook, fanout checks) reads the chain
+and never accepts these verdicts as independent:
+
+- a verdict row outside the chain, legacy rows included: reason `unsigned`,
+  `hash_mismatch`, `broken_link` or `duplicate_id`;
+- a `--session` verdict recorded on a host (Claude Code, Codex, OpenCode, Pi)
+  whose id no SubagentStart hook issued, or a Claude Code `<lead>:<x>` id
+  from the environment that none issued: reason `unissued_session`. This
+  catches a hand-minted id that an older CLI recorded without checking it.
+  `--session` from CI or a plain terminal, `--as`, and a host's own session
+  stay accepted.
+
+Such a row also cannot retire another: its `--supersedes` is ignored. An
+unverified author row or `stack.restacked` row neither discounts an
+independent failure nor carries a pass onto new code. The chain is a keyless
+sha256: it stops a row appended or edited by hand, not someone who
+recomputes the hashes or deletes the newest rows.
+
+The ledger file is created `0600`; an older, wider one is tightened on the
+next append (POSIX). On OpenCode, Pi and the MCP server, which run Workit in
+their own process, a held ledger lock (network filesystems only) is waited
+on for at most 250 ms and returns `busy`; the CLI waits up to 5 s.
+
+**Merges.** `workit pr merge` records `pr.merged` (`verified: false`) as soon
+as the forge accepts the merge, then confirms it with `pr.merge.verified`. If
+the forge cannot be read back, the merge fails as `merge_unverified` naming
+that row, and `pr status`, the stop hook and `verify-delivery merged` still
+see the merge.
 
 ## Task context across branches
 
