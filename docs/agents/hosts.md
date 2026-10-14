@@ -134,11 +134,12 @@ use yet), L = host limit (the host has no mechanism for it).
 
 Live-session guard limits:
 
-- **Windows, every host:** there's no process ancestry, so a hook process's
-  owner is its direct parent. A launcher that exits with the hook (Cursor's
-  `launch.mjs`, `cmd`) reads as gone, and the guard then fails open (L).
-- **Markers without a pid:** they last until their 15-minute heartbeat, and a
-  session of the same host as the owner is never refused (L).
+- **Windows, every host:** there's no process ancestry, so markers carry no
+  owner pid. They last until their 15-minute heartbeat, and a session of the
+  same host as the owner is never refused, so on Windows the guard only
+  separates different hosts (L).
+- **Any marker whose pid or start time is unknown:** same rule. A session of
+  the same host family is never refused; the pid only decides liveness.
 - **Codex:** a shell command is judged against the session's `cwd` from the
   hook payload. A command that sets only its own `workdir` (no `cd`) is judged
   against the session cwd, not that workdir. The installed codex binary names a

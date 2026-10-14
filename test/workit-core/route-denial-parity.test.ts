@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
@@ -32,19 +32,6 @@ beforeAll(() => {
         allowed: ["feature/*"],
         protected: ["main"],
       },
-    }),
-  );
-  // Every host runs in one checkout here: the live-session guard (#274) would
-  // refuse the second host's session, which is not what these tests measure.
-  const temp = [tmpdir(), realpathSync.native(tmpdir())];
-  writeFileSync(
-    path.join(configDir, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [...new Set(temp)].map((dir, index) => ({
-        name: `parity-${index}`,
-        glob: `${dir.replaceAll("\\", "/")}/workit-parity-*/**`,
-        liveSessionGuard: false,
-      })),
     }),
   );
 });
@@ -123,7 +110,9 @@ const codexDenies = (root: string, command: string): boolean => {
 const cursorDenies = (root: string, command: string): boolean => {
   const result = handleCursorHook({
     hook_event_name: "beforeShellExecution",
-    conversation_id: "conversation-1",
+    // The session the other hook-process hosts use: the live-session guard
+    // (#274) sees one owner in this shared checkout, not a second session.
+    conversation_id: "session-1",
     workspace_roots: [root],
     cwd: root,
     command,

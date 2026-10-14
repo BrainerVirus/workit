@@ -118,9 +118,11 @@ export const hostPid = (transport: string): number | null => {
   if (transport !== "hook-process") return process.pid;
   const key = `${liveProbe.platform}\0${process.ppid}`;
   if (PIDS.has(key)) return PIDS.get(key) ?? null;
-  // Windows: no ancestry to walk, so the hook's own parent. A launcher that
-  // exits with the hook (a shell, Cursor's launch.mjs) then reads as gone,
-  // and the marker as expired: the guard fails open there.
+  // Windows: no ancestry to walk, so no owner pid at all.
+  if (liveProbe.platform === "win32") {
+    PIDS.set(key, null);
+    return null;
+  }
   let pid = process.ppid;
   for (let hop = 0; hop < 4; hop++) {
     const info = processInfo(pid);
@@ -259,7 +261,9 @@ export const sameOwner = (marker: LiveMarker, owner: LiveOwner, machine: string)
   if (sameLead(marker, owner)) return true;
   if (marker.machine !== machine) return false;
   const pid = owner.pid();
-  if (pid === null || marker.pid === null) return familyOf(marker.host) === familyOf(owner.host);
+  // Without a pid and its start time the process cannot be told apart.
+  if (pid === null || marker.pid === null || marker.pidStart === null)
+    return familyOf(marker.host) === familyOf(owner.host);
   return marker.pid === pid;
 };
 

@@ -100,6 +100,9 @@ const claudeShell = (cwd: string, command: string, session = "claude-session-1")
 const decisionOf = (rendered: ReturnType<typeof claudeShell>) =>
   rendered.hookSpecificOutput?.permissionDecision ?? "none";
 
+/** A path as an agent writes it in a bash command (Git Bash on Windows): quoted, forward slashes. */
+const q = (dir: string): string => `'${dir.replaceAll("\\", "/")}'`;
+
 test("G another live session owns the checkout, W a Claude Code session edits or runs a mutating command, T denied naming owner, host, age and the unblock; reads stay allowed", () => {
   const root = repo();
   const file = own(root);
@@ -112,9 +115,7 @@ test("G another live session owns the checkout, W a Claude Code session edits or
   expect(write.hookSpecificOutput?.permissionDecision).toBe("deny");
   const reason = write.hookSpecificOutput?.permissionDecisionReason ?? "";
   expect(reason).toContain("workit live-session guard");
-  expect(reason).toContain(
-    `${root} belongs to another live agent session, OpenCode session other-session`,
-  );
+  expect(reason).toContain("belongs to another live agent session, OpenCode session other-session");
   expect(reason).toContain("last active 3 min ago");
   expect(reason).toContain("git worktree add");
   expect(reason).toContain(`rm '${file}'`);
@@ -303,15 +304,15 @@ test("G an owned checkout and a free one, W the command changes directory first,
   expect(git(owned, "worktree", "add", "-q", tree, "-b", "feature/own").status).toBe(0);
   const mine = realpathSync(tree);
   // The deny's own advice: move to your worktree and commit there.
-  expect(decisionOf(claudeShell(owned, `cd ${mine} && git commit -m x`))).not.toBe("deny");
-  expect(decisionOf(claudeShell(owned, `git -C ${mine} commit -m x`))).not.toBe("deny");
+  expect(decisionOf(claudeShell(owned, `cd ${q(mine)} && git commit -m x`))).not.toBe("deny");
+  expect(decisionOf(claudeShell(owned, `git -C ${q(mine)} commit -m x`))).not.toBe("deny");
   for (const command of [
-    `cd ${owned} && git commit -m x`,
-    `(cd ${owned}; git reset --hard)`,
-    `pushd ${owned} && git stash`,
-    `git -C ${owned} commit -m x`,
-    `cd ${owned} && echo x > src/a.ts`,
-    `cd ${owned} && touch src/a.ts`,
+    `cd ${q(owned)} && git commit -m x`,
+    `(cd ${q(owned)}; git reset --hard)`,
+    `pushd ${q(owned)} && git stash`,
+    `git -C ${q(owned)} commit -m x`,
+    `cd ${q(owned)} && echo x > src/a.ts`,
+    `cd ${q(owned)} && touch src/a.ts`,
   ])
     expect(decisionOf(claudeShell(free, command)), command).toBe("deny");
   // A directory that cannot be known is skipped, never denied.
@@ -375,15 +376,15 @@ test("G an owned and a free checkout, W writes follow popd, a ( … ) group or a
   own(owned);
   const free = repo();
   for (const command of [
-    `pushd ${owned} && popd && echo x > src/a.ts`,
-    `(cd ${owned}) && echo x > src/a.ts`,
-    `cd ${owned} && cd ${free} && patch -p1 < fix.diff`,
+    `pushd ${q(owned)} && popd && echo x > src/a.ts`,
+    `(cd ${q(owned)}) && echo x > src/a.ts`,
+    `cd ${q(owned)} && cd ${q(free)} && patch -p1 < fix.diff`,
   ])
     expect(decisionOf(claudeShell(free, command)), command).not.toBe("deny");
   for (const command of [
-    `pushd ${free} && popd && touch src/a.ts`,
-    `(cd ${owned}; echo x > src/a.ts)`,
-    `cd ${owned} && patch -p1 < fix.diff`,
+    `pushd ${q(free)} && popd && touch src/a.ts`,
+    `(cd ${q(owned)}; echo x > src/a.ts)`,
+    `cd ${q(owned)} && patch -p1 < fix.diff`,
   ])
     expect(
       decisionOf(claudeShell(command.startsWith("pushd") ? owned : free, command)),

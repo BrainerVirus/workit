@@ -203,7 +203,7 @@ test("G a live foreign marker, W another session claims, T the marker is untouch
   const root = checkout();
   const file = seed(root, { heartbeatAt: new Date(Date.now() - 60_000).toISOString() });
   const before = readFileSync(file, "utf8");
-  claimLiveSession(path.join(root, "a.ts"), owner("mine", 1));
+  claimLiveSession(path.join(root, "a.ts"), owner("mine", 1, "cursor"));
   expect(readFileSync(file, "utf8")).toBe(before);
 
   const fresh = checkout();
@@ -226,12 +226,33 @@ test("G a checkout reached through a symlink, W the marker is seeded under one s
   symlinkSync(root, link, process.platform === "win32" ? "junction" : "dir");
   expect(markerFile(link)).toBe(markerFile(root));
   seed(link, {});
-  expect(liveConflict(path.join(root, "x"), owner("mine", 1))?.marker.session).toBe("foreign");
+  expect(liveConflict(path.join(root, "x"), owner("mine", 1, "cursor"))?.marker.session).toBe(
+    "foreign",
+  );
 });
 
-test("checkoutKey: on Windows one lower-cased, backslashed spelling", () => {
-  const key = checkoutKey("/Tmp/Some/Repo-Not-There", "win32");
-  expect(key).toBe(key.toLowerCase());
-  expect(key).not.toContain("/");
-  expect(checkoutKey("/Tmp/Some/Repo-Not-There", "linux")).toContain("/Tmp/Some/Repo-Not-There");
+test("checkoutKey: a missing path keeps its resolved spelling; on Windows lower-cased with backslashes", () => {
+  const missing = path.join(os.tmpdir(), "Some", "Repo-Not-There");
+  const resolved = path.resolve(missing);
+  expect(checkoutKey(missing, "linux")).toBe(resolved);
+  expect(checkoutKey(missing, "win32")).toBe(resolved.replaceAll("/", "\\").toLowerCase());
+});
+
+test("G Windows (no host pid), W a lead's Cursor marker with a live pid of unknown start, T its subagent may write and a Claude Code session may not", () => {
+  liveProbe.platform = "win32";
+  const root = checkout();
+  seed(root, { host: "cursor", session: "conv-lead", leads: ["conv-lead"], pidStart: null });
+  const subagent = liveOwner(
+    { host: "cursor", session: { id: "conv-sub", parentId: null } },
+    "hook-process",
+    {},
+  );
+  expect(subagent?.pid()).toBeNull();
+  expect(liveConflict(path.join(root, "x"), subagent as LiveOwner)).toBeNull();
+  const claude = liveOwner(
+    { host: "claude_code", session: { id: "claude-1", parentId: null } },
+    "hook-process",
+    {},
+  );
+  expect(liveConflict(path.join(root, "x"), claude as LiveOwner)?.marker.session).toBe("conv-lead");
 });

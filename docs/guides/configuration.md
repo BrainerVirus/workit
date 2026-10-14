@@ -172,14 +172,12 @@ and Codex use `PreToolUse`, Cursor uses `preToolUse` and
 - **Cursor** does not put the parent conversation on a subagent's tool
   events, so the guard recognizes that subagent by the Cursor process it
   runs in, not by its id.
-- **Windows** has no process ancestry to read, so the owner of a hook
-  process is the hook's own parent. Claude Code starts its hook directly, so
-  its process is recorded. A launcher that exits with the hook (Cursor's
-  `launch.mjs`, a shell) reads as gone, so that marker counts as expired and
-  the guard lets the write through. A marker with no pid at all lasts until
-  its heartbeat expires, and then any session of the same host as the owner
-  is allowed: the guard cannot tell that host's subagents, or a session after
-  `/clear`, from another window.
+- **Windows** has no process ancestry to read, so a marker records no owner
+  process. It lasts until its heartbeat expires, and any session of the same
+  host as the owner is allowed, because the guard cannot tell that host's
+  subagents, or a session after `/clear`, from another window. On Windows the
+  guard therefore only separates different hosts. The same holds anywhere a
+  marker's process start time cannot be read.
 - **Codex** shell commands are judged in the session's directory. If a
   command carries its own `workdir` and does no `cd`, the guard still judges
   it against the session directory; that per-command `workdir` is not read.
