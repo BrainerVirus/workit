@@ -1135,18 +1135,17 @@ export type ReleaseRef = {
   ref: string;
   /** The commit it points at (a tag peeled). */
   sha: string;
+  /** A tag's line production branch: the tag's commit must be on it. */
+  production?: string | null;
 };
 
 export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & {
   refs: ReleaseRef[];
-  /** The branch a pushed tag's commit must already be on (or a branch in this push). */
+  /** The workspace's production branch (git-flow production, else the default target). */
   production: string | null;
-  /** Release tracks' production branches, which a track's tag may be on instead. */
-  trackProductions: string[];
 };
 
 /**
-<<<<<<< HEAD
  * One release line: the branches a release or hotfix finishes onto. The
  * workspace's own (git-flow production and develop, else the trunk) or a
  * release track's.
@@ -1228,11 +1227,17 @@ export function releaseLinesOf(cwd: string): ReleaseLine[] {
   return lines;
 }
 
-/** A release tag: a line's prefix and a digit (`v4.1.0`, `1.4.0` with an empty prefix, `nun/v2`). */
-const isReleaseTag = (tag: string, lines: readonly ReleaseLine[]): boolean =>
-  lines.some(
-    (line) => tag.startsWith(line.tagPrefix) && /^\d/u.test(tag.slice(line.tagPrefix.length)),
-  );
+/**
+ * The line a release tag belongs to: its prefix and a digit (`v4.1.0`,
+ * `1.4.0` with an empty prefix, `nun/v2`); the longest matching prefix wins.
+ * Null for any other tag.
+ */
+const lineOfTag = (tag: string, lines: readonly ReleaseLine[]): ReleaseLine | null =>
+  lines
+    .filter(
+      (line) => tag.startsWith(line.tagPrefix) && /^\d/u.test(tag.slice(line.tagPrefix.length)),
+    )
+    .toSorted((a, b) => b.tagPrefix.length - a.tagPrefix.length)[0] ?? null;
 
 /**
  * What `workit git push --release` may push: the git-flow production and
@@ -1276,13 +1281,20 @@ export function releasePushPreflight(
         `workit git push --release refs/heads/${raw}  # or refs/tags/${raw}`,
       );
     if (tag) {
-      if (!isReleaseTag(tagName, lines))
+      const line = lineOfTag(tagName, lines);
+      if (!line)
         return failure(
           "blocked",
           `release_push_refused: tag ${tagName} is not a release tag (${tagShape})`,
           `git tag -a ${tagShape} -m <message>  # then: workit git push --release ${tagShape}`,
         );
-      refs.push({ kind: "tag", name: tagName, ref: `refs/tags/${tagName}`, sha: tag });
+      refs.push({
+        kind: "tag",
+        name: tagName,
+        ref: `refs/tags/${tagName}`,
+        sha: tag,
+        production: line.track === null ? production : line.production,
+      });
       continue;
     }
     if (!branch) return failure("not_found", `${raw} is not a local branch or tag`);
@@ -1291,10 +1303,10 @@ export function releasePushPreflight(
         "blocked",
         branches.length
           ? `release_push_refused: ${branchName} is not a git-flow release branch (${branches.join(", ")})`
-          : `release_push_refused: the ${preset} policy lands ${branchName} only through a reviewed PR; workit git push --release pushes v<version> tags there, not branches`,
+          : `release_push_refused: the ${preset} policy lands ${branchName} only through a reviewed PR; workit git push --release pushes ${tagShape} tags there, not branches`,
         branches.length
           ? "workit git push  # a feature, bugfix, release or hotfix branch, then: workit pr create"
-          : `workit pr create --base ${branchName}  # then tag the merged commit and: workit git push --release v<version>`,
+          : `workit pr create --base ${branchName}  # then tag the merged commit and: workit git push --release ${tagShape}`,
       );
     refs.push({ kind: "branch", name: branchName, ref: `refs/heads/${branchName}`, sha: branch });
   }
@@ -1326,7 +1338,6 @@ export function releasePushPreflight(
     rawUrl: raw,
     local,
     production,
-    trackProductions: tracks.map((line) => line.production),
   });
 }
 
@@ -1372,31 +1383,32 @@ export function executeReleasePush(
         `git fetch ${plan.remote} ${ref.name} && git switch ${ref.name} && git merge --ff-only ${plan.remote}/${ref.name}  # then: workit git push --release ${ref.name}`,
       );
   }
-  // A release tag marks a commit the production branch already has (or a
-  // branch this push moves): never an unmerged feature commit.
+  // A release tag marks a commit its line's production branch already has
+  // (on the remote, or as this push moves it): never an unmerged feature
+  // commit, and never another line's production (a nun/ tag on master).
   const tags = plan.refs.filter((ref) => ref.kind === "tag");
-  if (tags.length) {
-    const productionTips: string[] = [];
-    for (const production of new Set(
-      [plan.production, ...plan.trackProductions].filter((name): name is string => !!name),
-    )) {
+  const contains = (tip: string, sha: string) =>
+    git(cwd, ["merge-base", "--is-ancestor", sha, tip]).ok;
+  for (const tag of tags) {
+    const production = tag.production ?? plan.production;
+    let remoteTip: string | null = null;
+    if (production) {
       const tip = remoteRefTip(cwd, plan.rawUrl, `refs/heads/${production}`);
       if (!tip.ok) return failure(tip.code, tip.error);
-      if (tip.sha) productionTips.push(tip.sha);
+      remoteTip = tip.sha;
     }
-    const contains = (tip: string, sha: string) =>
-      git(cwd, ["merge-base", "--is-ancestor", sha, tip]).ok;
-    for (const tag of tags) {
-      const released =
-        productionTips.some((tip) => contains(tip, tag.sha)) ||
-        plan.refs.some((ref) => ref.kind === "branch" && contains(ref.sha, tag.sha));
-      if (!released)
-        return failure(
-          "blocked",
-          `tag_unreleased: ${tag.name} (${tag.sha.slice(0, 12)}) is not on ${plan.remote}/${plan.production ?? "the production branch"}${plan.refs.some((ref) => ref.kind === "branch") ? " or a branch in this push" : ""}; a release tag marks a commit that already landed`,
-          `land it through a PR first (workit pr create), git fetch ${plan.remote}, then tag the merged commit`,
-        );
-    }
+    const pushed = plan.refs.find(
+      (ref) => ref.kind === "branch" && ref.name.toLowerCase() === production?.toLowerCase(),
+    );
+    const released =
+      (remoteTip !== null && contains(remoteTip, tag.sha)) ||
+      (pushed !== undefined && contains(pushed.sha, tag.sha));
+    if (!released)
+      return failure(
+        "blocked",
+        `tag_unreleased: ${tag.name} (${tag.sha.slice(0, 12)}) is not on ${plan.remote}/${production ?? "the production branch"}${pushed ? ` or the ${production} in this push` : ""}; a release tag marks a commit that already landed on its line's production branch`,
+        `land it through a PR first (workit pr create), git fetch ${plan.remote}, then tag the merged commit`,
+      );
   }
   const pending = plan.refs.filter((ref) => previous.get(ref.ref) !== ref.sha);
   if (pending.length) {

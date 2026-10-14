@@ -13,11 +13,11 @@
 //   pushes production, the merge-back branches and the tag through the
 //   existing `--release` push, publishes the forge release and verifies it.
 // - publish is the one path that pushes a release branch (verbs/release.ts).
-import { existsSync } from "node:fs";
 import { readLedger, appendObserved, type LedgerActor } from "../ledger";
 import { failure, success, type ForgeResult } from "../forge/types";
 import { vcsConfig } from "../core/vcs-config";
 import { trackBranchName } from "../core/release-tracks";
+import { resolveRuntimeWorkspacePolicy } from "../core/workspaces";
 import {
   git,
   gitBranch,
@@ -205,6 +205,10 @@ export type FinishPlan = {
   tag: string;
   production: string;
   mergeBack: string[];
+  /** What the finish pushes: production and the merge-back branches, never a release branch. */
+  pushBranches: string[];
+  /** A hotfix's merge-back target when a release branch is open (git-flow), else null. */
+  openRelease: string | null;
   /** git-flow merges locally; elsewhere finish opens a release PR. */
   gitflow: boolean;
   remote: string | null;
@@ -214,10 +218,14 @@ export type FinishPlan = {
   published: string | null;
   /** The commit the tag marks: the production merge, once made. */
   tagTarget: string | null;
+  /** A release.merged row exists (a merge resolved by hand has none). */
+  mergeRecorded: boolean;
   state: FinishState;
   /** The CHANGELOG.md section of this version, when there is one. */
   changelog: string | null;
   notes: string[];
+  /** Said before merging, never blocking (integration mode pr). */
+  warnings: string[];
 };
 
 const KINDS: ReleaseKind[] = ["release", "hotfix"];
@@ -354,14 +362,49 @@ export function planReleaseFinish(
       "workit git commit -m '<msg>' -- <paths>  # on the release branch, or stash them",
     );
   const tag = `${line.tagPrefix}${version}`;
-  const mergeBack = line.mergeBack;
+  const rows = releaseRows(cwd).filter((row) => row.branch === branch || row.release === branch);
+  // git-flow: a hotfix finished while a release is open merges back into
+  // that release branch instead of develop (the release carries it there).
+  // Recorded once, so a resumed finish keeps the same target.
+  const recordedOpen = rows.findLast((row) => row.type === "release.hotfix_target");
+  const openRelease =
+    kind !== "hotfix"
+      ? null
+      : typeof recordedOpen?.target === "string"
+        ? recordedOpen.target
+        : (git(cwd, ["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+            .stdout.split("\n")
+            .find((name) => name && versionIn(templateOf(line, "release"), name) !== null) ?? null);
+  const mergeBack = openRelease
+    ? [...new Set(line.mergeBack.map((name) => (name === line.integration ? openRelease : name)))]
+    : line.mergeBack;
+  if (openRelease)
+    notes.push(
+      `${openRelease} is open: the hotfix merges back into it instead of ${line.integration}`,
+    );
   const remote = pushRemoteName(cwd, line.production);
   if (remote) {
     const wanted = [line.production, ...mergeBack, branch];
     for (const name of wanted)
       fetchRefs(cwd, remote, [`+refs/heads/${name}:refs/remotes/${remote}/${name}`]);
   }
-  // Production and every merge-back branch: local, and not behind the remote.
+  const branchTip = resolveRef(cwd, `refs/heads/${branch}`);
+  const remoteBranch = remote ? resolveRef(cwd, `refs/remotes/${remote}/${branch}`) : null;
+  const mergedRow = rows.findLast((row) => row.type === "release.merged");
+  const deletedRow = rows.findLast((row) => row.type === "release.branch_deleted");
+  // Once the branch is gone its tip is in the ledger: the recorded merge, or
+  // the deletion (a merge resolved by hand left no release.merged row).
+  const recordedTip = [mergedRow?.releaseTip, deletedRow?.head].find(
+    (value): value is string => typeof value === "string",
+  );
+  const releaseTip = branchTip ?? recordedTip ?? null;
+  if (!releaseTip)
+    return failure(
+      "not_found",
+      `${branch} is gone and this ledger did not record its merge; nothing to resume`,
+    );
+  // Production and every merge-back branch: local, not behind the remote,
+  // and ahead of it only by this release's own merges.
   for (const name of [line.production, ...mergeBack]) {
     const local = resolveRef(cwd, `refs/heads/${name}`);
     const tracked = remote ? resolveRef(cwd, `refs/remotes/${remote}/${name}`) : null;
@@ -374,24 +417,30 @@ export function planReleaseFinish(
     }
     if (!local)
       return failure("not_found", `${name} exists neither locally nor on ${remote ?? "a remote"}`);
-    if (tracked && !isAncestor(cwd, tracked, local))
+    if (!tracked || name === openRelease) continue;
+    if (!isAncestor(cwd, tracked, local))
       return failure(
         "blocked",
         `branch_behind: local ${name} is behind or diverged from ${remote}/${name}; git-flow finishes only onto up-to-date branches`,
         `git switch ${name} && git merge --ff-only ${remote}/${name}  # then: workit release finish ${version}`,
       );
+    const foreign = git(cwd, ["rev-list", local, `^${tracked}`, `^${releaseTip}`])
+      .stdout.split("\n")
+      .filter(Boolean)
+      .filter(
+        (sha) =>
+          !(
+            git(cwd, ["rev-parse", "-q", "--verify", `${sha}^2`]).ok &&
+            isAncestor(cwd, releaseTip, sha)
+          ),
+      );
+    if (foreign.length)
+      return failure(
+        "blocked",
+        `branch_ahead: local ${name} has ${foreign.length} commit(s) ${remote}/${name} lacks that are not part of ${branch}; the finish push would publish them`,
+        `land them through review first, or: git switch ${name} && git reset --keep ${remote}/${name}  # then: workit release finish ${version}`,
+      );
   }
-  const rows = releaseRows(cwd).filter((row) => row.branch === branch || row.release === branch);
-  const branchTip = resolveRef(cwd, `refs/heads/${branch}`);
-  const remoteBranch = remote ? resolveRef(cwd, `refs/remotes/${remote}/${branch}`) : null;
-  const mergedRow = rows.findLast((row) => row.type === "release.merged");
-  const releaseTip =
-    branchTip ?? (typeof mergedRow?.releaseTip === "string" ? mergedRow.releaseTip : null);
-  if (!releaseTip)
-    return failure(
-      "not_found",
-      `${branch} is gone and this ledger did not record its merge; nothing to resume`,
-    );
   if (branchTip && remoteBranch && !isAncestor(cwd, remoteBranch, branchTip))
     return failure(
       "blocked",
@@ -438,15 +487,41 @@ export function planReleaseFinish(
     tag,
     production: line.production,
     mergeBack,
+    pushBranches: [line.production, ...mergeBack.filter((name) => name !== openRelease)],
+    openRelease,
     gitflow: line.gitflow,
     remote,
     releaseTip,
     published: remoteBranch,
     tagTarget,
+    mergeRecorded: mergedRow !== undefined,
     state,
     changelog: changelogSection(cwd, branchTip ?? production, version),
     notes,
+    warnings: integrationPrWarning(cwd, line.production),
   });
+}
+
+/**
+ * A workspace that sets `integration: "pr"` lands work through reviewed PRs;
+ * its forge may also protect production against the finish push. Said, not
+ * enforced: git-flow finishes locally either way.
+ */
+function integrationPrWarning(cwd: string, production: string): string[] {
+  try {
+    const selected = resolveRuntimeWorkspacePolicy(
+      cwd,
+      "branch",
+      process.env.WORKFLOW_PROFILE?.trim() || undefined,
+    ).policy as { integration?: unknown } | undefined;
+    return selected?.integration === "pr"
+      ? [
+          `the workspace integration mode is pr: the remote may require pull requests on ${production}, which would reject the finish push`,
+        ]
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -475,9 +550,7 @@ const mergeNoFf = (
 ): ForgeResult<string> => {
   const merged = git(cwd, ["merge", "--no-ff", "--no-edit", what], { timeoutMs: 10 * 60_000 });
   if (!merged.ok) {
-    const conflicted = existsSync(
-      git(cwd, ["rev-parse", "--git-path", "MERGE_HEAD"]).stdout.trim(),
-    );
+    const conflicted = git(cwd, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).ok;
     return failure(
       "failed",
       conflicted
@@ -503,6 +576,25 @@ export function finishLocally(
   const ran: string[] = [];
   const base = { version: plan.version, release: plan.branch, tag: plan.tag, track: plan.track };
   let tagTarget = plan.tagTarget;
+  if (plan.openRelease)
+    record(cwd, actor, {
+      type: "release.hotfix_target",
+      ...base,
+      branch: plan.branch,
+      target: plan.openRelease,
+    });
+  // A merge resolved by hand (`git merge --continue`) left no row: record
+  // what the repository shows, so a resume after the branch is gone has its tip.
+  if (plan.state.merged && !plan.mergeRecorded && tagTarget)
+    record(cwd, actor, {
+      type: "release.merged",
+      ...base,
+      branch: plan.production,
+      head: tagTarget,
+      merge: tagTarget,
+      releaseTip: plan.releaseTip,
+      observed: true,
+    });
   if (!plan.state.merged) {
     const on = switchTo(cwd, plan.production);
     if (!on.ok) return on;
@@ -522,7 +614,16 @@ export function finishLocally(
   if (!tagTarget) return failure("failed", `cannot tell which ${plan.production} commit to tag`);
   if (!plan.state.tagged) {
     const message = plan.changelog ?? `Release ${plan.version}`;
-    const tagged = git(cwd, ["tag", "-a", plan.tag, "-m", message, tagTarget]);
+    // verbatim: a changelog's `### Fixed` is not a comment to strip.
+    const tagged = git(cwd, [
+      "tag",
+      "-a",
+      "--cleanup=verbatim",
+      plan.tag,
+      "-m",
+      message,
+      tagTarget,
+    ]);
     if (!tagged.ok) return failure("failed", `git tag ${plan.tag} failed: ${gitError(tagged)}`);
     ran.push("tag");
     record(cwd, actor, {

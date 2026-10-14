@@ -100,7 +100,7 @@ const stepsOf = (plan: FinishPlan) => [
   })),
   { step: `delete local ${plan.branch}`, done: plan.state.branchDeleted },
   {
-    step: `push ${[plan.production, ...plan.mergeBack, plan.tag].join(", ")} (atomic, fast-forward only)`,
+    step: `push ${[...plan.pushBranches, plan.tag].join(", ")} (atomic, fast-forward only)`,
     done: false,
   },
   { step: `forge release ${plan.tag}`, done: false },
@@ -171,12 +171,16 @@ async function finish(argv: string[], io: Io): Promise<number> {
   const release = requireGrant(io.cwd, "release");
   const push = requireGrant(io.cwd, "push", { forge: !local });
   const steps = stepsOf(plan);
+  // Said before anything merges; never blocking.
+  for (const warning of plan.warnings) io.stderr(`warning: ${warning}\n`);
+  const warned = <T>(envelope: Envelope<T>): Envelope<T> =>
+    plan.warnings.length ? { ...envelope, warnings: plan.warnings } : envelope;
   if (dryRun) {
     const missing = [release, push].find((grant) => !grant.allowed);
     const data = { ...plan, steps, grants: { release: release.allowed, push: push.allowed } };
     if (missing && !missing.allowed)
-      return emit(io, fail("blocked", missing.error, { unblock: missing.unblock, data }));
-    return emit(io, ok(data), () => [
+      return emit(io, warned(fail("blocked", missing.error, { unblock: missing.unblock, data })));
+    return emit(io, warned(ok(data)), () => [
       `finish ${plan.branch} -> ${plan.production} as ${plan.tag}:`,
       ...steps.map((entry) => `  ${entry.done ? "done" : "todo"}  ${entry.step}`),
     ]);
@@ -189,10 +193,7 @@ async function finish(argv: string[], io: Io): Promise<number> {
   const notes = [...plan.notes];
   const pushed = await subVerb(
     () => import("./git"),
-    [
-      "push",
-      ...[plan.production, ...plan.mergeBack, plan.tag].flatMap((ref) => ["--release", ref]),
-    ],
+    ["push", ...[...plan.pushBranches, plan.tag].flatMap((ref) => ["--release", ref])],
     io,
   );
   if (!pushed.ok) return emit(io, { ...pushed, data: { ...pushed.data, step: "push", resume } });
@@ -253,10 +254,10 @@ async function finish(argv: string[], io: Io): Promise<number> {
   });
   return emit(
     io,
-    ok({ ...plan, ran: merged.data.ran, push: pushed.data, forgeRelease, notes }),
+    warned(ok({ ...plan, ran: merged.data.ran, push: pushed.data, forgeRelease, notes })),
     () => [
       `finished ${plan.branch}: ${plan.production} and ${plan.mergeBack.join(", ")} merged, ${plan.tag} tagged on ${short(merged.data.tagTarget)}`,
-      `pushed ${[plan.production, ...plan.mergeBack, plan.tag].join(", ")} to ${plan.remote ?? "the remote"}; remote tips verified`,
+      `pushed ${[...plan.pushBranches, plan.tag].join(", ")} to ${plan.remote ?? "the remote"}; remote tips verified`,
       ...(forgeRelease
         ? [
             `forge release ${plan.tag}${forgeRelease.created ? " created" : " already there"}${forgeRelease.url ? `: ${forgeRelease.url}` : ""}`,
