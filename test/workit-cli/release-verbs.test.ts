@@ -139,6 +139,8 @@ test("Given a local release branch with the bump and changelog, When release fin
   expect(repo.git("rev-parse", "v1.0.0^{commit}")).toBe(mainSha);
   expect(repo.git("cat-file", "-t", "v1.0.0")).toBe("tag");
   expect(repo.git("tag", "-l", "--format=%(contents)", "v1.0.0")).toContain("- the widget");
+  // Verbatim: the changelog's headings are not comments to strip.
+  expect(repo.git("tag", "-l", "--format=%(contents)", "v1.0.0")).toContain("### Fixed");
   expect(repo.git("tag", "-l", "--format=%(contents)", "v1.0.0")).not.toContain("0.9.0");
   // develop: a merge of the tag (git-flow merges back through the tag).
   expect(parents(repo, "develop")[1]).toBe(mainSha);
@@ -286,6 +288,206 @@ test("Given local main behind origin/main, When finish runs, Then it is refused 
   expect(repo.git("tag", "-l")).toBe("");
 });
 
+/** Commit `file` on `branch` (optionally pushed), then return to the branch checked out before. */
+const commitOn = (repo: RemoteRepo, branch: string, file: string, text: string, push = true) => {
+  const back = repo.git("branch", "--show-current");
+  repo.git("switch", "-q", branch);
+  repo.write(file, text);
+  repo.git("add", "-A");
+  repo.git("commit", "-qm", `chore: ${file} on ${branch}`);
+  if (push) repo.git("push", "-q", "origin", branch);
+  repo.git("switch", "-q", back);
+};
+
+test("Given a release that conflicts with main, When finish runs from another directory, Then it reports merge_conflict with the resume command", async () => {
+  // A plain (non-worktree) checkout, and a process cwd that is not the repo:
+  // a cwd-relative MERGE_HEAD path would miss the conflict.
+  const repo = flowRepo();
+  workspace(repo, GRANTED);
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  commitOn(repo, "main", "clash.txt", "main\n");
+  commitOn(repo, "release/1.0.0", "clash.txt", "release\n", false);
+  expect(process.cwd()).not.toBe(repo.cwd);
+  const finished = await run(["release", "finish", "--json"], repo.cwd);
+  expect(finished.code).toBe(1);
+  expect(finished.json().error).toBe("merge_conflict: merging release/1.0.0 into main conflicts");
+  expect(finished.json().unblock).toContain(
+    "git merge --continue, then: workit release finish 1.0.0",
+  );
+});
+
+test("Given a merge-back that conflicts with develop, When finish runs, Then the merge-back reports merge_conflict too", async () => {
+  const repo = flowRepo();
+  workspace(repo, GRANTED);
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  commitOn(repo, "develop", "clash.txt", "develop\n");
+  commitOn(repo, "release/1.0.0", "clash.txt", "release\n", false);
+  const finished = await run(["release", "finish", "--json"], repo.cwd);
+  expect(finished.code).toBe(1);
+  expect(finished.json().error).toBe("merge_conflict: merging v1.0.0 into develop conflicts");
+  expect(finished.json().unblock).toContain("git merge --continue");
+});
+
+test("Given a production conflict resolved by hand and a failed push, When finish runs again, Then it completes from the ledger and the repository", async () => {
+  const repo = flowRepo();
+  workspace(repo, GRANTED);
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  commitOn(repo, "main", "clash.txt", "main\n");
+  commitOn(repo, "release/1.0.0", "clash.txt", "release\n", false);
+  expect((await run(["release", "finish"], repo.cwd)).code).toBe(1);
+  // The user resolves it: no release.merged row records this merge.
+  repo.git("checkout", "--theirs", "clash.txt");
+  repo.git("add", "clash.txt");
+  repo.git("-c", "core.editor=true", "merge", "--continue");
+  const merge = repo.git("rev-parse", "main");
+  repo.git("remote", "set-url", "origin", path.join(repo.root, "missing.git"));
+  const failed = await run(["release", "finish", "--json"], repo.cwd);
+  expect(failed.json().data).toMatchObject({ step: "push" });
+  expect(repo.git("branch", "--list", "release/*")).toBe("");
+  repo.git("remote", "set-url", "origin", repo.bare);
+  const resumed = await run(["release", "finish", "1.0.0", "--json"], repo.cwd);
+  expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
+  expect(repo.remoteTip("main")).toBe(merge);
+  expect(remoteTag(repo, "v1.0.0")).toBe(merge);
+  expect(merges(repo, "main")).toBe(1);
+});
+
+test("Given unpushed commits of their own on develop or main, When finish (or --dry-run) runs, Then it is refused as branch_ahead before any merge", async () => {
+  for (const branch of ["develop", "main"]) {
+    const repo = flowRepo();
+    workspace(repo, GRANTED);
+    await run(["release", "start", "1.0.0"], repo.cwd);
+    bump(repo, "1.0.0");
+    commitOn(repo, branch, `local-${branch}.txt`, "local\n", false);
+    const head = repo.git("rev-parse", "main");
+    for (const argv of [
+      ["release", "finish", "--dry-run", "--json"],
+      ["release", "finish", "--json"],
+    ]) {
+      const refused = await run(argv, repo.cwd);
+      expect(refused.code, argv.join(" ")).toBe(3);
+      expect(refused.json().error).toContain(`branch_ahead: local ${branch} has 1 commit(s)`);
+    }
+    expect(repo.git("rev-parse", "main")).toBe(head);
+    expect(repo.git("tag", "-l")).toBe("");
+  }
+});
+
+test("Given each finish precondition broken, When finish runs, Then it refuses with that reason and nothing merges", async () => {
+  // Uncommitted change to a tracked file.
+  let repo = flowRepo();
+  workspace(repo, GRANTED);
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  bump(repo, "1.0.0");
+  repo.write("VERSION", "dirty\n");
+  let refused = await run(["release", "finish", "--json"], repo.cwd);
+  expect(refused.json().error).toContain("dirty_worktree");
+  // A published release branch someone else moved.
+  repo = flowRepo();
+  workspace(repo, GRANTED);
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  bump(repo, "1.0.0");
+  await run(["release", "publish"], repo.cwd);
+  repo.pushFromElsewhere("release/1.0.0");
+  refused = await run(["release", "finish", "--json"], repo.cwd);
+  expect(refused.json().error).toContain("release_behind: origin/release/1.0.0");
+  // The remote already has the tag elsewhere.
+  repo = flowRepo();
+  workspace(repo, GRANTED);
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  bump(repo, "1.0.0");
+  repo.git("push", "-q", "origin", "develop:refs/tags/v1.0.0");
+  refused = await run(["release", "finish", "--json"], repo.cwd);
+  expect(refused.json().error).toContain("tag_exists: origin already has v1.0.0");
+  expect(repo.git("rev-list", "--merges", "main")).toBe("");
+  // A local tag that is not this release's merge.
+  repo = flowRepo();
+  workspace(repo, GRANTED);
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  bump(repo, "1.0.0");
+  repo.git("tag", "v1.0.0", "develop");
+  refused = await run(["release", "finish", "--json"], repo.cwd);
+  expect(refused.json().error).toContain("is not this release's merge on main");
+  expect(repo.git("rev-list", "--merges", "main")).toBe("");
+});
+
+test("Given a published release branch with commits made after publishing, When finish runs, Then git branch -d keeps it (never -D) and names publish", async () => {
+  const repo = flowRepo();
+  workspace(repo, GRANTED);
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  await run(["release", "publish"], repo.cwd);
+  const late = bump(repo, "1.0.0");
+  const finished = await run(["release", "finish", "--json"], repo.cwd);
+  expect(finished.code).toBe(1);
+  expect(finished.json().error).toContain("git branch -d release/1.0.0 failed");
+  expect(finished.json().unblock).toContain("workit release publish 1.0.0");
+  expect(repo.git("rev-parse", "release/1.0.0")).toBe(late);
+  // Published, then resumed: the finish completes.
+  await run(["release", "publish"], repo.cwd);
+  const resumed = await run(["release", "finish", "1.0.0", "--json"], repo.cwd);
+  expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
+  expect(repo.git("branch", "--list", "release/*")).toBe("");
+});
+
+test("Given a tag or unpushed base, When release start runs, Then it refuses tag_exists or base_unpushed", async () => {
+  const repo = flowRepo();
+  workspace(repo, GRANTED);
+  repo.git("tag", "v2.0.0");
+  const tagged = await run(["release", "start", "2.0.0", "--json"], repo.cwd);
+  expect(tagged.json().error).toBe("tag_exists: v2.0.0 already exists");
+  commitOn(repo, "develop", "local.txt", "local\n", false);
+  const unpushed = await run(["release", "start", "2.1.0", "--json"], repo.cwd);
+  expect(unpushed.code).toBe(3);
+  expect(unpushed.json().error).toContain("base_unpushed: local develop");
+  expect(repo.git("branch", "--list", "release/*")).toBe("");
+});
+
+test("Given an open release branch, When a hotfix finishes, Then it merges back into the release branch, not develop, and never pushes it", async () => {
+  const repo = flowRepo();
+  workspace(repo, GRANTED);
+  await run(["release", "start", "1.1.0"], repo.cwd);
+  const develop = repo.git("rev-parse", "develop");
+  repo.git("switch", "-q", "main");
+  const started = await run(["release", "start", "1.0.1", "--hotfix", "--json"], repo.cwd);
+  expect(started.code, started.stdout + started.stderr).toBe(0);
+  repo.write("fix.txt", "fix\n");
+  repo.git("add", "-A");
+  repo.git("commit", "-qm", "fix: the widget");
+  const fix = repo.git("rev-parse", "HEAD");
+  const finished = await run(["release", "finish", "1.0.1", "--json"], repo.cwd);
+  expect(finished.code, finished.stdout + finished.stderr).toBe(0);
+  expect(repo.git("merge-base", "--is-ancestor", fix, "release/1.1.0")).toBe("");
+  expect(repo.git("rev-parse", "develop")).toBe(develop);
+  expect(repo.remoteTip("release/1.1.0")).toBeNull();
+  expect(remoteTag(repo, "v1.0.1")).toBe(repo.git("rev-parse", "main"));
+});
+
+test("Given integration mode pr, When finish runs, Then it warns that the remote may require PRs on main and still finishes", async () => {
+  const repo = flowRepo();
+  workspace(repo, { ...GRANTED, branchPolicy: { preset: "gitflow", integration: "pr" } });
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  bump(repo, "1.0.0");
+  const dry = await run(["release", "finish", "--dry-run", "--json"], repo.cwd);
+  expect(dry.json().warnings[0]).toContain("may require pull requests on main");
+  const finished = await run(["release", "finish"], repo.cwd);
+  expect(finished.code).toBe(0);
+  expect(finished.stderr).toContain("warning: the workspace integration mode is pr");
+});
+
+test("Given an empty or v tag prefix, When github-flow refuses a --release branch, Then the steering names that prefix's tag", async () => {
+  for (const [prefix, shape] of [
+    ["", "workit git push --release <version>"],
+    ["v", "workit git push --release v<version>"],
+  ]) {
+    const repo = flowRepo({ preset: "github-flow" });
+    workspace(repo, GRANTED);
+    repo.git("config", "gitflow.prefix.versiontag", prefix);
+    const refused = await run(["git", "push", "--release", "main", "--json"], repo.cwd);
+    expect(refused.json().unblock, prefix).toContain(shape);
+    expect(refused.json().error, prefix).toContain(`pushes ${prefix}<version> tags there`);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // release tracks: the ri-web shape (nun-develop -> nun-master beside develop -> master)
 
@@ -347,6 +549,13 @@ test("Given release tracks, When a nun release starts and finishes, Then it uses
   expect(repo.git("rev-parse", "master")).toBe(master);
   expect(repo.git("rev-parse", "develop")).toBe(develop);
   expect(repo.remoteTip("release/nun-1.0.0")).toBeNull();
+  // A nun/ tag marks a nun-master commit: one only on master is refused.
+  commitOn(repo, "master", "standard.txt", "standard\n");
+  repo.git("tag", "nun/v9.0.0", "master");
+  const crossed = await run(["git", "push", "--release", "nun/v9.0.0", "--json"], repo.cwd);
+  expect(crossed.code).toBe(3);
+  expect(crossed.json().error).toContain("tag_unreleased: nun/v9.0.0");
+  expect(crossed.json().error).toContain("origin/nun-master");
 });
 
 // ---------------------------------------------------------------------------

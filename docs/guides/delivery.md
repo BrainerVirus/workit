@@ -91,7 +91,9 @@ remote base and records `release.started`.
 
 `finish` first checks: no merge or rebase in progress, no uncommitted changes
 to tracked files, production and every merge-back branch not behind their
-remote (`branch_behind`; a missing local branch is created from the remote),
+remote (`branch_behind`; a missing local branch is created from the remote)
+and ahead of it only by this release's own merges (`branch_ahead`: the push
+would publish other unpushed commits),
 the release branch not behind its published copy, the tag free locally and on
 the remote (`tag_exists`), and the `release` and `push` grants (`--dry-run`
 stops here and lists each step as done or todo). Then, each step recorded as a
@@ -114,6 +116,12 @@ ledger row:
    (`release.forge_released`; none for a local-path remote);
 7. `verify-delivery released` on the tag (`delivery.verified`), then
    `release.finished`.
+
+As in git-flow, a hotfix finished while a release branch is open merges back
+into that release branch instead of develop (the release carries it there);
+the release branch is still never pushed. A workspace whose branch policy sets
+`integration: "pr"` gets a warning before anything merges that the remote may
+require pull requests on production.
 
 An interrupted finish (a merge conflict, a failed push, a forge error) prints
 the `resume` command (`workit release finish <version>`). The rerun reads the

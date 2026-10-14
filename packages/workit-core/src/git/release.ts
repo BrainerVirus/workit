@@ -424,7 +424,17 @@ export function planReleaseFinish(
         `branch_behind: local ${name} is behind or diverged from ${remote}/${name}; git-flow finishes only onto up-to-date branches`,
         `git switch ${name} && git merge --ff-only ${remote}/${name}  # then: workit release finish ${version}`,
       );
-    const foreign = git(cwd, ["rev-list", local, `^${tracked}`, `^${releaseTip}`])
+    // Published production commits arrive through the merge-back; not new.
+    const productionTracked = remote
+      ? resolveRef(cwd, `refs/remotes/${remote}/${line.production}`)
+      : null;
+    const foreign = git(cwd, [
+      "rev-list",
+      local,
+      `^${tracked}`,
+      `^${releaseTip}`,
+      ...(productionTracked ? [`^${productionTracked}`] : []),
+    ])
       .stdout.split("\n")
       .filter(Boolean)
       .filter(
@@ -649,8 +659,16 @@ export function finishLocally(
     }
     // -d, not -D: git refuses when the release has commits nothing merged.
     const deleted = git(cwd, ["branch", "-d", plan.branch]);
+    // A published branch is checked against its upstream: commits made
+    // after publishing would be lost with it.
     if (!deleted.ok)
-      return failure("failed", `git branch -d ${plan.branch} failed: ${gitError(deleted)}`);
+      return failure(
+        "failed",
+        `git branch -d ${plan.branch} failed: ${gitError(deleted)}`,
+        plan.published
+          ? `workit release publish ${plan.version}  # its remote copy lacks commits; then: workit release finish ${plan.version}`
+          : undefined,
+      );
     ran.push("delete-branch");
     record(cwd, actor, {
       type: "release.branch_deleted",
