@@ -56,7 +56,7 @@ import path from "node:path";
 import { hostAwareLockTimeout } from "./core/store-lock";
 import { vcsConfig } from "./core/vcs-config";
 import { GIT_TIMEOUTS, currentBranch, headSha, patchId, worktreeTree } from "./git/rev";
-import { hostSessionFromEnv } from "./host-session";
+import { hostSessionFromEnv, issuedBinding } from "./host-session";
 import { resolveStore } from "./store/paths";
 
 export const LEDGER_VERSION = 1;
@@ -151,6 +151,8 @@ export type VerdictRow = RowCommon & {
   self: boolean;
   selfReason: SelfReason | null;
   sessionSource: SessionSource;
+  /** The issued session's own subagent presented the token its hook bound the id to. */
+  sessionBound?: boolean;
   evidenceRefs: string[];
 };
 export type HandoffRow = RowCommon & { type: "handoff"; note: string | null; next: string };
@@ -800,7 +802,9 @@ export function readLedger(
   const file = ledgerPath(cwd);
   if (!file.ok) return file;
   let text = "";
+  let stat: fs.Stats | null = null;
   try {
+    stat = fs.statSync(file.value);
     text = fs.readFileSync(file.value, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
@@ -917,11 +921,61 @@ export function readLedger(
     else if (row.supersedes) row.supersedeIgnored = true;
     if (!byId.has(row.id)) byId.set(row.id, row);
   }
+  // A read that saw exactly the stat'ed file remembers its chain breaks.
+  if (options.integrity && stat && Buffer.byteLength(text) === stat.size)
+    tamperCache.set(file.value, {
+      size: stat.size,
+      stamp: fileStamp(stat),
+      breaks: integrity.unverified.filter((row) => TAMPER_REASONS.has(row.reason)),
+    });
   return {
     ok: true,
     value: { path: file.value, rows, skipped, integrity: options.integrity ? integrity : null },
   };
 }
+
+/** Chain breaks honest appends never produce: a row edited, removed or moved. */
+const TAMPER_REASONS: ReadonlySet<UnverifiedReason> = new Set(["hash_mismatch", "broken_link"]);
+const tamperCache = new Map<string, { size: number; stamp: string; breaks: UnverifiedRow[] }>();
+/** Inode, mtime and ctime: `touch -r` can restore an mtime, never a ctime. */
+const fileStamp = (stat: fs.Stats): string => `${stat.ino}:${stat.mtimeMs}:${stat.ctimeMs}`;
+
+/**
+ * Rows anywhere in the ledger whose chain shows an edit, a removal or a move
+ * (`hash_mismatch`, `broken_link`). Cached per file size and mtime; empty
+ * when the ledger cannot be read.
+ */
+export function ledgerTampering(cwd: string): UnverifiedRow[] {
+  const file = ledgerPath(cwd);
+  if (!file.ok) return [];
+  try {
+    const stat = fs.statSync(file.value);
+    const cached = tamperCache.get(file.value);
+    if (cached && cached.size === stat.size && cached.stamp === fileStamp(stat))
+      return cached.breaks;
+  } catch {
+    return [];
+  }
+  const read = readLedger(cwd, { integrity: true });
+  return read.ok
+    ? (read.value.integrity?.unverified ?? []).filter((row) => TAMPER_REASONS.has(row.reason))
+    : [];
+}
+
+/** How to repair a tampered ledger: see what broke, then start a new one and re-record. */
+export function tamperedUnblock(cwd: string): string {
+  const file = ledgerPath(cwd);
+  const where = file.ok ? file.value : "the ledger file";
+  return `workit ledger verify-integrity  # lists the edited or missing rows; if the edit is understood, move ${where} aside (mv ${where} ${where}.tampered-<date>) and record the verdicts again`;
+}
+
+const tamperedWarning = (cwd: string, breaks: readonly UnverifiedRow[]): string =>
+  `the ledger was edited, or a row was removed or moved (${breaks
+    .slice(0, 3)
+    .map((row) => `${row.reason} at row ${row.seq}`)
+    .join(
+      ", ",
+    )}${breaks.length > 3 ? ", …" : ""}): no verdict is accepted until it is repaired. ${tamperedUnblock(cwd)}`;
 
 export type RowFilter = { branch?: string; pr?: number; type?: string; last?: number };
 
@@ -1048,7 +1102,11 @@ export type RejectReason =
   /** The verdict row repeats an earlier row's id (a replayed line). */
   | "duplicate_id"
   /** A `--session` verdict whose id no SubagentStart hook issued, recorded on a host. */
-  | "unissued_session";
+  | "unissued_session"
+  /** An issued id recorded without the token its hook bound it to (another session reusing it). */
+  | "unbound_session"
+  /** A row somewhere in the ledger was edited, removed or moved: no verdict is accepted until it is repaired. */
+  | "ledger_tampered";
 
 export type VerdictEntry = {
   kind: string;
@@ -1088,8 +1146,8 @@ export type VerdictCheck = {
   warnings: string[];
 };
 
-const isLiveVerdict = (row: ReadRow): boolean =>
-  row.type === "verdict" && typeof row.result === "string" && !row.superseded;
+const isLiveVerdict = (row: ReadRow, retired: ReadonlySet<string>): boolean =>
+  row.type === "verdict" && typeof row.result === "string" && !retired.has(row.id);
 
 /** Sessions recorded in `Workit-Session:` trailers of `base...head` commits. */
 function trailerSessions(cwd: string, base: string | null, head: string | null): string[] {
@@ -1214,60 +1272,55 @@ const TRUST_REASONS: ReadonlySet<RejectReason> = new Set([
   "broken_link",
   "duplicate_id",
   "unissued_session",
+  "unbound_session",
 ]);
 
-const issuedHash = (value: string): string =>
-  createHash("sha256").update(value).digest("hex").slice(0, 32);
+/**
+ * Hosts whose shell itself names the session (OpenCode, Pi, Codex), and no
+ * host at all (`cli`: CI or a terminal, where any id is a declaration): an
+ * environment session from them was checked against that shell when recorded.
+ */
+const SHELL_VOUCHED_HOSTS: ReadonlySet<string> = new Set([
+  "cli",
+  "opencode",
+  "pi",
+  "codex_cli",
+  "codex_desktop",
+]);
 
 /**
- * Did a SubagentStart hook issue `session` (`<lead>:<agent id>`)? Reads the
- * record host-session.ts `recordIssuedSession` keeps (same layout).
+ * A verdict acting as a session nothing vouches for (`ledger verdict` refuses
+ * these when recording; rows by an older CLI or by hand are caught here):
+ *   - `unissued_session`: a `--session` id on a host, or a `<lead>:<x>`
+ *     environment id on a host that does not name it in its shell (Claude
+ *     Code, Cursor, any declared WORKIT_HOST), that no SubagentStart hook issued;
+ *   - `unbound_session`: such an id the hook bound to a token, recorded
+ *     without it (another session reusing an id it read in the ledger).
  */
-function hostIssued(cwd: string, session: string): boolean {
-  const cut = session.lastIndexOf(":");
-  if (cut <= 0) return false;
-  try {
-    const store = resolveStore(cwd);
-    if (store instanceof Error) return false;
-    return fs.existsSync(
-      path.join(
-        store.dir,
-        "hooks",
-        "issued",
-        issuedHash(session.slice(0, cut)),
-        issuedHash(session),
-      ),
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
- * A verdict acting as a session nothing vouches for: a `--session` id named on
- * a host (no host is CI or a terminal, where any id is a declaration) that no
- * SubagentStart hook issued, or a Claude Code `<lead>:<x>` id from the
- * environment that none issued. `ledger verdict` refuses both today; rows by
- * an older CLI or by hand are caught here.
- */
-function unissuedSession(cwd: string, row: ReadRow): boolean {
+function sessionTrust(cwd: string, row: ReadRow): RejectReason | null {
   const session = row.actor.session;
-  if (!session || row.self === true) return false;
+  if (!session || row.self === true) return null;
   const source = typeof row.sessionSource === "string" ? row.sessionSource : "env";
-  if (source === "flag") return row.actor.host !== "cli" && !hostIssued(cwd, session);
-  if (source === "env" && row.actor.host === "claude_code" && session.includes(":"))
-    return !hostIssued(cwd, session);
-  return false;
+  const host = row.actor.host;
+  const issuedOnly =
+    source === "flag"
+      ? host !== "cli"
+      : source === "env" && session.includes(":") && !SHELL_VOUCHED_HOSTS.has(host);
+  if (!issuedOnly) return null;
+  const binding = issuedBinding(cwd, session);
+  if (binding === null) return "unissued_session";
+  return binding === "token" && row.sessionBound !== true ? "unbound_session" : null;
 }
 
 /**
  * Why a gate cannot trust `row` (D18, audit N1): outside the hash chain, or
- * acting as an unissued session. Rows read without integrity are unsigned.
+ * acting as a session nothing vouches for. Rows read without integrity are unsigned.
  */
 function trustReasons(cwd: string, row: ReadRow): RejectReason[] {
   if (row.integrity === "unverified") return [row.integrityReason ?? "unsigned"];
   if (row.integrity !== "verified") return ["unsigned"];
-  return unissuedSession(cwd, row) ? ["unissued_session"] : [];
+  const session = sessionTrust(cwd, row);
+  return session ? [session] : [];
 }
 
 /**
@@ -1420,16 +1473,26 @@ export function checkVerdicts(
     );
   };
   const authors = authorSessions(cwd, rows, branch, { base: fallbackBase, head }, scope);
-  // A failure stays independent unless a chained ledger row makes its
-  // session an author: a forged author row (or a trailer on an empty commit)
-  // must not discount an independent failure.
-  const failureAuthors = authorSessions(
-    cwd,
-    rows.filter((row) => row.integrity === "verified"),
-    branch,
-    { base: null, head: null },
-    scope,
-  );
+  // A failure is an author's only when chained ledger rows written before it
+  // made its session an author. `ledger verdict` refuses an author's
+  // independent verdict, so authorship gained afterwards (a forged row, a
+  // commit or an empty amend under the reviewer's id, a trailer) never
+  // discounts a failure (audit N13, mv83zyg6 P2b).
+  const failureAuthorCache = new Map<number, Set<string>>();
+  const failureAuthors = (row: ReadRow): Set<string> => {
+    let set = failureAuthorCache.get(row.seq);
+    if (!set) {
+      set = authorSessions(
+        cwd,
+        rows.filter((other) => other.integrity === "verified" && other.seq < row.seq),
+        branch,
+        { base: null, head: null },
+        scope,
+      );
+      failureAuthorCache.set(row.seq, set);
+    }
+    return set;
+  };
   const reasonCache = new Map<ReadRow, RejectReason[]>();
   const reasonsOf = (row: ReadRow): RejectReason[] => {
     let reasons = reasonCache.get(row);
@@ -1437,15 +1500,26 @@ export function checkVerdicts(
       const failing = FAILING.has(String(row.result));
       reasons = [
         ...trustReasons(cwd, row),
-        ...independenceReasons(row, failing ? failureAuthors : authors),
+        ...independenceReasons(row, failing ? failureAuthors(row) : authors),
       ];
       reasonCache.set(row, reasons);
     }
     return reasons;
   };
+  // Only a trusted verdict retires another: an unverified row or one acting
+  // as an unissued or unbound session never supersedes (N13, mv83zyg6 P1).
+  const retired = new Set<string>();
+  for (const row of rows)
+    if (
+      row.type === "verdict" &&
+      row.supersedes &&
+      !row.supersedeIgnored &&
+      trustReasons(cwd, row).length === 0
+    )
+      retired.add(row.supersedes);
   const byKind = new Map<string, ReadRow[]>();
   for (const row of rows)
-    if (isLiveVerdict(row) && scope(row)) {
+    if (isLiveVerdict(row, retired) && scope(row)) {
       const kind = typeof row.kind === "string" ? row.kind : "review";
       byKind.set(kind, [...(byKind.get(kind) ?? []), row]);
     }
@@ -1496,6 +1570,16 @@ export function checkVerdicts(
       warnings.push(
         `ledger row ${row.id} (${row.type}) on ${row.branch ?? branch} is unverified: the workit CLI did not write it or it changed afterwards (workit ledger verify-integrity)`,
       );
+  // An edited, removed or moved row anywhere breaks the chain; honest appends
+  // never do. Until it is repaired no verdict is accepted (mv83zyg6 P3/P4).
+  const tampered = ledgerTampering(cwd);
+  if (tampered.length) {
+    warnings.push(tamperedWarning(cwd, tampered));
+    for (const entry of verdicts) {
+      entry.accepted = false;
+      entry.reasons = [...entry.reasons, "ledger_tampered"];
+    }
+  }
   verdicts.sort((a, b) => a.verdict.seq - b.verdict.seq);
   const newestCurrent = verdicts.findLast((entry) => entry.current) ?? verdicts.at(-1) ?? null;
   const failing = verdicts.find(
@@ -1505,8 +1589,9 @@ export function checkVerdicts(
     verdicts.findLast(
       (entry) => entry.accepted && STRONG_RESULTS.has(String(entry.verdict.result)),
     ) ?? null;
-  const accepted =
-    newestAccepted && !failing
+  const accepted = tampered.length
+    ? { accepted: false, verdict: null, reasons: ["ledger_tampered"] as RejectReason[] }
+    : newestAccepted && !failing
       ? { accepted: true, verdict: newestAccepted.verdict, reasons: [] }
       : {
           accepted: false,
@@ -1555,6 +1640,8 @@ export type RecordContext = {
   supersedes?: string;
   /** Where `actor.session` came from (verdicts record it). Default: the environment. */
   sessionSource?: SessionSource;
+  /** The caller presented the token bound to its issued session (verdicts record it). */
+  sessionBound?: boolean;
   now?: Date;
 };
 
@@ -1902,6 +1989,7 @@ export function recordVerdict(
       self,
       selfReason,
       sessionSource: context.sessionSource ?? "env",
+      ...(context.sessionBound === true ? { sessionBound: true } : {}),
       evidenceRefs: input.evidenceRefs ?? [],
     },
     { now: context.now },

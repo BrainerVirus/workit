@@ -19,6 +19,8 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
+import { createHash } from "node:crypto";
+import { resolveStateDir } from "@/packages/workit-core/src/core/logger";
 import { recordIssuedSession } from "@/packages/workit-core/src/host-session";
 import { useConfigHome } from "@/test/shared/grant-home";
 import { fixture } from "./hooks/hook-fixtures";
@@ -148,7 +150,7 @@ test("Given a pre-chain verdict prepended before the first chained row, When che
   expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["unsigned"] });
 });
 
-test("Given the author's self verdict edited by hand into an independent one, When checked, Then the reason is hash_mismatch", () => {
+test("Given the author's self verdict edited by hand into an independent one, When checked, Then the row reads hash_mismatch and the gate refuses the tampered ledger", () => {
   const root = featureRepo();
   chainStarted(root);
   value(recordVerdict(by(root, "v9"), { result: "verified", how: "mine", self: true }));
@@ -159,7 +161,9 @@ test("Given the author's self verdict edited by hand into an independent one, Wh
       .replace('"self":true', '"self":false')
       .replace('"selfReason":"flag"', '"selfReason":null'),
   );
-  expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["hash_mismatch"] });
+  const result = check(root);
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["ledger_tampered"] });
+  expect(result.verdicts[0].reasons).toContain("hash_mismatch");
 });
 
 test("Given a reviewer's independent failure, When an earlier pass by another reviewer is replayed at the end, Then the failure still blocks (duplicate_id)", () => {
@@ -232,7 +236,7 @@ test("Given an accepted pass on an older head, When a hand-appended stack.restac
   expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
 });
 
-test("Given a --session verdict an older CLI recorded on Claude Code, When no SubagentStart issued the id, Then it is unissued_session until a hook issued it", () => {
+test("Given a --session verdict an older CLI recorded on Claude Code, When no SubagentStart issued the id, Then it is unissued_session; once issued with a token, an unbound row is unbound_session", () => {
   const root = featureRepo();
   value(
     recordVerdict(by(root, "lead-1:agent-7", "claude_code", "flag"), {
@@ -242,15 +246,48 @@ test("Given a --session verdict an older CLI recorded on Claude Code, When no Su
   );
   expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["unissued_session"] });
   recordIssuedSession(root, "lead-1", "lead-1:agent-7");
+  // The id is issued, but the row never proved it was that subagent's.
+  expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["unbound_session"] });
+  value(
+    recordVerdict(
+      { ...by(root, "lead-1:agent-7", "claude_code", "flag"), sessionBound: true },
+      { result: "verified", how: "the subagent itself" },
+    ),
+  );
   expect(check(root).accepted.accepted).toBe(true);
 });
 
-test("Given a hand-minted Claude Code child id in WORKIT_SESSION_ID, When checked, Then it is unissued_session; a bare --session on a host is too", () => {
+test("Given an id a hook issued before tokens existed, When an older CLI recorded it by --session, Then it is still accepted (legacy registry entry)", () => {
+  const root = featureRepo();
+  recordIssuedSession(root, "lead-9", "lead-9:agent-1");
+  const digest = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 32);
+  writeFileSync(
+    path.join(resolveStateDir(), "issued", digest("lead-9"), digest("lead-9:agent-1")),
+    "workit-issued-sessions/2",
+  );
+  value(
+    recordVerdict(by(root, "lead-9:agent-1", "claude_code", "flag"), {
+      result: "verified",
+      how: "older cli",
+    }),
+  );
+  expect(check(root).accepted.accepted).toBe(true);
+});
+
+test("Given a hand-minted <lead>:<x> id in WORKIT_SESSION_ID on a declared host, When checked, Then it is unissued_session; a bare --session on a host is too", () => {
   const root = featureRepo();
   value(
     recordVerdict(by(root, "lead-1:v1", "claude_code", "env"), { result: "verified", how: "x" }),
   );
   expect(check(root).accepted.reasons).toEqual(["unissued_session"]);
+  // Any declared WORKIT_HOST, not only Claude Code (mv83zyg6 P5).
+  for (const host of ["cursor", "made-up"]) {
+    const declared = featureRepo();
+    value(
+      recordVerdict(by(declared, "lead-A:nobody", host, "env"), { result: "verified", how: "x" }),
+    );
+    expect(check(declared).accepted.reasons, host).toEqual(["unissued_session"]);
+  }
   const other = featureRepo();
   value(
     recordVerdict(by(other, "lead-1-v1", "codex_cli", "flag"), { result: "verified", how: "x" }),
@@ -277,12 +314,20 @@ test("Given the legitimate verdict flows, When checked, Then each is accepted", 
   const issued = featureRepo();
   recordIssuedSession(issued, "lead-2", "lead-2:agent-3");
   value(
-    recordVerdict(by(issued, "lead-2:agent-3", "claude_code", "flag"), {
-      result: "verified",
-      how: "subagent",
-    }),
+    recordVerdict(
+      { ...by(issued, "lead-2:agent-3", "claude_code", "flag"), sessionBound: true },
+      { result: "verified", how: "subagent" },
+    ),
   );
   expect(check(issued).accepted.accepted).toBe(true);
+  // OpenCode and Pi children: `<lead>:<child>` from their own shell.
+  for (const host of ["opencode", "pi"]) {
+    const child = featureRepo();
+    value(
+      recordVerdict(by(child, "lead-O:child-9", host, "env"), { result: "verified", how: "x" }),
+    );
+    expect(check(child).accepted.accepted, host).toBe(true);
+  }
   // A chained row written by an older CLI (no sessionSource field yet).
   const older = featureRepo();
   value(
