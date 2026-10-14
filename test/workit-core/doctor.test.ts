@@ -1,5 +1,10 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
+
+// Every doctor run spawns git/node/host probes; on a loaded machine single
+// tests measured past bun's 5 s default (2026-10-14). Windows keeps the 60 s
+// scripts/test.ts gives this file.
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 20_000);
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -1190,15 +1195,29 @@ test(
   SLOW_TEST_TIMEOUT_MS,
 );
 
-test("detects an unavailable runtime (no node/bun on PATH) and clears with a full PATH", () => {
+// The runtime row judges the node running workit (process.execPath); a PATH
+// without node warns for host hooks, and an older PATH node (fnm/nvm default,
+// 2026-10-14) is info, never a failure.
+test("runtime judges the running node: no PATH node warns, an older one is info", () => {
   const emptyBin = path.join(fixture.root, "empty-bin");
   mkdirSync(emptyBin, { recursive: true });
   const report = run({ env: { ...process.env, PATH: emptyBin } });
-  expect(report.exitCode).not.toBe(0);
-  expect(check(report, "runtime").status).toBe("fail");
+  expect(check(report, "runtime").status).toBe("warn");
+  expect(check(report, "runtime").detail).toContain(process.versions.node);
   expect(check(report, "runtime").fix).toBeTruthy();
 
   expect(check(run(), "runtime").status).toBe("pass");
+
+  if (process.platform === "win32") return;
+  const oldBin = path.join(fixture.root, "old-node-bin");
+  mkdirSync(oldBin, { recursive: true });
+  writeFileSync(path.join(oldBin, "node"), "#!/bin/sh\necho v22.19.0\n", { mode: 0o755 });
+  const older = run({
+    env: { ...process.env, PATH: `${oldBin}${path.delimiter}${process.env.PATH ?? ""}` },
+  });
+  expect(check(older, "runtime").status).toBe("info");
+  expect(check(older, "runtime").detail).toContain("v22.19.0");
+  expect(check(older, "runtime").fix).toBeUndefined();
 });
 
 test(
@@ -1563,14 +1582,14 @@ test("installer fails when a selected-host launcher entry is missing", () => {
   expect(check(runInstaller(), "launcher").status).toBe("pass");
 });
 
-test("installer fails when the runtime is unavailable", () => {
+// The installer runs under a Node 24+ that already satisfies the engines
+// floor; a PATH without node only leaves host hooks without a runtime.
+test("installer warns when no node is on PATH for host hooks", () => {
   const emptyBin = path.join(fixture.root, "empty-bin");
   mkdirSync(emptyBin, { recursive: true });
   const report = runInstaller({ env: { ...process.env, PATH: emptyBin } });
-  expect(report.ok).toBe(false);
-  expect(report.exitCode).toBe(1);
-  expect(check(report, "runtime").status).toBe("fail");
-  expect(check(report, "runtime").fix).toContain("Install Node");
+  expect(check(report, "runtime").status).toBe("warn");
+  expect(check(report, "runtime").fix).toContain("on PATH");
 });
 
 test(
@@ -1662,7 +1681,7 @@ test(
   { timeout: 300_000 },
 );
 
-test("codex pin passes when absent, warns on drift, passes on match", () => {
+test("codex pin passes when absent, is info when newer, warns when older, passes on match", () => {
   const emptyBin = path.join(fixture.root, "codex-empty-bin");
   mkdirSync(emptyBin, { recursive: true });
   expect(check(run({ env: { ...process.env, PATH: emptyBin } }), "codex_pin").status).toBe("pass");
@@ -1675,12 +1694,27 @@ test("codex pin passes when absent, warns on drift, passes on match", () => {
     '#!/usr/bin/env bash\necho "codex-cli ${CODEX_STUB_VERSION:-0.154.0}"\n',
     { mode: 0o755 },
   );
-  const drifted = run({
-    env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
+  // #265: a cask-updated Codex newer than the qualified pin is not a problem.
+  const newer = run({
+    env: {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      CODEX_STUB_VERSION: "9.0.0",
+    },
   });
-  expect(check(drifted, "codex_pin").status).toBe("warn");
-  expect(check(drifted, "codex_pin").detail).toContain(SUPPORT_MATRIX.codex.cli);
-  expect(check(drifted, "codex_pin").fix).toBeTruthy();
+  expect(check(newer, "codex_pin").status).toBe("info");
+  expect(check(newer, "codex_pin").detail).toContain(SUPPORT_MATRIX.codex.cli);
+  expect(check(newer, "codex_pin").fix).toBeUndefined();
+  const older = run({
+    env: {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      CODEX_STUB_VERSION: "0.1.0",
+    },
+  });
+  expect(check(older, "codex_pin").status).toBe("warn");
+  expect(check(older, "codex_pin").detail).toContain(SUPPORT_MATRIX.codex.cli);
+  expect(check(older, "codex_pin").fix).toBeTruthy();
   const matched = run({
     env: {
       ...process.env,

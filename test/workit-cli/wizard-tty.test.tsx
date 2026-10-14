@@ -762,15 +762,23 @@ test("locale selection preserves English and scrolls beyond the first five optio
   }
 });
 
-test("project setup can be skipped after previously selecting it", async () => {
+// #265: a workspace root outside any git repository (a folder of projects)
+// gets no project files; y keeps the refusal visible, n drops it.
+test("outside a git repository the project step refuses and plans no project files", async () => {
   await withNonGitRoot(async () => {
     const cleanup = withSeedConfig(seedConfig);
     const tty = await renderInk(<Wizard onExit={noop} />);
     try {
       await tty.keys(ENTER, ENTER, DOWN, ENTER, ENTER, ENTER, ENTER, ENTER);
       expect(tty.lastFrame()).toContain("Step 6 — Project setup");
+      expect(tty.lastFrame()).toContain("is not a git repository");
+      expect(tty.lastFrame()).toContain("cd <repo>");
+      expect(tty.lastFrame()).not.toContain("Apply gitignore + hygiene");
+      // y carries the refusal to the summary (and Apply's Skipped row).
       await tty.key("y");
-      expect(tty.lastFrame()).toContain("Project hygiene: yes");
+      expect(tty.lastFrame()).toContain("Project hygiene: skipped");
+      expect(tty.lastFrame()).toContain("is not a git repository");
+      expect(tty.lastFrame()).not.toContain(".gitignore");
       await tty.keys("b", "n");
       expect(tty.lastFrame()).toContain("Project hygiene: no");
       expect(tty.lastFrame()).not.toContain("CHANGELOG.md");

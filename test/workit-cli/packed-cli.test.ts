@@ -5,6 +5,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -147,9 +149,11 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
 
     const home = path.join(install, "home");
     const configDir = path.join(home, ".config", "workit");
-    const project = path.join(install, "project");
     mkdirSync(configDir, { recursive: true });
-    mkdirSync(project, { recursive: true });
+    mkdirSync(path.join(install, "project"), { recursive: true });
+    // Project files land at the git toplevel (realpath on macOS tmp dirs).
+    const project = realpathSync(path.join(install, "project"));
+    expect(spawnSync("git", ["init", "-q"], { cwd: project }).status).toBe(0);
     const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
 
     // workspace draft added through the extracted preview (WZ-12 apply path)
@@ -231,6 +235,40 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
       expect(entry?.status).toBe("Skipped");
       expect(readFileSync(file, "utf8")).toBe(before[file]);
     }
+  } finally {
+    rmSync(install, { recursive: true, force: true });
+  }
+}, 120_000);
+
+// #265: init from a folder holding several projects (not a repository) wrote
+// CHANGELOG.md, README.md and .gitignore there. The packed setup refuses and
+// names the child repositories to cd into; nothing lands in the folder.
+test("packed CLI setup refuses project files outside a git repository", async () => {
+  const packs = packWorkspacePackages();
+  const install = tmp("wk-packedcli-nongit-");
+  try {
+    const nm = path.join(install, "node_modules");
+    mkdirSync(nm, { recursive: true });
+    installPackedCore(nm, packs);
+    const setup = await loadSetup(nm);
+    const home = path.join(install, "home");
+    const configDir = path.join(home, ".config", "workit");
+    mkdirSync(configDir, { recursive: true });
+    const parent = path.join(install, "projects");
+    mkdirSync(path.join(parent, "app"), { recursive: true });
+    expect(spawnSync("git", ["init", "-q"], { cwd: path.join(parent, "app") }).status).toBe(0);
+    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+    const preview = setup.buildSetupPreview(
+      { ...PREVIEW_VALUES, platforms: [] },
+      { dir: configDir, cwd: parent, env },
+    );
+    expect(preview.ok, JSON.stringify(preview)).toBe(true);
+    const result = setup.applySetupPreview(preview, { home, configDir, cwd: parent, env });
+    const refusal = result.entries.find((e) => e.file === parent);
+    expect(refusal?.status).toBe("Skipped");
+    expect(refusal?.detail).toContain("is not a git repository");
+    expect(refusal?.detail).toContain(`cd ${path.join(parent, "app")}`);
+    expect(readdirSync(parent)).toEqual(["app"]);
   } finally {
     rmSync(install, { recursive: true, force: true });
   }

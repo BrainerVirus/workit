@@ -36,6 +36,15 @@ import {
   detectBranchPolicy,
   repoBranchPreset,
 } from "@brainervirus/workit-core/src/core/branch-policy.ts";
+import { projectTarget, type ProjectTarget } from "@brainervirus/workit-core/src/core/hygiene.ts";
+
+// Every keypress re-renders the project step: spawn `git rev-parse` once per
+// base path, not once per frame.
+let lastProjectTarget: { base: string; target: ProjectTarget } | null = null;
+const projectTargetFor = (base: string): ProjectTarget => {
+  if (lastProjectTarget?.base !== base) lastProjectTarget = { base, target: projectTarget(base) };
+  return lastProjectTarget.target;
+};
 import {
   createInitialDraft,
   reducer,
@@ -1394,15 +1403,42 @@ function Screen({
           <Text dimColor>Enter to save · Esc Back</Text>
         </Box>
       );
-    case "project":
-      // CA-07: print the exact directory Apply will touch — the resolved base
-      // path, never an implicit process.cwd().
+    case "project": {
+      // CA-07: print the exact directory Apply will touch — the git toplevel
+      // of the resolved base path, never an implicit process.cwd(). Outside a
+      // repository nothing is offered: the refusal names the way out.
+      const target = projectTargetFor(resolveBasePath(draft.values));
+      if (!target.ok) {
+        // y carries the refusal into the summary and the Apply output (a
+        // Skipped row naming `cd <repo>`); n leaves project files out silently.
+        return (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Step 6 — Project setup</Text>
+            <Text color="yellow">Skipped: {target.refused}</Text>
+            <ConfirmInput
+              defaultChoice="confirm"
+              submitOnEnter={false}
+              onConfirm={() => {
+                dispatch({ type: "set", field: "applyProject", value: true });
+                dispatch({ type: "next" });
+              }}
+              onCancel={() => {
+                dispatch({ type: "set", field: "applyProject", value: false });
+                dispatch({ type: "next" });
+              }}
+            />
+            <Text dimColor>
+              y to keep this note in the summary · n to skip it · either adds no project files · b
+              Back · Esc Cancel
+            </Text>
+          </Box>
+        );
+      }
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 6 — Project setup</Text>
           <Text dimColor>
-            Apply gitignore + hygiene in {resolveBasePath(draft.values)}? (Existing files are never
-            overwritten.)
+            Apply gitignore + hygiene in {target.root}? (Existing files are never overwritten.)
           </Text>
           <ConfirmInput
             defaultChoice="cancel"
@@ -1419,6 +1455,7 @@ function Screen({
           <Text dimColor>y to add project files · n to skip · b Back · Esc Cancel</Text>
         </Box>
       );
+    }
     case "summary": {
       const policy = effectivePolicy(draft.values);
       // WZ-08: the summary renders the authoritative preview (read-only) — the
@@ -1511,7 +1548,12 @@ function Screen({
             VCS provider: <Text color="green">{draft.values.vcsProvider}</Text>
           </Text>
           <Text>
-            Project hygiene: <Text color="green">{draft.values.applyProject ? "yes" : "no"}</Text>
+            Project hygiene:{" "}
+            {preview.projectRefused ? (
+              <Text color="yellow">skipped — {preview.projectRefused}</Text>
+            ) : (
+              <Text color="green">{draft.values.applyProject ? "yes" : "no"}</Text>
+            )}
           </Text>
           {preview.overrides.length > 0 && (
             <Box flexDirection="column" gap={0}>

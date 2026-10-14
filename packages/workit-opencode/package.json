@@ -38,10 +38,8 @@
     "build": "bun scripts/build.ts",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@brainervirus/workit-core": "workspace:*"
-  },
   "devDependencies": {
+    "@brainervirus/workit-core": "workspace:*",
     "@opencode/plugin": "2.0.18"
   },
   "engines": {

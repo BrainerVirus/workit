@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   cpSync,
@@ -7,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -29,6 +31,10 @@ import { isolatedEnv } from "@/test/shared/helpers/packages";
 // to a nonzero exitCode.
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// Apply runs the offline doctor after each host write (git/node probes);
+// single tests measured past bun's 5 s default on a loaded machine.
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 20_000);
 
 const tempDir = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const clean = (dir: string) => rmSync(dir, { recursive: true, force: true });
@@ -517,7 +523,8 @@ test("partial platform failure propagates nonzero + Failed entry; healthy platfo
 test("packaged hygiene assets are applied without overwriting existing files (CA-08)", () => {
   const home = tempDir("workit-install-home-");
   const dir = tempDir("workit-install-cfg-");
-  const project = tempDir("workit-install-project-");
+  const project = realpathSync(tempDir("workit-install-project-"));
+  expect(spawnSync("git", ["init", "-q"], { cwd: project }).status).toBe(0);
   try {
     writeFileSync(path.join(project, ".gitignore"), "# existing\n", "utf8");
     const result = applySetupPreview(
@@ -661,7 +668,8 @@ const collectTree = (...roots: string[]): Map<string, string> => {
 
 test("preview/apply parity: every Apply write was previewed, exactly (AR-09/CA-39)", () => {
   const home = tempDir("workit-parity-home-");
-  const dir = tempDir("workit-parity-cfg-");
+  const dir = realpathSync(tempDir("workit-parity-cfg-"));
+  expect(spawnSync("git", ["init", "-q"], { cwd: dir }).status).toBe(0);
   try {
     const preview = buildSetupPreview(
       values({
