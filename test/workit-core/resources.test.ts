@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -18,9 +18,11 @@ import {
   firstNotice,
   heldLease,
   resolveResourceSettings,
+  runScoped,
   scopePrefix,
   scopeSupport,
   staleReason,
+  updateLease,
   type LeaseRecord,
 } from "@/packages/workit-core/src/core/resources";
 
@@ -88,35 +90,77 @@ test("G no resources config, T one slot, test/build/typecheck heavy, 40% RAM and
   });
 });
 
-test("G repo then workspace resources, T the workspace wins field by field and a bad field keeps the earlier value", () => {
+test("G machine resources, T they set every field, and a bad field keeps the earlier value", () => {
   const { settings, warnings } = resolveResourceSettings(
     [
       {
-        label: "workit.checks.json",
-        value: { heavy: ["test", "e2e"], slots: 2, memoryMax: "50%", cpuQuota: "25%", wait: 30 },
+        label: "workspaces.json",
+        trust: "machine",
+        value: { heavy: ["test", "e2e"], slots: 3, memoryMax: "8G", cpuQuota: 4, scope: false },
       },
-      { label: "workspaces.json", value: { slots: 3, memoryMax: "8G", cpuQuota: 4, scope: false } },
-      { label: "late", value: { slots: 0, memoryMax: "lots", cpuQuota: "150%", heavy: "test" } },
+      {
+        label: "late",
+        trust: "machine",
+        value: { slots: 0, memoryMax: "lots", cpuQuota: "150%", heavy: "test" },
+      },
     ],
     HOST,
   );
   expect(settings).toEqual({
     slots: 3,
     heavy: ["test", "e2e"],
-    memoryMax: "8G",
+    memoryMax: "8589934592",
     cpuQuota: "400%",
-    waitMs: 30_000,
+    waitMs: 600_000,
     scope: false,
   });
   expect(warnings).toHaveLength(4);
   expect(warnings.join("\n")).toContain("late: slots");
   // The design's weight map form names the heavy checks by its keys.
-  expect(
-    resolveResourceSettings([{ label: "x", value: { heavy: { build: 1 } } }], HOST).settings.heavy,
-  ).toEqual(["build"]);
-  expect(
-    resolveResourceSettings([{ label: "x", value: { cpuQuota: "25%" } }], HOST).settings.cpuQuota,
-  ).toBe("200%");
+  const one = (value: unknown) =>
+    resolveResourceSettings([{ label: "x", trust: "machine", value }], HOST).settings;
+  expect(one({ heavy: { build: 1 } }).heavy).toEqual(["build"]);
+  expect(one({ cpuQuota: "25%" }).cpuQuota).toBe("200%");
+  expect(one({ memoryMax: "50%" }).memoryMax).toBe("17179869184");
+});
+
+test("G a committed workit.checks.json, T it can only tighten the machine's limits: no slots or scope, memory and CPU only lower, heavy only added", () => {
+  const repo = {
+    label: "workit.checks.json",
+    trust: "repo" as const,
+    value: {
+      slots: 8,
+      scope: false,
+      heavy: ["e2e"],
+      memoryMax: "90%",
+      cpuQuota: "100%",
+      wait: 30,
+    },
+  };
+  // Listed before the machine source on purpose: the repo still applies last.
+  const { settings, warnings } = resolveResourceSettings(
+    [repo, { label: "workspaces.json", trust: "machine", value: { heavy: ["test"] } }],
+    HOST,
+  );
+  expect(settings).toEqual({
+    slots: 1,
+    heavy: ["test", "e2e"],
+    memoryMax: "13743895347",
+    cpuQuota: "560%",
+    waitMs: 30_000,
+    scope: true,
+  });
+  expect(warnings.toSorted()).toEqual([
+    "workit.checks.json: cpuQuota: a repo can only lower it",
+    "workit.checks.json: memoryMax: a repo can only lower it",
+    "workit.checks.json: scope: is machine-wide; set it in your workspaces.json, not in the repo",
+    "workit.checks.json: slots: is machine-wide; set it in your workspaces.json, not in the repo",
+  ]);
+  const lower = resolveResourceSettings(
+    [{ ...repo, value: { memoryMax: "4G", cpuQuota: 2 } }],
+    HOST,
+  ).settings;
+  expect([lower.memoryMax, lower.cpuQuota]).toEqual(["4294967296", "200%"]);
 });
 
 test("G a free slot, T acquire writes the holder, a second acquire times out naming it, release frees the slot", async () => {
@@ -298,4 +342,172 @@ test.skipIf(!userSystemd)(
     expect(shell.log.trim()).toEndWith(`/${unit}-sh.scope`);
   },
   20_000,
+);
+
+// Review mv812c6d: SIGKILL overlap, non-Linux reclaim, forged WORKIT_LEASE, mutants.
+
+test("G workit is gone but its check's process group or scope still runs, T the lease holds; once both are gone it is stale", () => {
+  const lease = leaseRecord({ pid: 4242, pgid: 4343, scope: "workit-check-x-1.scope" });
+  const gone = { boot: null, alive: () => false };
+  expect(
+    staleReason(lease, { ...gone, group: (pgid) => pgid === 4343, scope: () => false }),
+  ).toBeNull();
+  expect(
+    staleReason(lease, {
+      ...gone,
+      group: () => false,
+      scope: (unit) => unit === "workit-check-x-1.scope",
+    }),
+  ).toBeNull();
+  expect(staleReason(lease, { ...gone, group: () => false, scope: () => false })).toBe(
+    "holder pid 4242 is gone",
+  );
+});
+
+test.skipIf(process.platform === "win32")(
+  "G a real orphaned process group recorded on the lease, T a second acquirer waits until the group exits",
+  async () => {
+    const dir = path.join(temp(), "leases");
+    const orphan = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    try {
+      writeSlot(dir, leaseRecord({ pid: deadPid(), pgid: orphan.pid }));
+      expect(await acquireLease(base(dir))).toMatchObject({ ok: false, reason: "timeout" });
+    } finally {
+      process.kill(-orphan.pid!, "SIGKILL");
+    }
+    await new Promise((resolve) => orphan.on("exit", resolve));
+    const got = await acquireLease({ ...base(dir), waitMs: 2000 });
+    expect(got.ok).toBe(true);
+    if (got.ok) got.lease.release();
+  },
+);
+
+test("G no boot id and no process start (macOS, Windows), T a boot time that moved means a reboot, and the age bound ends an unverifiable lease", () => {
+  const boot = 1_760_000_000_000;
+  const lease = leaseRecord({ bootTime: boot, maxAgeMs: 60_000 });
+  const noProc = {
+    boot: null,
+    alive: () => true,
+    start: () => null,
+    now: Date.parse(lease.startedAt) + 1000,
+  };
+  expect(staleReason(lease, { ...noProc, bootTime: boot + 30_000 })).toBeNull();
+  expect(staleReason(lease, { ...noProc, bootTime: boot + 3_600_000 })).toBe(
+    "taken before a reboot",
+  );
+  expect(
+    staleReason(lease, { ...noProc, bootTime: boot, now: Date.parse(lease.startedAt) + 61_000 }),
+  ).toBe("older than its 60 s bound");
+  // A holder whose start time verifies is never aged out.
+  const verified = { ...lease, processStart: "100" };
+  expect(
+    staleReason(verified, {
+      ...noProc,
+      start: () => "100",
+      bootTime: boot,
+      now: Date.parse(lease.startedAt) + 61_000,
+    }),
+  ).toBeNull();
+});
+
+test("G a WORKIT_LEASE naming a stale lease or one held by an unrelated process, T heldLease refuses it", async () => {
+  const dir = path.join(temp(), "leases");
+  const stale = leaseRecord({ id: "00000000-0000-4000-8000-0000000000d1", pid: deadPid() });
+  writeSlot(dir, stale);
+  // Even when its pid passed the ancestor test, a dead holder is no lease to reuse.
+  expect(heldLease(dir, stale.id, { ancestor: () => true })).toBeNull();
+  const live = leaseRecord({ id: "00000000-0000-4000-8000-0000000000d2" });
+  writeSlot(dir, live, 1);
+  expect(heldLease(dir, live.id)?.id).toBe(live.id);
+  expect(heldLease(dir, live.id, { ancestor: () => false })).toBeNull();
+});
+
+test.skipIf(process.platform !== "linux")(
+  "G a live lease held by a process that is not an ancestor, T heldLease refuses it on Linux",
+  async () => {
+    const dir = path.join(temp(), "leases");
+    const sibling = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+      stdio: "ignore",
+    });
+    try {
+      const lease = leaseRecord({ id: "00000000-0000-4000-8000-0000000000d3", pid: sibling.pid! });
+      writeSlot(dir, lease);
+      expect(heldLease(dir, lease.id)).toBeNull();
+    } finally {
+      sibling.kill("SIGKILL");
+    }
+  },
+);
+
+test("G a slot reclaimed and retaken by another holder, T release and updateLease leave it alone", async () => {
+  const dir = path.join(temp(), "leases");
+  const got = await acquireLease(base(dir));
+  if (!got.ok) throw new Error(got.reason);
+  updateLease(got.lease, { scope: "workit-check-ab-1.scope", pgid: 777 });
+  expect(JSON.parse(readFileSync(got.lease.file, "utf8"))).toMatchObject({
+    id: got.lease.record.id,
+    scope: "workit-check-ab-1.scope",
+    pgid: 777,
+  });
+  const other = leaseRecord({ id: "00000000-0000-4000-8000-0000000000e1" });
+  writeSlot(dir, other);
+  updateLease(got.lease, { pgid: 778 });
+  got.lease.release();
+  expect(JSON.parse(readFileSync(got.lease.file, "utf8"))).toEqual(other);
+});
+
+test("G notice markers older than a week, T a new notice prunes them", () => {
+  const state = temp();
+  const env = { WORKFLOW_TOOLKIT_STATE: state };
+  expect(firstNotice(env, "s-old", "no-scope")).toBe(true);
+  const old = path.join(state, "notices", "no-scope-s-old");
+  const week = new Date(Date.now() - 8 * 86_400_000);
+  utimesSync(old, week, week);
+  expect(firstNotice(env, "s-new", "no-scope")).toBe(true);
+  expect(existsSync(old)).toBe(false);
+  expect(existsSync(path.join(state, "notices", "no-scope-s-new"))).toBe(true);
+});
+
+test.skipIf(process.platform === "win32")(
+  "G systemd-run fails before the command runs, T the command runs unscoped and systemd-run's line never reaches the output; a command's own failure passes through",
+  async () => {
+    const bin = temp();
+    const failing = path.join(bin, "systemd-run-broken");
+    writeFileSync(
+      failing,
+      "#!/bin/sh\necho 'Failed to connect to bus: No such file or directory' >&2\nexit 1\n",
+    );
+    const passing = path.join(bin, "systemd-run-ok");
+    writeFileSync(passing, '#!/bin/sh\nshift\nexec "$@"\n');
+    chmodSync(failing, 0o755);
+    chmodSync(passing, 0o755);
+    const cwd = temp();
+    const runWith =
+      (argv: string[]) =>
+      (
+        wrapper: readonly string[] | null,
+        sinks: { onStdout: (t: string) => void; onStderr: (t: string) => void },
+      ) =>
+        runCheckCommand(argv, { cwd, ...sinks, ...(wrapper ? { wrapper } : {}) });
+    let seen = "";
+    const sinks = {
+      onStdout: (t: string) => void (seen += t),
+      onStderr: (t: string) => void (seen += t),
+    };
+    const ran = await runScoped(runWith(["sh", "-c", "echo ran"]), [failing, "--"], sinks);
+    expect(ran.fallback).toBe("Failed to connect to bus: No such file or directory");
+    expect([ran.result.exitCode, ran.result.log.trim(), seen.trim()]).toEqual([0, "ran", "ran"]);
+    seen = "";
+    const own = await runScoped(
+      runWith(["sh", "-c", "echo 'Failed to parse X=1' >&2; echo second >&2; exit 2"]),
+      [passing, "--"],
+      sinks,
+    );
+    expect(own.fallback).toBeNull();
+    expect(own.result.exitCode).toBe(2);
+    expect(seen).toBe("Failed to parse X=1\nsecond\n");
+  },
 );

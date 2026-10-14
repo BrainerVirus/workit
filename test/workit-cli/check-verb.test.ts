@@ -530,8 +530,16 @@ test("observed-check freshness: tree vs signal modes, modified worktree, and a c
 
 // Issue #282 slice 1: heavy checks take a machine-wide lease and run in their own scope.
 
-/** A repo whose workit.checks.json carries `resources`, plus a private state dir for the lease. */
-const heavyRepo = (checks: Record<string, string[]>, resources: Record<string, unknown> = {}) => {
+/**
+ * A repo whose workit.checks.json carries `resources`, a private state dir for
+ * the lease, and a private config dir whose workspaces.json gives the machine's
+ * `resources` (default: no systemd scope, so most tests stay fast).
+ */
+const heavyRepo = (
+  checks: Record<string, string[]>,
+  resources: Record<string, unknown> = {},
+  machine: Record<string, unknown> = { scope: false },
+) => {
   const root = repo(null);
   writeFileSync(path.join(root, "workit.checks.json"), JSON.stringify({ checks, resources }));
   git(root, "add", ".");
@@ -539,6 +547,10 @@ const heavyRepo = (checks: Record<string, string[]>, resources: Record<string, u
   const state = mkdtempSync(path.join(os.tmpdir(), "wk-lease-state-"));
   const config = mkdtempSync(path.join(os.tmpdir(), "wk-lease-config-"));
   dirs.push(state, config);
+  writeFileSync(
+    path.join(config, "workspaces.json"),
+    JSON.stringify({ workspaces: [{ name: "here", glob: "**", resources: machine }] }),
+  );
   const env = {
     ...process.env,
     WORKIT_SESSION_ID: "s-heavy",
@@ -602,11 +614,11 @@ const writeLease = (leases: string, record: Record<string, unknown>) => {
 };
 
 test("G two `workit check test` runs in different worktrees, W the first holds the lease, T the second waits for it, then runs, and --json reports the wait and the holder", async () => {
-  const one = heavyRepo({ test: SLOW(1500) }, { scope: false });
+  const one = heavyRepo({ test: SLOW(1500) });
   const two = repo(null);
   writeFileSync(
     path.join(two, "workit.checks.json"),
-    JSON.stringify({ checks: { test: SLOW(10) }, resources: { scope: false } }),
+    JSON.stringify({ checks: { test: SLOW(10) } }),
   );
   const first = cli(one.root, ["check", "test", "--json"], one.env);
   await until(() => existsSync(path.join(one.leases, "slot-0.json")));
@@ -628,10 +640,7 @@ test("G two `workit check test` runs in different worktrees, W the first holds t
 }, 30_000);
 
 test("G the lease is held elsewhere, T an ad-hoc check runs without it, --heavy and `test` queue for it (exit 4 when the wait runs out), lint and --no-lease skip it", async () => {
-  const { root, env, leases } = heavyRepo(
-    { test: SLOW(10), lint: SLOW(10) },
-    { wait: 0, scope: false },
-  );
+  const { root, env, leases } = heavyRepo({ test: SLOW(10), lint: SLOW(10) }, { wait: 0 });
   writeLease(leases, {
     id: "00000000-0000-4000-8000-000000000009",
     pid: process.pid,
@@ -659,7 +668,7 @@ test("G the lease is held elsewhere, T an ad-hoc check runs without it, --heavy 
 });
 
 test("G a stale lease from a dead process, T `workit check test` reclaims it and says so", async () => {
-  const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { scope: false });
+  const { root, env, leases } = heavyRepo({ test: SLOW(10) });
   const dead = Number(
     spawnSync(BUN, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim(),
   );
@@ -681,7 +690,7 @@ test("G a stale lease from a dead process, T `workit check test` reclaims it and
 });
 
 test("G an outer heavy check's WORKIT_LEASE, T a nested heavy check reuses that lease instead of deadlocking on it", async () => {
-  const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { wait: 0, scope: false });
+  const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { wait: 0 });
   const id = "00000000-0000-4000-8000-00000000000b";
   writeLease(leases, { id, pid: process.pid, check: "test", cwd: "/outer", session: "s-heavy" });
   const nested = await runEnv(root, ["check", "test", "--json"], { ...env, WORKIT_LEASE: id });
@@ -692,19 +701,23 @@ test("G an outer heavy check's WORKIT_LEASE, T a nested heavy check reuses that 
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const)
-  test(`G a heavy check holding the lease, W workit gets ${signal}, T the lease is released`, async () => {
-    const { root, env, leases } = heavyRepo({ test: SLOW(30_000) }, { scope: false });
-    const running = cli(root, ["check", "test", "--json"], env);
-    await until(() => existsSync(path.join(leases, "slot-0.json")));
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    running.child.kill(signal);
-    const result = await running.done;
-    expect(result.code, result.stderr).not.toBe(0);
-    expect(existsSync(path.join(leases, "slot-0.json"))).toBe(false);
-  }, 30_000);
+  test.skipIf(process.platform === "win32")(
+    `G a heavy check holding the lease, W workit gets ${signal}, T the lease is released`,
+    async () => {
+      const { root, env, leases } = heavyRepo({ test: SLOW(30_000) });
+      const running = cli(root, ["check", "test", "--json"], env);
+      await until(() => existsSync(path.join(leases, "slot-0.json")));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      running.child.kill(signal);
+      const result = await running.done;
+      expect(result.code, result.stderr).not.toBe(0);
+      expect(existsSync(path.join(leases, "slot-0.json"))).toBe(false);
+    },
+    30_000,
+  );
 
 test("G no user systemd (no manager socket), T a heavy check runs unscoped and says so once per session", async () => {
-  const { root, env } = heavyRepo({ test: SLOW(10) });
+  const { root, env } = heavyRepo({ test: SLOW(10) }, {}, {});
   const runtime = mkdtempSync(path.join(os.tmpdir(), "wk-no-systemd-"));
   dirs.push(runtime);
   const bare = { ...env, XDG_RUNTIME_DIR: runtime };
@@ -718,10 +731,12 @@ test("G no user systemd (no manager socket), T a heavy check runs unscoped and s
 });
 
 test("G workspaces.json resources mark lint heavy, T `workit check lint` takes the lease", async () => {
-  const { root, env, config } = heavyRepo({ lint: SLOW(10) }, { scope: false });
+  const { root, env, config } = heavyRepo({ lint: SLOW(10) });
   writeFileSync(
     path.join(config, "workspaces.json"),
-    JSON.stringify({ workspaces: [{ name: "here", glob: "**", resources: { heavy: ["lint"] } }] }),
+    JSON.stringify({
+      workspaces: [{ name: "here", glob: "**", resources: { heavy: ["lint"], scope: false } }],
+    }),
   );
   const lint = await runEnv(root, ["check", "lint", "--json"], env);
   expect(lint.code, lint.stderr).toBe(0);
@@ -748,11 +763,12 @@ test.skipIf(!userSystemd)(
         ],
       },
       { memoryMax: "2G", cpuQuota: 2 },
+      {},
     );
     const result = await runEnv(root, ["check", "test", "--json"], env);
     expect(result.code, result.stderr).toBe(0);
     const data = result.json().data;
-    expect(data.scope).toMatchObject({ memoryMax: "2G", cpuQuota: "200%" });
+    expect(data.scope).toMatchObject({ memoryMax: "2147483648", cpuQuota: "200%" });
     expect(data.scope.unit).toMatch(/^workit-check-[0-9a-f]{8}-\d+\.scope$/u);
     expect(data.logTail).toHaveLength(2);
     expect(data.logTail[0]).toEndWith(`/${data.scope.unit}`);
@@ -760,3 +776,76 @@ test.skipIf(!userSystemd)(
   },
   20_000,
 );
+
+const leaseFile = (leases: string) => {
+  try {
+    return JSON.parse(readFileSync(path.join(leases, "slot-0.json"), "utf8"));
+  } catch {
+    return null;
+  }
+};
+
+test.skipIf(process.platform === "win32")(
+  "G a heavy check whose workit is SIGKILLed, T its check keeps running and a second heavy check still waits; once the check's group exits the lease is reclaimed",
+  async () => {
+    const { root, env, leases } = heavyRepo({ test: SLOW(30_000) }, { wait: 0 });
+    const running = cli(root, ["check", "test", "--json"], env);
+    await until(() => typeof leaseFile(leases)?.pgid === "number");
+    const pgid: number = leaseFile(leases).pgid;
+    running.child.kill("SIGKILL");
+    await running.done;
+    try {
+      const second = await runEnv(root, ["check", "test", "--json"], env);
+      expect(second.code, second.stderr).toBe(4);
+      expect(second.json()).toMatchObject({ code: "busy" });
+    } finally {
+      process.kill(-pgid, "SIGKILL");
+    }
+    await until(() => {
+      try {
+        process.kill(-pgid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    // `test` itself sleeps 30 s; a short --heavy run shows the reclaim.
+    const after = await runEnv(root, ["check", "--heavy", "--json", "--", ...SLOW(10)], env);
+    expect(after.code, after.stderr).toBe(0);
+    expect(after.json().data.lease.reclaimed[0]).toMatchObject({ check: "test" });
+  },
+  60_000,
+);
+
+test.skipIf(process.platform !== "linux")(
+  "G a WORKIT_LEASE leaked from an unrelated live process, T the check does not skip the queue",
+  async () => {
+    const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { wait: 0 });
+    const sibling = spawn(BUN, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+    try {
+      const id = "00000000-0000-4000-8000-0000000000f1";
+      writeLease(leases, { id, pid: sibling.pid, check: "test", cwd: "/sibling", session: "s-x" });
+      const forged = await runEnv(root, ["check", "test", "--json"], { ...env, WORKIT_LEASE: id });
+      expect(forged.code).toBe(4);
+      expect(forged.json().data.lease.holders[0]).toMatchObject({ cwd: "/sibling" });
+    } finally {
+      sibling.kill("SIGKILL");
+    }
+  },
+);
+
+test("G a committed workit.checks.json that raises slots, T the machine's one slot still holds and the repo is told", async () => {
+  const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { wait: 0, slots: 4 });
+  writeLease(leases, {
+    id: "00000000-0000-4000-8000-0000000000f2",
+    pid: process.pid,
+    check: "build",
+    cwd: "/elsewhere",
+    session: "s-other",
+  });
+  const result = await runEnv(root, ["check", "test", "--json"], env);
+  expect(result.code).toBe(4);
+  expect(result.stderr).toContain(
+    "workit: resources: workit.checks.json: slots: is machine-wide; set it in your workspaces.json",
+  );
+});

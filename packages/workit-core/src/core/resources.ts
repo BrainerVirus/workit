@@ -5,18 +5,21 @@
 // cannot push the desktop session into systemd-oomd.
 //
 // The lease is a set of slot files, `<state>/leases/slot-<n>.json`, created
-// with O_EXCL: holding one is holding the lease. A slot whose holder pid is
-// dead, whose boot id differs, or whose pid now belongs to another process is
-// stale and reclaimed by the next acquirer under a short mkdir guard.
+// with O_EXCL: holding one is holding the lease. A slot is held while its
+// workit process runs or, after workit is killed, while the check's process
+// group or scope still has processes. It is stale, and reclaimed by the next
+// acquirer under a short mkdir guard, once those are gone, after a reboot, or
+// (where the holder cannot be identified) past its age bound.
 //
-// Settings, later sources win: built-in defaults (derived from total RAM and
-// CPUs), `resources` in workit.checks.json, `resources` in the matching
-// workspaces.json entry (the machine owner's word). Only the CLI imports this
-// module; hooks never do.
+// Settings: built-in defaults (derived from total RAM and CPUs), then
+// `resources` in the matching workspaces.json entry (the machine owner's
+// word), then `resources` in workit.checks.json, which can only tighten them.
+// Only the CLI imports this module; hooks never do.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { tailLines, type CheckRun } from "../checks";
 
 /** Named checks that take the lease when nothing is configured. */
 export const DEFAULT_HEAVY_CHECKS = ["test", "build", "typecheck"];
@@ -35,7 +38,7 @@ export type ResourceSettings = {
   slots: number;
   /** Named checks that are heavy. */
   heavy: string[];
-  /** systemd MemoryMax for a heavy check's scope (bytes, or a K/M/G/T size). */
+  /** systemd MemoryMax for a heavy check's scope, in bytes. */
   memoryMax: string;
   /** systemd CPUQuota for a heavy check's scope (percent of one CPU). */
   cpuQuota: string;
@@ -57,29 +60,31 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const SIZE = /^(\d+(?:\.\d+)?)([KMGT]?)$/iu;
 const PERCENT = /^(\d+(?:\.\d+)?)%$/u;
+const UNITS: Record<string, number> = { "": 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 };
 
-/** "40%" of total RAM, or an absolute size ("8G", "8589934592"), as a systemd MemoryMax. */
-function memoryValue(value: unknown, host: HostShape): string | Error {
+/** "40%" of total RAM, or a size ("8G", "8589934592"), as MemoryMax bytes. */
+function memoryValue(value: unknown, host: HostShape): number | Error {
   const text = typeof value === "number" ? String(value) : typeof value === "string" ? value : "";
   const percent = PERCENT.exec(text.trim());
   if (percent) {
     const share = Number(percent[1]);
     if (share <= 0 || share > 100) return new Error(`memoryMax ${text} must be 1-100%`);
-    return String(Math.floor((host.totalMemBytes * share) / 100));
+    return Math.floor((host.totalMemBytes * share) / 100);
   }
   const size = SIZE.exec(text.trim());
-  if (size && Number(size[1]) > 0) return `${size[1]}${size[2].toUpperCase()}`;
+  if (size && Number(size[1]) > 0)
+    return Math.floor(Number(size[1]) * UNITS[size[2].toUpperCase()]);
   return new Error(`memoryMax must be a percent of RAM ("40%") or a size ("8G"), got ${text}`);
 }
 
-/** "70%" of the whole machine, or a CPU count (4 → "400%"), as a systemd CPUQuota. */
-function cpuValue(value: unknown, host: HostShape): string | Error {
-  if (typeof value === "number" && value > 0) return `${Math.round(value * 100)}%`;
+/** "70%" of the whole machine, or a CPU count (4 → 400), as CPUQuota percent of one CPU. */
+function cpuValue(value: unknown, host: HostShape): number | Error {
+  if (typeof value === "number" && value > 0) return Math.round(value * 100);
   const percent = typeof value === "string" ? PERCENT.exec(value.trim()) : null;
   if (percent) {
     const share = Number(percent[1]);
     if (share <= 0 || share > 100) return new Error(`cpuQuota ${percent[0]} must be 1-100%`);
-    return `${Math.max(1, Math.round(host.cpus * share))}%`;
+    return Math.max(1, Math.round(host.cpus * share));
   }
   return new Error(
     `cpuQuota must be a percent of the machine ("70%") or a CPU count, got ${String(value)}`,
@@ -87,62 +92,91 @@ function cpuValue(value: unknown, host: HostShape): string | Error {
 }
 
 /**
- * Merge `resources` blocks (lowest precedence first) over the defaults.
- * Lenient: an invalid field is reported and its earlier value kept, so a typo
- * never turns the lease off.
+ * Where a `resources` block comes from. `machine` (the user's workspaces.json)
+ * sets anything. `repo` (a committed workit.checks.json) can only tighten: it
+ * adds heavy checks, lowers memoryMax and cpuQuota, and sets its own wait; it
+ * cannot raise the machine's slots or turn the scope off.
+ */
+export type ResourceSource = { label: string; trust: "machine" | "repo"; value: unknown };
+
+/**
+ * Merge `resources` blocks over the defaults, machine sources before repo
+ * ones. Lenient: an invalid or refused field is reported and the earlier
+ * value kept, so a typo never turns the lease off.
  */
 export function resolveResourceSettings(
-  sources: Array<{ label: string; value: unknown }>,
+  sources: ResourceSource[],
   host: HostShape = hostShape(),
 ): { settings: ResourceSettings; warnings: string[] } {
+  let memory = Math.floor(host.totalMemBytes * DEFAULT_MEMORY_SHARE);
+  let cpu = Math.max(1, Math.round(host.cpus * DEFAULT_CPU_SHARE * 100));
   const settings: ResourceSettings = {
     slots: DEFAULT_SLOTS,
     heavy: [...DEFAULT_HEAVY_CHECKS],
-    memoryMax: String(Math.floor(host.totalMemBytes * DEFAULT_MEMORY_SHARE)),
-    cpuQuota: `${Math.max(1, Math.round(host.cpus * DEFAULT_CPU_SHARE * 100))}%`,
+    memoryMax: "",
+    cpuQuota: "",
     waitMs: DEFAULT_WAIT_S * 1000,
     scope: true,
   };
   const warnings: string[] = [];
-  for (const { label, value } of sources) {
+  const ordered = [
+    ...sources.filter((source) => source.trust === "machine"),
+    ...sources.filter((source) => source.trust === "repo"),
+  ];
+  for (const { label, trust, value } of ordered) {
     if (value === undefined || value === null) continue;
     if (!isRecord(value)) {
       warnings.push(`${label}: resources must be an object`);
       continue;
     }
+    const repo = trust === "repo";
     const warn = (field: string, message: string) =>
       warnings.push(`${label}: ${field}: ${message}`);
+    const machineOnly = (field: string) =>
+      warn(field, "is machine-wide; set it in your workspaces.json, not in the repo");
     if (value.slots !== undefined) {
       const slots = value.slots;
-      if (typeof slots === "number" && Number.isInteger(slots) && slots >= 1 && slots <= MAX_SLOTS)
+      if (repo) machineOnly("slots");
+      else if (
+        typeof slots === "number" &&
+        Number.isInteger(slots) &&
+        slots >= 1 &&
+        slots <= MAX_SLOTS
+      )
         settings.slots = slots;
       else warn("slots", `must be an integer 1-${MAX_SLOTS}`);
     }
+    if (value.scope !== undefined) {
+      if (repo) machineOnly("scope");
+      else if (typeof value.scope === "boolean") settings.scope = value.scope;
+      else warn("scope", "must be true or false");
+    }
     if (value.heavy !== undefined) {
       const heavy = isRecord(value.heavy) ? Object.keys(value.heavy) : value.heavy;
-      if (Array.isArray(heavy) && heavy.every((item) => typeof item === "string"))
-        settings.heavy = heavy;
-      else warn("heavy", "must be a list of check names");
+      if (!Array.isArray(heavy) || !heavy.every((item) => typeof item === "string"))
+        warn("heavy", "must be a list of check names");
+      // A repo adds heavy checks; it never makes the machine's heavy ones light.
+      else settings.heavy = repo ? [...new Set([...settings.heavy, ...heavy])] : heavy;
     }
     if (value.memoryMax !== undefined) {
-      const memory = memoryValue(value.memoryMax, host);
-      if (memory instanceof Error) warn("memoryMax", memory.message);
-      else settings.memoryMax = memory;
+      const next = memoryValue(value.memoryMax, host);
+      if (next instanceof Error) warn("memoryMax", next.message);
+      else if (repo && next > memory) warn("memoryMax", "a repo can only lower it");
+      else memory = next;
     }
     if (value.cpuQuota !== undefined) {
-      const cpu = cpuValue(value.cpuQuota, host);
-      if (cpu instanceof Error) warn("cpuQuota", cpu.message);
-      else settings.cpuQuota = cpu;
+      const next = cpuValue(value.cpuQuota, host);
+      if (next instanceof Error) warn("cpuQuota", next.message);
+      else if (repo && next > cpu) warn("cpuQuota", "a repo can only lower it");
+      else cpu = next;
     }
     if (value.wait !== undefined) {
       if (typeof value.wait === "number" && value.wait >= 0) settings.waitMs = value.wait * 1000;
       else warn("wait", "must be a number of seconds");
     }
-    if (value.scope !== undefined) {
-      if (typeof value.scope === "boolean") settings.scope = value.scope;
-      else warn("scope", "must be true or false");
-    }
   }
+  settings.memoryMax = String(memory);
+  settings.cpuQuota = `${cpu}%`;
   return { settings, warnings };
 }
 
@@ -164,14 +198,23 @@ export const leaseDir = (env: NodeJS.ProcessEnv): string => path.join(stateDir(e
 
 export type LeaseRecord = {
   id: string;
+  /** The workit process that took the lease. */
   pid: number;
   /** Field 22 of /proc/<pid>/stat, so a recycled pid does not keep a lease alive. */
   processStart: string | null;
+  /** The kernel boot id (Linux). */
   bootId: string | null;
+  /** Boot time in ms, where there is no boot id (macOS, Windows). */
+  bootTime?: number | null;
+  /** The check's process group: it outlives a SIGKILLed workit. */
+  pgid?: number | null;
+  /** Past this age a lease whose holder cannot be identified (no processStart) is stale. */
+  maxAgeMs?: number | null;
   check: string;
   cwd: string;
   session: string | null;
   startedAt: string;
+  /** The check's systemd scope unit; it holds the lease while it has processes. */
   scope: string | null;
 };
 
@@ -187,12 +230,19 @@ const readText = (file: string): string | null => {
 export const bootId = (): string | null =>
   readText("/proc/sys/kernel/random/boot_id")?.trim() || null;
 
-/** Start time of `pid` (Linux), parsed after the last ")" so a comm with spaces cannot shift it. */
-export function processStart(pid: number): string | null {
+/** When the machine booted (ms), for platforms without a boot id. */
+const bootTime = (): number => Math.round((Date.now() - os.uptime() * 1000) / 1000) * 1000;
+/** Clock steps and uptime rounding move the computed boot time; a reboot moves it far more. */
+const BOOT_SLACK_MS = 120_000;
+
+/** The fields of /proc/<pid>/stat after the comm, so a comm with spaces cannot shift them. */
+const statFields = (pid: number): string[] | null => {
   const stat = readText(`/proc/${pid}/stat`);
-  if (!stat) return null;
-  return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
-}
+  return stat ? stat.slice(stat.lastIndexOf(")") + 2).split(" ") : null;
+};
+
+/** Start time of `pid` (Linux). */
+export const processStart = (pid: number): string | null => statFields(pid)?.[19] ?? null;
 
 const pidAlive = (pid: number): boolean => {
   try {
@@ -202,6 +252,38 @@ const pidAlive = (pid: number): boolean => {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 };
+
+/** Does process group `pgid` still have members? (Windows: is the process alive.) */
+const groupAlive = (pgid: number): boolean =>
+  process.platform === "win32" ? pidAlive(pgid) : pidAlive(-pgid);
+
+const SCOPE_UNIT = /^[\w.@-]+\.scope$/u;
+
+/** Does the user scope `unit` still hold processes? */
+function scopeBusy(unit: string): boolean {
+  if (process.platform !== "linux" || !SCOPE_UNIT.test(unit)) return false;
+  const uid = process.getuid?.() ?? 0;
+  const manager = `/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service`;
+  return [`${manager}/app.slice/${unit}`, `${manager}/${unit}`].some(
+    (dir) => (readText(`${dir}/cgroup.procs`) ?? "").trim() !== "",
+  );
+}
+
+/**
+ * Is `pid` this process or one of its ancestors? Walks the ppid chain on
+ * Linux; elsewhere there is no cheap chain, so it answers true.
+ */
+function isAncestor(pid: number): boolean {
+  if (process.platform !== "linux") return true;
+  let current = process.pid;
+  for (let step = 0; step < 128 && current > 1; step += 1) {
+    if (current === pid) return true;
+    const ppid = Number(statFields(current)?.[1]);
+    if (!Number.isInteger(ppid) || ppid <= 0) return false;
+    current = ppid;
+  }
+  return current === pid;
+}
 
 const parseLease = (text: string | null): LeaseRecord | null => {
   if (!text) return null;
@@ -215,22 +297,47 @@ const parseLease = (text: string | null): LeaseRecord | null => {
   }
 };
 
-/** Why `lease` no longer holds anything, or null while its holder runs. */
-export function staleReason(
-  lease: LeaseRecord,
-  probe: {
-    alive?: (pid: number) => boolean;
-    boot?: string | null;
-    start?: (pid: number) => string | null;
-  } = {},
-): string | null {
+export type LeaseProbe = {
+  alive?: (pid: number) => boolean;
+  boot?: string | null;
+  bootTime?: number | null;
+  start?: (pid: number) => string | null;
+  group?: (pgid: number) => boolean;
+  scope?: (unit: string) => boolean;
+  now?: number;
+};
+
+/**
+ * Why `lease` no longer holds anything, or null while it does. It holds while
+ * its workit process runs, or, once that is gone (a SIGKILL), while the
+ * check's process group or scope still has processes. A lease from before a
+ * reboot, or one past its age bound whose holder cannot be identified, is
+ * stale either way.
+ */
+export function staleReason(lease: LeaseRecord, probe: LeaseProbe = {}): string | null {
   const boot = probe.boot === undefined ? bootId() : probe.boot;
-  if (lease.bootId && boot && lease.bootId !== boot) return "taken before a reboot";
-  if (!(probe.alive ?? pidAlive)(lease.pid)) return `holder pid ${lease.pid} is gone`;
-  const start = (probe.start ?? processStart)(lease.pid);
-  if (lease.processStart && start && start !== lease.processStart)
-    return `pid ${lease.pid} now belongs to another process`;
-  return null;
+  if (lease.bootId && boot) {
+    if (lease.bootId !== boot) return "taken before a reboot";
+  } else if (typeof lease.bootTime === "number") {
+    const now = probe.bootTime === undefined ? bootTime() : probe.bootTime;
+    if (now !== null && Math.abs(now - lease.bootTime) > BOOT_SLACK_MS)
+      return "taken before a reboot";
+  }
+  const start = lease.processStart ? (probe.start ?? processStart)(lease.pid) : null;
+  const age = (probe.now ?? Date.now()) - Date.parse(lease.startedAt);
+  if (!start && typeof lease.maxAgeMs === "number" && age > lease.maxAgeMs)
+    return `older than its ${Math.round(lease.maxAgeMs / 1000)} s bound`;
+  const holder = !(probe.alive ?? pidAlive)(lease.pid)
+    ? `holder pid ${lease.pid} is gone`
+    : start && start !== lease.processStart
+      ? `pid ${lease.pid} now belongs to another process`
+      : null;
+  if (!holder) return null;
+  // workit is gone, but the check it started may still run.
+  if (typeof lease.pgid === "number" && lease.pgid > 0 && (probe.group ?? groupAlive)(lease.pgid))
+    return null;
+  if (lease.scope && (probe.scope ?? scopeBusy)(lease.scope)) return null;
+  return holder;
 }
 
 export type LeaseHolder = Pick<LeaseRecord, "pid" | "check" | "cwd" | "session" | "startedAt">;
@@ -292,10 +399,12 @@ export type AcquireOptions = {
   session: string | null;
   waitMs: number;
   pollMs?: number;
+  /** The age bound recorded on the lease (see LeaseRecord.maxAgeMs). */
+  maxAgeMs?: number;
   /** Called once, when the first attempt finds every slot held. */
   onWait?: (holders: LeaseHolder[]) => void;
   /** Overrides for tests. */
-  probe?: Parameters<typeof staleReason>[1];
+  probe?: LeaseProbe;
   pid?: number;
 };
 
@@ -349,6 +458,11 @@ function tryOnce(
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Remove `file` only while it still holds lease `id`: a reclaimed and retaken slot is someone else's. */
+function removeOwn(file: string, id: string): void {
+  if (parseLease(readText(file))?.id === id) fs.rmSync(file, { force: true });
+}
+
 /**
  * Take one of `slots` machine-wide lease slots, waiting (polling every
  * `pollMs`) up to `waitMs` for a live holder to finish. The returned lease is
@@ -356,11 +470,15 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 export async function acquireLease(options: AcquireOptions): Promise<AcquireResult> {
   const pid = options.pid ?? process.pid;
+  const boot = bootId();
   const record: LeaseRecord = {
     id: randomUUID(),
     pid,
     processStart: processStart(pid),
-    bootId: bootId(),
+    bootId: boot,
+    bootTime: boot ? null : bootTime(),
+    pgid: null,
+    maxAgeMs: options.maxAgeMs ?? null,
     check: options.check,
     cwd: options.cwd,
     session: options.session,
@@ -389,7 +507,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         if (released) return;
         released = true;
         process.off("exit", release);
-        if (parseLease(readText(file))?.id === record.id) fs.rmSync(file, { force: true });
+        removeOwn(file, record.id);
       };
       process.on("exit", release);
       return {
@@ -416,19 +534,34 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
   }
 }
 
-/** Record the scope unit on a held lease, so holders can be traced to their cgroup. */
-export function noteLeaseScope(lease: HeldLease, unit: string): void {
-  lease.record.scope = unit;
+/**
+ * Record the check's scope unit or process group on a held lease, so the lease
+ * stays held while they run, even if workit itself is killed. Never writes
+ * over a slot that is no longer this lease's.
+ */
+export function updateLease(lease: HeldLease, patch: Pick<Partial<LeaseRecord>, "scope" | "pgid">) {
+  Object.assign(lease.record, patch);
   try {
-    if (parseLease(readText(lease.file))?.id === lease.record.id)
-      fs.writeFileSync(lease.file, `${JSON.stringify(lease.record)}\n`, { mode: 0o600 });
+    if (parseLease(readText(lease.file))?.id !== lease.record.id) return;
+    const temp = `${lease.file}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, `${JSON.stringify(lease.record)}\n`, { mode: 0o600 });
+    fs.renameSync(temp, lease.file);
   } catch {
-    // The lease still holds; only the scope note is missing.
+    // The lease still holds; only the note is missing.
   }
 }
 
-/** Is `id` (an outer run's WORKIT_LEASE) a lease held in `dir`? A nested heavy check reuses it. */
-export function heldLease(dir: string, id: string | undefined): LeaseRecord | null {
+/**
+ * The lease an outer heavy check passed down as WORKIT_LEASE, when it is held
+ * in `dir` by this process or one of its ancestors. A nested heavy check
+ * reuses it instead of queueing behind its own parent; a leaked or forged id
+ * from an unrelated process is ignored.
+ */
+export function heldLease(
+  dir: string,
+  id: string | undefined,
+  options: { probe?: LeaseProbe; ancestor?: (pid: number) => boolean } = {},
+): LeaseRecord | null {
   if (!id || !/^[0-9a-f-]{36}$/u.test(id)) return null;
   let names: string[];
   try {
@@ -439,11 +572,15 @@ export function heldLease(dir: string, id: string | undefined): LeaseRecord | nu
   for (const name of names) {
     if (!/^slot-\d+\.json$/u.test(name)) continue;
     const lease = parseLease(readText(path.join(dir, name)));
-    if (lease?.id === id && !staleReason(lease)) return lease;
+    if (
+      lease?.id === id &&
+      !staleReason(lease, options.probe) &&
+      (options.ancestor ?? isAncestor)(lease.pid)
+    )
+      return lease;
   }
   return null;
 }
-
 /** "test, pid 123, 1m 40s, /repo/wt" for a waiting or timeout message. */
 export function describeHolder(holder: LeaseHolder, now = Date.now()): string {
   const seconds = Math.max(0, Math.round((now - Date.parse(holder.startedAt)) / 1000));
@@ -517,21 +654,94 @@ export function scopePrefix(
 }
 
 /** systemd-run's own failure before it ran the command (bus, unit, property). */
-export const SCOPE_START_FAILURE =
-  /^(?:Failed to (?:connect to bus|create bus connection|start transient scope unit|parse \S+?=)[^\n]*)/u;
+const SCOPE_START_FAILURE =
+  /^Failed to (?:connect to bus|create bus connection|start transient scope unit|parse \S+?=)/u;
+
+type Sinks = { onStdout: (text: string) => void; onStderr: (text: string) => void };
+
+/**
+ * Run a command in its scope, and plainly when systemd-run itself failed
+ * before the command ran (one "Failed to …" line, non-zero exit). The scoped
+ * attempt's first stderr line is held back until it is known not to be that
+ * failure, so the caller never sees systemd-run's line on a fallback.
+ * `fallback` is that line when the command ran unscoped.
+ */
+export async function runScoped(
+  run: (wrapper: readonly string[] | null, sinks: Sinks) => Promise<CheckRun>,
+  wrapper: readonly string[] | null,
+  sinks: Sinks,
+): Promise<{ result: CheckRun; fallback: string | null }> {
+  if (!wrapper) return { result: await run(null, sinks), fallback: null };
+  let state = "deciding" as "deciding" | "passing" | "held";
+  let firstLine = "";
+  const held: Array<[keyof Sinks, string]> = [];
+  const flush = () => {
+    state = "passing";
+    for (const [sink, text] of held.splice(0)) sinks[sink](text);
+  };
+  const result = await run(wrapper, {
+    onStdout: (text) => {
+      if (state === "passing") return sinks.onStdout(text);
+      held.push(["onStdout", text]);
+      // systemd-run writes only to stderr: stdout means the command runs.
+      if (state === "deciding") flush();
+    },
+    onStderr: (text) => {
+      if (state === "passing") return sinks.onStderr(text);
+      held.push(["onStderr", text]);
+      if (state === "held") return;
+      firstLine += text;
+      const newline = firstLine.indexOf("\n");
+      if (newline < 0 && firstLine.length < 4096) return;
+      if (SCOPE_START_FAILURE.test(firstLine.slice(0, newline < 0 ? undefined : newline)))
+        state = "held";
+      else flush();
+    },
+  });
+  const lines = tailLines(result.log, 2);
+  if (
+    state !== "passing" &&
+    result.exitCode !== 0 &&
+    lines.length === 1 &&
+    SCOPE_START_FAILURE.test(lines[0])
+  )
+    return { result: await run(null, sinks), fallback: lines[0] };
+  flush();
+  return { result, fallback: null };
+}
+
+/** Notice markers older than this are pruned. */
+const NOTICE_TTL_MS = 7 * 86_400_000;
 
 /**
  * Should the "no scope" notice print? Once per session: a marker under the
- * state dir records that this session was told.
+ * state dir records that this session was told. Markers older than a week
+ * are pruned when a new one is written.
  */
-export function firstNotice(env: NodeJS.ProcessEnv, session: string | null, key: string): boolean {
+export function firstNotice(
+  env: NodeJS.ProcessEnv,
+  session: string | null,
+  key: string,
+  now = Date.now(),
+): boolean {
   const id = (session ?? `ppid-${process.ppid}`).replace(/[^A-Za-z0-9_.-]/gu, "_").slice(0, 120);
-  const file = path.join(stateDir(env), "notices", `${key}-${id}`);
+  const dir = path.join(stateDir(env), "notices");
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(file, `${new Date().toISOString()}\n`, { flag: "wx", mode: 0o600 });
-    return true;
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(dir, `${key}-${id}`), `${new Date(now).toISOString()}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== "EEXIST";
   }
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const file = path.join(dir, name);
+      if (now - fs.statSync(file).mtimeMs > NOTICE_TTL_MS) fs.rmSync(file, { force: true });
+    }
+  } catch {
+    // Pruning is best effort.
+  }
+  return true;
 }

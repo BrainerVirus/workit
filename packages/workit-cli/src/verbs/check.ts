@@ -59,16 +59,16 @@ import {
 import { emit, fail, type EnvelopeCode, type Io } from "../output";
 import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
 import {
-  SCOPE_START_FAILURE,
   acquireLease,
   describeHolder,
   firstNotice,
   heldLease,
   leaseDir,
-  noteLeaseScope,
   resolveResourceSettings,
+  runScoped,
   scopePrefix,
   scopeSupport,
+  updateLease,
   type HeldLease,
   type LeaseHolder,
   type ResourceSettings,
@@ -76,6 +76,8 @@ import {
 
 const USAGE =
   "workit check <name> [--no-lease] | workit check [--name <n>] [--shell] [--heavy] [--timeout <s>] [--task <id>] [--json] -- <cmd…>";
+/** Lease age bound for a check without --timeout, where the holder cannot be identified. */
+const MAX_UNVERIFIED_RUN_MS = 6 * 3_600_000;
 /** Tail lines kept on the task record (the envelope carries TAIL_LINES). */
 const RECORD_TAIL_LINES = 20;
 const RECORD_TAIL_CHARS = 200;
@@ -335,6 +337,7 @@ async function prepareHeavy(
   settings: ResourceSettings,
   label: string,
   runCwd: string,
+  timeoutMs: number,
 ): Promise<HeavyRun | number> {
   const session = hostSessionFromEnv(io.env).session;
   const dir = leaseDir(io.env);
@@ -355,6 +358,9 @@ async function prepareHeavy(
     session,
     waitMs: settings.waitMs,
     pollMs: 1000,
+    // Where the holder cannot be identified (no /proc), its lease ends with
+    // the check's timeout, else after MAX_UNVERIFIED_RUN_MS.
+    maxAgeMs: (timeoutMs || MAX_UNVERIFIED_RUN_MS) + 60_000,
     onWait: (holders) =>
       io.stderr(
         `workit: waiting for the heavy-check lease (${settings.slots} slot${settings.slots === 1 ? "" : "s"}): held by ${holders.map((holder) => describeHolder(holder)).join("; ")}\n`,
@@ -410,7 +416,7 @@ async function prepareHeavy(
     };
   }
   const unit = `workit-check-${(lease?.record.id ?? "nolease0").slice(0, 8)}-${process.pid}`;
-  if (lease) noteLeaseScope(lease, `${unit}.scope`);
+  if (lease) updateLease(lease, { scope: `${unit}.scope` });
   return {
     lease,
     leaseReport,
@@ -489,44 +495,50 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (!options.noLease && (options.heavy || options.command === null)) {
     const workspace = await workspaceResources(io);
     const { settings, warnings } = resolveResourceSettings([
-      { label: CHECKS_FILE, value: config.resources },
-      { label: "workspaces.json", value: workspace.value },
+      { label: "workspaces.json", trust: "machine", value: workspace.value },
+      { label: CHECKS_FILE, trust: "repo", value: config.resources },
     ]);
     for (const warning of [workspace.warning, ...warnings])
       if (warning) io.stderr(`workit: resources: ${warning}\n`);
     if (options.heavy || (name !== null && settings.heavy.includes(name))) {
-      const prepared = await prepareHeavy(io, settings, name ?? command.join(" "), runCwd);
+      const prepared = await prepareHeavy(
+        io,
+        settings,
+        name ?? command.join(" "),
+        runCwd,
+        options.timeoutMs,
+      );
       if (typeof prepared === "number") return prepared;
       heavy = prepared;
     }
   }
-  const runOnce = (wrapper: string[] | null) =>
-    runCheckCommand(command, {
-      cwd: runCwd,
-      shell: options.shell,
-      timeoutMs: options.timeoutMs,
-      env: heavy?.env ?? io.env,
-      onStdout: io.json ? io.stderr : io.stdout,
-      onStderr: io.stderr,
-      ...(wrapper ? { wrapper } : {}),
-    });
+  const lease = heavy?.lease ?? null;
   let result: Awaited<ReturnType<typeof runCheckCommand>>;
   try {
-    result = await runOnce(heavy?.wrapper ?? null);
-    // systemd-run itself failed (no bus, unit refused) before the command ran: run it plainly.
-    const lines = tailLines(result.log, 2);
-    if (
-      heavy?.wrapper &&
-      result.exitCode !== 0 &&
-      lines.length === 1 &&
-      SCOPE_START_FAILURE.test(lines[0])
-    ) {
-      io.stderr(`workit: the memory/CPU scope could not start (${lines[0]}); running without it\n`);
-      heavy.scope = { unit: null, reason: `systemd-run failed: ${lines[0]}` };
-      result = await runOnce(null);
+    const scoped = await runScoped(
+      (wrapper, sinks) =>
+        runCheckCommand(command, {
+          cwd: runCwd,
+          shell: options.shell,
+          timeoutMs: options.timeoutMs,
+          env: heavy?.env ?? io.env,
+          ...sinks,
+          ...(wrapper ? { wrapper } : {}),
+          // The check's group keeps the lease held if workit itself is killed.
+          ...(lease ? { onSpawn: (pid: number) => updateLease(lease, { pgid: pid }) } : {}),
+        }),
+      heavy?.wrapper ?? null,
+      { onStdout: io.json ? io.stderr : io.stdout, onStderr: io.stderr },
+    );
+    result = scoped.result;
+    if (heavy && scoped.fallback) {
+      io.stderr(
+        `workit: the memory/CPU scope could not start (${scoped.fallback}); ran without it\n`,
+      );
+      heavy.scope = { unit: null, reason: `systemd-run failed: ${scoped.fallback}` };
     }
   } finally {
-    heavy?.lease?.release();
+    lease?.release();
   }
   // Fail safe: a command that changed the worktree leaves stale evidence.
   const treeAfter = key.tree === null ? null : (worktreeTree(io.cwd)?.key ?? null);

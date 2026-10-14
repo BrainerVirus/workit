@@ -521,11 +521,20 @@ workit check test --no-lease      # run it now, outside the lease (for you, not 
   check, pid, session, age and directory. It polls once a second, up to
   `wait` seconds (default 600). If the wait runs out, it exits 4 (`busy`) and
   lists the holders. The lease is released when the check ends, also on
-  Ctrl-C or SIGTERM. The next acquirer reclaims a lease whose holder pid is
-  dead or reused, or that was taken before a reboot, and says so. A heavy
-  check started by another heavy check reuses its lease (`WORKIT_LEASE`) and
-  does not wait for it. Leases are files under the Workit state dir
+  Ctrl-C or SIGTERM. Leases are files under the Workit state dir
   (`~/.local/state/workit/leases` on Linux).
+- **Stale leases.** A lease stays held while its `workit` process runs. If
+  `workit` is killed outright (SIGKILL), the lease stays held while the
+  check's process group or scope still has processes, so two heavy checks
+  never overlap. The next acquirer reclaims a lease, and says so, once those
+  are gone, or when it was taken before a reboot (the kernel boot id on
+  Linux, the boot time elsewhere). Where the holder cannot be identified by
+  its process start time (macOS, Windows), a lease also ends after the
+  check's `--timeout`, or 6 hours without one, plus a minute.
+- **Nested checks.** A heavy check started by another heavy check reuses
+  that check's lease (`WORKIT_LEASE`) and does not wait for it. On Linux the
+  lease must belong to one of the process's ancestors, so a leaked
+  `WORKIT_LEASE` cannot skip the queue.
 - **The scope (Linux).** If a user systemd manager is running and has the
   `memory` and `cpu` controllers delegated (cgroup v2), the check runs under
   `systemd-run --user --scope -p MemoryMax=<m> -p CPUQuota=<c>` as the unit
@@ -533,38 +542,46 @@ workit check test --no-lease      # run it now, outside the lease (for you, not 
   kernel kills the check alone, not the desktop session. Without such a
   manager (no systemd, not delegated, macOS, Windows), the check runs as
   before and Workit says so once per session. If `systemd-run` itself fails
-  to start the scope, the check runs again without one.
+  to start the scope, the check runs again without one; systemd-run's error
+  line is not shown as check output.
 - **`--json`** adds `lease` (`slot`, `waitedMs`, the `holder` it waited on
   with pid, check, cwd and session, `reclaimed`, `inherited`) and `scope`
-  (`unit`, `memoryMax`, `cpuQuota`, or `unit: null` with a `reason`). Both
-  are `null` for a check that is not heavy.
+  (`unit`, `memoryMax` in bytes, `cpuQuota`, or `unit: null` with a
+  `reason`). Both are `null` for a check that is not heavy.
 
-Configure it under `resources`, in the repo's `workit.checks.json` or in the
-matching entry of your `workspaces.json`. The workspace entry wins field by
-field, because the machine owner sets the machine's limits:
+Configure it under `resources`. The machine's limits come from the matching
+entry of your `workspaces.json`. A repo's committed `workit.checks.json` can
+only tighten them, so a repo cannot break the machine-wide limit: it can add
+`heavy` checks, lower `memoryMax` and `cpuQuota`, and set its own `wait`; its
+`slots` and `scope` are ignored with a warning.
+
+```json
+{
+  "workspaces": [
+    {
+      "name": "work",
+      "glob": "/home/me/work/**",
+      "resources": { "slots": 1, "memoryMax": "40%", "cpuQuota": "70%", "scope": true }
+    }
+  ]
+}
+```
 
 ```json
 {
   "checks": { "test": "npm run test:ci", "e2e": "npx playwright test" },
-  "resources": {
-    "heavy": ["test", "e2e", "build"],
-    "slots": 1,
-    "memoryMax": "40%",
-    "cpuQuota": "70%",
-    "wait": 600,
-    "scope": true
-  }
+  "resources": { "heavy": ["e2e"], "memoryMax": "8G", "wait": 900 }
 }
 ```
 
-| Field       | Default                      | Meaning                                                                |
-| ----------- | ---------------------------- | ---------------------------------------------------------------------- |
-| `heavy`     | `test`, `build`, `typecheck` | Named checks that take the lease (replaces the default list)           |
-| `slots`     | `1`                          | Heavy checks that may run at once on the machine (1-64)                |
-| `memoryMax` | `40%` of RAM                 | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
-| `cpuQuota`  | `70%` of all CPUs            | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
-| `wait`      | `600`                        | Seconds to wait for the lease before exit 4                            |
-| `scope`     | `true`                       | `false` keeps the lease but runs without a systemd scope               |
+| Field       | Default                      | Where     | Meaning                                                                |
+| ----------- | ---------------------------- | --------- | ---------------------------------------------------------------------- |
+| `heavy`     | `test`, `build`, `typecheck` | both      | Named checks that take the lease; a repo only adds to the list         |
+| `slots`     | `1`                          | workspace | Heavy checks that may run at once on the machine (1-64)                |
+| `memoryMax` | `40%` of RAM                 | both      | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
+| `cpuQuota`  | `70%` of all CPUs            | both      | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
+| `wait`      | `600`                        | both      | Seconds to wait for the lease before exit 4                            |
+| `scope`     | `true`                       | workspace | `false` keeps the lease but runs without a systemd scope               |
 
 An invalid field prints a `workit: resources:` warning and keeps the earlier
 value, so a typo never turns the lease off. The lease lives in the CLI, so it

@@ -174,6 +174,8 @@ export type RunOptions = {
    * prefix). A --shell command then runs as `<wrapper> /bin/sh -c <cmd>`.
    */
   wrapper?: readonly string[];
+  /** Called with the child's pid once it started (on POSIX also its process group id). */
+  onSpawn?: (pid: number) => void;
 };
 
 // cmd.exe metacharacters (the cross-spawn set).
@@ -344,6 +346,7 @@ export function runCheckCommand(argv: readonly string[], options: RunOptions): P
       finish(null, null, (error as NodeJS.ErrnoException).code ?? (error as Error).message);
       return;
     }
+    if (child.pid) options.onSpawn?.(child.pid);
     if (!windows)
       for (const name of FORWARDED_SIGNALS) {
         const handler = () => {
