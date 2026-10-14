@@ -1,6 +1,6 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as z from "zod";
@@ -526,3 +526,235 @@ test("observed-check freshness: tree vs signal modes, modified worktree, and a c
   ).toBe("stale");
   expect(evaluateEvidence(task("closed"), null, tree("t2"))[0].status).toBe("passed");
 });
+
+// Issue #282 slice 1: heavy checks take a machine-wide lease and run in their own scope.
+
+/** A repo whose workit.checks.json carries `resources`, plus a private state dir for the lease. */
+const heavyRepo = (checks: Record<string, string[]>, resources: Record<string, unknown> = {}) => {
+  const root = repo(null);
+  writeFileSync(path.join(root, "workit.checks.json"), JSON.stringify({ checks, resources }));
+  git(root, "add", ".");
+  git(root, "commit", "-qm", "checks");
+  const state = mkdtempSync(path.join(os.tmpdir(), "wk-lease-state-"));
+  const config = mkdtempSync(path.join(os.tmpdir(), "wk-lease-config-"));
+  dirs.push(state, config);
+  const env = {
+    ...process.env,
+    WORKIT_SESSION_ID: "s-heavy",
+    WORKFLOW_WORKSPACE_ROOT: "",
+    WORKFLOW_TOOLKIT_STATE: state,
+    WORKFLOW_TOOLKIT_CONFIG_DIR: config,
+    WORKIT_LEASE: "",
+  };
+  return { root, config, env, leases: path.join(state, "leases") };
+};
+
+const runEnv = async (cwd: string, argv: string[], env: NodeJS.ProcessEnv) => {
+  let stdout = "";
+  let stderr = "";
+  const code = await main(argv, {
+    cwd,
+    env,
+    stdout: (text) => void (stdout += text),
+    stderr: (text) => void (stderr += text),
+  });
+  return { code, stdout, stderr, json: () => JSON.parse(stdout) };
+};
+
+const cli = (cwd: string, argv: string[], env: NodeJS.ProcessEnv) => {
+  const child = spawn(BUN, [path.join(ROOT, "packages/workit-cli/src/main.ts"), ...argv], {
+    cwd,
+    env,
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => (stdout += chunk));
+  child.stderr.on("data", (chunk) => (stderr += chunk));
+  const done = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) =>
+    child.on("close", (code) => resolve({ code, stdout, stderr })),
+  );
+  return { child, done };
+};
+
+const until = async (condition: () => boolean, ms = 15_000) => {
+  const deadline = Date.now() + ms;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+};
+
+const SLOW = (ms: number) => [BUN, "-e", `setTimeout(() => {}, ${ms})`];
+
+const writeLease = (leases: string, record: Record<string, unknown>) => {
+  mkdirSync(leases, { recursive: true });
+  writeFileSync(
+    path.join(leases, "slot-0.json"),
+    JSON.stringify({
+      bootId: null,
+      processStart: null,
+      startedAt: new Date().toISOString(),
+      scope: null,
+      ...record,
+    }),
+  );
+};
+
+test("G two `workit check test` runs in different worktrees, W the first holds the lease, T the second waits for it, then runs, and --json reports the wait and the holder", async () => {
+  const one = heavyRepo({ test: SLOW(1500) }, { scope: false });
+  const two = repo(null);
+  writeFileSync(
+    path.join(two, "workit.checks.json"),
+    JSON.stringify({ checks: { test: SLOW(10) }, resources: { scope: false } }),
+  );
+  const first = cli(one.root, ["check", "test", "--json"], one.env);
+  await until(() => existsSync(path.join(one.leases, "slot-0.json")));
+  const second = cli(two, ["check", "test", "--json"], one.env);
+  const [a, b] = await Promise.all([first.done, second.done]);
+  expect(a.code, a.stderr).toBe(0);
+  expect(b.code, b.stderr).toBe(0);
+  expect(JSON.parse(a.stdout).data.lease).toMatchObject({ slot: 0, waitedMs: 0, holder: null });
+  const lease = JSON.parse(b.stdout).data.lease;
+  expect(lease.waitedMs).toBeGreaterThan(0);
+  expect(lease.holder).toMatchObject({
+    pid: first.child.pid,
+    check: "test",
+    cwd: one.root,
+    session: "s-heavy",
+  });
+  expect(b.stderr).toContain("waiting for the heavy-check lease (1 slot): held by test, pid");
+  expect(existsSync(path.join(one.leases, "slot-0.json"))).toBe(false);
+}, 30_000);
+
+test("G the lease is held elsewhere, T an ad-hoc check runs without it, --heavy and `test` queue for it (exit 4 when the wait runs out), lint and --no-lease skip it", async () => {
+  const { root, env, leases } = heavyRepo(
+    { test: SLOW(10), lint: SLOW(10) },
+    { wait: 0, scope: false },
+  );
+  writeLease(leases, {
+    id: "00000000-0000-4000-8000-000000000009",
+    pid: process.pid,
+    check: "build",
+    cwd: "/elsewhere",
+    session: "s-other",
+  });
+  const adhoc = await runEnv(root, ["check", "--json", "--", ...SLOW(10)], env);
+  expect(adhoc.code).toBe(0);
+  expect(adhoc.json().data).toMatchObject({ lease: null, scope: null });
+  const queued = await runEnv(root, ["check", "--heavy", "--json", "--", ...SLOW(10)], env);
+  expect(queued.code).toBe(4);
+  expect(queued.json()).toMatchObject({
+    ok: false,
+    code: "busy",
+    data: { lease: { holders: [{ check: "build", cwd: "/elsewhere", session: "s-other" }] } },
+  });
+  expect((await runEnv(root, ["check", "test", "--json"], env)).code).toBe(4);
+  const lint = await runEnv(root, ["check", "lint", "--json"], env);
+  expect(lint.code).toBe(0);
+  expect(lint.json().data.lease).toBeNull();
+  const unleased = await runEnv(root, ["check", "test", "--no-lease", "--json"], env);
+  expect(unleased.code).toBe(0);
+  expect(unleased.json().data.lease).toBeNull();
+});
+
+test("G a stale lease from a dead process, T `workit check test` reclaims it and says so", async () => {
+  const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { scope: false });
+  const dead = Number(
+    spawnSync(BUN, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim(),
+  );
+  writeLease(leases, {
+    id: "00000000-0000-4000-8000-00000000000a",
+    pid: dead,
+    check: "test",
+    cwd: "/gone",
+    session: null,
+  });
+  const result = await runEnv(root, ["check", "test", "--json"], env);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.json().data.lease.reclaimed).toEqual([
+    expect.objectContaining({ pid: dead, cwd: "/gone", reason: `holder pid ${dead} is gone` }),
+  ]);
+  expect(result.stderr).toContain("reclaimed a stale heavy-check lease");
+  // Released when the run ends.
+  expect(existsSync(path.join(leases, "slot-0.json"))).toBe(false);
+});
+
+test("G an outer heavy check's WORKIT_LEASE, T a nested heavy check reuses that lease instead of deadlocking on it", async () => {
+  const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { wait: 0, scope: false });
+  const id = "00000000-0000-4000-8000-00000000000b";
+  writeLease(leases, { id, pid: process.pid, check: "test", cwd: "/outer", session: "s-heavy" });
+  const nested = await runEnv(root, ["check", "test", "--json"], { ...env, WORKIT_LEASE: id });
+  expect(nested.code, nested.stderr).toBe(0);
+  expect(nested.json().data.lease).toMatchObject({ inherited: true, slot: null });
+  // The outer lease is untouched.
+  expect(existsSync(path.join(leases, "slot-0.json"))).toBe(true);
+});
+
+for (const signal of ["SIGINT", "SIGTERM"] as const)
+  test(`G a heavy check holding the lease, W workit gets ${signal}, T the lease is released`, async () => {
+    const { root, env, leases } = heavyRepo({ test: SLOW(30_000) }, { scope: false });
+    const running = cli(root, ["check", "test", "--json"], env);
+    await until(() => existsSync(path.join(leases, "slot-0.json")));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    running.child.kill(signal);
+    const result = await running.done;
+    expect(result.code, result.stderr).not.toBe(0);
+    expect(existsSync(path.join(leases, "slot-0.json"))).toBe(false);
+  }, 30_000);
+
+test("G no user systemd (no manager socket), T a heavy check runs unscoped and says so once per session", async () => {
+  const { root, env } = heavyRepo({ test: SLOW(10) });
+  const runtime = mkdtempSync(path.join(os.tmpdir(), "wk-no-systemd-"));
+  dirs.push(runtime);
+  const bare = { ...env, XDG_RUNTIME_DIR: runtime };
+  const first = await runEnv(root, ["check", "test", "--json"], bare);
+  expect(first.code, first.stderr).toBe(0);
+  expect(first.json().data.scope).toMatchObject({ unit: null });
+  expect(first.stderr).toContain("heavy checks run without a memory/CPU limit here");
+  const second = await runEnv(root, ["check", "test", "--json"], bare);
+  expect(second.json().data.scope).toMatchObject({ unit: null });
+  expect(second.stderr).not.toContain("without a memory/CPU limit");
+});
+
+test("G workspaces.json resources mark lint heavy, T `workit check lint` takes the lease", async () => {
+  const { root, env, config } = heavyRepo({ lint: SLOW(10) }, { scope: false });
+  writeFileSync(
+    path.join(config, "workspaces.json"),
+    JSON.stringify({ workspaces: [{ name: "here", glob: "**", resources: { heavy: ["lint"] } }] }),
+  );
+  const lint = await runEnv(root, ["check", "lint", "--json"], env);
+  expect(lint.code, lint.stderr).toBe(0);
+  expect(lint.json().data.lease).toMatchObject({ slot: 0, inherited: false });
+});
+
+const userSystemd =
+  process.platform === "linux" &&
+  spawnSync("systemd-run", ["--user", "--scope", "--quiet", "--collect", "--", "true"], {
+    stdio: "ignore",
+    timeout: 10_000,
+  }).status === 0;
+
+test.skipIf(!userSystemd)(
+  "G a delegated user systemd, T `workit check test` runs in a workit scope with the configured limits",
+  async () => {
+    const { root, env } = heavyRepo(
+      {
+        test: [
+          "sh",
+          "-c",
+          'cg=$(cut -d: -f3 /proc/self/cgroup); echo "$cg"; cat "/sys/fs/cgroup$cg/memory.max"',
+        ],
+      },
+      { memoryMax: "2G", cpuQuota: 2 },
+    );
+    const result = await runEnv(root, ["check", "test", "--json"], env);
+    expect(result.code, result.stderr).toBe(0);
+    const data = result.json().data;
+    expect(data.scope).toMatchObject({ memoryMax: "2G", cpuQuota: "200%" });
+    expect(data.scope.unit).toMatch(/^workit-check-[0-9a-f]{8}-\d+\.scope$/u);
+    expect(data.logTail).toHaveLength(2);
+    expect(data.logTail[0]).toEndWith(`/${data.scope.unit}`);
+    expect(data.logTail[1]).toBe("2147483648");
+  },
+  20_000,
+);

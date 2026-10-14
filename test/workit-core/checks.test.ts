@@ -70,6 +70,37 @@ test("workit.checks.json wins; argv must match exactly, from the repo top", () =
   expect(gateCheckNames(config, "verification")).toEqual(["test", "lint"]);
 });
 
+test("G a resources block in workit.checks.json, T the config carries it for the heavy-check lease", () => {
+  const resources = { heavy: ["e2e"], slots: 2 };
+  const root = dir({
+    "workit.checks.json": JSON.stringify({ checks: { e2e: "playwright test" }, resources }),
+  });
+  expect(loadCheckConfig(root)).toMatchObject({
+    error: null,
+    resources: { heavy: ["e2e"], slots: 2 },
+  });
+});
+
+test.skipIf(process.platform === "win32")(
+  "G a wrapper, T the command and a --shell command run through it with their exit code",
+  async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-wrap-"));
+    dirs.push(cwd);
+    const wrapper = ["env", "WORKIT_WRAPPED=yes"];
+    const argv = await runCheckCommand(
+      [process.execPath, "-e", "console.log(process.env.WORKIT_WRAPPED); process.exit(5)"],
+      { cwd, wrapper },
+    );
+    expect([argv.exitCode, argv.log.trim()]).toEqual([5, "yes"]);
+    const shell = await runCheckCommand(['echo "$WORKIT_WRAPPED" | tr y Y'], {
+      cwd,
+      shell: true,
+      wrapper,
+    });
+    expect([shell.exitCode, shell.log.trim()]).toEqual([0, "Yes"]);
+  },
+);
+
 test("package.json scripts are named checks run through the lockfile's package manager", () => {
   const bun = loadCheckConfig(
     dir({ "bun.lock": "", "package.json": JSON.stringify({ scripts: { test: "x", build: "y" } }) }),
