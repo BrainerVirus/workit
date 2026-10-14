@@ -22,7 +22,15 @@ import { createContextTool } from "../tools/context";
 import { createV2Lifecycle } from "./lifecycle";
 import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from "./injection";
 import { evaluateShellPermission } from "./permissions";
+import { childSessionId } from "@brainervirus/workit-core/src/host-session";
+import { childDenial, childMayRecord, childTaskMissing } from "./child-identity";
 import { observeShellBefore, observeShellResult, type ShellWorkdirs } from "./shell";
+import {
+  applyShellSession,
+  noteShellCall,
+  settleShellCall,
+  type PendingShells,
+} from "./shell-session";
 import { injectSkillNudge, observeSkillLoad } from "./skills";
 import { createStopControl } from "./stop";
 import { registerCommands, registerSkills } from "./registry";
@@ -157,11 +165,25 @@ const setup = async (ctx: Context): Promise<() => void> => {
             session.parentID,
             lifecycle.directChildren,
           );
-          if (session.parentID !== undefined && workerId === null)
-            return resultContent(
-              failure("permission_denied", "OpenCode child session has no validated Workit worker"),
-            );
           const family = workitFamilyOf(spec.name);
+          if (session.parentID !== undefined && workerId === null) {
+            const identity = childSessionId(session.parentID, session.id);
+            const lead = await sessionFacts(ctx, session.parentID);
+            const directChild =
+              lead !== null && lead.parentID === undefined && sameWorkspace(root, lead.directory);
+            if (!directChild || family === null || !childMayRecord(family, input))
+              return resultContent(failure("permission_denied", childDenial(identity)));
+            if (childTaskMissing(store, input))
+              return resultContent(
+                failure(
+                  "not_found",
+                  "no task for this branch yet: the lead starts one (workit_task start) before a child records on it, or pass taskId",
+                ),
+              );
+            return resultContent(
+              runFamily(family, input, { ...session, id: identity }, store, null),
+            );
+          }
           if (family !== null)
             return resultContent(runFamily(family, input, session, store, workerId));
           if (spec.name === "workit_init_apply") {
@@ -175,8 +197,12 @@ const setup = async (ctx: Context): Promise<() => void> => {
     }
   });
   const shellWorkdirs: ShellWorkdirs = new Map();
+  const pendingShells: PendingShells = new Map();
   await ctx.tool.hook("execute.before", async (event) => {
-    if (event.tool === "shell") return observeShellBefore(root, event, shellWorkdirs);
+    if (event.tool === "shell") {
+      noteShellCall(pendingShells, { sessionID: String(event.sessionID), input: event.input });
+      return observeShellBefore(root, event, shellWorkdirs);
+    }
     if (event.tool === "skill") return observeSkillLoad(root, event);
     if (event.tool !== "subagent") return;
     await lifecycle.executeBefore({
@@ -186,8 +212,20 @@ const setup = async (ctx: Context): Promise<() => void> => {
       input: event.input,
     });
   });
+  // Older V2 builds have no shell domain: their shells keep OPENCODE_SESSION_ID only.
+  const shellDomain = (ctx as Partial<Context>).shell;
+  if (shellDomain)
+    await shellDomain.hook("create.before", (event) =>
+      applyShellSession(pendingShells, event, async (sessionID) => {
+        const known = lifecycle.directChildren.get(sessionID);
+        return known ?? (await sessionFacts(ctx, sessionID))?.parentID;
+      }),
+    );
   await ctx.tool.hook("execute.after", async (event) => {
-    if (event.tool === "shell") return observeShellResult(root, event as never);
+    if (event.tool === "shell") {
+      settleShellCall(pendingShells, { sessionID: String(event.sessionID), input: event.input });
+      return observeShellResult(root, event as never);
+    }
     if (event.tool !== "subagent") return;
     await lifecycle.executeAfter({
       tool: event.tool,

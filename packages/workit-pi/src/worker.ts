@@ -12,6 +12,7 @@ import {
   failure,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
+import { childSessionId } from "@brainervirus/workit-core/src/host-session";
 import {
   appendBoundedStderr,
   MAX_WORKER_LINE_BYTES,
@@ -92,6 +93,8 @@ export type LaunchOptions = {
   taskId?: string;
   workerId?: string;
   sessionId?: string;
+  /** The launching lead's Pi session: the worker acts as `<lead>:<worker session>`. */
+  leadSession?: string;
   env?: NodeJS.ProcessEnv;
   spawn?: SpawnFn;
   /** Runs on the live handle before any spawn; a false result cancels the launch. */
@@ -228,9 +231,13 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     WORKIT_PI_TASK_ID: taskId ?? "",
     WORKIT_PI_WORKER_ID: workerId ?? "",
     WORKIT_PI_WORKER_SESSION: sessionId,
-    // The worker's `workit` calls (commits, verdicts) act as the worker, never as its lead.
+    // The worker's `workit` calls (commits, verdicts) act as the worker, never
+    // as its lead: its host-derived id ends in the PI_SESSION_ID its own bash
+    // tool exports (`--session-id`), which is what the ledger accepts.
     WORKIT_HOST: "pi",
-    WORKIT_SESSION_ID: sessionId,
+    WORKIT_SESSION_ID: options.leadSession
+      ? childSessionId(options.leadSession, sessionId)
+      : sessionId,
     WORKIT_PI_WORKER_ROLE: assignment.role,
     WORKIT_PI_WORKER_SCOPE: JSON.stringify(assignment.scope),
   };

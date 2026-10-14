@@ -1140,10 +1140,31 @@ export function authorSessions(
   return sessions;
 }
 
+/** Where each host's verifier session comes from, for refusal hints. */
+const HOST_DERIVED_SESSIONS =
+  "Claude Code, Codex and Cursor: `--session <lead>:<agent id>` from the SubagentStart hook; OpenCode child sessions and Pi workers: WORKIT_SESSION_ID=<lead>:<child> already set in their shell";
+
+/** Whether `derived` is a host-derived `<lead>:<bare>` id for the bare host session `bare`. */
+const derivesFrom = (derived: string, bare: string): boolean =>
+  !bare.includes(":") && derived.endsWith(`:${bare}`);
+
+/**
+ * Whether `session` is one of the authors: the same id, or one is a bare host
+ * session and the other its derived `<lead>:<session>` form (an OpenCode
+ * child that committed as `<lead>:<child>` and judges as `<child>` is still
+ * the author). Two derived ids never match on a shared last segment.
+ */
+const authoredBy = (authors: Set<string>, session: string): boolean => {
+  if (authors.has(session)) return true;
+  for (const author of authors)
+    if (derivesFrom(author, session) || derivesFrom(session, author)) return true;
+  return false;
+};
+
 const independenceReasons = (row: ReadRow, authors: Set<string>): RejectReason[] => {
   const reasons: RejectReason[] = [];
   if (!row.actor.session) reasons.push("no_session");
-  else if (authors.has(row.actor.session)) reasons.push("author_session");
+  else if (authoredBy(authors, row.actor.session)) reasons.push("author_session");
   if (row.self === true && !reasons.includes("no_session")) reasons.push("self");
   return reasons;
 };
@@ -1687,15 +1708,16 @@ export function recordVerdict(
     head: key.head,
   });
   const authoring = [session, input.derivedFrom].find(
-    (candidate): candidate is string => typeof candidate === "string" && authors.has(candidate),
+    (candidate): candidate is string =>
+      typeof candidate === "string" && authoredBy(authors, candidate),
   );
   if (!self && authoring)
     return err(
       "blocked",
       `author_verdict: session ${authoring} authored ${branch}; a verdict must come from a different session`,
       input.derivedFrom === undefined
-        ? "have a non-author session record the verdict: spawn a verifier with its own WORKIT_SESSION_ID=<lead>-v<n> (Claude Code: subagents get one from the SubagentStart hook); or, as the author, pass --self (self-reviewed, never accepted)"
-        : "run the verifier as a separate session: the lead spawns it with its own WORKIT_SESSION_ID (Claude Code: subagents get one from the SubagentStart hook)",
+        ? `have a non-author session record the verdict: spawn a verifier subagent, which gets its own host-derived session (${HOST_DERIVED_SESSIONS}); or, as the author, pass --self (self-reviewed, never accepted)`
+        : `run the verifier as a separate session: spawn a verifier subagent, which gets its own host-derived session (${HOST_DERIVED_SESSIONS})`,
     );
   const link = checkSupersede(context, "verdict", { self, kind, branch });
   if (!link.ok) return link;

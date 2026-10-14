@@ -27,6 +27,7 @@ import {
   type WorkerHandle,
 } from "@/packages/workit-pi/src/worker";
 import { parseWorkerLines } from "@/packages/workit-pi/src/worker-protocol";
+import { hostSessionFromEnv, sessionClaimRefusal } from "@/packages/workit-core/src/host-session";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const runtime = (root = mkdtempSync(path.join(tmpdir(), "workit-pi-worker-"))): PiRuntime => ({
@@ -378,6 +379,37 @@ test("implementer process is bound before prompt and receives scoped environment
     WORKIT_PI_WORKER_SESSION: "session-1",
     WORKIT_PI_WORKER_SCOPE: JSON.stringify(assignment("implementer").scope),
   });
+});
+
+test("Given a Pi lead, When it launches a worker, Then the worker's workit calls act as <lead>:<worker session>, which its own PI_SESSION_ID vouches for", () => {
+  let observedEnv: NodeJS.ProcessEnv | undefined;
+  const worker = launchWorker(assignment("reviewer"), {
+    runtime: runtime(),
+    sessionId: "pi-worker-w1",
+    leadSession: "pi-lead",
+    spawn: (_command, _args, options) => {
+      observedEnv = options.env;
+      return {
+        pid: 9002,
+        stdout: { on: () => undefined, setEncoding: () => undefined },
+        stderr: { on: () => undefined, setEncoding: () => undefined },
+        once: () => undefined,
+        stdin: { write: () => true, end: () => undefined },
+        kill: () => true,
+      };
+    },
+  });
+  expect(worker.spec.args).toContain("pi-worker-w1");
+  expect(observedEnv).toMatchObject({
+    WORKIT_HOST: "pi",
+    WORKIT_SESSION_ID: "pi-lead:pi-worker-w1",
+  });
+  // Pi's bash tool exports the worker's own session id (`--session-id`).
+  const shell = { ...observedEnv, PI_SESSION_ID: "pi-worker-w1" };
+  expect(hostSessionFromEnv(shell).session).toBe("pi-lead:pi-worker-w1");
+  expect(sessionClaimRefusal(shell, "pi-lead:pi-worker-w1")).toBeNull();
+  // The lead's own shell cannot claim it.
+  expect(sessionClaimRefusal({ PI_SESSION_ID: "pi-lead" }, "pi-lead:pi-worker-w1")).not.toBeNull();
 });
 
 test("launch failure remains assigned", () => {
