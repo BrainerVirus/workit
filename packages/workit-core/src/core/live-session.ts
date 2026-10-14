@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveStore } from "../store/paths";
 import { resolveStateDir } from "./logger";
+import { processStartOf } from "./store-lock";
 
 export const LIVE_SESSION_TTL_MS = 15 * 60_000;
 /** Rewrite a live marker of one's own at most this often. */
@@ -29,8 +30,11 @@ export type LiveOwner = {
   session: string;
   /** Lead ids this session counts as (its own lead, its parent's). */
   leads: string[];
-  /** The host process (null when it cannot be told). */
-  pid: number | null;
+  /**
+   * The host process (null when it cannot be told), read lazily: off Linux
+   * it costs `ps` calls, so only a write or a foreign marker asks for it.
+   */
+  pid: () => number | null;
 };
 
 export type LiveMarker = {
@@ -39,6 +43,8 @@ export type LiveMarker = {
   leads: string[];
   host: string;
   pid: number | null;
+  /** The pid's start time, so a reused pid does not keep the marker alive. */
+  pidStart: string | null;
   machine: string;
   checkout: string;
   heartbeatAt: string;
@@ -51,9 +57,22 @@ export type LiveDeps = {
   ttlMs?: number;
 };
 
+/**
+ * What reads the process table; tests swap it to count `ps` calls or to act
+ * as another platform.
+ */
+export const liveProbe = {
+  platform: process.platform as string,
+  run: (args: string[]): string =>
+    spawnSync("ps", args, { encoding: "utf8", timeout: 2_000 }).stdout ?? "",
+  start: (pid: number): string | null => processStartOf(pid),
+};
+
 /** A session's lead: the part before `:` (an issued subagent id), minus a fanout `-w-<slice>` tail. */
 export const leadOf = (session: string): string =>
   session.split(":")[0].replace(/-w-.*$/su, "") || session;
+
+const familyOf = (host: string): string => host.replace(/_(?:cli|desktop)$/u, "");
 
 const processAlive = (pid: number): boolean => {
   try {
@@ -67,18 +86,16 @@ const processAlive = (pid: number): boolean => {
 /** Parent pid and command line of `pid`: /proc on Linux, `ps` on other POSIX systems. */
 const processInfo = (pid: number): { ppid: number; command: string } | null => {
   try {
-    if (process.platform === "linux") {
+    if (liveProbe.platform === "linux") {
       const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
       const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
       const command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
       return Number.isInteger(ppid) ? { ppid, command: command.trim() } : null;
     }
-    if (process.platform === "win32") return null;
-    const run = spawnSync("ps", ["-o", "ppid=,command=", "-p", String(pid)], {
-      encoding: "utf8",
-      timeout: 2_000,
-    });
-    const match = /^\s*(\d+)\s+(.*)$/su.exec(run.stdout ?? "");
+    if (liveProbe.platform === "win32") return null;
+    const match = /^\s*(\d+)\s+(.*)$/su.exec(
+      liveProbe.run(["-o", "ppid=,command=", "-p", String(pid)]),
+    );
     return match ? { ppid: Number(match[1]), command: match[2].trim() } : null;
   } catch {
     return null;
@@ -89,21 +106,29 @@ const processInfo = (pid: number): { ppid: number; command: string } | null => {
 const WRAPPER =
   /^(?:\S*\/)?(?:sh|bash|dash|zsh|ash|ksh|fish|env|timeout|npx|npm|bunx|cmd\.exe|pwsh|powershell)(?:\s|$)|launch\.mjs|npx-cli\.js/u;
 
+const PIDS = new Map<string, number | null>();
+
 /**
  * The long-lived host process behind this hook: the plugin's own process for
  * an in-process host (OpenCode, Pi); for a hook process (Claude Code, Codex,
  * Cursor), the nearest ancestor that is not a launcher wrapper. Null when the
- * ancestry cannot be read (Windows): the heartbeat alone then bounds the marker.
+ * ancestry cannot be read (Windows). Cached per process.
  */
 export const hostPid = (transport: string): number | null => {
   if (transport !== "hook-process") return process.pid;
-  let pid = process.ppid;
+  const key = `${liveProbe.platform}\0${process.ppid}`;
+  if (PIDS.has(key)) return PIDS.get(key) ?? null;
+  let pid: number | null = process.ppid;
   for (let hop = 0; hop < 4; hop++) {
     const info = processInfo(pid);
-    if (!info) return process.platform === "win32" ? null : pid;
-    if (!WRAPPER.test(info.command) || info.ppid <= 1) return pid;
+    if (!info) {
+      if (liveProbe.platform === "win32") pid = null;
+      break;
+    }
+    if (!WRAPPER.test(info.command) || info.ppid <= 1) break;
     pid = info.ppid;
   }
+  PIDS.set(key, pid);
   return pid;
 };
 
@@ -126,7 +151,7 @@ export const liveOwner = (
     host: input.host,
     session: sessionSafe(session),
     leads: [...leads],
-    pid: hostPid(transport),
+    pid: () => hostPid(transport),
   };
 };
 
@@ -136,6 +161,10 @@ const checkoutOf = (target: string): string | null => {
   // A path that does not exist yet: its nearest existing ancestor.
   while (!fs.existsSync(dir) && path.dirname(dir) !== dir) dir = path.dirname(dir);
   if (fs.existsSync(dir) && !fs.statSync(dir).isDirectory()) dir = path.dirname(dir);
+  // Inside a `.git` directory: the checkout it belongs to.
+  const parts = dir.split(path.sep);
+  const dotGit = parts.lastIndexOf(".git");
+  if (dotGit > 0) dir = parts.slice(0, dotGit).join(path.sep) || path.sep;
   const location = resolveStore(dir);
   if (location instanceof Error || !location.shared || !location.top) return null;
   let top = location.top;
@@ -174,6 +203,7 @@ const readMarker = (file: string): LiveMarker | null => {
         : [],
       host: value.host,
       pid: typeof value.pid === "number" ? value.pid : null,
+      pidStart: typeof value.pidStart === "string" ? value.pidStart : null,
       machine: typeof value.machine === "string" ? value.machine : "",
       checkout: typeof value.checkout === "string" ? value.checkout : "",
       heartbeatAt: value.heartbeatAt,
@@ -186,19 +216,38 @@ const readMarker = (file: string): LiveMarker | null => {
 const ageOf = (marker: LiveMarker, now: Date): number =>
   now.getTime() - Date.parse(marker.heartbeatAt);
 
-/** Whether the marker's owner still counts: a fresh heartbeat and, on this machine, a running process. */
+/**
+ * Whether the marker's owner still counts: a fresh heartbeat and, on this
+ * machine, a running process that is still the one recorded (same start time).
+ */
 const isLive = (marker: LiveMarker, deps: LiveDeps): boolean => {
   const age = ageOf(marker, deps.now ?? new Date());
   if (age > (deps.ttlMs ?? LIVE_SESSION_TTL_MS)) return false;
-  const local = marker.machine === (deps.machine ?? os.hostname());
-  return !(local && marker.pid !== null && !(deps.alive ?? processAlive)(marker.pid));
+  if (marker.machine !== (deps.machine ?? os.hostname()) || marker.pid === null) return true;
+  if (!(deps.alive ?? processAlive)(marker.pid)) return false;
+  if (marker.pidStart === null) return true;
+  const start = liveProbe.start(marker.pid);
+  return start === null || start === marker.pidStart;
 };
 
-/** The same session, one of its subagents or its lead, or another session of the same host process. */
-export const sameOwner = (marker: LiveMarker, owner: LiveOwner, machine: string): boolean =>
+/** The same session, one of its subagents or fanout workers, or its lead: ids alone, no I/O. */
+const sameLead = (marker: LiveMarker, owner: LiveOwner): boolean =>
   marker.session === owner.session ||
-  owner.leads.some((lead) => lead === marker.session || marker.leads.includes(lead)) ||
-  (owner.pid !== null && marker.pid === owner.pid && marker.machine === machine);
+  owner.leads.some((lead) => lead === marker.session || marker.leads.includes(lead));
+
+/**
+ * The same session, one of its subagents or its lead, or another session of
+ * the same host process. Where a pid is unknown (Windows), any session of the
+ * same host family counts as the owner: the guard cannot tell a subagent or a
+ * cleared session from another window there, and never denies on a guess.
+ */
+export const sameOwner = (marker: LiveMarker, owner: LiveOwner, machine: string): boolean => {
+  if (sameLead(marker, owner)) return true;
+  if (marker.machine !== machine) return false;
+  const pid = owner.pid();
+  if (pid === null || marker.pid === null) return familyOf(marker.host) === familyOf(owner.host);
+  return marker.pid === pid;
+};
 
 export type LiveConflict = { marker: LiveMarker; file: string; ageMs: number; checkout: string };
 
@@ -223,7 +272,10 @@ export const liveConflict = (
 
 /**
  * Record `owner` as the live session of `target`'s checkout (a fresh
- * heartbeat), unless another live session owns it. Never throws.
+ * heartbeat), unless another live session owns it; one's own marker is
+ * rewritten at most every 30 s. Two sessions claiming a free checkout at
+ * the same instant race: each writes a temp file and renames it, the last
+ * rename wins, and the loser is refused from its next write on. Never throws.
  */
 export const claimLiveSession = (target: string, owner: LiveOwner, deps: LiveDeps = {}): void => {
   try {
@@ -234,20 +286,17 @@ export const claimLiveSession = (target: string, owner: LiveOwner, deps: LiveDep
     const machine = deps.machine ?? os.hostname();
     const current = readMarker(file);
     if (current && isLive(current, deps)) {
+      if (sameLead(current, owner) && ageOf(current, now) < HEARTBEAT_EVERY_MS) return;
       if (!sameOwner(current, owner, machine)) return;
-      if (
-        current.session === owner.session &&
-        current.pid === owner.pid &&
-        ageOf(current, now) < HEARTBEAT_EVERY_MS
-      )
-        return;
     }
+    const pid = owner.pid();
     const marker: LiveMarker = {
       version: 1,
       session: owner.session,
       leads: owner.leads,
       host: owner.host,
-      pid: owner.pid,
+      pid,
+      pidStart: pid === null ? null : liveProbe.start(pid),
       machine,
       checkout,
       heartbeatAt: now.toISOString(),

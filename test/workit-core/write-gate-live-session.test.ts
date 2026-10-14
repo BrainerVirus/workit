@@ -10,6 +10,7 @@ import {
   cursorAdapter,
   dispatchHook,
 } from "@/packages/workit-core/src/hooks/index";
+import { readLedger } from "@/packages/workit-core/src/ledger";
 import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permissions";
 import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 import { fixture } from "./hooks/hook-fixtures";
@@ -291,4 +292,80 @@ test("G the marker store is unreadable or a marker is corrupt, W a session write
   writeFileSync(blocked, "x");
   process.env.WORKFLOW_TOOLKIT_STATE = blocked;
   expect(decisionOf(claudeShell(repo(), "git commit -m x"))).not.toBe("deny");
+});
+
+test("G an owned checkout and a free one, W the command changes directory first, T the guard judges the directory each git command and write runs in", () => {
+  const owned = repo();
+  own(owned);
+  const free = repo();
+  const tree = path.join(path.dirname(owned), `${path.basename(owned)}-own-wt`);
+  roots.push(tree);
+  expect(git(owned, "worktree", "add", "-q", tree, "-b", "feature/own").status).toBe(0);
+  const mine = realpathSync(tree);
+  // The deny's own advice: move to your worktree and commit there.
+  expect(decisionOf(claudeShell(owned, `cd ${mine} && git commit -m x`))).not.toBe("deny");
+  expect(decisionOf(claudeShell(owned, `git -C ${mine} commit -m x`))).not.toBe("deny");
+  for (const command of [
+    `cd ${owned} && git commit -m x`,
+    `(cd ${owned}; git reset --hard)`,
+    `pushd ${owned} && git stash`,
+    `git -C ${owned} commit -m x`,
+    `cd ${owned} && echo x > src/a.ts`,
+    `cd ${owned} && touch src/a.ts`,
+  ])
+    expect(decisionOf(claudeShell(free, command)), command).toBe("deny");
+  // A directory that cannot be known is skipped, never denied.
+  expect(decisionOf(claudeShell(free, "cd $SOMEWHERE && git commit -m x"))).not.toBe("deny");
+});
+
+test("G an owned checkout, W git or workit runs through a shell, a substitution, env -i, git.exe or npx, T still denied", () => {
+  const root = repo();
+  own(root);
+  for (const command of [
+    "bash -c 'git commit -m x'",
+    'sh -c "git reset --hard"',
+    "echo $(git stash)",
+    "env -i git commit -m x",
+    "git.exe commit -m x",
+    "npx workit git commit -m x",
+    "npx -y @brainervirus/workit-cli git branch feature/y",
+    "bash -c 'workit git commit -m x'",
+    "echo x > .git/hooks/pre-commit",
+  ])
+    expect(decisionOf(claudeShell(root, command)), command).toBe("deny");
+});
+
+test("G an owned checkout, W help, dry runs or workit git sync run, T allowed; git commit -n still commits", () => {
+  const root = repo();
+  own(root);
+  for (const command of [
+    "git commit --help",
+    "git reset -h",
+    "git clean -n",
+    "git clean -nd",
+    "git add --dry-run .",
+    "workit git commit --help",
+    "workit git sync",
+  ])
+    expect(decisionOf(claudeShell(root, command)), command).not.toBe("deny");
+  expect(decisionOf(claudeShell(root, "git commit -n -m x"))).toBe("deny");
+});
+
+test("G an owned checkout, W the override is not the guarded command's own prefix, T denied; used as its prefix, T allowed and a ledger row records it", () => {
+  const root = repo();
+  mkdirSync(path.join(root, ".git", "workit"), { recursive: true });
+  own(root);
+  for (const command of [
+    "echo WORKIT_LIVE_SESSION=override; git commit -m x",
+    "WORKIT_LIVE_SESSION=override true && git commit -m x",
+    "echo 'WORKIT_LIVE_SESSION=override git commit -m x'; git commit -m y",
+  ])
+    expect(decisionOf(claudeShell(root, command)), command).toBe("deny");
+  expect(decisionOf(claudeShell(root, "WORKIT_LIVE_SESSION=override git commit -m x"))).not.toBe(
+    "deny",
+  );
+  const ledger = readLedger(root);
+  expect(ledger.ok && ledger.value.rows.some((row) => row.type === "live_session.override")).toBe(
+    true,
+  );
 });

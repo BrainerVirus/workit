@@ -1,7 +1,20 @@
-import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { hostPid, leadOf, liveOwner } from "@/packages/workit-core/src/core/live-session";
+import {
+  claimLiveSession,
+  hostPid,
+  leadOf,
+  liveConflict,
+  liveOwner,
+  liveProbe,
+  markerFile,
+  type LiveMarker,
+  type LiveOwner,
+} from "@/packages/workit-core/src/core/live-session";
+import { shellGate, writeGate } from "@/packages/workit-core/src/hooks/write-gate";
 
 // #274: who owns a checkout. A session's subagents (`<lead>:<agent>`) and
 // fanout workers (`<lead>-w-<slice>`) share its lead; a hook process's owner
@@ -20,12 +33,9 @@ test("liveOwner: no session id is no owner; a parent and a Pi worker's workit id
     session: { id, parentId },
   });
   expect(liveOwner(input(""), "hook-process", {})).toBeNull();
-  expect(liveOwner(input("sub-1", "conv-lead"), "in-process-plugin", {})).toEqual({
-    host: "cursor",
-    session: "sub-1",
-    leads: ["sub-1", "conv-lead"],
-    pid: process.pid,
-  });
+  const owner = liveOwner(input("sub-1", "conv-lead"), "in-process-plugin", {});
+  expect(owner).toMatchObject({ host: "cursor", session: "sub-1", leads: ["sub-1", "conv-lead"] });
+  expect(owner?.pid()).toBe(process.pid);
   const worker = liveOwner(input("pi-worker-ses"), "in-process-plugin", {
     WORKIT_PI_WORKER_SESSION: "pi-worker-ses",
     WORKIT_SESSION_ID: "pi-lead:pi-worker-ses",
@@ -52,3 +62,150 @@ test.skipIf(process.platform === "win32")(
     expect(hostPid("in-process-plugin")).toBe(process.pid);
   },
 );
+
+// --- markers on a real checkout ---------------------------------------------
+
+const dirs: string[] = [];
+let previousState: string | undefined;
+let sleeper: ChildProcess | undefined;
+const probe = { ...liveProbe };
+beforeEach(() => {
+  previousState = process.env.WORKFLOW_TOOLKIT_STATE;
+  const state = mkdtempSync(path.join(os.tmpdir(), "wk-live-unit-state-"));
+  dirs.push(state);
+  process.env.WORKFLOW_TOOLKIT_STATE = state;
+});
+afterEach(() => {
+  Object.assign(liveProbe, probe);
+  if (previousState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = previousState;
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  sleeper?.kill();
+  sleeper = undefined;
+});
+
+const checkout = (): string => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-live-unit-repo-")));
+  dirs.push(root);
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+  return root;
+};
+
+const livePid = (): number => {
+  sleeper ??= spawn(process.execPath, ["-e", "setTimeout(() => {}, 600000)"], { stdio: "ignore" });
+  return sleeper.pid as number;
+};
+
+const seed = (root: string, marker: Partial<LiveMarker>) => {
+  const file = markerFile(root);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      session: "foreign",
+      leads: ["foreign"],
+      host: "claude_code",
+      pid: livePid(),
+      pidStart: null,
+      machine: os.hostname(),
+      checkout: root,
+      heartbeatAt: new Date().toISOString(),
+      ...marker,
+    }),
+  );
+  return file;
+};
+
+const owner = (session: string, pid: number | null, host = "claude_code"): LiveOwner => ({
+  host,
+  session,
+  leads: [leadOf(session)],
+  pid: () => pid,
+});
+
+test("G macOS (ps for the process table), W the owning session writes again and again, T the host pid is never looked up", () => {
+  let calls = 0;
+  liveProbe.platform = "darwin";
+  liveProbe.run = () => {
+    calls++;
+    return "1 /usr/local/bin/claude\n";
+  };
+  liveProbe.start = () => {
+    calls++;
+    return null;
+  };
+  const root = checkout();
+  seed(root, { session: "lead-1", leads: ["lead-1"] });
+  const self = liveOwner(
+    { host: "claude_code", session: { id: "lead-1:agent-2", parentId: null } },
+    "hook-process",
+    {},
+  );
+  for (let index = 0; index < 20; index++) {
+    expect(shellGate(root, "git commit -m x", self).kind).toBe("none");
+    expect(writeGate(root, ["a.ts"], self).kind).toBe("none");
+  }
+  expect(calls).toBe(0);
+});
+
+test("G a foreign marker, W the pid is read, T at most one ancestry walk per process", () => {
+  let calls = 0;
+  liveProbe.platform = "freebsd";
+  liveProbe.run = () => {
+    calls++;
+    return "1 /usr/local/bin/cursor\n";
+  };
+  liveProbe.start = () => null;
+  const root = checkout();
+  seed(root, { session: "foreign", pid: livePid() });
+  const other = liveOwner(
+    { host: "cursor", session: { id: "conv-2", parentId: null } },
+    "hook-process",
+    {},
+  );
+  for (let index = 0; index < 5; index++)
+    expect(shellGate(root, "git commit -m x", other).kind).toBe("deny");
+  expect(calls).toBeLessThanOrEqual(1);
+});
+
+test("G no host pid (Windows), W another session of the same host writes, T allowed; another host is still refused", () => {
+  const root = checkout();
+  seed(root, { session: "claude-a", leads: ["claude-a"], pid: null });
+  expect(liveConflict(path.join(root, "x"), owner("claude-cleared", null))).toBeNull();
+  seed(root, { session: "codex-a", leads: ["codex-a"], host: "codex_cli", pid: livePid() });
+  expect(liveConflict(path.join(root, "x"), owner("codex-sub", null, "codex_desktop"))).toBeNull();
+  expect(liveConflict(path.join(root, "x"), owner("claude-b", null))?.marker.session).toBe(
+    "codex-a",
+  );
+});
+
+test("G a marker whose pid now belongs to another process (start time differs), T it is not live", () => {
+  const root = checkout();
+  const pid = livePid();
+  liveProbe.start = () => "Mon Jan  1 00:00:00 2026";
+  seed(root, { pid, pidStart: "Sun Dec 31 00:00:00 2023" });
+  expect(liveConflict(path.join(root, "x"), owner("mine", 1))).toBeNull();
+  seed(root, { pid, pidStart: "Mon Jan  1 00:00:00 2026" });
+  expect(liveConflict(path.join(root, "x"), owner("mine", 1))?.marker.session).toBe("foreign");
+});
+
+test("G a live foreign marker, W another session claims, T the marker is untouched; its own marker is rewritten at most every 30 s", () => {
+  const root = checkout();
+  const file = seed(root, { heartbeatAt: new Date(Date.now() - 60_000).toISOString() });
+  const before = readFileSync(file, "utf8");
+  claimLiveSession(path.join(root, "a.ts"), owner("mine", 1));
+  expect(readFileSync(file, "utf8")).toBe(before);
+
+  const fresh = checkout();
+  const now = new Date();
+  claimLiveSession(path.join(fresh, "a.ts"), owner("mine", 1), { now });
+  const first = JSON.parse(readFileSync(markerFile(fresh), "utf8")) as LiveMarker;
+  expect(first).toMatchObject({ session: "mine", heartbeatAt: now.toISOString() });
+  const soon = new Date(now.getTime() + 10_000);
+  claimLiveSession(path.join(fresh, "a.ts"), owner("mine", 1), { now: soon });
+  expect(JSON.parse(readFileSync(markerFile(fresh), "utf8")).heartbeatAt).toBe(now.toISOString());
+  const later = new Date(now.getTime() + 31_000);
+  claimLiveSession(path.join(fresh, "a.ts"), owner("mine", 1), { now: later });
+  expect(JSON.parse(readFileSync(markerFile(fresh), "utf8")).heartbeatAt).toBe(later.toISOString());
+});
