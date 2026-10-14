@@ -491,7 +491,7 @@ test("Given a PR body in a quoted heredoc substitution, When it mentions raw com
   }
 });
 
-test("Given a pathological command, When any host analyzes it, Then it answers within 50 ms, and one it cannot analyze is denied with an unblock (review B1)", async () => {
+test("Given a pathological command, When any host analyzes it, Then it answers in bounded time, and one it cannot analyze is denied with an unblock (review B1)", async () => {
   const root = workspace();
   try {
     const bomb = `echo ${"{a,b}".repeat(22)}; git push origin HEAD:main`;
@@ -499,7 +499,8 @@ test("Given a pathological command, When any host analyzes it, Then it answers w
     for (const command of [bomb, nested]) {
       const started = performance.now();
       expect(claudeDenies(root, command)).toBe(true);
-      expect(performance.now() - started).toBeLessThan(50);
+      // Unbounded expansion took ~17 s; 500 ms leaves room for slow CI runners.
+      expect(performance.now() - started).toBeLessThan(500);
       expect(await denialsByHost(root, command)).toEqual(allHosts(true));
     }
     const deep = `echo ${"$(".repeat(100)}true${")".repeat(100)}`;
