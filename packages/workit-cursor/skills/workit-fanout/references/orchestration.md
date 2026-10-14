@@ -73,8 +73,8 @@ Which session id a verdict carries, per host:
 - Claude Code: subagents inherit your `WORKIT_SESSION_ID`, so the
   SubagentStart hook names each `verifier` and `reviewer` its own session
   (`<lead>:<agent id>`), passed exactly as `--session`: the hook records the
-  ids it issues, and only those are accepted. An `implementer` uses the
-  session its brief exports for its workit commands.
+  ids it issues, and only those are accepted. An `implementer` is issued
+  none: it keeps your id in its env for its workit commands and commits.
 - Codex: the `workit-verifier` and `workit-reviewer` agents get the same
   issued `--session` from SubagentStart; any other verifier passes
   `--as verifier`.
@@ -84,8 +84,13 @@ Which session id a verdict carries, per host:
 - Cursor (no session id in the shell): the brief sets the verifier's
   `WORKIT_SESSION_ID=<lead>:verifier-<random hex>`, a fresh suffix per
   verifier. Cursor cannot check it: it is declared, not derived.
-- A worker's commits use `export WORKIT_SESSION_ID=<lead>-w-<slice>` from
-  `workit fanout brief`. A verdict under an id you made up (`<lead>-v1`,
+- A worker's commits: on Claude Code the lead's `WORKIT_SESSION_ID` already in
+  its env (SubagentStart issues no implementer id; plain git, no export, so the
+  lead authored those commits: a verifier or reviewer records the verdict, not
+  the lead); on OpenCode, Pi and Codex the id the host already
+  puts in its shell; on Cursor, CI and a plain terminal the brief's
+  `export WORKIT_SESSION_ID=<lead>-w-<slice>` (see `brief.md`, "Identity and
+  git rules per host"). A verdict under an id you made up (`<lead>-v1`,
   `<lead>:v1`) is refused as `forged_session` on Claude Code, Codex,
   OpenCode and Pi.
 
