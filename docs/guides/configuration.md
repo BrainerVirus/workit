@@ -41,6 +41,26 @@ not. An unknown value is reported by `workit grant show` and read as
 { "name": "personal", "glob": "/home/you/projects/personal/**", "defaultEndpoint": "green" }
 ```
 
+A workspace's `trailers` (default `true`) says whether commits carry the
+`Workit-Session:` trailer. Set `"trailers": false` on a workspace (a work
+repository whose history should not name agent sessions) and edit it yourself
+in `workspaces.json`: `workit git commit` then writes no trailer and records
+the author in the ledger only (`commit.recorded`), so a verdict from the same
+session is still refused as the author's. The session hook adds nothing there
+(it asks `workit git trailers`, which prints `on` or `off`), `workit doctor`
+neither suggests nor installs it, and `workit pr merge` sends its own squash
+message: the PR title and the branch's commits, with `Workit-Session:` lines
+stripped. `workit pr merge --subject <s> --body <b>` sets that squash message
+in any workspace.
+
+```json
+{ "name": "work", "glob": "/home/you/projects/work/**", "trailers": false }
+```
+
+To add your own trailers (Co-Authored-By) in the same commit, use
+`workit git commit --trailer "Co-Authored-By: Name <email>"` (repeatable)
+instead of amending afterwards.
+
 GitHub and GitLab use your `gh auth login` / `glab auth login`; Workit stores
 no forge tokens of its own.
 

@@ -124,6 +124,8 @@ Autonomy contract:
 CLI first: if a step has one right answer, use the \`workit\` verb instead of
 hand-running git, gh or glab (\`workit git|pr|ci|check\`; \`workit help\` lists
 the rest; without \`workit\` on PATH, \`npx -y @brainervirus/workit-cli\`).
+Add a trailer such as Co-Authored-By in the same commit with
+\`workit git commit --trailer "<Key: value>"\`; never amend to add one.
 The task families (task, policy, evidence, finding, decision, worker, state)
 are optional continuity for tracked work; each branch has one implicit task,
 created by the first recording, and a solo edit needs no task. A decision

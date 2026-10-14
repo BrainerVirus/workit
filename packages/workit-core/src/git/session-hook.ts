@@ -28,6 +28,9 @@
 //   it would commit a trailer-only message instead of aborting); for a
 //   template (git aborts an unedited one); for a comment-only message; and in a
 //   rebase or cherry-pick replaying commits that keep their own trailers.
+// - A workspace with `trailers: false`: the helper asks `workit git trailers`
+//   (when workit is on PATH) and adds nothing on `off`; doctor neither
+//   suggests nor installs the hook there. Without workit the trailer is added.
 // - `--if-exists addIfDifferent`: the same session's trailer is never repeated;
 //   another session that amends adds its own, as `workit git commit --amend` does.
 import { spawnSync } from "node:child_process";
@@ -80,6 +83,10 @@ fi
 [ -n "$session" ] || exit 0
 [ \${#session} -le 128 ] || exit 0
 case "$session" in *[!A-Za-z0-9_.:@/+-]*) exit 0 ;; esac
+# A workspace with \`trailers: false\` keeps authorship in the ledger only.
+if command -v workit >/dev/null 2>&1; then
+  [ "$(workit git trailers 2>/dev/null)" != off ] || exit 0
+fi
 add_trailer() {
   [ -f "$1" ] && [ -r "$1" ] || return 0
   body=$(sed '/^# -\\{24\\} >8 -\\{24\\}$/,$d' "$1" | git stripspace --strip-comments)

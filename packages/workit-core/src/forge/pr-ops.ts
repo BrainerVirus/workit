@@ -16,6 +16,9 @@
 // The merge call carries the head SHA (GitHub `sha=`, GitLab `sha=`), so a
 // head that moves after the gates refuses instead of merging unverified code.
 // --delete-branch deletes with a lease on that same SHA.
+// A squash with --subject/--body, or in a workspace with `trailers: false`,
+// sends its own message (the PR title and the branch's commits by default)
+// with every `Workit-Session:` trailer stripped from the body.
 import {
   requireGrant,
   resolveAutonomy,
@@ -24,6 +27,7 @@ import {
 } from "../autonomy";
 import { branchKindOf, flowRoute, gitFlowOf, isProtectedTarget } from "../core/branch";
 import { vcsConfig } from "../core/vcs-config";
+import { workspaceTrailers } from "../core/workspaces";
 import { workspaceReleaseTracks } from "../core/release-tracks";
 import { deleteRemoteBranch } from "../git/ops";
 import { spawnSync } from "node:child_process";
@@ -91,6 +95,13 @@ const createNext = (cwd: string): string => {
 
 /** Workit's own commit trailer: provenance for the ledger, not PR prose. */
 const SESSION_TRAILER = /^Workit-Session:.*$/gimu;
+
+/** `text` without `Workit-Session:` lines (and the blank runs they leave). */
+export const stripSessionTrailers = (text: string): string =>
+  text
+    .replace(SESSION_TRAILER, "")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
 
 /**
  * `--fill`: the title and body from the branch's commits on top of the base
@@ -343,6 +354,9 @@ export type MergeInput = {
   expect?: { base: string; branch: string };
   /** Merge without a verdict (`merge: true` only); the reason is recorded. */
   unverified?: { reason: string };
+  /** Squash commit subject and body (`--subject`, `--body`); unset parts use the defaults. */
+  subject?: string;
+  body?: string;
 };
 
 export type MergeOutcome = {
@@ -467,6 +481,56 @@ export function nextHint(next: string, number: number): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * The squash message workit sends, or null to leave the forge default: only a
+ * squash with --subject/--body or in a workspace with `trailers: false`.
+ * Defaults: the PR title (GitHub appends `(#n)` like its own default) and the
+ * branch's commits as GitHub lists them; Workit-Session lines never survive.
+ */
+function squashMessageFor(
+  cwd: string,
+  resolved: ResolvedForge,
+  input: MergeInput,
+  doc: PrStatusDoc,
+): ForgeResult<{ subject: string; body: string }> | null {
+  if (input.method !== "squash") return null;
+  if (input.subject === undefined && input.body === undefined && workspaceTrailers(cwd).enabled)
+    return null;
+  let subject = input.subject?.trim() ?? "";
+  if (!subject) {
+    const meta = resolved.forge.prMeta(doc.number);
+    if (!meta.ok) return meta;
+    subject =
+      resolved.forge.kind === "github" ? `${meta.data.title} (#${doc.number})` : meta.data.title;
+  }
+  const body = input.body ?? squashCommitList(cwd, resolved, doc.base, doc.head.sha);
+  return success({ subject, body: stripSessionTrailers(body) });
+}
+
+/** `* subject` and body of each commit on `base..head`, from the local clone ("" when absent). */
+function squashCommitList(
+  cwd: string,
+  resolved: ResolvedForge,
+  base: string,
+  head: string,
+): string {
+  const from =
+    resolveRef(cwd, `refs/remotes/${resolved.baseRemote}/${base}`) ??
+    resolveRef(cwd, `refs/heads/${base}`);
+  if (!from) return "";
+  const log = spawnSync(
+    "git",
+    ["log", "--reverse", "--no-merges", "--format=* %s%n%n%b%x1e", `${from}..${head}`],
+    { cwd, encoding: "utf8", timeout: GIT_TIMEOUTS.local, killSignal: "SIGKILL" },
+  );
+  if (log.status !== 0) return "";
+  return log.stdout
+    .split("\x1e")
+    .map((entry) => stripSessionTrailers(entry))
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export async function mergePullRequest(
@@ -596,7 +660,13 @@ export async function mergePullRequest(
       { reason: "needs_verdict", verdict: summary },
     );
 
-  const merged = resolved.forge.merge(doc.number, { sha: head, method: input.method });
+  const squashMessage = squashMessageFor(cwd, resolved, input, doc);
+  if (squashMessage && !squashMessage.ok) return squashMessage;
+  const merged = resolved.forge.merge(doc.number, {
+    sha: head,
+    method: input.method,
+    ...(squashMessage ? { squashMessage: squashMessage.data } : {}),
+  });
   if (!merged.ok) return merged;
   // Post-verify: the forge must report the PR merged.
   let state = "open";

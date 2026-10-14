@@ -143,6 +143,12 @@ const workspaceConfigSchema = z
     defaultEndpoint: z.unknown().optional(),
     /** How a normal-risk behavior change is verified (S17); same rules as grants. */
     verification: z.enum(["self", "independent"]).optional(),
+    /**
+     * Whether commits get the `Workit-Session:` trailer (default true). With
+     * `false`, `workit git commit` and the session hook write none and
+     * authorship lives in the ledger only (`commit.recorded`).
+     */
+    trailers: z.boolean().optional(),
     /** Autonomy grants (D15): only ever set here, by the user. */
     autonomy: z
       .object(
@@ -681,6 +687,24 @@ export const resolveRuntimeReleaseTracks = (
   return matched
     ? { workspace: matched.selected.name, releaseTracks: matched.selected.releaseTracks }
     : null;
+};
+
+/**
+ * Whether commits in cwd's workspace carry the `Workit-Session:` trailer:
+ * false only when the matching workspace sets `trailers: false`. Read
+ * leniently: no workspace, or an unreadable workspaces.json, keeps the trailer.
+ */
+export const workspaceTrailers = (cwd: string): { enabled: boolean; workspace: string | null } => {
+  let matched: ReturnType<typeof matchRuntimeWorkspace>;
+  try {
+    matched = matchRuntimeWorkspace(cwd);
+  } catch {
+    return { enabled: true, workspace: null };
+  }
+  return {
+    enabled: matched?.selected.trailers !== false,
+    workspace: matched?.selected.name ?? null,
+  };
 };
 
 const resolveRuntimeWorkspaceCandidate = (

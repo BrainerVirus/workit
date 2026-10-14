@@ -2076,14 +2076,22 @@ const sessionHookFinding = (hook: SessionHookStatus): Omit<DoctorCheck, "id"> =>
 /**
  * Plain `git commit`s made by an agent that cannot run `workit git` (a Claude
  * Code worktree-isolated subagent) get the Workit-Session trailer from a
- * prepare-commit-msg hook. Checked in Workit workspaces only; advisory (warn).
+ * prepare-commit-msg hook. Checked in Workit workspaces only, and not in one
+ * with `trailers: false`, which needs no hook; advisory (warn).
  */
 const checkSessionHook = (res: Resolved): DoctorCheck => {
-  if (!matchedWorkspace(res))
+  const workspace = matchedWorkspace(res);
+  if (!workspace)
     return {
       id: "session_hook",
       status: "pass",
       detail: `not in a Workit workspace — skipping the ${SESSION_HOOK_NAME} session hook`,
+    };
+  if (workspace.trailers === false)
+    return {
+      id: "session_hook",
+      status: "pass",
+      detail: `workspace ${workspace.name} sets trailers: false (authorship in the ledger only) — no ${SESSION_HOOK_NAME} session hook needed`,
     };
   const hook = inspectSessionHook(res.cwd, res.env);
   const finding = sessionHookFinding(hook);
@@ -2098,12 +2106,12 @@ const checkSessionHook = (res: Resolved): DoctorCheck => {
 
 export type SessionHookFix =
   | (SessionHookInstall & { workspace: string })
-  | { action: "skipped"; detail: string; workspace: null };
+  | { action: "skipped"; detail: string; workspace: string | null };
 
 /**
  * `workit doctor --fix`: install or refresh the prepare-commit-msg session
- * hook, only when the directory is in a configured Workit workspace. Another
- * tool's hook in that slot is never touched.
+ * hook, only when the directory is in a configured Workit workspace that
+ * keeps trailers. Another tool's hook in that slot is never touched.
  */
 export const fixSessionHook = (options: DoctorOptions = {}): SessionHookFix => {
   const res = resolve(options);
@@ -2113,6 +2121,12 @@ export const fixSessionHook = (options: DoctorOptions = {}): SessionHookFix => {
       action: "skipped",
       detail: `${res.cwd} is not in a Workit workspace; no hook installed`,
       workspace: null,
+    };
+  if (workspace.trailers === false)
+    return {
+      action: "skipped",
+      detail: `workspace ${workspace.name} sets trailers: false; no hook installed`,
+      workspace: workspace.name,
     };
   return { ...installSessionHook(res.cwd, res.env), workspace: workspace.name };
 };

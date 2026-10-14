@@ -542,6 +542,14 @@ export function createGitHubForge(options: {
           `sha=${mergeOptions.sha}`,
           "-f",
           `merge_method=${mergeOptions.method}`,
+          ...(mergeOptions.method === "squash" && mergeOptions.squashMessage
+            ? [
+                "-f",
+                `commit_title=${mergeOptions.squashMessage.subject}`,
+                "-f",
+                `commit_message=${mergeOptions.squashMessage.body}`,
+              ]
+            : []),
         ],
         `merge of pull request #${number}`,
       );

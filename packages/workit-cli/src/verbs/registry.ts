@@ -304,8 +304,9 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "merge",
         usage:
-          "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]",
-        summary: "Merge when READY, verified by a non-author and granted",
+          "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch] [--unverified --reason <why>]",
+        summary:
+          "Merge when READY, verified by a non-author and granted; --subject/--body set the squash message",
       },
     ],
     examples: [
@@ -351,9 +352,9 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "commit",
         usage:
-          "workit git commit -m|--message <msg>… | -F|--file <file|-> [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>]",
+          "workit git commit -m|--message <msg>… | -F|--file <file|-> [--trailer <key: value>]… [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>]",
         summary:
-          "Commit (or --amend) with a linted Conventional Commit message and the session trailer",
+          "Commit (or --amend) with a linted Conventional Commit message, the session trailer (unless the workspace sets trailers: false) and any --trailer",
       },
       {
         name: "push",
@@ -362,10 +363,17 @@ export const VERBS: readonly VerbEntry[] = [
         summary:
           "Push the current branch and verify the remote tip (never a blind --force); --release finishes a git-flow release",
       },
+      {
+        name: "trailers",
+        usage: "workit git trailers",
+        summary:
+          "Print on or off: whether commits in this workspace get the Workit-Session trailer",
+      },
     ],
     examples: [
       "workit git branch --kind feature --slug help-everywhere",
       'workit git commit -m "fix(cli): answer help flags first" --all',
+      'workit git commit -m "feat: x" --trailer "Co-Authored-By: Name <email>" --all',
       "workit git commit --amend --no-edit -- src/forgotten.ts",
       "workit git push --set-upstream",
     ],

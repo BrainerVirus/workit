@@ -577,6 +577,12 @@ export function createGitLabForge(options: {
           `sha=${mergeOptions.sha}`,
           "-F",
           `squash=${mergeOptions.method === "squash" ? "true" : "false"}`,
+          ...(mergeOptions.method === "squash" && mergeOptions.squashMessage
+            ? [
+                "-f",
+                `squash_commit_message=${[mergeOptions.squashMessage.subject, mergeOptions.squashMessage.body].filter(Boolean).join("\n\n")}`,
+              ]
+            : []),
         ],
         `merge of merge request !${iid}`,
       );

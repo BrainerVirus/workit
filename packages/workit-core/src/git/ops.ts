@@ -12,7 +12,9 @@
 //   the named paths (`--only` semantics) or, with --all, everything is
 //   committed: unrelated dirt is never swept in implicitly. The acting session
 //   goes into a `Workit-Session:` trailer and a `commit.recorded` ledger row,
-//   so a verdict from the same session reads as the author's (D18).
+//   so a verdict from the same session reads as the author's (D18). A
+//   workspace with `trailers: false` gets the ledger row only. `--trailer`
+//   adds the caller's own trailers (Co-Authored-By) to the same commit.
 // - push: never to a protected branch, an exact SHA (a commit that lands while
 //   pushing is not pushed by accident), force only as --force-with-lease with
 //   the tip workit last recorded, and success only when the remote tip
@@ -39,6 +41,7 @@ import { detectCommitFlavor, matchCommitFlavor } from "../core/commit-flavors";
 import { pushTargetIsStable } from "../core/pr-create";
 import { recordBranchBase, trackBranchName } from "../core/release-tracks";
 import { vcsConfig, type ResolvedReleaseTrack } from "../core/vcs-config";
+import { workspaceTrailers } from "../core/workspaces";
 import { redactText } from "../forge/redact";
 import { failure, success, type ForgeResult } from "../forge/types";
 import { appendObserved, readLedger, type LedgerActor } from "../ledger";
@@ -395,6 +398,8 @@ export type CommitOutcome = {
   /** Changes left uncommitted (not selected). */
   leftDirty: number;
   session: string | null;
+  /** Whether the commit carries the `Workit-Session:` trailer (workspace `trailers`). */
+  sessionTrailer: boolean;
   /** With --amend: the commit this one replaced. */
   amended: string | null;
   /** Follow-ups the agent should know (an amended commit that was already pushed). */
@@ -430,6 +435,8 @@ export function lintCommitMessage(
 }
 
 const SESSION_SAFE = /^[\w.:@/+-]{1,128}$/u;
+/** A `--trailer` the caller adds: one `Key: value` line. */
+const EXTRA_TRAILER = /^[A-Za-z0-9][A-Za-z0-9-]*: *\S[^\n\r]*$/u;
 
 // Fixed trailer syntax, whatever the user's trailer.* config says.
 const TRAILER_CONFIG = ["-c", "trailer.separators=:", "-c", "trailer.where=end"];
@@ -522,6 +529,8 @@ export function gitCommit(
     amend?: boolean;
     /** Record a commit even when it changes no file. */
     allowEmpty?: boolean;
+    /** Extra `Key: value` trailers for this commit (`--trailer`, e.g. Co-Authored-By). */
+    trailers?: readonly string[];
     actor: LedgerActor;
     env?: NodeJS.ProcessEnv;
   },
@@ -529,6 +538,19 @@ export function gitCommit(
   const given = input.message?.trim() ?? "";
   if (!given && !input.amend)
     return failure("invalid_input", "a commit message is required (-m <msg> or -F <file>)");
+  const extra = (input.trailers ?? []).map((trailer) => trailer.trim());
+  const malformed = extra.find((trailer) => !EXTRA_TRAILER.test(trailer));
+  if (malformed !== undefined)
+    return failure(
+      "invalid_input",
+      `--trailer ${JSON.stringify(malformed)} is not one "Key: value" line`,
+      `workit git commit -m '<msg>' --trailer "Co-Authored-By: Name <email>"`,
+    );
+  if (extra.some((trailer) => /^workit-session:/iu.test(trailer)))
+    return failure(
+      "invalid_input",
+      "--trailer cannot set Workit-Session: workit writes it from the acting session",
+    );
   const paths = input.paths ?? [];
   if (input.all && paths.length) return failure("invalid_input", "pass --all or paths, not both");
   const progress = operationInProgress(cwd);
@@ -588,9 +610,15 @@ export function gitCommit(
   const args = ["commit", "--no-edit"];
   if (input.amend) args.push("--amend");
   if (input.allowEmpty || emptyAmend) args.push("--allow-empty");
+  // Off (`trailers: false`): authorship is the commit.recorded row alone.
+  const sessionTrailer = Boolean(session) && workspaceTrailers(cwd).enabled;
   args.push(
     "-m",
-    withTrailers(cwd, message, [...carried, ...(session ? [`Workit-Session: ${session}`] : [])]),
+    withTrailers(cwd, message, [
+      ...carried,
+      ...extra,
+      ...(sessionTrailer ? [`Workit-Session: ${session}`] : []),
+    ]),
   );
   if (paths.length) {
     if (paths.some((value) => value.startsWith("-") || !value.trim()))
@@ -688,6 +716,7 @@ export function gitCommit(
     files,
     leftDirty,
     session,
+    sessionTrailer,
     amended: previous,
     notes,
     recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
