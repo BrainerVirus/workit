@@ -256,7 +256,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "check",
     group: "delivery",
     usage:
-      "workit check <name> [--task <id>] [--base <ref>] | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--base <ref>] -- <cmd…>",
+      "workit check <name> [--task <id>] [--base <ref>] [--no-lease] | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy] [--no-lease] -- <cmd…>",
     summary:
       "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's)",
     examples: ["workit check test", "workit check --name unit -- bun test test/unit"],
