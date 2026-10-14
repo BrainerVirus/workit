@@ -74,6 +74,8 @@ const NOT_ACCEPTED: Record<string, string[]> = {
   ),
   // `git push` names --force/-f only to refuse them.
   git: ["--force", "-f"],
+  // `release finish` passes --release to the in-process `git push`.
+  release: ["--release"],
 };
 
 const GLOBAL = new Set(["--json", "--cwd", "--help", "-h"]);
