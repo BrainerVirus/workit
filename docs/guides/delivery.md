@@ -499,3 +499,74 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   For a row written before the token, `--force` is refused. Never the main
   checkout, a worktree someone else added there, or a plain directory. An
   empty directory that existed before `create` is left in place.
+
+## Heavy checks share the machine
+
+Parallel agents run their checks on one machine. Workit runs each heavy check
+under a machine-wide lease, so two test suites never start at once, and on
+Linux it gives each one its own memory and CPU limit.
+
+```bash
+workit check test                 # heavy by default: waits for the lease, then runs
+workit check --heavy -- npx jest  # an ad-hoc command takes the lease only with --heavy
+workit check test --no-lease      # run it now, outside the lease (for you, not for briefs)
+```
+
+- **Which checks are heavy.** The named checks `test`, `build` and `typecheck`
+  are heavy by default. An ad-hoc `workit check -- <cmd>` takes the lease only
+  with `--heavy`.
+- **The lease.** The lease has `slots` places (default 1) across every
+  worktree and agent of the user. A heavy check that finds them all taken
+  prints one `waiting for the heavy-check lease` line naming the holder's
+  check, pid, session, age and directory. It polls once a second, up to
+  `wait` seconds (default 600). If the wait runs out, it exits 4 (`busy`) and
+  lists the holders. The lease is released when the check ends, also on
+  Ctrl-C or SIGTERM. The next acquirer reclaims a lease whose holder pid is
+  dead or reused, or that was taken before a reboot, and says so. A heavy
+  check started by another heavy check reuses its lease (`WORKIT_LEASE`) and
+  does not wait for it. Leases are files under the Workit state dir
+  (`~/.local/state/workit/leases` on Linux).
+- **The scope (Linux).** If a user systemd manager is running and has the
+  `memory` and `cpu` controllers delegated (cgroup v2), the check runs under
+  `systemd-run --user --scope -p MemoryMax=<m> -p CPUQuota=<c>` as the unit
+  `workit-check-<id>-<pid>.scope`. When the check passes its limit, the
+  kernel kills the check alone, not the desktop session. Without such a
+  manager (no systemd, not delegated, macOS, Windows), the check runs as
+  before and Workit says so once per session. If `systemd-run` itself fails
+  to start the scope, the check runs again without one.
+- **`--json`** adds `lease` (`slot`, `waitedMs`, the `holder` it waited on
+  with pid, check, cwd and session, `reclaimed`, `inherited`) and `scope`
+  (`unit`, `memoryMax`, `cpuQuota`, or `unit: null` with a `reason`). Both
+  are `null` for a check that is not heavy.
+
+Configure it under `resources`, in the repo's `workit.checks.json` or in the
+matching entry of your `workspaces.json`. The workspace entry wins field by
+field, because the machine owner sets the machine's limits:
+
+```json
+{
+  "checks": { "test": "npm run test:ci", "e2e": "npx playwright test" },
+  "resources": {
+    "heavy": ["test", "e2e", "build"],
+    "slots": 1,
+    "memoryMax": "40%",
+    "cpuQuota": "70%",
+    "wait": 600,
+    "scope": true
+  }
+}
+```
+
+| Field       | Default                      | Meaning                                                                |
+| ----------- | ---------------------------- | ---------------------------------------------------------------------- |
+| `heavy`     | `test`, `build`, `typecheck` | Named checks that take the lease (replaces the default list)           |
+| `slots`     | `1`                          | Heavy checks that may run at once on the machine (1-64)                |
+| `memoryMax` | `40%` of RAM                 | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
+| `cpuQuota`  | `70%` of all CPUs            | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
+| `wait`      | `600`                        | Seconds to wait for the lease before exit 4                            |
+| `scope`     | `true`                       | `false` keeps the lease but runs without a systemd scope               |
+
+An invalid field prints a `workit: resources:` warning and keeps the earlier
+value, so a typo never turns the lease off. The lease lives in the CLI, so it
+works the same on every host (Claude Code, OpenCode, Codex, Cursor, Pi):
+each one runs checks through `workit check`.
