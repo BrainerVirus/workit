@@ -43,14 +43,30 @@ workit lock wait --timeout 300       # wait for a free slot without taking it
 workit check test --no-lease --reason "machine idle, bisecting a hang"
 ```
 
-The shell hook catches the raw form. A heavy command an agent runs directly
-(`npx jest`, `npm run test:ci`, `cargo test`, `docker build`, also behind
-`bash -c`, `flock`, `nice`, `env` or `timeout`) runs as `workit check --heavy
--- <cmd>` on Claude Code, OpenCode and Pi. Codex and Cursor cannot rewrite a
-command, so the hook denies it there and names that exact command. Commands
-with shell syntax (`cd x && npm test`, `CI=1 npm test`) run whole in `bash -c`.
-Long-running dev servers (`npm run dev`, `vite`, `docker compose up`) are not
-gated: they would hold the lease for their whole life.
+The shell hook catches the raw form, after every other Workit gate (branch
+policy, raw git, the before-write and live-session gates) passed on it. Those
+gates also judge what `workit check … -- <cmd>` runs, so wrapping a command
+never gets it past them.
+
+- **One heavy command** (`npx jest`, `npm run test:ci`, `cargo test`, `docker
+  build`, also behind `flock`, `nice`, `env`, `timeout` or `bash -c '<one
+  command>'`) runs as `workit check --heavy -- <cmd>` on Claude Code, OpenCode
+  and Pi. On Claude Code and OpenCode the rewrite adds `--wait <s>`, so the
+  lease wait ends before the shell tool's own timeout (120 s by default; 100 s
+  of wait). Codex and Cursor cannot rewrite a command, so the hook denies it
+  there and names that exact command.
+- **A chain with heavy parts** (`git status && make test && touch x`, `cd web
+  && npm test`, a pipe, a redirect) is denied on every host. The reason names
+  each heavy part's lease command (`workit check --heavy -- make test`); run
+  the other parts as their own commands. The hook never wraps a chain in `bash
+  -c`.
+- **A host rule decides first.** If a host deny or ask rule names the heavy
+  command, or the only allow that would cover the wrapper is one for `workit`,
+  the command runs as typed, outside the lease, with a one-line note. Wrapping
+  must never change what the host would have done with it.
+- **Not gated:** watch modes (`--watch`, `tsc -w`), dev servers and
+  storybook (`npm run dev`, `start`, `serve`, `vite`, `next dev`), and any
+  command outside a git checkout.
 
 The catalog is built in (`workit lock heavy list`). To add a command, use
 `workit lock heavy add 'mvn verify'` (machine-wide, under the state dir), or

@@ -627,7 +627,10 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   are heavy by default. An ad-hoc `workit check -- <cmd>` takes the lease only
   with `--heavy`. A raw heavy shell command an agent runs (`npx jest`, `npm
   run test:ci`) is rewritten through the lease, or denied with the exact
-  rewrite on Codex and Cursor ([verification guide](verification.md#heavy-commands-and-the-lease)).
+  rewrite on Codex and Cursor. A chain with heavy parts is denied with each
+  part's lease command, and a command a host permission rule names runs
+  outside the lease ([verification guide](verification.md#heavy-commands-and-the-lease)).
+  `--wait <s>` caps the wait for the lease.
 - **The lease.** The lease has `slots` places (default 1) across every
   worktree and agent of the user. A heavy check that finds them all taken
   prints one `waiting for the heavy-check lease` line naming the holder's
