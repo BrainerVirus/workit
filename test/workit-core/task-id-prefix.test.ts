@@ -44,7 +44,8 @@ const resolveWith = (core: WorkitCore, taskId: string, revision: string, finding
   });
 
 test("resolveIdRef prefers an exact id, resolves a unique prefix and lists ambiguous candidates", () => {
-  const ids = ["aaaaaaaa-1", "aaaaaaaa-2", "bbbbbbbb-1"];
+  const ids = ["aaaaaaaa", "aaaaaaaa-1", "aaaaaaaa-2", "bbbbbbbb-1"];
+  expect(resolveIdRef("finding", "aaaaaaaa", ids)).toMatchObject({ ok: true, data: "aaaaaaaa" });
   expect(resolveIdRef("finding", "bbbbbbbb", ids)).toMatchObject({
     ok: true,
     data: "bbbbbbbb-1",
@@ -57,7 +58,7 @@ test("resolveIdRef prefers an exact id, resolves a unique prefix and lists ambig
     ok: false,
     code: "not_found",
   });
-  const ambiguous = resolveIdRef("finding", "aaaaaaaa", ids);
+  const ambiguous = resolveIdRef("finding", "aaaaaaaa-", ids);
   expect(ambiguous).toMatchObject({ ok: false, code: "invalid_input" });
   if (ambiguous.ok) throw new Error("expected failure");
   expect(ambiguous.error).toContain("aaaaaaaa-1");

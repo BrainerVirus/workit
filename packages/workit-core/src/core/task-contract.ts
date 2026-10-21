@@ -34,10 +34,8 @@ const text = z.string().check((ctx) => {
 });
 const id = text.regex(uuidPattern, "expected lowercase UUID");
 /** A full id or an unambiguous lowercase prefix of one (the 8-char short id other surfaces print). */
-const idRef = text.regex(
-  /^[0-9a-f][0-9a-f-]{7,35}$/,
-  "expected a lowercase UUID or an id prefix of 8 or more characters",
-);
+export const idRefPattern = /^[0-9a-f][0-9a-f-]{7,35}$/;
+const idRef = text.regex(idRefPattern, "expected a UUID or an id prefix of 8+ characters");
 const digest = text.regex(digestPattern, "expected lowercase SHA-256 digest");
 const revision = text.regex(uuidPattern, "expected UUID revision");
 const validUtc = (value: string): boolean => {

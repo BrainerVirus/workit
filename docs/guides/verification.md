@@ -290,6 +290,11 @@ changes. Some of that state reaches beyond the branch:
   optional. The rest of the request still goes in `--payload`
   (`{"reason": "…"}` or `{"report": …}`). If the command fails, the error
   names the exact `--task <id>` command to retry with.
+- **Short ids.** `workit finding resolve` (`findingId`), `workit worker
+  cancel|report` (`workerId`) and the finding ids inside a worker report accept
+  a full UUID or an unambiguous prefix of 8 or more characters, the short id
+  the ledger and verdict reports print. An ambiguous prefix fails with
+  `invalid_input` and lists the candidate ids; an unknown one is `not_found`.
 
 ## `workit test-audit`
 
