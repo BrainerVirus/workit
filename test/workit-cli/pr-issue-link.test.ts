@@ -480,6 +480,7 @@ test("pr create: given a fanout slice with issue #324 on the branch, then the PR
           id: "link",
           branch: "feature/x",
           tier: "standard",
+          reason: "parallel",
           goal: "link issues",
           scope: ["src/**"],
           acceptance: ["links"],

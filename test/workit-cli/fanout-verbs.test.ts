@@ -131,6 +131,7 @@ const slice = (id: string, scope: string[], extra: Record<string, unknown> = {})
   id,
   branch: `feature/${id}`,
   tier: "standard",
+  reason: "parallel",
   scope,
   goal: `ship ${id}`,
   acceptance: [`Given the app, When ${id} runs, Then it works`],
@@ -204,6 +205,52 @@ test("fanout plan: given a brief with a template placeholder goal and no verify 
     "slice ui: tier must be one of mundane, standard, hard",
   ]);
   expect(existsSync(fanoutsDir(repo))).toBe(false);
+});
+
+test("fanout plan: given delegation inline-first (the default) and a slice with no reason, when planned, then it is refused with the allowed reasons and nothing is stored", async () => {
+  const repo = makeRepo();
+  const result = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("api", ["src/api/**"], { reason: undefined })])),
+    "--json",
+  ]);
+  expect(result.code).toBe(2);
+  const problem = result.json().data.problems[0] as string;
+  expect(problem).toContain("slice api: reason is empty");
+  expect(problem).toContain("explore, parallel, backstop, high-risk-verify");
+  expect(existsSync(fanoutsDir(repo))).toBe(false);
+});
+
+test("fanout plan: given a reason outside the allowed set, when planned, then it is refused", async () => {
+  const repo = makeRepo();
+  const result = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("api", ["src/api/**"], { reason: "because" })])),
+    "--json",
+  ]);
+  expect(result.code).toBe(2);
+  expect(result.json().data.problems).toEqual([
+    "slice api: reason must be one of explore, parallel, backstop, high-risk-verify",
+  ]);
+});
+
+test("fanout plan: given the workspace sets delegation lead-orchestrates, when a slice has no reason, then it is planned", async () => {
+  const repo = makeRepo();
+  writeFileSync(
+    path.join(configHome.configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [{ name: "app", glob: `${repo.root}/**`, delegation: "lead-orchestrates" }],
+    }),
+  );
+  const result = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("api", ["src/api/**"], { reason: undefined })])),
+    "--json",
+  ]);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
 });
 
 test("fanout plan: given a dependency cycle, when planned, then it is invalid and names the cycle", async () => {

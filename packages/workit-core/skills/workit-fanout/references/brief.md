@@ -59,7 +59,8 @@ defaults to the trunk, or to the branch of a single `dependsOn` slice (a
 stack); `worktree` defaults to `../<repo>-wt/<id>`. `owns` claims a shared
 file another slice's glob also matches. Globs that match no file yet are compared
 through a sample path. Use `/` as the separator; a backslash only escapes
-literal brackets: `"app/\\[id\\]/page.tsx"`. A `timebox` such as `45 minutes`
+literal brackets: `"app/\\[id\\]/page.tsx"`. A `reason` (`explore`, `parallel`, `backstop` or `high-risk-verify`) is rendered as the brief's `REASON:` line and is
+required unless the workspace sets `delegation` to `lead-orchestrates`. A `timebox` such as `45 minutes`
 is the slice's STUCK threshold in `workit fanout status`. `"fanIn":
 "integration"` (with an integration branch as `trunk`) is the one-PR mode in
 `orchestration.md`; the default `"prs"` lands one PR per slice.
@@ -79,6 +80,7 @@ is the slice's STUCK threshold in `workit fanout status`. `"fanIn":
       "acceptance": ["Given no auth header, When GET /v1/usage, Then the status is 401"],
       "verify": ["workit check test"],
       "forbidden": ["no edits outside SCOPE", "no rebase or force-push"],
+      "reason": "parallel",
       "context": "docs/usage/spec.md Behavior",
       "timebox": "45 minutes"
     },

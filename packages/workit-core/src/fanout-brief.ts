@@ -211,6 +211,7 @@ export function renderBrief(
     "ACCEPTANCE:",
     ...slice.acceptance.map((line) => `  - ${line}`),
     `VERIFY: ${slice.verify.join("; ")}`,
+    ...(slice.reason ? [`REASON: ${slice.reason}`] : []),
     `TIER: ${slice.tier}`,
     ...(model
       ? [`  model: ${model.model}  (fanout.tierModels in workspace ${model.workspace})`]

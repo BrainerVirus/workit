@@ -62,6 +62,7 @@ const slice = (id: string, scope: string[], extra: Record<string, unknown> = {})
   id,
   branch: `feature/${id}`,
   tier: "standard",
+  reason: "parallel",
   scope,
   goal: `ship ${id}`,
   acceptance: [`Given the app, When ${id} runs, Then it works`],

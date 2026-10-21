@@ -5,13 +5,13 @@ description: Run independent slices in parallel - one worker per isolated worktr
 
 # Fan out parallel workers
 
-Fan out only independent slices: disjoint files, no shared mutable state, each
-verifiable alone. Code-coupled work stays with one owner, who fans out after
-the blocking part lands. A worker whose whole job is re-running one command is
-ceremony; do it yourself. Workit never spawns agents; you do.
+Inline-first (workspace `delegation`): fan out only past a threshold, named as
+each slice's `reason` (explore, parallel, backstop, high-risk-verify): an
+explorer past ~3 tool calls or 10k tokens; parallel writers only for 2+ disjoint
+units of ~100+ lines each. Coupled work stays with one owner. Workit never spawns.
 
 1. **Plan the slices** (read the `workit-shape` skill's SKILL.md and follow it) in a plan file (`references/brief.md`):
-   per slice an id, branch, TIER, SCOPE globs, `owns` for shared files,
+   per slice an id, branch, REASON, TIER, SCOPE globs, `owns` for shared files,
    `dependsOn` only for a real dependency, and the brief fields. `workit fanout
    plan <plan.json>` refuses an empty or placeholder brief field (exit 2) and
    two slices that may write one file (exit 3) with a fix; apply it and re-run:

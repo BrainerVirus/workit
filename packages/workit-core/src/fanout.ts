@@ -20,7 +20,7 @@
 //
 // Each slice's `hash` covers what it is (goal, acceptance, verify, forbidden,
 // scope, owns, branch, base, dependencies), not how it is briefed (tier,
-// timebox, context, issues) or where its worktree goes. A re-plan that changes a
+// reason, timebox, context, issues) or where its worktree goes. A re-plan that changes a
 // slice starts a new run for that slice alone: its `hashSince` moves to now,
 // and only ledger rows recorded under its hash (worktree rows carry
 // `sliceHash`) or since then link a gone branch's merged PR to it or count as
@@ -45,6 +45,7 @@ import {
   storeRoot,
   type LedgerActor,
 } from "./ledger";
+import { workspaceDelegation, type DelegationMode } from "./core/workspaces";
 import { stackFileName } from "./stack";
 
 export const FANOUT_VERSION = 1;
@@ -58,6 +59,8 @@ export type Slice = {
   base: string;
   worktree: string;
   tier: Tier;
+  /** Why this work is delegated; required under `delegation: inline-first`. */
+  reason: Reason | null;
   dependsOn: string[];
   /** The file-scope manifest: globs (`*`, `**`, `?`, `{a,b}`) relative to the repo root. */
   scope: string[];
@@ -76,6 +79,10 @@ export type Slice = {
   /** When a slice with this hash was first planned: older rows are not its run. */
   hashSince: string;
 };
+
+/** Why a slice is delegated at all (the brief's REASON line). */
+export const REASONS = ["explore", "parallel", "backstop", "high-risk-verify"] as const;
+export type Reason = (typeof REASONS)[number];
 
 export const FAN_IN_MODES = ["prs", "integration"] as const;
 export type FanInMode = (typeof FAN_IN_MODES)[number];
@@ -321,6 +328,8 @@ export type PlanDefaults = {
   root: string;
   /** Where default worktrees go: `<repo>-wt/` next to the main checkout. */
   worktreeRoot: string;
+  /** Under inline-first (the default when absent), a slice needs a reason. */
+  delegation?: DelegationMode;
 };
 
 type Parsed = { ok: true; plan: FanoutFile } | { ok: false; problems: string[] };
@@ -405,6 +414,15 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
     const tier = item.tier;
     if (typeof tier !== "string" || !(TIERS as readonly string[]).includes(tier))
       problems.push(`${where}: tier must be one of ${TIERS.join(", ")}`);
+    const rawReason = typeof item.reason === "string" ? item.reason.trim() : item.reason;
+    let reason: Reason | null = null;
+    if (rawReason === undefined || rawReason === null || rawReason === "") {
+      if ((defaults.delegation ?? "inline-first") === "inline-first")
+        problems.push(
+          `${where}: reason is empty; delegation is inline-first, so name why this is delegated: ${REASONS.join(", ")} (or set delegation to lead-orchestrates in the workspace)`,
+        );
+    } else if ((REASONS as readonly unknown[]).includes(rawReason)) reason = rawReason as Reason;
+    else problems.push(`${where}: reason must be one of ${REASONS.join(", ")}`);
     const dependsOn = textList(item.dependsOn ?? []);
     if (dependsOn === null) problems.push(`${where}: dependsOn must be a list of slice ids`);
     const issues = textList(item.issue ?? []);
@@ -420,6 +438,7 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
         optional("worktree") ?? path.join(defaults.worktreeRoot, id),
       ),
       tier: tier as Tier,
+      reason,
       dependsOn: [...new Set(dependsOn ?? [])],
       scope,
       owns,
@@ -782,7 +801,7 @@ export const planLeads = (
 
 /**
  * sha256 (16 hex) of the slice's definition. Brief-only fields (tier,
- * timebox, context, issues) and the worktree path are left out, so fixing a typo in
+ * reason, timebox, context, issues) and the worktree path are left out, so fixing a typo in
  * them never re-dispatches landed work.
  */
 export function sliceHash(slice: Slice): string {
@@ -791,6 +810,7 @@ export function sliceHash(slice: Slice): string {
     hash: _hash,
     hashSince: _since,
     tier: _tier,
+    reason: _reason,
     timebox: _timebox,
     context: _context,
     issues: _issues,
@@ -839,6 +859,9 @@ function parseStored(raw: unknown): FanoutFile | null {
       base: text(item.base) || raw.trunk,
       worktree: text(item.worktree),
       tier: (TIERS as readonly unknown[]).includes(item.tier) ? (item.tier as Tier) : "standard",
+      reason: (REASONS as readonly unknown[]).includes(item.reason)
+        ? (item.reason as Reason)
+        : null,
       dependsOn: list(item.dependsOn),
       scope: globs(item.scope),
       owns: globs(item.owns),
@@ -1043,6 +1066,7 @@ export function planFanout(
       trunk: input.trunk ?? defaultTrunk(cwd),
       root: mainCheckout(cwd),
       worktreeRoot: worktreeRoot(cwd),
+      delegation: workspaceDelegation(cwd),
     },
     input.name,
   );

@@ -475,7 +475,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   `\[` and `\]`, e.g. `app/\[id\]/page.tsx`, written `"app/\\[id\\]/page.tsx"` in
   JSON; any other backslash is read as a Windows separator, and `\*`, `\?`,
   `\{`, `\}` or a mix of both readings is refused: use `/`), optional
-  `owns`, `dependsOn`, `base`, `worktree`, and the brief: `goal`, `acceptance`, `verify`, `forbidden` (plus optional
+  `owns`, `dependsOn`, `base`, `worktree`, and the brief: `goal`, `acceptance`, `verify`, `forbidden` (plus `reason` (required under the default `delegation: inline-first`, see [configuration](configuration.md#delegation)) and optional
   `context`, `timebox`, and `issue`: one id or a list, linked by the slice's
   `pr create`). The shape is in the fanout skill's
   `references/brief.md`. It is stored in `<git common dir>/workit/fanouts/`,
@@ -488,7 +488,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   tracks it is origin's default branch, else `main`.
 - One lead owns a plan: re-planning overwrites the file without a lock.
   Each slice records a `hash` of its definition: goal, acceptance, verify,
-  forbidden, scope, owns, branch, base and dependencies, but not tier,
+  forbidden, scope, owns, branch, base and dependencies, but not tier, reason,
   timebox, context, issue or the worktree path. A re-plan that leaves a slice's hash
   unchanged continues its run; one that changes it starts a new run for that
   slice alone, so ledger rows from before the change no longer link a merged
