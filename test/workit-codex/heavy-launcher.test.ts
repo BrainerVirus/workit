@@ -74,7 +74,11 @@ const run = (entry: "source" | "dist", command: string) => {
       : spawnSync("node", [dist], { input: payload, encoding: "utf8", env });
   expect(child.status, child.stderr).toBe(0);
   return JSON.parse(child.stdout) as {
-    hookSpecificOutput: { permissionDecision?: string; permissionDecisionReason?: string };
+    hookSpecificOutput: {
+      hookEventName?: string;
+      permissionDecision?: string;
+      permissionDecisionReason?: string;
+    };
   };
 };
 
