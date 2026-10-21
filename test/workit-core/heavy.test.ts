@@ -135,17 +135,17 @@ test("given machine patterns in the state dir, when a matching command runs, the
   }
 });
 
-test("given a heavy command, when rewritten, then a plain one keeps its words and anything else goes through --shell", () => {
+test("given a heavy command, when rewritten, then a plain one keeps its words and anything else runs in bash -c", () => {
   expect(leaseRewrite("npm run test:ci")).toBe("workit check --heavy -- npm run test:ci");
   expect(leaseRewrite("  npx   jest ")).toBe("workit check --heavy -- npx jest");
-  expect(leaseRewrite("CI=1 npm test")).toBe("workit check --heavy --shell -- 'CI=1 npm test'");
+  expect(leaseRewrite("CI=1 npm test")).toBe("workit check --heavy -- bash -c 'CI=1 npm test'");
   expect(leaseRewrite("cd web && npm test")).toBe(
-    "workit check --heavy --shell -- 'cd web && npm test'",
+    "workit check --heavy -- bash -c 'cd web && npm test'",
   );
   expect(leaseRewrite("flock -o x.lock sh -c 'npm test'")).toBe(
-    `workit check --heavy --shell -- 'flock -o x.lock sh -c '\\''npm test'\\'''`,
+    `workit check --heavy -- bash -c 'flock -o x.lock sh -c '\\''npm test'\\'''`,
   );
   expect(leaseRewrite("npm test | tee out.log")).toBe(
-    "workit check --heavy --shell -- 'npm test | tee out.log'",
+    "workit check --heavy -- bash -c 'npm test | tee out.log'",
   );
 });

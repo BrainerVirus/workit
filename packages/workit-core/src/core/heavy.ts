@@ -417,8 +417,10 @@ const posixQuote = (text: string): string => `'${text.replaceAll("'", `'\\''`)}'
 
 /**
  * The command that runs `command` under the lease: `workit check --heavy --
- * <cmd>` for one plain command (no shell syntax, no env prefix), else
- * `workit check --heavy --shell -- '<cmd>'`.
+ * <cmd>` for one plain command (no shell syntax, no env prefix), else the
+ * whole line in bash (`workit check --heavy -- bash -c '<cmd>'`), the shell
+ * the hosts' Bash tools run, so bash syntax keeps working. PowerShell lines
+ * go through `--shell`.
  */
 export function leaseRewrite(command: string, dialect: ShellDialect = "posix"): string {
   const text = command.trim();
@@ -441,5 +443,5 @@ export function leaseRewrite(command: string, dialect: ShellDialect = "posix"): 
   if (plain) return `workit check --heavy -- ${text.split(/\s+/u).join(" ")}`;
   if (dialect === "powershell")
     return `workit check --heavy --shell -- '${text.replaceAll("'", "''")}'`;
-  return `workit check --heavy --shell -- ${posixQuote(text)}`;
+  return `workit check --heavy -- bash -c ${posixQuote(text)}`;
 }

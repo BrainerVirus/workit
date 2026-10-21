@@ -127,9 +127,9 @@ test("Given the rewritten command on Codex or Cursor, When the agent runs it, Th
   expect(cursor("workit check --heavy -- npm run test:ci").permission).not.toBe("deny");
 });
 
-test("Given a flock-wrapped suite, When the hook runs, Then the whole command goes through --shell", () => {
+test("Given a flock-wrapped suite, When the hook runs, Then the whole command runs in bash -c", () => {
   expect(opencode("flock -o x.lock sh -c 'npm test'")).toBe(
-    `workit check --heavy --shell -- 'flock -o x.lock sh -c '\\''npm test'\\'''`,
+    `workit check --heavy -- bash -c 'flock -o x.lock sh -c '\\''npm test'\\'''`,
   );
 });
 

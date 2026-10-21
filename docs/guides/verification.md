@@ -48,7 +48,7 @@ The shell hook catches the raw form. A heavy command an agent runs directly
 `bash -c`, `flock`, `nice`, `env` or `timeout`) runs as `workit check --heavy
 -- <cmd>` on Claude Code, OpenCode and Pi. Codex and Cursor cannot rewrite a
 command, so the hook denies it there and names that exact command. Commands
-with shell syntax (`cd x && npm test`, `CI=1 npm test`) go through `--shell`.
+with shell syntax (`cd x && npm test`, `CI=1 npm test`) run whole in `bash -c`.
 Long-running dev servers (`npm run dev`, `vite`, `docker compose up`) are not
 gated: they would hold the lease for their whole life.
 
