@@ -23,7 +23,7 @@ import { createV2Lifecycle } from "./lifecycle";
 import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from "./injection";
 import { evaluateShellPermission } from "./permissions";
 import { childSessionId } from "@brainervirus/workit-core/src/host-session";
-import { childDenial, childMayRecord, childTaskMissing } from "./child-identity";
+import { childDenial, childMayInspect, childMayRecord, childTaskMissing } from "./child-identity";
 import { observeShellBefore, observeShellResult, type ShellWorkdirs } from "./shell";
 import {
   applyShellSession,
@@ -121,6 +121,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     session: V2Session,
     store: TaskStore,
     workerId: string | null,
+    readOnlyChild = false,
   ): unknown => {
     const parsed = parseAdvertisedOperation(family, input, "opencode");
     if (!parsed.ok) return parsed;
@@ -131,6 +132,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
       constraints: [],
       now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
       workerId,
+      ...(readOnlyChild ? { readOnlyChild } : {}),
       nativeWorker: nativeWorkerFor(lifecycle.directChildren, session.id),
     });
     const run = core[family] as unknown as (request: unknown) => unknown;
@@ -171,8 +173,13 @@ const setup = async (ctx: Context): Promise<() => void> => {
             const lead = await sessionFacts(ctx, session.parentID);
             const directChild =
               lead !== null && lead.parentID === undefined && sameWorkspace(root, lead.directory);
-            if (!directChild || family === null || !childMayRecord(family, input))
+            const inspecting = childMayInspect(family, input);
+            if (!directChild || family === null || !(inspecting || childMayRecord(family, input)))
               return resultContent(failure("permission_denied", childDenial(identity)));
+            if (inspecting)
+              return resultContent(
+                runFamily(family, input, { ...session, id: identity }, store, null, true),
+              );
             if (childTaskMissing(store, input))
               return resultContent(
                 failure(

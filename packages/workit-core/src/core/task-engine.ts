@@ -35,6 +35,7 @@ import {
   type Result,
   type Scope,
   type TaskRecord,
+  type TaskBrief,
   type TaskListItem,
   type TaskSummary,
   type TaskView,
@@ -81,6 +82,7 @@ import {
   type NativeWorkerVerifier,
 } from "./workers";
 import {
+  boundTaskSummary,
   captureCandidate,
   checkPin,
   signalFreshness,
@@ -115,6 +117,8 @@ export type OperationContext = {
   now: Utc | (() => Utc);
   nativeWorker?: NativeWorkerVerifier;
   workerId?: string | null;
+  /** A child session with no worker record: it may only read the bounded task summary. */
+  readOnlyChild?: boolean;
 };
 
 export type ObserveCheckRequest = {
@@ -872,19 +876,27 @@ export class WorkitCore {
     return failure("invalid_input", "unknown state action");
   }
 
-  task(request: unknown): Result<TaskSummary | TaskListItem[] | TaskView> {
+  task(request: unknown): Result<TaskSummary | TaskBrief | TaskListItem[] | TaskView> {
     const resolved = this.implicitTask("task", request);
     if (!resolved.ok) return resolved;
     const value = resolved.data;
     return this.retryOmittedRevisions(value, () => this.taskOnce(value));
   }
 
-  private taskOnce(request: unknown): Result<TaskSummary | TaskListItem[] | TaskView> {
+  private taskOnce(request: unknown): Result<TaskSummary | TaskBrief | TaskListItem[] | TaskView> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("task", request);
     if (!parsed.ok) return parsed;
     const input = parsed.data;
+    if (this.context.readOnlyChild) {
+      if (input.action !== "inspect")
+        return failure("permission_denied", "child sessions can only inspect the task summary");
+      const task = this.store.readTask(input.taskId);
+      if (!task.ok) return task;
+      const summary = this.summary(task.data);
+      return summary.ok ? { ...summary, data: boundTaskSummary(summary.data) } : summary;
+    }
     if ((this.context.workerId ?? null) !== null) {
       if (input.action !== "inspect" && input.action !== "list")
         return failure("permission_denied", "helpers cannot control task lifecycle or scope");

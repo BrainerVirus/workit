@@ -168,7 +168,12 @@ export const createWorkitTools = ({
         return output(failure("permission_denied", "OpenCode session parentage is malformed"));
       const store = new TaskStore(context.directory);
       const workerId = workerIdFor(store, context.sessionID, data, directChildren);
-      if (parentID !== undefined && workerId === null)
+      const readOnlyChild =
+        parentID !== undefined &&
+        workerId === null &&
+        family === "task" &&
+        (parsed.data as { action?: unknown }).action === "inspect";
+      if (parentID !== undefined && workerId === null && !readOnlyChild)
         return output(
           failure("permission_denied", "OpenCode child session has no validated Workit worker"),
         );
@@ -179,6 +184,7 @@ export const createWorkitTools = ({
         constraints: [],
         now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
         workerId,
+        ...(readOnlyChild ? { readOnlyChild } : {}),
         nativeWorker: nativeWorkerFor(directChildren, context.sessionID),
       };
       const core = new WorkitCore(store, operationContext);

@@ -295,6 +295,16 @@ changes. Some of that state reaches beyond the branch:
   a full UUID or an unambiguous prefix of 8 or more characters, the short id
   the ledger and verdict reports print. An ambiguous prefix fails with
   `invalid_input` and lists the candidate ids; an unknown one is `not_found`.
+- **Bounded summary.** `workit task inspect --view summary` (the default view)
+  prints a task brief that stays under 4 KB however long the history is: the
+  objective, status, progress, closure, and the requirements still owed, with
+  long text truncated and `truncated: true` when anything was cut. Use
+  `--view full` for the whole record (it can reach megabytes). An OpenCode
+  child session without a worker can call `workit_task` `inspect` and always
+  gets this brief; every other task action from it is still refused. On the
+  MCP hosts (Codex, Cursor) an unattested caller, and on Pi a worker, gets the
+  same brief from `workit_task` `inspect` with `view: "summary"` or no view;
+  attested leads keep the full engine summary.
 
 ## `workit test-audit`
 

@@ -823,6 +823,27 @@ export const taskSummarySchema = z
   })
   .strict();
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
+/** Bounded `inspect` projection (`view: "summary"`): under 4 KB however long the task history is. */
+export type TaskBrief = {
+  id: string;
+  revision: string;
+  workspaceRevision: string;
+  updatedAt: string;
+  objective: string;
+  status: TaskSummary["status"];
+  closure: { outcome: Closure["outcome"]; at: string; summary: string } | null;
+  progress: {
+    summary: string;
+    nextAction: string | null;
+    blockers: { reason: string; dependentAction: string }[];
+  };
+  requirements: {
+    total: number;
+    unmet: number;
+    open: { dimension: Dimension; before: string; status: RequirementEvaluation["status"] }[];
+  };
+  truncated: boolean;
+};
 export const taskListItemSchema = taskSummarySchema
   .omit({ policy: true, requirements: true })
   .extend({ source: provenanceSchema.pick({ host: true, kind: true }) })

@@ -13,6 +13,7 @@ import {
   type OperationFamily,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
+import { briefInspectResult } from "@brainervirus/workit-core/src/core/task-evaluation";
 import {
   handleHook,
   PI_DESCRIPTOR,
@@ -80,9 +81,15 @@ const executeFamily = async (
   if (!parsed.ok) return output(parsed);
   const trust = trustedForMutation(ctx, (parsed.data as { action?: unknown }).action);
   if (!trust.ok) return output(trust);
-  const core = new WorkitCore(new TaskStore(ctx.cwd), piContext(ctx));
+  const context = piContext(ctx);
+  const core = new WorkitCore(new TaskStore(ctx.cwd), context);
   const run = core[family] as unknown as (request: unknown) => Result<unknown>;
-  return output(run.call(core, parsed.data));
+  const result = run.call(core, parsed.data);
+  return output(
+    family === "task" && (context.workerId ?? null) !== null
+      ? briefInspectResult(parsed.data, result)
+      : result,
+  );
 };
 
 export const registerWorkitTools = (

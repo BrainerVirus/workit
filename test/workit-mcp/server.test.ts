@@ -420,6 +420,56 @@ test("MCP contains thrown core errors without exposing the original message", as
   }
 });
 
+test("MCP gives an unattested caller the bounded task summary, and an attested one the full summary", async () => {
+  const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-brief-"));
+  let attested = true;
+  const { client, server } = await connect("cursor", {
+    current: async () => context("cursor", workspaceRoot, attested),
+  });
+  try {
+    const started = await client.callTool({ name: "workit_task", arguments: taskStartRequest() });
+    const taskId = (started.structuredContent as { data: { id: string } }).data.id;
+    const progressed = await client.callTool({
+      name: "workit_task",
+      arguments: {
+        schemaVersion: 1,
+        action: "progress",
+        taskId,
+        progress: {
+          summary: "s".repeat(3000),
+          nextAction: null,
+          blockers: Array.from({ length: 20 }, () => ({
+            reason: "r".repeat(900),
+            dependentAction: "d".repeat(500),
+            refs: [],
+          })),
+        },
+      },
+    });
+    expect(progressed.isError).not.toBe(true);
+
+    const inspect = (view?: string) =>
+      client.callTool({
+        name: "workit_task",
+        arguments: { schemaVersion: 1, action: "inspect", taskId, ...(view ? { view } : {}) },
+      });
+    const full = await inspect("summary");
+    expect(JSON.stringify(full.structuredContent).length).toBeGreaterThan(8000);
+
+    attested = false;
+    for (const view of [undefined, "summary"]) {
+      const result = await inspect(view);
+      const text = (result.content as { text: string }[])[0].text;
+      expect(Buffer.byteLength(text)).toBeLessThan(4096);
+      expect(JSON.parse(text)).toMatchObject({ ok: true, data: { id: taskId, truncated: true } });
+    }
+  } finally {
+    await client.close();
+    await server.close();
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test("MCP validates the executable host allowlist", () => {
   expect(() =>
     createMcpServer("workit_cli" as never, { current: async () => context("cursor") }),

@@ -343,6 +343,76 @@ test("interactive Pi decisions record the stated response without confirming and
   expect(denied.details).toMatchObject({ ok: false, code: "permission_denied" });
 });
 
+test("Pi worker task inspect returns the bounded summary, under 4 KB and valid JSON", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-brief-"));
+  const names = ["WORKIT_PI_WORKER_ID", "WORKIT_PI_WORKER_SESSION"];
+  const saved = names.map((name) => process.env[name]);
+  try {
+    const { store, task } = startedTask(root);
+    const lead = new WorkitCore(store, {
+      root,
+      caller: { host: "pi", actor: "pi-session" },
+      callerAttested: true,
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const progressed = lead.task({
+      schemaVersion: 1,
+      action: "progress",
+      taskId: task.id,
+      progress: {
+        summary: "s".repeat(3000),
+        nextAction: null,
+        blockers: Array.from({ length: 20 }, () => ({
+          reason: "r".repeat(900),
+          dependentAction: "d".repeat(500),
+          refs: [],
+        })),
+      },
+    });
+    if (!progressed.ok) throw new Error(progressed.error);
+    const fresh = store.readTask(task.id);
+    const workspace = store.readWorkspace();
+    if (!fresh.ok || !workspace.ok || !workspace.data) throw new Error("refresh failed");
+    const workerId = assignPiReviewer(
+      root,
+      store,
+      task.id,
+      fresh.data.revision,
+      workspace.data.revision,
+    );
+    const pi = makePi();
+    await extension(pi as any);
+    const taskTool = pi.tools.find((tool) => tool.name === "workit_task");
+    const inspect = async (extra: object) =>
+      taskTool.execute(
+        "call",
+        { schemaVersion: 1, action: "inspect", taskId: task.id, ...extra },
+        undefined,
+        undefined,
+        context(root),
+      );
+
+    const asLead = await inspect({ view: "summary" });
+    expect(asLead.content[0].text.length).toBeGreaterThan(8000);
+
+    process.env.WORKIT_PI_WORKER_ID = workerId;
+    process.env.WORKIT_PI_WORKER_SESSION = "worker-session";
+    for (const extra of [{}, { view: "summary" }]) {
+      const text: string = (await inspect(extra)).content[0].text;
+      expect(Buffer.byteLength(text)).toBeLessThan(4096);
+      expect(JSON.parse(text)).toMatchObject({ ok: true, data: { id: task.id, truncated: true } });
+    }
+  } finally {
+    names.forEach((name, index) => {
+      if (saved[index] === undefined) delete process.env[name];
+      else process.env[name] = saved[index];
+    });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Pi child registration omits the coordinator-only context reader", async () => {
   const previous = process.env.WORKIT_PI_WORKER_ID;
   process.env.WORKIT_PI_WORKER_ID = "worker-child";
