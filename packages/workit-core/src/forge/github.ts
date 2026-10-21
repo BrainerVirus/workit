@@ -719,5 +719,29 @@ export function createGitHubForge(options: {
         url: safeUrl(created.data.html_url ?? null),
       });
     },
+
+    issueComments(n) {
+      const listed = rest<Array<{ body?: unknown }>>(
+        `repos/${repo}/issues/${n}/comments?per_page=100`,
+        `comments on issue #${n}`,
+      );
+      if (!listed.ok) return listed;
+      if (!Array.isArray(listed.data))
+        return failure("failed", `gh api issue #${n} comments returned no list`);
+      return success(
+        listed.data.flatMap((comment) => (typeof comment.body === "string" ? [comment.body] : [])),
+      );
+    },
+
+    commentIssue(n, body) {
+      const posted = apiWrite<unknown>(
+        runner,
+        "gh",
+        apiHost,
+        ["api", "-X", "POST", `repos/${repo}/issues/${n}/comments`, "-f", `body=${body}`],
+        `comment on issue #${n}`,
+      );
+      return posted.ok ? success(undefined) : posted;
+    },
   };
 }

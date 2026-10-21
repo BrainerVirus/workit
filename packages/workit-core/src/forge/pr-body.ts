@@ -24,7 +24,7 @@ export function parseGhIssue(value: string): string {
 // skipped — a complete date anywhere in a segment (release-2024-01-15,
 // v2-2024-01-15-fix) — so no date digit ever closes an issue. Deliberate
 // numeric issue branches (feature/42-title, feature/2024-fix) keep linking.
-function deriveGhIssueFromBranch(branch: string): string {
+export function deriveGhIssueFromBranch(branch: string): string {
   for (const segment of branch.split("/")) {
     if (/^\d{4}-\d/.test(segment)) continue; // year-first date-like segment (incl. year-month)
     if (/\d{4}-\d{1,2}-\d{1,2}/.test(segment)) continue; // complete year-first date anywhere
@@ -33,6 +33,11 @@ function deriveGhIssueFromBranch(branch: string): string {
     if (m) return m[1];
   }
   return "";
+}
+
+/** A YouTrack id in the branch (feature/IRPT-740-x); anchored, 3+ digits so POSTGRES-16 or HTTP-3 never link. */
+export function deriveYouTrackIssueFromBranch(branch: string): string {
+  return /(?:^|\/|-)([A-Z]{2,}-\d{3,})\b/.exec(branch)?.[1] ?? "";
 }
 
 export function buildBody(
@@ -48,12 +53,7 @@ export function buildBody(
 ): string {
   let line: string | null = null;
   if (linkIssues) {
-    let issue = ytIssue;
-    if (!issue && branch) {
-      // anchored prefix + \b boundary, 3+ digits so version-like tokens (POSTGRES-16, HTTP-3) never link
-      const m = /(?:^|\/|-)([A-Z]{2,}-\d{3,})\b/.exec(branch);
-      if (m) issue = m[1];
-    }
+    const issue = ytIssue || deriveYouTrackIssueFromBranch(branch);
     if (issue && baseUrl) line = `Related to: ${baseUrl.replace(/\/+$/, "")}/issue/${issue}`;
   } else if (ghLinkOnPr) {
     let issue = parseGhIssue(ghIssue);

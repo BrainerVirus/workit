@@ -376,7 +376,7 @@ test("skip = no writeWorkspaces call → file untouched", () => {
   });
 });
 
-test("writeWorkspaces keeps YouTrack independent and rejects GitHub Issues on GitLab without writing", () => {
+test("writeWorkspaces keeps YouTrack independent and rejects an unknown issue tracker without writing", () => {
   withConfigDir((dir) => {
     const entries = [
       {
@@ -389,17 +389,16 @@ test("writeWorkspaces keeps YouTrack independent and rejects GitHub Issues on Gi
     ];
     expect(writeWorkspaces(entries).ok).toBe(true);
     const before = readFileSync(wsFile(dir), "utf8");
-    const issuesOnGitlab = writeWorkspaces([
+    const unknownTracker = writeWorkspaces([
       {
         name: "personal",
         glob: "/p/**",
         vcs: { provider: "gitlab" },
-        issues: { provider: "github", link_on_pr: true },
+        issues: { provider: "jira" as never, link: true },
       },
     ]);
-    expect(issuesOnGitlab.ok).toBe(false);
-    expect(issuesOnGitlab.error).toContain("issues");
-    expect(issuesOnGitlab.error).toContain("gitlab");
+    expect(unknownTracker.ok).toBe(false);
+    expect(unknownTracker.error).toContain("issues.provider");
     expect(readFileSync(wsFile(dir), "utf8")).toBe(before);
     expect(loadWorkspaces()).toEqual(entries);
   });

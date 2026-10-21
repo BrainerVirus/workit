@@ -175,8 +175,21 @@ const workspaceConfigSchema = z
       .object({ baseUrl: nonBlank.optional(), link_issues: z.boolean().optional() })
       .passthrough()
       .optional(),
+    /**
+     * The issue tracker PRs link to (any forge with any tracker). `link`
+     * derives the issue from the branch; `youtrack.link_issues` and
+     * `link_on_pr` are read as aliases (vcs-config.ts issueTrackerOf).
+     * `relation`, `repo` and `host` are read leniently there (D17): an
+     * unknown value warns and falls back, never invalidating the file.
+     */
     issues: z
-      .object({ provider: z.literal("github").optional(), link_on_pr: z.boolean().optional() })
+      .object({
+        provider: z.enum(["github", "gitlab", "youtrack"]).optional(),
+        link: z.boolean().optional(),
+        relation: z.unknown().optional(),
+        backlink: z.boolean().optional(),
+        link_on_pr: z.boolean().optional(),
+      })
       .passthrough()
       .optional(),
     branchPolicy: workspaceBranchPolicySchema.optional(),
@@ -187,13 +200,6 @@ const workspaceConfigSchema = z
   })
   .passthrough()
   .superRefine((workspace, context) => {
-    if (workspace.issues && workspace.vcs?.provider !== "github") {
-      context.addIssue({
-        code: "custom",
-        path: ["issues"],
-        message: `GitHub issue linking requires the github provider, got ${workspace.vcs?.provider ?? "unset"}`,
-      });
-    }
     if (
       workspace.defaultProfile !== undefined &&
       !Object.hasOwn(workspace.profiles ?? {}, workspace.defaultProfile)

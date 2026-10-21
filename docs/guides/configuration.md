@@ -88,6 +88,60 @@ To add your own trailers (Co-Authored-By) in the same commit, use
 `workit git commit --trailer "Co-Authored-By: Name <email>"` (repeatable)
 instead of amending afterwards.
 
+### Issue tracker
+
+A workspace's `issues` block names the tracker its PRs and MRs link to. Any
+forge works with any tracker: a GitHub repository can track its work in
+YouTrack, a GitLab one in GitLab issues.
+
+```json
+{
+  "name": "work",
+  "glob": "/home/you/projects/work/**",
+  "vcs": { "provider": "github" },
+  "issues": { "provider": "youtrack", "link": true, "relation": "closes", "backlink": false },
+  "youtrack": { "baseUrl": "https://you.youtrack.cloud" }
+}
+```
+
+- `provider`: `github`, `gitlab` or `youtrack`. A bare `--issue 42` (and a
+  number from the branch) is an issue on this tracker when it is `github` or
+  `gitlab`, else on the PR's forge.
+- `repo` and `host`: where a GitHub or GitLab tracker keeps its issues when
+  that is not the PR's own repository (`"repo": "group/project"`; `host`
+  defaults to the PR's host on the same forge, else `github.com` or
+  `gitlab.com`). An issue tracker on the other forge needs `repo`.
+- `link` (default `false`): with no `--issue`, derive the issue from the branch
+  name (`feature/42-login` is `#42`, `feature/IRPT-740-x` is `IRPT-740`; a
+  YouTrack id needs a base URL). A named issue always links.
+- `relation` (default `closes`): `Closes #42` or `Refs #42`; `pr create --refs`
+  picks `refs` for one PR. Any other value is reported as a note by
+  `pr create` and read as `closes`; it never invalidates the file.
+- `backlink` (default `false`): after opening the PR, comment its URL on each
+  linked issue, once per PR: a GitHub or GitLab issue on the PR's forge host
+  with the workspace's verified credential, a YouTrack issue through its API.
+  An issue on another forge host is not commented on; it is reported as
+  `skipped` with a note. Your
+  host's permission prompt for `workit pr create` is what allows the comment,
+  as with `workit youtrack note`, and a YouTrack comment also needs
+  `WORKFLOW_YT_WRITE=1` in the environment, the same gate as `workit
+  youtrack note`. A failed comment is reported and never undoes the PR.
+
+An issue on another forge than the PR's cannot be closed from it, so it gets a
+`Related to: <issue URL>` line instead of `Closes`.
+
+```json
+{ "vcs": { "provider": "github" }, "issues": { "provider": "gitlab", "repo": "group/project", "link": true } }
+```
+
+Older keys keep working and are read as aliases: `youtrack.link_issues: true`
+is `{ "provider": "youtrack", "link": true }`, and `issues.link_on_pr` is
+`link`. A workspace with only `youtrack.baseUrl` links YouTrack issues you
+name but derives none from the branch. The YouTrack base URL is the
+workspace's `youtrack.baseUrl`, else `baseUrl` in `youtrack.json`: an old
+`link_issues` workspace without its own `baseUrl` links through
+`youtrack.json`. See [delivery](delivery.md#linking-issues) for `--issue`.
+
 ### Model per fanout tier
 
 A workspace's `fanout.tierModels` names the model a fanout worker gets for

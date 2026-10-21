@@ -20,7 +20,7 @@
 //
 // Each slice's `hash` covers what it is (goal, acceptance, verify, forbidden,
 // scope, owns, branch, base, dependencies), not how it is briefed (tier,
-// timebox, context) or where its worktree goes. A re-plan that changes a
+// timebox, context, issues) or where its worktree goes. A re-plan that changes a
 // slice starts a new run for that slice alone: its `hashSince` moves to now,
 // and only ledger rows recorded under its hash (worktree rows carry
 // `sliceHash`) or since then link a gone branch's merged PR to it or count as
@@ -69,6 +69,8 @@ export type Slice = {
   forbidden: string[];
   context: string | null;
   timebox: string | null;
+  /** Issues the slice's PR links (`issue` in the plan: `#42`, `IRPT-74` or a URL). */
+  issues: string[];
   /** sliceHash of this definition: which run of the slice a ledger row belongs to. */
   hash: string;
   /** When a slice with this hash was first planned: older rows are not its run. */
@@ -405,6 +407,8 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       problems.push(`${where}: tier must be one of ${TIERS.join(", ")}`);
     const dependsOn = textList(item.dependsOn ?? []);
     if (dependsOn === null) problems.push(`${where}: dependsOn must be a list of slice ids`);
+    const issues = textList(item.issue ?? []);
+    if (issues === null) problems.push(`${where}: issue must be an issue id or a list of them`);
     const optional = (field: string): string | null =>
       typeof item[field] === "string" && filled(item[field]) ? item[field].trim() : null;
     slices.push({
@@ -425,6 +429,7 @@ export function parsePlan(raw: unknown, defaults: PlanDefaults, name?: string | 
       forbidden,
       context: optional("context"),
       timebox: optional("timebox"),
+      issues: [...new Set((issues ?? []).map((entry) => entry.trim()).filter(filled))],
       hash: "",
       hashSince: "",
     });
@@ -777,7 +782,7 @@ export const planLeads = (
 
 /**
  * sha256 (16 hex) of the slice's definition. Brief-only fields (tier,
- * timebox, context) and the worktree path are left out, so fixing a typo in
+ * timebox, context, issues) and the worktree path are left out, so fixing a typo in
  * them never re-dispatches landed work.
  */
 export function sliceHash(slice: Slice): string {
@@ -788,6 +793,7 @@ export function sliceHash(slice: Slice): string {
     tier: _tier,
     timebox: _timebox,
     context: _context,
+    issues: _issues,
     ...definition
   } = slice;
   return createHash("sha256").update(JSON.stringify(definition)).digest("hex").slice(0, 16);
@@ -842,6 +848,7 @@ function parseStored(raw: unknown): FanoutFile | null {
       forbidden: list(item.forbidden),
       context: typeof item.context === "string" ? item.context : null,
       timebox: typeof item.timebox === "string" ? item.timebox : null,
+      issues: list(item.issues),
       hash: text(item.hash),
       // A plan written before slice hashes: its run began at createdAt.
       hashSince: text(item.hashSince) || text(raw.createdAt),
@@ -940,6 +947,28 @@ export function selectFanout(
         `several fanout plans match; pick one (${all.data.map((plan) => plan.name).join(", ")})`,
         "pass --name <plan>",
       );
+}
+
+/**
+ * The issues the fanout slice on `branch` links (its `issue` field), so a
+ * worker's `workit pr create` links them unasked. A race attempt branch
+ * `<branch>-try<n>` counts as its slice; no plan or no slice is none.
+ */
+export function sliceIssuesFor(cwd: string, branch: string | null): string[] {
+  if (!branch) return [];
+  const all = listFanouts(cwd);
+  if (!all.ok) return [];
+  const issues = all.data.flatMap((plan) =>
+    plan.slices
+      .filter(
+        (slice) =>
+          slice.branch === branch ||
+          (branch.startsWith(`${slice.branch}-try`) &&
+            /^\d+$/u.test(branch.slice(slice.branch.length + 4))),
+      )
+      .flatMap((slice) => slice.issues),
+  );
+  return [...new Set(issues)];
 }
 
 function writeFanout(cwd: string, plan: FanoutFile): FanoutResult<string> {

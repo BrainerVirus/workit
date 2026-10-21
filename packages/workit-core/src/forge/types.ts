@@ -217,4 +217,8 @@ export interface Forge {
   findRelease(tag: string): ForgeResult<ForgeRelease | null>;
   /** Publish a release on an existing tag (never creates the tag). */
   createRelease(input: CreateReleaseInput): ForgeResult<ForgeRelease>;
+  /** Bodies of the first page of comments on issue `n` of the base repository. */
+  issueComments(n: number): ForgeResult<string[]>;
+  /** Comment on issue `n` of the base repository (the PR backlink). */
+  commentIssue(n: number, body: string): ForgeResult<void>;
 }

@@ -224,6 +224,14 @@ export function youTrackWorkDateMs(dateRaw: string):
   }
 }
 
+/** youtrack.json's baseUrl without trailing slashes, read-only (no token needed); null when unset. */
+export const youTrackBaseUrl = (): string | null => {
+  const read = readYouTrackContextConfig();
+  if ("error" in read) return null;
+  const base = typeof read.data.baseUrl === "string" ? read.data.baseUrl.replace(/\/+$/, "") : "";
+  return base || null;
+};
+
 export const youTrackToken = (): { token: string; base: string } | { error: string } => {
   const loaded = readYouTrackConfig(true);
   if ("error" in loaded) return loaded;

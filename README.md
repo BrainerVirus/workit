@@ -205,7 +205,8 @@ shape  →  implement  →  review  →  ship
 3. **Review**: a different session (the `verifier`/`reviewer` agent, or a
    reviewer started with its own `WORKIT_SESSION_ID`) records
    `workit ledger verdict`.
-4. **Ship**: `workit git push`, `workit pr create`, `workit ci wait`,
+4. **Ship**: `workit git push`, `workit pr create --issue <#n|ID>` (links the
+   issue on GitHub, GitLab or YouTrack), `workit ci wait`,
    `workit pr status`; `workit pr merge` only when the PR is READY, verified and
    the `merge` grant allows it. `workit verify-delivery` confirms it landed.
 
