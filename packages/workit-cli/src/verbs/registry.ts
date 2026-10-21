@@ -277,8 +277,9 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "create",
         usage:
-          "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--label <l>]… [--reviewer <login>]… [--draft]",
-        summary: "Open a PR/MR for the pushed branch, verified against the local HEAD",
+          "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft]",
+        summary:
+          "Open a PR/MR for the pushed branch, verified against the local HEAD, linking its issues",
       },
       {
         name: "ready",

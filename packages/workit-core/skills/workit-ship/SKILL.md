@@ -33,9 +33,8 @@ that repeats because the base keeps moving, or after 3 failed fix attempts on
 the same check.
 
 1. **Open.** `workit git push`, then `workit pr create --title "<title>"
-   --body-file <f|-> --issue <#n|ID>` (idempotent; body: `references/pr-body.md`;
-   one `--issue` per issue the PR closes, plus `--refs` when it only refers to
-   it; a fanout brief's `ISSUE:` links itself; edits: `workit pr edit`). A stack: `workit stack plan <bottom> ... <top>`, one
+   --body-file <f|->` plus `--issue <#n|ID>` per issue (`--refs`: no close; idempotent;
+   body: `references/pr-body.md`; edits: `workit pr edit`). A stack: `workit stack plan <bottom> ... <top>`, one
    `workit pr create --base <parent> --fill` per branch, then
    `workit stack sync`. Finish the whole stack before babysitting any PR.
 2. **Read state** with `workit pr status --json`. `REVIEW` alone is a pending
