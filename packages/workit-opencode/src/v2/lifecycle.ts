@@ -223,7 +223,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     const base =
       current === null
         ? 'recovery_required: this branch has no Workit task yet; start it (workit_task start, or `workit task start "<objective>"`), then assign a worker on it with workit_worker before launching a native task'
-        : "recovery_required: no assigned Workit worker is attributable to this coordinator on the current branch's task; assign one with workit_worker before launching a native task";
+        : "recovery_required: no assigned Workit worker is attributable to this coordinator on the current branch's task (worker assignments are branch-scoped: they follow the task of the branch checked out when the launch happens); assign one with workit_worker on this branch's task before launching a native task";
     const listed = store.listTasks();
     if (!listed.ok) return base;
     const stale = listed.data.flatMap((task) =>
@@ -244,6 +244,58 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     return stale.length > 0
       ? `${base}. Workers of this coordinator are still open on other tasks; cancel any that are stale: ${stale.join("; ")}`
       : base;
+  };
+
+  /**
+   * A lead who switches branches leaves its assigned worker on the old
+   * branch's task (#316). With exactly one such unlaunched worker and an
+   * active task on this branch, assign the same brief here and cancel the
+   * old entry with a reason that names both tasks. Anything ambiguous or
+   * refused falls back to the branch-scoped hint.
+   */
+  const rebindStaleWorker = (
+    coordinator: string,
+    current: string,
+    stale: { task: TaskRecord; entry: TaskRecord["workers"][number] }[],
+  ): boolean => {
+    if (stale.length !== 1) return false;
+    const { task: from, entry } = stale[0];
+    const store = new TaskStore(root);
+    const target = store.readTask(current);
+    if (!target.ok || target.data.status !== "active") return false;
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor: coordinator },
+      capabilities: [],
+      constraints: [],
+      now,
+    });
+    const assigned = core.worker({
+      schemaVersion: 1,
+      action: "assign",
+      taskId: current,
+      assignment: entry.data.assignment,
+    });
+    if (!assigned.ok) return false;
+    const cancelled = core.worker({
+      schemaVersion: 1,
+      action: "cancel",
+      taskId: from.id,
+      workerId: entry.id,
+      reason: `rebound to task ${current} (worker ${assigned.data.id}) after a branch switch`,
+    });
+    const latest = store.readTask(current);
+    if (cancelled.ok && latest.ok)
+      core.task({
+        schemaVersion: 1,
+        action: "progress",
+        taskId: current,
+        progress: {
+          ...latest.data.progress,
+          summary: `${latest.data.progress.summary} (worker ${assigned.data.id} rebound from task ${from.id} after a branch switch)`,
+        },
+      });
+    return cancelled.ok;
   };
 
   const prepareDispatch = (
@@ -275,7 +327,24 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     // another branch's task never blocks or captures one. Without a task
     // here the lead starts this branch's task and assigns a worker first.
     const current = currentTaskId(store);
-    const next = oldest(eligible.filter((item) => item.task.id === current));
+    let next = oldest(eligible.filter((item) => item.task.id === current));
+    if (!next && current !== null) {
+      const stale = eligible.filter((item) => item.task.id !== current);
+      if (rebindStaleWorker(coordinator, current, stale)) {
+        const refreshed = store.readTask(current);
+        const rebound = refreshed.ok
+          ? refreshed.data.workers.filter(
+              (entry) =>
+                entry.data.state === "assigned" &&
+                entry.data.session === null &&
+                entry.provenance.session?.kind === "host" &&
+                entry.provenance.session.handle === coordinator,
+            )
+          : [];
+        if (refreshed.ok && rebound.length > 0)
+          next = oldest(rebound.map((entry) => ({ task: refreshed.data, entry })));
+      }
+    }
     if (!next) return "unbound";
     dispatches.set(coordinator, {
       taskId: next.task.id,

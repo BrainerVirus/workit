@@ -66,6 +66,11 @@ const fixture = () => {
     if (!task.ok) throw new Error(task.error);
     return task.data.workers;
   };
+  const progress = (taskId: string) => {
+    const task = store.readTask(taskId);
+    if (!task.ok) throw new Error(task.error);
+    return task.data.progress.summary;
+  };
   const launch = async (child: string) => {
     await lifecycle.executeBefore({ tool: "subagent", sessionID: "lead", id: child, input: {} });
     sessions.set(child, { id: child, parentID: "lead", directory: root });
@@ -82,6 +87,7 @@ const fixture = () => {
     root,
     taskWithWorker,
     workers,
+    progress,
     launch,
     lifecycle,
     switchTo: (branch: string) => run(["switch", "-qc", branch]),
@@ -106,24 +112,53 @@ test("Given a stale assigned worker on branch A, When the lead launches from bra
   }
 });
 
-test("Given a stale assigned worker on branch A and none on branch B's task, When the lead launches from B, Then it is refused with the exact cancel call for A's worker", async () => {
+test("Given a lone stale assigned worker on branch A and none on branch B's task, When the lead launches from B, Then A's worker is rebound to B's task, the launch runs there and the move is traced", async () => {
   const value = fixture();
   try {
     const taskA = value.taskWithWorker();
     const workerA = value.workers(taskA)[0].id;
     value.switchTo("feature/b");
-    value.taskWithWorker(false);
+    const taskB = value.taskWithWorker(false);
+    await value.launch("ses_child_b");
+    expect(value.workers(taskA)[0]).toMatchObject({ id: workerA, data: { state: "stopped" } });
+    expect(value.workers(taskB)).toHaveLength(1);
+    expect(value.workers(taskB)[0].data).toMatchObject({
+      state: "running",
+      session: { handle: "ses_child_b" },
+      assignment: { objective: "investigate" },
+    });
+    expect(value.progress(taskB)).toContain(`rebound from task ${taskA}`);
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("Given stale assigned workers on two other branches' tasks and none on B's, When the lead launches from B, Then nothing is rebound and the branch-scoped hint names both cancel calls", async () => {
+  const value = fixture();
+  try {
+    const taskA = value.taskWithWorker();
+    const workerA = value.workers(taskA)[0].id;
+    value.switchTo("feature/c");
+    const taskC = value.taskWithWorker();
+    const workerC = value.workers(taskC)[0].id;
+    value.switchTo("feature/b");
+    const taskB = value.taskWithWorker(false);
     const refused = value.lifecycle.executeBefore({
       tool: "subagent",
       sessionID: "lead",
       id: "call_b",
       input: {},
     });
-    await expect(refused).rejects.toThrow(/current branch's task/);
+    await expect(refused).rejects.toThrow(/branch-scoped/);
     await expect(refused).rejects.toThrow(
       `workit_worker {"action":"cancel","taskId":"${taskA}","workerId":"${workerA}"`,
     );
+    await expect(refused).rejects.toThrow(
+      `workit_worker {"action":"cancel","taskId":"${taskC}","workerId":"${workerC}"`,
+    );
     expect(value.workers(taskA)[0].data.state).toBe("assigned");
+    expect(value.workers(taskC)[0].data.state).toBe("assigned");
+    expect(value.workers(taskB)).toHaveLength(0);
   } finally {
     value.cleanup();
   }
