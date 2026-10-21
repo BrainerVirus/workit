@@ -135,6 +135,7 @@ use yet), L = host limit (the host has no mechanism for it).
 | Branch policy / raw git deny + nudge | N `PreToolUse` | P: deny via permission effect; L: the nudge rides the result | N `PreToolUse` | P: deny works; nudge via `agent_message` (unverified); X: `postToolUse` context | P: `tool_call` blocks; L: the nudge rides `tool_result` |
 | Before-write gate | N `Edit`/`Write`/`MultiEdit`/`NotebookEdit` and shell writes | N permission `evaluate` | N `PreToolUse` on `apply_patch` (files from the patch) and shell writes | P `preToolUse` (a write with no readable path is gated as code) | N `tool_call` |
 | Live-session guard (#274) | N `PreToolUse` (edits and shell); owner pid = the hook's parent process | N permission `evaluate` (edits and shell); owner pid = the server process, which runs every child session | N `PreToolUse` (`apply_patch` and shell); X: a per-command `workdir`, if the payload carries one, is not read | P `preToolUse` + `beforeShellExecution`; L: a subagent's tool events carry no parent conversation, so it is matched by the Cursor process | N `tool_call` (edits and bash); a worker's `WORKIT_SESSION_ID` names its lead |
+| Issued-registry guard (#292): agent writes under `<state>/issued*` | N `PreToolUse` on edit tools and shell writes (also under `workit check -- bash -c`) | N permission `evaluate` (edits and shell) | N `PreToolUse` on `apply_patch` and shell; L: `write_stdin` and specialized shell paths are not interceptable | P `preToolUse` + `beforeShellExecution`; a write with no readable path is not matched | N `tool_call` (edits and bash) | 
 | Heavy-command gate (#325, ruling mvid5onk) | N `PreToolUse` after every Workit gate: one simple heavy command gets `updatedInput` `workit check --heavy -- <cmd>` (the CLI caps the lease wait at 100 s in a Claude Code shell) with no `permissionDecision` (claude 2.1.306 applies it, then its own permission flow); a chain with heavy parts is denied with the split; a command a deny/ask rule names, or one only a `workit` allow would cover (not under `bypassPermissions`), runs as typed with a note. Rules read: managed-settings.json, `$CLAUDE_CONFIG_DIR`/`~/.claude/settings.json`, project `.claude/settings.json` and `settings.local.json`. L: `--settings`, `--allowedTools`/`--disallowedTools`, SDK `canUseTool` and server-managed policy are unreadable | N `execute.before` runs the permission hook's gates on the original, then rewrites one simple heavy command to `workit check --heavy -- <cmd>` (before the shell-session correlation notes it); `permission.evaluate` denies an allowed chain with heavy parts (ask and deny stand). Rules read: global, project and `.opencode/` `opencode.json(c)` up to the git top, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`: `permission.bash`/`shell` and every `agent.*.permission` | L: no rewrite channel: `PreToolUse` denies one heavy command with the exact `workit check --heavy -- <cmd>` and a chain with the split. Rules read: `~/.codex/rules/*.rules` and project `.codex/rules/*.rules` (`prefix_rule`); a rule it cannot parse means pass through | L: `beforeShellExecution` answers only allow/deny/ask: denies with the exact rewrite or the split. Rules read: `~/.cursor/cli-config.json` and project `.cursor/cli.json` `Shell(x)`. L: the IDE allowlist/denylist is unreadable | N `tool_call` after the gates: mutates `event.input.command` for one simple heavy command, blocks a chain with the split (Pi has no permission rules to read) |
 | Hook deadline under load (#309); each host's deadline sits below its own timeout (`HOST_DEADLINES`; `WORKIT_HOOK_DEADLINE_MS` overrides all) | N: `hooks.json` timeouts 15 s (prompt, tool, subagent) and 20 s (`SessionStart`, `Stop`); deadline 8 s, 16 s for `SessionStart` and `Stop`; past it the hook answers `additionalContext` naming the skip | L: in-process plugin, no host timeout to beat (the server awaits the hook); no deadline applied | N: `Stop` `timeout: 20`, deadline 16 s; unset hooks keep Codex's default timeout (600 s per the Codex hooks docs, not read from the binary), deadline 45 s | N: no `timeout` set, so Cursor's 60 s default holds (`DEFAULT_HOOK_TIMEOUT_SECONDS`, cursor-agent 2026.09.26); deadline 45 s on every event, `subagentStart` included (`agent_message` on `beforeShellExecution`) | L: in-process extension, no host timeout; no deadline applied |
 | Raw commit recording | N `PostToolUse` | N `execute.after` | N `PostToolUse` | P: settled on the next shell command; X: `afterShellExecution`/`postToolUse` | N `tool_result` |
@@ -181,6 +182,19 @@ Hook deadline limits:
   `Stop` never continues the turn. Skips and late answers go to
   `<state dir>/hook-skips.jsonl`, and `workit doctor` (`hook_deadline`)
   counts the last day's.
+
+Issued-registry guard limits (#292):
+
+- It judges agent tool calls only; the CLI and the `SubagentStart` hook write
+  the registries unhindered. It reads edit paths and recognizable shell writes
+  (redirects, `tee`, `cp`, `mv`, `rm`, `sed -i`, `touch`, through `cd`, `~`,
+  `$HOME` and `workit check -- bash -c`). An interpreter (`python -c`), an
+  unexpanded other variable or a command substitution is not seen (L, every
+  host), so this is a guard against hand edits, not a sandbox (#329 moves the
+  state into the DB).
+- **Codex:** `write_stdin` and specialized tool paths carry no readable
+  target, so they are not gated (L).
+- **Cursor:** a write whose payload names no path is not matched (P).
 
 ## Design background
 

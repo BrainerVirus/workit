@@ -17,6 +17,7 @@ import {
   type LiveDeps,
   type LiveOwner,
 } from "../core/live-session";
+import { resolveStateDir } from "../core/logger";
 import { workspaceLiveSessionGuard } from "../core/workspaces";
 import { appendHookObserved, ledgerPath } from "../ledger";
 import type { HookDecision } from "./protocol";
@@ -335,6 +336,12 @@ const cdInto = (dir: string | undefined, words: string[]): string | undefined =>
 const quoteWord = (word: string): string =>
   /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 
+/** A leading `~`, `$HOME` or `${HOME}` the shell would expand. */
+const homeExpanded = (file: string): string => {
+  const match = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.exec(file);
+  return match ? (process.env.HOME || os.homedir()) + file.slice(match[0].length) : file;
+};
+
 /**
  * Per top-level segment, the files it writes (redirects, `touch`, `rm`,
  * `sed -i`…) and `workit git commit|branch`, resolved against the
@@ -351,8 +358,10 @@ const segmentTargets = (
   let dir: string | undefined = cwd;
   let stack: Array<string | undefined> = [];
   const groups: Array<{ dir: string | undefined; stack: Array<string | undefined> }> = [];
-  const at = (file: string) =>
-    path.isAbsolute(file) ? file : dir === undefined ? null : path.resolve(dir, file);
+  const at = (file: string) => {
+    const home = homeExpanded(file);
+    return path.isAbsolute(home) ? home : dir === undefined ? null : path.resolve(dir, home);
+  };
   for (const segment of segmentsOf(command, dialect)) {
     if (segment.group === "open") {
       groups.push({ dir, stack: [...stack] });
@@ -474,6 +483,34 @@ const claimAll = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps)
 const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
   paths?.length ? paths.map((file) => path.resolve(cwd, file)) : [path.join(cwd, DIR_TARGET)];
 
+// --- the issued-registry guard (#292) ---------------------------------------
+
+/**
+ * The files an agent tool call writes under `<state>/issued*`: the issued-id
+ * records and their token hashes. Only the hook and the CLI write there; an
+ * agent that could would forge an issued session or token by hand.
+ */
+const issuedTarget = (cwd: string, targets: readonly string[]): string | null => {
+  const fold = (value: string) => (CASE_INSENSITIVE ? value.toLowerCase() : value);
+  const state = fold(canonical(resolveStateDir()));
+  for (const target of targets) {
+    const relative = path.relative(state, fold(canonical(path.resolve(cwd, homeExpanded(target)))));
+    if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+    if (relative.split(path.sep)[0].startsWith("issued")) return target;
+  }
+  return null;
+};
+
+const issuedDeny = (file: string): HookDecision => {
+  const unblock =
+    "Issued ids and tokens are written only by Workit's SubagentStart hook. Run the verifier or reviewer agent so the host issues its own session; never edit the issued registries by hand.";
+  return {
+    kind: "deny",
+    reason: `workit issued-registry guard: ${file} is under Workit's issued-session state. ${unblock}`,
+    unblock,
+  };
+};
+
 /**
  * Deny a working-tree edit while the branch task has unmet before-write
  * requirements. `paths` are the files the tool writes, or null when unknown
@@ -488,6 +525,8 @@ export function writeGate(
   owner?: LiveOwner | null,
   deps?: LiveDeps,
 ): HookDecision {
+  const forged = paths?.length ? issuedTarget(cwd, paths) : null;
+  if (forged) return issuedDeny(forged);
   if (!owner) return beforeWriteGate(cwd, paths);
   const targets = liveTargets(cwd, paths);
   const live = liveGate(owner, targets, deps);
@@ -511,6 +550,12 @@ export function shellGate(
   dialect: ShellDialect = "posix",
   deps?: LiveDeps,
 ): HookDecision {
+  try {
+    const forged = issuedTarget(cwd, segmentTargets(cwd, command, dialect));
+    if (forged) return issuedDeny(forged);
+  } catch {
+    // Fail open, like the other shell analyses here.
+  }
   const writes = shellWrites(command);
   let targets: string[] = [];
   if (owner) {
