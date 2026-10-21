@@ -169,9 +169,6 @@ test("given one simple heavy command, when planned, then it is rewritten verbati
   expect(plan("flock -o x.lock sh -c 'npm test'")).toMatchObject({
     command: "workit check --heavy -- flock -o x.lock sh -c 'npm test'",
   });
-  expect(heavyPlan("npx jest", { cwd: root, env, rules: null, waitS: 100 })).toMatchObject({
-    command: "workit check --heavy --wait 100 -- npx jest",
-  });
 });
 
 test("given a chain with a heavy part, when planned, then it is split, naming the part's lease command and never bash -c", () => {

@@ -185,7 +185,7 @@ test("Given a raw `npx jest` on Claude Code, When the hook runs, Then updatedInp
   const output = claude(repo(), "npx jest");
   expect(output?.permissionDecision).toBeUndefined();
   expect(output?.updatedInput).toEqual({
-    command: "workit check --heavy --wait 100 -- npx jest",
+    command: "workit check --heavy -- npx jest",
     description: "run it",
   });
   expect(output?.additionalContext).toContain("heavy-check lease");
@@ -194,7 +194,7 @@ test("Given a raw `npx jest` on Claude Code, When the hook runs, Then updatedInp
 test("Given a raw `npx jest` on OpenCode and Pi, When the shell hook runs, Then the input is rewritten in place and nothing is denied", () => {
   const root = repo();
   expect(opencode(root, "npx jest")).toEqual({
-    command: "workit check --heavy --wait 100 -- npx jest",
+    command: "workit check --heavy -- npx jest",
     effect: "allow",
     message: undefined,
   });
@@ -331,7 +331,7 @@ test("Given Claude Code rules, When a heavy command is named or only workit is a
   expect(claude(root, "make test")?.updatedInput).toBeUndefined();
   expect(claude(root, "make test", { permission_mode: "bypassPermissions" })?.updatedInput).toEqual(
     {
-      command: "workit check --heavy --wait 100 -- make test",
+      command: "workit check --heavy -- make test",
       description: "run it",
     },
   );
@@ -406,7 +406,7 @@ test("Given `workit lock heavy add 'mvn verify'` and a custom pattern, When thos
     "Run exactly: workit check --heavy -- ./ci/integration.sh --all",
   );
   expect(opencode(root, "./ci/integration.sh --all").command).toBe(
-    "workit check --heavy --wait 100 -- ./ci/integration.sh --all",
+    "workit check --heavy -- ./ci/integration.sh --all",
   );
 });
 
@@ -423,5 +423,40 @@ test("Given no workit on PATH or a directory outside git, When a heavy command r
     expect(opencode(root, "npx jest").command).toBe("npx jest");
   } finally {
     process.env.PATH = before;
+  }
+});
+
+/** The flags `workit check` accepts in 8.14.0, the oldest CLI the plugin may meet. */
+const CLI_8_14_FLAGS = new Set([
+  "--heavy",
+  "--name",
+  "--shell",
+  "--timeout",
+  "--task",
+  "--json",
+  "--",
+]);
+const wrapperFlags = (command: string): string[] => {
+  const words = command.split(/\s+/u);
+  const at = words.indexOf("check");
+  const end = words.indexOf("--", at);
+  return [...words.slice(at + 1, end).filter((word) => word.startsWith("-")), "--"];
+};
+
+test("Given a plugin newer than the CLI, When each rewrite host wraps a heavy command, Then the wrapper uses only flags CLI 8.14.0 accepts, whatever the tool timeout", () => {
+  const root = repo();
+  const rewrites = [
+    claude(root, "make test", { tool_input: { command: "make test", timeout: 600000 } })
+      ?.updatedInput?.command,
+    claude(root, "npx jest")?.updatedInput?.command,
+    pi(root, "make test").command,
+  ];
+  const input = { command: "make test", timeout: 600000 };
+  observeShellBefore(root, { tool: "shell", sessionID: "ses_2", id: "call-2", input }, new Map());
+  rewrites.push(input.command);
+  for (const command of rewrites) {
+    expect(String(command)).toStartWith("workit check --heavy");
+    for (const flag of wrapperFlags(String(command)))
+      expect(CLI_8_14_FLAGS.has(flag), `${String(command)}: ${flag}`).toBe(true);
   }
 });

@@ -64,17 +64,13 @@ export type ShellBeforeEvent = { tool: string; sessionID: string; id: string; in
  * the permission hook runs (branch policy, the raw-git deny, the write and
  * live-session gates) all pass on the original command.
  */
-const leaseRewrite = (input: HookInput, raw: unknown): string | null => {
+const leaseRewrite = (input: HookInput): string | null => {
   if (input.event.kind !== "shell.pre") return null;
   const { command } = input.event;
   // The plan first: it has no side effects, and most commands stop here. The
   // gates run only for a heavy one (shellGate claims the checkout for the
   // session, as the permission hook does for every command it allows).
-  const timeout = (raw as { timeout?: unknown }).timeout;
-  const plan = heavyGate(input.cwd, command, {
-    host: "opencode",
-    toolTimeoutMs: typeof timeout === "number" ? timeout : null,
-  });
+  const plan = heavyGate(input.cwd, command, { host: "opencode" });
   if (plan.kind !== "rewrite") return null;
   if (shellPolicy(input.cwd, command, "posix").kind === "deny") return null;
   if (rawGitPre(input, command, { nudge: false }).kind === "deny") return null;
@@ -103,7 +99,7 @@ export const observeShellBefore = (
     if (!shell) return;
     const sessionID = String(event.sessionID);
     const original = hookInput(root, sessionID, String(event.id), shell);
-    const heavy = leaseRewrite(original, event.input);
+    const heavy = leaseRewrite(original);
     if (heavy) {
       (event.input as { command: string }).command = heavy;
       shell.command = heavy;

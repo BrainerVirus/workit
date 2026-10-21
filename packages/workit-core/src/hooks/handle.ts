@@ -166,12 +166,10 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       // A heavy command runs under the machine lease: rewritten where the
       // host can replace the command, else denied with the exact rewrite.
       // Every gate above passed on the original command (ruling mvid5onk).
-      const timeout = event.toolInput?.timeout;
       const plan = heavyGate(input.cwd, event.command, {
         host: input.host,
         dialect: event.dialect,
         permissionMode: input.permissionMode,
-        toolTimeoutMs: typeof timeout === "number" ? timeout : null,
       });
       if (plan.kind === "split" && canDeny) return splitDenial(plan);
       const rewrites = usable(descriptor.shellPolicy.rewrite);

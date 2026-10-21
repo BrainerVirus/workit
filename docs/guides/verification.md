@@ -51,10 +51,12 @@ never gets it past them.
 - **One heavy command** (`npx jest`, `npm run test:ci`, `cargo test`, `docker
   build`, also behind `flock`, `nice`, `env`, `timeout` or `bash -c '<one
   command>'`) runs as `workit check --heavy -- <cmd>` on Claude Code, OpenCode
-  and Pi. On Claude Code and OpenCode the rewrite adds `--wait <s>`, so the
-  lease wait ends before the shell tool's own timeout (120 s by default; 100 s
-  of wait). Codex and Cursor cannot rewrite a command, so the hook denies it
-  there and names that exact command.
+  and Pi. In a Claude Code or OpenCode shell the CLI caps the lease wait at
+  100 s, so a busy lease answers before the shell tool's own 120 s timeout
+  (`--wait <s>` overrides it); an older CLI waits its configured default. The
+  rewrite uses only flags every supported CLI accepts. Codex and Cursor
+  cannot rewrite a command, so the hook denies it there and names that exact
+  command.
 - **A chain with heavy parts** (`git status && make test && touch x`, `cd web
   && npm test`, a pipe, a redirect) is denied on every host. The reason names
   each heavy part's lease command (`workit check --heavy -- make test`); run

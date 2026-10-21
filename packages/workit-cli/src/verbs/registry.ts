@@ -175,7 +175,7 @@ function withSubcommands(
 
 const LEASE_NOTES = [
   "The heavy-check lease: heavy work (tests, builds, lint, typecheck, installs, image builds) shares one machine-wide lease, so parallel agents and worktrees never exhaust this machine's memory and CPU. `slots` (default 1) heavy checks run at once; on Linux each also runs in a systemd scope with MemoryMax and CPUQuota.",
-  "Waiting: a heavy check that finds every slot held prints one `waiting for the heavy-check lease` line naming the holder (check, pid, session, age, directory), polls once a second, and exits 4 (busy) after `resources.wait` seconds (default 600). `workit lock status` shows the holders; `workit lock wait` waits for a free slot.",
+  "Waiting: a heavy check that finds every slot held prints one `waiting for the heavy-check lease` line naming the holder (check, pid, session, age, directory), polls once a second, and exits 4 (busy) after `--wait <s>`, else `resources.wait` seconds (default 600, capped at 100 inside a Claude Code or OpenCode shell). `workit lock status` shows the holders; `workit lock wait` waits for a free slot.",
   "--heavy: an ad-hoc `workit check -- <cmd>` takes the lease only with --heavy; the named checks test, build and typecheck always do. The shell hook runs a raw heavy command (`npx jest`, `npm run test:ci`, `cargo test`, `docker build`) as `workit check --heavy -- <cmd>` on Claude Code, OpenCode and Pi, and denies it with that exact command on Codex and Cursor.",
   '--no-lease skips the lease and needs --reason "<why>". Never hand-roll a flock: the lease already queues every agent on the machine.',
 ];

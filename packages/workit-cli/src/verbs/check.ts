@@ -24,8 +24,10 @@
 //   Linux with a delegated user systemd runs in its own `systemd-run --user
 //   --scope` with MemoryMax and CPUQuota. `--json` reports `lease` and `scope`.
 //   `--no-lease` skips both and needs `--reason`, recorded as `noLease`.
-//   `--wait <s>` caps the lease wait (the shell hook sets it below the host
-//   tool's timeout).
+//   `--wait <s>` sets the lease wait. Without it, inside a Claude Code or
+//   OpenCode shell (CLAUDECODE, OPENCODE, OPENCODE_SESSION_ID) the wait is
+//   capped at 100 s, below the shell tool's 120 s default timeout, so a busy
+//   lease answers before the host kills the call.
 // - Exit code: the command's own (4 on --timeout or a lease wait that timed
 //   out, 2 on usage). When the
 //   command passed but the evidence could not be recorded, the recording
@@ -314,6 +316,22 @@ function boundedArgv(argv: readonly string[]): { argv: string[]; truncated: bool
   return { argv: cut, truncated };
 }
 
+/** The shell tool's default timeout in Claude Code and OpenCode is 120 s. */
+const HOST_TOOL_WAIT_CAP_MS = 100_000;
+
+/**
+ * The lease-wait cap inside a host shell tool that kills a call at its own
+ * timeout (Claude Code, OpenCode), else null. WORKIT_HOST_WAIT_CAP_MS
+ * replaces the 100 s cap (a test seam).
+ */
+export function hostToolWaitCapMs(env: NodeJS.ProcessEnv): number | null {
+  if (!env.CLAUDECODE && !env.OPENCODE && !env.OPENCODE_SESSION_ID) return null;
+  const override = Number(env.WORKIT_HOST_WAIT_CAP_MS);
+  return Number.isFinite(override) && override >= 0 && env.WORKIT_HOST_WAIT_CAP_MS
+    ? override
+    : HOST_TOOL_WAIT_CAP_MS;
+}
+
 /** `resources` of the workspaces.json entry matching `cwd`, read from io.env's config dir. */
 export async function workspaceResources(
   io: Io,
@@ -527,7 +545,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
       { label: "workspaces.json", trust: "machine", value: workspace.value },
       { label: CHECKS_FILE, trust: "repo", value: config.resources },
     ]);
-    if (options.waitMs !== null) settings.waitMs = Math.min(settings.waitMs, options.waitMs);
+    const cap = hostToolWaitCapMs(io.env);
+    if (options.waitMs !== null) settings.waitMs = options.waitMs;
+    else if (cap !== null) settings.waitMs = Math.min(settings.waitMs, cap);
     for (const warning of [workspace.warning, ...warnings])
       if (warning) io.stderr(`workit: resources: ${warning}\n`);
     if (options.heavy || (name !== null && settings.heavy.includes(name))) {

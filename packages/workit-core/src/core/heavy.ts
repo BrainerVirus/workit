@@ -454,8 +454,6 @@ export type PlanOptions = HeavyOptions & {
   rules: RuleRead | null;
   /** The host skips its permission prompts (Claude `bypassPermissions`). */
   bypass?: boolean;
-  /** Cap on the lease wait, below the host's tool timeout. */
-  waitS?: number | null;
 };
 
 const quoteWord = (word: string): string =>
@@ -496,7 +494,7 @@ export function heavyPlan(command: string, options: PlanOptions): HeavyPlan {
         };
     }
   if (single) {
-    const rewrite = leaseRewrite(command, options.waitS ?? null);
+    const rewrite = leaseRewrite(command);
     return rewrite
       ? { kind: "rewrite", command: rewrite, reason: single.reason }
       : { kind: "none" };
@@ -530,13 +528,15 @@ const ASSIGNMENTS = /^\s*((?:[A-Za-z_]\w*=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'"])*
 
 /**
  * The lease wrapper for one simple command: `[VAR=x …] workit check --heavy
- * [--wait <s>] -- <cmd>`, the command's own text kept verbatim after `--`.
+ * -- <cmd>`, the command's own text kept verbatim after `--`. It may only use
+ * flags the oldest supported CLI accepts: the plugin and the CLI update
+ * separately (docs/guides/verification.md), so a newer flag here would make
+ * an older CLI refuse every heavy command. The CLI caps the wait itself.
  */
-export function leaseRewrite(command: string, waitS: number | null = null): string | null {
+export function leaseRewrite(command: string): string | null {
   const text = command.trim();
   const prefix = ASSIGNMENTS.exec(text)?.[1] ?? "";
   const rest = text.slice(prefix.length).trim();
   if (!rest) return null;
-  const wait = waitS !== null && waitS > 0 ? ` --wait ${Math.floor(waitS)}` : "";
-  return `${prefix}workit check --heavy${wait} -- ${rest}`;
+  return `${prefix}workit check --heavy -- ${rest}`;
 }

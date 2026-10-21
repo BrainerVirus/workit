@@ -63,7 +63,7 @@ for (const [label, plugin] of [
       expect(run.status, run.stderr).toBe(0);
       expect(outputProblem("PreToolUse", run.json)).toBeNull();
       expect((run.json as Output).hookSpecificOutput?.updatedInput?.command, command).toBe(
-        `workit check --heavy --wait 100 -- ${command}`,
+        `workit check --heavy -- ${command}`,
       );
     }
     expect(runHook(plugin(), payload(root, "ls -la"), env).json).toEqual({});
@@ -94,6 +94,6 @@ test("Given a machine pattern, When its command runs, Then the launcher sends it
   );
   const run = runHook(PLUGIN_DIR, payload(root, "./ci/integration.sh --all"), env);
   expect((run.json as Output).hookSpecificOutput?.updatedInput?.command).toBe(
-    "workit check --heavy --wait 100 -- ./ci/integration.sh --all",
+    "workit check --heavy -- ./ci/integration.sh --all",
   );
 });

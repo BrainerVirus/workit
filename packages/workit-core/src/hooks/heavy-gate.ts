@@ -43,14 +43,8 @@ export type GateOptions = {
   dialect?: ShellDialect;
   /** Claude `permission_mode`: bypassPermissions skips the allowlist check. */
   permissionMode?: string | null;
-  /** The host shell tool's timeout (ms): the lease wait stays below it. */
-  toolTimeoutMs?: number | null;
   env?: NodeJS.ProcessEnv;
 };
-
-/** Seconds left for the lease wait inside a tool call of `timeoutMs`. */
-const waitFor = (timeoutMs: number | null | undefined): number =>
-  Math.max(10, Math.floor((timeoutMs && timeoutMs > 0 ? timeoutMs : 120_000) / 1000) - 20);
 
 /**
  * The gate's plan for `command`, run after the Workit gates allowed it.
@@ -63,16 +57,12 @@ export function heavyGate(cwd: string, command: string, options: GateOptions): H
     // The launchers' cheap word check first: most commands stop here.
     if (env.WORKIT_HEAVY_GATE === "0" || !maybeHeavy(command, cwd, env) || !workitOnPath(env))
       return { kind: "none" };
-    // Hosts that rewrite cap the wait below their tool timeout; a deny names
-    // the plain command.
-    const rewrites = options.host === "claude_code" || options.host === "opencode";
     return heavyPlan(command, {
       cwd,
       env,
       dialect: options.dialect ?? "posix",
       rules: rulesFor(options.host, cwd, env),
       bypass: options.permissionMode === "bypassPermissions",
-      waitS: rewrites ? waitFor(options.toolTimeoutMs) : null,
     });
   } catch {
     return { kind: "none" };

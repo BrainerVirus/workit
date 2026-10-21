@@ -630,7 +630,8 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   rewrite on Codex and Cursor. A chain with heavy parts is denied with each
   part's lease command, and a command a host permission rule names runs
   outside the lease ([verification guide](verification.md#heavy-commands-and-the-lease)).
-  `--wait <s>` caps the wait for the lease.
+  `--wait <s>` sets the wait for the lease; without it the wait is `wait`
+  (600 s), capped at 100 s inside a Claude Code or OpenCode shell.
 - **The lease.** The lease has `slots` places (default 1) across every
   worktree and agent of the user. A heavy check that finds them all taken
   prints one `waiting for the heavy-check lease` line naming the holder's
