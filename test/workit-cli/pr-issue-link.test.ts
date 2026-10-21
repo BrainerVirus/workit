@@ -145,6 +145,7 @@ test("pr create: given a YouTrack tracker, when --issue IRPT-74 --issue IRPT-75 
       repo: "o/r",
       tracker: "youtrack",
       issue: "IRPT-74",
+      relation: "related",
       source: "flag",
     }),
     expect.objectContaining({ pr: 12, tracker: "youtrack", issue: "IRPT-75" }),
@@ -231,9 +232,21 @@ test("pr create (GitLab): given GitLab issues, when --issue 7 runs, then the MR 
   ]);
 });
 
+const createIssue = (issue: string) => [
+  "pr",
+  "create",
+  "--base",
+  "main",
+  "--title",
+  "feat: x",
+  "--issue",
+  issue,
+  "--json",
+];
+
 test("pr create: given backlink true, then each issue gets one comment with the PR URL, and a comment already there is not posted again", async () => {
   const comments: string[] = ["an unrelated comment"];
-  const { repo, runner } = setup(
+  const { repo } = setup(
     "github",
     githubRoutes({
       "GET repos/o/r/issues/42/comments?per_page=100": () =>
@@ -245,105 +258,129 @@ test("pr create: given backlink true, then each issue gets one comment with the 
     }),
   );
   workspace(repo, { vcs: { provider: "github" }, issues: { provider: "github", backlink: true } });
-  const argv = ["pr", "create", "--base", "main", "--title", "feat: x", "--issue", "42", "--json"];
-  const first = await run(argv, repo.cwd);
+  const first = await run(createIssue("42"), repo.cwd);
   expect(first.code).toBe(0);
   expect(first.json().data.backlinks).toEqual([{ issue: "#42", status: "done" }]);
   expect(comments[1]).toStartWith("Linked from PR #12: https://github.com/o/r/pull/12");
 
-  // Another PR call for the same URL: the marker is read back, nothing is posted.
-  const again = await postAgain(repo, runner);
-  expect(again).toEqual([{ issue: "#42", status: "already_done" }]);
+  // The same PR URL again: the marker is read back, nothing is posted.
+  const again = await run(createIssue("42"), repo.cwd);
+  expect(again.json().data.backlinks).toEqual([{ issue: "#42", status: "already_done" }]);
   expect(comments).toHaveLength(2);
 });
 
-test("pr create: given backlink true and a YouTrack issue, then the comment goes to YouTrack with the PR URL; without credentials it is reported, never fatal", async () => {
-  const { repo } = setup("github", githubRoutes());
-  const youtrack: Array<{ issueId: string; text: string; marker: string }> = [];
-  Object.assign(forgeDeps, {
-    youtrack: async (issueId: string, text: string, marker: string) => {
-      youtrack.push({ issueId, text, marker });
-      return { status: "done" };
-    },
-  });
+test("pr create: given a GitHub forge and GitLab issues, when --issue 7 runs, then the body links the GitLab issue by URL and the backlink goes through glab", async () => {
+  const notes: string[] = [];
+  const NOTES = "projects/group%2Fproject/issues/7/notes";
+  const { repo, runner } = setup(
+    "github",
+    githubRoutes({
+      [`GET ${NOTES}?per_page=100`]: () => JSON.stringify(notes.map((body) => ({ body }))),
+      [`POST ${NOTES}`]: (call) => {
+        notes.push(call.vars.body);
+        return JSON.stringify({ id: 1 });
+      },
+    }),
+  );
   workspace(repo, {
-    issues: { provider: "youtrack", backlink: true },
-    youtrack: { baseUrl: "https://yt.example.test" },
+    vcs: { provider: "github" },
+    issues: { provider: "gitlab", repo: "group/project", backlink: true },
   });
-  const argv = [
-    "pr",
-    "create",
-    "--base",
-    "main",
-    "--title",
-    "feat: x",
-    "--issue",
-    "IRPT-74",
-    "--json",
-  ];
-  const missing = await run(argv, repo.cwd);
-  expect(missing.code).toBe(0);
-  expect(missing.json().data.backlinks).toEqual([
-    expect.objectContaining({ issue: "IRPT-74", status: "failed" }),
+  const result = await run(createIssue("7"), repo.cwd);
+  expect(result.code).toBe(0);
+  expect(postedBody(runner.calls)).toBe("Related to: https://gitlab.com/group/project/-/issues/7");
+  expect(result.json().data.backlinks).toEqual([
+    { issue: "https://gitlab.com/group/project/-/issues/7", status: "done" },
   ]);
-  expect(youtrack).toEqual([]);
-
-  const token = path.join(configHome.configDir, "youtrack.token");
-  writeFileSync(token, "perm:abc\n", { mode: 0o600 });
-  writeFileSync(
-    path.join(configHome.configDir, "youtrack.json"),
-    JSON.stringify({ baseUrl: "https://yt.example.test", tokenFile: token }),
-  );
-  const { postBacklinks, planIssueLinks } =
-    await import("@/packages/workit-core/src/forge/issue-link");
-  const { resolveForge } = await import("@/packages/workit-core/src/forge/resolve");
-  const resolved = resolveForge(repo.cwd, { runner: forgeDeps.runner });
-  if (!resolved.ok) throw new Error(resolved.error);
-  const planned = planIssueLinks(repo.cwd, {
-    issues: ["IRPT-74"],
-    refs: false,
-    branch: "feature/x",
-    forge: { kind: "github", repo: "o/r" },
-  });
-  if (!planned.ok) throw new Error(planned.error);
-  const posted = await postBacklinks(
-    repo.cwd,
-    resolved.data,
-    { number: 12, url: "https://github.com/o/r/pull/12" },
-    planned.data.links,
-    { youtrack: forgeDeps.youtrack },
-  );
-  expect(posted).toEqual([{ issue: "IRPT-74", status: "done" }]);
-  expect(youtrack).toEqual([
-    {
-      issueId: "IRPT-74",
-      text: "Linked from PR #12: https://github.com/o/r/pull/12",
-      marker: expect.stringMatching(/^<!-- workit-action:[0-9a-f]{64} -->$/u),
-    },
+  expect(
+    runner.calls.filter((call) => call.endpoint.startsWith(NOTES)).map((call) => call.bin),
+  ).toEqual(["glab", "glab"]);
+  expect(runner.calls.some((call) => call.endpoint.includes("repos/o/r/issues"))).toBe(false);
+  expect(notes[0]).toStartWith("Linked from PR #12: https://github.com/o/r/pull/12");
+  expect(linkedRows(repo.cwd)).toEqual([
+    expect.objectContaining({
+      tracker: "gitlab",
+      issue: "7",
+      issueRepo: "group/project",
+      issueUrl: "https://gitlab.com/group/project/-/issues/7",
+      relation: "related",
+    }),
   ]);
 });
 
-/** Re-runs the backlink step for PR #12 directly (a second `pr create` would reuse the PR). */
-const postAgain = async (repo: ForgeRepo, runner: ReturnType<typeof replayRunner>) => {
-  const { postBacklinks, planIssueLinks } =
-    await import("@/packages/workit-core/src/forge/issue-link");
-  const { resolveForge } = await import("@/packages/workit-core/src/forge/resolve");
-  const resolved = resolveForge(repo.cwd, { runner });
-  if (!resolved.ok) throw new Error(resolved.error);
-  const planned = planIssueLinks(repo.cwd, {
-    issues: ["42"],
-    refs: false,
-    branch: "feature/x",
-    forge: { kind: "github", repo: "o/r" },
+/** A local YouTrack: comments are kept and every request is logged. */
+const youTrackServer = () => {
+  const requests: Array<{ method: string; path: string }> = [];
+  const comments: Array<{ id: string; text: string; deleted: boolean }> = [];
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(request) {
+      const url = new URL(request.url);
+      requests.push({ method: request.method, path: url.pathname });
+      if (/\/api\/issues\/[^/]+\/comments$/u.test(url.pathname)) {
+        if (request.method === "POST") {
+          const comment = {
+            id: `c${comments.length + 1}`,
+            text: String((JSON.parse(await request.text()) as { text: unknown }).text),
+            deleted: false,
+          };
+          comments.push(comment);
+          return Response.json(comment);
+        }
+        return Response.json(comments);
+      }
+      return Response.json({ id: "x" });
+    },
   });
-  if (!planned.ok) throw new Error(planned.error);
-  return postBacklinks(
-    repo.cwd,
-    resolved.data,
-    { number: 12, url: "https://github.com/o/r/pull/12" },
-    planned.data.links,
-  );
+  return { url: `http://127.0.0.1:${server.port}`, requests, comments, stop: () => server.stop() };
 };
+
+test("pr create: given backlink true and a YouTrack issue, then the comment is posted once through the YouTrack API, and without WORKFLOW_YT_WRITE=1 nothing is written", async () => {
+  const yt = youTrackServer();
+  const previous = process.env.WORKFLOW_YT_WRITE;
+  try {
+    const { repo } = setup("github", githubRoutes());
+    const token = path.join(configHome.configDir, "youtrack.token");
+    writeFileSync(token, "perm:abc\n", { mode: 0o600 });
+    writeFileSync(
+      path.join(configHome.configDir, "youtrack.json"),
+      JSON.stringify({ baseUrl: yt.url, tokenFile: token }),
+    );
+    workspace(repo, { issues: { provider: "youtrack", backlink: true } });
+
+    delete process.env.WORKFLOW_YT_WRITE;
+    const refused = await run(createIssue("IRPT-74"), repo.cwd);
+    expect(refused.code).toBe(0);
+    expect(refused.json().data.backlinks).toEqual([
+      {
+        issue: "IRPT-74",
+        status: "failed",
+        note: "YouTrack writes need WORKFLOW_YT_WRITE=1 (as for workit youtrack note)",
+      },
+    ]);
+    expect(yt.requests).toEqual([]);
+
+    process.env.WORKFLOW_YT_WRITE = "1";
+    const posted = await run(createIssue("IRPT-74"), repo.cwd);
+    expect(posted.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "done" }]);
+    expect(yt.comments).toHaveLength(1);
+    expect(yt.comments[0].text).toStartWith(
+      "Linked from PR #12: https://github.com/o/r/pull/12\n\n<!-- workit-action:",
+    );
+    // The body links through youtrack.json's baseUrl when the workspace names none.
+    expect(posted.json().data.issues[0].line).toBe(`Related to: ${yt.url}/issue/IRPT-74`);
+
+    const again = await run(createIssue("IRPT-74"), repo.cwd);
+    expect(again.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "already_done" }]);
+    expect(yt.comments).toHaveLength(1);
+    expect(linkedRows(repo.cwd).at(-1)).toMatchObject({ tracker: "youtrack", relation: "related" });
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_YT_WRITE;
+    else process.env.WORKFLOW_YT_WRITE = previous;
+    await yt.stop();
+  }
+});
 
 test("pr create: given backlink false (the default), then no issue comment is read or posted", async () => {
   const { repo, runner } = setup("github", githubRoutes());

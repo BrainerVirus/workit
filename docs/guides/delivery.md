@@ -356,16 +356,21 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 
 ### Linking issues
 
-`workit pr create --issue <id>` (repeatable) links the PR to issues. The
-id's shape picks the tracker, so one PR can close a GitHub issue and refer to
-a YouTrack one:
+`workit pr create --issue <id>` (repeatable) links the PR to issues. A
+YouTrack id or URL is a YouTrack issue, an issue URL names its forge, and a
+number is an issue on the workspace's GitHub or GitLab tracker
+([`issues.provider`](configuration.md#issue-tracker)), else on the PR's forge:
 
 | `--issue` | Body line |
 | --- | --- |
-| `#42`, `42`, `https://github.com/o/r/issues/42` | `Closes #42` (`Refs #42` with `--refs`) |
+| `#42`, `42`, `https://github.com/o/r/issues/42` on a GitHub PR | `Closes #42` (`Refs #42` with `--refs`) |
 | `owner/repo#42` | `Closes owner/repo#42` |
-| `7` on GitLab, `https://gitlab.com/g/p/-/issues/7` | `Closes #7` in the MR description |
+| `7` on a GitLab MR | `Closes #7` in the MR description |
+| `7` on a GitHub PR with GitLab issues (`issues.repo: group/project`) | `Related to: https://gitlab.com/group/project/-/issues/7` |
 | `IRPT-74`, `https://you.youtrack.cloud/issue/IRPT-74` | `Related to: <baseUrl>/issue/IRPT-74` |
+
+A closing keyword does not cross forges, so an issue on the other forge is a
+`Related to:` line with its URL.
 
 - Without `--issue`, a [fanout](#parallel-slices-fanout) slice's `issue`
   links by itself, else the branch name does when the workspace tracker has
@@ -375,7 +380,8 @@ a YouTrack one:
   was already open keeps its body: the output says so and names
   `workit pr edit`.
 - With `backlink: true` the PR URL is commented on each linked issue, at
-  most once per PR.
+  most once per PR, through the tracker's backend (`gh`, `glab`, or the
+  YouTrack API, which needs `WORKFLOW_YT_WRITE=1` like `workit youtrack note`).
 
 ### Babysitting a PR
 

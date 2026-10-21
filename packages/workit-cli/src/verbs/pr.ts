@@ -130,7 +130,7 @@ async function status(argv: string[], io: Io): Promise<number> {
         lines.splice(
           1,
           0,
-          `issues: ${data.issues.map((entry) => `${entry.tracker === "youtrack" ? entry.issue : `${entry.repo ?? ""}#${entry.issue}`} (${entry.tracker === "youtrack" ? "related" : entry.relation})`).join(", ")}`,
+          `issues: ${data.issues.map((entry) => `${entry.tracker === "youtrack" ? entry.issue : (entry.url ?? `${entry.repo ?? ""}#${entry.issue}`)} (${entry.relation})`).join(", ")}`,
         );
       // `next:` stays the last line.
       lines.splice(
@@ -316,7 +316,7 @@ async function create(argv: string[], io: Io): Promise<number> {
     issues: flags.lists.issue ?? [],
     refs: flags.booleans.has("refs"),
     branch,
-    forge: { kind: forge.kind, repo: forge.repo },
+    forge: { kind: forge.kind, repo: forge.repo, host: forge.apiHost },
   });
   if (!planned.ok) return usage(io, planned.error, CREATE_USAGE);
   const links = planned.data.links;
@@ -343,13 +343,10 @@ async function create(argv: string[], io: Io): Promise<number> {
     : [];
   const backlinks: BacklinkOutcome[] =
     opened && planned.data.backlink && links.length
-      ? await postBacklinks(
-          io.cwd,
-          connected.data,
-          result.data,
-          links,
-          forgeDeps.youtrack ? { youtrack: forgeDeps.youtrack } : {},
-        )
+      ? await postBacklinks(io.cwd, connected.data, result.data, links, {
+          env: io.env,
+          ...(forgeDeps.runner ? { runner: forgeDeps.runner } : {}),
+        })
       : [];
   const created = {
     ...result.data,
@@ -362,6 +359,7 @@ async function create(argv: string[], io: Io): Promise<number> {
     })),
     linked,
     ...(planned.data.backlink && links.length ? { backlinks } : {}),
+    ...(planned.data.warnings.length ? { warnings: planned.data.warnings } : {}),
     ...(releaseTrack ? { releaseTrack } : {}),
     ...(route ? { flow: route } : {}),
   };
@@ -378,6 +376,7 @@ async function create(argv: string[], io: Io): Promise<number> {
       : []),
     `head ${data.head.slice(0, 12)} verified on the forge`,
     ...issueLines(links, opened, linked, backlinks, data.number),
+    ...planned.data.warnings.map((warning) => `note: ${warning}`),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     `next: ${data.next}`,
   ]);

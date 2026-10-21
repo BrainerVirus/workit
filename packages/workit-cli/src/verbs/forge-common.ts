@@ -3,7 +3,6 @@
 // human rendering of a PR status document.
 import { readFileSync } from "node:fs";
 import type { ForgeRunner } from "@brainervirus/workit-core/src/forge/exec";
-import type { YouTrackCommenter } from "@brainervirus/workit-core/src/forge/issue-link";
 import type { PrStatusDoc } from "@brainervirus/workit-core/src/forge/report";
 import {
   checkIdentity,
@@ -18,17 +17,15 @@ import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
 export { parseDuration } from "@brainervirus/workit-core/src/duration";
 import { emit, fail, type Io } from "../output";
 
-/** Test seams: a recorded-fixture runner, a virtual clock, a fake npm, stdin and YouTrack backlinks. */
+/** Test seams: a recorded-fixture runner, a virtual clock, a fake npm and stdin. */
 export const forgeDeps: {
   runner: ForgeRunner | undefined;
-  youtrack: YouTrackCommenter | undefined;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   npm: NpmRunner | undefined;
   readStdin: () => string;
 } = {
   runner: undefined,
-  youtrack: undefined,
   npm: undefined,
   readStdin: () => readFileSync(0, "utf8"),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

@@ -12,8 +12,24 @@ test("an old config with youtrack.link_issues true reads as issues { provider: y
     relation: "closes",
     backlink: false,
     baseUrl: "https://yt.example.test",
+    repo: null,
+    host: null,
     source: "youtrack.link_issues",
+    warnings: [],
   });
+});
+
+test("an unknown relation, repo or host warns and falls back instead of failing (D17)", () => {
+  const read = issueTrackerOf({ provider: "gitlab", relation: "related", repo: 7, host: " " }, {});
+  expect(read).toMatchObject({ provider: "gitlab", relation: "closes", repo: null, host: null });
+  expect(read?.warnings).toEqual([
+    'issues.relation "related" is not closes or refs; read as closes',
+    "issues.repo is not a non-empty string; ignored",
+    "issues.host is not a non-empty string; ignored",
+  ]);
+  expect(
+    issueTrackerOf({ provider: "gitlab", repo: "/group/project/", host: "GitLab.Example" }, {}),
+  ).toMatchObject({ repo: "group/project", host: "gitlab.example" });
 });
 
 test("issues.link_on_pr reads as link, and youtrack.link_issues still wins over a legacy GitHub block", () => {

@@ -179,12 +179,14 @@ const workspaceConfigSchema = z
      * The issue tracker PRs link to (any forge with any tracker). `link`
      * derives the issue from the branch; `youtrack.link_issues` and
      * `link_on_pr` are read as aliases (vcs-config.ts issueTrackerOf).
+     * `relation`, `repo` and `host` are read leniently there (D17): an
+     * unknown value warns and falls back, never invalidating the file.
      */
     issues: z
       .object({
         provider: z.enum(["github", "gitlab", "youtrack"]).optional(),
         link: z.boolean().optional(),
-        relation: z.enum(["closes", "refs"]).optional(),
+        relation: z.unknown().optional(),
         backlink: z.boolean().optional(),
         link_on_pr: z.boolean().optional(),
       })

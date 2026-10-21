@@ -104,23 +104,41 @@ YouTrack, a GitLab one in GitLab issues.
 }
 ```
 
-- `provider`: `github`, `gitlab` or `youtrack`.
+- `provider`: `github`, `gitlab` or `youtrack`. A bare `--issue 42` (and a
+  number from the branch) is an issue on this tracker when it is `github` or
+  `gitlab`, else on the PR's forge.
+- `repo` and `host`: where a GitHub or GitLab tracker keeps its issues when
+  that is not the PR's own repository (`"repo": "group/project"`; `host`
+  defaults to the PR's host on the same forge, else `github.com` or
+  `gitlab.com`). An issue tracker on the other forge needs `repo`.
 - `link` (default `false`): with no `--issue`, derive the issue from the branch
   name (`feature/42-login` is `#42`, `feature/IRPT-740-x` is `IRPT-740`; a
-  YouTrack id needs a `baseUrl`). A named issue always links.
+  YouTrack id needs a base URL). A named issue always links.
 - `relation` (default `closes`): `Closes #42` or `Refs #42`; `pr create --refs`
-  picks `refs` for one PR.
+  picks `refs` for one PR. Any other value is reported as a note by
+  `pr create` and read as `closes`; it never invalidates the file.
 - `backlink` (default `false`): after opening the PR, comment its URL on each
-  linked issue (YouTrack, or an issue in the same GitHub/GitLab repository),
-  once per PR. Your host's permission prompt for `workit pr create` is what
-  allows the comment, as with `workit youtrack note`; a failed comment is
-  reported and never undoes the PR.
+  linked issue, once per PR, through the tracker's own backend: `gh` for a
+  GitHub issue, `glab` for a GitLab one, the YouTrack API for YouTrack. Your
+  host's permission prompt for `workit pr create` is what allows the comment,
+  as with `workit youtrack note`, and a YouTrack comment also needs
+  `WORKFLOW_YT_WRITE=1` in the environment, the same gate as `workit
+  youtrack note`. A failed comment is reported and never undoes the PR.
+
+An issue on another forge than the PR's cannot be closed from it, so it gets a
+`Related to: <issue URL>` line instead of `Closes`.
+
+```json
+{ "vcs": { "provider": "github" }, "issues": { "provider": "gitlab", "repo": "group/project", "link": true } }
+```
 
 Older keys keep working and are read as aliases: `youtrack.link_issues: true`
 is `{ "provider": "youtrack", "link": true }`, and `issues.link_on_pr` is
 `link`. A workspace with only `youtrack.baseUrl` links YouTrack issues you
-name but derives none from the branch. See
-[delivery](delivery.md#linking-issues) for `--issue`.
+name but derives none from the branch. The YouTrack base URL is the
+workspace's `youtrack.baseUrl`, else `baseUrl` in `youtrack.json`: an old
+`link_issues` workspace without its own `baseUrl` links through
+`youtrack.json`. See [delivery](delivery.md#linking-issues) for `--issue`.
 
 ### Model per fanout tier
 

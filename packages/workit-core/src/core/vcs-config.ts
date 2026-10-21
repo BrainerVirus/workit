@@ -155,8 +155,14 @@ export type IssueTracker = {
   backlink: boolean;
   /** YouTrack's base URL from the workspace (`youtrack.baseUrl`), else null. */
   baseUrl: string | null;
+  /** The GitHub/GitLab repository that holds the issues (`issues.repo`); null: the PR's own. */
+  repo: string | null;
+  /** That repository's host (`issues.host`); null: the PR's host, or the tracker's public one. */
+  host: string | null;
   /** Which keys set it: the `issues` block or a legacy alias. */
   source: "issues" | "issues.link_on_pr" | "youtrack.link_issues" | "youtrack.baseUrl";
+  /** Values read leniently (D17): what was ignored and what was used instead. */
+  warnings: string[];
 };
 
 const TRACKERS: ReadonlySet<string> = new Set(["github", "gitlab", "youtrack"]);
@@ -168,33 +174,43 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 
 const flag = (value: unknown): boolean | null => (typeof value === "boolean" ? value : null);
 
+const text = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value.trim() : null;
+
 /**
  * The tracker from a workspace's `issues` and `youtrack` blocks. Legacy
  * configs keep their behavior: `youtrack.link_issues: true` reads as
  * `{ provider: youtrack, link: true }` (and wins over a legacy GitHub
  * `link_on_pr`, as it always did), `issues.link_on_pr` as `link`, and a bare
- * `youtrack.baseUrl` as a YouTrack tracker that links only named issues.
+ * `youtrack.baseUrl` as a YouTrack tracker that links only named issues. An
+ * unknown `relation`, `repo` or `host` is a warning, never an error (D17).
  */
 export function issueTrackerOf(issues: unknown, youtrack: unknown): IssueTracker | null {
   const iss = asRecord(issues);
   const yt = asRecord(youtrack);
-  const baseUrl = typeof yt.baseUrl === "string" && yt.baseUrl.trim() ? yt.baseUrl.trim() : null;
+  const warnings: string[] = [];
   const named =
     typeof iss.provider === "string" && TRACKERS.has(iss.provider.toLowerCase())
       ? (iss.provider.toLowerCase() as IssueTrackerProvider)
       : null;
-  const relation = iss.relation === "refs" ? "refs" : "closes";
-  const backlink = iss.backlink === true;
+  if (iss.relation !== undefined && iss.relation !== "closes" && iss.relation !== "refs")
+    warnings.push(
+      `issues.relation ${JSON.stringify(iss.relation)} is not closes or refs; read as closes`,
+    );
+  for (const key of ["repo", "host"] as const)
+    if (iss[key] !== undefined && text(iss[key]) === null)
+      warnings.push(`issues.${key} is not a non-empty string; ignored`);
+  const common = {
+    relation: iss.relation === "refs" ? ("refs" as const) : ("closes" as const),
+    backlink: iss.backlink === true,
+    baseUrl: text(yt.baseUrl),
+    repo: text(iss.repo)?.replace(/^\/+|\/+$/gu, "") ?? null,
+    host: text(iss.host)?.toLowerCase() ?? null,
+    warnings,
+  };
   const legacyGithub = named === "github" && flag(iss.link) === null;
   if (flag(yt.link_issues) === true && (named === null || legacyGithub))
-    return {
-      provider: "youtrack",
-      link: true,
-      relation,
-      backlink,
-      baseUrl,
-      source: "youtrack.link_issues",
-    };
+    return { provider: "youtrack", link: true, ...common, source: "youtrack.link_issues" };
   if (named) {
     const link =
       flag(iss.link) ??
@@ -204,22 +220,13 @@ export function issueTrackerOf(issues: unknown, youtrack: unknown): IssueTracker
     return {
       provider: named,
       link,
-      relation,
-      backlink,
-      baseUrl,
+      ...common,
       source:
         flag(iss.link) === null && flag(iss.link_on_pr) !== null ? "issues.link_on_pr" : "issues",
     };
   }
-  if (baseUrl)
-    return {
-      provider: "youtrack",
-      link: false,
-      relation,
-      backlink,
-      baseUrl,
-      source: "youtrack.baseUrl",
-    };
+  if (common.baseUrl)
+    return { provider: "youtrack", link: false, ...common, source: "youtrack.baseUrl" };
   return null;
 }
 
