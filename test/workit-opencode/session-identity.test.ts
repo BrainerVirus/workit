@@ -208,6 +208,80 @@ test("Given an OpenCode child session without a Workit worker, When it records a
   }
 });
 
+test("Given an OpenCode child without a worker and a task with a large history, When it inspects, Then it gets a bounded summary; every task mutation stays refused", async () => {
+  const root = repository();
+  const plugin = await harness(root, { ses_lead: {}, ses_child: { parentID: "ses_lead" } });
+  try {
+    const lead = new WorkitCore(new TaskStore(root), {
+      root,
+      caller: { host: "opencode", actor: "ses_lead" },
+      capabilities: [],
+      constraints: [],
+      now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    });
+    const started = lead.task(
+      taskStartRequest({
+        intent: { objective: "x".repeat(1500), scope: scope({ paths: ["."] }), authorityRefs: [] },
+      }),
+    );
+    if (!started.ok) throw new Error(started.error);
+    const taskId = (started.data as { id: string }).id;
+    const progressed = lead.task({
+      schemaVersion: 1,
+      action: "progress",
+      taskId,
+      progress: {
+        summary: "s".repeat(2000),
+        nextAction: "n".repeat(1000),
+        blockers: Array.from({ length: 20 }, (_, index) => ({
+          reason: `blocker ${index} ${"r".repeat(900)}`,
+          dependentAction: "d".repeat(500),
+          refs: [],
+        })),
+      },
+    });
+    if (!progressed.ok) throw new Error(progressed.error);
+    const full = JSON.stringify(
+      lead.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" }),
+    );
+    expect(full.length).toBeGreaterThan(20_000);
+
+    for (const view of [undefined, "summary", "full"]) {
+      const inspected = await plugin.call(
+        "workit_task",
+        { schemaVersion: 1, action: "inspect", taskId, ...(view ? { view } : {}) },
+        "ses_child",
+      );
+      expect(inspected.ok, String(view)).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(inspected)), String(view)).toBeLessThan(4096);
+      expect(inspected.data).toMatchObject({ id: taskId, status: "active", truncated: true });
+      expect(inspected.data.task).toBeUndefined();
+    }
+
+    const intent = { objective: "hijack", scope: scope(), authorityRefs: [] };
+    for (const request of [
+      { schemaVersion: 1, action: "list" },
+      { schemaVersion: 1, action: "pause", taskId },
+      { schemaVersion: 1, action: "close", taskId, outcome: "stopped", summary: "no" },
+      { schemaVersion: 1, action: "revise", taskId, intent, reason: "no" },
+      {
+        schemaVersion: 1,
+        action: "progress",
+        taskId,
+        progress: { summary: "no", nextAction: null, blockers: [] },
+      },
+      { schemaVersion: 1, action: "start", intent },
+    ]) {
+      const refused = await plugin.call("workit_task", request, "ses_child");
+      expect(refused.ok, String(request.action)).toBe(false);
+      expect(refused.code, String(request.action)).toBe("permission_denied");
+    }
+  } finally {
+    plugin.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Given a grandchild session, or a child whose lead runs in another workspace, When it records a finding without a worker, Then it is denied", async () => {
   const root = repository();
   const elsewhere = mkdtempSync(path.join(os.tmpdir(), "workit-v2-elsewhere-"));

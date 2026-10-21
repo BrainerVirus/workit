@@ -16,7 +16,12 @@ import {
   type OperationFamily,
   type OperationContext,
 } from "@brainervirus/workit-core/src/core";
-import { canonicalJson, type Result } from "@brainervirus/workit-core/src/core/task-contract";
+import {
+  canonicalJson,
+  type Result,
+  type TaskSummary,
+} from "@brainervirus/workit-core/src/core/task-contract";
+import { boundTaskSummary } from "@brainervirus/workit-core/src/core/task-evaluation";
 
 export const TASK_FAMILIES = OPERATION_FAMILIES;
 
@@ -486,6 +491,13 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
         });
     }
   } else result = dispatch(core, parsed.parsed.family, parsed.parsed.request);
+  if (
+    result.ok &&
+    parsed.parsed.family === "task" &&
+    parsed.parsed.action === "inspect" &&
+    (parsed.parsed.request.view ?? "summary") === "summary"
+  )
+    result = { ...result, data: boundTaskSummary(result.data as TaskSummary) };
   if (parsed.parsed.family === "policy" && parsed.parsed.action === "assess")
     result = withRequirementStatus(core, result, parsed.parsed.request.taskId);
   if (parsed.parsed.json) jsonResult(outOf(deps), result);

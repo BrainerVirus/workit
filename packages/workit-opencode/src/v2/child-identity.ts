@@ -23,6 +23,10 @@ export const childMayRecord = (family: OperationFamily | null, input: unknown): 
   );
 };
 
+/** A child without a worker may read the bounded task summary; the engine refuses the rest. */
+export const childMayInspect = (family: OperationFamily | null, input: unknown): boolean =>
+  family === "task" && fields(input).action === "inspect";
+
 /** A child never creates a task: without a taskId the branch must already have one. */
 export const childTaskMissing = (store: TaskStore, input: unknown): boolean => {
   if (fields(input).taskId !== undefined) return false;
@@ -31,4 +35,4 @@ export const childTaskMissing = (store: TaskStore, input: unknown): boolean => {
 };
 
 export const childDenial = (identity: string): string =>
-  `OpenCode child session has no validated Workit worker: as ${identity} it may only record evidence or findings (workit_evidence/workit_finding action "record") on an existing task; for anything else the lead assigns it a worker with workit_worker before launching it`;
+  `OpenCode child session has no validated Workit worker: as ${identity} it may only inspect the task summary (workit_task action "inspect") or record evidence or findings (workit_evidence/workit_finding action "record") on an existing task; for anything else the lead assigns it a worker with workit_worker before launching it`;

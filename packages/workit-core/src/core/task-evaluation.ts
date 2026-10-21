@@ -18,6 +18,8 @@ import {
   type EvidenceEvaluation,
   type Outcome,
   type Requirement,
+  type TaskBrief,
+  type TaskSummary,
   type Result,
   type Scope,
   type TaskRecord,
@@ -1073,4 +1075,65 @@ export function evaluateClosure(
     decisionIds,
     requirementIds: evaluations.map((item) => item.requirementId),
   });
+}
+
+export const TASK_BRIEF_MAX_BYTES = 4096;
+const BRIEF_TEXT = 250;
+const BRIEF_BLOCKERS = 3;
+const BRIEF_OPEN = 8;
+
+/** Cut `value` until its JSON-escaped form fits `BRIEF_TEXT` bytes. */
+const clip = (value: string): string => {
+  const fits = (text: string) => Buffer.byteLength(JSON.stringify(text)) <= BRIEF_TEXT;
+  if (fits(value)) return value;
+  let length = Math.min(value.length, BRIEF_TEXT);
+  while (length > 0 && !fits(`${value.slice(0, length)}…`)) length -= 1;
+  return `${value.slice(0, length)}…`;
+};
+
+/**
+ * Bound a task summary for `inspect --view summary`: text is clipped, lists
+ * capped and the policy reduced to the requirements still owed, so the JSON
+ * stays under {@link TASK_BRIEF_MAX_BYTES} however long the task history is.
+ */
+export function boundTaskSummary(summary: TaskSummary): TaskBrief {
+  const rules = new Map((summary.policy?.requirements ?? []).map((item) => [item.id, item]));
+  const unmet = summary.requirements.filter(
+    (item) => item.status === "unsatisfied" || item.status === "unavailable",
+  );
+  const { progress, closure } = summary;
+  const next = progress.nextAction;
+  const open = unmet.slice(0, BRIEF_OPEN).map((item) => ({
+    dimension: rules.get(item.requirementId)?.dimension ?? "verification",
+    before: rules.get(item.requirementId)?.before ?? "close",
+    status: item.status,
+  }));
+  const brief: TaskBrief = {
+    id: summary.id,
+    revision: summary.revision,
+    workspaceRevision: summary.workspaceRevision,
+    updatedAt: summary.updatedAt,
+    objective: clip(summary.objective),
+    status: summary.status,
+    closure: closure && {
+      outcome: closure.outcome,
+      at: closure.at,
+      summary: clip(closure.summary),
+    },
+    progress: {
+      summary: clip(progress.summary),
+      nextAction: next && clip(next),
+      blockers: progress.blockers.slice(0, BRIEF_BLOCKERS).map((item) => ({
+        reason: clip(item.reason),
+        dependentAction: clip(item.dependentAction),
+      })),
+    },
+    requirements: { total: summary.requirements.length, unmet: unmet.length, open },
+    truncated: false,
+  };
+  brief.truncated =
+    JSON.stringify(brief).includes("…") ||
+    progress.blockers.length > BRIEF_BLOCKERS ||
+    unmet.length > BRIEF_OPEN;
+  return brief;
 }
