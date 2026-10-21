@@ -219,6 +219,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       '  2. Decide ambiguities yourself: `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`; stop only for an irreversible, security-sensitive or out-of-worktree action.',
       "  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`; push only if this brief says so.",
       "  4. Never record a verdict on your own work.",
+      "  5. Run tests, lint, typecheck and builds only through `workit check` (a named check, or `workit check --heavy -- <cmd>`): one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
       "",
     ].join("\n"),
   );

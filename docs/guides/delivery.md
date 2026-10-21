@@ -619,12 +619,15 @@ Linux it gives each one its own memory and CPU limit.
 ```bash
 workit check test                 # heavy by default: waits for the lease, then runs
 workit check --heavy -- npx jest  # an ad-hoc command takes the lease only with --heavy
-workit check test --no-lease      # run it now, outside the lease (for you, not for briefs)
+workit check test --no-lease --reason "<why>"  # run it now, outside the lease (for you, not for briefs)
+workit lock status                # who holds the lease; `workit lock wait` waits for a slot
 ```
 
 - **Which checks are heavy.** The named checks `test`, `build` and `typecheck`
   are heavy by default. An ad-hoc `workit check -- <cmd>` takes the lease only
-  with `--heavy`.
+  with `--heavy`. A raw heavy shell command an agent runs (`npx jest`, `npm
+  run test:ci`) is rewritten through the lease, or denied with the exact
+  rewrite on Codex and Cursor ([verification guide](verification.md#heavy-commands-and-the-lease)).
 - **The lease.** The lease has `slots` places (default 1) across every
   worktree and agent of the user. A heavy check that finds them all taken
   prints one `waiting for the heavy-check lease` line naming the holder's
@@ -653,7 +656,9 @@ workit check test --no-lease      # run it now, outside the lease (for you, not 
   manager (no systemd, not delegated, macOS, Windows), the check runs as
   before and Workit says so once per session. If `systemd-run` itself fails
   to start the scope, the check runs again without one; systemd-run's error
-  line is not shown as check output.
+  line is not shown as check output. `workit doctor` starts a throwaway scope and reads
+  its cgroup back, so its `heavy_scope` row says whether the limits really
+  apply here, not only whether systemd accepted them.
 - **`--json`** adds `lease` (`slot`, `waitedMs`, the `holder` it waited on
   with pid, check, cwd and session, `reclaimed`, `inherited`) and `scope`
   (`unit`, `memoryMax` in bytes, `cpuQuota`, or `unit: null` with a
@@ -692,6 +697,7 @@ only tighten them, so a repo cannot break the machine-wide limit: it can add
 | `cpuQuota`  | `70%` of all CPUs            | both      | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
 | `wait`      | `600`                        | both      | Seconds to wait for the lease before exit 4                            |
 | `scope`     | `true`                       | workspace | `false` keeps the lease but runs without a systemd scope               |
+| `heavyCommands` | none                     | repo      | Extra shell commands the hook gates (`["mvn verify", "task test:*"]`)  |
 
 An invalid field prints a `workit: resources:` warning and keeps the earlier
 value, so a typo never turns the lease off. The lease lives in the CLI, so it

@@ -28,6 +28,40 @@ Without it, Workit detects defaults: package.json `test`/`lint`/`typecheck`/
 `pytest`, `make test`. A check is stale once the worktree changes, or if the
 check itself changed it.
 
+### Heavy commands and the lease
+
+Heavy work (tests, builds, lint, typecheck, installs, image builds) shares one
+machine-wide lease, so parallel agents cannot exhaust the machine's memory and
+CPU ([delivery guide](delivery.md#heavy-checks-share-the-machine)). Run heavy
+commands through `workit check`, never with a hand-made `flock`:
+
+```bash
+workit check test                    # test, build and typecheck take the lease
+workit check --heavy -- npx jest     # an ad-hoc heavy command
+workit lock status                   # who holds the lease
+workit lock wait --timeout 300       # wait for a free slot without taking it
+workit check test --no-lease --reason "machine idle, bisecting a hang"
+```
+
+The shell hook catches the raw form. A heavy command an agent runs directly
+(`npx jest`, `npm run test:ci`, `cargo test`, `docker build`, also behind
+`bash -c`, `flock`, `nice`, `env` or `timeout`) runs as `workit check --heavy
+-- <cmd>` on Claude Code, OpenCode and Pi. Codex and Cursor cannot rewrite a
+command, so the hook denies it there and names that exact command. Commands
+with shell syntax (`cd x && npm test`, `CI=1 npm test`) go through `--shell`.
+Long-running dev servers (`npm run dev`, `vite`, `docker compose up`) are not
+gated: they would hold the lease for their whole life.
+
+The catalog is built in (`workit lock heavy list`). To add a command, use
+`workit lock heavy add 'mvn verify'` (machine-wide, under the state dir), or
+list it in the repo's `workit.checks.json` under `resources.heavyCommands`. A
+pattern is words matched as a prefix of the command line, with `*` inside a
+word matching anything (`task test:*`). `workit lock heavy test -- <cmd>` says
+whether the hook gates a command. The hook leaves commands alone when no
+`workit` is on PATH, and `WORKIT_HEAVY_GATE=0` in the host's environment turns
+the gate off for that host. `--no-lease` needs `--reason`, recorded on the run
+as `noLease`.
+
 ## `workit ledger`: decisions, rulings, verdicts
 
 The ledger is a repo-wide, append-only record shared by all worktrees.

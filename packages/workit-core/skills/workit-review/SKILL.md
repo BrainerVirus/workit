@@ -24,7 +24,8 @@ independent; `type-check-only` never proves a behavior change.
    - **Standards:** repo rules first (`CODING_STANDARDS.md` when present),
      then a smell baseline (unclear name, long function, duplicated logic,
      leaky abstraction). Judgment only; lint owns nits.
-4. **Tests:** `workit test-audit --diff`. Would each new test fail if the
+4. **Tests:** run suites under the heavy-check lease (`workit check test`,
+   `workit check --heavy -- <cmd>`); `workit test-audit --diff`. Would each new test fail if the
    behavior broke? Triage the findings (workit-test-audit).
 5. **Blast radius:** for each touched contract, caller, config or migration,
    state the one fact it is safe because of and run the proof. Anything
