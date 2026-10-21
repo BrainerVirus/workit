@@ -380,8 +380,10 @@ A closing keyword does not cross forges, so an issue on the other forge is a
   was already open keeps its body: the output says so and names
   `workit pr edit`.
 - With `backlink: true` the PR URL is commented on each linked issue, at
-  most once per PR, through the tracker's backend (`gh`, `glab`, or the
-  YouTrack API, which needs `WORKFLOW_YT_WRITE=1` like `workit youtrack note`).
+  most once per PR, with the workspace's verified forge credential or the
+  YouTrack API (which needs `WORKFLOW_YT_WRITE=1` like `workit youtrack note`).
+  An issue on another forge host is not commented on; it is reported as
+  `skipped` with a note.
 
 ### Babysitting a PR
 

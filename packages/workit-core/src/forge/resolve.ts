@@ -53,6 +53,8 @@ export type ResolvedForge = {
   baseRemote: string;
   /** Absolute deadline (ms, `now()` clock) every API call is clamped to; null = none. */
   limits: { deadline: number | null };
+  /** The workspace credential's runner, clamped to `limits` (another repo on the same host). */
+  runner: ForgeRunner;
 };
 
 export type ResolveOptions = {
@@ -352,6 +354,7 @@ export function resolveForge(
     fork: baseRepo !== headRepo,
     baseRemote,
     limits,
+    runner,
   });
 }
 

@@ -343,10 +343,7 @@ async function create(argv: string[], io: Io): Promise<number> {
     : [];
   const backlinks: BacklinkOutcome[] =
     opened && planned.data.backlink && links.length
-      ? await postBacklinks(io.cwd, connected.data, result.data, links, {
-          env: io.env,
-          ...(forgeDeps.runner ? { runner: forgeDeps.runner } : {}),
-        })
+      ? await postBacklinks(io.cwd, connected.data, result.data, links, { env: io.env })
       : [];
   const created = {
     ...result.data,

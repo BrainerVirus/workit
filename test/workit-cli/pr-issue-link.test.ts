@@ -269,19 +269,8 @@ test("pr create: given backlink true, then each issue gets one comment with the 
   expect(comments).toHaveLength(2);
 });
 
-test("pr create: given a GitHub forge and GitLab issues, when --issue 7 runs, then the body links the GitLab issue by URL and the backlink goes through glab", async () => {
-  const notes: string[] = [];
-  const NOTES = "projects/group%2Fproject/issues/7/notes";
-  const { repo, runner } = setup(
-    "github",
-    githubRoutes({
-      [`GET ${NOTES}?per_page=100`]: () => JSON.stringify(notes.map((body) => ({ body }))),
-      [`POST ${NOTES}`]: (call) => {
-        notes.push(call.vars.body);
-        return JSON.stringify({ id: 1 });
-      },
-    }),
-  );
+test("pr create: given a GitHub forge and GitLab issues, when --issue 7 runs, then the body links the GitLab issue by URL and the backlink is skipped: no account is verified on gitlab.com", async () => {
+  const { repo, runner } = setup("github", githubRoutes());
   workspace(repo, {
     vcs: { provider: "github" },
     issues: { provider: "gitlab", repo: "group/project", backlink: true },
@@ -290,13 +279,14 @@ test("pr create: given a GitHub forge and GitLab issues, when --issue 7 runs, th
   expect(result.code).toBe(0);
   expect(postedBody(runner.calls)).toBe("Related to: https://gitlab.com/group/project/-/issues/7");
   expect(result.json().data.backlinks).toEqual([
-    { issue: "https://gitlab.com/group/project/-/issues/7", status: "done" },
+    {
+      issue: "https://gitlab.com/group/project/-/issues/7",
+      status: "skipped",
+      note: "an issue on another forge host is not backlinked: no verified account for gitlab.com",
+    },
   ]);
-  expect(
-    runner.calls.filter((call) => call.endpoint.startsWith(NOTES)).map((call) => call.bin),
-  ).toEqual(["glab", "glab"]);
-  expect(runner.calls.some((call) => call.endpoint.includes("repos/o/r/issues"))).toBe(false);
-  expect(notes[0]).toStartWith("Linked from PR #12: https://github.com/o/r/pull/12");
+  expect(runner.calls.some((call) => call.endpoint.includes("/issues/7/notes"))).toBe(false);
+  expect(runner.calls.some((call) => call.bin === "glab")).toBe(false);
   expect(linkedRows(repo.cwd)).toEqual([
     expect.objectContaining({
       tracker: "gitlab",
@@ -306,6 +296,40 @@ test("pr create: given a GitHub forge and GitLab issues, when --issue 7 runs, th
       relation: "related",
     }),
   ]);
+});
+
+test("pr create: given issues in another repository on the same host and vcs.account, then the backlink reads and posts there with the workspace account's token", async () => {
+  const TOKEN = "gho_token_for_octo_0000000000000000";
+  const comments: string[] = [];
+  const COMMENTS = "repos/o/other/issues/9/comments";
+  const { repo, runner } = setup(
+    "github",
+    githubRoutes({
+      "CLI auth token --hostname github.com --user octo": TOKEN,
+      [`GET ${COMMENTS}?per_page=100`]: () => JSON.stringify(comments.map((body) => ({ body }))),
+      [`POST ${COMMENTS}`]: (call) => {
+        comments.push(call.vars.body);
+        return JSON.stringify({ id: 1 });
+      },
+    }),
+  );
+  workspace(repo, {
+    vcs: { provider: "github", account: "octo" },
+    issues: { provider: "github", repo: "o/other", backlink: true },
+  });
+  const result = await run(createIssue("9"), repo.cwd);
+  expect(result.code).toBe(0);
+  expect(postedBody(runner.calls)).toBe("Closes o/other#9");
+  expect(result.json().data.backlinks).toEqual([{ issue: "o/other#9", status: "done" }]);
+  const backlink = runner.calls.filter((call) => call.endpoint.startsWith(COMMENTS));
+  expect(backlink.map((call) => [call.method, call.token])).toEqual([
+    ["GET", TOKEN],
+    ["POST", TOKEN],
+  ]);
+  const create = runner.calls.find((call) => call.endpoint === "repos/o/r/pulls");
+  expect(create?.token).toBe(TOKEN);
+  expect(runner.calls.filter((call) => call.method !== "CLI" && call.token !== TOKEN)).toEqual([]);
+  expect(comments[0]).toStartWith("Linked from PR #12: https://github.com/o/r/pull/12");
 });
 
 /** A local YouTrack: comments are kept and every request is logged. */

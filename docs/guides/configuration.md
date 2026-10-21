@@ -118,8 +118,10 @@ YouTrack, a GitLab one in GitLab issues.
   picks `refs` for one PR. Any other value is reported as a note by
   `pr create` and read as `closes`; it never invalidates the file.
 - `backlink` (default `false`): after opening the PR, comment its URL on each
-  linked issue, once per PR, through the tracker's own backend: `gh` for a
-  GitHub issue, `glab` for a GitLab one, the YouTrack API for YouTrack. Your
+  linked issue, once per PR: a GitHub or GitLab issue on the PR's forge host
+  with the workspace's verified credential, a YouTrack issue through its API.
+  An issue on another forge host is not commented on; it is reported as
+  `skipped` with a note. Your
   host's permission prompt for `workit pr create` is what allows the comment,
   as with `workit youtrack note`, and a YouTrack comment also needs
   `WORKFLOW_YT_WRITE=1` in the environment, the same gate as `workit

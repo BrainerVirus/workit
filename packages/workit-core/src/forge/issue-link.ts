@@ -16,7 +16,7 @@ import { defaultOperations, ISSUE_RE, unwrap } from "../core/youtrack-tools";
 import { withMarker, writeOnce, youTrackMarker, type OnceOutcome } from "../core/youtrack-writes";
 import { sliceIssuesFor } from "../fanout";
 import { appendObserved, type LedgerActor, type ReadRow } from "../ledger";
-import { systemRunner, type ForgeRunner } from "./exec";
+import type { ForgeRunner } from "./exec";
 import { createGitHubForge } from "./github";
 import { createGitLabForge } from "./gitlab";
 import { deriveGhIssueFromBranch, deriveYouTrackIssueFromBranch } from "./pr-body";
@@ -338,7 +338,7 @@ export function linkedIssues(
 
 export type BacklinkOutcome = {
   issue: string;
-  status: OnceOutcome["status"];
+  status: OnceOutcome["status"] | "skipped";
   note?: string;
 };
 
@@ -359,26 +359,36 @@ const defaultYouTrackComment = (
     }
   });
 
-/** The forge an issue lives on: the PR's own, or the tracker's (gh or glab on its host). */
+/**
+ * The forge an issue lives on: the PR's own, or another repository on the
+ * same forge host under the same verified credential. Null for another host:
+ * no account is verified there.
+ */
 function issueForge(
   resolved: ResolvedForge,
   link: IssueLink,
   runner: ForgeRunner | undefined,
-): Forge {
-  if (link.tracker === "youtrack") throw new Error("YouTrack issues have no forge");
+): Forge | null {
+  if (link.tracker === "youtrack") return null;
   if (link.repo === null && link.host === null) return resolved.forge;
-  const host = link.host ?? resolved.forge.apiHost;
-  const repo = link.repo ?? resolved.forge.repo;
-  const options = { apiHost: host, repo, runner: runner ?? systemRunner(link.tracker, host) };
+  const apiHost = resolved.forge.apiHost;
+  if (link.tracker !== resolved.forge.kind || !same(link.host ?? apiHost, apiHost)) return null;
+  const options = {
+    apiHost,
+    repo: link.repo ?? resolved.forge.repo,
+    runner: runner ?? resolved.runner,
+  };
   return link.tracker === "github" ? createGitHubForge(options) : createGitLabForge(options);
 }
 
 /**
  * The tracker backlink (`issues.backlink: true`): a comment with the PR URL
- * on each linked issue, through the tracker's own backend (gh for GitHub
- * issues, glab for GitLab issues, the YouTrack API behind WORKFLOW_YT_WRITE=1
- * like `workit youtrack note`), posted at most once: a marker naming the PR
- * is read back first. A failure is reported per issue and never undoes the PR.
+ * on each linked issue, posted at most once: a marker naming the PR is read
+ * back first. Forge issues on the PR's host go through the workspace's
+ * verified credential; one on another forge host is skipped (no account is
+ * verified there). YouTrack goes through its API behind WORKFLOW_YT_WRITE=1,
+ * like `workit youtrack note`. A failure is reported per issue and never
+ * undoes the PR.
  */
 export async function postBacklinks(
   cwd: string,
@@ -420,6 +430,14 @@ export async function postBacklinks(
       continue;
     }
     const forge = issueForge(resolved, link, deps.runner);
+    if (!forge) {
+      out.push({
+        issue,
+        status: "skipped",
+        note: `an issue on another forge host is not backlinked: no verified account for ${link.host ?? resolved.forge.apiHost}`,
+      });
+      continue;
+    }
     const marker = `<!-- workit-backlink:${pr.url} -->`;
     const number = Number(link.id);
     const existing = forge.issueComments(number);
