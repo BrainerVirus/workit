@@ -449,6 +449,30 @@ test("Given the verifier session each skill documents per host, When it records 
   }
 });
 
+// CI flake #284: a base64url token began with "-" about once in 64 mints, and
+// `--token -…` (the form the SubagentStart hook prints) is a usage error (exit 2).
+test("Given any token a SubagentStart hook mints, When the verifier passes it as `--token <token>`, Then the verdict is accepted", async () => {
+  const root = featureRepo();
+  authoredBy(root, "implementer-1");
+  // One lead per id, so the per-lead bound never prunes a minted token.
+  const minted = Array.from({ length: 1024 }, (_, i) => {
+    const lead = `lead-mint-${i}`;
+    return { lead, token: recordIssuedSession(root, lead, `${lead}:a`) ?? "" };
+  });
+  expect(minted.filter(({ token }) => token === "")).toEqual([]);
+  const pick = minted.find(({ token }) => token.startsWith("-")) ?? minted[0];
+  const result = await verdict(
+    root,
+    { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: pick.lead },
+    "--session",
+    `${pick.lead}:a`,
+    "--token",
+    pick.token,
+  );
+  expect(result.code, `--token ${pick.token}: ${result.stdout}`).toBe(0);
+  expect(result.json().data.self).toBe(false);
+});
+
 test("Given --as from an OpenCode or Pi shell whose WORKIT_SESSION_ID is hand-minted, Then it is refused: --as is checked by the session it derives from", async () => {
   const root = featureRepo();
   authoredBy(root, "implementer-1");
