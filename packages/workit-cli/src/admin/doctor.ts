@@ -41,6 +41,7 @@ import {
 } from "@brainervirus/workit-core/src/core/config";
 import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
 import { probeScope, type ScopeProbe } from "@brainervirus/workit-core/src/core/heavy-scope";
+import { countHookSkips, HOOK_SKIPS_FILE } from "@brainervirus/workit-core/src/hooks/deadline";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
@@ -112,7 +113,8 @@ type DoctorCheckId =
   | "github_identity"
   | "gitlab_identity"
   | "log_writable"
-  | "heavy_scope";
+  | "heavy_scope"
+  | "hook_deadline";
 
 /** `info` is a true fact that needs no action (a normal install has no dev
  *  checkout, a newer host CLI than qualified); it counts as passed. */
@@ -194,6 +196,8 @@ type Resolved = {
   /** Where the Cursor hook launcher and MCP server leave their heartbeats
    *  (core's resolveStateDir, unless a state dir is given). */
   cursorHeartbeatDir: string;
+  /** Where hook processes record deadline skips (the same state dir). */
+  hookStateDir: string;
   codexHome?: string;
   piAgentDir?: string;
   env: NodeJS.ProcessEnv;
@@ -242,6 +246,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     cursorPluginDir:
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
     cursorHeartbeatDir: options.stateDir ?? (env.WORKFLOW_TOOLKIT_STATE || resolveStateDir()),
+    hookStateDir: options.stateDir ?? (env.WORKFLOW_TOOLKIT_STATE || resolveStateDir()),
     codexHome: options.codexHome,
     piAgentDir: options.piAgentDir,
     env,
@@ -2580,6 +2585,33 @@ const checkHeavyScope = (res: Resolved): DoctorCheck => {
   };
 };
 
+// A hook past its own deadline answers a minimal result instead of being
+// killed by the host (#309); each one is recorded where the hook runs.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const checkHookDeadline = (res: Resolved): DoctorCheck => {
+  const file = path.join(res.hookStateDir, HOOK_SKIPS_FILE);
+  const { skip, late } = countHookSkips(res.hookStateDir, Date.now() - DAY_MS);
+  const lateText = late > 0 ? `; ${late} answered past it in full` : "";
+  if (skip > 0)
+    return {
+      id: "hook_deadline",
+      status: "warn",
+      detail: `${skip} hook${skip === 1 ? "" : "s"} skipped past the hook deadline in the last day (host under load: Workit context, gates and nudges were not applied)${lateText} (${file})`,
+      fix: "Lower the machine load: run heavy commands through `workit check` (the lease serializes them) and fewer parallel agents; WORKIT_HOOK_DEADLINE_MS raises the deadline",
+    };
+  if (late > 0)
+    return {
+      id: "hook_deadline",
+      status: "info",
+      detail: `no hook skipped in the last day${lateText} (${file})`,
+    };
+  return {
+    id: "hook_deadline",
+    status: "pass",
+    detail: "no hook passed its deadline in the last day",
+  };
+};
+
 const CLAUDE_PLUGIN_PACKAGE = "@brainervirus/workit-claude-code";
 
 const versionBehind = (version: string, latest: string): boolean =>
@@ -2822,6 +2854,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkGitLabIdentity,
   checkLogWritable,
   checkHeavyScope,
+  checkHookDeadline,
 ];
 
 // AR-11/CA-40: the installer guarantees the selected host itself — runtime,
