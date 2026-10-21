@@ -126,7 +126,8 @@ async function runHeavy(args: string[], io: Io): Promise<number> {
       }),
     );
   const check = await import("./check");
-  return check.run(["--heavy", ...head, ...args.slice(split)], io);
+  // Passed to check, not a lock flag.
+  return check.run([`--heavy`, ...head, ...args.slice(split)], io);
 }
 
 type PatternFile = { patterns: string[] } & Record<string, unknown>;

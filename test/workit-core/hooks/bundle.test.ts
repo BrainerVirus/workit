@@ -35,8 +35,9 @@ const HOOK_ENTRIES = [
 // add ~6 KB (Cursor ~716 KB); the ledger's verdict-gate trust checks and
 // issued-id tokens (#289) add ~6 KB (Cursor ~722.5 KB); the live-session
 // guard (#274) with its review fixes adds ~8.5 KB (Cursor ~731 KB), so the
-// ceiling is 732 KB.
-const BUDGET = 732_000;
+// ceiling was 732 KB. The heavy-command gate (#325: catalog, wrappers,
+// patterns) adds ~5 KB (Codex ~736.5 KB), so the ceiling is 742 KB.
+const BUDGET = 742_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {

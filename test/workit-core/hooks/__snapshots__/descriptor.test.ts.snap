@@ -212,6 +212,7 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
       "channel": "permissionDecision",
       "deny": "native",
       "failClosed": false,
+      "rewrite": "native",
     },
     "stopControl": "native",
     "subagents": {
@@ -544,6 +545,7 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
       "channel": "permissionDecision",
       "deny": "native",
       "failClosed": false,
+      "rewrite": "none",
     },
     "stopControl": "native",
     "subagents": {
@@ -901,6 +903,7 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
       "channel": "exit2+json",
       "deny": "native",
       "failClosed": false,
+      "rewrite": "none",
     },
     "stopControl": "native",
     "subagents": {
@@ -1161,6 +1164,7 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
       "channel": "effect",
       "deny": "native",
       "failClosed": false,
+      "rewrite": "native",
     },
     "stopControl": "partial",
     "subagents": {
@@ -1371,6 +1375,7 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
       "channel": "block",
       "deny": "native",
       "failClosed": false,
+      "rewrite": "native",
     },
     "stopControl": "native",
     "subagents": {
