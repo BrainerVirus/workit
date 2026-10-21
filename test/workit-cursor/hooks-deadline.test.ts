@@ -48,6 +48,39 @@ test("Given a Cursor beforeShellExecution past the hook deadline, When Cursor ru
   });
 });
 
+test("Given a Cursor subagentStart past the hook deadline, When Cursor runs the hook, Then its own handler is skipped too and the skip is recorded", () => {
+  const state = dir(() => mkdtempSync(path.join(tmpdir(), "workit-cursor-deadline-state-")));
+  const run = runCursor(
+    fixture(
+      "cursor",
+      "subagent-start",
+      dir(() => tempRoot("workit-cursor-deadline-")),
+    ),
+    {
+      WORKIT_HOOK_DEADLINE_MS: "1",
+      WORKFLOW_TOOLKIT_STATE: state,
+    },
+  );
+  expect(run.status).toBe(0);
+  expect(run.json).toEqual({ additional_context: "workit context skipped: host under load" });
+  expect(JSON.parse(readFileSync(path.join(state, "hook-skips.jsonl"), "utf8"))).toMatchObject({
+    host: "cursor",
+    event: "subagent.start",
+    outcome: "skip",
+  });
+});
+
+test("Given a fast Cursor subagentStart, When Cursor runs the hook, Then its own handler answers", () => {
+  const cwd = dir(() => tempRoot("workit-cursor-deadline-"));
+  const state = dir(() => mkdtempSync(path.join(tmpdir(), "workit-cursor-deadline-state-")));
+  const run = runCursor(fixture("cursor", "subagent-start", cwd), {
+    WORKFLOW_TOOLKIT_STATE: state,
+  });
+  expect(run.json.additional_context).toBeUndefined();
+  expect(run.json).toHaveProperty("permission");
+  expect(run.stderr).not.toContain("host under load");
+});
+
 test("Given a fast Cursor beforeShellExecution, When Cursor runs the hook, Then the hook answers without a skip", () => {
   const cwd = dir(() => tempRoot("workit-cursor-deadline-"));
   const state = dir(() => mkdtempSync(path.join(tmpdir(), "workit-cursor-deadline-state-")));

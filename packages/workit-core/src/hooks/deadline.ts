@@ -10,11 +10,21 @@ import type { HookDecision, HookEventKind, HostAdapter, RenderedHook } from "./p
 
 export const HOOK_SKIP_TEXT = "workit context skipped: host under load";
 
-/**
- * Below the shortest host timeout Workit registers (Claude Code 15 s), with
- * room left for a dispatch that started in time.
- */
+/** For a host without its own row; Claude Code's prompt/tool/subagent value. */
 export const HOOK_DEADLINE_MS = 8_000;
+
+/**
+ * Per host, by native event ("" for the rest): a margin below the host's own
+ * timeout, left for a dispatch that started in time. Claude Code registers
+ * 15 s (20 s for SessionStart and Stop); Codex defaults to 600 s and Workit
+ * registers 20 s for Stop; Cursor defaults to 60 s.
+ */
+export const HOST_DEADLINES: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  claude_code: { "": 8_000, SessionStart: 16_000, Stop: 16_000 },
+  codex_cli: { "": 45_000, Stop: 16_000 },
+  codex_desktop: { "": 45_000, Stop: 16_000 },
+  cursor: { "": 45_000 },
+};
 
 export const HOOK_SKIPS_FILE = "hook-skips.jsonl";
 
@@ -29,7 +39,7 @@ export type HookSkip = {
 };
 
 export type HookDeadline = {
-  /** Milliseconds from `startedAt`; WORKIT_HOOK_DEADLINE_MS overrides. */
+  /** Milliseconds from `startedAt`; by default WORKIT_HOOK_DEADLINE_MS, else HOST_DEADLINES. */
   deadlineMs?: number;
   /**
    * Epoch ms the budget counts from; the call by default. A hook-process
@@ -37,7 +47,7 @@ export type HookDeadline = {
    */
   startedAt?: number;
   now?: () => number;
-  /** The handler step (test seam). */
+  /** The handler step; dispatchHook unless a host handles the event itself. */
   dispatch?: (
     adapter: HostAdapter,
     raw: unknown,
@@ -48,9 +58,22 @@ export type HookDeadline = {
 
 export type DeadlineResult = RenderedHook & { error: string | null; skipped: boolean };
 
-export const hookDeadlineMs = (env: NodeJS.ProcessEnv): number => {
+const override = (env: NodeJS.ProcessEnv): number | null => {
   const value = Number(env.WORKIT_HOOK_DEADLINE_MS);
-  return Number.isFinite(value) && value > 0 ? value : HOOK_DEADLINE_MS;
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+/** The deadline for one native event; `native` undefined gives the host's shortest. */
+export const hookDeadlineMs = (env: NodeJS.ProcessEnv, host = "", native?: string): number => {
+  const row = HOST_DEADLINES[host];
+  return (
+    override(env) ??
+    (row
+      ? native === undefined
+        ? Math.min(...Object.values(row))
+        : (row[native] ?? row[""])
+      : HOOK_DEADLINE_MS)
+  );
 };
 
 const skipsFile = (stateDir: string) => path.join(stateDir, HOOK_SKIPS_FILE);
@@ -122,19 +145,27 @@ export const isTimedOut = (value: unknown): value is typeof TIMED_OUT => value =
 
 type Budget = Required<Pick<HookDeadline, "now" | "record">> & {
   startedAt: number;
+  /** The host's shortest until the payload names its event. */
   deadlineMs: number;
+  /** The host whose HOST_DEADLINES row refines it per event; null when the caller fixed it. */
+  host: string | null;
 };
 
 /** Epoch ms this process started. */
 export const PROCESS_START = performance.timeOrigin;
 
-export const hookBudget = (env: NodeJS.ProcessEnv, options: HookDeadline = {}): Budget => {
+export const hookBudget = (
+  env: NodeJS.ProcessEnv,
+  options: HookDeadline = {},
+  host = "",
+): Budget => {
   const now = options.now ?? Date.now;
   return {
     now,
     record: options.record ?? ((skip) => recordHookSkip(skip)),
     startedAt: options.startedAt ?? now(),
-    deadlineMs: options.deadlineMs ?? hookDeadlineMs(env),
+    deadlineMs: options.deadlineMs ?? hookDeadlineMs(env, host),
+    host: options.deadlineMs === undefined ? host : null,
   };
 };
 
@@ -203,6 +234,9 @@ export const dispatchWithin = async (
   budget: Budget,
   dispatch: NonNullable<HookDeadline["dispatch"]> = dispatchHook,
 ): Promise<DeadlineResult> => {
+  const native = (raw as { hook_event_name?: unknown } | null)?.hook_event_name;
+  if (budget.host !== null && typeof native === "string")
+    budget.deadlineMs = hookDeadlineMs(env, budget.host, native);
   const remaining = () => budget.startedAt + budget.deadlineMs - budget.now();
   const result =
     remaining() > 0

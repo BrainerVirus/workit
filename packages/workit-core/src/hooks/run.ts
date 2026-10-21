@@ -36,7 +36,7 @@ export async function runHookProcess(
   deadline: HookDeadline = {},
 ): Promise<number> {
   const adapter = typeof host === "string" ? HOOK_ADAPTERS[host] : host;
-  const budget = hookBudget(env, deadline);
+  const budget = hookBudget(env, deadline, adapter.descriptor.host);
   const text = await readWithin(stdin, budget);
   let raw: unknown;
   try {

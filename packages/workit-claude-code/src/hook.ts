@@ -62,7 +62,11 @@ export async function runClaudeHook(
   env: NodeJS.ProcessEnv = process.env,
   deadline: HookDeadline = {},
 ): Promise<number> {
-  const budget = hookBudget(env, { startedAt: PROCESS_START, ...deadline });
+  const budget = hookBudget(
+    env,
+    { startedAt: PROCESS_START, ...deadline },
+    adapter.descriptor.host,
+  );
   const input = await readWithin(stdin, budget);
   let raw: unknown;
   try {

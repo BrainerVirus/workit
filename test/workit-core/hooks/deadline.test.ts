@@ -176,6 +176,69 @@ test("Given a handler that finishes after the deadline, When it returns, Then it
   ]);
 });
 
+const RAN = { json: { ran: true }, exitCode: 0, error: null };
+const startingAt = (elapsedMs: number) => ({
+  startedAt: 0,
+  now: () => elapsedMs,
+  dispatch: () => RAN,
+});
+
+test.each([
+  [
+    "Claude Code UserPromptSubmit",
+    claudeCodeAdapter,
+    "claude-code",
+    "user-prompt-submit",
+    7_900,
+    8_100,
+  ],
+  ["Claude Code Stop", claudeCodeAdapter, "claude-code", "stop", 15_900, 16_100],
+  [
+    "Claude Code SessionStart",
+    claudeCodeAdapter,
+    "claude-code",
+    "session-start-compact",
+    15_900,
+    16_100,
+  ],
+  ["Codex PreToolUse", codexAdapter, "codex", "pre-tool-use-bash", 44_900, 45_100],
+  ["Codex Stop", codexAdapter, "codex", "stop", 15_900, 16_100],
+  [
+    "Cursor beforeShellExecution",
+    cursorAdapter,
+    "cursor",
+    "before-shell-execution",
+    44_900,
+    45_100,
+  ],
+] as const)(
+  "Given a %s, When its handler starts just inside or just past that host's deadline, Then it runs inside and skips past",
+  async (_name, adapter, host, name, inside, past) => {
+    const payload = fixture(host, name, root());
+    const ran = await run(adapter, payload, startingAt(inside));
+    expect(ran.json).toEqual({ ran: true });
+    expect(ran.skips).toEqual([]);
+    const skipped = await run(adapter, payload, startingAt(past));
+    expect(skipped.json).not.toEqual({ ran: true });
+    expect(skipped.skips).toEqual([expect.objectContaining({ outcome: "skip" })]);
+  },
+);
+
+test("Given WORKIT_HOOK_DEADLINE_MS, When a Codex hook starts past it, Then the override wins over the host's deadline", async () => {
+  let stdout = "";
+  const skips: HookSkip[] = [];
+  await runHookProcess(
+    codexAdapter,
+    [JSON.stringify(fixture("codex", "pre-tool-use-bash", root()))],
+    { write: (chunk: string) => (stdout += chunk) },
+    { write: () => true },
+    { WORKIT_HOOK_DEADLINE_MS: "2000" },
+    { ...startingAt(2_100), record: (skip) => skips.push(skip) },
+  );
+  expect(JSON.parse(stdout)).not.toEqual({ ran: true });
+  expect(skips).toHaveLength(1);
+});
+
 test("Given recorded skips, When they are counted for the last day, Then older rows and torn lines are left out", () => {
   const state = mkdtempSync(path.join(tmpdir(), "workit-deadline-state-"));
   roots.push(state);

@@ -234,6 +234,17 @@ export const handleCursorHook = (raw: unknown): Record<string, unknown> =>
   degradedCursorHook(raw)?.json ??
   (isSubagentStart(raw) ? handleSubagentStartHook(raw) : dispatchHook(cursorAdapter, raw).json);
 
+/** subagentStart's own handler as the deadline's dispatch step: a failure denies. */
+const subagentStartStep = (_adapter: unknown, raw: unknown) => {
+  let json: Record<string, unknown>;
+  try {
+    json = handleSubagentStartHook(raw);
+  } catch (error) {
+    json = deny(`hook failure: ${String(error)}`);
+  }
+  return { json, exitCode: json.permission === "deny" ? 2 : 0, error: null };
+};
+
 export const runCursorHook = async (): Promise<void> => {
   let text = "";
   for await (const chunk of process.stdin) text += String(chunk);
@@ -249,24 +260,16 @@ export const runCursorHook = async (): Promise<void> => {
     process.exitCode = 0;
     return;
   }
-  if (isSubagentStart(raw)) {
-    let output: Record<string, unknown>;
-    try {
-      output = handleSubagentStartHook(raw);
-    } catch (error) {
-      output = deny(`hook failure: ${String(error)}`);
-    }
-    process.stdout.write(`${JSON.stringify(output)}\n`);
-    process.exitCode = output.permission === "deny" ? 2 : 0;
-    return;
-  }
   process.exitCode = await runHookProcess(
     cursorAdapter,
     [text],
     process.stdout,
     process.stderr,
     process.env,
-    { startedAt: PROCESS_START },
+    {
+      startedAt: PROCESS_START,
+      ...(isSubagentStart(raw) ? { dispatch: subagentStartStep } : {}),
+    },
   );
 };
 
