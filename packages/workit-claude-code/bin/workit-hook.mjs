@@ -87,6 +87,7 @@ const stateDir = () => {
     return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
   return path.join(home, ".local", "state", "workit");
 };
+const REPO_CHECKS = "workit.checks.json";
 /** Could the command be heavy? A doubt answers yes (it only costs a runtime load). */
 const maybeHeavy = (command, cwd) => {
   try {
@@ -95,15 +96,16 @@ const maybeHeavy = (command, cwd) => {
     const patterns = [];
     const machine = readJson(path.join(stateDir(), "heavy-commands.json"));
     if (Array.isArray(machine?.patterns)) patterns.push(...machine.patterns);
-    for (let dir = path.resolve(cwd), step = 0; step < 32; step += 1) {
-      const repo = readJson(path.join(dir, "workit.checks.json"));
-      if (repo !== undefined) {
+    // The repo's checks config at the git top: keep REPO_CHECKS equal to
+    // checksConfigFile in workit-core/src/check-config.ts (a test holds them).
+    for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+      if (existsSync(path.join(dir, ".git"))) {
+        const repo = readJson(path.join(dir, REPO_CHECKS));
         if (Array.isArray(repo?.resources?.heavyCommands))
           patterns.push(...repo.resources.heavyCommands);
         break;
       }
-      if (existsSync(path.join(dir, ".git")) || path.dirname(dir) === dir) break;
-      dir = path.dirname(dir);
+      if (path.dirname(dir) === dir) break;
     }
     for (const pattern of patterns) {
       if (typeof pattern !== "string") continue;

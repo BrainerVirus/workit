@@ -171,7 +171,7 @@ async function heavy(args: string[], io: Io): Promise<number> {
       (data) => [
         "built in: test runners, builds and bundlers, lint and typecheck, installs, image builds, Sonar, browser tests (JS, Go, Rust, JVM, .NET, Python, Ruby, PHP, Elixir, Swift, C)",
         `machine (${data.file}): ${data.machine.length ? data.machine.join(", ") : "none"}`,
-        `repo (${CHECKS_FILE} resources.heavyCommands): ${data.repo.length ? data.repo.join(", ") : "none"}`,
+        `repo (checks config resources.heavyCommands): ${data.repo.length ? data.repo.join(", ") : "none"}`,
       ],
     );
   if (action === "add" || action === "remove") {

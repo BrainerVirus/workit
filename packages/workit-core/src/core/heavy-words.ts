@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { repoHeavyCommands } from "../check-config";
 
 export const HEAVY_WORDS: ReadonlySet<string> = new Set(
   (
@@ -57,17 +58,12 @@ const patternWords = (cwd: string, env: NodeJS.ProcessEnv): Set<string> | null =
     | { patterns?: unknown }
     | undefined;
   if (Array.isArray(machine?.patterns)) patterns.push(...machine.patterns);
-  for (let dir = path.resolve(cwd), step = 0; step < 32; step += 1) {
-    const repo = readJson(path.join(dir, "workit.checks.json")) as
-      | { resources?: { heavyCommands?: unknown } }
-      | undefined;
-    if (repo !== undefined) {
-      if (Array.isArray(repo?.resources?.heavyCommands))
-        patterns.push(...repo.resources.heavyCommands);
+  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, ".git"))) {
+      patterns.push(...repoHeavyCommands(dir));
       break;
     }
-    if (fs.existsSync(path.join(dir, ".git")) || path.dirname(dir) === dir) break;
-    dir = path.dirname(dir);
+    if (path.dirname(dir) === dir) break;
   }
   const words = new Set<string>();
   for (const pattern of patterns) {

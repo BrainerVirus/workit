@@ -125,10 +125,11 @@ test("a host plugin or MCP bundle loads no setup/doctor/admin modules", () => {
 });
 
 // Codex runs its hook on every tool call plus PostToolUse after every shell
-// call. The entry answers the calls that cannot matter (non-git shell
-// commands, PostToolUse without a commit) before the runtime chunk loads, so
+// call. The entry answers the calls that cannot matter (shell commands with
+// no git/gh/glab and no heavy word (core/heavy-words.ts),
+// PostToolUse without a commit) before the runtime chunk loads, so
 // it must stay a few hundred bytes; the runtime still answers the rest.
-test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab commands", () => {
+test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab and maybe-heavy commands", () => {
   const out = mkdtempSync(path.join(tmpdir(), "workit-codex-entry-"));
   try {
     const built = spawnSync(
@@ -152,7 +153,7 @@ test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab
     expect(
       run({ hook_event_name: "PostToolUse", tool_input: { command: "ls" }, tool_response: "" }),
     ).toEqual({ hookSpecificOutput: { hookEventName: "PostToolUse" } });
-    expect(run({ hook_event_name: "PreToolUse", tool_input: { command: "npm test" } })).toEqual({
+    expect(run({ hook_event_name: "PreToolUse", tool_input: { command: "ls -la" } })).toEqual({
       hookSpecificOutput: { hookEventName: "PreToolUse" },
     });
     expect(

@@ -70,7 +70,7 @@ never gets it past them.
 
 The catalog is built in (`workit lock heavy list`). To add a command, use
 `workit lock heavy add 'mvn verify'` (machine-wide, under the state dir), or
-list it in the repo's `workit.checks.json` under `resources.heavyCommands`. A
+list it in the repo's checks config under `resources.heavyCommands`. A
 pattern is words matched as a prefix of the command line, with `*` inside a
 word matching anything (`task test:*`). `workit lock heavy test -- <cmd>` says
 whether the hook gates a command. The hook leaves commands alone when no

@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { outputProblem, installedPlugin, PLUGIN_DIR, runHook } from "./plugin-helpers";
 import { HEAVY_WORDS } from "@/packages/workit-core/src/core/heavy-words";
+import { checksConfigFile } from "@/packages/workit-core/src/check-config";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -76,6 +77,12 @@ test("Given the launcher's copy of the heavy words, Then it equals core/heavy-wo
     .join("")
     .split(" ");
   expect(words.toSorted()).toEqual([...HEAVY_WORDS].toSorted());
+});
+
+test("Given the launcher's repo checks-config path, Then it is the checks-config loader's", () => {
+  const source = readFileSync(path.join(PLUGIN_DIR, "bin", "workit-hook.mjs"), "utf8");
+  const relative = /const REPO_CHECKS = "([^"]+)";/u.exec(source)?.[1];
+  expect(relative && path.join("/repo", relative)).toBe(checksConfigFile("/repo"));
 });
 
 test("Given a machine pattern, When its command runs, Then the launcher sends it to the gate", () => {

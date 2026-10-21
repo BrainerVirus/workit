@@ -13,7 +13,7 @@
 // `xargs`, chains and substitutions).
 //
 // Extensions, both adding only: patterns in `resources.heavyCommands` of the
-// repo's workit.checks.json, and machine-wide patterns `workit lock heavy add`
+// repo's checks config (check-config.ts), and machine-wide patterns `workit lock heavy add`
 // writes to `<state>/heavy-commands.json`. A pattern is words matched as a
 // prefix of a command line (`mvn verify`), `*` inside a word matching
 // anything (`test:*`).
@@ -28,6 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import { commandLines, simpleCommand } from "../hooks/raw-git";
 import type { ShellDialect } from "../hooks/shell-words";
+import { repoHeavyCommands } from "../check-config";
 import { gitTop, wrapAllowed, type RuleRead } from "./heavy-rules";
 
 /** Workit's state dir for `env` (the logger's resolution, over an explicit env). */
@@ -366,21 +367,9 @@ export function machinePatterns(env: NodeJS.ProcessEnv): string[] {
   return isRecord(value) ? stringList(value.patterns) : [];
 }
 
-/** `resources.heavyCommands` of the nearest workit.checks.json, up to the repository top. */
+/** `resources.heavyCommands` of the repo's checks config (the checks-config loader's file). */
 export function repoPatterns(cwd: string): string[] {
-  let dir = path.resolve(cwd);
-  for (let step = 0; step < 32; step += 1) {
-    const value = readJson(path.join(dir, "workit.checks.json"));
-    if (value !== undefined)
-      return isRecord(value) && isRecord(value.resources)
-        ? stringList(value.resources.heavyCommands)
-        : [];
-    if (fs.existsSync(path.join(dir, ".git"))) return [];
-    const parent = path.dirname(dir);
-    if (parent === dir) return [];
-    dir = parent;
-  }
-  return [];
+  return repoHeavyCommands(gitTop(cwd) ?? path.resolve(cwd));
 }
 
 export type HeavyMatch = {
