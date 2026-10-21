@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
+import { underIssued } from "@/packages/workit-core/src/hooks/write-gate";
 import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permissions";
 import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 import { fixture, tempRoot } from "./hook-fixtures";
@@ -84,6 +85,11 @@ test("G the state dir under ~, W a shell writes through ~ or $HOME, T denied", (
     mkdirSync(path.join(home, "st", "issued"), { recursive: true });
     for (const target of ["~/st/issued/x", "$HOME/st/issued-tokens/x"])
       expect(claude("Bash", { command: `echo f > ${target}` })?.permissionDecision).toBe("deny");
+    for (const dir of ["~/st", "$HOME/st", "${HOME}/st"])
+      expect(
+        claude("Bash", { command: `cd ${dir} && touch issued-tokens/z` })?.permissionDecision,
+        dir,
+      ).toBe("deny");
   } finally {
     process.env.HOME = prior.HOME;
     process.env.WORKFLOW_TOOLKIT_STATE = prior.state;
@@ -102,4 +108,22 @@ test("G OpenCode and Pi, W edits and shell writes hit the issued dirs, T both de
   expect(
     enforceToolPolicy({ toolName: "bash", input: { command: `rm ${file}` } } as never, ctx),
   ).toMatchObject({ block: true });
+});
+
+test("G Windows-shaped state and targets, W matched on any OS, T separators, case, drive form and short names do not hide the registry", () => {
+  const winState = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\wk\\state";
+  const real = (file: string) => file.replace("RUNNER~1", "runneradmin");
+  const hit = (target: string, cwd = "C:\\work") =>
+    underIssued(winState, cwd, target, "win32", real);
+  expect(hit("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\wk\\state\\issued\\lead\\abc")).toBe(true);
+  expect(hit("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\wk\\state\\issued/lead/abc")).toBe(true);
+  expect(hit("c:/users/runneradmin/appdata/local/temp/wk/STATE/Issued-Tokens/x")).toBe(true);
+  expect(hit("/c/Users/RUNNER~1/AppData/Local/Temp/wk/state/issued/x")).toBe(true);
+  expect(hit("lead\\abc", "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\wk\\state\\issued")).toBe(
+    true,
+  );
+  expect(hit("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\wk\\state\\logs\\x.log")).toBe(false);
+  expect(hit("C:\\work\\issued\\x")).toBe(false);
+  expect(underIssued("/s/state", "/w", "/s/state/issued/x", "linux")).toBe(true);
+  expect(underIssued("/s/state", "/w", "/s/State/issued/x", "linux")).toBe(false);
 });

@@ -149,6 +149,12 @@ const hasTaskStore = (cwd) => {
   }
 };
 
+/** Text that may name the issued-session registries (the guard in write-gate.ts judges it). */
+const mentionsIssued = (text) => {
+  const flat = (value) => value.replaceAll("\\", "/").toLowerCase();
+  return /issued/i.test(text) || flat(text).includes(flat(stateDir()));
+};
+
 const fastAllow = (() => {
   try {
     const value = JSON.parse(payload);
@@ -156,6 +162,7 @@ const fastAllow = (() => {
     if (value?.hook_event_name === "PostToolUse")
       return typeof command === "string" && !/\bcommit\b/.test(command);
     if (value?.hook_event_name !== "PreToolUse") return false;
+    if (mentionsIssued(JSON.stringify(value.tool_input ?? {}))) return false;
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (WORKIT_DELIVERY.test(command)) return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;

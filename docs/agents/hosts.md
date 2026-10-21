@@ -192,6 +192,10 @@ Issued-registry guard limits (#292):
   unexpanded other variable or a command substitution is not seen (L, every
   host), so this is a guard against hand edits, not a sandbox (#329 moves the
   state into the DB).
+- The Claude Code launcher's fast path and the Codex launcher's quiet path
+  send any edit or shell command whose text names `issued` or the state dir to
+  the runtime, so a checkout with no task store is guarded too. Windows paths
+  match across `\` and `/`, case, drive form and 8.3 short names.
 - **Codex:** `write_stdin` and specialized tool paths carry no readable
   target, so they are not gated (L).
 - **Cursor:** a write whose payload names no path is not matched (P).

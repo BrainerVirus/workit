@@ -32,7 +32,7 @@ const wordsOf = (command: string): string[] =>
     )
     .filter(Boolean);
 
-const stateDir = (env: NodeJS.ProcessEnv): string => {
+export const stateDir = (env: NodeJS.ProcessEnv): string => {
   if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
   if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
   const home = env.HOME || os.homedir();
