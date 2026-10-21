@@ -729,6 +729,86 @@ test("continuing a reported clean worker is refused with the exact resume-brief 
   }
 });
 
+const planSlice = (value: ReturnType<typeof fixture>, branch: string) =>
+  planFanout(value.root, {
+    raw: {
+      name: "w",
+      trunk: "main",
+      slices: [
+        {
+          id: "slice-a",
+          branch,
+          tier: "mundane",
+          scope: ["a.ts"],
+          goal: "g",
+          acceptance: ["Given a, When b, Then c"],
+          verify: ["workit check test"],
+          forbidden: ["none"],
+        },
+      ],
+    },
+    name: null,
+    trunk: null,
+    actor: { host: "opencode", session: "coordinator", agentId: null },
+  });
+
+test("a refused continuation keeps the <slice> placeholder when no fanout plan exists", async () => {
+  const value = fixture();
+  try {
+    await reportedChild(value);
+    await expect(continueChild(value)).rejects.toThrow(
+      /holds no live state.*: workit fanout brief <slice> --mode resume$/,
+    );
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("the resume brief finds a slice by its -try<n> attempt branch and nothing looser", async () => {
+  const value = fixture();
+  try {
+    expect(planSlice(value, "feature/x")).toMatchObject({ ok: true });
+    await reportedChild(value);
+    const cases: [string, string][] = [
+      ["feature/x-try2", "slice-a"],
+      ["feature/x-tryx", "<slice>"],
+      ["feature/x-try", "<slice>"],
+      ["feature/x-other", "<slice>"],
+    ];
+    for (const [index, [branch, expected]] of cases.entries()) {
+      const directory = join(value.root, `wt-${index}`);
+      git(value.root, ["worktree", "add", "-q", "-b", branch, directory]);
+      value.sessions.set("ses_child1", {
+        id: "ses_child1",
+        parentID: "coordinator",
+        directory,
+        outcome: "succeeded",
+      });
+      await expect(continueChild(value)).rejects.toThrow(
+        new RegExp(`holds no live state.*: workit fanout brief ${expected} --mode resume$`),
+      );
+    }
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("continuing a reported worker whose worktree no longer exists is refused as holding no live state", async () => {
+  const value = fixture();
+  try {
+    await reportedChild(value);
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "coordinator",
+      directory: join(value.root, "removed-worktree"),
+      outcome: "succeeded",
+    });
+    await expect(continueChild(value)).rejects.toThrow(/already reported and holds no live state/);
+  } finally {
+    value.cleanup();
+  }
+});
+
 test("continuing a reported worker that holds uncommitted changes is allowed", async () => {
   const value = fixture();
   try {
