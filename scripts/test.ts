@@ -64,6 +64,7 @@ const WINDOWS_SLOW_FILES = new Set([
   "test/workit-core/ledger-integrity.test.ts",
   "test/workit-core/ledger.test.ts",
   "test/workit-core/revision-retry.test.ts",
+  "test/workit-core/route-denial-parity.test.ts",
 ]);
 const WINDOWS_SLOW_TIMEOUT_MS = 60_000;
 
