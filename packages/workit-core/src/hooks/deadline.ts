@@ -2,7 +2,7 @@
 // and discards its output; under machine load that silently drops the Workit
 // context and gates. Past this deadline, below every host timeout, the hook
 // answers a minimal valid result naming the skip and records it for doctor.
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../core/logger";
 import { dispatchHook } from "./handle";
@@ -26,6 +26,7 @@ export const HOST_DEADLINES: Readonly<Record<string, Readonly<Record<string, num
   cursor: { "": 45_000 },
 };
 
+/** One JSON HookSkip per line; `workit doctor` (hook_deadline) reads it. */
 export const HOOK_SKIPS_FILE = "hook-skips.jsonl";
 
 /** `skip`: the hook answered the minimal result; `late`: it answered in full, past the deadline. */
@@ -86,30 +87,6 @@ export const recordHookSkip = (skip: HookSkip, stateDir: string = resolveStateDi
   } catch {
     // The skip still reached the host; only the doctor count is lost.
   }
-};
-
-/** Skips and late answers recorded since `since` (epoch ms). */
-export const countHookSkips = (stateDir: string, since: number): { skip: number; late: number } => {
-  const counts = { skip: 0, late: 0 };
-  let text = "";
-  try {
-    text = readFileSync(skipsFile(stateDir), "utf8");
-  } catch {
-    return counts;
-  }
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const row = JSON.parse(line) as Partial<HookSkip>;
-      const at = Date.parse(String(row.at));
-      if (!(at >= since)) continue;
-      if (row.outcome === "skip") counts.skip += 1;
-      else if (row.outcome === "late") counts.late += 1;
-    } catch {
-      // A torn line from a concurrent append is not a skip.
-    }
-  }
-  return counts;
 };
 
 const QUIET: ReadonlySet<HookEventKind | null> = new Set([

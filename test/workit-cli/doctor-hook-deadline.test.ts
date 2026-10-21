@@ -1,10 +1,14 @@
 // workit doctor `hook_deadline` (issue #309): a count of the hooks that
 // answered the minimal skip result past their own deadline in the last day.
 import { afterAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { runDoctor, type DoctorCheck } from "@/packages/workit-cli/src/admin/doctor";
+import {
+  countHookSkips,
+  runDoctor,
+  type DoctorCheck,
+} from "@/packages/workit-cli/src/admin/doctor";
 import { recordHookSkip, type HookSkip } from "@/packages/workit-core/src/hooks/deadline";
 
 const scratch = mkdtempSync(path.join(tmpdir(), "workit-doctor-hook-deadline-"));
@@ -62,4 +66,21 @@ test("Given no recorded skips, When doctor runs, Then hook_deadline passes", () 
     status: "pass",
     detail: "no hook passed its deadline in the last day",
   });
+});
+
+test("Given skips written by the hook, When doctor counts them since a time, Then older rows and torn lines are left out", () => {
+  const state = path.join(scratch, "count");
+  const at = (iso: string, outcome: HookSkip["outcome"]): HookSkip => ({
+    ...row(0, outcome),
+    at: iso,
+  });
+  recordHookSkip(at("2026-10-20T10:00:00Z", "skip"), state);
+  recordHookSkip(at("2026-10-21T09:00:00Z", "skip"), state);
+  recordHookSkip(at("2026-10-21T09:30:00Z", "late"), state);
+  appendFileSync(path.join(state, "hook-skips.jsonl"), '{"at":"2026-10-21T09:40:00Z","outc\n');
+  expect(countHookSkips(state, Date.parse("2026-10-20T12:00:00Z"))).toEqual({ skip: 1, late: 1 });
+});
+
+test("Given no state dir, When doctor counts skips, Then the count is zero", () => {
+  expect(countHookSkips(path.join(scratch, "no-such-state-dir"), 0)).toEqual({ skip: 0, late: 0 });
 });

@@ -41,7 +41,6 @@ import {
 } from "@brainervirus/workit-core/src/core/config";
 import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
 import { probeScope, type ScopeProbe } from "@brainervirus/workit-core/src/core/heavy-scope";
-import { countHookSkips, HOOK_SKIPS_FILE } from "@brainervirus/workit-core/src/hooks/deadline";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
@@ -2586,8 +2585,34 @@ const checkHeavyScope = (res: Resolved): DoctorCheck => {
 };
 
 // A hook past its own deadline answers a minimal result instead of being
-// killed by the host (#309); each one is recorded where the hook runs.
+// killed by the host (#309); each one is a line in the state dir's
+// hook-skips.jsonl (core hooks/deadline.ts writes it; read here directly so
+// doctor needs no hook module).
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOOK_SKIPS_FILE = "hook-skips.jsonl";
+
+/** Skips and late answers recorded since `since` (epoch ms); torn lines are ignored. */
+export const countHookSkips = (stateDir: string, since: number): { skip: number; late: number } => {
+  const counts = { skip: 0, late: 0 };
+  let text = "";
+  try {
+    text = readFileSync(path.join(stateDir, HOOK_SKIPS_FILE), "utf8");
+  } catch {
+    return counts;
+  }
+  for (const line of text.split("\n")) {
+    try {
+      const row = JSON.parse(line) as { at?: unknown; outcome?: unknown };
+      if (!(Date.parse(String(row.at)) >= since)) continue;
+      if (row.outcome === "skip") counts.skip += 1;
+      else if (row.outcome === "late") counts.late += 1;
+    } catch {
+      // A blank or torn line (a concurrent append) is not a skip.
+    }
+  }
+  return counts;
+};
+
 const checkHookDeadline = (res: Resolved): DoctorCheck => {
   const file = path.join(res.hookStateDir, HOOK_SKIPS_FILE);
   const { skip, late } = countHookSkips(res.hookStateDir, Date.now() - DAY_MS);

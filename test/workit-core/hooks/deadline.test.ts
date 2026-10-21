@@ -3,7 +3,7 @@
 // Slow steps are faked (a handler that never settles, a clock already past the
 // deadline), never slept.
 import { afterAll, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -15,7 +15,6 @@ import {
   type HostAdapter,
 } from "@/packages/workit-core/src/hooks/index";
 import {
-  countHookSkips,
   recordHookSkip,
   type HookDeadline,
   type HookSkip,
@@ -239,27 +238,40 @@ test("Given WORKIT_HOOK_DEADLINE_MS, When a Codex hook starts past it, Then the 
   expect(skips).toHaveLength(1);
 });
 
-test("Given recorded skips, When they are counted for the last day, Then older rows and torn lines are left out", () => {
+test("Given a skip, When it is recorded, Then the state dir gets one JSON line per skip", () => {
   const state = mkdtempSync(path.join(tmpdir(), "workit-deadline-state-"));
   roots.push(state);
-  const row = (at: string, outcome: HookSkip["outcome"]): HookSkip => ({
-    at,
-    host: "claude_code",
-    event: "context.turn",
-    outcome,
+  const skip: HookSkip = {
+    at: "2026-10-21T09:00:00.000Z",
+    host: "codex_cli",
+    event: "shell.pre",
+    outcome: "skip",
     stage: "dispatch",
-    elapsedMs: 9000,
-  });
-  recordHookSkip(row("2026-10-20T10:00:00Z", "skip"), state);
-  recordHookSkip(row("2026-10-21T09:00:00Z", "skip"), state);
-  recordHookSkip(row("2026-10-21T09:30:00Z", "late"), state);
-  appendFileSync(path.join(state, "hook-skips.jsonl"), '{"at":"2026-10-21T09:40:00Z","outc\n');
-  expect(countHookSkips(state, Date.parse("2026-10-20T12:00:00Z"))).toEqual({ skip: 1, late: 1 });
+    elapsedMs: 46_000,
+  };
+  recordHookSkip(skip, state);
+  recordHookSkip({ ...skip, outcome: "late", stage: "done" }, state);
+  const lines = readFileSync(path.join(state, "hook-skips.jsonl"), "utf8").trim().split("\n");
+  expect(lines.map((line) => JSON.parse(line))).toEqual([
+    skip,
+    { ...skip, outcome: "late", stage: "done" },
+  ]);
 });
 
-test("Given no state dir, When skips are counted, Then the count is zero", () => {
-  expect(countHookSkips(path.join(tmpdir(), "workit-no-such-state-dir"), 0)).toEqual({
-    skip: 0,
-    late: 0,
-  });
+test("Given an unwritable state dir, When a skip is recorded, Then the hook is not broken by it", () => {
+  const file = path.join(root(), "not-a-dir");
+  writeFileSync(file, "");
+  expect(() =>
+    recordHookSkip(
+      {
+        at: "2026-10-21T09:00:00.000Z",
+        host: "cursor",
+        event: null,
+        outcome: "skip",
+        stage: "input",
+        elapsedMs: 1,
+      },
+      file,
+    ),
+  ).not.toThrow();
 });
