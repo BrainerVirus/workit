@@ -51,6 +51,16 @@ Hooks fail open: if the runtime cannot start (no Bun for a pin, missing
 were not installed. `PreCompact` cannot inject context, so context is restored
 by `SessionStart` with `source: "compact"`.
 
+Hooks also answer before Claude Code's timeout. Prompt, tool and subagent hooks
+get 15 seconds, and `SessionStart` and `Stop` get 20. Normally a hook takes
+well under a second. On an overloaded machine it can take several seconds, and
+Claude Code discards the output of a hook it times out. So each hook has its own
+8-second deadline, counted from the start of its process. A hook past that
+deadline answers `workit context skipped: host under load` instead of its usual
+context, and that turn gets no gates or nudges. `workit doctor` counts these
+skips over the last day in its `hook_deadline` row. To change the deadline, set
+`WORKIT_HOOK_DEADLINE_MS`.
+
 ## Agents
 
 | Agent | Role |
