@@ -18,6 +18,8 @@ import {
   type CursorHookInput,
 } from "@brainervirus/workit-core/hooks";
 
+import { PROCESS_START } from "@brainervirus/workit-core/src/hooks/deadline";
+
 export { parseCursorHookInput, type CursorHookInput } from "@brainervirus/workit-core/hooks";
 
 /** Every tool name the hook treats as a write. The committed preToolUse
@@ -258,7 +260,14 @@ export const runCursorHook = async (): Promise<void> => {
     process.exitCode = output.permission === "deny" ? 2 : 0;
     return;
   }
-  process.exitCode = await runHookProcess(cursorAdapter, [text], process.stdout);
+  process.exitCode = await runHookProcess(
+    cursorAdapter,
+    [text],
+    process.stdout,
+    process.stderr,
+    process.env,
+    { startedAt: PROCESS_START },
+  );
 };
 
 if (import.meta.main) await runCursorHook();

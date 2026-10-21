@@ -6,7 +6,15 @@
 // so `workit` calls on the Bash tool know their host. The core resends
 // per-turn task context only when it changed (descriptor turnResend on-change).
 import { appendFileSync } from "node:fs";
-import { claudeCodeAdapter, dispatchHook, type HostAdapter } from "@brainervirus/workit-core/hooks";
+import { claudeCodeAdapter, type HostAdapter } from "@brainervirus/workit-core/hooks";
+import {
+  dispatchWithin,
+  hookBudget,
+  PROCESS_START,
+  readWithin,
+  skippedHook,
+  type HookDeadline,
+} from "@brainervirus/workit-core/src/hooks/deadline";
 
 type Sink = { write(chunk: string): unknown };
 
@@ -44,29 +52,36 @@ const exportSessionEnv = (env: NodeJS.ProcessEnv, sessionId: string): void => {
   }
 };
 
-/** Runs one Claude Code hook invocation and returns the process exit code. */
+/** Runs one Claude Code hook invocation and returns the process exit code.
+ * Past the hook deadline, counted from the process start (every caller is a
+ * hook process), Claude gets a minimal result naming the skip. */
 export async function runClaudeHook(
   stdin: AsyncIterable<unknown> | Iterable<unknown>,
   stdout: Sink,
   stderr: Sink = process.stderr,
   env: NodeJS.ProcessEnv = process.env,
+  deadline: HookDeadline = {},
 ): Promise<number> {
-  let input = "";
-  for await (const chunk of stdin) input += String(chunk);
+  const budget = hookBudget(env, { startedAt: PROCESS_START, ...deadline });
+  const input = await readWithin(stdin, budget);
   let raw: unknown;
   try {
-    raw = JSON.parse(input || "{}");
+    raw = input === null ? undefined : JSON.parse(input || "{}");
   } catch {
     raw = undefined;
   }
-  const result = dispatchHook(adapter, raw, env);
-  if (raw === undefined || result.error)
+  const result =
+    input === null
+      ? skippedHook(adapter, undefined, env, budget, "input")
+      : await dispatchWithin(adapter, raw, env, budget, deadline.dispatch);
+  if (result.skipped) stderr.write(`[workit] ${result.error}\n`);
+  else if (raw === undefined || result.error)
     stderr.write(
       `[workit] hook input rejected: ${raw === undefined ? "invalid JSON hook input" : result.error}\n`,
     );
   const payload = isRecord(raw) ? raw : {};
   const sessionId = text(payload.session_id);
-  if (sessionId && !result.error && payload.hook_event_name === "SessionStart")
+  if (sessionId && (result.skipped || !result.error) && payload.hook_event_name === "SessionStart")
     exportSessionEnv(env, sessionId);
   stdout.write(`${JSON.stringify(result.json)}\n`);
   return result.exitCode;
