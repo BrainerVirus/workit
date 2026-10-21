@@ -1,3 +1,8 @@
+import {
+  childSessionId,
+  judgeBranch,
+  verdictCommand,
+} from "@brainervirus/workit-core/src/host-session";
 import { getWorkitBootstrap } from "../bootstrap";
 import { compactContextFor, unfinishedTaskOfferFor, workerContextFor } from "../runtime";
 import { sameWorkspace } from "../shared/session";
@@ -40,6 +45,34 @@ export const injectAgentContext = (
     system.unshift(textPart(`<workit-task-context>${taskContext}</workit-task-context>`));
   if (workerContext && !hasMarker(system, "<workit-worker-context>"))
     system.unshift(textPart(`<workit-worker-context>${workerContext}</workit-worker-context>`));
+  const verdict = session.parentID ? judgeVerdictText(root, session, workerContext) : null;
+  if (verdict && !hasMarker(system, "<workit-verdict-line>"))
+    system.push(textPart(`<workit-verdict-line>${verdict}</workit-verdict-line>`));
+};
+
+const workerRole = (workerContext: string | null): unknown => {
+  if (!workerContext) return null;
+  try {
+    return (JSON.parse(workerContext) as { role?: unknown }).role;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * A child that may judge (no Workit worker, or a read-only one) is told its
+ * exact verdict command. Its shell already acts as `<lead>:<child>`
+ * (shell-session.ts), so the command names no session or token; an
+ * implementer worker gets none.
+ */
+const judgeVerdictText = (
+  root: string,
+  session: InjectionSession,
+  workerContext: string | null,
+): string | null => {
+  if (workerRole(workerContext) === "implementer") return null;
+  const line = verdictCommand({ branch: judgeBranch(session.directory ?? root) });
+  return `If this session verifies or reviews a candidate, record its verdict with exactly this command (pick the result, name the candidate branch if it differs, say what you ran): \`${line}\`. Your shell already acts as your own Workit session ${childSessionId(session.parentID ?? "", session.id)}: pass no --session or --token, and never set WORKIT_SESSION_ID by hand.`;
 };
 
 export const injectHistoryOffer = (

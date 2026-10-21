@@ -8,7 +8,7 @@ import {
 import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
-import { recordIssuedSession } from "../host-session";
+import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
 import {
@@ -114,9 +114,10 @@ const subagentStartText = (
   // and only with the token it hands to this subagent alone.
   // (An isolated judge's text is rebuilt with cwd "": the hook's own cwd then.)
   // Issued once: a replayed SubagentStart for the same id gets no token.
-  const token = session ? recordIssuedSession(input.cwd || process.cwd(), session, own) : null;
-  const flags = token ? `--session ${own} --token ${token}` : `--session ${own}`;
-  return `${readOnly} Its own Workit session is ${own}: record verdicts with \`workit ledger verdict <result> ${flags} ...\` so the ledger tells it apart from the author.${token ? " The token is this subagent's alone: never write it into a report, a file or a commit. --token needs a workit CLI at least as new as this plugin; if the CLI answers that --token is an unknown option, update the workit CLI (workit upgrade --cli) and record again." : ""}`;
+  const cwd = input.cwd || process.cwd();
+  const token = session ? recordIssuedSession(cwd, session, own) : null;
+  const line = verdictCommand({ branch: judgeBranch(cwd), session: own, token });
+  return `${readOnly} Its own Workit session is ${own}, so the ledger tells its verdicts apart from the author's. Record the verdict with exactly this command (pick the result, name the candidate branch if it differs, say what you ran): \`${line}\`.${token ? " The token is this subagent's alone: never write it into a report, a file or a commit. --token needs a workit CLI at least as new as this plugin; if the CLI answers that --token is an unknown option, update the workit CLI (workit upgrade --cli) and record again." : ""}`;
 };
 
 export function handleHook(input: HookInput, deps: HookDeps): HookDecision {

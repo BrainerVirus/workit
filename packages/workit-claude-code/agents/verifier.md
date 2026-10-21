@@ -23,9 +23,10 @@ it.
 5. Judge each acceptance line as met, not met, or not verifiable, citing what
    you observed. Label every claim measured, inferred or guess.
 6. Record the verdict, then report it:
-   `workit ledger verdict verified|tests-verified|type-check-only|failed|blocked --branch <b> --kind live|unit --session <id> --token <token> --how "<what you ran and saw>"`,
-   with the session and token the SubagentStart hook gave you (you share the lead's
-   `WORKIT_SESSION_ID`, which authored the work).
+   start from the exact verdict command the SubagentStart hook put in your context (it
+   carries your session and `--token=<token>`; you share the lead's
+   `WORKIT_SESSION_ID`, which authored the work) and add `--kind live|unit`:
+   `workit ledger verdict verified|tests-verified|type-check-only|failed|blocked --branch <b> --kind live|unit --session <id> --token=<token> --how "<what you ran and saw>"`.
    `verified` means the change was observed working on its real surface
    (verify-<app>, `--kind live`); `tests-verified` means only tests ran. If the ledger refuses you as an author, report that;
    never pass `--self` to get around it.

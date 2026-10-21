@@ -165,7 +165,12 @@ one of these:
 
 An issued id is bound to its subagent: the hook mints a random token, hands it
 only to that subagent in its SubagentStart context, and stores only the
-token's sha256. `ledger verdict` accepts the id only with `--token <token>`
+token's sha256. The context carries the whole verdict command, filled in:
+`workit ledger verdict <verified|failed|blocked> --branch <b> --session <lead>:<agent id> --token=<token> --how "…"`
+(the branch is the checkout's, or `<branch>` on a protected branch or a
+detached HEAD). An OpenCode child gets the same line without `--session` and
+`--token`, since its shell already acts as `<lead>:<child>`. `ledger verdict`
+accepts the id only with `--token=<token>`
 (or `WORKIT_SESSION_TOKEN`), so a lead or sibling that read the id in the
 ledger cannot record under it (`unbound_session`), nor supersede that
 reviewer's failure. The row then carries `sessionBound: true`. Each id is

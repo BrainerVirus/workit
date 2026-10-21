@@ -165,7 +165,7 @@ test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issu
     // Before any SubagentStart nothing under the lead is issued.
     expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)).not.toBeNull();
     const tokenIn = (output: unknown): string | null =>
-      /--token (\S+)/u.exec(JSON.stringify(output))?.[1] ?? null;
+      /--token=([0-9a-f]+)/u.exec(JSON.stringify(output))?.[1] ?? null;
     const claudeToken = tokenIn(
       dispatchHook(
         claudeCodeAdapter,
