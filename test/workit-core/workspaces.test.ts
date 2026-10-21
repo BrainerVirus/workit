@@ -13,6 +13,8 @@ import {
   validateWorkspaceGlob,
   validateWorkspacesDocument,
   workspacesPath,
+  workspaceDelegation,
+  workspaceTrailers,
   type WorkspaceConfig,
 } from "@/packages/workit-core/src/core/workspaces";
 import { readConfigFromDir } from "@/packages/workit-core/src/core/config";
@@ -710,4 +712,29 @@ test("defaultEndpoint: green and merged are valid, and an unknown value does not
     expect(result.entries[0]?.defaultEndpoint).toBe(value);
     expect(result.entries[0]?.autonomy).toEqual({ merge: "verified" });
   }
+});
+
+test("workspaceDelegation: defaults to inline-first, reads lead-orchestrates, ignores unknown values, and changes nothing else", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-delegation-"));
+  const entry = { name: "work", glob: "/home/*/Documents/projects/work/**" };
+  const cwd = "/home/u/Documents/projects/work/repo";
+  writeWorkspaces(dir, JSON.stringify({ workspaces: [entry] }));
+  withIsolatedConfig(dir, () => {
+    expect(workspaceDelegation(cwd)).toBe("inline-first");
+    expect(workspaceTrailers(cwd).enabled).toBe(true);
+  });
+  writeWorkspaces(
+    dir,
+    JSON.stringify({ workspaces: [{ ...entry, delegation: "lead-orchestrates" }] }),
+  );
+  withIsolatedConfig(dir, () => {
+    expect(workspaceDelegation(cwd)).toBe("lead-orchestrates");
+    expect(workspaceTrailers(cwd).enabled).toBe(true);
+    expect(resolveWorkspace(cwd)?.name).toBe("work");
+  });
+  writeWorkspaces(dir, JSON.stringify({ workspaces: [{ ...entry, delegation: "chaos" }] }));
+  withIsolatedConfig(dir, () => {
+    expect(workspaceDelegation(cwd)).toBe("inline-first");
+  });
+  rmSync(dir, { recursive: true, force: true });
 });

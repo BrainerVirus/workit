@@ -43,6 +43,11 @@ description: Build a requested change in small verified steps - follow local pat
 
 Independent slices that could run in parallel: fan them out (read the `workit-fanout` skill's SKILL.md and follow it).
 
+Stay inline by default (workspace `delegation: inline-first`). Hand work off
+only past the thresholds: an explorer after about 3 tool calls or 10k tokens
+of searching, parallel writers for 2 or more disjoint units of about 100+
+lines each.
+
 ## Example
 
 Bad: "Done - added the --since flag, tests pass." (no check ran this turn; the

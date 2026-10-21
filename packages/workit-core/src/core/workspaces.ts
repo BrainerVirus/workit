@@ -144,6 +144,13 @@ const workspaceConfigSchema = z
     /** How a normal-risk behavior change is verified (S17); same rules as grants. */
     verification: z.enum(["self", "independent"]).optional(),
     /**
+     * Who does the work (skills and `fanout plan` read it): `inline-first`
+     * (default) keeps the lead working itself and refuses a slice without a
+     * reason to delegate; `lead-orchestrates` allows slices without one.
+     * Read leniently (workspaceDelegation): an unknown value reads as unset.
+     */
+    delegation: z.unknown().optional(),
+    /**
      * Whether commits get the `Workit-Session:` trailer (default true). With
      * `false`, `workit git commit` and the session hook write none and
      * authorship lives in the ledger only (`commit.recorded`).
@@ -765,6 +772,21 @@ export const workspaceTrailers = (
 export const workspaceLiveSessionGuard = (cwd: string, dir?: string): boolean =>
   inheritedSetting(cwd, dir, (entry) => typeof entry.liveSessionGuard === "boolean")?.source
     ?.liveSessionGuard !== false;
+
+export const DELEGATION_MODES = ["inline-first", "lead-orchestrates"] as const;
+export type DelegationMode = (typeof DELEGATION_MODES)[number];
+
+const isDelegation = (value: unknown): value is DelegationMode =>
+  (DELEGATION_MODES as readonly unknown[]).includes(value);
+
+/**
+ * The workspace's `delegation` mode, default `inline-first`; inherited like
+ * `trailers`. A value this version does not know reads as unset.
+ */
+export const workspaceDelegation = (cwd: string, dir?: string): DelegationMode => {
+  const source = inheritedSetting(cwd, dir, (entry) => isDelegation(entry.delegation))?.source;
+  return isDelegation(source?.delegation) ? source.delegation : "inline-first";
+};
 
 const hostFamily = (host: string): string => host.replace(/_(?:cli|desktop)$/u, "");
 

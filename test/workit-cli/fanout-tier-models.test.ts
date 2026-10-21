@@ -79,6 +79,7 @@ const setup = async (tierModels: unknown) => {
     id,
     branch: `feature/${id}`,
     tier,
+    reason: "parallel",
     scope: [`${id}.ts`],
     goal: `GET /${id} answers 200`,
     acceptance: [`Given the app, When GET /${id}, Then the status is 200`],

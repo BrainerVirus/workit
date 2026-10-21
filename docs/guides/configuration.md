@@ -142,6 +142,19 @@ workspace's `youtrack.baseUrl`, else `baseUrl` in `youtrack.json`: an old
 `link_issues` workspace without its own `baseUrl` links through
 `youtrack.json`. See [delivery](delivery.md#linking-issues) for `--issue`.
 
+### Delegation
+
+A workspace's `delegation` is `inline-first` (the default) or
+`lead-orchestrates`. Under `inline-first` the lead does the work itself, and
+`workit fanout plan` refuses a slice without a `reason` (`explore`,
+`parallel`, `backstop` or `high-risk-verify`, rendered as the brief's
+`REASON:` line). `lead-orchestrates` allows slices without one. An unknown
+value reads as the default.
+
+```json
+{ "name": "work", "glob": "/home/you/work/**", "delegation": "lead-orchestrates" }
+```
+
 ### Model per fanout tier
 
 A workspace's `fanout.tierModels` names the model a fanout worker gets for
