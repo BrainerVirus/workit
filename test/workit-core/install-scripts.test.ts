@@ -283,6 +283,11 @@ function copyCoreSources(stub: string) {
       path.join(repoRoot, "packages/workit-cli/src/admin", name),
       path.join(stub, "packages/workit-cli/src/admin", name),
     );
+  // doctor's checks_config row and --fix read the checks config path through check-config.ts.
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/src/check-config.ts"),
+    path.join(stub, "packages/workit-core/src/check-config.ts"),
+  );
   // release-tracks.ts (doctor) reads branch facts through git/rev.ts.
   mkdirSync(path.join(stub, "packages/workit-core/src/git"), { recursive: true });
   cpSync(

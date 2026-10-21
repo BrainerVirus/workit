@@ -65,13 +65,14 @@ test(
     // and pi_extension pass (no Codex or Pi install); session_hook passes (no
     // workspace configured); hook_issued_sessions passes (no plugin hook);
     // heavy_scope is info (no systemd-run on the isolated PATH, #325);
-    // hook_deadline passes (no hook skips recorded, #309).
+    // hook_deadline passes (no hook skips recorded, #309); checks_config
+    // passes (no checks config at the repo root, #354).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 25,
+      passed: 26,
       warned: 1,
       failed: 1,
-      total: 27,
+      total: 28,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -108,13 +109,14 @@ test(
       // fixture's bundled hook runs locally); hook_issued_sessions passes (no
       // Claude Code or Codex plugin hook); heavy_scope is info (no
       // systemd-run on the isolated PATH, #325); hook_deadline passes (no
-      // hook skips recorded, #309).
+      // hook skips recorded, #309); checks_config passes (no checks config at
+      // the repo root, #354).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 25,
+        passed: 26,
         warned: 1,
         failed: 1,
-        total: 27,
+        total: 28,
         fixes: 1,
       });
     } finally {
