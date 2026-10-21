@@ -207,8 +207,11 @@ const setup = async (ctx: Context): Promise<() => void> => {
   const pendingShells: PendingShells = new Map();
   await ctx.tool.hook("execute.before", async (event) => {
     if (event.tool === "shell") {
-      noteShellCall(pendingShells, { sessionID: String(event.sessionID), input: event.input });
-      return observeShellBefore(root, event, shellWorkdirs);
+      observeShellBefore(root, event, shellWorkdirs);
+      return noteShellCall(pendingShells, {
+        sessionID: String(event.sessionID),
+        input: event.input,
+      });
     }
     if (event.tool === "skill") return observeSkillLoad(root, event);
     if (event.tool !== "subagent") return;

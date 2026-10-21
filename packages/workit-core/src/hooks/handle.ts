@@ -9,6 +9,7 @@ import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { recordIssuedSession } from "../host-session";
+import { heavyDenial, heavyGate, rewriteNote } from "./heavy-gate";
 import { shellPolicy } from "./policy";
 import {
   callKey,
@@ -162,6 +163,11 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
         ? shellGate(input.cwd, event.command, liveOwner(input, descriptor.transport), event.dialect)
         : NONE;
       if (gate.kind === "deny") return gate;
+      // A heavy command runs under the machine lease: rewritten where the
+      // host can replace the command, else denied with the exact rewrite.
+      const heavy = heavyGate(input.cwd, event.command, event.dialect);
+      const lease = heavy && usable(descriptor.shellPolicy.rewrite) ? heavy : null;
+      if (heavy && !lease && canDeny) return heavyDenial(event.command, heavy);
       // The command will run: note HEAD so the post-tool hook (or the next
       // command, without one) can tell whether a raw commit moved it.
       noteRawCommit(
@@ -169,12 +175,27 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
         event.command,
         postTool ? callKey(event.toolUseId, event.command) : NEXT_COMMAND,
       );
+      const rewritten = (text: string | null): HookDecision =>
+        lease
+          ? {
+              kind: "rewrite",
+              command: lease.command,
+              input: event.toolInput ? { ...event.toolInput, command: lease.command } : null,
+              text,
+            }
+          : NONE;
       // An in-process plugin shows nudges on the tool result (shellNudge):
       // spending the once-per-session nudge here would lose it.
-      if (descriptor.transport !== "hook-process") return NONE;
-      return withContextLine(
+      if (descriptor.transport !== "hook-process") return rewritten(null);
+      const nudged = withContextLine(
         canDeny ? rawGitPre(input, event.command) : NONE,
         shipNudge(input, event.command),
+      );
+      if (!lease) return nudged;
+      return rewritten(
+        [rewriteNote(lease), nudged.kind === "context" ? nudged.text : null]
+          .filter(Boolean)
+          .join("\n"),
       );
     }
     case "shell.post":

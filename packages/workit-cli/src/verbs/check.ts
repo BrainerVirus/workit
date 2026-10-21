@@ -1,7 +1,7 @@
 // `workit check` (design §2.1 S9, §2.2; D5, D14, D18): run a command and
 // record what the CLI itself observed.
 //
-//   workit check <name> [--timeout <s>] [--task <id>] [--no-lease] [--json]   # the configured command
+//   workit check <name> [--timeout <s>] [--task <id>] [--no-lease --reason <why>] [--json]   # the configured command
 //   workit check [--name <n>] [--shell] [--heavy] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
 //
 // - The command runs without a shell (with --shell, pass one command string);
@@ -23,6 +23,7 @@
 //   machine-wide lease (core/resources.ts), waiting for a free slot, and on
 //   Linux with a delegated user systemd runs in its own `systemd-run --user
 //   --scope` with MemoryMax and CPUQuota. `--json` reports `lease` and `scope`.
+//   `--no-lease` skips both and needs `--reason`, recorded as `noLease`.
 // - Exit code: the command's own (4 on --timeout or a lease wait that timed
 //   out, 2 on usage). When the
 //   command passed but the evidence could not be recorded, the recording
@@ -75,7 +76,7 @@ import {
 } from "@brainervirus/workit-core/src/core/resources";
 
 const USAGE =
-  "workit check <name> [--no-lease] | workit check [--name <n>] [--shell] [--heavy] [--timeout <s>] [--task <id>] [--json] -- <cmd…>";
+  'workit check <name> [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
 /** Lease age bound for a check without --timeout, where the holder cannot be identified. */
 const MAX_UNVERIFIED_RUN_MS = 6 * 3_600_000;
 /** Tail lines kept on the task record (the envelope carries TAIL_LINES). */
@@ -87,6 +88,8 @@ type Options = {
   shell: boolean;
   heavy: boolean;
   noLease: boolean;
+  /** Why the run skips the lease; required with --no-lease. */
+  reason: string | null;
   timeoutMs: number;
   task: string | null;
   base: string | null;
@@ -102,6 +105,7 @@ function parse(argv: readonly string[]): Options | Error {
     shell: false,
     heavy: false,
     noLease: false,
+    reason: null,
     timeoutMs: 0,
     task: null,
     base: null,
@@ -127,10 +131,17 @@ function parse(argv: readonly string[]): Options | Error {
       else options.noLease = true;
       continue;
     }
-    if (flag === "--name" || flag === "--task" || flag === "--base" || flag === "--timeout") {
+    if (
+      flag === "--name" ||
+      flag === "--task" ||
+      flag === "--base" ||
+      flag === "--timeout" ||
+      flag === "--reason"
+    ) {
       const got = value();
       if (got instanceof Error) return got;
       if (flag === "--name") options.name = got;
+      else if (flag === "--reason") options.reason = got.trim() || null;
       else if (flag === "--task") options.task = got;
       else if (flag === "--base") options.base = got;
       else {
@@ -144,6 +155,11 @@ function parse(argv: readonly string[]): Options | Error {
     if (arg.startsWith("-")) return new Error(`unknown option ${arg}`);
     options.positionals.push(arg);
   }
+  if (options.noLease && !options.reason)
+    return new Error(
+      '--no-lease needs --reason "<why>": heavy commands share one machine-wide lease so parallel agents cannot exhaust memory and CPU',
+    );
+  if (options.reason && !options.noLease) return new Error("--reason goes with --no-lease");
   return options;
 }
 
@@ -288,7 +304,9 @@ function boundedArgv(argv: readonly string[]): { argv: string[]; truncated: bool
 }
 
 /** `resources` of the workspaces.json entry matching `cwd`, read from io.env's config dir. */
-async function workspaceResources(io: Io): Promise<{ value: unknown; warning: string | null }> {
+export async function workspaceResources(
+  io: Io,
+): Promise<{ value: unknown; warning: string | null }> {
   const env = io.env;
   const dir =
     env.WORKFLOW_TOOLKIT_CONFIG ??
@@ -512,6 +530,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
       heavy = prepared;
     }
   }
+  if (options.noLease)
+    io.stderr(`workit: running without the heavy-check lease: ${options.reason}\n`);
   const lease = heavy?.lease ?? null;
   let result: Awaited<ReturnType<typeof runCheckCommand>>;
   try {
@@ -633,6 +653,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     task: task.task,
     lease: heavy?.leaseReport ?? null,
     scope: heavy?.scope ?? null,
+    ...(options.noLease ? { noLease: { reason: options.reason } } : {}),
     ...(task.note ? { taskNote: task.note } : {}),
     satisfies: task.satisfies,
     stillUnsatisfied: task.stillUnsatisfied,

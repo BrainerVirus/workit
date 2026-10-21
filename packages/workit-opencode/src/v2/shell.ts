@@ -1,10 +1,13 @@
-// OpenCode V2 shell calls: before one runs, note HEAD (and the workdir for
-// the permission hook); after it, record a raw `git commit` for the session
+// OpenCode V2 shell calls: before one runs, rewrite a heavy command to run
+// under the machine-wide heavy-check lease (`workit check --heavy -- <cmd>`;
+// the tool's input is mutable in execute.before), note HEAD (and the workdir
+// for the permission hook); after it, record a raw `git commit` for the session
 // and append the raw-git nudge to the tool output (OpenCode's permission
 // hook can only deny, so a nudge rides on the result the model reads).
 import path from "node:path";
 import {
   callKey,
+  heavyGate,
   noteRawCommit,
   rawGitPost,
   shellNudge,
@@ -51,7 +54,12 @@ const hookInput = (
 
 export type ShellBeforeEvent = { tool: string; sessionID: string; id: string; input: unknown };
 
-/** Before the shell tool runs: remember its workdir and note HEAD for a raw commit. */
+/**
+ * Before the shell tool runs: rewrite a heavy command through the lease,
+ * remember its workdir and note HEAD for a raw commit. Runs before the
+ * shell-session correlation notes the call, so that keys on the command
+ * `create.before` will see.
+ */
 export const observeShellBefore = (
   root: string,
   event: ShellBeforeEvent,
@@ -62,6 +70,12 @@ export const observeShellBefore = (
     const shell = commandOf(event.input);
     if (!shell) return;
     const sessionID = String(event.sessionID);
+    const cwd = shell.workdir ? path.resolve(root, shell.workdir) : root;
+    const heavy = heavyGate(cwd, shell.command, "posix");
+    if (heavy) {
+      (event.input as { command: string }).command = heavy.command;
+      shell.command = heavy.command;
+    }
     const input = hookInput(root, sessionID, String(event.id), shell);
     workdirs.set(sessionID, input.cwd);
     if (workdirs.size > 256) workdirs.delete(workdirs.keys().next().value!);

@@ -15,11 +15,15 @@
 // `resources` in the matching workspaces.json entry (the machine owner's
 // word), then `resources` in workit.checks.json, which can only tighten them.
 // Only the CLI imports this module; hooks never do.
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { tailLines, type CheckRun } from "../checks";
+import { stateDir } from "./heavy";
+
+export { stateDir };
 
 /** Named checks that take the lease when nothing is configured. */
 export const DEFAULT_HEAVY_CHECKS = ["test", "build", "typecheck"];
@@ -182,17 +186,6 @@ export function resolveResourceSettings(
 
 // ---------------------------------------------------------------------------
 // the machine lease
-
-/** Workit's state dir for `env` (the logger's resolution, over an explicit env). */
-export function stateDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform) {
-  if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
-  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
-  const home = env.HOME || os.homedir();
-  if (platform === "darwin") return path.join(home, "Library", "Application Support", "workit");
-  if (platform === "win32")
-    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
-  return path.join(home, ".local", "state", "workit");
-}
 
 export const leaseDir = (env: NodeJS.ProcessEnv): string => path.join(stateDir(env), "leases");
 
@@ -744,4 +737,86 @@ export function firstNotice(
     // Pruning is best effort.
   }
   return true;
+}
+
+export type SlotState = {
+  slot: number;
+  /** The lease in this slot, or null when it is free. */
+  holder: LeaseHolder | null;
+  /** Why the lease in it no longer holds (the next acquirer reclaims it). */
+  stale: string | null;
+};
+
+/** What each of `slots` lease slots holds right now. Read-only: nothing is reclaimed. */
+export function leaseSlots(dir: string, slots: number, probe: LeaseProbe = {}): SlotState[] {
+  const states: SlotState[] = [];
+  for (let slot = 0; slot < slots; slot += 1) {
+    const lease = parseLease(readText(path.join(dir, `slot-${slot}.json`)));
+    states.push({
+      slot,
+      holder: lease ? holderOf(lease) : null,
+      stale: lease ? staleReason(lease, probe) : null,
+    });
+  }
+  return states;
+}
+
+export type ScopeProbe =
+  | { effective: true; memoryMax: string; cpuMax: string; delegate: string | null }
+  | { effective: false; supported: boolean; reason: string; delegate: string | null };
+
+const PROBE_MEMORY = "268435456";
+const PROBE_CPU = "50%";
+const PROBE_SCRIPT =
+  'cg=$(sed -n "s/^0:://p" /proc/self/cgroup); cat "/sys/fs/cgroup$cg/memory.max" "/sys/fs/cgroup$cg/cpu.max"';
+
+/** `Delegate=` and `DelegateControllers=` of the user manager's unit, as systemd reports them. */
+function userManagerDelegate(env: NodeJS.ProcessEnv): string | null {
+  const uid = process.getuid?.() ?? 0;
+  const shown = spawnSync(
+    "systemctl",
+    ["show", `user@${uid}.service`, "-p", "Delegate", "-p", "DelegateControllers"],
+    { env, encoding: "utf8", timeout: 5000 },
+  );
+  const text = shown.status === 0 ? shown.stdout.trim().split(/\n/u).join(", ") : "";
+  return text || null;
+}
+
+/**
+ * Do heavy-check scopes really get their limits here? Starts a throwaway
+ * scope the way a heavy check does (MemoryMax 256 MiB, CPUQuota 50%) and
+ * reads the limits back from its own cgroup, so a manager that accepts the
+ * properties but cannot apply them (no delegation) is told apart.
+ */
+export function probeScope(env: NodeJS.ProcessEnv = process.env): ScopeProbe {
+  const support = scopeSupport(env);
+  const delegate = process.platform === "linux" ? userManagerDelegate(env) : null;
+  if (!support.ok) return { effective: false, supported: false, reason: support.reason, delegate };
+  const unit = `workit-probe-${process.pid}-${Date.now().toString(36)}`;
+  const probe = spawnSync(
+    "systemd-run",
+    [
+      ...scopePrefix(unit, { memoryMax: PROBE_MEMORY, cpuQuota: PROBE_CPU }).slice(1),
+      "sh",
+      "-c",
+      PROBE_SCRIPT,
+    ],
+    { env, encoding: "utf8", timeout: 10_000 },
+  );
+  if (probe.status !== 0)
+    return {
+      effective: false,
+      supported: true,
+      reason: `systemd-run failed: ${(probe.stderr || probe.error?.message || `exit ${probe.status}`).trim().split("\n")[0]}`,
+      delegate,
+    };
+  const [memoryMax = "", cpuMax = ""] = probe.stdout.trim().split(/\n/u);
+  if (memoryMax.trim() === PROBE_MEMORY && cpuMax.trim().startsWith("50000 "))
+    return { effective: true, memoryMax: memoryMax.trim(), cpuMax: cpuMax.trim(), delegate };
+  return {
+    effective: false,
+    supported: true,
+    reason: `the scope started but its cgroup reads memory.max=${memoryMax.trim() || "?"} cpu.max=${cpuMax.trim() || "?"} (asked ${PROBE_MEMORY} and 50000 100000)`,
+    delegate,
+  };
 }

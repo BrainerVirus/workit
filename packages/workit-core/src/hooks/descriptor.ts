@@ -19,6 +19,8 @@ export type HostDescriptor = {
     channel: "permissionDecision" | "exit2+json" | "effect" | "block" | null;
     /** A parse or handler failure on a pre-tool gate denies instead of passing. */
     failClosed: boolean;
+    /** The pre-shell hook can replace the command before it runs (the heavy-command lease). */
+    rewrite: Support;
   };
   context: {
     sessionStart: Support;

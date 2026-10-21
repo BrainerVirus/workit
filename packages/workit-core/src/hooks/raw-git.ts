@@ -544,7 +544,29 @@ export function rawInvocations(
 /** The invocations of the last few commands parsed (pure: same text, same answer). */
 const RECENT = new Map<string, readonly RawInvocation[]>();
 
-function walk(command: string, dialect: ShellDialect, depth: number): RawInvocation[] {
+/**
+ * Every command line a shell command runs, past the same wrappers, nesting
+ * and chains rawInvocations reads (`bash -c '…'`, `flock f -c '…'`, `xargs`,
+ * `timeout 30`, env prefixes): the words after the prefixes, outermost first.
+ */
+export function commandLines(command: string, dialect: ShellDialect = "posix"): string[][] {
+  const lines: string[][] = [];
+  try {
+    walk(command, dialect, 0, lines);
+  } catch (error) {
+    throw error instanceof ShellAnalysisError
+      ? error
+      : new ShellAnalysisError(error instanceof Error ? error.message : String(error));
+  }
+  return lines;
+}
+
+function walk(
+  command: string,
+  dialect: ShellDialect,
+  depth: number,
+  seen?: string[][],
+): RawInvocation[] {
   const found: RawInvocation[] = [];
   let dir: Dir = null;
   const groups: Array<{ dir: Dir; stack: Dir[] }> = [];
@@ -556,7 +578,10 @@ function walk(command: string, dialect: ShellDialect, depth: number): RawInvocat
   const sessionConfig: string[] = [];
   const nested = (script: string | null | undefined, inner: ShellDialect) => {
     if (!script || depth >= MAX_DEPTH) return;
-    for (const invocation of rawInvocations(script, inner, depth + 1))
+    const inside = seen
+      ? walk(script, inner, depth + 1, seen)
+      : rawInvocations(script, inner, depth + 1);
+    for (const invocation of inside)
       found.push({ ...invocation, dir: rebase(dir, invocation.dir) });
   };
   const visit = (input: string[], stdin: string | undefined, hops: number) => {
@@ -567,6 +592,9 @@ function walk(command: string, dialect: ShellDialect, depth: number): RawInvocat
     const { words, env } = stripPrefixes(line);
     const name = commandName(words[0]);
     if (!name) return;
+    seen?.push(words);
+    // `flock <file> -c '…'`: the wrapper's script.
+    if (name === "-c" || name === "--command") return nested(words[1], "posix");
     const runs = (lines: string[][]) => {
       if (hops < MAX_DEPTH) for (const next of lines) visit(next, undefined, hops + 1);
     };

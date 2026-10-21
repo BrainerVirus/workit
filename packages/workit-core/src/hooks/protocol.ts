@@ -27,6 +27,8 @@ export type HookEvent =
       toolUseId: string | null;
       /** The shell that runs `command`; posix when absent. */
       dialect?: "posix" | "powershell";
+      /** The host's whole tool input, where a rewrite must hand it back (Claude Code). */
+      toolInput?: Record<string, unknown>;
     }
   /** A pre-tool gate for a non-shell tool. Host permission policy owns these. */
   | {
@@ -95,6 +97,12 @@ export type HookDecision =
   | { kind: "context"; text: string }
   /** The reason text always carries its own correction (principle 3). */
   | { kind: "deny"; reason: string; unblock: string | null }
+  /**
+   * shell.pre: run `command` instead (the heavy-command lease rewrite).
+   * `input` is the host's tool input with the command replaced, where the
+   * host takes the whole input back; `text` is model-visible context.
+   */
+  | { kind: "rewrite"; command: string; input: Record<string, unknown> | null; text: string | null }
   /** Stop/SubagentStop: keep working. */
   | { kind: "continue"; reason: string }
   | { kind: "notice"; userMessage: string };

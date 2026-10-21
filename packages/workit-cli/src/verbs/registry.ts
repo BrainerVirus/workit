@@ -31,6 +31,8 @@ export type VerbEntry = {
   /** The verb runs without a subcommand too (`grant` shows, `verify-delivery` infers). */
   optionalSubcommand?: boolean;
   examples?: readonly string[];
+  /** Paragraphs `workit help <verb>` prints after the summary. */
+  notes?: readonly string[];
   /** The slice that implements this verb; set while it is a stub. */
   planned?: string;
   load: () => Promise<Verb>;
@@ -171,6 +173,13 @@ function withSubcommands(
   };
 }
 
+const LEASE_NOTES = [
+  "The heavy-check lease: heavy work (tests, builds, lint, typecheck, installs, image builds) shares one machine-wide lease, so parallel agents and worktrees never exhaust this machine's memory and CPU. `slots` (default 1) heavy checks run at once; on Linux each also runs in a systemd scope with MemoryMax and CPUQuota.",
+  "Waiting: a heavy check that finds every slot held prints one `waiting for the heavy-check lease` line naming the holder (check, pid, session, age, directory), polls once a second, and exits 4 (busy) after `resources.wait` seconds (default 600). `workit lock status` shows the holders; `workit lock wait` waits for a free slot.",
+  "--heavy: an ad-hoc `workit check -- <cmd>` takes the lease only with --heavy; the named checks test, build and typecheck always do. The shell hook runs a raw heavy command (`npx jest`, `npm run test:ci`, `cargo test`, `docker build`) as `workit check --heavy -- <cmd>` on Claude Code, OpenCode and Pi, and denies it with that exact command on Codex and Cursor.",
+  '--no-lease skips the lease and needs --reason "<why>". Never hand-roll a flock: the lease already queues every agent on the machine.',
+];
+
 const VERIFY_OPTIONS =
   "[--expect pushed|pr|merged|released] [--pr <n> | --branch <b>] [--sha <sha>] [--tag <t>] [--package <name[@version]>]";
 
@@ -257,12 +266,57 @@ export const VERBS: readonly VerbEntry[] = [
     name: "check",
     group: "delivery",
     usage:
-      "workit check <name> [--task <id>] [--base <ref>] [--no-lease] | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy] [--no-lease] -- <cmd…>",
+      'workit check <name> [--task <id>] [--base <ref>] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy] [--no-lease --reason "<why>"] -- <cmd…>',
     summary:
-      "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's)",
-    examples: ["workit check test", "workit check --name unit -- bun test test/unit"],
+      "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's); heavy checks wait for the machine-wide heavy-check lease",
+    examples: [
+      "workit check test",
+      "workit check --heavy -- npx jest",
+      "workit check --name unit -- bun test test/unit",
+      'workit check test --no-lease --reason "machine is idle, debugging a hang"',
+    ],
+    notes: LEASE_NOTES,
     load: () => import("./check"),
   },
+  withSubcommands({
+    name: "lock",
+    group: "delivery",
+    summary:
+      "The machine-wide heavy-check lease: who holds it, wait for it, run a command under it, and which shell commands count as heavy",
+    subcommands: [
+      {
+        name: "status",
+        usage: "workit lock status",
+        summary: "Show each lease slot: free, held (check, pid, session, age, directory) or stale",
+      },
+      {
+        name: "wait",
+        usage: "workit lock wait [--timeout <s>]",
+        summary:
+          "Wait until a lease slot is free, without taking it (exit 0 free, 4 still busy at the timeout)",
+      },
+      {
+        name: "run",
+        usage: "workit lock run [--shell] [--timeout <s>] -- <cmd…>",
+        summary: "Run a command under the lease: the same as workit check --heavy -- <cmd…>",
+      },
+      {
+        name: "heavy",
+        usage: "workit lock heavy list | add <pattern> | remove <pattern> | test -- <cmd…>",
+        summary:
+          "List, add or remove machine-wide heavy-command patterns (words matched as a prefix, * inside a word), or test whether the shell hook gates a command",
+      },
+    ],
+    examples: [
+      "workit lock status",
+      "workit lock wait --timeout 300",
+      "workit lock run -- npx jest",
+      "workit lock heavy add 'mvn verify'",
+      "workit lock heavy test -- npm run test:ci",
+    ],
+    notes: LEASE_NOTES,
+    load: () => import("./lock"),
+  }),
   withSubcommands({
     name: "pr",
     group: "delivery",

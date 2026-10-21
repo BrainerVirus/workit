@@ -86,6 +86,8 @@ const examplesFor = (entry: VerbEntry, sub?: SubcommandEntry): string[] =>
 const exampleBlock = (examples: string[]): string[] =>
   examples.length ? ["", "examples:", ...examples.map((line) => `  ${line}`)] : [];
 
+const noteBlock = (entry: VerbEntry): string[] => (entry.notes ?? []).flatMap((note) => ["", note]);
+
 export function verbHelp(entry: VerbEntry): HelpDoc {
   const subs = entry.subcommands ?? [];
   const usages = usageLines(entry);
@@ -98,6 +100,7 @@ export function verbHelp(entry: VerbEntry): HelpDoc {
           ...subs.flatMap((sub) => [`usage: ${sub.usage}`, `    ${sub.summary}`]),
         ]
       : [`usage: ${entry.usage}`, "", entry.summary]),
+    ...noteBlock(entry),
     ...exampleBlock(examples),
     "",
     ...(subs.length
@@ -130,6 +133,7 @@ export function subcommandHelp(entry: VerbEntry, sub: SubcommandEntry): HelpDoc 
       `usage: ${sub.usage}`,
       "",
       sub.summary,
+      ...noteBlock(entry),
       ...exampleBlock(examples),
       "",
       ...(sub.aliases?.length ? [`aliases: ${sub.aliases.join(", ")}`] : []),

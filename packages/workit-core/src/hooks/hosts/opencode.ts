@@ -25,7 +25,7 @@ export const OPENCODE_DESCRIPTOR: HostDescriptor = {
     // session went idle, and resume semantics are inferred from the schema.
     stop: { support: "partial", native: 'event("session.idle")' },
   },
-  shellPolicy: { deny: "native", channel: "effect", failClosed: false },
+  shellPolicy: { deny: "native", channel: "effect", failClosed: false, rewrite: "native" },
   context: {
     sessionStart: "none",
     perTurn: "native",

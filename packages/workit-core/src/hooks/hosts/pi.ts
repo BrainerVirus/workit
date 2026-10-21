@@ -24,7 +24,7 @@ export const PI_DESCRIPTOR: HostDescriptor = {
     // no loop guard: the extension continues at most once per run.
     stop: { support: "native", native: "agent_end" },
   },
-  shellPolicy: { deny: "native", channel: "block", failClosed: false },
+  shellPolicy: { deny: "native", channel: "block", failClosed: false, rewrite: "native" },
   context: {
     sessionStart: "native",
     // before_agent_start runs every turn; its message stays in the session,
