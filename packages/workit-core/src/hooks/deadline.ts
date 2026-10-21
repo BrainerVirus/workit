@@ -11,8 +11,8 @@ import type { HookDecision, HookEventKind, HostAdapter, RenderedHook } from "./p
 export const HOOK_SKIP_TEXT = "workit context skipped: host under load";
 
 /**
- * Below the shortest host timeout Workit registers (Codex Stop, 10 s; Claude
- * Code 15 s and 20 s), with room left for a dispatch that started in time.
+ * Below the shortest host timeout Workit registers (Claude Code 15 s), with
+ * room left for a dispatch that started in time.
  */
 export const HOOK_DEADLINE_MS = 8_000;
 
