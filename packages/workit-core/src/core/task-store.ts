@@ -728,20 +728,29 @@ export class TaskStore {
    * the branch checked out now (#264). Null when no open task has it.
    */
   taskForWorker(workerId: unknown): Result<Id | null> {
-    if (typeof workerId !== "string" || !validId(workerId))
+    if (typeof workerId !== "string" || !/^[0-9a-f][0-9a-f-]{7,35}$/.test(workerId))
       return failure(
         "invalid_input",
         "needs a worker id: `workit worker cancel|report <workerId>`",
       );
     const listed = this.listTaskIndex();
     if (!listed.ok) return listed;
+    const matches: { worker: string; task: Id }[] = [];
     for (const entry of listed.data) {
       if (entry.status === "closed") continue;
       const loaded = this.load(entry.id);
       if (!loaded.ok) return loaded;
-      if (loaded.data?.record.workers.some((worker) => worker.id === workerId))
-        return success(null, null, entry.id);
+      for (const worker of loaded.data?.record.workers ?? []) {
+        if (worker.id === workerId) return success(null, null, entry.id);
+        if (worker.id.startsWith(workerId)) matches.push({ worker: worker.id, task: entry.id });
+      }
     }
+    if (new Set(matches.map((match) => match.task)).size > 1)
+      return failure(
+        "invalid_input",
+        `worker prefix ${workerId} is ambiguous; candidates: ${matches.map((match) => match.worker).join(", ")}`,
+      );
+    if (matches.length > 0) return success(null, null, matches[0].task);
     return success(null, null, null);
   }
 
