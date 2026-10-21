@@ -1,5 +1,3 @@
-import { selectFanout } from "../fanout";
-import { currentBranch } from "../git/rev";
 import type {
   Caller,
   Id,
@@ -62,24 +60,3 @@ export const workerBlocksTransition = (
  */
 export const holdsLiveState = (state: WorkerState, dirty: boolean | null): boolean =>
   state === "running" || dirty === true;
-
-/**
- * The resume brief that continues the slice a worker's worktree is on:
- * `workit fanout brief <slice> --mode resume`. The slice is found by branch
- * (a race attempt branch `<branch>-try<n>` counts as its slice); with no plan
- * or no match the line keeps a `<slice>` placeholder.
- */
-export const resumeBriefCommand = (root: string, directory: string | undefined): string => {
-  const branch = directory ? currentBranch(directory) : null;
-  const plan = branch ? selectFanout(root, null, branch) : null;
-  const slice =
-    branch && plan?.ok
-      ? plan.data.slices.find(
-          (entry) =>
-            entry.branch === branch ||
-            (branch.startsWith(`${entry.branch}-try`) &&
-              /^\d+$/u.test(branch.slice(entry.branch.length + 4))),
-        )
-      : undefined;
-  return `workit fanout brief ${slice?.id ?? "<slice>"} --mode resume`;
-};
