@@ -112,6 +112,67 @@ const fixture = (taskActor = "coordinator", coordinator = "coordinator") => {
   };
 };
 
+const switchToNewTask = (value: ReturnType<typeof fixture>, branch: string) => {
+  git(value.root, ["switch", "-q", "-c", branch]);
+  const started = value.core.task(
+    taskStartRequest({
+      expectedWorkspaceRevision: value.revisions().expectedWorkspaceRevision,
+      intent: { objective: "branch task", scope: scope({ paths: ["."] }), authorityRefs: [] },
+    }),
+  );
+  if (!started.ok) throw new Error(started.error);
+  return (started.data as { id: string }).id;
+};
+
+test("a launch after a branch switch rebinds the lone stale worker to the branch's task", async () => {
+  const value = fixture();
+  try {
+    const staleId = value.worker().id;
+    const branchTask = switchToNewTask(value, "feature/other");
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+    });
+    const old = value.store.readTask(value.taskId);
+    const next = value.store.readTask(branchTask);
+    if (!old.ok || !next.ok) throw new Error("tasks missing");
+    const oldWorker = old.data.workers.find((entry) => entry.id === staleId)!;
+    expect(oldWorker.data.state).toBe("stopped");
+    expect(next.data.progress.summary).toContain(`rebound from task ${value.taskId}`);
+    expect(next.data.workers).toHaveLength(1);
+    expect(next.data.workers[0].data.state).toBe("assigned");
+    expect(next.data.workers[0].data.assignment.objective).toBe("review");
+    expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("an ambiguous branch switch is denied with the branch-scoped hint and rebinds nothing", async () => {
+  const value = fixture();
+  try {
+    value.assignWorker("investigator");
+    const branchTask = switchToNewTask(value, "feature/other");
+    await expect(
+      value.lifecycle.executeBefore({
+        tool: "subagent",
+        sessionID: "coordinator",
+        id: "call_1",
+        input: {},
+      }),
+    ).rejects.toThrow(/branch-scoped/);
+    const old = value.store.readTask(value.taskId);
+    const next = value.store.readTask(branchTask);
+    if (!old.ok || !next.ok) throw new Error("tasks missing");
+    expect(old.data.workers.map((entry) => entry.data.state)).toEqual(["assigned", "assigned"]);
+    expect(next.data.workers).toHaveLength(0);
+  } finally {
+    value.cleanup();
+  }
+});
+
 test("session.created never consumes an assigned worker without a matching subagent result", async () => {
   const value = fixture();
   try {
