@@ -152,6 +152,28 @@ export const readWithin = async (
   return isTimedOut(text) ? null : text;
 };
 
+/** Records one outcome; returns the parsed native event name for rendering. */
+const note = (
+  adapter: HostAdapter,
+  raw: unknown,
+  env: NodeJS.ProcessEnv,
+  budget: Budget,
+  outcome: HookSkip["outcome"],
+  stage: HookSkip["stage"],
+): { native: string | null; event: HookEventKind | null } => {
+  const parsed = raw === undefined ? null : adapter.parse(raw, env);
+  const event = parsed ? (parsed.ok ? parsed.input.event.kind : parsed.event) : null;
+  budget.record({
+    at: new Date(budget.now()).toISOString(),
+    host: adapter.descriptor.host,
+    event,
+    outcome,
+    stage,
+    elapsedMs: Math.round(budget.now() - budget.startedAt),
+  });
+  return { native: parsed?.native ?? null, event };
+};
+
 /** The minimal result for a skipped hook, rendered in the host's own shape. */
 export const skippedHook = (
   adapter: HostAdapter,
@@ -160,21 +182,7 @@ export const skippedHook = (
   budget: Budget,
   stage: HookSkip["stage"],
 ): DeadlineResult => {
-  let native: string | null = null;
-  let event: HookEventKind | null = null;
-  if (raw !== undefined) {
-    const parsed = adapter.parse(raw, env);
-    native = parsed.native;
-    event = parsed.ok ? parsed.input.event.kind : parsed.event;
-  }
-  budget.record({
-    at: new Date(budget.now()).toISOString(),
-    host: adapter.descriptor.host,
-    event,
-    outcome: "skip",
-    stage,
-    elapsedMs: Math.round(budget.now() - budget.startedAt),
-  });
+  const { native, event } = note(adapter, raw, env, budget, "skip", stage);
   return {
     ...adapter.render(skipDecision(event), native),
     error: `${HOOK_SKIP_TEXT} (past the ${budget.deadlineMs} ms hook deadline)`,
@@ -196,22 +204,14 @@ export const dispatchWithin = async (
   dispatch: NonNullable<HookDeadline["dispatch"]> = dispatchHook,
 ): Promise<DeadlineResult> => {
   const remaining = () => budget.startedAt + budget.deadlineMs - budget.now();
-  if (remaining() <= 0) return skippedHook(adapter, raw, env, budget, "dispatch");
-  const result = await within(
-    Promise.resolve().then(() => dispatch(adapter, raw, env)),
-    remaining(),
-  );
+  const result =
+    remaining() > 0
+      ? await within(
+          Promise.resolve().then(() => dispatch(adapter, raw, env)),
+          remaining(),
+        )
+      : TIMED_OUT;
   if (isTimedOut(result)) return skippedHook(adapter, raw, env, budget, "dispatch");
-  if (remaining() < 0) {
-    const parsed = raw === undefined ? null : adapter.parse(raw, env);
-    budget.record({
-      at: new Date(budget.now()).toISOString(),
-      host: adapter.descriptor.host,
-      event: parsed ? (parsed.ok ? parsed.input.event.kind : parsed.event) : null,
-      outcome: "late",
-      stage: "done",
-      elapsedMs: Math.round(budget.now() - budget.startedAt),
-    });
-  }
+  if (remaining() < 0) note(adapter, raw, env, budget, "late", "done");
   return { ...result, skipped: false };
 };
