@@ -20,6 +20,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { tailLines, type CheckRun } from "../checks";
+import { stateDir } from "./heavy";
+
+export { stateDir };
+export {
+  probeScope,
+  scopePrefix,
+  scopeSupport,
+  type ScopeProbe,
+  type ScopeSupport,
+} from "./heavy-scope";
 
 /** Named checks that take the lease when nothing is configured. */
 export const DEFAULT_HEAVY_CHECKS = ["test", "build", "typecheck"];
@@ -182,17 +192,6 @@ export function resolveResourceSettings(
 
 // ---------------------------------------------------------------------------
 // the machine lease
-
-/** Workit's state dir for `env` (the logger's resolution, over an explicit env). */
-export function stateDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform) {
-  if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
-  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
-  const home = env.HOME || os.homedir();
-  if (platform === "darwin") return path.join(home, "Library", "Application Support", "workit");
-  if (platform === "win32")
-    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
-  return path.join(home, ".local", "state", "workit");
-}
 
 export const leaseDir = (env: NodeJS.ProcessEnv): string => path.join(stateDir(env), "leases");
 
@@ -588,71 +587,6 @@ export function describeHolder(holder: LeaseHolder, now = Date.now()): string {
   return `${holder.check}, pid ${holder.pid}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}`;
 }
 
-// ---------------------------------------------------------------------------
-// the systemd user scope
-
-export type ScopeSupport = { ok: true } | { ok: false; reason: string };
-
-const onPath = (command: string, env: NodeJS.ProcessEnv): boolean =>
-  (env.PATH ?? "")
-    .split(path.delimiter)
-    .filter(Boolean)
-    .some((dir) => {
-      try {
-        fs.accessSync(path.join(dir, command), fs.constants.X_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-
-/**
- * Can heavy checks run in their own `systemd-run --user --scope`? Needs Linux,
- * `systemd-run` on PATH, a running user manager, and the memory and cpu
- * controllers delegated to it (cgroup v2).
- */
-export function scopeSupport(
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform = process.platform,
-  read: (file: string) => string | null = readText,
-): ScopeSupport {
-  if (platform !== "linux") return { ok: false, reason: `no systemd scopes on ${platform}` };
-  if (!onPath("systemd-run", env)) return { ok: false, reason: "systemd-run is not on PATH" };
-  const uid = process.getuid?.() ?? 0;
-  const runtime = env.XDG_RUNTIME_DIR || `/run/user/${uid}`;
-  if (!fs.existsSync(path.join(runtime, "systemd", "private")))
-    return { ok: false, reason: "no user systemd manager is running" };
-  const controllers = read(
-    `/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/cgroup.controllers`,
-  );
-  if (controllers === null)
-    return { ok: false, reason: "cgroup v2 is not mounted for the user manager" };
-  const missing = ["memory", "cpu"].filter((name) => !controllers.split(/\s+/u).includes(name));
-  if (missing.length)
-    return { ok: false, reason: `the user manager is not delegated ${missing.join(" and ")}` };
-  return { ok: true };
-}
-
-/** The `systemd-run` prefix that runs a command in its own limited scope. */
-export function scopePrefix(
-  unit: string,
-  settings: Pick<ResourceSettings, "memoryMax" | "cpuQuota">,
-) {
-  return [
-    "systemd-run",
-    "--user",
-    "--scope",
-    "--quiet",
-    "--collect",
-    `--unit=${unit}`,
-    "-p",
-    `MemoryMax=${settings.memoryMax}`,
-    "-p",
-    `CPUQuota=${settings.cpuQuota}`,
-    "--",
-  ];
-}
-
 /** systemd-run's own failure before it ran the command (bus, unit, property). */
 const SCOPE_START_FAILURE =
   /^Failed to (?:connect to bus|create bus connection|start transient scope unit|parse \S+?=)/u;
@@ -744,4 +678,26 @@ export function firstNotice(
     // Pruning is best effort.
   }
   return true;
+}
+
+export type SlotState = {
+  slot: number;
+  /** The lease in this slot, or null when it is free. */
+  holder: LeaseHolder | null;
+  /** Why the lease in it no longer holds (the next acquirer reclaims it). */
+  stale: string | null;
+};
+
+/** What each of `slots` lease slots holds right now. Read-only: nothing is reclaimed. */
+export function leaseSlots(dir: string, slots: number, probe: LeaseProbe = {}): SlotState[] {
+  const states: SlotState[] = [];
+  for (let slot = 0; slot < slots; slot += 1) {
+    const lease = parseLease(readText(path.join(dir, `slot-${slot}.json`)));
+    states.push({
+      slot,
+      holder: lease ? holderOf(lease) : null,
+      stale: lease ? staleReason(lease, probe) : null,
+    });
+  }
+  return states;
 }

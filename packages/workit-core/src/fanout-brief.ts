@@ -112,6 +112,7 @@ const rules = (
       ? '  3. Commit with plain `git commit -m <msg> --trailer "Workit-Session: <the WORKIT_SESSION_ID in your env>" --trailer "<your host attribution trailer>" -- <paths in SCOPE>`; push only if this brief says so.'
       : "  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`; push only if this brief says so.",
     "  4. Never record a verdict on your own work.",
+    "  5. Run tests, lint, typecheck and builds only through `workit check` (a named check, or `workit check --heavy -- <cmd>`): one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
   ];
 };
 

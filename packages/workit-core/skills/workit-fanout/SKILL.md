@@ -21,8 +21,8 @@ ceremony; do it yourself. Workit never spawns agents; you do.
 2. **Record standing orders** (`workit ledger standing add "<order>"`): every
    user directive all workers share. Directives decay across resumes.
 3. **Brief each worker verbatim** with `workit fanout brief <slice>`: plan
-   fields, standing orders, SCRATCH, session id, fan-in rule. Never hand-edit
-   it; change the plan or the standing orders and render again.
+   fields, standing orders, SCRATCH, session id, fan-in and heavy-lease rules.
+   Never hand-edit it; change the plan or the standing orders and render again.
 4. **Spawn in a rolling window**, in the background, each in its own worktree:
    keep 4-6 in flight and refill from `spawnable` in `workit fanout status` as
    each one finishes. Model: the brief's `model:` line, else TIER

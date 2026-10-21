@@ -40,6 +40,7 @@ import {
   readConfigFromDir,
 } from "@brainervirus/workit-core/src/core/config";
 import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
+import { probeScope, type ScopeProbe } from "@brainervirus/workit-core/src/core/heavy-scope";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
@@ -110,7 +111,8 @@ type DoctorCheckId =
   | "credential_metadata"
   | "github_identity"
   | "gitlab_identity"
-  | "log_writable";
+  | "log_writable"
+  | "heavy_scope";
 
 /** `info` is a true fact that needs no action (a normal install has no dev
  *  checkout, a newer host CLI than qualified); it counts as passed. */
@@ -171,6 +173,8 @@ export type DoctorOptions = {
   env?: NodeJS.ProcessEnv;
   /** Installer run: only registration/config checks count toward exitCode. */
   installer?: boolean;
+  /** The heavy-check scope probe (test seam; default starts a real throwaway scope). */
+  scopeProbe?: (env: NodeJS.ProcessEnv) => ScopeProbe;
 };
 
 type Resolved = {
@@ -195,6 +199,7 @@ type Resolved = {
   env: NodeJS.ProcessEnv;
   installer: boolean;
   cliVersion: string | null;
+  scopeProbe: (env: NodeJS.ProcessEnv) => ScopeProbe;
 };
 
 const findDevFromCwd = (cwd: string): string | null => {
@@ -242,6 +247,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     env,
     installer: options.installer ?? false,
     cliVersion: options.cliVersion ?? null,
+    scopeProbe: options.scopeProbe ?? probeScope,
   };
 };
 
@@ -2546,6 +2552,34 @@ const checkWorkspaceLock = (res: Resolved): DoctorCheck => {
   };
 };
 
+// Heavy checks run in a systemd scope with MemoryMax and CPUQuota (Linux). A
+// throwaway scope is started and its cgroup read back, so the row reports
+// what the kernel applies, not what the unit file claims.
+const SCOPE_DELEGATE_FIX =
+  'Delegate the controllers to your user manager: `sudo systemctl edit user@.service`, add `[Service]` and `Delegate=cpu memory pids`, then log in again (or set "resources": {"scope": false} in workspaces.json to run heavy checks unlimited)';
+const checkHeavyScope = (res: Resolved): DoctorCheck => {
+  const probe = res.scopeProbe(res.env);
+  const delegate = probe.delegate ? `; user manager ${probe.delegate}` : "";
+  if (probe.effective)
+    return {
+      id: "heavy_scope",
+      status: "pass",
+      detail: `heavy-check scopes apply their limits (probe scope read memory.max=${probe.memoryMax}, cpu.max=${probe.cpuMax}${delegate})`,
+    };
+  if (!probe.supported)
+    return {
+      id: "heavy_scope",
+      status: "info",
+      detail: `heavy checks run under the lease without a memory/CPU scope: ${probe.reason}${delegate}`,
+    };
+  return {
+    id: "heavy_scope",
+    status: "warn",
+    detail: `heavy-check scopes do not apply their limits: ${probe.reason}${delegate}`,
+    fix: SCOPE_DELEGATE_FIX,
+  };
+};
+
 const CLAUDE_PLUGIN_PACKAGE = "@brainervirus/workit-claude-code";
 
 const versionBehind = (version: string, latest: string): boolean =>
@@ -2787,6 +2821,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkGithubIdentity,
   checkGitLabIdentity,
   checkLogWritable,
+  checkHeavyScope,
 ];
 
 // AR-11/CA-40: the installer guarantees the selected host itself — runtime,

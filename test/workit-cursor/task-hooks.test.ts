@@ -410,6 +410,40 @@ const shell = (root: string, command: string) =>
     command,
   });
 
+/** Run `fn` with a stand-in `workit` on PATH, so the heavy-command gate is active. */
+const withWorkitOnPath = <T>(fn: () => T): T => {
+  const bin = mkdtempSync(path.join(tmpdir(), "workit-fake-bin-"));
+  writeFileSync(path.join(bin, "workit"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const before = { PATH: process.env.PATH, HOME: process.env.HOME };
+  process.env.PATH = `${bin}${path.delimiter}${before.PATH ?? ""}`;
+  // A scratch home: no real host permission rule decides the case.
+  process.env.HOME = bin;
+  try {
+    return fn();
+  } finally {
+    process.env.PATH = before.PATH;
+    process.env.HOME = before.HOME;
+    rmSync(bin, { recursive: true, force: true });
+  }
+};
+
+test("Given `pip install requests` in a git checkout, When the Cursor hook runs, Then the heavy-command gate denies it with the exact rewrite", () => {
+  const root = shellRoot();
+  spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
+  try {
+    const result = withWorkitOnPath(() => shell(root, "pip install requests")) as {
+      permission?: string;
+      agent_message?: string;
+    };
+    expect(result.permission).toBe("deny");
+    expect(result.agent_message).toContain(
+      "Run exactly: workit check --heavy -- pip install requests",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("shell intent captures unlisted verbs and skips env assignments", () => {
   const root = shellRoot();
   try {
@@ -424,6 +458,7 @@ test("shell intent captures unlisted verbs and skips env assignments", () => {
     expect(shell(root, `FOO=1 rm ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual(
       { permission: "allow" },
     );
+    // Outside a git checkout the heavy-command gate stays out too.
     expect(shell(root, "pip install requests")).toMatchObject({ permission: "allow" });
   } finally {
     rmSync(root, { recursive: true, force: true });

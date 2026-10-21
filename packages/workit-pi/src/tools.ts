@@ -149,6 +149,10 @@ export const enforceToolPolicy = (
       descriptor: PI_DESCRIPTOR,
       addendum: null,
     });
+    // A heavy command runs under the machine lease: Pi's tool_call input is
+    // mutable, so the command is replaced in place.
+    if (decision.kind === "rewrite" && event.toolName === "bash")
+      (event.input as { command: string }).command = decision.command;
     return decision.kind === "deny" ? { block: true as const, reason: decision.reason } : undefined;
   };
   if (event.toolName === "bash") {

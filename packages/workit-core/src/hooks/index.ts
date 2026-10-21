@@ -19,6 +19,7 @@ export {
   type SessionHandle,
 } from "./context";
 export { shellPolicy } from "./policy";
+export { heavyDenial, heavyGate, splitDenial } from "./heavy-gate";
 export { shellGate, shellWrites, writeGate } from "./write-gate";
 export { liveOwner } from "../core/live-session";
 export { asksUser, stopDecision, stopObligation, type StopObligation } from "./stop";

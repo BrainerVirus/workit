@@ -13,6 +13,7 @@
 // policy): a broken hook must never brick the host.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -37,7 +38,9 @@ const failOpen = (reason) => {
 // no redirect and no writing verb can need none of them; with no Workit task
 // store for the checkout there is no task to gate a non-git edit on; and a
 // PostToolUse only matters after a `git commit`. A workit delivery verb
-// (`workit pr create`, `workit ci wait`) may get the workit-ship nudge.
+// (`workit pr create`, `workit ci wait`) may get the workit-ship nudge. A
+// command that may be heavy (a catalog word or a pattern's first word, the
+// copy of core/heavy-words.ts below) goes to the heavy-command gate.
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
 const RAW_TOOLS = /\b(?:git|gh|glab)\b/;
@@ -46,6 +49,74 @@ const WORKIT_DELIVERY =
 const MAYBE_GATED =
   /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
 const SHELLS = new Set(["Bash", "PowerShell"]);
+const HEAVY_WORDS = new Set(
+  (
+    "npm npx pnpm pnpx yarn bun bunx deno corepack make gmake docker podman nerdctl " +
+    "python python3 py uv poetry pdm pipenv hatch rye bundle rake nx " +
+    "jest vitest mocha ava tap karma jasmine nyc c8 tsc vue-tsc svelte-check eslint stylelint " +
+    "tslint webpack webpack-cli rollup parcel tsup vite next nuxt nuxi astro ng react-scripts " +
+    "playwright cypress wdio testcafe turbo lerna sonar-scanner sonarless sonarless-mcp go " +
+    "golangci-lint gotestsum staticcheck cargo mvn mvnw gradle gradlew ant sbt bazel bazelisk " +
+    "buck2 dotnet msbuild pytest py.test tox nox mypy pyright pylint coverage maturin pip pip3 " +
+    "rspec rails phpunit pest phpstan psalm composer mix swift xcodebuild flutter dart pod cmake " +
+    "ninja meson ctest scons docker-compose buildah earthly"
+  ).split(" "),
+);
+const wordsOf = (command) =>
+  command
+    .split(/[\s;&|()<>`'"]+/u)
+    .map((word) =>
+      (word.split(/[\\/]/u).at(-1) ?? "").toLowerCase().replace(/\.(?:exe|cmd|bat)$/u, ""),
+    )
+    .filter(Boolean);
+const readJson = (file) => {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return undefined;
+  }
+};
+const stateDir = () => {
+  const env = process.env;
+  if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
+  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
+  const home = env.HOME || os.homedir();
+  if (process.platform === "darwin")
+    return path.join(home, "Library", "Application Support", "workit");
+  if (process.platform === "win32")
+    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
+  return path.join(home, ".local", "state", "workit");
+};
+const REPO_CHECKS = "workit.checks.json";
+/** Could the command be heavy? A doubt answers yes (it only costs a runtime load). */
+const maybeHeavy = (command, cwd) => {
+  try {
+    const words = wordsOf(command);
+    if (words.some((word) => HEAVY_WORDS.has(word) || /^python[\d.]*$/u.test(word))) return true;
+    const patterns = [];
+    const machine = readJson(path.join(stateDir(), "heavy-commands.json"));
+    if (Array.isArray(machine?.patterns)) patterns.push(...machine.patterns);
+    // The repo's checks config at the git top: keep REPO_CHECKS equal to
+    // checksConfigFile in workit-core/src/check-config.ts (a test holds them).
+    for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+      if (existsSync(path.join(dir, ".git"))) {
+        const repo = readJson(path.join(dir, REPO_CHECKS));
+        if (Array.isArray(repo?.resources?.heavyCommands))
+          patterns.push(...repo.resources.heavyCommands);
+        break;
+      }
+      if (path.dirname(dir) === dir) break;
+    }
+    for (const pattern of patterns) {
+      if (typeof pattern !== "string") continue;
+      const first = wordsOf(pattern)[0];
+      if (!first || first.includes("*") || words.includes(first)) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+};
 const EDITS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 /** `<git-common-dir>/workit` (or `<dir>/.workit` outside git) holds tasks. */
@@ -85,6 +156,7 @@ const fastAllow = (() => {
     if (value?.hook_event_name !== "PreToolUse") return false;
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (WORKIT_DELIVERY.test(command)) return false;
+      if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
       if (!MAYBE_GATED.test(command)) return true;
       return !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }

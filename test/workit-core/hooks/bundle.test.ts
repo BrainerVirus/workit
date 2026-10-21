@@ -35,8 +35,10 @@ const HOOK_ENTRIES = [
 // add ~6 KB (Cursor ~716 KB); the ledger's verdict-gate trust checks and
 // issued-id tokens (#289) add ~6 KB (Cursor ~722.5 KB); the live-session
 // guard (#274) with its review fixes adds ~8.5 KB (Cursor ~731 KB), so the
-// ceiling is 732 KB.
-const BUDGET = 732_000;
+// ceiling was 732 KB. The heavy-command gate (#325: catalog, wrappers,
+// patterns, host permission rules, see-through gates) adds ~21 KB (Cursor
+// ~751.9 KB), so the ceiling is 753 KB.
+const BUDGET = 753_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {
@@ -123,10 +125,11 @@ test("a host plugin or MCP bundle loads no setup/doctor/admin modules", () => {
 });
 
 // Codex runs its hook on every tool call plus PostToolUse after every shell
-// call. The entry answers the calls that cannot matter (non-git shell
-// commands, PostToolUse without a commit) before the runtime chunk loads, so
+// call. The entry answers the calls that cannot matter (shell commands with
+// no git/gh/glab and no heavy word (core/heavy-words.ts),
+// PostToolUse without a commit) before the runtime chunk loads, so
 // it must stay a few hundred bytes; the runtime still answers the rest.
-test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab commands", () => {
+test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab and maybe-heavy commands", () => {
   const out = mkdtempSync(path.join(tmpdir(), "workit-codex-entry-"));
   try {
     const built = spawnSync(
@@ -150,7 +153,7 @@ test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab
     expect(
       run({ hook_event_name: "PostToolUse", tool_input: { command: "ls" }, tool_response: "" }),
     ).toEqual({ hookSpecificOutput: { hookEventName: "PostToolUse" } });
-    expect(run({ hook_event_name: "PreToolUse", tool_input: { command: "npm test" } })).toEqual({
+    expect(run({ hook_event_name: "PreToolUse", tool_input: { command: "ls -la" } })).toEqual({
       hookSpecificOutput: { hookEventName: "PreToolUse" },
     });
     expect(

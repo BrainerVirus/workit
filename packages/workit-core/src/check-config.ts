@@ -29,6 +29,26 @@ import path from "node:path";
 export const SCRIPT_CHECKS = ["test", "lint", "typecheck", "check"] as const;
 export const CHECKS_FILE = "workit.checks.json";
 
+/** Where the repo's checks config lives under the repository top `root` (the one path resolver). */
+export const checksConfigFile = (root: string): string => path.join(root, CHECKS_FILE);
+
+/**
+ * `resources.heavyCommands` of the repo's checks config under `root`, read
+ * leniently (no git, no check validation): the heavy-command gate's patterns.
+ */
+export function repoHeavyCommands(root: string): string[] {
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(checksConfigFile(root), "utf8"));
+    const resources = isRecord(value) ? value.resources : undefined;
+    const list = isRecord(resources) ? resources.heavyCommands : undefined;
+    return Array.isArray(list)
+      ? list.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export type NamedCheck = {
   name: string;
   /** The argv `workit check <name>` runs. */
@@ -171,7 +191,7 @@ const GATES = ["testing", "verification"] as const;
 /** The named checks for the repository containing `cwd` (see the header). */
 export function loadCheckConfig(cwd: string): CheckConfig {
   const root = checkRoot(cwd);
-  const file = path.join(root, CHECKS_FILE);
+  const file = checksConfigFile(root);
   const none = (error: string | null = null): CheckConfig => ({
     source: error ? CHECKS_FILE : "none",
     root,

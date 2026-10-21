@@ -1,13 +1,21 @@
-// OpenCode V2 shell calls: before one runs, note HEAD (and the workdir for
-// the permission hook); after it, record a raw `git commit` for the session
+// OpenCode V2 shell calls: before one runs, rewrite one simple heavy command
+// to run under the machine-wide heavy-check lease (`workit check --heavy --
+// <cmd>`; the tool's input is mutable in execute.before) once every Workit
+// gate passed on the original and no OpenCode permission rule names it, note
+// HEAD (and the workdir for the permission hook); after it, record a raw `git commit` for the session
 // and append the raw-git nudge to the tool output (OpenCode's permission
 // hook can only deny, so a nudge rides on the result the model reads).
 import path from "node:path";
 import {
   callKey,
+  heavyGate,
+  liveOwner,
   noteRawCommit,
   rawGitPost,
+  rawGitPre,
+  shellGate,
   shellNudge,
+  shellPolicy,
   type HookInput,
 } from "@brainervirus/workit-core/hooks";
 
@@ -51,7 +59,35 @@ const hookInput = (
 
 export type ShellBeforeEvent = { tool: string; sessionID: string; id: string; input: unknown };
 
-/** Before the shell tool runs: remember its workdir and note HEAD for a raw commit. */
+/**
+ * The lease rewrite of a simple heavy command, or null: only when the gates
+ * the permission hook runs (branch policy, the raw-git deny, the write and
+ * live-session gates) all pass on the original command.
+ */
+const leaseRewrite = (input: HookInput): string | null => {
+  if (input.event.kind !== "shell.pre") return null;
+  const { command } = input.event;
+  // The plan first: it has no side effects, and most commands stop here. The
+  // gates run only for a heavy one (shellGate claims the checkout for the
+  // session, as the permission hook does for every command it allows).
+  const plan = heavyGate(input.cwd, command, { host: "opencode" });
+  if (plan.kind !== "rewrite") return null;
+  if (shellPolicy(input.cwd, command, "posix").kind === "deny") return null;
+  if (rawGitPre(input, command, { nudge: false }).kind === "deny") return null;
+  const owner = liveOwner(
+    { host: "opencode", session: { id: input.session.id, parentId: null } },
+    "in-process-plugin",
+  );
+  if (shellGate(input.cwd, command, owner).kind === "deny") return null;
+  return plan.command;
+};
+
+/**
+ * Before the shell tool runs: rewrite a heavy command through the lease,
+ * remember its workdir and note HEAD for a raw commit. Runs before the
+ * shell-session correlation notes the call, so that keys on the command
+ * `create.before` will see.
+ */
 export const observeShellBefore = (
   root: string,
   event: ShellBeforeEvent,
@@ -62,6 +98,12 @@ export const observeShellBefore = (
     const shell = commandOf(event.input);
     if (!shell) return;
     const sessionID = String(event.sessionID);
+    const original = hookInput(root, sessionID, String(event.id), shell);
+    const heavy = leaseRewrite(original);
+    if (heavy) {
+      (event.input as { command: string }).command = heavy;
+      shell.command = heavy;
+    }
     const input = hookInput(root, sessionID, String(event.id), shell);
     workdirs.set(sessionID, input.cwd);
     if (workdirs.size > 256) workdirs.delete(workdirs.keys().next().value!);

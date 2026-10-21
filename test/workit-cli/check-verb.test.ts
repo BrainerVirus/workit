@@ -662,9 +662,16 @@ test("G the lease is held elsewhere, T an ad-hoc check runs without it, --heavy 
   const lint = await runEnv(root, ["check", "lint", "--json"], env);
   expect(lint.code).toBe(0);
   expect(lint.json().data.lease).toBeNull();
-  const unleased = await runEnv(root, ["check", "test", "--no-lease", "--json"], env);
+  const unleased = await runEnv(
+    root,
+    ["check", "test", "--no-lease", "--reason", "measuring the hold", "--json"],
+    env,
+  );
   expect(unleased.code).toBe(0);
-  expect(unleased.json().data.lease).toBeNull();
+  expect(unleased.json().data).toMatchObject({
+    lease: null,
+    noLease: { reason: "measuring the hold" },
+  });
 });
 
 test("G a stale lease from a dead process, T `workit check test` reclaims it and says so", async () => {

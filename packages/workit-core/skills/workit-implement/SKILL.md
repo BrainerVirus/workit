@@ -19,7 +19,9 @@ description: Build a requested change in small verified steps - follow local pat
    Mechanical change: the existing checks are enough. No tautological tests:
    a test must fail if the behavior breaks, never restate the implementation.
 4. Run the real checks: `workit check test` (and `lint`, `typecheck` when the
-   repo has them).
+   repo has them). Heavy work runs under one machine-wide lease: an ad-hoc
+   suite is `workit check --heavy -- <cmd>`, never a hand-made flock; a busy
+   lease waits and names its holder (`workit lock status`).
 5. Prove the feature on its real surface with the project's `verify-<app>`
    skill; none yet? Write one (workit-verify-app). Tests show branch behavior,
    not that the feature works.

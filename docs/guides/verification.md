@@ -28,6 +28,58 @@ Without it, Workit detects defaults: package.json `test`/`lint`/`typecheck`/
 `pytest`, `make test`. A check is stale once the worktree changes, or if the
 check itself changed it.
 
+### Heavy commands and the lease
+
+Heavy work (tests, builds, lint, typecheck, installs, image builds) shares one
+machine-wide lease, so parallel agents cannot exhaust the machine's memory and
+CPU ([delivery guide](delivery.md#heavy-checks-share-the-machine)). Run heavy
+commands through `workit check`, never with a hand-made `flock`:
+
+```bash
+workit check test                    # test, build and typecheck take the lease
+workit check --heavy -- npx jest     # an ad-hoc heavy command
+workit lock status                   # who holds the lease
+workit lock wait --timeout 300       # wait for a free slot without taking it
+workit check test --no-lease --reason "machine idle, bisecting a hang"
+```
+
+The shell hook catches the raw form, after every other Workit gate (branch
+policy, raw git, the before-write and live-session gates) passed on it. Those
+gates also judge what `workit check … -- <cmd>` runs, so wrapping a command
+never gets it past them.
+
+- **One heavy command** (`npx jest`, `npm run test:ci`, `cargo test`, `docker
+  build`, also behind `flock`, `nice`, `env`, `timeout` or `bash -c '<one
+  command>'`) runs as `workit check --heavy -- <cmd>` on Claude Code, OpenCode
+  and Pi. In a Claude Code or OpenCode shell the CLI caps the lease wait at
+  100 s, so a busy lease answers before the shell tool's own 120 s timeout
+  (`--wait <s>` overrides it); an older CLI waits its configured default. The
+  rewrite uses only flags every supported CLI accepts. Codex and Cursor
+  cannot rewrite a command, so the hook denies it there and names that exact
+  command.
+- **A chain with heavy parts** (`git status && make test && touch x`, `cd web
+  && npm test`, a pipe, a redirect) is denied on every host. The reason names
+  each heavy part's lease command (`workit check --heavy -- make test`); run
+  the other parts as their own commands. The hook never wraps a chain in `bash
+  -c`.
+- **A host rule decides first.** If a host deny or ask rule names the heavy
+  command, or the only allow that would cover the wrapper is one for `workit`,
+  the command runs as typed, outside the lease, with a one-line note. Wrapping
+  must never change what the host would have done with it.
+- **Not gated:** watch modes (`--watch`, `tsc -w`), dev servers and
+  storybook (`npm run dev`, `start`, `serve`, `vite`, `next dev`), and any
+  command outside a git checkout.
+
+The catalog is built in (`workit lock heavy list`). To add a command, use
+`workit lock heavy add 'mvn verify'` (machine-wide, under the state dir), or
+list it in the repo's checks config under `resources.heavyCommands`. A
+pattern is words matched as a prefix of the command line, with `*` inside a
+word matching anything (`task test:*`). `workit lock heavy test -- <cmd>` says
+whether the hook gates a command. The hook leaves commands alone when no
+`workit` is on PATH, and `WORKIT_HEAVY_GATE=0` in the host's environment turns
+the gate off for that host. `--no-lease` needs `--reason`, recorded on the run
+as `noLease`.
+
 ## `workit ledger`: decisions, rulings, verdicts
 
 The ledger is a repo-wide, append-only record shared by all worktrees.

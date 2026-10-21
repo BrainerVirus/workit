@@ -21,6 +21,8 @@ way a user would.
    `.cursor/skills/`; other hosts: the directory their docs name). If the repo
    already has a project skills directory, use it:
    - **Launch:** one command, its ready signal (log line, port, exit 0), a timeout.
+     Builds, installs and e2e suites run under the heavy-check lease
+     (`workit check --heavy -- <cmd>`); a long-running server does not.
    - **Doctor:** each precondition and its fix (deps, env vars, ports, services).
    - **Drive:** how to exercise it: CLI invocations, `curl` against routes, a
      browser tool for UI, with fixture data.

@@ -9,6 +9,7 @@ import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { recordIssuedSession } from "../host-session";
+import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
 import {
   callKey,
@@ -162,6 +163,19 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
         ? shellGate(input.cwd, event.command, liveOwner(input, descriptor.transport), event.dialect)
         : NONE;
       if (gate.kind === "deny") return gate;
+      // A heavy command runs under the machine lease: rewritten where the
+      // host can replace the command, else denied with the exact rewrite.
+      // Every gate above passed on the original command (ruling mvid5onk).
+      const plan = heavyGate(input.cwd, event.command, {
+        host: input.host,
+        dialect: event.dialect,
+        permissionMode: input.permissionMode,
+      });
+      if (plan.kind === "split" && canDeny) return splitDenial(plan);
+      const rewrites = usable(descriptor.shellPolicy.rewrite);
+      if (plan.kind === "rewrite" && !rewrites && canDeny) return heavyDenial(event.command, plan);
+      const lease = plan.kind === "rewrite" && rewrites ? plan : null;
+      const aside = plan.kind === "passthrough" ? plan.note : null;
       // The command will run: note HEAD so the post-tool hook (or the next
       // command, without one) can tell whether a raw commit moved it.
       noteRawCommit(
@@ -169,12 +183,27 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
         event.command,
         postTool ? callKey(event.toolUseId, event.command) : NEXT_COMMAND,
       );
+      const rewritten = (text: string | null): HookDecision =>
+        lease
+          ? {
+              kind: "rewrite",
+              command: lease.command,
+              input: event.toolInput ? { ...event.toolInput, command: lease.command } : null,
+              text,
+            }
+          : NONE;
       // An in-process plugin shows nudges on the tool result (shellNudge):
       // spending the once-per-session nudge here would lose it.
-      if (descriptor.transport !== "hook-process") return NONE;
-      return withContextLine(
-        canDeny ? rawGitPre(input, event.command) : NONE,
+      if (descriptor.transport !== "hook-process") return rewritten(null);
+      const nudged = withContextLine(
+        withContextLine(canDeny ? rawGitPre(input, event.command) : NONE, aside),
         shipNudge(input, event.command),
+      );
+      if (!lease) return nudged;
+      return rewritten(
+        [rewriteNote(lease), nudged.kind === "context" ? nudged.text : null]
+          .filter(Boolean)
+          .join("\n"),
       );
     }
     case "shell.post":

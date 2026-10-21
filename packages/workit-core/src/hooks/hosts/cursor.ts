@@ -65,7 +65,7 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
   },
   // Fails open like every host: a payload Workit cannot parse (a renamed
   // field in a Cursor release) must not block every shell command.
-  shellPolicy: { deny: "native", channel: "exit2+json", failClosed: false },
+  shellPolicy: { deny: "native", channel: "exit2+json", failClosed: false, rewrite: "none" },
   context: {
     sessionStart: "native",
     perTurn: "none",

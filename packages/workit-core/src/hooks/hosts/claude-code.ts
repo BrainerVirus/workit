@@ -54,7 +54,12 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     // `stop_hook_active` and `last_assistant_message` (claude 2.1.295).
     stop: { support: "native", native: "Stop" },
   },
-  shellPolicy: { deny: "native", channel: "permissionDecision", failClosed: false },
+  shellPolicy: {
+    deny: "native",
+    channel: "permissionDecision",
+    failClosed: false,
+    rewrite: "native",
+  },
   context: {
     sessionStart: "native",
     perTurn: "native",
@@ -185,7 +190,16 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
         return { ok: true, event: { kind: "tool.pre", tool: value.tool_name, toolUseId } };
       const command = toolCommand(value);
       return command
-        ? { ok: true, event: { kind: "shell.pre", command, toolUseId, dialect: dialectOf(value) } }
+        ? {
+            ok: true,
+            event: {
+              kind: "shell.pre",
+              command,
+              toolUseId,
+              dialect: dialectOf(value),
+              toolInput: value.tool_input as Record<string, unknown>,
+            },
+          }
         : { ok: false, error: `tool_input.command is required for ${value.tool_name}` };
     }
     case "PostToolUse": {
@@ -254,8 +268,25 @@ const CONTEXT_EVENTS = new Set([
   "PostToolUse",
 ]);
 
-/** Never emits `allow`: that would bypass the user's own permission prompt. */
+/**
+ * Never emits `allow`: that would bypass the user's own permission prompt. A
+ * rewrite is `updatedInput` with no permissionDecision: Claude Code applies it
+ * and runs its normal permission flow on the rewritten command (claude
+ * 2.1.306: a hook result with updatedInput and no permissionBehavior is
+ * yielded as the input to run).
+ */
 const render = (decision: HookDecision, native: string | null) => {
+  if (decision.kind === "rewrite" && native === "PreToolUse" && decision.input)
+    return {
+      json: {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          updatedInput: decision.input,
+          ...(decision.text ? { additionalContext: decision.text } : {}),
+        },
+      },
+      exitCode: 0,
+    };
   if (decision.kind === "deny" && native === "PreToolUse")
     return {
       json: {

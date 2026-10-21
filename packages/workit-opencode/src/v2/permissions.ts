@@ -1,4 +1,5 @@
 import {
+  heavyGate,
   liveOwner,
   rawGitPre,
   shellGate,
@@ -69,5 +70,11 @@ export const evaluateShellPermission = (
     if (raw.kind === "deny") return deny(raw.reason);
     const gated = shellGate(cwd, resource, owner);
     if (gated.kind === "deny") return deny(gated.reason);
+    // A chain with heavy parts the host would allow outright: run them alone
+    // under the lease. An ask or deny stands (#325).
+    if (event.effect === "allow") {
+      const plan = heavyGate(cwd, resource, { host: "opencode" });
+      if (plan.kind === "split") return deny(plan.reason);
+    }
   }
 };

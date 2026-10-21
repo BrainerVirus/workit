@@ -23,6 +23,7 @@ import type { HookDecision } from "./protocol";
 import {
   inWorkitWorkspace,
   rawInvocations,
+  workitCheckTail,
   workitInvocations,
   type RawInvocation,
 } from "./raw-git";
@@ -69,6 +70,28 @@ const exempt = (cwd: string, root: string, file: string, plans: ReadonlySet<stri
 
 const PREFIXES = new Set(["sudo", "command", "env", "nohup", "time", "exec", "xargs"]);
 const operands = (words: string[]) => words.filter((item) => !item.startsWith("-"));
+
+const SCRIPT_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+
+/**
+ * The script `workit check … -- <cmd>` runs, so the gates judge it as if it
+ * ran raw: the `--shell` string, a `bash -c` script, or the argv. Other
+ * workit verbs stay exempt (null).
+ */
+const wrappedScript = (input: string[]): string | null => {
+  let words = input;
+  while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) words = words.slice(1);
+  const tail = workitCheckTail(words);
+  if (!tail) return null;
+  if ("script" in tail) return tail.script;
+  const [shell, flag, script] = tail.argv;
+  if (
+    SCRIPT_SHELLS.has((shell.split(/[\\/]/).at(-1) ?? "").toLowerCase()) &&
+    /^-[a-z]*c$/.test(flag ?? "")
+  )
+    return script ?? null;
+  return tail.argv.map(quoteWord).join(" ");
+};
 
 /** The files one simple command edits: [] none, null unknown. */
 const editsOf = (input: string[]): string[] | null => {
@@ -149,10 +172,19 @@ const editsOf = (input: string[]): string[] | null => {
  * known, else null. Interpreters and formatters are not detected; Workit's
  * own commands never count.
  */
-export const shellWrites = (command: string): { writes: boolean; targets: string[] | null } => {
+export const shellWrites = (
+  command: string,
+  depth = 0,
+): { writes: boolean; targets: string[] | null } => {
   const targets: string[] = [];
   let unknown = false;
   for (const segment of segmentsOf(command)) {
+    const inner = depth < 4 ? wrappedScript(segment.words) : null;
+    if (inner !== null) {
+      const nested = shellWrites(inner, depth + 1);
+      if (nested.writes && nested.targets === null) unknown = true;
+      else if (nested.targets) targets.push(...nested.targets);
+    }
     targets.push(
       ...segment.redirects.filter((item) => !/^\/dev\/(?:null|stdout|stderr|tty)$/.test(item)),
     );
@@ -309,7 +341,12 @@ const quoteWord = (word: string): string =>
  * directory that segment runs in (`cd`, `pushd`/`popd`, `( … )` groups). A
  * relative target in an unknown directory is skipped.
  */
-const segmentTargets = (cwd: string, command: string, dialect: ShellDialect): string[] => {
+const segmentTargets = (
+  cwd: string,
+  command: string,
+  dialect: ShellDialect,
+  depth = 0,
+): string[] => {
   const targets: string[] = [];
   let dir: string | undefined = cwd;
   let stack: Array<string | undefined> = [];
@@ -342,6 +379,9 @@ const segmentTargets = (cwd: string, command: string, dialect: ShellDialect): st
       dir = stack.length ? stack.pop() : undefined;
       continue;
     }
+    const inner = depth < 4 ? wrappedScript(words) : null;
+    if (inner !== null && dir !== undefined)
+      targets.push(...segmentTargets(dir, inner, "posix", depth + 1));
     for (const file of segment.redirects)
       if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) {
         const resolved = at(file);

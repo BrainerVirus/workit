@@ -88,7 +88,12 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
     // last_assistant_message, turn_id; output `{"decision":"block","reason"}`.
     stop: { support: "native", native: "Stop" },
   },
-  shellPolicy: { deny: "native", channel: "permissionDecision", failClosed: false },
+  shellPolicy: {
+    deny: "native",
+    channel: "permissionDecision",
+    failClosed: false,
+    rewrite: "none",
+  },
   context: {
     sessionStart: "native",
     perTurn: "native",

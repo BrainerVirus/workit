@@ -544,7 +544,29 @@ export function rawInvocations(
 /** The invocations of the last few commands parsed (pure: same text, same answer). */
 const RECENT = new Map<string, readonly RawInvocation[]>();
 
-function walk(command: string, dialect: ShellDialect, depth: number): RawInvocation[] {
+/**
+ * Every command line a shell command runs, past the same wrappers, nesting
+ * and chains rawInvocations reads (`bash -c '…'`, `flock f -c '…'`, `xargs`,
+ * `timeout 30`, env prefixes): the words after the prefixes, outermost first.
+ */
+export function commandLines(command: string, dialect: ShellDialect = "posix"): string[][] {
+  const lines: string[][] = [];
+  try {
+    walk(command, dialect, 0, lines);
+  } catch (error) {
+    throw error instanceof ShellAnalysisError
+      ? error
+      : new ShellAnalysisError(error instanceof Error ? error.message : String(error));
+  }
+  return lines;
+}
+
+function walk(
+  command: string,
+  dialect: ShellDialect,
+  depth: number,
+  seen?: string[][],
+): RawInvocation[] {
   const found: RawInvocation[] = [];
   let dir: Dir = null;
   const groups: Array<{ dir: Dir; stack: Dir[] }> = [];
@@ -556,7 +578,10 @@ function walk(command: string, dialect: ShellDialect, depth: number): RawInvocat
   const sessionConfig: string[] = [];
   const nested = (script: string | null | undefined, inner: ShellDialect) => {
     if (!script || depth >= MAX_DEPTH) return;
-    for (const invocation of rawInvocations(script, inner, depth + 1))
+    const inside = seen
+      ? walk(script, inner, depth + 1, seen)
+      : rawInvocations(script, inner, depth + 1);
+    for (const invocation of inside)
       found.push({ ...invocation, dir: rebase(dir, invocation.dir) });
   };
   const visit = (input: string[], stdin: string | undefined, hops: number) => {
@@ -567,9 +592,18 @@ function walk(command: string, dialect: ShellDialect, depth: number): RawInvocat
     const { words, env } = stripPrefixes(line);
     const name = commandName(words[0]);
     if (!name) return;
+    seen?.push(words);
+    // `flock <file> -c '…'`: the wrapper's script.
+    if (name === "-c" || name === "--command") return nested(words[1], "posix");
     const runs = (lines: string[][]) => {
       if (hops < MAX_DEPTH) for (const next of lines) visit(next, undefined, hops + 1);
     };
+    // The gates judge what `workit check … -- <cmd>` runs as if it ran raw.
+    // (The heavy-command reader, `seen`, stops at workit: a wrapped command
+    // already runs under the lease.)
+    const wrapped = seen ? null : workitCheckTail(words);
+    if (wrapped)
+      return "script" in wrapped ? nested(wrapped.script, "posix") : runs([wrapped.argv]);
     if (CD.has(name)) {
       const target = cdTarget(words);
       dir = target === null ? os.homedir() : joinDir(dir, target);
@@ -659,6 +693,74 @@ const LAUNCHERS = new Set([
   "command",
 ]);
 const WORKIT_BIN = /(?:^|[\\/])workit(?:\.exe)?$|^@brainervirus\/workit-cli$/;
+const WORKIT_PACKAGE = /^@brainervirus\/workit-cli(?:@\S*)?$/;
+const PACKAGE_RUNNERS = new Set(["npx", "bunx", "pnpx"]);
+
+/**
+ * What a `workit check [flags] -- <cmd…>` (or `workit lock run -- <cmd…>`,
+ * also through `npx @brainervirus/workit-cli`) runs: the script of `--shell`,
+ * else the argv. Null for any other command.
+ */
+export function workitCheckTail(
+  words: readonly string[],
+): { script: string } | { argv: string[] } | null {
+  let at = 0;
+  if (PACKAGE_RUNNERS.has(commandName(words[0]))) {
+    at = words.findIndex((word, index) => index > 0 && !word.startsWith("-"));
+    if (at < 0 || !WORKIT_PACKAGE.test(words[at])) return null;
+  } else if (!/^workit(?:\.exe|\.cmd)?$/.test(commandName(words[0]))) return null;
+  const args = words.slice(at + 1);
+  if (args[0] !== "check" && !(args[0] === "lock" && args[1] === "run")) return null;
+  const split = args.indexOf("--");
+  const tail = split < 0 ? [] : args.slice(split + 1);
+  if (!tail.length) return null;
+  return args.slice(0, split).includes("--shell") ? { script: tail.join(" ") } : { argv: tail };
+}
+
+/**
+ * The one command `command` runs after its wrappers (env prefixes, `timeout`,
+ * `nice`, `flock`, `bash -c '<one command>'`), or null when it is a chain,
+ * pipe, redirect, substitution, group or heredoc anywhere.
+ */
+export function simpleCommand(
+  command: string,
+  dialect: ShellDialect = "posix",
+  depth = 0,
+): string[] | null {
+  let segments: Segment[];
+  try {
+    segments = segmentsOf(command, dialect);
+  } catch {
+    return null;
+  }
+  if (segments.length !== 1) return null;
+  const [segment] = segments;
+  if (
+    segment.group ||
+    segment.pipe ||
+    segment.unanalyzable ||
+    segment.redirects.length ||
+    segment.subs?.length ||
+    segment.stdin?.length
+  )
+    return null;
+  const { words } = stripPrefixes(segment.words);
+  const name = commandName(words[0]);
+  if (!name || depth >= MAX_DEPTH) return null;
+  if (SHELLS.has(name)) {
+    const script = shellScript(words, undefined);
+    return script ? simpleCommand(script, "posix", depth + 1) : null;
+  }
+  if (name === "-c" || name === "--command")
+    return words[1] ? simpleCommand(words[1], "posix", depth + 1) : null;
+  if (
+    EVALS.has(name) ||
+    POWERSHELLS.has(name) ||
+    ["xargs", "find", "parallel", "script", "cmd", "source", "."].includes(name)
+  )
+    return null;
+  return words;
+}
 
 /**
  * The arguments of every workit CLI invocation in a shell command: past env

@@ -248,6 +248,8 @@ const STUB_CORE_FILES = [
   "safe-write.ts",
   "task-contract.ts",
   "store-lock.ts",
+  // doctor's heavy_scope row probes the systemd scope (#325).
+  "heavy-scope.ts",
   "runtime-identity.ts",
   "release-tracks.ts",
 ];
