@@ -173,7 +173,7 @@ test("matched workspace carries vcs.provider, vcs.defaultTargetBranch, youtrack.
   });
 });
 
-test("YouTrack settings are valid with either hosting provider while GitHub Issues stay host-bound", () => {
+test("any forge works with any issue tracker; an unknown tracker or relation is invalid", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-tracker-hosts-"));
   try {
     writeWorkspaces(
@@ -207,14 +207,34 @@ test("YouTrack settings are valid with either hosting provider while GitHub Issu
             vcs: { provider: "gitlab" },
             issues: { provider: "github", link_on_pr: true },
           },
+          {
+            name: "github-gitlab-issues",
+            glob: "/home/*/mixed/**",
+            vcs: { provider: "github" },
+            issues: { provider: "gitlab", link: true, relation: "refs", backlink: true },
+          },
+        ],
+      }),
+    );
+    withIsolatedConfig(dir, () => expect(readWorkspacesResult().status).toBe("valid"));
+
+    writeWorkspaces(
+      dir,
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "jira",
+            glob: "/home/*/jira/**",
+            vcs: { provider: "github" },
+            issues: { provider: "jira", relation: "fixes" },
+          },
         ],
       }),
     );
     withIsolatedConfig(dir, () => {
       expect(readWorkspacesResult().status).toBe("invalid");
-      expect(readWorkspacesResult().error).toContain(
-        "GitHub issue linking requires the github provider",
-      );
+      expect(readWorkspacesResult().error).toContain("issues.provider");
+      expect(readWorkspacesResult().error).toContain("issues.relation");
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });

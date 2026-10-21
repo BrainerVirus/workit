@@ -776,5 +776,32 @@ export function createGitLabForge(options: {
         url: safeUrl(created.data["_links"]?.self ?? null),
       });
     },
+
+    issueComments(iid) {
+      const listed = apiJson<Array<{ body?: unknown }>>(
+        runner,
+        "glab",
+        apiHost,
+        api(`${project}/issues/${iid}/notes?per_page=100`),
+        `notes on issue #${iid}`,
+      );
+      if (!listed.ok) return listed;
+      if (!Array.isArray(listed.data))
+        return failure("failed", `glab api issue #${iid} notes returned no list`);
+      return success(
+        listed.data.flatMap((note) => (typeof note.body === "string" ? [note.body] : [])),
+      );
+    },
+
+    commentIssue(iid, body) {
+      const posted = apiWrite<unknown>(
+        runner,
+        "glab",
+        apiHost,
+        ["api", "-X", "POST", `${project}/issues/${iid}/notes`, "-f", `body=${body}`],
+        `note on issue #${iid}`,
+      );
+      return posted.ok ? success(undefined) : posted;
+    },
   };
 }

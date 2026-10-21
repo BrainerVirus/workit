@@ -11,7 +11,17 @@
 // ready/edit/threads/reply: the lifecycle steps `next` names (audit M13).
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { prBodyFor } from "@brainervirus/workit-core/src/forge/pr-body";
+import {
+  label as issueLabel,
+  linkedIssues,
+  planIssueLinks,
+  postBacklinks,
+  recordIssueLinks,
+  withIssueLines,
+  type BacklinkOutcome,
+  type IssueLink,
+  type LinkedIssue,
+} from "@brainervirus/workit-core/src/forge/issue-link";
 import {
   editPullRequest,
   listThreads,
@@ -59,7 +69,7 @@ import {
 
 const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]";
 const CREATE_USAGE =
-  "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--label <l>]… [--reviewer <login>]… [--draft] [--json]";
+  "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--json]";
 const MERGE_USAGE =
   "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch] [--unverified --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
@@ -110,11 +120,18 @@ async function status(argv: string[], io: Io): Promise<number> {
   if (!report.ok) return forgeFail(io, report);
   const doc = report.data.doc;
   const hint = nextHint(doc.next, doc.number);
+  const issues = issuesBlock(io.cwd, doc);
   return emit(
     io,
-    ok({ ...doc, nextHint: hint, verdict: verdictBlock(io.cwd, doc.head.branch, doc) }),
+    ok({ ...doc, nextHint: hint, verdict: verdictBlock(io.cwd, doc.head.branch, doc), issues }),
     (data) => {
       const lines = renderStatus(data);
+      if (data.issues?.length)
+        lines.splice(
+          1,
+          0,
+          `issues: ${data.issues.map((entry) => `${entry.tracker === "youtrack" ? entry.issue : `${entry.repo ?? ""}#${entry.issue}`} (${entry.tracker === "youtrack" ? "related" : entry.relation})`).join(", ")}`,
+        );
       // `next:` stays the last line.
       lines.splice(
         lines.length - 1,
@@ -130,6 +147,13 @@ async function status(argv: string[], io: Io): Promise<number> {
       return lines;
     },
   );
+}
+
+/** The issues `pr.linked` rows record for this PR; null when the ledger is unreadable. */
+function issuesBlock(cwd: string, doc: { number: number; repo: string }): LinkedIssue[] | null {
+  const ledger = readLedger(cwd);
+  if (!ledger.ok) return null;
+  return linkedIssues(ledger.value.rows, { pr: doc.number, repo: doc.repo });
 }
 
 /** How a merged PR landed, from its `pr.merged` row ("untracked": workit did not merge it). */
@@ -212,6 +236,8 @@ async function create(argv: string[], io: Io): Promise<number> {
     draft: "boolean",
     label: "list",
     reviewer: "list",
+    issue: "list",
+    refs: "boolean",
   });
   if (typeof flags === "string") return usage(io, flags, CREATE_USAGE);
   if (flags.positionals.length)
@@ -285,27 +311,57 @@ async function create(argv: string[], io: Io): Promise<number> {
     title ||= filled.data.title;
     body ??= filled.data.body;
   }
+  const forge = connected.data.forge;
+  const planned = planIssueLinks(io.cwd, {
+    issues: flags.lists.issue ?? [],
+    refs: flags.booleans.has("refs"),
+    branch,
+    forge: { kind: forge.kind, repo: forge.repo },
+  });
+  if (!planned.ok) return usage(io, planned.error, CREATE_USAGE);
+  const links = planned.data.links;
+  const actor = actorFromEnv(io.env);
   const result = await createPullRequest(
     io.cwd,
     connected.data,
     {
       base,
       title,
-      body: prBodyFor(io.cwd, {
-        body: body ?? "",
-        branch: branch ?? "",
-        repo: connected.data.forge.kind === "github" ? connected.data.forge.repo : null,
-      }),
+      body: withIssueLines(body ?? "", links),
       draft: flags.booleans.has("draft"),
-      actor: actorFromEnv(io.env),
+      actor,
       labels: flags.lists.label ?? [],
       reviewers: flags.lists.reviewer ?? [],
     },
     forgeDeps.sleep,
   );
   if (!result.ok) return forgeFail(io, result);
+  // Only a PR this call opened carries the lines; a reused one keeps its body.
+  const opened = result.data.created;
+  const linked = opened
+    ? recordIssueLinks(io.cwd, result.data, links, { actor, forge: forge.kind, repo: forge.repo })
+    : [];
+  const backlinks: BacklinkOutcome[] =
+    opened && planned.data.backlink && links.length
+      ? await postBacklinks(
+          io.cwd,
+          connected.data,
+          result.data,
+          links,
+          forgeDeps.youtrack ? { youtrack: forgeDeps.youtrack } : {},
+        )
+      : [];
   const created = {
     ...result.data,
+    issues: links.map((link) => ({
+      issue: issueLabel(link),
+      tracker: link.tracker,
+      relation: link.relation,
+      source: link.source,
+      line: link.line,
+    })),
+    linked,
+    ...(planned.data.backlink && links.length ? { backlinks } : {}),
     ...(releaseTrack ? { releaseTrack } : {}),
     ...(route ? { flow: route } : {}),
   };
@@ -321,9 +377,35 @@ async function create(argv: string[], io: Io): Promise<number> {
         ]
       : []),
     `head ${data.head.slice(0, 12)} verified on the forge`,
+    ...issueLines(links, opened, linked, backlinks, data.number),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     `next: ${data.next}`,
   ]);
+}
+
+function issueLines(
+  links: readonly IssueLink[],
+  opened: boolean,
+  linked: ReturnType<typeof recordIssueLinks>,
+  backlinks: readonly BacklinkOutcome[],
+  number: number,
+): string[] {
+  if (links.length === 0) return [];
+  const names = links.map(issueLabel).join(", ");
+  if (!opened)
+    return [
+      `issues not linked: the PR was already open, so its body is unchanged (${names}); add the lines with workit pr edit --pr ${number} --body-file <f>`,
+    ];
+  return [
+    `linked ${names}`,
+    ...linked.flatMap((row) =>
+      "error" in row ? [`ledger: link to ${row.issue} not recorded (${row.error})`] : [],
+    ),
+    ...backlinks.map(
+      (entry) =>
+        `backlink ${entry.issue}: ${entry.status.replace("_", " ")}${entry.note ? ` (${entry.note})` : ""}`,
+    ),
+  ];
 }
 
 const METHODS: ReadonlySet<string> = new Set<MergeMethod>(["squash", "merge", "rebase"]);

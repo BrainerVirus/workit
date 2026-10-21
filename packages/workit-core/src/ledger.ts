@@ -89,7 +89,12 @@ export type VerdictSurface = (typeof VERDICT_SURFACES)[number];
 export type Observer = "agent_asserted" | "workit_cli";
 
 /** Row types written by the CLI's own PR verbs (S10/S11); the only PR→branch source. */
-export const PR_ROW_TYPES: ReadonlySet<string> = new Set(["pr.created", "pr.status", "pr.merged"]);
+export const PR_ROW_TYPES: ReadonlySet<string> = new Set([
+  "pr.created",
+  "pr.status",
+  "pr.merged",
+  "pr.linked",
+]);
 
 /** Who wrote a row. Unverified: the environment says so (D18). */
 export type LedgerActor = { host: string; session: string | null; agentId: string | null };
@@ -2084,6 +2089,9 @@ export function summarizeRow(row: ReadRow): RowSummary {
       break;
     case "pr.merged":
       summary = `#${row.pr ?? "?"} ${text("method")} at ${(row.head ?? "?").slice(0, 12)}${text("mergeSha") ? ` -> ${text("mergeSha").slice(0, 12)}` : ""}`;
+      break;
+    case "pr.linked":
+      summary = `#${row.pr ?? "?"} links ${text("tracker")} ${text("issueRepo") ? `${text("issueRepo")}` : ""}${text("tracker") === "youtrack" ? "" : "#"}${text("issue")} (${text("relation") || "closes"}, from ${text("source") || "?"})`;
       break;
     case "merge.unverified":
       summary = `#${row.pr ?? "?"} unverified merge requested at ${(row.head ?? "?").slice(0, 12)} (reason: ${text("reason")})`;

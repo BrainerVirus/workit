@@ -39,6 +39,8 @@ export type BriefOutcome = {
   branch: string;
   base: string;
   tier: string;
+  /** Issues the slice's PR links (the brief's ISSUE line). */
+  issues: string[];
   /** The model `fanout.tierModels` names for the tier on the lead's host, else null. */
   model: string | null;
   /** Absolute when the slice's worktree exists, else relative to the worker's worktree root. */
@@ -195,6 +197,11 @@ export function renderBrief(
     ...(slice.owns.length ? [`  owns: ${slice.owns.join(", ")}`] : []),
     `  branch: ${branch}   base: ${slice.base}`,
     `CONTEXT: ${slice.context ?? "none given: read the files in SCOPE and the neighbours they import"}`,
+    ...(slice.issues.length
+      ? [
+          `ISSUE: ${slice.issues.join(", ")}  (\`workit pr create\` on ${branch} links ${slice.issues.length === 1 ? "it" : "them"} by itself; no --issue needed)`,
+        ]
+      : []),
     ...(mode === "resume" && head
       ? [
           `  resume: continue ${branch} from ${head.slice(0, 12)}; read \`git log ${slice.base}..${branch}\` and \`workit ledger list --branch ${branch}\` (the last report, verdicts, rulings)`,
@@ -229,6 +236,7 @@ export function renderBrief(
       branch,
       base: slice.base,
       tier: slice.tier,
+      issues: slice.issues,
       model: model?.model ?? null,
       scratch,
       session,
