@@ -32,6 +32,7 @@ import {
   unfinishedTaskOffer,
   workitContext,
 } from "../src/context";
+import { resolveIdRef } from "@brainervirus/workit-core/src/core/task-contract";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import {
   enforceToolPolicy,
@@ -98,7 +99,13 @@ const readAssignment = (
     return failure("permission_denied", "worker assignment is not bound to this workspace");
   if (task.data.status !== "active")
     return failure("invalid_transition", "paused or closed tasks cannot supervise workers");
-  const worker = task.data.workers.find((candidate) => candidate.id === request.workerId);
+  const workerId = resolveIdRef(
+    "worker",
+    request.workerId,
+    task.data.workers.map((candidate) => candidate.id),
+  );
+  if (!workerId.ok) return workerId;
+  const worker = task.data.workers.find((candidate) => candidate.id === workerId.data);
   if (!worker) return failure("not_found", "worker assignment not found");
   return success(null, workspace.data.revision, {
     store,
@@ -286,7 +293,7 @@ export default function extension(pi: ExtensionAPI): void {
     const validated = readAssignment(ctx, request);
     if (!validated.ok) return validated;
     const { store, task, workspace, worker } = validated.data;
-    const current = [...workers.values()].find((handle) => handle.workerId === request.workerId);
+    const current = [...workers.values()].find((handle) => handle.workerId === worker.id);
     if (request.action === "cancel") {
       if (!current)
         return failure("recovery_required", "worker process is not live in this session");

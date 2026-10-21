@@ -33,6 +33,9 @@ const text = z.string().check((ctx) => {
     ctx.issues.push({ code: "custom", input: ctx.value, message: "invalid Unicode", path: [] });
 });
 const id = text.regex(uuidPattern, "expected lowercase UUID");
+/** A full id or an unambiguous lowercase prefix of one (the 8-char short id other surfaces print). */
+export const idRefPattern = /^[0-9a-f][0-9a-f-]{7,35}$/;
+const idRef = text.regex(idRefPattern, "expected a UUID or an id prefix of 8+ characters");
 const digest = text.regex(digestPattern, "expected lowercase SHA-256 digest");
 const revision = text.regex(uuidPattern, "expected UUID revision");
 const validUtc = (value: string): boolean => {
@@ -598,7 +601,7 @@ export const workerReportSchema = z
     outcome: z.enum(["completed", "failed", "cancelled"]),
     summary: text,
     evidenceIds: z.array(id),
-    findingIds: z.array(id),
+    findingIds: z.array(idRef),
   })
   .strict();
 export type WorkerReport = z.infer<typeof workerReportSchema>;
@@ -938,7 +941,7 @@ const findingOperations = {
     action: z.literal("resolve"),
     ...taskId,
     expectedRevision: revision.optional(),
-    findingId: id,
+    findingId: idRef,
     disposition: z.enum(["open", "fixed", "dismissed", "deferred"]),
     reason: text,
     evidenceIds: z.array(id),
@@ -980,7 +983,7 @@ const workerOperations = {
     ...taskId,
     expectedRevision: revision.optional(),
     expectedWorkspaceRevision: revision.optional(),
-    workerId: id,
+    workerId: idRef,
     report: workerReportSchema,
   }),
   cancel: operation({
@@ -988,7 +991,7 @@ const workerOperations = {
     ...taskId,
     ...revisions,
     expectedWorkspaceRevision: revision.optional(),
-    workerId: id,
+    workerId: idRef,
     reason: text,
   }),
 };
@@ -1117,6 +1120,21 @@ export const failure = (
   error: string,
   details: ErrorDetails = {},
 ): Result<never> => ({ ok: false, schemaVersion: 1, code, error, details });
+
+/**
+ * Resolve a full id or an unambiguous prefix against the ids a task holds.
+ * An exact match always wins; several prefix matches fail listing the candidates.
+ */
+export function resolveIdRef(kind: string, ref: string, ids: readonly string[]): Result<string> {
+  if (ids.includes(ref)) return success(null, null, ref);
+  const matches = ids.filter((candidate) => candidate.startsWith(ref));
+  if (matches.length === 1) return success(null, null, matches[0]);
+  if (matches.length === 0) return failure("not_found", `${kind} not found`);
+  return failure(
+    "invalid_input",
+    `${kind} prefix ${ref} is ambiguous; candidates: ${matches.join(", ")}`,
+  );
+}
 
 export function parseOperation(family: OperationFamily, input: unknown): Result<OperationRequest> {
   if (

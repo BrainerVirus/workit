@@ -15,6 +15,7 @@ import {
   legacyAssessmentSchema,
   newId,
   parseOperation,
+  resolveIdRef,
   rewriteRecordRefs,
   success,
   type Candidate,
@@ -391,6 +392,8 @@ const TASK_SCOPED_ACTIONS: ReadonlySet<string> = new Set([
   "state.export",
 ]);
 /** Worker actions that name their worker: they resolve to that worker's task. */
+const ONLY_OWN_REPORT = "workers can submit only their own report";
+const NO_HELPER_CONTROL = "helpers cannot cancel or control workers";
 const WORKER_ADDRESSED_ACTIONS: ReadonlySet<string> = new Set(["worker.cancel", "worker.report"]);
 /**
  * The exact CLI command that runs worker `request` (cancel or report, with a
@@ -1524,6 +1527,13 @@ export class WorkitCore {
       return success(changed.data.revision, null, changed.data.findings.at(-1)!);
     }
     if (helper?.ok) return failure("permission_denied", "helpers cannot resolve findings");
+    const findingRef = resolveIdRef(
+      "finding",
+      input.findingId,
+      task.data.findings.map((entry) => entry.id),
+    );
+    if (!findingRef.ok) return findingRef;
+    input.findingId = findingRef.data;
     const finding = task.data.findings.find((entry) => entry.id === input.findingId);
     if (!finding) return failure("not_found", "finding not found");
     if (!input.reason.trim())
@@ -1738,13 +1748,39 @@ export class WorkitCore {
       );
     }
 
+    // A helper may only address itself: resolving against its own id alone keeps
+    // another worker's id out of any ambiguity error.
+    const workerRef = resolveIdRef(
+      "worker",
+      input.workerId,
+      helperId === null ? task.data.workers.map((candidate) => candidate.id) : [helperId],
+    );
+    if (!workerRef.ok)
+      return helperId === null
+        ? workerRef
+        : failure(
+            "permission_denied",
+            input.action === "report" ? ONLY_OWN_REPORT : NO_HELPER_CONTROL,
+          );
+    input.workerId = workerRef.data;
     const entry = task.data.workers.find((candidate) => candidate.id === input.workerId);
     if (!entry) return failure("not_found", "worker not found");
     if (input.action === "report") {
       if (helperId === null || helperId !== input.workerId)
-        return failure("permission_denied", "workers can submit only their own report");
+        return failure("permission_denied", ONLY_OWN_REPORT);
       const helper = this.helperEntry(task.data, true, true);
       if (!helper.ok) return helper;
+      const ownFindings = task.data.findings
+        .filter((candidate) => candidate.provenance.workerId === helperId)
+        .map((candidate) => candidate.id);
+      const reported: string[] = [];
+      for (const findingRef of input.report.findingIds) {
+        const found = resolveIdRef("finding", findingRef, ownFindings);
+        if (found.ok) reported.push(found.data);
+        else if (found.code === "not_found") reported.push(findingRef);
+        else return found;
+      }
+      input.report.findingIds = reported;
       const evidence = task.data.evidence.filter((candidate) =>
         input.report.evidenceIds.includes(candidate.id),
       );
@@ -1800,8 +1836,7 @@ export class WorkitCore {
         : failure("recovery_required", "worker disappeared during report");
     }
 
-    if (helperId !== null)
-      return failure("permission_denied", "helpers cannot cancel or control workers");
+    if (helperId !== null) return failure("permission_denied", NO_HELPER_CONTROL);
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot cancel workers");
     if (entry.data.state === "stopped") {

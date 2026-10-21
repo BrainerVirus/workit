@@ -47,6 +47,8 @@ import {
   success,
   taskRecordSchema,
   workspaceRecordSchema,
+  idRefPattern,
+  resolveIdRef,
   type Id,
   type Intent,
   type Provenance,
@@ -728,20 +730,23 @@ export class TaskStore {
    * the branch checked out now (#264). Null when no open task has it.
    */
   taskForWorker(workerId: unknown): Result<Id | null> {
-    if (typeof workerId !== "string" || !validId(workerId))
+    if (typeof workerId !== "string" || !idRefPattern.test(workerId))
       return failure(
         "invalid_input",
         "needs a worker id: `workit worker cancel|report <workerId>`",
       );
     const listed = this.listTaskIndex();
     if (!listed.ok) return listed;
+    const owners = new Map<string, Id>();
     for (const entry of listed.data) {
       if (entry.status === "closed") continue;
       const loaded = this.load(entry.id);
       if (!loaded.ok) return loaded;
-      if (loaded.data?.record.workers.some((worker) => worker.id === workerId))
-        return success(null, null, entry.id);
+      for (const worker of loaded.data?.record.workers ?? []) owners.set(worker.id, entry.id);
     }
+    const resolved = resolveIdRef("worker", workerId, [...owners.keys()]);
+    if (resolved.ok) return success(null, null, owners.get(resolved.data) ?? null);
+    if (resolved.code !== "not_found") return resolved;
     return success(null, null, null);
   }
 
