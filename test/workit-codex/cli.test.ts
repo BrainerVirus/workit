@@ -510,7 +510,7 @@ test("bash intent passes everything through; host policy owns shell writes", () 
     // No gating by intent, paths, or escapes — host policy owns shell writes.
     expectHostPermissionUnchanged(bash(root, 'echo "rm -rf /"').hookSpecificOutput);
     expectHostPermissionUnchanged(bash(root, "echo hi").hookSpecificOutput);
-    expectHostPermissionUnchanged(bash(root, "pip install requests").hookSpecificOutput);
+    expectHostPermissionUnchanged(bash(root, "gem install rake").hookSpecificOutput);
     expectHostPermissionUnchanged(bash(root, `tee ${outside}`).hookSpecificOutput);
     writeFileSync(outside, "outside\n");
     symlinkSync(outside, path.join(root, "link"));

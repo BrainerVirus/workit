@@ -424,7 +424,7 @@ test("shell intent captures unlisted verbs and skips env assignments", () => {
     expect(shell(root, `FOO=1 rm ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual(
       { permission: "allow" },
     );
-    expect(shell(root, "pip install requests")).toMatchObject({ permission: "allow" });
+    expect(shell(root, "gem install rake")).toMatchObject({ permission: "allow" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
