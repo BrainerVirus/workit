@@ -67,6 +67,15 @@ export type ShellBeforeEvent = { tool: string; sessionID: string; id: string; in
 const leaseRewrite = (input: HookInput, raw: unknown): string | null => {
   if (input.event.kind !== "shell.pre") return null;
   const { command } = input.event;
+  // The plan first: it has no side effects, and most commands stop here. The
+  // gates run only for a heavy one (shellGate claims the checkout for the
+  // session, as the permission hook does for every command it allows).
+  const timeout = (raw as { timeout?: unknown }).timeout;
+  const plan = heavyGate(input.cwd, command, {
+    host: "opencode",
+    toolTimeoutMs: typeof timeout === "number" ? timeout : null,
+  });
+  if (plan.kind !== "rewrite") return null;
   if (shellPolicy(input.cwd, command, "posix").kind === "deny") return null;
   if (rawGitPre(input, command, { nudge: false }).kind === "deny") return null;
   const owner = liveOwner(
@@ -74,12 +83,7 @@ const leaseRewrite = (input: HookInput, raw: unknown): string | null => {
     "in-process-plugin",
   );
   if (shellGate(input.cwd, command, owner).kind === "deny") return null;
-  const timeout = (raw as { timeout?: unknown }).timeout;
-  const plan = heavyGate(input.cwd, command, {
-    host: "opencode",
-    toolTimeoutMs: typeof timeout === "number" ? timeout : null,
-  });
-  return plan.kind === "rewrite" ? plan.command : null;
+  return plan.command;
 };
 
 /**

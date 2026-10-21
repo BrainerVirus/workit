@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runDoctor, type DoctorCheck } from "@/packages/workit-cli/src/admin/doctor";
-import { probeScope, type ScopeProbe } from "@/packages/workit-core/src/core/resources";
+import { probeScope, type ScopeProbe } from "@/packages/workit-core/src/core/heavy-scope";
 
 const scratch = mkdtempSync(path.join(tmpdir(), "workit-doctor-scope-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));

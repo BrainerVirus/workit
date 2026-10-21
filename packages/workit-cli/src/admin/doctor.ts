@@ -40,7 +40,7 @@ import {
   readConfigFromDir,
 } from "@brainervirus/workit-core/src/core/config";
 import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
-import { probeScope, type ScopeProbe } from "@brainervirus/workit-core/src/core/resources";
+import { probeScope, type ScopeProbe } from "@brainervirus/workit-core/src/core/heavy-scope";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,

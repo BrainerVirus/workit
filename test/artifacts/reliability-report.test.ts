@@ -63,13 +63,14 @@ test(
     // on the isolated PATH, so workit_on_path warns without failing.
     // cursor_hook passes (no Cursor plugin install); codex_hooks, codex_agents
     // and pi_extension pass (no Codex or Pi install); session_hook passes (no
-    // workspace configured); hook_issued_sessions passes (no plugin hook).
+    // workspace configured); hook_issued_sessions passes (no plugin hook);
+    // heavy_scope is info (no systemd-run on the isolated PATH, #325).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 23,
+      passed: 24,
       warned: 1,
       failed: 1,
-      total: 25,
+      total: 26,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -104,13 +105,14 @@ test(
       // and the workspace_lock check (pass with no metadata lock); workit_on_path
       // warns (no workit on the isolated PATH); cursor_hook passes (the
       // fixture's bundled hook runs locally); hook_issued_sessions passes (no
-      // Claude Code or Codex plugin hook).
+      // Claude Code or Codex plugin hook); heavy_scope is info (no
+      // systemd-run on the isolated PATH, #325).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 23,
+        passed: 24,
         warned: 1,
         failed: 1,
-        total: 25,
+        total: 26,
         fixes: 1,
       });
     } finally {
