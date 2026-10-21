@@ -294,7 +294,7 @@ and how to fix it.
 ## Pull requests and CI
 
 ```bash
-workit pr create (--title <t> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [--label <l>]… [--reviewer <login>]… [--draft]
+workit pr create (--title <t> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft]
 workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
 workit pr ready [--undo]               # mark the draft ready (or back to draft)
 workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
@@ -353,6 +353,29 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 - A forge refusal (HTTP 405/422) shows the forge's own reason, such as "No
   commits between main and feature/x". Network errors and 5xx answers exit 5
   (`unavailable`, retry), not 1.
+
+### Linking issues
+
+`workit pr create --issue <id>` (repeatable) links the PR to issues. The
+id's shape picks the tracker, so one PR can close a GitHub issue and refer to
+a YouTrack one:
+
+| `--issue` | Body line |
+| --- | --- |
+| `#42`, `42`, `https://github.com/o/r/issues/42` | `Closes #42` (`Refs #42` with `--refs`) |
+| `owner/repo#42` | `Closes owner/repo#42` |
+| `7` on GitLab, `https://gitlab.com/g/p/-/issues/7` | `Closes #7` in the MR description |
+| `IRPT-74`, `https://you.youtrack.cloud/issue/IRPT-74` | `Related to: <baseUrl>/issue/IRPT-74` |
+
+- Without `--issue`, a [fanout](#parallel-slices-fanout) slice's `issue`
+  links by itself, else the branch name does when the workspace tracker has
+  `link: true` ([issue tracker](configuration.md#issue-tracker)), as before.
+- Each link of a PR the command opened is a `pr.linked` ledger row, and
+  `pr status` lists them (`issues:` line, `issues` in `--json`). A PR that
+  was already open keeps its body: the output says so and names
+  `workit pr edit`.
+- With `backlink: true` the PR URL is commented on each linked issue, at
+  most once per PR.
 
 ### Babysitting a PR
 
@@ -445,7 +468,8 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   JSON; any other backslash is read as a Windows separator, and `\*`, `\?`,
   `\{`, `\}` or a mix of both readings is refused: use `/`), optional
   `owns`, `dependsOn`, `base`, `worktree`, and the brief: `goal`, `acceptance`, `verify`, `forbidden` (plus optional
-  `context`, `timebox`). The shape is in the fanout skill's
+  `context`, `timebox`, and `issue`: one id or a list, linked by the slice's
+  `pr create`). The shape is in the fanout skill's
   `references/brief.md`. It is stored in `<git common dir>/workit/fanouts/`,
   shared by every worktree, and each plan appends a `fanout.planned` ledger
   row.
@@ -457,7 +481,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
 - One lead owns a plan: re-planning overwrites the file without a lock.
   Each slice records a `hash` of its definition: goal, acceptance, verify,
   forbidden, scope, owns, branch, base and dependencies, but not tier,
-  timebox, context or the worktree path. A re-plan that leaves a slice's hash
+  timebox, context, issue or the worktree path. A re-plan that leaves a slice's hash
   unchanged continues its run; one that changes it starts a new run for that
   slice alone, so ledger rows from before the change no longer link a merged
   PR to it or count as its worktree. Liveness (`STUCK`, last activity) still
@@ -493,7 +517,8 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   orders count from any session, and `standing add` and `clear` fall back to
   refusing the worker and verifier ids above. `--take-lead` gives it a lead.
 - `brief <slice>` prints the worker brief: MODE, GOAL, SCOPE (with `owns`,
-  branch and base), CONTEXT, ACCEPTANCE, VERIFY, TIER, TIMEBOX (default 30
+  branch and base), CONTEXT, ISSUE (when the slice has one), ACCEPTANCE,
+  VERIFY, TIER, TIMEBOX (default 30
   minutes), SCRATCH, FORBIDDEN, the fan-in rule, REPORT, the standing orders
   in force, the worker's `WORKIT_SESSION_ID` (`<lead session>-w-<slice>`) and
   the worker rules. MODE is `resume` when the branch exists, else `new`

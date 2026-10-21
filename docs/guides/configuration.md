@@ -88,6 +88,40 @@ To add your own trailers (Co-Authored-By) in the same commit, use
 `workit git commit --trailer "Co-Authored-By: Name <email>"` (repeatable)
 instead of amending afterwards.
 
+### Issue tracker
+
+A workspace's `issues` block names the tracker its PRs and MRs link to. Any
+forge works with any tracker: a GitHub repository can track its work in
+YouTrack, a GitLab one in GitLab issues.
+
+```json
+{
+  "name": "work",
+  "glob": "/home/you/projects/work/**",
+  "vcs": { "provider": "github" },
+  "issues": { "provider": "youtrack", "link": true, "relation": "closes", "backlink": false },
+  "youtrack": { "baseUrl": "https://you.youtrack.cloud" }
+}
+```
+
+- `provider`: `github`, `gitlab` or `youtrack`.
+- `link` (default `false`): with no `--issue`, derive the issue from the branch
+  name (`feature/42-login` is `#42`, `feature/IRPT-740-x` is `IRPT-740`; a
+  YouTrack id needs a `baseUrl`). A named issue always links.
+- `relation` (default `closes`): `Closes #42` or `Refs #42`; `pr create --refs`
+  picks `refs` for one PR.
+- `backlink` (default `false`): after opening the PR, comment its URL on each
+  linked issue (YouTrack, or an issue in the same GitHub/GitLab repository),
+  once per PR. Your host's permission prompt for `workit pr create` is what
+  allows the comment, as with `workit youtrack note`; a failed comment is
+  reported and never undoes the PR.
+
+Older keys keep working and are read as aliases: `youtrack.link_issues: true`
+is `{ "provider": "youtrack", "link": true }`, and `issues.link_on_pr` is
+`link`. A workspace with only `youtrack.baseUrl` links YouTrack issues you
+name but derives none from the branch. See
+[delivery](delivery.md#linking-issues) for `--issue`.
+
 ### Model per fanout tier
 
 A workspace's `fanout.tierModels` names the model a fanout worker gets for
