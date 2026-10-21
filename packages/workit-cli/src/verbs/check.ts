@@ -13,7 +13,7 @@
 //   current branch, created by this run when there is none (D3). Attestation stays null until a
 //   host hook attests the run.
 // - It is *configured* only when the name is in the check config
-//   (workit.checks.json, else detected ecosystem defaults) and argv is exactly
+//   (.workit/checks.json, else detected ecosystem defaults) and argv is exactly
 //   that name's command, run from the repo top; --shell runs never are. Only
 //   configured runs satisfy gates; `workit check -- true` never does.
 // - The tree key is taken before and after the run: a command that changed
@@ -478,6 +478,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (options instanceof Error)
     return emit(io, fail("invalid_input", options.message, { unblock: USAGE }));
   const config: CheckConfig = loadCheckConfig(io.cwd);
+  if (config.note) io.stderr(`note: ${config.note}\n`);
   const top = checkRoot(io.cwd);
   let command: string[];
   let runCwd = io.cwd;
@@ -500,7 +501,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
           data: { configured: config.checks.map((item) => item.name), source: config.source },
           unblock: config.checks.length
             ? `workit check ${config.checks.map((item) => item.name).join("|")}`
-            : `add {"checks":{"${name}":"<command>"}} to workit.checks.json, or run workit check --name ${name} -- <cmd…>`,
+            : `add {"checks":{"${name}":"<command>"}} to .workit/checks.json, or run workit check --name ${name} -- <cmd…>`,
         }),
       );
     command = check.argv;

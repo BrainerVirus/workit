@@ -4,7 +4,7 @@
 // reflects the cleaned state. `--fix` installs the prepare-commit-msg hook that adds the
 // Workit-Session trailer to plain git commits, in a Workit workspace only.
 import pkg from "../../package.json" with { type: "json" };
-import { fixSessionHook, runDoctor } from "../admin/doctor";
+import { fixChecksConfig, fixSessionHook, runDoctor } from "../admin/doctor";
 import { lintKnowledge } from "@brainervirus/workit-core/src/knowledge";
 import {
   clearStaleMetadataLock,
@@ -84,6 +84,17 @@ export async function run(argv: string[], io: Io): Promise<number> {
       };
     }
   }
+  let checksConfig: { action: string; detail: string } | null = null;
+  if (argv.includes("--fix")) {
+    try {
+      checksConfig = fixChecksConfig({ host: "cli", cwd: io.cwd });
+    } catch (error) {
+      checksConfig = {
+        action: "failed",
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
   const report = runDoctor({
     host: "cli",
     cwd: io.cwd,
@@ -111,7 +122,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         }
       : { unavailable: true };
     io.stdout(
-      `${JSON.stringify({ ...report, ...(fixLock ? { fixLock } : {}), ...(sessionHook ? { sessionHook } : {}), knowledge: summary }, null, 2)}\n`,
+      `${JSON.stringify({ ...report, ...(fixLock ? { fixLock } : {}), ...(sessionHook ? { sessionHook } : {}), ...(checksConfig ? { checksConfig } : {}), knowledge: summary }, null, 2)}\n`,
     );
     return report.exitCode;
   }
@@ -126,6 +137,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
     );
   }
   if (sessionHook) io.stdout(`fix: session hook ${sessionHook.action}: ${sessionHook.detail}\n`);
+  if (checksConfig && checksConfig.action !== "none")
+    io.stdout(`fix: checks config ${checksConfig.action}: ${checksConfig.detail}\n`);
   io.stdout(
     `workit doctor — ${report.ok ? "healthy" : "problems found"} (${report.offline ? "offline" : "online"})\n`,
   );

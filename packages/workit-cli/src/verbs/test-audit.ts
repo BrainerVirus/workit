@@ -120,7 +120,7 @@ const quote = (arg: string): string =>
 /**
  * The command each mutant runs, and where. `--test-cmd` runs from the current
  * directory (`{files}` expands to the related test files). Otherwise the
- * `test` check that `workit check test` would run (workit.checks.json, else
+ * `test` check that `workit check test` would run (.workit/checks.json, else
  * the detected default) runs whole, from the repository top.
  */
 function testCommand(repo: string, cwd: string, given: string | null) {
@@ -240,7 +240,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         io,
         fail("unavailable", "no test command for --mutate", {
           unblock:
-            'workit test-audit --mutate --test-cmd "<runner> {files}" (or configure a `test` check in workit.checks.json)',
+            'workit test-audit --mutate --test-cmd "<runner> {files}" (or configure a `test` check in .workit/checks.json)',
         }),
       );
     try {

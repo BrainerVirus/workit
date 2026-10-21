@@ -684,7 +684,7 @@ function evaluateObservedGate(
       reason:
         requirement.dimension === "testing" && config.checks.length
           ? `no \`test\` check is configured; add one (or gates.testing) to ${CHECKS_FILE}, then run ${checkCommand("test", runtimeVersion())}`
-          : `no checks are configured or detected; add ${CHECKS_FILE} (committed, so it shows in the diff), e.g. {"checks":{"test":"<your test command>"}}, then run ${checkCommand("test", runtimeVersion())}`,
+          : `no checks are configured or detected; add ${CHECKS_FILE}, e.g. {"checks":{"test":"<your test command>"}}, then run ${checkCommand("test", runtimeVersion())}`,
     };
   const satisfied = fresh.filter(named);
   if (satisfied.length)

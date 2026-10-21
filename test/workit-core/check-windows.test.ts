@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadCheckConfig, matchesNamedCheck } from "@/packages/workit-core/src/check-config";
 import { runCheckCommand } from "@/packages/workit-core/src/checks";
+import { checksPath } from "@/test/workit-core/task-fixtures";
 
 // Windows-only behavior of `workit check` runs (S9b review H1, M1). This file
 // lives under test/workit-core so the Windows CI job runs it.
@@ -20,10 +21,7 @@ test.skipIf(process.platform !== "win32")(
     dirs.push(root);
     writeFileSync(path.join(root, "fakecheck.cmd"), "@echo off\r\necho args:%*\r\nexit /b 3\r\n");
     const argv = ["fakecheck", "a b", "x&y", 'q"q'];
-    writeFileSync(
-      path.join(root, "workit.checks.json"),
-      JSON.stringify({ checks: { test: argv } }),
-    );
+    writeFileSync(checksPath(root), JSON.stringify({ checks: { test: argv } }));
     // The argv is the configured one; only the spawn changes.
     expect(matchesNamedCheck(loadCheckConfig(root), "test", argv, ".")).toBe(true);
     const env = { ...process.env };

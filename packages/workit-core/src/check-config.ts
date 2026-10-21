@@ -5,10 +5,11 @@
 // never does (design §0 #3).
 //
 // Config, first source that exists at the repository top:
-// 1. `workit.checks.json`: `{"checks":{"test":"bun test","lint":["bun","run","lint"]},
-//    "gates":{"testing":"test"}}`, committed and visible in review. (Not
-//    `.workit/checks.json`: the store directory is git-ignored, so a file there
-//    is never reviewed.)
+// 1. `.workit/checks.json`: `{"checks":{"test":"bun test","lint":["bun","run","lint"]},
+//    "gates":{"testing":"test"}}`. Per-repo workit config lives in the
+//    self-ignoring `.workit/`, never at the repo root. A legacy root
+//    `workit.checks.json` is still read when `.workit/checks.json` is absent,
+//    with a note that it moved.
 // 2. Built-in ecosystem defaults detected from the repo: package.json scripts
 //    `test`, `lint`, `typecheck`, `check` (`<pm> run <script>`, pm from the
 //    lockfile); go.mod → `go test ./...`; Cargo.toml → `cargo test`;
@@ -25,12 +26,30 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-/** The package.json scripts that count as named checks when no workit.checks.json exists. */
+/** The package.json scripts that count as named checks when no checks config exists. */
 export const SCRIPT_CHECKS = ["test", "lint", "typecheck", "check"] as const;
-export const CHECKS_FILE = "workit.checks.json";
+export const CHECKS_FILE = ".workit/checks.json";
+export const LEGACY_CHECKS_FILE = "workit.checks.json";
 
-/** Where the repo's checks config lives under the repository top `root` (the one path resolver). */
-export const checksConfigFile = (root: string): string => path.join(root, CHECKS_FILE);
+/**
+ * Where the repo's checks config lives under the repository top `root` (the
+ * one path resolver): `.workit/checks.json`, else the legacy root file when
+ * only that exists, else the `.workit/` path a new config belongs at.
+ */
+export function checksConfigFile(root: string): string {
+  const current = path.join(root, CHECKS_FILE);
+  const legacy = path.join(root, LEGACY_CHECKS_FILE);
+  return !fs.existsSync(current) && fs.existsSync(legacy) ? legacy : current;
+}
+
+/** Create `<root>/.workit/` with its self-ignoring `.gitignore` (idempotent) and return the dir. */
+export function ensureWorkitDir(root: string): string {
+  const dir = path.join(root, ".workit");
+  fs.mkdirSync(dir, { recursive: true });
+  const ignore = path.join(dir, ".gitignore");
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, "*\n");
+  return dir;
+}
 
 /**
  * `resources.heavyCommands` of the repo's checks config under `root`, read
@@ -59,15 +78,17 @@ export type NamedCheck = {
 
 export type CheckConfig = {
   /** Where the config came from; `defaults` = detected ecosystem defaults, `none` = nothing. */
-  source: "workit.checks.json" | "defaults" | "none";
+  source: typeof CHECKS_FILE | typeof LEGACY_CHECKS_FILE | "defaults" | "none";
   /** The directory configured commands run in (the repository top). */
   root: string;
   checks: NamedCheck[];
-  /** Explicit gate bindings from workit.checks.json (`gates.testing`, `gates.verification`). */
+  /** Explicit gate bindings from the checks config (`gates.testing`, `gates.verification`). */
   gates: Partial<Record<"testing" | "verification", string[]>>;
   /** Set when the config exists but cannot be used; gates then fail closed. */
   error: string | null;
-  /** The raw `resources` block of workit.checks.json (heavy-check limits; core/resources.ts reads it). */
+  /** One line for the user when the config was read from the legacy root file. */
+  note?: string;
+  /** The raw `resources` block of the checks config (heavy-check limits; core/resources.ts reads it). */
   resources?: unknown;
 };
 
@@ -192,19 +213,27 @@ const GATES = ["testing", "verification"] as const;
 export function loadCheckConfig(cwd: string): CheckConfig {
   const root = checkRoot(cwd);
   const file = checksConfigFile(root);
+  const legacy = path.basename(file) === LEGACY_CHECKS_FILE;
+  const label = legacy ? LEGACY_CHECKS_FILE : CHECKS_FILE;
+  const note = legacy
+    ? {
+        note: `${LEGACY_CHECKS_FILE} is deprecated; move it to ${CHECKS_FILE} (workit doctor --fix)`,
+      }
+    : {};
   const none = (error: string | null = null): CheckConfig => ({
-    source: error ? CHECKS_FILE : "none",
+    source: error ? label : "none",
     root,
     checks: [],
     gates: {},
     error,
+    ...note,
   });
   let text: string | null = null;
   try {
     text = fs.readFileSync(file, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-      return none(`cannot read ${CHECKS_FILE}: ${(error as Error).message}`);
+      return none(`cannot read ${label}: ${(error as Error).message}`);
   }
   if (text === null) {
     const checks = detectedChecks(root);
@@ -214,14 +243,14 @@ export function loadCheckConfig(cwd: string): CheckConfig {
   try {
     parsed = JSON.parse(text);
   } catch {
-    return none(`${CHECKS_FILE} is not valid JSON`);
+    return none(`${label} is not valid JSON`);
   }
   if (!isRecord(parsed) || !isRecord(parsed.checks))
-    return none(`${CHECKS_FILE} must be {"checks":{"<name>":"<command>"|["argv",…]}}`);
+    return none(`${label} must be {"checks":{"<name>":"<command>"|["argv",…]}}`);
   const checks: NamedCheck[] = [];
   for (const [name, value] of Object.entries(parsed.checks)) {
     if (!CHECK_NAME.test(name))
-      return none(`${CHECKS_FILE}: check name "${name}" must match ${CHECK_NAME.source}`);
+      return none(`${label}: check name "${name}" must match ${CHECK_NAME.source}`);
     const argv =
       typeof value === "string"
         ? splitCommand(value)
@@ -230,27 +259,27 @@ export function loadCheckConfig(cwd: string): CheckConfig {
             value.every((item) => typeof item === "string" && item.length > 0)
           ? (value as string[])
           : new Error("expected a command string or a non-empty argv array");
-    if (argv instanceof Error) return none(`${CHECKS_FILE}: check "${name}": ${argv.message}`);
+    if (argv instanceof Error) return none(`${label}: check "${name}": ${argv.message}`);
     checks.push({ name, argv, accepts: [argv] });
   }
   const gates: CheckConfig["gates"] = {};
   if (parsed.gates !== undefined) {
     if (!isRecord(parsed.gates))
-      return none(`${CHECKS_FILE}: gates must be {"testing":"<name>"|["<name>",…]}`);
+      return none(`${label}: gates must be {"testing":"<name>"|["<name>",…]}`);
     for (const [gate, value] of Object.entries(parsed.gates)) {
       if (!(GATES as readonly string[]).includes(gate))
-        return none(`${CHECKS_FILE}: unknown gate "${gate}" (use ${GATES.join(" or ")})`);
+        return none(`${label}: unknown gate "${gate}" (use ${GATES.join(" or ")})`);
       const names = typeof value === "string" ? [value] : value;
       if (
         !Array.isArray(names) ||
         names.length === 0 ||
         !names.every((name) => typeof name === "string" && checks.some((c) => c.name === name))
       )
-        return none(`${CHECKS_FILE}: gates.${gate} must name configured checks`);
+        return none(`${label}: gates.${gate} must name configured checks`);
       gates[gate as (typeof GATES)[number]] = names as string[];
     }
   }
-  return { source: CHECKS_FILE, root, checks, gates, error: null, resources: parsed.resources };
+  return { source: label, root, checks, gates, error: null, ...note, resources: parsed.resources };
 }
 
 const sameArgv = (left: readonly string[], right: readonly string[]): boolean =>

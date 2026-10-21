@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { heavyCommand, heavyPlan } from "@/packages/workit-core/src/core/heavy";
 import { maybeHeavy } from "@/packages/workit-core/src/core/heavy-words";
+import { checksPath } from "@/test/workit-core/task-fixtures";
 
 let root: string;
 let state: string;
@@ -117,7 +118,7 @@ test("given a light command, when classified repeatedly, then the gate adds well
   expect(perCommand).toBeLessThan(5);
 });
 
-test("given a repo pattern in workit.checks.json, when its command runs, then it is heavy", () => {
+test("given a repo pattern in .workit/checks.json, when its command runs, then it is heavy", () => {
   const repo = mkdtempSync(path.join(tmpdir(), "workit-heavy-repo-"));
   try {
     mkdirSync(path.join(repo, ".git"));
@@ -125,7 +126,7 @@ test("given a repo pattern in workit.checks.json, when its command runs, then it
     const sub = path.join(repo, "sub");
     expect(heavyCommand("./ci/integration.sh --all", { cwd: sub, env })).toBeNull();
     writeFileSync(
-      path.join(repo, "workit.checks.json"),
+      checksPath(repo),
       JSON.stringify({ resources: { heavyCommands: ["./ci/integration.sh", "task test:*"] } }),
     );
     expect(heavyCommand("./ci/integration.sh --all", { cwd: sub, env })?.source).toEqual({

@@ -22,7 +22,7 @@ description: Turn requirements into Given/When/Then scenarios, agree the test se
    then take the next scenario. Any edit makes the observation stale; re-run
    before you claim it. A recorded "tests pass" is a note, and an ad-hoc
    `workit check -- <cmd>` never satisfies the gate: only the configured
-   `test` check does. No `test` detected? Create `workit.checks.json`, copying
+   `test` check does. No `test` detected? Create `.workit/checks.json`, copying
    in every check the repo already runs: once it exists it replaces the
    detected defaults.
 5. **Mock only at system boundaries:** network, clock, randomness, other

@@ -124,9 +124,9 @@ test("G machine resources, T they set every field, and a bad field keeps the ear
   expect(one({ memoryMax: "50%" }).memoryMax).toBe("17179869184");
 });
 
-test("G a committed workit.checks.json, T it can only tighten the machine's limits: no slots or scope, memory and CPU only lower, heavy only added", () => {
+test("G a repo .workit/checks.json, T it can only tighten the machine's limits: no slots or scope, memory and CPU only lower, heavy only added", () => {
   const repo = {
-    label: "workit.checks.json",
+    label: ".workit/checks.json",
     trust: "repo" as const,
     value: {
       slots: 8,
@@ -151,10 +151,10 @@ test("G a committed workit.checks.json, T it can only tighten the machine's limi
     scope: true,
   });
   expect(warnings.toSorted()).toEqual([
-    "workit.checks.json: cpuQuota: a repo can only lower it",
-    "workit.checks.json: memoryMax: a repo can only lower it",
-    "workit.checks.json: scope: is machine-wide; set it in your workspaces.json, not in the repo",
-    "workit.checks.json: slots: is machine-wide; set it in your workspaces.json, not in the repo",
+    ".workit/checks.json: cpuQuota: a repo can only lower it",
+    ".workit/checks.json: memoryMax: a repo can only lower it",
+    ".workit/checks.json: scope: is machine-wide; set it in your workspaces.json, not in the repo",
+    ".workit/checks.json: slots: is machine-wide; set it in your workspaces.json, not in the repo",
   ]);
   const lower = resolveResourceSettings(
     [{ ...repo, value: { memoryMax: "4G", cpuQuota: 2 } }],

@@ -669,7 +669,7 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   `reason`). Both are `null` for a check that is not heavy.
 
 Configure it under `resources`. The machine's limits come from the matching
-entry of your `workspaces.json`. A repo's committed `workit.checks.json` can
+entry of your `workspaces.json`. A repo's `.workit/checks.json` can
 only tighten them, so a repo cannot break the machine-wide limit: it can add
 `heavy` checks, lower `memoryMax` and `cpuQuota`, and set its own `wait`; its
 `slots` and `scope` are ignored with a warning.
