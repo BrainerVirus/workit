@@ -4,6 +4,8 @@ import {
   type TaskRecord,
   type WorkspaceRecord,
 } from "@brainervirus/workit-core/src/core";
+import { holdsLiveState, resumeBriefCommand } from "@brainervirus/workit-core/src/core/workers";
+import { worktreeTree } from "@brainervirus/workit-core/src/git/rev";
 import { nativeWorkerFor, workerCoordinatorFor, type DirectChildren } from "../tools/workit";
 import { sameWorkspace } from "../shared/session";
 
@@ -475,10 +477,27 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
             ),
           ).length
         : 0;
-      if (bound !== 1 && ownsActiveTask(coordinator))
-        throw new Error(
-          "delegation_lineage_denied: a continuation sessionID must name a running Workit worker",
-        );
+      if (bound !== 1 && ownsActiveTask(coordinator)) {
+        const reported =
+          listed.ok &&
+          listed.data.some((task) =>
+            task.workers.some(
+              (worker) =>
+                worker.data.state === "stopped" &&
+                worker.data.session?.kind === "host" &&
+                worker.data.session.handle === childID &&
+                workerCoordinatorFor(task, worker) === coordinator,
+            ),
+          );
+        const dirty =
+          reported && child.directory ? (worktreeTree(child.directory)?.dirty ?? null) : null;
+        if (!reported || !holdsLiveState("stopped", dirty))
+          throw new Error(
+            reported
+              ? `delegation_lineage_denied: this worker already reported and holds no live state (no running process, no uncommitted changes); continue the slice with a fresh worker: ${resumeBriefCommand(root, child.directory)}`
+              : "delegation_lineage_denied: a continuation sessionID must name a running Workit worker",
+          );
+      }
       return;
     }
     // Native subagent use outside Workit stays unmanaged: no slot, no veto,
