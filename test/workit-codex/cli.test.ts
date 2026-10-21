@@ -503,6 +503,41 @@ const bash = (root: string, command: string) =>
     ),
   );
 
+/** Run `fn` with a stand-in `workit` on PATH, so the heavy-command gate is active. */
+const withWorkitOnPath = <T>(fn: () => T): T => {
+  const bin = mkdtempSync(path.join(tmpdir(), "workit-fake-bin-"));
+  writeFileSync(path.join(bin, "workit"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const before = { PATH: process.env.PATH, HOME: process.env.HOME };
+  process.env.PATH = `${bin}${path.delimiter}${before.PATH ?? ""}`;
+  // A scratch home: no real host permission rule decides the case.
+  process.env.HOME = bin;
+  try {
+    return fn();
+  } finally {
+    process.env.PATH = before.PATH;
+    process.env.HOME = before.HOME;
+    rmSync(bin, { recursive: true, force: true });
+  }
+};
+
+test("Given `pip install requests` in a git checkout, When the Codex hook runs, Then the heavy-command gate denies it with the exact rewrite", () => {
+  const root = cwd();
+  spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
+  try {
+    const output = withWorkitOnPath(() => bash(root, "pip install requests"))
+      .hookSpecificOutput as {
+      permissionDecision?: string;
+      permissionDecisionReason?: string;
+    };
+    expect(output.permissionDecision).toBe("deny");
+    expect(output.permissionDecisionReason).toContain(
+      "Run exactly: workit check --heavy -- pip install requests",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("bash intent passes everything through; host policy owns shell writes", () => {
   const root = bashRoot();
   const outside = path.join(tmpdir(), `wk-codex-outside-${process.pid}.txt`);
@@ -510,7 +545,8 @@ test("bash intent passes everything through; host policy owns shell writes", () 
     // No gating by intent, paths, or escapes — host policy owns shell writes.
     expectHostPermissionUnchanged(bash(root, 'echo "rm -rf /"').hookSpecificOutput);
     expectHostPermissionUnchanged(bash(root, "echo hi").hookSpecificOutput);
-    expectHostPermissionUnchanged(bash(root, "gem install rake").hookSpecificOutput);
+    // Outside a git checkout the heavy-command gate stays out too.
+    expectHostPermissionUnchanged(bash(root, "pip install requests").hookSpecificOutput);
     expectHostPermissionUnchanged(bash(root, `tee ${outside}`).hookSpecificOutput);
     writeFileSync(outside, "outside\n");
     symlinkSync(outside, path.join(root, "link"));

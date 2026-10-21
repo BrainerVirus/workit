@@ -793,16 +793,13 @@ export function probeScope(env: NodeJS.ProcessEnv = process.env): ScopeProbe {
   const delegate = process.platform === "linux" ? userManagerDelegate(env) : null;
   if (!support.ok) return { effective: false, supported: false, reason: support.reason, delegate };
   const unit = `workit-probe-${process.pid}-${Date.now().toString(36)}`;
-  const probe = spawnSync(
-    "systemd-run",
-    [
-      ...scopePrefix(unit, { memoryMax: PROBE_MEMORY, cpuQuota: PROBE_CPU }).slice(1),
-      "sh",
-      "-c",
-      PROBE_SCRIPT,
-    ],
-    { env, encoding: "utf8", timeout: 10_000 },
-  );
+  // The same `systemd-run …` prefix a heavy check runs under.
+  const [runner, ...prefix] = scopePrefix(unit, { memoryMax: PROBE_MEMORY, cpuQuota: PROBE_CPU });
+  const probe = spawnSync(runner, [...prefix, "sh", "-c", PROBE_SCRIPT], {
+    env,
+    encoding: "utf8",
+    timeout: 10_000,
+  });
   if (probe.status !== 0)
     return {
       effective: false,

@@ -9,7 +9,7 @@ import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { recordIssuedSession } from "../host-session";
-import { heavyDenial, heavyGate, rewriteNote } from "./heavy-gate";
+import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
 import {
   callKey,
@@ -165,9 +165,19 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       if (gate.kind === "deny") return gate;
       // A heavy command runs under the machine lease: rewritten where the
       // host can replace the command, else denied with the exact rewrite.
-      const heavy = heavyGate(input.cwd, event.command, event.dialect);
-      const lease = heavy && usable(descriptor.shellPolicy.rewrite) ? heavy : null;
-      if (heavy && !lease && canDeny) return heavyDenial(event.command, heavy);
+      // Every gate above passed on the original command (ruling mvid5onk).
+      const timeout = event.toolInput?.timeout;
+      const plan = heavyGate(input.cwd, event.command, {
+        host: input.host,
+        dialect: event.dialect,
+        permissionMode: input.permissionMode,
+        toolTimeoutMs: typeof timeout === "number" ? timeout : null,
+      });
+      if (plan.kind === "split" && canDeny) return splitDenial(plan);
+      const rewrites = usable(descriptor.shellPolicy.rewrite);
+      if (plan.kind === "rewrite" && !rewrites && canDeny) return heavyDenial(event.command, plan);
+      const lease = plan.kind === "rewrite" && rewrites ? plan : null;
+      const aside = plan.kind === "passthrough" ? plan.note : null;
       // The command will run: note HEAD so the post-tool hook (or the next
       // command, without one) can tell whether a raw commit moved it.
       noteRawCommit(
@@ -188,7 +198,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
       // spending the once-per-session nudge here would lose it.
       if (descriptor.transport !== "hook-process") return rewritten(null);
       const nudged = withContextLine(
-        canDeny ? rawGitPre(input, event.command) : NONE,
+        withContextLine(canDeny ? rawGitPre(input, event.command) : NONE, aside),
         shipNudge(input, event.command),
       );
       if (!lease) return nudged;

@@ -2,7 +2,7 @@
 // record what the CLI itself observed.
 //
 //   workit check <name> [--timeout <s>] [--task <id>] [--no-lease --reason <why>] [--json]   # the configured command
-//   workit check [--name <n>] [--shell] [--heavy] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
+//   workit check [--name <n>] [--shell] [--heavy] [--wait <s>] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
 //
 // - The command runs without a shell (with --shell, pass one command string);
 //   its output streams through (to stderr under --json, so stdout stays one
@@ -24,6 +24,8 @@
 //   Linux with a delegated user systemd runs in its own `systemd-run --user
 //   --scope` with MemoryMax and CPUQuota. `--json` reports `lease` and `scope`.
 //   `--no-lease` skips both and needs `--reason`, recorded as `noLease`.
+//   `--wait <s>` caps the lease wait (the shell hook sets it below the host
+//   tool's timeout).
 // - Exit code: the command's own (4 on --timeout or a lease wait that timed
 //   out, 2 on usage). When the
 //   command passed but the evidence could not be recorded, the recording
@@ -76,7 +78,7 @@ import {
 } from "@brainervirus/workit-core/src/core/resources";
 
 const USAGE =
-  'workit check <name> [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
+  'workit check <name> [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--wait <s>] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
 /** Lease age bound for a check without --timeout, where the holder cannot be identified. */
 const MAX_UNVERIFIED_RUN_MS = 6 * 3_600_000;
 /** Tail lines kept on the task record (the envelope carries TAIL_LINES). */
@@ -90,6 +92,8 @@ type Options = {
   noLease: boolean;
   /** Why the run skips the lease; required with --no-lease. */
   reason: string | null;
+  /** Cap on the lease wait (ms); null keeps resources.wait. */
+  waitMs: number | null;
   timeoutMs: number;
   task: string | null;
   base: string | null;
@@ -106,6 +110,7 @@ function parse(argv: readonly string[]): Options | Error {
     heavy: false,
     noLease: false,
     reason: null,
+    waitMs: null,
     timeoutMs: 0,
     task: null,
     base: null,
@@ -136,13 +141,19 @@ function parse(argv: readonly string[]): Options | Error {
       flag === "--task" ||
       flag === "--base" ||
       flag === "--timeout" ||
+      flag === "--wait" ||
       flag === "--reason"
     ) {
       const got = value();
       if (got instanceof Error) return got;
       if (flag === "--name") options.name = got;
       else if (flag === "--reason") options.reason = got.trim() || null;
-      else if (flag === "--task") options.task = got;
+      else if (flag === "--wait") {
+        const seconds = Number(got);
+        if (!Number.isFinite(seconds) || seconds < 0)
+          return new Error("--wait must be a number of seconds");
+        options.waitMs = Math.round(seconds * 1000);
+      } else if (flag === "--task") options.task = got;
       else if (flag === "--base") options.base = got;
       else {
         const seconds = Number(got);
@@ -516,6 +527,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       { label: "workspaces.json", trust: "machine", value: workspace.value },
       { label: CHECKS_FILE, trust: "repo", value: config.resources },
     ]);
+    if (options.waitMs !== null) settings.waitMs = Math.min(settings.waitMs, options.waitMs);
     for (const warning of [workspace.warning, ...warnings])
       if (warning) io.stderr(`workit: resources: ${warning}\n`);
     if (options.heavy || (name !== null && settings.heavy.includes(name))) {

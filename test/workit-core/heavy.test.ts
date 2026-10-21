@@ -2,7 +2,8 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { heavyCommand, leaseRewrite } from "@/packages/workit-core/src/core/heavy";
+import { heavyCommand, heavyPlan } from "@/packages/workit-core/src/core/heavy";
+import { maybeHeavy } from "@/packages/workit-core/src/core/heavy-words";
 
 let root: string;
 let state: string;
@@ -62,8 +63,17 @@ test("given wrappers and chains, when classified, then the heavy command inside 
     "cd packages/app && npm run build",
     "bash -c 'cd web && yarn test'",
     "ls; npm run lint | tee lint.log",
-  ])
+    "cargo +nightly build",
+    "docker compose up --build",
+    "nx run app:build",
+    "nx test app",
+    "rake spec",
+    "pip install requests",
+  ]) {
     expect(heavy(command), command).toBe(true);
+    // The launchers' pre-check lets every heavy command reach the gate.
+    expect(maybeHeavy(command, root, env), command).toBe(true);
+  }
 });
 
 test("given light commands, dev servers and workit itself, when classified, then none is heavy", () => {
@@ -80,6 +90,16 @@ test("given light commands, dev servers and workit itself, when classified, then
     "bun scripts/gen.ts",
     "workit check --heavy -- npm test",
     "npx -y @brainervirus/workit-cli check -- npm test",
+    "tsc --watch",
+    "jest --watch",
+    "vitest watch",
+    "npm run test:watch",
+    "npm start",
+    "pnpm dev",
+    "storybook dev -p 6006",
+    "npm run storybook",
+    "nx graph",
+    "rake",
   ])
     expect(heavy(command), command).toBe(false);
 });
@@ -135,17 +155,56 @@ test("given machine patterns in the state dir, when a matching command runs, the
   }
 });
 
-test("given a heavy command, when rewritten, then a plain one keeps its words and anything else runs in bash -c", () => {
-  expect(leaseRewrite("npm run test:ci")).toBe("workit check --heavy -- npm run test:ci");
-  expect(leaseRewrite("  npx   jest ")).toBe("workit check --heavy -- npx jest");
-  expect(leaseRewrite("CI=1 npm test")).toBe("workit check --heavy -- bash -c 'CI=1 npm test'");
-  expect(leaseRewrite("cd web && npm test")).toBe(
-    "workit check --heavy -- bash -c 'cd web && npm test'",
-  );
-  expect(leaseRewrite("flock -o x.lock sh -c 'npm test'")).toBe(
-    `workit check --heavy -- bash -c 'flock -o x.lock sh -c '\\''npm test'\\'''`,
-  );
-  expect(leaseRewrite("npm test | tee out.log")).toBe(
-    "workit check --heavy -- bash -c 'npm test | tee out.log'",
-  );
+const plan = (command: string, cwd = root) => heavyPlan(command, { cwd, env, rules: null });
+
+test("given one simple heavy command, when planned, then it is rewritten verbatim after --, env prefixes kept in front", () => {
+  expect(plan("npm run test:ci")).toEqual({
+    kind: "rewrite",
+    command: "workit check --heavy -- npm run test:ci",
+    reason: "npm run test:ci",
+  });
+  expect(plan("CI=1 npm test")).toMatchObject({
+    command: "CI=1 workit check --heavy -- npm test",
+  });
+  expect(plan("flock -o x.lock sh -c 'npm test'")).toMatchObject({
+    command: "workit check --heavy -- flock -o x.lock sh -c 'npm test'",
+  });
+  expect(heavyPlan("npx jest", { cwd: root, env, rules: null, waitS: 100 })).toMatchObject({
+    command: "workit check --heavy --wait 100 -- npx jest",
+  });
+});
+
+test("given a chain with a heavy part, when planned, then it is split, naming the part's lease command and never bash -c", () => {
+  for (const command of [
+    "git status --short && make test && touch pwned.txt",
+    "cd web && npm test",
+    "npm test | tee out.log",
+    "bash -c 'cd web && npm test'",
+  ]) {
+    const result = plan(command);
+    expect(result.kind, command).toBe("split");
+    if (result.kind !== "split") continue;
+    expect(result.reason.split("(here:")[1]).not.toContain("bash -c");
+    expect(result.unblock).toMatch(/^workit check --heavy -- /u);
+  }
+  expect(plan("git status --short && make test && touch pwned.txt")).toMatchObject({
+    unblock: "workit check --heavy -- make test",
+  });
+});
+
+test("given an already wrapped command, a light one, or a checkout outside git, when planned, then nothing changes", () => {
+  expect(plan("workit check --heavy -- npx jest")).toEqual({ kind: "none" });
+  expect(plan("ls -la")).toEqual({ kind: "none" });
+  const outside = mkdtempSync(path.join(tmpdir(), "workit-heavy-nogit-"));
+  try {
+    expect(plan("npx jest", outside)).toEqual({ kind: "none" });
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("given a deny rule naming the heavy command, when planned, then it passes through with the host-decides note", () => {
+  const result = heavyPlan("npx jest", { cwd: root, env, rules: { deny: ["npx:*"], allow: [] } });
+  expect(result).toMatchObject({ kind: "passthrough" });
+  if (result.kind === "passthrough") expect(result.note).toContain("the host decides");
 });

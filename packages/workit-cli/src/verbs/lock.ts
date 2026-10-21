@@ -5,7 +5,7 @@
 //
 //   workit lock status
 //   workit lock wait [--timeout <s>]
-//   workit lock run [--shell] [--timeout <s>] -- <cmd…>
+//   workit lock run [--shell] [--wait <s>] [--timeout <s>] -- <cmd…>
 //   workit lock heavy list | add <pattern> | remove <pattern> | test <cmd…>
 import fs from "node:fs";
 import path from "node:path";
@@ -13,7 +13,7 @@ import { CHECKS_FILE, loadCheckConfig } from "@brainervirus/workit-core/src/chec
 import {
   heavyCommand,
   heavyCommandsFile,
-  leaseRewrite,
+  heavyPlan,
   machinePatterns,
   parsePattern,
   repoPatterns,
@@ -29,7 +29,7 @@ import { emit, fail, ok, type Io } from "../output";
 import { workspaceResources } from "./check";
 
 const USAGE =
-  "workit lock status | wait [--timeout <s>] | run [--shell] [--timeout <s>] -- <cmd…> | heavy list|add|remove|test";
+  "workit lock status | wait [--timeout <s>] | run [--shell] [--wait <s>] [--timeout <s>] -- <cmd…> | heavy list|add|remove|test";
 
 async function settingsFor(io: Io) {
   const workspace = await workspaceResources(io);
@@ -116,13 +116,14 @@ async function runHeavy(args: string[], io: Io): Promise<number> {
       arg !== "--shell" &&
       arg !== "--json" &&
       !arg.startsWith("--timeout") &&
-      !(head[index - 1] === "--timeout" && !arg.startsWith("-")),
+      !arg.startsWith("--wait") &&
+      !((head[index - 1] === "--timeout" || head[index - 1] === "--wait") && !arg.startsWith("-")),
   );
   if (split < 0 || unknown)
     return emit(
       io,
       fail("invalid_input", unknown ? `unexpected ${unknown}` : "no command after --", {
-        unblock: "workit lock run [--shell] [--timeout <s>] -- <cmd…>",
+        unblock: "workit lock run [--shell] [--wait <s>] [--timeout <s>] -- <cmd…>",
       }),
     );
   const check = await import("./check");
@@ -213,6 +214,8 @@ async function heavy(args: string[], io: Io): Promise<number> {
         }),
       );
     const match = heavyCommand(command, { cwd: io.cwd, env: io.env });
+    // Host permission rules are the hook's to read; this answers without them.
+    const plan = heavyPlan(command, { cwd: io.cwd, env: io.env, rules: null });
     return emit(
       io,
       ok({
@@ -220,12 +223,17 @@ async function heavy(args: string[], io: Io): Promise<number> {
         heavy: Boolean(match),
         reason: match?.reason ?? null,
         source: match?.source ?? null,
-        rewrite: match ? leaseRewrite(command) : null,
+        rewrite: plan.kind === "rewrite" ? plan.command : null,
+        split: plan.kind === "split" ? plan.reason : null,
       }),
       (data) =>
-        data.heavy
-          ? [`heavy (${data.reason}): the shell hook runs it as ${data.rewrite}`]
-          : ["light: the shell hook leaves it alone"],
+        !data.heavy
+          ? ["light: the shell hook leaves it alone"]
+          : data.rewrite
+            ? [`heavy (${data.reason}): the shell hook runs it as ${data.rewrite}`]
+            : data.split
+              ? [`heavy (${data.reason}): the shell hook denies the chain: ${data.split}`]
+              : [`heavy (${data.reason}): outside a git checkout the shell hook leaves it alone`],
     );
   }
   return emit(

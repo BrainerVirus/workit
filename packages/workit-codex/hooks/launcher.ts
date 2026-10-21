@@ -3,9 +3,12 @@
 // of those calls cannot matter to Workit, so they answer before the Workit
 // runtime (a ~1 MB module graph) loads:
 //   - PostToolUse: only a raw `git commit` is recorded;
-//   - PreToolUse: only a file edit (apply_patch, for the before-write gate)
-//     or a shell command that names git, gh or glab can be denied or nudged.
-import process from "node:process";
+//   - PreToolUse: only a file edit (apply_patch, for the before-write gate),
+//     a shell command that names git, gh or glab, or one that may be heavy
+//     (the heavy-command gate's cheap pre-check) can be denied or nudged.
+// The global `process`: under bun, `import process from "node:process"` reads
+// an empty stdin when the launcher runs from source (bun 1.3.14).
+import { maybeHeavy } from "@brainervirus/workit-core/src/core/heavy-words";
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
@@ -34,7 +37,7 @@ const quietEvent = (): string | null => {
     if (!shell) return event;
     if (!text.trim()) return null;
     if (event === "PostToolUse") return /\bcommit\b/.test(text) ? null : event;
-    return /\b(?:git|gh|glab)\b/.test(text) ? null : event;
+    return /\b(?:git|gh|glab)\b/.test(text) || maybeHeavy(text, value.cwd) ? null : event;
   } catch {
     return null;
   }

@@ -101,7 +101,7 @@ test("Given a child session's raw `npx jest`, When OpenCode creates its shell, T
   const plugin = await harness({ ses_lead: {}, ses_child: { parentID: "ses_lead" } });
   try {
     const created = await plugin.shell("ses_child", "npx jest");
-    expect(created.command).toBe("workit check --heavy -- npx jest");
+    expect(created.command).toBe("workit check --heavy --wait 100 -- npx jest");
     expect(created.env.WORKIT_SESSION_ID).toBe("ses_lead:ses_child");
   } finally {
     plugin.cleanup();

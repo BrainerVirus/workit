@@ -26,8 +26,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { commandLines } from "../hooks/raw-git";
-import { segmentsOf, type ShellDialect } from "../hooks/shell-words";
+import { commandLines, simpleCommand } from "../hooks/raw-git";
+import type { ShellDialect } from "../hooks/shell-words";
+import { gitTop, wrapAllowed, type RuleRead } from "./heavy-rules";
 
 /** Workit's state dir for `env` (the logger's resolution, over an explicit env). */
 export function stateDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform) {
@@ -46,9 +47,13 @@ export const heavyCommandsFile = (env: NodeJS.ProcessEnv): string =>
 
 /** Script and target names that test, lint, typecheck, build or serve. */
 const HEAVY_SCRIPT =
-  /^(?:test|tests|t|tst|unit|integration|e2e|coverage|cov|lint|eslint|typecheck|type-check|types|tsc|check|verify|validate|build|compile|bundle|ci|storybook|sonar|cypress|playwright|jest|vitest|mocha|bench|benchmark|all)(?:$|[:_.-])/iu;
+  /^(?:test|tests|t|tst|unit|integration|e2e|coverage|cov|lint|eslint|typecheck|type-check|types|tsc|check|verify|validate|build|compile|bundle|ci|sonar|cypress|playwright|jest|vitest|mocha|bench|benchmark|all)(?:$|[:_.-])/iu;
 
 const INFO_FLAGS = new Set(["--version", "-v", "-V", "--help", "-h", "help", "version"]);
+
+/** Watch modes and scripts never end: they would hold the lease for good (#328). */
+const WATCH_FLAG = /^(?:--watch(?:All)?(?:=.*)?|-w|--serve)$/u;
+const WATCH_SCRIPT = /(?:^|[:_.-])(?:watch|dev|serve|start|storybook)(?:$|[:_.-])/iu;
 
 type Rule = "any" | ReadonlySet<string>;
 const sub = (...names: string[]): Rule => new Set(names);
@@ -83,14 +88,11 @@ const TOOLS: Record<string, Rule> = {
   astro: sub("build", "check"),
   ng: sub("build", "b", "test", "t", "e2e", "lint"),
   "react-scripts": sub("build", "test"),
-  storybook: sub("build"),
-  "build-storybook": "any",
   playwright: sub("test", "install"),
   cypress: sub("run"),
   wdio: "any",
   testcafe: "any",
   turbo: "any",
-  nx: "any",
   lerna: sub("run", "exec", "bootstrap"),
   "sonar-scanner": "any",
   sonarless: sub("scan"),
@@ -143,7 +145,7 @@ const TOOLS: Record<string, Rule> = {
   pip3: sub("install", "wheel"),
   // Ruby, PHP, Elixir, Swift, Dart
   rspec: "any",
-  rake: "any",
+
   rails: sub("test", "assets:precompile"),
   phpunit: "any",
   pest: "any",
@@ -226,6 +228,10 @@ function builtIn(words: string[], depth = 0): string | null {
   const inner = (from: number) => builtIn(words.slice(from), depth + 1);
   if (WORKIT.test(name)) return null;
   if (INFO_FLAGS.has(words[1] ?? "") && words.length === 2) return null;
+  if (
+    words.some((word) => word === "--watch" || word.startsWith("--watch=") || word === "--watchAll")
+  )
+    return null;
   if (name === "npx" || name === "bunx" || name === "pnpx") return inner(positional(words, 1));
   if (name === "corepack") return inner(1);
   if (name === "npm" || name === "pnpm" || name === "yarn" || name === "bun" || name === "deno") {
@@ -245,12 +251,13 @@ function builtIn(words: string[], depth = 0): string | null {
       return words.slice(at + 1).some((word) => HEAVY_SCRIPT.test(word)) ? label() : null;
     if (NPM_RUN.has(command)) {
       const script = words[positional(words, at + 1)];
-      if (script === undefined) return null;
+      if (script === undefined || WATCH_SCRIPT.test(script)) return null;
       if (HEAVY_SCRIPT.test(script)) return label();
       return name === "bun" ? inner(positional(words, at + 1)) : null;
     }
     if (name === "npm") return null;
     // `pnpm <script>`, `yarn <script>`, `bun <script>`, or a package binary (`yarn jest`).
+    if (WATCH_SCRIPT.test(command)) return null;
     if (HEAVY_SCRIPT.test(command) && !/\.[cm]?[jt]sx?$/u.test(command)) return label();
     return inner(at);
   }
@@ -272,7 +279,28 @@ function builtIn(words: string[], depth = 0): string | null {
   }
   if (name === "make" || name === "gmake") {
     const targets = words.slice(1).filter((word) => !word.startsWith("-") && !word.includes("="));
+    if (targets.some((target) => WATCH_SCRIPT.test(target))) return null;
     return !targets.length || targets.some((target) => HEAVY_SCRIPT.test(target)) ? label() : null;
+  }
+  if (name === "rake") {
+    const targets = words.slice(1).filter((word) => !word.startsWith("-") && !word.includes("="));
+    return targets.some((target) => HEAVY_SCRIPT.test(target) || /^spec(?:$|:)/u.test(target))
+      ? label()
+      : null;
+  }
+  if (name === "nx") {
+    const at = positional(words, 1);
+    const command = words[at] ?? "";
+    if (["run-many", "affected"].includes(command))
+      return words.some((word) => /^(?:-t|--targets?)(?:=|$)/u.test(word)) &&
+        !words.some((word) => WATCH_SCRIPT.test(word.replace(/^--?targets?=/u, "")))
+        ? label()
+        : null;
+    if (command === "run") {
+      const target = (words[at + 1] ?? "").split(":")[1] ?? "";
+      return HEAVY_SCRIPT.test(target) && !WATCH_SCRIPT.test(target) ? label() : null;
+    }
+    return HEAVY_SCRIPT.test(command) && !WATCH_SCRIPT.test(command) ? label() : null;
   }
   if (name === "docker" || name === "podman" || name === "nerdctl") {
     const at = positional(words, 1, new Set(["-H", "--host", "--context", "-c", "--config"]));
@@ -281,15 +309,23 @@ function builtIn(words: string[], depth = 0): string | null {
     if (command === "buildx" || command === "image" || command === "builder")
       return words[positional(words, at + 1)] === "build" ? label() : null;
     if (command === "compose") {
-      const action = words[positional(words, at + 1, new Set(["-f", "--file", "-p"]))];
-      return action === "build" ? label() : null;
+      const at2 = positional(words, at + 1, new Set(["-f", "--file", "-p"]));
+      const action = words[at2];
+      if (action === "build") return label();
+      return action === "up" && words.slice(at2 + 1).includes("--build") ? label() : null;
     }
     return null;
   }
   const rule = TOOLS[name];
   if (!rule) return null;
+  // A tool's own watch mode (`tsc -w`, `jest --watch`, `vitest watch`).
+  if (words.slice(1).some((word) => WATCH_FLAG.test(word) || word === "watch" || word === "dev"))
+    return null;
   if (rule === "any") return label();
-  const command = words.slice(1).find((word) => !word.startsWith("-") || rule.has(word));
+  // `cargo +nightly build`: a toolchain selector is not the subcommand.
+  const command = words
+    .slice(1)
+    .find((word) => (!word.startsWith("-") && !word.startsWith("+")) || rule.has(word));
   return command !== undefined && rule.has(command) ? label() : null;
 }
 
@@ -363,37 +399,125 @@ export type HeavyOptions = {
   patterns?: Array<{ pattern: string; from: "machine" | "repo" }>;
 };
 
+/** Every heavy command line of `lines`: the catalog first, then the patterns. */
+function heavyLines(lines: string[][], options: HeavyOptions): HeavyMatch[] {
+  const found: HeavyMatch[] = [];
+  let patterns: Array<{ pattern: string; from: "machine" | "repo"; matchers: RegExp[] }> | null =
+    null;
+  for (const line of lines) {
+    const reason = builtIn(line);
+    if (reason) {
+      found.push({ line, source: "catalog", reason });
+      continue;
+    }
+    patterns ??= (
+      options.patterns ?? [
+        ...machinePatterns(options.env ?? process.env).map((pattern) => ({
+          pattern,
+          from: "machine" as const,
+        })),
+        ...repoPatterns(options.cwd).map((pattern) => ({ pattern, from: "repo" as const })),
+      ]
+    ).flatMap((entry) => {
+      const matchers = parsePattern(entry.pattern);
+      return matchers ? [{ ...entry, matchers }] : [];
+    });
+    const hit = patterns.find((entry) => matches(entry.matchers, line));
+    if (hit)
+      found.push({
+        line,
+        source: { pattern: hit.pattern, from: hit.from },
+        reason: `${hit.from} pattern "${hit.pattern}"`,
+      });
+  }
+  return found;
+}
+
+const linesOf = (command: string, dialect: ShellDialect): string[][] | null => {
+  try {
+    return commandLines(command, dialect);
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Is `command` heavy? The first command line it runs that the catalog or a
  * pattern names, or null. Fails open: a command the shell reader cannot
  * analyze is not heavy.
  */
 export function heavyCommand(command: string, options: HeavyOptions): HeavyMatch | null {
-  let lines: string[][];
-  try {
-    lines = commandLines(command, options.dialect ?? "posix");
-  } catch {
-    return null;
+  const lines = linesOf(command, options.dialect ?? "posix");
+  return lines ? (heavyLines(lines, options)[0] ?? null) : null;
+}
+
+export type HeavyPlan =
+  | { kind: "none" }
+  /** One heavy command: run `command` (the lease wrapper) instead. */
+  | { kind: "rewrite"; command: string; reason: string }
+  /** A chain with heavy parts: run each part alone (`unblock` is the first heavy one). */
+  | { kind: "split"; reason: string; unblock: string | null }
+  /** A host rule names it, or wrapping would raise it: it runs as typed. */
+  | { kind: "passthrough"; note: string };
+
+export type PlanOptions = HeavyOptions & {
+  /** The host's permission rules; null where the host has none to read (Pi). */
+  rules: RuleRead | null;
+  /** The host skips its permission prompts (Claude `bypassPermissions`). */
+  bypass?: boolean;
+  /** Cap on the lease wait, below the host's tool timeout. */
+  waitS?: number | null;
+};
+
+const quoteWord = (word: string): string =>
+  /^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+
+const leaseCommand = (words: readonly string[]) =>
+  `workit check --heavy -- ${words.map(quoteWord).join(" ")}`;
+
+/**
+ * What the shell hook does with `command` (ruling mvid5onk), after every
+ * Workit gate passed on it: rewrite one heavy command through the lease,
+ * tell a chain with heavy parts to run them alone (never `bash -c`), or step
+ * aside when a host rule names it or wrapping would raise its permission.
+ * Outside a git checkout, and for PowerShell, nothing changes.
+ */
+export function heavyPlan(command: string, options: PlanOptions): HeavyPlan {
+  const dialect = options.dialect ?? "posix";
+  if (dialect !== "posix" || !gitTop(options.cwd)) return { kind: "none" };
+  const lines = linesOf(command, dialect);
+  if (!lines) return { kind: "none" };
+  const heavy = heavyLines(lines, options);
+  if (!heavy.length) return { kind: "none" };
+  const simple = simpleCommand(command, dialect);
+  const single = simple && !WORKIT.test(baseName(simple[0])) && heavyLines([simple], options)[0];
+  const judged = single
+    ? [{ words: lines.flat(), text: command }]
+    : heavy.map((match) => ({
+        words: match.line,
+        text: match.line.join(" "),
+      }));
+  if (options.rules !== null)
+    for (const { words, text } of judged) {
+      const verdict = wrapAllowed(options.rules, words, text, { bypass: options.bypass });
+      if (!verdict.ok)
+        return {
+          kind: "passthrough",
+          note: `workit: \`${command.trim()}\` is heavy but runs outside the heavy-check lease because a host permission rule names it (or \`workit\` is allowlisted); the host decides.`,
+        };
+    }
+  if (single) {
+    const rewrite = leaseRewrite(command, options.waitS ?? null);
+    return rewrite
+      ? { kind: "rewrite", command: rewrite, reason: single.reason }
+      : { kind: "none" };
   }
-  if (!lines.length) return null;
-  for (const line of lines) {
-    const reason = builtIn(line);
-    if (reason) return { line, source: "catalog", reason };
-  }
-  const patterns = options.patterns ?? [
-    ...machinePatterns(options.env ?? process.env).map((pattern) => ({
-      pattern,
-      from: "machine" as const,
-    })),
-    ...repoPatterns(options.cwd).map((pattern) => ({ pattern, from: "repo" as const })),
-  ];
-  for (const { pattern, from } of patterns) {
-    const matchers = parsePattern(pattern);
-    if (!matchers) continue;
-    const line = lines.find((words) => matches(matchers, words));
-    if (line) return { line, source: { pattern, from }, reason: `${from} pattern "${pattern}"` };
-  }
-  return null;
+  const parts = heavy.map((match) => leaseCommand(match.line));
+  return {
+    kind: "split",
+    reason: `heavy_command: \`${command.trim()}\` chains heavy work (${heavy.map((match) => match.reason).join("; ")}) with other commands, and a chain cannot run under the machine-wide heavy-check lease. Run each heavy part alone as \`workit check --heavy -- <segment>\` (here: ${parts.map((part) => `\`${part}\``).join("; ")}); run the other parts as their own commands.`,
+    unblock: parts[0] ?? null,
+  };
 }
 
 /** Is a `workit` CLI on PATH? The rewrite runs it, so without one the gate stays out of the way. */
@@ -412,36 +536,18 @@ export function workitOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
   return false;
 }
 
-const SIMPLE_WORD = /^[\w@%+=:,./-]+$/u;
-const posixQuote = (text: string): string => `'${text.replaceAll("'", `'\\''`)}'`;
+/** Leading `VAR=value` words, kept in front of `workit` so the command still sees them. */
+const ASSIGNMENTS = /^\s*((?:[A-Za-z_]\w*=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'"])*\s+)*)/u;
 
 /**
- * The command that runs `command` under the lease: `workit check --heavy --
- * <cmd>` for one plain command (no shell syntax, no env prefix), else the
- * whole line in bash (`workit check --heavy -- bash -c '<cmd>'`), the shell
- * the hosts' Bash tools run, so bash syntax keeps working. PowerShell lines
- * go through `--shell`.
+ * The lease wrapper for one simple command: `[VAR=x …] workit check --heavy
+ * [--wait <s>] -- <cmd>`, the command's own text kept verbatim after `--`.
  */
-export function leaseRewrite(command: string, dialect: ShellDialect = "posix"): string {
+export function leaseRewrite(command: string, waitS: number | null = null): string | null {
   const text = command.trim();
-  let plain = false;
-  try {
-    const segments = segmentsOf(text, dialect);
-    plain =
-      dialect === "posix" &&
-      segments.length === 1 &&
-      !segments[0].redirects.length &&
-      !segments[0].subs?.length &&
-      !segments[0].stdin?.length &&
-      !segments[0].pipe &&
-      !segments[0].group &&
-      !/^[A-Za-z_]\w*=/u.test(segments[0].words[0] ?? "") &&
-      text.split(/\s+/u).every((word) => SIMPLE_WORD.test(word));
-  } catch {
-    plain = false;
-  }
-  if (plain) return `workit check --heavy -- ${text.split(/\s+/u).join(" ")}`;
-  if (dialect === "powershell")
-    return `workit check --heavy --shell -- '${text.replaceAll("'", "''")}'`;
-  return `workit check --heavy -- bash -c ${posixQuote(text)}`;
+  const prefix = ASSIGNMENTS.exec(text)?.[1] ?? "";
+  const rest = text.slice(prefix.length).trim();
+  if (!rest) return null;
+  const wait = waitS !== null && waitS > 0 ? ` --wait ${Math.floor(waitS)}` : "";
+  return `${prefix}workit check --heavy${wait} -- ${rest}`;
 }

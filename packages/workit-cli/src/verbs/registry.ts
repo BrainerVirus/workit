@@ -266,7 +266,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "check",
     group: "delivery",
     usage:
-      'workit check <name> [--task <id>] [--base <ref>] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy] [--no-lease --reason "<why>"] -- <cmd…>',
+      'workit check <name> [--task <id>] [--base <ref>] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy [--wait <s>]] [--no-lease --reason "<why>"] -- <cmd…>',
     summary:
       "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's); heavy checks wait for the machine-wide heavy-check lease",
     examples: [
@@ -297,7 +297,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "run",
-        usage: "workit lock run [--shell] [--timeout <s>] -- <cmd…>",
+        usage: "workit lock run [--shell] [--wait <s>] [--timeout <s>] -- <cmd…>",
         summary: "Run a command under the lease: the same as workit check --heavy -- <cmd…>",
       },
       {
