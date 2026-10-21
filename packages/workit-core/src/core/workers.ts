@@ -51,3 +51,12 @@ export const workerBlocksTransition = (
   transition: "pause" | "resume" | "revise" | "close",
   state: WorkerState,
 ): boolean => (transition === "pause" ? false : isUncertainWorker(state));
+
+/**
+ * A worker may be continued in its own session only while it holds live
+ * state: a running process, or uncommitted changes in its worktree. A worker
+ * that reported and is clean is continued by a fresh worker on the same
+ * slice. An unreadable worktree counts as no live state.
+ */
+export const holdsLiveState = (state: WorkerState, dirty: boolean | null): boolean =>
+  state === "running" || dirty === true;

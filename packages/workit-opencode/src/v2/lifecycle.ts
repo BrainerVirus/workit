@@ -4,6 +4,9 @@ import {
   type TaskRecord,
   type WorkspaceRecord,
 } from "@brainervirus/workit-core/src/core";
+import { holdsLiveState } from "@brainervirus/workit-core/src/core/workers";
+import { selectFanout } from "@brainervirus/workit-core/src/fanout";
+import { currentBranch, worktreeTree } from "@brainervirus/workit-core/src/git/rev";
 import { nativeWorkerFor, workerCoordinatorFor, type DirectChildren } from "../tools/workit";
 import { sameWorkspace } from "../shared/session";
 
@@ -71,6 +74,27 @@ const sessionIDOf = (value: unknown): string | null =>
 
 const parentOf = (session: V2SessionInfo | null): string | undefined =>
   typeof session?.parentID === "string" && session.parentID ? session.parentID : undefined;
+
+/**
+ * The resume brief that continues the slice a worker's worktree is on:
+ * `workit fanout brief <slice> --mode resume`. The slice is found by branch
+ * (a race attempt branch `<branch>-try<n>` counts as its slice); with no plan
+ * or no match the line keeps a `<slice>` placeholder.
+ */
+const resumeBriefCommand = (root: string, directory: string | undefined): string => {
+  const branch = directory ? currentBranch(directory) : null;
+  const plan = branch ? selectFanout(root, null, branch) : null;
+  const slice =
+    branch && plan?.ok
+      ? plan.data.slices.find(
+          (entry) =>
+            entry.branch === branch ||
+            (branch.startsWith(`${entry.branch}-try`) &&
+              /^\d+$/u.test(branch.slice(entry.branch.length + 4))),
+        )
+      : undefined;
+  return `workit fanout brief ${slice?.id ?? "<slice>"} --mode resume`;
+};
 
 const contentText = (content: unknown): string => {
   if (typeof content === "string") return content;
@@ -475,10 +499,27 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
             ),
           ).length
         : 0;
-      if (bound !== 1 && ownsActiveTask(coordinator))
-        throw new Error(
-          "delegation_lineage_denied: a continuation sessionID must name a running Workit worker",
-        );
+      if (bound !== 1 && ownsActiveTask(coordinator)) {
+        const reported =
+          listed.ok &&
+          listed.data.some((task) =>
+            task.workers.some(
+              (worker) =>
+                worker.data.state === "stopped" &&
+                worker.data.session?.kind === "host" &&
+                worker.data.session.handle === childID &&
+                workerCoordinatorFor(task, worker) === coordinator,
+            ),
+          );
+        const dirty =
+          reported && child.directory ? (worktreeTree(child.directory)?.dirty ?? null) : null;
+        if (!reported || !holdsLiveState("stopped", dirty))
+          throw new Error(
+            reported
+              ? `delegation_lineage_denied: this worker already reported and holds no live state (no running process, no uncommitted changes); continue the slice with a fresh worker: ${resumeBriefCommand(root, child.directory)}`
+              : "delegation_lineage_denied: a continuation sessionID must name a running Workit worker",
+          );
+      }
       return;
     }
     // Native subagent use outside Workit stays unmanaged: no slot, no veto,

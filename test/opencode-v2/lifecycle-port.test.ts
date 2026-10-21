@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
+import { planFanout } from "@/packages/workit-core/src/fanout";
 import { createV2Lifecycle, type V2SessionInfo } from "@/packages/workit-opencode/src/v2/lifecycle";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd });
@@ -601,6 +602,105 @@ test("continuation requires an existing running worker binding", async () => {
         input: { sessionID: "ses_unknown" },
       }),
     ).rejects.toThrow(/continuation sessionID/);
+  } finally {
+    value.cleanup();
+  }
+});
+
+const reportedChild = async (value: ReturnType<typeof fixture>) => {
+  value.assignWorker("investigator");
+  const launch = { tool: "subagent", sessionID: "coordinator", id: "call_1", input: {} };
+  await value.lifecycle.executeBefore(launch);
+  await value.lifecycle.executeAfter({
+    ...launch,
+    status: "completed",
+    result: { metadata: { sessionID: "ses_child1" }, content: [] },
+  });
+  value.sessions.set("ses_child1", {
+    id: "ses_child1",
+    parentID: "coordinator",
+    directory: value.root,
+    outcome: "succeeded",
+  });
+  await value.lifecycle.executeBefore({ ...launch, id: "call_2" });
+  expect(value.worker().data.state).toBe("stopped");
+};
+
+const continueChild = (value: ReturnType<typeof fixture>) =>
+  value.lifecycle.executeBefore({
+    tool: "subagent",
+    sessionID: "coordinator",
+    id: "call_3",
+    input: { sessionID: "ses_child1" },
+  });
+
+test("continuing a reported clean worker is refused with the exact resume-brief command", async () => {
+  const value = fixture();
+  try {
+    const planned = planFanout(value.root, {
+      raw: {
+        name: "w",
+        trunk: "main",
+        slices: [
+          {
+            id: "slice-a",
+            branch: "feature/v2-lifecycle",
+            tier: "mundane",
+            scope: ["a.ts"],
+            goal: "g",
+            acceptance: ["Given a, When b, Then c"],
+            verify: ["workit check test"],
+            forbidden: ["none"],
+          },
+        ],
+      },
+      name: null,
+      trunk: null,
+      actor: { host: "opencode", session: "coordinator", agentId: null },
+    });
+    expect(planned).toMatchObject({ ok: true });
+    await reportedChild(value);
+    await expect(continueChild(value)).rejects.toThrow(
+      /delegation_lineage_denied: .*holds no live state.*: workit fanout brief slice-a --mode resume$/,
+    );
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("continuing a reported worker that holds uncommitted changes is allowed", async () => {
+  const value = fixture();
+  try {
+    await reportedChild(value);
+    writeFileSync(join(value.root, "wip.txt"), "unfinished\n");
+    await continueChild(value);
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("continuing a worker whose process is still running is allowed", async () => {
+  const value = fixture();
+  try {
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "coordinator",
+      directory: value.root,
+    });
+    value.assignWorker("investigator");
+    const launch = { tool: "subagent", sessionID: "coordinator", id: "call_1", input: {} };
+    await value.lifecycle.executeBefore(launch);
+    await value.lifecycle.executeAfter({
+      ...launch,
+      status: "completed",
+      result: { metadata: { sessionID: "ses_child1" }, content: [] },
+    });
+    await value.lifecycle.handleEvent({
+      type: "session.execution.started",
+      data: { sessionID: "ses_child1" },
+    });
+    expect(value.worker().data.state).toBe("running");
+    await continueChild(value);
   } finally {
     value.cleanup();
   }
