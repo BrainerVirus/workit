@@ -196,7 +196,9 @@ const tokenHash = (token: string): string => createHash("sha256").update(token).
  * Null when nothing was issued: already issued, or the write failed (fails open).
  */
 export function recordIssuedSession(cwd: string, lead: string, issued: string): string | null {
-  const token = randomBytes(18).toString("base64url");
+  // Hex, never base64url: a token that starts with "-" (1 in 64) breaks the
+  // `--token <token>` the hook prints, because the CLI parses it as a flag.
+  const token = randomBytes(18).toString("hex");
   try {
     migrateRepoIssued(cwd);
     const own = hash(issued);
