@@ -301,10 +301,10 @@ changes. Some of that state reaches beyond the branch:
   long text truncated and `truncated: true` when anything was cut. Use
   `--view full` for the whole record (it can reach megabytes). An OpenCode
   child session without a worker can call `workit_task` `inspect` and always
-  gets this brief; every other task action from it is still refused. The MCP
-  hosts (Codex, Cursor) and Pi already allow read-only `inspect` to
-  unattested callers with `view: "summary"`; that tool call returns the
-  engine summary (policy included), not the 4 KB brief.
+  gets this brief; every other task action from it is still refused. On the
+  MCP hosts (Codex, Cursor) an unattested caller, and on Pi a worker, gets the
+  same brief from `workit_task` `inspect` with `view: "summary"` or no view;
+  attested leads keep the full engine summary.
 
 ## `workit test-audit`
 

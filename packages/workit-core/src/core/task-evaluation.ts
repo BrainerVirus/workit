@@ -1137,3 +1137,11 @@ export function boundTaskSummary(summary: TaskSummary): TaskBrief {
     unmet.length > BRIEF_OPEN;
   return brief;
 }
+
+/** For a child or unattested caller: `task inspect` with the summary view returns the brief. */
+export function briefInspectResult(request: unknown, result: Result<unknown>): Result<unknown> {
+  const { action, view } = (request ?? {}) as { action?: unknown; view?: unknown };
+  return result.ok && action === "inspect" && (view ?? "summary") === "summary"
+    ? { ...result, data: boundTaskSummary(result.data as TaskSummary) }
+    : result;
+}

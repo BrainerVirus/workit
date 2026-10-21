@@ -25,6 +25,7 @@ import {
   markSourcesLoaded,
 } from "@brainervirus/workit-core/src/core/boundary";
 import type { Host, Result } from "@brainervirus/workit-core/src/core/task-contract";
+import { briefInspectResult } from "@brainervirus/workit-core/src/core/task-evaluation";
 import { redactSecrets } from "@brainervirus/workit-core/src/core/logger";
 import { readExternalContext } from "@brainervirus/workit-core/src/core/context-read";
 
@@ -362,7 +363,13 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
 
       const core = new WorkitCore(new TaskStore(context.root), context);
       const run = core[family] as unknown as (input: unknown) => Result<unknown>;
-      return resultForClient(run.call(core, parsed.data), workspaceRoot);
+      const result = run.call(core, parsed.data);
+      return resultForClient(
+        family === "task" && context.callerAttested !== true
+          ? briefInspectResult(parsed.data, result)
+          : result,
+        workspaceRoot,
+      );
     } catch (error) {
       return thrownResult(toolName, error, workspaceRoot);
     }
