@@ -361,9 +361,9 @@ test("SubagentStart tells the worktree implementer, per preset, that plain git i
 
 test("SubagentStart gives the worktree implementer write guidance and keeps other agents read-only", () => {
   const cwd = root();
-  const context = (agent_type: string) =>
+  const context = (agent_type: string, agent_id = "agent-1") =>
     (
-      runHook(PLUGIN_DIR, fixture("claude-code", "subagent-start", cwd, { agent_type }))
+      runHook(PLUGIN_DIR, fixture("claude-code", "subagent-start", cwd, { agent_type, agent_id }))
         .json as Specific
     ).hookSpecificOutput?.additionalContext ?? "";
   for (const agent of ["workit:implementer"]) {
@@ -401,9 +401,13 @@ test("SubagentStart gives the worktree implementer write guidance and keeps othe
     "other:implementer",
   ])
     expect(context(agent), agent).toContain("read-only/agent-guided");
-  // The plugin's judges get their own session for verdicts (author != verifier).
-  for (const agent of ["workit:reviewer", "workit:verifier"])
-    expect(context(agent), agent).toContain("--session claude-session-1:agent-1");
+  // The plugin's judges get their own session for verdicts (author != verifier),
+  // one per agent id (agent-1 was issued above).
+  for (const [agent, id] of [
+    ["workit:reviewer", "agent-2"],
+    ["workit:verifier", "agent-3"],
+  ])
+    expect(context(agent, id), agent).toContain(`--session claude-session-1:${id}`);
   expect(context("Explore")).not.toContain("--session");
 });
 

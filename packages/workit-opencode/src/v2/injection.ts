@@ -70,9 +70,13 @@ const judgeVerdictText = (
   session: InjectionSession,
   workerContext: string | null,
 ): string | null => {
-  if (workerRole(workerContext) === "implementer") return null;
-  const line = verdictCommand({ branch: judgeBranch(session.directory ?? root) });
-  return `If this session verifies or reviews a candidate, record its verdict with exactly this command (pick the result, name the candidate branch if it differs, say what you ran): \`${line}\`. Your shell already acts as your own Workit session ${childSessionId(session.parentID ?? "", session.id)}: pass no --session or --token, and never set WORKIT_SESSION_ID by hand.`;
+  const role = workerRole(workerContext);
+  if (role === "implementer") return null;
+  const line = verdictCommand({
+    branch: judgeBranch(session.directory ?? root),
+    judge: role === "reviewer" ? "reviewer" : null,
+  });
+  return `If this session verifies or reviews a candidate, record its verdict with exactly this command (pick the result and kind, live when you drove the real surface, name the candidate branch if it differs, say what you ran): \`${line}\`. Your shell already acts as your own Workit session ${childSessionId(session.parentID ?? "", session.id)}: pass no --session or --token, and never set WORKIT_SESSION_ID by hand.`;
 };
 
 export const injectHistoryOffer = (

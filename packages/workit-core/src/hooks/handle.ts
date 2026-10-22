@@ -116,8 +116,13 @@ const subagentStartText = (
   // Issued once: a replayed SubagentStart for the same id gets no token.
   const cwd = input.cwd || process.cwd();
   const token = session ? recordIssuedSession(cwd, session, own) : null;
-  const line = verdictCommand({ branch: judgeBranch(cwd), session: own, token });
-  return `${readOnly} Its own Workit session is ${own}, so the ledger tells its verdicts apart from the author's. Record the verdict with exactly this command (pick the result, name the candidate branch if it differs, say what you ran): \`${line}\`.${token ? " The token is this subagent's alone: never write it into a report, a file or a commit. --token needs a workit CLI at least as new as this plugin; if the CLI answers that --token is an unknown option, update the workit CLI (workit upgrade --cli) and record again." : ""}`;
+  // Already issued: without its token the id is refused (unbound_session).
+  if (session && !token)
+    return `${readOnly} ${own} was already issued to an earlier subagent, so no token is handed out again and a verdict under it would be refused (unbound_session). Record no verdict as ${own}: spawn a fresh verifier or reviewer, which gets its own session and token.`;
+  const judge = event.agentType.endsWith("reviewer") ? "reviewer" : "verifier";
+  const line = verdictCommand({ branch: judgeBranch(cwd), judge, session: own, token });
+  const pick = judge === "verifier" ? ", --kind live when you drove the real surface" : "";
+  return `${readOnly} Its own Workit session is ${own}, so the ledger tells its verdicts apart from the author's. Record the verdict with exactly this command (pick the result${pick}, name the candidate branch if it differs, say what you ran): \`${line}\`.${token ? " The token is this subagent's alone: never write it into a report, a file or a commit. --token needs a workit CLI at least as new as this plugin; if the CLI answers that --token is an unknown option, update the workit CLI (workit upgrade --cli) and record again." : ""}`;
 };
 
 export function handleHook(input: HookInput, deps: HookDeps): HookDecision {

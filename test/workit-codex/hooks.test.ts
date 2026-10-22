@@ -100,12 +100,15 @@ test("G a Workit workspace, W a Codex prompt asks for a skill's work, T one advi
 
 test("G a Codex SubagentStart, T Workit judges get their own session and the implementer worktree guidance, by agent type", () => {
   const root = repo();
-  const start = (agent_type: string) =>
-    codex("subagent-start", root, { agent_type })?.additionalContext ?? "";
-  for (const judge of ["workit-verifier", "workit-reviewer"]) {
-    const text = start(judge);
-    expect(text, judge).toContain("Its own Workit session is codex-session-1:agent-1");
-    expect(text, judge).toContain("--session codex-session-1:agent-1");
+  const start = (agent_type: string, agent_id = "agent-1") =>
+    codex("subagent-start", root, { agent_type, agent_id })?.additionalContext ?? "";
+  for (const [judge, id] of [
+    ["workit-verifier", "agent-1"],
+    ["workit-reviewer", "agent-2"],
+  ]) {
+    const text = start(judge, id);
+    expect(text, judge).toContain(`Its own Workit session is codex-session-1:${id}`);
+    expect(text, judge).toContain(`--session codex-session-1:${id}`);
   }
   const implementer = start("workit-implementer");
   expect(implementer).toContain("its own git worktree");

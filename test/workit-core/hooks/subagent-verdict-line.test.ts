@@ -56,10 +56,13 @@ const claude = (cwd: string, agent: string, agentId = "agent-1") =>
       {},
     ).json as Out
   ).hookSpecificOutput?.additionalContext ?? "";
-const codex = (cwd: string, agent: string) =>
+const codex = (cwd: string, agent: string, agentId = "agent-1") =>
   (
-    dispatchHook(codexAdapter, fixture("codex", "subagent-start", cwd, { agent_type: agent }), {})
-      .json as Out
+    dispatchHook(
+      codexAdapter,
+      fixture("codex", "subagent-start", cwd, { agent_type: agent, agent_id: agentId }),
+      {},
+    ).json as Out
   ).hookSpecificOutput?.additionalContext ?? "";
 
 const LINE = /`(workit ledger verdict <verified\|failed\|blocked> [^`]*)`/u;
@@ -69,6 +72,7 @@ const lineIn = (text: string): string | null => LINE.exec(text)?.[1] ?? null;
 const argvOf = (line: string): string[] =>
   line
     .replace("<verified|failed|blocked>", "verified")
+    .replace("<live|unit>", "live")
     .replace('--how "<what you ran and saw>"', "")
     .split(" ")
     .filter(Boolean)
@@ -76,14 +80,14 @@ const argvOf = (line: string): string[] =>
 
 test("Given a verifier and a reviewer spawned on Claude Code, When they start, Then each context holds its exact verdict line with branch, session and --token=", () => {
   const root = repo();
-  for (const [agent, id] of [
-    ["workit:verifier", "agent-1"],
-    ["workit:reviewer", "agent-2"],
+  for (const [agent, id, kind] of [
+    ["workit:verifier", "agent-1", "<live\\|unit>"],
+    ["workit:reviewer", "agent-2", "review"],
   ] as const) {
     const line = lineIn(claude(root, agent, id));
     expect(line, agent).toMatch(
       new RegExp(
-        `^workit ledger verdict <verified\\|failed\\|blocked> --branch feature/x --session claude-session-1:${id} --token=[0-9a-f]{36} --how "<what you ran and saw>"$`,
+        `^workit ledger verdict <verified\\|failed\\|blocked> --kind ${kind} --branch feature/x --session claude-session-1:${id} --token=[0-9a-f]{36} --how "<what you ran and saw>"$`,
         "u",
       ),
     );
@@ -93,15 +97,22 @@ test("Given a verifier and a reviewer spawned on Claude Code, When they start, T
 
 test("Given a verifier and a reviewer spawned on Codex, When they start, Then the same line is injected through SubagentStart", () => {
   const root = repo();
-  for (const agent of ["workit-verifier", "workit-reviewer"]) {
-    const line = lineIn(codex(root, agent));
-    if (agent === "workit-verifier")
-      expect(line).toMatch(
-        /^workit ledger verdict <verified\|failed\|blocked> --branch feature\/x --session codex-session-1:agent-1 --token=[0-9a-f]{36} --how /u,
-      );
-    // The id is issued once: a second judge under the same agent id gets no token.
-    else expect(line).toContain("--session codex-session-1:agent-1 --how");
-  }
+  expect(lineIn(codex(root, "workit-verifier"))).toMatch(
+    /^workit ledger verdict <verified\|failed\|blocked> --kind <live\|unit> --branch feature\/x --session codex-session-1:agent-1 --token=[0-9a-f]{36} --how /u,
+  );
+  expect(lineIn(codex(root, "workit-reviewer", "agent-2"))).toMatch(
+    /^workit ledger verdict <verified\|failed\|blocked> --kind review --branch feature\/x --session codex-session-1:agent-2 --token=/u,
+  );
+});
+
+test("Given SubagentStart fired again for an id already issued, When the judge starts, Then it gets no command (one without the token is refused) and is told to spawn a fresh verifier", () => {
+  const root = repo();
+  expect(lineIn(claude(root, "workit:verifier"))).not.toBeNull();
+  const replay = claude(root, "workit:verifier");
+  expect(lineIn(replay)).toBeNull();
+  expect(replay).not.toContain("workit ledger verdict");
+  expect(replay).toContain("unbound_session");
+  expect(replay).toContain("spawn a fresh verifier");
 });
 
 test("Given an implementer or an unrelated agent, When it starts, Then no verdict line is injected", () => {
@@ -143,6 +154,7 @@ test("Given the verdict line a Claude Code verifier received, When it runs it as
     branch: "feature/x",
     self: false,
     sessionBound: true,
+    kind: "live",
     actor: { session: "claude-session-1:agent-1" },
   });
 });

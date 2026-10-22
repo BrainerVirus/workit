@@ -233,14 +233,23 @@ export function judgeBranch(cwd: string): string | null {
  * The exact verdict command a verifier or reviewer runs, filled in (#271
  * S2a). `--token=` keeps a token from ever parsing as a flag. Hosts whose
  * child shell carries its own session (OpenCode, Pi) pass no session.
+ * `--kind` is always named: left out, the CLI records `review`.
  */
 export function verdictCommand(options: {
   branch: string | null;
+  judge: "verifier" | "reviewer" | null;
   session?: string | null;
   token?: string | null;
 }): string {
+  const kind =
+    options.judge === "verifier"
+      ? "<live|unit>"
+      : options.judge === "reviewer"
+        ? "review"
+        : "<live|unit|review>";
   return [
     "workit ledger verdict <verified|failed|blocked>",
+    `--kind ${kind}`,
     `--branch ${options.branch ?? "<branch>"}`,
     options.session ? `--session ${options.session}` : null,
     options.token ? `--token=${options.token}` : null,

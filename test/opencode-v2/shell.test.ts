@@ -830,11 +830,16 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
     // token. An implementer worker and the lead get none.
     const verdict = /<workit-verdict-line>[^<]*`(workit ledger verdict [^`]*)`/u;
     const line = verdict.exec(reviewer)?.[1] ?? "";
-    expect(line).toMatch(/^workit ledger verdict <verified\|failed\|blocked> --branch \S+ --how /u);
+    expect(line).toMatch(
+      /^workit ledger verdict <verified\|failed\|blocked> --kind review --branch \S+ --how /u,
+    );
     expect(line).not.toContain("--session");
     expect(line).not.toContain("--token");
     expect(reviewer).toContain("your own Workit session coord:reviewer-session");
-    expect(verdict.test(contextFor("unbound-child", "coord"))).toBe(true);
+    // A child without a worker could be either judge: it picks the kind.
+    expect(verdict.exec(contextFor("unbound-child", "coord"))?.[1]).toContain(
+      "--kind <live|unit|review> ",
+    );
     expect(implementer).not.toContain("<workit-verdict-line>");
     const lead: Array<{ type: string; text: string }> = [];
     injectAgentContext(root, { id: "coord", directory: root }, children, lead);

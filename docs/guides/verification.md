@@ -166,9 +166,10 @@ one of these:
 An issued id is bound to its subagent: the hook mints a random token, hands it
 only to that subagent in its SubagentStart context, and stores only the
 token's sha256. The context carries the whole verdict command, filled in:
-`workit ledger verdict <verified|failed|blocked> --branch <b> --session <lead>:<agent id> --token=<token> --how "…"`
-(the branch is the checkout's, or `<branch>` on a protected branch or a
-detached HEAD). An OpenCode child gets the same line without `--session` and
+`workit ledger verdict <verified|failed|blocked> --kind <live|unit> --branch <b> --session <lead>:<agent id> --token=<token> --how "…"`
+(`--kind review` for a reviewer; the branch is the checkout's, or `<branch>`
+on a protected branch or a detached HEAD). A SubagentStart fired again for an
+id already issued prints no command: spawn a fresh verifier instead. An OpenCode child gets the same line without `--session` and
 `--token`, since its shell already acts as `<lead>:<child>`. `ledger verdict`
 accepts the id only with `--token=<token>`
 (or `WORKIT_SESSION_TOKEN`), so a lead or sibling that read the id in the
