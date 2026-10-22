@@ -130,6 +130,10 @@ export type DecisionRow = RowCommon & {
   what: string;
   why: string;
   refs: string[];
+  /** A tie-breaker agent's call (`--by decider`): never the user's answer, never a verdict. */
+  by?: "decider";
+  /** Each decider's view when the call was recorded after weighing more than one. */
+  views?: string[];
 };
 export type RulingRow = RowCommon & {
   type: "ruling";
@@ -1702,8 +1706,12 @@ function checkSupersede(
 
 export function recordDecision(
   context: RecordContext,
-  input: { what?: string; why?: string; refs?: string[] },
+  input: { what?: string; why?: string; refs?: string[]; by?: string; views?: string[] },
 ): LedgerResult<DecisionRow> {
+  if (input.by !== undefined && input.by !== "decider")
+    return err("invalid_input", `--by takes "decider", got "${input.by}"`);
+  if (input.by === undefined && input.views?.length)
+    return err("invalid_input", "--view needs --by decider");
   const what = required(input.what, "<what>");
   if (!what.ok) return what;
   const why = required(input.why, "--why");
@@ -1718,6 +1726,8 @@ export function recordDecision(
       what: what.value,
       why: why.value,
       refs: input.refs ?? [],
+      ...(input.by === "decider" ? { by: "decider" as const } : {}),
+      ...(input.views?.length ? { views: input.views } : {}),
     },
     { now: context.now },
   );
@@ -2023,7 +2033,7 @@ export type RowSummary = {
   branch: string | null;
   summary: string;
   /** Why a reader should discount the row: superseded, ignored (by the trust rules), self. */
-  labels: Array<"superseded" | "ignored" | "self">;
+  labels: Array<"superseded" | "ignored" | "self" | "decider">;
 };
 
 /** Row types that count only when an observing verb wrote them. */
@@ -2040,6 +2050,7 @@ export function rowLabels(row: ReadRow): RowSummary["labels"] {
   if (row.supersedeIgnored || (OBSERVED_ONLY.has(row.type) && row.observer !== "workit_cli"))
     labels.push("ignored");
   if (row.type === "verdict" && row.self === true) labels.push("self");
+  if (row.type === "decision" && row.by === "decider") labels.push("decider");
   return labels;
 }
 
@@ -2047,9 +2058,11 @@ export function summarizeRow(row: ReadRow): RowSummary {
   const text = (key: string): string => str(row[key]) ?? "";
   let summary: string;
   switch (row.type) {
-    case "decision":
-      summary = `${text("what")} (why: ${text("why")})`;
+    case "decision": {
+      const views = Array.isArray(row.views) ? row.views.map(String) : [];
+      summary = `${row.by === "decider" ? "[decider] " : ""}${text("what")} (why: ${text("why")}${views.length ? `; views: ${views.join(" | ")}` : ""})`;
       break;
+    }
     case "ruling":
       summary = `${text("what")} (why: ${text("why")}; cost if wrong: ${text("costIfWrong")})`;
       break;

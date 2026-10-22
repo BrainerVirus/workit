@@ -97,6 +97,7 @@ workit ledger ruling "Skip Windows for now" --why "no users" --cost-if-wrong "po
 workit ledger verdict verified --how "workit check test; drove the CLI" --kind live
 workit ledger verdict              # current and accepted verdicts for this branch
 workit ledger check [--pr <n>]     # verified, self-reviewed or unreviewed?
+workit ledger decision "Keep the flag off" --by decider --why "reversible" --view "A: on" --view "B: off"  # a tie-breaker agent's call: never the user's answer, never a verdict
 workit ledger list --type decision
 workit ledger verify-integrity     # rows the CLI did not write, or that changed since
 ```

@@ -113,6 +113,7 @@ const rules = (
       : "  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`; push only if this brief says so.",
     "  4. Never record a verdict on your own work.",
     "  5. Run tests, lint, typecheck and builds only through `workit check` (a named check, or `workit check --heavy -- <cmd>`): one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
+    "  6. A failed review gets one fix round and one recheck. Still failing: stop and report the open finding, never a third round (the lead spawns a decider). A product choice is the user's: report it, do not decide it.",
   ];
 };
 

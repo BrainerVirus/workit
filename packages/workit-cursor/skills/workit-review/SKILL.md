@@ -36,7 +36,10 @@ independent; `type-check-only` never proves a behavior change.
 7. Record the verdict:
    `workit ledger verdict verified|failed|blocked --kind review --branch <b> --how "<what you ran and read>"`
    under your own session (the one the lead or the hook gave you).
-8. **Harness note** (optional): friction caused by the repo or harness, not
+8. **Bound the loop.** A failed verdict gets one fix round and one recheck of
+   the changed hunks. Still failing, or stuck: no third round; the lead spawns
+   a decider (read the `workit-fanout` skill's SKILL.md and follow it). A product choice goes to the user.
+9. **Harness note** (optional): friction caused by the repo or harness, not
    the change (a flaky fixture, a missing check, a misleading doc or skill
    line), goes on its own `Harness note:` line in the report and any PR
    comment, never as a finding or in the verdict, so a later retro finds it.

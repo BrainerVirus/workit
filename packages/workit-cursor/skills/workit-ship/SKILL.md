@@ -29,8 +29,8 @@ doubling from 30 s. `fix-ci`: step 5. `address-threads`: step 4.
 once the verdict is accepted. `merged`: step 7. `null` (closed, not merged):
 stop and report. Stop early only for a new consequential choice, a host
 denial, a review comment that needs a product decision, a required update
-that repeats because the base keeps moving, or after 3 failed fix attempts on
-the same check.
+that repeats because the base keeps moving, or a fix round and a recheck of
+one check both fail: spawn a decider (read the `workit-fanout` skill's SKILL.md and follow it), never a third attempt.
 
 1. **Open.** `workit git push`, then `workit pr create --title "<title>"
    --body-file <f|->` plus `--issue <#n|ID>` per issue (`--refs`: no close; idempotent;
