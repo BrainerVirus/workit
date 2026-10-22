@@ -5,10 +5,12 @@
 //   - PostToolUse: only a raw `git commit` is recorded;
 //   - PreToolUse: only a file edit (apply_patch, for the before-write gate),
 //     a shell command that names git, gh or glab, or one that may be heavy
-//     (the heavy-command gate's cheap pre-check) can be denied or nudged.
+//     (the heavy-command gate's cheap pre-check) can be denied or nudged;
+//   - unless a standing-order revision this agent has not seen is pending.
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
 import { maybeHeavy, stateDir } from "@brainervirus/workit-core/src/core/heavy-words";
+import { standingPending } from "@brainervirus/workit-core/src/hooks/standing-signal";
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
@@ -28,6 +30,8 @@ const quietEvent = (): string | null => {
   try {
     const value = JSON.parse(payload) as {
       hook_event_name?: unknown;
+      session_id?: unknown;
+      agent_id?: unknown;
       cwd?: unknown;
       tool_name?: unknown;
       tool_input?: { command?: unknown };
@@ -35,6 +39,16 @@ const quietEvent = (): string | null => {
     const event = value.hook_event_name;
     if (event !== "PreToolUse" && event !== "PostToolUse") return null;
     if (typeof value.cwd !== "string" || typeof value.tool_name !== "string") return null;
+    if (
+      event === "PreToolUse" &&
+      typeof value.session_id === "string" &&
+      standingPending(
+        value.cwd,
+        value.session_id,
+        typeof value.agent_id === "string" && value.agent_id.trim() ? value.agent_id : null,
+      )
+    )
+      return null;
     const tool = value.tool_name.toLowerCase();
     if (event === "PreToolUse" && WRITE_TOOLS.has(tool.replace(/[_-]/g, ""))) return null;
     const shell = SHELL_TOOLS.has(tool);

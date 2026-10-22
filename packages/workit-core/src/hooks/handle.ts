@@ -26,6 +26,7 @@ import {
   skillReadIn,
   withContextLine,
 } from "./skill-nudge";
+import { seedStanding, standingDelta } from "./standing";
 import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
 import { shellGate, writeGate } from "./write-gate";
@@ -125,7 +126,29 @@ const subagentStartText = (
   return `${readOnly} Its own Workit session is ${own}, so the ledger tells its verdicts apart from the author's. Record the verdict with exactly this command (pick the result${pick}, name the candidate branch if it differs, say what you ran): \`${line}\`.${token ? " The token is this subagent's alone: never write it into a report, a file or a commit. --token needs a workit CLI at least as new as this plugin; if the CLI answers that --token is an unknown option, update the workit CLI (workit upgrade --cli) and record again." : ""}`;
 };
 
+const PRE_TOOL = new Set<HookEventKind>(["shell.pre", "write.pre", "tool.pre"]);
+
+/**
+ * A running worker's standing-order delta rides any pre-tool answer that lets
+ * the call run. In-process hosts deliver it on their own channel (OpenCode's
+ * system context, Pi's tool result), so it is never spent here for them.
+ */
 export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
+  const decision = decide(input, deps);
+  if (
+    deps.descriptor.transport !== "hook-process" ||
+    !PRE_TOOL.has(input.event.kind) ||
+    decision.kind === "deny"
+  )
+    return decision;
+  const delta = standingDelta(input);
+  if (!delta) return decision;
+  return decision.kind === "rewrite"
+    ? { ...decision, text: [decision.text, delta].filter(Boolean).join("\n") }
+    : withContextLine(decision, delta);
+}
+
+function decide(input: HookInput, deps: HookDeps): HookDecision {
   const { descriptor } = deps;
   const event = input.event;
   switch (event.kind) {
@@ -221,6 +244,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
         ? writeGate(input.cwd, event.paths, liveOwner(input, descriptor.transport))
         : NONE;
     case "subagent.start":
+      seedStanding({ ...input, session: { ...input.session, agentId: event.agentId } });
       return {
         kind: "context",
         text: subagentStartText(input, descriptor, event),
