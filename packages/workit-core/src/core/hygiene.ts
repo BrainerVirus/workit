@@ -82,7 +82,7 @@ export type ProjectTarget = { ok: true; root: string } | { ok: false; refused: s
  * Where project files (gitignore, hygiene) belong: the git toplevel of `dir`.
  * Outside a repository there is no project to scaffold, and a folder holding
  * several projects must never receive them, so the answer is a refusal naming
- * the way out: the child repositories found one level down, or `workit --cwd <repo> init`.
+ * the way out: the child repositories found one level down, or `cd <repo>`.
  */
 export const projectTarget = (dir: string): ProjectTarget => {
   const start = path.resolve(dir);
@@ -102,9 +102,9 @@ export const projectTarget = (dir: string): ProjectTarget => {
     children.length > 0
       ? `run it inside one of its repositories: ${children
           .slice(0, 5)
-          .map((child) => `workit --cwd ${child} init`)
+          .map((child) => `cd ${child}`)
           .join(", ")}${children.length > 5 ? ` (+${children.length - 5} more)` : ""}`
-      : "run workit --cwd <repo> init (or git init here and run workit init again)";
+      : "cd <repo> (or git init here) and run workit init again";
   return {
     ok: false,
     refused: `${start} is not a git repository, so no project files were added there; ${where}`,
