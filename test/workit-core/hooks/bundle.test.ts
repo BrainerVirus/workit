@@ -37,8 +37,10 @@ const HOOK_ENTRIES = [
 // guard (#274) with its review fixes adds ~8.5 KB (Cursor ~731 KB), so the
 // ceiling was 732 KB. The heavy-command gate (#325: catalog, wrappers,
 // patterns, host permission rules, see-through gates) adds ~21 KB (Cursor
-// ~751.9 KB), so the ceiling is 753 KB.
-const BUDGET = 753_000;
+// ~751.9 KB), so the ceiling was 753 KB. Standing-order deltas for running
+// workers (#320: hooks/standing.ts, the revision signal) add ~4.2 KB to every
+// hook entry (Cursor ~756.1 KB), so the ceiling is 758 KB.
+const BUDGET = 758_000;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {
