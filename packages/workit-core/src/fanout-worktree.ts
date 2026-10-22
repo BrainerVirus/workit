@@ -28,6 +28,7 @@ import path from "node:path";
 import { gitBranch } from "./git/ops";
 import { GIT_TIMEOUTS, gitCommonDir, pushRemoteName, resolveRef } from "./git/rev";
 import { appendObserved, readLedger, type LedgerActor } from "./ledger";
+import { linkWorktreeDependencies, type LinkedDependencies } from "./worktree-deps";
 import {
   branchRef,
   fanoutFail,
@@ -253,6 +254,8 @@ export type CreateOutcome = {
   mode: "new" | "resume";
   /** False when the worktree already existed on the slice's branch. */
   created: boolean;
+  /** node_modules linked from the main checkout (worktree-deps.ts); null when none were. */
+  dependencies: LinkedDependencies | null;
   notes: string[];
 };
 
@@ -301,6 +304,7 @@ export function createSliceWorktree(
         `remove it yourself (git worktree remove ${target}) once you know what it holds`,
       );
     excludeScratch(cwd);
+    const deps = linkWorktreeDependencies(mainCheckout(cwd), target);
     return {
       ok: true,
       data: {
@@ -309,7 +313,13 @@ export function createSliceWorktree(
         head: existing.head ?? "",
         mode: resolveRef(cwd, localRef) ? "resume" : "new",
         created: false,
-        notes: ["the worktree already exists; nothing was changed"],
+        dependencies: deps.linked,
+        notes: [
+          deps.linked
+            ? "the worktree already exists; only its missing dependencies were linked"
+            : "the worktree already exists; nothing was changed",
+          ...deps.notes,
+        ],
       },
     };
   }
@@ -383,6 +393,8 @@ export function createSliceWorktree(
   }
   excludeScratch(cwd);
   const scratch = ensureScratch(target);
+  const deps = linkWorktreeDependencies(mainCheckout(cwd), target);
+  notes.push(...deps.notes);
   const head = gitRun(target, ["rev-parse", "HEAD"]).stdout.trim();
   const baseSha = mode === "new" ? head : null;
   const admin = markAdminDir(target);
@@ -402,7 +414,10 @@ export function createSliceWorktree(
     ...(admin ? { adminId: admin.id, adminIno: admin.ino, adminToken: admin.token } : {}),
     ...(baseSha ? { baseSha } : {}),
   });
-  return { ok: true, data: { ...base, scratch, head, mode, created: true, notes } };
+  return {
+    ok: true,
+    data: { ...base, scratch, head, mode, created: true, dependencies: deps.linked, notes },
+  };
 }
 
 const worktreeFailed = (stderr: string) =>

@@ -1,6 +1,15 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -799,4 +808,70 @@ test("fanout worktree: given an unknown slice or a missing action, when run, the
   expect(unknown.json().error).toBe("ghost: not a slice of fanout wave");
   const missing = await run(cwd, ["fanout", "worktree", "remove", "a", "--json"]);
   expect(missing.code).toBe(2);
+});
+
+/** A workspace monorepo: `@acme/lib` is packages/lib, linked from node_modules as bun and npm do. */
+const workspaceRepo = (ignored = true) => {
+  const repo = localRepo();
+  const { cwd } = repo;
+  writeFileSync(path.join(cwd, ".gitignore"), ignored ? "node_modules/\n" : "");
+  const lib = path.join(cwd, "packages", "lib");
+  mkdirSync(lib, { recursive: true });
+  writeFileSync(path.join(lib, "package.json"), '{"name":"@acme/lib","main":"index.js"}');
+  writeFileSync(path.join(lib, "index.js"), "module.exports = 'main';\n");
+  writeFileSync(path.join(lib, "cli.js"), "#!/usr/bin/env node\n");
+  git(cwd, "add", "-A");
+  git(cwd, "commit", "-qm", "chore: lib");
+  const modules = path.join(cwd, "node_modules");
+  mkdirSync(path.join(modules, "@acme"), { recursive: true });
+  mkdirSync(path.join(modules, ".bin"));
+  mkdirSync(path.join(modules, "leftpad"));
+  writeFileSync(path.join(modules, "leftpad", "package.json"), '{"name":"leftpad"}');
+  writeFileSync(path.join(modules, "leftpad", "index.js"), "module.exports = 'pad';\n");
+  symlinkSync("../../packages/lib", path.join(modules, "@acme", "lib"));
+  symlinkSync("../@acme/lib/cli.js", path.join(modules, ".bin", "lib"));
+  return repo;
+};
+
+test("fanout worktree create: given a workspace monorepo whose main checkout has node_modules, when a slice worktree is created, then its workspace packages and bins resolve inside the worktree, third-party packages are shared, and release removes the links without touching the main checkout's", async () => {
+  const { root, cwd } = workspaceRepo();
+  await plan(cwd, root, [slice("a", ["packages/lib/**"])]);
+  const wt = path.join(root, "app-wt", "a");
+  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(created.code, created.stderr + created.stdout).toBe(0);
+  expect(created.json().data.dependencies).toMatchObject({ dirs: ["node_modules"] });
+
+  writeFileSync(path.join(wt, "packages", "lib", "index.js"), "module.exports = 'worktree';\n");
+  const real = (file: string) => realpathSync(file);
+  expect(real(Bun.resolveSync("@acme/lib", wt))).toBe(
+    real(path.join(wt, "packages", "lib", "index.js")),
+  );
+  expect(real(path.join(wt, "node_modules", ".bin", "lib"))).toBe(
+    real(path.join(wt, "packages", "lib", "cli.js")),
+  );
+  expect(real(Bun.resolveSync("leftpad", wt))).toBe(
+    real(path.join(cwd, "node_modules", "leftpad", "index.js")),
+  );
+  expect(git(wt, "status", "--porcelain")).toBe("M packages/lib/index.js");
+  git(wt, "checkout", "--", "packages/lib/index.js");
+
+  const released = await run(cwd, ["fanout", "worktree", "release", "a", "--json"]);
+  expect(released.code, released.stderr + released.stdout).toBe(0);
+  expect(existsSync(wt)).toBe(false);
+  expect(readFileSync(path.join(cwd, "node_modules", "leftpad", "index.js"), "utf8")).toBe(
+    "module.exports = 'pad';\n",
+  );
+  expect(readFileSync(path.join(cwd, "packages", "lib", "index.js"), "utf8")).toBe(
+    "module.exports = 'main';\n",
+  );
+});
+
+test("fanout worktree create: given node_modules is not git-ignored, when created, then no links are made and a note says why", async () => {
+  const { root, cwd } = workspaceRepo(false);
+  await plan(cwd, root, [slice("a", ["packages/lib/**"])]);
+  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(created.code, created.stderr + created.stdout).toBe(0);
+  expect(created.json().data.dependencies).toBeNull();
+  expect(existsSync(path.join(root, "app-wt", "a", "node_modules"))).toBe(false);
+  expect(created.json().data.notes.join("\n")).toContain("node_modules is not ignored by git");
 });
