@@ -37,6 +37,10 @@ export type VerbEntry = {
   /** The verb runs without a subcommand too (`grant` shows, `verify-delivery` infers). */
   optionalSubcommand?: boolean;
   examples?: readonly string[];
+  /** One parser reads every subcommand's flags, so any flag its usage names is valid for all of them. */
+  sharedParser?: boolean;
+  /** Everything after the first positional goes to another program untouched (`launch <host> …`). */
+  passthrough?: boolean;
   /** `flagAliases` and `flagHints` for a verb without subcommands. */
   flagAliases?: Readonly<Record<string, string>>;
   flagHints?: Readonly<Record<string, string>>;
@@ -215,6 +219,7 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "launch",
     group: "setup",
+    passthrough: true,
     usage: "workit launch <host> [--auto-upgrade] [-- <host args…>]",
     summary: "Upgrade before host startup, then start the host",
     load: () => import("./launch"),
@@ -587,6 +592,7 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "ledger",
     group: "delivery",
+    sharedParser: true,
     summary:
       "Record and query decisions, rulings, SHA-keyed verdicts (patch-id carry-over across rebases) and a fanout's standing orders",
     subcommands: [

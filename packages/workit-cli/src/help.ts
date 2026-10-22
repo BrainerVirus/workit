@@ -207,7 +207,8 @@ export function checkFlags(entry: VerbEntry, args: readonly string[]): FlagCheck
   const word = firstWord(args);
   const sub = word === undefined ? undefined : findSubcommand(entry, word);
   const lines =
-    sub && !/ …/u.test(sub.usage) ? [sub.usage] : usageLines(entry).filter((line) => line !== "");
+    sub && !entry.sharedParser && !/ …/u.test(sub.usage) ? [sub.usage] : usageLines(entry);
+  const takes = valueFlags(lines);
   const known = new Set<string>();
   for (const line of lines)
     for (const match of line.matchAll(/(?<![\w-])--([a-zA-Z][\w-]*)/gu)) known.add(match[1]);
@@ -221,6 +222,16 @@ export function checkFlags(entry: VerbEntry, args: readonly string[]): FlagCheck
     if (arg === "--") {
       out.push(...args.slice(index));
       break;
+    }
+    if (entry.passthrough && !arg.startsWith("-")) {
+      out.push(...args.slice(index));
+      break;
+    }
+    // The token after a flag that takes a value is its value, whatever it looks like;
+    // the parser says what is wrong with it.
+    if (takes.has(arg) && index + 1 < args.length && args[index + 1] !== "--") {
+      out.push(arg, args[(index += 1)]);
+      continue;
     }
     const match = LONG_FLAG.exec(arg);
     if (!match || GLOBAL_FLAGS.has(match[1]) || known.has(match[1])) {
