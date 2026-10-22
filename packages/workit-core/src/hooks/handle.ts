@@ -234,8 +234,11 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         withContextLine(canDeny ? rawGitPre(input, event.command) : NONE, aside),
         shipNudge(input, event.command),
       );
+      // A deny always wins over the cwd rewrite.
       if (!lease)
-        return cwdCommand ? rewritten(nudged.kind === "context" ? nudged.text : null) : nudged;
+        return cwdCommand && nudged.kind !== "deny"
+          ? rewritten(nudged.kind === "context" ? nudged.text : null)
+          : nudged;
       return rewritten(
         [rewriteNote(lease), nudged.kind === "context" ? nudged.text : null]
           .filter(Boolean)

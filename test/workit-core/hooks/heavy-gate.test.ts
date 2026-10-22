@@ -495,6 +495,11 @@ test.each([
   ["cd /x && FOO=1 workit git push"],
   ["cd /x && workit git push &"],
   ["cd /x && workit git push $(date)"],
+  ["cd /x && workit git push --cwd=/y"],
+  ["cd /x && workit pr status | grep -r y ."],
+  ["cd /x && workit pr status | grep y notes.txt"],
+  ["cd /x && workit pr status | tail -F relfile"],
+  ["cd /x && workit pr status | head --output=f"],
 ])("Given `%s` on Claude Code, When PreToolUse runs, Then it is not rewritten", (command) => {
   expect(claude(repo(), command)?.updatedInput).toBeUndefined();
 });
