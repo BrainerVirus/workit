@@ -12,8 +12,8 @@ import {
 } from "@/packages/workit-core/src/ledger";
 
 export const LEAD = "11111111-aaaa-bbbb-cccc-000000000001";
-export const FANOUT = "wave";
-export const SLICE_BRANCH = "feature/slice-a";
+const FANOUT = "wave";
+const SLICE_BRANCH = "feature/slice-a";
 
 const dirs: string[] = [];
 export const cleanup = (): void => {
