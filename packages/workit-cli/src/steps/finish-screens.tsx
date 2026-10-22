@@ -54,15 +54,16 @@ export function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Elemen
   // so edits show live on return from the integration/develop editors.
   const policy = draft.values.branchPolicy ?? detected;
   const [mode, setMode] = useState<BranchPolicyEditMode>("menu");
+  const basePath = resolveBasePath(draft.values);
 
   useEffect(() => {
     if (detected) return;
     dispatch({
       type: "set",
       field: "branchPolicyDetected",
-      value: detectBranchPolicy(resolveBasePath(draft.values)),
+      value: detectBranchPolicy(basePath),
     });
-  }, [detected, dispatch]);
+  }, [detected, dispatch, basePath]);
 
   if (mode === "integration") {
     return (
@@ -143,6 +144,17 @@ function describeMutation(m: SetupMutation): string {
     case "set-token-path":
       return `+ change ${m.key} in ${m.path} → ${m.value}`;
   }
+}
+
+// Each row is keyed by its own text; a repeated row gets an occurrence suffix.
+function mutationRows(mutations: SetupMutation[]): { key: string; text: string }[] {
+  const seen = new Map<string, number>();
+  return mutations.map((m) => {
+    const text = describeMutation(m);
+    const count = seen.get(text) ?? 0;
+    seen.set(text, count + 1);
+    return { key: count === 0 ? text : `${text}#${count}`, text };
+  });
 }
 
 // D-06: shown only when WORKFLOW_WORKSPACE_ROOT is unset — the prompt IS the
@@ -365,8 +377,8 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
       {canApply ? (
         <Box flexDirection="column" gap={0}>
           <Text bold>Will apply:</Text>
-          {preview.mutations.map((m, index) => (
-            <Text key={`${m.type}:${index}`}>{describeMutation(m)}</Text>
+          {mutationRows(preview.mutations).map((row) => (
+            <Text key={row.key}>{row.text}</Text>
           ))}
           {preview.preserved.map((p) => (
             <Text key={p} color="green">

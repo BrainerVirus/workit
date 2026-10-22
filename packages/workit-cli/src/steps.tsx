@@ -133,6 +133,7 @@ export function Wizard({
   useEffect(() => {
     if (draft.screen === "exit" && !exitedRef.current) {
       exitedRef.current = true;
+      // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent -- a one-shot exit event, not state sync: runInit's onExit unmounts the Ink instance, which must wait until the "Exiting…" frame commits; the parent cannot derive the answers itself.
       onExit(!draft.cancelled, draft.values);
     }
   }, [draft.screen, draft.cancelled, draft.values, onExit]);
