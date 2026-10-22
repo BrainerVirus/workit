@@ -213,6 +213,7 @@ export function checkFlags(entry: VerbEntry, args: readonly string[]): FlagCheck
     for (const match of line.matchAll(/(?<![\w-])--([a-zA-Z][\w-]*)/gu)) known.add(match[1]);
   const aliases = { ...entry.flagAliases, ...sub?.flagAliases };
   const hints = { ...entry.flagHints, ...sub?.flagHints };
+  for (const flag of sub?.deferredFlags ?? []) known.add(flag);
   const where = `workit help ${entry.name}${sub ? ` ${sub.name}` : ""}`;
   const out: string[] = [];
   for (let index = 0; index < args.length; index += 1) {

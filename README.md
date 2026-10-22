@@ -250,7 +250,13 @@ nothing. A bare `--` ends any command's options: after it `-h` is an ordinary
 value, and a command that takes no positional arguments refuses anything there
 (exit 2) before it runs. A value that starts with `-`
 goes as `--flag=value` (`workit git commit --message=-h`); `-h` right after a
-flag that takes a value is refused as ambiguous. Global flags:
+flag that takes a value is refused as ambiguous. A `--flag` a command does not
+take fails with exit 2 and an `unblock` naming the closest valid flag (or the
+right form: `workit status` points at `workit task status`, `pr create --head`
+at switching branches). Alternate spellings work: `--fanout` and `--name` both
+select a fanout plan, `ledger verdict --sha <sha>` is `--head <sha>` (the sha
+must be the head being judged), and `task list --status all` lists every task.
+Global flags:
 `--json` (envelope `{"ok","code","data","error"?,"unblock"?}`), `--cwd <dir>`,
 `--version`. Exit codes: `0` ok, `1` failed, `2` usage, `3` blocked,
 `4` busy/pending, `5` unavailable.

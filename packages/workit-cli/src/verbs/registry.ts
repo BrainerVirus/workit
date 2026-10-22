@@ -23,6 +23,8 @@ export type SubcommandEntry = {
   flagAliases?: Readonly<Record<string, string>>;
   /** Flags agents guess that do not exist here: flag (no dashes) to the one-line fix. */
   flagHints?: Readonly<Record<string, string>>;
+  /** Flags the parser refuses with its own guidance; the router leaves them to it. */
+  deferredFlags?: readonly string[];
 };
 
 export type VerbEntry = {
@@ -429,6 +431,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "push",
+        deferredFlags: ["force"],
         usage:
           "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…]",
         summary:

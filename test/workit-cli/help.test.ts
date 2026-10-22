@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { takesPositionals } from "@/packages/workit-cli/src/help";
+import { checkFlags, takesPositionals } from "@/packages/workit-cli/src/help";
 import { TASK_ACTIONS } from "@/packages/workit-cli/src/task";
 import {
   FAMILY_ACTIONS,
@@ -141,6 +141,30 @@ test("given every verb, then each flag its parser accepts is named in its usage,
   expect([...parserFlags("test-audit")]).toContain("--max-mutants");
   expect([...parserFlags("policy")]).toContain("--judge");
   expect([...parserFlags("evidence")]).not.toContain("--judge");
+});
+
+test("given every verb, then no flag its parser accepts is rejected by the router's flag check", () => {
+  for (const entry of VERBS) {
+    const heads = [[], ...(entry.subcommands ?? []).map((sub) => [sub.name])];
+    for (const flag of parserFlags(entry.name)) {
+      if (!flag.startsWith("--")) continue;
+      const passes = heads.some((head) => "args" in checkFlags(entry, [...head, flag]));
+      expect(passes, `workit ${entry.name}: ${flag} is accepted by its parser`).toBe(true);
+    }
+  }
+  const push = findSubcommand(
+    VERBS.find((entry) => entry.name === "git")!,
+    "push",
+  )!;
+  expect(push.deferredFlags).toContain("force");
+  expect(
+    checkFlags(
+      VERBS.find((entry) => entry.name === "git")!,
+      ["push", "--force"],
+    ),
+  ).toEqual({
+    args: ["push", "--force"],
+  });
 });
 
 test("given the task families, then help lists exactly the actions the family grammar accepts", () => {
