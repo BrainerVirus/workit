@@ -24,7 +24,10 @@ description: Build a requested change in small verified steps - follow local pat
    lease waits and names its holder (`workit lock status`).
 5. Prove the feature on its real surface with the project's `verify-<app>`
    skill; none yet? Write one (read the `workit-verify-app` skill's SKILL.md and follow it). Tests show branch behavior,
-   not that the feature works.
+   not that the feature works. The report carries what you observed: a UI
+   change a screenshot or console/network check (chrome devtools or
+   agent-browser), an API a quoted real response. App not runnable? Say so
+   plainly, never claim success.
 6. Commit: `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`).
    No endpoint named? Stop here and state the next command. Hand delivery to
    ship, which pushes and opens the PR with its body shape (read the `workit-ship` skill's SKILL.md and follow it), only
@@ -55,8 +58,7 @@ flag was never invoked)
 
 Good: "Added `--since`. measured: `workit check test` exit 0;
 `mytool log --since 2d` printed 3 entries against the fixture repo. inferred:
-the GitLab path behaves the same (shared parser, not run). Verification handed
-to the verifier agent."
+the GitLab path behaves the same (not run). Handed to the verifier agent."
 
 ## Check
 

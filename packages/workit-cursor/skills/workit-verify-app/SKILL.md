@@ -27,7 +27,10 @@ way a user would.
    - **Drive:** how to exercise it: CLI invocations, `curl` against routes, a
      browser tool for UI, with fixture data.
    - **Evidence:** what to capture (exit code, response body, screenshot path)
-     and the command that records it.
+     and the command that records it. A UI is driven with chrome devtools or
+     agent-browser, with a screenshot or console/network observation; an API
+     with a real call, response quoted. The report carries the observation.
+     App not runnable? Say so plainly, never claim success.
    - **Cleanup:** stop processes, remove temp data.
    - **Feature map:** feature, how to drive it, expected observation.
 3. **Prove it end-to-end once:** launch, drive one feature, capture evidence,
@@ -54,7 +57,8 @@ report `clean`, `changed` (what) or `blocked` (why).
 Bad: "Verify by running the tests." (that is not the real surface)
 
 Good: "Launch `bun run dev` (ready: `listening on :5173`, 30 s). Drive:
-`curl -s localhost:5173/api/health` returns `{"ok":true}`. Evidence:
+`curl -s localhost:5173/api/health` returned `{"ok":true}`; screenshot of
+/settings at .workit-scratch/settings.png. Evidence:
 `workit check --name verify-web -- bun scripts/smoke.ts` exit 0."
 
 ## Check
