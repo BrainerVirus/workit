@@ -78,6 +78,15 @@ const cli = (repo: string, tmp: string, args: string[]) =>
 const copiesIn = (tmp: string) =>
   readdirSync(tmp).filter((name) => name.startsWith("workit-mutate-"));
 
+test("--rule names every unknown id in order and accepts the known ones", () => {
+  const { repo, tmp } = fixture();
+  const bad = cli(repo, tmp, ["--rule", "nope, tautology,also-nope", "--json"]);
+  expect(bad.status).toBe(2);
+  expect(JSON.parse(bad.stdout).error).toStartWith("unknown rule nope, also-nope (rules: ");
+  const good = cli(repo, tmp, ["--rule", "tautology,mock-echo", "--json"]);
+  expect(good.status).toBe(0);
+});
+
 test("--diff audits only the test files changed against the base", () => {
   const { repo, tmp } = fixture();
   writeFileSync(

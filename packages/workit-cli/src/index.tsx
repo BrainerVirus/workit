@@ -191,7 +191,8 @@ function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => vo
       </Box>
     );
   }
-  const selected = plan.hosts.filter((h) => hosts.includes(h.host));
+  const chosen = new Set(hosts);
+  const selected = plan.hosts.filter((h) => chosen.has(h.host));
   // The reviewed plan IS the filtered plan: the outcome hands apply exactly
   // what this screen displayed, so display and applied set cannot drift.
   const reviewed: UninstallPlan = { hosts: selected };

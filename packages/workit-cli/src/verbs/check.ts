@@ -268,15 +268,16 @@ async function recordInTask(
   if (!view.ok || !task.ok) return outcome;
   const requirements = (view.data as { requirements?: unknown }).requirements;
   if (!Array.isArray(requirements)) return outcome;
+  const byId = new Map<string, NonNullable<typeof task.data.policy>["requirements"][number]>();
+  for (const entry of task.data.policy?.requirements ?? [])
+    if (!byId.has(entry.id)) byId.set(entry.id, entry);
   for (const item of requirements as Array<{
     requirementId: string;
     status: string;
     evidenceIds: string[];
     reason: string;
   }>) {
-    const requirement = task.data.policy?.requirements.find(
-      (entry) => entry.id === item.requirementId,
-    );
+    const requirement = byId.get(item.requirementId);
     if (!requirement) continue;
     if (item.status === "satisfied" && item.evidenceIds.includes(recorded.data.id))
       outcome.satisfies.push(requirement.id);
