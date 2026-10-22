@@ -450,7 +450,8 @@ test("Given the verifier session each skill documents per host, When it records 
 });
 
 // CI flake #284: a base64url token began with "-" about once in 64 mints, and
-// `--token -…` (the form the SubagentStart hook prints) is a usage error (exit 2).
+// `--token -…` is a usage error (exit 2). Tokens are hex now, and the
+// SubagentStart hook prints `--token=<token>`; the spaced form stays accepted.
 test("Given any token a SubagentStart hook mints, When the verifier passes it as `--token <token>`, Then the verdict is accepted", async () => {
   const root = featureRepo();
   authoredBy(root, "implementer-1");

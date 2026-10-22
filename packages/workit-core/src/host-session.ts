@@ -10,7 +10,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isProtectedTarget } from "./core/branch";
 import { resolveStateDir } from "./core/logger";
+import { currentBranch } from "./git/rev";
 import { resolveStore } from "./store/paths";
 
 export type HostSession = { host: string | null; session: string | null };
@@ -215,6 +217,46 @@ export function recordIssuedSession(cwd: string, lead: string, issued: string): 
     // Already issued (EEXIST), or a failed write: no token is handed out.
     return null;
   }
+}
+
+/**
+ * The branch a judge spawned from `cwd` most likely verifies: the checkout's
+ * branch, or null on a detached HEAD or a protected branch (a lead on `main`
+ * fanning out names the candidate in its brief, never its own branch).
+ */
+export function judgeBranch(cwd: string): string | null {
+  const branch = currentBranch(cwd);
+  return branch && !isProtectedTarget(cwd, branch) ? branch : null;
+}
+
+/**
+ * The exact verdict command a verifier or reviewer runs, filled in (#271
+ * S2a). `--token=` keeps a token from ever parsing as a flag. Hosts whose
+ * child shell carries its own session (OpenCode, Pi) pass no session.
+ * `--kind` is always named: left out, the CLI records `review`.
+ */
+export function verdictCommand(options: {
+  branch: string | null;
+  judge: "verifier" | "reviewer" | null;
+  session?: string | null;
+  token?: string | null;
+}): string {
+  const kind =
+    options.judge === "verifier"
+      ? "<live|unit>"
+      : options.judge === "reviewer"
+        ? "review"
+        : "<live|unit|review>";
+  return [
+    "workit ledger verdict <verified|failed|blocked>",
+    `--kind ${kind}`,
+    `--branch ${options.branch ?? "<branch>"}`,
+    options.session ? `--session ${options.session}` : null,
+    options.token ? `--token=${options.token}` : null,
+    '--how "<what you ran and saw>"',
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /** Keep the newest ISSUED_PER_LEAD ids of one lead (and their token hashes); `own` is never pruned. */

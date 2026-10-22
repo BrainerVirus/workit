@@ -824,6 +824,26 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
     const mismatched = contextFor("reviewer-session", "other-coordinator");
     expect(mismatched).not.toContain("<workit-worker-context>");
     expect(mismatched).not.toContain('"role":"reviewer"');
+
+    // #271 S2a: a judging child is told its exact verdict command; its shell
+    // already acts as <lead>:<child>, so the command names no session or
+    // token. An implementer worker and the lead get none.
+    const verdict = /<workit-verdict-line>[^<]*`(workit ledger verdict [^`]*)`/u;
+    const line = verdict.exec(reviewer)?.[1] ?? "";
+    expect(line).toMatch(
+      /^workit ledger verdict <verified\|failed\|blocked> --kind review --branch \S+ --how /u,
+    );
+    expect(line).not.toContain("--session");
+    expect(line).not.toContain("--token");
+    expect(reviewer).toContain("your own Workit session coord:reviewer-session");
+    // A child without a worker could be either judge: it picks the kind.
+    expect(verdict.exec(contextFor("unbound-child", "coord"))?.[1]).toContain(
+      "--kind <live|unit|review> ",
+    );
+    expect(implementer).not.toContain("<workit-verdict-line>");
+    const lead: Array<{ type: string; text: string }> = [];
+    injectAgentContext(root, { id: "coord", directory: root }, children, lead);
+    expect(lead.map((part) => part.text).join("\n")).not.toContain("<workit-verdict-line>");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
