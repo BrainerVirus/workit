@@ -7,6 +7,7 @@ import {
   runHookProcess,
   type CodexHost,
 } from "@brainervirus/workit-core/hooks";
+import { PROCESS_START } from "@brainervirus/workit-core/src/hooks/deadline";
 
 export {
   detectCodexSurface,
@@ -48,7 +49,14 @@ export const runCodexHook = async (
   stdin: AsyncIterable<unknown> | Iterable<unknown> = process.stdin,
 ): Promise<void> => {
   warnOnSurfaceFallback();
-  process.exitCode = await runHookProcess(detectCodexSurface(process.env), stdin, process.stdout);
+  process.exitCode = await runHookProcess(
+    detectCodexSurface(process.env),
+    stdin,
+    process.stdout,
+    process.stderr,
+    process.env,
+    { startedAt: PROCESS_START },
+  );
 };
 
 if (import.meta.main) await runCodexHook();
