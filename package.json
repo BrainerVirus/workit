@@ -37,7 +37,7 @@
     "validate:cursor-marketplace": "bun packages/workit-core/scripts/validate-cursor-marketplace.ts",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
-    "doctor": "react-doctor packages/workit-cli/src -y --no-telemetry --blocking error",
+    "doctor": "react-doctor packages/workit-cli/src -y --no-telemetry --blocking warning",
     "knip": "knip --no-progress --no-config-hints && knip --no-progress --production --files && bun scripts/check-reachability.ts",
     "hooks:install": "lefthook install",
     "format": "oxfmt",
