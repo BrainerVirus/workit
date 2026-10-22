@@ -90,7 +90,8 @@ function parse(argv: string[]): Options | string {
       if (value === undefined || value === "") return `${flag} requires a value`;
       if (flag === "--rule") {
         const ids = value.split(",").map((id) => id.trim());
-        const unknown = ids.filter((id) => !ruleIds.includes(id as RuleId));
+        const known = new Set<string>(ruleIds);
+        const unknown = ids.filter((id) => !known.has(id));
         if (unknown.length > 0)
           return `unknown rule ${unknown.join(", ")} (rules: ${ruleIds.join(", ")})`;
         options.rules = new Set(ids as RuleId[]);

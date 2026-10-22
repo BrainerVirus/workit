@@ -504,9 +504,9 @@ export async function runMutation(options: MutateOptions): Promise<MutationRepor
       const next = list[round];
       if (next) runnable.push(next);
     }
+  const scheduled = new Set(runnable);
   for (const mutant of mutants)
-    if (!runnable.includes(mutant))
-      record({ ...mutant, status: "no-tests", durationMs: 0, tests: [] });
+    if (!scheduled.has(mutant)) record({ ...mutant, status: "no-tests", durationMs: 0, tests: [] });
   if (runnable.length === 0) return finish(options, 0, results, counts, started);
 
   removeStaleCopies();

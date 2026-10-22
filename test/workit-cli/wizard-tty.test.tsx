@@ -681,6 +681,28 @@ test("two arrow keys in one stdin chunk advance TWO steps with distinct onChange
   tty.unmount();
 });
 
+test("Given two detected hosts, When both are toggled off in one stdin chunk and Enter is pressed, Then the wizard continues with neither selected", async () => {
+  const exits: Array<{ complete: boolean; values?: { platforms: string[] } }> = [];
+  const tty = await renderInk(
+    <Wizard
+      onExit={(complete, values) => exits.push({ complete, values })}
+      detection={{
+        ...emptyDetection(),
+        opencode: { detected: true, configured: false },
+        cursor: { detected: true, configured: false },
+      }}
+    />,
+  );
+  expect(tty.lastFrame()).toContain("[✓] OpenCode · detected");
+  expect(tty.lastFrame()).toContain("[✓] Cursor · detected");
+  await tty.burst(DOWN, DOWN, SPACE, DOWN, SPACE);
+  expect(tty.lastFrame()).toContain("[ ] OpenCode · detected");
+  expect(tty.lastFrame()).toContain("[ ] Cursor · detected");
+  await tty.burst(ESC);
+  expect(exits).toEqual([{ complete: false, values: expect.objectContaining({ platforms: [] }) }]);
+  tty.unmount();
+});
+
 test("down,down,up then Enter submits exactly the highlighted option's value", async () => {
   const actions: { field: string; value: string }[] = [];
   const selects: string[] = [];

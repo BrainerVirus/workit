@@ -384,8 +384,8 @@ export function applyUpgrade(
     if (digest(file) !== expected)
       return { ok: false, error: `configuration changed; preview again: ${file}` };
   const { home, env, configDir } = upgradePaths(deps);
-  const active = deps.activeHosts?.() ?? runningHosts(deps);
-  if (plan.entries.some((entry) => active.includes(entry.host)))
+  const active = new Set(deps.activeHosts?.() ?? runningHosts(deps));
+  if (plan.entries.some((entry) => active.has(entry.host)))
     return {
       ok: false,
       error: "Stop the selected running hosts before upgrading their loaded plugins",
