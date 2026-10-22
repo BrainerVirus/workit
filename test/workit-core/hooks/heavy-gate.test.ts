@@ -460,3 +460,59 @@ test("Given a plugin newer than the CLI, When each rewrite host wraps a heavy co
       expect(CLI_8_14_FLAGS.has(flag), `${String(command)}: ${flag}`).toBe(true);
   }
 });
+
+// Issue #388: `cd <dir> && workit …` is rewritten to `workit --cwd <dir> …` on
+// Claude Code (updatedInput, no permission decision); every other shape is left alone.
+test("Given `cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3` on Claude Code, When PreToolUse runs, Then updatedInput.command is the --cwd form with the filter kept", () => {
+  const output = claude(repo(), "cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3");
+  expect(output?.permissionDecision).toBeUndefined();
+  expect(output?.updatedInput).toEqual({
+    command: "workit --cwd /tmp/wt pr merge --pr 7 2>&1 | tail -3",
+    description: "run it",
+  });
+});
+
+test("Given a quoted literal directory, When PreToolUse runs, Then the quoting is kept in the rewrite", () => {
+  expect(
+    claude(repo(), `cd "/tmp/my wt" && workit git push | head -5`)?.updatedInput?.command,
+  ).toBe(`workit --cwd "/tmp/my wt" git push | head -5`);
+});
+
+test.each([
+  ['cd "$W" && workit git push'],
+  ["cd $W && workit git push"],
+  ["cd - && workit git push"],
+  ["cd && workit git push"],
+  ["cd /x; workit git push"],
+  ["cd /x || workit git push"],
+  ["cd /x && workit git push && git log"],
+  ["cd /x && git log && workit git push"],
+  ["cd /x && workit git push ; echo done"],
+  ["cd /x && workit git push | tee out.txt"],
+  ["cd /x && workit git push > out.txt"],
+  ["cd /x && workit git push | tail -3 && echo hi"],
+  ["cd /x && workit --cwd /y git push"],
+  ["cd /x && FOO=1 workit git push"],
+  ["cd /x && workit git push &"],
+  ["cd /x && workit git push $(date)"],
+  ["cd /x && workit git push --cwd=/y"],
+  ["cd /x && workit pr status | grep -r y ."],
+  ["cd /x && workit pr status | grep y notes.txt"],
+  ["cd /x && workit pr status | tail -F relfile"],
+  ["cd /x && workit pr status | head --output=f"],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then it is not rewritten", (command) => {
+  expect(claude(repo(), command)?.updatedInput).toBeUndefined();
+});
+
+test("Given a cd-workit compound on Codex and Cursor, When the hook runs, Then it is neither denied nor rewritten", () => {
+  const root = repo();
+  const command = "cd /tmp/wt && workit pr merge --pr 7";
+  expect(codex(root, command)?.permissionDecision).toBeUndefined();
+  expect(cursor(root, command).permission).not.toBe("deny");
+});
+
+test("Given a cd-workit compound wrapping a heavy command, When PreToolUse runs, Then it is never rewritten to a command that skips the lease", () => {
+  const output = claude(repo(), "cd /tmp/wt && workit check test -- npx jest");
+  expect(output?.permissionDecision).toBeUndefined();
+  expect(String(output?.updatedInput?.command ?? "workit")).toStartWith("workit");
+});
