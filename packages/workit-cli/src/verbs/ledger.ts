@@ -15,7 +15,12 @@
 //   workit ledger standing add "<order>" | list | clear [<id>]  [--fanout <name>]
 //                          # the lead's standing orders for a fanout's workers,
 //                          # recorded only by the session that first made the
-//                          # plan; `workit fanout brief` pastes those in force
+//                          # plan; `workit fanout brief` pastes those in force,
+//                          # and running workers get each change on their next
+//                          # hooked tool call (hooks/standing.ts)
+//   workit ledger standing add --stop ["<note>"] | add --clear
+//                          # the stop line: running workers stop and report;
+//                          # --clear lifts it and keeps the other orders
 //   workit ledger add decision|ruling|verdict …       # same as the bare forms
 //
 // Every write accepts --supersedes <id> (same type, same session only), plus
@@ -47,6 +52,7 @@ import {
   checkVerdicts,
   clearStanding,
   filterRows,
+  liftStop,
   readLedger,
   recordDecision,
   recordRuling,
@@ -78,7 +84,7 @@ import { emit, fail, ok, type Io } from "../output";
 const USAGE =
   "workit ledger decision|ruling|verdict|standing|list|check ... (workit help ledger for the grammar)";
 const STANDING_USAGE =
-  'workit ledger standing add "<order>" | list | clear [<id>]  [--fanout <name>] [--json]';
+  'workit ledger standing add "<order>" | add --stop ["<note>"] | add --clear | list | clear [<id>]  [--fanout <name>] [--json]';
 
 const OPTIONS = {
   why: { type: "string" },
@@ -102,6 +108,8 @@ const OPTIONS = {
   token: { type: "string" },
   as: { type: "string" },
   fanout: { type: "string" },
+  stop: { type: "boolean" },
+  clear: { type: "boolean" },
   json: { type: "boolean" },
 } as const;
 
@@ -127,6 +135,8 @@ type Values = {
   token?: string;
   as?: string;
   fanout?: string;
+  stop?: boolean;
+  clear?: boolean;
 };
 
 const SESSION_SAFE = /^[A-Za-z0-9_.:@/+-]{1,128}$/;
@@ -550,6 +560,9 @@ async function standing(io: Io, values: Values, args: string[]): Promise<number>
         { unblock: STANDING_USAGE },
       ),
     );
+  if ((values.stop || values.clear) && action !== "add")
+    return usage(io, `--stop and --clear go with standing add, not standing ${action}`);
+  if (values.stop && values.clear) return usage(io, "pass --stop or --clear, not both");
   const target = standingFanout(io, values);
   if (target instanceof Error)
     return emit(io, fail("invalid_input", target.message, { unblock: STANDING_USAGE }));
@@ -588,11 +601,23 @@ async function standing(io: Io, values: Values, args: string[]): Promise<number>
         unblock: "workit fanout plan <plan.json> first, or name an existing plan with --fanout",
       }),
     );
+  if (action === "add" && values.clear) {
+    if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
+    return fromResult(
+      io,
+      liftStop(context, { fanout, lead, leads }),
+      (rows) =>
+        `lifted the stop line for fanout ${fanout} (cleared ${rows.map((row) => row.target).join(", ")}); running workers are told on their next tool call`,
+    );
+  }
   if (action === "add")
     return fromResult(
       io,
-      recordStanding(context, { fanout, lead, what: rest.join(" ") }),
-      (row) => `recorded standing order ${row.id} for fanout ${fanout}`,
+      recordStanding(context, { fanout, lead, what: rest.join(" "), stop: values.stop === true }),
+      (row) =>
+        row.stop
+          ? `recorded stop line ${row.id} for fanout ${fanout}; running workers stop and report on their next tool call`
+          : `recorded standing order ${row.id} for fanout ${fanout}; running workers get it on their next tool call`,
     );
   if (rest.length > 1) return usage(io, `unexpected argument: ${rest[1]}`);
   return fromResult(
