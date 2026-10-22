@@ -487,11 +487,12 @@ test("G ci wait sees pending checks, W the session stops under endpoint green, T
       last_assistant_message: "Pushed; CI is running.",
       ...extra,
     }).json;
-  expect(stop()).toEqual({
-    decision: "block",
-    reason: expect.stringContaining("PR #12's checks were last seen pending"),
-  });
-  expect((stop() as { reason: string }).reason).toContain("`workit ci wait --pr 12`");
+  const first = stop() as { decision?: string; reason: string };
+  expect(first.decision).toBe("block");
+  expect(first.reason).toContain("PR #12's checks were last seen pending");
+  expect(first.reason).toContain("`workit ci wait --pr 12`");
+  // Once per head and session: the same obligation does not block again.
+  expect(stop()).toEqual({});
   expect(stop({ stop_hook_active: true })).toEqual({});
   // pr status reading passing checks records the change; the stop is free.
   checks = "github/pr-passing.json";
