@@ -37,10 +37,8 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
 6. **Retry once, then escalate.** A stuck or failed slice gets one retry with
    a fresh brief (`workit fanout brief <slice> --mode resume`, same branch);
    if that fails too, re-slice it, take it over, or report the gap. Never
-   chain resumes. A failed review gets one fix round and one recheck, then a
-   decider, never a third round; a product choice goes to the user
-   (`references/orchestration.md`, "Stuck calls"). A hard slice may race instead: N attempts, keep the best
-   verdict (`references/orchestration.md`).
+   chain resumes. A fix round and recheck that both fail: a decider, not a
+   third round; product choices go to the user (`references/orchestration.md`).
 7. **Verify by the workspace `verification` setting** (`workit grant show`).
    A report is a pointer, never evidence. `self`: a verifier that wrote none
    of the slices, or you if you wrote none. `independent` or high risk: a
