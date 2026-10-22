@@ -406,6 +406,7 @@ const checkRuntime = (res: Resolved): DoctorCheck => {
       id: "runtime",
       status: "fail",
       detail: `bun not found on PATH (dev checkout requires the pinned toolchain ${SUPPORT_MATRIX.bun})`,
+      // react-doctor-disable-next-line react-doctor/plugin-update-trust-risk -- display text only: `fix` is printed (verbs/doctor.ts, --json `fixes`), never executed; workit downloads and runs nothing here.
       fix: `Install bun ${SUPPORT_MATRIX.bun} (curl -fsSL https://bun.sh/install | bash)`,
     };
   }
@@ -2762,6 +2763,7 @@ const hookRecordsIssued = (root: string): boolean | null => {
   if (files.length === 0) return null;
   return files.some((file) => {
     try {
+      // react-doctor-disable-next-line react-doctor/js-set-map-lookups -- String#includes: a substring search in the file text, which a Set cannot answer.
       return readFileSync(path.join(root, "dist", file), "utf8").includes(HOOK_ISSUED_MARKER);
     } catch {
       return false;

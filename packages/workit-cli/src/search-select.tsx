@@ -50,7 +50,9 @@ export function filterOptions<T extends string>(
   return options
     .filter(
       (option) =>
+        // react-doctor-disable-next-line react-doctor/js-set-map-lookups -- String#includes: a substring match on one label, which a Set cannot answer.
         fold(option.label.toLowerCase()).includes(q) ||
+        // react-doctor-disable-next-line react-doctor/js-set-map-lookups -- String#includes: a substring match on one value, which a Set cannot answer.
         fold(option.value.toLowerCase()).includes(q),
     )
     .slice(0, limit);
