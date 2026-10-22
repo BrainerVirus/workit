@@ -569,8 +569,9 @@ export const VERBS: readonly VerbEntry[] = [
     subcommands: [
       {
         name: "decision",
-        usage: `workit ledger decision "<what>" --why "<why>" [--ref <path|url>]… ${LEDGER_ACTOR}`,
-        summary: "Record a decision and why",
+        usage: `workit ledger decision "<what>" --why "<why>" [--by decider [--view "<view>"]…] [--ref <path|url>]… ${LEDGER_ACTOR}`,
+        summary:
+          "Record a decision and why; --by decider marks a tie-breaker agent's call (not the user's answer, not a verdict)",
       },
       {
         name: "ruling",

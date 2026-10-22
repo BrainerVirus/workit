@@ -1,6 +1,9 @@
 // `workit ledger` (design §2.1 S13, D18): record and query the repo-wide run ledger.
 //
 //   workit ledger decision "<what>" --why "<why>" [--ref <path|url>…]
+//   workit ledger decision "<what>" --by decider --why "<why>" [--view "<a decider's view>"]…
+//                          # a tie-breaker agent's call: listed as (decider), never the
+//                          # user's product-choice answer and never a verdict
 //   workit ledger ruling   "<what>" --why "<why>" --cost-if-wrong "<…>" [--ref …]
 //   workit ledger verdict  <result> --how "<method/evidence>" [--kind unit|live|perf|review]
 //                          [--pr n|--branch b] [--base <ref>] [--surface ui|cli|api]
@@ -81,6 +84,8 @@ const OPTIONS = {
   why: { type: "string" },
   "cost-if-wrong": { type: "string" },
   ref: { type: "string", multiple: true },
+  by: { type: "string" },
+  view: { type: "string", multiple: true },
   how: { type: "string" },
   kind: { type: "string" },
   surface: { type: "string" },
@@ -103,6 +108,8 @@ type Values = {
   why?: string;
   "cost-if-wrong"?: string;
   ref?: string[];
+  by?: string;
+  view?: string[];
   how?: string;
   kind?: string;
   surface?: string;
@@ -411,7 +418,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (sub === "decision")
     return fromResult(
       io,
-      await recorded(recordDecision(context, { what: text, why: values.why, refs: values.ref })),
+      await recorded(
+        recordDecision(context, {
+          what: text,
+          why: values.why,
+          refs: values.ref,
+          by: values.by,
+          views: values.view,
+        }),
+      ),
       (row) => `recorded decision ${row.id}`,
     );
   if (sub === "ruling")

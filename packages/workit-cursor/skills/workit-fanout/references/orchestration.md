@@ -43,6 +43,27 @@ rulings). If the retry fails too, escalate instead of a third worker:
 re-slice it smaller (`workit fanout plan` again), take it over yourself, or
 report the gap to the user.
 
+## Stuck calls: the decider
+
+A failed review gets one fix round and one recheck (the changed hunks only).
+If the recheck fails, or a worker and a reviewer disagree, spawn a decider
+instead of a third round. A decider is a fresh read-only agent, not the author
+or the reviewer. It returns three things: the options, a pick by
+reversibility (the option cheapest to undo wins a tie), and the exact change
+list. The fixer applies that list once, then one focused recheck follows.
+
+- Hard call (shared contract, security, migration): two deciders on different
+  models (Claude Code: a different `model` on the Agent call; OpenCode: a
+  child session on another configured agent; Codex, Cursor and Pi: one
+  decider, since the host picks no model). If they disagree, you take the
+  more reversible option.
+- Record it: `workit ledger decision "<pick>" --by decider --why "<why it is
+  the more reversible>" --view "<decider A: view>" --view "<decider B: view>"`.
+  The row is listed as a decider call; it is never the user's answer to a
+  product choice and never a verdict.
+- A product choice, or authority nobody here has, is not a decider's call:
+  ask the user with your recommendation.
+
 ## Race a hard slice
 
 When a hard slice has an uncertain approach and a cheap VERIFY, run 2-3

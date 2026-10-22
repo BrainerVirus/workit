@@ -196,7 +196,7 @@ export const ledgerView = (root: string): LedgerView => {
 export type RuleStatus = { met: boolean; reason: string; decisionIds: string[] };
 
 /** A user decision recorded on the task, or a ledger decision on this branch since the task began. */
-const productDecision = (task: TaskRecord, ledger: LedgerView): RuleStatus => {
+export const productDecision = (task: TaskRecord, ledger: LedgerView): RuleStatus => {
   const decisions = task.decisions.filter(
     (entry) =>
       entry.data.revoked === null &&
@@ -217,6 +217,7 @@ const productDecision = (task: TaskRecord, ledger: LedgerView): RuleStatus => {
     .findLast(
       (item) =>
         item.type === "decision" &&
+        item.by !== "decider" &&
         !item.superseded &&
         (item.branch ?? null) === branch &&
         Date.parse(item.at) >= since,
