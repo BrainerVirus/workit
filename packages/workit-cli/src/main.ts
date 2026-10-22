@@ -5,6 +5,8 @@
 import path from "node:path";
 import pkg from "../package.json" with { type: "json" };
 import {
+  checkFlags,
+  commandUnblock,
   firstWord,
   helpAsValue,
   takesPositionals,
@@ -168,6 +170,9 @@ export async function main(
   }
   const ended = endOfOptions(io, entry, args);
   if (typeof ended === "number") return ended;
+  const checked = checkFlags(entry, ended);
+  if ("error" in checked)
+    return emit(io, fail("invalid_input", checked.error, { unblock: checked.unblock }));
   if (parsed.cwd !== null) {
     try {
       // Existing verbs resolve from process.cwd(); keep them in step with io.cwd.
@@ -195,7 +200,7 @@ export async function main(
       `workit: migrated ${report.tasks} task${report.tasks === 1 ? "" : "s"} from ${report.from} to ${report.to} (backup: ${report.backup})\n`,
     );
   const verb = await entry.load();
-  const runVerb = (target: Io) => guarded(target, () => verb.run(ended, target));
+  const runVerb = (target: Io) => guarded(target, () => verb.run(checked.args, target));
   if (!io.json) return runVerb(io);
   return runJsonPure(io, command, runVerb);
 }
@@ -343,7 +348,10 @@ const describe = (entry: VerbEntry) => ({
 });
 
 const unknown = (io: Io, command: string): number =>
-  emit(io, fail("invalid_input", `unknown command "${command}"`, { unblock: "workit help" }));
+  emit(
+    io,
+    fail("invalid_input", `unknown command "${command}"`, { unblock: commandUnblock(command) }),
+  );
 
 if (import.meta.main) {
   process.exit(await main(process.argv.slice(2), {}, { diagnostics: true }));

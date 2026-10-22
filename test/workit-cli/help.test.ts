@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { takesPositionals } from "@/packages/workit-cli/src/help";
+import { checkFlags, takesPositionals } from "@/packages/workit-cli/src/help";
 import { TASK_ACTIONS } from "@/packages/workit-cli/src/task";
 import {
   FAMILY_ACTIONS,
@@ -66,11 +66,15 @@ PARSERS.task = [...PARSERS.task, "verbs/task.ts"];
 
 // Flags a parser names but does not accept for this verb.
 const NOT_ACCEPTED: Record<string, string[]> = {
-  // parseTaskArgs reads --judge/--ref/--why only when the family is policy.
+  // parseTaskArgs reads --judge/--ref/--why only when the family is policy,
+  // and --status only for `task list`.
   ...Object.fromEntries(
-    TASK_FAMILY_NAMES.filter((name) => name !== "policy").map((name) => [
+    TASK_FAMILY_NAMES.map((name) => [
       name,
-      ["--judge", "--ref", "--why"],
+      [
+        ...(name === "policy" ? [] : ["--judge", "--ref", "--why"]),
+        ...(name === "task" ? [] : ["--status"]),
+      ],
     ]),
   ),
   // `git push` names --force/-f only to refuse them.
@@ -137,6 +141,74 @@ test("given every verb, then each flag its parser accepts is named in its usage,
   expect([...parserFlags("test-audit")]).toContain("--max-mutants");
   expect([...parserFlags("policy")]).toContain("--judge");
   expect([...parserFlags("evidence")]).not.toContain("--judge");
+});
+
+test("given every verb, then no flag its parser accepts is rejected by the router's flag check", () => {
+  for (const entry of VERBS) {
+    const subs = (entry.subcommands ?? []).map((sub) => [sub.name]);
+    const heads = [[], ...subs];
+    for (const flag of parserFlags(entry.name)) {
+      if (!flag.startsWith("--")) continue;
+      const passes = (head: string[]) => "args" in checkFlags(entry, [...head, flag]);
+      if (entry.sharedParser)
+        for (const head of subs)
+          expect(passes(head), `workit ${entry.name} ${head[0]}: parser accepts ${flag}`).toBe(
+            true,
+          );
+      else
+        expect(heads.some(passes), `workit ${entry.name}: ${flag} is accepted by its parser`).toBe(
+          true,
+        );
+    }
+  }
+});
+
+test("given a flag that takes a value, then a dash-leading value is left to the parser", () => {
+  for (const entry of VERBS) {
+    for (const sub of entry.subcommands ?? [{ name: "", usage: entry.usage }]) {
+      const head = sub.name ? [sub.name] : [];
+      for (const match of sub.usage.matchAll(/(?<![\w-])(--[a-z][\w-]*) (?=[<"])/gu)) {
+        const args = [...head, match[1], "--x"];
+        expect(checkFlags(entry, args), `workit ${entry.name} ${sub.name} ${match[1]}`).toEqual({
+          args,
+        });
+      }
+    }
+  }
+});
+
+test("given launch, then everything after the host is the host's own arguments", () => {
+  const launch = VERBS.find((entry) => entry.name === "launch")!;
+  expect(checkFlags(launch, ["--auto-upgrade", "codex", "--model", "x", "--hostflag"])).toEqual({
+    args: ["--auto-upgrade", "codex", "--model", "x", "--hostflag"],
+  });
+  expect("error" in checkFlags(launch, ["--bogus", "codex"])).toBe(true);
+});
+
+test("given the router's flag check, then each case it once got wrong passes", () => {
+  const ledger = VERBS.find((entry) => entry.name === "ledger")!;
+  for (const args of [
+    ["decision", "x", "--base", "main"],
+    ["ruling", "x", "--base", "main"],
+    ["verdict", "verified", "--token", "--abc"],
+  ])
+    expect(checkFlags(ledger, args)).toEqual({ args });
+});
+
+test("given the push refusals, then the router leaves --force to the parser", () => {
+  const push = findSubcommand(
+    VERBS.find((entry) => entry.name === "git")!,
+    "push",
+  )!;
+  expect(push.deferredFlags).toContain("force");
+  expect(
+    checkFlags(
+      VERBS.find((entry) => entry.name === "git")!,
+      ["push", "--force"],
+    ),
+  ).toEqual({
+    args: ["push", "--force"],
+  });
 });
 
 test("given the task families, then help lists exactly the actions the family grammar accepts", () => {

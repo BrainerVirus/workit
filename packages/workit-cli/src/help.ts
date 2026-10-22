@@ -1,6 +1,7 @@
 // Help for one verb or subcommand, from the registry (cold path: no verb module
 // loads). `workit help <verb> [<sub>]` and `--help`/`-h` anywhere before a bare
 // `--` both land here, so no verb ever sees a help flag.
+import { VERBS, findSubcommand } from "./verbs/registry";
 import type { SubcommandEntry, VerbEntry, VerbGroup } from "./verbs/registry";
 
 const HELP_FLAGS = new Set(["--help", "-h"]);
@@ -140,4 +141,113 @@ export function subcommandHelp(entry: VerbEntry, sub: SubcommandEntry): HelpDoc 
       ESCAPE,
     ].join("\n"),
   };
+}
+
+const distance = (left: string, right: string): number => {
+  let row = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    const next = [i];
+    for (let j = 1; j <= right.length; j += 1)
+      next[j] = Math.min(
+        row[j] + 1,
+        next[j - 1] + 1,
+        row[j - 1] + (left[i - 1] === right[j - 1] ? 0 : 1),
+      );
+    row = next;
+  }
+  return row[right.length];
+};
+
+/** The candidate closest to `word`: a near spelling or a prefix, else null. */
+export function closest(word: string, candidates: Iterable<string>): string | null {
+  let best: string | null = null;
+  let bestScore = Infinity;
+  for (const candidate of candidates) {
+    const near = distance(word, candidate);
+    const score =
+      candidate.startsWith(word) || word.startsWith(candidate) ? Math.min(near, 1) : near;
+    if (score < bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return best !== null && bestScore <= Math.max(2, Math.floor(word.length / 3)) ? best : null;
+}
+
+// Guesses at verbs that do not exist, each answered with the verb that does the job.
+const COMMAND_HINTS: Record<string, string> = {
+  status:
+    "workit task status (this branch's task) or workit pr status (its PR); workit handoff prints the whole picture",
+  context: "workit handoff prints the branch, HEAD, dirty state, verdict and next command",
+};
+
+/** The one-line unblock for an unknown command. */
+export function commandUnblock(command: string): string {
+  const near = closest(
+    command,
+    VERBS.filter((entry) => !entry.planned).map((entry) => entry.name),
+  );
+  return (
+    COMMAND_HINTS[command] ?? (near ? `did you mean workit ${near}? (workit help)` : "workit help")
+  );
+}
+
+const LONG_FLAG = /^--([a-zA-Z][\w-]*)(=|$)/u;
+const GLOBAL_FLAGS = new Set(["json", "cwd", "help"]);
+
+export type FlagCheck = { args: string[] } | { error: string; unblock: string };
+
+/**
+ * Before a verb loads: rewrite a flag spelled as a registered alias to the one
+ * its parser reads, and refuse a `--flag` the command's usage does not name
+ * with the closest valid flag (or the registered fix) as the unblock. A bare
+ * `--` ends the options.
+ */
+export function checkFlags(entry: VerbEntry, args: readonly string[]): FlagCheck {
+  const word = firstWord(args);
+  const sub = word === undefined ? undefined : findSubcommand(entry, word);
+  const lines =
+    sub && !entry.sharedParser && !/ …/u.test(sub.usage) ? [sub.usage] : usageLines(entry);
+  const takes = valueFlags(lines);
+  const known = new Set<string>();
+  for (const line of lines)
+    for (const match of line.matchAll(/(?<![\w-])--([a-zA-Z][\w-]*)/gu)) known.add(match[1]);
+  const aliases = { ...entry.flagAliases, ...sub?.flagAliases };
+  const hints = { ...entry.flagHints, ...sub?.flagHints };
+  for (const flag of sub?.deferredFlags ?? []) known.add(flag);
+  const where = `workit help ${entry.name}${sub ? ` ${sub.name}` : ""}`;
+  const out: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--") {
+      out.push(...args.slice(index));
+      break;
+    }
+    if (entry.passthrough && !arg.startsWith("-")) {
+      out.push(...args.slice(index));
+      break;
+    }
+    // The token after a flag that takes a value is its value, whatever it looks like;
+    // the parser says what is wrong with it.
+    if (takes.has(arg) && index + 1 < args.length && args[index + 1] !== "--") {
+      out.push(arg, args[(index += 1)]);
+      continue;
+    }
+    const match = LONG_FLAG.exec(arg);
+    if (!match || GLOBAL_FLAGS.has(match[1]) || known.has(match[1])) {
+      out.push(arg);
+      continue;
+    }
+    const canonical = aliases[match[1]];
+    if (canonical !== undefined) {
+      out.push(`--${canonical}${arg.slice(match[0].length - match[2].length)}`);
+      continue;
+    }
+    const near = closest(match[1], known);
+    return {
+      error: `unknown option --${match[1]}`,
+      unblock: hints[match[1]] ?? (near ? `did you mean --${near}? (${where})` : where),
+    };
+  }
+  return { args: out };
 }

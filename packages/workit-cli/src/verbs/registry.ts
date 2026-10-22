@@ -19,6 +19,12 @@ export type SubcommandEntry = {
   aliases?: readonly string[];
   usage: string;
   summary: string;
+  /** Flags this subcommand takes under another spelling: alias (no dashes) to the flag the parser reads. */
+  flagAliases?: Readonly<Record<string, string>>;
+  /** Flags agents guess that do not exist here: flag (no dashes) to the one-line fix. */
+  flagHints?: Readonly<Record<string, string>>;
+  /** Flags the parser refuses with its own guidance; the router leaves them to it. */
+  deferredFlags?: readonly string[];
 };
 
 export type VerbEntry = {
@@ -31,6 +37,13 @@ export type VerbEntry = {
   /** The verb runs without a subcommand too (`grant` shows, `verify-delivery` infers). */
   optionalSubcommand?: boolean;
   examples?: readonly string[];
+  /** One parser reads every subcommand's flags, so any flag its usage names is valid for all of them. */
+  sharedParser?: boolean;
+  /** Everything after the first positional goes to another program untouched (`launch <host> …`). */
+  passthrough?: boolean;
+  /** `flagAliases` and `flagHints` for a verb without subcommands. */
+  flagAliases?: Readonly<Record<string, string>>;
+  flagHints?: Readonly<Record<string, string>>;
   /** Paragraphs `workit help <verb>` prints after the summary. */
   notes?: readonly string[];
   /** The slice that implements this verb; set while it is a stub. */
@@ -122,11 +135,13 @@ const familySubcommands = (name: Family): SubcommandEntry[] => {
     .map(([action, summary]) => ({
       name: action,
       usage:
-        name === "policy" && action !== "explain"
-          ? `workit policy ${action} ${POLICY_JUDGE} ${FAMILY_OPTIONS}`
-          : name === "worker" && action !== "assign"
-            ? `workit worker ${action} [<workerId>] ${FAMILY_OPTIONS}`
-            : `workit ${name} ${action} ${FAMILY_OPTIONS}`,
+        name === "task" && action === "list"
+          ? `workit task list [--status all] ${FAMILY_OPTIONS}`
+          : name === "policy" && action !== "explain"
+            ? `workit policy ${action} ${POLICY_JUDGE} ${FAMILY_OPTIONS}`
+            : name === "worker" && action !== "assign"
+              ? `workit worker ${action} [<workerId>] ${FAMILY_OPTIONS}`
+              : `workit ${name} ${action} ${FAMILY_OPTIONS}`,
       summary,
     }));
   return [...implicit, ...grammar];
@@ -204,6 +219,7 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "launch",
     group: "setup",
+    passthrough: true,
     usage: "workit launch <host> [--auto-upgrade] [-- <host args…>]",
     summary: "Upgrade before host startup, then start the host",
     load: () => import("./launch"),
@@ -267,6 +283,9 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage:
       'workit check <name> [--task <id>] [--base <ref>] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy [--wait <s>]] [--no-lease --reason "<why>"] -- <cmd…>',
+    flagHints: {
+      list: "workit check <name> runs a configured check; a name that is not configured prints the valid ones (workit check test|lint|typecheck|check)",
+    },
     summary:
       "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's); heavy checks wait for the machine-wide heavy-check lease",
     examples: [
@@ -330,6 +349,9 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "create",
+        flagHints: {
+          head: "pr create opens the PR for the current branch: git switch <branch>, then workit pr create (--base sets the target)",
+        },
         usage:
           "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft]",
         summary:
@@ -414,6 +436,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "push",
+        deferredFlags: ["force"],
         usage:
           "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…]",
         summary:
@@ -530,27 +553,32 @@ export const VERBS: readonly VerbEntry[] = [
     subcommands: [
       {
         name: "plan",
+        flagAliases: { fanout: "name" },
         usage:
           "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead]",
         summary: "Register the slices of a plan file",
       },
       {
         name: "brief",
+        flagAliases: { fanout: "name" },
         usage: "workit fanout brief <slice> [--mode new|resume] [--attempt <n>] [--name <n>]",
         summary: "Render one worker's brief with the standing orders",
       },
       {
         name: "check",
+        flagAliases: { fanout: "name" },
         usage: "workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]",
         summary: "Gate fan-in: out-of-scope edits, trunk and sibling merge conflicts",
       },
       {
         name: "status",
+        flagAliases: { fanout: "name" },
         usage: "workit fanout status [--name <n>] [--stuck-after 30m] [--offline]",
         summary: "Each slice's state: STUCK, PR, CI, verdict, landed, landing order",
       },
       {
         name: "worktree",
+        flagAliases: { fanout: "name" },
         usage: "workit fanout worktree create|release <slice> [--name <n>] [--force]",
         summary: "Make or release a slice's worktree (--force applies to release only)",
       },
@@ -564,6 +592,7 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "ledger",
     group: "delivery",
+    sharedParser: true,
     summary:
       "Record and query decisions, rulings, SHA-keyed verdicts (patch-id carry-over across rebases) and a fanout's standing orders",
     subcommands: [
@@ -580,7 +609,11 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "verdict",
-        usage: `workit ledger verdict <result> --how "<method/evidence>" [--kind unit|live|perf|review] [--base <ref>] [--surface ui|cli|api] [--evidence <ref>]… [--self] ${LEDGER_ACTOR} | ledger verdict [<branch>]`,
+        flagAliases: { sha: "head" },
+        flagHints: {
+          repo: "a verdict is recorded in the checkout you run it from: cd into the repo or pass --cwd <dir>",
+        },
+        usage: `workit ledger verdict <result> --how "<method/evidence>" [--head <sha>] [--kind unit|live|perf|review] [--base <ref>] [--surface ui|cli|api] [--evidence <ref>]… [--self] ${LEDGER_ACTOR} | ledger verdict [<branch>]`,
         summary:
           "Record a SHA-keyed verdict on the branch head (result: verified, tests-verified, type-check-only, blocked, failed), or show the current verdicts",
       },
@@ -603,6 +636,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "standing",
+        flagAliases: { name: "fanout" },
         usage: `workit ledger standing add "<order>" | standing list | standing clear [<id>]  [--fanout <name>] [--supersedes <id>] [--session <id> [--token <t>] | --as <role>]`,
         summary: "The lead's standing orders for a fanout's workers",
       },

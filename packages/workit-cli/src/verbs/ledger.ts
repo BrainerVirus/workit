@@ -67,7 +67,7 @@ import {
   selectFanout,
   type FanoutFile,
 } from "@brainervirus/workit-core/src/fanout";
-import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
+import { currentBranch, headSha, resolveRef } from "@brainervirus/workit-core/src/git/rev";
 import {
   issuedTokenMatches,
   sessionClaimRefusal,
@@ -92,6 +92,7 @@ const OPTIONS = {
   evidence: { type: "string", multiple: true },
   self: { type: "boolean" },
   branch: { type: "string" },
+  head: { type: "string" },
   base: { type: "string" },
   pr: { type: "string" },
   type: { type: "string" },
@@ -116,6 +117,7 @@ type Values = {
   evidence?: string[];
   self?: boolean;
   branch?: string;
+  head?: string;
   base?: string;
   pr?: string;
   type?: string;
@@ -397,6 +399,22 @@ export async function run(argv: string[], io: Io): Promise<number> {
 
   const target = targetBranch(io, rows, values.branch, pr);
   if (!target.ok) return failed(io, target);
+  if (values.head !== undefined) {
+    const actual = target.value === null ? headSha(io.cwd) : resolveRef(io.cwd, target.value);
+    const wanted = values.head.trim().toLowerCase();
+    if (!actual || wanted.length < 4 || !actual.startsWith(wanted))
+      return emit(
+        io,
+        fail(
+          "invalid_input",
+          `--head ${values.head} is not the head of ${target.value ?? "this checkout"}${actual ? ` (${actual.slice(0, 12)})` : ""}`,
+          {
+            unblock:
+              "a verdict is keyed to the branch head: check out the commit to judge (or pass --branch/--pr), or drop --head",
+          },
+        ),
+      );
+  }
   const acting = actorFor(io, values);
   if (acting instanceof Error) return usage(io, acting.message);
   const { actor } = acting;
