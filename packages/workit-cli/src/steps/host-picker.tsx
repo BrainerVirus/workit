@@ -3,6 +3,9 @@ import { useEffect, useRef, useState, type JSX } from "react";
 import type { HostDetection, HostId } from "../admin/detect-hosts";
 import { PLATFORM_LABELS } from "./options";
 
+// Controlled: the parent owns the selection and gets every change through
+// onChange. chosenRef mirrors it so a burst of keys in one stdin chunk toggles
+// against the latest selection, not the last rendered one.
 export function HostPicker({
   detection,
   selected,
@@ -24,19 +27,18 @@ export function HostPicker({
   ];
   const [index, setIndex] = useState(0);
   const indexRef = useRef(index);
-  const [chosen, setChosen] = useState(selected);
-  const chosenRef = useRef(chosen);
+  const chosenRef = useRef(selected);
   useEffect(() => {
     indexRef.current = index;
   }, [index]);
   useEffect(() => {
-    chosenRef.current = chosen;
-  }, [chosen]);
+    chosenRef.current = selected;
+  }, [selected]);
   const update = (next: string[]) => {
     chosenRef.current = next;
-    setChosen(next);
     onChange(next);
   };
+  const checkedHosts = new Set(selected);
   useInput((input, key) => {
     if (key.upArrow || key.downArrow) {
       const next = Math.max(
@@ -70,7 +72,7 @@ export function HostPicker({
         const host =
           option.value === "__all" || option.value === "__none" ? null : (option.value as HostId);
         const detected = host === null || detection[host].detected;
-        const checked = host !== null && chosen.includes(host);
+        const checked = host !== null && checkedHosts.has(host);
         const label =
           host === null
             ? option.label
