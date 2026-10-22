@@ -39,8 +39,16 @@ const HOOK_ENTRIES = [
 // patterns, host permission rules, see-through gates) adds ~21 KB (Cursor
 // ~751.9 KB), so the ceiling was 753 KB. Standing-order deltas for running
 // workers (#320: hooks/standing.ts, the revision signal) add ~4.2 KB to every
-// hook entry (Cursor ~756.1 KB), so the ceiling is 758 KB.
-const BUDGET = 758_000;
+// hook entry. Every size above was measured with a local Bun older than the
+// pinned one; the pinned Bun (package.json packageManager, CI's BUN_VERSION)
+// minifies the same graph to ~477-497 KB (Cursor 496,734 B after #320), so the
+// ceiling is 500 KB, measured with that Bun. Another Bun gives different sizes,
+// so the size check runs only on the pinned version.
+const BUDGET = 500_000;
+const PINNED_BUN = (
+  JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
+).packageManager?.replace(/^bun@/, "");
+const sizeCheckApplies = Bun.version === PINNED_BUN;
 const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
 
 test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {
@@ -75,7 +83,7 @@ test("a hook bundle loads no doctor/setup modules or the core barrel, within its
         inputs.filter((input) => FORBIDDEN.test(input)),
         entry,
       ).toEqual([]);
-      expect(statSync(outfile).size, entry).toBeLessThanOrEqual(BUDGET);
+      if (sizeCheckApplies) expect(statSync(outfile).size, entry).toBeLessThanOrEqual(BUDGET);
     }
   } finally {
     rmSync(out, { recursive: true, force: true });
