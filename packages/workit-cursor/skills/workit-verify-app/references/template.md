@@ -30,6 +30,8 @@ description: Launch, drive and observe <app> on its real surface (<cli|web|api>)
 ## Evidence
 `workit check --name verify-<app> -- <driver command>` records exit code and log.
 Screenshots go to `<tmp dir>/verify-<app>/<feature>.png`; cite the path.
+UI: also report a console or network observation. API: quote the real response.
+If the app cannot be run, say so plainly instead of claiming success.
 
 ## Cleanup
 `<command>` (stop servers, remove `<tmp dir>`).
