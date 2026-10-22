@@ -26,6 +26,7 @@ export { asksUser, stopDecision, stopObligation, type StopObligation } from "./s
 export { callKey, noteRawCommit, rawGitPost, rawGitPre } from "./raw-git";
 export { promptNudge, recordSkillLoad, shellNudge, skillFileIn } from "./skill-nudge";
 export { isWriteTool, writePaths } from "./hosts/fields";
+export { seedStanding, standingDelta, standingSinceStart } from "./standing";
 export { dispatchHook, failureDecision, handleHook, type HookDeps } from "./handle";
 export { HOOK_ADAPTERS, runHookProcess } from "./run";
 export { CLAUDE_CODE_DESCRIPTOR, claudeCodeAdapter } from "./hosts/claude-code";

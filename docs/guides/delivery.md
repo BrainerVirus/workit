@@ -462,6 +462,7 @@ subagents do that.
 ```bash
 workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead]  # register slices; refuse gaps and overlap
 workit ledger standing add "<order>" | list | clear [<id>] [--fanout <n>] # the lead's standing orders for every worker
+workit ledger standing add --stop ["<note>"] | add --clear [--fanout <n>] # the stop line for running workers, and lifting it
 workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>]  # the complete worker brief, verbatim
 workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
 workit fanout worktree create <slice> [--name <n>]                      # the slice's worktree and scratch dir
@@ -511,6 +512,22 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   recorded, so no worker, verifier or hand-written row can inject one. `list`
   shows the orders in force; `clear <id>` ends one and `clear` ends them all
   (a `standing.cleared` row).
+- Workers already running get each change on their next hooked tool call,
+  once: the orders added and the orders cleared since they last looked
+  (their brief's orders are not repeated). A worker is a subagent or child
+  session of the lead, a session acting as `<lead>:<x>` or `<lead>-w-<slice>`,
+  or any session on a slice's branch; the lead itself gets nothing. Claude
+  Code and Codex carry it as the pre-tool hook's `additionalContext`, Cursor
+  as `agent_message` on its next shell command, OpenCode in the child's
+  system context on every model call while the change stands, and Pi on the
+  worker's next tool result. A call with nothing new costs two small file
+  reads (`<git common dir>/workit/standing/`) and never loads the runtime.
+- `standing add --stop ["<note>"]` is the stop line: an order every running
+  worker gets on its next tool call telling it to start nothing new, stop
+  what it started (dev servers, browsers, watchers), commit only finished
+  work and report to the lead now. Briefs rendered while it stands carry it
+  too. `standing add --clear` lifts it (only the stop orders; the others
+  stay) and tells running workers the stop is lifted.
 - Sessions change with each new conversation. A lead that resumes in a new
   session runs `fanout plan <plan.json> --take-lead`: the plan records the
   current session as `leadSession`, keeps the previous lead in `formerLeads`

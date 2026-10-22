@@ -12,6 +12,7 @@
 // proceeds as if no Workit hook were installed (no context, no branch
 // policy): a broken hook must never brick the host.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -155,6 +156,49 @@ const mentionsIssued = (text) => {
   return /issued/i.test(text) || flat(text).includes(flat(stateDir()));
 };
 
+// A standing order the lead added or cleared since this agent last looked
+// (`<store>/standing/rev` against its `standing/seen/<key>.json`) rides the
+// next tool call, so that call loads the runtime. A copy of
+// workit-core/src/hooks/standing-signal.ts (a test holds them equal).
+const gitStoreDir = (cwd) => {
+  try {
+    for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+      const dotGit = path.join(dir, ".git");
+      if (existsSync(dotGit)) {
+        let gitDir = dotGit;
+        if (statSync(dotGit).isFile()) {
+          const target = /^gitdir:\s*(.+)$/mu.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
+          if (!target) return null;
+          gitDir = path.resolve(dir, target);
+          const common = path.join(gitDir, "commondir");
+          if (existsSync(common))
+            gitDir = path.resolve(gitDir, readFileSync(common, "utf8").trim());
+        }
+        return path.join(gitDir, "workit");
+      }
+      if (path.dirname(dir) === dir) return null;
+    }
+  } catch {
+    return null;
+  }
+};
+const standingPending = (cwd, session, agentId) => {
+  const store = gitStoreDir(cwd);
+  if (!store || typeof session !== "string" || !session) return false;
+  let rev;
+  try {
+    rev = readFileSync(path.join(store, "standing", "rev"), "utf8").trim();
+  } catch {
+    return false;
+  }
+  if (!rev) return false;
+  const key = createHash("sha256")
+    .update(`${session}\0${typeof agentId === "string" ? agentId : ""}`)
+    .digest("hex")
+    .slice(0, 32);
+  return readJson(path.join(store, "standing", "seen", `${key}.json`))?.rev !== rev;
+};
+
 const fastAllow = (() => {
   try {
     const value = JSON.parse(payload);
@@ -163,6 +207,7 @@ const fastAllow = (() => {
       return typeof command === "string" && !/\bcommit\b/.test(command);
     if (value?.hook_event_name !== "PreToolUse") return false;
     if (mentionsIssued(JSON.stringify(value.tool_input ?? {}))) return false;
+    if (standingPending(String(value.cwd ?? "."), value.session_id, value.agent_id)) return false;
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (WORKIT_DELIVERY.test(command)) return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;

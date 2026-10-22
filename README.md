@@ -214,7 +214,9 @@ For independent slices, **fanout** runs one worker per isolated worktree with
 a fixed brief and file-scope manifest, and a non-author verifier per slice.
 `workit fanout plan` refuses incomplete briefs and overlapping scopes before
 any spawn, `workit fanout brief` renders each worker's brief with the lead's
-standing orders (`workit ledger standing`), `workit fanout status` flags
+standing orders (`workit ledger standing`; workers already running get each
+change on their next tool call, and `standing add --stop` tells them to stop
+and report), `workit fanout status` flags
 stuck workers and suggests a landing
 order, `workit fanout worktree create|release` isolates workers on hosts
 without native worktrees, and `workit fanout check` gates fan-in. See

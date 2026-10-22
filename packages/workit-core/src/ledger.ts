@@ -57,6 +57,7 @@ import { hostAwareLockTimeout } from "./core/store-lock";
 import { vcsConfig } from "./core/vcs-config";
 import { GIT_TIMEOUTS, currentBranch, headSha, patchId, worktreeTree } from "./git/rev";
 import { hostSessionFromEnv, issuedBinding } from "./host-session";
+import { bumpStandingRev } from "./hooks/standing-signal";
 import { resolveStore } from "./store/paths";
 
 export const LEDGER_VERSION = 1;
@@ -165,8 +166,16 @@ export type VerdictRow = RowCommon & {
   evidenceRefs: string[];
 };
 export type HandoffRow = RowCommon & { type: "handoff"; note: string | null; next: string };
-/** A lead's standing order for every worker of a fanout ("no new dependencies"). */
-export type StandingRow = RowCommon & { type: "standing"; fanout: string; what: string };
+/**
+ * A lead's standing order for every worker of a fanout ("no new dependencies").
+ * `stop` marks the stop line: running workers stop and report.
+ */
+export type StandingRow = RowCommon & {
+  type: "standing";
+  fanout: string;
+  what: string;
+  stop?: true;
+};
 /** Ends one standing order (`target`), or every one recorded before it (null). */
 export type StandingClearedRow = RowCommon & {
   type: "standing.cleared";
@@ -1827,11 +1836,27 @@ function leadOnly(context: RecordContext, lead: string | null): LedgerResult<voi
   );
 }
 
+/** Running workers see a new revision on their next hook (hooks/standing.ts). */
+function signalStanding<T extends { id: string }>(
+  cwd: string,
+  result: LedgerResult<T>,
+): LedgerResult<T> {
+  const root = result.ok ? storeRoot(cwd) : null;
+  if (result.ok && root?.ok && root.value.shared) bumpStandingRev(root.value.root, result.value.id);
+  return result;
+}
+
+/** The stop line's text, as briefs and running workers read it. */
+export const stopOrderText = (note: string | null): string =>
+  `STOP: start nothing new, stop every process you started (dev servers, browsers, watchers), commit only finished work, and report to the lead now${note ? ` (${note})` : ""}`;
+
 export function recordStanding(
   context: RecordContext,
-  input: { fanout: string; lead: string | null; what?: string },
+  input: { fanout: string; lead: string | null; what?: string; stop?: boolean },
 ): LedgerResult<StandingRow> {
-  const what = required(input.what, "<order>");
+  const what: LedgerResult<string> = input.stop
+    ? { ok: true, value: stopOrderText(input.what?.trim() || null) }
+    : required(input.what, "<order>");
   if (!what.ok) return what;
   // One order per line of every brief: a newline or control character would
   // let an order forge other brief fields.
@@ -1845,16 +1870,18 @@ export function recordStanding(
   if (!lead.ok) return lead;
   const link = checkSupersede(context, "standing");
   if (!link.ok) return link;
-  return appendRow<StandingRow>(
+  const recorded = appendRow<StandingRow>(
     context.cwd,
     {
       ...common(context, noteKey(context)),
       type: "standing",
       fanout: input.fanout,
       what: what.value,
+      ...(input.stop ? { stop: true as const } : {}),
     },
     { now: context.now },
   );
+  return signalStanding(context.cwd, recorded);
 }
 
 /** Clear one standing order by id (it must be in force), or all of them; lead only. */
@@ -1883,16 +1910,46 @@ export function clearStanding(
         `workit ledger standing list --fanout ${input.fanout}`,
       );
   }
-  return appendRow<StandingClearedRow>(
+  return signalStanding(
     context.cwd,
-    {
-      ...common(context, noteKey(context)),
-      type: "standing.cleared",
-      fanout: input.fanout,
-      target: input.target,
-    },
-    { now: context.now },
+    appendRow<StandingClearedRow>(
+      context.cwd,
+      {
+        ...common(context, noteKey(context)),
+        type: "standing.cleared",
+        fanout: input.fanout,
+        target: input.target,
+      },
+      { now: context.now },
+    ),
   );
+}
+
+/** Lift the stop line: clear each stop order in force and keep the others; lead only. */
+export function liftStop(
+  context: RecordContext,
+  input: { fanout: string; lead: string | null; leads?: readonly string[] | null },
+): LedgerResult<StandingClearedRow[]> {
+  const lead = leadOnly(context, input.lead);
+  if (!lead.ok) return lead;
+  const ledger = readLedger(context.cwd);
+  if (!ledger.ok) return ledger;
+  const stops = activeStanding(ledger.value.rows, input.fanout, input.leads ?? null).filter(
+    (row) => row.stop === true,
+  );
+  if (!stops.length)
+    return err(
+      "not_found",
+      `no stop line in force for fanout ${input.fanout}`,
+      `workit ledger standing list --fanout ${input.fanout}`,
+    );
+  const cleared: StandingClearedRow[] = [];
+  for (const stop of stops) {
+    const row = clearStanding(context, { ...input, target: stop.id });
+    if (!row.ok) return row;
+    cleared.push(row.value);
+  }
+  return { ok: true, value: cleared };
 }
 
 /**

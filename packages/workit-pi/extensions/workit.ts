@@ -27,6 +27,7 @@ import {
 } from "@brainervirus/workit-core/hooks";
 import {
   piContext,
+  standingNotice,
   turnContext,
   turnInput,
   unfinishedTaskOffer,
@@ -590,6 +591,17 @@ export default function extension(pi: ExtensionAPI): void {
   pi.on("session_compact_failed", () => undefined);
   pi.on("tool_call", (event: ToolCallEvent, ctx) => enforceToolPolicy(event, ctx));
   pi.on("tool_result", (event: ToolResultEvent, ctx) => {
+    const observed = observeResult(event, ctx);
+    let standing: string | null = null;
+    try {
+      standing = standingNotice(ctx);
+    } catch {
+      // Fail open: the result is unchanged.
+    }
+    if (!standing) return observed;
+    return { content: [...(observed?.content ?? event.content), { type: "text", text: standing }] };
+  });
+  const observeResult = (event: ToolResultEvent, ctx: ExtensionContext) => {
     if (childWorker && event.toolName === "workit_worker") {
       const details = event.details;
       const report =
@@ -617,7 +629,7 @@ export default function extension(pi: ExtensionAPI): void {
       isError: event.isError,
     });
     return observeToolResult(event, ctx);
-  });
+  };
   pi.on("session_shutdown", (_event, ctx) => {
     sessions.delete(ctx.sessionManager.getSessionId());
   });

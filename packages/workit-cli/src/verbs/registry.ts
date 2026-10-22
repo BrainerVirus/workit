@@ -637,8 +637,9 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "standing",
         flagAliases: { name: "fanout" },
-        usage: `workit ledger standing add "<order>" | standing list | standing clear [<id>]  [--fanout <name>] [--supersedes <id>] [--session <id> [--token <t>] | --as <role>]`,
-        summary: "The lead's standing orders for a fanout's workers",
+        usage: `workit ledger standing add "<order>" | standing add --stop ["<note>"] | standing add --clear | standing list | standing clear [<id>]  [--fanout <name>] [--supersedes <id>] [--session <id> [--token <t>] | --as <role>]`,
+        summary:
+          "The lead's standing orders for a fanout's workers; running workers get each change on their next tool call, and --stop tells them to stop and report",
       },
       {
         name: "add",
