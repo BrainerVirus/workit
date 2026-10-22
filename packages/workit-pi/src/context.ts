@@ -8,6 +8,7 @@ import {
   capabilitiesFor,
   PI_DESCRIPTOR,
   sessionCompactContext,
+  standingDelta,
   unfinishedTaskOffer as historyOffer,
   type HookInput,
 } from "@brainervirus/workit-core/hooks";
@@ -66,6 +67,18 @@ export const turnInput = (ctx: ExtensionContext): HookInput => ({
   transcriptPath: null,
   event: { kind: "context.turn" },
 });
+
+/**
+ * A standing-order change from the lead, once per revision. Pi's tool_call
+ * cannot add context, so the change rides the tool result. A supervised
+ * worker acts as `<lead>:<worker session>`, which names its lead.
+ */
+export const standingNotice = (ctx: ExtensionContext): string | null => {
+  if (!ctx.isProjectTrusted()) return null;
+  const worker = process.env.WORKIT_PI_WORKER_SESSION && process.env.WORKIT_SESSION_ID?.trim();
+  const input = turnInput(ctx);
+  return standingDelta(worker ? { ...input, session: { ...input.session, id: worker } } : input);
+};
 
 /** The session contract: bootstrap plus `taskContext` (see turnContext). */
 export const workitContext = (

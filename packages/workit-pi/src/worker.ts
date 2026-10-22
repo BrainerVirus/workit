@@ -12,6 +12,7 @@ import {
   failure,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
+import { seedStanding } from "@brainervirus/workit-core/src/hooks/standing";
 import { childSessionId } from "@brainervirus/workit-core/src/host-session";
 import {
   appendBoundedStderr,
@@ -241,6 +242,15 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     WORKIT_PI_WORKER_ROLE: assignment.role,
     WORKIT_PI_WORKER_SCOPE: JSON.stringify(assignment.scope),
   };
+  // The brief carries the standing orders in force now: only later changes reach the worker.
+  seedStanding({
+    host: "pi",
+    cwd: spec.cwd,
+    session: { id: env.WORKIT_SESSION_ID!, agentId: null, agentType: null, parentId: null },
+    permissionMode: null,
+    transcriptPath: null,
+    event: { kind: "session.start", source: "startup" },
+  });
   try {
     const spawn =
       options.spawn ?? ((command, args, spawnOptions) => nodeSpawn(command, args, spawnOptions));

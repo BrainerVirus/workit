@@ -3,6 +3,7 @@ import {
   judgeBranch,
   verdictCommand,
 } from "@brainervirus/workit-core/src/host-session";
+import { standingSinceStart } from "@brainervirus/workit-core/src/hooks/standing";
 import { getWorkitBootstrap } from "../bootstrap";
 import { compactContextFor, unfinishedTaskOfferFor, workerContextFor } from "../runtime";
 import { sameWorkspace } from "../shared/session";
@@ -48,7 +49,25 @@ export const injectAgentContext = (
   const verdict = session.parentID ? judgeVerdictText(root, session, workerContext) : null;
   if (verdict && !hasMarker(system, "<workit-verdict-line>"))
     system.push(textPart(`<workit-verdict-line>${verdict}</workit-verdict-line>`));
+  const standing = session.parentID ? standingFor(root, session) : null;
+  if (standing && !hasMarker(system, "<workit-standing>"))
+    system.push(textPart(`<workit-standing>${standing}</workit-standing>`));
 };
+
+/**
+ * Standing orders the lead changed since this child started: the system
+ * context is rebuilt every model call, so the change stands on each call
+ * until the lead changes it again.
+ */
+const standingFor = (root: string, session: InjectionSession): string | null =>
+  standingSinceStart({
+    host: "opencode",
+    cwd: session.directory ?? root,
+    session: { id: session.id, agentId: null, agentType: null, parentId: session.parentID ?? null },
+    permissionMode: null,
+    transcriptPath: null,
+    event: { kind: "context.turn" },
+  });
 
 const workerRole = (workerContext: string | null): unknown => {
   if (!workerContext) return null;
