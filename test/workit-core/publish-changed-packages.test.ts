@@ -82,6 +82,24 @@ describe("changedPackages", () => {
       r.cleanup();
     }
   });
+  test("a changed package republishes the internal packages it depends on (#386)", () => {
+    const r = repo();
+    try {
+      // The real CLI depends on workit-cursor; release rewrites the range to
+      // ^<new version>, so workit-cursor must publish that version too.
+      r.change(
+        "packages/workit-cli/package.json",
+        `{"name":"@brainervirus/workit-cli","version":"0.8.10","dependencies":{"@brainervirus/workit-cursor":"workspace:*"}}\n`,
+      );
+      expect(changedPackages(r.root, "v0.8.10")).toEqual([
+        "workit-cli",
+        "workit-cursor",
+        "workit-claude-code",
+      ]);
+    } finally {
+      r.cleanup();
+    }
+  });
 });
 
 describe("publishChanged", () => {

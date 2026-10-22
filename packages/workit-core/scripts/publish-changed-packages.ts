@@ -20,13 +20,43 @@ export function changedPackages(root: string, fromTag: string): string[] {
   // Plus packages whose inlined third-party deps resolve differently in the
   // lockfile (BUNDLED_DEPS); a dev-tooling-only lockfile bump changes none.
   const relocked = new Set<string>(lockChangedPackages(root, fromTag, "HEAD"));
-  return RELEASE_PACKAGES.filter((pkg) => {
-    if (relocked.has(pkg)) return true;
-    // Own directory plus any sources bundled into its dist/ (BUNDLED_SOURCES).
-    const out = git(root, ["diff", "--name-only", `${fromTag}..HEAD`, "--", ...payloadPaths(pkg)]);
-    return out !== "";
-  });
+  const changed = new Set<string>(
+    RELEASE_PACKAGES.filter((pkg) => {
+      if (relocked.has(pkg)) return true;
+      // Own directory plus any sources bundled into its dist/ (BUNDLED_SOURCES).
+      const out = git(root, [
+        "diff",
+        "--name-only",
+        `${fromTag}..HEAD`,
+        "--",
+        ...payloadPaths(pkg),
+      ]);
+      return out !== "";
+    }),
+  );
+  // A published package depends on its internal dependencies at ^<released
+  // version> (rewrite-workspace-deps), so each must ship that version too or
+  // the package cannot install (#386: workit-cli 8.21.1 required an
+  // unpublished workit-cursor 8.21.1).
+  const queue = [...changed];
+  for (let pkg = queue.pop(); pkg !== undefined; pkg = queue.pop())
+    for (const dep of internalDependencies(root, pkg))
+      if (!changed.has(dep)) {
+        changed.add(dep);
+        queue.push(dep);
+      }
+  return RELEASE_PACKAGES.filter((pkg) => changed.has(pkg));
 }
+
+/** The release packages `pkg` declares as runtime dependencies at HEAD. */
+const internalDependencies = (root: string, pkg: string): string[] => {
+  const manifest = JSON.parse(git(root, ["show", `HEAD:packages/${pkg}/package.json`])) as {
+    dependencies?: Record<string, string>;
+  };
+  return RELEASE_PACKAGES.filter(
+    (other) => manifest.dependencies?.[`@brainervirus/${other}`] !== undefined,
+  );
+};
 
 export function publishChanged(opts: {
   root: string;
