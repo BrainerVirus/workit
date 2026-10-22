@@ -13,7 +13,7 @@
 //
 // Settings: built-in defaults (derived from total RAM and CPUs), then
 // `resources` in the matching workspaces.json entry (the machine owner's
-// word), then `resources` in workit.checks.json, which can only tighten them.
+// word), then `resources` in .workit/checks.json, which can only tighten them.
 // Only the CLI imports this module; hooks never do.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -103,7 +103,7 @@ function cpuValue(value: unknown, host: HostShape): number | Error {
 
 /**
  * Where a `resources` block comes from. `machine` (the user's workspaces.json)
- * sets anything. `repo` (a committed workit.checks.json) can only tighten: it
+ * sets anything. `repo` (the repo's .workit/checks.json) can only tighten: it
  * adds heavy checks, lowers memoryMax and cpuQuota, and sets its own wait; it
  * cannot raise the machine's slots or turn the scope off.
  */

@@ -1,5 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { CHECKS_FILE, ensureWorkitDir } from "@/packages/workit-core/src/check-config";
 import type {
   Caller,
   Constraint,
@@ -115,7 +116,13 @@ export const taskStartRequest = (overrides: Partial<TaskStartRequest> = {}): Tas
 
 /** A committed check config whose `test` check is `true` (what checkObservation() runs). */
 export const writeTestCheck = (root: string): void =>
-  writeFileSync(join(root, "workit.checks.json"), JSON.stringify({ checks: { test: ["true"] } }));
+  writeFileSync(checksPath(root), JSON.stringify({ checks: { test: ["true"] } }));
+
+/** The repo's checks config path, with `.workit/` and its self-ignoring `.gitignore` in place. */
+export const checksPath = (root: string): string => {
+  ensureWorkitDir(root);
+  return join(root, CHECKS_FILE);
+};
 
 /** What `workit check` would record; outside git (`tree: null`) it binds to the candidate. */
 export const checkObservation = (overrides: Partial<CheckObservation> = {}): CheckObservation => ({

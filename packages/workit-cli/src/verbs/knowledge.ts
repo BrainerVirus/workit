@@ -5,7 +5,7 @@
 // can register it as a configured check:
 //
 //   workit knowledge lint [--json]
-//   workit.checks.json: {"checks":{"knowledge":"workit knowledge lint"}}
+//   .workit/checks.json: {"checks":{"knowledge":"workit knowledge lint"}}
 import { checkRoot } from "@brainervirus/workit-core/src/check-config";
 import { lintKnowledge } from "@brainervirus/workit-core/src/knowledge";
 import { emit, fail, ok, type Io } from "../output";

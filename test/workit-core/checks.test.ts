@@ -32,7 +32,10 @@ afterEach(() => {
 const dir = (files: Record<string, string> = {}): string => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-checks-"));
   dirs.push(root);
-  for (const [name, text] of Object.entries(files)) writeFileSync(path.join(root, name), text);
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
+    writeFileSync(path.join(root, name), text);
+  }
   return root;
 };
 
@@ -50,15 +53,15 @@ test("splitCommand groups quotes and refuses shell syntax", () => {
   expect(splitCommand("   ")).toBeInstanceOf(Error);
 });
 
-test("workit.checks.json wins; argv must match exactly, from the repo top", () => {
+test(".workit/checks.json wins; argv must match exactly, from the repo top", () => {
   const root = dir({
-    "workit.checks.json": JSON.stringify({
+    ".workit/checks.json": JSON.stringify({
       checks: { test: "bun test", lint: ["bun", "run", "lint"] },
     }),
     "package.json": JSON.stringify({ scripts: { typecheck: "tsc" } }),
   });
   const config = loadCheckConfig(root);
-  expect(config).toMatchObject({ source: "workit.checks.json", error: null });
+  expect(config).toMatchObject({ source: ".workit/checks.json", error: null });
   expect(config.checks.map((check) => check.name)).toEqual(["test", "lint"]);
   expect(matchesNamedCheck(config, "test", ["bun", "test"], ".")).toBe(true);
   expect(matchesNamedCheck(config, "test", ["bun", "test", "--bail"], ".")).toBe(false);
@@ -70,10 +73,36 @@ test("workit.checks.json wins; argv must match exactly, from the repo top", () =
   expect(gateCheckNames(config, "verification")).toEqual(["test", "lint"]);
 });
 
-test("G a resources block in workit.checks.json, T the config carries it for the heavy-check lease", () => {
+test("G only a legacy root workit.checks.json, T it still loads with a note naming .workit/checks.json", () => {
+  const config = loadCheckConfig(
+    dir({ "workit.checks.json": JSON.stringify({ checks: { test: "bun test" } }) }),
+  );
+  expect(config).toMatchObject({ source: "workit.checks.json", error: null });
+  expect(config.checks.map((check) => check.name)).toEqual(["test"]);
+  expect(config.note).toContain(".workit/checks.json");
+});
+
+test("G both locations, T .workit/checks.json wins and no note is raised", () => {
+  const config = loadCheckConfig(
+    dir({
+      ".workit/checks.json": JSON.stringify({ checks: { fresh: "bun test" } }),
+      "workit.checks.json": JSON.stringify({ checks: { stale: "bun test" } }),
+    }),
+  );
+  expect(config.source).toBe(".workit/checks.json");
+  expect(config.checks.map((check) => check.name)).toEqual(["fresh"]);
+  expect(config.note).toBeUndefined();
+});
+
+test("G a legacy file that is broken, T the error names the legacy file", () => {
+  const config = loadCheckConfig(dir({ "workit.checks.json": "{" }));
+  expect(config.error).toBe("workit.checks.json is not valid JSON");
+});
+
+test("G a resources block in .workit/checks.json, T the config carries it for the heavy-check lease", () => {
   const resources = { heavy: ["e2e"], slots: 2 };
   const root = dir({
-    "workit.checks.json": JSON.stringify({ checks: { e2e: "playwright test" }, resources }),
+    ".workit/checks.json": JSON.stringify({ checks: { e2e: "playwright test" }, resources }),
   });
   expect(loadCheckConfig(root)).toMatchObject({
     error: null,
@@ -127,14 +156,14 @@ test("package.json scripts are named checks run through the lockfile's package m
   expect(gateCheckNames(loadCheckConfig(dir()), "testing")).toEqual([]);
 });
 
-test("a broken workit.checks.json is an error, and nothing matches it", () => {
+test("a broken .workit/checks.json is an error, and nothing matches it", () => {
   for (const text of [
     "{",
     JSON.stringify({ checks: [] }),
     JSON.stringify({ checks: { test: "a | b" } }),
     JSON.stringify({ checks: { "Bad Name": "x" } }),
   ]) {
-    const config = loadCheckConfig(dir({ "workit.checks.json": text }));
+    const config = loadCheckConfig(dir({ ".workit/checks.json": text }));
     expect(config.error, text).toBeString();
     expect(matchesNamedCheck(config, "test", ["a"], ".")).toBe(false);
   }
@@ -206,10 +235,10 @@ test("ecosystem defaults: go, cargo, pytest and a Makefile test target are named
   expect(loadCheckConfig(dir({ "go.mod": "" })).source).toBe("defaults");
 });
 
-test("gates map in workit.checks.json binds a gate to named checks, and must name configured ones", () => {
+test("gates map in .workit/checks.json binds a gate to named checks, and must name configured ones", () => {
   const config = loadCheckConfig(
     dir({
-      "workit.checks.json": JSON.stringify({
+      ".workit/checks.json": JSON.stringify({
         checks: { unit: "bun test", e2e: "bun run e2e", lint: "bun run lint" },
         gates: { testing: ["unit", "e2e"], verification: "lint" },
       }),
@@ -221,7 +250,7 @@ test("gates map in workit.checks.json binds a gate to named checks, and must nam
   for (const gates of [{ testing: "missing" }, { deploy: "unit" }, { testing: [] }, []])
     expect(
       loadCheckConfig(
-        dir({ "workit.checks.json": JSON.stringify({ checks: { unit: "bun test" }, gates }) }),
+        dir({ ".workit/checks.json": JSON.stringify({ checks: { unit: "bun test" }, gates }) }),
       ).error,
     ).toBeString();
 });

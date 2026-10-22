@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mutantsFor, removeStaleCopies } from "@/packages/workit-cli/src/test-audit/mutate";
 
+import { checksPath } from "@/test/workit-core/task-fixtures";
 // `workit test-audit --mutate` and `--diff` against a throwaway git repo. The
 // branch changes `isAdult` to `age >= 18` and its test only checks 30 and 5,
 // so the boundary mutant (`>`) survives and the negation (`<`) is killed.
@@ -166,7 +167,7 @@ test("the mutation copy is its own git repo on the same branch with the same dir
 
 test("without --test-cmd, --mutate runs the configured `workit check test` command", () => {
   const { repo, tmp } = fixture();
-  writeFileSync(path.join(repo, "workit.checks.json"), '{ "checks": { "test": "bun test" } }\n');
+  writeFileSync(checksPath(repo), '{ "checks": { "test": "bun test" } }\n');
   const run = cli(repo, tmp, ["--mutate", "--diff", "main", "--json"]);
   const mutation = JSON.parse(run.stdout).data.mutation;
   expect([mutation.command, mutation.counts.killed, mutation.counts.survived]).toEqual([
@@ -408,7 +409,7 @@ test("--diff handles changed paths with spaces and non-ASCII names", () => {
   ).toEqual(["test/sp ace/ñandú.test.ts"]);
 });
 
-test("with no workit.checks.json, --mutate runs the detected default `workit check test` would run", () => {
+test("with no .workit/checks.json, --mutate runs the detected default `workit check test` would run", () => {
   const { repo, tmp } = fixture();
   writeFileSync(
     path.join(repo, "package.json"),

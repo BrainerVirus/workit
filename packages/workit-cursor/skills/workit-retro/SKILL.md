@@ -32,7 +32,7 @@ proposes and stops. Nothing changes until the user approves.
    more cited occurrences**; a one-off is not a learning.
 4. **Name the strongest enforcer that works**, strongest first: architecture
    or types (the mistake cannot be written) > lint rule > configured check
-   (`workit.checks.json`, `workit check <name>`) or CI job > test >
+   (`.workit/checks.json`, `workit check <name>`) or CI job > test >
    `CODING_STANDARDS.md` (judgment the reviewer reads) > AGENTS.md pointer
    (navigation only). A mechanical rule gets a check, not prose: a check can
    fail, a sentence cannot. From types to test, the proof is that the new
@@ -60,7 +60,7 @@ Bad: "Agents seem lost in the build. Added 'read the build docs carefully' to
 AGENTS.md." One vague occurrence, no citation, a no-op line, auto-applied.
 
 Good: "Navigation, 3 occurrences (rulings 12, 19; PR #88 thread): agents sought
-check names in package.json, missing `workit.checks.json`. Enforcer: AGENTS.md
+check names in package.json, missing `.workit/checks.json`. Enforcer: AGENTS.md
 pointer, +74 bytes, minus the stale Commands paragraph (-210). Unstable check,
 2 occurrences (ledger rows 31, 44: `e2e` red then green on one SHA): a debug
 slice to fix the check. Approve?"

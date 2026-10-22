@@ -15,6 +15,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -40,6 +41,12 @@ import {
   readConfigFromDir,
 } from "@brainervirus/workit-core/src/core/config";
 import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
+import {
+  CHECKS_FILE,
+  LEGACY_CHECKS_FILE,
+  checkRoot,
+  ensureWorkitDir,
+} from "@brainervirus/workit-core/src/check-config";
 import { probeScope, type ScopeProbe } from "@brainervirus/workit-core/src/core/heavy-scope";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
 import {
@@ -113,7 +120,8 @@ type DoctorCheckId =
   | "gitlab_identity"
   | "log_writable"
   | "heavy_scope"
-  | "hook_deadline";
+  | "hook_deadline"
+  | "checks_config";
 
 /** `info` is a true fact that needs no action (a normal install has no dev
  *  checkout, a newer host CLI than qualified); it counts as passed. */
@@ -2637,6 +2645,50 @@ const checkHookDeadline = (res: Resolved): DoctorCheck => {
   };
 };
 
+// The per-repo checks config lives in `.workit/checks.json`; a root
+// `workit.checks.json` is still read but is a legacy location.
+const checkChecksConfig = (res: Resolved): DoctorCheck => {
+  const root = checkRoot(res.cwd);
+  const current = existsSync(path.join(root, CHECKS_FILE));
+  const legacy = existsSync(path.join(root, LEGACY_CHECKS_FILE));
+  if (!legacy)
+    return {
+      id: "checks_config",
+      status: "pass",
+      detail: current
+        ? `${CHECKS_FILE} is the checks config`
+        : "no per-repo checks config at the root",
+    };
+  return {
+    id: "checks_config",
+    status: "warn",
+    detail: current
+      ? `${LEGACY_CHECKS_FILE} at the repo root is ignored: ${CHECKS_FILE} wins`
+      : `${LEGACY_CHECKS_FILE} at the repo root is a legacy location, still read`,
+    fix: current
+      ? `delete ${LEGACY_CHECKS_FILE} once ${CHECKS_FILE} has what you need`
+      : "workit doctor --fix (moves it to .workit/checks.json)",
+  };
+};
+
+export type ChecksConfigFix = { action: "moved" | "skipped" | "none"; detail: string };
+
+/** `workit doctor --fix`: move a root `workit.checks.json` into `.workit/checks.json`. */
+export const fixChecksConfig = (options: DoctorOptions = {}): ChecksConfigFix => {
+  const root = checkRoot(resolve(options).cwd);
+  const from = path.join(root, LEGACY_CHECKS_FILE);
+  const to = path.join(root, CHECKS_FILE);
+  if (!existsSync(from)) return { action: "none", detail: `no ${LEGACY_CHECKS_FILE} at ${root}` };
+  if (existsSync(to))
+    return {
+      action: "skipped",
+      detail: `${CHECKS_FILE} already exists; ${LEGACY_CHECKS_FILE} left in place`,
+    };
+  ensureWorkitDir(root);
+  renameSync(from, to);
+  return { action: "moved", detail: `${LEGACY_CHECKS_FILE} -> ${CHECKS_FILE}` };
+};
+
 const CLAUDE_PLUGIN_PACKAGE = "@brainervirus/workit-claude-code";
 
 const versionBehind = (version: string, latest: string): boolean =>
@@ -2880,6 +2932,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkLogWritable,
   checkHeavyScope,
   checkHookDeadline,
+  checkChecksConfig,
 ];
 
 // AR-11/CA-40: the installer guarantees the selected host itself — runtime,

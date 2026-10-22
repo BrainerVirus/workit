@@ -35,7 +35,7 @@ way a user would.
    never run is a guess; do not hand it off.
 4. **Make the driver a named check** when it is cheap and deterministic. A
    named check is one command without shell syntax (put pipes and setup in a
-   script). Add `"verify": "<driver>"` to `checks` in `workit.checks.json`; if
+   script). Add `"verify": "<driver>"` to `checks` in `.workit/checks.json`; if
    the file does not exist yet, first copy in every check the repo already runs
    (test, lint, typecheck), because the file replaces the detected defaults.
    `workit check verify` then records it, and it joins the verification gate

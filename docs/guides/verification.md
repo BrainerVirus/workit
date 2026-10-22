@@ -17,7 +17,9 @@ output, and records exit code, duration, HEAD, worktree tree key and patch-id
 as `observer: workit_cli` evidence. The exit code is the command's;
 `--timeout <s>` kills the whole process tree.
 
-Configured checks come from a committed `workit.checks.json`:
+Configured checks come from `.workit/checks.json`, which lives in the
+self-ignoring `.workit/` directory so it adds nothing to your repo root or
+`.gitignore`:
 
 ```json
 { "checks": { "test": "bun test", "lint": "bun run lint" }, "gates": { "testing": "test" } }
@@ -27,6 +29,11 @@ Without it, Workit detects defaults: package.json `test`/`lint`/`typecheck`/
 `check` scripts as `<pm> run <script>`, `go test ./...`, `cargo test`,
 `pytest`, `make test`. A check is stale once the worktree changes, or if the
 check itself changed it.
+
+A root `workit.checks.json` from older versions is still read when
+`.workit/checks.json` is absent, and `workit check` prints a one-line `note:`
+that it moved. `.workit/checks.json` wins when both exist. `workit doctor` lists
+the legacy file, and `workit doctor --fix` moves it into `.workit/`.
 
 ### Heavy commands and the lease
 

@@ -139,7 +139,7 @@ worktrees) as an append-only event log. `workit task status` shows it;
 `workit handoff` prints a resume brief.
 
 **Observed evidence (`workit check`).** `workit check test` runs the configured
-command (from a committed `workit.checks.json`, else detected defaults such as
+command (from `.workit/checks.json`, else detected defaults such as
 `<pm> run test`, `go test ./...`, `cargo test`, `pytest`) and records exit
 code, HEAD and tree. Gates accept only a fresh passing run of a configured
 check; a check is stale once the worktree changes. Ad-hoc

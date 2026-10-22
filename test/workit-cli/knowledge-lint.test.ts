@@ -165,10 +165,10 @@ test("Given a clean repo and a broken one, When workit knowledge lint runs, Then
   expect((await run(clean, ["knowledge"])).code).toBe(2);
 });
 
-test("Given workit.checks.json registers knowledge, When workit check knowledge runs, Then the configured check fails on a finding and passes once fixed", async () => {
+test("Given .workit/checks.json registers knowledge, When workit check knowledge runs, Then the configured check fails on a finding and passes once fixed", async () => {
   const root = tempRepo({
     "AGENTS.md": "# Agents\n\nSee [gone](docs/gone.md).\n",
-    "workit.checks.json": JSON.stringify({
+    ".workit/checks.json": JSON.stringify({
       checks: { knowledge: [process.execPath, CLI, "knowledge", "lint"] },
     }),
   });

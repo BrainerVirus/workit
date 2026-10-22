@@ -25,6 +25,7 @@ import {
   checkObservation,
   taskStartRequest,
 } from "../workit-core/task-fixtures";
+import { checksPath } from "@/test/workit-core/task-fixtures";
 
 // S9b `workit check` (design §2.1 S9, §5 S9b acceptance; D5, D14).
 
@@ -52,7 +53,7 @@ const repo = (
   git(root, "config", "user.name", "Workit Test");
   git(root, "config", "commit.gpgsign", "false");
   writeFileSync(path.join(root, "a.txt"), "one\n");
-  if (checks) writeFileSync(path.join(root, "workit.checks.json"), JSON.stringify({ checks }));
+  if (checks) writeFileSync(checksPath(root), JSON.stringify({ checks }));
   git(root, "add", ".");
   git(root, "commit", "-qm", "base");
   git(root, "checkout", "-qb", "feature/x");
@@ -330,15 +331,10 @@ test("G a fresh branch with no task, W check runs, T a task bound to the branch 
   expect((await run(bare, ["check", "--json", "--", "true"])).code).toBe(0);
   expect(status()).toMatchObject({
     status: "unsatisfied",
-    reason: expect.stringContaining(
-      'add workit.checks.json (committed, so it shows in the diff), e.g. {"checks":{"test":',
-    ),
+    reason: expect.stringContaining('add .workit/checks.json, e.g. {"checks":{"test":'),
   });
   // --shell runs are never configured, even with a matching name.
-  writeFileSync(
-    path.join(bare, "workit.checks.json"),
-    JSON.stringify({ checks: { test: ["true"] } }),
-  );
+  writeFileSync(checksPath(bare), JSON.stringify({ checks: { test: ["true"] } }));
   const shell = await run(bare, ["check", "--json", "--shell", "--name", "test", "--", "true"]);
   expect(shell.json().data).toMatchObject({ configured: false });
   expect(status().status).toBe("unsatisfied");
@@ -531,7 +527,7 @@ test("observed-check freshness: tree vs signal modes, modified worktree, and a c
 // Issue #282 slice 1: heavy checks take a machine-wide lease and run in their own scope.
 
 /**
- * A repo whose workit.checks.json carries `resources`, a private state dir for
+ * A repo whose .workit/checks.json carries `resources`, a private state dir for
  * the lease, and a private config dir whose workspaces.json gives the machine's
  * `resources` (default: no systemd scope, so most tests stay fast).
  */
@@ -541,9 +537,7 @@ const heavyRepo = (
   machine: Record<string, unknown> = { scope: false },
 ) => {
   const root = repo(null);
-  writeFileSync(path.join(root, "workit.checks.json"), JSON.stringify({ checks, resources }));
-  git(root, "add", ".");
-  git(root, "commit", "-qm", "checks");
+  writeFileSync(checksPath(root), JSON.stringify({ checks, resources }));
   const state = mkdtempSync(path.join(os.tmpdir(), "wk-lease-state-"));
   const config = mkdtempSync(path.join(os.tmpdir(), "wk-lease-config-"));
   dirs.push(state, config);
@@ -616,10 +610,7 @@ const writeLease = (leases: string, record: Record<string, unknown>) => {
 test("G two `workit check test` runs in different worktrees, W the first holds the lease, T the second waits for it, then runs, and --json reports the wait and the holder", async () => {
   const one = heavyRepo({ test: SLOW(1500) });
   const two = repo(null);
-  writeFileSync(
-    path.join(two, "workit.checks.json"),
-    JSON.stringify({ checks: { test: SLOW(10) } }),
-  );
+  writeFileSync(checksPath(two), JSON.stringify({ checks: { test: SLOW(10) } }));
   const first = cli(one.root, ["check", "test", "--json"], one.env);
   await until(() => existsSync(path.join(one.leases, "slot-0.json")));
   const second = cli(two, ["check", "test", "--json"], one.env);
@@ -841,7 +832,7 @@ test.skipIf(process.platform !== "linux")(
   },
 );
 
-test("G a committed workit.checks.json that raises slots, T the machine's one slot still holds and the repo is told", async () => {
+test("G a repo .workit/checks.json that raises slots, T the machine's one slot still holds and the repo is told", async () => {
   const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { wait: 0, slots: 4 });
   writeLease(leases, {
     id: "00000000-0000-4000-8000-0000000000f2",
@@ -853,6 +844,25 @@ test("G a committed workit.checks.json that raises slots, T the machine's one sl
   const result = await runEnv(root, ["check", "test", "--json"], env);
   expect(result.code).toBe(4);
   expect(result.stderr).toContain(
-    "workit: resources: workit.checks.json: slots: is machine-wide; set it in your workspaces.json",
+    "workit: resources: .workit/checks.json: slots: is machine-wide; set it in your workspaces.json",
   );
+});
+
+test("G a repo with only a root workit.checks.json, W `workit check test` runs, T it still runs and the note names .workit/checks.json", async () => {
+  const root = repo(null);
+  writeFileSync(
+    path.join(root, "workit.checks.json"),
+    JSON.stringify({ checks: { test: [BUN, "-e", "process.exit(0)"] } }),
+  );
+  const ran = await run(root, ["check", "test"]);
+  expect(ran.code).toBe(0);
+  expect(ran.stderr).toContain("note: workit.checks.json is deprecated");
+  expect(ran.stderr).toContain(".workit/checks.json");
+});
+
+test("G a repo with only .workit/checks.json, W `workit check test` runs, T it runs that config with no note", async () => {
+  const root = repo();
+  const ran = await run(root, ["check", "test"]);
+  expect(ran.code).toBe(0);
+  expect(ran.stderr).not.toContain("note:");
 });
