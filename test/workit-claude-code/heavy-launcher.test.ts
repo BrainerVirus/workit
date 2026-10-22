@@ -97,3 +97,27 @@ test("Given a machine pattern, When its command runs, Then the launcher sends it
     "workit check --heavy -- ./ci/integration.sh --all",
   );
 });
+
+for (const [label, plugin] of [
+  ["local pin (source)", () => PLUGIN_DIR],
+  ["installed (dist)", installedPlugin],
+] as const)
+  test(`[${label}] Given a repo with no task store, When an edit or shell write targets the issued registry, Then the launcher sends it to the guard and it is denied`, () => {
+    const root = repo();
+    const issued = path.join(env.WORKFLOW_TOOLKIT_STATE, "issued", "lead", "abc");
+    const decision = (run: { json: unknown }) =>
+      (run.json as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput
+        ?.permissionDecision;
+    for (const command of [
+      `echo forged > ${issued}`,
+      `cd ${env.WORKFLOW_TOOLKIT_STATE} && touch issued-tokens/z`,
+    ])
+      expect(decision(runHook(plugin(), payload(root, command), env)), command).toBe("deny");
+    const edit = {
+      ...payload(root, ""),
+      tool_name: "Write",
+      tool_input: { file_path: issued, content: "x" },
+    };
+    expect(decision(runHook(plugin(), edit, env))).toBe("deny");
+    expect(runHook(plugin(), payload(root, `echo ok > ${root}/a.txt`), env).json).toEqual({});
+  }, 60_000);

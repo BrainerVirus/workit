@@ -17,6 +17,7 @@ import {
   type LiveDeps,
   type LiveOwner,
 } from "../core/live-session";
+import { resolveStateDir } from "../core/logger";
 import { workspaceLiveSessionGuard } from "../core/workspaces";
 import { appendHookObserved, ledgerPath } from "../ledger";
 import type { HookDecision } from "./protocol";
@@ -41,7 +42,8 @@ const canonical = (file: string): string => {
   let rest = "";
   for (let dir = path.resolve(file); ; dir = path.dirname(dir)) {
     try {
-      return path.join(realpathSync(dir), rest);
+      // Native resolution also expands Windows 8.3 short names (RUNNER~1).
+      return path.join(realpathSync.native(dir), rest);
     } catch {
       if (path.dirname(dir) === dir) return path.resolve(file);
       rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
@@ -325,15 +327,22 @@ const POPD = new Set(["popd", "pop-location"]);
 
 /** A `cd` operand resolved against `dir`; undefined when it cannot be known. */
 const cdInto = (dir: string | undefined, words: string[]): string | undefined => {
-  const target = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
-  // Only a leading `~` expands; a mid-path `~` is literal (Windows 8.3
+  const named = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
+  // Only a leading `~` or `$HOME` expands; a mid-path `~` is literal (Windows 8.3
   // short names like RUNNER~1).
+  const target = named === undefined ? undefined : homeExpanded(named);
   if (dir === undefined || target === "-" || (target && /^~|[$`*?]/.test(target))) return undefined;
   return target === undefined ? os.homedir() : path.resolve(dir, target);
 };
 
 const quoteWord = (word: string): string =>
   /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
+
+/** A leading `~`, `$HOME` or `${HOME}` the shell would expand. */
+const homeExpanded = (file: string): string => {
+  const match = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.exec(file);
+  return match ? (process.env.HOME || os.homedir()) + file.slice(match[0].length) : file;
+};
 
 /**
  * Per top-level segment, the files it writes (redirects, `touch`, `rm`,
@@ -351,8 +360,10 @@ const segmentTargets = (
   let dir: string | undefined = cwd;
   let stack: Array<string | undefined> = [];
   const groups: Array<{ dir: string | undefined; stack: Array<string | undefined> }> = [];
-  const at = (file: string) =>
-    path.isAbsolute(file) ? file : dir === undefined ? null : path.resolve(dir, file);
+  const at = (file: string) => {
+    const home = homeExpanded(file);
+    return path.isAbsolute(home) ? home : dir === undefined ? null : path.resolve(dir, home);
+  };
   for (const segment of segmentsOf(command, dialect)) {
     if (segment.group === "open") {
       groups.push({ dir, stack: [...stack] });
@@ -474,6 +485,65 @@ const claimAll = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps)
 const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
   paths?.length ? paths.map((file) => path.resolve(cwd, file)) : [path.join(cwd, DIR_TARGET)];
 
+// --- the issued-registry guard (#292) ---------------------------------------
+
+/**
+ * The files an agent tool call writes under `<state>/issued*`: the issued-id
+ * records and their token hashes. Only the hook and the CLI write there; an
+ * agent that could would forge an issued session or token by hand.
+ */
+const issuedTarget = (cwd: string, targets: readonly string[]): string | null => {
+  const state = resolveStateDir();
+  const found = targets.find((target) =>
+    underIssued(state, cwd, homeExpanded(target), process.platform, canonical),
+  );
+  return found ?? null;
+};
+
+/**
+ * Whether `target` (resolved against `cwd`) is `<state>/issued*` or inside
+ * it. Pure over `platform`, so Windows shapes are testable anywhere: mixed
+ * `\` and `/`, drive-letter case, and the `/c/Users/...` form a POSIX shell
+ * on Windows uses. `real` resolves symlinks and 8.3 short names (RUNNER~1) on
+ * the live platform.
+ */
+export const underIssued = (
+  state: string,
+  cwd: string,
+  target: string,
+  platform: NodeJS.Platform = process.platform,
+  real: (file: string) => string = (file) => file,
+): boolean => {
+  const win = platform === "win32";
+  const p = win ? path.win32 : path.posix;
+  const fold = (value: string) => (win || platform === "darwin" ? value.toLowerCase() : value);
+  const named = win ? target.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:") : target;
+  const relative = p.relative(fold(real(p.resolve(state))), fold(real(p.resolve(cwd, named))));
+  if (relative.startsWith("..") || p.isAbsolute(relative)) return false;
+  return relative.split(p.sep)[0].startsWith("issued");
+};
+
+/**
+ * A POSIX shell drops an unquoted `\` before the analysis sees the words, so
+ * `> C:\state\issued\x` loses its separators. On Windows, a command that
+ * writes and spells out the registry path is denied.
+ */
+const unquotedWindowsIssued = (command: string): boolean => {
+  if (process.platform !== "win32" || !command.includes("\\")) return false;
+  const flat = (value: string) => value.replaceAll("\\", "/").toLowerCase();
+  return flat(command).includes(`${flat(resolveStateDir())}/issued`) && shellWrites(command).writes;
+};
+
+const issuedDeny = (file: string): HookDecision => {
+  const unblock =
+    "Issued ids and tokens are written only by Workit's SubagentStart hook. Run the verifier or reviewer agent so the host issues its own session; never edit the issued registries by hand.";
+  return {
+    kind: "deny",
+    reason: `workit issued-registry guard: ${file} is under Workit's issued-session state. ${unblock}`,
+    unblock,
+  };
+};
+
 /**
  * Deny a working-tree edit while the branch task has unmet before-write
  * requirements. `paths` are the files the tool writes, or null when unknown
@@ -488,6 +558,8 @@ export function writeGate(
   owner?: LiveOwner | null,
   deps?: LiveDeps,
 ): HookDecision {
+  const forged = paths?.length ? issuedTarget(cwd, paths) : null;
+  if (forged) return issuedDeny(forged);
   if (!owner) return beforeWriteGate(cwd, paths);
   const targets = liveTargets(cwd, paths);
   const live = liveGate(owner, targets, deps);
@@ -511,6 +583,14 @@ export function shellGate(
   dialect: ShellDialect = "posix",
   deps?: LiveDeps,
 ): HookDecision {
+  try {
+    const forged =
+      issuedTarget(cwd, segmentTargets(cwd, command, dialect)) ??
+      (unquotedWindowsIssued(command) ? "the issued registry" : null);
+    if (forged) return issuedDeny(forged);
+  } catch {
+    // Fail open, like the other shell analyses here.
+  }
   const writes = shellWrites(command);
   let targets: string[] = [];
   if (owner) {

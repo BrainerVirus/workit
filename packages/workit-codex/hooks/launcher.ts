@@ -8,7 +8,7 @@
 //     (the heavy-command gate's cheap pre-check) can be denied or nudged.
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
-import { maybeHeavy } from "@brainervirus/workit-core/src/core/heavy-words";
+import { maybeHeavy, stateDir } from "@brainervirus/workit-core/src/core/heavy-words";
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
@@ -16,6 +16,12 @@ for await (const chunk of process.stdin) payload += String(chunk);
 const SHELL_TOOLS = new Set(["bash", "unified-exec"]);
 /** Codex sends apply_patch; Edit and Write are its matcher aliases, kept in case a release sends them. */
 const WRITE_TOOLS = new Set(["applypatch", "edit", "write"]);
+
+/** Text that may name the issued-session registries (the guard in write-gate.ts judges it). */
+const mentionsIssued = (text: string): boolean => {
+  const flat = (value: string) => value.replaceAll("\\", "/").toLowerCase();
+  return /issued/i.test(text) || flat(text).includes(flat(stateDir(process.env)));
+};
 
 /** The event name when the answer is "no decision" without the runtime, else null. */
 const quietEvent = (): string | null => {
@@ -37,7 +43,9 @@ const quietEvent = (): string | null => {
     if (!shell) return event;
     if (!text.trim()) return null;
     if (event === "PostToolUse") return /\bcommit\b/.test(text) ? null : event;
-    return /\b(?:git|gh|glab)\b/.test(text) || maybeHeavy(text, value.cwd) ? null : event;
+    return /\b(?:git|gh|glab)\b/.test(text) || mentionsIssued(text) || maybeHeavy(text, value.cwd)
+      ? null
+      : event;
   } catch {
     return null;
   }

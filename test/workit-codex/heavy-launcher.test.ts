@@ -93,3 +93,16 @@ for (const entry of ["source", "dist"] as const)
     }
     expect(run(entry, "ls -la")).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse" } });
   }, 60_000);
+
+for (const entry of ["source", "dist"] as const)
+  test(`[${entry}] Given a shell write into the issued registry, When the Codex hook runs, Then it is denied rather than answered quietly`, () => {
+    const state = env.WORKFLOW_TOOLKIT_STATE ?? "";
+    for (const command of [
+      `echo forged > ${state}/issued/lead/abc`,
+      `cd ${state} && touch issued-tokens/z`,
+    ])
+      expect(run(entry, command).hookSpecificOutput.permissionDecision, command).toBe("deny");
+    expect(run(entry, `echo ok > ${root}/a.txt`)).toEqual({
+      hookSpecificOutput: { hookEventName: "PreToolUse" },
+    });
+  }, 60_000);
