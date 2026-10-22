@@ -224,6 +224,16 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
       if (token === "--json") json = true;
       continue;
     }
+    // `task list` already lists every task, so `--status all` is accepted as what it asks for.
+    if (family === "task" && action === "list" && token === "--status") {
+      const value = inline ?? argv[++i];
+      if (value !== "all")
+        return parseUsage(
+          `task list has no status filter (got --status ${value ?? ""}); it lists every task`,
+          json,
+        );
+      continue;
+    }
     // `worker cancel|report <workerId>`: the worker id as a positional (#264).
     if (takesWorkerId && workerId === undefined && !argv[i].startsWith("-")) {
       workerId = argv[i];
