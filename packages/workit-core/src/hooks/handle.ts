@@ -28,6 +28,7 @@ import {
   withContextLine,
 } from "./skill-nudge";
 import { seedStanding, standingDelta } from "./standing";
+import { trackJudge } from "./session-marker";
 import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
 import { shellGate, writeGate } from "./write-gate";
@@ -254,6 +255,8 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         ? writeGate(input.cwd, event.paths, liveOwner(input, descriptor.transport))
         : NONE;
     case "subagent.start":
+      if (workitRole(descriptor, event.agentType) === "judge")
+        trackJudge(input, event.agentId, true);
       seedStanding({ ...input, session: { ...input.session, agentId: event.agentId } });
       return {
         kind: "context",
@@ -274,6 +277,8 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     // A subagent's stop is never blocked; attestation and prompt control
     // arrive with the CLI-observed evidence model.
     case "subagent.stop":
+      trackJudge(input, event.agentId, false);
+      return NONE;
     case "prompt.submit":
       return NONE;
   }

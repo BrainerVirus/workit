@@ -52,7 +52,10 @@ const SESSION = "s-lead";
 const actor = (session: string) => ({ host: "claude_code", session, agentId: null });
 
 /** A Workit checkout on feature/x with an `origin` remote that has main only. */
-const repo = (endpoint: "commit" | "pr" | "green" | "merged") => {
+const repo = (
+  endpoint: "commit" | "pr" | "green" | "merged",
+  verification?: "self" | "independent",
+) => {
   const parent = tempRoot("workit-stop-");
   roots.push(parent);
   const root = path.join(parent, "work");
@@ -75,6 +78,7 @@ const repo = (endpoint: "commit" | "pr" | "green" | "merged") => {
           vcs: { provider: "github", account: "octo" },
           autonomy: { push: true, pr: true, merge: "verified" },
           defaultEndpoint: endpoint,
+          ...(verification ? { verification } : {}),
         },
       ],
     }),
@@ -148,6 +152,10 @@ const prStatus = (
     forge: "github",
     checks,
   });
+
+/** Forget which obligations the session was already told about (the stop marker). */
+const forgetRaised = (root: string) =>
+  rmSync(path.join(root, ".git", "workit", "hooks"), { recursive: true, force: true });
 
 const claudeStop = (cwd: string, extra: Record<string, unknown> = {}) =>
   dispatchHook(
@@ -263,6 +271,7 @@ test("G a branch the CLI merged, W the remote branch is deleted (squash + --dele
     }
     // Before the merge is recorded, the commit reads unpushed.
     expect(claudeStop(root).reason, removal).toContain("`workit git push`");
+    forgetRaised(root);
     // A hook-observed merge row proves nothing: only the CLI's counts.
     appendHookObserved(root, {
       type: "pr.merged",
@@ -272,6 +281,7 @@ test("G a branch the CLI merged, W the remote branch is deleted (squash + --dele
       pr: 5,
     });
     expect(claudeStop(root).reason, removal).toContain("`workit git push`");
+    forgetRaised(root);
     prMerged(root, 5);
     expect(claudeStop(root), removal).toEqual({});
   }
@@ -309,7 +319,7 @@ const forgeSaw = (root: string, pr: number, state: "merged" | "closed") =>
   );
 
 test("G a merge in the forge UI, branch not pruned, W pr status records the merge, T no verdict is owed; a PR closed unmerged still owes one", () => {
-  const merged = repo("pr");
+  const merged = repo("green", "independent");
   commit(merged, "a.txt");
   git(merged, "push", "-q", "-u", "origin", "feature/x");
   prCreated(merged, 5);
@@ -343,7 +353,7 @@ test("G a branch reused after its CLI merge, W this session commits again, T onl
 });
 
 test("G a session that only opened the PR (no commits of its own), W the CLI merged it at HEAD, T no verdict is owed", () => {
-  const root = repo("pr");
+  const root = repo("green", "independent");
   commit(root, "a.txt", "s-author");
   git(root, "push", "-q", "-u", "origin", "feature/x");
   prCreated(root, 4);
@@ -353,7 +363,7 @@ test("G a session that only opened the PR (no commits of its own), W the CLI mer
 });
 
 test("G an --unverified merge of this session's PR, T no verdict is owed; a new commit after the merge is owed again", () => {
-  const root = repo("pr");
+  const root = repo("green", "independent");
   const first = commit(root, "a.txt");
   git(root, "push", "-q", "-u", "origin", "feature/x");
   prCreated(root, 6);
@@ -379,11 +389,13 @@ test("G endpoint green and the open PR's checks recorded failing at the head, T 
   expect(out.decision).toBe("block");
   expect(out.reason).toContain("PR #7's checks were last seen failing");
   expect(out.reason).toContain("`workit ci wait --pr 7` after fixing the failures");
+  forgetRaised(root);
   prStatus(root, 7, "pending");
   const pending = claudeStop(root).reason;
   expect(pending).toContain("PR #7's checks were last seen pending");
   expect(pending).not.toContain("after fixing");
   // Passing checks at the head leave only the verdict obligation.
+  forgetRaised(root);
   prStatus(root, 7, "passing");
   expect(claudeStop(root).reason).toContain("has no current verdict");
 });
@@ -421,7 +433,7 @@ test("G failing checks recorded for a PR merged since, or under endpoint pr, T n
 });
 
 test("G this session delivered a PR, W the head has no or only a self verdict, T it continues naming a non-author verifier; an independent verdict clears it", () => {
-  const root = repo("pr");
+  const root = repo("green", "independent");
   commit(root, "a.txt");
   git(root, "push", "-q", "origin", "feature/x");
   prCreated(root, 8);
@@ -429,24 +441,25 @@ test("G this session delivered a PR, W the head has no or only a self verdict, T
   expect(none.decision).toBe("block");
   expect(none.reason).toContain("has no current verdict");
   expect(none.reason).toContain("workit:verifier");
-  expect(none.reason).toContain("if no verifier is already running on it");
   expect(none.reason).toContain("Never record a verdict on your own work");
   const self = recordVerdict(
     { cwd: root, actor: actor(SESSION), branch: "feature/x" },
     { result: "verified", how: "ran the tests", self: true },
   );
   expect(self.ok).toBe(true);
+  forgetRaised(root);
   expect(claudeStop(root).reason).toContain("has only a self verdict");
   const independent = recordVerdict(
     { cwd: root, actor: actor("s-verifier"), branch: "feature/x" },
     { result: "verified", how: "drove the CLI" },
   );
   expect(independent.ok).toBe(true);
+  forgetRaised(root);
   expect(claudeStop(root)).toEqual({});
 });
 
 test("G an independent failed verdict on the delivered head, T the stop is free: the fix is the agent's next turn, not a verifier", () => {
-  const root = repo("pr");
+  const root = repo("green", "independent");
   commit(root, "a.txt");
   git(root, "push", "-q", "origin", "feature/x");
   prCreated(root, 9);
@@ -498,4 +511,69 @@ test("G Cursor stop, W an unmet obligation and a transcript, T followup_message 
   expect(stop()).toEqual({});
   say("Committed. Shall I push it?");
   expect(stop()).toEqual({});
+});
+
+const judgeEvent = (root: string, kind: "SubagentStart" | "SubagentStop", agentId: string) =>
+  dispatchHook(
+    claudeCodeAdapter,
+    fixture("claude-code", kind === "SubagentStart" ? "subagent-start" : "subagent-stop", root, {
+      session_id: SESSION,
+      agent_id: agentId,
+      agent_type: "workit:verifier",
+    }),
+  );
+
+/** A delivered PR with no verdict yet. */
+const delivered = (endpoint: "pr" | "green", verification?: "self" | "independent") => {
+  const root = repo(endpoint, verification);
+  commit(root, "a.txt");
+  git(root, "push", "-q", "origin", "feature/x");
+  prCreated(root, 8);
+  return root;
+};
+
+test("G verification self at normal risk and a self verdict at the head, W the agent stops, T no verdict block", () => {
+  const root = delivered("green", "self");
+  const none = claudeStop(root);
+  expect(none.decision).toBe("block");
+  expect(none.reason).toContain("your own is enough");
+  expect(none.reason).toContain("--self");
+  forgetRaised(root);
+  recordVerdict(
+    { cwd: root, actor: actor(SESSION), branch: "feature/x" },
+    { result: "verified", how: "ran the tests", self: true },
+  );
+  expect(claudeStop(root)).toEqual({});
+});
+
+test("G endpoint pr and no verdict, W the agent stops after opening the PR, T no block for the verdict", () => {
+  expect(claudeStop(delivered("pr", "independent"))).toEqual({});
+});
+
+test("G a verdict obligation already raised for head H, W the agent stops again on H, T no second block; a new head is raised again", () => {
+  const root = delivered("green", "independent");
+  expect(claudeStop(root).decision).toBe("block");
+  expect(claudeStop(root)).toEqual({});
+  commit(root, "b.txt");
+  git(root, "push", "-q", "origin", "feature/x");
+  expect(claudeStop(root).reason).toContain("has no current verdict");
+});
+
+test("G a running issued verifier subagent, W the lead stops, T no verdict block; after it stops the verdict is owed once", () => {
+  const root = delivered("green", "independent");
+  expect(judgeEvent(root, "SubagentStart", "v1").error).toBeNull();
+  expect(claudeStop(root)).toEqual({});
+  judgeEvent(root, "SubagentStop", "v1");
+  expect(claudeStop(root).decision).toBe("block");
+});
+
+test("G verification independent and no accepted verdict, W stopping at endpoint merged, T it still blocks once", () => {
+  const root = repo("merged", "independent");
+  commit(root, "a.txt");
+  git(root, "push", "-q", "origin", "feature/x");
+  prCreated(root, 8);
+  const out = claudeStop(root);
+  expect(out.decision).toBe("block");
+  expect(out.reason).toContain("an independent verdict");
+  expect(claudeStop(root)).toEqual({});
 });

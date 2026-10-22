@@ -10,7 +10,13 @@
 //       for its current head (`pr.status` rows) while the endpoint is green
 //       or merged;
 //   (c) verdict: the session opened the PR (or verified delivery) but the
-//       head carries no accepted non-author verdict.
+//       head lacks the verdict the policy asks for, while the endpoint is
+//       green or merged (a PR opens without one): the author's own `--self`
+//       verdict at normal risk under `verification: self`, an accepted
+//       non-author verdict at high risk or under `verification: independent`.
+//       Not raised while a verifier or reviewer this lead started still runs.
+// Each obligation blocks once per head and session (a marker keyed by kind
+// and head), not once per turn.
 // A branch that landed owes nothing: a recorded merge (`workit pr merge`, or
 // `pr status`/`ci wait` seeing the forge report it merged) of HEAD or of a
 // head that contains this session's commits, or, with no merge recorded, an
@@ -23,11 +29,14 @@
 // the stop.
 import { spawnSync } from "node:child_process";
 import { resolveAutonomy } from "../autonomy";
+import { latestJudgment } from "../core/policy/derive";
+import { TaskStore } from "../core/task-store";
 import { currentBranch, pushRemoteName } from "../git/rev";
 import { checkVerdicts, readLedger, type ReadRow } from "../ledger";
 import type { HostDescriptor } from "./descriptor";
 import type { HookDecision, HookInput } from "./protocol";
 import { guardedBranch, inWorkitWorkspace } from "./raw-git";
+import { readSessionMarker, sessionMarkerFile, writeSessionMarker } from "./session-marker";
 
 const NONE: HookDecision = { kind: "none" };
 
@@ -35,6 +44,8 @@ export type StopObligation = {
   kind: "unpushed" | "checks" | "verdict";
   /** What is left, with the workit command that clears it. */
   reason: string;
+  /** HEAD when it was found: with the kind, the once-per-head key. */
+  head?: string | null;
 };
 
 /** A question mark (Latin, full-width, Arabic) ending a sentence, or Spanish's opening one. */
@@ -224,20 +235,47 @@ const redChecks = (
   };
 };
 
-/** (c) Delivered by this session, yet no accepted non-author verdict on the head. */
+/** Did the open task's latest judgment call this change high risk? */
+const highRisk = (cwd: string): boolean => {
+  try {
+    const store = new TaskStore(cwd);
+    const listed = store.listTaskIndex();
+    const key = store.currentKey();
+    if (!listed.ok || !key.ok) return false;
+    const entry = listed.data
+      .filter((item) => item.key === key.data.key && item.status !== "closed")
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    const task = entry ? store.readTask(entry.id) : null;
+    return task?.ok === true && latestJudgment(task.data)?.riskTier === "high";
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * (c) Delivered by this session, yet the head lacks the verdict the policy
+ * asks for: the author's own at normal risk when the workspace's
+ * verification is `self`, else an accepted non-author one.
+ */
 const unverified = (
   cwd: string,
   branch: string,
   all: readonly ReadRow[],
   descriptor: HostDescriptor,
+  verification: "self" | "independent",
 ): StopObligation | null => {
   const check = checkVerdicts(cwd, branch, all);
   if (check.accepted.accepted || check.accepted.reasons.includes("failing_verdict")) return null;
+  const independent = verification === "independent" || highRisk(cwd);
+  if (!independent && check.review === "self-reviewed") return null;
   const has = check.review === "self-reviewed" ? "only a self verdict" : "no current verdict";
   const verifier = `${descriptor.subagents.agentPrefix}verifier`;
+  const how = independent
+    ? `hand it to a session that did not author it (the ${verifier} agent records \`workit ledger verdict <result> --branch ${branch} --how "<evidence>"\`), or tell the user it is unverified. Never record a verdict on your own work as independent.`
+    : `after an observed passing \`workit check test\`, record your own: \`workit ledger verdict tests-verified --self --branch ${branch} --how "<what you ran>"\` (shown as self-reviewed), or tell the user it is unverified.`;
   return {
     kind: "verdict",
-    reason: `the head ${short(check.head)} of ${branch}, which this session delivered, has ${has}: if no verifier is already running on it, hand it to a session that did not author it (the ${verifier} agent records \`workit ledger verdict <result> --branch ${branch} --how "<evidence>"\`), or tell the user it is unverified. Never record a verdict on your own work.`,
+    reason: `the head ${short(check.head)} of ${branch}, which this session delivered, has ${has}, and this change needs ${independent ? "an independent verdict" : "a verdict (your own is enough)"}: ${how}`,
   };
 };
 
@@ -274,17 +312,21 @@ export function stopObligation(
     if (commits.size === 0 && !delivered) return null;
     const head = gitLine(input.cwd, ["rev-parse", "HEAD"]);
     if (landed(input.cwd, branch, rows, head, commits)) return null;
-    const endpoint = resolveAutonomy(input.cwd).effectiveEndpoint;
+    const autonomy = resolveAutonomy(input.cwd);
+    const endpoint = autonomy.effectiveEndpoint;
     if (endpoint !== "commit") {
       const left = unpushed(input.cwd, branch, endpoint, commits, mergedHeads(rows));
-      if (left) return left;
+      if (left) return { ...left, head };
     }
     const pr = openPr(rows);
     if ((endpoint === "green" || endpoint === "merged") && pr !== null && head) {
       const left = redChecks(rows, pr, head, endpoint);
-      if (left) return left;
+      if (left) return { ...left, head };
     }
-    return delivered ? unverified(input.cwd, branch, all, descriptor) : null;
+    // A PR opens without a verdict: only green and merged need one.
+    if (!delivered || (endpoint !== "green" && endpoint !== "merged")) return null;
+    const left = unverified(input.cwd, branch, all, descriptor, autonomy.verification);
+    return left ? { ...left, head } : null;
   } catch {
     return null;
   }
@@ -301,10 +343,20 @@ export function stopDecision(input: HookInput, descriptor: HostDescriptor): Hook
   if (event.kind !== "stop" || event.stopHookActive) return NONE;
   if (!event.lastMessage?.trim() || asksUser(event.lastMessage)) return NONE;
   const left = stopObligation(input, descriptor);
-  return left
-    ? {
-        kind: "continue",
-        reason: `Workit: before stopping, ${left.reason} If this cannot be done now, say so to the user and stop.`,
-      }
-    : NONE;
+  if (!left) return NONE;
+  // Once per head and obligation for the session, and no verdict nag while a
+  // verifier or reviewer this lead started is still running.
+  const session = input.session.id;
+  const file = session ? sessionMarkerFile(input, session) : null;
+  const marker = file ? readSessionMarker(file) : null;
+  if (left.kind === "verdict" && marker && marker.judges.length > 0) return NONE;
+  const key = `${left.kind}:${left.head ?? ""}`;
+  if (file && marker) {
+    if (marker.stops.includes(key)) return NONE;
+    writeSessionMarker(file, { ...marker, stops: [...marker.stops, key] });
+  }
+  return {
+    kind: "continue",
+    reason: `Workit: before stopping, ${left.reason} If this cannot be done now, say so to the user and stop.`,
+  };
 }

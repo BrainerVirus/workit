@@ -94,8 +94,14 @@ naming the obligation and the workit command that clears it:
   `workit pr status` and each `workit ci wait` poll record the checks summary
   as a `pr.status` ledger row whenever it changes, so the hook never calls
   the forge;
-- a PR this session opened (or a delivery it verified) whose head has no
-  accepted non-author verdict: hand it to a verifier that did not author it.
+- a PR this session opened (or a delivery it verified) whose head lacks the
+  verdict the policy asks for, while the endpoint is `green` or `merged` (a
+  PR opens without one, so `pr` never asks): your own `--self` verdict is
+  enough at normal risk under `verification: self`; high risk or `verification:
+  independent` needs a verifier that did not author it. Not raised while a
+  verifier or reviewer this session started is still running.
+
+Each obligation blocks once per head and session, not once per turn.
 
 The continuation's own stop is always allowed, so an agent that cannot finish
 says so and stops. A stop is never blocked in a subagent, outside a Workit
