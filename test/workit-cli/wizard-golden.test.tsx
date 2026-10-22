@@ -326,7 +326,7 @@ test("golden: a full walk through every wizard screen and editor mode renders th
       workit — workflow rails for agentic codingEdit profile · releaseBranch preset: gitflowAllowed patterns: release/*Protected branches: unsetDevelop branch: unsetIntegration (pr or merge): unsetFeature prefix: unsetBugfix prefix: unsetRelease prefix: unsetHotfix prefix: unsetCommit preset: conventionalCommit pattern: unset  Branch preset  Allowed patterns  Protected branches  Develop branch  Integration (pr or merge)  Feature prefix  Bugfix prefix  Release prefix  Hotfix prefix  Commit preset  Commit pattern❯ Done editing
 
       ### profiles: one
-      workit — workflow rails for agentic codingProfiles · default: noneProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Create profile  Back to advanced settings
+      workit — workflow rails for agentic codingProfiles · default: noneProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Create profile❯ Back to advanced settings
 
       ### profiles: highlight back
       workit — workflow rails for agentic codingProfiles · default: noneProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Create profile❯ Back to advanced settings
@@ -344,7 +344,7 @@ test("golden: a full walk through every wizard screen and editor mode renders th
       workit — workflow rails for agentic codingEdit profile · release2Branch preset: unsetAllowed patterns: unsetProtected branches: unsetDevelop branch: unsetIntegration (pr or merge): unsetFeature prefix: unsetBugfix prefix: unsetRelease prefix: unsetHotfix prefix: unsetCommit preset: conventionalCommit pattern: unset  Branch preset  Allowed patterns  Protected branches  Develop branch  Integration (pr or merge)  Feature prefix  Bugfix prefix  Release prefix  Hotfix prefix  Commit preset  Commit pattern❯ Done editing
 
       ### profiles: two
-      workit — workflow rails for agentic codingProfiles · default: releaseProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Edit profile release2  Set release2 as default  Delete profile release2  Create profile  Back to advanced settings
+      workit — workflow rails for agentic codingProfiles · default: releaseProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Edit profile release2  Set release2 as default  Delete profile release2  Create profile❯ Back to advanced settings
 
       ### profiles: two, highlight back
       workit — workflow rails for agentic codingProfiles · default: releaseProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Edit profile release2  Set release2 as default  Delete profile release2  Create profile❯ Back to advanced settings
@@ -356,13 +356,13 @@ test("golden: a full walk through every wizard screen and editor mode renders th
       workit — workflow rails for agentic codingProfiles · default: releaseProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Create profile❯ Back to advanced settings
 
       ### profileEdit: via edit
-      workit — workflow rails for agentic codingEdit profile · releaseBranch preset: gitflowAllowed patterns: release/*Protected branches: unsetDevelop branch: unsetIntegration (pr or merge): unsetFeature prefix: unsetBugfix prefix: unsetRelease prefix: unsetHotfix prefix: unsetCommit preset: conventionalCommit pattern: unset❯ Branch preset  Allowed patterns  Protected branches  Develop branch  Integration (pr or merge)  Feature prefix  Bugfix prefix  Release prefix  Hotfix prefix  Commit preset  Commit pattern  Done editing
+      workit — workflow rails for agentic codingEdit profile · releaseBranch preset: gitflowAllowed patterns: release/*Protected branches: unsetDevelop branch: unsetIntegration (pr or merge): unsetFeature prefix: unsetBugfix prefix: unsetRelease prefix: unsetHotfix prefix: unsetCommit preset: conventionalCommit pattern: unset  Branch preset  Allowed patterns  Protected branches  Develop branch  Integration (pr or merge)  Feature prefix  Bugfix prefix  Release prefix  Hotfix prefix  Commit preset  Commit pattern❯ Done editing
 
       ### profileEdit: highlight done
       workit — workflow rails for agentic codingEdit profile · releaseBranch preset: gitflowAllowed patterns: release/*Protected branches: unsetDevelop branch: unsetIntegration (pr or merge): unsetFeature prefix: unsetBugfix prefix: unsetRelease prefix: unsetHotfix prefix: unsetCommit preset: conventionalCommit pattern: unset  Branch preset  Allowed patterns  Protected branches  Develop branch  Integration (pr or merge)  Feature prefix  Bugfix prefix  Release prefix  Hotfix prefix  Commit preset  Commit pattern❯ Done editing
 
       ### profiles: back from edit
-      workit — workflow rails for agentic codingProfiles · default: releaseProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Create profile  Back to advanced settings
+      workit — workflow rails for agentic codingProfiles · default: releaseProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Create profile❯ Back to advanced settings
 
       ### profiles: back from edit, highlight back
       workit — workflow rails for agentic codingProfiles · default: releaseProfiles can override branch rules and commit conventions.  Edit profile release  Set release as default  Delete profile release  Create profile❯ Back to advanced settings
@@ -395,7 +395,7 @@ test("golden: a full walk through every wizard screen and editor mode renders th
       workit — workflow rails for agentic codingEdit release track · stableStrategy: github-flowProduction branch: maintrunkIntegration branch: developFeature branch naming: feature/{name}Release branch naming: release/{version}Hotfix branch naming: hotfix/{name}Base branch: developMerge-back branches: developPull request target: developTag namespace: unsetVersion source (manual, git-tag, package-json): git-tagPackage.json path: unsetPackage version field: unsetRequired checks: unset  Strategy  Production branch  Integration branch  Feature branch naming  Release branch naming  Hotfix branch naming  Base branch  Merge-back branches  Pull request target  Tag namespace  Version source (manual, git-tag, package-json)  Package.json path  Package version field  Required checks❯ Done editing
 
       ### tracks: one
-      workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Create release track  Back to advanced settings
+      workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Create release track❯ Back to advanced settings
 
       ### tracks: one, highlight back
       workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Create release track❯ Back to advanced settings
@@ -407,7 +407,7 @@ test("golden: a full walk through every wizard screen and editor mode renders th
       workit — workflow rails for agentic codingEdit release track · stable2Strategy: gitflowProduction branch: mainIntegration branch: developFeature branch naming: feature/{name}Release branch naming: release/{version}Hotfix branch naming: hotfix/{name}Base branch: developMerge-back branches: developPull request target: developTag namespace: unsetVersion source (manual, git-tag, package-json): git-tagPackage.json path: unsetPackage version field: unsetRequired checks: unset  Strategy  Production branch  Integration branch  Feature branch naming  Release branch naming  Hotfix branch naming  Base branch  Merge-back branches  Pull request target  Tag namespace  Version source (manual, git-tag, package-json)  Package.json path  Package version field  Required checks❯ Done editing
 
       ### tracks: two
-      workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Edit release track stable2  Delete release track stable2  Create release track  Back to advanced settings
+      workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Edit release track stable2  Delete release track stable2  Create release track❯ Back to advanced settings
 
       ### tracks: two, highlight back
       workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Edit release track stable2  Delete release track stable2  Create release track❯ Back to advanced settings
@@ -416,13 +416,13 @@ test("golden: a full walk through every wizard screen and editor mode renders th
       workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Create release track❯ Back to advanced settings
 
       ### trackEdit: via edit
-      workit — workflow rails for agentic codingEdit release track · stableStrategy: github-flowProduction branch: maintrunkIntegration branch: developFeature branch naming: feature/{name}Release branch naming: release/{version}Hotfix branch naming: hotfix/{name}Base branch: developMerge-back branches: developPull request target: developTag namespace: unsetVersion source (manual, git-tag, package-json): git-tagPackage.json path: unsetPackage version field: unsetRequired checks: unset❯ Strategy  Production branch  Integration branch  Feature branch naming  Release branch naming  Hotfix branch naming  Base branch  Merge-back branches  Pull request target  Tag namespace  Version source (manual, git-tag, package-json)  Package.json path  Package version field  Required checks  Done editing
+      workit — workflow rails for agentic codingEdit release track · stableStrategy: github-flowProduction branch: maintrunkIntegration branch: developFeature branch naming: feature/{name}Release branch naming: release/{version}Hotfix branch naming: hotfix/{name}Base branch: developMerge-back branches: developPull request target: developTag namespace: unsetVersion source (manual, git-tag, package-json): git-tagPackage.json path: unsetPackage version field: unsetRequired checks: unset  Strategy  Production branch  Integration branch  Feature branch naming  Release branch naming  Hotfix branch naming  Base branch  Merge-back branches  Pull request target  Tag namespace  Version source (manual, git-tag, package-json)  Package.json path  Package version field  Required checks❯ Done editing
 
       ### trackEdit: highlight done
       workit — workflow rails for agentic codingEdit release track · stableStrategy: github-flowProduction branch: maintrunkIntegration branch: developFeature branch naming: feature/{name}Release branch naming: release/{version}Hotfix branch naming: hotfix/{name}Base branch: developMerge-back branches: developPull request target: developTag namespace: unsetVersion source (manual, git-tag, package-json): git-tagPackage.json path: unsetPackage version field: unsetRequired checks: unset  Strategy  Production branch  Integration branch  Feature branch naming  Release branch naming  Hotfix branch naming  Base branch  Merge-back branches  Pull request target  Tag namespace  Version source (manual, git-tag, package-json)  Package.json path  Package version field  Required checks❯ Done editing
 
       ### tracks: back from edit
-      workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Create release track  Back to advanced settings
+      workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Create release track❯ Back to advanced settings
 
       ### tracks: back from edit, highlight back
       workit — workflow rails for agentic codingNamed release tracksEach track has its own branches, naming, version source, and checks.  Edit release track stable  Delete release track stable  Create release track❯ Back to advanced settings
@@ -682,5 +682,23 @@ test("golden: the branch-policy screens in a git checkout render the same frames
         }
       ]"
     `);
+  });
+}, 60_000);
+
+test("Given a profile was just edited, When Done returns to the profile list and Enter is pressed at once, Then the list's default row (Back) is taken instead of crashing", async () => {
+  await inSandbox(async (box) => {
+    process.env.WORKFLOW_WORKSPACE_ROOT = box.project;
+    const tty = await renderInk(<Wizard onExit={() => {}} detection={detection} />);
+    await tty.keys(ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
+    await tty.keys(UP, UP, ENTER, "work", ENTER, "/work/**", ENTER, ENTER);
+    await tty.keys(DOWN, DOWN, ENTER);
+    await tty.keys(UP, UP, ENTER, UP, ENTER, "release", ENTER);
+    expect(tty.lastFrame()).toContain("❯ Done editing");
+    await tty.keys(ENTER);
+    expect(tty.lastFrame()).toContain("❯ Back to advanced settings");
+    await tty.keys(ENTER);
+    expect(tty.lastFrame()).toContain("Advanced workspace settings · work");
+    expect(tty.lastFrame()).toContain("❯ Save workspace settings");
+    tty.unmount();
   });
 }, 60_000);

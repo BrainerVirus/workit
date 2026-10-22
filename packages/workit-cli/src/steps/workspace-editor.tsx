@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import { TextInput } from "@inkjs/ui";
 import { useState, type Dispatch, type JSX } from "react";
+import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
   workspaceEditorValue,
   profileEditorValue,
@@ -17,6 +18,89 @@ import {
   WORKSPACE_ADVANCED_FIELDS,
 } from "./options";
 
+type Kind = "profile" | "track";
+
+// Each view is its own component, so a list control never carries its
+// highlighted row into the next view: every list opens on its declared value.
+type View =
+  | { mode: "main" }
+  | { mode: "menu"; kind: Kind }
+  | { mode: "name"; kind: Kind }
+  | { mode: "edit"; kind: Kind; name: string }
+  | { mode: "value"; kind: Kind; name: string; field: string };
+
+type Collection = {
+  fields: { label: string; value: string }[];
+  exists: (workspace: WorkspaceConfig, name: string) => boolean;
+  /** The field's editor value, or undefined when the entry does not exist. */
+  valueOf: (workspace: WorkspaceConfig, name: string, field: string) => string | undefined;
+  createTitle: string;
+  nameLabel: string;
+  emptyError: string;
+  duplicateError: (name: string) => string;
+  editTitle: string;
+  valueTitle: string;
+  valueFooter: string;
+  create: (name: string) => WizardAction;
+  set: (name: string, field: string, value: string) => WizardAction;
+};
+
+const COLLECTIONS: Record<Kind, Collection> = {
+  profile: {
+    fields: PROFILE_FIELDS,
+    exists: (workspace, name) => Boolean(workspace.profiles?.[name]),
+    valueOf: (workspace, name, field) => {
+      const profile = workspace.profiles?.[name];
+      return profile ? profileEditorValue(profile, field as ProfileEditorField) : undefined;
+    },
+    createTitle: "Create profile",
+    nameLabel: "Profile name:",
+    emptyError: "Enter a profile name.",
+    duplicateError: (name) =>
+      `Profile ${name} already exists. Choose a different name or edit it from the list.`,
+    editTitle: "Edit profile",
+    valueTitle: "Profile",
+    valueFooter: "Enter to save · Esc Back",
+    create: (name) => ({ type: "workspaceProfileCreate", name }),
+    set: (name, field, value) => ({
+      type: "workspaceProfileSet",
+      name,
+      field: field as ProfileEditorField,
+      value,
+    }),
+  },
+  track: {
+    fields: TRACK_FIELDS,
+    exists: (workspace, name) => Boolean(workspace.releaseTracks?.[name]),
+    valueOf: (workspace, name, field) => {
+      const track = workspace.releaseTracks?.[name];
+      return track ? trackEditorValue(track, field as TrackEditorField) : undefined;
+    },
+    createTitle: "Create release track",
+    nameLabel: "Track name:",
+    emptyError: "Enter a release-track name.",
+    duplicateError: (name) =>
+      `Release track ${name} already exists. Choose a different name or edit it from the list.`,
+    editTitle: "Edit release track",
+    valueTitle: "Release track",
+    valueFooter: "Lists use comma-separated values · Enter to save · Esc Back",
+    create: (name) => ({ type: "workspaceTrackCreate", name }),
+    set: (name, field, value) => ({
+      type: "workspaceTrackSet",
+      name,
+      field: field as TrackEditorField,
+      value,
+    }),
+  },
+};
+
+const MAIN_OPTIONS = [
+  ...WORKSPACE_ADVANCED_FIELDS,
+  { label: "Manage profiles", value: "profiles" as const },
+  { label: "Manage release tracks", value: "tracks" as const },
+  { label: "Save workspace settings", value: "save" as const },
+];
+
 export function WorkspaceCollectionEditor({
   draft,
   dispatch,
@@ -24,296 +108,62 @@ export function WorkspaceCollectionEditor({
   draft: WizardDraft;
   dispatch: Dispatch<WizardAction>;
 }): JSX.Element {
-  type Mode =
-    | "main"
-    | "profiles"
-    | "profileName"
-    | "profileEdit"
-    | "profileValue"
-    | "tracks"
-    | "trackName"
-    | "trackEdit"
-    | "trackValue";
-  const [mode, setMode] = useState<Mode>("main");
-  const [name, setName] = useState("");
-  const [field, setField] = useState<ProfileEditorField | TrackEditorField | null>(null);
-  const [nameError, setNameError] = useState("");
+  const [view, setView] = useState<View>({ mode: "main" });
   const workspace = draft.workspaceDraft;
-  const profileNames = Object.keys(workspace?.profiles ?? {});
-  const trackNames = Object.keys(workspace?.releaseTracks ?? {});
   if (!workspace) return <Text color="red">Workspace draft is unavailable.</Text>;
-
-  if (mode === "profiles") {
-    const options = [
-      ...profileNames.flatMap((profile) => [
-        { label: `Edit profile ${profile}`, value: `edit:${profile}` },
-        { label: `Set ${profile} as default`, value: `default:${profile}` },
-        { label: `Delete profile ${profile}`, value: `delete:${profile}` },
-      ]),
-      { label: "Create profile", value: "create" },
-      { label: "Back to advanced settings", value: "back" },
-    ];
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Profiles · default: {workspace.defaultProfile ?? "none"}</Text>
-        <Text dimColor>Profiles can override branch rules and commit conventions.</Text>
-        <SelectList
-          options={options}
-          value="back"
-          onSelect={(value) => {
-            const profileName = value.slice(value.indexOf(":") + 1);
-            if (value === "create") {
-              setNameError("");
-              setName("");
-              setMode("profileName");
-            } else if (value.startsWith("edit:")) {
-              setName(profileName);
-              setMode("profileEdit");
-            } else if (value.startsWith("default:"))
-              dispatch({ type: "workspaceProfileDefault", name: profileName });
-            else if (value.startsWith("delete:"))
-              dispatch({ type: "workspaceProfileDelete", name: profileName });
-            else setMode("main");
-          }}
-        />
-      </Box>
-    );
-  }
-  if (mode === "profileName")
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Create profile</Text>
-        <Text dimColor>Profile name:</Text>
-        <TextInput
-          onSubmit={(value) => {
-            const next = value.trim();
-            if (!next) {
-              setNameError("Enter a profile name.");
-              return;
-            }
-            if (workspace.profiles?.[next]) {
-              setNameError(
-                `Profile ${next} already exists. Choose a different name or edit it from the list.`,
-              );
-              return;
-            }
-            dispatch({ type: "workspaceProfileCreate", name: next });
-            setName(next);
-            setMode("profileEdit");
-          }}
-        />
-        {nameError && <Text color="red">{nameError}</Text>}
-        <Text dimColor>Enter to create · Esc Back</Text>
-      </Box>
-    );
-  if (mode === "profileEdit" || mode === "profileValue") {
-    const selected = workspace.profiles?.[name];
-    if (mode === "profileValue" && field) {
-      const item = PROFILE_FIELDS.find((entry) => entry.value === field);
-      const choices = enumFieldOptions(field);
-      return (
-        <Box flexDirection="column" gap={1}>
-          <Text bold>
-            Profile {name} · {item?.label}
-          </Text>
-          {choices ? (
-            <SelectList
-              options={choices}
-              value={
-                selected
-                  ? profileEditorValue(selected, field as ProfileEditorField)
-                  : choices[0].value
-              }
-              onSelect={(value) => {
-                dispatch({
-                  type: "workspaceProfileSet",
-                  name,
-                  field: field as ProfileEditorField,
-                  value,
-                });
-                setMode("profileEdit");
-              }}
-            />
-          ) : (
-            <TextInput
-              defaultValue={
-                selected ? profileEditorValue(selected, field as ProfileEditorField) : ""
-              }
-              onSubmit={(value) => {
-                dispatch({
-                  type: "workspaceProfileSet",
-                  name,
-                  field: field as ProfileEditorField,
-                  value,
-                });
-                setMode("profileEdit");
-              }}
-            />
-          )}
-          <Text dimColor>Enter to save · Esc Back</Text>
-        </Box>
+  switch (view.mode) {
+    case "main":
+      return <MainMenu workspace={workspace} dispatch={dispatch} setView={setView} />;
+    case "menu":
+      return view.kind === "profile" ? (
+        <ProfilesMenu workspace={workspace} dispatch={dispatch} setView={setView} />
+      ) : (
+        <TracksMenu workspace={workspace} dispatch={dispatch} setView={setView} />
       );
-    }
-    const options = [
-      ...PROFILE_FIELDS,
-      { label: "Done editing", value: "done" as ProfileEditorField },
-    ];
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Edit profile · {name}</Text>
-        {PROFILE_FIELDS.map((item) => (
-          <Text key={item.value} dimColor>
-            {item.label}: {selected ? profileEditorValue(selected, item.value) || "unset" : ""}
-          </Text>
-        ))}
-        <SelectList
-          options={options}
-          value="done"
-          onSelect={(value) => {
-            if (value === "done") setMode("profiles");
-            else {
-              setField(value);
-              setMode("profileValue");
-            }
-          }}
-        />
-      </Box>
-    );
-  }
-  if (mode === "tracks") {
-    const options = [
-      ...trackNames.flatMap((track) => [
-        { label: `Edit release track ${track}`, value: `edit:${track}` },
-        { label: `Delete release track ${track}`, value: `delete:${track}` },
-      ]),
-      { label: "Create release track", value: "create" },
-      { label: "Back to advanced settings", value: "back" },
-    ];
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Named release tracks</Text>
-        <Text dimColor>Each track has its own branches, naming, version source, and checks.</Text>
-        <SelectList
-          options={options}
-          value="back"
-          onSelect={(value) => {
-            const trackName = value.slice(value.indexOf(":") + 1);
-            if (value === "create") {
-              setNameError("");
-              setName("");
-              setMode("trackName");
-            } else if (value.startsWith("edit:")) {
-              setName(trackName);
-              setMode("trackEdit");
-            } else if (value.startsWith("delete:"))
-              dispatch({ type: "workspaceTrackDelete", name: trackName });
-            else setMode("main");
-          }}
-        />
-      </Box>
-    );
-  }
-  if (mode === "trackName")
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Create release track</Text>
-        <Text dimColor>Track name:</Text>
-        <TextInput
-          onSubmit={(value) => {
-            const next = value.trim();
-            if (!next) {
-              setNameError("Enter a release-track name.");
-              return;
-            }
-            if (workspace.releaseTracks?.[next]) {
-              setNameError(
-                `Release track ${next} already exists. Choose a different name or edit it from the list.`,
-              );
-              return;
-            }
-            dispatch({ type: "workspaceTrackCreate", name: next });
-            setName(next);
-            setMode("trackEdit");
-          }}
-        />
-        {nameError && <Text color="red">{nameError}</Text>}
-        <Text dimColor>Enter to create · Esc Back</Text>
-      </Box>
-    );
-  if (mode === "trackEdit" || mode === "trackValue") {
-    const selected = workspace.releaseTracks?.[name];
-    if (mode === "trackValue" && field) {
-      const item = TRACK_FIELDS.find((entry) => entry.value === field);
-      const choices = enumFieldOptions(field);
+    case "name":
       return (
-        <Box flexDirection="column" gap={1}>
-          <Text bold>
-            Release track {name} · {item?.label}
-          </Text>
-          {choices ? (
-            <SelectList
-              options={choices}
-              value={
-                selected ? trackEditorValue(selected, field as TrackEditorField) : choices[0].value
-              }
-              onSelect={(value) => {
-                dispatch({
-                  type: "workspaceTrackSet",
-                  name,
-                  field: field as TrackEditorField,
-                  value,
-                });
-                setMode("trackEdit");
-              }}
-            />
-          ) : (
-            <TextInput
-              defaultValue={selected ? trackEditorValue(selected, field as TrackEditorField) : ""}
-              onSubmit={(value) => {
-                dispatch({
-                  type: "workspaceTrackSet",
-                  name,
-                  field: field as TrackEditorField,
-                  value,
-                });
-                setMode("trackEdit");
-              }}
-            />
-          )}
-          <Text dimColor>Lists use comma-separated values · Enter to save · Esc Back</Text>
-        </Box>
-      );
-    }
-    const options = [...TRACK_FIELDS, { label: "Done editing", value: "done" as TrackEditorField }];
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Edit release track · {name}</Text>
-        {TRACK_FIELDS.map((item) => (
-          <Text key={item.value} dimColor>
-            {item.label}: {selected ? trackEditorValue(selected, item.value) || "unset" : ""}
-          </Text>
-        ))}
-        <SelectList
-          options={options}
-          value="done"
-          onSelect={(value) => {
-            if (value === "done") setMode("tracks");
-            else {
-              setField(value);
-              setMode("trackValue");
-            }
+        <NameInput
+          collection={COLLECTIONS[view.kind]}
+          workspace={workspace}
+          onCreate={(name) => {
+            dispatch(COLLECTIONS[view.kind].create(name));
+            setView({ mode: "edit", kind: view.kind, name });
           }}
         />
-      </Box>
-    );
+      );
+    case "edit":
+      return (
+        <EntryFields
+          collection={COLLECTIONS[view.kind]}
+          workspace={workspace}
+          name={view.name}
+          onDone={() => setView({ mode: "menu", kind: view.kind })}
+          onPick={(field) => setView({ ...view, mode: "value", field })}
+        />
+      );
+    case "value":
+      return (
+        <EntryFieldValue
+          collection={COLLECTIONS[view.kind]}
+          workspace={workspace}
+          name={view.name}
+          field={view.field}
+          onSave={(value) => {
+            dispatch(COLLECTIONS[view.kind].set(view.name, view.field, value));
+            setView({ mode: "edit", kind: view.kind, name: view.name });
+          }}
+        />
+      );
   }
+}
 
-  const options = [
-    ...WORKSPACE_ADVANCED_FIELDS,
-    { label: "Manage profiles", value: "profiles" as const },
-    { label: "Manage release tracks", value: "tracks" as const },
-    { label: "Save workspace settings", value: "save" as const },
-  ];
+type MenuProps = {
+  workspace: WorkspaceConfig;
+  dispatch: Dispatch<WizardAction>;
+  setView: (view: View) => void;
+};
+
+function MainMenu({ workspace, dispatch, setView }: MenuProps): JSX.Element {
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>Advanced workspace settings · {workspace.name}</Text>
@@ -326,15 +176,169 @@ export function WorkspaceCollectionEditor({
         </Text>
       ))}
       <SelectList
-        options={options}
+        options={MAIN_OPTIONS}
         value="save"
         onSelect={(value) => {
           if (value === "save") dispatch({ type: "workspaceSave" });
-          else if (value === "profiles") setMode("profiles");
-          else if (value === "tracks") setMode("tracks");
+          else if (value === "profiles") setView({ mode: "menu", kind: "profile" });
+          else if (value === "tracks") setView({ mode: "menu", kind: "track" });
           else dispatch({ type: "workspaceAdvancedSelect", field: value });
         }}
       />
+    </Box>
+  );
+}
+
+function ProfilesMenu({ workspace, dispatch, setView }: MenuProps): JSX.Element {
+  const options = [
+    ...Object.keys(workspace.profiles ?? {}).flatMap((profile) => [
+      { label: `Edit profile ${profile}`, value: `edit:${profile}` },
+      { label: `Set ${profile} as default`, value: `default:${profile}` },
+      { label: `Delete profile ${profile}`, value: `delete:${profile}` },
+    ]),
+    { label: "Create profile", value: "create" },
+    { label: "Back to advanced settings", value: "back" },
+  ];
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Profiles · default: {workspace.defaultProfile ?? "none"}</Text>
+      <Text dimColor>Profiles can override branch rules and commit conventions.</Text>
+      <SelectList
+        options={options}
+        value="back"
+        onSelect={(value) => {
+          const name = value.slice(value.indexOf(":") + 1);
+          if (value === "create") setView({ mode: "name", kind: "profile" });
+          else if (value.startsWith("edit:")) setView({ mode: "edit", kind: "profile", name });
+          else if (value.startsWith("default:"))
+            dispatch({ type: "workspaceProfileDefault", name });
+          else if (value.startsWith("delete:")) dispatch({ type: "workspaceProfileDelete", name });
+          else setView({ mode: "main" });
+        }}
+      />
+    </Box>
+  );
+}
+
+function TracksMenu({ workspace, dispatch, setView }: MenuProps): JSX.Element {
+  const options = [
+    ...Object.keys(workspace.releaseTracks ?? {}).flatMap((track) => [
+      { label: `Edit release track ${track}`, value: `edit:${track}` },
+      { label: `Delete release track ${track}`, value: `delete:${track}` },
+    ]),
+    { label: "Create release track", value: "create" },
+    { label: "Back to advanced settings", value: "back" },
+  ];
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Named release tracks</Text>
+      <Text dimColor>Each track has its own branches, naming, version source, and checks.</Text>
+      <SelectList
+        options={options}
+        value="back"
+        onSelect={(value) => {
+          const name = value.slice(value.indexOf(":") + 1);
+          if (value === "create") setView({ mode: "name", kind: "track" });
+          else if (value.startsWith("edit:")) setView({ mode: "edit", kind: "track", name });
+          else if (value.startsWith("delete:")) dispatch({ type: "workspaceTrackDelete", name });
+          else setView({ mode: "main" });
+        }}
+      />
+    </Box>
+  );
+}
+
+function NameInput({
+  collection,
+  workspace,
+  onCreate,
+}: {
+  collection: Collection;
+  workspace: WorkspaceConfig;
+  onCreate: (name: string) => void;
+}): JSX.Element {
+  const [error, setError] = useState("");
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>{collection.createTitle}</Text>
+      <Text dimColor>{collection.nameLabel}</Text>
+      <TextInput
+        onSubmit={(value) => {
+          const next = value.trim();
+          if (!next) setError(collection.emptyError);
+          else if (collection.exists(workspace, next)) setError(collection.duplicateError(next));
+          else onCreate(next);
+        }}
+      />
+      {error && <Text color="red">{error}</Text>}
+      <Text dimColor>Enter to create · Esc Back</Text>
+    </Box>
+  );
+}
+
+function EntryFields({
+  collection,
+  workspace,
+  name,
+  onDone,
+  onPick,
+}: {
+  collection: Collection;
+  workspace: WorkspaceConfig;
+  name: string;
+  onDone: () => void;
+  onPick: (field: string) => void;
+}): JSX.Element {
+  const options = [...collection.fields, { label: "Done editing", value: "done" }];
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>
+        {collection.editTitle} · {name}
+      </Text>
+      {collection.fields.map((item) => {
+        const value = collection.valueOf(workspace, name, item.value);
+        return (
+          <Text key={item.value} dimColor>
+            {item.label}: {value === undefined ? "" : value || "unset"}
+          </Text>
+        );
+      })}
+      <SelectList
+        options={options}
+        value="done"
+        onSelect={(value) => (value === "done" ? onDone() : onPick(value))}
+      />
+    </Box>
+  );
+}
+
+function EntryFieldValue({
+  collection,
+  workspace,
+  name,
+  field,
+  onSave,
+}: {
+  collection: Collection;
+  workspace: WorkspaceConfig;
+  name: string;
+  field: string;
+  onSave: (value: string) => void;
+}): JSX.Element {
+  const item = collection.fields.find((entry) => entry.value === field);
+  const choices = enumFieldOptions(field);
+  const current = collection.valueOf(workspace, name, field);
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>
+        {collection.valueTitle} {name} · {item?.label}
+      </Text>
+      {choices ? (
+        <SelectList options={choices} value={current ?? choices[0].value} onSelect={onSave} />
+      ) : (
+        <TextInput defaultValue={current ?? ""} onSubmit={onSave} />
+      )}
+      <Text dimColor>{collection.valueFooter}</Text>
     </Box>
   );
 }
