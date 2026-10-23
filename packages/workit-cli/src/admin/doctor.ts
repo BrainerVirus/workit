@@ -67,6 +67,7 @@ import {
 import { roleModelIssues } from "@brainervirus/workit-core/src/core/role-models";
 import {
   CLAUDE_MARKETPLACE_NAME,
+  claudeConfigDir,
   claudeWorkitInstalls,
   openCodeInstalledPlugin,
   type ClaudeWorkitInstall,
@@ -103,6 +104,7 @@ type DoctorCheckId =
   | "pi_extension"
   | "opencode_version"
   | "claude_plugin"
+  | "claude_session_plugin"
   | "hook_issued_sessions"
   | "workit_on_path"
   | "assets"
@@ -190,7 +192,11 @@ export type DoctorOptions = {
   installer?: boolean;
   /** The heavy-check scope probe (test seam; default starts a real throwaway scope). */
   scopeProbe?: (env: NodeJS.ProcessEnv) => ScopeProbe;
+  /** Running `claude` processes (test seam; default reads `ps`; null = unreadable). */
+  claudeProcesses?: () => ClaudeProcess[] | null;
 };
+
+export type ClaudeProcess = { pid: number; startedMs: number; args: string };
 
 type Resolved = {
   host: DoctorHost;
@@ -217,6 +223,7 @@ type Resolved = {
   installer: boolean;
   cliVersion: string | null;
   scopeProbe: (env: NodeJS.ProcessEnv) => ScopeProbe;
+  claudeProcesses: () => ClaudeProcess[] | null;
 };
 
 const findDevFromCwd = (cwd: string): string | null => {
@@ -227,6 +234,20 @@ const findDevFromCwd = (cwd: string): string | null => {
     if (parent === dir) return null;
     dir = parent;
   }
+};
+
+/** Running `claude` processes with their start time, from `ps` (Linux and macOS); null when unreadable. */
+const listClaudeProcesses = (): ClaudeProcess[] | null => {
+  const r = spawnSync("ps", ["-eo", "pid=,lstart=,args="], { encoding: "utf8", timeout: 5000 });
+  if (r.status !== 0 || typeof r.stdout !== "string") return null;
+  const found: ClaudeProcess[] = [];
+  for (const row of r.stdout.split("\n")) {
+    const m = /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/.exec(row);
+    if (!m || !/^(\S*\/)?claude(\s|$)/.test(m[3])) continue;
+    const startedMs = Date.parse(m[2]);
+    if (Number.isFinite(startedMs)) found.push({ pid: Number(m[1]), startedMs, args: m[3] });
+  }
+  return found;
 };
 
 const resolve = (options: DoctorOptions): Resolved => {
@@ -266,6 +287,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     installer: options.installer ?? false,
     cliVersion: options.cliVersion ?? null,
     scopeProbe: options.scopeProbe ?? probeScope,
+    claudeProcesses: options.claudeProcesses ?? listClaudeProcesses,
   };
 };
 
@@ -2800,6 +2822,86 @@ const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: bool
 };
 
 /**
+ * A running Claude Code process loads its plugins once, at process start;
+ * `/resume` inside it keeps the old plugin and hooks, and so do its
+ * subagents. It is stale when it started before the installed Workit plugin
+ * version was installed. Never fails; Windows has no `ps`, so it is not checked.
+ */
+const checkClaudeSessionPlugin = (res: Resolved): DoctorCheck => {
+  const id = "claude_session_plugin" as const;
+  if (process.platform === "win32")
+    return {
+      id,
+      status: "info",
+      detail: "running Claude Code sessions are not checked on Windows",
+    };
+  const installs = claudeWorkitInstalls(res.home, res.env, res.cwd).filter(
+    (install) => install.version,
+  );
+  if (installs.length === 0)
+    return {
+      id,
+      status: "info",
+      detail: "no Workit Claude Code plugin install recorded — skipping",
+    };
+  const registry = readJson(
+    path.join(claudeConfigDir(res.home, res.env), "plugins", "installed_plugins.json"),
+  );
+  const recorded = (install: ClaudeWorkitInstall): number | null => {
+    const entries: unknown = registry?.plugins?.[install.id];
+    const entry = Array.isArray(entries)
+      ? entries.find((e) => e?.installPath === install.installPath)
+      : null;
+    for (const stamp of [entry?.lastUpdated, entry?.installedAt]) {
+      const ms = typeof stamp === "string" ? Date.parse(stamp) : NaN;
+      if (Number.isFinite(ms)) return ms;
+    }
+    try {
+      return statSync(install.installPath).mtimeMs;
+    } catch {
+      return null;
+    }
+  };
+  // The newest install is the one a fresh start loads.
+  const latest = installs
+    .map((install) => ({ install, at: recorded(install) }))
+    .filter((one): one is { install: ClaudeWorkitInstall; at: number } => one.at !== null)
+    .toSorted((a, b) => b.at - a.at)[0];
+  if (!latest)
+    return {
+      id,
+      status: "info",
+      detail: "no install time recorded for the Workit plugin — skipping",
+    };
+  const running = res.claudeProcesses();
+  if (running === null)
+    return {
+      id,
+      status: "info",
+      detail: "could not list running claude processes (ps) — skipping",
+    };
+  const stale = running.filter((proc) => proc.startedMs < latest.at);
+  if (stale.length === 0)
+    return {
+      id,
+      status: "info",
+      detail: `${running.length} running claude process(es), none started before Workit ${latest.install.version} was installed`,
+    };
+  const sessionOf = (args: string) =>
+    /(?:--resume|--session-id|-r)[ =]([0-9a-f]{8}-[0-9a-f-]{27})/i.exec(args)?.[1] ?? null;
+  const rows = stale.map((proc) => {
+    const session = sessionOf(proc.args);
+    return `pid ${proc.pid} started ${new Date(proc.startedMs).toISOString()}${session ? ` (session ${session})` : ""}`;
+  });
+  const first = stale.map((proc) => sessionOf(proc.args)).find((one) => one);
+  return {
+    id,
+    status: "warn",
+    detail: `started before Workit ${latest.install.version} was installed: ${rows.join("; ")}; quit and start \`claude --resume ${first ?? "<session id>"}\` to load it (\`/resume\` keeps the old plugin)`,
+  };
+};
+
+/**
  * host-session.ts ISSUED_SESSIONS_MARKER, kept as a literal so the doctor does
  * not pull the store layer into its import graph (the installer runs it from
  * a minimal copy of core); test/workit-cli/doctor-issued-sessions.test.ts
@@ -3002,6 +3104,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkPiExtension,
   checkOpencodeVersion,
   checkClaudePlugin,
+  checkClaudeSessionPlugin,
   checkHookIssuedSessions,
   checkWorkitOnPath,
   checkAssets,
