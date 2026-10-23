@@ -215,7 +215,9 @@ const opaqueWrites = (input: readonly string[]): string[] | null => {
     return listed(has(/^--reference/) ? files : files.slice(1));
   if (name === "rsync") {
     const dest = files.at(-1);
-    return dest === undefined ? ["."] : /^[\w.@-]*:/.test(dest) ? [] : [dest];
+    // `host:path` is remote; a drive letter (`C:/…`, `C:\…`) is a local path.
+    const remote = /^[\w.@-]*:/.test(dest ?? "") && !/^[A-Za-z]:[\\/]/.test(dest ?? "");
+    return dest === undefined ? ["."] : remote ? [] : [dest];
   }
   if (name === "find") {
     const exec = args.findIndex((arg) => /^-(?:exec|execdir|ok|okdir)$/.test(arg));
