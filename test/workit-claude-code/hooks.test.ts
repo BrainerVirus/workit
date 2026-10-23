@@ -138,6 +138,29 @@ for (const [label, plugin] of RUNTIMES) {
     });
   }, 60_000);
 
+  // Issue #297: a quoted or split bypass flag passes the launcher's fast path
+  // to the runtime, which asks; a plain Workit call still takes the fast path.
+  test(`[${label}] given a quoted or split Workit bypass flag, the launcher reaches the runtime and the hook asks`, () => {
+    const cwd = root();
+    const pre = (command: string) => {
+      const payload = {
+        ...fixture("claude-code", "pre-tool-use-bash", cwd),
+        tool_input: { command },
+      };
+      const run = runHook(plugin(), payload);
+      expect(outputProblem("PreToolUse", run.json), command).toBeNull();
+      return (run.json as Specific).hookSpecificOutput;
+    };
+    for (const command of [
+      `workit stack land "--unverified" --reason now`,
+      "workit stack land --unverif''ied --reason now",
+      "workit stack land --unver$'i'fied --reason now",
+      "workit\tstack\tland\t--unverified\t--reason\tnow",
+    ])
+      expect(pre(command)?.permissionDecision, command).toBe("ask");
+    expect(pre("workit stack status")).toBeUndefined();
+  }, 60_000);
+
   test(`[${label}] given a protected main, a Bash \`git checkout -b main\` is denied with protected_ref`, async () => {
     await withProtectedMain(() => {
       const run = runHook(plugin(), fixture("claude-code", "pre-tool-use-bash", root()));

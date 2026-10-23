@@ -298,6 +298,17 @@ const render = (decision: HookDecision, native: string | null) => {
       },
       exitCode: 0,
     };
+  if (decision.kind === "ask" && native === "PreToolUse")
+    return {
+      json: {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "ask",
+          permissionDecisionReason: decision.reason,
+        },
+      },
+      exitCode: 0,
+    };
   if (decision.kind === "context" && native !== null && CONTEXT_EVENTS.has(native))
     return {
       json: { hookSpecificOutput: { hookEventName: native, additionalContext: decision.text } },

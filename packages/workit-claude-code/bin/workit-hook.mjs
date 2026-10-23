@@ -50,6 +50,12 @@ const WORKIT_DELIVERY =
 // The runtime moves the verb first (`cd <dir> && workit …`, `workit --cwd
 // <dir> <verb>`) so Workit's enumerated allow rules match (hooks/cwd-normalize.ts).
 const WORKIT_REORDER = /^\s*(?:cd\s[^;|&]*&&\s*workit\s|workit\s+(?:--json\s+)*--cwd[\s=])/;
+// A Workit call that may carry a bypass flag, however quoted, goes to the
+// runtime, which asks the user (hooks/delivery-verbs.ts workitBypassFlag).
+const mayBypass = (command) =>
+  /\bworkit\b/.test(command) &&
+  (/\$['"]/.test(command) ||
+    /--unverified|--overwrite-unintegrated/.test(command.replace(/['"\\`]/g, "")));
 const MAYBE_GATED =
   /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
 // What an implementer's confinement also judges (hooks/worktree-confine.ts):
@@ -220,7 +226,8 @@ const fastAllow = (() => {
     // without a task store (hooks/worktree-confine.ts).
     const implementer = value.agent_type === "workit:implementer";
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
-      if (WORKIT_DELIVERY.test(command) || WORKIT_REORDER.test(command)) return false;
+      if (WORKIT_DELIVERY.test(command) || WORKIT_REORDER.test(command) || mayBypass(command))
+        return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
       if (!MAYBE_GATED.test(command) && !(implementer && IMPLEMENTER_GATED.test(command)))
         return true;

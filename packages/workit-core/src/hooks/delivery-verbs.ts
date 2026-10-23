@@ -10,7 +10,7 @@
 // `uninstall`, `launch`), delete data (`gc`), import state (`state`) or write
 // outside the forge flow (`youtrack`, `changelog`, `knowledge`, `handoff`).
 // Pure string work: the OpenCode plugin bundles it.
-import { segmentsOf } from "./shell-words";
+import { segmentsOf, type ShellDialect } from "./shell-words";
 
 export const WORKIT_ALLOWED_VERBS = [
   "git",
@@ -30,10 +30,19 @@ export const WORKIT_ALLOWED_VERBS = [
   "help",
 ] as const;
 
-/** Flags that override a Workit gate: a host never allows them unasked. */
+/**
+ * Flags that override a Workit gate: a host never allows them unasked.
+ * Workit has no `--admin` flag and refuses a bare `--force` push itself.
+ */
 export const WORKIT_BYPASS_FLAGS = ["--unverified", "--overwrite-unintegrated"] as const;
 
 const ALLOWED = new Set<string>(WORKIT_ALLOWED_VERBS);
+
+const isBypass = (word: string): boolean =>
+  WORKIT_BYPASS_FLAGS.some((flag) => word === flag || word.startsWith(`${flag}=`));
+
+/** `workit`, `workit-cli`, or either by path. */
+const isWorkitWord = (word: string): boolean => /^(?:.*[\\/])?workit(?:-cli)?$/u.test(word);
 
 /**
  * Is `words` one Workit call of an allowed verb? Global `--json` and
@@ -56,10 +65,34 @@ export const isAllowedWorkitCall = (words: readonly string[]): boolean => {
   if (verb === "--version") return at === words.length - 1;
   if (!ALLOWED.has(verb)) return false;
   const end = words.indexOf("--");
-  const flags = end < 0 ? words : words.slice(0, end);
-  return !flags.some((word) =>
-    WORKIT_BYPASS_FLAGS.some((flag) => word === flag || word.startsWith(`${flag}=`)),
-  );
+  return !(end < 0 ? words : words.slice(0, end)).some(isBypass);
+};
+
+/**
+ * The bypass flag a Workit call in `command` carries before its `--`, or
+ * null. Words are read after shell quoting, so `"--unverified"`,
+ * `--unverif''ied` or a tab-separated flag are found where a host's string
+ * rule could miss them. A command the tokenizer cannot analyze is judged on
+ * its text with quotes and backslashes removed.
+ */
+export const workitBypassFlag = (
+  command: string,
+  dialect: ShellDialect = "posix",
+): string | null => {
+  for (const segment of segmentsOf(command, dialect)) {
+    if (segment.unanalyzable) {
+      const text = command.replaceAll(/['"\\`]/gu, "");
+      if (!/\bworkit\b/u.test(text)) return null;
+      return WORKIT_BYPASS_FLAGS.find((flag) => text.includes(flag)) ?? null;
+    }
+    const start = segment.words.findIndex(isWorkitWord);
+    if (start < 0) continue;
+    const words = segment.words.slice(start + 1);
+    const end = words.indexOf("--");
+    const flag = (end < 0 ? words : words.slice(0, end)).find(isBypass);
+    if (flag) return flag.split("=")[0] ?? flag;
+  }
+  return null;
 };
 
 /**

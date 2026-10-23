@@ -30,7 +30,10 @@ what to fix.
   keys and strict only on required ones, so a newer runtime never bricks an
   older reader (design decision D17, `docs/workit-next/spec.md`).
 - Hooks fail open and never answer `allow`; host permissions stay
-  authoritative.
+  authoritative. One exception (ruling mvkdpqyn): the OpenCode plugin's
+  `permission.evaluate` turns an `ask` into `allow` for a command made only of
+  Workit's enumerated delivery verbs (`hooks/delivery-verbs.ts`); a config
+  `deny` still wins.
 - The before-write gate gates working-tree edits only, never Workit's own
   commands, history moves or the paths that unblock it.
 - Config migrations are idempotent and back up before applying. They preserve

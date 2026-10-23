@@ -26,7 +26,8 @@ classifier cannot see Workit's grants or verdicts, so it may deny `workit pr
 merge` as "Merge Without Review". Run `workit setup --hosts=claude-code` in
 your own terminal (not from a Claude Code session: it refuses there): after
 showing the diff it adds enumerated `Bash(workit <verb> *)` allows, `ask`
-rules for `--unverified` and `--overwrite-unintegrated`, one
+rules for `--unverified` and `--overwrite-unintegrated` (the Workit hook also
+asks for them however they are quoted), one
 `autoMode.environment` and one `autoMode.allow` line describing Workit's
 gates, and `env.CLAUDE_CODE_SHELL` (bash) when your shell is zsh. See
 [the hosts guide](hosts.md#host-permissions-workit-setup).

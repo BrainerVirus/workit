@@ -10,7 +10,7 @@
 // `--cwd` and `--json` mean the same anywhere before `--` (main.ts
 // parseGlobals), so moving them never changes what runs.
 import { WORKIT_ALLOWED_VERBS } from "./delivery-verbs";
-import { segmentsOf } from "./shell-words";
+import { segmentsOf, type Segment } from "./shell-words";
 
 // A directory spelled as one literal word: bare, '…' or "…" with no expansion.
 const DIR = String.raw`[A-Za-z0-9_./@%+:,=-]+|'[^'$${"`"}\\\n]*'|"[^"$${"`"}\\!\n]*"`;
@@ -23,6 +23,9 @@ const GLOBALS_FIRST = new RegExp(
 const VERB_FIRST = /^((?:--json\s+)*)([a-z][a-z-]*)(?=\s|$)/u;
 const VERBS = new Set<string>(WORKIT_ALLOWED_VERBS);
 const FILTERS = new Set(["tail", "head", "grep"]);
+
+const clean = (s: Segment): boolean =>
+  !s.unanalyzable && !s.group && !s.subs?.length && !s.stdin?.length && !s.redirects.length;
 
 // A filter that reads only stdin, so moving the cwd cannot change what it
 // reads: flags and counts for tail/head, one pattern for grep (no -r/-R/-f).
@@ -50,8 +53,6 @@ export const cwdRewrite = (command: string): string | null => {
   const [head, ...filters] = segments;
   if (!head || head.words[0] !== "workit") return null;
   if (head.words.some((w) => w === "--cwd" || w.startsWith("--cwd="))) return null;
-  const clean = (s: (typeof segments)[number]) =>
-    !s.unanalyzable && !s.group && !s.subs?.length && !s.stdin?.length && !s.redirects.length;
   if (!segments.every(clean)) return null;
   if (!segments.slice(0, -1).every((s) => s.pipe)) return null;
   if (!filters.every((s) => FILTERS.has(s.words[0] ?? "") && stdinOnly(s.words))) return null;
@@ -65,11 +66,14 @@ export const cwdRewrite = (command: string): string | null => {
 /**
  * `workit --cwd <dir> <verb> …` (with any `--json` there) rewritten with the
  * verb first, for a verb the host rules list; null otherwise. Only the words
- * before the first verb move.
+ * before the first verb move, and only in a command that is that one call
+ * (no `;`, `&&`, `|`, newline, substitution or redirect).
  */
 export const verbFirst = (command: string): string | null => {
   const match = GLOBALS_FIRST.exec(command);
   const [whole, lead, globals, verb] = match ?? [];
   if (!whole || !verb || !VERBS.has(verb) || !globals?.includes("--cwd")) return null;
+  const segments = segmentsOf(command);
+  if (segments.length !== 1 || !segments.every(clean)) return null;
   return `${lead} ${verb}${globals}${command.slice(whole.length)}`;
 };

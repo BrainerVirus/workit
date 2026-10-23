@@ -72,15 +72,18 @@ It allows only the delivery and state verbs `git`, `pr`, `ci`, `stack`,
 `test-audit`, `gc`, `init`, `upgrade` or `uninstall`. It refuses inside an
 agent session (`CLAUDECODE`, `WORKIT_SESSION_ID`, `CODEX_THREAD_ID`,
 `OPENCODE_SESSION_ID`, `PI_SESSION_ID` or `CURSOR_AGENT` set) and prints the
-command to run yourself. `workit uninstall` removes exactly the entries it
-added (recorded in Workit's state dir), `workit upgrade --apply --confirm`
-refreshes a block it already wrote (the diff is in the preview), and `workit
-doctor` has a `claude_permissions`, `codex_permissions` and
-`cursor_permissions` row.
+command to run yourself. `workit uninstall` removes the entries it added
+(recorded in Workit's state dir, and only entries shaped like Workit's own:
+`Bash(workit …)`, `Shell(workit …)`, its two `autoMode` lines, the
+`CLAUDE_CODE_SHELL` bash path it set, the Codex rules file).
+`workit upgrade --apply --confirm` adds only the entries new in this Workit
+version to a block it already wrote, never one you removed, and prints the
+diff in the preview and again when it applies. `workit doctor` has a
+`claude_permissions`, `codex_permissions` and `cursor_permissions` row.
 
 | Host | What `workit setup` writes |
 | --- | --- |
-| Claude Code | In `$CLAUDE_CONFIG_DIR/settings.json` (else `~/.claude/settings.json`; managed settings are never written): `permissions.allow` `Bash(workit <verb> *)` per verb and `Bash(workit --version)`; `permissions.ask` `Bash(workit * --unverified*)` and `Bash(workit * --overwrite-unintegrated*)`, so a bypass still asks, in auto mode too; one `autoMode.environment` and one `autoMode.allow` line next to `"$defaults"` and your own; `env.CLAUDE_CODE_SHELL` set to bash when your shell is zsh and nothing is set (`--no-shell` skips it) |
+| Claude Code | In `$CLAUDE_CONFIG_DIR/settings.json` (else `~/.claude/settings.json`; managed settings are never written): `permissions.allow` `Bash(workit <verb> *)` per verb and `Bash(workit --version)`; `permissions.ask` `Bash(workit * --unverified*)` and `Bash(workit * --overwrite-unintegrated*)` as a second layer (a text pattern: quoting can slip past it). The first layer is the Workit hook: it reads the words of each `workit` call and answers `ask`, never `allow`, when one carries a bypass flag before `--`, so `"--unverified"` or `--unverif''ied` still reaches you; one `autoMode.environment` and one `autoMode.allow` line next to `"$defaults"` and your own; `env.CLAUDE_CODE_SHELL` set to bash when your shell is zsh and nothing is set (`--no-shell` skips it) |
 | Codex | `~/.codex/rules/workit.rules` (or under `$CODEX_HOME`), a file Workit owns: one `prefix_rule(pattern=["workit", "<verb>"], decision="allow")` per verb and `["workit", "grant"]` → `prompt`. `config.toml` and its sandbox settings are untouched |
 | Cursor | `Shell(workit <verb>)` per verb in `~/.cursor/cli-config.json` `permissions.allow` (cursor-agent matches the rule as a command prefix) |
 | OpenCode | Nothing: the Workit plugin's `permission.evaluate` turns an `ask` for a command made only of allowed Workit calls into `allow`. A config `deny` still wins, and `check`, `lock`, `grant`, `--session`, a bypass flag, a redirect or a substitution stay `ask` |
@@ -96,6 +99,12 @@ and `--reason` still apply), and on Cursor the `workit --session <id> …` form
 does not match a rule. Cursor's IDE allowlist (`~/.cursor/permissions.json`)
 replaces the whole IDE list, so setup leaves it alone; to use it, add the same
 `Shell(workit <verb>)` entries to your existing list yourself.
+
+An allowed verb can still run the repository's own code: `workit git commit`
+and `workit git push` run git, so a checkout's git hooks (husky, lefthook,
+`core.hooksPath`) and settings such as `core.sshCommand` or `core.fsmonitor`
+run without a prompt. Allow Workit's verbs only on machines where you trust
+the repositories you open with an agent.
 
 | Host | Deny | Nudge | Raw commit recorded | Session id in the shell |
 | --- | --- | --- | --- | --- |

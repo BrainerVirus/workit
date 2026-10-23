@@ -504,12 +504,47 @@ test.each([
   ["workit --session s --cwd /x git push"],
   ["workit --cwd $W git push"],
   ["workit git push --cwd /x"],
+  ["workit --cwd /x git push; rm -rf y"],
+  ["workit --cwd /x git push && rm -rf y"],
+  ["workit --cwd /x git push | sh"],
+  ["workit --cwd /x git push\nrm -rf y"],
+  ["workit --cwd /x git push > out.txt"],
+  ["workit --cwd /x pr create --body $(cat f)"],
 ])(
   "Given `%s` on Claude Code, When PreToolUse runs, Then the words are not reordered",
   (command) => {
     expect(claude(repo(), command)?.updatedInput).toBeUndefined();
   },
 );
+
+// Issue #297: a bypass flag always reaches the user on Claude Code, however
+// it is quoted or split, while a `Bash(workit pr *)` allow rule would match.
+test.each([
+  ["workit pr merge --pr 7 --unverified --reason now"],
+  [`workit pr merge --pr 7 "--unverified" --reason now`],
+  ["workit pr merge --pr 7 --unverif''ied --reason now"],
+  ["workit pr merge --pr 7 --unver\\ified --reason now"],
+  ["workit\tpr\tmerge\t--unverified\t--reason\tnow"],
+  ["workit stack land --unverified=x"],
+  ["workit git push --force-with-lease '--overwrite-unintegrated'"],
+  ["cd /x && workit pr merge --unverified --reason now"],
+  ["workit --cwd /x pr merge --unverified --reason now"],
+  ["workit pr status && workit pr merge --unverified --reason r"],
+  ["/usr/local/bin/workit pr merge --unverified --reason r"],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then the hook asks", (command) => {
+  const output = claude(repo(), command);
+  expect(output?.permissionDecision).toBe("ask");
+  expect(output?.permissionDecisionReason).toContain("--");
+  expect(output?.updatedInput).toBeUndefined();
+});
+
+test.each([
+  ["workit pr merge --pr 7"],
+  ["workit check test -- bun test --unverified"],
+  ["echo --unverified"],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then the hook does not ask", (command) => {
+  expect(claude(repo(), command)?.permissionDecision).toBeUndefined();
+});
 
 test.each([
   ['cd "$W" && workit git push'],

@@ -10,6 +10,7 @@ import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
 import { cwdRewrite, verbFirst } from "./cwd-normalize";
+import { workitBypassFlag } from "./delivery-verbs";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
 import {
@@ -152,7 +153,8 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
   if (
     deps.descriptor.transport !== "hook-process" ||
     !PRE_TOOL.has(input.event.kind) ||
-    decision.kind === "deny"
+    decision.kind === "deny" ||
+    decision.kind === "ask"
   )
     return decision;
   const delta = standingDelta(input);
@@ -239,6 +241,19 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         event.command,
         postTool ? callKey(event.toolUseId, event.command) : NEXT_COMMAND,
       );
+      // Claude Code: a Workit bypass flag always reaches the user, whatever
+      // the allow rules match (issue #297). Words, not text, so quoting
+      // cannot hide it; a deny above still wins. A leased command runs under
+      // `workit lock run`, which no Workit rule allows.
+      const bypass =
+        !lease && input.host === "claude_code"
+          ? workitBypassFlag(event.command, event.dialect)
+          : null;
+      if (bypass)
+        return {
+          kind: "ask",
+          reason: `Workit: \`${bypass}\` overrides a Workit gate, so the user decides this call (no allow rule covers it).`,
+        };
       const rewrittenTo = lease?.command ?? cwdCommand;
       const rewritten = (text: string | null): HookDecision =>
         rewrittenTo
