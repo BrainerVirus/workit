@@ -133,7 +133,8 @@ implementer works there with `workit --cwd <worktree> git|check …`, one verb
 per call. Workit's pre-tool hooks bind it to the first Workit worktree it
 changes and deny its edits and mutating git commands outside that worktree,
 naming it; before that, a change outside every Workit worktree is denied, so
-it never edits the lead's checkout. An agent still running in a
+it never edits the lead's checkout. Worktree, ref, config and fan-out plan
+changes stay the lead's and are denied to the implementer. An agent still running in a
 `.claude/worktrees/` checkout (spawned with `isolation: "worktree"`) is told
 up front to run git as plain separate commands there (`git switch -c`,
 `git commit --trailer "Workit-Session=<session>"`, `git push`) and workit for

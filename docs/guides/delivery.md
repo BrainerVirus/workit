@@ -626,7 +626,13 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   (`worktree.bound` ledger row), and afterwards a change outside it is denied
   naming the worktree. Before it is bound, a change outside every Workit
   worktree is denied, so it never edits the lead's checkout. Files outside any
-  repository stay host policy.
+  repository stay host policy. What the lead owns is always denied to it:
+  `git worktree add|remove|prune`, branch deletes, moves and force-resets,
+  `update-ref`, `symbolic-ref` writes, tag deletes, delete pushes, `git config`
+  and `git remote` writes, `git stash drop|clear`, and `workit fanout
+  plan|worktree`. A command whose writes Workit cannot read (`python -c`,
+  `node -e`, `xargs rm`, `find -delete`) counts as a change in the directory
+  it runs in, and a link inside the worktree may not point outside it.
 - `worktree release` records the worktree's `git status` in the ledger
   (`fanout.worktree.released`) before anything else, refuses while there are
   uncommitted changes unless `--force`, then removes the scratch dir and the
