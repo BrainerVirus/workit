@@ -346,6 +346,26 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./lock"),
   }),
   withSubcommands({
+    name: "models",
+    group: "delivery",
+    summary:
+      "The model and effort each role (decider, implementer tiers, verifier, reviewer, explore, babysit) runs on for a host, from models.roles, fanout.tierModels and the built-in defaults",
+    subcommands: [
+      {
+        name: "show",
+        usage:
+          "workit models show [--role <role>] [--tier <mundane|standard|hard>] [--host <host>] [--json]",
+        summary:
+          "Print the resolved model and effort per role for a host (default: the lead's host, else claude_code) and where each came from",
+      },
+    ],
+    examples: [
+      "workit models show --host claude_code --json",
+      "workit models show --role verifier --host claude_code",
+    ],
+    load: () => import("./models"),
+  }),
+  withSubcommands({
     name: "pr",
     group: "delivery",
     summary:

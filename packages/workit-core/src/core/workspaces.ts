@@ -166,6 +166,12 @@ const workspaceConfigSchema = z
      * name or per host family; read leniently (workspaceTierModel).
      */
     fanout: z.object({ tierModels: z.unknown().optional() }).passthrough().optional(),
+    /**
+     * Model and effort per role and host (`models.roles`, core/role-models.ts);
+     * read leniently there. The same key at the top of workspaces.json is the
+     * global default.
+     */
+    models: z.object({ roles: z.unknown().optional() }).passthrough().optional(),
     /** Autonomy grants (D15): only ever set here, by the user. */
     autonomy: z
       .object(
@@ -219,7 +225,10 @@ const workspaceConfigSchema = z
     }
   });
 const workspacesFileSchema = z
-  .object({ workspaces: z.array(workspaceConfigSchema).optional() })
+  .object({
+    workspaces: z.array(workspaceConfigSchema).optional(),
+    models: z.object({ roles: z.unknown().optional() }).passthrough().optional(),
+  })
   .passthrough()
   .superRefine((file, context) => {
     const names = new Set<string>();
@@ -788,7 +797,52 @@ export const workspaceDelegation = (cwd: string, dir?: string): DelegationMode =
   return isDelegation(source?.delegation) ? source.delegation : "inline-first";
 };
 
-const hostFamily = (host: string): string => host.replace(/_(?:cli|desktop)$/u, "");
+/**
+ * Where `models.roles` and `fanout.tierModels` can come from for cwd, nearest
+ * first: the selected workspace, each enclosing one (most specific first),
+ * then the global default at the top of workspaces.json. Read leniently: an
+ * unreadable file reads as no sources.
+ */
+export const modelSources = (
+  cwd: string,
+  dir?: string,
+): Array<{ name: string; global: boolean; models: unknown; tierModels: unknown }> => {
+  const out: Array<{ name: string; global: boolean; models: unknown; tierModels: unknown }> = [];
+  try {
+    const matched = matchRuntimeWorkspace(cwd, dir);
+    if (matched) {
+      const enclosing = matched.matches
+        .filter((entry) => entry !== matched.selected)
+        .toSorted((a, b) => globSpecificity(b.glob) - globSpecificity(a.glob));
+      for (const entry of [matched.selected, ...enclosing])
+        out.push({
+          name: entry.name,
+          global: false,
+          models: entry.models,
+          tierModels: (entry.fanout as { tierModels?: unknown } | undefined)?.tierModels,
+        });
+    }
+  } catch {
+    // An unreadable or invalid file: no workspace sources.
+  }
+  try {
+    const document: unknown = JSON.parse(
+      readFileSync(path.join(dir ?? configDir(), "workspaces.json"), "utf8"),
+    );
+    if (document && typeof document === "object" && !Array.isArray(document))
+      out.push({
+        name: "global",
+        global: true,
+        models: (document as Record<string, unknown>).models,
+        tierModels: undefined,
+      });
+  } catch {
+    // No global default.
+  }
+  return out;
+};
+
+export const hostFamily = (host: string): string => host.replace(/_(?:cli|desktop)$/u, "");
 
 const TIER_KEYS = new Set(["mundane", "standard", "hard"]);
 const TIER_HOSTS = new Set([
@@ -839,39 +893,6 @@ export const workspaceTierModelIssues = (cwd: string, dir?: string): string[] =>
     }
   }
   return issues;
-};
-
-/**
- * The model `fanout.tierModels` names for a tier on a host, or null (the
- * fanout skill's TIER guidance applies). A tier maps to one model name for
- * every host, or to `{ <host>: <model> }` keyed by host family (claude_code,
- * opencode, codex, cursor, pi) with an optional `default`. Inherited like
- * `trailers`, per tier; anything malformed reads as unset.
- */
-export const workspaceTierModel = (
-  cwd: string,
-  tier: string,
-  host: string | null,
-  dir?: string,
-): { model: string; workspace: string } | null => {
-  const pick = (entry: RuntimeEntry): string | null => {
-    const fanout = entry.fanout as { tierModels?: unknown } | undefined;
-    const models = fanout?.tierModels;
-    if (!models || typeof models !== "object" || !Object.hasOwn(models, tier)) return null;
-    const value = (models as Record<string, unknown>)[tier];
-    if (typeof value === "string") return value.trim() || null;
-    if (!value || typeof value !== "object") return null;
-    const byHost = value as Record<string, unknown>;
-    const family = host ? hostFamily(host) : null;
-    const named =
-      (family && Object.hasOwn(byHost, family) ? byHost[family] : undefined) ??
-      (host && Object.hasOwn(byHost, host) ? byHost[host] : undefined) ??
-      (Object.hasOwn(byHost, "default") ? byHost.default : undefined);
-    return typeof named === "string" && named.trim() ? named.trim() : null;
-  };
-  const found = inheritedSetting(cwd, dir, (entry) => pick(entry) !== null);
-  const model = found?.source ? pick(found.source) : null;
-  return model && found?.source ? { model, workspace: found.source.name } : null;
 };
 
 const resolveRuntimeWorkspaceCandidate = (

@@ -48,6 +48,7 @@ import {
   describeReleaseTracks,
   releaseTracksReport,
 } from "@brainervirus/workit-core/src/core/release-tracks";
+import { roleModelIssues } from "@brainervirus/workit-core/src/core/role-models";
 import { workspaceTierModelIssues } from "@brainervirus/workit-core/src/core/workspaces";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
@@ -157,7 +158,7 @@ function show(argv: string[], io: Io): number {
   // Release tracks ride along (read-only): which line this checkout is on
   // decides where push/pr/merge land, so the grant view shows it too.
   const tracks = releaseTracksReport(io.cwd);
-  const tierModelIssues = workspaceTierModelIssues(io.cwd);
+  const tierModelIssues = [...workspaceTierModelIssues(io.cwd), ...roleModelIssues(io.cwd)];
   const shown = {
     ...autonomy,
     ...(tracks.tracks.length || tracks.error ? { releaseTracks: tracks } : {}),

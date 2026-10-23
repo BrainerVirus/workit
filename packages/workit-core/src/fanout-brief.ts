@@ -20,7 +20,7 @@
 // the integration tip before reporting, and nothing else. It only reads, apart
 // from hiding `.workit-scratch/` in the repository's info/exclude.
 import { createHash } from "node:crypto";
-import { workspaceTierModel } from "./core/workspaces";
+import { resolveRoleModel } from "./core/role-models";
 import { activeStanding, readLedger, type LedgerActor } from "./ledger";
 import { branchRef, fanoutFail, planLeads, type FanoutFile, type FanoutResult } from "./fanout";
 import {
@@ -44,8 +44,12 @@ export type BriefOutcome = {
   tier: string;
   /** Issues the slice's PR links (the brief's ISSUE line). */
   issues: string[];
-  /** The model `fanout.tierModels` names for the tier on the lead's host, else null. */
+  /** The model `models.roles` (or `fanout.tierModels`) names for the tier on the lead's host, else null. */
   model: string | null;
+  /** Its effort, when one is configured. */
+  effort: string | null;
+  /** The model and effort the lead spawns this slice's non-author verifier with, else null. */
+  verifier: { model: string; effort: string | null } | null;
   /** Absolute when the slice's worktree exists, else relative to the worker's worktree root. */
   scratch: string;
   /** The id a worker exports, or null when its host issues or derives it. */
@@ -185,7 +189,8 @@ export function renderBrief(
     what: String(row.what),
   }));
   const identity = identityOf(input.actor.host);
-  const model = workspaceTierModel(cwd, slice.tier, input.actor.host);
+  const model = resolveRoleModel(cwd, { role: "implementer", tier: slice.tier }, input.actor.host);
+  const verifier = resolveRoleModel(cwd, { role: "verifier" }, input.actor.host);
   const minted = workerSession(sessionSafe(input.actor.session), slice.id, input.attempt);
   const session = identity === "declared" ? minted : null;
   const fanIn =
@@ -222,7 +227,14 @@ export function renderBrief(
     ...(slice.reason ? [`REASON: ${slice.reason}`] : []),
     `TIER: ${slice.tier}`,
     ...(model
-      ? [`  model: ${model.model}  (fanout.tierModels in workspace ${model.workspace})`]
+      ? [
+          `  model: ${model.model}${model.effort ? `  effort: ${model.effort}` : ""}  (${model.source})`,
+        ]
+      : []),
+    ...(verifier
+      ? [
+          `  verifier: model ${verifier.model}${verifier.effort ? `  effort ${verifier.effort}` : ""}  (${verifier.source})`,
+        ]
       : []),
     `TIMEBOX: ${slice.timebox ?? DEFAULT_TIMEBOX}; past it without a new commit you will be replaced`,
     scratchLine,
@@ -251,6 +263,8 @@ export function renderBrief(
       tier: slice.tier,
       issues: slice.issues,
       model: model?.model ?? null,
+      effort: model?.effort ?? null,
+      verifier: verifier ? { model: verifier.model, effort: verifier.effort } : null,
       scratch,
       session,
       standing,
