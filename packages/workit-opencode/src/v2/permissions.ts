@@ -1,5 +1,6 @@
 import {
   heavyGate,
+  isAllowedWorkitCommand,
   liveOwner,
   rawGitPre,
   shellGate,
@@ -77,4 +78,14 @@ export const evaluateShellPermission = (
       if (plan.kind === "split") return deny(plan.reason);
     }
   }
+  // Issue #297: an ask for Workit's enumerated delivery verbs only becomes an
+  // allow; their own grants and verdict gates decide. Never check, lock or
+  // grant, never a bypass flag; a config deny returned above already.
+  if (
+    event.effect === "ask" &&
+    resources.length > 0 &&
+    resources.length === event.resources.length &&
+    resources.every(isAllowedWorkitCommand)
+  )
+    event.effect = "allow";
 };
