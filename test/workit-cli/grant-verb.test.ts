@@ -293,6 +293,10 @@ test("verification=independent (user config, S17) tightens headless, makes norma
     if (!preview.ok || !preview.data) throw new Error("preview failed");
     return preview.data.requirements.map((item) => item.ruleId);
   };
+  // Unset is proportional (#333): the review lane decides.
+  expect(rules()).toEqual(["check:test", "verdict:lane"]);
+  // proportional -> self tightens, so it goes through headless.
+  expect((await run(["set", "w", "verification=self"], headless)).code).toBe(0);
   expect(rules()).toEqual(["check:test", "verdict:self"]);
   const tightened = await run(["set", "w", "verification=independent"], headless);
   expect(tightened.code).toBe(0);
@@ -303,9 +307,11 @@ test("verification=independent (user config, S17) tightens headless, makes norma
   expect(loosened.code).not.toBe(0);
   expect(loosened.json()).toMatchObject({ ok: false });
   expect(entry().verification).toBe("independent");
+  // Unset falls back to proportional, the loosest: a raise too.
+  expect((await run(["unset", "w", "verification"], headless)).code).not.toBe(0);
   expect((await run(["unset", "w", "verification"], interactive("w"))).code).toBe(0);
   expect(entry().verification).toBeUndefined();
-  expect(rules()).toEqual(["check:test", "verdict:self"]);
+  expect(rules()).toEqual(["check:test", "verdict:lane"]);
 });
 
 // Babysit endpoints: commit < pr < green < merged. `green` babysits the PR to

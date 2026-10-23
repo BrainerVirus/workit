@@ -31,7 +31,7 @@ const workit = (cwd: string, ...args: string[]) => {
 const ruleIds = (output: { data: { requirements: { ruleId: string }[] } }) =>
   output.data.requirements.map((item) => item.ruleId);
 
-test("G `--judge behavior=yes risk=normal`, T requirements = {check:test, verdict:self} (default verification)", () => {
+test("G `--judge behavior=yes risk=normal`, T requirements = {check:test, verdict:lane} (default verification: proportional) and the lane is shown", () => {
   const root = repo();
   const assessed = workit(
     root,
@@ -43,7 +43,11 @@ test("G `--judge behavior=yes risk=normal`, T requirements = {check:test, verdic
     "--json",
   );
   expect(assessed.code).toBe(0);
-  expect(ruleIds(assessed.json())).toEqual(["check:test", "verdict:self"]);
+  expect(ruleIds(assessed.json())).toEqual(["check:test", "verdict:lane"]);
+  expect(assessed.json().data.lane).toMatchObject({
+    verification: "proportional",
+    need: expect.any(String),
+  });
   expect(assessed.json().data.requirements[0]).toMatchObject({ status: "unsatisfied" });
 });
 

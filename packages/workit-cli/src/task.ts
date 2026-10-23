@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { checkRoot } from "@brainervirus/workit-core/src/check-config";
+import {
+  DEFAULT_VERIFICATION,
+  resolveAutonomy,
+  type VerificationMode,
+} from "@brainervirus/workit-core/src/autonomy";
+import { currentJudgment } from "@brainervirus/workit-core/src/core/policy/current-judgment";
 import { judgeTokens } from "@brainervirus/workit-core/src/core/policy/judgment";
+import { branchLane, laneNeed } from "@brainervirus/workit-core/src/core/policy/lane";
 import { sameDirectoryIdentity } from "@brainervirus/workit-core/src/core/task-store";
 import {
   OPERATION_FAMILIES,
@@ -378,10 +385,32 @@ type RequirementEvaluation = { requirementId: string; status: string; reason: st
  * A recorded policy with each requirement's current status, so the output
  * tells what is already met from what is still owed (S17 review L11).
  */
+/** The working tree's review lane (#333) and the workspace's verification mode. */
+function laneOf(root: string) {
+  let verification: VerificationMode;
+  try {
+    verification = resolveAutonomy(root).verification;
+  } catch {
+    verification = DEFAULT_VERIFICATION;
+  }
+  const lane = branchLane(root, { head: null, workingTree: true, judgment: currentJudgment(root) });
+  return {
+    lane: lane.lane,
+    reasons: lane.reasons,
+    lines: lane.lines,
+    files: lane.files,
+    riskFiles: lane.riskFiles,
+    base: lane.base,
+    verification,
+    need: verification === "proportional" ? laneNeed(lane.lane) : null,
+  };
+}
+
 function withRequirementStatus(
   core: WorkitCore,
   result: Result<unknown>,
   taskId: unknown,
+  root: string,
 ): Result<unknown> {
   if (!result.ok || !result.data) return result;
   const policy = result.data as { requirements: Array<{ id: string }> };
@@ -395,6 +424,7 @@ function withRequirementStatus(
     : [];
   return success(result.revision, result.workspaceRevision, {
     ...policy,
+    lane: laneOf(root),
     requirements: policy.requirements.map((requirement) => {
       const evaluation = evaluations.find((item) => item.requirementId === requirement.id);
       return {
@@ -430,6 +460,11 @@ function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false)
       statusReason?: string | null;
       satisfaction: string;
     }>;
+    if (data.lane)
+      write(
+        stream,
+        `lane ${data.lane.lane} (${data.lane.reasons.join("; ")}); verification: ${data.lane.verification}`,
+      );
     if (!requirements.length)
       write(stream, "no requirements: nothing to prove beyond your own checks");
     for (const item of requirements)
@@ -509,7 +544,7 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
   )
     result = { ...result, data: boundTaskSummary(result.data as TaskSummary) };
   if (parsed.parsed.family === "policy" && parsed.parsed.action === "assess")
-    result = withRequirementStatus(core, result, parsed.parsed.request.taskId);
+    result = withRequirementStatus(core, result, parsed.parsed.request.taskId, root);
   if (parsed.parsed.json) jsonResult(outOf(deps), result);
   else printHuman(result, deps, parsed.parsed.handoff);
   return result.ok ? 0 : 1;

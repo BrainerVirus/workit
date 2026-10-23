@@ -24,6 +24,7 @@ import {
   resolveAutonomy,
   type AutonomySource,
   type DefaultEndpoint,
+  type VerificationMode,
 } from "../autonomy";
 import { branchKindOf, flowRoute, gitFlowOf, isProtectedTarget } from "../core/branch";
 import { vcsConfig } from "../core/vcs-config";
@@ -40,6 +41,8 @@ import {
   type LedgerActor,
   type VerdictCheck,
 } from "../ledger";
+import type { LaneNeed, ReviewLane } from "../core/policy/lane";
+import { laneLabel, prLaneGate } from "../core/policy/pr-lane";
 import { buildStatusDoc, selectPr, type PrStatusDoc } from "./report";
 import type { ResolvedForge } from "./resolve";
 import { failure, success, type ForgeResult, type MergeMethod, type PrRef } from "./types";
@@ -361,7 +364,22 @@ export type MergeOutcome = {
   head: string;
   method: MergeMethod;
   mergeSha: string | null;
-  verdict: { required: boolean; accepted: boolean; verdictId: string | null };
+  /**
+   * `required`: the gate asked for a verdict (false under lane none or a
+   * bypass); `accepted`: an accepted independent verdict covers the head;
+   * `verdictId`: the verdict the merge relied on (the author's own under lane
+   * self, shown as self-reviewed); `lane`/`need`: the review lane and what it
+   * asked (`need` is non-author outside `verification: proportional`).
+   */
+  verdict: {
+    required: boolean;
+    accepted: boolean;
+    verdictId: string | null;
+    review: "verified" | "self-reviewed" | "none";
+    lane: ReviewLane;
+    need: LaneNeed;
+    verification: VerificationMode;
+  };
   /** Set when `--unverified` bypassed the verdict: the reason and its ledger row. */
   unverified: { reason: string; recorded: string } | null;
   grant: { source: AutonomySource };
@@ -645,13 +663,24 @@ export async function mergePullRequest(
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return ledger;
   const check = checkVerdicts(cwd, branch, ledger.value.rows);
-  const summary = { head: check.head, accepted: check.accepted, authors: check.authors };
-  const covered = check.head === head && check.accepted.accepted;
+  const gate = prLaneGate(cwd, check, { branch, base: doc.base, head });
+  const summary = {
+    head: check.head,
+    accepted: check.accepted,
+    authors: check.authors,
+    lane: gate.lane.lane,
+    need: gate.need,
+  };
+  // Lane none needs no verdict, so no verdict head either.
+  const covered = gate.satisfied && (gate.need === "none" || check.head === head);
   let verdict: MergeOutcome["verdict"] = {
-    required: true,
-    accepted: covered,
-    verdictId:
-      covered && typeof check.accepted.verdict?.id === "string" ? check.accepted.verdict.id : null,
+    required: gate.need !== "none",
+    accepted: check.head === head && check.accepted.accepted,
+    verdictId: covered ? gate.verdictId : null,
+    review: covered ? gate.review : "none",
+    lane: gate.lane.lane,
+    need: gate.need,
+    verification: gate.verification,
   };
   let unverified: MergeOutcome["unverified"] = null;
   // The bypass covers a missing verdict, never a rejection.
@@ -679,9 +708,9 @@ export async function mergePullRequest(
         "failed",
         `unverified_unrecorded: the --unverified bypass could not be recorded (${recorded.error}); nothing was merged`,
       );
-    verdict = { required: false, accepted: false, verdictId: null };
+    verdict = { ...verdict, required: false, accepted: false, verdictId: null, review: "none" };
     unverified = { reason, recorded: String(recorded.value.id) };
-  } else if (check.head !== head)
+  } else if (!covered && check.head !== head)
     return refuse(
       `head_mismatch: the verdict check reads ${branch} at ${check.head?.slice(0, 12) ?? "(missing)"} but ${label} is at ${head.slice(0, 12)}`,
       `git fetch && git switch ${branch} && git merge --ff-only @{u}  # then re-verify that head`,
@@ -693,12 +722,21 @@ export async function mergePullRequest(
       tamperedUnblock(cwd),
       { reason: "ledger_tampered", verdict: summary },
     );
-  else if (!covered)
+  else if (!covered) {
+    const bypassHint = grant.allowUnverified
+      ? `; or, only if the user asks to merge unverified: workit pr merge --unverified --reason "<why>"`
+      : "";
+    const lane = gate.verification === "proportional" ? `, ${laneLabel(gate)}` : "";
     return refuse(
-      `NEEDS_VERDICT: ${label} has no accepted independent verdict for ${head.slice(0, 12)} (${check.accepted.reasons.join(", ")})`,
-      `an independent session verifies the head and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${branch}${grant.allowUnverified ? `; or, only if the user asks to merge unverified: workit pr merge --unverified --reason "<why>"` : ""}`,
+      gate.need === "self"
+        ? `NEEDS_VERDICT: ${label} has no verdict for ${head.slice(0, 12)}${lane}: the author's own --self verdict is enough (${check.accepted.reasons.join(", ")})`
+        : `NEEDS_VERDICT: ${label} has no accepted independent verdict for ${head.slice(0, 12)}${lane} (${check.accepted.reasons.join(", ")})`,
+      gate.need === "self"
+        ? `after an observed passing \`workit check test\`, the author runs: workit ledger verdict tests-verified --self --how "<what you ran>" --branch ${branch} (or a verifier records one)${bypassHint}`
+        : `an independent session verifies the head and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${branch}${bypassHint}`,
       { reason: "needs_verdict", verdict: summary },
     );
+  }
 
   const squashMessage = squashMessageFor(cwd, resolved, input, doc);
   if (squashMessage && !squashMessage.ok) return squashMessage;
@@ -714,6 +752,8 @@ export async function mergePullRequest(
     base: doc.base,
     method: input.method,
     verdictId: verdict.verdictId,
+    review: verdict.review,
+    lane: verdict.lane,
     ...(unverified ? { unverified: unverified.recorded } : {}),
     grant: grant.source,
   });
@@ -747,6 +787,8 @@ export async function mergePullRequest(
     mergeSha: merged.data.mergeSha,
     method: input.method,
     verdictId: verdict.verdictId,
+    review: verdict.review,
+    lane: verdict.lane,
     ...(unverified ? { unverified: unverified.recorded } : {}),
     grant: grant.source,
     intent: intentId,

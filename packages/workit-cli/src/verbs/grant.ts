@@ -8,9 +8,10 @@
 // `defaultEndpoint=commit|pr|green|merged` sets where an unnamed request stops
 // (skills read it); any step up commit < pr < green < merged is a raise, like
 // any grant. `merged` only takes effect with the merge grant: show reports the
-// configured and the effective endpoint. `verification=self|independent`
-// sets what a normal-risk behavior change needs (S17): independent → self is a
-// raise (it lets the author verify its own work).
+// configured and the effective endpoint. `verification=proportional|self|independent`
+// sets what a behavior change needs (S17, #333): any step down independent >
+// self > proportional is a raise (it lets the author verify its own work, or
+// lets the review lane ask for less). Unset means proportional.
 //
 // Raising a grant (anything that lets an agent deliver more) needs the user at
 // an interactive terminal who types the workspace name to confirm; a headless
@@ -26,6 +27,8 @@
 import {
   DEFAULT_ENDPOINTS,
   DEFAULT_GRANTS,
+  DEFAULT_VERIFICATION,
+  VERIFICATION_MODES,
   GRANT_KINDS,
   isDefaultEndpoint,
   isGrantKind,
@@ -50,7 +53,7 @@ import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 
 const USAGE =
-  "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr|green|merged] [verification=self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
+  "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr|green|merged] [verification=proportional|self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
 
 /** Agent hosts that export a marker into the shells they run (best effort). */
 const AGENT_ENV = [
@@ -99,6 +102,18 @@ const endpointLabel = (view: EndpointView): string =>
     ? view.defaultEndpoint
     : `${view.defaultEndpoint} (effective: ${view.effectiveEndpoint}${view.endpointReason ? `, ${view.endpointReason}` : ""})`;
 
+const VERIFICATION_STRICTNESS: readonly VerificationMode[] = [
+  "independent",
+  "self",
+  "proportional",
+];
+const VERIFICATION_TEXT: Record<VerificationMode, string> = {
+  proportional:
+    "the review lane from the diff decides: none needs no verdict, self the author's --self verdict, focused and full a non-author verdict, also to merge",
+  self: "a normal-risk behavior change needs a passing check and the author's --self verdict, shown as self-reviewed; merge needs a non-author verdict",
+  independent: "a normal-risk behavior change needs a non-author verdict",
+};
+
 const describe = (
   grants: Grants,
   configured: readonly GrantKind[],
@@ -111,7 +126,7 @@ const describe = (
   ),
   `  default endpoint: ${endpointLabel(endpoint)} (an unnamed request stops at ${STOPS_AT[endpoint.effectiveEndpoint]})`,
   ...(endpoint.endpointIssue ? [`  note: ${endpoint.endpointIssue}`] : []),
-  `  verification: ${verification} (${verification === "independent" ? "a normal-risk behavior change needs a non-author verdict" : "a normal-risk behavior change needs a passing check and the author's --self verdict, shown as self-reviewed"})`,
+  `  verification: ${verification} (${VERIFICATION_TEXT[verification]})`,
 ];
 
 function show(argv: string[], io: Io): number {
@@ -186,8 +201,9 @@ async function change(
     }
     if (kind === "verification") {
       if (verb === "unset") verification = null;
-      else if (raw === "self" || raw === "independent") verification = raw;
-      else return usage(io, `${spec}: verification must be self or independent`);
+      else if (VERIFICATION_MODES.includes(raw as VerificationMode))
+        verification = raw as VerificationMode;
+      else return usage(io, `${spec}: verification must be ${VERIFICATION_MODES.join(", ")}`);
       continue;
     }
     if (!isGrantKind(kind)) return usage(io, `unknown grant kind "${kind}"`);
@@ -204,12 +220,12 @@ async function change(
     .map(({ kind, value }) => ({ kind, value: String(value ?? DEFAULT_GRANTS[kind]) }));
   if (endpoint && raisesEndpoint(entry.defaultEndpoint, endpoint))
     raised.push({ kind: "defaultEndpoint", value: endpoint });
-  if (
-    verification !== undefined &&
-    verification !== "independent" &&
-    entry.verification === "independent"
-  )
-    raised.push({ kind: "verification", value: "self" });
+  // Strictest first: independent > self (merge still needs a non-author
+  // verdict) > proportional (the lane may ask for less).
+  const strictness = (mode: VerificationMode) => VERIFICATION_STRICTNESS.indexOf(mode);
+  const target = verification === null ? DEFAULT_VERIFICATION : verification;
+  if (target !== undefined && strictness(target) > strictness(entry.verification))
+    raised.push({ kind: "verification", value: target });
   if (raised.length > 0) {
     const command = `workit grant ${verb} ${workspace} ${specs.join(" ")}`;
     const agent = agentMarker(io.env);

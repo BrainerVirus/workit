@@ -262,7 +262,7 @@ export const VERBS: readonly VerbEntry[] = [
         {
           name: "set",
           usage:
-            "workit grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr|green|merged] [verification=self|independent]",
+            "workit grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr|green|merged] [verification=proportional|self|independent]",
           summary:
             "Change grants (kinds: push, pr, merge, release, rerun); raising one asks the user to confirm at a terminal",
         },

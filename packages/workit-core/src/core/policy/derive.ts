@@ -6,6 +6,7 @@ import path from "node:path";
 import { currentBranch } from "../../git/rev";
 import { STRONG_RESULTS, checkVerdicts, readLedger, type ReadRow } from "../../ledger";
 import type { VerificationMode } from "../../autonomy";
+import { branchLane, laneNeed, type BranchLane } from "./lane";
 import {
   requirementId,
   sha256,
@@ -21,6 +22,7 @@ export const RULES = {
   self: "verdict:self",
   nonAuthor: "verdict:non-author",
   verified: "verdict:verified",
+  lane: "verdict:lane",
   product: "decision:product",
   plan: "plan",
 } as const;
@@ -46,8 +48,11 @@ const normalizedScope = (scope: Scope): Scope => ({
 /**
  * | judgment                         | requirement                                  |
  * | behaviorChange                   | check:test (configured, fresh tree), close   |
- * | behaviorChange && risk = normal  | verdict:self (default) or verdict:non-author  |
- * |                                  | (workspace verification: independent), close |
+ * | behaviorChange && risk = normal, | verdict:lane: the review lane from the diff   |
+ * | verification: proportional       |                                               |
+ * |                                  | decides (core/policy/lane.ts), close          |
+ * | behaviorChange && risk = normal  | verdict:self (verification: self) or          |
+ * |                                  | verdict:non-author (independent), close       |
  * | risk = high                      | verdict:verified (ledger), close             |
  * | productChoiceOpen                | decision:product, before write               |
  * | needsPlan or risk = high         | plan (doc ref, soft), before write           |
@@ -62,6 +67,7 @@ export function deriveRequirements(
 ): Requirement[] {
   const out: Requirement[] = [];
   const base = { scope, dependentAction: null };
+  const proportional = verification === "proportional";
   if (judgment.behaviorChange)
     out.push(
       derived({
@@ -74,7 +80,21 @@ export function deriveRequirements(
         acceptanceAllowed: false,
       }),
     );
-  if (judgment.behaviorChange && judgment.riskTier === "normal")
+  if (proportional && judgment.behaviorChange && judgment.riskTier === "normal")
+    out.push(
+      derived({
+        ...base,
+        ruleId: RULES.lane,
+        dimension: "review",
+        reason:
+          "The review lane computed from the diff decides the verdict: none needs none, self the author's own (shown as self-reviewed), focused and full a non-author one.",
+        satisfaction:
+          "Read the lane in `workit policy assess` or `workit pr status`; record what it asks: `workit ledger verdict tests-verified --self --how <what you ran>` for self, or hand focused and full to a verifier.",
+        before: "close",
+        acceptanceAllowed: false,
+      }),
+    );
+  if (!proportional && judgment.behaviorChange && judgment.riskTier === "normal")
     out.push(
       verification === "independent"
         ? derived({
@@ -264,7 +284,21 @@ const planRecorded = (task: TaskRecord, root: string): RuleStatus => {
  * an accepted independent one; `verdict:verified` an accepted independent
  * `verified` verdict of kind `live`.
  */
-const verdict = (requirement: Requirement, root: string, ledger: LedgerView): RuleStatus => {
+/** The review lane of the checked-out work (the working tree against the default base). */
+export const workingLane = (task: TaskRecord, root: string): BranchLane =>
+  branchLane(root, { head: null, workingTree: true, judgment: latestJudgment(task) });
+
+/** `verdict:lane`: the rule the lane asks for, or met under lane none. */
+const laneVerdict = (task: TaskRecord, root: string, ledger: LedgerView): RuleStatus => {
+  const lane = workingLane(task, root);
+  const label = `lane ${lane.lane} (${lane.reasons.join("; ")})`;
+  const need = laneNeed(lane.lane);
+  if (need === "none") return { met: true, reason: `${label}: no verdict needed`, decisionIds: [] };
+  const status = verdict(need === "self" ? RULES.self : RULES.nonAuthor, root, ledger);
+  return { ...status, reason: `${label}: ${status.reason}` };
+};
+
+const verdict = (ruleId: string, root: string, ledger: LedgerView): RuleStatus => {
   const branch = ledger.branch();
   if (!branch)
     return { met: false, reason: "no branch is checked out to hold a verdict", decisionIds: [] };
@@ -274,12 +308,12 @@ const verdict = (requirement: Requirement, root: string, ledger: LedgerView): Ru
     STRONG_RESULTS.has(String(entry.verdict.result));
   const met =
     !failing &&
-    (requirement.ruleId === RULES.verified
+    (ruleId === RULES.verified
       ? check.verdicts.find(
           (entry) =>
             entry.accepted && entry.kind === "live" && String(entry.verdict.result) === "verified",
         )
-      : requirement.ruleId === RULES.nonAuthor
+      : ruleId === RULES.nonAuthor
         ? check.verdicts.find((entry) => entry.accepted && strong(entry))
         : check.verdicts.find((entry) => entry.current && strong(entry)));
   if (met)
@@ -294,9 +328,9 @@ const verdict = (requirement: Requirement, root: string, ledger: LedgerView): Ru
       ? "type-check-only does not prove a behavior change"
       : (check.accepted.reasons.join(", ") || "no_verdict").replace(/_/g, " ");
   const unblock =
-    requirement.ruleId === RULES.self
+    ruleId === RULES.self
       ? "record your own verdict after an observed `workit check test`: `workit ledger verdict tests-verified --self --how <what you ran>` (shown as self-reviewed), or have a verifier record one"
-      : `an independent session records \`workit ledger verdict verified${requirement.ruleId === RULES.verified ? " --kind live" : ""} --how <what it exercised>\``;
+      : `an independent session records \`workit ledger verdict verified${ruleId === RULES.verified ? " --kind live" : ""} --how <what it exercised>\``;
   return { met: false, reason: `${why}: ${unblock}`, decisionIds: [] };
 };
 
@@ -315,7 +349,9 @@ export function derivedRuleStatus(
     case RULES.self:
     case RULES.nonAuthor:
     case RULES.verified:
-      return verdict(requirement, root, ledger);
+      return verdict(requirement.ruleId, root, ledger);
+    case RULES.lane:
+      return laneVerdict(task, root, ledger);
     default:
       return null;
   }

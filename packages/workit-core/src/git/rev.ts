@@ -515,6 +515,92 @@ export function resolveRef(cwd: string, ref: string): string | null {
   return line(git(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]));
 }
 
+/** Pinned diff options for the review-lane reads: user config never changes them. */
+const LANE_DIFF = [
+  "-c",
+  "core.quotePath=false",
+  "diff",
+  "--no-color",
+  "--no-ext-diff",
+  "--no-textconv",
+  "--no-renames",
+];
+
+/**
+ * `merge-base(base, head)..head`, or with `head` null the working tree's
+ * tracked changes since `merge-base(base, HEAD)`. Null when a revision does
+ * not resolve.
+ */
+const laneRange = (cwd: string, base: string, head: string | null): string[] | null => {
+  if (!safeArg(base) || (head !== null && !safeArg(head))) return null;
+  if (head !== null) return [`${base}...${head}`];
+  const fork = mergeBase(cwd, base, "HEAD");
+  return fork ? [fork] : null;
+};
+
+export type NumstatEntry = { path: string; added: number; deleted: number; binary: boolean };
+
+/** Added and deleted lines per file of the lane range (no renames); null when git fails. */
+export function diffNumstat(cwd: string, base: string, head: string | null): NumstatEntry[] | null {
+  const range = laneRange(cwd, base, head);
+  if (!range) return null;
+  const run = git(cwd, [...LANE_DIFF, "--numstat", "-z", ...range, "--"]);
+  if (!run.ok) return null;
+  const out: NumstatEntry[] = [];
+  for (const record of run.stdout.split("\0")) {
+    const match = /^(-|\d+)\t(-|\d+)\t(.+)$/su.exec(record.replace(/^\n/u, ""));
+    if (!match) continue;
+    const binary = match[1] === "-";
+    out.push({
+      path: match[3],
+      added: binary ? 0 : Number(match[1]),
+      deleted: binary ? 0 : Number(match[2]),
+      binary,
+    });
+  }
+  return out;
+}
+
+/**
+ * The zero-context diff of the lane range with whitespace and blank-line
+ * changes ignored: what is left is the substance. Null when git fails.
+ */
+export function diffSubstance(cwd: string, base: string, head: string | null): string | null {
+  const range = laneRange(cwd, base, head);
+  if (!range) return null;
+  const run = git(cwd, [
+    ...LANE_DIFF,
+    "-U0",
+    "--ignore-all-space",
+    "--ignore-blank-lines",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    ...range,
+    "--",
+  ]);
+  return run.ok ? run.stdout : null;
+}
+
+/** Untracked, not ignored files of the working tree (repo-relative). */
+export function untrackedFiles(cwd: string): string[] {
+  const run = git(cwd, ["ls-files", "-z", "--others", "--exclude-standard"]);
+  return run.ok ? run.stdout.split("\0").filter(Boolean) : [];
+}
+
+/** Of `paths`, those `.gitattributes` marks `linguist-generated` (generated copies). */
+export function generatedPaths(cwd: string, paths: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  if (!paths.length) return out;
+  const run = git(cwd, ["check-attr", "-z", "--stdin", "linguist-generated"], {
+    input: `${paths.join("\0")}\0`,
+  });
+  if (!run.ok) return out;
+  const fields = run.stdout.split("\0");
+  for (let index = 0; index + 2 < fields.length; index += 3)
+    if (fields[index + 2] === "set" || fields[index + 2] === "true") out.add(fields[index]);
+  return out;
+}
+
 /**
  * Commits `head` lacks from `base` (behind) and has on top of it (ahead), and
  * whether `base` is already an ancestor of `head`. Null when either side
