@@ -14,7 +14,8 @@
 //       green or merged (a PR opens without one): the author's own `--self`
 //       verdict at normal risk under `verification: self`, an accepted
 //       non-author verdict at high risk or under `verification: independent`.
-//       Not raised while a verifier or reviewer this lead started still runs.
+//       Not raised when the task's latest judgment records no behavior
+//       change at normal risk (policy/derive.ts asks for none either), nor while a verifier or reviewer this lead started still runs.
 // Each obligation blocks once per head and session (a marker keyed by kind
 // and head), not once per turn.
 // A branch that landed owes nothing: a recorded merge (`workit pr merge`, or
@@ -30,13 +31,14 @@
 import { spawnSync } from "node:child_process";
 import { resolveAutonomy } from "../autonomy";
 import { latestJudgment } from "../core/policy/derive";
+import type { Judgment } from "../core/task-contract";
 import { TaskStore } from "../core/task-store";
 import { currentBranch, pushRemoteName } from "../git/rev";
 import { checkVerdicts, readLedger, type ReadRow } from "../ledger";
 import type { HostDescriptor } from "./descriptor";
 import type { HookDecision, HookInput } from "./protocol";
 import { guardedBranch, inWorkitWorkspace } from "./raw-git";
-import { readSessionMarker, sessionMarkerFile, writeSessionMarker } from "./session-marker";
+import { readSessionMarker, sessionMarkerFile, updateSessionMarker } from "./session-marker";
 
 const NONE: HookDecision = { kind: "none" };
 
@@ -235,20 +237,20 @@ const redChecks = (
   };
 };
 
-/** Did the open task's latest judgment call this change high risk? */
-const highRisk = (cwd: string): boolean => {
+/** The open task's latest judgment (the one policy/derive.ts reads), or null when none is recorded. */
+const taskJudgment = (cwd: string): Judgment | null => {
   try {
     const store = new TaskStore(cwd);
     const listed = store.listTaskIndex();
     const key = store.currentKey();
-    if (!listed.ok || !key.ok) return false;
+    if (!listed.ok || !key.ok) return null;
     const entry = listed.data
       .filter((item) => item.key === key.data.key && item.status !== "closed")
       .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
     const task = entry ? store.readTask(entry.id) : null;
-    return task?.ok === true && latestJudgment(task.data)?.riskTier === "high";
+    return task?.ok === true ? latestJudgment(task.data) : null;
   } catch {
-    return false;
+    return null;
   }
 };
 
@@ -266,7 +268,12 @@ const unverified = (
 ): StopObligation | null => {
   const check = checkVerdicts(cwd, branch, all);
   if (check.accepted.accepted || check.accepted.reasons.includes("failing_verdict")) return null;
-  const independent = verification === "independent" || highRisk(cwd);
+  const judgment = taskJudgment(cwd);
+  const high = judgment?.riskTier === "high";
+  // Like policy/derive.ts: a verdict is asked for a behavior change or high
+  // risk. A recorded judgment with neither (docs only) owes none.
+  if (judgment && !judgment.behaviorChange && !high) return null;
+  const independent = verification === "independent" || high;
   if (!independent && check.review === "self-reviewed") return null;
   const has = check.review === "self-reviewed" ? "only a self verdict" : "no current verdict";
   const verifier = `${descriptor.subagents.agentPrefix}verifier`;
@@ -353,7 +360,7 @@ export function stopDecision(input: HookInput, descriptor: HostDescriptor): Hook
   const key = `${left.kind}:${left.head ?? ""}`;
   if (file && marker) {
     if (marker.stops.includes(key)) return NONE;
-    writeSessionMarker(file, { ...marker, stops: [...marker.stops, key] });
+    updateSessionMarker(file, (fresh) => ({ ...fresh, stops: [...fresh.stops, key] }));
   }
   return {
     kind: "continue",

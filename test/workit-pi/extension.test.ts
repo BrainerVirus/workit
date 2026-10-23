@@ -671,6 +671,37 @@ test("Pi blocks noncompliant branch targets and leaves other commands to the hos
   }
 });
 
+test("G Pi's shell policy is fail-open, W the tool_call gate throws internally, T the call proceeds and the error is logged to stderr", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-failopen-"));
+  const written: string[] = [];
+  const realWrite = process.stderr.write.bind(process.stderr);
+  try {
+    const pi = makePi();
+    await extension(pi as any);
+    const guard = pi.handlers.get("tool_call");
+    // An input whose command cannot be read: the gate throws before deciding.
+    const broken = {
+      toolName: "bash",
+      toolCallId: "boom",
+      get input(): never {
+        throw new Error("gate exploded");
+      },
+    };
+    process.stderr.write = (chunk: string | Uint8Array) => {
+      written.push(String(chunk));
+      return true;
+    };
+    const result = await guard?.(broken, context(root));
+    process.stderr.write = realWrite;
+    expect(result).toBeUndefined();
+    expect(written.join("")).toContain("[workit] tool_call gate failed");
+    expect(written.join("")).toContain("gate exploded");
+  } finally {
+    process.stderr.write = realWrite;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Pi allows recognized raw branch and PR creation outside live work", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-route-bare-"));
   try {

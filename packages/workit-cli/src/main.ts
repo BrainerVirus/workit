@@ -3,6 +3,7 @@
 // module and hand it argv + io. `--version` and `help` load nothing else, and
 // only `init`/`uninstall` ever load ink/react (through index.tsx).
 import path from "node:path";
+import { sessionClaimRefusal } from "@brainervirus/workit-core/src/host-session";
 import pkg from "../package.json" with { type: "json" };
 import {
   checkFlags,
@@ -62,6 +63,7 @@ ${sections.join("\n\n")}
 Global flags:
   --json             Machine-readable output: {"ok","code","data","error"?,"unblock"?}
   --cwd <dir>        Run as if started in <dir>
+  --session <id>     Act as session <id> (before the command; same as WORKIT_SESSION_ID=<id>, which it beats)
   --version          Print the CLI version
   -h, --help         Show usage for the command and subcommand before it (runs nothing)
   help <cmd> [<sub>] The same, as a command
@@ -72,7 +74,14 @@ Run \`npx @brainervirus/workit-cli init\` to configure platforms, YouTrack, VCS 
 `;
 }
 
-type Parsed = { json: boolean; cwd: string | null; rest: string[]; error?: string };
+type Parsed = {
+  json: boolean;
+  cwd: string | null;
+  /** `--session <id>` before the command: the value WORKIT_SESSION_ID would carry. */
+  session?: string;
+  rest: string[];
+  error?: string;
+};
 
 /**
  * Pull the global flags out of argv, in any position before a bare `--`
@@ -80,11 +89,15 @@ type Parsed = { json: boolean; cwd: string | null; rest: string[]; error?: strin
  * consumed. `--json` before the command is consumed so the command is always
  * the first token; after the command it stays in the verb's argv too, because
  * existing verbs parse it themselves (main re-adds it for `--json <verb>`).
+ * `--session <id>` is consumed only before the command (`workit --session X
+ * git commit …`, the form for a host whose shell allowlist cannot match a
+ * leading `WORKIT_SESSION_ID=X`); after it, it is `ledger verdict`'s own flag.
  */
 export function parseGlobals(argv: readonly string[]): Parsed {
   const rest: string[] = [];
   let json = false;
   let cwd: string | null = null;
+  let session: string | undefined;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--") {
@@ -102,9 +115,16 @@ export function parseGlobals(argv: readonly string[]): Parsed {
       cwd = value;
       continue;
     }
+    if (rest.length === 0 && (arg === "--session" || arg.startsWith("--session="))) {
+      const value = arg === "--session" ? argv[++index] : arg.slice("--session=".length);
+      if (!value || value.startsWith("--"))
+        return { json, cwd, rest, error: "--session requires an id" };
+      session = value;
+      continue;
+    }
     rest.push(arg);
   }
-  return { json, cwd, rest };
+  return { json, cwd, ...(session === undefined ? {} : { session }), rest };
 }
 
 const defaultIo = (json: boolean): Io => ({
@@ -125,6 +145,15 @@ export async function main(
   const cwd = path.resolve(overrides.cwd ?? process.cwd(), parsed.cwd ?? ".");
   const io: Io = { ...defaultIo(parsed.json), ...overrides, json: parsed.json, cwd };
   if (parsed.error) return emit(io, fail("invalid_input", parsed.error));
+  if (parsed.session !== undefined) {
+    // The same gate the env var meets (verdicts, commits): where the host's
+    // session is checked, the flag cannot name another one.
+    const refusal = sessionClaimRefusal(io.env, parsed.session, cwd);
+    if (refusal) return emit(io, fail("blocked", refusal.error, { unblock: refusal.unblock }));
+    io.env = { ...io.env, WORKIT_SESSION_ID: parsed.session };
+    // The real CLI also reads the process env (task store, task verbs).
+    if (overrides.env === undefined) process.env.WORKIT_SESSION_ID = parsed.session;
+  }
   const [command, ...verbArgs] = parsed.rest;
   // `workit --json doctor` reaches the verb as `doctor --json` (before any `--`).
   const args = parsed.json && !verbArgs.includes("--json") ? withJsonFlag(verbArgs) : verbArgs;

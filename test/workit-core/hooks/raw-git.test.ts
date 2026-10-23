@@ -463,7 +463,7 @@ test("each host renders the deny on its own channel and the nudge without granti
     // Cursor's shell has no session id: the nudge names the conversation's.
     expect(nudged.json).toEqual({
       permission: "allow",
-      agent_message: expect.stringMatching(/WORKIT_SESSION_ID=\S+ workit git commit/),
+      agent_message: expect.stringMatching(/workit --session \S+ git commit/),
     });
 
     // The in-process hosts get their own checkout: the live-session guard

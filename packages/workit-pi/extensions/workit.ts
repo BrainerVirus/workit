@@ -589,7 +589,20 @@ export default function extension(pi: ExtensionAPI): void {
     sessions.delete(ctx.sessionManager.getSessionId());
   });
   pi.on("session_compact_failed", () => undefined);
-  pi.on("tool_call", (event: ToolCallEvent, ctx) => enforceToolPolicy(event, ctx));
+  pi.on("tool_call", (event: ToolCallEvent, ctx) => {
+    try {
+      return enforceToolPolicy(event, ctx);
+    } catch (error) {
+      // An internal gate error follows the descriptor's fail policy
+      // (`shellPolicy.failClosed`, false on Pi): the call proceeds. Logged to
+      // stderr like the other hooks' errors.
+      const message = `hook failure: ${String(error)}`;
+      process.stderr.write(`[workit] tool_call gate failed: ${message}\n`);
+      return PI_DESCRIPTOR.shellPolicy.failClosed
+        ? { block: true as const, reason: message }
+        : undefined;
+    }
+  });
   pi.on("tool_result", (event: ToolResultEvent, ctx) => {
     const observed = observeResult(event, ctx);
     let standing: string | null = null;
