@@ -55,8 +55,9 @@ afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
-const run = (entry: "source" | "dist", command: string) => {
+const run = (entry: "source" | "dist", command: string, extra: Record<string, unknown> = {}) => {
   const payload = JSON.stringify({
+    ...extra,
     session_id: "session-1",
     cwd: root,
     model: "gpt-5",
@@ -105,4 +106,14 @@ for (const entry of ["source", "dist"] as const)
     expect(run(entry, `echo ok > ${root}/a.txt`)).toEqual({
       hookSpecificOutput: { hookEventName: "PreToolUse" },
     });
+  }, 60_000);
+
+for (const entry of ["source", "dist"] as const)
+  test(`[${entry}] Given a workit-implementer subagent with no Workit worktree, When its shell writes into the lead's checkout, Then the hook loads the runtime and denies it (#310)`, () => {
+    const implementer = { agent_id: "impl-1", agent_type: "workit-implementer" };
+    const output = run(entry, `echo x > ${root}/a.txt`, implementer).hookSpecificOutput;
+    expect(output.permissionDecision).toBe("deny");
+    expect(output.permissionDecisionReason).toContain(
+      "workit worktree confinement: implementer impl-1 is not working in a Workit worktree yet",
+    );
   }, 60_000);

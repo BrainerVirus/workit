@@ -788,6 +788,25 @@ export function workitInvocations(
   return found;
 }
 
+/** Workit's global options before the verb: `--json`, and these (`--name value` or `--name=value`). */
+const WORKIT_GLOBAL = /^--(?:cwd|session|token|as)(=|$)/;
+
+/** An invocation's arguments without the global options before the verb, and the last `--cwd` among them. */
+export function skipWorkitGlobals(args: readonly string[]): { rest: string[]; cwd: string | null } {
+  let cwd: string | null = null;
+  let at = 0;
+  for (; at < args.length; at++) {
+    const match = WORKIT_GLOBAL.exec(args[at]);
+    if (match?.[1] === "=") {
+      if (args[at].startsWith("--cwd=")) cwd = args[at].slice(6);
+    } else if (match && args[at + 1] !== undefined) {
+      if (args[at] === "--cwd") cwd = args[at + 1];
+      at++;
+    } else if (args[at] !== "--json") break;
+  }
+  return { rest: args.slice(at), cwd };
+}
+
 /** What one raw invocation means for workit. */
 export type RawAction =
   | { kind: "commit"; amend: boolean }

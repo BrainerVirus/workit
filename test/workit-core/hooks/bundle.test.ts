@@ -47,7 +47,9 @@ const HOOK_ENTRIES = [
 // re-parsed with the canonical schema anyway) removes zod's compiler (~30 KB)
 // and ~28 ms of codegen from every runtime hook start: Cursor 469,397 B, Codex
 // 465,763 B, core run 465,299 B, Claude Code 449,479 B. The ceiling is that max
-// plus ~40 KB of headroom for wave 1.5 (#388), rounded to 510 KB. Another Bun
+// plus ~40 KB of headroom for wave 1.5 (#388), rounded to 510 KB. Implementer
+// worktree confinement (#310) adds ~10.5 KB: Cursor 479,926 B, Codex 476,292 B,
+// core run 475,828 B, Claude Code 460,007 B. Another Bun
 // gives different sizes, so the size check runs only on the pinned version.
 const BUDGET = 510_000;
 const PINNED_BUN = (

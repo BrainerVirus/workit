@@ -31,7 +31,8 @@ import { seedStanding, standingDelta } from "./standing";
 import { trackJudge } from "./session-marker";
 import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
-import { shellGate, writeGate } from "./write-gate";
+import { liveTargets, shellGate, writeGate } from "./write-gate";
+import { confineImplementer, confineImplementerShell, hostIsolated } from "./worktree-confine";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
 export type HookDeps = { descriptor: HostDescriptor; addendum: string | null };
@@ -68,6 +69,12 @@ const workitRole = (
   return Object.hasOwn(ROLES, name) ? ROLES[name] : null;
 };
 
+/** A tool call made by a Workit implementer subagent (the host names its agent type). */
+const implementerAgent = (input: HookInput, descriptor: HostDescriptor): boolean =>
+  Boolean(input.session.agentId) &&
+  input.session.agentType !== null &&
+  workitRole(descriptor, input.session.agentType) === "implementer";
+
 /** `<lead session>:<agent id>`, safe for the ledger's session grammar. */
 const subagentSession = (session: string | null, agentId: string): string =>
   [session, agentId]
@@ -99,17 +106,22 @@ const subagentStartText = (
   const session = input.session.id ?? null;
   const role = workitRole(descriptor, event.agentType);
   const who = `${descriptor.label} subagent ${event.agentId} (${event.agentType})`;
+  // An implementer is host-isolated only when the host put it in its own
+  // worktree (`.claude/worktrees/agent-<id>`); by default the lead makes one.
   const isolated =
     descriptor.subagents.worktreeIsolation === "native" &&
-    (role === "implementer" || CLAUDE_WORKTREE.test(input.cwd));
+    (role === "implementer"
+      ? hostIsolated(input.cwd, event.agentId)
+      : CLAUDE_WORKTREE.test(input.cwd));
   const guide = role === "implementer" ? branchGuidance(input.cwd) : null;
   if (role === "implementer" && isolated)
     return `Workit observed ${who} working in its own git worktree: it may edit and commit there, within its brief's scope. ${isolatedGit(input.cwd)} Plain git is expected here, and the branch name is still policy-checked: a raw \`git switch -c\`, \`git checkout -b\`, \`git branch\` or \`git worktree add -b\` onto a protected or non-compliant name is denied, so use a policy-compliant branch.${guide ? ` ${guide}` : " (e.g. feature/<slug>)"} Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
   if (isolated)
     return `${isolatedGit(input.cwd)}\n${subagentStartText({ ...input, cwd: "" }, descriptor, event)}`;
   if (role === "implementer")
-    // No host isolation: the lead makes the worktree, and workit git works there.
-    return `Workit observed ${who} as an implementer: it edits and commits only in its own git worktree (the lead makes one with \`workit fanout worktree create <slice>\`), never in the lead's checkout, within its brief's scope. Before the first commit, switch to a policy-compliant branch with \`workit git branch <branch> --base <base>\` (or \`--kind <kind> --slug <slug>\`, which picks the base); branch policy hooks still deny protected or non-compliant branches, raw git included.${guide ? ` ${guide}` : " (e.g. feature/<slug>)"} Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
+    // No host isolation: the lead makes the worktree, Workit's hooks confine
+    // the implementer to it (worktree-confine.ts), and workit git works there.
+    return `Workit observed ${who} as an implementer: it edits and commits only in its own git worktree, the one its brief names (the lead makes it with \`workit fanout worktree create <slice>\` before spawning), never in the lead's checkout, within its brief's scope. Workit binds it to the first Workit worktree it changes: from then on an edit or a mutating git command outside that worktree is denied, and before then so is one outside every Workit worktree. Run Workit against the worktree one verb per call, never \`cd … &&\` chains or \`$VAR\` paths: \`workit --cwd <worktree> git commit -m "<message>" -- <paths>\`, \`workit --cwd <worktree> check <name>\`. The worktree is on the brief's branch once the lead made it; otherwise switch with \`workit --cwd <worktree> git branch <branch> --base <base>\` (or \`--kind <kind> --slug <slug>\`, which picks the base); branch policy hooks still deny protected or non-compliant branches, raw git included.${guide ? ` ${guide}` : " (e.g. feature/<slug>)"} Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
   const readOnly = `Workit observed ${who} as read-only/agent-guided.`;
   if (role !== "judge" || !event.agentId) return readOnly;
   const own = subagentSession(session, event.agentId);
@@ -189,6 +201,11 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       if (!postTool) settlePendingCommit(input);
       const raw = canDeny ? rawGitPre(input, event.command, { nudge: false }) : NONE;
       if (raw.kind === "deny") return raw;
+      // An implementer subagent stays in its Workit worktree (#310).
+      if (canDeny && implementerAgent(input, descriptor)) {
+        const confined = confineImplementerShell(input, event.command, event.dialect);
+        if (confined.kind === "deny") return confined;
+      }
       // The before-write gate and the live-session guard (#274).
       const gate = usable(descriptor.events["write.pre"].support)
         ? shellGate(input.cwd, event.command, liveOwner(input, descriptor.transport), event.dialect)
@@ -250,10 +267,14 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       if (usable(descriptor.events["shell.post"].support))
         rawGitPost(input, event.command, callKey(event.toolUseId, event.command));
       return NONE;
-    case "write.pre":
-      return usable(descriptor.events["write.pre"].support)
-        ? writeGate(input.cwd, event.paths, liveOwner(input, descriptor.transport))
-        : NONE;
+    case "write.pre": {
+      if (!usable(descriptor.events["write.pre"].support)) return NONE;
+      if (implementerAgent(input, descriptor)) {
+        const confined = confineImplementer(input, liveTargets(input.cwd, event.paths));
+        if (confined.kind === "deny") return confined;
+      }
+      return writeGate(input.cwd, event.paths, liveOwner(input, descriptor.transport));
+    }
     case "subagent.start":
       if (workitRole(descriptor, event.agentType) === "judge")
         trackJudge(input, event.agentId, true);

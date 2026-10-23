@@ -49,6 +49,11 @@ const WORKIT_DELIVERY =
   /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:-cli)?\s+(?:pr (?:create|merge)|ci wait|git push)\b/;
 const MAYBE_GATED =
   /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
+// What an implementer's confinement also judges (hooks/worktree-confine.ts):
+// writers the edit analysis cannot see, `-c` scripts, `$(…)` and Workit's
+// lead-owned fanout verbs.
+const IMPLEMENTER_GATED =
+  /\b(?:unlink|chmod|chown|chgrp|shred|chattr|setfacl|rsync|find|xargs|g?awk|python[\d.]*|node|bun|deno|ruby|php|sh|bash|zsh|dash|ksh|workit)\b|\$\(|`/i;
 const SHELLS = new Set(["Bash", "PowerShell"]);
 const HEAVY_WORDS = new Set(
   (
@@ -208,13 +213,17 @@ const fastAllow = (() => {
     if (value?.hook_event_name !== "PreToolUse") return false;
     if (mentionsIssued(JSON.stringify(value.tool_input ?? {}))) return false;
     if (standingPending(String(value.cwd ?? "."), value.session_id, value.agent_id)) return false;
+    // An implementer's writes are confined to its Workit worktree with or
+    // without a task store (hooks/worktree-confine.ts).
+    const implementer = value.agent_type === "workit:implementer";
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (WORKIT_DELIVERY.test(command)) return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
-      if (!MAYBE_GATED.test(command)) return true;
-      return !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
+      if (!MAYBE_GATED.test(command) && !(implementer && IMPLEMENTER_GATED.test(command)))
+        return true;
+      return !implementer && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }
-    return EDITS.has(value.tool_name) && !hasTaskStore(String(value.cwd ?? "."));
+    return EDITS.has(value.tool_name) && !implementer && !hasTaskStore(String(value.cwd ?? "."));
   } catch {
     return false;
   }

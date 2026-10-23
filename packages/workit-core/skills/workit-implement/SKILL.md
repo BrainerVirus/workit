@@ -47,6 +47,8 @@ description: Build a requested change in small verified steps - follow local pat
    `workit verify-delivery push`).
 
 Independent slices that could run in parallel: fan them out (workit-fanout).
+One `implementer` slice: `workit fanout worktree create <slice>` before spawning,
+then `workit fanout brief <slice>`; no host isolation (Workit's hooks confine it).
 
 Stay inline by default (workspace `delegation: inline-first`). Hand work off
 only past the thresholds: an explorer after about 3 tool calls or 10k tokens

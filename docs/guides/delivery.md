@@ -455,8 +455,7 @@ workit stack land [--dry-run] [--max <n>]
 ## Parallel slices (fanout)
 
 `workit fanout` records the slices one lead fans out to parallel workers,
-shows how each is doing, makes their worktrees on hosts without native
-isolation, and gates their fan-in. It never spawns agents: the host's own
+shows how each is doing, makes their worktrees, and gates their fan-in. It never spawns agents: the host's own
 subagents do that.
 
 ```bash
@@ -465,7 +464,7 @@ workit ledger standing add "<order>" | list | clear [<id>] [--fanout <n>] # the 
 workit ledger standing add --stop ["<note>"] | add --clear [--fanout <n>] # the stop line for running workers, and lifting it
 workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>]  # the complete worker brief, verbatim
 workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
-workit fanout worktree create <slice> [--name <n>]                      # the slice's worktree and scratch dir
+workit fanout worktree create <slice> [--name <n>]                      # the slice's worktree, scratch dir and node_modules links
 workit fanout worktree release <slice> [--name <n>] [--force]           # record git status, then remove it
 workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-in gate, landing order
 ```
@@ -608,12 +607,39 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   stacked child whose only open dependency is its verified parent). Without
   `gh`/`glab` it still answers (exit 0), says the forge is off, and its next
   step asks for a PR (`workit pr create`) before any merge.
-- `worktree create` (for hosts without native worktrees: OpenCode, Codex,
-  Cursor, Pi) adds the slice's worktree at its planned path. A new slice
-  starts at its base and gets its branch through `workit git branch` (branch
-  policy applies); an existing branch is checked out as it is (`MODE:
+- `worktree create` (on every host; Claude Code's implementer no longer uses
+  its native isolation) adds the slice's worktree at its planned path. A new
+  slice starts at its base and gets its branch through `workit git branch`
+  (branch policy applies); an existing branch is checked out as it is (`MODE:
   resume`). It also makes `<worktree>/.workit-scratch`, hidden from git
   through the repository's `info/exclude`, for the worker's temp files.
+  Where the main checkout has `node_modules` (also `packages/*/node_modules`)
+  that git ignores, the worktree gets its own: relative links such as
+  workspace packages (`../../packages/<name>`) and `.bin` entries resolve
+  inside the worktree, installed packages link to the main checkout's (about
+  20 ms for this repository, no install). Tests in the worktree then import
+  its own workspace packages, not the main checkout's. When git does not
+  ignore `node_modules`, nothing is linked and a note says so.
+- An implementer subagent is confined to such a worktree by Workit's
+  pre-tool hooks (Claude Code; Codex when it names the agent on the tool
+  call): its first edit or mutating git command inside one binds it
+  (`worktree.bound` ledger row), and afterwards a change outside it is denied
+  naming the worktree. Before it is bound, a change outside every Workit
+  worktree is denied, so it never edits the lead's checkout. Files outside any
+  repository stay host policy. What the lead owns is always denied to it:
+  `git worktree add|remove|prune`, branch deletes, moves and force-resets,
+  `update-ref`, `symbolic-ref` writes, tag deletes, delete pushes, force
+  pushes with a refspec, refspec pushes with `:` or `+`, `git replace|filter-branch|gc|prune|repack|sparse-checkout`,
+  `git config` and `git remote` writes, `git stash drop|clear`, and `workit
+  fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
+  command whose writes Workit cannot read (`python -c`, `node -e`, `xargs rm`,
+  `find -delete`) counts as a change in the directory it runs in, and a link
+  inside the worktree may not point outside it. After a `cd -`, `cd "$VAR"` or
+  `popd` Workit cannot follow, a write is denied until it names an absolute
+  path, `git -C <worktree>` or `workit --cwd <worktree>`. This guards against
+  hand edits and is not a sandbox: writers such as `tar -C`, `unzip -d`,
+  `curl -o`, `ed` or `sqlite3` and script files an interpreter runs are not
+  judged, so the merge gate and a non-author verdict still check the diff.
 - `worktree release` records the worktree's `git status` in the ledger
   (`fanout.worktree.released`) before anything else, refuses while there are
   uncommitted changes unless `--force`, then removes the scratch dir and the

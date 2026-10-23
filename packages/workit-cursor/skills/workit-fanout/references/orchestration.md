@@ -35,8 +35,8 @@ parent is verified, appears there by itself.
 
 A slice is retried when it is STUCK, its worker exits without meeting
 ACCEPTANCE, or its verdict fails. Stop the worker and observe that it exited.
-Release its worktree: `workit fanout worktree release <slice>` (native
-worktrees: record `git -C <wt> status --short` first). Then spawn one fresh
+Release its worktree: `workit fanout worktree release <slice>` (it records
+`git status` first), and create it again for the retry. Then spawn one fresh
 worker with `workit fanout brief <slice> --mode resume`: same branch, and the
 brief points at its head and its ledger rows (last report, verdicts,
 rulings). If the retry fails too, escalate instead of a third worker:
@@ -69,9 +69,9 @@ list. The fixer applies that list once, then one focused recheck follows.
 When a hard slice has an uncertain approach and a cheap VERIFY, run 2-3
 attempts at once instead of retrying in series. `workit fanout brief <slice>
 --attempt <n>` gives each attempt its own branch (`<branch>-try<n>`), session
-and scratch dir. Each attempt needs its own worktree: Claude Code's
-`implementer` isolates natively; on other hosts `fanout worktree create` makes
-only the slice's own worktree, so run the attempts one after another there.
+and scratch dir. Each attempt needs its own worktree, and `fanout worktree
+create` makes only the slice's own one, so run the attempts one after another
+there on every host.
 Verify every attempt, keep the one with the best verdict (accepted first,
 then the fewest changed files, then the earliest), point the slice branch at
 it (`git branch <branch> <winner>`), have the verifier record the verdict on
@@ -109,7 +109,7 @@ Which session id a verdict carries, per host:
   `WORKIT_SESSION_ID=<lead>:verifier-<random hex>`, a fresh suffix per
   verifier. Cursor cannot check it: it is declared, not derived.
 - A worker's commits: on Claude Code the lead's `WORKIT_SESSION_ID` already in
-  its env (SubagentStart issues no implementer id; plain git, no export, so the
+  its env (SubagentStart issues no implementer id; no export, so the
   lead authored those commits: a verifier or reviewer records the verdict, not
   the lead); on OpenCode, Pi and Codex the id the host already
   puts in its shell; on Cursor, CI and a plain terminal the brief's

@@ -4,7 +4,7 @@
 // unblock. History moves (commit, merge, rebase, stash pop) are not edits.
 // Reads only the task index, one task snapshot and the ledger; never
 // migrates, never captures a candidate, and fails open on any state error.
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileSignature, TaskStore } from "../core/task-store";
@@ -25,6 +25,7 @@ import {
   inWorkitWorkspace,
   rawInvocations,
   workitCheckTail,
+  skipWorkitGlobals,
   workitInvocations,
   type RawInvocation,
 } from "./raw-git";
@@ -70,7 +71,7 @@ const exempt = (cwd: string, root: string, file: string, plans: ReadonlySet<stri
   );
 };
 
-const PREFIXES = new Set(["sudo", "command", "env", "nohup", "time", "exec", "xargs"]);
+const PREFIXES = new Set(["sudo", "command", "env", "nohup", "time", "exec", "xargs", "busybox"]);
 const operands = (words: string[]) => words.filter((item) => !item.startsWith("-"));
 
 const SCRIPT_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
@@ -86,12 +87,9 @@ const wrappedScript = (input: string[]): string | null => {
   const tail = workitCheckTail(words);
   if (!tail) return null;
   if ("script" in tail) return tail.script;
-  const [shell, flag, script] = tail.argv;
-  if (
-    SCRIPT_SHELLS.has((shell.split(/[\\/]/).at(-1) ?? "").toLowerCase()) &&
-    /^-[a-z]*c$/.test(flag ?? "")
-  )
-    return script ?? null;
+  const script = shellScript(tail.argv);
+  if (SCRIPT_SHELLS.has((tail.argv[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase()) && script)
+    return script;
   return tail.argv.map(quoteWord).join(" ");
 };
 
@@ -165,6 +163,112 @@ const editsOf = (input: string[]): string[] | null => {
     default:
       return [];
   }
+};
+
+/** A `bash -c '<script>'` (any SCRIPT_SHELLS) script, else null. */
+const shellScript = (words: readonly string[]): string | null => {
+  if (!SCRIPT_SHELLS.has((words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase())) return null;
+  // Options may come before `-c` (`bash --norc -c`, `sh -e -c`); the script follows it.
+  for (let index = 1; index < words.length; index++) {
+    const word = words[index];
+    if (/^-[a-z]*c$/.test(word)) return words[index + 1] ?? null;
+    if (/^[-+][oO]$/.test(word)) index++;
+    else if (!/^[-+]/.test(word)) return null;
+  }
+  return null;
+};
+
+/** xargs options that take the next word as their value. */
+const XARGS_VALUE = /^-[IinLPdsEa]$/;
+
+/** The command `xargs` (or `find -exec`) runs with `{}` filled in by a path. */
+const runsWriter = (words: readonly string[]): boolean => {
+  const filled = [...words.filter((word) => word !== "{}" && word !== ";" && word !== "+"), "x"];
+  const edits = editsOf(filled);
+  return edits === null || edits.length > 0 || opaqueWrites(filled) !== null;
+};
+
+/**
+ * For an implementer's confinement: commands that may write where the edit
+ * analysis cannot see (interpreters, chmod, rsync, `find -delete`, `xargs rm`,
+ * `awk -i`, a `-c` shell script): the paths they may change, "." standing for
+ * the directory they run in; null when the command is none of them.
+ */
+const opaqueWrites = (input: readonly string[]): string[] | null => {
+  let words = input;
+  while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) {
+    if (words[0] === "xargs") {
+      let at = 1;
+      while (words[at]?.startsWith("-")) at += XARGS_VALUE.test(words[at]) ? 2 : 1;
+      return runsWriter(words.slice(at)) ? ["."] : null;
+    }
+    words = words.slice(1);
+  }
+  const [verb, ...args] = words;
+  const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+  const files = operands(args);
+  const has = (pattern: RegExp) => args.some((arg) => pattern.test(arg));
+  const listed = (named: string[]) => (named.length ? named : ["."]);
+  if (name === "unlink" || name === "shred") return listed(files);
+  // The mode or owner comes first, unless `--reference` names it.
+  if (/^(?:chmod|chown|chgrp|chattr)$/.test(name))
+    return listed(has(/^--reference/) ? files : files.slice(1));
+  if (name === "rsync") {
+    const dest = files.at(-1);
+    // `host:path` is remote; a drive letter (`C:/…`, `C:\…`) is a local path.
+    const remote = /^[\w.@-]*:/.test(dest ?? "") && !/^[A-Za-z]:[\\/]/.test(dest ?? "");
+    return dest === undefined ? ["."] : remote ? [] : [dest];
+  }
+  if (name === "find") {
+    const exec = args.findIndex((arg) => /^-(?:exec|execdir|ok|okdir)$/.test(arg));
+    const writes =
+      has(/^-(?:delete|fprint\w*|fls)$/) || (exec >= 0 && runsWriter(args.slice(exec + 1)));
+    const end = args.findIndex((arg) => /^[-(!]/.test(arg));
+    return writes ? listed(end < 0 ? args : args.slice(0, end)) : null;
+  }
+  if (/^g?awk$/.test(name)) {
+    if (!has(/^-i|^--include/)) return null;
+    const named: string[] = [];
+    let program = !has(/^-f$|^--file/);
+    for (let index = 0; index < args.length; index++)
+      if (/^(?:-[ifvF]|--(?:include|file|assign|field-separator))$/.test(args[index])) index++;
+      else if (args[index].startsWith("-")) continue;
+      else if (program) program = false;
+      else named.push(args[index]);
+    return listed(named);
+  }
+  if (name === "perl") return has(/^-[a-zA-Z]*[eE]/) ? ["."] : null;
+  if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name))
+    return has(/^-[a-zA-Z]*[ce]$|^--eval$|^-p$/) ? ["."] : null;
+  return shellScript(words) === null ? null : ["."];
+};
+
+/**
+ * `ln`'s link sources, resolved as the link will: a relative symbolic source
+ * against the directory the link lands in. Writes through such a link change
+ * its source, so an implementer's links are judged by where they point.
+ */
+const linkSources = (args: readonly string[], at: (file: string) => string | null): string[] => {
+  const names = operands([...args]);
+  const into = args.indexOf("-t");
+  const dest = into >= 0 ? args[into + 1] : names.length > 1 ? names.at(-1) : ".";
+  const sources = names.filter((name, index) =>
+    into >= 0 ? name !== dest : index < names.length - 1 || names.length === 1,
+  );
+  const target = dest === undefined ? null : at(dest);
+  const symbolic = args.some((arg) => /^-[a-zA-Z]*s|^--symbolic$/.test(arg));
+  const base =
+    target === null
+      ? null
+      : into >= 0 || sources.length > 1 || existsSync(target) || /[\\/]$/.test(dest ?? "")
+        ? target
+        : path.dirname(target);
+  return sources.flatMap((source) => {
+    if (symbolic && base !== null && !path.isAbsolute(homeExpanded(source)))
+      return [path.resolve(base, source)];
+    const resolved = at(source);
+    return resolved ? [resolved] : [];
+  });
 };
 
 /**
@@ -325,13 +429,25 @@ const CD = new Set(["cd", "chdir", "set-location", "sl"]);
 const PUSHD = new Set(["pushd", "push-location"]);
 const POPD = new Set(["popd", "pop-location"]);
 
-/** A `cd` operand resolved against `dir`; undefined when it cannot be known. */
-const cdInto = (dir: string | undefined, words: string[]): string | undefined => {
+/**
+ * Stands for a directory an implementer's command moved to but the analysis
+ * cannot name (`cd -`, `cd "$X"`, a bare `popd`): a write that lands under it
+ * is denied by `confineImplementer`, as the shell may be anywhere.
+ */
+export const UNKNOWN_DIR = path.resolve(path.parse(process.cwd()).root, ".workit-unknown-dir");
+
+/**
+ * A `cd` operand resolved against `dir`. A target that cannot be known is
+ * undefined, or `UNKNOWN_DIR` when `strict`.
+ */
+const cdInto = (dir: string | undefined, words: string[], strict = false): string | undefined => {
+  const lost = strict ? UNKNOWN_DIR : undefined;
   const named = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
   // Only a leading `~` or `$HOME` expands; a mid-path `~` is literal (Windows 8.3
   // short names like RUNNER~1).
   const target = named === undefined ? undefined : homeExpanded(named);
-  if (dir === undefined || target === "-" || (target && /^~|[$`*?]/.test(target))) return undefined;
+  if (target === "-" || (target && /^~|[$`*?]/.test(target))) return lost;
+  if (dir === undefined) return lost;
   return target === undefined ? os.homedir() : path.resolve(dir, target);
 };
 
@@ -355,6 +471,7 @@ const segmentTargets = (
   command: string,
   dialect: ShellDialect,
   depth = 0,
+  strict = false,
 ): string[] => {
   const targets: string[] = [];
   let dir: string | undefined = cwd;
@@ -378,21 +495,34 @@ const segmentTargets = (
     const words = lead < 0 ? [] : segment.words.slice(lead);
     const name = (words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
     if (CD.has(name)) {
-      dir = cdInto(dir, words);
+      dir = cdInto(dir, words, strict);
       continue;
     }
     if (PUSHD.has(name)) {
       stack.push(dir);
-      dir = cdInto(dir, words);
+      dir = cdInto(dir, words, strict);
       continue;
     }
     if (POPD.has(name)) {
-      dir = stack.length ? stack.pop() : undefined;
+      dir = stack.length ? stack.pop() : strict ? UNKNOWN_DIR : undefined;
       continue;
     }
-    const inner = depth < 4 ? wrappedScript(words) : null;
+    const inner = depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
     if (inner !== null && dir !== undefined)
-      targets.push(...segmentTargets(dir, inner, "posix", depth + 1));
+      targets.push(...segmentTargets(dir, inner, "posix", depth + 1, strict));
+    if (strict && dir !== undefined) {
+      const runIn = dir;
+      for (const sub of depth < 4 ? (segment.subs ?? []) : [])
+        targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, true));
+      const opaque = segment.unanalyzable ? ["."] : inner === null ? opaqueWrites(words) : null;
+      for (const file of opaque ?? []) {
+        const resolved = at(file);
+        if (resolved) targets.push(file === "." ? path.join(resolved, DIR_TARGET) : resolved);
+      }
+      const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
+      if (ln >= 0 && words.slice(0, ln).every((word) => PREFIXES.has(word)))
+        targets.push(...linkSources(words.slice(ln + 1), at));
+    }
     for (const file of segment.redirects)
       if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) {
         const resolved = at(file);
@@ -406,16 +536,49 @@ const segmentTargets = (
         const resolved = at(file);
         if (resolved) targets.push(resolved);
       }
-    if (
-      dir !== undefined &&
-      workitInvocations(segment.words.map(quoteWord).join(" "), "posix").some(
-        (args) =>
-          args[0] === "git" && MUTATING_WORKIT_GIT.has(args[1] ?? "") && !inert(args.slice(2), ""),
-      )
-    )
-      targets.push(path.join(dir, DIR_TARGET));
+    if (dir !== undefined)
+      for (const invocation of workitInvocations(segment.words.map(quoteWord).join(" "), "posix")) {
+        const { at: runsIn, args } = workitCwd(dir, invocation);
+        if (
+          args[0] === "git" &&
+          MUTATING_WORKIT_GIT.has(args[1] ?? "") &&
+          !inert(args.slice(2), "")
+        )
+          targets.push(path.join(runsIn, DIR_TARGET));
+      }
   }
   return targets;
+};
+
+/** A workit invocation's global `--cwd <dir>` (or `--cwd=<dir>`), resolved against `dir`. */
+const workitCwd = (dir: string, args: string[]): { at: string; args: string[] } => {
+  const { rest, cwd } = skipWorkitGlobals(args);
+  return { at: cwd === null ? dir : path.resolve(dir, homeExpanded(cwd)), args: rest };
+};
+
+/**
+ * Where one shell command changes files: the files it writes and, as
+ * `<dir>/.workit-live-target`, each directory a mutating git or
+ * `workit git commit|branch` runs in or an unknown write happens in.
+ * `strict` (an implementer's confinement) also reads `-c` shell scripts and
+ * `$(…)`, counts writers the analysis cannot see in the directory they run
+ * in, and judges `ln` sources. Absolute paths; [] when the command cannot be
+ * analysed (fail open).
+ */
+export const shellMutationTargets = (
+  cwd: string,
+  command: string,
+  dialect: ShellDialect = "posix",
+  strict = false,
+): string[] => {
+  try {
+    return [
+      ...segmentTargets(cwd, command, dialect, 0, strict),
+      ...gitMutationDirs(cwd, command, dialect).map((dir) => path.join(dir, DIR_TARGET)),
+    ];
+  } catch {
+    return [];
+  }
 };
 
 /** The command is one simple command led by `WORKIT_LIVE_SESSION=override`. */
@@ -482,7 +645,7 @@ const claimAll = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps)
 };
 
 /** The absolute paths an edit touches: its files, or cwd itself when unknown. */
-const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
+export const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
   paths?.length ? paths.map((file) => path.resolve(cwd, file)) : [path.join(cwd, DIR_TARGET)];
 
 // --- the issued-registry guard (#292) ---------------------------------------
@@ -593,16 +756,7 @@ export function shellGate(
   }
   const writes = shellWrites(command);
   let targets: string[] = [];
-  if (owner) {
-    try {
-      targets = [
-        ...segmentTargets(cwd, command, dialect),
-        ...gitMutationDirs(cwd, command, dialect).map((dir) => path.join(dir, DIR_TARGET)),
-      ];
-    } catch {
-      targets = [];
-    }
-  }
+  if (owner) targets = shellMutationTargets(cwd, command, dialect);
   if (owner && targets.length) {
     const live = liveGate(owner, targets, deps);
     if (live.kind !== "none") {

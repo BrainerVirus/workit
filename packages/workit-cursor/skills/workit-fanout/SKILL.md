@@ -20,14 +20,14 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
    PR (`references/orchestration.md`).
 2. **Record standing orders** (`workit ledger standing add "<order>"`): every
    user directive all workers share. Directives decay across resumes.
-3. **Brief each worker verbatim** with `workit fanout brief <slice>`: plan
-   fields, standing orders, SCRATCH, session id, fan-in and heavy-lease rules.
+3. **Brief each worker verbatim**: `workit fanout worktree create <slice>`
+   (every host), then `workit fanout brief <slice>` (WORKTREE, SCRATCH, rules).
    Never hand-edit it; change the plan or the standing orders and render again.
 4. **Spawn in a rolling window**, in the background, each in its own worktree:
    keep 4-6 in flight and refill from `spawnable` in `workit fanout status` as
    each one finishes. Model: the brief's `model:` line, else TIER
-   (`references/orchestration.md`). Claude Code: the `implementer` agent;
-   elsewhere first `workit fanout worktree create <slice>`.
+   (`references/orchestration.md`). Claude Code: the `implementer` agent, never
+   with `isolation: "worktree"`; Workit's hooks confine it to its WORKTREE.
 5. **Judge liveness by side effects only:** `workit fanout status` (head age,
    PR, CI, verdict, landed; STUCK past the TIMEBOX). Stop a stuck worker and
    observe that it exited (a timeout is not proof). Removing a worktree drops

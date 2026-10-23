@@ -124,7 +124,7 @@ test("hooks.json registers the designed events through the exec-form launcher, n
   ]);
 });
 
-test("agents: verifier and reviewer are read-only, implementer runs in an isolated worktree", () => {
+test("agents: verifier and reviewer are read-only, implementer runs in the lead's Workit worktree without host isolation", () => {
   const agents = path.join(PLUGIN_DIR, "agents");
   expect(readdirSync(agents).toSorted()).toEqual(["implementer.md", "reviewer.md", "verifier.md"]);
   for (const name of ["verifier", "reviewer"]) {
@@ -135,7 +135,10 @@ test("agents: verifier and reviewer are read-only, implementer runs in an isolat
     expect(meta.tools).not.toContain("Write");
   }
   const implementer = frontmatter(path.join(agents, "implementer.md"));
-  expect(implementer.isolation).toBe("worktree");
+  // Claude Code's isolation refused every wrapped git (#310): no `isolation:`
+  // key; the lead's `workit fanout worktree create` worktree, `workit --cwd`.
+  expect(Object.hasOwn(implementer, "isolation")).toBe(false);
+  expect(readFileSync(path.join(agents, "implementer.md"), "utf8")).not.toMatch(/^isolation:/mu);
   expect(readFileSync(path.join(agents, "implementer.md"), "utf8")).toContain("goal, scope (files");
   // Author is not verifier: the read-only agents record ledger verdicts, the
   // implementer never verdicts its own work.
@@ -145,7 +148,9 @@ test("agents: verifier and reviewer are read-only, implementer runs in an isolat
   expect(body("verifier")).toMatch(/never pass `--self`/);
   expect(body("implementer")).toContain("Never record a verdict on your own work");
   expect(body("implementer")).not.toMatch(/workit ledger verdict/);
-  expect(body("implementer")).toContain("workit git branch");
+  expect(body("implementer")).toContain("workit --cwd <worktree> git branch");
+  expect(body("implementer")).toContain("workit --cwd <worktree> check");
+  expect(body("implementer")).toContain("workit fanout worktree create <slice>");
   // Subagents inherit the lead's (author's) WORKIT_SESSION_ID, so verdicts use
   // the session the SubagentStart hook names.
   for (const name of ["verifier", "reviewer"]) {

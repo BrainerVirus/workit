@@ -413,11 +413,14 @@ test("Given a workspace nested in one with trailers: false, Then it inherits off
 
 test("Given trailers: false, When an isolated implementer starts, Then its git text asks for no Workit-Session trailer; with trailers on it names the trailer", () => {
   const repo = setup({ trailers: false });
+  // Claude Code put it in its own worktree: `.claude/worktrees/agent-<id>`.
+  const isolated = path.join(repo.cwd, ".claude", "worktrees", "agent-a1");
+  repo.git("worktree", "add", "-q", "--detach", isolated);
   const text = () => {
     const decision = handleHook(
       {
         host: "claude_code",
-        cwd: repo.cwd,
+        cwd: isolated,
         session: { id: "lead-1", agentId: null, agentType: null, parentId: null },
         permissionMode: null,
         transcriptPath: null,
