@@ -6,18 +6,26 @@
 //   - that branch has an accepted independent verdict now (fresh or carried);
 //   - the verdict's session is not an author of the lower branch either;
 //   - every commit of the lower branch since its fork from the trunk has a
-//     patch-id among the commits of the judged head (the verdict's own head,
-//     not the upper branch's current tip): the lower change was judged
-//     unchanged. No merge commits, at least one non-empty commit.
+//     verbatim patch-id (whitespace counts) among the commits of the judged
+//     head (the verdict's own head, not the upper branch's current tip): the
+//     lower change was judged unchanged. No merge commits, at least one
+//     non-empty commit;
+//   - the judged head holds exactly the lower branch's resulting files (no
+//     `<lower>..<judged>` difference in any file the lower branch changed):
+//     an upper commit that reverts or rewrites a lower file means the lower
+//     PR's own code was never judged;
+//   - the lower branch's own review lane is below full (decision B3): a risk
+//     path or a large change needs its own verdict.
 //
 // A lower branch that changed after the verdict (a new commit, an amend, a
 // conflict resolved differently) holds a patch-id the judged head lacks and
-// is not covered. A current independent failure or a tampered ledger on the
+// is not covered. When git cannot read any of this, nothing is covered. A current independent failure or a tampered ledger on the
 // lower branch is never covered over. `pr merge`, `stack land`, `stack
 // status`, `pr status` and `ledger check` read this; the Stop hook does not.
 import fs from "node:fs";
 import path from "node:path";
-import { commitPatchIds, mergeBase } from "./git/rev";
+import { branchLane } from "./core/policy/lane";
+import { commitPatchIds, diffRaw, mergeBase } from "./git/rev";
 import {
   authorSessions,
   authoredBy,
@@ -83,8 +91,11 @@ function chainsAbove(cwd: string, branch: string): Chain[] {
   return chains;
 }
 
-/** Every own commit of `head` since the trunk is among the commits of `judged`. */
-function contained(cwd: string, trunk: string, head: string, judged: string): boolean {
+/**
+ * Whether the verdict on `judged` covers the lower branch at `head` (see the
+ * header). Anything git cannot read is not covered.
+ */
+function covers(cwd: string, trunk: string, head: string, judged: string): boolean {
   const trunkSha = [`origin/${trunk}`, trunk].map((ref) => resolveCommit(cwd, ref)).find(Boolean);
   const ownFork = trunkSha ? mergeBase(cwd, trunkSha, head) : null;
   const judgedFork = trunkSha ? mergeBase(cwd, trunkSha, judged) : null;
@@ -93,7 +104,14 @@ function contained(cwd: string, trunk: string, head: string, judged: string): bo
   const top = commitPatchIds(cwd, judgedFork, judged);
   if (!own || !top || own.merges > 0 || own.patchIds.length === 0) return false;
   const judgedIds = new Set(top.patchIds);
-  return own.patchIds.every((id) => judgedIds.has(id));
+  if (!own.patchIds.every((id) => judgedIds.has(id))) return false;
+  // The judged tree holds exactly the lower branch's resulting files.
+  const changed = diffRaw(cwd, ownFork, head);
+  const between = changed ? diffRaw(cwd, head, judged) : null;
+  if (!changed || !between) return false;
+  const files = new Set(changed.map((entry) => entry.path));
+  if (between.some((entry) => files.has(entry.path))) return false;
+  return branchLane(cwd, { base: trunk, head }).lane !== "full";
 }
 
 /**
@@ -120,7 +138,7 @@ export function checkVerdictsCovered(
       if (!row?.head || !session || typeof row.id !== "string") continue;
       authors ??= authorSessions(cwd, rows, branch, { base: defaultBase(cwd), head: check.head });
       if (authoredBy(authors, session)) continue;
-      if (!contained(cwd, chain.trunk, check.head, row.head)) continue;
+      if (!covers(cwd, chain.trunk, check.head, row.head)) continue;
       return {
         ...check,
         accepted: { accepted: true, verdict: row, reasons: [] },

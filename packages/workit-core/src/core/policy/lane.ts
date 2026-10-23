@@ -25,9 +25,9 @@ import {
   diffNumstat,
   diffRaw,
   fileAt,
-  filePatchHashes,
   isTracked,
   mergeBase,
+  ownChangeDrift,
   readBlobs,
   resolveRef,
   treeFilesNamed,
@@ -120,14 +120,21 @@ const LOCKFILES = new Set([
   "composer.lock",
 ]);
 
-/** Docs are told by extension only: code under `docs/` is code. */
-const DOC_EXT = /\.(?:md|mdx|markdown|rst|adoc|txt)$/iu;
+/**
+ * Docs are told by prose extension only: code under `docs/` is code. `.txt`
+ * is not a doc: requirements.txt, CMakeLists.txt or robots.txt change behavior.
+ */
+const DOC_EXT = /\.(?:md|mdx|markdown|rst|adoc)$/iu;
 const DOC_NAMES = /^(?:license|licence|notice|authors|changelog|changes|contributors)$/iu;
 /** Markdown that steers agents is behavior, not docs. */
 const INSTRUCTIONS =
   /(?:^|\/)(?:AGENTS|CLAUDE|GEMINI|SKILL)\.md$|(?:^|\/)(?:skills|agents|commands|rules|prompts)\/[^/]+/iu;
-const TEST_PATH =
-  /(?:^|\/)(?:test|tests|__tests__|spec|specs|fixtures)\/|\.(?:test|spec)\.[^/]+$/iu;
+/**
+ * A test file: under a `test/`, `tests/` or `__tests__/` folder, or named
+ * `*.test.*`, `*.spec.*` or `*_test.*`. A `fixtures/` or `spec/` folder can
+ * hold runtime data or code, so it is not a test path (it reads as behavior).
+ */
+const TEST_PATH = /(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec)\.[^/]+$|_test\.[^/]+$/iu;
 
 export type ChangedFile = {
   path: string;
@@ -399,11 +406,11 @@ function laneFiles(
  *
  * - Same fork: the plain `from..to` diff, comments and formatting read as
  *   in the lane.
- * - Moved fork (a rebase): each file's own change (`fork..head`) is compared
- *   by hash and only files whose change differs count. Their lines come from
- *   `from..to`, which may include base edits (over-counting is the safe
- *   direction), and none is cosmetic: a base edit in the same file would
- *   make that comparison unsound.
+ * - Moved fork (a rebase): each file the branch touches is compared by exact
+ *   blob (see ownChangeDrift): it counts when the branch's resulting file
+ *   differs, or when the base changed it too between the forks. Their lines
+ *   come from `from..to`, which may include base edits (over-counting is the
+ *   safe direction), and none is cosmetic.
  *
  * Null when git cannot read either side.
  */
@@ -412,13 +419,9 @@ export function driftFiles(
   range: { from: string; to: string; fromFork: string; toFork: string },
 ): ChangedFile[] | null {
   if (range.fromFork === range.toFork) return laneFiles(cwd, range.from, range.to, range.toFork);
-  const before = filePatchHashes(cwd, range.fromFork, range.from);
-  const after = filePatchHashes(cwd, range.toFork, range.to);
-  const stats = before && after ? diffNumstat(cwd, range.from, range.to) : null;
-  if (!before || !after || !stats) return null;
-  const drifted = [...new Set([...before.keys(), ...after.keys()])]
-    .filter((file) => before.get(file) !== after.get(file))
-    .toSorted();
+  const drifted = ownChangeDrift(cwd, range);
+  const stats = drifted ? diffNumstat(cwd, range.from, range.to) : null;
+  if (!drifted || !stats) return null;
   const byPath = new Map(stats.map((entry) => [entry.path, entry]));
   const generated = generatedAt(cwd, range.toFork, drifted);
   return drifted.map((file) => ({

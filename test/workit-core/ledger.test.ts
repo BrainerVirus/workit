@@ -490,7 +490,9 @@ test("given a verdict at SHA A, a base-only rebase carries it, and a content cha
   ).toBe("stale");
 });
 
-test("a base change elsewhere in the same file still carries the verdict", () => {
+// #334 review: patch-id and diff hash drop hunk line numbers, so carry needs
+// exact blobs; a base edit in a file the branch touches is drift (fail closed).
+test("a base change elsewhere in the same file makes the verdict stale", () => {
   const root = repo();
   commit(root, "a.py", BASE_FILE, "base");
   git(root, "checkout", "-qb", "feature/x");
@@ -500,7 +502,7 @@ test("a base change elsewhere in the same file still carries the verdict", () =>
   commit(root, "a.py", BASE_FILE.replace("line 2\n", "line 2 base edit\n"), "far edit");
   git(root, "checkout", "-q", "feature/x");
   git(root, "rebase", "-q", "main");
-  expect(checkVerdicts(root, "feature/x", read(root).rows).current.basis).toBe("carried");
+  expect(checkVerdicts(root, "feature/x", read(root).rows).current.basis).toBe("stale");
 });
 
 test("given a Python re-indent after the verdict, patch-id is unchanged but the verdict reads stale", () => {

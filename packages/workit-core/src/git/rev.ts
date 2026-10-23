@@ -531,72 +531,57 @@ export function isTracked(top: string, file: string): boolean {
 }
 
 /**
- * A hash of each file's own change in `fork..head`, by path: the pinned
- * whole-range diff split per file, `index` lines dropped and hunk headers
- * stripped of line numbers (as the ledger's diffHash), so a base change
- * elsewhere in the file keeps the hash. Null when git fails or a header names
- * a path git did not list (a quoted path): the caller fails closed.
+ * The files whose own change differs between two versions of a branch: the
+ * judged `from` (forked from `fromFork`) and the current `to` (forked from
+ * `toFork`), compared by exact blob and mode, never by diff text (#334). A
+ * file the branch touches on one side only differs. A file it touches on
+ * both sides is unchanged only when the base left it alone between the forks
+ * and the branch's resulting blob is identical, so a hunk moved within a
+ * file, a re-indent or a base edit in a file the branch touches always
+ * counts. Null when git cannot read either side: the caller fails closed.
  */
-export function filePatchHashes(
+export function ownChangeDrift(
   cwd: string,
-  fork: string,
-  head: string,
-): Map<string, string> | null {
-  const raw = diffRaw(cwd, fork, head);
-  if (!raw || !safeArg(fork) || !safeArg(head)) return null;
-  const byHeader = new Map(
-    raw.map((entry) => [`diff --git a/${entry.path} b/${entry.path}`, entry.path]),
-  );
-  const run = git(
-    cwd,
-    [
-      "-c",
-      "core.quotePath=false",
-      "diff",
-      "-U3",
-      "--diff-algorithm=myers",
-      "--indent-heuristic",
-      "--no-color",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--no-renames",
-      "--full-index",
-      "--binary",
-      "--src-prefix=a/",
-      "--dst-prefix=b/",
-      fork,
-      head,
-      "--",
-    ],
-    { timeoutMs: GIT_TIMEOUTS.worktree },
-  );
-  if (!run.ok) return null;
-  const out = new Map<string, string>();
-  let file: string | null = null;
-  let hash: ReturnType<typeof createHash> | null = null;
-  const flush = () => {
-    if (file !== null && hash) out.set(file, hash.digest("hex"));
-  };
-  for (const text of run.stdout.split("\n")) {
-    if (text.startsWith("diff --git ")) {
-      flush();
-      file = byHeader.get(text) ?? null;
-      if (file === null) return null;
-      hash = createHash("sha256");
-      continue;
-    }
-    if (!hash || text.startsWith("index ")) continue;
-    hash.update(text.startsWith("@@ ") ? "@@" : text);
-    hash.update("\n");
-  }
-  flush();
-  return out.size === raw.length ? out : null;
+  range: { from: string; to: string; fromFork: string; toFork: string },
+): string[] | null {
+  const before = diffRaw(cwd, range.fromFork, range.from);
+  const after = diffRaw(cwd, range.toFork, range.to);
+  if (!before || !after) return null;
+  const judged = new Map(before.map((entry) => [entry.path, entry]));
+  const current = new Map(after.map((entry) => [entry.path, entry]));
+  const same = (a: RawEntry | undefined, b: RawEntry | undefined): boolean =>
+    a !== undefined &&
+    b !== undefined &&
+    a.oldMode === b.oldMode &&
+    a.oldBlob === b.oldBlob &&
+    a.newMode === b.newMode &&
+    a.newBlob === b.newBlob;
+  return [...new Set([...judged.keys(), ...current.keys()])]
+    .filter((file) => !same(judged.get(file), current.get(file)))
+    .toSorted();
 }
 
 /**
- * The stable patch-ids of the non-merge commits of `fork..head` (empty
- * commits have none) and how many merge commits the range holds. Diff
- * options are pinned as in patchId. Null when git fails.
+ * Whether the branch's own files are identical at `from` (on `fromBase`) and
+ * `to` (on `toBase`): ownChangeDrift from each head's fork is empty. The
+ * exactness behind every patch-equal carry; false when git cannot tell.
+ */
+export function sameOwnChange(
+  cwd: string,
+  range: { from: string; to: string; fromBase: string; toBase: string },
+): boolean {
+  const fromFork = mergeBase(cwd, range.fromBase, range.from);
+  const toFork = mergeBase(cwd, range.toBase, range.to);
+  if (!fromFork || !toFork) return false;
+  return ownChangeDrift(cwd, { from: range.from, to: range.to, fromFork, toFork })?.length === 0;
+}
+
+/**
+ * The verbatim patch-ids of the non-merge commits of `fork..head` (empty
+ * commits have none) and how many merge commits the range holds: unlike
+ * `--stable`, whitespace counts, so a re-indent is another patch. Diff
+ * options are pinned as in patchId. Null when git fails, or has no
+ * `patch-id --verbatim`: the caller fails closed.
  */
 export function commitPatchIds(
   cwd: string,
@@ -630,7 +615,7 @@ export function commitPatchIds(
   );
   if (merges === null || !log.ok) return null;
   if (!log.stdout.trim()) return { patchIds: [], merges: Number(merges) };
-  const ids = git(cwd, ["patch-id", "--stable"], { input: log.stdout });
+  const ids = git(cwd, ["patch-id", "--verbatim"], { input: log.stdout });
   if (!ids.ok) return null;
   return {
     patchIds: ids.stdout

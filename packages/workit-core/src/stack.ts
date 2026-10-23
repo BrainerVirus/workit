@@ -62,6 +62,7 @@ import {
   pushRemoteName,
   remoteRefTip,
   resolveRef,
+  sameOwnChange,
 } from "./git/rev";
 import {
   appendObserved,
@@ -1671,7 +1672,11 @@ export function syncStack(
         };
         const after = { p: patchId(cwd, parentTip, newTip), d: diffHash(cwd, parentTip, newTip) };
         const equal =
-          before.d !== null && before.d === after.d && before.p !== null && before.p === after.p;
+          before.d !== null &&
+          before.d === after.d &&
+          before.p !== null &&
+          before.p === after.p &&
+          sameOwnChange(cwd, { from: fromHead, to: newTip, fromBase, toBase: parentTip });
         appendObserved(cwd, {
           type: "stack.restacked",
           actor,

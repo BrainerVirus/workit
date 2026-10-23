@@ -236,3 +236,139 @@ test("Given a hand-appended verdict, When a docs-only commit follows, Then it ne
   expect(result.verdicts[0]).toMatchObject({ basis: "stale", carry: null, accepted: false });
   expect(result.accepted.accepted).toBe(false);
 });
+
+// ---------------------------------------------------------------------------
+// Exact carry (#334 review): patch-ids and the diff hash drop hunk line
+// numbers, so after a rebase the same edit moved within a file looked
+// unchanged. Carry now needs the branch's own files to be identical blobs.
+
+/** A function whose early return sits behind three identical context lines. */
+const ROLE = (name: string, early: string) =>
+  `export function ${name}(u: unknown): boolean {\n  const a = 1;\n  const b = 2;\n  const c = 3;\n  if (u) return ${early};\n  const d = 4;\n  const e = 5;\n  return !!(a + b + c + d + e);\n}\n`;
+const ROLES = (admin: string, guest: string) => ROLE("isAdmin", admin) + ROLE("isGuest", guest);
+
+/**
+ * main and feature/x both hold src/roles.ts; the branch flips isAdmin and is
+ * judged. Then main moves, and the branch is rebased with the flip moved to
+ * isGuest instead (plus `extra` files). Returns the judged verdict.
+ */
+const movedHunkAfterRebase = (root: string, extra: Record<string, string>) => {
+  git(root, "checkout", "-q", "main");
+  commit(root, { "src/roles.ts": ROLES("false", "false") }, "roles");
+  git(root, "checkout", "-q", "feature/x");
+  git(root, "rebase", "-q", "main");
+  commit(root, { "src/roles.ts": ROLES("true", "false") }, "admin early true");
+  const judged = verdict(root);
+  git(root, "checkout", "-q", "main");
+  commit(root, { "NOTES.md": "n\n" }, "main moves");
+  git(root, "checkout", "-q", "feature/x");
+  git(root, "reset", "-q", "--hard", "HEAD~1");
+  git(root, "rebase", "-q", "main");
+  commit(root, { "src/roles.ts": ROLES("false", "true"), ...extra }, "guest early true");
+  return judged;
+};
+
+test("Given a rebase that moved the judged edit from isAdmin to isGuest (same context), When checked, Then the verdict is stale", () => {
+  const root = featureRepo();
+  movedHunkAfterRebase(root, {});
+  const result = check(root);
+  expect(result.current.basis).toBe("stale");
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+});
+
+test("Given the moved edit after a rebase plus a docs file, When checked, Then the verdict is stale, not carried as lane none", () => {
+  const root = featureRepo();
+  movedHunkAfterRebase(root, { "docs/x.md": "hi\n" });
+  const result = check(root);
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.verdicts[0].carry).toBeNull();
+  expect(result.reverify?.files).toContain("src/roles.ts");
+});
+
+test("Given a pure rebase whose base also edited a branch file, When checked, Then the verdict is stale (the base change in that file is drift)", () => {
+  const root = featureRepo();
+  verdict(root);
+  git(root, "checkout", "-q", "main");
+  commit(root, { "test/app.test.ts": "// base side\n" }, "main edits a branch file");
+  git(root, "checkout", "-q", "feature/x");
+  git(root, "rebase", "-q", "-X", "theirs", "main");
+  expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+});
+
+test("Given a CLI-observed patch-equal restack row over a moved edit, When checked, Then it does not carry", () => {
+  const root = featureRepo();
+  git(root, "checkout", "-q", "main");
+  commit(root, { "src/roles.ts": ROLES("false", "false") }, "roles");
+  git(root, "checkout", "-q", "feature/x");
+  git(root, "rebase", "-q", "main");
+  const fromBase = git(root, "rev-parse", "main");
+  const fromHead = commit(root, { "src/roles.ts": ROLES("true", "false") }, "admin early true");
+  verdict(root);
+  git(root, "checkout", "-q", "main");
+  const toBase = commit(root, { "NOTES.md": "n\n" }, "main moves");
+  git(root, "checkout", "-q", "feature/x");
+  git(root, "reset", "-q", "--hard", "HEAD~1");
+  git(root, "rebase", "-q", "main");
+  const head = commit(root, { "src/roles.ts": ROLES("false", "true") }, "guest early true");
+  const restacked = (to: string) =>
+    value(
+      appendObserved(root, {
+        type: "stack.restacked",
+        actor: { host: "cli", session: "author", agentId: null },
+        stack: "s",
+        branch: "feature/x",
+        head: to,
+        fromHead,
+        fromBase,
+        toBase,
+        patchEqual: true,
+        forced: false,
+      }),
+    );
+  restacked(head);
+  expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  // Control: the same row over an identical restack carries.
+  git(root, "reset", "-q", "--hard", "HEAD~1");
+  const same = commit(root, { "src/roles.ts": ROLES("true", "false") }, "admin early true");
+  restacked(same);
+  expect(check(root).accepted.accepted).toBe(true);
+});
+
+test("Given a verified head, When requirements.txt gains a dependency and CMakeLists.txt a compile definition, Then the verdict does not carry", () => {
+  const root = featureRepo();
+  commit(root, { "requirements.txt": "flask==2.0\n", "CMakeLists.txt": "project(app)\n" }, "deps");
+  verdict(root);
+  commit(
+    root,
+    {
+      "requirements.txt": "flask==2.0\nevil-pkg==6.6.6\n",
+      "CMakeLists.txt": "project(app)\nadd_compile_definitions(EVIL)\n",
+    },
+    "deps2",
+  );
+  const result = check(root);
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.verdicts[0].carry).toBeNull();
+});
+
+test("Given a unit verdict, When a runtime file under src/fixtures/ or spec/ changes, Then it is not a tests-only carry", () => {
+  for (const file of ["src/fixtures/config.json", "spec/config.rb"]) {
+    const root = featureRepo();
+    commit(root, { [file]: "admin = false\n" }, "cfg");
+    verdict(root, "unit", "tests-verified");
+    commit(root, { [file]: "admin = true\n" }, "cfg2");
+    const result = check(root);
+    expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+    expect(result.verdicts[0].carry).toBeNull();
+  }
+});
+
+test("Given a unit verdict, When a `*_test.go` or `*.spec.ts` file changes, Then it carries as tests-only", () => {
+  for (const file of ["pkg/app_test.go", "src/app.spec.ts"]) {
+    const root = featureRepo();
+    commit(root, { [file]: "a\n" }, "t");
+    verdict(root, "unit", "tests-verified");
+    commit(root, { [file]: "b\n" }, "t2");
+    expect(check(root).verdicts[0].carry).toMatchObject({ rule: "tests-only", files: [file] });
+  }
+});

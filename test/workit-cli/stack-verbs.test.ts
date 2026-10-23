@@ -926,12 +926,25 @@ test("verdict carry: only CLI-observed, patch-equal restack rows carry; an agent
   const forge = setup("github", undefined, ["feature/a", "feature/b"], "ts");
   await verdict(forge, "feature/b");
   const b1 = forge.git("rev-parse", "feature/b");
-  onBranch(forge, "feature/b", () => {
-    writeFileSync(path.join(forge.cwd, "b.ts"), "b changed\n");
-    forge.git("commit", "-q", "-a", "--amend", "--no-edit");
+  const a1 = forge.git("rev-parse", "feature/a");
+  // The parent moves and b is restacked onto it, its own files unchanged:
+  // the trunk-relative diff differs, so only a restack row can carry.
+  onBranch(forge, "feature/a", () => {
+    writeFileSync(path.join(forge.cwd, "a2.ts"), "export const a2 = 1;\n");
+    forge.git("add", "a2.ts");
+    forge.git("commit", "-q", "-m", "a2");
   });
+  const a2 = forge.git("rev-parse", "feature/a");
+  onBranch(forge, "feature/b", () => forge.git("rebase", "-q", "feature/a"));
   const b2 = forge.git("rev-parse", "feature/b");
-  const link = { branch: "feature/b", fromHead: b1, head: b2, patchEqual: true };
+  const link = {
+    branch: "feature/b",
+    fromHead: b1,
+    head: b2,
+    fromBase: a1,
+    toBase: a2,
+    patchEqual: true,
+  };
   const actor = { host: "cli", session: "agent-x", agentId: null };
   const asserted = appendRow(forge.cwd, { type: "stack.restacked", actor, ...link } as never);
   expect(asserted.ok).toBe(true);

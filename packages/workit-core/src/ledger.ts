@@ -58,7 +58,14 @@ import path from "node:path";
 import { hostAwareLockTimeout } from "./core/store-lock";
 import { verdictDrift, type CarryRule, type Drift } from "./core/policy/carry";
 import { defaultBase } from "./git/default-base";
-import { GIT_TIMEOUTS, currentBranch, headSha, patchId, worktreeTree } from "./git/rev";
+import {
+  GIT_TIMEOUTS,
+  currentBranch,
+  headSha,
+  patchId,
+  sameOwnChange,
+  worktreeTree,
+} from "./git/rev";
 import { hostSessionFromEnv, issuedBinding } from "./host-session";
 import { bumpStandingRev } from "./hooks/standing-signal";
 import { resolveStore } from "./store/paths";
@@ -1394,15 +1401,39 @@ function effectiveOf(
  * each restack itself and records `stack.restacked` with `patchEqual` when
  * the change relative to the parent is identical (same patch-id AND same
  * exact diff hash, D18). A verdict carries when such observed rows link its
- * head to the current head.
+ * head to the current head. With `exactIn` (the checkout), each link is
+ * re-read with exact blobs (sameOwnChange, #334), so a row recorded before
+ * that check carries a pass only when the branch's own files are identical
+ * across the restack. Null keeps every observed link: a failure keeps
+ * applying through them (failing closed the other way).
  */
+const restackExact = new WeakMap<ReadRow, boolean>();
 function restackCarries(
+  exactIn: string | null,
   rows: readonly ReadRow[],
   branch: string,
   from: string | null,
   to: string | null,
 ): boolean {
   if (!from || !to) return false;
+  const exact = (row: ReadRow, fromHead: string, head: string): boolean => {
+    if (exactIn === null) return true;
+    const cwd = exactIn;
+    let known = restackExact.get(row);
+    if (known === undefined) {
+      known =
+        typeof row.fromBase === "string" &&
+        typeof row.toBase === "string" &&
+        sameOwnChange(cwd, {
+          from: fromHead,
+          to: head,
+          fromBase: row.fromBase,
+          toBase: row.toBase,
+        });
+      restackExact.set(row, known);
+    }
+    return known;
+  };
   const edges = new Map<string, string[]>();
   for (const row of rows)
     if (
@@ -1412,7 +1443,8 @@ function restackCarries(
       row.branch === branch &&
       row.patchEqual === true &&
       typeof row.fromHead === "string" &&
-      row.head
+      row.head &&
+      exact(row, row.fromHead, row.head)
     )
       edges.set(row.fromHead, [...(edges.get(row.fromHead) ?? []), row.head]);
   const seen = new Set<string>([from]);
@@ -1478,17 +1510,46 @@ export function checkVerdicts(
     driftCache.set(row, drift);
     return drift;
   };
+  // The same patch-id and diff hash are not enough to carry a pass (#334):
+  // both drop hunk line numbers, so an edit moved within a file keeps them.
+  // The branch's own files must be identical blobs too (sameOwnChange). A
+  // failure keeps the looser carry: it fails closed by applying more.
+  const exactCache = new Map<ReadRow, boolean>();
+  const exactCarry = (row: ReadRow): boolean => {
+    if (FAILING.has(String(row.result))) return true;
+    let exact = exactCache.get(row);
+    if (exact === undefined) {
+      const toBase = row.base ?? fallbackBase;
+      const toBaseSha = toBase ? resolveCommit(cwd, toBase) : null;
+      const fromBase = row.baseSha ?? toBaseSha;
+      exact = Boolean(
+        row.head &&
+        head &&
+        toBaseSha &&
+        fromBase &&
+        sameOwnChange(cwd, { from: row.head, to: head, fromBase, toBase: toBaseSha }),
+      );
+      exactCache.set(row, exact);
+    }
+    return exact;
+  };
+  const keyBasis = (row: ReadRow): Exclude<VerdictBasis, "none"> => {
+    const basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
+    return basis === "carried" && !exactCarry(row) ? "stale" : basis;
+  };
+  const restacked = (row: ReadRow): boolean =>
+    restackCarries(FAILING.has(String(row.result)) ? null : cwd, rows, branch, row.head, head);
   /** The follow-up carry of a verdict the exact keys and restacks do not carry. */
   const carryOf = (row: ReadRow): CarryNote | null => {
-    if (verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) }) !== "stale") return null;
-    if (restackCarries(rows, branch, row.head, head)) return null;
+    if (keyBasis(row) !== "stale") return null;
+    if (restacked(row)) return null;
     const drift = driftOf(row);
     return drift?.carries ? { rule: drift.rule, since: drift.since, files: drift.files } : null;
   };
   const basisOf = (row: ReadRow): Exclude<VerdictBasis, "none"> => {
-    const basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
+    const basis = keyBasis(row);
     if (basis !== "stale") return basis;
-    return restackCarries(rows, branch, row.head, head) || carryOf(row) ? "carried" : basis;
+    return restacked(row) || carryOf(row) ? "carried" : basis;
   };
   // A newer row is judged under the failure's own base, so a row recorded
   // with a different --base cannot make unchanged code look changed. When
@@ -1502,7 +1563,7 @@ export function checkVerdicts(
     const keys = stored ? { patchId: row.patchId, diffHash: row.diffHash } : keysAt(base, row.head);
     return (
       verdictBasis(failed, { head: row.head, ...keys }) !== "stale" ||
-      restackCarries(rows, branch, failed.head, row.head)
+      restackCarries(null, rows, branch, failed.head, row.head)
     );
   };
   const authors = authorSessions(cwd, rows, branch, { base: fallbackBase, head }, scope);
