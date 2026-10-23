@@ -96,9 +96,11 @@ naming the obligation and the workit command that clears it:
   the forge;
 - a PR this session opened (or a delivery it verified) whose head lacks the
   verdict the policy asks for, while the endpoint is `green` or `merged` (a
-  PR opens without one, so `pr` never asks): your own `--self` verdict is
-  enough at normal risk under `verification: self`; high risk or `verification:
-  independent` needs a verifier that did not author it. Not raised while a
+  PR opens without one, so `pr` never asks): under `verification:
+  proportional` the head's review lane decides (none: nothing; self: your own
+  `--self` verdict; focused or full: a verifier that did not author it); under
+  `verification: self` your own is enough at normal risk; high risk or
+  `verification: independent` needs a verifier that did not author it. Not raised while a
   verifier or reviewer this session started is still running.
 
 Each obligation blocks once per head and session, not once per turn.

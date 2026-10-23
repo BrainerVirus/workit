@@ -23,7 +23,7 @@ repository.
 | `merge` | needs a grant | `workit pr merge`, `stack land`. Both need an accepted independent verdict. `true` also allows `--unverified --reason "<why>"`, a bypass recorded in the ledger; `"verified"` never does (see [Merging](#merging)) |
 | `release` | needs a grant | `workit git push --release <ref>`: finishing a release or hotfix by pushing the git-flow main and develop branches and release tags (`v*`, or the prefix in `gitflow.prefix.versiontag`, which may be empty) whose commit already landed, which `workit git push` refuses; outside git-flow, tags only. Fast-forward only, a tag never moves; the `push` grant and its account check apply too (see [Releasing](#releasing)) |
 | `defaultEndpoint` | `commit` | Where an unnamed delivery request stops, lowest to highest: `commit`, `pr`, `green`, `merged` (skills read it; see [Default endpoint](#default-endpoint)) |
-| `verification` | `self` | What a normal-risk behavior change needs: `self` (observed `workit check test` plus the author's own `--self` verdict, shown as self-reviewed) or `independent` (a verdict from a session that did not author it). High risk always needs an independent live `verified` verdict |
+| `verification` | `proportional` | What a change needs: `proportional` (the diff's [review lane](verification.md#review-lanes) decides, merge included: `none` no verdict, `self` the author's `--self` verdict, `focused`/`full` a non-author one), `self` (observed `workit check test` plus the author's own `--self` verdict at normal risk, shown as self-reviewed; merge needs a non-author verdict) or `independent` (a verdict from a session that did not author it). High risk always needs an independent live `verified` verdict |
 
 Without a merge grant the ceiling is: PR or stack opened, CI green,
 independently verified. Explicit grants need `vcs.account` for forge effects.
@@ -52,8 +52,10 @@ See [delivery](delivery.md#release-push).
 ## Merging
 
 `merge: true` and `merge: "verified"` both merge only a READY PR whose head
-has an accepted independent `verified` or `tests-verified` verdict (`workit
-ledger check`; `type-check-only` never counts). Without one,
+has the verdict its [review lane](verification.md#review-lanes) asks for
+under `verification: "proportional"` (none for `none`, the author's `--self`
+for `self`), else an accepted independent `verified` or `tests-verified`
+verdict (`workit ledger check`; `type-check-only` never counts). Without it,
 `pr merge` refuses with `NEEDS_VERDICT` and `stack land` stops at
 `no_verdict`; the unblock names the verifier route.
 
@@ -96,7 +98,8 @@ workit grant unset personal merge
 
 Raising a grant (including any step up `defaultEndpoint`'s
 `commit` < `pr` < `green` < `merged`, and
-`verification` from `independent` back to `self`) needs you
+any step down `verification`'s `independent` > `self` > `proportional`,
+including unsetting it) needs you
 at an interactive terminal, typing the workspace name to confirm. Headless and
 agent shells (no TTY, or an agent marker such as `CLAUDECODE`, `OPENCODE`,
 `CURSOR_AGENT`, `PI_CODING_AGENT`, `AI_AGENT`, `AGENT` or any `CODEX_*`) are
@@ -113,7 +116,7 @@ allowed. Each write keeps `workspaces.json.bak`.
 | `commit` | a local commit on a policy-compliant branch (default) |
 | `pr` | the pushed branch with its PR open |
 | `green` | the PR merge-ready: it keeps babysitting without asking (`workit ci wait` in the background, one `workit ci rerun` for a clear flake or infra failure, otherwise a fix; review threads answered; the branch rebased when the forge requires it; a draft marked ready) until CI is green, threads are resolved and the verification gate is met. It never merges |
-| `merged` | everything in `green`, then `workit pr merge` once a non-author verdict is accepted |
+| `merged` | everything in `green`, then `workit pr merge` once the verdict the merge gate asks for is recorded |
 
 The configured endpoint applies only when the request names none; an
 explicit "babysit this PR" stops at merge-ready. The agent stops early only

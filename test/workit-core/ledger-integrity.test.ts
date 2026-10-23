@@ -138,6 +138,28 @@ test("Given an independent pass on an older head and the author's own pass on th
   expect(check.selfVerdict?.id).toBe(self.id);
 });
 
+test("Given the author's own pass, When the author then records a failure of another kind on the same head, Then the newer failure cancels it: no self verdict, unreviewed (review finding mvkcoxgb)", () => {
+  const root = featureRepo();
+  seedAuthor(root, "feature/x", "author");
+  value(recordVerdict(as(root, "author"), { result: "tests-verified", how: "suite", self: true }));
+  value(
+    recordVerdict(as(root, "author"), {
+      result: "failed",
+      how: "found a bug live",
+      self: true,
+      kind: "live",
+    }),
+  );
+  const check = checkVerdicts(root, "feature/x", read(root).rows);
+  expect(check.review).toBe("unreviewed");
+  expect(check.selfVerdict).toBeNull();
+  // A newer pass wins again.
+  const again = value(
+    recordVerdict(as(root, "author"), { result: "tests-verified", how: "fixed", self: true }),
+  );
+  expect(checkVerdicts(root, "feature/x", read(root).rows).selfVerdict?.id).toBe(again.id);
+});
+
 test("Given a failure on one branch and kind, When the same session supersedes it from another branch or with another kind, Then the link is refused and the failure stands", () => {
   const root = featureRepo();
   const failure = value(recordVerdict(as(root, "v1"), { result: "failed", how: "bug" }));

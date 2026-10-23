@@ -1,0 +1,276 @@
+import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { main } from "@/packages/workit-cli/src/main";
+import type { Io } from "@/packages/workit-cli/src/output";
+import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
+import {
+  fixture,
+  makeForgeRepo,
+  replayRunner,
+  type Call,
+  type ForgeRepo,
+  type Reply,
+} from "@/test/shared/helpers/forge-replay";
+
+// #333: under `verification: proportional` (the default) the merge gate reads
+// the PR's review lane: none merges without a verdict, self takes the
+// author's own `--self` verdict, focused and full need a non-author one.
+// `self` and `independent` keep the non-author gate.
+
+setDefaultTimeout(60_000);
+
+let configDir = "";
+let configHome: ConfigHome;
+const original = { ...forgeDeps };
+beforeAll(() => {
+  configHome = useConfigHome("wk-lane-config-");
+  configDir = configHome.configDir;
+});
+afterAll(() => configHome.restore());
+
+const repos: ForgeRepo[] = [];
+afterEach(() => {
+  Object.assign(forgeDeps, original);
+  for (const name of ["workspaces.json", "config.json"])
+    rmSync(path.join(configDir, name), { force: true });
+  for (const repo of repos.splice(0)) repo.cleanup();
+});
+
+const run = async (argv: string[], cwd: string, session = "author-1") => {
+  let stdout = "";
+  let stderr = "";
+  const io: Partial<Io> = {
+    cwd,
+    env: { ...process.env, WORKIT_SESSION_ID: session },
+    stdout: (text) => void (stdout += text),
+    stderr: (text) => void (stderr += text),
+  };
+  const code = await main(argv, io);
+  return { code, stdout, stderr, json: () => JSON.parse(stdout) };
+};
+
+const GH_STATUS = 'graphql status {"owner":"o","name":"r","number":"12"}';
+
+/**
+ * A READY PR whose feature/x commit holds exactly `files` (the fixture's
+ * feature.txt replaced), under a workspace granting `merge: verified`.
+ */
+const setup = (files: Record<string, string>, entry: Record<string, unknown> = {}) => {
+  writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
+  );
+  const repo = makeForgeRepo("github");
+  repos.push(repo);
+  repo.git("rm", "-q", "feature.txt");
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(repo.cwd, file)), { recursive: true });
+    writeFileSync(path.join(repo.cwd, file), text);
+  }
+  repo.git("add", "-A");
+  repo.git("commit", "-q", "--amend", "-m", "feature");
+  const head = repo.git("rev-parse", "HEAD");
+  repo.subs["{{HEAD}}"] = head;
+  let merged = false;
+  const routes: Record<string, Reply> = {
+    "GET user": fixture("github/user.json"),
+    "GET repos/o/r": fixture("github/repo.json"),
+    "GET repos/o/r/branches/main": fixture("github/branch-main.json"),
+    "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
+    "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
+    "graphql find": fixture("github/find-pr.json"),
+    [GH_STATUS]: () => fixture(merged ? "github/pr-merged.json" : "github/pr-passing.json"),
+    "PUT repos/o/r/pulls/12/merge": () => {
+      merged = true;
+      return JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" });
+    },
+  };
+  const runner = replayRunner(routes, repo.subs);
+  Object.assign(forgeDeps, { runner, sleep: async () => {}, now: () => 0 });
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "w",
+          glob: `${repo.root.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "github", account: "octo" },
+          autonomy: { merge: "verified" },
+          ...entry,
+        },
+      ],
+    }),
+  );
+  return { repo, runner, head };
+};
+
+const merges = (calls: readonly Call[]) =>
+  calls.filter((call) => call.method === "PUT" && call.endpoint.endsWith("/merge"));
+
+const DOCS = { "README.md": "# Feature\n\nHow to use it.\n" };
+const SMALL = { "src/feature.ts": "export const feature = 1;\n" };
+const RISKY = { "src/hooks/guard.ts": "export const guard = true;\n" };
+
+const selfVerdict = async (repo: ForgeRepo) =>
+  expect(
+    (await run(["ledger", "verdict", "tests-verified", "--self", "--how", "bun test"], repo.cwd))
+      .code,
+  ).toBe(0);
+const independentVerdict = async (repo: ForgeRepo) =>
+  expect(
+    (await run(["ledger", "verdict", "verified", "--how", "exercised it"], repo.cwd, "reviewer-2"))
+      .code,
+  ).toBe(0);
+
+test("proportional default: given a docs-only PR, when merging, then no verdict is required (lane none)", async () => {
+  const { repo, runner, head } = setup(DOCS);
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({
+    head,
+    verdict: { required: false, lane: "none", need: "none", verification: "proportional" },
+  });
+  expect(merges(runner.calls)).toHaveLength(1);
+});
+
+test("proportional default: given a small low-risk behavior change, then the author's --self verdict satisfies the gate (lane self)", async () => {
+  const { repo, runner } = setup(SMALL);
+  const none = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(none.code).toBe(3);
+  expect(none.json()).toMatchObject({
+    data: { reason: "needs_verdict", verdict: { lane: "self" } },
+  });
+  expect(none.json().error).toContain("the author's own --self verdict is enough");
+  expect(none.json().unblock).toContain("workit ledger verdict tests-verified --self");
+  await selfVerdict(repo);
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data.verdict).toMatchObject({
+    required: true,
+    accepted: false,
+    review: "self-reviewed",
+    lane: "self",
+    need: "self",
+  });
+  expect(merges(runner.calls)).toHaveLength(1);
+});
+
+test("proportional default: given a change touching a risk path, then the lane is full and only a non-author verdict merges", async () => {
+  const { repo, runner } = setup(RISKY);
+  await selfVerdict(repo);
+  const self = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(self.code).toBe(3);
+  expect(self.json().error).toContain("NEEDS_VERDICT");
+  expect(self.json().error).toContain("lane full (touches a risk path: src/hooks/guard.ts)");
+  expect(merges(runner.calls)).toEqual([]);
+  await independentVerdict(repo);
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data.verdict).toMatchObject({
+    required: true,
+    accepted: true,
+    review: "verified",
+    lane: "full",
+  });
+});
+
+test("verification: self keeps the non-author merge gate: a docs-only PR or a --self verdict does not merge", async () => {
+  const docs = setup(DOCS, { verification: "self" });
+  const none = await run(["pr", "merge", "--json"], docs.repo.cwd);
+  expect(none.code).toBe(3);
+  expect(none.json().error).toStartWith(
+    `NEEDS_VERDICT: PR #12 has no accepted independent verdict for ${docs.head.slice(0, 12)} (`,
+  );
+  const small = setup(SMALL, { verification: "self" });
+  await selfVerdict(small.repo);
+  const self = await run(["pr", "merge", "--json"], small.repo.cwd);
+  expect(self.code).toBe(3);
+  expect(self.json().error).toContain("NEEDS_VERDICT");
+  expect(merges(small.runner.calls)).toEqual([]);
+});
+
+test("verification: independent keeps the non-author merge gate for a docs-only PR", async () => {
+  const { repo, runner } = setup(DOCS, { verification: "independent" });
+  const none = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(none.code).toBe(3);
+  expect(none.json()).toMatchObject({ data: { reason: "needs_verdict" } });
+  expect(merges(runner.calls)).toEqual([]);
+  await independentVerdict(repo);
+  expect((await run(["pr", "merge", "--json"], repo.cwd)).code).toBe(0);
+});
+
+test("pr status --json shows the lane, why, and what the merge gate needs", async () => {
+  const { repo } = setup(RISKY);
+  const result = await run(["pr", "status", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data.verdict.lane).toMatchObject({
+    lane: "full",
+    riskFiles: ["src/hooks/guard.ts"],
+    verification: "proportional",
+    need: "non-author",
+    satisfied: false,
+  });
+  const human = await run(["pr", "status"], repo.cwd);
+  expect(human.stdout).toContain(
+    "lane: full (touches a risk path: src/hooks/guard.ts); merge needs an accepted non-author verdict",
+  );
+});
+
+test("pr status warns when .workit/risk-paths is untracked in the working tree", async () => {
+  const { repo } = setup(SMALL);
+  const clean = await run(["pr", "status", "--json"], repo.cwd);
+  expect(clean.json().data.verdict.lane.warnings).toEqual([]);
+  mkdirSync(path.join(repo.cwd, ".workit"), { recursive: true });
+  writeFileSync(path.join(repo.cwd, ".workit/risk-paths"), "src/**\n");
+  const warned = await run(["pr", "status", "--json"], repo.cwd);
+  expect(warned.json().data.verdict.lane.warnings).toEqual([
+    expect.stringContaining(".workit/risk-paths is not committed"),
+  ]);
+  expect((await run(["pr", "status"], repo.cwd)).stdout).toContain(
+    "warning: .workit/risk-paths is not committed",
+  );
+});
+
+// Review finding mvkcoxgb: each of these merged with no verdict at lane none.
+for (const [name, files, attributes] of [
+  [
+    "code after a block comment",
+    { "src/auth/login.ts": "/* audited */ export const allow = () => true;\n" },
+    null,
+  ],
+  [
+    "a risk path with a space in its name",
+    { "src/auth/check token.ts": "export const allow = () => true;\n" },
+    null,
+  ],
+  [
+    ".git/info/attributes marking everything generated",
+    { "src/hooks/guard.ts": "export const guard = false;\n" },
+    "* linguist-generated\n",
+  ],
+] as const)
+  test(`fails closed end to end: ${name} is lane full, and neither no verdict nor --self merges`, async () => {
+    const { repo, runner } = setup(files);
+    if (attributes) {
+      const gitDir = repo.git("rev-parse", "--git-common-dir");
+      writeFileSync(path.resolve(repo.cwd, gitDir, "info/attributes"), attributes);
+    }
+    const none = await run(["pr", "merge", "--json"], repo.cwd);
+    expect(none.code).toBe(3);
+    expect(none.json().data).toMatchObject({
+      reason: "needs_verdict",
+      verdict: { lane: "full" },
+    });
+    await selfVerdict(repo);
+    expect((await run(["pr", "merge", "--json"], repo.cwd)).code).toBe(3);
+    expect(merges(runner.calls)).toEqual([]);
+  });
+
+test("a merged lane-none PR reads as merged with no verdict in pr status", async () => {
+  const { repo } = setup(DOCS);
+  expect((await run(["pr", "merge", "--json"], repo.cwd)).code).toBe(0);
+  const human = await run(["pr", "status"], repo.cwd);
+  expect(human.stdout).toContain("with no verdict (lane none)");
+});

@@ -1,1 +1,7 @@
 * text=auto eol=lf
+
+# Generated copies (test/workit-core/generated-copies.test.ts): review lanes
+# (#333) count them as no review, and the forge collapses them in diffs.
+packages/workit-cursor/skills/** linguist-generated
+packages/workit-cursor/commands/** linguist-generated
+packages/workit-cli/assets/templates/** linguist-generated

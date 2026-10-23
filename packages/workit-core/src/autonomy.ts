@@ -185,17 +185,28 @@ function endpointView(entry: unknown, context: EndpointContext): EndpointView {
 }
 
 /**
- * How a normal-risk behavior change is verified (S17). `self` (default): an
- * observed passing `workit check test` plus the author's own `--self`
- * verdict, labelled self-reviewed. `independent`: a verdict from a session
- * that did not author the branch. User config only, like grants.
+ * How a behavior change is verified (S17, #333). `proportional` (default):
+ * the review lane computed from the diff decides (core/policy/lane.ts): none
+ * needs no verdict, self the author's own `--self` verdict, focused and full
+ * a non-author verdict, at every gate including merge. `self`: an observed
+ * passing `workit check test` plus the author's own `--self` verdict at
+ * normal risk, labelled self-reviewed; merge still needs a non-author
+ * verdict. `independent`: a verdict from a session that did not author the
+ * branch. User config only, like grants.
  */
-export type VerificationMode = "self" | "independent";
-export const DEFAULT_VERIFICATION: VerificationMode = "self";
-export const verificationOf = (entry: unknown): VerificationMode =>
-  (entry as { verification?: unknown } | null)?.verification === "independent"
-    ? "independent"
-    : "self";
+export type VerificationMode = "self" | "independent" | "proportional";
+export const VERIFICATION_MODES: readonly VerificationMode[] = [
+  "proportional",
+  "self",
+  "independent",
+];
+export const DEFAULT_VERIFICATION: VerificationMode = "proportional";
+export const verificationOf = (entry: unknown): VerificationMode => {
+  const value = (entry as { verification?: unknown } | null)?.verification;
+  return VERIFICATION_MODES.includes(value as VerificationMode)
+    ? (value as VerificationMode)
+    : DEFAULT_VERIFICATION;
+};
 
 export type AutonomySource = "autonomy" | "autoApprove" | "default";
 
@@ -415,7 +426,7 @@ export function writeGrants(
   dir: string = grantsDir(),
   /** A new default endpoint; `null` removes it (back to `commit`). */
   endpoint?: DefaultEndpoint | null,
-  /** A new verification mode; `null` removes it (back to `self`). */
+  /** A new verification mode; `null` removes it (back to `proportional`). */
   verification?: VerificationMode | null,
 ): GrantWrite {
   const current = readWorkspacesResult(dir);

@@ -83,12 +83,13 @@ const setup = (
   kind: "github" | "gitlab",
   autonomy: Record<string, unknown> = { push: true, pr: true, merge: "verified" },
   branches?: string[],
+  extension?: string,
 ) => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
   );
-  const forge = makeStackForge(kind, branches);
+  const forge = makeStackForge(kind, branches, extension);
   forges.push(forge);
   writeFileSync(
     path.join(configDir, "workspaces.json"),
@@ -99,6 +100,8 @@ const setup = (
           glob: `${forge.root.replaceAll("\\", "/")}/**`,
           vcs: { provider: kind, account: "octo" },
           autonomy,
+          // The pre-#333 default: the non-author land gate these tests pin.
+          verification: "self",
         },
       ],
     }),
@@ -336,6 +339,35 @@ test("stack land: given merge: true and an accepted verdict on the root, then th
   expect(result.json().data).toMatchObject({
     landed: [{ pr: 11, unverified: null }],
     stoppedAt: { pr: 12, reason: "no_verdict" },
+  });
+  expect(rows(forge.cwd, "merge.unverified")).toEqual([]);
+});
+
+test("stack land under proportional (#333): a small root PR (lane self) lands on the author's --self verdict; the next one still stops", async () => {
+  // Code files: a `.txt` change is docs, lane none.
+  const forge = setup("github", undefined, undefined, "ts");
+  // Drop the pinned `verification: self`: the proportional default.
+  const file = path.join(configDir, "workspaces.json");
+  const document = JSON.parse(readFileSync(file, "utf8"));
+  delete document.workspaces[0].verification;
+  writeFileSync(file, JSON.stringify(document));
+  await plan(forge);
+  const none = await run(["stack", "land", "--json"], forge.cwd);
+  expect(none.json().data).toMatchObject({ landed: [], stoppedAt: { pr: 11 } });
+  expect(none.json().data.stoppedAt.detail).toContain("lane self");
+  expect(none.json().data.stoppedAt.unblock).toContain(
+    "workit ledger verdict tests-verified --self",
+  );
+  const self = await run(
+    ["ledger", "verdict", "tests-verified", "--self", "--how", "bun test", "--branch", "feature/a"],
+    forge.cwd,
+  );
+  expect(self.code, self.stderr + self.stdout).toBe(0);
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({
+    landed: [{ pr: 11, unverified: null }],
+    stoppedAt: { pr: 12 },
   });
   expect(rows(forge.cwd, "merge.unverified")).toEqual([]);
 });

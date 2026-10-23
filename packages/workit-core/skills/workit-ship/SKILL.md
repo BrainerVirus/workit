@@ -51,8 +51,7 @@ the same check. Fix round and recheck both failed: a decider (workit-fanout).
    allows; no sleep loop. Red: read `logTail`, classify. Flake or infra: one
    `workit ci rerun --failed --reason flake|infra` per head. Real: reproduce
    with `workit check`, fix the root cause, batch every fix in one push.
-6. **Verified.** High risk, `verification: independent` or a verified merge: a
-   non-author verdict (workit-review); else a self verdict stands. Land only when
+6. **Verified.** The lane in `workit pr status` decides: none, no verdict; self, your `--self` verdict; focused or full (or `verification: self|independent`), one non-author verifier per PR after the last push, never per push (workit-review), on Claude Code `model: sonnet` when focused. Land only when
    granted: `workit stack land` or `workit pr merge`; `--unverified --reason` if user-asked.
 7. **Observe it landed:** `workit verify-delivery pr` or `merge`. After a failed
    verdict or a check red 3+ times, at any endpoint: offer `/wk-retro` in one

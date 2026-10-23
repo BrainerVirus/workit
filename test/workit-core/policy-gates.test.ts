@@ -365,7 +365,12 @@ test("derived requirements route to their method skills; dead routes are gone", 
       "workit-bdd",
       "workit-review",
     ]);
-    expect(routed({ productChoiceOpen: true, needsPlan: true })).toEqual(["workit-shape"]);
+    // Under proportional verification a normal-risk judgment carries the
+    // review lane whatever it says about behavior (the diff decides).
+    expect(routed({ productChoiceOpen: true, needsPlan: true })).toEqual([
+      "workit-shape",
+      "workit-review",
+    ]);
     expect(routed({ riskTier: "trivial" })).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });

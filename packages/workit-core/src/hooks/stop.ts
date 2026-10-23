@@ -11,11 +11,15 @@
 //       or merged;
 //   (c) verdict: the session opened the PR (or verified delivery) but the
 //       head lacks the verdict the policy asks for, while the endpoint is
-//       green or merged (a PR opens without one): the author's own `--self`
-//       verdict at normal risk under `verification: self`, an accepted
-//       non-author verdict at high risk or under `verification: independent`.
-//       Not raised when the task's latest judgment records no behavior
-//       change at normal risk (policy/derive.ts asks for none either), nor while a verifier or reviewer this lead started still runs.
+//       green or merged (a PR opens without one). Under `verification:
+//       proportional` (the default) the review lane of the head decides
+//       (core/policy/lane.ts): none owes nothing, self the author's own
+//       `--self` verdict, focused and full an accepted non-author verdict.
+//       Under `self`: the author's own at normal risk; at high risk or under
+//       `independent`: a non-author one, and not raised when the task's
+//       latest judgment records no behavior change at normal risk
+//       (policy/derive.ts asks for none either). Never raised while a
+//       verifier or reviewer this lead started still runs.
 // Each obligation blocks once per head and session (a marker keyed by kind
 // and head), not once per turn.
 // A branch that landed owes nothing: a recorded merge (`workit pr merge`, or
@@ -29,10 +33,9 @@
 // the ledger and local git only (no forge call), and every failure allows
 // the stop.
 import { spawnSync } from "node:child_process";
-import { resolveAutonomy } from "../autonomy";
-import { latestJudgment } from "../core/policy/derive";
-import type { Judgment } from "../core/task-contract";
-import { TaskStore } from "../core/task-store";
+import { resolveAutonomy, type VerificationMode } from "../autonomy";
+import { currentJudgment } from "../core/policy/current-judgment";
+import { branchLane, laneNeed } from "../core/policy/lane";
 import { currentBranch, pushRemoteName } from "../git/rev";
 import { checkVerdicts, readLedger, type ReadRow } from "../ledger";
 import type { HostDescriptor } from "./descriptor";
@@ -237,43 +240,57 @@ const redChecks = (
   };
 };
 
-/** The open task's latest judgment (the one policy/derive.ts reads), or null when none is recorded. */
-const taskJudgment = (cwd: string): Judgment | null => {
-  try {
-    const store = new TaskStore(cwd);
-    const listed = store.listTaskIndex();
-    const key = store.currentKey();
-    if (!listed.ok || !key.ok) return null;
-    const entry = listed.data
-      .filter((item) => item.key === key.data.key && item.status !== "closed")
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
-    const task = entry ? store.readTask(entry.id) : null;
-    return task?.ok === true ? latestJudgment(task.data) : null;
-  } catch {
-    return null;
-  }
+/**
+ * The base the branch's PR targets: the newest the forge reported (a
+ * `pr.status` row, so a PR retargeted on the forge is read against its
+ * current base), else the one it was opened with (`pr.created`), else null
+ * (the default base). Read from the ledger: the hook never calls the forge.
+ */
+const prBase = (rows: readonly ReadRow[]): string | null => {
+  const seen = rows.findLast(
+    (row) =>
+      (row.type === "pr.status" || row.type === "pr.created") &&
+      row.observer === "workit_cli" &&
+      typeof row.base === "string",
+  );
+  return typeof seen?.base === "string" ? seen.base : null;
 };
 
 /**
  * (c) Delivered by this session, yet the head lacks the verdict the policy
- * asks for: the author's own at normal risk when the workspace's
- * verification is `self`, else an accepted non-author one.
+ * asks for. Under `verification: proportional` the review lane of the head
+ * decides (core/policy/lane.ts): none owes nothing, self the author's own,
+ * focused and full a non-author one. Under `self`, the author's own at
+ * normal risk; under `independent` or at high risk, a non-author one.
  */
 const unverified = (
   cwd: string,
   branch: string,
   all: readonly ReadRow[],
   descriptor: HostDescriptor,
-  verification: "self" | "independent",
+  verification: VerificationMode,
+  head: string | null,
 ): StopObligation | null => {
   const check = checkVerdicts(cwd, branch, all);
   if (check.accepted.accepted || check.accepted.reasons.includes("failing_verdict")) return null;
-  const judgment = taskJudgment(cwd);
+  const judgment = currentJudgment(cwd);
   const high = judgment?.riskTier === "high";
-  // Like policy/derive.ts: a verdict is asked for a behavior change or high
-  // risk. A recorded judgment with neither (docs only) owes none.
-  if (judgment && !judgment.behaviorChange && !high) return null;
-  const independent = verification === "independent" || high;
+  let independent: boolean;
+  if (verification === "proportional") {
+    const lane = branchLane(cwd, {
+      base: prBase(all.filter((row) => row.branch === branch)),
+      head,
+      judgment,
+    });
+    const need = laneNeed(lane.lane);
+    if (need === "none") return null;
+    independent = need === "non-author";
+  } else {
+    // Like policy/derive.ts: a verdict is asked for a behavior change or high
+    // risk. A recorded judgment with neither (docs only) owes none.
+    if (judgment && !judgment.behaviorChange && !high) return null;
+    independent = verification === "independent" || high;
+  }
   if (!independent && check.review === "self-reviewed") return null;
   const has = check.review === "self-reviewed" ? "only a self verdict" : "no current verdict";
   const verifier = `${descriptor.subagents.agentPrefix}verifier`;
@@ -332,7 +349,7 @@ export function stopObligation(
     }
     // A PR opens without a verdict: only green and merged need one.
     if (!delivered || (endpoint !== "green" && endpoint !== "merged")) return null;
-    const left = unverified(input.cwd, branch, all, descriptor, autonomy.verification);
+    const left = unverified(input.cwd, branch, all, descriptor, autonomy.verification, head);
     return left ? { ...left, head } : null;
   } catch {
     return null;

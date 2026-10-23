@@ -73,6 +73,8 @@ import {
   type ReadRow,
   type VerdictBasis,
 } from "./ledger";
+import type { LaneNeed, ReviewLane } from "./core/policy/lane";
+import { prLaneGate } from "./core/policy/pr-lane";
 
 export const STACK_VERSION = 1;
 
@@ -1016,7 +1018,20 @@ export type BranchStatus = {
   next: NextAction | null;
   checks: ChecksState | null;
   blockers: string[];
-  verdict: { accepted: boolean; basis: VerdictBasis; reasons: string[]; verdictId: string | null };
+  /**
+   * `accepted`: an accepted independent verdict; `satisfied`: what the land
+   * gate reads, the verdict the PR's review lane asks for (an accepted
+   * independent one outside `verification: proportional`).
+   */
+  verdict: {
+    accepted: boolean;
+    satisfied: boolean;
+    basis: VerdictBasis;
+    reasons: string[];
+    verdictId: string | null;
+    lane: ReviewLane | null;
+    need: LaneNeed;
+  };
 };
 
 export type Qualification =
@@ -1081,16 +1096,27 @@ export function repoMismatch(ctx: Pick<Ctx, "resolved">, stack: StackFile): Stac
   return null;
 }
 
-const verdictOf = (cwd: string, branch: string, rows: readonly ReadRow[]) => {
+const verdictOf = (
+  cwd: string,
+  branch: string,
+  rows: readonly ReadRow[],
+  doc: PrStatusDoc | null,
+): BranchStatus["verdict"] => {
   const check = checkVerdicts(cwd, branch, rows);
+  // Without a PR there is no base to diff against: the gate stays independent.
+  const gate = doc ? prLaneGate(cwd, check, { branch, base: doc.base, head: doc.head.sha }) : null;
   return {
     accepted: check.accepted.accepted,
+    satisfied: gate ? gate.satisfied : check.accepted.accepted,
     basis: check.current.basis,
-    reasons: check.accepted.reasons as string[],
-    verdictId:
-      typeof check.accepted.verdict?.id === "string" && check.accepted.accepted
+    reasons: check.accepted.reasons,
+    verdictId: gate
+      ? gate.verdictId
+      : typeof check.accepted.verdict?.id === "string" && check.accepted.accepted
         ? check.accepted.verdict.id
         : null,
+    lane: gate?.lane.lane ?? null,
+    need: gate?.need ?? "non-author",
   };
 };
 
@@ -1161,12 +1187,20 @@ export function qualify(
       `${label} has a current independent failed verdict for ${doc.head.sha.slice(0, 12)}; --unverified never lands over a rejection`,
       "a new independent verdict on the head supersedes it",
     );
-  if (!(bypass && allowUnverified) && !verdict.accepted)
+  if (!(bypass && allowUnverified) && !verdict.satisfied) {
+    const bypassHint = allowUnverified
+      ? `; or, only if the user asks to land unverified: workit stack land --unverified --reason "<why>"`
+      : "";
     return stop(
       verdict.reasons.includes("no_verdict") ? "no_verdict" : "needs_verdict",
-      `${label} has no accepted independent verdict for ${doc.head.sha.slice(0, 12)} (${verdict.reasons.join(", ") || "none"})`,
-      `an independent session verifies ${entry.branch} and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${entry.branch}${allowUnverified ? `; or, only if the user asks to land unverified: workit stack land --unverified --reason "<why>"` : ""}`,
+      verdict.need === "self"
+        ? `${label} has no verdict for ${doc.head.sha.slice(0, 12)} (lane self: the author's own --self verdict is enough; ${verdict.reasons.join(", ") || "none"})`
+        : `${label} has no accepted independent verdict for ${doc.head.sha.slice(0, 12)}${verdict.lane && verdict.lane !== "none" ? ` (lane ${verdict.lane})` : ""} (${verdict.reasons.join(", ") || "none"})`,
+      verdict.need === "self"
+        ? `after an observed passing \`workit check test\`, the author runs: workit ledger verdict tests-verified --self --how "<what you ran>" --branch ${entry.branch}${bypassHint}`
+        : `an independent session verifies ${entry.branch} and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${entry.branch}${bypassHint}`,
     );
+  }
   if (!grant.allowed)
     return stop(
       "grant_required",
@@ -1215,8 +1249,16 @@ export function stackStatus(ctx: Ctx, stack: StackFile): StackResult<StatusOutco
       checks: doc?.checks.state ?? null,
       blockers: doc?.blockers ?? [],
       verdict: merged
-        ? { accepted: true, basis: "none", reasons: [], verdictId: null }
-        : verdictOf(ctx.cwd, entry.branch, ledger.value.rows),
+        ? {
+            accepted: true,
+            satisfied: true,
+            basis: "none",
+            reasons: [],
+            verdictId: null,
+            lane: null,
+            need: "non-author",
+          }
+        : verdictOf(ctx.cwd, entry.branch, ledger.value.rows, doc),
     };
     branches.push(row);
     if (merged) {
@@ -1866,7 +1908,7 @@ export async function landStack(
       }
     }
     const grant = requireGrant(ctx.cwd, "merge");
-    const verdict = verdictOf(ctx.cwd, entry.branch, ledgerRows());
+    const verdict = verdictOf(ctx.cwd, entry.branch, ledgerRows(), doc);
     // A dry run predicts the retarget the real run would do first.
     const effective =
       options.dryRun && simulated.size > 0 && doc ? { ...doc, base: stack.trunk } : doc;
@@ -1906,7 +1948,7 @@ export async function landStack(
         deleteBranch: false,
         actor: ctx.actor,
         expect: { base: stack.trunk, branch: entry.branch },
-        ...(bypass && !verdict.accepted ? { unverified: bypass } : {}),
+        ...(bypass && !verdict.satisfied ? { unverified: bypass } : {}),
       },
       ctx.sleep,
     );

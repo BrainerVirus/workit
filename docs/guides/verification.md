@@ -112,17 +112,101 @@ product-choice=… plan=…`, or the flat `workit_policy` tool fields):
 | Judgment | Needed |
 | --- | --- |
 | behavior change | an observed passing `workit check test` on the final tree |
-| behavior change, risk `normal` | a verdict: by default the author's own (`workit ledger verdict tests-verified --self --how …`), labelled **self-reviewed** in `ledger check` and `pr status`, never verified (it warns when no passing `workit check test` was observed on the head); with the workspace setting `verification: "independent"` ([grants](grants.md)) a verdict from a non-author session |
+| risk `normal`, under the default `verification: "proportional"` | the verdict the [review lane](#review-lanes) asks for, whatever the behavior-change judgment says: the diff decides (lane `none` needs none) |
+| behavior change, risk `normal`, under `verification: "self"` or `"independent"` | under `self` the author's own (`workit ledger verdict tests-verified --self --how …`), labelled **self-reviewed** in `ledger check` and `pr status`, never verified (it warns when no passing `workit check test` was observed on the head); under `verification: "independent"` ([grants](grants.md)) a verdict from a non-author session |
 | risk `high` | an independent `verified` verdict of kind `live`, and a plan before code is written |
 | open product choice | the user's answer recorded (`workit ledger decision "<choice>" --why "<reason>"`) before code is written |
 | plan needed | the plan written, then cited: `workit policy assess --ref <path>` (an approved limitation waives it) |
+
+### Review lanes
+
+Under `verification: "proportional"` (the default when a workspace sets none)
+Workit computes a review lane from the diff of the branch against its base
+(`packages/workit-core/src/core/policy/lane.ts`, thresholds in
+`LANE_THRESHOLDS`). `workit pr status` (`verdict.lane` in `--json`) and
+`workit policy assess` (`lane`) show it with the reason.
+
+| Lane | When | Needs |
+| --- | --- | --- |
+| `none` | only docs (`.md`, `.mdx`, `.rst`, `.adoc`, `.txt` outside agent instructions, or a bare `LICENSE`/`CHANGELOG`), comment, whitespace or formatting edits, or generated copies (`linguist-generated` in the base revision's `.gitattributes`) | no verdict |
+| `self` | at most 100 changed lines in at most 5 behavior files, no risk path, no lockfile or binary | the author's own `--self` verdict (or an independent one) |
+| `focused` | more than 100 lines, more than 5 behavior files, or a lockfile or binary change | an accepted non-author verdict |
+| `full` | 500+ lines, any file on a risk path, or a high-risk judgment | an accepted non-author verdict (a high-risk judgment still asks a `live` one at task close) |
+
+Lines count code, tests and agent instructions (`SKILL.md`, `AGENTS.md`,
+`CLAUDE.md`, `skills/`, `agents/`, `commands/`, `rules/`, `prompts/`);
+lockfiles count as a behavior change but never toward size. A diff Workit
+cannot read reads as `focused`. The lane gates `workit pr merge`, `workit
+stack land`, the Stop hook and the task's `verdict:lane` requirement alike.
+
+The lane fails closed: when Workit is unsure a file is docs, a comment or
+formatting, it counts as a behavior change.
+
+- **Docs** are told by extension only: code under `docs/` or in a
+  `generated/` folder is code.
+- **Comments and formatting** are told by reading each whole file on both
+  sides with its strings, template literals and block comments, for
+  TypeScript and JavaScript (not JSX), Java, Kotlin, Scala, Swift, Dart,
+  Groovy, Go, CSS, SCSS, LESS, Python, TOML and markup without scripts.
+  Directive comments (`@ts-ignore`, `eslint-disable`, `noqa`, `//go:build`
+  and the like), shebangs and whitespace inside strings are code. A file
+  with a lone carriage return, U+2028 or U+2029 (CRLF is fine) is read like
+  a binary: never cosmetic, so the lane is at least `focused`.
+- **Documented limits.** The C family (C, C++, Objective-C, C#), Rust, SQL,
+  shell, Ruby, YAML and every other type without a lexer keep their
+  comments: only trailing whitespace is cosmetic there. Where a lexer
+  exists, a few constructs are read as behavior rather than guessed at:
+  Python f-strings with a nested string inside `{}`, an unquoted CSS
+  `url(`, and a JavaScript `/` after `)` with another `/` later on the line.
+- **Generated copies** come only from the `.gitattributes` files of the base
+  revision (the fork point), never `.git/info/attributes`, a global
+  attributes file or the change itself.
+- **Risk paths** are decided first and override every other kind: a
+  comment-only, generated, docs or lockfile change on a risk path is still
+  `full`. Built in: a path part such as `auth`, `security`, `secret`, `gate`,
+  `policy`, `hooks`, `release`, `migrations` or `.github/workflows` (never a
+  test or a doc), CI files, every `.gitattributes`, and `.workit/risk-paths`.
+
+#### Repo risk paths: `.workit/risk-paths`
+
+A repository adds its own risk paths in `.workit/risk-paths`: one glob per
+line (`**` spans directories, `*` and `?` stay within one, a bare directory
+covers everything under it), `#` comments and blank lines skipped. Workit
+reads it from the base revision only, so a change cannot remove an entry
+to lower its own lane; entries only tighten. A change to the file is itself
+a risk path, and it protects the next change, not the one that adds it.
+Workit's marker directory ignores everything else in `.workit/` but leaves
+`risk-paths` visible (`.workit/.gitignore` is `*` and `!risk-paths`; `workit
+doctor --fix` and any command that creates the directory rewrite the old
+`*` alone), so `git add .workit/risk-paths` is enough. While the file is
+untracked, `policy assess` and `pr status` warn that it does not apply until
+it is committed on the base.
+
+```text
+# merge gates and what they read
+src/billing/**
+packages/core/src/gates/merge.ts
+```
+A current independent failed verdict or a tampered ledger still blocks every
+lane. `verification: "self"` and `"independent"` keep their earlier rules,
+including a non-author verdict to merge.
+
+Spend verifiers by lane: none for `none` and `self`; one per PR after its
+last push for `focused` (a cheaper model where the host lets the lead pick
+one, e.g. Claude Code `model: sonnet` on the Agent call) and `full` (the
+strong model).
 
 Every `policy assess` is recorded in the ledger as a `policy.judged` row
 (session, what was sent, the resulting requirements). A session that judged
 an open product choice or a needed plan cannot lift it silently: its own
 `product-choice=no` or `plan=no` needs `--why "<reason>"`, which the row keeps.
 
-Trivial work judged `risk=trivial behavior=no` needs nothing. Before-write
+Trivial work judged `risk=trivial behavior=no` needs nothing at task close
+(its PR still merges by its lane). Task close trusts the recorded judgment;
+the merge gate reads the diff lane. A `risk=trivial` task that still changes
+code needs what its lane asks before merge. A `behavior=no` judgment at normal risk
+still owes what the lane asks, except outside git, where no branch can hold a
+verdict. Before-write
 requirements deny working-tree edits on hosts with a pre-write hook (Claude
 Code, OpenCode, Cursor, Pi; advisory on Codex); Markdown, top-level `docs/`,
 any `plans/` directory, the cited plan and files outside the checkout stay

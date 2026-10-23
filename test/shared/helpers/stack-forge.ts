@@ -68,11 +68,13 @@ const GL_ID = 34675721;
 
 /**
  * Trunk `main` with one commit; `branches` stacked in order, each adding
- * `<slug>.txt`; all pushed. PRs are numbered from 11 with the chain as bases.
+ * `<slug>.<extension>` (`txt` by default); all pushed. PRs are numbered from
+ * 11 with the chain as bases.
  */
 export function makeStackForge(
   kind: "github" | "gitlab",
   branches: readonly string[] = ["feature/a", "feature/b", "feature/c", "feature/d"],
+  extension = "txt",
 ): StackForge {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-stack-"));
   const bare = path.join(root, "remote.git");
@@ -97,7 +99,7 @@ export function makeStackForge(
       [`${slug} draft\n`, `feat: ${slug} draft`],
       [`${slug}\n`, `feat: ${slug}`],
     ]) {
-      writeFileSync(path.join(cwd, `${slug}.txt`), text);
+      writeFileSync(path.join(cwd, `${slug}.${extension}`), text);
       runGit(cwd, "add", "-A");
       runGit(cwd, "commit", "-q", "-m", subject);
     }

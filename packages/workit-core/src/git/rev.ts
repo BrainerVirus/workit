@@ -515,6 +515,139 @@ export function resolveRef(cwd: string, ref: string): string | null {
   return line(git(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]));
 }
 
+/** Pinned diff options for the review-lane reads: user config never changes them. */
+const LANE_DIFF = [
+  "-c",
+  "core.quotePath=false",
+  "diff",
+  "--no-color",
+  "--no-ext-diff",
+  "--no-textconv",
+  "--no-renames",
+];
+
+/** `fork..head`, or with `head` null the working tree's tracked changes since `fork`. */
+const laneRange = (fork: string, head: string | null): string[] | null => {
+  if (!safeArg(fork) || (head !== null && !safeArg(head))) return null;
+  return head === null ? [fork] : [fork, head];
+};
+
+export type NumstatEntry = { path: string; added: number; deleted: number; binary: boolean };
+
+/** Added and deleted lines per file of `fork..head` (no renames); null when git fails. */
+export function diffNumstat(cwd: string, fork: string, head: string | null): NumstatEntry[] | null {
+  const range = laneRange(fork, head);
+  if (!range) return null;
+  const run = git(cwd, [...LANE_DIFF, "--numstat", "-z", ...range, "--"]);
+  if (!run.ok) return null;
+  const out: NumstatEntry[] = [];
+  for (const record of run.stdout.split("\0")) {
+    const match = /^(-|\d+)\t(-|\d+)\t(.+)$/su.exec(record.replace(/^\n/u, ""));
+    if (!match) continue;
+    const binary = match[1] === "-";
+    out.push({
+      path: match[3],
+      added: binary ? 0 : Number(match[1]),
+      deleted: binary ? 0 : Number(match[2]),
+      binary,
+    });
+  }
+  return out;
+}
+
+/** One file of `git diff --raw`: modes and blob ids on each side (zeros: absent or the working tree). */
+export type RawEntry = {
+  path: string;
+  oldMode: string;
+  newMode: string;
+  oldBlob: string;
+  newBlob: string;
+};
+
+/**
+ * The changed files of `fork..head` (or the working tree) with their modes
+ * and blob ids, read NUL-separated so no path is ever quoted or split.
+ * Null when git fails.
+ */
+export function diffRaw(cwd: string, fork: string, head: string | null): RawEntry[] | null {
+  const range = laneRange(fork, head);
+  if (!range) return null;
+  const run = git(cwd, [...LANE_DIFF, "--raw", "-z", "--no-abbrev", ...range, "--"]);
+  if (!run.ok) return null;
+  const fields = run.stdout.split("\0");
+  const out: RawEntry[] = [];
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const meta = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]\d*$/u.exec(
+      fields[index].replace(/^\n/u, ""),
+    );
+    if (!meta) return null;
+    out.push({
+      path: fields[index + 1],
+      oldMode: meta[1],
+      newMode: meta[2],
+      oldBlob: meta[3],
+      newBlob: meta[4],
+    });
+  }
+  return out;
+}
+
+/** The contents of `ids` (blob ids), by id; null when git fails. Missing objects are left out. */
+export function readBlobs(cwd: string, ids: readonly string[]): Map<string, Buffer> | null {
+  const out = new Map<string, Buffer>();
+  const wanted = [...new Set(ids)].filter((id) => /^[0-9a-f]{40,64}$/u.test(id));
+  if (!wanted.length) return out;
+  const run = spawnSync("git", ["cat-file", "--batch"], {
+    cwd,
+    input: `${wanted.join("\n")}\n`,
+    maxBuffer: MAX_BUFFER,
+    timeout: GIT_TIMEOUTS.local,
+    killSignal: "SIGKILL",
+    windowsHide: true,
+  });
+  if (run.status !== 0 || !run.stdout) return null;
+  const bytes = run.stdout;
+  let at = 0;
+  for (const id of wanted) {
+    const end = bytes.indexOf(0x0a, at);
+    if (end < 0) return null;
+    const header = bytes.subarray(at, end).toString("utf8").split(" ");
+    at = end + 1;
+    if (header[1] === "missing") continue;
+    const size = Number(header[2]);
+    if (header[0] !== id || !Number.isSafeInteger(size)) return null;
+    out.set(id, bytes.subarray(at, at + size));
+    at += size + 1;
+  }
+  return out;
+}
+
+/** Blob ids of the files named `name` anywhere in the tree of `rev`, by path; null when git fails. */
+export function treeFilesNamed(cwd: string, rev: string, name: string): Map<string, string> | null {
+  if (!safeArg(rev)) return null;
+  const run = git(cwd, ["ls-tree", "-r", "-z", "--full-tree", rev]);
+  if (!run.ok) return null;
+  const out = new Map<string, string>();
+  for (const record of run.stdout.split("\0")) {
+    const match = /^\d{6} blob ([0-9a-f]+)\t(.+)$/su.exec(record);
+    if (match && (match[2] === name || match[2].endsWith(`/${name}`))) out.set(match[2], match[1]);
+  }
+  return out;
+}
+
+/** The text of `file` (a fixed repo path) at `rev`; null when it is absent or git fails. */
+export function fileAt(cwd: string, rev: string, file: string): string | null {
+  if (!safeArg(rev)) return null;
+  const run = git(cwd, ["cat-file", "blob", `${rev}:${file}`]);
+  return run.ok ? run.stdout : null;
+}
+
+/** Untracked, not ignored files of the working tree (repo-relative). */
+export function untrackedFiles(cwd: string): string[] {
+  const run = git(cwd, ["ls-files", "-z", "--others", "--exclude-standard"]);
+  return run.ok ? run.stdout.split("\0").filter(Boolean) : [];
+}
+
 /**
  * Commits `head` lacks from `base` (behind) and has on top of it (ahead), and
  * whether `base` is already an ancestor of `head`. Null when either side

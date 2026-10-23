@@ -115,9 +115,9 @@ Autonomy contract:
   Prose is a note: only a configured check the CLI ran (\`workit check <name>\`)
   satisfies a gate; an ad-hoc \`workit check -- <cmd>\` never does.
 - Author is not verifier: your own verdict is \`--self\`, shown as
-  self-reviewed, never verified. High risk, \`verification: independent\` and
-  merge need a verifier with its own host-derived session (a subagent's
-  \`<lead>:<child>\`); never hand-mint one (\`<lead>-v1\`).
+  self-reviewed, never verified. High risk, a focused or full lane and
+  merge under \`verification: self|independent\` need a verifier with its
+  own host-derived session (a subagent's \`<lead>:<child>\`); never hand-mint one (\`<lead>-v1\`).
 - A local-commit endpoint does not imply PR readiness, and a local commit alone
   is not evidence of a requested remote push. Before reporting delivery,
   reconcile every requested item and observe it (\`workit verify-delivery\`).

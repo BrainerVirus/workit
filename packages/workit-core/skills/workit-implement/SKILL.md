@@ -36,11 +36,11 @@ description: Build a requested change in small verified steps - follow local pat
    when that was requested, or the request implies delivery and the effective
    endpoint in `workit grant show` is `pr`, `green` or `merged`; `green` and
    `merged` keep babysitting. Otherwise it is `commit`.
-7. Verify, as far as the policy asks. Normal risk: after `workit check test`
-   passes, record your own `workit ledger verdict tests-verified --self --how
-   "<what you ran>"`; it reads self-reviewed, never verified, and is enough.
-   Ask a non-author only for high risk, a workspace with `verification:
-   independent` (`workit grant show`) or a verified merge: a fresh verifier with its own host-derived session (Claude Code and Codex:
+7. Verify as far as the review lane asks (`workit policy assess`, `workit pr
+   status`). Lane none: no verdict. Lane self: after `workit check test` passes,
+   record `workit ledger verdict tests-verified --self --how "<what you ran>"`;
+   it reads self-reviewed, never verified, and is enough. Focused, full, high
+   risk or `verification: self|independent` merges: one fresh verifier per PR after the last push, its own host-derived session (Claude Code: the `verifier` agent, `model: sonnet` when focused; Codex:
    the `verifier` agent; OpenCode: a child session; Pi: a supervised worker),
    never a hand-minted id. Before saying done, reconcile
    every named deliverable against the target checkout and observe it (for a push:

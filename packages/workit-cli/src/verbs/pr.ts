@@ -51,6 +51,8 @@ import {
   type FlowRoute,
 } from "@brainervirus/workit-core/src/core/branch";
 import { actorFromEnv, checkVerdicts, readLedger } from "@brainervirus/workit-core/src/ledger";
+import { untrackedRiskPathsWarning } from "@brainervirus/workit-core/src/core/policy/lane";
+import { prLaneGate } from "@brainervirus/workit-core/src/core/policy/pr-lane";
 import {
   vcsConfig,
   type ResolvedReleaseTrack,
@@ -142,6 +144,14 @@ async function status(argv: string[], io: Io): Promise<number> {
             ? `verdict: ${data.verdict.accepted ? `accepted (${data.verdict.basis})` : data.verdict.review === "self-reviewed" ? "self-reviewed (author's own verdict; not independent)" : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
             : "verdict: unknown (ledger unreadable)",
       );
+      if (data.verdict?.lane)
+        lines.splice(
+          lines.length - 1,
+          0,
+          `lane: ${data.verdict.lane.lane} (${data.verdict.lane.reasons.join("; ")}); merge needs ${NEED_TEXT[data.verdict.lane.need]}${data.verdict.lane.verification === "proportional" ? "" : ` (verification: ${data.verdict.lane.verification})`}`,
+        );
+      for (const warning of data.verdict?.lane?.warnings ?? [])
+        lines.splice(lines.length - 1, 0, `warning: ${warning}`);
       // The step that clears `next`, right above it.
       if (data.nextHint) lines.splice(lines.length - 1, 0, `do: ${data.nextHint}`);
       return lines;
@@ -156,10 +166,19 @@ function issuesBlock(cwd: string, doc: { number: number; repo: string }): Linked
   return linkedIssues(ledger.value.rows, { pr: doc.number, repo: doc.repo });
 }
 
+const NEED_TEXT = {
+  none: "no verdict",
+  self: "the author's own --self verdict (or an independent one)",
+  "non-author": "an accepted non-author verdict",
+} as const;
+
 /** How a merged PR landed, from its `pr.merged` row ("untracked": workit did not merge it). */
 type MergeRecord = {
   head: string | null;
   verdictId: string | null;
+  /** How the merge was reviewed (rows before review lanes carry none). */
+  review?: string;
+  lane?: string;
   unverified: boolean;
   /** Only the intent row: the merge call failed, yet the forge merged. */
   intentOnly?: boolean;
@@ -170,7 +189,11 @@ const mergedVerdictLine = (landed: MergeRecord | "untracked"): string =>
     ? "merged outside workit (no merge record)"
     : landed.unverified
       ? `merged unverified at ${(landed.head ?? "?").slice(0, 12)} (recorded bypass)`
-      : `merged with accepted verdict ${landed.verdictId ?? "?"} at ${(landed.head ?? "?").slice(0, 12)}${landed.intentOnly ? " (merge intent recorded; the merge call itself failed)" : ""}`;
+      : landed.lane === "none" && !landed.verdictId
+        ? `merged at ${(landed.head ?? "?").slice(0, 12)} with no verdict (lane none)`
+        : landed.review === "self-reviewed"
+          ? `merged self-reviewed (lane self) with the author's verdict ${landed.verdictId ?? "?"} at ${(landed.head ?? "?").slice(0, 12)}`
+          : `merged with accepted verdict ${landed.verdictId ?? "?"} at ${(landed.head ?? "?").slice(0, 12)}${landed.intentOnly ? " (merge intent recorded; the merge call itself failed)" : ""}`;
 
 /**
  * S12: the S13 verdict for the PR's head branch (fresh, carried through a
@@ -179,7 +202,7 @@ const mergedVerdictLine = (landed: MergeRecord | "untracked"): string =>
 function verdictBlock(
   cwd: string,
   branch: string,
-  doc: { state: string; number: number; base: string },
+  doc: { state: string; number: number; base: string; head: { sha: string } },
 ) {
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return null;
@@ -206,13 +229,34 @@ function verdictBlock(
       ? {
           head: typeof row.head === "string" ? row.head : null,
           verdictId: typeof row.verdictId === "string" ? row.verdictId : null,
+          ...(typeof row.review === "string" ? { review: row.review } : {}),
+          ...(typeof row.lane === "string" ? { lane: row.lane } : {}),
           unverified: row.unverified !== undefined && row.unverified !== null,
           ...(merged ? {} : { intentOnly: true }),
         }
       : "untracked";
   }
+  // The open PR's review lane and what the merge gate asks for it.
+  const gate =
+    doc.state === "merged" || !doc.head.sha
+      ? null
+      : prLaneGate(cwd, check, { branch, base: doc.base, head: doc.head.sha });
   return {
     merge: landed,
+    lane: gate
+      ? {
+          lane: gate.lane.lane,
+          reasons: gate.lane.reasons,
+          lines: gate.lane.lines,
+          files: gate.lane.files,
+          riskFiles: gate.lane.riskFiles,
+          base: gate.lane.base,
+          verification: gate.verification,
+          warnings: [untrackedRiskPathsWarning(cwd)].filter((line) => line !== null),
+          need: gate.need,
+          satisfied: gate.satisfied && (gate.need === "none" || check.head === doc.head.sha),
+        }
+      : null,
     accepted: check.accepted.accepted,
     review: check.review,
     basis: check.current.basis,

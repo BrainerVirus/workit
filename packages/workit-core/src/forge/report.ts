@@ -428,7 +428,7 @@ export function buildStatusDoc(
 
 /**
  * Record what the forge said about a PR as a CLI-observed `pr.status` row
- * (pr, branch, head, state: open|merged|closed, checks), only when it
+ * (pr, branch, head, base, state: open|merged|closed, checks), only when it
  * differs from the newest row for that PR, so polling never floods the
  * ledger. Hooks read it without calling the forge: an open PR's checks
  * (passing|failing|pending; one without gating checks is not recorded), and
@@ -455,7 +455,8 @@ export function recordPrStatus(cwd: string, doc: PrStatusDoc, actor: LedgerActor
       last &&
       last.head === doc.head.sha &&
       last.checks === checks &&
-      (last.state ?? "open") === state
+      (last.state ?? "open") === state &&
+      (last.base ?? null) === (doc.base ?? null)
     )
       return;
     appendObserved(cwd, {
@@ -468,6 +469,7 @@ export function recordPrStatus(cwd: string, doc: PrStatusDoc, actor: LedgerActor
       forge: doc.forge,
       state,
       checks,
+      base: doc.base,
     });
   } catch {
     // The row is an observation for hooks; the verb's answer stands without it.

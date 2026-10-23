@@ -154,8 +154,9 @@ head independently verified?".
 
 **Autonomy grants.** Per-workspace grants in `~/.config/workit/workspaces.json`
 set the ceiling: `push`, `pr` and `rerun` are allowed by default; `merge` needs
-`true` or `verified`, and both merge only with an accepted independent verdict
-(`true` also allows a ledger-recorded `--unverified --reason` bypass);
+`true` or `verified`, and both merge only with the verdict the PR's review
+lane asks for (an accepted independent one outside `verification:
+proportional`; `true` also allows a ledger-recorded `--unverified --reason` bypass);
 `defaultEndpoint` is where an unnamed delivery request
 stops: `commit` (default), `pr` (push and open the PR), `green` (open the PR,
 then babysit CI, review threads and required rebases until it is merge-ready,
@@ -168,10 +169,16 @@ you at a terminal; agents can only lower them. See
 **Policy.** Judge tracked work in four calls (`workit policy assess --judge
 risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no`,
 or the flat `workit_policy` tool fields) and Workit derives what it needs:
-nothing for trivial work, an observed `workit check test` and a verdict for a
-behavior change (the author's own, shown as self-reviewed, unless the
-workspace sets `verification: "independent"`), an independent live verdict and
-a plan for high risk. An open product choice or a needed plan blocks code
+nothing for trivial work, an observed `workit check test` and the verdict the
+change's review lane asks for, an independent live verdict and a plan for high
+risk. Under the default `verification: "proportional"` the lane comes from the
+diff: `none` (docs, comments, formatting, generated copies) needs no verdict,
+`self` (a small change off risk paths) the author's own `--self` verdict,
+`focused` and `full` (risk paths such as hooks, auth, release, migrations or
+the repo's own `.workit/risk-paths`, a lockfile, or a large diff) a non-author
+verdict, at task close, the Stop hook and the merge gate alike; when unsure, a
+file counts as a behavior change. `workit pr status` and `workit policy
+assess` show it. An open product choice or a needed plan blocks code
 edits until recorded, on every host with a pre-write hook (advisory on Codex).
 See [verification](docs/guides/verification.md). Host permissions
 (allow/ask/deny, sandbox) always stay authoritative; Workit adds no consent

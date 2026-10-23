@@ -142,7 +142,7 @@ const workspaceConfigSchema = z
      */
     defaultEndpoint: z.unknown().optional(),
     /** How a normal-risk behavior change is verified (S17); same rules as grants. */
-    verification: z.enum(["self", "independent"]).optional(),
+    verification: z.enum(["proportional", "self", "independent"]).optional(),
     /**
      * Who does the work (skills and `fanout plan` read it): `inline-first`
      * (default) keeps the lead working itself and refuses a slice without a

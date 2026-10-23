@@ -40,7 +40,7 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
    chain resumes. A fix round and recheck that both fail: a decider, not a
    third round; product choices go to the user (`references/orchestration.md`).
 7. **Verify by the workspace `verification` setting** (`workit grant show`).
-   A report is a pointer, never evidence. `self`: a verifier that wrote none
+   A report is a pointer, never evidence. `proportional` (default): each slice's lane (`workit pr status`) decides; none needs no verdict, self the author's `--self`, focused (cheap model: Claude Code `model: sonnet`) and full a verifier after the last push. `self`: a verifier that wrote none
    of the slices, or you if you wrote none. `independent` or high risk: a
    separate verifier session, never yours (doctrine: the ledger only refuses
    authors). One verifier may take a batch of slices, one verdict per branch

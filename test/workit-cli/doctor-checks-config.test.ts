@@ -83,3 +83,24 @@ test("Given a fresh repo, When a checks config is written under ensureWorkitDir,
     "",
   );
 });
+
+test("Given a .workit/.gitignore, When ensureWorkitDir runs, Then risk-paths is not ignored, the old `*` is rewritten and a custom file is kept", () => {
+  const root = repo({});
+  spawnSync("git", ["init", "-q"], { cwd: root });
+  const ignore = path.join(ensureWorkitDir(root), ".gitignore");
+  expect(readFileSync(ignore, "utf8")).toBe("*\n!risk-paths\n");
+  writeFileSync(path.join(root, ".workit/risk-paths"), "src/billing/**\n");
+  writeFileSync(path.join(root, ".workit/checks.json"), CONFIG);
+  const status = spawnSync("git", ["status", "--porcelain", "-uall"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  expect(status.stdout).toContain(".workit/risk-paths");
+  expect(status.stdout).not.toContain("checks.json");
+  writeFileSync(ignore, "*\n");
+  ensureWorkitDir(root);
+  expect(readFileSync(ignore, "utf8")).toBe("*\n!risk-paths\n");
+  writeFileSync(ignore, "*\n!mine\n");
+  ensureWorkitDir(root);
+  expect(readFileSync(ignore, "utf8")).toBe("*\n!mine\n");
+});

@@ -104,6 +104,8 @@ const setup = (
           glob: `${repo.root.replaceAll("\\", "/")}/**`,
           vcs: { provider: "github", account: "octo" },
           autonomy: { merge: "verified" },
+          // The pre-#333 default: the non-author merge gate these tests pin.
+          verification: "self",
         },
       ],
     }),

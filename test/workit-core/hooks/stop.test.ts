@@ -21,6 +21,7 @@ import {
 import { recordPrStatus, type PrStatusDoc } from "@/packages/workit-core/src/forge/report";
 import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
 import { fixture, tempRoot } from "./hook-fixtures";
 
 const roots: string[] = [];
@@ -329,7 +330,7 @@ test("G a merge in the forge UI, branch not pruned, W pr status records the merg
   expect(claudeStop(merged)).toEqual({});
 
   const closed = repo("green");
-  commit(closed, "a.txt");
+  commit(closed, "a.ts");
   git(closed, "push", "-q", "-u", "origin", "feature/x");
   prCreated(closed, 6);
   prStatus(closed, 6, "failing");
@@ -382,7 +383,7 @@ test("G an --unverified merge of this session's PR, T no verdict is owed; a new 
 
 test("G endpoint green and the open PR's checks recorded failing at the head, T it continues naming workit ci wait", () => {
   const root = repo("green");
-  commit(root, "a.txt");
+  commit(root, "a.ts");
   git(root, "push", "-q", "origin", "feature/x");
   prCreated(root, 7);
   prStatus(root, 7, "failing");
@@ -403,7 +404,7 @@ test("G endpoint green and the open PR's checks recorded failing at the head, T 
 
 test("G checks recorded failing at an older head, T they say nothing about the new head", () => {
   const root = repo("green");
-  commit(root, "a.txt");
+  commit(root, "a.ts");
   git(root, "push", "-q", "origin", "feature/x");
   prCreated(root, 7);
   prStatus(root, 7, "failing");
@@ -433,31 +434,35 @@ test("G failing checks recorded for a PR merged since, or under endpoint pr, T n
   expect(claudeStop(underPr)).toEqual({});
 });
 
-test("G this session delivered a PR, W the head has no or only a self verdict, T it continues naming a non-author verifier; an independent verdict clears it", () => {
-  const root = repo("green", "independent");
-  commit(root, "a.txt");
-  git(root, "push", "-q", "origin", "feature/x");
-  prCreated(root, 8);
-  const none = claudeStop(root);
-  expect(none.decision).toBe("block");
-  expect(none.reason).toContain("has no current verdict");
-  expect(none.reason).toContain("workit:verifier");
-  expect(none.reason).toContain("Never record a verdict on your own work");
-  const self = recordVerdict(
-    { cwd: root, actor: actor(SESSION), branch: "feature/x" },
-    { result: "verified", how: "ran the tests", self: true },
-  );
-  expect(self.ok).toBe(true);
-  forgetRaised(root);
-  expect(claudeStop(root).reason).toContain("has only a self verdict");
-  const independent = recordVerdict(
-    { cwd: root, actor: actor("s-verifier"), branch: "feature/x" },
-    { result: "verified", how: "drove the CLI" },
-  );
-  expect(independent.ok).toBe(true);
-  forgetRaised(root);
-  expect(claudeStop(root)).toEqual({});
-});
+test(
+  "G this session delivered a PR, W the head has no or only a self verdict, T it continues naming a non-author verifier; an independent verdict clears it",
+  () => {
+    const root = repo("green", "independent");
+    commit(root, "a.txt");
+    git(root, "push", "-q", "origin", "feature/x");
+    prCreated(root, 8);
+    const none = claudeStop(root);
+    expect(none.decision).toBe("block");
+    expect(none.reason).toContain("has no current verdict");
+    expect(none.reason).toContain("workit:verifier");
+    expect(none.reason).toContain("Never record a verdict on your own work");
+    const self = recordVerdict(
+      { cwd: root, actor: actor(SESSION), branch: "feature/x" },
+      { result: "verified", how: "ran the tests", self: true },
+    );
+    expect(self.ok).toBe(true);
+    forgetRaised(root);
+    expect(claudeStop(root).reason).toContain("has only a self verdict");
+    const independent = recordVerdict(
+      { cwd: root, actor: actor("s-verifier"), branch: "feature/x" },
+      { result: "verified", how: "drove the CLI" },
+    );
+    expect(independent.ok).toBe(true);
+    forgetRaised(root);
+    expect(claudeStop(root)).toEqual({});
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
 test("G an independent failed verdict on the delivered head, T the stop is free: the fix is the agent's next turn, not a verifier", () => {
   const root = repo("green", "independent");
@@ -581,20 +586,24 @@ const judge = (root: string, judgment: Record<string, unknown>) => {
   if (!assessed.ok) throw new Error(assessed.error);
 };
 
-test("G the task's judgment says no behavior change, W the agent stops with no verdict, T no verdict block; a behavior change or no judgment still blocks", () => {
-  const docs = delivered("green", "self");
-  judge(docs, { riskTier: "normal", behaviorChange: false });
-  expect(claudeStop(docs)).toEqual({});
-  const code = delivered("green", "self");
-  judge(code, { riskTier: "normal", behaviorChange: true });
-  expect(claudeStop(code).decision).toBe("block");
-  const unjudged = delivered("green", "self");
-  expect(claudeStop(unjudged).decision).toBe("block");
-  // High risk asks for a verifier whether or not behavior changes.
-  const risky = delivered("green", "independent");
-  judge(risky, { riskTier: "high", behaviorChange: false });
-  expect(claudeStop(risky).decision).toBe("block");
-});
+test(
+  "G the task's judgment says no behavior change, W the agent stops with no verdict, T no verdict block; a behavior change or no judgment still blocks",
+  () => {
+    const docs = delivered("green", "self");
+    judge(docs, { riskTier: "normal", behaviorChange: false });
+    expect(claudeStop(docs)).toEqual({});
+    const code = delivered("green", "self");
+    judge(code, { riskTier: "normal", behaviorChange: true });
+    expect(claudeStop(code).decision).toBe("block");
+    const unjudged = delivered("green", "self");
+    expect(claudeStop(unjudged).decision).toBe("block");
+    // High risk asks for a verifier whether or not behavior changes.
+    const risky = delivered("green", "independent");
+    judge(risky, { riskTier: "high", behaviorChange: false });
+    expect(claudeStop(risky).decision).toBe("block");
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
 
 test("G verification independent and no accepted verdict, W stopping at endpoint merged, T it still blocks once", () => {
   const root = repo("merged", "independent");
@@ -606,3 +615,84 @@ test("G verification independent and no accepted verdict, W stopping at endpoint
   expect(out.reason).toContain("an independent verdict");
   expect(claudeStop(root)).toEqual({});
 });
+
+/** A delivered PR under the default `verification: proportional` whose one commit adds `file`. */
+const deliveredLane = (file: string) => {
+  const root = repo("green");
+  mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+  commit(root, file);
+  git(root, "push", "-q", "origin", "feature/x");
+  prCreated(root, 8);
+  return root;
+};
+
+test("G proportional (the default) and a docs-only PR, W the agent stops with no verdict, T no verdict block (lane none)", () => {
+  expect(claudeStop(deliveredLane("README.md"))).toEqual({});
+});
+
+test(
+  "G proportional and a small code change, W the agent stops, T it asks for the author's own verdict (lane self), which clears it",
+  () => {
+    const root = deliveredLane("src/a.ts");
+    const none = claudeStop(root);
+    expect(none.decision).toBe("block");
+    expect(none.reason).toContain("your own is enough");
+    forgetRaised(root);
+    recordVerdict(
+      { cwd: root, actor: actor(SESSION), branch: "feature/x" },
+      { result: "tests-verified", how: "bun test", self: true },
+    );
+    expect(claudeStop(root)).toEqual({});
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "G a PR retargeted on the forge, W the agent stops, T the lane is read against the base `pr status` last saw, not the one it was opened with",
+  () => {
+    const root = repo("green");
+    // `stage` already holds a risk-path change; the PR adds only docs on top.
+    mkdirSync(path.join(root, "src/hooks"), { recursive: true });
+    writeFileSync(path.join(root, "src/hooks/guard.ts"), "export const guard = 1;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "stage work");
+    git(root, "push", "-q", "origin", "HEAD:stage");
+    commit(root, "README.md");
+    git(root, "push", "-q", "origin", "feature/x");
+    git(root, "fetch", "-q", "origin");
+    prCreated(root, 8);
+    // Against main the hook file is in the diff: lane full.
+    expect(claudeStop(root).decision).toBe("block");
+    forgetRaised(root);
+    appendObserved(root, {
+      type: "pr.status",
+      actor: actor(SESSION),
+      branch: "feature/x",
+      head: git(root, "rev-parse", "HEAD"),
+      pr: 8,
+      repo: "o/r",
+      forge: "github",
+      state: "open",
+      checks: "passing",
+      base: "stage",
+    });
+    expect(claudeStop(root)).toEqual({});
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "G proportional and a change on a risk path, W the agent stops with only a self verdict, T it asks for an independent verdict (lane full)",
+  () => {
+    const root = deliveredLane("src/hooks/guard.ts");
+    recordVerdict(
+      { cwd: root, actor: actor(SESSION), branch: "feature/x" },
+      { result: "tests-verified", how: "bun test", self: true },
+    );
+    const out = claudeStop(root);
+    expect(out.decision).toBe("block");
+    expect(out.reason).toContain("has only a self verdict");
+    expect(out.reason).toContain("an independent verdict");
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);

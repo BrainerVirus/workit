@@ -64,7 +64,16 @@ const workspace = (repo: ForgeRepo, entry: Record<string, unknown>) =>
   writeFileSync(
     path.join(configDir, "workspaces.json"),
     JSON.stringify({
-      workspaces: [{ name: "w", glob: `${repo.root.replaceAll("\\", "/")}/**`, ...entry }],
+      // `verification: self`, the pre-#333 default, keeps the non-author merge
+      // gate these tests pin; pr-merge-lanes.test.ts covers proportional.
+      workspaces: [
+        {
+          name: "w",
+          glob: `${repo.root.replaceAll("\\", "/")}/**`,
+          verification: "self",
+          ...entry,
+        },
+      ],
     }),
   );
 
