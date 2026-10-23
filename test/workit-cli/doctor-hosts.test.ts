@@ -1,5 +1,5 @@
 // workit doctor host checks on scratch homes: Codex plugin hook trust and
-// agents (codex-cli 0.160.1), and the Pi extension (pi-coding-agent 0.85.1).
+// agents (codex-cli 0.160.1), and the Pi extension (pi-coding-agent 1.4.0).
 import { afterAll, expect, test } from "bun:test";
 import {
   cpSync,

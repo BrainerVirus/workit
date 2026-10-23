@@ -513,6 +513,7 @@ export default function extension(pi: ExtensionAPI): void {
             pi as unknown as { sendUserMessage: (content: string, options: unknown) => void }
           ).sendUserMessage(`/skill:${skill}${extra ? ` ${extra}` : ""}`, {
             expandPromptTemplates: true,
+            deliverAs: "followUp",
           });
         },
       });
@@ -530,6 +531,9 @@ export default function extension(pi: ExtensionAPI): void {
     reconcileLostWorkers(ctx);
   });
   pi.on("before_agent_start", (event, ctx) => {
+    // Pi 1.2+ also fires this for runs a custom message starts (Workit's own
+    // stop-line continuation): they carry no prompt and no new Workit context.
+    if (event.messageType !== "user") return undefined;
     const nudge = skillPromptNudge(event.prompt, ctx);
     const id = ctx.sessionManager.getSessionId();
     const trusted = ctx.isProjectTrusted();

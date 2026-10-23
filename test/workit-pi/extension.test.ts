@@ -106,7 +106,7 @@ test("clean Pi package declares stock discovery and the seven families plus read
   );
   expect(manifest.pi).toEqual({ extensions: ["./dist/workit.js"], skills: ["./skills"] });
   expect(manifest.dependencies ?? {}).not.toHaveProperty("@brainervirus/workit-core");
-  expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("^0.85.1");
+  expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("^1.4.0");
   const pi = makePi();
   await extension(pi as any);
   expect(
@@ -170,7 +170,7 @@ test("Pi registers wk- slash aliases that expand the bundled skill commands", as
     await command.handler("extra args", {});
     expect(pi.sent.at(-1)).toEqual({
       content: `/skill:${skill} extra args`,
-      options: { expandPromptTemplates: true },
+      options: { expandPromptTemplates: true, deliverAs: "followUp" },
     });
   }
 });
@@ -454,8 +454,9 @@ test("Pi session context offers unfinished history once without writing task sta
   await extension(pi as any);
   const ctx = context(root, false, true, "new-pi-session");
   const start = pi.handlers.get("before_agent_start")!;
-  const first = await start({}, ctx);
-  const second = await start({}, ctx);
+  const userEvent = { type: "before_agent_start", messageType: "user", prompt: "" };
+  const first = await start(userEvent, ctx);
+  const second = await start(userEvent, ctx);
   expect((first as any).message.content).toContain("<workit-history-offer>");
   expect((first as any).message.content).toContain("test task");
   expect((first as any).message.content).toContain("same handle from Codex");

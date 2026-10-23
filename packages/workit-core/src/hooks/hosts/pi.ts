@@ -4,7 +4,7 @@ import type { HostDescriptor } from "../descriptor";
 export const PI_DESCRIPTOR: HostDescriptor = {
   host: "pi",
   label: "Pi",
-  verifiedAgainst: "@earendil-works/pi-coding-agent 0.85.1",
+  verifiedAgainst: "@earendil-works/pi-coding-agent 1.4.0",
   docs: ["https://github.com/earendil-works/pi-coding-agent"],
   transport: "in-process-plugin",
   events: {
@@ -20,7 +20,7 @@ export const PI_DESCRIPTOR: HostDescriptor = {
     "prompt.submit": { support: "undocumented", native: null },
     "compact.pre": { support: "native", native: "session_before_compact" },
     // agent_end carries the run's messages; pi.sendMessage(…, {triggerTurn})
-    // starts one more turn (pi-coding-agent 0.85.1 types.d.ts). The host has
+    // starts one more turn (pi-coding-agent 1.4.0 types.d.ts). The host has
     // no loop guard: the extension continues at most once per run.
     stop: { support: "native", native: "agent_end" },
   },
