@@ -125,7 +125,7 @@ Autonomy contract:
 CLI first: if a step has one right answer, use the \`workit\` verb instead of
 hand-running git, gh or glab (\`workit git|pr|ci|check|help\`;
 else \`npx -y @brainervirus/workit-cli\`).
-Other checkout: \`workit --cwd <dir> <verb>\` (Codex: \`<verb> --cwd <dir>\`); one workit
+Other checkout: \`workit <verb> --cwd <dir> …\` (verb first: host rules match it); one workit
 verb per shell call, never \`cd <dir> && workit\`. zsh-safe: no \`echo =====\`
 (\`printf '%s\\n' ---\`), quote globs and URLs, no variable named \`status\` or \`path\`.
 Add Co-Authored-By via \`workit git commit --trailer "K: v" -- <paths>\`, never

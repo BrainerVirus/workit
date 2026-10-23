@@ -13,7 +13,7 @@
 // workers export nothing (the host derives the id);
 // Cursor, CI and plain terminals export `<lead>-w-<slice>`. Once
 // `workit fanout worktree create` made the slice's worktree, WORKTREE and the
-// RULES name it: every git and check command runs as `workit --cwd <worktree> …`.
+// RULES name it: every git and check command runs as `workit <verb> --cwd <worktree> …`.
 // The lead must have a WORKIT_SESSION_ID: worker ids derive from it. A
 // worker id longer than the ledger's 128 characters hashes its slice part. The fan-in line follows the plan's `fanIn`:
 // one PR per slice forbids every merge; integration mode has the worker merge
@@ -96,8 +96,9 @@ const identityLines = (identity: BriefIdentity, session: string): string[] => {
 
 /**
  * RULES. With the slice's worktree made (`worktree`), every git and check
- * command names it (`workit --cwd <worktree> …`, one verb per call) and it is
- * already on the branch; Workit's hooks keep an implementer inside it (#310).
+ * command names it (`workit <verb> --cwd <worktree> …`, verb first so host
+ * allow rules match, one verb per call) and it is already on the branch;
+ * Workit's hooks keep an implementer inside it (#310).
  */
 const rules = (
   mode: BriefMode,
@@ -105,17 +106,18 @@ const rules = (
   base: string,
   worktree: string | null,
 ): string[] => {
-  const workit = worktree ? `workit --cwd ${worktree}` : "workit";
+  const workit = (verb: string) =>
+    worktree ? `workit ${verb} --cwd ${worktree}` : `workit ${verb}`;
   let first = `  1. First command: \`workit git branch ${branch} --base ${base}\` (your worktree may start on another name).`;
   if (worktree)
-    first = `  1. Work only in WORKTREE, already on ${branch}${mode === "resume" ? " at its head" : ""}: edit files under it and run each git and check command against it, one verb per call (\`${workit} git commit …\`, \`${workit} check <name>\`), never \`cd … &&\` chains or \`$VAR\` paths. An implementer's change outside it is denied.`;
+    first = `  1. Work only in WORKTREE, already on ${branch}${mode === "resume" ? " at its head" : ""}: edit files under it and run each git and check command against it, one verb per call (\`${workit("git")} commit …\`, \`${workit("check")} <name>\`), never \`cd … &&\` chains or \`$VAR\` paths. An implementer's change outside it is denied.`;
   else if (mode === "resume")
     first = `  1. First command: \`git switch ${branch}\`, then continue from its head.`;
   return [
     "RULES:",
     first,
     '  2. Decide ambiguities yourself: `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`; stop only for an irreversible, security-sensitive or out-of-worktree action.',
-    `  3. Commit with \`${workit} git commit -m <msg> -- <paths in SCOPE>\`; push only if this brief says so.`,
+    `  3. Commit with \`${workit("git")} commit -m <msg> -- <paths in SCOPE>\`; push only if this brief says so.`,
     "  4. Never record a verdict on your own work.",
     "  5. Run tests, lint, typecheck and builds only through `workit check` (a named check, or `workit check --heavy -- <cmd>`): one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
     "  6. A failed review gets one fix round and one recheck. Still failing: stop and report the open finding, never a third round (the lead spawns a decider). A product choice is the user's: report it, do not decide it.",

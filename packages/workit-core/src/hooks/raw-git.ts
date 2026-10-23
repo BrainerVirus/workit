@@ -791,7 +791,12 @@ export function workitInvocations(
 /** Workit's global options before the verb: `--json`, and these (`--name value` or `--name=value`). */
 const WORKIT_GLOBAL = /^--(?:cwd|session|token|as)(=|$)/;
 
-/** An invocation's arguments without the global options before the verb, and the last `--cwd` among them. */
+/**
+ * An invocation's arguments without the global options before the verb and
+ * without any `--cwd` before `--`, and the last `--cwd`. Like the CLI's
+ * parseGlobals, `--cwd` counts anywhere before `--`, so `workit <verb> --cwd
+ * <dir> …` (the form host allow rules match) runs in `<dir>` here too.
+ */
 export function skipWorkitGlobals(args: readonly string[]): { rest: string[]; cwd: string | null } {
   let cwd: string | null = null;
   let at = 0;
@@ -804,7 +809,18 @@ export function skipWorkitGlobals(args: readonly string[]): { rest: string[]; cw
       at++;
     } else if (args[at] !== "--json") break;
   }
-  return { rest: args.slice(at), cwd };
+  const rest: string[] = [];
+  for (; at < args.length; at++) {
+    const arg = args[at];
+    if (arg === "--") {
+      rest.push(...args.slice(at));
+      break;
+    }
+    if (arg.startsWith("--cwd=")) cwd = arg.slice("--cwd=".length);
+    else if (arg === "--cwd" && args[at + 1] !== undefined) cwd = args[++at];
+    else rest.push(arg);
+  }
+  return { rest, cwd };
 }
 
 /** What one raw invocation means for workit. */

@@ -25,7 +25,7 @@ REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,
   each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),
   anything out of scope as a follow-up, not a diff.
 STANDING: <the standing orders, verbatim: `workit ledger standing add` records each one>
-WORKTREE: <the path `workit fanout worktree create <slice>` made; the worker runs `workit --cwd <it> …` there>
+WORKTREE: <the path `workit fanout worktree create <slice>` made; the worker runs `workit <verb> --cwd <it> …` there>
   <identity line, per the lead's host: see "Identity and git rules per host" below>
 ```
 
@@ -114,7 +114,7 @@ lead's host (`WORKIT_HOST`, or the host's own session variable):
 
 Once `workit fanout worktree create <slice>` made the worktree, the brief's
 WORKTREE line names it and RULES 1 and 3 run against it on every host:
-`workit --cwd <worktree> git commit …`, `workit --cwd <worktree> check <name>`,
+`workit git --cwd <worktree> commit …`, `workit check --cwd <worktree> <name>`,
 one verb per call. The worktree is already on the branch (MODE new or resume),
 so no branch command comes first. Without one, `MODE: resume` is
 `git switch <branch>` (the branch exists), then continue from its head. A race
@@ -124,13 +124,13 @@ attempt (`--attempt <n>`) follows its host's row with the branch
 ## Worker rules (`workit fanout brief` appends them as RULES)
 
 1. Work only in WORKTREE, already on the branch, one verb per call against it
-   (`workit --cwd <worktree> …`); Workit's hooks deny an implementer's change
+   (`workit <verb> --cwd <worktree> …`); Workit's hooks deny an implementer's change
    outside it. With no worktree made yet: create the branch (`MODE: new`) or
    `git switch` to it (`MODE: resume`), as the table above says.
 2. Decide ambiguities yourself and record them:
    `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`.
    Stop only for an irreversible action, a security-sensitive one, or a side
    effect outside the worktree.
-3. Commit with `workit --cwd <worktree> git commit -m "<msg>" -- <paths in SCOPE>`;
+3. Commit with `workit git --cwd <worktree> commit -m "<msg>" -- <paths in SCOPE>`;
    push only if the brief says so.
 4. Never record a verdict on your own work.

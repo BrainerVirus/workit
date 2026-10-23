@@ -187,7 +187,7 @@ command that wraps git (`workit git …`, `workit check`) and cannot be turned
 off. The lead makes the worktree first with `workit fanout worktree create
 <slice>` (on every host), which also links the main checkout's
 `node_modules` so the worktree's tests import its own workspace packages. The
-implementer works there with `workit --cwd <worktree> git|check …`, one verb
+implementer works there with `workit git|check --cwd <worktree> …`, one verb
 per call. Workit's pre-tool hooks bind it to the first Workit worktree it
 changes and deny its edits and mutating git commands outside that worktree,
 naming it; before that, a change outside every Workit worktree is denied, so

@@ -636,7 +636,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   `find -delete`) counts as a change in the directory it runs in, and a link
   inside the worktree may not point outside it. After a `cd -`, `cd "$VAR"` or
   `popd` Workit cannot follow, a write is denied until it names an absolute
-  path, `git -C <worktree>` or `workit --cwd <worktree>`. This guards against
+  path, `git -C <worktree>` or `workit <verb> --cwd <worktree>`. This guards against
   hand edits and is not a sandbox: writers such as `tar -C`, `unzip -d`,
   `curl -o`, `ed` or `sqlite3` and script files an interpreter runs are not
   judged, so the merge gate and a non-author verdict still check the diff.

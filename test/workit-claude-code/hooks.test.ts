@@ -430,7 +430,7 @@ test("SubagentStart gives the worktree implementer write guidance and keeps othe
   const unisolated = context("workit:implementer");
   expect(unisolated).toContain("edits and commits only in its own git worktree");
   expect(unisolated).toContain("workit fanout worktree create <slice>");
-  expect(unisolated).toContain("`workit --cwd <worktree> check <name>`");
+  expect(unisolated).toContain("`workit check --cwd <worktree> <name>`");
   expect(unisolated).toContain("an edit or a mutating git command outside that worktree is denied");
   expect(unisolated).not.toContain("Run git as plain");
   expect(unisolated).not.toContain("read-only");

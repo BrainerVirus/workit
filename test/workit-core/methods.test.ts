@@ -510,8 +510,8 @@ test("workit-ship names every babysit step `workit pr status` can report", () =>
 
 test("Given the session contract, When it is read, Then it names --cwd, one verb per call and the zsh-safe shell rules", () => {
   const bootstrap = invariantBootstrap();
-  expect(bootstrap).toContain("workit --cwd <dir> <verb>");
-  expect(bootstrap).toContain("(Codex: `<verb> --cwd <dir>`)");
+  expect(bootstrap).toContain("`workit <verb> --cwd <dir> …` (verb first: host rules match it)");
+  expect(bootstrap).not.toContain("workit --cwd <dir> <verb>");
   expect(bootstrap).toContain("verb per shell call");
   expect(bootstrap).toContain("never `cd <dir> && workit`");
   expect(bootstrap).toContain("printf '%s\\n' ---");

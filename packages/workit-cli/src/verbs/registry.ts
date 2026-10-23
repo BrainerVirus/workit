@@ -620,7 +620,7 @@ export const VERBS: readonly VerbEntry[] = [
         name: "verdict",
         flagAliases: { sha: "head" },
         flagHints: {
-          repo: "a verdict is recorded in the checkout you run it from: pass --cwd <dir> (workit --cwd <dir> ledger verdict …)",
+          repo: "a verdict is recorded in the checkout you run it from: pass --cwd <dir> (workit ledger --cwd <dir> verdict …)",
         },
         usage: `workit ledger verdict <result> --how "<method/evidence>" [--head <sha>] [--kind unit|live|perf|review] [--base <ref>] [--surface ui|cli|api] [--evidence <ref>]… [--self] ${LEDGER_ACTOR} | ledger verdict [<branch>]`,
         summary:

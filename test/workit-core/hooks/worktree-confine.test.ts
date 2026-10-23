@@ -150,7 +150,7 @@ test("Given an implementer bound to worktree W by its first edit there, When it 
     expect(denied?.permissionDecisionReason, outside).toContain(
       `implementer impl-edit is bound to the worktree ${wtA}, and ${outside} is outside it`,
     );
-    expect(denied?.permissionDecisionReason, outside).toContain(`workit --cwd ${wtA} git commit`);
+    expect(denied?.permissionDecisionReason, outside).toContain(`workit git --cwd ${wtA} commit`);
   }
   expect(
     claude(
@@ -176,6 +176,10 @@ test("Given an implementer bound to W, When it runs git and shell writes, Then r
   for (const command of [
     `workit --cwd ${wtA} git commit -m "feat: a" -- a.ts`,
     `workit --cwd ${wtA} check test`,
+    // Verb first (#297): `--cwd` after the verb names the same directory.
+    `workit git --cwd ${wtA} commit -m "feat: a" -- a.ts`,
+    `workit git --cwd=${wtA} commit -m "feat: a" -- a.ts`,
+    `workit check --cwd ${wtA} test`,
     `git -C ${wtA} add a.ts`,
     `echo x > ${path.join(wtA, "a.ts")}`,
     "git status",
@@ -187,6 +191,8 @@ test("Given an implementer bound to W, When it runs git and shell writes, Then r
     `git -C ${wtB} commit -m x`,
     `cd ${lead} && git add -A`,
     `workit --cwd ${lead} git commit -m "feat: a" -- src/core.ts`,
+    `workit git --cwd ${lead} commit -m "feat: a" -- src/core.ts`,
+    `workit git commit --cwd ${lead} -m "feat: a" -- src/core.ts`,
     `echo x > ${path.join(lead, "src", "core.ts")}`,
   ]) {
     const denied = bash(command, { id: "impl-shell" });
@@ -408,6 +414,8 @@ test("Given a bound implementer, When it puts workit global options before fanou
     "workit --session=x --json fanout worktree create c",
     `workit --json --cwd ${wtA} fanout plan plan.json`,
     `workit --cwd=${wtA} --json fanout worktree release b`,
+    `workit fanout --cwd ${wtA} worktree release b`,
+    `workit fanout worktree --cwd=${wtA} create c`,
     "workit --token t --as lead fanout worktree create c",
     "workit check -- workit --json fanout plan plan.json",
   ])
