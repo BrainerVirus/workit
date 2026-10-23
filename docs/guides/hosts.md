@@ -123,13 +123,21 @@ ledger and local git only, never the forge, and any failure allows the stop.
 | Pi | `agent_end` | `pi.sendMessage(…, {triggerTurn: true})` | the extension skips the next `agent_end` |
 | OpenCode | `session.idle` event | `session.synthetic({resume: true})` | the plugin skips the next idle |
 
-**Worktree-isolated Claude Code subagents.** Claude Code's worktree isolation
-refuses any command that wraps git, `workit git …` included, and cannot be
-turned off. A `workit:implementer`, or any agent running in a
-`.claude/worktrees/` checkout, is told up front to run git as plain separate
-commands there (`git switch -c`, `git commit --trailer
-"Workit-Session=<session>"`, `git push`) and workit for the non-git verbs
-(`workit check`, `workit ledger`, `workit pr`).
+**Implementer worktrees.** The `workit:implementer` agent runs without Claude
+Code's worktree isolation, which refuses any command it cannot verify and any
+command that wraps git (`workit git …`, `workit check`) and cannot be turned
+off. The lead makes the worktree first with `workit fanout worktree create
+<slice>` (on every host), which also links the main checkout's
+`node_modules` so the worktree's tests import its own workspace packages. The
+implementer works there with `workit --cwd <worktree> git|check …`, one verb
+per call. Workit's pre-tool hooks bind it to the first Workit worktree it
+changes and deny its edits and mutating git commands outside that worktree,
+naming it; before that, a change outside every Workit worktree is denied, so
+it never edits the lead's checkout. An agent still running in a
+`.claude/worktrees/` checkout (spawned with `isolation: "worktree"`) is told
+up front to run git as plain separate commands there (`git switch -c`,
+`git commit --trailer "Workit-Session=<session>"`, `git push`) and workit for
+the non-git verbs.
 
 `workit` reads `WORKIT_SESSION_ID` first (set it, even empty, to override),
 then the host's own variable from the table. Cursor puts no conversation id in
@@ -237,7 +245,8 @@ injection plus the skill nudge (`UserPromptSubmit`), the before-write gate on
 `workit-verifier` or `workit-reviewer` is told its own Workit session id for
 `workit ledger verdict --session`; one named `workit-implementer` is told to
 work only in its own worktree (`workit fanout worktree create <slice>`) on a
-policy-compliant branch.
+policy-compliant branch, and Workit's `PreToolUse` hook denies its changes
+outside that worktree when Codex names the agent on the tool call.
 
 The plugin ships those three agents. Codex plugins cannot register agents, so
 the plugin's MCP server copies `workit-verifier.toml`, `workit-reviewer.toml`
