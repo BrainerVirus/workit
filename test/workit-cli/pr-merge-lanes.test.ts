@@ -274,3 +274,61 @@ test("a merged lane-none PR reads as merged with no verdict in pr status", async
   const human = await run(["pr", "status"], repo.cwd);
   expect(human.stdout).toContain("with no verdict (lane none)");
 });
+
+// #334: a verdict carries over a follow-up commit whose own change is lane
+// none; a code change makes it stale and asks a focused re-verify.
+const followUp = (repo: ForgeRepo, files: Record<string, string>) => {
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(repo.cwd, file)), { recursive: true });
+    writeFileSync(path.join(repo.cwd, file), text);
+  }
+  repo.git("add", "-A");
+  repo.git("commit", "-q", "-m", "follow-up");
+  const head = repo.git("rev-parse", "HEAD");
+  repo.subs["{{HEAD}}"] = head;
+  return head;
+};
+
+test("given a verified head and a follow-up touching only README.md, when merging, then the verdict carries and pr status names the carry", async () => {
+  const { repo, runner, head: judged } = setup(RISKY);
+  await independentVerdict(repo);
+  followUp(repo, DOCS);
+  const status = await run(["pr", "status", "--json"], repo.cwd);
+  expect(status.json().data.verdict).toMatchObject({
+    accepted: true,
+    basis: "carried",
+    carry: { rule: "lane-none", since: judged, files: ["README.md"] },
+    reverify: null,
+  });
+  expect((await run(["pr", "status"], repo.cwd)).stdout).toContain(
+    `verdict: accepted (carried (lane none since ${judged.slice(0, 12)}))`,
+  );
+  const merged = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(merged.code, merged.stdout + merged.stderr).toBe(0);
+  expect(merged.json().data.verdict).toMatchObject({
+    accepted: true,
+    review: "verified",
+    carry: { rule: "lane-none", since: judged },
+  });
+  expect(merges(runner.calls)).toHaveLength(1);
+});
+
+test("given a verified head and a follow-up changing src code, then the verdict is stale and pr status asks a focused re-verify", async () => {
+  const { repo, runner, head: judged } = setup(RISKY);
+  await independentVerdict(repo);
+  followUp(repo, SMALL);
+  const status = await run(["pr", "status", "--json"], repo.cwd);
+  expect(status.json().data.verdict).toMatchObject({
+    accepted: false,
+    basis: "stale",
+    carry: null,
+    reverify: { scope: "focused", since: judged, files: ["src/feature.ts"] },
+  });
+  expect((await run(["pr", "status"], repo.cwd)).stdout).toContain(
+    "reverify: focused (src/feature.ts)",
+  );
+  const merged = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(merged.code).toBe(3);
+  expect(merged.json().error).toContain("stale");
+  expect(merges(runner.calls)).toEqual([]);
+});

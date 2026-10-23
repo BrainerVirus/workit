@@ -35,12 +35,13 @@ import { spawnSync } from "node:child_process";
 import { currentBranch, fetchRefs, GIT_TIMEOUTS, remoteRefTip, resolveRef } from "../git/rev";
 import {
   appendObserved,
-  checkVerdicts,
   tamperedUnblock,
   readLedger,
+  type CarryNote,
   type LedgerActor,
   type VerdictCheck,
 } from "../ledger";
+import { checkVerdictsCovered, type StackCover } from "../verdict-cover";
 import type { LaneNeed, ReviewLane } from "../core/policy/lane";
 import { laneLabel, prLaneGate } from "../core/policy/pr-lane";
 import { buildStatusDoc, selectPr, type PrStatusDoc } from "./report";
@@ -379,6 +380,10 @@ export type MergeOutcome = {
     lane: ReviewLane;
     need: LaneNeed;
     verification: VerificationMode;
+    /** The stack verdict above this PR that covers it (#334), when it has none of its own. */
+    cover?: StackCover | null;
+    /** How a verdict on an older head carried to this one over a follow-up change (#334). */
+    carry?: CarryNote | null;
   };
   /** Set when `--unverified` bypassed the verdict: the reason and its ledger row. */
   unverified: { reason: string; recorded: string } | null;
@@ -662,7 +667,8 @@ export async function mergePullRequest(
   }
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return ledger;
-  const check = checkVerdicts(cwd, branch, ledger.value.rows);
+  // A lower PR of a stack may be covered by the verdict at its top (#334).
+  const check = checkVerdictsCovered(cwd, branch, ledger.value.rows);
   const gate = prLaneGate(cwd, check, { branch, base: doc.base, head });
   const summary = {
     head: check.head,
@@ -681,6 +687,9 @@ export async function mergePullRequest(
     lane: gate.lane.lane,
     need: gate.need,
     verification: gate.verification,
+    ...(covered && gate.review === "verified"
+      ? { cover: check.cover, carry: check.cover ? null : check.carry }
+      : {}),
   };
   let unverified: MergeOutcome["unverified"] = null;
   // The bypass covers a missing verdict, never a rejection.

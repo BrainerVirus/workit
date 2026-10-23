@@ -593,6 +593,54 @@ export function filePatchHashes(
   return out.size === raw.length ? out : null;
 }
 
+/**
+ * The stable patch-ids of the non-merge commits of `fork..head` (empty
+ * commits have none) and how many merge commits the range holds. Diff
+ * options are pinned as in patchId. Null when git fails.
+ */
+export function commitPatchIds(
+  cwd: string,
+  fork: string,
+  head: string,
+): { patchIds: string[]; merges: number } | null {
+  if (!safeArg(fork) || !safeArg(head)) return null;
+  const range = `${fork}..${head}`;
+  const merges = line(git(cwd, ["rev-list", "--count", "--merges", range]));
+  const log = git(
+    cwd,
+    [
+      "log",
+      "--no-merges",
+      "-p",
+      "-U3",
+      "--diff-algorithm=myers",
+      "--indent-heuristic",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-renames",
+      "--full-index",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--format=commit %H",
+      range,
+      "--",
+    ],
+    { timeoutMs: GIT_TIMEOUTS.worktree },
+  );
+  if (merges === null || !log.ok) return null;
+  if (!log.stdout.trim()) return { patchIds: [], merges: Number(merges) };
+  const ids = git(cwd, ["patch-id", "--stable"], { input: log.stdout });
+  if (!ids.ok) return null;
+  return {
+    patchIds: ids.stdout
+      .split("\n")
+      .map((entry) => entry.trim().split(/\s+/u)[0])
+      .filter(Boolean),
+    merges: Number(merges),
+  };
+}
+
 /** Pinned diff options for the review-lane reads: user config never changes them. */
 const LANE_DIFF = [
   "-c",

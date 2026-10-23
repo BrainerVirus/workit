@@ -49,6 +49,7 @@ import {
   branchForPr,
   branchScope,
   activeStanding,
+  carryLabel,
   checkVerdicts,
   clearStanding,
   filterRows,
@@ -64,9 +65,12 @@ import {
   type LedgerResult,
   type ReadRow,
   type RecordContext,
-  type VerdictCheck,
   type VerdictRow,
 } from "@brainervirus/workit-core/src/ledger";
+import {
+  checkVerdictsCovered,
+  type CoveredCheck,
+} from "@brainervirus/workit-core/src/verdict-cover";
 import {
   planLeads,
   readFanout,
@@ -213,13 +217,21 @@ const passedTestOn = (cwd: string, verdict: VerdictRow): boolean => {
   );
 };
 
-const verdictLines = (check: VerdictCheck): string[] => {
+const verdictLines = (check: CoveredCheck): string[] => {
   const lines = [
     `${check.branch} @ ${(check.head ?? "no commit").slice(0, 12)}: current: ${check.current.basis}${typeof check.current.verdict?.result === "string" ? ` (${check.current.verdict.result})` : ""}; ${check.accepted.accepted ? "accepted" : `not accepted (${check.accepted.reasons.join(", ")})`}; review: ${check.review}`,
   ];
+  if (check.cover)
+    lines.push(
+      `  covered by stack verdict ${check.cover.verdictId} on ${check.cover.branch} @ ${check.cover.head.slice(0, 12)} (stack ${check.cover.stack})`,
+    );
   for (const entry of check.verdicts)
     lines.push(
-      `  ${entry.kind}: ${entry.basis}${entry.accepted ? ", accepted" : ` (${entry.reasons.join(", ")})`}  ${summarizeRow(entry.verdict).summary}`,
+      `  ${entry.kind}: ${entry.carry ? carryLabel(entry.carry) : entry.basis}${entry.accepted ? ", accepted" : ` (${entry.reasons.join(", ")})`}  ${summarizeRow(entry.verdict).summary}`,
+    );
+  if (check.reverify)
+    lines.push(
+      `reverify: focused (${check.reverify.files.join(", ")}): re-check only the change since ${check.reverify.since.slice(0, 12)}`,
     );
   for (const warning of check.warnings) lines.push(`warning: ${warning}`);
   return lines;
@@ -404,7 +416,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
           unblock: "pass --branch <branch>",
         }),
       );
-    return emit(io, ok(checkVerdicts(io.cwd, branch, rows)), verdictLines);
+    return emit(io, ok(checkVerdictsCovered(io.cwd, branch, rows)), verdictLines);
   }
 
   const target = targetBranch(io, rows, values.branch, pr);

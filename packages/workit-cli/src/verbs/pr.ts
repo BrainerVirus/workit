@@ -50,7 +50,13 @@ import {
   gitFlowOf,
   type FlowRoute,
 } from "@brainervirus/workit-core/src/core/branch";
-import { actorFromEnv, checkVerdicts, readLedger } from "@brainervirus/workit-core/src/ledger";
+import {
+  actorFromEnv,
+  carryLabel,
+  readLedger,
+  type CarryNote,
+} from "@brainervirus/workit-core/src/ledger";
+import { checkVerdictsCovered, type StackCover } from "@brainervirus/workit-core/src/verdict-cover";
 import { untrackedRiskPathsWarning } from "@brainervirus/workit-core/src/core/policy/lane";
 import { prLaneGate } from "@brainervirus/workit-core/src/core/policy/pr-lane";
 import {
@@ -141,9 +147,15 @@ async function status(argv: string[], io: Io): Promise<number> {
         data.verdict?.merge
           ? `verdict: ${mergedVerdictLine(data.verdict.merge)}`
           : data.verdict
-            ? `verdict: ${data.verdict.accepted ? `accepted (${data.verdict.basis})` : data.verdict.review === "self-reviewed" ? "self-reviewed (author's own verdict; not independent)" : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
+            ? `verdict: ${data.verdict.accepted ? `accepted (${acceptedHow(data.verdict)})` : data.verdict.review === "self-reviewed" ? "self-reviewed (author's own verdict; not independent)" : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
             : "verdict: unknown (ledger unreadable)",
       );
+      if (data.verdict?.reverify && !data.verdict.merge)
+        lines.splice(
+          lines.length - 1,
+          0,
+          `reverify: focused (${data.verdict.reverify.files.join(", ")}): re-check only the change since ${data.verdict.reverify.since.slice(0, 12)} and reuse green CI`,
+        );
       if (data.verdict?.lane)
         lines.splice(
           lines.length - 1,
@@ -206,7 +218,7 @@ function verdictBlock(
 ) {
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return null;
-  const check = checkVerdicts(cwd, branch, ledger.value.rows);
+  const check = checkVerdictsCovered(cwd, branch, ledger.value.rows);
   // A merged PR's verdict is the one its merge was accepted on: the branch
   // has moved on or been deleted, so a fresh check would read as stale.
   let landed: MergeRecord | "untracked" | null = null;
@@ -266,8 +278,23 @@ function verdictBlock(
       check.accepted.accepted && typeof check.accepted.verdict?.id === "string"
         ? check.accepted.verdict.id
         : null,
+    carry: check.cover ? null : check.carry,
+    cover: check.cover,
+    reverify: check.reverify,
   };
 }
+
+/** How the accepted verdict applies: fresh, carried (and why), or a stack verdict above it. */
+const acceptedHow = (verdict: {
+  basis: string;
+  carry: CarryNote | null;
+  cover: StackCover | null;
+}): string =>
+  verdict.cover
+    ? `stack verdict ${verdict.cover.verdictId} on ${verdict.cover.branch} @ ${verdict.cover.head.slice(0, 12)}`
+    : verdict.carry
+      ? carryLabel(verdict.carry)
+      : verdict.basis;
 
 async function create(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
@@ -518,7 +545,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
     `merged ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number} (${data.method}) at head ${data.head.slice(0, 12)}${data.mergeSha ? ` -> ${data.mergeSha.slice(0, 12)}` : ""}`,
     data.unverified
       ? `UNVERIFIED: merged without a verdict (--unverified: ${data.unverified.reason}); ledger ${data.unverified.recorded}`
-      : `verdict ${data.verdict.verdictId ?? "?"} accepted for that head`,
+      : `verdict ${data.verdict.verdictId ?? "?"} accepted for that head${data.verdict.cover ? ` (stack verdict on ${data.verdict.cover.branch} @ ${data.verdict.cover.head.slice(0, 12)})` : data.verdict.carry ? ` (${carryLabel(data.verdict.carry)})` : ""}`,
     ...(data.mergeBack.length
       ? [
           `merge back: ${data.base} is the ${data.mergeBackTrack} production branch; bring it into ${data.mergeBack.join(", ")}`,

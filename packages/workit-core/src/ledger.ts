@@ -1254,7 +1254,7 @@ const derivesFrom = (derived: string, bare: string): boolean =>
  * child that committed as `<lead>:<child>` and judges as `<child>` is still
  * the author). Two derived ids never match on a shared last segment.
  */
-const authoredBy = (authors: Set<string>, session: string): boolean => {
+export const authoredBy = (authors: Set<string>, session: string): boolean => {
   if (authors.has(session)) return true;
   for (const author of authors)
     if (derivesFrom(author, session) || derivesFrom(session, author)) return true;
