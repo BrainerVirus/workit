@@ -240,13 +240,20 @@ const redChecks = (
   };
 };
 
-/** The base the session's PR targets (its `pr.created` row), else null (the default base). */
+/**
+ * The base the branch's PR targets: the newest the forge reported (a
+ * `pr.status` row, so a PR retargeted on the forge is read against its
+ * current base), else the one it was opened with (`pr.created`), else null
+ * (the default base). Read from the ledger: the hook never calls the forge.
+ */
 const prBase = (rows: readonly ReadRow[]): string | null => {
-  const created = rows.findLast(
+  const seen = rows.findLast(
     (row) =>
-      row.type === "pr.created" && row.observer === "workit_cli" && typeof row.base === "string",
+      (row.type === "pr.status" || row.type === "pr.created") &&
+      row.observer === "workit_cli" &&
+      typeof row.base === "string",
   );
-  return typeof created?.base === "string" ? created.base : null;
+  return typeof seen?.base === "string" ? seen.base : null;
 };
 
 /**

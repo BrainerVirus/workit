@@ -1622,15 +1622,20 @@ export function checkVerdicts(
                 ? newestCurrent.reasons
                 : (["type_check_only"] as RejectReason[]),
         };
-  const selfEntry = failing
+  // The author's latest pass or failure on the current code wins, across
+  // kinds: a newer failure cancels an older pass (review finding mvkcoxgb).
+  const latestSelf = failing
     ? undefined
     : verdicts.findLast(
         (entry) =>
           entry.current &&
           !entry.independent &&
           !untrusted(entry.reasons) &&
-          STRONG_RESULTS.has(String(entry.verdict.result)),
+          (STRONG_RESULTS.has(String(entry.verdict.result)) ||
+            FAILING.has(String(entry.verdict.result))),
       );
+  const selfEntry =
+    latestSelf && STRONG_RESULTS.has(String(latestSelf.verdict.result)) ? latestSelf : undefined;
   return {
     branch,
     head,

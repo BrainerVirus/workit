@@ -330,7 +330,7 @@ test("G a merge in the forge UI, branch not pruned, W pr status records the merg
   expect(claudeStop(merged)).toEqual({});
 
   const closed = repo("green");
-  commit(closed, "a.txt");
+  commit(closed, "a.ts");
   git(closed, "push", "-q", "-u", "origin", "feature/x");
   prCreated(closed, 6);
   prStatus(closed, 6, "failing");
@@ -383,7 +383,7 @@ test("G an --unverified merge of this session's PR, T no verdict is owed; a new 
 
 test("G endpoint green and the open PR's checks recorded failing at the head, T it continues naming workit ci wait", () => {
   const root = repo("green");
-  commit(root, "a.txt");
+  commit(root, "a.ts");
   git(root, "push", "-q", "origin", "feature/x");
   prCreated(root, 7);
   prStatus(root, 7, "failing");
@@ -404,7 +404,7 @@ test("G endpoint green and the open PR's checks recorded failing at the head, T 
 
 test("G checks recorded failing at an older head, T they say nothing about the new head", () => {
   const root = repo("green");
-  commit(root, "a.txt");
+  commit(root, "a.ts");
   git(root, "push", "-q", "origin", "feature/x");
   prCreated(root, 7);
   prStatus(root, 7, "failing");
@@ -642,6 +642,40 @@ test(
       { cwd: root, actor: actor(SESSION), branch: "feature/x" },
       { result: "tests-verified", how: "bun test", self: true },
     );
+    expect(claudeStop(root)).toEqual({});
+  },
+  SLOW_TEST_TIMEOUT_MS,
+);
+
+test(
+  "G a PR retargeted on the forge, W the agent stops, T the lane is read against the base `pr status` last saw, not the one it was opened with",
+  () => {
+    const root = repo("green");
+    // `stage` already holds a risk-path change; the PR adds only docs on top.
+    mkdirSync(path.join(root, "src/hooks"), { recursive: true });
+    writeFileSync(path.join(root, "src/hooks/guard.ts"), "export const guard = 1;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "stage work");
+    git(root, "push", "-q", "origin", "HEAD:stage");
+    commit(root, "README.md");
+    git(root, "push", "-q", "origin", "feature/x");
+    git(root, "fetch", "-q", "origin");
+    prCreated(root, 8);
+    // Against main the hook file is in the diff: lane full.
+    expect(claudeStop(root).decision).toBe("block");
+    forgetRaised(root);
+    appendObserved(root, {
+      type: "pr.status",
+      actor: actor(SESSION),
+      branch: "feature/x",
+      head: git(root, "rev-parse", "HEAD"),
+      pr: 8,
+      repo: "o/r",
+      forge: "github",
+      state: "open",
+      checks: "passing",
+      base: "stage",
+    });
     expect(claudeStop(root)).toEqual({});
   },
   SLOW_TEST_TIMEOUT_MS,
