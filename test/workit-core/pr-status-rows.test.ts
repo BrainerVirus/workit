@@ -68,6 +68,15 @@ test("an open PR without gating checks is not recorded; a merge or close the for
   ]);
 });
 
+test("the PR's base is recorded, and a retarget on the forge is a new row (the Stop hook reads it)", () => {
+  const root = repo();
+  const at = (base: string): PrStatusDoc => ({ ...doc("open", "passing"), base });
+  recordPrStatus(root, at("main"), actor);
+  recordPrStatus(root, at("main"), actor);
+  recordPrStatus(root, at("stage"), actor);
+  expect(rows(root).map((row) => row.base)).toEqual(["main", "stage"]);
+});
+
 test("a failure while recording stays inside: the verb's answer stands", () => {
   const root = repo();
   const broken = {

@@ -456,7 +456,7 @@ export function recordPrStatus(cwd: string, doc: PrStatusDoc, actor: LedgerActor
       last.head === doc.head.sha &&
       last.checks === checks &&
       (last.state ?? "open") === state &&
-      last.base === doc.base
+      (last.base ?? null) === (doc.base ?? null)
     )
       return;
     appendObserved(cwd, {
