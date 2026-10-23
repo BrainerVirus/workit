@@ -15,6 +15,7 @@ import {
 import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 import { codexRules } from "@/packages/workit-core/src/core/heavy-rules";
 import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
+import { runUpgradeCommand } from "@/packages/workit-cli/src/upgrade";
 
 // Issue #297: `workit setup` writes a Workit-owned, reversible permission
 // block per host after one consent. Every test runs against a scratch HOME and
@@ -301,7 +302,15 @@ test("Given a drifted Claude Code block, When doctor runs, Then its permission r
   expect(report.checks.find((c) => c.id === "codex_permissions")?.status).toBe("info");
 });
 
-test("Given the upgrade refresh, When no block was written, Then nothing is planned; When a written block drifted, Then only its missing entry returns, without the shell", async () => {
+/** Rewrite Workit's ownership record in `env`'s state dir. */
+const editRecord = (env: NodeJS.ProcessEnv, edit: (record: any) => void) => {
+  const file = path.join(env.WORKFLOW_TOOLKIT_STATE!, "host-permissions.json");
+  const record = JSON.parse(readFileSync(file, "utf8"));
+  edit(record);
+  writeFileSync(file, JSON.stringify(record, null, 2) + "\n");
+};
+
+test("Given the upgrade refresh, When no block was written, Then nothing is planned; When the user removed a Workit entry, Then it is not re-added; When this version offers a new entry, Then only that entry is added, without the shell", async () => {
   const fresh = sandbox();
   writeFileSync(fresh.settings, "{}\n");
   const none = planHostPermissions({
@@ -316,17 +325,96 @@ test("Given the upgrade refresh, When no block was written, Then nothing is plan
   await cli(["setup", "--hosts=claude-code", "--no-shell", "--yes"], env);
   const value = JSON.parse(readFileSync(settings, "utf8"));
   value.permissions.allow = value.permissions.allow.filter(
-    (e: string) => e !== "Bash(workit ci *)",
+    (e: string) => e !== "Bash(workit ci *)" && e !== "Bash(workit stack *)",
   );
   writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
-  const plan = planHostPermissions({
-    hosts: ["claude-code"],
-    refreshOnly: true,
-    shell: false,
-    env,
-    home,
+  const refresh = () =>
+    planHostPermissions({ hosts: ["claude-code"], refreshOnly: true, shell: false, env, home });
+  // The user removed both: the refresh leaves them out.
+  expect(refresh().changes).toEqual([]);
+  // An older Workit never offered `stack`: this version adds it, not `ci`.
+  editRecord(env, (record) => {
+    const offered = record.hosts["claude-code"].offered;
+    offered["permissions.allow"] = offered["permissions.allow"].filter(
+      (e: string) => e !== "Bash(workit stack *)",
+    );
   });
+  const plan = refresh();
   expect(plan.changes).toHaveLength(1);
-  expect(plan.changes[0]?.owned.lists).toEqual({ "permissions.allow": ["Bash(workit ci *)"] });
+  expect(plan.changes[0]?.owned.lists).toEqual({ "permissions.allow": ["Bash(workit stack *)"] });
+  expect(plan.changes[0]?.after).not.toContain("Bash(workit ci *)");
   expect(plan.changes[0]?.after).not.toContain("CLAUDE_CODE_SHELL");
+});
+
+test("Given a Cursor block an older Workit wrote, When `workit upgrade --apply --confirm` runs, Then it adds only the new entry and prints the diff it applied", async () => {
+  const { env, home } = sandbox();
+  const cliConfig = path.join(home, ".cursor", "cli-config.json");
+  mkdirSync(path.dirname(cliConfig), { recursive: true });
+  writeFileSync(cliConfig, JSON.stringify({ permissions: { allow: ["Shell(ls)"] } }));
+  expect((await cli(["setup", "--hosts=cursor", "--yes"], env)).code).toBe(0);
+  const value = JSON.parse(readFileSync(cliConfig, "utf8"));
+  value.permissions.allow = value.permissions.allow.filter(
+    (e: string) => e !== "Shell(workit ci)" && e !== "Shell(workit ledger)",
+  );
+  writeFileSync(cliConfig, JSON.stringify(value, null, 2) + "\n");
+  editRecord(env, (record) => {
+    const cursor = record.hosts.cursor;
+    for (const lists of [cursor.offered, cursor.owned.lists])
+      lists["permissions.allow"] = lists["permissions.allow"].filter(
+        (e: string) => e !== "Shell(workit ci)",
+      );
+  });
+  let stdout = "";
+  const code = await runUpgradeCommand(["--hosts=cursor", "--apply", "--confirm"], {
+    home,
+    // No agent session in this test, whatever runs it.
+    env: {
+      ...env,
+      CLAUDECODE: "",
+      WORKIT_SESSION_ID: "",
+      CODEX_THREAD_ID: "",
+      OPENCODE_SESSION_ID: "",
+      PI_SESSION_ID: "",
+      CURSOR_AGENT: "",
+    },
+    run: () => ({ status: 1, stdout: "" }),
+    activeHosts: () => [],
+    out: { write: (text) => void (stdout += text) },
+  });
+  expect(code, stdout).toBe(0);
+  const allow = JSON.parse(readFileSync(cliConfig, "utf8")).permissions.allow;
+  expect(allow).toContain("Shell(workit ci)");
+  expect(allow).not.toContain("Shell(workit ledger)");
+  const report = JSON.parse(stdout);
+  expect(report.permissions.written).toEqual([
+    { host: "cursor", file: cliConfig, status: "written" },
+  ]);
+  expect(report.permissions.changes[0].diff).toMatch(/^\+ +"Shell\(workit ci\)",?$/mu);
+});
+
+test("Given a tampered ownership record, When uninstall runs, Then only Workit-shaped entries go and the user's deny rule and env survive", async () => {
+  const { env, home, settings } = sandbox();
+  writeFileSync(settings, JSON.stringify(USER_SETTINGS, null, 2) + "\n");
+  expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+  const value = JSON.parse(readFileSync(settings, "utf8"));
+  value.env.ANTHROPIC_BASE_URL = "https://example.test";
+  writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
+  editRecord(env, (record) => {
+    const owned = record.hosts["claude-code"].owned;
+    owned.lists["permissions.deny"] = ["Bash(rm *)"];
+    owned.lists["permissions.allow"].push("Bash(npm test)");
+    owned.lists["autoMode.environment"].push("Org-specific CLIs: acme — deploy tool");
+    owned.env.ANTHROPIC_BASE_URL = "https://example.test";
+    owned.env.FOO = "1";
+    owned.created.push("model");
+  });
+  const result = applyUninstall(planUninstall({ home, env }), { home, env });
+  expect(result.ok).toBe(true);
+  const after = JSON.parse(readFileSync(settings, "utf8"));
+  expect(after.permissions.deny).toEqual(["Bash(rm *)"]);
+  expect(after.permissions.allow).toEqual(["Bash(npm test)"]);
+  expect(after.autoMode.environment).toEqual(USER_SETTINGS.autoMode.environment);
+  expect(after.env).toEqual({ FOO: "1", ANTHROPIC_BASE_URL: "https://example.test" });
+  expect(after.model).toBe("opus");
+  expect(after.permissions.ask).toBeUndefined();
 });

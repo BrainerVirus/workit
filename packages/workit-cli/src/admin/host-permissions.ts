@@ -25,7 +25,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { stateDir as workitStateDir } from "@brainervirus/workit-core/src/core/heavy";
+import { stateDir as workitStateDir } from "@brainervirus/workit-core/src/core/heavy-words";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import { WORKIT_ALLOWED_VERBS } from "@brainervirus/workit-core/src/hooks/delivery-verbs";
 import { claudeConfigDir } from "./host-install";
@@ -97,7 +97,7 @@ export type OwnedEntries = {
 const emptyOwned = (): OwnedEntries => ({ lists: {}, created: [], env: {} });
 
 /** Deep copy of a JSON record, so a merge never aliases its input. */
-const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const clone = <T>(value: T): T => structuredClone(value);
 
 /** The object at `keys`, created when missing (recorded in `owned.created`). */
 const objectAt = (root: Json, keys: string[], owned: OwnedEntries): Json | null => {
@@ -115,6 +115,9 @@ const objectAt = (root: Json, keys: string[], owned: OwnedEntries): Json | null 
   return node;
 };
 
+/** Entries to leave out of a merge: per dotted path, the entries an earlier write offered. */
+type Skip = Record<string, readonly string[]>;
+
 /** Append the missing `entries` to the array at `dotted`; a new array starts with `seed`. */
 const appendList = (
   root: Json,
@@ -122,7 +125,11 @@ const appendList = (
   entries: readonly string[],
   owned: OwnedEntries,
   seed: readonly string[] = [],
+  skip: Skip = {},
 ): string | null => {
+  const skipped = new Set(skip[dotted] ?? []);
+  const wanted = entries.filter((entry) => !skipped.has(entry));
+  if (wanted.length === 0) return null;
   const keys = dotted.split(".");
   const parent = objectAt(root, keys.slice(0, -1), owned);
   const leaf = keys.at(-1)!;
@@ -133,9 +140,11 @@ const appendList = (
   }
   const list = parent[leaf];
   if (!Array.isArray(list)) return `${dotted} is not a list`;
-  for (const entry of entries)
-    if (!list.includes(entry)) {
+  const present = new Set<unknown>(list);
+  for (const entry of wanted)
+    if (!present.has(entry)) {
       list.push(entry);
+      present.add(entry);
       (owned.lists[dotted] ??= []).push(entry);
     }
   return null;
@@ -145,16 +154,17 @@ type HostMerge = { config: Json; owned: OwnedEntries; error?: string };
 
 /**
  * Claude Code user settings with Workit's block. `shell` (a bash path) is set
- * as `env.CLAUDE_CODE_SHELL` only when no value is set.
+ * as `env.CLAUDE_CODE_SHELL` only when no value is set; `skip` leaves out the
+ * entries an earlier write offered (the upgrade refresh).
  */
-function mergeClaudeSettings(settings: Json, shell: string | null): HostMerge {
+function mergeClaudeSettings(settings: Json, shell: string | null, skip: Skip = {}): HostMerge {
   const config = clone(settings);
   const owned = emptyOwned();
   const error =
-    appendList(config, "permissions.allow", CLAUDE_ALLOW, owned) ??
-    appendList(config, "permissions.ask", CLAUDE_ASK, owned) ??
-    appendList(config, "autoMode.environment", [AUTO_MODE_ENVIRONMENT], owned, [DEFAULTS]) ??
-    appendList(config, "autoMode.allow", [AUTO_MODE_ALLOW], owned, [DEFAULTS]);
+    appendList(config, "permissions.allow", CLAUDE_ALLOW, owned, [], skip) ??
+    appendList(config, "permissions.ask", CLAUDE_ASK, owned, [], skip) ??
+    appendList(config, "autoMode.environment", [AUTO_MODE_ENVIRONMENT], owned, [DEFAULTS], skip) ??
+    appendList(config, "autoMode.allow", [AUTO_MODE_ALLOW], owned, [DEFAULTS], skip);
   if (error) return { config: settings, owned: emptyOwned(), error };
   if (shell) {
     const env = objectAt(config, ["env"], owned);
@@ -168,10 +178,10 @@ function mergeClaudeSettings(settings: Json, shell: string | null): HostMerge {
 }
 
 /** Cursor CLI config with Workit's `Shell(workit <verb>)` allows. */
-function mergeCursorCliConfig(config: Json): HostMerge {
+function mergeCursorCliConfig(config: Json, skip: Skip = {}): HostMerge {
   const next = clone(config);
   const owned = emptyOwned();
-  const error = appendList(next, "permissions.allow", CURSOR_ALLOW, owned);
+  const error = appendList(next, "permissions.allow", CURSOR_ALLOW, owned, [], skip);
   return error ? { config, owned: emptyOwned(), error } : { config: next, owned };
 }
 
@@ -200,10 +210,64 @@ const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | nu
   return isRecord(node) ? { parent: node, key: keys.at(-1)! } : null;
 };
 
+/** The shape of every entry Workit writes at a dotted path, per host. */
+const ENTRY_SHAPES: Record<"claude-code" | "cursor", Record<string, (entry: string) => boolean>> = {
+  "claude-code": {
+    "permissions.allow": (entry) => entry.startsWith("Bash(workit "),
+    "permissions.ask": (entry) => entry.startsWith("Bash(workit "),
+    "autoMode.environment": (entry) => entry.startsWith("Org-specific CLIs: workit "),
+    "autoMode.allow": (entry) => entry.startsWith("Workit-gated delivery: "),
+  },
+  cursor: { "permissions.allow": (entry) => entry.startsWith("Shell(workit ") },
+};
+
+/** The containers a merge may create, per host. */
+const CREATED_PATHS: Record<"claude-code" | "cursor", ReadonlySet<string>> = {
+  "claude-code": new Set([
+    "permissions",
+    "permissions.allow",
+    "permissions.ask",
+    "autoMode",
+    "autoMode.environment",
+    "autoMode.allow",
+    "env",
+  ]),
+  cursor: new Set(["permissions", "permissions.allow"]),
+};
+
+/** A bash path, as `findBash` writes it. */
+const isBashPath = (value: unknown): value is string =>
+  typeof value === "string" && path.isAbsolute(value) && path.basename(value) === "bash";
+
+/**
+ * An ownership record cut down to what Workit could have written: its own
+ * list paths with entries of its own shapes, `CLAUDE_CODE_SHELL` only as a
+ * bash path, and its own containers. A stale or edited record never makes
+ * uninstall remove a user's entry.
+ */
+const trustedOwned = (owned: OwnedEntries, host: "claude-code" | "cursor"): OwnedEntries => {
+  const shapes = ENTRY_SHAPES[host];
+  const lists: Record<string, string[]> = {};
+  for (const [dotted, entries] of Object.entries(isRecord(owned.lists) ? owned.lists : {})) {
+    const shape = Object.hasOwn(shapes, dotted) ? shapes[dotted] : undefined;
+    if (!shape || !Array.isArray(entries)) continue;
+    lists[dotted] = entries.filter((entry) => typeof entry === "string" && shape(entry));
+  }
+  const shell = isRecord(owned.env) ? owned.env.CLAUDE_CODE_SHELL : undefined;
+  return {
+    lists,
+    created: (Array.isArray(owned.created) ? owned.created : []).filter((dotted) =>
+      CREATED_PATHS[host].has(dotted),
+    ),
+    env: host === "claude-code" && isBashPath(shell) ? { CLAUDE_CODE_SHELL: shell } : {},
+  };
+};
+
 /**
  * The inverse of a merge: drop the entries `owned` names, the env values it
  * set (when unchanged), and the containers it created once they hold nothing
- * but their seed. Without a record, the canonical entries are dropped.
+ * but their seed. Without a record, the canonical entries are dropped; with
+ * one, only its entries shaped like Workit's (`trustedOwned`).
  */
 export function removeOwnedEntries(
   config: Json,
@@ -211,13 +275,14 @@ export function removeOwnedEntries(
   host: "claude-code" | "cursor",
 ): { next: Json; changed: boolean } {
   const next = clone(config);
-  const record = owned ?? CANONICAL[host];
+  const record = owned ? trustedOwned(owned, host) : CANONICAL[host];
   let changed = false;
   for (const [dotted, entries] of Object.entries(record.lists)) {
     const at = valueAt(next, dotted);
     const list = at?.parent[at.key];
     if (!at || !Array.isArray(list)) continue;
-    const kept = list.filter((entry) => !entries.includes(entry as string));
+    const drop = new Set<unknown>(entries);
+    const kept = list.filter((entry) => !drop.has(entry));
     if (kept.length !== list.length) {
       at.parent[at.key] = kept;
       changed = true;
@@ -252,8 +317,8 @@ function missingEntries(config: Json, host: "claude-code" | "cursor"): string[] 
   for (const [dotted, entries] of Object.entries(CANONICAL[host].lists)) {
     const at = valueAt(config, dotted);
     const list = at?.parent[at.key];
-    for (const entry of entries)
-      if (!Array.isArray(list) || !list.includes(entry)) missing.push(`${dotted}: ${entry}`);
+    const present = new Set<unknown>(Array.isArray(list) ? list : []);
+    for (const entry of entries) if (!present.has(entry)) missing.push(`${dotted}: ${entry}`);
   }
   return missing;
 }
@@ -303,9 +368,16 @@ const AGENT_SESSION_VARS = [
 const agentSessionVar = (env: NodeJS.ProcessEnv): string | null =>
   AGENT_SESSION_VARS.find((name) => (env[name] ?? "") !== "") ?? null;
 
+type HostRecord = {
+  file: string;
+  owned: OwnedEntries;
+  /** Every entry a Workit version offered per dotted path, added or already there. */
+  offered?: Record<string, string[]>;
+};
+
 type OwnershipRecord = {
   version: 1;
-  hosts: Partial<Record<PermissionHost, { file: string; owned: OwnedEntries }>>;
+  hosts: Partial<Record<PermissionHost, HostRecord>>;
 };
 
 const RECORD_FILE = "host-permissions.json";
@@ -326,12 +398,19 @@ const writeOwnership = (record: OwnershipRecord, stateDir: string): void => {
   writeFileAtomic(path.join(stateDir, RECORD_FILE), JSON.stringify(record, null, 2) + "\n", 0o600);
 };
 
-const unionOwned = (a: OwnedEntries | undefined, b: OwnedEntries): OwnedEntries => {
-  const lists: Record<string, string[]> = { ...a?.lists };
-  for (const [key, entries] of Object.entries(b.lists))
+const unionLists = (
+  a: Record<string, string[]> | undefined,
+  b: Record<string, readonly string[]>,
+): Record<string, string[]> => {
+  const lists: Record<string, string[]> = { ...a };
+  for (const [key, entries] of Object.entries(b))
     lists[key] = [...new Set([...(lists[key] ?? []), ...entries])];
+  return lists;
+};
+
+const unionOwned = (a: OwnedEntries | undefined, b: OwnedEntries): OwnedEntries => {
   return {
-    lists,
+    lists: unionLists(a?.lists, b.lists),
     created: [...new Set([...(a?.created ?? []), ...b.created])],
     env: { ...a?.env, ...b.env },
   };
@@ -357,6 +436,8 @@ export type PermissionChange = {
   before: string | null;
   after: string;
   owned: OwnedEntries;
+  /** The entries this version offers, recorded so a refresh never re-adds a removed one. */
+  offered: Record<string, string[]>;
 };
 
 export type PermissionPlan = {
@@ -375,7 +456,10 @@ export type PlanOptions = PermissionPaths & {
   shell?: boolean;
   /** The bash to name (test seam; default the first of /usr/bin/bash, /bin/bash on PATH order). */
   bash?: string | null;
-  /** Only hosts whose block Workit already wrote (the upgrade refresh). */
+  /**
+   * The upgrade refresh: only hosts whose block Workit already wrote, and
+   * only entries new in this version (never one the user removed).
+   */
   refreshOnly?: boolean;
 };
 
@@ -428,10 +512,16 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
     const before = readText(target.file);
     let after: string;
     let owned: OwnedEntries;
+    let offered: Record<string, string[]> = {};
     if (host === "codex") {
       after = codexRulesText();
       owned = emptyOwned();
     } else {
+      const previous = record.hosts[host as PermissionHost];
+      // A record without `offered` (written before it existed): what Workit added stands in.
+      const skip: Skip = options.refreshOnly
+        ? (previous?.offered ?? previous?.owned.lists ?? {})
+        : {};
       let parsed: unknown = {};
       try {
         parsed = before === null || before.trim() === "" ? {} : JSON.parse(before);
@@ -453,7 +543,9 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
           : options.bash
         : null;
       const merged =
-        host === "claude-code" ? mergeClaudeSettings(parsed, bash) : mergeCursorCliConfig(parsed);
+        host === "claude-code"
+          ? mergeClaudeSettings(parsed, bash, skip)
+          : mergeCursorCliConfig(parsed, skip);
       if (merged.error) {
         plan.blocked.push(`${target.file}: ${merged.error}; left untouched`);
         continue;
@@ -464,12 +556,20 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
       }
       after = JSON.stringify(merged.config, null, 2) + "\n";
       owned = merged.owned;
+      offered = CANONICAL[host as "claude-code" | "cursor"].lists;
     }
     if (before === after) {
       plan.notes.push(`${host}: Workit's permission block is already in ${target.file}`);
       continue;
     }
-    plan.changes.push({ host: host as PermissionHost, file: target.file, before, after, owned });
+    plan.changes.push({
+      host: host as PermissionHost,
+      file: target.file,
+      before,
+      after,
+      owned,
+      offered,
+    });
   }
   const agent = agentSessionVar(paths.env);
   if (agent && plan.changes.length > 0)
@@ -568,9 +668,11 @@ export function applyHostPermissions(
       }
       mkdirSync(path.dirname(target), { recursive: true });
       writeFileAtomic(target, change.after);
+      const previous = record.hosts[change.host];
       record.hosts[change.host] = {
         file: change.file,
-        owned: unionOwned(record.hosts[change.host]?.owned, change.owned),
+        owned: unionOwned(previous?.owned, change.owned),
+        offered: unionLists(previous?.offered, change.offered),
       };
       entries.push({ host: change.host, file: change.file, status: "written" });
     } catch (error) {

@@ -252,8 +252,12 @@ const STUB_CORE_FILES = [
   "heavy-scope.ts",
   "runtime-identity.ts",
   "release-tracks.ts",
+  // doctor's *_permissions rows (#297) resolve the state dir here.
+  "heavy-words.ts",
 ];
-const STUB_ADMIN_FILES = ["registration.ts", "doctor.ts", "host-install.ts"];
+// doctor's *_permissions rows read Workit's verb list (hooks/delivery-verbs.ts).
+const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts"];
+const STUB_ADMIN_FILES = ["registration.ts", "doctor.ts", "host-install.ts", "host-permissions.ts"];
 
 function copyCoreSources(stub: string) {
   mkdirSync(path.join(stub, "node_modules", "@brainervirus"), { recursive: true });
@@ -277,6 +281,12 @@ function copyCoreSources(stub: string) {
     cpSync(
       path.join(repoRoot, "packages/workit-core/src/core", name),
       path.join(stub, "packages/workit-core/src/core", name),
+    );
+  mkdirSync(path.join(stub, "packages/workit-core/src/hooks"), { recursive: true });
+  for (const name of STUB_HOOK_FILES)
+    cpSync(
+      path.join(repoRoot, "packages/workit-core/src/hooks", name),
+      path.join(stub, "packages/workit-core/src/hooks", name),
     );
   for (const name of STUB_ADMIN_FILES)
     cpSync(

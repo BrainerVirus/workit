@@ -630,8 +630,17 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   }
   const written = applyHostPermissions(permissions, { home, env });
   const permissionsOk = written.every((entry) => entry.status === "written");
+  // The diff again, so what was written is on screen next to the result.
   out.write(
-    JSON.stringify({ ...result, ok: permissionsOk, permissions: { written } }, null, 2) + "\n",
+    JSON.stringify(
+      {
+        ...result,
+        ok: permissionsOk,
+        permissions: { changes: permissionPreview.changes, written },
+      },
+      null,
+      2,
+    ) + "\n",
   );
   return permissionsOk ? 0 : 1;
 }
