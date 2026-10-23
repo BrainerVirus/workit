@@ -354,7 +354,7 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "show",
         usage:
-          "workit models show [--role <role>] [--tier <mundane|standard|hard>] [--host <host>] [--json]",
+          "workit models show [--role <role>] [--tier <mundane|standard|hard>] [--host <host>] [--report [--days <n>]] [--json]",
         summary:
           "Print the resolved model and effort per role for a host (default: the lead's host, else claude_code) and where each came from",
       },
