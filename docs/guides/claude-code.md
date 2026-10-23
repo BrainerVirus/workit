@@ -21,6 +21,16 @@ claude plugin marketplace update workit && claude plugin update workit@workit   
 a newer version is published. `workit uninstall` runs the native
 `claude plugin uninstall` for each install that applies where you run it.
 
+**Permissions.** A plugin cannot ship permission rules, and in auto mode the
+classifier cannot see Workit's grants or verdicts, so it may deny `workit pr
+merge` as "Merge Without Review". Run `workit setup --hosts=claude-code` in
+your own terminal (not from a Claude Code session: it refuses there): after
+showing the diff it adds enumerated `Bash(workit <verb> *)` allows, `ask`
+rules for `--unverified` and `--overwrite-unintegrated`, one
+`autoMode.environment` and one `autoMode.allow` line describing Workit's
+gates, and `env.CLAUDE_CODE_SHELL` (bash) when your shell is zsh. See
+[the hosts guide](hosts.md#host-permissions-workit-setup).
+
 **Local pin to a checkout.** Hooks and `bin/workit` run the TypeScript sources
 with Bun, so edits apply without rebuilding. Only the skills are generated:
 

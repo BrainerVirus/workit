@@ -42,7 +42,17 @@ ones you pick with their native commands, and writes your global config:
 ```bash
 npx @brainervirus/workit-cli init
 workit doctor          # after a global install (npm i -g @brainervirus/workit-cli)
+workit setup           # optional: let agents run Workit's delivery verbs without a prompt
 ```
+
+`workit setup` shows the exact diff, asks once (`--yes` for a script,
+`--dry-run` to only look) and writes a Workit-owned block into each host's own
+permission config: enumerated `workit git|pr|ci|stack|release|task|ledger|…`
+verbs only, never `workit check -- …`, `workit lock run -- …` or `workit
+grant`. Run it in your own terminal, not from an agent session (it refuses
+there). `workit uninstall` removes exactly what it added, and `workit doctor`
+reports drift. Per-host details are in
+[the hosts guide](docs/guides/hosts.md#host-permissions-workit-setup).
 
 Or install a single host by hand:
 
@@ -275,6 +285,7 @@ Global flags:
 | Command | Purpose |
 | --- | --- |
 | `workit init` | Interactive setup wizard (hosts, config, optional project files) |
+| `workit setup [--hosts=…] [--dry-run \| --yes]` | Write Workit's host permission block after showing the diff |
 | `workit doctor [--json] [--fix-lock]` | Offline installation health; clear a stale store lock |
 | `workit upgrade [--apply --confirm]` | Preview, then apply, package and config upgrades |
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
