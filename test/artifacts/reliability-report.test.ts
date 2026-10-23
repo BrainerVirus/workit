@@ -66,13 +66,14 @@ test(
     // workspace configured); hook_issued_sessions passes (no plugin hook);
     // heavy_scope is info (no systemd-run on the isolated PATH, #325);
     // hook_deadline passes (no hook skips recorded, #309); checks_config
-    // passes (no checks config at the repo root, #354).
+    // passes (no checks config at the repo root, #354); plugin_files passes
+    // (no registered host plugin, #394).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 26,
+      passed: 27,
       warned: 1,
       failed: 1,
-      total: 28,
+      total: 29,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -110,13 +111,14 @@ test(
       // Claude Code or Codex plugin hook); heavy_scope is info (no
       // systemd-run on the isolated PATH, #325); hook_deadline passes (no
       // hook skips recorded, #309); checks_config passes (no checks config at
-      // the repo root, #354).
+      // the repo root, #354); plugin_files passes (no registered host plugin,
+      // #394).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 26,
+        passed: 27,
         warned: 1,
         failed: 1,
-        total: 28,
+        total: 29,
         fixes: 1,
       });
     } finally {
