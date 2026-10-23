@@ -45,6 +45,8 @@ test.each([
   ["workit pr merge --reason x ${F:---unverified}"],
   ["workit pr merge --reason x --unverifie?"],
   ['workit pr merge --reason x "$F"'],
+  ['workit git commit --cwd "$wt" -m x'],
+  ["workit pr merge --cwd $wt"],
   ["workit pr merge --reason x --unver$(echo ified)"],
   ['workit pr create --body-file "$F"'],
   ["workit stack land --unverified --reason now"],

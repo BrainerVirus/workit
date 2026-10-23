@@ -564,7 +564,7 @@ test.each([
   expect(output?.updatedInput).toBeUndefined();
 });
 
-// An expansion before `--` could become a bypass flag at run time.
+// A word the shell expands is not read: only a literal bypass flag asks.
 test.each([
   ["workit pr merge --reason x ${F:---unverified}"],
   ["workit pr merge --reason x --unverifie?"],
@@ -573,12 +573,11 @@ test.each([
   ["workit pr merge --reason x --unver`echo ified`"],
   ["workit stack land --reason x --unverifie[d]"],
   ['workit pr create --body-file "$F"'],
-])("Given `%s` on Claude Code, When PreToolUse runs, Then the hook asks, not denies", (command) => {
-  const output = claude(repo(), command);
-  expect(output?.permissionDecision).toBe("ask");
-  expect(output?.permissionDecisionReason).toContain(
-    "an expansion before `--` could become a bypass flag",
-  );
+  ["workit pr merge --cwd $wt"],
+  ['workit git commit --cwd "$wt" -m x'],
+  ['workit --cwd="$wt" pr status'],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then the hook does not ask", (command) => {
+  expect(claude(repo(), command)?.permissionDecision).toBeUndefined();
 });
 
 test.each([
