@@ -263,7 +263,7 @@ test("a protected-branch deny is structured JSON on stdout with exit 0 and nothi
   });
 }, 30_000);
 
-test("SubagentStart tells the worktree implementer, per preset, that plain git is expected but branch names stay policy-checked, naming that preset's kinds and only bases that exist", async () => {
+test("SubagentStart tells an implementer Claude Code isolated, per preset, that plain git is expected but branch names stay policy-checked, naming that preset's kinds and only bases that exist", async () => {
   await withProtectedMain((configDir) => {
     /** A repository whose first branch is `trunk`, plus `extra` branches. */
     const checkout = (trunk: string, extra: string[] = []) => {
@@ -275,13 +275,19 @@ test("SubagentStart tells the worktree implementer, per preset, that plain git i
       for (const name of extra) git("branch", name);
       return cwd;
     };
-    const context = (cwd: string) =>
-      (
-        runHook(
-          PLUGIN_DIR,
-          fixture("claude-code", "subagent-start", cwd, { agent_type: "workit:implementer" }),
-        ).json as Specific
-      ).hookSpecificOutput?.additionalContext ?? "";
+    /** An implementer Claude Code isolated in `<checkout>/.claude/worktrees/agent-<id>`. */
+    const context = (checkoutDir: string) => {
+      const cwd = path.join(checkoutDir, ".claude", "worktrees", "agent-agent-1");
+      mkdirSync(cwd, { recursive: true });
+      return (
+        (
+          runHook(
+            PLUGIN_DIR,
+            fixture("claude-code", "subagent-start", cwd, { agent_type: "workit:implementer" }),
+          ).json as Specific
+        ).hookSpecificOutput?.additionalContext ?? ""
+      );
+    };
     const custom = { preset: "custom", allowed: ["task/*", "release/*"], protected: ["main"] };
     const table: Array<[string, Record<string, unknown>, string, string[], RegExp | null]> = [
       [
@@ -366,8 +372,26 @@ test("SubagentStart gives the worktree implementer write guidance and keeps othe
       runHook(PLUGIN_DIR, fixture("claude-code", "subagent-start", cwd, { agent_type, agent_id }))
         .json as Specific
     ).hookSpecificOutput?.additionalContext ?? "";
+  // By default the implementer runs in the lead's cwd (#310): the lead's Workit
+  // worktree, workit verbs one per call, and Workit's confinement named.
+  const unisolated = context("workit:implementer");
+  expect(unisolated).toContain("edits and commits only in its own git worktree");
+  expect(unisolated).toContain("workit fanout worktree create <slice>");
+  expect(unisolated).toContain("`workit --cwd <worktree> check <name>`");
+  expect(unisolated).toContain("an edit or a mutating git command outside that worktree is denied");
+  expect(unisolated).not.toContain("Run git as plain");
+  expect(unisolated).not.toContain("read-only");
+  // An implementer the lead isolated anyway keeps the plain-git rule.
+  const isolatedDir = path.join(cwd, ".claude", "worktrees", "agent-agent-1");
+  mkdirSync(isolatedDir, { recursive: true });
   for (const agent of ["workit:implementer"]) {
-    const text = context(agent);
+    const text =
+      (
+        runHook(
+          PLUGIN_DIR,
+          fixture("claude-code", "subagent-start", isolatedDir, { agent_type: agent }),
+        ).json as Specific
+      ).hookSpecificOutput?.additionalContext ?? "";
     expect(text, agent).toContain("working in its own git worktree");
     expect(text, agent).toContain("policy-compliant branch");
     expect(text, agent).not.toContain("read-only");

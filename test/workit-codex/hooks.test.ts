@@ -114,7 +114,7 @@ test("G a Codex SubagentStart, T Workit judges get their own session and the imp
   expect(implementer).toContain("its own git worktree");
   // Codex does not isolate subagents itself: the lead makes the worktree.
   expect(implementer).toContain("workit fanout worktree create");
-  expect(implementer).toContain("workit git branch <branch> --base <base>");
+  expect(implementer).toContain("workit --cwd <worktree> git branch <branch> --base <base>");
   expect(implementer).not.toContain("read-only");
   for (const other of [
     "worker",
@@ -134,17 +134,23 @@ test("G a Codex SubagentStart, T Workit judges get their own session and the imp
 
 test("G a Claude Code SubagentStart, T only the plugin-namespaced workit:<role> agents get role guidance", () => {
   const root = repo();
-  const claude = (agent_type: string) =>
+  const claude = (agent_type: string, cwd = root) =>
     (
-      dispatchHook(
-        claudeCodeAdapter,
-        fixture("claude-code", "subagent-start", root, { agent_type }),
-      ).json as Out
+      dispatchHook(claudeCodeAdapter, fixture("claude-code", "subagent-start", cwd, { agent_type }))
+        .json as Out
     ).hookSpecificOutput?.additionalContext ?? "";
-  // Claude Code's native worktree isolation keeps its own wording.
+  // The implementer runs without Claude Code's isolation (#310): the lead's
+  // `workit fanout worktree create` worktree, workit verbs one per call.
   const implementer = claude("workit:implementer");
-  expect(implementer).toContain("working in its own git worktree: it may edit and commit there");
-  expect(implementer).not.toContain("workit fanout worktree");
+  expect(implementer).toContain("workit fanout worktree create <slice>");
+  expect(implementer).toContain('`workit --cwd <worktree> git commit -m "<message>" -- <paths>`');
+  expect(implementer).not.toContain("Run git as plain");
+  // One the lead isolated anyway (`.claude/worktrees/agent-<id>`) keeps the plain-git wording.
+  const isolated = path.join(root, ".claude", "worktrees", "agent-agent-1");
+  mkdirSync(isolated, { recursive: true });
+  const hostIsolated = claude("workit:implementer", isolated);
+  expect(hostIsolated).toContain("working in its own git worktree: it may edit and commit there");
+  expect(hostIsolated).not.toContain("workit fanout worktree");
   expect(claude("workit:verifier")).toContain("Its own Workit session is");
   // Plugin agents are always namespaced: a bare workit-<role> is someone
   // else's agent and is never told it is worktree-isolated.

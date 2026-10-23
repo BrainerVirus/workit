@@ -28,6 +28,7 @@ import path from "node:path";
 import { gitBranch } from "./git/ops";
 import { GIT_TIMEOUTS, gitCommonDir, pushRemoteName, resolveRef } from "./git/rev";
 import { appendObserved, readLedger, type LedgerActor } from "./ledger";
+import { FANOUT_TOKEN_FILE } from "./hooks/worktree-confine";
 import { linkWorktreeDependencies, type LinkedDependencies } from "./worktree-deps";
 import {
   branchRef,
@@ -155,8 +156,6 @@ function createdRow(cwd: string, plan: FanoutFile, slice: Slice, target: string)
   return { row, exact: false };
 }
 
-const TOKEN_FILE = "workit-fanout-token";
-
 /** The filesystem calls identity relies on; tests stub them. */
 export const worktreeDeps = {
   stat: (file: string): fs.BigIntStats => fs.statSync(file, { bigint: true }),
@@ -180,7 +179,7 @@ function adminDir(worktree: string): AdminDir | null {
   const file = dir.stdout.trim();
   let token: string | null = null;
   try {
-    token = fs.readFileSync(path.join(file, TOKEN_FILE), "utf8").trim() || null;
+    token = fs.readFileSync(path.join(file, FANOUT_TOKEN_FILE), "utf8").trim() || null;
   } catch {
     token = null;
   }
@@ -205,7 +204,7 @@ function markAdminDir(worktree: string): (AdminDir & { token: string }) | null {
   if (!admin) return null;
   const token = randomBytes(16).toString("hex");
   try {
-    fs.writeFileSync(path.join(admin.path, TOKEN_FILE), `${token}\n`);
+    fs.writeFileSync(path.join(admin.path, FANOUT_TOKEN_FILE), `${token}\n`);
   } catch {
     return null;
   }

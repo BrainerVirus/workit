@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -413,11 +413,14 @@ test("Given a workspace nested in one with trailers: false, Then it inherits off
 
 test("Given trailers: false, When an isolated implementer starts, Then its git text asks for no Workit-Session trailer; with trailers on it names the trailer", () => {
   const repo = setup({ trailers: false });
+  // Claude Code put it in its own worktree: `.claude/worktrees/agent-<id>`.
+  const isolated = path.join(repo.cwd, ".claude", "worktrees", "agent-a1");
+  mkdirSync(isolated, { recursive: true });
   const text = () => {
     const decision = handleHook(
       {
         host: "claude_code",
-        cwd: repo.cwd,
+        cwd: isolated,
         session: { id: "lead-1", agentId: null, agentType: null, parentId: null },
         permissionMode: null,
         transcriptPath: null,

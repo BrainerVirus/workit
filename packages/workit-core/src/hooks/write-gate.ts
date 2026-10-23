@@ -406,16 +406,48 @@ const segmentTargets = (
         const resolved = at(file);
         if (resolved) targets.push(resolved);
       }
-    if (
-      dir !== undefined &&
-      workitInvocations(segment.words.map(quoteWord).join(" "), "posix").some(
-        (args) =>
-          args[0] === "git" && MUTATING_WORKIT_GIT.has(args[1] ?? "") && !inert(args.slice(2), ""),
-      )
-    )
-      targets.push(path.join(dir, DIR_TARGET));
+    if (dir !== undefined)
+      for (const invocation of workitInvocations(segment.words.map(quoteWord).join(" "), "posix")) {
+        const { at: runsIn, args } = workitCwd(dir, invocation);
+        if (
+          args[0] === "git" &&
+          MUTATING_WORKIT_GIT.has(args[1] ?? "") &&
+          !inert(args.slice(2), "")
+        )
+          targets.push(path.join(runsIn, DIR_TARGET));
+      }
   }
   return targets;
+};
+
+/** A workit invocation's global `--cwd <dir>` (or `--cwd=<dir>`), resolved against `dir`. */
+const workitCwd = (dir: string, args: string[]): { at: string; args: string[] } => {
+  if (args[0] === "--cwd" && args[1] !== undefined)
+    return { at: path.resolve(dir, homeExpanded(args[1])), args: args.slice(2) };
+  if (args[0]?.startsWith("--cwd="))
+    return { at: path.resolve(dir, homeExpanded(args[0].slice(6))), args: args.slice(1) };
+  return { at: dir, args };
+};
+
+/**
+ * Where one shell command changes files: the files it writes and, as
+ * `<dir>/.workit-live-target`, each directory a mutating git or
+ * `workit git commit|branch` runs in or an unknown write happens in.
+ * Absolute paths; [] when the command cannot be analysed (fail open).
+ */
+export const shellMutationTargets = (
+  cwd: string,
+  command: string,
+  dialect: ShellDialect = "posix",
+): string[] => {
+  try {
+    return [
+      ...segmentTargets(cwd, command, dialect),
+      ...gitMutationDirs(cwd, command, dialect).map((dir) => path.join(dir, DIR_TARGET)),
+    ];
+  } catch {
+    return [];
+  }
 };
 
 /** The command is one simple command led by `WORKIT_LIVE_SESSION=override`. */
@@ -482,7 +514,7 @@ const claimAll = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps)
 };
 
 /** The absolute paths an edit touches: its files, or cwd itself when unknown. */
-const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
+export const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
   paths?.length ? paths.map((file) => path.resolve(cwd, file)) : [path.join(cwd, DIR_TARGET)];
 
 // --- the issued-registry guard (#292) ---------------------------------------
@@ -593,16 +625,7 @@ export function shellGate(
   }
   const writes = shellWrites(command);
   let targets: string[] = [];
-  if (owner) {
-    try {
-      targets = [
-        ...segmentTargets(cwd, command, dialect),
-        ...gitMutationDirs(cwd, command, dialect).map((dir) => path.join(dir, DIR_TARGET)),
-      ];
-    } catch {
-      targets = [];
-    }
-  }
+  if (owner) targets = shellMutationTargets(cwd, command, dialect);
   if (owner && targets.length) {
     const live = liveGate(owner, targets, deps);
     if (live.kind !== "none") {

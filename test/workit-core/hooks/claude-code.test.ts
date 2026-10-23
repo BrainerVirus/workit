@@ -185,7 +185,7 @@ test("Claude SubagentStart keys its text on agent_type: only the worktree implem
           {},
         ).json,
       );
-    expect(text("workit:implementer")).toContain("working in its own git worktree");
+    expect(text("workit:implementer")).toContain("edits and commits only in its own git worktree");
     expect(text("workit:implementer")).not.toContain("read-only");
     expect(text("workit:reviewer")).toContain("read-only/agent-guided");
     expect(text("general-purpose")).toContain("read-only/agent-guided");
