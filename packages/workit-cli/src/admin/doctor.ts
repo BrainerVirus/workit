@@ -64,6 +64,7 @@ import {
   workspaceTrailers,
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces";
+import { roleModelIssues } from "@brainervirus/workit-core/src/core/role-models";
 import {
   CLAUDE_MARKETPLACE_NAME,
   claudeWorkitInstalls,
@@ -2103,6 +2104,7 @@ const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
     const tracks = releaseTracksReport(res.cwd);
     const lines = describeReleaseTracks(tracks);
     const detail = [matched, ...branchPresetLine(res, match), ...lines].join("; ");
+    const modelIssues = roleModelIssues(res.cwd, res.configDir);
     if (tracks.error)
       return {
         id: "workspace_mismatch",
@@ -2116,6 +2118,13 @@ const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
         status: "warn",
         detail,
         fix: `Fix the reported releaseTracks fields in ${file}, or pass --track <name> where the track is not determined`,
+      };
+    if (modelIssues.length)
+      return {
+        id: "workspace_mismatch",
+        status: "warn",
+        detail: [detail, ...modelIssues].join("; "),
+        fix: `Fix the reported models.roles entries in ${file} (roles: decider, implementer, verifier, reviewer, explore, babysit; hosts: claude_code, opencode, codex, cursor, pi, default)`,
       };
     return { id: "workspace_mismatch", status: "pass", detail };
   }

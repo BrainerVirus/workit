@@ -5,7 +5,16 @@ import { TaskStore, type OperationContext } from "@brainervirus/workit-core/src/
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix.ts";
 import { McpCapabilityUnavailableError, runStdioServer } from "@brainervirus/workit-mcp/src/server";
 import { codexCapabilities, detectCodexSurface, type CodexHost } from "../hooks/workit-hook";
-import { codexHomeFor, codexHomeOfInstall, installCodexAgents } from "./agents";
+import {
+  resolveRoleModel,
+  uniformImplementerModel,
+} from "@brainervirus/workit-core/src/core/role-models";
+import {
+  codexHomeFor,
+  codexHomeOfInstall,
+  installCodexAgents,
+  type CodexRoleModels,
+} from "./agents";
 
 export const codexQualification = (host: CodexHost) =>
   host === "codex_cli"
@@ -78,16 +87,36 @@ export const codexContextProvider = (
 const pluginRoot = (): string => path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
+ * The `models.roles` model and effort for each Codex agent (host `codex`),
+ * only for roles that configure one. The implementer agent serves every fanout
+ * tier, so it gets a model only when all three tiers resolve to the same one.
+ */
+export const codexRoleModels = (cwd: string): CodexRoleModels => {
+  const out: CodexRoleModels = {};
+  for (const role of ["verifier", "reviewer"] as const) {
+    const found = resolveRoleModel(cwd, { role }, "codex");
+    if (found) out[role] = { model: found.model, effort: found.effort };
+  }
+  const implementer = uniformImplementerModel(cwd, "codex");
+  if (implementer) out.implementer = { model: implementer.model, effort: implementer.effort };
+  return out;
+};
+
+/**
  * Codex plugins cannot ship custom agents, so each MCP start of an installed
  * plugin copies the bundled workit-* agents into the owning Codex home's
  * `agents/` (scripts/agents.ts). A checkout or unpacked tarball is not an
  * install and copies nothing. Never fatal: the MCP server must still start.
  */
-export const syncCodexAgents = (root: string): void => {
+export const syncCodexAgents = (root: string, cwd?: string): void => {
   const codexHome = codexHomeOfInstall(root);
   if (!codexHome) return;
   try {
-    installCodexAgents(root, codexHome);
+    installCodexAgents(
+      root,
+      codexHome,
+      codexRoleModels(cwd ?? resolveCodexWorkspaceRoot(root, process.env) ?? process.cwd()),
+    );
   } catch {
     // Agents are a convenience; `workit doctor` reports a missing copy.
   }

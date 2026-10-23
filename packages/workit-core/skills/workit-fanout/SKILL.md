@@ -25,8 +25,8 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
    Never hand-edit it; change the plan or the standing orders and render again.
 4. **Spawn in a rolling window**, in the background, each in its own worktree:
    keep 4-6 in flight and refill from `spawnable` in `workit fanout status` as
-   each one finishes. Model: the brief's `model:` line, else TIER
-   (`references/orchestration.md`). Claude Code: the `implementer` agent, never
+   each one finishes. Model: the brief's `model:` and `effort:` lines (`workit models show`),
+   else TIER (`references/orchestration.md`). Claude Code: the `implementer` agent, never
    with `isolation: "worktree"`; Workit's hooks confine it to its WORKTREE.
 5. **Judge liveness by side effects only:** `workit fanout status` (head age,
    PR, CI, verdict, landed; STUCK past the TIMEBOX). Stop a stuck worker and
@@ -40,12 +40,12 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
    chain resumes. A fix round and recheck that both fail: a decider, not a
    third round; product choices go to the user (`references/orchestration.md`).
 7. **Verify by the workspace `verification` setting** (`workit grant show`).
-   A report is a pointer, never evidence. `proportional` (default): each slice's lane (`workit pr status`) decides; none needs no verdict, self the author's `--self`, focused (cheap model: Claude Code `model: sonnet`) and full a verifier after the last push; one verdict at a stack's top covers its unchanged lower PRs, and a stale one with `reverify: focused` re-checks only the new diff, reusing green CI. `self`: a verifier that wrote none
+   A report is a pointer, never evidence. `proportional` (default): each slice's lane (`workit pr status`) decides; none needs no verdict, self the author's `--self`, focused and full a verifier (Claude Code: the `model` and `effort` of `workit models show --role verifier`) after the last push; one verdict at a stack's top covers its unchanged lower PRs, and a stale one with `reverify: focused` re-checks only the new diff, reusing green CI. `self`: a verifier that wrote none
    of the slices, or you if you wrote none. `independent` or high risk: a
    separate verifier session, never yours (doctrine: the ledger only refuses
    authors). One verifier may take a batch of slices, one verdict per branch
    (`workit ledger verdict <result> --branch <b> --how "<evidence>"`), in a
-   session never chosen by the author. A review panel on separate models only at high risk.
+   session never chosen by the author. Spawn it with the brief's `verifier:` model (`workit models show --role verifier`). A review panel on separate models only at high risk.
 8. **Fan in** with `workit fanout check`: out-of-scope files (any file outside
    it stops the fan-in) and `git merge-tree` conflicts with trunk and between
    siblings. Fix what it names until it exits 0; a merged slice reads as

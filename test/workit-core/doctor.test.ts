@@ -1412,6 +1412,27 @@ test("detects a workspace mismatch and clears once the glob matches", () => {
   expect(check(run(), "workspace_mismatch").status).toBe("pass");
 });
 
+test("G a models.roles entry with an unknown role and host, W doctor runs, T workspace_mismatch warns naming both and the fix", () => {
+  const workspacesFile = path.join(fixture.configDir, "workspaces.json");
+  writeConfig(
+    workspacesFile,
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "current",
+          glob: `${fixture.cwd}/**`,
+          models: { roles: { judge: { claude_code: "opus" }, verifier: { vim: "sonnet" } } },
+        },
+      ],
+    }),
+  );
+  const found = check(run(), "workspace_mismatch");
+  expect(found.status).toBe("warn");
+  expect(found.detail).toContain("judge: unknown role");
+  expect(found.detail).toContain("verifier.vim: unknown host");
+  expect(found.fix).toContain("models.roles");
+});
+
 test("doctor surfaces typed workspace errors without throwing through identity checks", () => {
   const workspacesFile = path.join(fixture.configDir, "workspaces.json");
   writeConfig(

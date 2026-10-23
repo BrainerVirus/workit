@@ -18,7 +18,7 @@
 import { parseDuration } from "./duration";
 import { checksState, gatingChecks, missingRequired, type ChecksState } from "./forge/report";
 import type { ResolvedForge } from "./forge/resolve";
-import { workspaceTierModel } from "./core/workspaces";
+import { resolveRoleModel } from "./core/role-models";
 import { actorFromEnv, checkVerdicts, readLedger, type ReadRow, type VerdictBasis } from "./ledger";
 import { sliceLandings } from "./fanout-check";
 import { forgeBreaker, inSliceRun } from "./fanout-landed";
@@ -75,7 +75,7 @@ export type StatusOutcome = {
   landingOrder: string[];
   /** Not started; every dependency landed (or, stacked, its parent has an accepted verdict). */
   spawnable: string[];
-  /** The model `fanout.tierModels` names for each spawnable slice's TIER on this host. */
+  /** The model `models.roles` (or `fanout.tierModels`) names for each spawnable slice's TIER on this host. */
   spawnModels: Record<string, string>;
   stuck: string[];
   next: string;
@@ -288,7 +288,7 @@ export function fanoutStatus(
   const spawnModels: Record<string, string> = {};
   for (const id of spawnable) {
     const tier = plan.slices.find((slice) => slice.id === id)?.tier;
-    const model = tier ? workspaceTierModel(cwd, tier, host) : null;
+    const model = tier ? resolveRoleModel(cwd, { role: "implementer", tier }, host) : null;
     if (model) spawnModels[id] = model.model;
   }
   const spawnList = spawnable

@@ -137,21 +137,55 @@ test("G tierModels without an entry for the host or tier, W the lead renders a b
   expect(codex.code, codex.stderr + codex.stdout).toBe(0);
   expect(codex.json().data.model).toBeNull();
   expect(codex.json().data.text).not.toContain("model:");
+  // Claude Code has built-in role defaults: a malformed entry falls to them.
   const malformed = await run(cwd, ["fanout", "brief", "docs", "--json"], "claude_code");
-  expect(malformed.json().data.model).toBeNull();
+  expect(malformed.json().data.model).toBe("haiku");
+  expect(malformed.json().data.text).toContain("TIER: mundane\n  model: haiku  (built-in)\n");
+});
+
+test("G models.roles for the implementer and verifier in the workspace, W the lead renders a brief, T it names the tier's model and effort and the verifier's model", async () => {
+  const cwd = await setup({});
+  writeFileSync(
+    path.join(configHome.configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "app",
+          glob: `${cwd}/**`,
+          models: {
+            roles: {
+              implementer: { hard: { claude_code: { model: "opus", effort: "high" } } },
+              verifier: { claude_code: { model: "haiku", effort: "low" } },
+            },
+          },
+        },
+      ],
+    }),
+  );
+  const brief = await run(cwd, ["fanout", "brief", "core", "--json"], "claude_code");
+  expect(brief.code, brief.stderr + brief.stdout).toBe(0);
+  expect(brief.json().data.effort).toBe("high");
+  expect(brief.json().data.text).toContain(
+    "TIER: hard\n  model: opus  effort: high  (models.roles in workspace app)\n  verifier: model haiku  effort low  (models.roles in workspace app)\n",
+  );
+  const codex = await run(cwd, ["fanout", "brief", "core", "--json"], "codex_cli");
+  expect(codex.json().data.model).toBeNull();
+  expect(codex.json().data.text).not.toContain("verifier:");
 });
 
 test("G tierModels, W fanout status lists spawnable slices, T it names each one's model and leaves an unmapped one bare", async () => {
-  const cwd = await setup({ mundane: "sonnet", standard: { cursor: "gpt-5" } });
+  const cwd = await setup({ mundane: "fast-one", standard: { cursor: "gpt-5" } });
   const status = await run(cwd, ["fanout", "status", "--offline", "--json"], "claude_code");
   expect(status.code, status.stderr + status.stdout).toBe(0);
   const data = status.json().data;
   expect(data.spawnable).toEqual(["docs", "api", "core"]);
-  expect(data.spawnModels).toEqual({ docs: "sonnet", core: "opus" });
-  expect(data.next).toContain("spawn docs (model sonnet), api, core (model opus)");
+  expect(data.spawnModels).toEqual({ docs: "fast-one", api: "sonnet", core: "opus" });
+  expect(data.next).toContain("spawn docs (model fast-one), api (model sonnet), core (model opus)");
 
   const human = await run(cwd, ["fanout", "status", "--offline"], "cursor");
-  expect(human.stdout).toContain("spawn docs (model sonnet), api (model gpt-5), core (model opus)");
+  expect(human.stdout).toContain(
+    "spawn docs (model fast-one), api (model gpt-5), core (model opus)",
+  );
 });
 
 test("G tierModels with unknown tiers, unknown hosts and non-string values, W grant show runs, T each is reported as ignored", async () => {

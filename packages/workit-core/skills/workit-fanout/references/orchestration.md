@@ -5,22 +5,31 @@ and fans in. Workit records and checks; the host's own subagents run the work.
 
 ## TIER to model
 
-TIER is a field of each slice and of its brief. When the workspace sets
-`fanout.tierModels`, the brief has a `model:` line under TIER and `workit
-fanout status` names the model next to each spawnable slice: use that model.
-Without one, map TIER where the host lets you pick a model per spawn:
+TIER is a field of each slice and of its brief. Role models come from the
+workspace (`models.roles`; `fanout.tierModels` still feeds the implementer
+tiers) and, on Claude Code, built-in defaults: the brief has a `model:` line
+(with `effort:` when set) under TIER and a `verifier:` line; `workit fanout
+status` names the model next to each spawnable slice; `workit models show
+[--role r] [--host h] --json` lists every role (decider, implementer tiers,
+verifier, reviewer, explore, babysit). Pass exactly that `model` (and `effort`
+where the host's spawn call takes one) on the spawn call: a subagent that
+passes none inherits your model. Scouting and PR babysitting use the `explore`
+and `babysit` roles. A role with no model (other hosts without config) runs
+on the host's model, and TIER only sizes the timebox and decides whether to
+race. Claude Code's built-in defaults, when nothing is configured:
 
-| TIER | Claude Code (`model` on the Agent call) | Hosts without a per-spawn model |
-| --- | --- | --- |
-| scouting (read-only search, not a slice) | `haiku` | host default |
-| mundane | `sonnet` | host default |
-| standard | omit it (inherits yours) | host default |
-| hard | omit it (inherits yours); consider a race | host default |
+| Role or TIER | `model` on the Agent call |
+| --- | --- |
+| decider | `fable`, effort `high` |
+| hard | `opus` |
+| standard | `sonnet` |
+| mundane | `haiku` |
+| verifier | `sonnet` |
+| reviewer | `opus` |
+| explore, babysit | `haiku` |
 
-OpenCode takes a subagent's model from its agent config: pick a configured
-agent whose model fits the TIER, else the default. Codex, Cursor and Pi run
-every worker on the host's model, so TIER only sizes the timebox and decides
-whether to race.
+OpenCode takes a subagent's model from its agent config: pick a
+configured agent whose model fits the TIER, else the default.
 
 ## Rolling window
 
@@ -53,7 +62,7 @@ reversibility (the option cheapest to undo wins a tie), and the exact change
 list. The fixer applies that list once, then one focused recheck follows.
 
 - Hard call (shared contract, security, migration): two deciders on different
-  models (Claude Code: a different `model` on the Agent call; OpenCode: a
+  models (Claude Code: the `decider` role model, the other a different `model` on the Agent call; OpenCode: a
   child session on another configured agent; Codex, Cursor and Pi: one
   decider, since the host picks no model). If they disagree, you take the
   more reversible option.

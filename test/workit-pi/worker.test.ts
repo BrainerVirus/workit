@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -948,4 +948,56 @@ test("a raced Pi spawn stays unresolved", async () => {
     observed: false,
   });
   expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
+});
+
+test("G no models.roles for Pi, W a supervised worker command is built, T it names no --model or --thinking: the ambient model applies", () => {
+  const configDir = mkdtempSync(path.join(tmpdir(), "workit-pi-models-none-"));
+  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  try {
+    for (const role of ["reviewer", "investigator", "implementer"] as const) {
+      const { args } = workerCommand(runtime(), assignment(role));
+      expect(args).not.toContain("--model");
+      expect(args).not.toContain("--thinking");
+    }
+  } finally {
+    if (saved === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+  }
+});
+
+test("G models.roles with a Pi model and effort per role, W a worker command is built, T the worker gets --model and --thinking; a role without one stays ambient", () => {
+  const configDir = mkdtempSync(path.join(tmpdir(), "workit-pi-models-"));
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-models-root-"));
+  writeFileSync(
+    path.join(configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "pi",
+          glob: `${root}/**`,
+          models: {
+            roles: {
+              reviewer: { pi: { model: "anthropic/claude-sonnet-4-5", effort: "high" } },
+              explore: { pi: "anthropic/claude-haiku-4-5" },
+            },
+          },
+        },
+      ],
+    }),
+  );
+  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  try {
+    const reviewer = workerCommand(runtime(root), assignment("reviewer")).args;
+    expect(reviewer[reviewer.indexOf("--model") + 1]).toBe("anthropic/claude-sonnet-4-5");
+    expect(reviewer[reviewer.indexOf("--thinking") + 1]).toBe("high");
+    const investigator = workerCommand(runtime(root), assignment("investigator")).args;
+    expect(investigator[investigator.indexOf("--model") + 1]).toBe("anthropic/claude-haiku-4-5");
+    expect(investigator).not.toContain("--thinking");
+    expect(workerCommand(runtime(root), assignment("implementer")).args).not.toContain("--model");
+  } finally {
+    if (saved === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+  }
 });

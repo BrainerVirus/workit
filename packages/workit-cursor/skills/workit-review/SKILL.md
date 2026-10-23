@@ -9,7 +9,8 @@ Review the candidate, never the author's summary of it. A session that wrote a
 commit on the branch cannot record a passing verdict: if that is you, hand the
 review to a fresh agent with its own host-derived session: Claude Code and
 Codex, the `reviewer` or `verifier` agent (`--session` and `--token` from SubagentStart);
-OpenCode, a child session; Pi, a supervised worker. Never hand-mint one such
+OpenCode, a child session; Pi, a supervised worker. On Claude Code pass the
+`model` and `effort` of `workit models show --role <verifier|reviewer>`. Never hand-mint one such
 as `<lead>-v1`: it is refused as `forged_session`.
 An author's `--self` verdict reads self-reviewed and never counts as
 independent; `type-check-only` never proves a behavior change.

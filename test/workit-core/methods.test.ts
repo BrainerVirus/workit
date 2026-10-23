@@ -357,13 +357,10 @@ test("agent-critical delivery rules stay stated", () => {
       skillText("workit-fanout"),
       "except the integration-tip merge in integration mode",
     ],
-    ["fanout orchestration", fanoutOrchestration(), "| mundane | `sonnet` |"],
-    [
-      "fanout orchestration",
-      fanoutOrchestration(),
-      "| scouting (read-only search, not a slice) | `haiku` |",
-    ],
-    ["fanout orchestration", fanoutOrchestration(), "| hard | omit it (inherits yours)"],
+    ["fanout orchestration", fanoutOrchestration(), "| mundane | `haiku` |"],
+    ["fanout orchestration", fanoutOrchestration(), "| explore, babysit | `haiku` |"],
+    ["fanout orchestration", fanoutOrchestration(), "| hard | `opus` |"],
+    ["fanout orchestration", fanoutOrchestration(), "workit models show"],
     ["fanout orchestration", fanoutOrchestration(), "escalate instead of a third worker"],
     ["fanout orchestration", fanoutOrchestration(), "keep the one with the best verdict"],
     [
