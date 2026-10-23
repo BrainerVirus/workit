@@ -75,12 +75,11 @@ export const isAllowedWorkitCall = (
 
 const bypassReason = (flag: string) =>
   `Workit: \`${flag}\` overrides a Workit gate, so the user decides this call (no allow rule covers it).`;
-const EXPANSION_REASON =
-  "Workit: an expansion before `--` could become a bypass flag, so the user decides this call (no allow rule covers it).";
 
 /**
  * The ask reason for a Workit call in `command` that carries a bypass flag
- * before its `--` or a word the shell expands there, or null. Words are read after shell quoting, so `"--unverified"`,
+ * before its `--`, or null. A word the shell expands (`$F`, `${F:---unverified}`) is not read: its text is not what runs, and the
+ * merge grant and `--reason` stay the gate. Words are read after shell quoting, so `"--unverified"`,
  * `--unverif''ied` or a tab-separated flag are found where a host's string
  * rule could miss them. A command the tokenizer cannot analyze is judged on
  * its text with quotes and backslashes removed.
@@ -102,8 +101,6 @@ export const workitBypassFlag = (
     const end = words.indexOf("--");
     const flag = (end < 0 ? words : words.slice(0, end)).find(isBypass);
     if (flag) return bypassReason(flag.split("=")[0] ?? flag);
-    const limit = start + 1 + (end < 0 ? words.length : end);
-    if (segment.expands?.some((index) => index > start && index < limit)) return EXPANSION_REASON;
   }
   return null;
 };
