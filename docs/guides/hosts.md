@@ -214,6 +214,17 @@ session the same way, so plain `git commit`s on every host carry the trailer
 (Cursor only with `WORKIT_SESSION_ID` set); see
 [the session trailer hook](delivery.md#session-trailer-hook).
 
+## Claude Code
+
+The full guide is [claude-code.md](claude-code.md). One thing about updates:
+Claude Code loads its plugins once, when the process starts. After
+`claude plugin update workit@workit`, a running session, `/resume` inside it
+and the subagents it spawns keep running the old hook. Quit Claude Code and
+start it again (`claude --resume <session id>` keeps the conversation). When
+the hook sees a newer installed version it tells the agent once to ask you to
+restart, and `workit doctor` (`claude_session_plugin`, Linux and macOS) warns
+for each running `claude` process that started before the install.
+
 ## OpenCode
 
 Requires OpenCode 2.0.18+ and Node.js 24+.

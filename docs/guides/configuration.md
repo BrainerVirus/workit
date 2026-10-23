@@ -207,7 +207,13 @@ effort name; those entries are skipped.
 
 **How each host applies it.**
 
-- Claude Code: the fanout brief names `model:` and `effort:` under TIER and a
+- Claude Code: a subagent spawn that names no `model` gets its role's model
+  (and `effort`) from the plugin's PreToolUse hook, so `Explore` runs on the
+  explore role and `workit:verifier` on the verifier role; a spawn that names a
+  model keeps it, and a spawn is never denied over its model.
+  `workit models show --report [--days n]` lists the models subagents actually
+  ran on (default last 7 days) and flags a role that ran on a non-default one.
+  The fanout brief also names `model:` and `effort:` under TIER and a
   `verifier:` line; `workit fanout status` names the model per spawnable
   slice; the skills tell the lead to pass the model (and `effort`) from
   `workit models show` on each Agent call. A user-level `~/.claude/agents/`
