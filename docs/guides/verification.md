@@ -146,13 +146,18 @@ formatting, it counts as a behavior change.
   `generated/` folder is code.
 - **Comments and formatting** are told by reading each whole file on both
   sides with its strings, template literals and block comments, for
-  TypeScript and JavaScript (not JSX), C-family, Java, Kotlin, Go, Rust, CSS,
-  Python, TOML, SQL and markup without scripts. Directive comments
-  (`@ts-ignore`, `eslint-disable`, `noqa`, `//go:build` and the like),
-  shebangs and whitespace inside strings are code. Python, YAML, Makefiles,
-  other indentation-sensitive and unknown types ignore only trailing
-  whitespace; shell, Ruby, YAML and other types without a lexer keep their
-  comments.
+  TypeScript and JavaScript (not JSX), Java, Kotlin, Scala, Swift, Dart,
+  Groovy, Go, CSS, SCSS, LESS, Python, TOML and markup without scripts.
+  Directive comments (`@ts-ignore`, `eslint-disable`, `noqa`, `//go:build`
+  and the like), shebangs and whitespace inside strings are code. A file
+  with a lone carriage return, U+2028 or U+2029 (CRLF is fine) is read like
+  a binary: never cosmetic, so the lane is at least `focused`.
+- **Documented limits.** The C family (C, C++, Objective-C, C#), Rust, SQL,
+  shell, Ruby, YAML and every other type without a lexer keep their
+  comments: only trailing whitespace is cosmetic there. Where a lexer
+  exists, a few constructs are read as behavior rather than guessed at:
+  Python f-strings with a nested string inside `{}`, an unquoted CSS
+  `url(`, and a JavaScript `/` after `)` with another `/` later on the line.
 - **Generated copies** come only from the `.gitattributes` files of the base
   revision (the fork point), never `.git/info/attributes`, a global
   attributes file or the change itself.
@@ -170,8 +175,12 @@ covers everything under it), `#` comments and blank lines skipped. Workit
 reads it from the base revision only, so a change cannot remove an entry
 to lower its own lane; entries only tighten. A change to the file is itself
 a risk path, and it protects the next change, not the one that adds it.
-Workit's marker directory ignores everything else in `.workit/`, so commit
-it with `git add -f .workit/risk-paths`.
+Workit's marker directory ignores everything else in `.workit/` but leaves
+`risk-paths` visible (`.workit/.gitignore` is `*` and `!risk-paths`; `workit
+doctor --fix` and any command that creates the directory rewrite the old
+`*` alone), so `git add .workit/risk-paths` is enough. While the file is
+untracked, `policy assess` and `pr status` warn that it does not apply until
+it is committed on the base.
 
 ```text
 # merge gates and what they read
@@ -193,7 +202,9 @@ an open product choice or a needed plan cannot lift it silently: its own
 `product-choice=no` or `plan=no` needs `--why "<reason>"`, which the row keeps.
 
 Trivial work judged `risk=trivial behavior=no` needs nothing at task close
-(its PR still merges by its lane). A `behavior=no` judgment at normal risk
+(its PR still merges by its lane). Task close trusts the recorded judgment;
+the merge gate reads the diff lane. A `risk=trivial` task that still changes
+code needs what its lane asks before merge. A `behavior=no` judgment at normal risk
 still owes what the lane asks, except outside git, where no branch can hold a
 verdict. Before-write
 requirements deny working-tree edits on hosts with a pre-write hook (Claude

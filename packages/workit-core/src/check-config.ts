@@ -42,12 +42,19 @@ export function checksConfigFile(root: string): string {
   return !fs.existsSync(current) && fs.existsSync(legacy) ? legacy : current;
 }
 
-/** Create `<root>/.workit/` with its self-ignoring `.gitignore` (idempotent) and return the dir. */
+const WORKIT_GITIGNORE = "*\n!risk-paths\n";
+
+/**
+ * Create `<root>/.workit/` with its `.gitignore` (idempotent) and return the
+ * dir. It ignores everything but `risk-paths`, which a repo commits; the old
+ * `*` alone is rewritten.
+ */
 export function ensureWorkitDir(root: string): string {
   const dir = path.join(root, ".workit");
   fs.mkdirSync(dir, { recursive: true });
   const ignore = path.join(dir, ".gitignore");
-  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, "*\n");
+  if (!fs.existsSync(ignore) || fs.readFileSync(ignore, "utf8") === "*\n")
+    fs.writeFileSync(ignore, WORKIT_GITIGNORE);
   return dir;
 }
 

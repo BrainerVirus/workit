@@ -8,7 +8,11 @@ import {
 } from "@brainervirus/workit-core/src/autonomy";
 import { currentJudgment } from "@brainervirus/workit-core/src/core/policy/current-judgment";
 import { judgeTokens } from "@brainervirus/workit-core/src/core/policy/judgment";
-import { branchLane, laneNeed } from "@brainervirus/workit-core/src/core/policy/lane";
+import {
+  branchLane,
+  laneNeed,
+  untrackedRiskPathsWarning,
+} from "@brainervirus/workit-core/src/core/policy/lane";
 import { sameDirectoryIdentity } from "@brainervirus/workit-core/src/core/task-store";
 import {
   OPERATION_FAMILIES,
@@ -403,6 +407,7 @@ function laneOf(root: string) {
     base: lane.base,
     verification,
     need: verification === "proportional" ? laneNeed(lane.lane) : null,
+    warnings: [untrackedRiskPathsWarning(root)].filter((line) => line !== null),
   };
 }
 
@@ -465,6 +470,8 @@ function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false)
         stream,
         `lane ${data.lane.lane} (${data.lane.reasons.join("; ")}); verification: ${data.lane.verification}`,
       );
+    for (const warning of (data.lane?.warnings ?? []) as string[])
+      write(stream, `warning: ${warning}`);
     if (!requirements.length)
       write(stream, "no requirements: nothing to prove beyond your own checks");
     for (const item of requirements)

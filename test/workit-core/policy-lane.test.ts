@@ -508,6 +508,143 @@ test("substance: the lexer reads strings, regexes and comments with the whole fi
   expect(cosmetic("a.tsx", "<p>don't</p>\n", "<p>don't</p>  \n")).toBe(true);
 });
 
+test("lane: a lone CR, U+2028 or U+2029 makes a file opaque (at least focused); CRLF stays cosmetic", () => {
+  const order = ["none", "self", "focused", "full"];
+  const atLeastFocused = (name: string) => order.indexOf(name) >= order.indexOf("focused");
+  for (const [name, before, after] of [
+    ["src/app/a.ts", "// note\rexport const x = 1;\n", "// note\rexport const x = 2;\n"],
+    ["src/app/a.py", "# note\rx = 1\n", "# note\rx = 2\n"],
+    ["src/app/a.ts", "// note\u2028export const x = 1;\n", "// note\u2028export const x = 2;\n"],
+    ["src/app/a.ts", "// note\u2029export const x = 1;\n", "// note\u2029export const x = 2;\n"],
+  ])
+    expect(atLeastFocused(laneOf({ [name]: before }, { [name]: after }).lane)).toBe(true);
+  // An untracked file with the same shape counts too.
+  const root = repoWith({ "src/app/b.ts": "export const b = 1;\n" });
+  write(root, "src/app/new.ts", "// note\rexport const x = 1;\n");
+  expect(
+    atLeastFocused(branchLane(root, { base: "main", head: null, workingTree: true }).lane),
+  ).toBe(true);
+  expect(
+    laneOf(
+      { "src/app/a.ts": "export const x = 1;\n// c\n" },
+      { "src/app/a.ts": "export const x = 1;\r\n// c  \r\n" },
+    ).lane,
+  ).toBe("none");
+});
+
+const lexCases: [string, string, string, string][] = [
+  [
+    "js regex after )",
+    "a.ts",
+    "if (ok) /x\\/\\//.test(u) && safe();\n",
+    "if (ok) /x\\/\\//.test(u) && evil();\n",
+  ],
+  ["js CR line terminator", "a.ts", "// note\rsafe();\n", "// note\revil();\n"],
+  ["js U+2028", "a.ts", "// note\u2028safe();\n", "// note\u2028evil();\n"],
+  ["js U+2029", "a.js", "/* a */ x = 1; // n\u2029y = 2;\n", "/* a */ x = 1; // n\u2029y = 3;\n"],
+  ["py CR", "a.py", "# c\rsafe()\n", "# c\revil()\n"],
+  [
+    "py nested fstring 3.12",
+    "a.py",
+    'print(f"{d["#"]}"); safe()\n',
+    'print(f"{d["#"]}"); evil()\n',
+  ],
+  ["py rb prefix", "a.py", 'x = rb"\\\\" # c\nsafe()\n', 'x = rb"\\\\" # c\nevil()\n'],
+  ["cpp raw string", "a.cpp", 'auto s = R"(a" // )"; safe();\n', 'auto s = R"(a" // )"; evil();\n'],
+  [
+    "cs verbatim",
+    "a.cs",
+    'var s = @"\\" + "/*"; safe(); // */\n',
+    'var s = @"\\" + "/*"; evil(); // */\n',
+  ],
+  [
+    "rust char quote",
+    "a.rs",
+    'let a = \'"\'; let b = "//"; safe();\n',
+    'let a = \'"\'; let b = "//"; evil();\n',
+  ],
+  ["rust raw string", "a.rs", 'let s = r#"a" // "#; safe();\n', 'let s = r#"a" // "#; evil();\n'],
+  [
+    "sql backslash",
+    "q.sql",
+    "SELECT 'C:\\', 'x -- ', safe FROM t;\n",
+    "SELECT 'C:\\', 'x -- ', evil FROM t;\n",
+  ],
+  [
+    "css url",
+    "a.css",
+    "a{background:url(/*);color:red}\nb{} /* */\n",
+    "a{background:url(/*);color:blue}\nb{} /* */\n",
+  ],
+  ["c trigraph", "a.c", 's = "??/"; /* "; safe(); /* */\n', 's = "??/"; /* "; evil(); /* */\n'],
+  ["c line-comment backslash", "a.c", "// note \\\nsafe();\n", "// note \\\nevil();\n"],
+  ["c preproc", "a.c", "#define X 1\n", "#define X 2\n"],
+  ["toml multiline", "a.toml", 'a = """\nx # y\n"""\n', 'a = """\nx # z\n"""\n'],
+  ["toml literal ml", "a.toml", "a = '''\nx \\''' # c\nb = 1\n", "a = '''\nx \\''' # c\nb = 2\n"],
+  [
+    "html string",
+    "a.html",
+    '<a title="x"><!-- c --></a>\n<p>1</p>\n',
+    '<a title="x"><!-- c --></a>\n<p>2</p>\n',
+  ],
+  ["bom", "a.ts", "\uFEFFx = 1;\n", "x = 1;\n"],
+  ["crlf", "a.ts", "x = 1;\r\n", "x = 1;\n"],
+  ["js keyword-like regex", "a.ts", "x = a\n/re/g.test(s) // c\n", "x = a\n/re/g.test(t) // c\n"],
+  ["js div after ]", "a.ts", "y = arr[0] / 2 // c\n", "y = arr[0] / 3 // c\n"],
+  ["go", "a.go", "s := `a//` + x // c\n", "s := `a//` + y // c\n"],
+  ["swift multiline", "a.swift", 's = """\na // b\n"""\n', 's = """\na // c\n"""\n'],
+  [
+    "js }/ regex",
+    "a.ts",
+    "if (a) {}\n/x/.test(s) ? safe() : 0\n",
+    "if (a) {}\n/x/.test(s) ? evil() : 0\n",
+  ],
+  ["js obj division", "a.ts", "v = {a:1}.a / 2 + 3 // /\n", "v = {a:1}.a / 2 + 4 // /\n"],
+  [
+    "js `}` from block then divide",
+    "a.ts",
+    "f = function(){} / 1 / 2 // c\n",
+    "f = function(){} / 1 / 3 // c\n",
+  ],
+  ["ts generic >", "a.ts", "let x = a<b>/1/2 // c\n", "let x = a<b>/1/3 // c\n"],
+  [
+    "kotlin char",
+    "a.kt",
+    'val c = \'"\'; val s = "//"; safe()\n',
+    'val c = \'"\'; val s = "//"; evil()\n',
+  ],
+  ["py string prefix u", "a.py", "x = u'#'; safe()\n", "x = u'#'; evil()\n"],
+];
+
+test("substance: every reviewed lexer probe fails closed; BOM and CRLF stay cosmetic", () => {
+  for (const [name, probe, before, after] of lexCases) {
+    const expected = name === "bom" || name === "crlf";
+    expect([name, cosmeticChange(probe, Buffer.from(before), Buffer.from(after))]).toEqual([
+      name,
+      expected,
+    ]);
+  }
+});
+
+test("substance: unlexed languages keep their comments; lexed ones fail closed on what they misread", () => {
+  const cosmetic = (name: string, before: string, after: string) =>
+    cosmeticChange(name, Buffer.from(before), Buffer.from(after));
+  for (const ext of ["c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "cs", "rs", "sql"]) {
+    expect(cosmetic(`a.${ext}`, "x();\n", "// note\nx();\n")).toBe(false);
+    expect(cosmetic(`a.${ext}`, "x();\n", "x();   \n\n")).toBe(true);
+  }
+  expect(cosmetic("a.py", 'x = f"{{a}} {b}" # c\n', 'x = f"{{a}} {b}" # d\n')).toBe(true);
+  expect(cosmetic("a.py", 'x = f"{a" # c\n', 'x = f"{a" # d\n')).toBe(false);
+  expect(
+    cosmetic("a.css", 'a{background:url("x")} /* c */\n', 'a{background:url("x")} /* d */\n'),
+  ).toBe(true);
+  expect(
+    cosmetic("a.css", "a{background:url(x)} /* c */\n", "a{background:url(x)} /* d */\n"),
+  ).toBe(false);
+  expect(cosmetic("a.ts", "y = f(a) / 2;\n// c\n", "y = f(a) / 2;\n// d\n")).toBe(true);
+  expect(cosmetic("a.ts", "y = f(a) / 2 / 3; // c\n", "y = f(a) / 2 / 3; // d\n")).toBe(false);
+});
+
 test("this repository's .workit/risk-paths names real gate files", () => {
   const root = path.resolve(import.meta.dir, "../..");
   const globs = parseRiskPaths(readFileSync(path.join(root, ".workit/risk-paths"), "utf8"));

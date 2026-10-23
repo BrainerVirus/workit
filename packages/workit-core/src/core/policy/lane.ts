@@ -19,7 +19,7 @@
 // The diff sets the floor; a recorded high-risk judgment raises it to full.
 // A behavior-change judgment does not move it: the diff already tells docs
 // from behavior (Markdown that steers agents counts as behavior).
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   diffNumstat,
@@ -32,9 +32,10 @@ import {
   untrackedFiles,
 } from "../../git/rev";
 import type { VerificationMode } from "../../autonomy";
+import { git } from "../../git/ops";
 import { defaultBase, type VerdictCheck } from "../../ledger";
 import { generatedByAttributes } from "./attributes";
-import { cosmeticChange } from "./substance";
+import { cosmeticChange, hasOpaqueLineBreak } from "./substance";
 
 export const REVIEW_LANES = ["none", "self", "focused", "full"] as const;
 export type ReviewLane = (typeof REVIEW_LANES)[number];
@@ -286,6 +287,7 @@ function untrackedStat(cwd: string, file: string): ChangedFile {
     const bytes = readFileSync(path.join(cwd, file));
     if (bytes.includes(0)) return { path: file, added: 0, deleted: 0, binary: true };
     const text = bytes.toString("utf8");
+    if (hasOpaqueLineBreak(text)) return { path: file, added: 0, deleted: 0, binary: true };
     const lines = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
     return { path: file, added: lines, deleted: 0 };
   } catch {
@@ -302,7 +304,11 @@ const ABSENT = /^0+$/u;
  * and insignificant whitespace aside; see substance.ts). A file git lists
  * but this cannot read is not cosmetic.
  */
-function cosmeticFiles(cwd: string, fork: string, head: string | null): Set<string> | null {
+function cosmeticFiles(
+  cwd: string,
+  fork: string,
+  head: string | null,
+): { cosmetic: Set<string>; opaque: Set<string> } | null {
   const raw = diffRaw(cwd, fork, head);
   if (!raw) return null;
   const candidates = raw.filter(
@@ -318,6 +324,7 @@ function cosmeticFiles(cwd: string, fork: string, head: string | null): Set<stri
   );
   if (!blobs) return null;
   const out = new Set<string>();
+  const opaque = new Set<string>();
   for (const entry of candidates) {
     const before = blobs.get(entry.oldBlob);
     let after = blobs.get(entry.newBlob);
@@ -328,8 +335,12 @@ function cosmeticFiles(cwd: string, fork: string, head: string | null): Set<stri
         after = undefined;
       }
     if (before && after && cosmeticChange(entry.path, before, after)) out.add(entry.path);
+    // A lone CR, U+2028 or U+2029 ends a line for some readers and not for
+    // others: such a file is read as opaque, like a binary.
+    else if ([before, after].some((bytes) => bytes && hasOpaqueLineBreak(bytes.toString("utf8"))))
+      opaque.add(entry.path);
   }
-  return out;
+  return { cosmetic: out, opaque };
 }
 
 /** Of `paths`, those the `.gitattributes` files at `fork` mark generated (none when unreadable). */
@@ -356,7 +367,8 @@ function laneFiles(cwd: string, fork: string, head: string | null): ChangedFile[
   const files: ChangedFile[] = [
     ...stats.map((entry) => ({
       ...entry,
-      cosmetic: !entry.binary && cosmetic.has(entry.path),
+      ...(cosmetic.opaque.has(entry.path) ? { binary: true } : {}),
+      cosmetic: !entry.binary && cosmetic.cosmetic.has(entry.path),
     })),
     ...(head === null ? untrackedFiles(cwd).map((file) => untrackedStat(cwd, file)) : []),
   ];
@@ -435,6 +447,21 @@ export function branchLane(
     base,
     head: options.head,
   };
+}
+
+/**
+ * A warning when `.workit/risk-paths` sits in the working tree but is not
+ * tracked: the lane reads it from the base revision only, so it applies once
+ * it is committed there. Null when there is nothing to warn about.
+ */
+export function untrackedRiskPathsWarning(cwd: string): string | null {
+  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
+  const root = top.ok ? top.stdout.trim() : "";
+  if (!root || !existsSync(path.join(root, RISK_PATHS_FILE))) return null;
+  const tracked = git(root, ["ls-files", "--error-unmatch", "--", RISK_PATHS_FILE]);
+  return tracked.ok
+    ? null
+    : `${RISK_PATHS_FILE} is not committed: it does not apply until it is committed on the base branch`;
 }
 
 /** What a verdict gate asks for in a lane under `verification: proportional`. */

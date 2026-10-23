@@ -218,6 +218,21 @@ test("pr status --json shows the lane, why, and what the merge gate needs", asyn
   );
 });
 
+test("pr status warns when .workit/risk-paths is untracked in the working tree", async () => {
+  const { repo } = setup(SMALL);
+  const clean = await run(["pr", "status", "--json"], repo.cwd);
+  expect(clean.json().data.verdict.lane.warnings).toEqual([]);
+  mkdirSync(path.join(repo.cwd, ".workit"), { recursive: true });
+  writeFileSync(path.join(repo.cwd, ".workit/risk-paths"), "src/**\n");
+  const warned = await run(["pr", "status", "--json"], repo.cwd);
+  expect(warned.json().data.verdict.lane.warnings).toEqual([
+    expect.stringContaining(".workit/risk-paths is not committed"),
+  ]);
+  expect((await run(["pr", "status"], repo.cwd)).stdout).toContain(
+    "warning: .workit/risk-paths is not committed",
+  );
+});
+
 // Review finding mvkcoxgb: each of these merged with no verdict at lane none.
 for (const [name, files, attributes] of [
   [

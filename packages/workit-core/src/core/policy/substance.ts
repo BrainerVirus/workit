@@ -6,7 +6,8 @@
 // its comments, an indentation-sensitive or unknown type keeps all but
 // trailing whitespace, and anything it cannot read (invalid UTF-8, a NUL
 // byte, an unterminated string or comment, a regex across lines) is
-// substantive.
+// substantive. Languages it would read wrongly stay unlexed (C-family, Rust,
+// SQL, shell, Ruby, YAML): only trailing whitespace is cosmetic there.
 
 type Syntax = {
   /** Line comment openers. */
@@ -23,8 +24,12 @@ type Syntax = {
   js?: boolean;
   /** Go raw strings in backticks. */
   rawBacktick?: boolean;
-  /** Strings may span lines (SQL). */
+  /** Strings may span lines. */
   multiline?: boolean;
+  /** Python: an f-string with an unbalanced `{` holds a nested string this cannot read. */
+  fstring?: boolean;
+  /** CSS: an unquoted `url(` body is no string or comment this can read. */
+  cssUrl?: boolean;
   /** Only trailing whitespace is cosmetic (indentation matters). */
   indented?: boolean;
 };
@@ -34,20 +39,20 @@ const C_LIKE: Syntax = { line: ["//"], block: SLASH_BLOCK, quotes: `"'` };
 const SYNTAXES: Record<string, Syntax> = Object.fromEntries([
   // Not jsx or tsx: JSX text (`don't`, `</a>`) is no lexable string or regex.
   ...["ts", "mts", "cts", "js", "mjs", "cjs"].map((ext) => [ext, { ...C_LIKE, js: true }]),
-  ...["c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "cs"].map((ext) => [ext, C_LIKE]),
   ...["java", "kt", "kts", "scala", "swift", "dart", "groovy"].map((ext) => [
     ext,
     { ...C_LIKE, triple: true },
   ]),
   ["go", { ...C_LIKE, rawBacktick: true }],
-  ["rs", { ...C_LIKE, quotes: `"` }],
-  ...["css", "scss", "less"].map((ext) => [ext, { line: [], block: SLASH_BLOCK, quotes: `"'` }]),
+  ...["css", "scss", "less"].map((ext) => [
+    ext,
+    { line: [], block: SLASH_BLOCK, quotes: `"'`, cssUrl: true },
+  ]),
   ...["py", "pyi"].map((ext) => [
     ext,
-    { line: ["#"], block: [], quotes: `"'`, triple: true, indented: true },
+    { line: ["#"], block: [], quotes: `"'`, triple: true, indented: true, fstring: true },
   ]),
   ["toml", { line: ["#"], block: [], quotes: `"`, literal: "'", triple: true }],
-  ["sql", { line: ["--"], block: SLASH_BLOCK, quotes: `'"`, multiline: true }],
   ...["html", "htm", "xml", "svg", "xhtml"].map((ext) => [
     ext,
     // Text and <pre> whitespace can matter: only trailing whitespace is cosmetic.
@@ -179,6 +184,8 @@ function lex(syntax: Syntax, text: string): string | null {
   };
   /** Scan a quoted string from `index`; returns false when it does not close. */
   const scanString = (quote: string, escapes: boolean, multiline: boolean): boolean => {
+    const prefix = text.slice(Math.max(0, index - 2), index).match(/[a-z]*$/iu)?.[0] ?? "";
+    const fstring = syntax.fstring === true && /f/iu.test(prefix);
     let end = index + quote.length;
     while (end < text.length) {
       const char = text[end];
@@ -187,6 +194,7 @@ function lex(syntax: Syntax, text: string): string | null {
         continue;
       }
       if (text.startsWith(quote, end)) {
+        if (fstring && unbalanced(text.slice(index + quote.length, end))) return false;
         emitVerbatim(text.slice(index, end + quote.length));
         index = end + quote.length;
         return true;
@@ -274,6 +282,13 @@ function lex(syntax: Syntax, text: string): string | null {
       index += 1;
       continue;
     }
+    if (syntax.cssUrl && /^url\(\s*[^"')\s]/iu.test(text.slice(index, index + 64))) return null;
+    if (syntax.js && char === "/" && !regexAllowed() && out.trimEnd().endsWith(")")) {
+      // Division after `)` may be a regex after `if (x)`: with another `/` on
+      // the line the two readings differ on what is code, so give up.
+      const lineEnd = text.indexOf("\n", index);
+      if (text.slice(index + 1, lineEnd < 0 ? text.length : lineEnd).includes("/")) return null;
+    }
     if (syntax.js && char === "/" && regexAllowed()) {
       let end = index + 1;
       let inClass = false;
@@ -309,6 +324,24 @@ function lex(syntax: Syntax, text: string): string | null {
   return out;
 }
 
+/** Does an f-string body hold a `{` that never closes, once `{{` and `}}` are set aside? */
+function unbalanced(body: string): boolean {
+  let depth = 0;
+  for (const part of body.replaceAll("{{", "").replaceAll("}}", "")) {
+    if (part === "{") depth += 1;
+    else if (part === "}") depth = Math.max(0, depth - 1);
+  }
+  return depth > 0;
+}
+
+/**
+ * A lone CR (not followed by LF), U+2028 or U+2029: some readers end a line
+ * there and others do not, so a comment can hide code from one of them.
+ */
+export function hasOpaqueLineBreak(text: string): boolean {
+  return /\r(?!\n)|[\u2028\u2029]/u.test(text);
+}
+
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 /** The UTF-8 text of `bytes`, or null for binary (a NUL byte) or invalid UTF-8. */
@@ -326,6 +359,7 @@ export function cosmeticChange(file: string, before: Uint8Array, after: Uint8Arr
   const left = textOf(before);
   const right = textOf(after);
   if (left === null || right === null) return false;
+  if (hasOpaqueLineBreak(left) || hasOpaqueLineBreak(right)) return false;
   const a = substanceOf(file, left);
   return a !== null && a === substanceOf(file, right);
 }

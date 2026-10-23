@@ -51,6 +51,7 @@ import {
   type FlowRoute,
 } from "@brainervirus/workit-core/src/core/branch";
 import { actorFromEnv, checkVerdicts, readLedger } from "@brainervirus/workit-core/src/ledger";
+import { untrackedRiskPathsWarning } from "@brainervirus/workit-core/src/core/policy/lane";
 import { prLaneGate } from "@brainervirus/workit-core/src/core/policy/pr-lane";
 import {
   vcsConfig,
@@ -149,6 +150,8 @@ async function status(argv: string[], io: Io): Promise<number> {
           0,
           `lane: ${data.verdict.lane.lane} (${data.verdict.lane.reasons.join("; ")}); merge needs ${NEED_TEXT[data.verdict.lane.need]}${data.verdict.lane.verification === "proportional" ? "" : ` (verification: ${data.verdict.lane.verification})`}`,
         );
+      for (const warning of data.verdict?.lane?.warnings ?? [])
+        lines.splice(lines.length - 1, 0, `warning: ${warning}`);
       // The step that clears `next`, right above it.
       if (data.nextHint) lines.splice(lines.length - 1, 0, `do: ${data.nextHint}`);
       return lines;
@@ -249,6 +252,7 @@ function verdictBlock(
           riskFiles: gate.lane.riskFiles,
           base: gate.lane.base,
           verification: gate.verification,
+          warnings: [untrackedRiskPathsWarning(cwd)].filter((line) => line !== null),
           need: gate.need,
           satisfied: gate.satisfied && (gate.need === "none" || check.head === doc.head.sha),
         }

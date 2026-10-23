@@ -1,7 +1,7 @@
 // S17 acceptance through the CLI: `workit policy assess --judge …`.
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -27,7 +27,7 @@ const workit = (cwd: string, ...args: string[]) => {
     [path.join(ROOT, "packages/workit-cli/src/main.ts"), ...args],
     { cwd, encoding: "utf8", env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: "" } },
   );
-  return { code: result.status, json: () => JSON.parse(result.stdout) };
+  return { code: result.status, stdout: result.stdout, json: () => JSON.parse(result.stdout) };
 };
 const ruleIds = (output: { data: { requirements: { ruleId: string }[] } }) =>
   output.data.requirements.map((item) => item.ruleId);
@@ -200,3 +200,16 @@ test("Given lead judged product-choice=yes, When lead lifts it with a 1900-char 
   expect(rows[1]).toMatchObject({ lifted: ["productChoiceOpen"], why });
   expect(JSON.stringify(rows[1]).split(why)).toHaveLength(2);
 }, 30_000);
+
+test("G an untracked .workit/risk-paths, T policy assess warns it does not apply until committed", () => {
+  const root = repo();
+  mkdirSync(path.join(root, ".workit"));
+  writeFileSync(path.join(root, ".workit/risk-paths"), "src/billing/**\n");
+  const judge = ["policy", "assess", "--judge", "behavior=yes", "risk=normal"];
+  expect(workit(root, ...judge, "--json").json().data.lane.warnings).toEqual([
+    expect.stringContaining(".workit/risk-paths is not committed"),
+  ]);
+  expect(workit(root, ...judge).stdout).toContain("warning: .workit/risk-paths is not committed");
+  spawnSync("git", ["add", "-f", ".workit/risk-paths"], { cwd: root });
+  expect(workit(root, ...judge, "--json").json().data.lane.warnings).toEqual([]);
+});
