@@ -218,6 +218,41 @@ test("pr status --json shows the lane, why, and what the merge gate needs", asyn
   );
 });
 
+// Review finding mvkcoxgb: each of these merged with no verdict at lane none.
+for (const [name, files, attributes] of [
+  [
+    "code after a block comment",
+    { "src/auth/login.ts": "/* audited */ export const allow = () => true;\n" },
+    null,
+  ],
+  [
+    "a risk path with a space in its name",
+    { "src/auth/check token.ts": "export const allow = () => true;\n" },
+    null,
+  ],
+  [
+    ".git/info/attributes marking everything generated",
+    { "src/hooks/guard.ts": "export const guard = false;\n" },
+    "* linguist-generated\n",
+  ],
+] as const)
+  test(`fails closed end to end: ${name} is lane full, and neither no verdict nor --self merges`, async () => {
+    const { repo, runner } = setup(files);
+    if (attributes) {
+      const gitDir = repo.git("rev-parse", "--git-common-dir");
+      writeFileSync(path.resolve(repo.cwd, gitDir, "info/attributes"), attributes);
+    }
+    const none = await run(["pr", "merge", "--json"], repo.cwd);
+    expect(none.code).toBe(3);
+    expect(none.json().data).toMatchObject({
+      reason: "needs_verdict",
+      verdict: { lane: "full" },
+    });
+    await selfVerdict(repo);
+    expect((await run(["pr", "merge", "--json"], repo.cwd)).code).toBe(3);
+    expect(merges(runner.calls)).toEqual([]);
+  });
+
 test("a merged lane-none PR reads as merged with no verdict in pr status", async () => {
   const { repo } = setup(DOCS);
   expect((await run(["pr", "merge", "--json"], repo.cwd)).code).toBe(0);

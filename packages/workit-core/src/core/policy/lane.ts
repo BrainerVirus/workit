@@ -5,9 +5,16 @@
 //
 //   none     docs, comment or formatting-only, or generated copies: no verdict
 //   self     a small, low-risk behavior change: the author's `--self` verdict
-//   focused  a normal behavior change: an accepted non-author verdict
+//   focused  a normal behavior change, or any lockfile or binary change: an
+//            accepted non-author verdict
 //   full     a risk path, a large diff or a high-risk judgment: an accepted
 //            non-author verdict (a high-risk task also asks `--kind live`)
+//
+// The lane fails closed (review finding mvkcoxgb): any doubt about a file
+// makes it a behavior change, and a file on a risk path is never below full,
+// whatever else it is (cosmetic, generated, docs or a lockfile). Generated
+// copies and repo risk paths are read from the base revision only, so a
+// change can neither mark its own code generated nor drop a risk path.
 //
 // The diff sets the floor; a recorded high-risk judgment raises it to full.
 // A behavior-change judgment does not move it: the diff already tells docs
@@ -16,13 +23,18 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   diffNumstat,
-  diffSubstance,
-  generatedPaths,
+  diffRaw,
+  fileAt,
+  mergeBase,
+  readBlobs,
   resolveRef,
+  treeFilesNamed,
   untrackedFiles,
 } from "../../git/rev";
 import type { VerificationMode } from "../../autonomy";
 import { defaultBase, type VerdictCheck } from "../../ledger";
+import { generatedByAttributes } from "./attributes";
+import { cosmeticChange } from "./substance";
 
 export const REVIEW_LANES = ["none", "self", "focused", "full"] as const;
 export type ReviewLane = (typeof REVIEW_LANES)[number];
@@ -45,7 +57,7 @@ export const LANE_THRESHOLDS = {
  * Path tokens that mark a risk path: merge and release gates, hooks, auth,
  * secrets, migrations, CI. A token matches a whole directory name or a
  * `-`/`_`/`.`-separated part of one (`auth`, `oauth-client`, `pre_commit`).
- * Tests and docs never count as risk paths.
+ * Tests and docs never match a token.
  */
 export const RISK_TOKENS: ReadonlySet<string> = new Set([
   "auth",
@@ -74,13 +86,19 @@ export const RISK_TOKENS: ReadonlySet<string> = new Set([
   "workflows",
 ]);
 
-/** Exact repo paths (CI definitions) that are risk paths regardless of tokens. */
+/** Exact repo paths (CI definitions, the lane's own inputs) that are risk paths. */
 const RISK_FILES = new Set([
   ".gitlab-ci.yml",
   "Jenkinsfile",
   "azure-pipelines.yml",
   ".pre-commit-config.yaml",
+  ".workit/risk-paths",
 ]);
+/** File names that are risk paths in any directory: they decide what is generated. */
+const RISK_NAMES = new Set([".gitattributes"]);
+
+/** The repo's own risk paths, one glob per line at the base revision (decision B3: they only tighten). */
+export const RISK_PATHS_FILE = ".workit/risk-paths";
 
 const LOCKFILES = new Set([
   "bun.lock",
@@ -98,49 +116,14 @@ const LOCKFILES = new Set([
   "composer.lock",
 ]);
 
-const DOC_EXT = /\.(?:md|mdx|markdown|rst|adoc)$/iu;
-const DOC_NAMES = /^(?:license|licence|notice|authors|changelog|changes|contributors)(?:\.|$)/iu;
+/** Docs are told by extension only: code under `docs/` is code. */
+const DOC_EXT = /\.(?:md|mdx|markdown|rst|adoc|txt)$/iu;
+const DOC_NAMES = /^(?:license|licence|notice|authors|changelog|changes|contributors)$/iu;
 /** Markdown that steers agents is behavior, not docs. */
 const INSTRUCTIONS =
   /(?:^|\/)(?:AGENTS|CLAUDE|GEMINI|SKILL)\.md$|(?:^|\/)(?:skills|agents|commands|rules|prompts)\/[^/]+/iu;
 const TEST_PATH =
   /(?:^|\/)(?:test|tests|__tests__|spec|specs|fixtures)\/|\.(?:test|spec)\.[^/]+$/iu;
-const GENERATED_PATH = /(?:^|\/)(?:generated|__generated__)\/|\.generated\.[^/]+$/iu;
-
-/** Comment markers by extension: a changed line starting with one is a comment. */
-const SLASH = ["//", "/*", "*/", "* ", "*"];
-const HASH = ["#"];
-const COMMENT_MARKERS: Record<string, readonly string[]> = Object.fromEntries([
-  ...[
-    "ts",
-    "tsx",
-    "mts",
-    "cts",
-    "js",
-    "jsx",
-    "mjs",
-    "cjs",
-    "java",
-    "kt",
-    "go",
-    "rs",
-    "c",
-    "h",
-    "cc",
-    "cpp",
-    "hpp",
-    "cs",
-    "swift",
-    "scala",
-    "php",
-    "css",
-    "scss",
-    "less",
-  ].map((ext) => [ext, SLASH]),
-  ...["py", "sh", "bash", "zsh", "rb", "yml", "yaml", "toml", "pl", "r"].map((ext) => [ext, HASH]),
-  ...["sql", "lua", "hs"].map((ext) => [ext, ["--"]]),
-  ...["html", "xml", "svg", "vue"].map((ext) => [ext, ["<!--", "-->"]]),
-]);
 
 export type ChangedFile = {
   path: string;
@@ -149,7 +132,7 @@ export type ChangedFile = {
   binary?: boolean;
   /** Only whitespace, blank-line or comment changes. */
   cosmetic?: boolean;
-  /** Marked `linguist-generated` in `.gitattributes`. */
+  /** Marked `linguist-generated` by the base revision's `.gitattributes`. */
   generated?: boolean;
 };
 
@@ -176,16 +159,17 @@ type FileKind = "doc" | "cosmetic" | "generated" | "lockfile" | "test" | "behavi
 
 const basename = (file: string): string => file.slice(file.lastIndexOf("/") + 1);
 
+/** Prose for people: a doc extension (or a bare LICENSE-style name), not agent instructions. */
+const isDoc = (file: string): boolean =>
+  !INSTRUCTIONS.test(file) && (DOC_EXT.test(file) || DOC_NAMES.test(basename(file)));
+
+/** What a file off risk paths is; risk paths are decided before (see computeLane). */
 function kindOf(file: ChangedFile): FileKind {
-  if (file.generated || GENERATED_PATH.test(file.path)) return "generated";
+  if (file.binary) return "behavior";
+  if (file.generated) return "generated";
   if (LOCKFILES.has(basename(file.path))) return "lockfile";
-  if (
-    /(?:^|\/)docs\//u.test(file.path) ||
-    (!INSTRUCTIONS.test(file.path) &&
-      (DOC_EXT.test(file.path) || DOC_NAMES.test(basename(file.path))))
-  )
-    return "doc";
-  if (file.cosmetic && !file.binary) return "cosmetic";
+  if (isDoc(file.path)) return "doc";
+  if (file.cosmetic) return "cosmetic";
   return TEST_PATH.test(file.path) ? "test" : "behavior";
 }
 
@@ -210,11 +194,15 @@ function globMatch(pattern: string, file: string): boolean {
   return regex.test(file) || file.startsWith(`${pattern.replace(/\/$/u, "")}/`);
 }
 
-/** A built-in risk path: a CI file, `.github/workflows`, or a path with a risk token. */
+/**
+ * A risk path: a configured glob (any file, tests and docs included), a CI
+ * definition, a `.gitattributes`, `.workit/risk-paths`, or a path with a
+ * risk token (never a test or a doc).
+ */
 export function isRiskPath(file: string, extra: readonly string[] = []): boolean {
   if (extra.some((pattern) => globMatch(pattern, file))) return true;
-  if (TEST_PATH.test(file)) return false;
-  if (RISK_FILES.has(file)) return true;
+  if (RISK_FILES.has(file) || RISK_NAMES.has(basename(file))) return true;
+  if (TEST_PATH.test(file) || isDoc(file)) return false;
   return file
     .split("/")
     .map((segment, index, all) =>
@@ -228,18 +216,32 @@ export function isRiskPath(file: string, extra: readonly string[] = []): boolean
     );
 }
 
+/** The globs of a risk-paths file: one per line, `#` comments and blank lines skipped. */
+export const parseRiskPaths = (text: string): string[] =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => line.replace(/^\//u, ""));
+
 /** The review lane for a set of changed files (pure; thresholds in LANE_THRESHOLDS). */
 export function computeLane(input: LaneInput): LaneAssessment {
-  const kinds = input.files.map((file) => ({ file, kind: kindOf(file) }));
+  // A risk path is decided first and overrides every other kind.
+  const riskFiles = input.files
+    .filter((file) => isRiskPath(file.path, input.riskPaths))
+    .map((file) => file.path);
+  const risky = new Set(riskFiles);
+  const kinds = input.files.map((file) => ({
+    file,
+    kind: risky.has(file.path) ? ("behavior" as const) : kindOf(file),
+  }));
   const behavior = kinds.filter(
     (entry) => entry.kind === "behavior" || entry.kind === "test" || entry.kind === "lockfile",
   );
   const lines = behavior
     .filter((entry) => entry.kind !== "lockfile")
     .reduce((sum, entry) => sum + entry.file.added + entry.file.deleted, 0);
-  const riskFiles = behavior
-    .filter((entry) => isRiskPath(entry.file.path, input.riskPaths))
-    .map((entry) => entry.file.path);
+  const opaque = behavior.filter((entry) => entry.kind === "lockfile" || entry.file.binary);
   const result = (lane: ReviewLane, reasons: string[]): LaneAssessment => ({
     lane,
     reasons,
@@ -265,67 +267,17 @@ export function computeLane(input: LaneInput): LaneAssessment {
     return result("focused", [`${lines} lines changed (> ${selfMaxLines})`]);
   if (behavior.length > selfMaxFiles)
     return result("focused", [`${behavior.length} behavior files changed (> ${selfMaxFiles})`]);
+  // A lockfile or a binary has no lines to read: the author cannot vouch for it alone.
+  if (opaque.length)
+    return result("focused", [
+      `a lockfile or binary changed: ${opaque
+        .slice(0, 3)
+        .map((entry) => entry.file.path)
+        .join(", ")}${opaque.length > 3 ? ", …" : ""}`,
+    ]);
   return result("self", [
     `small change: ${lines} line${lines === 1 ? "" : "s"} in ${behavior.length} file${behavior.length === 1 ? "" : "s"}, no risk path`,
   ]);
-}
-
-const extension = (file: string): string => {
-  const name = basename(file);
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
-};
-
-/**
- * Files whose whitespace-insensitive diff changes something other than
- * comments, from `git diff -U0 -w --ignore-blank-lines` output. A file
- * absent from that diff changed only whitespace.
- */
-export function substantiveFiles(diff: string): Set<string> {
-  const out = new Set<string>();
-  let file: string | null = null;
-  let headerPath: string | null = null;
-  let markers: readonly string[] | null = null;
-  let inHunk = false;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("diff --git ")) {
-      const rest = line.slice("diff --git ".length);
-      // No renames: `a/<p> b/<p>`, so the path is half of what is left.
-      headerPath = rest.slice(2, 2 + (rest.length - 5) / 2);
-      file = null;
-      markers = null;
-      inHunk = false;
-      continue;
-    }
-    if (line.startsWith("@@")) {
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk && (line.startsWith("--- ") || line.startsWith("+++ "))) {
-      const side = line.slice(4);
-      if (side !== "/dev/null") file = side.slice(2);
-      file ??= headerPath;
-      markers = file ? (COMMENT_MARKERS[extension(file)] ?? null) : null;
-      continue;
-    }
-    if (
-      !inHunk &&
-      (line.startsWith("old mode") ||
-        line.startsWith("new mode") ||
-        line.startsWith("Binary files"))
-    ) {
-      if (headerPath) out.add(headerPath);
-      continue;
-    }
-    if (!(line.startsWith("+") || line.startsWith("-")) || !file) continue;
-    const text = line.slice(1).trim();
-    if (!text) continue;
-    const comment = markers?.some((marker) =>
-      marker === "*" ? text === "*" : text.startsWith(marker),
-    );
-    if (!comment) out.add(file);
-  }
-  return out;
 }
 
 /** Lines of an untracked file; binary (or unreadable) when it holds a NUL byte. */
@@ -341,37 +293,105 @@ function untrackedStat(cwd: string, file: string): ChangedFile {
   }
 }
 
+const REGULAR = new Set(["100644", "100755"]);
+const ABSENT = /^0+$/u;
+
+/**
+ * The files of `fork..head` (or the working tree) whose change is cosmetic:
+ * a regular file on both sides, same mode, and equal substance (comments
+ * and insignificant whitespace aside; see substance.ts). A file git lists
+ * but this cannot read is not cosmetic.
+ */
+function cosmeticFiles(cwd: string, fork: string, head: string | null): Set<string> | null {
+  const raw = diffRaw(cwd, fork, head);
+  if (!raw) return null;
+  const candidates = raw.filter(
+    (entry) =>
+      REGULAR.has(entry.oldMode) &&
+      entry.oldMode === entry.newMode &&
+      !ABSENT.test(entry.oldBlob) &&
+      (head === null || !ABSENT.test(entry.newBlob)),
+  );
+  const blobs = readBlobs(
+    cwd,
+    candidates.flatMap((entry) => [entry.oldBlob, entry.newBlob]),
+  );
+  if (!blobs) return null;
+  const out = new Set<string>();
+  for (const entry of candidates) {
+    const before = blobs.get(entry.oldBlob);
+    let after = blobs.get(entry.newBlob);
+    if (!after && head === null && ABSENT.test(entry.newBlob))
+      try {
+        after = readFileSync(path.join(cwd, entry.path));
+      } catch {
+        after = undefined;
+      }
+    if (before && after && cosmeticChange(entry.path, before, after)) out.add(entry.path);
+  }
+  return out;
+}
+
+/** Of `paths`, those the `.gitattributes` files at `fork` mark generated (none when unreadable). */
+function generatedAt(cwd: string, fork: string, paths: readonly string[]): Set<string> {
+  const files = treeFilesNamed(cwd, fork, ".gitattributes");
+  const blobs = files?.size ? readBlobs(cwd, [...files.values()]) : null;
+  if (!files || !blobs) return new Set();
+  const texts = new Map<string, string>();
+  for (const [file, id] of files) {
+    const bytes = blobs.get(id);
+    if (bytes) texts.set(file, bytes.toString("utf8"));
+  }
+  return generatedByAttributes(texts, paths);
+}
+
+/** The fork point of `head` (or HEAD for the working tree) from `base`. */
+const forkOf = (cwd: string, base: string, head: string | null): string | null =>
+  mergeBase(cwd, base, head ?? "HEAD");
+
+function laneFiles(cwd: string, fork: string, head: string | null): ChangedFile[] | null {
+  const stats = diffNumstat(cwd, fork, head);
+  const cosmetic = stats ? cosmeticFiles(cwd, fork, head) : null;
+  if (!stats || !cosmetic) return null;
+  const files: ChangedFile[] = [
+    ...stats.map((entry) => ({
+      ...entry,
+      cosmetic: !entry.binary && cosmetic.has(entry.path),
+    })),
+    ...(head === null ? untrackedFiles(cwd).map((file) => untrackedStat(cwd, file)) : []),
+  ];
+  const generated = generatedAt(
+    cwd,
+    fork,
+    files.map((entry) => entry.path),
+  );
+  return files.map((entry) => ({
+    ...entry,
+    generated: generated.has(entry.path),
+  }));
+}
+
 /**
  * The changed files of `merge-base(base, head)..head`, or with `head` null
  * of the working tree (tracked changes plus untracked files) since
  * `merge-base(base, HEAD)`. Null when git cannot read them.
  */
 export function changedFiles(cwd: string, base: string, head: string | null): ChangedFile[] | null {
-  const stats = diffNumstat(cwd, base, head);
-  const substance = stats ? diffSubstance(cwd, base, head) : null;
-  if (!stats || substance === null) return null;
-  const substantive = substantiveFiles(substance);
-  const files: ChangedFile[] = [
-    ...stats.map((entry) => ({
-      ...entry,
-      cosmetic: !entry.binary && !substantive.has(entry.path),
-    })),
-    ...(head === null ? untrackedFiles(cwd).map((file) => untrackedStat(cwd, file)) : []),
-  ];
-  const generated = generatedPaths(
-    cwd,
-    files.map((entry) => entry.path),
-  );
-  return files.map((entry) => ({ ...entry, generated: generated.has(entry.path) }));
+  const fork = forkOf(cwd, base, head);
+  return fork ? laneFiles(cwd, fork, head) : null;
 }
 
-export type BranchLane = LaneAssessment & { base: string | null; head: string | null };
+export type BranchLane = LaneAssessment & {
+  base: string | null;
+  head: string | null;
+};
 
 /**
  * The lane of `head` against `base` (a branch name; `origin/<base>` is
- * preferred, then the local branch, then the repository default). When the
- * diff cannot be read the lane is focused (an independent verdict, as
- * before lanes), or full under a high-risk judgment.
+ * preferred, then the local branch, then the repository default). The repo's
+ * risk paths come from `.workit/risk-paths` at the fork point. When the diff
+ * cannot be read the lane is focused (an independent verdict, as before
+ * lanes), or full under a high-risk judgment.
  */
 export function branchLane(
   cwd: string,
@@ -386,18 +406,12 @@ export function branchLane(
 ): BranchLane {
   const candidates = options.base ? [`origin/${options.base}`, options.base] : [];
   const base = candidates.find((ref) => resolveRef(cwd, ref) !== null) ?? defaultBase(cwd) ?? null;
-  const files =
-    base && options.workingTree
-      ? changedFiles(cwd, base, null)
-      : base && options.head
-        ? changedFiles(cwd, base, options.head)
-        : null;
-  const judged = {
-    riskTier: options.judgment?.riskTier ?? null,
-    riskPaths: options.riskPaths ?? [],
-  };
-  if (!files) {
-    const high = judged.riskTier === "high";
+  const head = options.workingTree ? null : options.head;
+  const fork = base && (options.workingTree || options.head) ? forkOf(cwd, base, head) : null;
+  const files = fork ? laneFiles(cwd, fork, head) : null;
+  const riskTier = options.judgment?.riskTier ?? null;
+  if (!fork || !files) {
+    const high = riskTier === "high";
     return {
       lane: high ? "full" : "focused",
       reasons: [
@@ -411,7 +425,16 @@ export function branchLane(
       head: options.head,
     };
   }
-  return { ...computeLane({ files, ...judged }), base, head: options.head };
+  const repoRisk = parseRiskPaths(fileAt(cwd, fork, RISK_PATHS_FILE) ?? "");
+  return {
+    ...computeLane({
+      files,
+      riskTier,
+      riskPaths: [...repoRisk, ...(options.riskPaths ?? [])],
+    }),
+    base,
+    head: options.head,
+  };
 }
 
 /** What a verdict gate asks for in a lane under `verification: proportional`. */
