@@ -12,7 +12,9 @@ bun test <path> # one file; `bun run format` fixes formatting (not Markdown)
 ```
 
 Tests need Node 24+ on PATH (`fnm use` reads `.node-version`). Never run root `build` or `check` in
-a checkout a live host has loaded; see [testing.md](docs/agents/testing.md#local-pins).
+a checkout a live host has loaded; see [testing.md](docs/agents/testing.md#local-pins). Hosts run
+the released npm packages; to prove a change in a real host, point it at a worktree only for the
+test and switch back ([real-host tests](docs/agents/testing.md#real-host-tests)).
 
 ## Workflow
 

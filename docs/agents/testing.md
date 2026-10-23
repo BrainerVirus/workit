@@ -18,6 +18,27 @@ it: they replace bundles the host has loaded. Run lint, format, typecheck and
 tests directly, work in a separate worktree, or build into an external target
 directory (`bun packages/<pkg>/scripts/build.ts <target-dir>`).
 
+## Real-host tests
+
+Day to day, every host runs the released npm packages, unpinned, so
+`workit upgrade` keeps them current. To verify a change in real conditions,
+point the host at a worktree of the branch for the test only, then switch back.
+
+| Host | Point at the worktree | Pick up a change | Switch back |
+| --- | --- | --- | --- |
+| Claude Code | `claude --plugin-dir <wt>/packages/workit-claude-code` (loads in place, shadows the marketplace plugin) | hook scripts on the next call; `/reload-plugins` for hooks.json, skills, MCP | start `claude` without the flag |
+| OpenCode | `"plugins": ["file://<wt>/packages/workit-opencode"]` after `bun packages/workit-opencode/scripts/build.ts` | `opencode reload` for config; `opencode service restart` for plugin code | `"plugins": ["@brainervirus/workit-opencode"]`, then `opencode reload` |
+| Codex | `codex plugin marketplace add <wt>`, then `codex plugin add workit@<name>` | new Codex session; re-trust changed hooks in `/hooks` | remove that marketplace, `codex plugin add workit@workflow-toolkit` |
+| Cursor | copy `<wt>/packages/workit-cursor` over `~/.cursor/plugins/local/workit` | `Developer: Reload Window` | `workit init`, select Cursor |
+| Pi | `pi -e <wt>/packages/workit-pi` for one run, or that path in `~/.pi/agent/settings.json` `packages` | `/reload` | `pi remove <path>`, `pi install npm:@brainervirus/workit-pi` |
+
+Never repoint a host the user is working in. If the change needs a restart or
+reload of a host that is in use, test it headless instead (`claude -p`,
+`opencode run --standalone`, `codex exec`, `cursor-agent -p`, `pi -p`) or in a
+container (OpenCode has one: `WORKIT_V2_HARNESS=1 bun test
+test/opencode-v2/contract.test.ts`). If neither fits, ask the user to save their
+work and close that host before you switch it, and switch it back after.
+
 ## Tiers
 
 `bun scripts/test.ts <unit|packaging> [bun test args]` selects a tier; the
