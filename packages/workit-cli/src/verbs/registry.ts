@@ -210,6 +210,15 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./init"),
   },
   {
+    name: "setup",
+    group: "setup",
+    usage:
+      "workit setup [--hosts=claude-code,codex,cursor,opencode,pi] [--no-shell] [--dry-run | --yes]",
+    summary:
+      "Write Workit's host permission block (enumerated delivery verbs) after showing the diff; run it in your own terminal",
+    load: () => import("./setup"),
+  },
+  {
     name: "upgrade",
     group: "setup",
     usage: "workit upgrade [--hosts=a,b|none] [--cli] [--preview | --apply --confirm]",
