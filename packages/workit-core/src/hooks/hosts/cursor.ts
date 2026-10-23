@@ -408,6 +408,6 @@ export const cursorAdapter: HostAdapter = {
   // only), so the agent is told the id its `workit` calls should act as.
   addendum: (input) =>
     input.session.id
-      ? `<workit-session>Cursor puts no session id in the shell: prefix workit commands that record authorship with WORKIT_SESSION_ID=${input.session.id} (e.g. \`WORKIT_SESSION_ID=${input.session.id} workit git commit -m …\`). A verifier uses its own id, never this one.</workit-session>`
+      ? `<workit-session>Cursor puts no session id in the shell: start workit commands that record authorship with the global flag \`--session ${input.session.id}\` (e.g. \`workit --session ${input.session.id} git commit -m …\`; a leading env assignment can miss the \`Shell(workit)\` allowlist). A verifier uses its own id, never this one.</workit-session>`
       : null,
 };

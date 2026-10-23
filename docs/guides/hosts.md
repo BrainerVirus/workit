@@ -134,7 +134,9 @@ commands there (`git switch -c`, `git commit --trailer
 `workit` reads `WORKIT_SESSION_ID` first (set it, even empty, to override),
 then the host's own variable from the table. Cursor puts no conversation id in
 the agent's shell (its `sessionStart` env reaches hooks only), so its session
-context and commit nudge say `WORKIT_SESSION_ID=<id> workit git commit …`.
+context says `workit --session <id> git commit …` (the global `--session`
+flag goes before the command and beats `WORKIT_SESSION_ID`; the commit nudge
+still shows `WORKIT_SESSION_ID=<id> workit git commit …`).
 Cursor's raw commits are recorded when the session runs its next shell command
 in the same checkout, since no post-shell hook is registered yet. A
 `WORKIT_SESSION_ID` inherited from another host (its `WORKIT_HOST` names that
