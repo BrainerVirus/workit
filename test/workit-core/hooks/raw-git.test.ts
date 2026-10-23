@@ -127,10 +127,14 @@ test("classification: workit check and lock run run the wrapped command in --cwd
   expect(dirs("workit check --cwd /lead -- git commit -am x")).toEqual(["/lead"]);
   expect(dirs("workit check --cwd=/lead --shell -- 'git commit -am x'")).toEqual(["/lead"]);
   expect(dirs("workit --cwd /lead check -- git commit -am x")).toEqual(["/lead"]);
-  expect(dirs("workit lock run --cwd /lead -- git -C sub push")).toEqual(["/lead/sub"]);
-  expect(dirs("cd /a && workit check --cwd b -- git add .")).toEqual(["/a/b"]);
+  expect(dirs("workit lock run --cwd /lead -- git -C sub push")).toEqual([
+    path.join("/lead", "sub"),
+  ]);
+  expect(dirs("cd /a && workit check --cwd b -- git add .")).toEqual([path.join("/a", "b")]);
   expect(dirs("workit check --cwd /a -- workit check --cwd /lead -- git add .")).toEqual(["/lead"]);
-  expect(dirs("workit check --cwd /a -- workit check --cwd b -- git add .")).toEqual(["/a/b"]);
+  expect(dirs("workit check --cwd /a -- workit check --cwd b -- git add .")).toEqual([
+    path.join("/a", "b"),
+  ]);
   // The --cwd scopes the wrapped command only; the next one runs where the shell is.
   expect(dirs("workit check --cwd /lead -- git add . && git add .")).toEqual(["/lead", null]);
   expect(dirs("workit check -- git status")).toEqual([null]);
