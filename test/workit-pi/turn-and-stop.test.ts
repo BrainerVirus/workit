@@ -96,10 +96,27 @@ const setup = async (root: string, trusted = true) => {
   const turn = async (prompt = ""): Promise<{ customType: string; content: string } | undefined> =>
     (
       (await handlers.get("before_agent_start")!(
-        { type: "before_agent_start", prompt, systemPrompt: "", systemPromptOptions: {} },
+        {
+          type: "before_agent_start",
+          messageType: "user",
+          prompt,
+          systemPrompt: "",
+          systemPromptOptions: {},
+        },
         ctx,
       )) as { message?: { customType: string; content: string } } | undefined
     )?.message;
+  const customTurn = async () =>
+    handlers.get("before_agent_start")!(
+      {
+        type: "before_agent_start",
+        messageType: "custom",
+        message: { customType: "workit-stop", content: "x", display: true },
+        systemPrompt: "",
+        systemPromptOptions: {},
+      },
+      ctx,
+    );
   const end = async (text: string, stopReason = "stop", extra: Record<string, unknown> = {}) =>
     handlers.get("agent_end")!(
       {
@@ -112,7 +129,7 @@ const setup = async (root: string, trusted = true) => {
       },
       ctx,
     );
-  return { turn, end, sent };
+  return { turn, customTurn, end, sent };
 };
 
 const progress = (root: string, taskId: string, nextAction: string) => {
@@ -238,4 +255,12 @@ test("G a Pi run that ends with an unpushed commit under endpoint pr, W agent_en
   const untrusted = await setup(root, false);
   await untrusted.end("Committed the change.");
   expect(untrusted.sent).toEqual([]);
+});
+
+test("G a custom-message run (the stop-line continuation), T before_agent_start neither throws nor injects Workit context", async () => {
+  const root = repo();
+  startTask(root, { host: "pi", actor: "pi-session" }, "custom run task");
+  const { turn, customTurn } = await setup(root, true);
+  expect(await customTurn()).toBeUndefined();
+  expect((await turn())?.content).toContain("custom run task");
 });

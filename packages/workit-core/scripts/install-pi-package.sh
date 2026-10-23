@@ -16,7 +16,7 @@ if [ ! -f "$SOURCE/packages/workit-pi/dist/workit.js" ] && [ -f "$SHARE/packages
   SOURCE="$SHARE"
 fi
 
-# pi 0.85.1 loads extensions from the settings `packages` list, not from
+# pi 1.4.0 loads extensions from the settings `packages` list, not from
 # ~/.pi/config.json below. Register the absolute package dir there (honoring
 # PI_CODING_AGENT_DIR) so `pi list` picks it up; the config.json write stays
 # because uninstall and detection still key pi state off it — migrating

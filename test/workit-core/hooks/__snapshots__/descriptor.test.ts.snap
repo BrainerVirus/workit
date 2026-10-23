@@ -1387,7 +1387,7 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
       "worktreeIsolation": "none",
     },
     "transport": "in-process-plugin",
-    "verifiedAgainst": "@earendil-works/pi-coding-agent 0.85.1",
+    "verifiedAgainst": "@earendil-works/pi-coding-agent 1.4.0",
   },
   "unobserved": [
     {

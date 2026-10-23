@@ -344,7 +344,7 @@ pi install npm:@brainervirus/workit-pi
 pi install ./packages/workit-pi -l --approve   # local checkout
 ```
 
-Pi 0.85.1 loads the extension and skills from the package's `pi` manifest. The
+Pi 1.4.0 loads the extension and skills from the package's `pi` manifest. The
 extension uses Pi's native session identity, exposes the seven families plus
 read-only `workit_context`, and bundles a coordinator that launches fresh
 reviewer/investigator processes and scoped implementers. Pi project trust

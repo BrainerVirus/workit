@@ -118,7 +118,7 @@ Skills are invoked as `$workit-<name>` or from the `/skills` picker.
 </details>
 
 <details>
-<summary><strong>Pi</strong> (0.85.1)</summary>
+<summary><strong>Pi</strong> (1.4.0)</summary>
 
 ```bash
 pi install npm:@brainervirus/workit-pi

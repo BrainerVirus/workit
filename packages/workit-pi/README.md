@@ -3,7 +3,7 @@
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
-[Workit](https://github.com/BrainerVirus/workit) for Pi (stock 0.85.1): a native extension with the
+[Workit](https://github.com/BrainerVirus/workit) for Pi (stock 1.4.0): a native extension with the
 seven task families plus read-only `workit_context`, the eleven method
 skills, session and compaction continuity, and a coordinator that launches
 fresh reviewer/investigator processes and scoped implementers. Requires

@@ -31,10 +31,10 @@
     "build": "bun scripts/build.ts"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.85.1"
+    "@earendil-works/pi-coding-agent": "1.4.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.85.1"
+    "@earendil-works/pi-coding-agent": "^1.4.0"
   },
   "engines": {
     "node": ">=24"

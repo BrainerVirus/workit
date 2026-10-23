@@ -178,7 +178,7 @@ test("CA-31 toolchain evidence records actual Node, Bun, compiler, schema, and S
   expect(evidence.hosts.cursor).toContain("@brainervirus/workit-cursor@");
   expect(evidence.hosts.codex_cli).toContain("codex-cli@0.153.");
   expect(evidence.hosts.codex_desktop).toContain("codex-desktop@");
-  expect(evidence.hosts.pi).toContain("@earendil-works/pi-coding-agent@0.85.1");
+  expect(evidence.hosts.pi).toContain("@earendil-works/pi-coding-agent@1.4.0");
 });
 
 test("CA-32 MCP schemas publish draft-2020-12 from core definitions", () => {

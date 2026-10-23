@@ -41,7 +41,13 @@ test("Pi session events retain native session identity across startup, reload, r
   for (const reason of ["startup", "reload", "resume", "new", "fork"] as const)
     await handlers.get("session_start")!({ type: "session_start", reason }, ctx);
   const first: any = await handlers.get("before_agent_start")!(
-    { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+    {
+      type: "before_agent_start",
+      messageType: "user",
+      prompt: "",
+      systemPrompt: "",
+      systemPromptOptions: {},
+    },
     ctx,
   );
   expect(first.message.content).toContain("pi-session");
@@ -51,13 +57,25 @@ test("Pi session events retain native session identity across startup, reload, r
 test("Pi compaction leaves the host summary intact and restores once only after success", async () => {
   const { handlers, ctx } = await setup();
   const before: any = await handlers.get("before_agent_start")!(
-    { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+    {
+      type: "before_agent_start",
+      messageType: "user",
+      prompt: "",
+      systemPrompt: "",
+      systemPromptOptions: {},
+    },
     ctx,
   );
   expect(before.message.content).toContain("Workit is optional coordination");
   expect(
     await handlers.get("before_agent_start")!(
-      { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+      {
+        type: "before_agent_start",
+        messageType: "user",
+        prompt: "",
+        systemPrompt: "",
+        systemPromptOptions: {},
+      },
       ctx,
     ),
   ).toBeUndefined();
@@ -84,13 +102,25 @@ test("Pi compaction leaves the host summary intact and restores once only after 
     ctx,
   );
   const restored: any = await handlers.get("before_agent_start")!(
-    { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+    {
+      type: "before_agent_start",
+      messageType: "user",
+      prompt: "",
+      systemPrompt: "",
+      systemPromptOptions: {},
+    },
     ctx,
   );
   expect(restored.message.content).toContain("Workit is optional coordination");
   expect(
     await handlers.get("before_agent_start")!(
-      { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+      {
+        type: "before_agent_start",
+        messageType: "user",
+        prompt: "",
+        systemPrompt: "",
+        systemPromptOptions: {},
+      },
       ctx,
     ),
   ).toBeUndefined();
@@ -101,7 +131,13 @@ test("G a Pi session with a task, W the task context changes mid-session, T the 
   const { handlers, ctx, root } = await setup();
   const turn = async (): Promise<string | undefined> => {
     const result: any = await handlers.get("before_agent_start")!(
-      { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+      {
+        type: "before_agent_start",
+        messageType: "user",
+        prompt: "",
+        systemPrompt: "",
+        systemPromptOptions: {},
+      },
       ctx,
     );
     return result?.message.content;
@@ -162,7 +198,13 @@ test("G a Pi session with a task, W the task context changes mid-session, T the 
 test("Pi failed compaction does not trigger a restoration injection", async () => {
   const { handlers, ctx } = await setup();
   await handlers.get("before_agent_start")!(
-    { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+    {
+      type: "before_agent_start",
+      messageType: "user",
+      prompt: "",
+      systemPrompt: "",
+      systemPromptOptions: {},
+    },
     ctx,
   );
   await handlers.get("session_before_compact")!(
@@ -188,7 +230,13 @@ test("Pi failed compaction does not trigger a restoration injection", async () =
   );
   expect(
     await handlers.get("before_agent_start")!(
-      { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+      {
+        type: "before_agent_start",
+        messageType: "user",
+        prompt: "",
+        systemPrompt: "",
+        systemPromptOptions: {},
+      },
       ctx,
     ),
   ).toBeUndefined();

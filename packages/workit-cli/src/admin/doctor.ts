@@ -915,7 +915,7 @@ const checkCodexAgents = (res: Resolved): DoctorCheck => {
 };
 
 // Pi package -----------------------------------------------------------------
-// Verified against @earendil-works/pi-coding-agent 0.85.1 (docs/packages.md,
+// Verified against @earendil-works/pi-coding-agent 1.4.0 (docs/packages.md,
 // docs/settings.md, dist/core/package-manager.js): `pi install` records the
 // source in `packages` of `<agentDir>/settings.json` (or `.pi/settings.json`
 // with -l; the project entry wins), npm sources install to
