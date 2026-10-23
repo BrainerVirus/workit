@@ -112,7 +112,7 @@ product-choice=… plan=…`, or the flat `workit_policy` tool fields):
 | Judgment | Needed |
 | --- | --- |
 | behavior change | an observed passing `workit check test` on the final tree |
-| risk `trivial` or `normal`, under the default `verification: "proportional"` | the verdict the [review lane](#review-lanes) asks for, whatever the behavior-change judgment says: the diff decides (lane `none` needs none) |
+| risk `normal`, under the default `verification: "proportional"` | the verdict the [review lane](#review-lanes) asks for, whatever the behavior-change judgment says: the diff decides (lane `none` needs none) |
 | behavior change, risk `normal`, under `verification: "self"` or `"independent"` | under `self` the author's own (`workit ledger verdict tests-verified --self --how …`), labelled **self-reviewed** in `ledger check` and `pr status`, never verified (it warns when no passing `workit check test` was observed on the head); under `verification: "independent"` ([grants](grants.md)) a verdict from a non-author session |
 | risk `high` | an independent `verified` verdict of kind `live`, and a plan before code is written |
 | open product choice | the user's answer recorded (`workit ledger decision "<choice>" --why "<reason>"`) before code is written |
@@ -192,9 +192,10 @@ Every `policy assess` is recorded in the ledger as a `policy.judged` row
 an open product choice or a needed plan cannot lift it silently: its own
 `product-choice=no` or `plan=no` needs `--why "<reason>"`, which the row keeps.
 
-Trivial work judged `risk=trivial behavior=no` needs nothing beyond what its
-review lane asks: nothing for docs or formatting, a verdict once code changes
-(outside git, with no branch to read a lane from, nothing). Before-write
+Trivial work judged `risk=trivial behavior=no` needs nothing at task close
+(its PR still merges by its lane). A `behavior=no` judgment at normal risk
+still owes what the lane asks, except outside git, where no branch can hold a
+verdict. Before-write
 requirements deny working-tree edits on hosts with a pre-write hook (Claude
 Code, OpenCode, Cursor, Pi; advisory on Codex); Markdown, top-level `docs/`,
 any `plans/` directory, the cited plan and files outside the checkout stay

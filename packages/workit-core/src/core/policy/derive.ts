@@ -48,7 +48,7 @@ const normalizedScope = (scope: Scope): Scope => ({
 /**
  * | judgment                         | requirement                                  |
  * | behaviorChange                   | check:test (configured, fresh tree), close   |
- * | risk != high,                    | verdict:lane: the review lane from the diff   |
+ * | risk = normal,                   | verdict:lane: the review lane from the diff   |
  * | verification: proportional       | decides (core/policy/lane.ts; met under lane  |
  * | (whatever behaviorChange says)   | none), close                                  |
  * | behaviorChange && risk = normal  | verdict:self (verification: self) or          |
@@ -81,9 +81,10 @@ export function deriveRequirements(
       }),
     );
   // The diff, not the behavior-change judgment, decides: the requirement is
-  // derived at any risk below high and is met under lane none (ruling mvkc3zts,
-  // review finding mvkcoxgb).
-  if (proportional && judgment.riskTier !== "high")
+  // derived at normal risk whatever behaviorChange says and is met under lane
+  // none (review finding mvkcoxgb). Trivial work keeps needing nothing at
+  // close; the merge gate still reads its lane.
+  if (proportional && judgment.riskTier === "normal")
     out.push(
       derived({
         ...base,

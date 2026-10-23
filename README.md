@@ -169,8 +169,8 @@ you at a terminal; agents can only lower them. See
 **Policy.** Judge tracked work in four calls (`workit policy assess --judge
 risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no`,
 or the flat `workit_policy` tool fields) and Workit derives what it needs:
-only what the review lane asks for trivial work, an observed `workit check test`
-and the verdict the change's review lane asks for, an independent live verdict and a plan for high
+nothing for trivial work, an observed `workit check test` and the verdict the
+change's review lane asks for, an independent live verdict and a plan for high
 risk. Under the default `verification: "proportional"` the lane comes from the
 diff: `none` (docs, comments, formatting, generated copies) needs no verdict,
 `self` (a small change off risk paths) the author's own `--self` verdict,

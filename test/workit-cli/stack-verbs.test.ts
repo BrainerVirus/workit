@@ -83,12 +83,13 @@ const setup = (
   kind: "github" | "gitlab",
   autonomy: Record<string, unknown> = { push: true, pr: true, merge: "verified" },
   branches?: string[],
+  extension?: string,
 ) => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
   );
-  const forge = makeStackForge(kind, branches);
+  const forge = makeStackForge(kind, branches, extension);
   forges.push(forge);
   writeFileSync(
     path.join(configDir, "workspaces.json"),
@@ -343,7 +344,8 @@ test("stack land: given merge: true and an accepted verdict on the root, then th
 });
 
 test("stack land under proportional (#333): a small root PR (lane self) lands on the author's --self verdict; the next one still stops", async () => {
-  const forge = setup("github");
+  // Code files: a `.txt` change is docs, lane none.
+  const forge = setup("github", undefined, undefined, "ts");
   // Drop the pinned `verification: self`: the proportional default.
   const file = path.join(configDir, "workspaces.json");
   const document = JSON.parse(readFileSync(file, "utf8"));

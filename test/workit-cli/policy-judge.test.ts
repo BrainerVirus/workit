@@ -52,7 +52,7 @@ test("G `--judge behavior=yes risk=normal`, T requirements = {check:test, verdic
   expect(assessed.json().data.requirements[0]).toMatchObject({ status: "unsatisfied" });
 });
 
-test("G a 2-line mechanical fix judged trivial, T only the review lane, met while the diff is none, and no spec proposed", () => {
+test("G a 2-line mechanical fix judged trivial, T zero requirements and no spec proposed", () => {
   const root = repo();
   const assessed = workit(
     root,
@@ -64,7 +64,13 @@ test("G a 2-line mechanical fix judged trivial, T only the review lane, met whil
     "--json",
   );
   expect(assessed.code).toBe(0);
-  // The diff, not the judgment, decides the lane (review finding mvkcoxgb).
+  expect(ruleIds(assessed.json())).toEqual([]);
+});
+
+test("G behavior=no judged on a docs-only diff, T the lane requirement is met with no verdict", () => {
+  const root = repo();
+  writeFileSync(path.join(root, "README.md"), "# Notes\n");
+  const assessed = workit(root, "policy", "assess", "--judge", "behavior=no", "--json");
   expect(ruleIds(assessed.json())).toEqual(["verdict:lane"]);
   expect(assessed.json().data.requirements[0]).toMatchObject({ status: "satisfied" });
 });
