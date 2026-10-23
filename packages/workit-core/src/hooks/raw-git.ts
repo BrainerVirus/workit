@@ -1623,10 +1623,10 @@ const nudgeFor = (action: RawAction, host: HookInput["host"], session: string): 
   switch (action.kind) {
     case "commit": {
       // Cursor's shell carries no conversation id: name it explicitly.
-      const prefix = host === "cursor" && session ? `WORKIT_SESSION_ID=${session} ` : "";
+      const workit = host === "cursor" && session ? `workit --session ${session}` : "workit";
       return action.amend
-        ? `workit: raw ${quote("git commit --amend")} is recorded for this session; for new commits prefer ${quote(`${prefix}workit git commit -m '<msg>'`)} (adds the Workit-Session trailer and checks branch and commit policy).`
-        : `workit: prefer ${quote(`${prefix}workit git commit -m '<msg>' [--all | -- <paths>]`)}: it adds the Workit-Session trailer and checks branch and commit policy.`;
+        ? `workit: raw ${quote("git commit --amend")} is recorded for this session; for new commits prefer ${quote(`${workit} git commit -m '<msg>'`)} (adds the Workit-Session trailer and checks branch and commit policy).`
+        : `workit: prefer ${quote(`${workit} git commit -m '<msg>' [--all | -- <paths>]`)}: it adds the Workit-Session trailer and checks branch and commit policy.`;
     }
     case "push":
       return action.blindForce
