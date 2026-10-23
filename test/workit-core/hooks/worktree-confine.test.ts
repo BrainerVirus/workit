@@ -449,6 +449,28 @@ test("Given a bound implementer, When workit check or lock run names another dir
     expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
 });
 
+test("Given a bound implementer, When workit check or lock run wraps a mutating git command, Then git is judged in the --cwd directory, through nested wrappers and -C", () => {
+  const id = implementerBoundToA("impl-check-cwd-git");
+  for (const command of [
+    `workit check --cwd ${lead} -- git commit -am x`,
+    `workit check --cwd=${lead} --shell -- 'git commit -am x'`,
+    `workit lock run --cwd ${lead} -- git -C sub commit -am x`,
+    `cd ${wtA} && workit check --cwd ${lead} -- git add .`,
+    `workit check --cwd ${wtA} -- workit check --cwd ${lead} -- git commit -am x`,
+    `workit check --cwd ${wtA} -- bash -c 'cd ${lead} && git commit -am x'`,
+  ])
+    denies(command, id, `bound to the worktree ${wtA}`);
+  for (const command of [
+    `workit check --cwd ${wtA} -- git commit -am x`,
+    `workit check --cwd=${wtA} --shell -- 'git commit -am x'`,
+    `workit lock run --cwd ${wtA} -- git -C sub add .`,
+    `workit check --cwd ${lead} -- workit check --cwd ${wtA} -- git commit -am x`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+  // A lead (no agent) is not confined; its wrapped git is unaffected.
+  expect(bash(`workit check --cwd ${lead} -- git status`, { type: null })).toBeUndefined();
+});
+
 test("Given a bound implementer, When a cd target cannot be resolved and a write follows, Then it is denied naming how to spell the path; reads after it, and the lead, are unaffected", () => {
   const id = implementerBoundToA("impl-unknown-dir");
   for (const command of [

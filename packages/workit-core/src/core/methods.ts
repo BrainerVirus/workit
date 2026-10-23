@@ -137,7 +137,7 @@ authorizes an effect. Judge work once with
 \`workit policy assess --judge risk= behavior= product-choice= plan=\`.
 Across repositories, bind items to checkout, branch and endpoint, resolve
 competing targets before a mutation, and reconcile an uncertain
-external effect before a retry.
+effect before a retry.
 
 Mid-task: never silently drop or resume an objective (workit-continue).
 
