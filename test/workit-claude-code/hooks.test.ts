@@ -263,6 +263,32 @@ test("a protected-branch deny is structured JSON on stdout with exit 0 and nothi
   });
 }, 30_000);
 
+test("Given a workit:implementer subagent with no Workit worktree in a checkout without tasks, When it edits or shell-writes there, Then the launcher does not answer on its fast path and the hook denies it (#310); the lead's edit stays on the fast path", () => {
+  const cwd = root();
+  Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd });
+  const pre = (tool_name: string, tool_input: Record<string, unknown>, agent: boolean) =>
+    runHook(
+      PLUGIN_DIR,
+      fixture("claude-code", "pre-tool-use-write", cwd, {
+        tool_name,
+        tool_input,
+        ...(agent ? { agent_id: "impl-1", agent_type: "workit:implementer" } : {}),
+      }),
+    ).json as Specific;
+  const file = path.join(cwd, "a.ts");
+  for (const [tool, input] of [
+    ["Write", { file_path: file, content: "x" }],
+    ["Bash", { command: `echo x > ${file}` }],
+  ] as const) {
+    const denied = pre(tool, input, true).hookSpecificOutput;
+    expect(denied?.permissionDecision, tool).toBe("deny");
+    expect(denied?.permissionDecisionReason, tool).toContain(
+      "workit worktree confinement: implementer impl-1",
+    );
+    expect(pre(tool, input, false), tool).toEqual({});
+  }
+});
+
 test("SubagentStart tells an implementer Claude Code isolated, per preset, that plain git is expected but branch names stay policy-checked, naming that preset's kinds and only bases that exist", async () => {
   await withProtectedMain((configDir) => {
     /** A repository whose first branch is `trunk`, plus `extra` branches. */

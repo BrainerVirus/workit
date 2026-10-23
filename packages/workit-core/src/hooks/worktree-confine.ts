@@ -71,7 +71,7 @@ const checkoutOf = (file: string): { root: string; workit: boolean } | null => {
 };
 
 /** The root of the Workit-made worktree `file` is in, else null. */
-export const workitWorktreeOf = (file: string): string | null => {
+const workitWorktreeOf = (file: string): string | null => {
   try {
     const checkout = checkoutOf(file);
     return checkout?.workit ? checkout.root : null;
@@ -99,7 +99,7 @@ const readBinding = (file: string): Binding | null => {
 };
 
 /** The worktree `input`'s agent is bound to, while that worktree is still a Workit one. */
-export const boundWorktree = (input: HookInput): string | null => {
+const boundWorktree = (input: HookInput): string | null => {
   const agentId = input.session.agentId;
   const store = agentId ? gitStoreDir(input.cwd) : null;
   if (!store || !agentId) return null;

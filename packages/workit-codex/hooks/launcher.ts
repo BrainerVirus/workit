@@ -6,7 +6,8 @@
 //   - PreToolUse: only a file edit (apply_patch, for the before-write gate),
 //     a shell command that names git, gh or glab, or one that may be heavy
 //     (the heavy-command gate's cheap pre-check) can be denied or nudged;
-//   - unless a standing-order revision this agent has not seen is pending.
+//   - unless a standing-order revision this agent has not seen is pending,
+//     or the agent is a workit-implementer (worktree confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
 import { maybeHeavy, stateDir } from "@brainervirus/workit-core/src/core/heavy-words";
@@ -32,6 +33,7 @@ const quietEvent = (): string | null => {
       hook_event_name?: unknown;
       session_id?: unknown;
       agent_id?: unknown;
+      agent_type?: unknown;
       cwd?: unknown;
       tool_name?: unknown;
       tool_input?: { command?: unknown };
@@ -51,6 +53,8 @@ const quietEvent = (): string | null => {
       return null;
     const tool = value.tool_name.toLowerCase();
     if (event === "PreToolUse" && WRITE_TOOLS.has(tool.replace(/[_-]/g, ""))) return null;
+    // An implementer's shell writes are confined to its Workit worktree (hooks/worktree-confine.ts).
+    if (event === "PreToolUse" && value.agent_type === "workit-implementer") return null;
     const shell = SHELL_TOOLS.has(tool);
     const command = value.tool_input?.command;
     const text = Array.isArray(command) ? command.join(" ") : String(command ?? "");
