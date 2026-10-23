@@ -106,6 +106,7 @@ type DoctorCheckId =
   | "assets"
   | "launcher"
   | "cursor_hook"
+  | "plugin_files"
   | "utility"
   | "stale_pin"
   | "stale_install"
@@ -1342,6 +1343,47 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
     status: "pass",
     detail: `${res.host} launcher/hook entries present`,
   };
+};
+
+// A host config that registers the Workit plugin whose files are gone loads
+// nothing, silently. Read-only: the config and the directory, nothing run.
+const checkPluginFiles = (res: Resolved): DoctorCheck => {
+  const problems: string[] = [];
+  const fixes: string[] = [];
+  if (hostsFor(res.host).includes("cursor")) {
+    const settings = existsSync(res.cursorSettings) ? readJson(res.cursorSettings) : null;
+    const dirs: unknown[] = Array.isArray(settings?.plugin_dirs) ? settings.plugin_dirs : [];
+    for (const entry of dirs.map(String)) {
+      const normal = entry.replaceAll("\\", "/").replace(/\/+$/, "");
+      if (!normal.endsWith("local/workit") && !normal.endsWith("local/workflow-toolkit")) continue;
+      const dir = entry.startsWith("~") ? path.join(res.home, entry.slice(1)) : entry;
+      let state: "missing" | "empty" | null = null;
+      try {
+        state = readdirSync(dir).length === 0 ? "empty" : null;
+      } catch {
+        state = "missing";
+      }
+      if (!state) continue;
+      problems.push(
+        `Cursor registers the Workit plugin at ${entry}, but that directory is ${state}`,
+      );
+      fixes.push("Run `workit init` and select Cursor to install the plugin files");
+    }
+  }
+  for (const install of codexWorkitInstalls(res)) {
+    if (install.root) continue;
+    problems.push(
+      `Codex enables ${install.id} in ${install.configFile}, but no plugin files are cached for it`,
+    );
+    fixes.push(`codex plugin add ${install.id}`);
+  }
+  if (problems.length === 0)
+    return {
+      id: "plugin_files",
+      status: "pass",
+      detail: "no registered Workit host plugin is missing its files",
+    };
+  return { id: "plugin_files", status: "warn", detail: problems.join("; "), fix: fixes.join("; ") };
 };
 
 // Ask the installed plugin's own hook launcher (hooks/launch.mjs --probe)
@@ -2920,6 +2962,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkAssets,
   checkLauncher,
   checkCursorHook,
+  checkPluginFiles,
   checkUtility,
   checkStalePin,
   checkStaleInstall,
