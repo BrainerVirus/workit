@@ -121,10 +121,11 @@ const usageReport = (cwd: string, env: NodeJS.ProcessEnv, days: number) => {
           });
           for (const model of ran) {
             entry.models[model] = (entry.models[model] ?? 0) + 1;
+            // First sight of this model for the entry: flag it once if no default matches.
             if (
+              entry.models[model] === 1 &&
               entry.defaults.length &&
-              !entry.defaults.some((d) => matches(model, d)) &&
-              !entry.flagged.includes(model)
+              !entry.defaults.some((d) => matches(model, d))
             )
               entry.flagged.push(model);
           }

@@ -23,7 +23,7 @@ const newer = (a: string, b: string): boolean => {
 };
 
 /** The newest installed version beside the running plugin dir, or null (a local pin, no registry). */
-export const installedBeside = (root: string): { running: string; installed: string } | null => {
+const installedBeside = (root: string): { running: string; installed: string } | null => {
   try {
     const versions = path.dirname(root);
     const plugins = path.dirname(path.dirname(path.dirname(versions)));
