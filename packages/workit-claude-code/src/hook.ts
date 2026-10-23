@@ -6,6 +6,7 @@
 // so `workit` calls on the Bash tool know their host. The core resends
 // per-turn task context only when it changed (descriptor turnResend on-change).
 import { appendFileSync } from "node:fs";
+import { stalePluginNotice } from "./stale-plugin";
 import { claudeCodeAdapter, type HostAdapter } from "@brainervirus/workit-core/hooks";
 import {
   dispatchWithin,
@@ -52,6 +53,21 @@ const exportSessionEnv = (env: NodeJS.ProcessEnv, sessionId: string): void => {
   }
 };
 
+/** Adds one line to a hook result's additionalContext (creating it for an empty result). */
+const withContext = (json: unknown, payload: Payload, line: string): unknown => {
+  const base = isRecord(json) ? json : {};
+  const out = isRecord(base.hookSpecificOutput) ? base.hookSpecificOutput : {};
+  const prior = text(out.additionalContext);
+  return {
+    ...base,
+    hookSpecificOutput: {
+      hookEventName: payload.hook_event_name,
+      ...out,
+      additionalContext: prior ? `${prior}\n${line}` : line,
+    },
+  };
+};
+
 /** Runs one Claude Code hook invocation and returns the process exit code.
  * Past the hook deadline, counted from the process start (every caller is a
  * hook process), Claude gets a minimal result naming the skip. */
@@ -87,6 +103,9 @@ export async function runClaudeHook(
   const sessionId = text(payload.session_id);
   if (sessionId && (result.skipped || !result.error) && payload.hook_event_name === "SessionStart")
     exportSessionEnv(env, sessionId);
-  stdout.write(`${JSON.stringify(result.json)}\n`);
+  const notice = result.skipped ? null : stalePluginNotice(payload, env);
+  stdout.write(
+    `${JSON.stringify(notice ? withContext(result.json, payload, notice) : result.json)}\n`,
+  );
   return result.exitCode;
 }

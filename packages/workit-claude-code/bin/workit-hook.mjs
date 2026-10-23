@@ -213,10 +213,51 @@ const standingPending = (cwd, session, agentId) => {
   return readJson(path.join(store, "standing", "seen", `${key}.json`))?.rev !== rev;
 };
 
+// The plugin dir this hook runs from (`<config>/plugins/cache/<mkt>/workit/<version>`)
+// against the newest version the registry lists beside it: while the line has not
+// been given this session, the runtime runs (src/stale-plugin.ts holds the same test).
+const parts = (version) => /^(\d+)\.(\d+)\.(\d+)/.exec(version)?.slice(1).map(Number);
+const staleUnannounced = (session) => {
+  try {
+    const versions = path.dirname(root);
+    if (path.basename(path.dirname(path.dirname(versions))) !== "cache") return false;
+    const running = parts(path.basename(root));
+    if (!running || typeof session !== "string") return false;
+    const registry = readJson(
+      path.join(path.dirname(path.dirname(path.dirname(versions))), "installed_plugins.json"),
+    );
+    for (const entries of Object.values(registry?.plugins ?? {}))
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        const at = typeof entry?.version === "string" ? parts(entry.version) : undefined;
+        if (
+          at &&
+          path.dirname(String(entry.installPath)) === versions &&
+          (at[0] - running[0] || at[1] - running[1] || at[2] - running[2]) > 0
+        )
+          return !existsSync(markerFor(session, entry.version));
+      }
+  } catch {
+    // an unreadable registry is not a reason to load the runtime
+  }
+  return false;
+};
+const markerFor = (session, installed) =>
+  path.join(
+    stateDir(),
+    "stale-plugin",
+    createHash("sha256").update(`${session}\0${installed}`).digest("hex").slice(0, 32),
+  );
+
 const fastAllow = (() => {
   try {
     const value = JSON.parse(payload);
     const command = value?.tool_input?.command;
+    if (
+      value?.hook_event_name === "PreToolUse" &&
+      !value.agent_id &&
+      staleUnannounced(value.session_id)
+    )
+      return false;
     if (value?.hook_event_name === "PostToolUse")
       return typeof command === "string" && !/\bcommit\b/.test(command);
     if (value?.hook_event_name !== "PreToolUse") return false;
@@ -233,12 +274,16 @@ const fastAllow = (() => {
         return true;
       return !implementer && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }
+    // A subagent spawn that names its model has no default to fill (hooks/agent-model.ts).
+    if (value.tool_name === "Agent" || value.tool_name === "Task")
+      return typeof value.tool_input?.model === "string" && value.tool_input.model.trim() !== "";
     return EDITS.has(value.tool_name) && !implementer && !hasTaskStore(String(value.cwd ?? "."));
   } catch {
     return false;
   }
 })();
 
+process.env.WORKIT_PLUGIN_ROOT = root;
 if (fastAllow) {
   process.stdout.write("{}\n");
 } else if (fromSource) {

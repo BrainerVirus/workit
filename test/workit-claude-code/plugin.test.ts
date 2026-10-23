@@ -114,6 +114,8 @@ test("hooks.json registers the designed events through the exec-form launcher, n
     ["Bash", undefined],
     ["PowerShell", undefined],
     ["Edit|Write|MultiEdit|NotebookEdit", undefined],
+    // A subagent spawn that names no model gets its role's default (#420).
+    ["Agent|Task", undefined],
     ["Skill", undefined],
   ]);
   // No `if` filter: it misses `cd x && git commit`, `bash -c` and absolute git

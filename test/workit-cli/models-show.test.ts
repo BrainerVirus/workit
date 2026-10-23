@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -151,4 +151,57 @@ test("G unknown role, host, tier and bad values, W checked, T each is reported a
   expect(issues).toContain("verifier.claude_code.effort: not an effort name");
   expect(issues).toContain("implementer.epic: unknown tier");
   expect(resolveRoleModel(cwd, { role: "verifier" }, "claude_code")?.model).toBe("sonnet");
+});
+
+// #420: `models show --report` reads Claude Code's subagent transcripts.
+const transcript = (
+  claudeDir: string,
+  id: string,
+  agentType: string,
+  models: string[],
+  ageDays = 0,
+) => {
+  const dir = path.join(claudeDir, "projects", "p", "session", "subagents");
+  mkdirSync(dir, { recursive: true });
+  const meta = path.join(dir, `agent-${id}.meta.json`);
+  writeFileSync(meta, JSON.stringify({ agentType }));
+  writeFileSync(
+    path.join(dir, `agent-${id}.jsonl`),
+    [
+      JSON.stringify({ type: "user", message: { role: "user", content: '"model":"x"' } }),
+      ...models.map((model) => JSON.stringify({ type: "assistant", message: { model } })),
+    ].join("\n"),
+  );
+  const when = new Date(Date.now() - ageDays * 86_400_000);
+  utimesSync(meta, when, when);
+};
+
+test("G subagent transcripts, W models show --report, T it lists models per role over 7 days and flags a non-default one", async () => {
+  const claudeDir = path.join(configHome.home, ".claude");
+  rmSync(claudeDir, { recursive: true, force: true });
+  transcript(claudeDir, "a", "workit:verifier", ["claude-sonnet-5-5"]);
+  transcript(claudeDir, "b", "workit:verifier", ["claude-opus-5-5"]);
+  transcript(claudeDir, "c", "workit:implementer", ["claude-sonnet-5-5", "claude-opus-5-5"]);
+  transcript(claudeDir, "d", "workit:verifier", ["claude-opus-5-5"], 30);
+  transcript(claudeDir, "e", "Plan", ["claude-opus-5-5"]);
+  let stdout = "";
+  const code = await main(["models", "show", "--report", "--json"], {
+    cwd: project(),
+    env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir, WORKIT_HOST: "", WORKIT_SESSION_ID: "" },
+    stdout: (text) => void (stdout += text),
+    stderr: (text) => void (stdout += text),
+  });
+  expect(code, stdout).toBe(0);
+  const { data } = JSON.parse(stdout);
+  expect(data.days).toBe(7);
+  expect(data.agents).toBe(4);
+  expect(data.types["workit:verifier"]).toEqual({
+    role: "verifier",
+    defaults: ["sonnet"],
+    models: { "claude-sonnet-5-5": 1, "claude-opus-5-5": 1 },
+    flagged: ["claude-opus-5-5"],
+  });
+  // opus is an implementer tier default (hard): not flagged; Plan has no role.
+  expect(data.types["workit:implementer"].flagged).toEqual([]);
+  expect(data.types.Plan).toMatchObject({ role: null, flagged: [] });
 });

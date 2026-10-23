@@ -37,6 +37,8 @@ export type HookEvent =
       toolUseId: string | null;
       /** The skill a skill-loading tool loads (Claude Code's Skill tool). */
       skill?: string | null;
+      /** A subagent spawn's whole tool input (Claude Code's Agent tool), where a default is filled in. */
+      agentInput?: Record<string, unknown>;
     }
   /** A file-writing tool (Edit, Write, apply_patch…): the before-write gate (S17). */
   | {
@@ -105,6 +107,12 @@ export type HookDecision =
    * host takes the whole input back; `text` is model-visible context.
    */
   | { kind: "rewrite"; command: string; input: Record<string, unknown> | null; text: string | null }
+  /**
+   * tool.pre: run the tool with `input` (the host's whole tool input, with
+   * defaults filled in) instead; `text` is model-visible context. Never a
+   * permission decision.
+   */
+  | { kind: "update-input"; input: Record<string, unknown>; text: string | null }
   /** Stop/SubagentStop: keep working. */
   | { kind: "continue"; reason: string }
   | { kind: "notice"; userMessage: string };

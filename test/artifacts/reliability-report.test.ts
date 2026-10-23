@@ -71,10 +71,10 @@ test(
     // info (no host permission block, #297).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 30,
+      passed: 31,
       warned: 1,
       failed: 1,
-      total: 32,
+      total: 33,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -117,10 +117,10 @@ test(
       // block, #297).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 30,
+        passed: 31,
         warned: 1,
         failed: 1,
-        total: 32,
+        total: 33,
         fixes: 1,
       });
     } finally {
