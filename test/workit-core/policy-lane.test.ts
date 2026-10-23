@@ -364,12 +364,10 @@ test("a risk path is never below full: comment-only, generated, lockfile", () =>
 });
 
 test("paths with spaces, quotes or non-ASCII characters are read, never dropped", () => {
-  for (const name of [
-    "src/auth/check token.ts",
-    'src/auth/we"ird.ts',
-    "src/auth/sesión.ts",
-    "src/auth/back\\slash.ts",
-  ])
+  // Windows forbids `"` in a file name and reads `\` as a separator.
+  const names = ["src/auth/check token.ts", "src/auth/sesión.ts"];
+  if (process.platform !== "win32") names.push('src/auth/we"ird.ts', "src/auth/back\\slash.ts");
+  for (const name of names)
     expect(
       laneOf({ [name]: "export const a = 1;\n" }, { [name]: "export const a = 2;\n" }),
     ).toMatchObject({ lane: "full", riskFiles: [name] });
