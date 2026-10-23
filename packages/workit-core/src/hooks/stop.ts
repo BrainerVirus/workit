@@ -38,7 +38,7 @@ import { checkVerdicts, readLedger, type ReadRow } from "../ledger";
 import type { HostDescriptor } from "./descriptor";
 import type { HookDecision, HookInput } from "./protocol";
 import { guardedBranch, inWorkitWorkspace } from "./raw-git";
-import { readSessionMarker, sessionMarkerFile, writeSessionMarker } from "./session-marker";
+import { readSessionMarker, sessionMarkerFile, updateSessionMarker } from "./session-marker";
 
 const NONE: HookDecision = { kind: "none" };
 
@@ -360,7 +360,7 @@ export function stopDecision(input: HookInput, descriptor: HostDescriptor): Hook
   const key = `${left.kind}:${left.head ?? ""}`;
   if (file && marker) {
     if (marker.stops.includes(key)) return NONE;
-    writeSessionMarker(file, { ...marker, stops: [...marker.stops, key] });
+    updateSessionMarker(file, (fresh) => ({ ...fresh, stops: [...fresh.stops, key] }));
   }
   return {
     kind: "continue",

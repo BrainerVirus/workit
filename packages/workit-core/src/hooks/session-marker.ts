@@ -42,9 +42,19 @@ export const sessionMarkerFile = (
 const list = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
-export const readSessionMarker = (file: string): SessionMarker => {
+const EMPTY: SessionMarker = { nudged: [], loaded: [], raw: [], stops: [], judges: [] };
+
+const readRaw = (file: string): string => {
   try {
-    const value = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+};
+
+const parseMarker = (text: string): SessionMarker => {
+  try {
+    const value = JSON.parse(text) as Record<string, unknown>;
     return {
       nudged: list(value.nudged),
       loaded: list(value.loaded),
@@ -53,14 +63,51 @@ export const readSessionMarker = (file: string): SessionMarker => {
       judges: list(value.judges),
     };
   } catch {
-    return { nudged: [], loaded: [], raw: [], stops: [], judges: [] };
+    return { ...EMPTY };
+  }
+};
+
+export const readSessionMarker = (file: string): SessionMarker => parseMarker(readRaw(file));
+
+/** Write through a temp file in the same directory and rename: a reader never sees half a marker. */
+const writeAtomic = (file: string, marker: SessionMarker): void => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  try {
+    fs.writeFileSync(temp, JSON.stringify(marker));
+    fs.renameSync(temp, file);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
   }
 };
 
 export const writeSessionMarker = (file: string, marker: SessionMarker): void => {
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(marker));
+    writeAtomic(file, marker);
+  } catch {
+    // Fail open: without a marker a later nudge repeats.
+  }
+};
+
+/**
+ * Read-modify-write: `change` maps the marker as read to the marker to keep.
+ * Another hook's rename between the read and ours is detected (the file's
+ * text changed) and `change` runs once more on the fresh marker, so an entry
+ * of a concurrent hook is not lost. Fails open like the rest.
+ */
+export const updateSessionMarker = (
+  file: string,
+  change: (marker: SessionMarker) => SessionMarker,
+): void => {
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const before = readRaw(file);
+      const next = change(parseMarker(before));
+      if (attempt === 0 && readRaw(file) !== before) continue;
+      writeAtomic(file, next);
+      return;
+    }
   } catch {
     // Fail open: without a marker a later nudge repeats.
   }
@@ -71,7 +118,8 @@ export const trackJudge = (input: HookInput, agentId: string | null, running: bo
   const session = input.session.id;
   const file = session && agentId ? sessionMarkerFile(input, session) : null;
   if (!file || !agentId) return;
-  const marker = readSessionMarker(file);
-  const rest = marker.judges.filter((id) => id !== agentId);
-  writeSessionMarker(file, { ...marker, judges: running ? [...rest, agentId] : rest });
+  updateSessionMarker(file, (marker) => {
+    const rest = marker.judges.filter((id) => id !== agentId);
+    return { ...marker, judges: running ? [...rest, agentId] : rest };
+  });
 };
