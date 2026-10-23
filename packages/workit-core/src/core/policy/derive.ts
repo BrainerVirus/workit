@@ -48,9 +48,9 @@ const normalizedScope = (scope: Scope): Scope => ({
 /**
  * | judgment                         | requirement                                  |
  * | behaviorChange                   | check:test (configured, fresh tree), close   |
- * | behaviorChange && risk = normal, | verdict:lane: the review lane from the diff   |
- * | verification: proportional       |                                               |
- * |                                  | decides (core/policy/lane.ts), close          |
+ * | risk != high,                    | verdict:lane: the review lane from the diff   |
+ * | verification: proportional       | decides (core/policy/lane.ts; met under lane  |
+ * | (whatever behaviorChange says)   | none), close                                  |
  * | behaviorChange && risk = normal  | verdict:self (verification: self) or          |
  * |                                  | verdict:non-author (independent), close       |
  * | risk = high                      | verdict:verified (ledger), close             |
@@ -80,7 +80,10 @@ export function deriveRequirements(
         acceptanceAllowed: false,
       }),
     );
-  if (proportional && judgment.behaviorChange && judgment.riskTier === "normal")
+  // The diff, not the behavior-change judgment, decides: the requirement is
+  // derived at any risk below high and is met under lane none (ruling mvkc3zts,
+  // review finding mvkcoxgb).
+  if (proportional && judgment.riskTier !== "high")
     out.push(
       derived({
         ...base,
@@ -290,6 +293,14 @@ export const workingLane = (task: TaskRecord, root: string): BranchLane =>
 
 /** `verdict:lane`: the rule the lane asks for, or met under lane none. */
 const laneVerdict = (task: TaskRecord, root: string, ledger: LedgerView): RuleStatus => {
+  // With no branch (outside git) there is no diff to read and nothing could
+  // hold a verdict: a judgment of no behavior change owes none, as before lanes.
+  if (!ledger.branch() && latestJudgment(task)?.behaviorChange === false)
+    return {
+      met: true,
+      reason: "no branch to read a lane from, and the judgment records no behavior change",
+      decisionIds: [],
+    };
   const lane = workingLane(task, root);
   const label = `lane ${lane.lane} (${lane.reasons.join("; ")})`;
   const need = laneNeed(lane.lane);

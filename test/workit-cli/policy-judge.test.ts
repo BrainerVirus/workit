@@ -1,7 +1,7 @@
 // S17 acceptance through the CLI: `workit policy assess --judge …`.
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -16,8 +16,9 @@ const repo = () => {
   dirs.push(root);
   const git = (...args: string[]) =>
     spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: root });
-  git("init", "-q", "-b", "feature/x");
+  git("init", "-q", "-b", "main");
   git("commit", "-q", "--allow-empty", "-m", "base");
+  git("switch", "-q", "-c", "feature/x");
   return root;
 };
 const workit = (cwd: string, ...args: string[]) => {
@@ -51,7 +52,7 @@ test("G `--judge behavior=yes risk=normal`, T requirements = {check:test, verdic
   expect(assessed.json().data.requirements[0]).toMatchObject({ status: "unsatisfied" });
 });
 
-test("G a 2-line mechanical fix judged trivial, T zero requirements and no spec proposed", () => {
+test("G a 2-line mechanical fix judged trivial, T only the review lane, met while the diff is none, and no spec proposed", () => {
   const root = repo();
   const assessed = workit(
     root,
@@ -63,14 +64,25 @@ test("G a 2-line mechanical fix judged trivial, T zero requirements and no spec 
     "--json",
   );
   expect(assessed.code).toBe(0);
-  expect(ruleIds(assessed.json())).toEqual([]);
+  // The diff, not the judgment, decides the lane (review finding mvkcoxgb).
+  expect(ruleIds(assessed.json())).toEqual(["verdict:lane"]);
+  expect(assessed.json().data.requirements[0]).toMatchObject({ status: "satisfied" });
+});
+
+test("G behavior=no judged on a code change, T the lane still asks for its verdict", () => {
+  const root = repo();
+  writeFileSync(path.join(root, "feature.ts"), "export const x = 1;\n");
+  const assessed = workit(root, "policy", "assess", "--judge", "behavior=no", "--json");
+  expect(assessed.code).toBe(0);
+  expect(ruleIds(assessed.json())).toEqual(["verdict:lane"]);
+  expect(assessed.json().data.requirements[0]).toMatchObject({ status: "unsatisfied" });
 });
 
 test("G a needed plan, W --ref cites it, T the judgment keeps its calls and records the ref", () => {
   const root = repo();
   expect(workit(root, "policy", "assess", "--judge", "plan=yes", "--json").code).toBe(0);
   const cited = workit(root, "policy", "assess", "--ref", "docs/plan.md", "--json");
-  expect(ruleIds(cited.json())).toEqual(["plan"]);
+  expect(ruleIds(cited.json())).toEqual(["verdict:lane", "plan"]);
   const bad = workit(root, "policy", "assess", "--judge", "risk=sky", "--json");
   expect(bad.code).not.toBe(0);
   expect(bad.json()).toMatchObject({ code: "invalid_input" });
@@ -104,7 +116,7 @@ test("Given a judge call, When `policy assess --judge` runs, Then a ledger row r
     actor: { session: "lead" },
     input: { plan: "yes" },
     judgment: { needsPlan: true },
-    requirements: ["plan"],
+    requirements: ["verdict:lane", "plan"],
   });
 }, 30_000);
 
