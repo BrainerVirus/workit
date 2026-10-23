@@ -12,6 +12,10 @@ import {
   failure,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
+import {
+  resolveRoleModel,
+  uniformImplementerModel,
+} from "@brainervirus/workit-core/src/core/role-models";
 import { seedStanding } from "@brainervirus/workit-core/src/hooks/standing";
 import { childSessionId } from "@brainervirus/workit-core/src/host-session";
 import {
@@ -143,11 +147,18 @@ const roleTools = (role: WorkerAssignment["role"]): string[] => {
   return [...readOnly, ...familyTools];
 };
 
+/** The `models.roles` model for a Pi worker role: investigators are `explore`; an implementer needs one model for every tier. */
+const roleModel = (cwd: string, role: WorkerAssignment["role"]) =>
+  role === "implementer"
+    ? uniformImplementerModel(cwd, "pi")
+    : resolveRoleModel(cwd, { role: role === "investigator" ? "explore" : "reviewer" }, "pi");
+
 export function workerCommand(runtime: PiRuntime, assignment: WorkerAssignment): SpawnSpec {
-  // No --model/--provider by product decision (Document-ambient): supervised
-  // workers inherit the coordinator's ambient model from settings.json, so a
-  // review runs under the same model the user already trusts. Pinning a model
-  // here would silently override that choice per role.
+  // Document-ambient by product decision: a supervised worker inherits the
+  // coordinator's ambient model from settings.json, so a review runs under the
+  // model the user already trusts. Only a role the user configured in
+  // `models.roles` (host `pi`) gets `--model`/`--thinking` (#395).
+  const configured = roleModel(runtime.root, assignment.role);
   return {
     command: runtime.node,
     args: [
@@ -158,6 +169,8 @@ export function workerCommand(runtime: PiRuntime, assignment: WorkerAssignment):
       ...(runtime.sessionId ? ["--session-id", runtime.sessionId] : []),
       "--approve",
       "--offline",
+      ...(configured ? ["--model", configured.model] : []),
+      ...(configured?.effort ? ["--thinking", configured.effort] : []),
       "--no-context-files",
       "--tools",
       roleTools(assignment.role).join(","),

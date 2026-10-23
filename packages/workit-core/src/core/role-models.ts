@@ -128,6 +128,25 @@ export const resolveRoleModel = (
   return null;
 };
 
+/**
+ * The implementer model when a host's agent serves every fanout tier (a Codex
+ * agent file, a Pi worker): set only when all three tiers resolve to the same
+ * model and effort, else null (the spawn or session decides per slice).
+ */
+export const uniformImplementerModel = (
+  cwd: string,
+  host: string | null,
+  dir?: string,
+): RoleModel | null => {
+  const tiers = MODEL_TIERS.map((tier) =>
+    resolveRoleModel(cwd, { role: "implementer", tier }, host, dir),
+  );
+  const [first] = tiers;
+  return first && tiers.every((t) => t?.model === first.model && t.effort === first.effort)
+    ? first
+    : null;
+};
+
 /** Every selector `models show` lists, in role order. */
 export const ROLE_SELECTORS: RoleSelector[] = MODEL_ROLES.flatMap((role): RoleSelector[] =>
   role === "implementer" ? MODEL_TIERS.map((tier) => ({ role, tier })) : [{ role }],

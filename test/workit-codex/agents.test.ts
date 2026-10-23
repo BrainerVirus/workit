@@ -234,3 +234,66 @@ test("Given the MCP launcher sync, When the Codex agents dir is unwritable, Then
     "workit-verifier.toml",
   ]);
 });
+
+test("G role models for Codex, W the agents install, T only a configured role's file carries model and model_reasoning_effort, and removing the config removes them", () => {
+  const codexHome = path.join(scratch, "models", ".codex");
+  installCodexAgents(packageRoot, codexHome, {
+    verifier: { model: "gpt-5.1-codex-mini", effort: "low" },
+    reviewer: { model: "gpt-5.1-codex", effort: null },
+  });
+  const read = (role: string) =>
+    Bun.TOML.parse(
+      readFileSync(path.join(codexHome, "agents", `workit-${role}.toml`), "utf8"),
+    ) as Record<string, unknown>;
+  expect(read("verifier").model).toBe("gpt-5.1-codex-mini");
+  expect(read("verifier").model_reasoning_effort).toBe("low");
+  expect(read("reviewer").model).toBe("gpt-5.1-codex");
+  expect(read("reviewer").model_reasoning_effort).toBeUndefined();
+  expect(read("implementer").model).toBeUndefined();
+  expect(read("verifier").developer_instructions).toContain("workit ledger verdict");
+  const second = installCodexAgents(packageRoot, codexHome);
+  expect(second.map((r) => r.action)).toEqual(["current", "updated", "updated"]);
+  expect(read("verifier").model).toBeUndefined();
+});
+
+test("G a Codex role model in the workspace config, W the launcher syncs the agents, T the installed file names it; with none configured it names no model", () => {
+  const { root, agents } = pluginAt("configured", "9.0.0");
+  const configDir = path.join(scratch, "configured", "config");
+  const cwd = path.join(scratch, "configured", "work");
+  mkdirSync(configDir, { recursive: true });
+  mkdirSync(cwd, { recursive: true });
+  const read = (role: string) =>
+    Bun.TOML.parse(readFileSync(path.join(agents, `workit-${role}.toml`), "utf8")) as Record<
+      string,
+      unknown
+    >;
+  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  try {
+    syncCodexAgents(root, cwd);
+    expect(read("verifier").model).toBeUndefined();
+    writeFileSync(
+      path.join(configDir, "workspaces.json"),
+      JSON.stringify({
+        models: {
+          roles: {
+            verifier: { codex: { model: "gpt-5.1-codex-mini", effort: "low" } },
+            implementer: {
+              mundane: { codex: "gpt-5.1-codex-mini" },
+              standard: { codex: "gpt-5.1-codex-mini" },
+              hard: { codex: "gpt-5.1-codex" },
+            },
+          },
+        },
+      }),
+    );
+    syncCodexAgents(root, cwd);
+  } finally {
+    if (saved === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+  }
+  expect(read("verifier").model).toBe("gpt-5.1-codex-mini");
+  expect(read("verifier").model_reasoning_effort).toBe("low");
+  // The implementer agent serves every tier: tiers that differ leave it unset.
+  expect(read("implementer").model).toBeUndefined();
+});
