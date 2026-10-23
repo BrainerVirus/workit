@@ -182,8 +182,9 @@ test("ledger check reports carried after a base-only rebase and stale after a co
     current: { basis: "carried" },
     accepted: { accepted: true },
   });
-  writeFileSync(path.join(root, "feature.txt"), "changed\n");
-  git(root, "commit", "-qam", "change");
+  writeFileSync(path.join(root, "feature.ts"), "export const changed = true;\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "change");
   const stale = await run(root, ["ledger", "check"]);
   expect(stale.code).toBe(0);
   expect(stale.stdout).toContain("current: stale (verified); not accepted (stale)");

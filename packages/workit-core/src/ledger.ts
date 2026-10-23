@@ -54,7 +54,8 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { hostAwareLockTimeout } from "./core/store-lock";
-import { vcsConfig } from "./core/vcs-config";
+import { verdictDrift, type CarryRule, type Drift } from "./core/policy/carry";
+import { defaultBase } from "./git/default-base";
 import { GIT_TIMEOUTS, currentBranch, headSha, patchId, worktreeTree } from "./git/rev";
 import { hostSessionFromEnv, issuedBinding } from "./host-session";
 import { bumpStandingRev } from "./hooks/standing-signal";
@@ -281,47 +282,8 @@ export function branchHead(cwd: string, branch: string): string | null {
   );
 }
 
-/**
- * The PR target of the release track the checkout is on, when the workspace
- * configures tracks (as `fanout plan` and `stack plan` pick their trunk); a
- * plain workspace default does not override origin's default branch.
- */
-const trackTrunk = (cwd: string): string | null => {
-  try {
-    const resolved = vcsConfig("resolve", cwd);
-    if (resolved.ok === false || !resolved.releaseTrack || resolved.releaseTrack.blocking)
-      return null;
-    const target = String(resolved.defaultTargetBranch ?? "").trim();
-    return target && safeRef(target) ? target : null;
-  } catch {
-    return null;
-  }
-};
-
-/**
- * The default base for patch-ids and author trailers: the release track's PR
- * target (origin's copy, else the local one) when tracks are configured, else
- * origin's HEAD branch, else the first of origin/main, origin/master, main,
- * master, origin/develop, develop that exists.
- */
-export function defaultBase(cwd: string): string | null {
-  const trunk = trackTrunk(cwd);
-  if (trunk)
-    for (const candidate of [`origin/${trunk}`, trunk])
-      if (resolveCommit(cwd, candidate)) return candidate;
-  const originHead = git(cwd, ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]);
-  if (originHead && resolveCommit(cwd, originHead)) return originHead;
-  for (const candidate of [
-    "origin/main",
-    "origin/master",
-    "main",
-    "master",
-    "origin/develop",
-    "develop",
-  ])
-    if (resolveCommit(cwd, candidate)) return candidate;
-  return null;
-}
+// The default base lives in git/default-base.ts (shared with the review lane).
+export { defaultBase };
 
 /**
  * sha256 of the exact `base...head` diff with the pinned options rev.ts uses
@@ -1136,8 +1098,20 @@ export type VerdictEntry = {
   /** current AND passing AND independent. */
   accepted: boolean;
   reasons: RejectReason[];
+  /** Why a verdict on an older head still applies after a follow-up change (core/policy/carry.ts). */
+  carry: CarryNote | null;
   verdict: ReadRow;
 };
+
+/** A verdict carried over a follow-up change: by which rule, from which judged head, over which files. */
+export type CarryNote = { rule: CarryRule; since: string; files: string[] };
+
+/** A stale verdict whose follow-up change is small and off risk paths: re-verify only these files. */
+export type Reverify = { scope: "focused"; since: string; files: string[] };
+
+/** `carried (lane none since <head>)`: how a carried verdict reads in `ledger check` and `pr status`. */
+export const carryLabel = (carry: CarryNote): string =>
+  `carried (${carry.rule === "lane-none" ? "lane none" : "tests only"} since ${carry.since.slice(0, 12)})`;
 
 export type VerdictCheck = {
   branch: string;
@@ -1146,6 +1120,10 @@ export type VerdictCheck = {
   patchId: string | null;
   /** Newest current verdict (else newest verdict): does it still apply? */
   current: { basis: VerdictBasis; verdict: ReadRow | null };
+  /** The carry of the accepted verdict (else of the newest current one), when a follow-up change carried it. */
+  carry: CarryNote | null;
+  /** No verdict applies, but the newest passing one is stale only by a small change: re-verify that. */
+  reverify: Reverify | null;
   /**
    * What merge gates read: an accepted strong (`verified`/`tests-verified`)
    * verdict and no current independent failure. `type-check-only` never counts.
@@ -1471,9 +1449,44 @@ export function checkVerdicts(
     return key;
   };
   const keyFor = (base: string | null) => keysAt(base, head);
+  // The branch's own change since a trusted verdict's head, read once per
+  // row (#334). A row the gates cannot trust never carries.
+  const driftCache = new Map<ReadRow, Drift | null>();
+  const driftOf = (row: ReadRow): Drift | null => {
+    if (driftCache.has(row)) return driftCache.get(row) ?? null;
+    let drift: Drift | null = null;
+    const toBase = row.base ?? fallbackBase;
+    const toBaseSha = toBase ? resolveCommit(cwd, toBase) : null;
+    const fromBase = row.baseSha ?? toBaseSha;
+    if (
+      row.head &&
+      head &&
+      row.head !== head &&
+      toBaseSha &&
+      fromBase &&
+      !untrusted(reasonsOf(row))
+    )
+      drift = verdictDrift(cwd, {
+        from: row.head,
+        to: head,
+        fromBase,
+        toBase: toBaseSha,
+        kind: typeof row.kind === "string" ? row.kind : "review",
+      });
+    driftCache.set(row, drift);
+    return drift;
+  };
+  /** The follow-up carry of a verdict the exact keys and restacks do not carry. */
+  const carryOf = (row: ReadRow): CarryNote | null => {
+    if (verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) }) !== "stale") return null;
+    if (restackCarries(rows, branch, row.head, head)) return null;
+    const drift = driftOf(row);
+    return drift?.carries ? { rule: drift.rule, since: drift.since, files: drift.files } : null;
+  };
   const basisOf = (row: ReadRow): Exclude<VerdictBasis, "none"> => {
     const basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
-    return basis === "stale" && restackCarries(rows, branch, row.head, head) ? "carried" : basis;
+    if (basis !== "stale") return basis;
+    return restackCarries(rows, branch, row.head, head) || carryOf(row) ? "carried" : basis;
   };
   // A newer row is judged under the failure's own base, so a row recorded
   // with a different --base cannot make unchanged code look changed. When
@@ -1566,6 +1579,7 @@ export function checkVerdicts(
       independent: independence.length === 0,
       accepted: reasons.length === 0,
       reasons,
+      carry: basis === "carried" ? carryOf(row) : null,
       verdict: row,
     });
     // The author's own failure never displaces an independent pass, but it
@@ -1636,6 +1650,24 @@ export function checkVerdicts(
       );
   const selfEntry =
     latestSelf && STRONG_RESULTS.has(String(latestSelf.verdict.result)) ? latestSelf : undefined;
+  const carryEntry =
+    verdicts.find((entry) => entry.verdict === accepted.verdict && entry.accepted) ?? newestCurrent;
+  // A focused re-verify: nothing applies now, and the newest trusted pass is
+  // stale only by a small change off risk paths (the drift's lane is self).
+  const lastPass =
+    accepted.accepted || failing || tampered.length
+      ? undefined
+      : verdicts.findLast(
+          (entry) =>
+            !entry.current &&
+            !untrusted(entry.reasons) &&
+            STRONG_RESULTS.has(String(entry.verdict.result)),
+        );
+  const drift = lastPass ? driftOf(lastPass.verdict) : null;
+  const reverify: Reverify | null =
+    drift && !drift.carries && drift.focused && drift.files
+      ? { scope: "focused", since: drift.since, files: drift.files }
+      : null;
   return {
     branch,
     head,
@@ -1644,6 +1676,8 @@ export function checkVerdicts(
     base: newestCurrent?.verdict.base ?? fallbackBase,
     patchId: keyFor(newestCurrent?.verdict.base ?? fallbackBase).patchId,
     current: { basis: newestCurrent?.basis ?? "none", verdict: newestCurrent?.verdict ?? null },
+    carry: carryEntry?.carry ?? null,
+    reverify,
     accepted,
     verdicts,
     authors: [...authors].toSorted(),

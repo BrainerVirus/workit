@@ -515,6 +515,84 @@ export function resolveRef(cwd: string, ref: string): string | null {
   return line(git(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]));
 }
 
+/** The branch origin's HEAD names (`origin/main`), or null. */
+export function originHeadRef(cwd: string): string | null {
+  return line(git(cwd, ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]));
+}
+
+/** The top of the working tree, or null outside one. */
+export function worktreeTop(cwd: string): string | null {
+  return line(git(cwd, ["rev-parse", "--show-toplevel"]));
+}
+
+/** Whether git tracks `file` (repo-relative) in the index of the checkout at `top`. */
+export function isTracked(top: string, file: string): boolean {
+  return git(top, ["ls-files", "--error-unmatch", "--", file]).ok;
+}
+
+/**
+ * A hash of each file's own change in `fork..head`, by path: the pinned
+ * whole-range diff split per file, `index` lines dropped and hunk headers
+ * stripped of line numbers (as the ledger's diffHash), so a base change
+ * elsewhere in the file keeps the hash. Null when git fails or a header names
+ * a path git did not list (a quoted path): the caller fails closed.
+ */
+export function filePatchHashes(
+  cwd: string,
+  fork: string,
+  head: string,
+): Map<string, string> | null {
+  const raw = diffRaw(cwd, fork, head);
+  if (!raw || !safeArg(fork) || !safeArg(head)) return null;
+  const byHeader = new Map(
+    raw.map((entry) => [`diff --git a/${entry.path} b/${entry.path}`, entry.path]),
+  );
+  const run = git(
+    cwd,
+    [
+      "-c",
+      "core.quotePath=false",
+      "diff",
+      "-U3",
+      "--diff-algorithm=myers",
+      "--indent-heuristic",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-renames",
+      "--full-index",
+      "--binary",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      fork,
+      head,
+      "--",
+    ],
+    { timeoutMs: GIT_TIMEOUTS.worktree },
+  );
+  if (!run.ok) return null;
+  const out = new Map<string, string>();
+  let file: string | null = null;
+  let hash: ReturnType<typeof createHash> | null = null;
+  const flush = () => {
+    if (file !== null && hash) out.set(file, hash.digest("hex"));
+  };
+  for (const text of run.stdout.split("\n")) {
+    if (text.startsWith("diff --git ")) {
+      flush();
+      file = byHeader.get(text) ?? null;
+      if (file === null) return null;
+      hash = createHash("sha256");
+      continue;
+    }
+    if (!hash || text.startsWith("index ")) continue;
+    hash.update(text.startsWith("@@ ") ? "@@" : text);
+    hash.update("\n");
+  }
+  flush();
+  return out.size === raw.length ? out : null;
+}
+
 /** Pinned diff options for the review-lane reads: user config never changes them. */
 const LANE_DIFF = [
   "-c",

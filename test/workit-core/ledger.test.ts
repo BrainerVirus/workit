@@ -475,7 +475,8 @@ test("given a verdict at SHA A, a base-only rebase carries it, and a content cha
     patchId: verdict.patchId,
   });
 
-  commit(root, "feature.txt", "feature changed\n", "change the feature");
+  // A behavior change (a docs-only one would carry, see ledger-carry.test.ts).
+  commit(root, "feature.ts", "export const changed = true;\n", "change the feature");
   const changed = checkVerdicts(root, "feature/x", read(root).rows);
   expect(changed).toMatchObject({
     current: { basis: "stale" },
