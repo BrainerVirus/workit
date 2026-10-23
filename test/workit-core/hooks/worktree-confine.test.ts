@@ -387,3 +387,144 @@ test("Given a Codex workit-implementer subagent, When it patches the lead's chec
   const denied = codex(path.join(lead, "src", "x.ts"), "codex-impl");
   expect(denied?.permissionDecisionReason).toContain(`bound to the worktree ${wtB}`);
 });
+
+// --- decider's plan (wave 1.5 slice 4) --------------------------------------
+
+const implementerBoundToA = (id: string) => {
+  expect(write(path.join(wtA, "a.ts"), { id })?.permissionDecision).toBeUndefined();
+  return { id };
+};
+const denies = (command: string, agent: { id: string }, text: string) => {
+  const out = bash(command, agent);
+  expect(out?.permissionDecision, command).toBe("deny");
+  expect(out?.permissionDecisionReason, command).toContain(text);
+};
+
+test("Given a bound implementer, When it puts workit global options before fanout, Then the lead's verbs stay denied; the same options before its own git verbs run where --cwd says", () => {
+  const id = implementerBoundToA("impl-globals");
+  for (const command of [
+    "workit --json fanout worktree release b --force",
+    "workit --session x fanout plan plan.json",
+    "workit --session=x --json fanout worktree create c",
+    `workit --json --cwd ${wtA} fanout plan plan.json`,
+    `workit --cwd=${wtA} --json fanout worktree release b`,
+    "workit --token t --as lead fanout worktree create c",
+    "workit check -- workit --json fanout plan plan.json",
+  ])
+    denies(command, id, "belong to the lead");
+  expect(bash("workit --json fanout status", id)?.permissionDecision).toBeUndefined();
+  // `--cwd` after other globals still says where a mutating workit git runs.
+  denies(`cd ${wtA} && workit --json --cwd ${lead} git commit -m x -- src/core.ts`, id, wtA);
+  denies(`cd ${wtA} && workit --session x --cwd=${lead} git commit -m x -- f`, id, wtA);
+  expect(
+    bash(`workit --json --cwd ${wtA} git commit -m "feat: a" -- a.ts`, id)?.permissionDecision,
+  ).toBeUndefined();
+});
+
+test("Given a bound implementer, When a cd target cannot be resolved and a write follows, Then it is denied naming how to spell the path; reads after it, and the lead, are unaffected", () => {
+  const id = implementerBoundToA("impl-unknown-dir");
+  for (const command of [
+    `cd ${wtA} && cd - && rm src/core.ts`,
+    `cd ${wtA} && cd "$OLDPWD" && echo x > f`,
+    `cd ${wtA} && popd && rm f`,
+    `pushd ${wtA} && popd && popd && touch f`,
+    `cd ${wtA} && cd ~- && sed -i s/a/b/ f`,
+    `cd ${wtA} && cd $(git rev-parse --show-toplevel) && rm f`,
+    'cd /tmp/*/x && python3 -c \'open("f","w")\'',
+    `cd ${wtA} && cd - && cp x y`,
+  ]) {
+    denies(command, id, "cannot resolve");
+    expect(bash(command, id)?.permissionDecisionReason, command).toContain(`git -C ${wtA}`);
+  }
+  for (const command of [
+    `cd ${wtA} && cd - && ls`,
+    `cd ${wtA} && cd - && cd ${wtA} && rm a.ts`,
+    `cd - && echo x > ${path.join(wtA, "a.ts")}`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+  expect(
+    bash(`cd ${wtA} && cd - && rm src/core.ts`, { type: null })?.permissionDecision,
+  ).toBeUndefined();
+});
+
+test("Given a bound implementer, When it force-pushes or pushes another ref, or runs history and storage writers, Then it is denied; its own plain push and the read forms pass", () => {
+  const id = implementerBoundToA("impl-git-more");
+  for (const command of [
+    "git push --force origin feature/b",
+    "git push -f origin feature/c",
+    `git -C ${wtA} push --force-with-lease origin feature/b`,
+    `git -C ${wtA} push --force-with-lease origin feature/a`,
+    "git push --force-if-includes origin feature/b",
+    "git push origin +feature/a",
+    "git push origin HEAD:feature/z",
+    "git push origin feature/a:feature/z",
+    "git replace abc def",
+    "git notes add -m x",
+    "git filter-branch --all",
+    "git gc",
+    "git prune",
+    "git repack -ad",
+    "git reflog expire --all",
+    "git reflog delete HEAD@{1}",
+    "git submodule update --init",
+    "git sparse-checkout set src",
+  ])
+    denies(command, id, "belong to the lead");
+  for (const command of [
+    "git push origin feature/a",
+    "git push -u origin feature/a",
+    `git -C ${wtA} push --force-with-lease`,
+    `git -C ${wtA} push --force origin`,
+    "git reflog show",
+    "git reflog",
+    "git submodule status",
+    "git notes list",
+    "git notes show",
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+});
+
+test("Given a bound implementer, When it writes the lead's checkout through a shell with options before -c or through busybox, Then it is denied", () => {
+  const id = implementerBoundToA("impl-shell-forms");
+  const core = path.join(lead, "src", "core.ts");
+  for (const command of [
+    `bash --norc -c 'echo x > ${core}'`,
+    `sh -e -c "rm ${core}"`,
+    `bash -o pipefail -c 'rm ${core}'`,
+    `busybox rm ${core}`,
+    `busybox sh -c 'echo x > ${core}'`,
+    `workit check -- bash --norc -c 'rm ${core}'`,
+  ])
+    denies(command, id, `bound to the worktree ${wtA}`);
+  const own = path.join(wtA, "a.ts");
+  for (const command of [
+    `bash --norc -c 'echo x > ${own}'`,
+    `busybox rm ${own}`,
+    "bash -e -c true",
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+});
+
+test("Given a directory that only claims Claude Code's isolation through a .git file naming a sibling's admin dir, When an implementer in it writes the lead's checkout, Then it is denied; the real linked worktree stays host-isolated", () => {
+  const real = path.join(lead, ".claude", "worktrees", "agent-real-3");
+  git(lead, "worktree", "add", "-q", "--detach", real);
+  const forged = path.join(lead, ".claude", "worktrees", "agent-forged-4");
+  mkdirSync(forged, { recursive: true });
+  writeFileSync(
+    path.join(forged, ".git"),
+    `gitdir: ${path.join(lead, ".git", "worktrees", "agent-real-3")}\n`,
+  );
+  const at = (cwd: string, agent: string) => {
+    const payload = fixture("claude-code", "pre-tool-use-write", cwd, {
+      tool_name: "Write",
+      tool_input: { file_path: path.join(lead, "src", "core.ts"), content: "x" },
+      agent_id: agent,
+      agent_type: "workit:implementer",
+    });
+    return (dispatchHook(claudeCodeAdapter, payload, {}).json as Specific).hookSpecificOutput;
+  };
+  expect(at(real, "real-3")?.permissionDecision).toBeUndefined();
+  const denied = at(forged, "forged-4");
+  expect(denied?.permissionDecision).toBe("deny");
+  expect(denied?.permissionDecisionReason).toContain("workit worktree confinement");
+});

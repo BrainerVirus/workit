@@ -628,11 +628,18 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   worktree is denied, so it never edits the lead's checkout. Files outside any
   repository stay host policy. What the lead owns is always denied to it:
   `git worktree add|remove|prune`, branch deletes, moves and force-resets,
-  `update-ref`, `symbolic-ref` writes, tag deletes, delete pushes, `git config`
-  and `git remote` writes, `git stash drop|clear`, and `workit fanout
-  plan|worktree`. A command whose writes Workit cannot read (`python -c`,
-  `node -e`, `xargs rm`, `find -delete`) counts as a change in the directory
-  it runs in, and a link inside the worktree may not point outside it.
+  `update-ref`, `symbolic-ref` writes, tag deletes, delete pushes, force
+  pushes with a refspec, refspec pushes with `:` or `+`, `git replace|filter-branch|gc|prune|repack|sparse-checkout`,
+  `git config` and `git remote` writes, `git stash drop|clear`, and `workit
+  fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
+  command whose writes Workit cannot read (`python -c`, `node -e`, `xargs rm`,
+  `find -delete`) counts as a change in the directory it runs in, and a link
+  inside the worktree may not point outside it. After a `cd -`, `cd "$VAR"` or
+  `popd` Workit cannot follow, a write is denied until it names an absolute
+  path, `git -C <worktree>` or `workit --cwd <worktree>`. This guards against
+  hand edits and is not a sandbox: writers such as `tar -C`, `unzip -d`,
+  `curl -o`, `ed` or `sqlite3` and script files an interpreter runs are not
+  judged, so the merge gate and a non-author verdict still check the diff.
 - `worktree release` records the worktree's `git status` in the ledger
   (`fanout.worktree.released`) before anything else, refuses while there are
   uncommitted changes unless `--force`, then removes the scratch dir and the

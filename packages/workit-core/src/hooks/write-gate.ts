@@ -25,6 +25,7 @@ import {
   inWorkitWorkspace,
   rawInvocations,
   workitCheckTail,
+  skipWorkitGlobals,
   workitInvocations,
   type RawInvocation,
 } from "./raw-git";
@@ -70,7 +71,7 @@ const exempt = (cwd: string, root: string, file: string, plans: ReadonlySet<stri
   );
 };
 
-const PREFIXES = new Set(["sudo", "command", "env", "nohup", "time", "exec", "xargs"]);
+const PREFIXES = new Set(["sudo", "command", "env", "nohup", "time", "exec", "xargs", "busybox"]);
 const operands = (words: string[]) => words.filter((item) => !item.startsWith("-"));
 
 const SCRIPT_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
@@ -86,12 +87,9 @@ const wrappedScript = (input: string[]): string | null => {
   const tail = workitCheckTail(words);
   if (!tail) return null;
   if ("script" in tail) return tail.script;
-  const [shell, flag, script] = tail.argv;
-  if (
-    SCRIPT_SHELLS.has((shell.split(/[\\/]/).at(-1) ?? "").toLowerCase()) &&
-    /^-[a-z]*c$/.test(flag ?? "")
-  )
-    return script ?? null;
+  const script = shellScript(tail.argv);
+  if (SCRIPT_SHELLS.has((tail.argv[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase()) && script)
+    return script;
   return tail.argv.map(quoteWord).join(" ");
 };
 
@@ -168,11 +166,17 @@ const editsOf = (input: string[]): string[] | null => {
 };
 
 /** A `bash -c '<script>'` (any SCRIPT_SHELLS) script, else null. */
-const shellScript = (words: readonly string[]): string | null =>
-  SCRIPT_SHELLS.has((words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase()) &&
-  /^-[a-z]*c$/.test(words[1] ?? "")
-    ? (words[2] ?? null)
-    : null;
+const shellScript = (words: readonly string[]): string | null => {
+  if (!SCRIPT_SHELLS.has((words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase())) return null;
+  // Options may come before `-c` (`bash --norc -c`, `sh -e -c`); the script follows it.
+  for (let index = 1; index < words.length; index++) {
+    const word = words[index];
+    if (/^-[a-z]*c$/.test(word)) return words[index + 1] ?? null;
+    if (/^[-+][oO]$/.test(word)) index++;
+    else if (!/^[-+]/.test(word)) return null;
+  }
+  return null;
+};
 
 /** xargs options that take the next word as their value. */
 const XARGS_VALUE = /^-[IinLPdsEa]$/;
@@ -423,13 +427,25 @@ const CD = new Set(["cd", "chdir", "set-location", "sl"]);
 const PUSHD = new Set(["pushd", "push-location"]);
 const POPD = new Set(["popd", "pop-location"]);
 
-/** A `cd` operand resolved against `dir`; undefined when it cannot be known. */
-const cdInto = (dir: string | undefined, words: string[]): string | undefined => {
+/**
+ * Stands for a directory an implementer's command moved to but the analysis
+ * cannot name (`cd -`, `cd "$X"`, a bare `popd`): a write that lands under it
+ * is denied by `confineImplementer`, as the shell may be anywhere.
+ */
+export const UNKNOWN_DIR = path.resolve(path.parse(process.cwd()).root, ".workit-unknown-dir");
+
+/**
+ * A `cd` operand resolved against `dir`. A target that cannot be known is
+ * undefined, or `UNKNOWN_DIR` when `strict`.
+ */
+const cdInto = (dir: string | undefined, words: string[], strict = false): string | undefined => {
+  const lost = strict ? UNKNOWN_DIR : undefined;
   const named = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
   // Only a leading `~` or `$HOME` expands; a mid-path `~` is literal (Windows 8.3
   // short names like RUNNER~1).
   const target = named === undefined ? undefined : homeExpanded(named);
-  if (dir === undefined || target === "-" || (target && /^~|[$`*?]/.test(target))) return undefined;
+  if (target === "-" || (target && /^~|[$`*?]/.test(target))) return lost;
+  if (dir === undefined) return lost;
   return target === undefined ? os.homedir() : path.resolve(dir, target);
 };
 
@@ -477,16 +493,16 @@ const segmentTargets = (
     const words = lead < 0 ? [] : segment.words.slice(lead);
     const name = (words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
     if (CD.has(name)) {
-      dir = cdInto(dir, words);
+      dir = cdInto(dir, words, strict);
       continue;
     }
     if (PUSHD.has(name)) {
       stack.push(dir);
-      dir = cdInto(dir, words);
+      dir = cdInto(dir, words, strict);
       continue;
     }
     if (POPD.has(name)) {
-      dir = stack.length ? stack.pop() : undefined;
+      dir = stack.length ? stack.pop() : strict ? UNKNOWN_DIR : undefined;
       continue;
     }
     const inner = depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
@@ -534,11 +550,8 @@ const segmentTargets = (
 
 /** A workit invocation's global `--cwd <dir>` (or `--cwd=<dir>`), resolved against `dir`. */
 const workitCwd = (dir: string, args: string[]): { at: string; args: string[] } => {
-  if (args[0] === "--cwd" && args[1] !== undefined)
-    return { at: path.resolve(dir, homeExpanded(args[1])), args: args.slice(2) };
-  if (args[0]?.startsWith("--cwd="))
-    return { at: path.resolve(dir, homeExpanded(args[0].slice(6))), args: args.slice(1) };
-  return { at: dir, args };
+  const { rest, cwd } = skipWorkitGlobals(args);
+  return { at: cwd === null ? dir : path.resolve(dir, homeExpanded(cwd)), args: rest };
 };
 
 /**

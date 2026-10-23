@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -415,7 +415,7 @@ test("Given trailers: false, When an isolated implementer starts, Then its git t
   const repo = setup({ trailers: false });
   // Claude Code put it in its own worktree: `.claude/worktrees/agent-<id>`.
   const isolated = path.join(repo.cwd, ".claude", "worktrees", "agent-a1");
-  mkdirSync(isolated, { recursive: true });
+  repo.git("worktree", "add", "-q", "--detach", isolated);
   const text = () => {
     const decision = handleHook(
       {

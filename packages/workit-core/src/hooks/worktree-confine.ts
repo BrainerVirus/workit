@@ -25,9 +25,9 @@ import path from "node:path";
 import { resolveStateDir } from "../core/logger";
 import { appendHookObserved } from "../ledger";
 import type { HookDecision, HookInput } from "./protocol";
-import { inWorkitWorkspace, rawInvocations, workitInvocations } from "./raw-git";
+import { inWorkitWorkspace, rawInvocations, skipWorkitGlobals, workitInvocations } from "./raw-git";
 import type { ShellDialect } from "./shell-words";
-import { shellMutationTargets } from "./write-gate";
+import { shellMutationTargets, UNKNOWN_DIR } from "./write-gate";
 
 /** Written by `workit fanout worktree create` into git's admin dir for the worktree. */
 export const FANOUT_TOKEN_FILE = "workit-fanout-token";
@@ -156,6 +156,11 @@ export const hostIsolated = (cwd: string, agentId: string | null): boolean => {
     const admin = /^gitdir:\s*(.+)$/mu.exec(fs.readFileSync(dotGit, "utf8"))?.[1]?.trim();
     if (!admin) return false;
     const adminDir = path.resolve(checkout.root, admin);
+    // The admin dir must point back at this checkout: a forged `.git` file
+    // naming a sibling's admin dir does not make a directory that sibling's.
+    const back = fs.readFileSync(path.join(adminDir, "gitdir"), "utf8").trim();
+    if (path.relative(canonical(path.resolve(adminDir, back)), canonical(dotGit)) !== "")
+      return false;
     const common = path.join(adminDir, "commondir");
     const gitDir = fs.existsSync(common)
       ? path.resolve(adminDir, fs.readFileSync(common, "utf8").trim())
@@ -194,6 +199,16 @@ const outsideDeny = (input: HookInput, worktree: string, target: string): HookDe
   };
 };
 
+const unknownDirDeny = (input: HookInput, worktree: string | null): HookDecision => {
+  const wt = worktree ?? "<worktree>";
+  const unblock = `Workit cannot resolve \`cd -\`, \`cd "$X"\` or \`popd\`: write by absolute path, \`git -C ${wt}\` or \`workit --cwd ${wt}\`.`;
+  return {
+    kind: "deny",
+    reason: `workit worktree confinement: implementer ${input.session.agentId} writes after an unknown directory change. ${unblock}`,
+    unblock,
+  };
+};
+
 /**
  * Judge an implementer's edit or mutating command by the absolute paths it
  * changes (`targets`). Only targets inside a git checkout, or Workit's
@@ -205,6 +220,8 @@ const outsideDeny = (input: HookInput, worktree: string, target: string): HookDe
 export function confineImplementer(input: HookInput, targets: readonly string[]): HookDecision {
   try {
     if (!input.session.agentId || hostIsolated(input.cwd, input.session.agentId)) return NONE;
+    if (targets.some((target) => within(path.resolve(target), UNKNOWN_DIR)))
+      return unknownDirDeny(input, boundWorktree(input));
     const bindings = canonical(bindingDir());
     const judged = targets
       .map((named) => ({ named, real: canonical(named) }))
@@ -263,8 +280,27 @@ const leadOwnedGit = (args: readonly string[]): boolean => {
       return flag(/^-[a-zA-Z]*[dDfmMcC]|^--(?:delete|force|move|copy)$/);
     case "tag":
       return flag(/^-[a-zA-Z]*[df]|^--(?:delete|force)$/);
-    case "push":
-      return flag(/^(?:-d|--delete|--mirror|--prune)$/) || names.some((name) => /^\+?:/.test(name));
+    case "push": {
+      if (flag(/^(?:-d|--delete|--mirror|--prune)$/)) return true;
+      // names[0] is the remote; the rest are refspecs. `git push [-u] [remote]` and
+      // `git push --force-with-lease [remote]` (the current branch) stay the implementer's.
+      const refspecs = names.slice(1);
+      return (
+        refspecs.some((name) => name.includes(":") || name.startsWith("+")) ||
+        (refspecs.length > 0 && flag(/^-[a-zA-Z]*f|^--force/))
+      );
+    }
+    case "replace":
+    case "filter-branch":
+    case "gc":
+    case "prune":
+    case "repack":
+    case "sparse-checkout":
+      return true;
+    case "notes":
+    case "reflog":
+    case "submodule":
+      return !/^(?:list|show|status|exists)$/.test(names[0] ?? "list");
     case "stash":
       return names[0] === "drop" || names[0] === "clear";
     case "remote":
@@ -283,18 +319,14 @@ const leadOwnedGit = (args: readonly string[]): boolean => {
   }
 };
 
-/** A `workit [--cwd <dir>] fanout plan|worktree …` in `args` (also behind `check --`). */
+/** A `workit [globals] fanout plan|worktree …` in `args` (also behind `check --`). */
 const leadOwnedWorkit = (args: readonly string[]): boolean =>
   !args.includes("--help") &&
-  args.some(
-    (word, index) =>
-      word === "fanout" &&
-      /^(?:plan|worktree)$/.test(args[index + 1] ?? "") &&
-      (index === 0 ||
-        args[index - 2] === "--cwd" ||
-        args[index - 1].startsWith("--cwd=") ||
-        /(?:^|[\\/])workit(?:\.exe|\.cmd)?$/.test(args[index - 1])),
-  );
+  args.some((_, start) => {
+    if (start > 0 && !/(?:^|[\\/])workit(?:\.exe|\.cmd)?$/.test(args[start - 1])) return false;
+    const [verb, sub] = skipWorkitGlobals(args.slice(start)).rest;
+    return verb === "fanout" && /^(?:plan|worktree)$/.test(sub ?? "");
+  });
 
 const leadOwnedDeny = (input: HookInput, command: string): HookDecision => {
   const unblock =
