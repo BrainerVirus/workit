@@ -18,6 +18,12 @@ export type Segment = {
   pipe?: true;
   /** Text it reads on standard input: heredoc bodies and here-strings. */
   stdin?: string[];
+  /**
+   * Indexes into `words` of the words the shell expands before the command
+   * runs: an unquoted `$`, `*`, `?`, `[` or backtick, or a `$(…)`, `<(…)` or
+   * double-quoted `$`/backtick. The text of such a word is not what runs.
+   */
+  expands?: number[];
   /** Command substitutions in its words (`$(…)`, `` `…` ``, `<(…)`), run with it. */
   subs?: string[];
   /** The command could not be analyzed (too deeply nested): why. The only segment then. */
@@ -291,6 +297,20 @@ const substitutions = (body: string): string[] => {
 const PLAIN_POSIX = /[^\s'"\\`$(){},<>|;&#]+/uy;
 const PLAIN_POWERSHELL = /[^\s'"`(){}<>|;&#]+/uy;
 
+/** Does a double-quoted body hold an expansion (`$x`, `$(…)`, a backtick)? */
+const expandsInQuotes = (body: string, dialect: ShellDialect): boolean => {
+  const escape = dialect === "posix" ? "\\" : "`";
+  for (let index = 0; index < body.length; index++) {
+    const char = body[index];
+    if (char === escape) index++;
+    else if (char === "$" || (dialect === "posix" && char === "`")) return true;
+  }
+  return false;
+};
+
+/** An unquoted glob or variable character in a plain run. */
+const EXPANDING_RUN = /[*?[]/u;
+
 /** The `)` of a `(( … ))` arithmetic command starting at `start`, or 0 for a subshell (`((a) )`). */
 const arithmeticEnd = (command: string, start: number): number => {
   const end = substitutionEnd(command, start);
@@ -316,6 +336,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
   let current: Segment = { words: [], redirects: [] };
   let word = "";
   let inWord = false;
+  let expanding = false;
   let pending: "redirect" | "input" | "heredoc" | "herestring" | null = null;
   const heredocs: Array<{ delimiter: string; owner: Segment }> = [];
   const escape = posix ? "\\" : "`";
@@ -327,11 +348,16 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
     } else if (pending === "heredoc")
       heredocs.push({ delimiter: text.replace(/^-/, ""), owner: current });
     else if (pending === "herestring") (current.stdin ??= []).push(text);
-    else if (pending !== "input")
+    else if (pending !== "input") {
+      const at = current.words.length;
       current.words.push(...(MARKERS.test(word) ? expandBraces(word) : [word]));
+      if (expanding || (!posix && word.startsWith("@")))
+        (current.expands ??= []).push(...current.words.slice(at).map((_, i) => at + i));
+    }
     pending = null;
     word = "";
     inWord = false;
+    expanding = false;
   };
   const flushSegment = () => {
     flushWord();
@@ -347,6 +373,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
   /** A substitution read apart: its command runs, its text stays in the word. */
   const substitution = (inner: string, text: string) => {
     (current.subs ??= []).push(inner);
+    expanding = true;
     word += text;
     inWord = true;
   };
@@ -358,6 +385,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
     if (run) {
       word += run[0];
       inWord = true;
+      if (EXPANDING_RUN.test(run[0])) expanding = true;
       index += run[0].length - 1;
       continue;
     }
@@ -383,6 +411,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
       const body = command.slice(index + 1, end < 0 ? undefined : end);
       if (posix && char === '"' && /\$\(|`/.test(body))
         (current.subs ??= []).push(...substitutions(body));
+      if (char === '"' && expandsInQuotes(body, dialect)) expanding = true;
       word += unquote(body, char, dialect);
       inWord = true;
       index = end < 0 ? command.length : end;
@@ -428,6 +457,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
       if (char === "(" && inWord && word.endsWith("$")) {
         word = word.slice(0, -1);
         inWord = word !== "";
+        if (!inWord) expanding = false;
       }
       group(char === "(" ? "open" : "close");
     } else if (!posix && (char === "{" || char === "}")) {
@@ -474,6 +504,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
     } else if (posix && char === "," && word.includes(OPEN)) word += COMMA;
     else if (posix && char === "}" && word.includes(OPEN)) word += CLOSE;
     else {
+      if (char === "$") expanding = true;
       word += char;
       inWord = true;
     }

@@ -11,7 +11,13 @@ const root = mkdtempSync(path.join(tmpdir(), "workit-oc-allow-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 const evaluate = (command: string, effect: string, action = "shell") => {
-  const event = { sessionID: "s1", action, resources: [command], effect, message: undefined };
+  const event = {
+    sessionID: "s1",
+    action,
+    resources: [command],
+    effect,
+    message: undefined,
+  };
   evaluateShellPermission(root, event);
   return event.effect;
 };
@@ -26,6 +32,7 @@ test.each([
   ["workit --json pr status"],
   ["workit ledger verdict verified --how 'ran it'"],
   ["workit --version"],
+  ["workit pr merge --reason x '$F'"],
 ])("Given an ask for the delivery call `%s`, Then it becomes allow", (command) => {
   expect(evaluate(command, "ask")).toBe("allow");
 });
@@ -35,6 +42,11 @@ test.each([
   ["workit lock run -- rm -rf x"],
   ["workit grant set work merge=true"],
   ["workit pr merge --unverified --reason now"],
+  ["workit pr merge --reason x ${F:---unverified}"],
+  ["workit pr merge --reason x --unverifie?"],
+  ['workit pr merge --reason x "$F"'],
+  ["workit pr merge --reason x --unver$(echo ified)"],
+  ['workit pr create --body-file "$F"'],
   ["workit stack land --unverified --reason now"],
   ["workit --session x git commit -m m -- a"],
   ["workit pr status && rm -rf x"],

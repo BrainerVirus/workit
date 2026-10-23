@@ -249,11 +249,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         !lease && input.host === "claude_code"
           ? workitBypassFlag(event.command, event.dialect)
           : null;
-      if (bypass)
-        return {
-          kind: "ask",
-          reason: `Workit: \`${bypass}\` overrides a Workit gate, so the user decides this call (no allow rule covers it).`,
-        };
+      if (bypass) return { kind: "ask", reason: bypass };
       const rewrittenTo = lease?.command ?? cwdCommand;
       const rewritten = (text: string | null): HookDecision =>
         rewrittenTo

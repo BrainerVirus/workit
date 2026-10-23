@@ -48,9 +48,13 @@ const isWorkitWord = (word: string): boolean => /^(?:.*[\\/])?workit(?:-cli)?$/u
  * Is `words` one Workit call of an allowed verb? Global `--json` and
  * `--cwd <dir>` may come first (they mean the same anywhere before `--`);
  * `--session` may not (it changes the acting identity). A bypass flag before
- * `--` disqualifies it.
+ * `--` disqualifies it, and so does a word the shell expands there (`expands`,
+ * indexes into `words`): `${F:---unverified}` could become one.
  */
-export const isAllowedWorkitCall = (words: readonly string[]): boolean => {
+export const isAllowedWorkitCall = (
+  words: readonly string[],
+  expands: readonly number[] = [],
+): boolean => {
   if (words[0] !== "workit") return false;
   let at = 1;
   for (;;) {
@@ -65,12 +69,18 @@ export const isAllowedWorkitCall = (words: readonly string[]): boolean => {
   if (verb === "--version") return at === words.length - 1;
   if (!ALLOWED.has(verb)) return false;
   const end = words.indexOf("--");
-  return !(end < 0 ? words : words.slice(0, end)).some(isBypass);
+  const limit = end < 0 ? words.length : end;
+  return !words.slice(0, limit).some(isBypass) && !expands.some((index) => index < limit);
 };
 
+const bypassReason = (flag: string) =>
+  `Workit: \`${flag}\` overrides a Workit gate, so the user decides this call (no allow rule covers it).`;
+const EXPANSION_REASON =
+  "Workit: an expansion before `--` could become a bypass flag, so the user decides this call (no allow rule covers it).";
+
 /**
- * The bypass flag a Workit call in `command` carries before its `--`, or
- * null. Words are read after shell quoting, so `"--unverified"`,
+ * The ask reason for a Workit call in `command` that carries a bypass flag
+ * before its `--` or a word the shell expands there, or null. Words are read after shell quoting, so `"--unverified"`,
  * `--unverif''ied` or a tab-separated flag are found where a host's string
  * rule could miss them. A command the tokenizer cannot analyze is judged on
  * its text with quotes and backslashes removed.
@@ -83,14 +93,17 @@ export const workitBypassFlag = (
     if (segment.unanalyzable) {
       const text = command.replaceAll(/['"\\`]/gu, "");
       if (!/\bworkit\b/u.test(text)) return null;
-      return WORKIT_BYPASS_FLAGS.find((flag) => text.includes(flag)) ?? null;
+      const found = WORKIT_BYPASS_FLAGS.find((flag) => text.includes(flag));
+      return found ? bypassReason(found) : null;
     }
     const start = segment.words.findIndex(isWorkitWord);
     if (start < 0) continue;
     const words = segment.words.slice(start + 1);
     const end = words.indexOf("--");
     const flag = (end < 0 ? words : words.slice(0, end)).find(isBypass);
-    if (flag) return flag.split("=")[0] ?? flag;
+    if (flag) return bypassReason(flag.split("=")[0] ?? flag);
+    const limit = start + 1 + (end < 0 ? words.length : end);
+    if (segment.expands?.some((index) => index > start && index < limit)) return EXPANSION_REASON;
   }
   return null;
 };
@@ -110,7 +123,7 @@ export const isAllowedWorkitCommand = (command: string): boolean => {
         !s.subs?.length &&
         !s.stdin?.length &&
         !s.redirects.length &&
-        isAllowedWorkitCall(s.words),
+        isAllowedWorkitCall(s.words, s.expands),
     )
   );
 };
