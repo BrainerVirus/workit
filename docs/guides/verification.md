@@ -112,10 +112,39 @@ product-choice=… plan=…`, or the flat `workit_policy` tool fields):
 | Judgment | Needed |
 | --- | --- |
 | behavior change | an observed passing `workit check test` on the final tree |
-| behavior change, risk `normal` | a verdict: by default the author's own (`workit ledger verdict tests-verified --self --how …`), labelled **self-reviewed** in `ledger check` and `pr status`, never verified (it warns when no passing `workit check test` was observed on the head); with the workspace setting `verification: "independent"` ([grants](grants.md)) a verdict from a non-author session |
+| behavior change, risk `normal` | the verdict the [review lane](#review-lanes) asks for (default `verification: "proportional"`); under `verification: "self"` the author's own (`workit ledger verdict tests-verified --self --how …`), labelled **self-reviewed** in `ledger check` and `pr status`, never verified (it warns when no passing `workit check test` was observed on the head); under `verification: "independent"` ([grants](grants.md)) a verdict from a non-author session |
 | risk `high` | an independent `verified` verdict of kind `live`, and a plan before code is written |
 | open product choice | the user's answer recorded (`workit ledger decision "<choice>" --why "<reason>"`) before code is written |
 | plan needed | the plan written, then cited: `workit policy assess --ref <path>` (an approved limitation waives it) |
+
+### Review lanes
+
+Under `verification: "proportional"` (the default when a workspace sets none)
+Workit computes a review lane from the diff of the branch against its base
+(`packages/workit-core/src/core/policy/lane.ts`, thresholds in
+`LANE_THRESHOLDS`). `workit pr status` (`verdict.lane` in `--json`) and
+`workit policy assess` (`lane`) show it with the reason.
+
+| Lane | When | Needs |
+| --- | --- | --- |
+| `none` | only docs (Markdown outside agent instructions, `docs/`), comment, whitespace or formatting edits, or generated copies (`linguist-generated` in `.gitattributes`, `*.generated.*`) | no verdict |
+| `self` | at most 100 changed lines in at most 5 behavior files, no risk path | the author's own `--self` verdict (or an independent one) |
+| `focused` | more than 100 lines or more than 5 behavior files | an accepted non-author verdict |
+| `full` | 500+ lines, a behavior file on a risk path (a path part such as `auth`, `security`, `secret`, `gate`, `policy`, `hooks`, `release`, `migrations`, `.github/workflows`, CI files), or a high-risk judgment | an accepted non-author verdict (a high-risk judgment still asks a `live` one at task close) |
+
+Lines count code, tests and agent instructions (`SKILL.md`, `AGENTS.md`,
+`CLAUDE.md`, `skills/`, `agents/`, `commands/`, `rules/`, `prompts/`);
+lockfiles count as a behavior change but never toward size. A diff Workit
+cannot read reads as `focused`. The lane gates `workit pr merge`, `workit
+stack land`, the Stop hook and the task's `verdict:lane` requirement alike.
+A current independent failed verdict or a tampered ledger still blocks every
+lane. `verification: "self"` and `"independent"` keep their earlier rules,
+including a non-author verdict to merge.
+
+Spend verifiers by lane: none for `none` and `self`; one per PR after its
+last push for `focused` (a cheaper model where the host lets the lead pick
+one, e.g. Claude Code `model: sonnet` on the Agent call) and `full` (the
+strong model).
 
 Every `policy assess` is recorded in the ledger as a `policy.judged` row
 (session, what was sent, the resulting requirements). A session that judged

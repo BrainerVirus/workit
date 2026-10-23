@@ -13,6 +13,9 @@ OpenCode, a child session; Pi, a supervised worker. Never hand-mint one such
 as `<lead>-v1`: it is refused as `forged_session`.
 An author's `--self` verdict reads self-reviewed and never counts as
 independent; `type-check-only` never proves a behavior change.
+Depth follows the review lane in `workit pr status`: focused reads the diff and
+runs its tests; full also drives the real surface (verify-<app>). Review once
+per PR after its last push; a second pass on an unchanged head is waste.
 
 1. Pin the candidate: `git rev-parse HEAD`, the base, `git diff <base>...HEAD`;
    for a PR, `workit pr status --json` (checks, unresolved threads).
