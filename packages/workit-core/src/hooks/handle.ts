@@ -9,6 +9,7 @@ import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
+import { agentModelDecision } from "./agent-model";
 import { cwdRewrite, verbFirst } from "./cwd-normalize";
 import { workitBypassFlag } from "./delivery-verbs";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
@@ -159,7 +160,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
     return decision;
   const delta = standingDelta(input);
   if (!delta) return decision;
-  return decision.kind === "rewrite"
+  return decision.kind === "rewrite" || decision.kind === "update-input"
     ? { ...decision, text: [decision.text, delta].filter(Boolean).join("\n") }
     : withContextLine(decision, delta);
 }
@@ -307,6 +308,8 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     case "tool.pre":
       // Host permission policy owns other tools; a skill load is recorded.
       if (event.skill) recordSkillLoad(input, event.skill, "tool");
+      if (event.agentInput && input.host === "claude_code")
+        return agentModelDecision(input.cwd, event.agentInput);
       return NONE;
     case "stop":
       return usable(descriptor.events.stop.support) ? stopDecision(input, descriptor) : NONE;

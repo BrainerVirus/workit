@@ -186,6 +186,17 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
             skill: isRecord(value.tool_input) ? optionalText(value.tool_input.skill) : null,
           },
         };
+      // `Task` is the Agent tool's legacy name.
+      if (value.tool_name === "Agent" || value.tool_name === "Task")
+        return {
+          ok: true,
+          event: {
+            kind: "tool.pre",
+            tool: value.tool_name,
+            toolUseId,
+            ...(isRecord(value.tool_input) ? { agentInput: value.tool_input } : {}),
+          },
+        };
       if (!SHELL_TOOLS.has(value.tool_name))
         return { ok: true, event: { kind: "tool.pre", tool: value.tool_name, toolUseId } };
       const command = toolCommand(value);
@@ -276,7 +287,11 @@ const CONTEXT_EVENTS = new Set([
  * yielded as the input to run).
  */
 const render = (decision: HookDecision, native: string | null) => {
-  if (decision.kind === "rewrite" && native === "PreToolUse" && decision.input)
+  if (
+    (decision.kind === "rewrite" || decision.kind === "update-input") &&
+    native === "PreToolUse" &&
+    decision.input
+  )
     return {
       json: {
         hookSpecificOutput: {

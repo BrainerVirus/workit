@@ -207,3 +207,30 @@ export const roleModelIssues = (cwd: string, dir?: string): string[] => {
   }
   return issues;
 };
+
+/**
+ * The role a Claude Code subagent type runs as: the Workit agents by their
+ * namespaced name, the built-in `Explore`. Plan, general-purpose and every
+ * other type map to none (their model is not Workit's to choose). An
+ * implementer spawn names its brief tier on a `TIER: <tier>` line in its
+ * prompt; without one it is `standard`.
+ */
+export const roleForAgentType = (agentType: unknown, prompt?: unknown): RoleSelector | null => {
+  switch (agentType) {
+    case "workit:implementer": {
+      const tier =
+        typeof prompt === "string"
+          ? /^[ \t]*TIER:[ \t]*(mundane|standard|hard)\b/im.exec(prompt)?.[1]
+          : undefined;
+      return { role: "implementer", tier: (tier?.toLowerCase() as ModelTier) ?? "standard" };
+    }
+    case "workit:verifier":
+      return { role: "verifier" };
+    case "workit:reviewer":
+      return { role: "reviewer" };
+    case "Explore":
+      return { role: "explore" };
+    default:
+      return null;
+  }
+};

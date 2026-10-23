@@ -233,6 +233,9 @@ const fastAllow = (() => {
         return true;
       return !implementer && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }
+    // A subagent spawn that names its model has no default to fill (hooks/agent-model.ts).
+    if (value.tool_name === "Agent" || value.tool_name === "Task")
+      return typeof value.tool_input?.model === "string" && value.tool_input.model.trim() !== "";
     return EDITS.has(value.tool_name) && !implementer && !hasTaskStore(String(value.cwd ?? "."));
   } catch {
     return false;
