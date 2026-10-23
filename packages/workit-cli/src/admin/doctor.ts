@@ -85,6 +85,7 @@ import {
   type SessionHookRemoval,
   type SessionHookStatus,
 } from "@brainervirus/workit-core/src/git/session-hook";
+import { permissionHealth, permissionTarget, type PermissionHost } from "./host-permissions";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
 // import the YouTrack/VCS stack just to label a credential state.
@@ -122,7 +123,10 @@ type DoctorCheckId =
   | "log_writable"
   | "heavy_scope"
   | "hook_deadline"
-  | "checks_config";
+  | "checks_config"
+  | "claude_permissions"
+  | "codex_permissions"
+  | "cursor_permissions";
 
 /** `info` is a true fact that needs no action (a normal install has no dev
  *  checkout, a newer host CLI than qualified); it counts as passed. */
@@ -2948,6 +2952,38 @@ const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
   };
 };
 
+/**
+ * Workit's permission block in one host's own config (issue #297). Advisory:
+ * the block is optional, so a missing one is info and a drifted or unreadable
+ * one warns with the command that rewrites it; never a failure.
+ */
+const checkHostPermissions =
+  (host: PermissionHost, id: DoctorCheckId) =>
+  (res: Resolved): DoctorCheck => {
+    const paths = {
+      home: res.home,
+      env: res.codexHome ? { ...res.env, CODEX_HOME: res.codexHome } : res.env,
+      stateDir: res.stateDir,
+    };
+    const fix = `workit setup --hosts=${host}`;
+    const health = permissionHealth(host, paths);
+    const file = permissionTarget(host, paths).file;
+    switch (health.state) {
+      case "no-host":
+        return { id, status: "info", detail: `${host} not found; no permission block needed` };
+      case "absent":
+        return {
+          id,
+          status: "info",
+          detail: `no Workit permission block in ${file} (optional: \`${fix}\` lets agents run Workit's delivery verbs without a prompt)`,
+        };
+      case "ok":
+        return { id, status: "pass", detail: `Workit's permission block is current in ${file}` };
+      default:
+        return { id, status: "warn", detail: health.detail, fix };
+    }
+  };
+
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
@@ -2978,6 +3014,9 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkHeavyScope,
   checkHookDeadline,
   checkChecksConfig,
+  checkHostPermissions("claude-code", "claude_permissions"),
+  checkHostPermissions("codex", "codex_permissions"),
+  checkHostPermissions("cursor", "cursor_permissions"),
 ];
 
 // AR-11/CA-40: the installer guarantees the selected host itself — runtime,

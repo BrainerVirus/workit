@@ -14,6 +14,7 @@ import {
 } from "@/packages/workit-cli/src/admin/host-permissions";
 import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 import { codexRules } from "@/packages/workit-core/src/core/heavy-rules";
+import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 
 // Issue #297: `workit setup` writes a Workit-owned, reversible permission
 // block per host after one consent. Every test runs against a scratch HOME and
@@ -285,4 +286,47 @@ test("Given a delivery call, Then the Claude Code allow rules match it and a byp
   expect(
     CLAUDE_ASK.some((rule) => claudeMatches(rule, "workit stack land --overwrite-unintegrated")),
   ).toBe(true);
+});
+
+test("Given a drifted Claude Code block, When doctor runs, Then its permission row warns with the setup command", async () => {
+  const { env, home, settings } = sandbox();
+  await cli(["setup", "--hosts=claude-code", "--yes"], env);
+  const value = JSON.parse(readFileSync(settings, "utf8"));
+  value.autoMode.allow = ["$defaults"];
+  writeFileSync(settings, JSON.stringify(value));
+  const report = runDoctor({ home, env, stateDir: env.WORKFLOW_TOOLKIT_STATE, cwd: scratch });
+  const row = report.checks.find((c) => c.id === "claude_permissions");
+  expect(row?.status).toBe("warn");
+  expect(row?.fix).toBe("workit setup --hosts=claude-code");
+  expect(report.checks.find((c) => c.id === "codex_permissions")?.status).toBe("info");
+});
+
+test("Given the upgrade refresh, When no block was written, Then nothing is planned; When a written block drifted, Then only its missing entry returns, without the shell", async () => {
+  const fresh = sandbox();
+  writeFileSync(fresh.settings, "{}\n");
+  const none = planHostPermissions({
+    hosts: ["claude-code"],
+    refreshOnly: true,
+    env: fresh.env,
+    home: fresh.home,
+  });
+  expect(none.changes).toEqual([]);
+
+  const { env, home, settings } = sandbox();
+  await cli(["setup", "--hosts=claude-code", "--no-shell", "--yes"], env);
+  const value = JSON.parse(readFileSync(settings, "utf8"));
+  value.permissions.allow = value.permissions.allow.filter(
+    (e: string) => e !== "Bash(workit ci *)",
+  );
+  writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
+  const plan = planHostPermissions({
+    hosts: ["claude-code"],
+    refreshOnly: true,
+    shell: false,
+    env,
+    home,
+  });
+  expect(plan.changes).toHaveLength(1);
+  expect(plan.changes[0]?.owned.lists).toEqual({ "permissions.allow": ["Bash(workit ci *)"] });
+  expect(plan.changes[0]?.after).not.toContain("CLAUDE_CODE_SHELL");
 });

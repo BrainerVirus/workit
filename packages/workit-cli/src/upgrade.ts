@@ -26,6 +26,11 @@ import { applySetupPreview, type SetupPreview } from "./admin/setup";
 import { OPENCODE_V1_FIX } from "./admin/doctor";
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
+import {
+  applyHostPermissions,
+  permissionDiff,
+  planHostPermissions,
+} from "./admin/host-permissions";
 
 const HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
 type Command = { command: string; args: string[]; purpose?: string } & Partial<HostInstallCommand>;
@@ -580,8 +585,33 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     }
     plan.ok = plan.blocked.length === 0;
   }
+  // Issue #297: refresh a Workit permission block `workit setup` already
+  // wrote (never add one, never set the shell); the diff is part of the
+  // preview, so `--apply --confirm` is its consent.
+  const { home, env } = upgradePaths(deps);
+  const permissions = planHostPermissions({
+    hosts: hostFlag === undefined ? [...raw, "claude-code"] : raw,
+    refreshOnly: true,
+    shell: false,
+    home,
+    env,
+  });
+  const permissionPreview = {
+    changes: permissions.changes.map((c) => ({
+      host: c.host,
+      file: c.file,
+      diff: permissionDiff(c),
+    })),
+    ...(permissions.refused ? { refused: permissions.refused } : {}),
+  };
   if (!flags.has("--apply")) {
-    out.write(JSON.stringify(plan, null, 2) + "\n");
+    out.write(
+      JSON.stringify(
+        permissions.changes.length ? { ...plan, permissions: permissionPreview } : plan,
+        null,
+        2,
+      ) + "\n",
+    );
     return plan.ok ? 0 : 1;
   }
   if (!flags.has("--confirm")) {
@@ -590,8 +620,20 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   }
   for (const warning of plan.warnings ?? []) out.write(`warning: ${warning}\n`);
   const result = applyUpgrade(plan, deps);
-  out.write(JSON.stringify(result, null, 2) + "\n");
-  return result.ok ? 0 : 1;
+  if (!result.ok || permissions.changes.length === 0) {
+    out.write(JSON.stringify(result, null, 2) + "\n");
+    return result.ok ? 0 : 1;
+  }
+  if (permissions.refused) {
+    out.write(JSON.stringify({ ...result, permissions: permissionPreview }, null, 2) + "\n");
+    return 0;
+  }
+  const written = applyHostPermissions(permissions, { home, env });
+  const permissionsOk = written.every((entry) => entry.status === "written");
+  out.write(
+    JSON.stringify({ ...result, ok: permissionsOk, permissions: { written } }, null, 2) + "\n",
+  );
+  return permissionsOk ? 0 : 1;
 }
 
 export async function runLaunchCommand(argv: string[], deps: UpgradeDeps = {}): Promise<number> {
