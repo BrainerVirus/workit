@@ -20,6 +20,7 @@ import {
 } from "@/packages/workit-core/src/ledger";
 import { recordPrStatus, type PrStatusDoc } from "@/packages/workit-core/src/forge/report";
 import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
+import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { fixture, tempRoot } from "./hook-fixtures";
 
 const roots: string[] = [];
@@ -565,6 +566,34 @@ test("G a running issued verifier subagent, W the lead stops, T no verdict block
   expect(claudeStop(root)).toEqual({});
   judgeEvent(root, "SubagentStop", "v1");
   expect(claudeStop(root).decision).toBe("block");
+});
+
+/** Record the branch task's judgment in `root`, as `workit policy assess` does. */
+const judge = (root: string, judgment: Record<string, unknown>) => {
+  const core = new WorkitCore(new TaskStore(root), {
+    root,
+    caller: { host: "workit_cli", actor: "cli" },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  const assessed = core.policy({ action: "assess", ...judgment });
+  if (!assessed.ok) throw new Error(assessed.error);
+};
+
+test("G the task's judgment says no behavior change, W the agent stops with no verdict, T no verdict block; a behavior change or no judgment still blocks", () => {
+  const docs = delivered("green", "self");
+  judge(docs, { riskTier: "normal", behaviorChange: false });
+  expect(claudeStop(docs)).toEqual({});
+  const code = delivered("green", "self");
+  judge(code, { riskTier: "normal", behaviorChange: true });
+  expect(claudeStop(code).decision).toBe("block");
+  const unjudged = delivered("green", "self");
+  expect(claudeStop(unjudged).decision).toBe("block");
+  // High risk asks for a verifier whether or not behavior changes.
+  const risky = delivered("green", "independent");
+  judge(risky, { riskTier: "high", behaviorChange: false });
+  expect(claudeStop(risky).decision).toBe("block");
 });
 
 test("G verification independent and no accepted verdict, W stopping at endpoint merged, T it still blocks once", () => {
