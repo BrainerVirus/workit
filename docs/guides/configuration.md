@@ -155,35 +155,87 @@ value reads as the default.
 { "name": "work", "glob": "/home/you/work/**", "delegation": "lead-orchestrates" }
 ```
 
-### Model per fanout tier
+### Models per role
 
-A workspace's `fanout.tierModels` names the model a fanout worker gets for
-its slice's TIER (`mundane`, `standard`, `hard`). Give one model name for
-every host, or an object keyed by host (`claude_code`, `opencode`, `codex`,
-`cursor`, `pi`, plus an optional `default`) where model names differ.
-`workit fanout brief` adds a `model:` line under `TIER:`, and `workit fanout
-status` names the model next to each slice it lists to spawn
-(`spawnModels` in `--json`). A tier or host with no entry, or a value that is
-not a name, gets no model line: the fanout skill's TIER guidance applies. A
-nested workspace inherits each tier it leaves unset from the enclosing one.
+Subagents inherit the lead's model unless the spawn names one, so a lead on a
+large model runs every verifier and implementer on it too. `models.roles` names
+the model (and, where the host takes one, the effort) each role runs on, per
+host. Put it at the top of `workspaces.json` for a global default, and on a
+workspace to override it; a nested workspace inherits each role it leaves unset
+from the enclosing one, then from the global default.
+
+Roles: `decider`, `implementer` (one entry per fanout tier: `mundane`,
+`standard`, `hard`), `verifier`, `reviewer`, `explore` (read-only scouting) and
+`babysit` (PR and CI watching). A role is an object keyed by host
+(`claude_code`, `opencode`, `codex`, `cursor`, `pi`, plus an optional
+`default`) whose values are a model name or `{ "model": "...", "effort": "..." }`.
+A bare model name or `{ model, effort }` applies to every host. Effort values
+are the host's own (Claude Code: `low`, `medium`, `high`, `xhigh`, `max`; Pi
+`--thinking` levels; Codex `model_reasoning_effort`).
 
 ```json
 {
-  "name": "personal",
-  "glob": "/home/you/projects/personal/**",
-  "fanout": {
-    "tierModels": {
-      "mundane": { "claude_code": "sonnet", "opencode": "anthropic/claude-sonnet-4-5" },
-      "standard": "opus",
-      "hard": "opus"
+  "models": {
+    "roles": {
+      "verifier": { "claude_code": "sonnet", "codex": { "model": "gpt-5.1-codex-mini", "effort": "low" } }
     }
-  }
+  },
+  "workspaces": [
+    {
+      "name": "personal",
+      "glob": "/home/you/projects/personal/**",
+      "models": {
+        "roles": {
+          "implementer": { "hard": { "claude_code": { "model": "opus", "effort": "high" } } },
+          "reviewer": { "claude_code": "opus" }
+        }
+      }
+    }
+  ]
 }
 ```
 
-The lead's host comes from its environment (`WORKIT_HOST` or the host's own
-session variable). Hosts that cannot pick a model per spawn (Codex, Cursor,
-Pi) still show it, so you can start the worker on that model yourself.
+**Defaults.** With nothing configured, Claude Code gets decider `fable`
+(effort `high`), implementer `hard` `opus`, `standard` `sonnet`, `mundane`
+`haiku`, verifier `sonnet`, reviewer `opus`, explore `haiku` and babysit
+`haiku`. The other hosts have no built-in defaults: a role with no entry runs
+on the host's own model. `workit models show [--role r] [--tier t] [--host h]
+[--json]` prints what each role resolves to and where it came from (default
+host: the lead's, else `claude_code`). `workit doctor` and `workit grant show`
+report an unknown role, tier or host key, or a value that is not a model or
+effort name; those entries are skipped.
+
+**How each host applies it.**
+
+- Claude Code: the fanout brief names `model:` and `effort:` under TIER and a
+  `verifier:` line; `workit fanout status` names the model per spawnable
+  slice; the skills tell the lead to pass the model (and `effort`) from
+  `workit models show` on each Agent call. A user-level `~/.claude/agents/`
+  file cannot replace the plugin's `workit:verifier`, `workit:reviewer` or
+  `workit:implementer`: plugin agents are namespaced and a user agent is a
+  different name, so the per-call `model` is the mechanism.
+- Codex: when the plugin copies its agents into `$CODEX_HOME/agents/`, a
+  configured role's file gets `model` and `model_reasoning_effort`. A value in
+  the file overrides what a spawn passes, so the implementer file gets one
+  only when all three tiers resolve to the same model. Restart Codex after a
+  change.
+- Pi: a supervised worker gets `--model` and `--thinking` for a configured
+  role (reviewer; investigator uses `explore`; implementer only when its tiers
+  agree). Without config the worker keeps the ambient model.
+- OpenCode and Cursor: Workit registers no agents of its own there, so the
+  skills and the brief name the model and the lead passes it (Cursor's Task
+  `model`; an OpenCode subagent takes its model from its agent config).
+
+**Migrating `fanout.tierModels`.** It keeps working: it is read as
+`models.roles.implementer.<tier>` (a model name per tier and host, no
+effort). Within one workspace `models.roles` wins when both name a tier.
+Move a tier by renaming `fanout.tierModels.hard` to
+`models.roles.implementer.hard`.
+
+`workit fanout brief` adds the `model:` line under `TIER:` (and `effort:`),
+and `workit fanout status` names the model next to each slice it lists to
+spawn (`spawnModels` in `--json`). The lead's host comes from its environment
+(`WORKIT_HOST` or the host's own session variable).
 
 ### Live-session guard
 

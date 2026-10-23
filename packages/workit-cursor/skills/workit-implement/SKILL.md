@@ -40,7 +40,7 @@ description: Build a requested change in small verified steps - follow local pat
    status`). Lane none: no verdict. Lane self: after `workit check test` passes,
    record `workit ledger verdict tests-verified --self --how "<what you ran>"`;
    it reads self-reviewed, never verified, and is enough. Focused, full, high
-   risk or `verification: self|independent` merges: one fresh verifier per PR after the last push, its own host-derived session (Claude Code: the `verifier` agent, `model: sonnet` when focused; Codex:
+   risk or `verification: self|independent` merges: one fresh verifier per PR after the last push, its own host-derived session (Claude Code: the `verifier` agent with the `model` (and `effort`) of `workit models show --role verifier`; Codex:
    the `verifier` agent; OpenCode: a child session; Pi: a supervised worker),
    never a hand-minted id. Before saying done, reconcile
    every named deliverable against the target checkout and observe it (for a push:
