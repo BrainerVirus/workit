@@ -215,6 +215,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       "STANDING:",
       "  - no new dependencies",
       "  - ask nothing; record rulings",
+      `WORKTREE: ${path.join(root, "app-wt", "a")}  (not made yet: the lead runs \`workit fanout worktree create a\` before spawning, then renders this brief again)`,
       "  export WORKIT_SESSION_ID=lead-1-w-a",
       "RULES:",
       "  1. First command: `workit git branch feature/a --base main` (your worktree may start on another name).",
@@ -250,7 +251,16 @@ test("fanout brief: given the slice's worktree made by fanout worktree create an
   expect(data.text).toContain(
     `  resume: continue feature/a from ${head.slice(0, 12)}; read \`git log main..feature/a\``,
   );
-  expect(data.text).toContain("  1. First command: `git switch feature/a`");
+  // The worker runs every git and check command against that worktree (#310).
+  expect(data.text).toContain(
+    `WORKTREE: ${wt}  (made by \`workit fanout worktree create a\`; yours alone)`,
+  );
+  expect(data.text).toContain(
+    `  1. Work only in WORKTREE, already on feature/a at its head: edit files under it and run each git and check command against it, one verb per call (\`workit --cwd ${wt} git commit …\`, \`workit --cwd ${wt} check <name>\`)`,
+  );
+  expect(data.text).toContain(
+    `  3. Commit with \`workit --cwd ${wt} git commit -m <msg> -- <paths in SCOPE>\``,
+  );
   expect(data.text).toContain("  - none recorded beyond this brief");
 });
 
@@ -610,40 +620,36 @@ const planned = async () => {
   return cwd;
 };
 
-test("fanout brief: given a Claude Code lead, when a new brief is rendered, then it points at the env WORKIT_SESSION_ID instead of exporting one and RULES 1 and 3 use plain git with the two trailers", async () => {
+test("fanout brief: given a Claude Code lead, when a new brief is rendered, then it points at the env WORKIT_SESSION_ID instead of exporting one and RULES use workit git, no plain-git workaround (no worktree isolation, #310)", async () => {
   const cwd = await planned();
   const data = await briefOn(cwd, "claude_code", "a");
   expect(data.session).toBeNull();
   expect(data.text).not.toContain("export WORKIT_SESSION_ID");
   expect(data.text).not.toContain("lead-1-w-a");
   expect(data.text).toContain(
-    "  Session: your env already has WORKIT_SESSION_ID (the lead's id; SubagentStart issues ids only to verifiers and reviewers). Use it as is, in your Workit-Session trailer and workit commands; never export or hand-mint one.",
+    "  Session: your env already has WORKIT_SESSION_ID (the lead's id; SubagentStart issues ids only to verifiers and reviewers). Use it as is: workit commands read it and `workit git commit` adds the Workit-Session trailer; never export or hand-mint one.",
   );
-  expect(data.text).toContain('"Workit-Session: <the WORKIT_SESSION_ID in your env>"');
   expect(data.text).not.toContain("context names");
-  expect(data.text).toContain(
-    "  1. First command: `git fetch origin && git switch -c feature/a origin/main`",
-  );
-  expect(data.text).toContain('plain `git commit -m <msg> --trailer "Workit-Session: ');
-  expect(data.text).toContain('--trailer "<your host attribution trailer>" -- <paths in SCOPE>`');
-  expect(data.text).not.toMatch(/workit git (branch|commit)/u);
+  expect(data.text).toContain("  1. First command: `workit git branch feature/a --base main`");
+  expect(data.text).toContain("  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`");
+  expect(data.text).not.toContain("plain `git commit");
+  expect(data.text).not.toContain("git switch -c");
   expect(data.text).toContain("  2. Decide ambiguities yourself: `workit ledger ruling");
 });
 
-test("fanout brief: given a Claude Code lead, when the resume and race-attempt variants are rendered, then both follow the same plain-git, no-export rules", async () => {
+test("fanout brief: given a Claude Code lead, when the resume and race-attempt variants are rendered, then both keep workit git and export nothing", async () => {
   const cwd = await planned();
   git(cwd, "branch", "feature/a");
   const resume = await briefOn(cwd, "claude_code", "a");
   expect(resume.text).toContain("MODE: resume");
   expect(resume.text).toContain("  1. First command: `git switch feature/a`");
-  expect(resume.text).not.toMatch(/workit git (branch|commit)/u);
+  expect(resume.text).toContain("`workit git commit -m <msg> -- <paths in SCOPE>`");
   expect(resume.text).not.toContain("export WORKIT_SESSION_ID");
   const attempt = await briefOn(cwd, "claude_code", "a", "--attempt", "2");
   expect(attempt.session).toBeNull();
-  expect(attempt.text).toContain("git fetch origin && git switch -c feature/a-try2 origin/main");
-  expect(attempt.text).not.toContain("+try2");
+  expect(attempt.text).toContain("`workit git branch feature/a-try2 --base main`");
+  expect(attempt.text).not.toContain("lead-1-w-a+try2");
   expect(attempt.text).not.toContain("export WORKIT_SESSION_ID");
-  expect(attempt.text).not.toMatch(/workit git (branch|commit)/u);
 });
 
 test.each([["opencode"], ["pi"], ["codex_cli"], ["codex_desktop"]])(

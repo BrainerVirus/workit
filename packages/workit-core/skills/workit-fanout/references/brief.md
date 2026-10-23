@@ -25,6 +25,7 @@ REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,
   each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),
   anything out of scope as a follow-up, not a diff.
 STANDING: <the standing orders, verbatim: `workit ledger standing add` records each one>
+WORKTREE: <the path `workit fanout worktree create <slice>` made; the worker runs `workit --cwd <it> …` there>
   <identity line, per the lead's host: see "Identity and git rules per host" below>
 ```
 
@@ -48,6 +49,7 @@ FORBIDDEN: no edits outside SCOPE; no schema migration; no new packages
 FAN-IN: one PR per slice. Never rebase, retarget, merge or force-push: the lead owns topology.
 REPORT: as in the template
 STANDING: conventional commits; no comments that restate code; ask nothing, record rulings instead
+WORKTREE: ../app-wt/usage-endpoint  (made by `workit fanout worktree create usage-endpoint`; yours alone)
 ```
 
 ## Plan file
@@ -106,25 +108,29 @@ lead's host (`WORKIT_HOST`, or the host's own session variable):
 
 | Lead's host | Identity line | RULES 1 and 3 |
 | --- | --- | --- |
-| Claude Code | `Session: your env already has WORKIT_SESSION_ID (the lead's id)`; no `export`, no hand-minted id (SubagentStart issues `<lead>:<agent id>` only to verifiers and reviewers, never to an implementer, so the worker's commits carry the lead's id) | plain git: `git fetch origin && git switch -c <branch> origin/<base>` and `git commit -m <msg> --trailer "Workit-Session: <the env WORKIT_SESSION_ID>" --trailer "<host attribution>" -- <paths in SCOPE>`, because worktree isolation refuses every `workit git` form |
+| Claude Code | `Session: your env already has WORKIT_SESSION_ID (the lead's id)`; no `export`, no hand-minted id (SubagentStart issues `<lead>:<agent id>` only to verifiers and reviewers, never to an implementer, so the worker's commits carry the lead's id) | `workit git branch <branch> --base <base>`, `workit git commit -m <msg> -- <paths in SCOPE>`: the implementer runs without Claude Code's worktree isolation, which refused every `workit git` form |
 | OpenCode, Pi, Codex | `Session: your host already sets WORKIT_SESSION_ID in your shell`; export nothing (the host derives the id and an export cannot replace it) | `workit git branch <branch> --base <base>`, `workit git commit -m <msg> -- <paths in SCOPE>` |
 | Cursor, CI, a plain terminal | `export WORKIT_SESSION_ID=<lead>-w-<slice>` (`+try<n>` for a race attempt): declared, not checked | the same `workit git` forms |
 
-`MODE: resume` is `git switch <branch>` on every host (the branch exists; the
-lead removed the dead worker's worktree after its exit, so the switch
-succeeds), then continue from its head. A race attempt (`--attempt <n>`)
-follows its host's row with the branch `<branch>-try<n>`.
+Once `workit fanout worktree create <slice>` made the worktree, the brief's
+WORKTREE line names it and RULES 1 and 3 run against it on every host:
+`workit --cwd <worktree> git commit …`, `workit --cwd <worktree> check <name>`,
+one verb per call. The worktree is already on the branch (MODE new or resume),
+so no branch command comes first. Without one, `MODE: resume` is
+`git switch <branch>` (the branch exists), then continue from its head. A race
+attempt (`--attempt <n>`) follows its host's row with the branch
+`<branch>-try<n>`.
 
 ## Worker rules (`workit fanout brief` appends them as RULES)
 
-1. First command: create the branch (`MODE: new`; the worktree may start on a
-   name that breaks branch policy) or `git switch` to it (`MODE: resume`),
-   as the table above says for your host.
+1. Work only in WORKTREE, already on the branch, one verb per call against it
+   (`workit --cwd <worktree> …`); Workit's hooks deny an implementer's change
+   outside it. With no worktree made yet: create the branch (`MODE: new`) or
+   `git switch` to it (`MODE: resume`), as the table above says.
 2. Decide ambiguities yourself and record them:
    `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`.
    Stop only for an irreversible action, a security-sensitive one, or a side
    effect outside the worktree.
-3. Commit as the table says (`workit git commit -m "<msg>" -- <paths in SCOPE>`,
-   or plain git with the trailers on Claude Code); push only if the brief says
-   so.
+3. Commit with `workit --cwd <worktree> git commit -m "<msg>" -- <paths in SCOPE>`;
+   push only if the brief says so.
 4. Never record a verdict on your own work.

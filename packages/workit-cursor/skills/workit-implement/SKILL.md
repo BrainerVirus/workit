@@ -47,6 +47,10 @@ description: Build a requested change in small verified steps - follow local pat
    `workit verify-delivery push`).
 
 Independent slices that could run in parallel: fan them out (read the `workit-fanout` skill's SKILL.md and follow it).
+One slice for an `implementer` subagent goes the same way: plan it, run
+`workit fanout worktree create <slice>` before spawning, pass `workit fanout
+brief <slice>` (it names the WORKTREE), release the worktree once verified.
+Never spawn it with host worktree isolation: Workit's hooks confine it.
 
 Stay inline by default (workspace `delegation: inline-first`). Hand work off
 only past the thresholds: an explorer after about 3 tool calls or 10k tokens
