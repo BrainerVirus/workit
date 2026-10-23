@@ -4,7 +4,7 @@
 // that names the subagent on its tool events (Claude Code, Codex).
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -84,6 +84,7 @@ beforeAll(async () => {
 afterAll(() => {
   configHome.restore();
   rmSync(root, { recursive: true, force: true });
+  rmSync(`${root}-link`, { force: true });
 });
 
 type Specific = {
@@ -108,8 +109,11 @@ const claude = (
 };
 const write = (file: string, agent?: { id?: string; type?: string | null }) =>
   claude("Write", { file_path: file, content: "x" }, agent);
+// Paths in a command use forward slashes: a POSIX shell drops an unquoted `\`
+// (Windows paths), and Git Bash takes `C:/…`.
+const posix = (command: string) => command.replaceAll("\\", "/");
 const bash = (command: string, agent?: { id?: string; type?: string | null }) =>
-  claude("Bash", { command }, agent);
+  claude("Bash", { command: posix(command) }, agent);
 
 test("Given an implementer that has not touched a Workit worktree, When it writes in the lead's checkout, Then it is denied as unbound; a file outside any repository is left to host policy", () => {
   const denied = write(path.join(lead, "src", "core.ts"), { id: "impl-unbound" });
@@ -133,7 +137,14 @@ test("Given an implementer bound to worktree W by its first edit there, When it 
     }),
   ]);
 
-  for (const outside of [path.join(lead, "src", "core.ts"), path.join(wtB, "b.ts")]) {
+  // A path reached through a symlink (macOS /var -> /private/var) is named as spelled.
+  const linked = `${root}-link`;
+  symlinkSync(root, linked, "junction");
+  for (const outside of [
+    path.join(lead, "src", "core.ts"),
+    path.join(wtB, "b.ts"),
+    path.join(linked, "app", "src", "core.ts"),
+  ]) {
     const denied = write(outside, { id: "impl-edit" });
     expect(denied?.permissionDecision, outside).toBe("deny");
     expect(denied?.permissionDecisionReason, outside).toContain(
@@ -190,10 +201,10 @@ test("Given the lead, a judge, or an implementer Claude Code isolated itself, Wh
   expect(write(file, { id: "rev-1", type: "workit:reviewer" })?.permissionDecision).toBeUndefined();
   expect(write(file, { id: "x-1", type: "implementer" })?.permissionDecision).toBeUndefined();
   const isolated = path.join(lead, ".claude", "worktrees", "agent-iso-1");
-  mkdirSync(isolated, { recursive: true });
+  git(lead, "worktree", "add", "-q", "--detach", isolated);
   const payload = fixture("claude-code", "pre-tool-use-write", isolated, {
     tool_name: "Write",
-    tool_input: { file_path: path.join(isolated, "a.ts"), content: "x" },
+    tool_input: { file_path: path.join(lead, "src", "core.ts"), content: "x" },
     agent_id: "iso-1",
     agent_type: "workit:implementer",
   });
@@ -201,6 +212,156 @@ test("Given the lead, a judge, or an implementer Claude Code isolated itself, Wh
     (dispatchHook(claudeCodeAdapter, payload, {}).json as Specific).hookSpecificOutput
       ?.permissionDecision,
   ).toBeUndefined();
+});
+
+test("Given an implementer whose cwd only looks like Claude Code's isolation (a mkdir'd .claude/worktrees/agent-<id>, not a linked worktree), When it writes the lead's checkout, Then confinement still applies", () => {
+  const fake = path.join(root, ".claude", "worktrees", "agent-fake-1");
+  mkdirSync(fake, { recursive: true });
+  for (const [tool, toolInput] of [
+    ["Write", { file_path: path.join(lead, "src", "core.ts"), content: "x" }],
+    ["Bash", { command: posix(`git -C ${lead} commit -am x`) }],
+  ] as const) {
+    const payload = fixture("claude-code", "pre-tool-use-write", fake, {
+      tool_name: tool,
+      tool_input: toolInput,
+      agent_id: "fake-1",
+      agent_type: "workit:implementer",
+    });
+    const out = (dispatchHook(claudeCodeAdapter, payload, {}).json as Specific).hookSpecificOutput;
+    expect(out?.permissionDecision, tool).toBe("deny");
+    expect(out?.permissionDecisionReason, tool).toContain("workit worktree confinement");
+  }
+});
+
+test("Given an implementer whose hook cwd is outside every repository, When it writes W and then a sibling worktree, Then the binding holds and the second write is denied", () => {
+  const outside = (file: string) =>
+    (
+      dispatchHook(
+        claudeCodeAdapter,
+        fixture("claude-code", "pre-tool-use-write", os.tmpdir(), {
+          tool_name: "Write",
+          tool_input: { file_path: file, content: "x" },
+          agent_id: "impl-tmp",
+          agent_type: "workit:implementer",
+        }),
+        {},
+      ).json as Specific
+    ).hookSpecificOutput;
+  expect(outside(path.join(wtA, "a.ts"))?.permissionDecision).toBeUndefined();
+  const denied = outside(path.join(wtB, "b.ts"));
+  expect(denied?.permissionDecision).toBe("deny");
+  expect(denied?.permissionDecisionReason).toContain(`bound to the worktree ${wtA}`);
+});
+
+test("Given a bound implementer, When it changes worktrees, refs, config or the fan-out plan (the lead's), Then each is denied, while the read forms pass and the lead and a reviewer are not confined", () => {
+  const id = { id: "impl-lead-owned" };
+  expect(write(path.join(wtA, "a.ts"), id)?.permissionDecision).toBeUndefined();
+  const leadOwned = [
+    `git worktree remove --force ${wtB}`,
+    `git -C ${wtA} worktree add ${path.join(root, "c")}`,
+    "git worktree prune",
+    "git branch -D feature/b",
+    `git -C ${wtA} branch -m feature/z`,
+    "git update-ref -d refs/heads/feature/b",
+    "git symbolic-ref HEAD refs/heads/feature/b",
+    "git tag -d v1",
+    "git push origin :feature/b",
+    "git push --delete origin feature/b",
+    `git -C ${wtA} config user.name x`,
+    "git config --unset user.name",
+    "git config set user.name x",
+    "git stash drop",
+    "git remote add up https://example.com/x.git",
+    `workit check -- git worktree remove ${wtB}`,
+    `bash -c "git branch -D feature/b"`,
+    "workit fanout plan plan.json",
+    "workit fanout worktree create c --json",
+    "workit fanout worktree release b --force --json",
+    `workit --cwd ${wtA} fanout worktree release b --force`,
+    "workit check -- workit fanout plan plan.json",
+  ];
+  for (const command of leadOwned) {
+    const denied = bash(command, id);
+    expect(denied?.permissionDecision, command).toBe("deny");
+    expect(denied?.permissionDecisionReason, command).toContain("belong to the lead");
+  }
+  for (const command of [
+    "git worktree list",
+    "git branch --list",
+    "git config user.name",
+    "git config --get user.name",
+    "git symbolic-ref HEAD",
+    `git -C ${wtA} stash list`,
+    "workit fanout status --json",
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+  for (const agent of [{ type: null }, { id: "rev-2", type: "workit:reviewer" }])
+    for (const command of leadOwned)
+      expect(bash(command, agent)?.permissionDecisionReason ?? "", command).not.toContain(
+        "worktree confinement",
+      );
+});
+
+test("Given a bound implementer, When it runs writers the edit analysis cannot see in the lead's checkout, Then each is denied; run inside W (or on W's files) they pass", () => {
+  const id = { id: "impl-opaque" };
+  expect(write(path.join(wtA, "a.ts"), id)?.permissionDecision).toBeUndefined();
+  const core = path.join(lead, "src", "core.ts");
+  for (const command of [
+    `bash -c 'echo x > ${core}'`,
+    `sh -c "rm ${core}"`,
+    `workit check -- bash -c 'echo x > ${core}'`,
+    `echo $(rm ${core})`,
+    `unlink ${core}`,
+    `chmod 000 ${core}`,
+    `rsync /etc/hosts ${core}`,
+    `find ${lead}/src -delete`,
+    `find ${lead}/src -name '*.ts' -exec rm {} +`,
+    `xargs rm <<< ${core}`,
+    `xargs -0 -n 1 sed -i s/x/y/ <<< ${core}`,
+    `awk -i inplace 1 ${core}`,
+    `python3 -c "open('${core}','w')"`,
+    `node -e "require('fs').rmSync('${core}')"`,
+    `perl -e 'unlink "${core}"'`,
+    `workit check -- python3 -c "open('${core}','w')"`,
+  ]) {
+    const denied = bash(command, id);
+    expect(denied?.permissionDecision, command).toBe("deny");
+    expect(denied?.permissionDecisionReason, command).toContain(`bound to the worktree ${wtA}`);
+  }
+  const own = path.join(wtA, "a.ts");
+  for (const command of [
+    `bash -c 'echo x > ${own}'`,
+    `chmod +x ${own}`,
+    `find ${wtA} -name '*.tmp' -delete`,
+    `awk -i inplace 1 ${own}`,
+    `cd ${wtA} && python3 -c "print(1)"`,
+    `rsync -a /etc/hosts ${own}`,
+    `find ${lead}/src -name '*.ts'`,
+    `xargs grep x <<< ${core}`,
+    "python3 -V",
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+  // The lead's own shell analysis is unchanged: no confinement, no new denials.
+  expect(bash(`python3 -c "open('${core}','w')"`, { type: null })?.permissionDecision).toBe(
+    undefined,
+  );
+});
+
+test("Given a bound implementer, When it links into W a path outside W (symlink or hard link), Then it is denied, so no later write reaches the lead through it", () => {
+  const id = { id: "impl-link" };
+  expect(write(path.join(wtA, "a.ts"), id)?.permissionDecision).toBeUndefined();
+  for (const command of [
+    `ln -s ${lead}/src ${wtA}/esc && echo x > ${wtA}/esc/core.ts`,
+    `ln ${lead}/src/core.ts ${wtA}/hard.ts`,
+    `ln -s ../../app/src ${wtA}/esc2`,
+    `ln -s -t ${wtA} ${lead}/src`,
+  ]) {
+    const denied = bash(command, id);
+    expect(denied?.permissionDecision, command).toBe("deny");
+    expect(denied?.permissionDecisionReason, command).toContain("is outside it");
+  }
+  for (const command of [`ln -s a.ts ${wtA}/b.ts`, `ln -s /etc/hosts ${wtA}/hosts`])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
 });
 
 test("Given a Codex workit-implementer subagent, When it patches the lead's checkout and then its worktree, Then the same confinement applies", () => {
@@ -218,8 +379,11 @@ test("Given a Codex workit-implementer subagent, When it patches the lead's chec
         {},
       ).json as Specific
     ).hookSpecificOutput;
+  // W is wtB here: the Claude Code tests above hold wtA's live-session marker,
+  // and on Windows (no owner pid) a Codex session there would be another live
+  // session to the live-session guard.
   expect(codex(path.join(lead, "src", "x.ts"), "codex-impl")?.permissionDecision).toBe("deny");
-  expect(codex(path.join(wtA, "x.ts"), "codex-impl")?.permissionDecision).toBeUndefined();
+  expect(codex(path.join(wtB, "x.ts"), "codex-impl")?.permissionDecision).toBeUndefined();
   const denied = codex(path.join(lead, "src", "x.ts"), "codex-impl");
-  expect(denied?.permissionDecisionReason).toContain(`bound to the worktree ${wtA}`);
+  expect(denied?.permissionDecisionReason).toContain(`bound to the worktree ${wtB}`);
 });

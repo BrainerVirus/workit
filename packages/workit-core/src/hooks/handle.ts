@@ -31,8 +31,8 @@ import { seedStanding, standingDelta } from "./standing";
 import { trackJudge } from "./session-marker";
 import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
-import { liveTargets, shellGate, shellMutationTargets, writeGate } from "./write-gate";
-import { confineImplementer, hostIsolated } from "./worktree-confine";
+import { liveTargets, shellGate, writeGate } from "./write-gate";
+import { confineImplementer, confineImplementerShell, hostIsolated } from "./worktree-confine";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
 export type HookDeps = { descriptor: HostDescriptor; addendum: string | null };
@@ -203,10 +203,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       if (raw.kind === "deny") return raw;
       // An implementer subagent stays in its Workit worktree (#310).
       if (canDeny && implementerAgent(input, descriptor)) {
-        const confined = confineImplementer(
-          input,
-          shellMutationTargets(input.cwd, event.command, event.dialect),
-        );
+        const confined = confineImplementerShell(input, event.command, event.dialect);
         if (confined.kind === "deny") return confined;
       }
       // The before-write gate and the live-session guard (#274).

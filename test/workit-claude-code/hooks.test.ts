@@ -279,13 +279,17 @@ test("Given a workit:implementer subagent with no Workit worktree in a checkout 
   for (const [tool, input] of [
     ["Write", { file_path: file, content: "x" }],
     ["Bash", { command: `echo x > ${file}` }],
+    // Writers only the implementer's confinement judges (MAYBE_GATED misses them).
+    ["Bash", { command: `chmod 600 ${file}` }],
+    ["Bash", { command: "workit fanout plan plan.json" }],
   ] as const) {
+    const label = `${tool} ${JSON.stringify(input)}`;
     const denied = pre(tool, input, true).hookSpecificOutput;
-    expect(denied?.permissionDecision, tool).toBe("deny");
-    expect(denied?.permissionDecisionReason, tool).toContain(
+    expect(denied?.permissionDecision, label).toBe("deny");
+    expect(denied?.permissionDecisionReason, label).toContain(
       "workit worktree confinement: implementer impl-1",
     );
-    expect(pre(tool, input, false), tool).toEqual({});
+    expect(pre(tool, input, false), label).toEqual({});
   }
 });
 
@@ -304,7 +308,7 @@ test("SubagentStart tells an implementer Claude Code isolated, per preset, that 
     /** An implementer Claude Code isolated in `<checkout>/.claude/worktrees/agent-<id>`. */
     const context = (checkoutDir: string) => {
       const cwd = path.join(checkoutDir, ".claude", "worktrees", "agent-agent-1");
-      mkdirSync(cwd, { recursive: true });
+      Bun.spawnSync(["git", "worktree", "add", "-q", "--detach", cwd], { cwd: checkoutDir });
       return (
         (
           runHook(
@@ -408,8 +412,13 @@ test("SubagentStart gives the worktree implementer write guidance and keeps othe
   expect(unisolated).not.toContain("Run git as plain");
   expect(unisolated).not.toContain("read-only");
   // An implementer the lead isolated anyway keeps the plain-git rule.
+  // (a real linked worktree there: a directory that only looks like one is not isolation).
   const isolatedDir = path.join(cwd, ".claude", "worktrees", "agent-agent-1");
-  mkdirSync(isolatedDir, { recursive: true });
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd });
+  git("init", "-q", "-b", "main");
+  git("commit", "-q", "--allow-empty", "-m", "init");
+  git("worktree", "add", "-q", "--detach", isolatedDir);
   for (const agent of ["workit:implementer"]) {
     const text =
       (

@@ -146,8 +146,12 @@ test("G a Claude Code SubagentStart, T only the plugin-namespaced workit:<role> 
   expect(implementer).toContain('`workit --cwd <worktree> git commit -m "<message>" -- <paths>`');
   expect(implementer).not.toContain("Run git as plain");
   // One the lead isolated anyway (`.claude/worktrees/agent-<id>`) keeps the plain-git wording.
+  // Only a real linked worktree there counts, never a directory that looks like one.
   const isolated = path.join(root, ".claude", "worktrees", "agent-agent-1");
   mkdirSync(isolated, { recursive: true });
+  expect(claude("workit:implementer", isolated)).toContain("workit fanout worktree create <slice>");
+  rmSync(isolated, { recursive: true });
+  spawnSync("git", ["worktree", "add", "-q", "--detach", isolated], { cwd: root });
   const hostIsolated = claude("workit:implementer", isolated);
   expect(hostIsolated).toContain("working in its own git worktree: it may edit and commit there");
   expect(hostIsolated).not.toContain("workit fanout worktree");
