@@ -9,7 +9,7 @@ import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
-import { cwdRewrite } from "./cwd-normalize";
+import { cwdRewrite, verbFirst } from "./cwd-normalize";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
 import {
@@ -223,10 +223,14 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       const rewrites = usable(descriptor.shellPolicy.rewrite);
       if (plan.kind === "rewrite" && !rewrites && canDeny) return heavyDenial(event.command, plan);
       const lease = plan.kind === "rewrite" && rewrites ? plan : null;
-      // `cd <dir> && workit …` becomes `workit --cwd <dir> …` (issue #388). A
-      // workit command is never heavy itself, so the lease plan wins when set.
+      // `cd <dir> && workit …` becomes `workit <verb> --cwd <dir> …` (issue
+      // #388), and `workit --cwd <dir> <verb>` puts the verb first (#297), so
+      // Workit's enumerated allow rules match. A workit command is never heavy
+      // itself, so the lease plan wins when set.
       const cwdCommand =
-        !lease && rewrites && input.host === "claude_code" ? cwdRewrite(event.command) : null;
+        !lease && rewrites && input.host === "claude_code"
+          ? (cwdRewrite(event.command) ?? verbFirst(event.command))
+          : null;
       const aside = plan.kind === "passthrough" ? plan.note : null;
       // The command will run: note HEAD so the post-tool hook (or the next
       // command, without one) can tell whether a raw commit moved it.

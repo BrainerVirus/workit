@@ -467,7 +467,7 @@ test("Given `cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3` on Claude Code
   const output = claude(repo(), "cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3");
   expect(output?.permissionDecision).toBeUndefined();
   expect(output?.updatedInput).toEqual({
-    command: "workit --cwd /tmp/wt pr merge --pr 7 2>&1 | tail -3",
+    command: "workit pr --cwd /tmp/wt merge --pr 7 2>&1 | tail -3",
     description: "run it",
   });
 });
@@ -475,8 +475,41 @@ test("Given `cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3` on Claude Code
 test("Given a quoted literal directory, When PreToolUse runs, Then the quoting is kept in the rewrite", () => {
   expect(
     claude(repo(), `cd "/tmp/my wt" && workit git push | head -5`)?.updatedInput?.command,
-  ).toBe(`workit --cwd "/tmp/my wt" git push | head -5`);
+  ).toBe(`workit git --cwd "/tmp/my wt" push | head -5`);
 });
+
+// Issue #297: the verb goes first so an enumerated `Bash(workit <verb> *)` rule matches.
+test.each([
+  ["cd /x && workit --json pr status", "workit pr --cwd /x --json status"],
+  ["cd /x && workit check test", "workit --cwd /x check test"],
+  [
+    "workit --cwd /tmp/wt git commit -m 'feat: x' -- a.ts",
+    "workit git --cwd /tmp/wt commit -m 'feat: x' -- a.ts",
+  ],
+  ["workit --json --cwd=/w pr merge --pr 7", "workit pr --json --cwd=/w merge --pr 7"],
+  [
+    `workit --cwd "/tmp/my wt" ledger verdict verified`,
+    `workit ledger --cwd "/tmp/my wt" verdict verified`,
+  ],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then it becomes `%s`", (command, expected) => {
+  const output = claude(repo(), command);
+  expect(output?.permissionDecision).toBeUndefined();
+  expect(output?.updatedInput?.command).toBe(expected);
+});
+
+test.each([
+  ["workit --cwd /x check -- rm -rf y"],
+  ["workit --cwd /x lock run -- rm -rf y"],
+  ["workit --cwd /x grant set w merge=true"],
+  ["workit --session s --cwd /x git push"],
+  ["workit --cwd $W git push"],
+  ["workit git push --cwd /x"],
+])(
+  "Given `%s` on Claude Code, When PreToolUse runs, Then the words are not reordered",
+  (command) => {
+    expect(claude(repo(), command)?.updatedInput).toBeUndefined();
+  },
+);
 
 test.each([
   ['cd "$W" && workit git push'],
