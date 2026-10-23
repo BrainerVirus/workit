@@ -9,7 +9,15 @@ import path from "node:path";
 import { resolveStore } from "../store/paths";
 import type { HookInput } from "./protocol";
 
-export type SessionMarker = { nudged: string[]; loaded: string[]; raw: string[] };
+export type SessionMarker = {
+  nudged: string[];
+  loaded: string[];
+  raw: string[];
+  /** Stop obligations already raised, `<kind>:<head>`: each blocks once per head. */
+  stops: string[];
+  /** Verifier and reviewer subagents of this lead that started and have not stopped. */
+  judges: string[];
+};
 
 /**
  * The marker in the workspace's store (null outside one: nothing is nudged or
@@ -37,9 +45,15 @@ const list = (value: unknown): string[] =>
 export const readSessionMarker = (file: string): SessionMarker => {
   try {
     const value = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-    return { nudged: list(value.nudged), loaded: list(value.loaded), raw: list(value.raw) };
+    return {
+      nudged: list(value.nudged),
+      loaded: list(value.loaded),
+      raw: list(value.raw),
+      stops: list(value.stops),
+      judges: list(value.judges),
+    };
   } catch {
-    return { nudged: [], loaded: [], raw: [] };
+    return { nudged: [], loaded: [], raw: [], stops: [], judges: [] };
   }
 };
 
@@ -50,4 +64,14 @@ export const writeSessionMarker = (file: string, marker: SessionMarker): void =>
   } catch {
     // Fail open: without a marker a later nudge repeats.
   }
+};
+
+/** Record that a verifier or reviewer subagent of this lead started or stopped. */
+export const trackJudge = (input: HookInput, agentId: string | null, running: boolean): void => {
+  const session = input.session.id;
+  const file = session && agentId ? sessionMarkerFile(input, session) : null;
+  if (!file || !agentId) return;
+  const marker = readSessionMarker(file);
+  const rest = marker.judges.filter((id) => id !== agentId);
+  writeSessionMarker(file, { ...marker, judges: running ? [...rest, agentId] : rest });
 };

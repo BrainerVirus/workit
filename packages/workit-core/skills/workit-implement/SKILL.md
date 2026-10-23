@@ -18,8 +18,10 @@ description: Build a requested change in small verified steps - follow local pat
    acceptance as Given/When/Then and see a test fail first (workit-bdd).
    Mechanical change: the existing checks are enough. No tautological tests:
    a test must fail if the behavior breaks, never restate the implementation.
-4. Run the real checks: `workit check test` (and `lint`, `typecheck` when the
-   repo has them). Heavy work runs under one machine-wide lease: an ad-hoc
+4. Run the real checks, local-first: the targeted test or check for the file
+   you touched while you work, then the full configured set once at the end
+   (`workit check test`, plus `lint` and `typecheck` when the repo has them),
+   not after every edit. Heavy work runs under one machine-wide lease: an ad-hoc
    suite is `workit check --heavy -- <cmd>`, never a hand-made flock; a busy
    lease waits and names its holder (`workit lock status`).
 5. Prove the feature on its real surface with the project's `verify-<app>`
@@ -34,11 +36,11 @@ description: Build a requested change in small verified steps - follow local pat
    when that was requested, or the request implies delivery and the effective
    endpoint in `workit grant show` is `pr`, `green` or `merged`; `green` and
    `merged` keep babysitting. Otherwise it is `commit`.
-7. Verify. Normal risk: after `workit check test` passes, record your own
-   `workit ledger verdict tests-verified --self --how "<what you ran>"`; it
-   reads self-reviewed, never verified. High risk, a workspace with
-   `verification: independent` (`workit grant show`) or a verified merge needs
-   a fresh verifier with its own host-derived session (Claude Code and Codex:
+7. Verify, as far as the policy asks. Normal risk: after `workit check test`
+   passes, record your own `workit ledger verdict tests-verified --self --how
+   "<what you ran>"`; it reads self-reviewed, never verified, and is enough.
+   Ask a non-author only for high risk, a workspace with `verification:
+   independent` (`workit grant show`) or a verified merge: a fresh verifier with its own host-derived session (Claude Code and Codex:
    the `verifier` agent; OpenCode: a child session; Pi: a supervised worker),
    never a hand-minted id. Before saying done, reconcile
    every named deliverable against the target checkout and observe it (for a push:

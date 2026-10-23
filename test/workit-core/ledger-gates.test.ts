@@ -443,7 +443,8 @@ test("Given this session delivered a PR, When the only verdict on the head is ha
             glob: `${root.replaceAll("\\", "/")}/**`,
             vcs: { provider: "github", account: "octo" },
             autonomy: { push: true, pr: true, merge: "verified" },
-            defaultEndpoint: "pr",
+            defaultEndpoint: "green",
+            verification: "independent",
           },
         ],
       }),
@@ -464,9 +465,14 @@ test("Given this session delivered a PR, When the only verdict on the head is ha
         claudeCodeAdapter,
         fixture("claude-code", "stop", root, { session_id: "s-lead" }),
       ).json as { decision?: string; reason?: string };
+    // Each obligation blocks once per head and session: forget the marker between stops.
+    const forgetRaised = () =>
+      rmSync(path.join(root, ".git", "workit", "hooks"), { recursive: true, force: true });
     expect(stop().reason).toContain("has no current verdict");
+    forgetRaised();
     append(root, forgedVerdict(root));
     expect(stop().reason).toContain("has no current verdict");
+    forgetRaised();
     value(
       recordVerdict(by(root, "s-verifier", "claude_code"), { result: "verified", how: "ran it" }),
     );

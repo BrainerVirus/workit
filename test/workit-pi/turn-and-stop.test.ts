@@ -205,19 +205,36 @@ test("G a Pi run that ends with an unpushed commit under endpoint pr, W agent_en
   // The run that continuation started ends freely.
   await end("Still committed.");
   expect(sent).toHaveLength(1);
-  // A later run is continued again, once; a question to the user never.
+  // The same unpushed head is not raised twice in one session; a question never is.
   await end("Committed again.");
-  expect(sent).toHaveLength(2);
   await end("Done.");
   await end("Should I push it now?");
-  expect(sent).toHaveLength(2);
-  // Esc (aborted) or an error is never overridden.
+  expect(sent).toHaveLength(1);
+  // A new head is a new obligation: the next run on it is continued, once.
+  writeFileSync(path.join(root, "b.txt"), "b\n");
+  git(root, "add", "b.txt");
+  git(root, "commit", "-q", "-m", "feat: b");
+  const next = git(root, "rev-parse", "HEAD");
+  appendHookObserved(root, {
+    type: "commit.recorded",
+    actor: { host: "pi", session: "pi-session", agentId: null },
+    branch: "feature/x",
+    head: next,
+    sha: next,
+    session: "pi-session",
+    agentId: null,
+    subject: "feat: b",
+    files: ["b.txt"],
+    fileCount: 1,
+  });
+  // Esc (aborted) or an error is never overridden, and does not spend the head.
   await end("Committed the change.", "aborted");
   await end("Committed the change.", "error");
-  expect(sent).toHaveLength(2);
-  // The same run ending normally is continued: the guards above held it.
+  expect(sent).toHaveLength(1);
   await end("Committed the change.");
-  expect(sent).toHaveLength(3);
+  expect(sent).toHaveLength(2);
+  await end("Committed the change.");
+  expect(sent).toHaveLength(2);
   const untrusted = await setup(root, false);
   await untrusted.end("Committed the change.");
   expect(untrusted.sent).toEqual([]);
