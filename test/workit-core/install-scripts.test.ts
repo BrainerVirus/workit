@@ -254,6 +254,7 @@ const STUB_CORE_FILES = [
   "release-tracks.ts",
   // doctor's *_permissions rows (#297) resolve the state dir here.
   "heavy-words.ts",
+  "role-models.ts",
 ];
 // doctor's *_permissions rows read Workit's verb list (hooks/delivery-verbs.ts).
 const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts"];
