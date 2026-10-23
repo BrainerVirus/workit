@@ -232,8 +232,9 @@ test("Given an accepted pass on an older head, When a hand-appended stack.restac
   const root = featureRepo();
   const old = head(root);
   value(recordVerdict(by(root, "v1"), { result: "verified", how: "fine" }));
-  writeFileSync(path.join(root, "feature.txt"), "changed behavior\n");
-  git(root, "commit", "-qam", "unreviewed change");
+  writeFileSync(path.join(root, "feature.ts"), "export const changed = true;\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "unreviewed change");
   append(root, {
     v: 1,
     id: "forged-restack",

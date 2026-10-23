@@ -534,12 +534,13 @@ test("stack sync: after the root was squash-merged on the forge, the rest is res
 });
 
 test("stack sync: a restack conflict stops blocked with the rebase-continue unblock; unprocessed branches keep their recorded state; continuing resumes", async () => {
-  const forge = setup("github");
+  // Code files: a docs-only resolution would carry the verdict (#334).
+  const forge = setup("github", undefined, undefined, "ts");
   const planned = await plan(forge);
   await verdict(forge, "feature/b");
   forge.mergeExternally(11);
-  // Someone lands a conflicting b.txt on main.
-  forge.commitElsewhere("main", "b.txt", "conflicting\n");
+  // Someone lands a conflicting b.ts on main.
+  forge.commitElsewhere("main", "b.ts", "conflicting\n");
   const result = await run(["stack", "sync", "--json"], forge.cwd);
   expect(result.code).toBe(3);
   const json = result.json();
@@ -568,8 +569,8 @@ test("stack sync: a restack conflict stops blocked with the rebase-continue unbl
   expect(forge.git("symbolic-ref", "--short", "HEAD")).toBe("feature/d");
   expect(forge.git("status", "--porcelain")).toBe("");
   // Resolve there and continue.
-  writeFileSync(path.join(worktree, "b.txt"), "b\n");
-  spawnSync("git", ["add", "b.txt"], { cwd: worktree });
+  writeFileSync(path.join(worktree, "b.ts"), "b\n");
+  spawnSync("git", ["add", "b.ts"], { cwd: worktree });
   spawnSync("git", ["rebase", "--continue"], {
     cwd: worktree,
     env: { ...process.env, GIT_EDITOR: "true" },
@@ -922,15 +923,28 @@ test("stack: an empty branch is not merged, and a recorded merge is re-checked b
 });
 
 test("verdict carry: only CLI-observed, patch-equal restack rows carry; an agent-asserted row is ignored", async () => {
-  const forge = setup("github", undefined, ["feature/a", "feature/b"]);
+  const forge = setup("github", undefined, ["feature/a", "feature/b"], "ts");
   await verdict(forge, "feature/b");
   const b1 = forge.git("rev-parse", "feature/b");
-  onBranch(forge, "feature/b", () => {
-    writeFileSync(path.join(forge.cwd, "b.txt"), "b changed\n");
-    forge.git("commit", "-q", "-a", "--amend", "--no-edit");
+  const a1 = forge.git("rev-parse", "feature/a");
+  // The parent moves and b is restacked onto it, its own files unchanged:
+  // the trunk-relative diff differs, so only a restack row can carry.
+  onBranch(forge, "feature/a", () => {
+    writeFileSync(path.join(forge.cwd, "a2.ts"), "export const a2 = 1;\n");
+    forge.git("add", "a2.ts");
+    forge.git("commit", "-q", "-m", "a2");
   });
+  const a2 = forge.git("rev-parse", "feature/a");
+  onBranch(forge, "feature/b", () => forge.git("rebase", "-q", "feature/a"));
   const b2 = forge.git("rev-parse", "feature/b");
-  const link = { branch: "feature/b", fromHead: b1, head: b2, patchEqual: true };
+  const link = {
+    branch: "feature/b",
+    fromHead: b1,
+    head: b2,
+    fromBase: a1,
+    toBase: a2,
+    patchEqual: true,
+  };
   const actor = { host: "cli", session: "agent-x", agentId: null };
   const asserted = appendRow(forge.cwd, { type: "stack.restacked", actor, ...link } as never);
   expect(asserted.ok).toBe(true);
@@ -948,11 +962,12 @@ test("verdict carry: only CLI-observed, patch-equal restack rows carry; an agent
 });
 
 test("stack sync: a whitespace-only change since the verdict (equal patch-id, different exact diff) is pushed as rebased, but its verdict does not carry", async () => {
-  const forge = setup("github", undefined, ["feature/a", "feature/b"]);
+  // A code file: across the parent's squash merge no edit counts as cosmetic (#334).
+  const forge = setup("github", undefined, ["feature/a", "feature/b"], "ts");
   await run(["stack", "plan", "feature/a", "feature/b", "--json"], forge.cwd);
   await verdict(forge, "feature/b");
   onBranch(forge, "feature/b", () => {
-    writeFileSync(path.join(forge.cwd, "b.txt"), "b \n");
+    writeFileSync(path.join(forge.cwd, "b.ts"), "b \n");
     forge.git("commit", "-q", "-a", "--amend", "--no-edit");
   });
   forge.mergeExternally(11);
@@ -1049,4 +1064,67 @@ test("stack file names are portable: case-distinct names never collide and reser
   );
   expect(stackFileName("CON")).toMatch(/^con-[0-9a-f]{12}\.json$/u);
   expect(stackFileName("a:b*c?")).toMatch(/^a_b_c_-[0-9a-f]{12}\.json$/u);
+});
+
+// ---------------------------------------------------------------------------
+// stack-wide verdicts (#334, decision mvk5q3io): one verifier at the top of a
+// stack covers each lower PR whose own commits it judged unchanged.
+
+const STACK3 = ["feature/a", "feature/b", "feature/c"];
+
+test("stack land: given a 3-PR stack verified only at the top, when landing, then each lower PR is accepted by the top verdict and all three land", async () => {
+  const forge = setup("github", undefined, STACK3, "ts");
+  await run(["stack", "plan", ...STACK3, "--json"], forge.cwd);
+  const top = await verdict(forge, "feature/c");
+  expect(top.code, top.stderr + top.stdout).toBe(0);
+  const topId = top.json().data.id as string;
+  const status = await run(["stack", "status", "--json"], forge.cwd);
+  expect(status.json().data.verdict).toBe("READY");
+  expect(status.json().data.branches[0].verdict).toMatchObject({
+    satisfied: true,
+    verdictId: topId,
+    cover: { branch: "feature/c", verdictId: topId },
+  });
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data.landed.map((item: { pr: number }) => item.pr)).toEqual([11, 12, 13]);
+  // Each lower merge names the covering verdict.
+  expect(
+    rows(forge.cwd, "pr.merged")
+      .filter((row) => row.pr !== 13)
+      .map((row) => row.verdictId),
+  ).toEqual([topId, topId]);
+});
+
+test("stack land: given the middle PR got a code change after the top verdict, then the root lands but the middle PR is not covered", async () => {
+  const forge = setup("github", undefined, STACK3, "ts");
+  await run(["stack", "plan", ...STACK3, "--json"], forge.cwd);
+  expect((await verdict(forge, "feature/c")).code).toBe(0);
+  forge.git("switch", "-q", "feature/b");
+  writeFileSync(path.join(forge.cwd, "b.ts"), "export const b = 2;\n");
+  forge.git("commit", "-qam", "fix: b");
+  forge.git("switch", "-q", "feature/c");
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({
+    landed: [{ pr: 11 }],
+    stoppedAt: { pr: 12, branch: "feature/b" },
+  });
+  expect(result.json().data.stoppedAt.reason).toMatch(/no_verdict|needs_verdict/u);
+});
+
+test("pr merge: given a lower PR of a stack verified at the top, then pr status and pr merge accept it and name the covering verdict", async () => {
+  const forge = setup("github", undefined, STACK3, "ts");
+  await run(["stack", "plan", ...STACK3, "--json"], forge.cwd);
+  const topId = (await verdict(forge, "feature/c")).json().data.id as string;
+  forge.git("switch", "-q", "feature/a");
+  const status = await run(["pr", "status", "--pr", "11", "--json"], forge.cwd);
+  expect(status.json().data.verdict).toMatchObject({
+    accepted: true,
+    verdictId: topId,
+    cover: { branch: "feature/c", verdictId: topId },
+  });
+  const merged = await run(["pr", "merge", "--pr", "11", "--json"], forge.cwd);
+  expect(merged.code, merged.stderr + merged.stdout).toBe(0);
+  expect(merged.json().data.verdict).toMatchObject({ accepted: true, verdictId: topId });
 });

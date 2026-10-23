@@ -16,6 +16,8 @@ independent; `type-check-only` never proves a behavior change.
 Depth follows the review lane in `workit pr status`: focused reads the diff and
 runs its tests; full also drives the real surface (verify-<app>). Review once
 per PR after its last push; a second pass on an unchanged head is waste.
+A stale verdict showing `reverify: focused (<files>)` in `workit pr status`: re-check only
+those files since the judged head and reuse green CI there (no fresh install, no full suite).
 
 1. Pin the candidate: `git rev-parse HEAD`, the base, `git diff <base>...HEAD`;
    for a PR, `workit pr status --json` (checks, unresolved threads).

@@ -159,8 +159,10 @@ check; a check is stale once the worktree changes. Ad-hoc
 result (`verified`, `tests-verified`, `type-check-only`, `blocked`, `failed`)
 for a branch head under the acting session. A verdict from the session that
 authored the commits is never accepted. Verdicts carry across rebases when
-the patch-id and diff are unchanged. `workit ledger check` answers "is this
-head independently verified?".
+the patch-id and diff are unchanged, and across docs-only follow-up pushes;
+one verdict at the top of a stack covers its unchanged lower PRs
+([carry-over](docs/guides/verification.md#carry-over-and-stack-verdicts)).
+`workit ledger check` answers "is this head independently verified?".
 
 **Autonomy grants.** Per-workspace grants in `~/.config/workit/workspaces.json`
 set the ceiling: `push`, `pr` and `rerun` are allowed by default; `merge` needs

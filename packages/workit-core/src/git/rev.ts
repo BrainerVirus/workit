@@ -515,6 +515,117 @@ export function resolveRef(cwd: string, ref: string): string | null {
   return line(git(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]));
 }
 
+/** The branch origin's HEAD names (`origin/main`), or null. */
+export function originHeadRef(cwd: string): string | null {
+  return line(git(cwd, ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]));
+}
+
+/** The top of the working tree, or null outside one. */
+export function worktreeTop(cwd: string): string | null {
+  return line(git(cwd, ["rev-parse", "--show-toplevel"]));
+}
+
+/** Whether git tracks `file` (repo-relative) in the index of the checkout at `top`. */
+export function isTracked(top: string, file: string): boolean {
+  return git(top, ["ls-files", "--error-unmatch", "--", file]).ok;
+}
+
+/**
+ * The files whose own change differs between two versions of a branch: the
+ * judged `from` (forked from `fromFork`) and the current `to` (forked from
+ * `toFork`), compared by exact blob and mode, never by diff text (#334). A
+ * file the branch touches on one side only differs. A file it touches on
+ * both sides is unchanged only when the base left it alone between the forks
+ * and the branch's resulting blob is identical, so a hunk moved within a
+ * file, a re-indent or a base edit in a file the branch touches always
+ * counts. Null when git cannot read either side: the caller fails closed.
+ */
+export function ownChangeDrift(
+  cwd: string,
+  range: { from: string; to: string; fromFork: string; toFork: string },
+): string[] | null {
+  const before = diffRaw(cwd, range.fromFork, range.from);
+  const after = diffRaw(cwd, range.toFork, range.to);
+  if (!before || !after) return null;
+  const judged = new Map(before.map((entry) => [entry.path, entry]));
+  const current = new Map(after.map((entry) => [entry.path, entry]));
+  const same = (a: RawEntry | undefined, b: RawEntry | undefined): boolean =>
+    a !== undefined &&
+    b !== undefined &&
+    a.oldMode === b.oldMode &&
+    a.oldBlob === b.oldBlob &&
+    a.newMode === b.newMode &&
+    a.newBlob === b.newBlob;
+  return [...new Set([...judged.keys(), ...current.keys()])]
+    .filter((file) => !same(judged.get(file), current.get(file)))
+    .toSorted();
+}
+
+/**
+ * Whether the branch's own files are identical at `from` (on `fromBase`) and
+ * `to` (on `toBase`): ownChangeDrift from each head's fork is empty. The
+ * exactness behind every patch-equal carry; false when git cannot tell.
+ */
+export function sameOwnChange(
+  cwd: string,
+  range: { from: string; to: string; fromBase: string; toBase: string },
+): boolean {
+  const fromFork = mergeBase(cwd, range.fromBase, range.from);
+  const toFork = mergeBase(cwd, range.toBase, range.to);
+  if (!fromFork || !toFork) return false;
+  return ownChangeDrift(cwd, { from: range.from, to: range.to, fromFork, toFork })?.length === 0;
+}
+
+/**
+ * The verbatim patch-ids of the non-merge commits of `fork..head` (empty
+ * commits have none) and how many merge commits the range holds: unlike
+ * `--stable`, whitespace counts, so a re-indent is another patch. Diff
+ * options are pinned as in patchId. Null when git fails, or has no
+ * `patch-id --verbatim`: the caller fails closed.
+ */
+export function commitPatchIds(
+  cwd: string,
+  fork: string,
+  head: string,
+): { patchIds: string[]; merges: number } | null {
+  if (!safeArg(fork) || !safeArg(head)) return null;
+  const range = `${fork}..${head}`;
+  const merges = line(git(cwd, ["rev-list", "--count", "--merges", range]));
+  const log = git(
+    cwd,
+    [
+      "log",
+      "--no-merges",
+      "-p",
+      "-U3",
+      "--diff-algorithm=myers",
+      "--indent-heuristic",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-renames",
+      "--full-index",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--format=commit %H",
+      range,
+      "--",
+    ],
+    { timeoutMs: GIT_TIMEOUTS.worktree },
+  );
+  if (merges === null || !log.ok) return null;
+  if (!log.stdout.trim()) return { patchIds: [], merges: Number(merges) };
+  const ids = git(cwd, ["patch-id", "--verbatim"], { input: log.stdout });
+  if (!ids.ok) return null;
+  return {
+    patchIds: ids.stdout
+      .split("\n")
+      .map((entry) => entry.trim().split(/\s+/u)[0])
+      .filter(Boolean),
+    merges: Number(merges),
+  };
+}
+
 /** Pinned diff options for the review-lane reads: user config never changes them. */
 const LANE_DIFF = [
   "-c",

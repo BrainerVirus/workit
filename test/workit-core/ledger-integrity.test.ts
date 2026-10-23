@@ -129,7 +129,7 @@ test("Given an independent pass on an older head and the author's own pass on th
   const root = featureRepo();
   seedAuthor(root, "feature/x", "author");
   value(recordVerdict(as(root, "v1"), { result: "verified", how: "reviewed H1" }));
-  commit(root, "feature.txt", "feature, more\n", "more work");
+  commit(root, "feature.ts", "export const more = true;\n", "more work");
   const self = value(
     recordVerdict(as(root, "author"), { result: "tests-verified", how: "suite", self: true }),
   );

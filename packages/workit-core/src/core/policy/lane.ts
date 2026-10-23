@@ -25,15 +25,18 @@ import {
   diffNumstat,
   diffRaw,
   fileAt,
+  isTracked,
   mergeBase,
+  ownChangeDrift,
   readBlobs,
   resolveRef,
   treeFilesNamed,
   untrackedFiles,
+  worktreeTop,
 } from "../../git/rev";
 import type { VerificationMode } from "../../autonomy";
-import { git } from "../../git/ops";
-import { defaultBase, type VerdictCheck } from "../../ledger";
+import { defaultBase } from "../../git/default-base";
+import type { VerdictCheck } from "../../ledger";
 import { generatedByAttributes } from "./attributes";
 import { cosmeticChange, hasOpaqueLineBreak } from "./substance";
 
@@ -117,14 +120,21 @@ const LOCKFILES = new Set([
   "composer.lock",
 ]);
 
-/** Docs are told by extension only: code under `docs/` is code. */
-const DOC_EXT = /\.(?:md|mdx|markdown|rst|adoc|txt)$/iu;
+/**
+ * Docs are told by prose extension only: code under `docs/` is code. `.txt`
+ * is not a doc: requirements.txt, CMakeLists.txt or robots.txt change behavior.
+ */
+const DOC_EXT = /\.(?:md|mdx|markdown|rst|adoc)$/iu;
 const DOC_NAMES = /^(?:license|licence|notice|authors|changelog|changes|contributors)$/iu;
 /** Markdown that steers agents is behavior, not docs. */
 const INSTRUCTIONS =
   /(?:^|\/)(?:AGENTS|CLAUDE|GEMINI|SKILL)\.md$|(?:^|\/)(?:skills|agents|commands|rules|prompts)\/[^/]+/iu;
-const TEST_PATH =
-  /(?:^|\/)(?:test|tests|__tests__|spec|specs|fixtures)\/|\.(?:test|spec)\.[^/]+$/iu;
+/**
+ * A test file: under a `test/`, `tests/` or `__tests__/` folder, or named
+ * `*.test.*`, `*.spec.*` or `*_test.*`. A `fixtures/` or `spec/` folder can
+ * hold runtime data or code, so it is not a test path (it reads as behavior).
+ */
+const TEST_PATH = /(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec)\.[^/]+$|_test\.[^/]+$/iu;
 
 export type ChangedFile = {
   path: string;
@@ -156,7 +166,7 @@ export type LaneAssessment = {
   riskFiles: string[];
 };
 
-type FileKind = "doc" | "cosmetic" | "generated" | "lockfile" | "test" | "behavior";
+export type FileKind = "doc" | "cosmetic" | "generated" | "lockfile" | "test" | "behavior";
 
 const basename = (file: string): string => file.slice(file.lastIndexOf("/") + 1);
 
@@ -165,7 +175,7 @@ const isDoc = (file: string): boolean =>
   !INSTRUCTIONS.test(file) && (DOC_EXT.test(file) || DOC_NAMES.test(basename(file)));
 
 /** What a file off risk paths is; risk paths are decided before (see computeLane). */
-function kindOf(file: ChangedFile): FileKind {
+export function kindOf(file: ChangedFile): FileKind {
   if (file.binary) return "behavior";
   if (file.generated) return "generated";
   if (LOCKFILES.has(basename(file.path))) return "lockfile";
@@ -360,7 +370,13 @@ function generatedAt(cwd: string, fork: string, paths: readonly string[]): Set<s
 const forkOf = (cwd: string, base: string, head: string | null): string | null =>
   mergeBase(cwd, base, head ?? "HEAD");
 
-function laneFiles(cwd: string, fork: string, head: string | null): ChangedFile[] | null {
+/** The files of `fork..head`; generated copies are read from `attributesAt` (the base revision). */
+function laneFiles(
+  cwd: string,
+  fork: string,
+  head: string | null,
+  attributesAt: string = fork,
+): ChangedFile[] | null {
   const stats = diffNumstat(cwd, fork, head);
   const cosmetic = stats ? cosmeticFiles(cwd, fork, head) : null;
   if (!stats || !cosmetic) return null;
@@ -374,12 +390,47 @@ function laneFiles(cwd: string, fork: string, head: string | null): ChangedFile[
   ];
   const generated = generatedAt(
     cwd,
-    fork,
+    attributesAt,
     files.map((entry) => entry.path),
   );
   return files.map((entry) => ({
     ...entry,
     generated: generated.has(entry.path),
+  }));
+}
+
+/**
+ * The files whose own change differs between two versions of a branch: the
+ * judged `from` (forked from `fromFork`) and the current `to` (forked from
+ * `toFork`). Generated copies are read from `toFork` only.
+ *
+ * - Same fork: the plain `from..to` diff, comments and formatting read as
+ *   in the lane.
+ * - Moved fork (a rebase): each file the branch touches is compared by exact
+ *   blob (see ownChangeDrift): it counts when the branch's resulting file
+ *   differs, or when the base changed it too between the forks. Their lines
+ *   come from `from..to`, which may include base edits (over-counting is the
+ *   safe direction), and none is cosmetic.
+ *
+ * Null when git cannot read either side.
+ */
+export function driftFiles(
+  cwd: string,
+  range: { from: string; to: string; fromFork: string; toFork: string },
+): ChangedFile[] | null {
+  if (range.fromFork === range.toFork) return laneFiles(cwd, range.from, range.to, range.toFork);
+  const drifted = ownChangeDrift(cwd, range);
+  const stats = drifted ? diffNumstat(cwd, range.from, range.to) : null;
+  if (!drifted || !stats) return null;
+  const byPath = new Map(stats.map((entry) => [entry.path, entry]));
+  const generated = generatedAt(cwd, range.toFork, drifted);
+  return drifted.map((file) => ({
+    path: file,
+    added: byPath.get(file)?.added ?? 0,
+    deleted: byPath.get(file)?.deleted ?? 0,
+    ...(byPath.get(file)?.binary ? { binary: true } : {}),
+    cosmetic: false,
+    generated: generated.has(file),
   }));
 }
 
@@ -455,11 +506,9 @@ export function branchLane(
  * it is committed there. Null when there is nothing to warn about.
  */
 export function untrackedRiskPathsWarning(cwd: string): string | null {
-  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
-  const root = top.ok ? top.stdout.trim() : "";
+  const root = worktreeTop(cwd);
   if (!root || !existsSync(path.join(root, RISK_PATHS_FILE))) return null;
-  const tracked = git(root, ["ls-files", "--error-unmatch", "--", RISK_PATHS_FILE]);
-  return tracked.ok
+  return isTracked(root, RISK_PATHS_FILE)
     ? null
     : `${RISK_PATHS_FILE} is not committed: it does not apply until it is committed on the base branch`;
 }

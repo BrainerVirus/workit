@@ -9,6 +9,7 @@ import {
   changedFiles,
   computeLane,
   isRiskPath,
+  kindOf,
   laneGate,
   parseRiskPaths,
   type ChangedFile,
@@ -418,12 +419,42 @@ test("generated: only the base tree's .gitattributes counts; .git/info/attribute
 
 test("docs by extension only: code under docs/ or a generated/ folder is behavior", () => {
   expect(lane([file("docs/conf.py", 3)])).toBe("self");
-  expect(lane([file("docs/notes.txt", 3), file("CHANGELOG", 3), file("LICENSE.md", 3)])).toBe(
+  expect(lane([file("docs/notes.rst", 3), file("CHANGELOG", 3), file("LICENSE.md", 3)])).toBe(
     "none",
   );
   expect(lane([file("src/generated/api.ts", 3)])).toBe("self");
   expect(lane([file("src/api.generated.ts", 3)])).toBe("self");
   expect(lane([file("LICENSE.sh", 3)])).toBe("self");
+});
+
+test("a .txt file is behavior, never docs: requirements.txt, CMakeLists.txt, constraints.txt, robots.txt", () => {
+  for (const name of [
+    "requirements.txt",
+    "CMakeLists.txt",
+    "constraints.txt",
+    "robots.txt",
+    "docs/notes.txt",
+  ])
+    expect(lane([file(name, 1)])).toBe("self");
+});
+
+test("test files: test/, tests/, __tests__/ folders and *.test.*, *.spec.*, *_test.* names; fixtures/ and spec/ folders are behavior", () => {
+  for (const name of [
+    "test/a.ts",
+    "pkg/tests/a.py",
+    "src/__tests__/a.js",
+    "src/a.test.ts",
+    "src/a.spec.ts",
+    "pkg/a_test.go",
+  ])
+    expect(kindOf(file(name))).toBe("test");
+  for (const name of [
+    "src/fixtures/config.json",
+    "fixtures/seed.sql",
+    "spec/config.rb",
+    "src/specs/a.ts",
+  ])
+    expect(kindOf(file(name))).toBe("behavior");
 });
 
 test("indentation-sensitive files: only trailing whitespace is cosmetic", () => {
