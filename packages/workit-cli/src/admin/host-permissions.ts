@@ -210,16 +210,19 @@ const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | nu
   return isRecord(node) ? { parent: node, key: keys.at(-1)! } : null;
 };
 
-/** The shape of every entry Workit writes at a dotted path, per host. */
-const ENTRY_SHAPES: Record<"claude-code" | "cursor", Record<string, (entry: string) => boolean>> = {
-  "claude-code": {
-    "permissions.allow": (entry) => entry.startsWith("Bash(workit "),
-    "permissions.ask": (entry) => entry.startsWith("Bash(workit "),
-    "autoMode.environment": (entry) => entry.startsWith("Org-specific CLIs: workit "),
-    "autoMode.allow": (entry) => entry.startsWith("Workit-gated delivery: "),
-  },
-  cursor: { "permissions.allow": (entry) => entry.startsWith("Shell(workit ") },
+/**
+ * Entries earlier Workit versions offered that this one no longer does, per
+ * host and dotted path. Add an entry here when it leaves the canonical lists,
+ * so uninstall still removes it. None yet: no release has shipped a block.
+ */
+const PRIOR_ENTRIES: Record<"claude-code" | "cursor", Record<string, readonly string[]>> = {
+  "claude-code": {},
+  cursor: {},
 };
+
+/** Every entry any shipped Workit version offered at `dotted`: the one set uninstall may remove. */
+const offeredAt = (host: "claude-code" | "cursor", dotted: string): ReadonlySet<string> =>
+  new Set([...(CANONICAL[host].lists[dotted] ?? []), ...(PRIOR_ENTRIES[host][dotted] ?? [])]);
 
 /** The containers a merge may create, per host. */
 const CREATED_PATHS: Record<"claude-code" | "cursor", ReadonlySet<string>> = {
@@ -235,23 +238,29 @@ const CREATED_PATHS: Record<"claude-code" | "cursor", ReadonlySet<string>> = {
   cursor: new Set(["permissions", "permissions.allow"]),
 };
 
-/** A bash path, as `findBash` writes it. */
-const isBashPath = (value: unknown): value is string =>
-  typeof value === "string" && path.isAbsolute(value) && path.basename(value) === "bash";
+/** Where `findBash` looks first, so a Workit-written `CLAUDE_CODE_SHELL` is one of these or the PATH hit. */
+const FIXED_BASH = new Set(["/usr/bin/bash", "/bin/bash"]);
+
+/** Could Workit have written `value` as `CLAUDE_CODE_SHELL`: a fixed system bash or what `findBash` finds now? */
+const isWorkitBash = (value: unknown, env: NodeJS.ProcessEnv): value is string =>
+  typeof value === "string" && (FIXED_BASH.has(value) || value === findBash(env));
 
 /**
  * An ownership record cut down to what Workit could have written: its own
- * list paths with entries of its own shapes, `CLAUDE_CODE_SHELL` only as a
- * bash path, and its own containers. A stale or edited record never makes
- * uninstall remove a user's entry.
+ * list paths with the exact entries a shipped version offered, only the
+ * `CLAUDE_CODE_SHELL` value `findBash` yields, and its own containers. A
+ * stale or edited record never makes uninstall remove a user's entry.
  */
-const trustedOwned = (owned: OwnedEntries, host: "claude-code" | "cursor"): OwnedEntries => {
-  const shapes = ENTRY_SHAPES[host];
+const trustedOwned = (
+  owned: OwnedEntries,
+  host: "claude-code" | "cursor",
+  env: NodeJS.ProcessEnv,
+): OwnedEntries => {
   const lists: Record<string, string[]> = {};
   for (const [dotted, entries] of Object.entries(isRecord(owned.lists) ? owned.lists : {})) {
-    const shape = Object.hasOwn(shapes, dotted) ? shapes[dotted] : undefined;
-    if (!shape || !Array.isArray(entries)) continue;
-    lists[dotted] = entries.filter((entry) => typeof entry === "string" && shape(entry));
+    const offered = offeredAt(host, dotted);
+    if (!Array.isArray(entries) || offered.size === 0) continue;
+    lists[dotted] = entries.filter((entry) => typeof entry === "string" && offered.has(entry));
   }
   const shell = isRecord(owned.env) ? owned.env.CLAUDE_CODE_SHELL : undefined;
   return {
@@ -259,7 +268,7 @@ const trustedOwned = (owned: OwnedEntries, host: "claude-code" | "cursor"): Owne
     created: (Array.isArray(owned.created) ? owned.created : []).filter((dotted) =>
       CREATED_PATHS[host].has(dotted),
     ),
-    env: host === "claude-code" && isBashPath(shell) ? { CLAUDE_CODE_SHELL: shell } : {},
+    env: host === "claude-code" && isWorkitBash(shell, env) ? { CLAUDE_CODE_SHELL: shell } : {},
   };
 };
 
@@ -267,15 +276,16 @@ const trustedOwned = (owned: OwnedEntries, host: "claude-code" | "cursor"): Owne
  * The inverse of a merge: drop the entries `owned` names, the env values it
  * set (when unchanged), and the containers it created once they hold nothing
  * but their seed. Without a record, the canonical entries are dropped; with
- * one, only its entries shaped like Workit's (`trustedOwned`).
+ * one, only the entries a shipped version offered (`trustedOwned`).
  */
 export function removeOwnedEntries(
   config: Json,
   owned: OwnedEntries | null,
   host: "claude-code" | "cursor",
+  shellEnv: NodeJS.ProcessEnv = process.env,
 ): { next: Json; changed: boolean } {
   const next = clone(config);
-  const record = owned ? trustedOwned(owned, host) : CANONICAL[host];
+  const record = owned ? trustedOwned(owned, host, shellEnv) : CANONICAL[host];
   let changed = false;
   for (const [dotted, entries] of Object.entries(record.lists)) {
     const at = valueAt(next, dotted);

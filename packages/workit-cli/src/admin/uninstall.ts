@@ -279,8 +279,14 @@ const permissionPathsOf = (paths: UninstallPaths) => {
 const permissionCleaner =
   (host: "claude-code" | "cursor", file: string, paths: UninstallPaths): JsonCleaner =>
   (record) => {
-    const owned = readOwnership(permissionPathsOf(paths)).hosts[host];
-    return removeOwnedEntries(record, owned?.file === file ? owned.owned : null, host);
+    const resolved = permissionPathsOf(paths);
+    const owned = readOwnership(resolved).hosts[host];
+    return removeOwnedEntries(
+      record,
+      owned?.file === file ? owned.owned : null,
+      host,
+      resolved.env,
+    );
   };
 
 const jsonCleanerFor = (

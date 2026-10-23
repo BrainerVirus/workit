@@ -418,3 +418,24 @@ test("Given a tampered ownership record, When uninstall runs, Then only Workit-s
   expect(after.model).toBe("opus");
   expect(after.permissions.ask).toBeUndefined();
 });
+
+test("Given a tampered ownership record naming the user's own `Bash(workit …)` ask rules and CLAUDE_CODE_SHELL, When uninstall runs, Then only entries a Workit version offered go", async () => {
+  const { env, home, settings } = sandbox();
+  const user = {
+    permissions: { ask: ["Bash(workit grant *)", "Bash(workit pr merge *)"] },
+    env: { CLAUDE_CODE_SHELL: "/opt/my/bash" },
+  };
+  writeFileSync(settings, JSON.stringify(user, null, 2) + "\n");
+  expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+  editRecord(env, (record) => {
+    const owned = record.hosts["claude-code"].owned;
+    owned.lists["permissions.ask"].push("Bash(workit grant *)", "Bash(workit pr merge *)");
+    owned.lists["permissions.allow"].push("Bash(workit grant *)");
+    owned.env.CLAUDE_CODE_SHELL = "/opt/my/bash";
+  });
+  const result = applyUninstall(planUninstall({ home, env }), { home, env });
+  expect(result.ok).toBe(true);
+  const after = JSON.parse(readFileSync(settings, "utf8"));
+  expect(after.permissions.ask).toEqual(["Bash(workit grant *)", "Bash(workit pr merge *)"]);
+  expect(after.env).toEqual({ CLAUDE_CODE_SHELL: "/opt/my/bash" });
+});
