@@ -33,7 +33,9 @@
 //   `base`, the stable patch-id of `base...head` and an exact diff hash. It is
 //   `fresh` (same head; verdicts on a dirty worktree are refused, so the head
 //   is the judged tree), `carried` (new head, same patch-id AND same exact
-//   diff: a rebase that only moved the base) or `stale`.
+//   diff: a rebase that only moved the base; or a trusted verdict whose
+//   follow-up change is lane none, or test-only for a unit verdict, see
+//   core/policy/carry.ts) or `stale`.
 // - Integrity (D18): every row the CLI appends carries `prevHash` (sha256 of
 //   the previous line) and `rowHash` (sha256 over `prevHash` and the row), a
 //   running chain. A row without it after the chain began, or whose hashes do

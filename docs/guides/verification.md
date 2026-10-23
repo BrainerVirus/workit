@@ -196,6 +196,53 @@ last push for `focused` (a cheaper model where the host lets the lead pick
 one, e.g. Claude Code `model: sonnet` on the Agent call) and `full` (the
 strong model).
 
+### Carry-over and stack verdicts
+
+A verdict is keyed to the head it judged. It still applies to a newer head
+(`carried`) when:
+
+- **Rebase:** the change against the base has the same patch-id and the same
+  exact diff, or `workit stack sync` observed a patch-equal restack.
+- **Lane-none follow-up:** the branch's own change since the judged head is
+  lane `none`: docs, comment or formatting edits, generated copies, or an
+  empty commit (a CI retrigger). Base changes from a rebase are left out.
+- **Test-only follow-up, `unit` verdicts only:** every changed file is a test
+  (or docs), off risk paths, with no lockfile or binary, and the change is
+  small (lane `self`: at most 100 lines in at most 5 files). A `live`,
+  `review` or `perf` verdict does not carry over test changes.
+
+Anything else makes the verdict stale. That includes any behavior change, a
+risk path (even a comment there), a lockfile or binary, or a diff Workit
+cannot read. A hand-appended or untrusted verdict row never carries. When
+the branch was rebased between the two heads, only files whose own change
+differs count, and none of them counts as a comment or formatting edit.
+A carried independent failure still blocks.
+
+`workit ledger check` and `workit pr status` show the reason, for example
+`carried (lane none since 1a2b3c4d5e6f)`. In `--json`, the verdict's `carry`
+holds `rule` (`lane-none` or `tests-only`), `since` and `files`. When the
+newest passing verdict is stale only because of a small change off risk
+paths (that change's lane is `self`), `pr status` prints
+`reverify: focused (<files>)` (`verdict.reverify` in JSON). The verifier then
+re-checks only those files since the judged head and reuses green CI on the
+head, with no fresh install and no full suite.
+
+**Stack verdicts.** One verifier at the top of a stack, after its last push,
+can cover the lower PRs. A lower branch with no accepted verdict of its own
+is accepted by a verdict on a branch above it in the stack when all of these
+hold:
+
+- the upper verdict is accepted for that branch now;
+- its session is not an author of the lower branch;
+- every commit of the lower branch since the trunk has a patch-id among the
+  commits of the judged head (not merge commits, and at least one commit).
+
+If the lower branch gained a commit or was amended after the verdict, it is
+not covered and needs its own. `workit pr merge`, `workit stack land`,
+`workit stack status`, `workit pr status` and `workit ledger check` name the
+covering verdict (`cover` in JSON). The Stop hook still reads each branch's
+own verdicts.
+
 Every `policy assess` is recorded in the ledger as a `policy.judged` row
 (session, what was sent, the resulting requirements). A session that judged
 an open product choice or a needed plan cannot lift it silently: its own
@@ -338,7 +385,8 @@ Limits (the check stops casual forgery, not a determined one; see
   already exists.
 
 Verdicts are SHA-keyed and carry over a rebase when
-the patch-id and diff are unchanged. A dirty tree is refused, also when the
+the patch-id and diff are unchanged, and over a docs-only (or, for a `unit`
+verdict, small test-only) follow-up ([carry-over](#carry-over-and-stack-verdicts)). A dirty tree is refused, also when the
 branch is checked out in another worktree. Verdicts and author rows follow a
 `git branch -m` rename (through the branch's reflog).
 

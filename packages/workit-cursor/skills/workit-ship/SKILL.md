@@ -51,7 +51,7 @@ the same check. Fix round and recheck both failed: a decider (read the `workit-f
    allows; no sleep loop. Red: read `logTail`, classify. Flake or infra: one
    `workit ci rerun --failed --reason flake|infra` per head. Real: reproduce
    with `workit check`, fix the root cause, batch every fix in one push.
-6. **Verified.** The lane in `workit pr status` decides: none, no verdict; self, your `--self` verdict; focused or full (or `verification: self|independent`), one non-author verifier per PR after the last push, never per push (read the `workit-review` skill's SKILL.md and follow it), on Claude Code `model: sonnet` when focused. Land only when
+6. **Verified.** The lane in `workit pr status` decides: none, no verdict; self, your `--self` verdict; focused or full (or `verification: self|independent`), one non-author verifier per PR after the last push, never per push (read the `workit-review` skill's SKILL.md and follow it), on Claude Code `model: sonnet` when focused. A docs-only push (or test-only under a unit verdict) keeps the verdict (`carried`); `reverify: focused` re-checks only the new diff, reusing green CI; one verdict at a stack's top covers its unchanged lower PRs. Land only when
    granted: `workit stack land` or `workit pr merge`; `--unverified --reason` if user-asked.
 7. **Observe it landed:** `workit verify-delivery pr` or `merge`. After a failed
    verdict or a check red 3+ times, at any endpoint: offer `/wk-retro` in one
