@@ -1068,10 +1068,6 @@ export const advertisedOperationSchemas = {
 } as const;
 export type TaskStartRequest = z.infer<typeof taskOperations.start>;
 
-const compiledOperationSchemas = Object.fromEntries(
-  OPERATION_FAMILIES.map((family) => [family, z.compile(operationSchemas[family])]),
-) as typeof operationSchemas;
-
 export type Id = string;
 export type Revision = string;
 export type Digest = string;
@@ -1165,8 +1161,7 @@ export function parseOperation(family: OperationFamily, input: unknown): Result<
     (input as { schemaVersion?: unknown }).schemaVersion !== SCHEMA_VERSION
   )
     return failure("unsupported_version", "unsupported schema version", { operation: family });
-  const compiled = compiledOperationSchemas[family].safeParse(input);
-  const parsed = compiled.success ? operationSchemas[family].safeParse(input) : compiled;
+  const parsed = operationSchemas[family].safeParse(input);
   if (parsed.success) return success(null, null, parsed.data);
   const fields = parsed.error.issues.map((issue) => ({
     path: issue.code === "unrecognized_keys" ? issue.keys.join(".") : issue.path.join("."),

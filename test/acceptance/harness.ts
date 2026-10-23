@@ -405,7 +405,7 @@ const normalizedSchemaIssues = (
     reason: issue.message,
   }));
 
-/** CA-32: compiled z.compile() paths must agree with canonical operationSchemas on the shared corpus. */
+/** CA-32: parseOperation must agree with canonical operationSchemas on the shared corpus. */
 export const verifyCompiledSchemaParity = (): string[] => {
   const failures: string[] = [];
   const corpus = [
