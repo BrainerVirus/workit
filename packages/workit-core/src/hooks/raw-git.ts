@@ -602,8 +602,15 @@ function walk(
     // (The heavy-command reader, `seen`, stops at workit: a wrapped command
     // already runs under the lease.)
     const wrapped = seen ? null : workitCheckTail(words);
-    if (wrapped)
-      return "script" in wrapped ? nested(wrapped.script, "posix") : runs([wrapped.argv]);
+    if (wrapped) {
+      // `--cwd <dir>` is where the wrapped command runs, not the shell's directory.
+      const outer = dir;
+      if (wrapped.cwd !== null) dir = joinDir(dir, wrapped.cwd);
+      if ("script" in wrapped) nested(wrapped.script, "posix");
+      else runs([wrapped.argv]);
+      dir = outer;
+      return;
+    }
     if (CD.has(name)) {
       const target = cdTarget(words);
       dir = target === null ? os.homedir() : joinDir(dir, target);
@@ -699,22 +706,25 @@ const PACKAGE_RUNNERS = new Set(["npx", "bunx", "pnpx"]);
 /**
  * What a `workit check [flags] -- <cmd…>` (or `workit lock run -- <cmd…>`,
  * also through `npx @brainervirus/workit-cli`) runs: the script of `--shell`,
- * else the argv. Null for any other command.
+ * else the argv, and the `--cwd` it runs in (null: the shell's). Null for any
+ * other command.
  */
 export function workitCheckTail(
   words: readonly string[],
-): { script: string } | { argv: string[] } | null {
+): (({ script: string } | { argv: string[] }) & { cwd: string | null }) | null {
   let at = 0;
   if (PACKAGE_RUNNERS.has(commandName(words[0]))) {
     at = words.findIndex((word, index) => index > 0 && !word.startsWith("-"));
     if (at < 0 || !WORKIT_PACKAGE.test(words[at])) return null;
   } else if (!/^workit(?:\.exe|\.cmd)?$/.test(commandName(words[0]))) return null;
-  const args = words.slice(at + 1);
+  const { rest: args, cwd } = skipWorkitGlobals(words.slice(at + 1));
   if (args[0] !== "check" && !(args[0] === "lock" && args[1] === "run")) return null;
   const split = args.indexOf("--");
   const tail = split < 0 ? [] : args.slice(split + 1);
   if (!tail.length) return null;
-  return args.slice(0, split).includes("--shell") ? { script: tail.join(" ") } : { argv: tail };
+  return args.slice(0, split).includes("--shell")
+    ? { script: tail.join(" "), cwd }
+    : { argv: tail, cwd };
 }
 
 /**
@@ -791,7 +801,12 @@ export function workitInvocations(
 /** Workit's global options before the verb: `--json`, and these (`--name value` or `--name=value`). */
 const WORKIT_GLOBAL = /^--(?:cwd|session|token|as)(=|$)/;
 
-/** An invocation's arguments without the global options before the verb, and the last `--cwd` among them. */
+/**
+ * An invocation's arguments without the global options before the verb and
+ * without any `--cwd` before `--`, and the last `--cwd`. Like the CLI's
+ * parseGlobals, `--cwd` counts anywhere before `--`, so `workit <verb> --cwd
+ * <dir> …` (the form host allow rules match) runs in `<dir>` here too.
+ */
 export function skipWorkitGlobals(args: readonly string[]): { rest: string[]; cwd: string | null } {
   let cwd: string | null = null;
   let at = 0;
@@ -804,7 +819,18 @@ export function skipWorkitGlobals(args: readonly string[]): { rest: string[]; cw
       at++;
     } else if (args[at] !== "--json") break;
   }
-  return { rest: args.slice(at), cwd };
+  const rest: string[] = [];
+  for (; at < args.length; at++) {
+    const arg = args[at];
+    if (arg === "--") {
+      rest.push(...args.slice(at));
+      break;
+    }
+    if (arg.startsWith("--cwd=")) cwd = arg.slice("--cwd=".length);
+    else if (arg === "--cwd" && args[at + 1] !== undefined) cwd = args[++at];
+    else rest.push(arg);
+  }
+  return { rest, cwd };
 }
 
 /** What one raw invocation means for workit. */

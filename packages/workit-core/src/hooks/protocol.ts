@@ -97,6 +97,8 @@ export type HookDecision =
   | { kind: "context"; text: string }
   /** The reason text always carries its own correction (principle 3). */
   | { kind: "deny"; reason: string; unblock: string | null }
+  /** shell.pre: let the user decide, whatever the host's rules allow. Never an allow. */
+  | { kind: "ask"; reason: string }
   /**
    * shell.pre: run `command` instead (the heavy-command lease rewrite).
    * `input` is the host's tool input with the command replaced, where the

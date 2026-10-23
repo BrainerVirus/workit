@@ -288,6 +288,7 @@ test("existing task families still route through the router (with --cwd)", () =>
 // cannot ship without proving its --json stdout is one JSON document.
 const JSON_ERROR_PATHS: Record<string, string[][]> = {
   init: [[]],
+  setup: [["--bogus"]],
   upgrade: [["--bogus"]],
   launch: [[], ["nohost"]],
   doctor: [["--fix-lock", "--force"]],

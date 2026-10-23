@@ -155,7 +155,9 @@ one: a process that drives a pseudo-terminal, clears the agent markers or
 edits `workspaces.json` directly can get past it. The hard boundary is your
 host's permission prompt: deny or ask on `workit grant set` and on edits under
 `~/.config/workit`, and allowlist only read verbs (such as `workit pr status`
-and `workit grant show`).
+and `workit grant show`). The block `workit setup` writes follows that rule:
+it allows Workit's gated delivery verbs, never `workit grant`, and asks for
+`--unverified` ([hosts](hosts.md#host-permissions-workit-setup)).
 
 A legacy `autoApprove` setting is read once as grants (its merge class becomes
 `merge: "verified"`) and folded into `autonomy` on the next `workit grant`

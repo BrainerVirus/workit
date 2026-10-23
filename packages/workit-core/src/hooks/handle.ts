@@ -9,7 +9,8 @@ import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
-import { cwdRewrite } from "./cwd-normalize";
+import { cwdRewrite, verbFirst } from "./cwd-normalize";
+import { workitBypassFlag } from "./delivery-verbs";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
 import {
@@ -121,7 +122,7 @@ const subagentStartText = (
   if (role === "implementer")
     // No host isolation: the lead makes the worktree, Workit's hooks confine
     // the implementer to it (worktree-confine.ts), and workit git works there.
-    return `Workit observed ${who} as an implementer: it edits and commits only in its own git worktree, the one its brief names (the lead makes it with \`workit fanout worktree create <slice>\` before spawning), never in the lead's checkout, within its brief's scope. Workit binds it to the first Workit worktree it changes: from then on an edit or a mutating git command outside that worktree is denied, and before then so is one outside every Workit worktree. Run Workit against the worktree one verb per call, never \`cd … &&\` chains or \`$VAR\` paths: \`workit --cwd <worktree> git commit -m "<message>" -- <paths>\`, \`workit --cwd <worktree> check <name>\`. The worktree is on the brief's branch once the lead made it; otherwise switch with \`workit --cwd <worktree> git branch <branch> --base <base>\` (or \`--kind <kind> --slug <slug>\`, which picks the base); branch policy hooks still deny protected or non-compliant branches, raw git included.${guide ? ` ${guide}` : " (e.g. feature/<slug>)"} Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
+    return `Workit observed ${who} as an implementer: it edits and commits only in its own git worktree, the one its brief names (the lead makes it with \`workit fanout worktree create <slice>\` before spawning), never in the lead's checkout, within its brief's scope. Workit binds it to the first Workit worktree it changes: from then on an edit or a mutating git command outside that worktree is denied, and before then so is one outside every Workit worktree. Run Workit against the worktree one verb per call, never \`cd … &&\` chains or \`$VAR\` paths: \`workit git --cwd <worktree> commit -m "<message>" -- <paths>\`, \`workit check --cwd <worktree> <name>\` (verb first, so host allow rules match). The worktree is on the brief's branch once the lead made it; otherwise switch with \`workit git --cwd <worktree> branch <branch> --base <base>\` (or \`--kind <kind> --slug <slug>\`, which picks the base); branch policy hooks still deny protected or non-compliant branches, raw git included.${guide ? ` ${guide}` : " (e.g. feature/<slug>)"} Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
   const readOnly = `Workit observed ${who} as read-only/agent-guided.`;
   if (role !== "judge" || !event.agentId) return readOnly;
   const own = subagentSession(session, event.agentId);
@@ -152,7 +153,8 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
   if (
     deps.descriptor.transport !== "hook-process" ||
     !PRE_TOOL.has(input.event.kind) ||
-    decision.kind === "deny"
+    decision.kind === "deny" ||
+    decision.kind === "ask"
   )
     return decision;
   const delta = standingDelta(input);
@@ -223,10 +225,14 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       const rewrites = usable(descriptor.shellPolicy.rewrite);
       if (plan.kind === "rewrite" && !rewrites && canDeny) return heavyDenial(event.command, plan);
       const lease = plan.kind === "rewrite" && rewrites ? plan : null;
-      // `cd <dir> && workit …` becomes `workit --cwd <dir> …` (issue #388). A
-      // workit command is never heavy itself, so the lease plan wins when set.
+      // `cd <dir> && workit …` becomes `workit <verb> --cwd <dir> …` (issue
+      // #388), and `workit --cwd <dir> <verb>` puts the verb first (#297), so
+      // Workit's enumerated allow rules match. A workit command is never heavy
+      // itself, so the lease plan wins when set.
       const cwdCommand =
-        !lease && rewrites && input.host === "claude_code" ? cwdRewrite(event.command) : null;
+        !lease && rewrites && input.host === "claude_code"
+          ? (cwdRewrite(event.command) ?? verbFirst(event.command))
+          : null;
       const aside = plan.kind === "passthrough" ? plan.note : null;
       // The command will run: note HEAD so the post-tool hook (or the next
       // command, without one) can tell whether a raw commit moved it.
@@ -235,6 +241,15 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         event.command,
         postTool ? callKey(event.toolUseId, event.command) : NEXT_COMMAND,
       );
+      // Claude Code: a Workit bypass flag always reaches the user, whatever
+      // the allow rules match (issue #297). Words, not text, so quoting
+      // cannot hide it; a deny above still wins. A leased command runs under
+      // `workit lock run`, which no Workit rule allows.
+      const bypass =
+        !lease && input.host === "claude_code"
+          ? workitBypassFlag(event.command, event.dialect)
+          : null;
+      if (bypass) return { kind: "ask", reason: bypass };
       const rewrittenTo = lease?.command ?? cwdCommand;
       const rewritten = (text: string | null): HookDecision =>
         rewrittenTo

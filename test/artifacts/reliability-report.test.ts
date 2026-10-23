@@ -67,13 +67,14 @@ test(
     // heavy_scope is info (no systemd-run on the isolated PATH, #325);
     // hook_deadline passes (no hook skips recorded, #309); checks_config
     // passes (no checks config at the repo root, #354); plugin_files passes
-    // (no registered host plugin, #394).
+    // (no registered host plugin, #394); the three *_permissions rows are
+    // info (no host permission block, #297).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 27,
+      passed: 30,
       warned: 1,
       failed: 1,
-      total: 29,
+      total: 32,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -112,13 +113,14 @@ test(
       // systemd-run on the isolated PATH, #325); hook_deadline passes (no
       // hook skips recorded, #309); checks_config passes (no checks config at
       // the repo root, #354); plugin_files passes (no registered host plugin,
-      // #394).
+      // #394); the three *_permissions rows are info (no host permission
+      // block, #297).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 27,
+        passed: 30,
         warned: 1,
         failed: 1,
-        total: 29,
+        total: 32,
         fixes: 1,
       });
     } finally {

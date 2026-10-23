@@ -8,8 +8,8 @@ backward: what must be true, what must exist, what must be wired. The author's
 summary is a claim, not evidence; assume the goal is not met until you observe
 it.
 
-1. Pin the candidate in its own checkout (run workit with `--cwd <worktree>`;
-   never `cd` first): `git -C <worktree> rev-parse HEAD` and `git -C <worktree> status --short`. A dirty tree
+1. Pin the candidate in its own checkout (run workit as
+   `workit <verb> --cwd <worktree> …`, verb first; never `cd` first): `git -C <worktree> rev-parse HEAD` and `git -C <worktree> status --short`. A dirty tree
    or a moving HEAD is itself a finding, and the ledger refuses a verdict on it.
 2. Read the brief: goal, acceptance (Given/When/Then), verify commands.
 3. Run every verify command through the CLI so the result is observed:

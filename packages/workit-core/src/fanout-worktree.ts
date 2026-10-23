@@ -480,7 +480,7 @@ export function releaseSliceWorktree(
     return fanoutFail(
       "blocked",
       `this command runs inside ${entry.path}`,
-      `run it from the main checkout: workit --cwd <main checkout> fanout worktree release ${slice.id}`,
+      `run it from the main checkout: workit fanout --cwd <main checkout> worktree release ${slice.id}`,
     );
   if (entry.branch !== null && entry.branch !== `refs/heads/${slice.branch}`)
     return fanoutFail(

@@ -19,6 +19,12 @@ export {
   type SessionHandle,
 } from "./context";
 export { shellPolicy } from "./policy";
+export {
+  isAllowedWorkitCall,
+  isAllowedWorkitCommand,
+  WORKIT_ALLOWED_VERBS,
+  WORKIT_BYPASS_FLAGS,
+} from "./delivery-verbs";
 export { heavyDenial, heavyGate, splitDenial } from "./heavy-gate";
 export { shellGate, shellWrites, writeGate } from "./write-gate";
 export { liveOwner } from "../core/live-session";

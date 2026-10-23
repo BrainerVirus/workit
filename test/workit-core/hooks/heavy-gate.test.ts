@@ -57,7 +57,11 @@ beforeAll(() => {
   writeFileSync(
     path.join(config, "config.json"),
     JSON.stringify({
-      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+      branchPolicy: {
+        preset: "custom",
+        allowed: ["feature/*"],
+        protected: ["main"],
+      },
     }),
   );
   dirs.push(bin, home, state, config);
@@ -178,7 +182,11 @@ const opencode = (root: string, command: string, effect = "allow") => {
     message: undefined as string | undefined,
   };
   evaluateShellPermission(root, event);
-  return { command: input.command, effect: event.effect, message: event.message };
+  return {
+    command: input.command,
+    effect: event.effect,
+    message: event.message,
+  };
 };
 
 test("Given a raw `npx jest` on Claude Code, When the hook runs, Then updatedInput runs it under the lease with no permission decision and a wait below the tool timeout", () => {
@@ -298,7 +306,9 @@ test("Given an open product choice, When a write runs inside the wrapper, Then t
 
 test("Given another live session owns the checkout, When a write runs inside the wrapper, Then the live-session guard denies it", () => {
   const root = repo();
-  sleeper ??= spawn(process.execPath, ["-e", "setTimeout(() => {}, 600000)"], { stdio: "ignore" });
+  sleeper ??= spawn(process.execPath, ["-e", "setTimeout(() => {}, 600000)"], {
+    stdio: "ignore",
+  });
   const file = markerFile(root);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(
@@ -345,14 +355,24 @@ test("Given OpenCode permission rules, When a heavy command runs, Then a named o
     path.join(root, "opencode.json"),
     JSON.stringify({ permission: { bash: { "npx *": "deny" } } }),
   );
-  expect(opencode(root, "npx jest", "deny")).toMatchObject({ command: "npx jest", effect: "deny" });
+  expect(opencode(root, "npx jest", "deny")).toMatchObject({
+    command: "npx jest",
+    effect: "deny",
+  });
   writeFileSync(
     path.join(root, "opencode.json"),
-    JSON.stringify({ permission: { bash: { "workit *": "allow", "*": "ask" } } }),
+    JSON.stringify({
+      permission: { bash: { "workit *": "allow", "*": "ask" } },
+    }),
   );
-  expect(opencode(root, "make test", "ask")).toMatchObject({ command: "make test", effect: "ask" });
+  expect(opencode(root, "make test", "ask")).toMatchObject({
+    command: "make test",
+    effect: "ask",
+  });
   rmSync(path.join(root, "opencode.json"));
-  expect(opencode(root, "git status && npm test", "ask")).toMatchObject({ effect: "ask" });
+  expect(opencode(root, "git status && npm test", "ask")).toMatchObject({
+    effect: "ask",
+  });
 });
 
 test("Given `gh pr merge 1 && npm test` on OpenCode, When it runs, Then the raw-git deny stands and the input is unchanged", () => {
@@ -394,7 +414,12 @@ test("Given light commands (ls, git status), When the hook runs on each host, Th
 
 test("Given `workit lock heavy add 'mvn verify'` and a custom pattern, When those commands run next, Then they are gated", async () => {
   const root = repo();
-  const io = { cwd: root, env: process.env, stdout: () => {}, stderr: () => {} };
+  const io = {
+    cwd: root,
+    env: process.env,
+    stdout: () => {},
+    stderr: () => {},
+  };
   expect(codex(root, "./ci/integration.sh --all").permissionDecision).toBeUndefined();
   expect(await main(["lock", "heavy", "add", "mvn verify"], io)).toBe(0);
   expect(await main(["lock", "heavy", "add", "./ci/integration.sh"], io)).toBe(0);
@@ -446,8 +471,9 @@ const wrapperFlags = (command: string): string[] => {
 test("Given a plugin newer than the CLI, When each rewrite host wraps a heavy command, Then the wrapper uses only flags CLI 8.14.0 accepts, whatever the tool timeout", () => {
   const root = repo();
   const rewrites = [
-    claude(root, "make test", { tool_input: { command: "make test", timeout: 600000 } })
-      ?.updatedInput?.command,
+    claude(root, "make test", {
+      tool_input: { command: "make test", timeout: 600000 },
+    })?.updatedInput?.command,
     claude(root, "npx jest")?.updatedInput?.command,
     pi(root, "make test").command,
   ];
@@ -467,7 +493,7 @@ test("Given `cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3` on Claude Code
   const output = claude(repo(), "cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3");
   expect(output?.permissionDecision).toBeUndefined();
   expect(output?.updatedInput).toEqual({
-    command: "workit --cwd /tmp/wt pr merge --pr 7 2>&1 | tail -3",
+    command: "workit pr --cwd /tmp/wt merge --pr 7 2>&1 | tail -3",
     description: "run it",
   });
 });
@@ -475,7 +501,101 @@ test("Given `cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3` on Claude Code
 test("Given a quoted literal directory, When PreToolUse runs, Then the quoting is kept in the rewrite", () => {
   expect(
     claude(repo(), `cd "/tmp/my wt" && workit git push | head -5`)?.updatedInput?.command,
-  ).toBe(`workit --cwd "/tmp/my wt" git push | head -5`);
+  ).toBe(`workit git --cwd "/tmp/my wt" push | head -5`);
+});
+
+// Issue #297: the verb goes first so an enumerated `Bash(workit <verb> *)` rule matches.
+test.each([
+  ["cd /x && workit --json pr status", "workit pr --cwd /x --json status"],
+  ["cd /x && workit check test", "workit --cwd /x check test"],
+  [
+    "workit --cwd /tmp/wt git commit -m 'feat: x' -- a.ts",
+    "workit git --cwd /tmp/wt commit -m 'feat: x' -- a.ts",
+  ],
+  ["workit --json --cwd=/w pr merge --pr 7", "workit pr --json --cwd=/w merge --pr 7"],
+  [
+    `workit --cwd "/tmp/my wt" ledger verdict verified`,
+    `workit ledger --cwd "/tmp/my wt" verdict verified`,
+  ],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then it becomes `%s`", (command, expected) => {
+  const output = claude(repo(), command);
+  expect(output?.permissionDecision).toBeUndefined();
+  expect(output?.updatedInput?.command).toBe(expected);
+});
+
+test.each([
+  ["workit --cwd /x check -- rm -rf y"],
+  ["workit --cwd /x lock run -- rm -rf y"],
+  ["workit --cwd /x grant set w merge=true"],
+  ["workit --session s --cwd /x git push"],
+  ["workit --cwd $W git push"],
+  ["workit git push --cwd /x"],
+  ["workit --cwd /x git push; rm -rf y"],
+  ["workit --cwd /x git push && rm -rf y"],
+  ["workit --cwd /x git push | sh"],
+  ["workit --cwd /x git push\nrm -rf y"],
+  ["workit --cwd /x git push > out.txt"],
+  ["workit --cwd /x pr create --body $(cat f)"],
+])(
+  "Given `%s` on Claude Code, When PreToolUse runs, Then the words are not reordered",
+  (command) => {
+    expect(claude(repo(), command)?.updatedInput).toBeUndefined();
+  },
+);
+
+// Issue #297: a bypass flag always reaches the user on Claude Code, however
+// it is quoted or split, while a `Bash(workit pr *)` allow rule would match.
+test.each([
+  ["workit pr merge --pr 7 --unverified --reason now"],
+  [`workit pr merge --pr 7 "--unverified" --reason now`],
+  ["workit pr merge --pr 7 --unverif''ied --reason now"],
+  ["workit pr merge --pr 7 --unver\\ified --reason now"],
+  ["workit\tpr\tmerge\t--unverified\t--reason\tnow"],
+  ["workit stack land --unverified=x"],
+  ["workit git push --force-with-lease '--overwrite-unintegrated'"],
+  ["cd /x && workit pr merge --unverified --reason now"],
+  ["workit --cwd /x pr merge --unverified --reason now"],
+  ["workit pr status && workit pr merge --unverified --reason r"],
+  ["/usr/local/bin/workit pr merge --unverified --reason r"],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then the hook asks", (command) => {
+  const output = claude(repo(), command);
+  expect(output?.permissionDecision).toBe("ask");
+  expect(output?.permissionDecisionReason).toContain("--");
+  expect(output?.updatedInput).toBeUndefined();
+});
+
+// An expansion before `--` could become a bypass flag at run time.
+test.each([
+  ["workit pr merge --reason x ${F:---unverified}"],
+  ["workit pr merge --reason x --unverifie?"],
+  ['workit pr merge --reason x "$F"'],
+  ["workit pr merge --reason x --unver$(echo ified)"],
+  ["workit pr merge --reason x --unver`echo ified`"],
+  ["workit stack land --reason x --unverifie[d]"],
+  ['workit pr create --body-file "$F"'],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then the hook asks, not denies", (command) => {
+  const output = claude(repo(), command);
+  expect(output?.permissionDecision).toBe("ask");
+  expect(output?.permissionDecisionReason).toContain(
+    "an expansion before `--` could become a bypass flag",
+  );
+});
+
+test.each([
+  ["workit pr merge --reason x '$F'"],
+  ["workit pr merge --reason x '--unverifie?'"],
+  ["workit check test -- bun test $F"],
+  ["workit pr merge --reason x -- $F"],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then the hook does not ask", (command) => {
+  expect(claude(repo(), command)?.permissionDecision).toBeUndefined();
+});
+
+test.each([
+  ["workit pr merge --pr 7"],
+  ["workit check test -- bun test --unverified"],
+  ["echo --unverified"],
+])("Given `%s` on Claude Code, When PreToolUse runs, Then the hook does not ask", (command) => {
+  expect(claude(repo(), command)?.permissionDecision).toBeUndefined();
 });
 
 test.each([

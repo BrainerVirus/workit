@@ -509,7 +509,7 @@ const segmentTargets = (
     }
     const inner = depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
     if (inner !== null && dir !== undefined)
-      targets.push(...segmentTargets(dir, inner, "posix", depth + 1, strict));
+      targets.push(...segmentTargets(workitRunDir(dir, words), inner, "posix", depth + 1, strict));
     if (strict && dir !== undefined) {
       const runIn = dir;
       for (const sub of depth < 4 ? (segment.subs ?? []) : [])
@@ -548,6 +548,15 @@ const segmentTargets = (
       }
   }
   return targets;
+};
+
+/** Where `workit check|lock run [--cwd <dir>] -- <cmd>` runs its command: `--cwd` resolved against `dir`. */
+const workitRunDir = (dir: string, words: string[]): string => {
+  for (const invocation of workitInvocations(words.map(quoteWord).join(" "), "posix")) {
+    const { at, args } = workitCwd(dir, invocation);
+    if (args[0] === "check" || (args[0] === "lock" && args[1] === "run")) return at;
+  }
+  return dir;
 };
 
 /** A workit invocation's global `--cwd <dir>` (or `--cwd=<dir>`), resolved against `dir`. */

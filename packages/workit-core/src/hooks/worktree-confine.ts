@@ -182,7 +182,7 @@ const shown = (target: string): string =>
 
 const unboundDeny = (input: HookInput, target: string): HookDecision => {
   const unblock =
-    "Work only in the worktree your brief names, which the lead made with `workit fanout worktree create <slice>`: edit files under it and run one verb per call against it (`workit --cwd <worktree> git commit -m … -- <paths>`, `workit --cwd <worktree> check <name>`). If your brief names no worktree, stop and report that to the lead.";
+    "Work only in the worktree your brief names, which the lead made with `workit fanout worktree create <slice>`: edit files under it and run one verb per call against it (`workit git --cwd <worktree> commit -m … -- <paths>`, `workit check --cwd <worktree> <name>`). If your brief names no worktree, stop and report that to the lead.";
   return {
     kind: "deny",
     reason: `workit worktree confinement: implementer ${input.session.agentId} is not working in a Workit worktree yet, and ${shown(target)} is outside every worktree \`workit fanout worktree create\` made, so it would change the lead's checkout. ${unblock}`,
@@ -191,7 +191,7 @@ const unboundDeny = (input: HookInput, target: string): HookDecision => {
 };
 
 const outsideDeny = (input: HookInput, worktree: string, target: string): HookDecision => {
-  const unblock = `Edit only under ${worktree} and run git there, one verb per call: \`workit --cwd ${worktree} git commit -m … -- <paths>\`, \`workit --cwd ${worktree} check <name>\` (or \`git -C ${worktree} …\`); a command whose writes Workit cannot see is judged by the directory it runs in. Anything outside it is a follow-up for your report.`;
+  const unblock = `Edit only under ${worktree} and run git there, one verb per call: \`workit git --cwd ${worktree} commit -m … -- <paths>\`, \`workit check --cwd ${worktree} <name>\` (or \`git -C ${worktree} …\`); a command whose writes Workit cannot see is judged by the directory it runs in. Anything outside it is a follow-up for your report.`;
   return {
     kind: "deny",
     reason: `workit worktree confinement: implementer ${input.session.agentId} is bound to the worktree ${worktree}, and ${shown(target)} is outside it. ${unblock}`,
@@ -201,7 +201,7 @@ const outsideDeny = (input: HookInput, worktree: string, target: string): HookDe
 
 const unknownDirDeny = (input: HookInput, worktree: string | null): HookDecision => {
   const wt = worktree ?? "<worktree>";
-  const unblock = `Workit cannot resolve \`cd -\`, \`cd "$X"\` or \`popd\`: write by absolute path, \`git -C ${wt}\` or \`workit --cwd ${wt}\`.`;
+  const unblock = `Workit cannot resolve \`cd -\`, \`cd "$X"\` or \`popd\`: write by absolute path, \`git -C ${wt}\` or \`workit <verb> --cwd ${wt}\`.`;
   return {
     kind: "deny",
     reason: `workit worktree confinement: implementer ${input.session.agentId} writes after an unknown directory change. ${unblock}`,

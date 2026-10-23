@@ -122,6 +122,28 @@ const push = (targets: Array<string | null>, remote: string | null, blindForce =
   ...(targets.length === 1 && targets[0] === null ? { implicit: true as const } : {}),
 });
 
+test("classification: workit check and lock run run the wrapped command in --cwd, relative to the shell and through nested wrappers", () => {
+  const dirs = (command: string) => classify(command).map((row) => row.dir);
+  expect(dirs("workit check --cwd /lead -- git commit -am x")).toEqual(["/lead"]);
+  expect(dirs("workit check --cwd=/lead --shell -- 'git commit -am x'")).toEqual(["/lead"]);
+  expect(dirs("workit --cwd /lead check -- git commit -am x")).toEqual(["/lead"]);
+  expect(dirs("workit lock run --cwd /lead -- git -C sub push")).toEqual([
+    path.join("/lead", "sub"),
+  ]);
+  expect(dirs("cd /a && workit check --cwd b -- git add .")).toEqual([path.join("/a", "b")]);
+  expect(dirs("workit check --cwd /a -- workit check --cwd /lead -- git add .")).toEqual(["/lead"]);
+  expect(dirs("workit check --cwd /a -- workit check --cwd b -- git add .")).toEqual([
+    path.join("/a", "b"),
+  ]);
+  // The --cwd scopes the wrapped command only; the next one runs where the shell is.
+  expect(dirs("workit check --cwd /lead -- git add . && git add .")).toEqual(["/lead", null]);
+  expect(dirs("workit check -- git status")).toEqual([null]);
+  expect(classify("workit check --cwd /lead -- git push origin main")[0]).toEqual({
+    dir: "/lead",
+    action: push(["main"], "origin"),
+  });
+});
+
 test("classification: chains, cd, -C, env prefixes, quoting and bash -c find the raw command and its directory", () => {
   const table: Array<[string, unknown]> = [
     [

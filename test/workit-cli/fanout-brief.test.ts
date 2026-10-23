@@ -256,10 +256,10 @@ test("fanout brief: given the slice's worktree made by fanout worktree create an
     `WORKTREE: ${wt}  (made by \`workit fanout worktree create a\`; yours alone)`,
   );
   expect(data.text).toContain(
-    `  1. Work only in WORKTREE, already on feature/a at its head: edit files under it and run each git and check command against it, one verb per call (\`workit --cwd ${wt} git commit …\`, \`workit --cwd ${wt} check <name>\`)`,
+    `  1. Work only in WORKTREE, already on feature/a at its head: edit files under it and run each git and check command against it, one verb per call (\`workit git --cwd ${wt} commit …\`, \`workit check --cwd ${wt} <name>\`)`,
   );
   expect(data.text).toContain(
-    `  3. Commit with \`workit --cwd ${wt} git commit -m <msg> -- <paths in SCOPE>\``,
+    `  3. Commit with \`workit git --cwd ${wt} commit -m <msg> -- <paths in SCOPE>\``,
   );
   expect(data.text).toContain("  - none recorded beyond this brief");
 });

@@ -21,6 +21,17 @@ claude plugin marketplace update workit && claude plugin update workit@workit   
 a newer version is published. `workit uninstall` runs the native
 `claude plugin uninstall` for each install that applies where you run it.
 
+**Permissions.** A plugin cannot ship permission rules, and in auto mode the
+classifier cannot see Workit's grants or verdicts, so it may deny `workit pr
+merge` as "Merge Without Review". Run `workit setup --hosts=claude-code` in
+your own terminal (not from a Claude Code session: it refuses there): after
+showing the diff it adds enumerated `Bash(workit <verb> *)` allows, `ask`
+rules for `--unverified` and `--overwrite-unintegrated` (the Workit hook also
+asks for them however they are quoted), one
+`autoMode.environment` and one `autoMode.allow` line describing Workit's
+gates, and `env.CLAUDE_CODE_SHELL` (bash) when your shell is zsh. See
+[the hosts guide](hosts.md#host-permissions-workit-setup).
+
 **Local pin to a checkout.** Hooks and `bin/workit` run the TypeScript sources
 with Bun, so edits apply without rebuilding. Only the skills are generated:
 
@@ -43,7 +54,7 @@ forces one runtime; `WORKIT_SHIM_TRACE=1 workit …` prints which entry ran.
 | `UserPromptSubmit` | Re-injects task context only when it changed |
 | `PreToolUse` on `Bash`/`PowerShell` and `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | Denies protected or non-compliant branch operations, and working-tree edits while the branch task has an open product choice or needs a plan (the before-write gate), and in a Workit workspace raw gate bypasses (`gh pr merge`, `glab mr merge`, a push onto a protected branch), with `permissionDecision: "deny"` and the unblock. Routine raw `git commit`/`git push`/`gh pr create` get an `additionalContext` nudge toward the workit verb ([hosts](hosts.md)). Never answers `allow`, so your permission prompts stay in charge. Plain shell commands, and edits in a checkout without Workit tasks, are answered before the runtime loads; so is a PostToolUse whose command has no `commit` |
 | `PostToolUse` on `Bash`/`PowerShell` | Records a raw `git commit` that moved HEAD (noted by PreToolUse) as the session's `commit.recorded` ledger row, so its own verdict is not independent |
-| `SubagentStart` | Tells the `implementer` it works only in the worktree its lead made with `workit fanout worktree create`, through `workit --cwd <worktree> …`; tells other subagents they are read-only |
+| `SubagentStart` | Tells the `implementer` it works only in the worktree its lead made with `workit fanout worktree create`, through `workit <verb> --cwd <worktree> …`; tells other subagents they are read-only |
 
 Hooks fail open: if the runtime cannot start (no Bun for a pin, missing
 `dist/`), the hook answers nothing, prints one
@@ -68,7 +79,7 @@ skips over the last day in its `hook_deadline` row. To change the deadline, set
 | --- | --- |
 | `verifier` | Read-only. Runs the brief's checks through `workit check` and records a `workit ledger verdict` under its own session |
 | `reviewer` | Read-only. Reviews intent fidelity, standards, test quality and blast radius; records a review verdict |
-| `implementer` | No `isolation` (Claude Code's refused every wrapped git). Edits and commits only in the worktree the lead made with `workit fanout worktree create <slice>`, running `workit --cwd <worktree> git\|check …` one verb per call; the `PreToolUse` hook denies its edits and mutating git commands outside that worktree |
+| `implementer` | No `isolation` (Claude Code's refused every wrapped git). Edits and commits only in the worktree the lead made with `workit fanout worktree create <slice>`, running `workit git\|check --cwd <worktree> …` one verb per call; the `PreToolUse` hook denies its edits and mutating git commands outside that worktree |
 
 The SubagentStart hook gives each verifier/reviewer its own session id, so the
 ledger never accepts the author's verdict on its own work.

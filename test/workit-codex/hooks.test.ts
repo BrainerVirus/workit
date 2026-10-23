@@ -114,7 +114,7 @@ test("G a Codex SubagentStart, T Workit judges get their own session and the imp
   expect(implementer).toContain("its own git worktree");
   // Codex does not isolate subagents itself: the lead makes the worktree.
   expect(implementer).toContain("workit fanout worktree create");
-  expect(implementer).toContain("workit --cwd <worktree> git branch <branch> --base <base>");
+  expect(implementer).toContain("workit git --cwd <worktree> branch <branch> --base <base>");
   expect(implementer).not.toContain("read-only");
   for (const other of [
     "worker",
@@ -143,7 +143,7 @@ test("G a Claude Code SubagentStart, T only the plugin-namespaced workit:<role> 
   // `workit fanout worktree create` worktree, workit verbs one per call.
   const implementer = claude("workit:implementer");
   expect(implementer).toContain("workit fanout worktree create <slice>");
-  expect(implementer).toContain('`workit --cwd <worktree> git commit -m "<message>" -- <paths>`');
+  expect(implementer).toContain('`workit git --cwd <worktree> commit -m "<message>" -- <paths>`');
   expect(implementer).not.toContain("Run git as plain");
   // One the lead isolated anyway (`.claude/worktrees/agent-<id>`) keeps the plain-git wording.
   // Only a real linked worktree there counts, never a directory that looks like one.

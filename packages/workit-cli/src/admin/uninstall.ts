@@ -11,6 +11,14 @@ import os from "node:os";
 import path from "node:path";
 import { isWorkitPlugin } from "./registration";
 import {
+  forgetOwnership,
+  permissionTarget,
+  readOwnership,
+  removeCodexRules,
+  removeOwnedEntries,
+  type PermissionHost,
+} from "./host-permissions";
+import {
   claudeWorkitInstalls,
   findHostExecutable,
   runHostCommand,
@@ -22,6 +30,8 @@ export type UninstallHost = "opencode" | "cursor" | "codex" | "pi" | "claude-cod
 export type UninstallAction =
   | { kind: "edit-json-remove"; path: string; detail: string }
   | { kind: "remove-dir"; path: string; detail: string }
+  /** Workit's own Codex rules file (exact path only). */
+  | { kind: "remove-file"; path: string; detail: string }
   /** A host-native uninstall (Claude Code owns its plugin cache and registry). */
   | {
       kind: "host-command";
@@ -69,6 +79,8 @@ export type UninstallPaths = {
   runHostCommand?: HostCommandRunner;
   /** Project directory for Claude Code project/local-scope installs (default: process cwd). */
   cwd?: string;
+  /** Workit's state dir, which records the permission entries setup added. */
+  stateDir?: string;
 };
 
 type ResolvedUninstall = {
@@ -78,6 +90,10 @@ type ResolvedUninstall = {
   cursorPluginDir: string;
   codexPluginDir: string;
   piConfig: string;
+  /** Host permission files `workit setup` writes (issue #297). */
+  claudeSettings: string;
+  cursorCliConfig: string;
+  codexRules: string;
 };
 
 const resolveUninstallPaths = (options: UninstallPaths = {}): ResolvedUninstall => {
@@ -85,7 +101,11 @@ const resolveUninstallPaths = (options: UninstallPaths = {}): ResolvedUninstall 
   // homedir. No process.env tier — an ambient HOME must never leak past an
   // explicitly empty injected env.
   const home = options.home ?? options.env?.HOME ?? os.homedir();
+  const permissionPaths = { home, env: options.env ?? process.env };
   return {
+    claudeSettings: permissionTarget("claude-code", permissionPaths).file,
+    cursorCliConfig: permissionTarget("cursor", permissionPaths).file,
+    codexRules: permissionTarget("codex", permissionPaths).file,
     opencodeConfig:
       options.opencodeConfig ?? path.join(home, ".config", "opencode", "opencode.json"),
     cursorSettings: options.cursorSettings ?? path.join(home, ".cursor", "settings.json"),
@@ -246,7 +266,38 @@ function cleanPiConfig(config: Record<string, unknown>): {
   return { next, changed };
 }
 
-const jsonCleanerFor = (target: string, res: ResolvedUninstall): JsonCleaner | null => {
+const permissionPathsOf = (paths: UninstallPaths) => {
+  const env = paths.env ?? process.env;
+  return {
+    home: paths.home ?? env.HOME ?? os.homedir(),
+    env,
+    ...(paths.stateDir ? { stateDir: paths.stateDir } : {}),
+  };
+};
+
+/** Inverse of `workit setup`: the entries the ownership record names (else the canonical ones). */
+const permissionCleaner =
+  (host: "claude-code" | "cursor", file: string, paths: UninstallPaths): JsonCleaner =>
+  (record) => {
+    const resolved = permissionPathsOf(paths);
+    const owned = readOwnership(resolved).hosts[host];
+    return removeOwnedEntries(
+      record,
+      owned?.file === file ? owned.owned : null,
+      host,
+      resolved.env,
+    );
+  };
+
+const jsonCleanerFor = (
+  target: string,
+  res: ResolvedUninstall,
+  paths: UninstallPaths = {},
+): JsonCleaner | null => {
+  if (target === res.claudeSettings)
+    return permissionCleaner("claude-code", res.claudeSettings, paths);
+  if (target === res.cursorCliConfig)
+    return permissionCleaner("cursor", res.cursorCliConfig, paths);
   if (target === res.opencodeConfig) return cleanOpenCodeConfig;
   if (target === res.cursorSettings) return (r) => cleanCursorSettings(r, res.cursorPluginDir);
   if (target === res.cursorMcp) return cleanCursorMcp;
@@ -368,6 +419,28 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
       cwd: install.projectPath,
     })),
   };
+
+  // Workit's permission blocks (issue #297). They do not mark a host as
+  // installed: detection counts plugin registrations only.
+  for (const [plan, host, file] of [
+    [claude, "claude-code", res.claudeSettings],
+    [cursor, "cursor", res.cursorCliConfig],
+  ] as const) {
+    const existing = readJsonRecord(file);
+    if (existing.kind !== "record") continue;
+    if (!permissionCleaner(host, file, paths)(existing.value).changed) continue;
+    plan.actions.push({
+      kind: "edit-json-remove",
+      path: file,
+      detail: `remove Workit's permission block from ${path.basename(file)}`,
+    });
+  }
+  if (existsSync(res.codexRules))
+    codex.actions.push({
+      kind: "remove-file",
+      path: res.codexRules,
+      detail: "remove Workit's Codex rules file",
+    });
 
   return { hosts: [opencode, cursor, codex, pi, claude] };
 }
@@ -502,7 +575,17 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
     for (const action of hostPlan.actions) {
       let status: UninstallResultStatus;
       let detail: string | undefined;
-      if (action.kind === "host-command") {
+      if (action.kind === "remove-file") {
+        try {
+          const removed = removeCodexRules(action.path, permissionPathsOf(paths));
+          status = removed ? "removed" : "failed";
+          detail = removed ? undefined : `${action.path} is not Workit's Codex rules file`;
+          if (removed) forgetOwnership("codex", permissionPathsOf(paths));
+        } catch (error) {
+          status = "failed";
+          detail = error instanceof Error ? error.message : String(error);
+        }
+      } else if (action.kind === "host-command") {
         const outcome = applyClaudeUninstall(action, paths);
         status = outcome.status;
         detail = outcome.detail;
@@ -530,7 +613,7 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
           }
         }
       } else {
-        const cleaner = jsonCleanerFor(action.path, res);
+        const cleaner = jsonCleanerFor(action.path, res, paths);
         if (cleaner === null) {
           status = "failed";
           detail = `${action.path} is not a recognized uninstall target for this host`;
@@ -538,6 +621,14 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
           const outcome = applyEditJsonRemove(action.path, cleaner);
           status = outcome.status;
           detail = outcome.detail;
+          const permissionHost: PermissionHost | null =
+            action.path === res.claudeSettings
+              ? "claude-code"
+              : action.path === res.cursorCliConfig
+                ? "cursor"
+                : null;
+          if (permissionHost && status !== "failed")
+            forgetOwnership(permissionHost, permissionPathsOf(paths));
         }
       }
       entries.push({ host: hostPlan.host, path: action.path, status, detail });

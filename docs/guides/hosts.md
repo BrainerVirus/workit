@@ -48,7 +48,63 @@ Commands are parsed as text (chains, `cd x &&`, `( … )` subshells,
 for Claude Code's PowerShell tool); a directory that cannot be known (`cd -`,
 `cd $X`) gets no decision. Git is spawned only to read a new commit and, before
 a deny, the push remote. The hooks fail open
-and never grant permission: host allow/deny rules stay authoritative.
+and never grant permission: host allow/deny rules stay authoritative. The one
+exception is OpenCode's `ask` for Workit's own delivery verbs (below).
+
+## Host permissions (`workit setup`)
+
+Plugins cannot ship permission rules, so without help every host asks (or, in
+Claude Code's auto mode, a classifier judges) each `workit pr merge` or
+`workit git push` even though Workit's grants and non-author verdicts already
+gate them. `workit setup` writes a Workit-owned block into each host's own
+config after one consent:
+
+```bash
+workit setup --dry-run                 # show the diff, write nothing
+workit setup --hosts=claude-code       # show the diff, ask, write
+workit setup --hosts=codex,cursor --yes
+```
+
+It allows only the delivery and state verbs `git`, `pr`, `ci`, `stack`,
+`release`, `task`, `ledger`, `evidence`, `finding`, `decision`, `worker`,
+`verify-delivery`, `policy`, `doctor`, `help` and `workit --version`. Never
+`check` or `lock run` (they run any command), `grant` (authority), `fanout`,
+`test-audit`, `gc`, `init`, `upgrade` or `uninstall`. It refuses inside an
+agent session (`CLAUDECODE`, `WORKIT_SESSION_ID`, `CODEX_THREAD_ID`,
+`OPENCODE_SESSION_ID`, `PI_SESSION_ID` or `CURSOR_AGENT` set) and prints the
+command to run yourself. `workit uninstall` removes the entries it added
+(recorded in Workit's state dir, and only entries shaped like Workit's own:
+`Bash(workit …)`, `Shell(workit …)`, its two `autoMode` lines, the
+`CLAUDE_CODE_SHELL` bash path it set, the Codex rules file).
+`workit upgrade --apply --confirm` adds only the entries new in this Workit
+version to a block it already wrote, never one you removed, and prints the
+diff in the preview and again when it applies. `workit doctor` has a
+`claude_permissions`, `codex_permissions` and `cursor_permissions` row.
+
+| Host | What `workit setup` writes |
+| --- | --- |
+| Claude Code | In `$CLAUDE_CONFIG_DIR/settings.json` (else `~/.claude/settings.json`; managed settings are never written): `permissions.allow` `Bash(workit <verb> *)` per verb and `Bash(workit --version)`; `permissions.ask` `Bash(workit * --unverified*)` and `Bash(workit * --overwrite-unintegrated*)` as a second layer (a text pattern: quoting can slip past it). The first layer is the Workit hook: it reads the words of each `workit` call and answers `ask`, never `allow`, when one carries a bypass flag before `--`, so `"--unverified"` or `--unverif''ied` still reaches you; one `autoMode.environment` and one `autoMode.allow` line next to `"$defaults"` and your own; `env.CLAUDE_CODE_SHELL` set to bash when your shell is zsh and nothing is set (`--no-shell` skips it) |
+| Codex | `~/.codex/rules/workit.rules` (or under `$CODEX_HOME`), a file Workit owns: one `prefix_rule(pattern=["workit", "<verb>"], decision="allow")` per verb and `["workit", "grant"]` → `prompt`. `config.toml` and its sandbox settings are untouched |
+| Cursor | `Shell(workit <verb>)` per verb in `~/.cursor/cli-config.json` `permissions.allow` (cursor-agent matches the rule as a command prefix) |
+| OpenCode | Nothing: the Workit plugin's `permission.evaluate` turns an `ask` for a command made only of allowed Workit calls into `allow`. A config `deny` still wins, and `check`, `lock`, `grant`, `--session`, a bypass flag, a redirect or a substitution stay `ask` |
+| Pi | Nothing: Pi has no permission layer |
+
+Write the verb first: `workit <verb> --cwd <dir> …`. A host rule cannot match
+a variable directory before the verb, so `workit --cwd <dir> git push` would
+still prompt; on Claude Code the Workit hook reorders `workit --cwd <dir>
+<verb>` and `cd <dir> && workit <verb>` for you. Limits: Codex and Cursor
+rules match a prefix, so a bypass flag later in the command
+(`workit pr merge --unverified`) is not asked for there (Workit's own grant
+and `--reason` still apply), and on Cursor the `workit --session <id> …` form
+does not match a rule. Cursor's IDE allowlist (`~/.cursor/permissions.json`)
+replaces the whole IDE list, so setup leaves it alone; to use it, add the same
+`Shell(workit <verb>)` entries to your existing list yourself.
+
+An allowed verb can still run the repository's own code: `workit git commit`
+and `workit git push` run git, so a checkout's git hooks (husky, lefthook,
+`core.hooksPath`) and settings such as `core.sshCommand` or `core.fsmonitor`
+run without a prompt. Allow Workit's verbs only on machines where you trust
+the repositories you open with an agent.
 
 | Host | Deny | Nudge | Raw commit recorded | Session id in the shell |
 | --- | --- | --- | --- | --- |
@@ -131,7 +187,7 @@ command that wraps git (`workit git …`, `workit check`) and cannot be turned
 off. The lead makes the worktree first with `workit fanout worktree create
 <slice>` (on every host), which also links the main checkout's
 `node_modules` so the worktree's tests import its own workspace packages. The
-implementer works there with `workit --cwd <worktree> git|check …`, one verb
+implementer works there with `workit git|check --cwd <worktree> …`, one verb
 per call. Workit's pre-tool hooks bind it to the first Workit worktree it
 changes and deny its edits and mutating git commands outside that worktree,
 naming it; before that, a change outside every Workit worktree is denied, so

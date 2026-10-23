@@ -1536,7 +1536,7 @@ export function syncStack(
           return stackFail(
             "blocked",
             `a rebase is in progress in ${owner}`,
-            `git -C ${owner} rebase --continue  # or --abort; then workit --cwd ${owner} stack sync`,
+            `git -C ${owner} rebase --continue  # or --abort; then workit stack --cwd ${owner} sync`,
             { conflict: entry.branch, worktree: owner, progress: outcome },
           );
         if (owner && trackedDirt(owner))

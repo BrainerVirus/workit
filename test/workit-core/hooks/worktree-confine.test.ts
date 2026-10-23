@@ -150,7 +150,7 @@ test("Given an implementer bound to worktree W by its first edit there, When it 
     expect(denied?.permissionDecisionReason, outside).toContain(
       `implementer impl-edit is bound to the worktree ${wtA}, and ${outside} is outside it`,
     );
-    expect(denied?.permissionDecisionReason, outside).toContain(`workit --cwd ${wtA} git commit`);
+    expect(denied?.permissionDecisionReason, outside).toContain(`workit git --cwd ${wtA} commit`);
   }
   expect(
     claude(
@@ -176,6 +176,10 @@ test("Given an implementer bound to W, When it runs git and shell writes, Then r
   for (const command of [
     `workit --cwd ${wtA} git commit -m "feat: a" -- a.ts`,
     `workit --cwd ${wtA} check test`,
+    // Verb first (#297): `--cwd` after the verb names the same directory.
+    `workit git --cwd ${wtA} commit -m "feat: a" -- a.ts`,
+    `workit git --cwd=${wtA} commit -m "feat: a" -- a.ts`,
+    `workit check --cwd ${wtA} test`,
     `git -C ${wtA} add a.ts`,
     `echo x > ${path.join(wtA, "a.ts")}`,
     "git status",
@@ -187,6 +191,8 @@ test("Given an implementer bound to W, When it runs git and shell writes, Then r
     `git -C ${wtB} commit -m x`,
     `cd ${lead} && git add -A`,
     `workit --cwd ${lead} git commit -m "feat: a" -- src/core.ts`,
+    `workit git --cwd ${lead} commit -m "feat: a" -- src/core.ts`,
+    `workit git commit --cwd ${lead} -m "feat: a" -- src/core.ts`,
     `echo x > ${path.join(lead, "src", "core.ts")}`,
   ]) {
     const denied = bash(command, { id: "impl-shell" });
@@ -408,6 +414,8 @@ test("Given a bound implementer, When it puts workit global options before fanou
     "workit --session=x --json fanout worktree create c",
     `workit --json --cwd ${wtA} fanout plan plan.json`,
     `workit --cwd=${wtA} --json fanout worktree release b`,
+    `workit fanout --cwd ${wtA} worktree release b`,
+    `workit fanout worktree --cwd=${wtA} create c`,
     "workit --token t --as lead fanout worktree create c",
     "workit check -- workit --json fanout plan plan.json",
   ])
@@ -419,6 +427,48 @@ test("Given a bound implementer, When it puts workit global options before fanou
   expect(
     bash(`workit --json --cwd ${wtA} git commit -m "feat: a" -- a.ts`, id)?.permissionDecision,
   ).toBeUndefined();
+});
+
+test("Given a bound implementer, When workit check or lock run names another directory with --cwd, Then the inner command is judged there: the lead's checkout is denied, its own worktree passes", () => {
+  const id = implementerBoundToA("impl-check-cwd");
+  for (const command of [
+    `workit check --cwd ${lead} -- git commit -am x`,
+    `workit --cwd ${lead} check -- git commit -am x`,
+    `workit check --cwd ${lead} -- touch f`,
+    `workit check --cwd ${lead} -- sh -c 'echo > f'`,
+    `workit check --cwd=${lead} --shell -- 'echo hi > f'`,
+    `workit lock run --cwd ${lead} -- sh -c 'echo > f'`,
+  ])
+    denies(command, id, `bound to the worktree ${wtA}`);
+  for (const command of [
+    `workit check --cwd ${wtA} -- git status`,
+    `workit check --cwd ${wtA} -- touch f`,
+    `workit check --cwd ${wtA} -- sh -c 'echo > f'`,
+    `workit lock run --cwd ${wtA} -- sh -c 'echo > f'`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+});
+
+test("Given a bound implementer, When workit check or lock run wraps a mutating git command, Then git is judged in the --cwd directory, through nested wrappers and -C", () => {
+  const id = implementerBoundToA("impl-check-cwd-git");
+  for (const command of [
+    `workit check --cwd ${lead} -- git commit -am x`,
+    `workit check --cwd=${lead} --shell -- 'git commit -am x'`,
+    `workit lock run --cwd ${lead} -- git -C sub commit -am x`,
+    `cd ${wtA} && workit check --cwd ${lead} -- git add .`,
+    `workit check --cwd ${wtA} -- workit check --cwd ${lead} -- git commit -am x`,
+    `workit check --cwd ${wtA} -- bash -c 'cd ${lead} && git commit -am x'`,
+  ])
+    denies(command, id, `bound to the worktree ${wtA}`);
+  for (const command of [
+    `workit check --cwd ${wtA} -- git commit -am x`,
+    `workit check --cwd=${wtA} --shell -- 'git commit -am x'`,
+    `workit lock run --cwd ${wtA} -- git -C sub add .`,
+    `workit check --cwd ${lead} -- workit check --cwd ${wtA} -- git commit -am x`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+  // A lead (no agent) is not confined; its wrapped git is unaffected.
+  expect(bash(`workit check --cwd ${lead} -- git status`, { type: null })).toBeUndefined();
 });
 
 test("Given a bound implementer, When a cd target cannot be resolved and a write follows, Then it is denied naming how to spell the path; reads after it, and the lead, are unaffected", () => {

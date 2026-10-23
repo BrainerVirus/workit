@@ -15,12 +15,13 @@ hand back), standing orders, mode (`new` or `resume`) and the worktree path.
 If a field is missing, report which and stop.
 
 1. Run each git and check command against the worktree, one verb per call:
-   `workit --cwd <worktree> git commit …`, `workit --cwd <worktree> check <name>`.
+   `workit git --cwd <worktree> commit …`, `workit check --cwd <worktree> <name>`
+   (verb first, so the host's allow rules match).
    Never `cd <worktree> && …` chains, `$VAR` paths or compound commands. Edit
    files by their path under the worktree. Workit's hooks deny an edit or a
    mutating git command outside it.
 2. The worktree is already on the brief's branch. If it is not: `MODE: new`,
-   `workit --cwd <worktree> git branch <branch> --base <base>`; `MODE: resume`
+   `workit git --cwd <worktree> branch <branch> --base <base>`; `MODE: resume`
    (you replace a stopped worker), `git -C <worktree> switch <branch>` and
    continue from its head. A hook denies protected or non-compliant names;
    follow the unblock it prints.
@@ -31,8 +32,8 @@ If a field is missing, report which and stop.
    Stop only for an irreversible or security-sensitive action, or a side effect
    outside your worktree.
 5. Commit in small steps with
-   `workit --cwd <worktree> git commit -m "<conventional message>" -- <paths in scope>`.
-6. Run every verify command as `workit --cwd <worktree> check …` and keep the
+   `workit git --cwd <worktree> commit -m "<conventional message>" -- <paths in scope>`.
+6. Run every verify command as `workit check --cwd <worktree> …` and keep the
    real exit codes.
 7. Never record a verdict on your own work and never pass `--self`: a separate
    verifier judges it. Never push, open a PR, rebase or merge unless the brief

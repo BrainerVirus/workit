@@ -136,7 +136,7 @@ test("agents: verifier and reviewer are read-only, implementer runs in the lead'
   }
   const implementer = frontmatter(path.join(agents, "implementer.md"));
   // Claude Code's isolation refused every wrapped git (#310): no `isolation:`
-  // key; the lead's `workit fanout worktree create` worktree, `workit --cwd`.
+  // key; the lead's `workit fanout worktree create` worktree, `workit <verb> --cwd`.
   expect(Object.hasOwn(implementer, "isolation")).toBe(false);
   expect(readFileSync(path.join(agents, "implementer.md"), "utf8")).not.toMatch(/^isolation:/mu);
   expect(readFileSync(path.join(agents, "implementer.md"), "utf8")).toContain("goal, scope (files");
@@ -148,8 +148,8 @@ test("agents: verifier and reviewer are read-only, implementer runs in the lead'
   expect(body("verifier")).toMatch(/never pass `--self`/);
   expect(body("implementer")).toContain("Never record a verdict on your own work");
   expect(body("implementer")).not.toMatch(/workit ledger verdict/);
-  expect(body("implementer")).toContain("workit --cwd <worktree> git branch");
-  expect(body("implementer")).toContain("workit --cwd <worktree> check");
+  expect(body("implementer")).toContain("workit git --cwd <worktree> branch");
+  expect(body("implementer")).toContain("workit check --cwd <worktree>");
   expect(body("implementer")).toContain("workit fanout worktree create <slice>");
   // Subagents inherit the lead's (author's) WORKIT_SESSION_ID, so verdicts use
   // the session the SubagentStart hook names.

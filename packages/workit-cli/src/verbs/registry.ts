@@ -210,6 +210,15 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./init"),
   },
   {
+    name: "setup",
+    group: "setup",
+    usage:
+      "workit setup [--hosts=claude-code,codex,cursor,opencode,pi] [--no-shell] [--dry-run | --yes]",
+    summary:
+      "Write Workit's host permission block (enumerated delivery verbs) after showing the diff; run it in your own terminal",
+    load: () => import("./setup"),
+  },
+  {
     name: "upgrade",
     group: "setup",
     usage: "workit upgrade [--hosts=a,b|none] [--cli] [--preview | --apply --confirm]",
@@ -611,7 +620,7 @@ export const VERBS: readonly VerbEntry[] = [
         name: "verdict",
         flagAliases: { sha: "head" },
         flagHints: {
-          repo: "a verdict is recorded in the checkout you run it from: pass --cwd <dir> (workit --cwd <dir> ledger verdict …)",
+          repo: "a verdict is recorded in the checkout you run it from: pass --cwd <dir> (workit ledger --cwd <dir> verdict …)",
         },
         usage: `workit ledger verdict <result> --how "<method/evidence>" [--head <sha>] [--kind unit|live|perf|review] [--base <ref>] [--surface ui|cli|api] [--evidence <ref>]… [--self] ${LEDGER_ACTOR} | ledger verdict [<branch>]`,
         summary:
