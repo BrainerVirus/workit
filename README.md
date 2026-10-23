@@ -174,9 +174,11 @@ change's review lane asks for, an independent live verdict and a plan for high
 risk. Under the default `verification: "proportional"` the lane comes from the
 diff: `none` (docs, comments, formatting, generated copies) needs no verdict,
 `self` (a small change off risk paths) the author's own `--self` verdict,
-`focused` and `full` (risk paths such as hooks, auth, release, migrations, or a
-large diff) a non-author verdict, at task close, the Stop hook and the merge
-gate alike; `workit pr status` and `workit policy assess` show it. An open product choice or a needed plan blocks code
+`focused` and `full` (risk paths such as hooks, auth, release, migrations or
+the repo's own `.workit/risk-paths`, a lockfile, or a large diff) a non-author
+verdict, at task close, the Stop hook and the merge gate alike; when unsure, a
+file counts as a behavior change. `workit pr status` and `workit policy
+assess` show it. An open product choice or a needed plan blocks code
 edits until recorded, on every host with a pre-write hook (advisory on Codex).
 See [verification](docs/guides/verification.md). Host permissions
 (allow/ask/deny, sandbox) always stay authoritative; Workit adds no consent

@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   computeLane,
   isRiskPath,
   laneGate,
+  parseRiskPaths,
   type ChangedFile,
   type LaneInput,
 } from "@/packages/workit-core/src/core/policy/lane";
@@ -505,6 +506,22 @@ test("substance: the lexer reads strings, regexes and comments with the whole fi
   expect(cosmetic("a.sh", "echo hi\n", "# note\necho hi\n")).toBe(false);
   expect(cosmetic("a.sh", "echo hi\n", "echo hi   \n\n")).toBe(true);
   expect(cosmetic("a.tsx", "<p>don't</p>\n", "<p>don't</p>  \n")).toBe(true);
+});
+
+test("this repository's .workit/risk-paths names real gate files", () => {
+  const root = path.resolve(import.meta.dir, "../..");
+  const globs = parseRiskPaths(readFileSync(path.join(root, ".workit/risk-paths"), "utf8"));
+  expect(globs).toContain("packages/workit-core/src/core/policy/**");
+  for (const glob of globs.filter((entry) => !entry.includes("*")))
+    expect(existsSync(path.join(root, glob))).toBe(true);
+  for (const gate of [
+    "packages/workit-core/src/forge/pr-ops.ts",
+    "packages/workit-cli/src/verbs/grant.ts",
+    "packages/workit-core/src/core/policy/lane.ts",
+    "packages/workit-core/src/hooks/stop.ts",
+  ])
+    expect(isRiskPath(gate, globs)).toBe(true);
+  expect(isRiskPath("packages/workit-core/src/core/hygiene.ts", globs)).toBe(false);
 });
 
 test("lockfile-only and binary-only changes are focused, not self", () => {

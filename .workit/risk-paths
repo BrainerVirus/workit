@@ -1,0 +1,19 @@
+# Review-lane risk paths (docs/guides/verification.md): a change to any of
+# these is lane full and needs an accepted non-author verdict. One glob per
+# line (`**` spans directories). Read from the PR's base revision, so a change
+# here protects the next PR, not the one that makes it. Entries only tighten.
+
+# Merge, land and grant gates
+packages/workit-core/src/forge/pr-ops.ts
+packages/workit-core/src/stack.ts
+packages/workit-core/src/ledger.ts
+packages/workit-core/src/autonomy.ts
+packages/workit-cli/src/verbs/grant.ts
+
+# What the gates read: the diff, the policy and the hooks
+packages/workit-core/src/git/rev.ts
+packages/workit-core/src/core/policy/**
+packages/workit-core/src/hooks/**
+
+# This file and Workit's own repo state
+.workit/**

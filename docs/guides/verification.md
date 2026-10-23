@@ -127,16 +127,56 @@ Workit computes a review lane from the diff of the branch against its base
 
 | Lane | When | Needs |
 | --- | --- | --- |
-| `none` | only docs (Markdown outside agent instructions, `docs/`), comment, whitespace or formatting edits, or generated copies (`linguist-generated` in `.gitattributes`, `*.generated.*`) | no verdict |
-| `self` | at most 100 changed lines in at most 5 behavior files, no risk path | the author's own `--self` verdict (or an independent one) |
-| `focused` | more than 100 lines or more than 5 behavior files | an accepted non-author verdict |
-| `full` | 500+ lines, a behavior file on a risk path (a path part such as `auth`, `security`, `secret`, `gate`, `policy`, `hooks`, `release`, `migrations`, `.github/workflows`, CI files), or a high-risk judgment | an accepted non-author verdict (a high-risk judgment still asks a `live` one at task close) |
+| `none` | only docs (`.md`, `.mdx`, `.rst`, `.adoc`, `.txt` outside agent instructions, or a bare `LICENSE`/`CHANGELOG`), comment, whitespace or formatting edits, or generated copies (`linguist-generated` in the base revision's `.gitattributes`) | no verdict |
+| `self` | at most 100 changed lines in at most 5 behavior files, no risk path, no lockfile or binary | the author's own `--self` verdict (or an independent one) |
+| `focused` | more than 100 lines, more than 5 behavior files, or a lockfile or binary change | an accepted non-author verdict |
+| `full` | 500+ lines, any file on a risk path, or a high-risk judgment | an accepted non-author verdict (a high-risk judgment still asks a `live` one at task close) |
 
 Lines count code, tests and agent instructions (`SKILL.md`, `AGENTS.md`,
 `CLAUDE.md`, `skills/`, `agents/`, `commands/`, `rules/`, `prompts/`);
 lockfiles count as a behavior change but never toward size. A diff Workit
 cannot read reads as `focused`. The lane gates `workit pr merge`, `workit
 stack land`, the Stop hook and the task's `verdict:lane` requirement alike.
+
+The lane fails closed: when Workit is unsure a file is docs, a comment or
+formatting, it counts as a behavior change.
+
+- **Docs** are told by extension only: code under `docs/` or in a
+  `generated/` folder is code.
+- **Comments and formatting** are told by reading each whole file on both
+  sides with its strings, template literals and block comments, for
+  TypeScript and JavaScript (not JSX), C-family, Java, Kotlin, Go, Rust, CSS,
+  Python, TOML, SQL and markup without scripts. Directive comments
+  (`@ts-ignore`, `eslint-disable`, `noqa`, `//go:build` and the like),
+  shebangs and whitespace inside strings are code. Python, YAML, Makefiles,
+  other indentation-sensitive and unknown types ignore only trailing
+  whitespace; shell, Ruby, YAML and other types without a lexer keep their
+  comments.
+- **Generated copies** come only from the `.gitattributes` files of the base
+  revision (the fork point), never `.git/info/attributes`, a global
+  attributes file or the change itself.
+- **Risk paths** are decided first and override every other kind: a
+  comment-only, generated, docs or lockfile change on a risk path is still
+  `full`. Built in: a path part such as `auth`, `security`, `secret`, `gate`,
+  `policy`, `hooks`, `release`, `migrations` or `.github/workflows` (never a
+  test or a doc), CI files, every `.gitattributes`, and `.workit/risk-paths`.
+
+#### Repo risk paths: `.workit/risk-paths`
+
+A repository adds its own risk paths in `.workit/risk-paths`: one glob per
+line (`**` spans directories, `*` and `?` stay within one, a bare directory
+covers everything under it), `#` comments and blank lines skipped. Workit
+reads it from the base revision only, so a change cannot remove an entry
+to lower its own lane; entries only tighten. A change to the file is itself
+a risk path, and it protects the next change, not the one that adds it.
+Workit's marker directory ignores everything else in `.workit/`, so commit
+it with `git add -f .workit/risk-paths`.
+
+```text
+# merge gates and what they read
+src/billing/**
+packages/core/src/gates/merge.ts
+```
 A current independent failed verdict or a tampered ledger still blocks every
 lane. `verification: "self"` and `"independent"` keep their earlier rules,
 including a non-author verdict to merge.
