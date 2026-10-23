@@ -709,7 +709,7 @@ export function workitCheckTail(
     at = words.findIndex((word, index) => index > 0 && !word.startsWith("-"));
     if (at < 0 || !WORKIT_PACKAGE.test(words[at])) return null;
   } else if (!/^workit(?:\.exe|\.cmd)?$/.test(commandName(words[0]))) return null;
-  const args = words.slice(at + 1);
+  const args = skipWorkitGlobals(words.slice(at + 1)).rest;
   if (args[0] !== "check" && !(args[0] === "lock" && args[1] === "run")) return null;
   const split = args.indexOf("--");
   const tail = split < 0 ? [] : args.slice(split + 1);

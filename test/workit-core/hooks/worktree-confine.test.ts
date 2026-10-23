@@ -429,6 +429,26 @@ test("Given a bound implementer, When it puts workit global options before fanou
   ).toBeUndefined();
 });
 
+test("Given a bound implementer, When workit check or lock run names another directory with --cwd, Then the inner command is judged there: the lead's checkout is denied, its own worktree passes", () => {
+  const id = implementerBoundToA("impl-check-cwd");
+  for (const command of [
+    `workit check --cwd ${lead} -- git commit -am x`,
+    `workit --cwd ${lead} check -- git commit -am x`,
+    `workit check --cwd ${lead} -- touch f`,
+    `workit check --cwd ${lead} -- sh -c 'echo > f'`,
+    `workit check --cwd=${lead} --shell -- 'echo hi > f'`,
+    `workit lock run --cwd ${lead} -- sh -c 'echo > f'`,
+  ])
+    denies(command, id, `bound to the worktree ${wtA}`);
+  for (const command of [
+    `workit check --cwd ${wtA} -- git status`,
+    `workit check --cwd ${wtA} -- touch f`,
+    `workit check --cwd ${wtA} -- sh -c 'echo > f'`,
+    `workit lock run --cwd ${wtA} -- sh -c 'echo > f'`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+});
+
 test("Given a bound implementer, When a cd target cannot be resolved and a write follows, Then it is denied naming how to spell the path; reads after it, and the lead, are unaffected", () => {
   const id = implementerBoundToA("impl-unknown-dir");
   for (const command of [
