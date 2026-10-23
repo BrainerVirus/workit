@@ -42,9 +42,14 @@ const HOOK_ENTRIES = [
 // hook entry. Every size above was measured with a local Bun older than the
 // pinned one; the pinned Bun (package.json packageManager, CI's BUN_VERSION)
 // minifies the same graph to ~477-497 KB (Cursor 496,734 B after #320), so the
-// ceiling is 500 KB, measured with that Bun. Another Bun gives different sizes,
-// so the size check runs only on the pinned version.
-const BUDGET = 500_000;
+// ceiling was 500 KB, measured with that Bun (Cursor 499,796 B at v8.22.1).
+// Dropping the eager z.compile() of the operation schemas (#273: parseOperation
+// re-parsed with the canonical schema anyway) removes zod's compiler (~30 KB)
+// and ~28 ms of codegen from every runtime hook start: Cursor 469,397 B, Codex
+// 465,763 B, core run 465,299 B, Claude Code 449,479 B. The ceiling is that max
+// plus ~40 KB of headroom for wave 1.5 (#388), rounded to 510 KB. Another Bun
+// gives different sizes, so the size check runs only on the pinned version.
+const BUDGET = 510_000;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
