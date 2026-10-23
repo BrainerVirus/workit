@@ -31,7 +31,11 @@ import { WORKIT_ALLOWED_VERBS } from "@brainervirus/workit-core/src/hooks/delive
 import { claudeConfigDir } from "./host-install";
 
 export type PermissionHost = "claude-code" | "codex" | "cursor";
-export const PERMISSION_HOSTS: readonly PermissionHost[] = ["claude-code", "codex", "cursor"];
+const PERMISSION_HOSTS: ReadonlySet<string> = new Set<PermissionHost>([
+  "claude-code",
+  "codex",
+  "cursor",
+]);
 
 export const CLAUDE_ALLOW: readonly string[] = [
   ...WORKIT_ALLOWED_VERBS.map((verb) => `Bash(workit ${verb} *)`),
@@ -42,9 +46,9 @@ export const CLAUDE_ASK: readonly string[] = [
   "Bash(workit * --unverified*)",
   "Bash(workit * --overwrite-unintegrated*)",
 ];
-export const AUTO_MODE_ENVIRONMENT =
+const AUTO_MODE_ENVIRONMENT =
   "Org-specific CLIs: workit — the user's delivery CLI. Its push, pr merge, release and PR-thread verbs run only under per-workspace grants and non-author verdicts the user configured in ~/.config/workit, outside the agent's reach.";
-export const AUTO_MODE_ALLOW =
+const AUTO_MODE_ALLOW =
   "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `--unverified`, `--admin` or any bypass flag.";
 const DEFAULTS = "$defaults";
 
@@ -137,13 +141,13 @@ const appendList = (
   return null;
 };
 
-export type HostMerge = { config: Json; owned: OwnedEntries; error?: string };
+type HostMerge = { config: Json; owned: OwnedEntries; error?: string };
 
 /**
  * Claude Code user settings with Workit's block. `shell` (a bash path) is set
  * as `env.CLAUDE_CODE_SHELL` only when no value is set.
  */
-export function mergeClaudeSettings(settings: Json, shell: string | null): HostMerge {
+function mergeClaudeSettings(settings: Json, shell: string | null): HostMerge {
   const config = clone(settings);
   const owned = emptyOwned();
   const error =
@@ -164,7 +168,7 @@ export function mergeClaudeSettings(settings: Json, shell: string | null): HostM
 }
 
 /** Cursor CLI config with Workit's `Shell(workit <verb>)` allows. */
-export function mergeCursorCliConfig(config: Json): HostMerge {
+function mergeCursorCliConfig(config: Json): HostMerge {
   const next = clone(config);
   const owned = emptyOwned();
   const error = appendList(next, "permissions.allow", CURSOR_ALLOW, owned);
@@ -243,7 +247,7 @@ export function removeOwnedEntries(
 }
 
 /** Workit entries missing from a host config (empty when the block is whole). */
-export function missingEntries(config: Json, host: "claude-code" | "cursor"): string[] {
+function missingEntries(config: Json, host: "claude-code" | "cursor"): string[] {
   const missing: string[] = [];
   for (const [dotted, entries] of Object.entries(CANONICAL[host].lists)) {
     const at = valueAt(config, dotted);
@@ -296,7 +300,7 @@ const AGENT_SESSION_VARS = [
 ] as const;
 
 /** The variable showing this process runs inside an agent session, or null. */
-export const agentSessionVar = (env: NodeJS.ProcessEnv): string | null =>
+const agentSessionVar = (env: NodeJS.ProcessEnv): string | null =>
   AGENT_SESSION_VARS.find((name) => (env[name] ?? "") !== "") ?? null;
 
 type OwnershipRecord = {
@@ -415,7 +419,7 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
       plan.notes.push("pi: nothing to write; Pi has no permission layer");
       continue;
     }
-    if (!PERMISSION_HOSTS.includes(host as PermissionHost)) continue;
+    if (!PERMISSION_HOSTS.has(host)) continue;
     const target = permissionTarget(host as PermissionHost, paths);
     if (!existsSync(target.hostDir)) {
       plan.notes.push(`${host}: not installed (${target.hostDir} is missing); nothing written`);
