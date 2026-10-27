@@ -15,6 +15,7 @@
 // failure, npx network error, timeout, a crash) prints `{}`, exits 0 and
 // writes one `[workit] Cursor hook unavailable: …` line on stderr. Only a
 // policy deny from the hook itself (exit 2 with Cursor's deny JSON) blocks.
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -24,6 +25,35 @@ import {
 } from "./launch-runtime.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// A Node below this package's own engines minimum cannot run the bundled hook:
+// fail open with one clear line. WORKIT_HOOK_NODE_VERSION stands in for
+// process.versions.node (tests). An unreadable minimum never blocks.
+const nodeFloorMessage = () => {
+  try {
+    const found = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
+    const range = JSON.parse(readFileSync(path.join(pluginRoot, "package.json"), "utf8")).engines
+      ?.node;
+    const min = /^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(range ?? ""));
+    if (!min) return null;
+    const need = [min[1], min[2] ?? 0, min[3] ?? 0].map(Number);
+    const have = String(found).replace(/^v/, "").split(".").map(Number);
+    for (let i = 0; i < 3; i++) {
+      const a = have[i] ?? 0;
+      if (Number.isNaN(a)) return null;
+      if (a !== need[i]) return a < need[i] ? `needs Node ${range}, found ${found}` : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+const tooOld = nodeFloorMessage();
+if (tooOld && process.argv[2] !== "--probe") {
+  process.stderr.write(`[workit] Cursor hook unavailable: ${tooOld}\n`);
+  process.stdout.write("{}\n");
+  process.exit(0);
+}
 
 // `--probe <bin>` (for `workit doctor`): run one no-op preCompact through
 // the candidate Cursor would use and print which one it was and how it went.

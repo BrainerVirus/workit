@@ -123,6 +123,14 @@ host registers nothing its descriptor does not map. Guard:
 workit does not register yet is marked `none` there and listed below as
 missing.
 
+Node floor (#424): the Claude Code, Codex and Cursor hooks are separate `node`
+processes resolved from `PATH`. Each launcher reads the minimum from its own
+package's `engines.node` and, on an older Node, fails open (`{}`, exit 0) with
+`[workit] <Host> hook unavailable: needs Node >=24, found <v>` on stderr before
+loading dist; an unreadable minimum never blocks. `WORKIT_HOOK_NODE_VERSION`
+overrides the found version (tests). OpenCode and Pi hooks run in-process in the
+host's own runtime, so the `PATH` Node does not apply to them.
+
 N = native, P = partial, X = missing (the host has a mechanism workit does not
 use yet), L = host limit (the host has no mechanism for it).
 

@@ -33,6 +33,33 @@ const failOpen = (reason) => {
   process.stdout.write("{}\n");
 };
 
+// A Node below this package's own engines minimum cannot load dist: fail open
+// with one clear line instead of a syntax error. WORKIT_HOOK_NODE_VERSION
+// stands in for process.versions.node (tests). An unreadable minimum never blocks.
+const nodeFloorMessage = () => {
+  try {
+    const found = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
+    const range = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).engines?.node;
+    const min = /^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(range ?? ""));
+    if (!min) return null;
+    const need = [min[1], min[2] ?? 0, min[3] ?? 0].map(Number);
+    const have = String(found).replace(/^v/, "").split(".").map(Number);
+    for (let i = 0; i < 3; i++) {
+      const a = have[i] ?? 0;
+      if (Number.isNaN(a)) return null;
+      if (a !== need[i]) return a < need[i] ? `needs Node ${range}, found ${found}` : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+const tooOld = nodeFloorMessage();
+if (tooOld) {
+  failOpen(tooOld);
+  process.exit(0);
+}
+
 // Every Bash/PowerShell call and every file edit reaches this hook (branch
 // policy, raw git/forge steering and the before-write gate). Fast paths
 // answer `{}` before the runtime loads: a shell command with no git/gh/glab,
