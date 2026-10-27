@@ -1,0 +1,11 @@
+{
+  "id": "read-only-git-status",
+  "source": "retro 2026-10-27 codex §6: read-only raw git is fine",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "codex",
+    "fixture": "pre-tool-use-bash",
+    "overrides": { "tool_input": { "command": "git status --short" } }
+  },
+  "expect": { "kind": ["none"] }
+}

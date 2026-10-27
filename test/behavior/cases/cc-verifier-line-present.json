@@ -1,0 +1,19 @@
+{
+  "id": "cc-verifier-line-present",
+  "source": "#271 S2a regression: a judge starts with its exact verdict command",
+  "repo": {
+    "branch": "feature/x"
+  },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "subagent-start",
+    "overrides": {
+      "agent_id": "a0b1c2d3e4f5a6b7c",
+      "agent_type": "workit:verifier"
+    }
+  },
+  "expect": {
+    "kind": ["context"],
+    "require": ["`workit ledger verdict <verified\\|failed\\|blocked> ", "--branch feature/x "]
+  }
+}

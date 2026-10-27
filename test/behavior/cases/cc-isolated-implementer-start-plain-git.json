@@ -1,0 +1,11 @@
+{
+  "id": "cc-isolated-implementer-start-plain-git",
+  "source": "retro 2026-10-27 claude-code F3: the start text that the nudges contradict",
+  "repo": { "branch": "feature/x", "worktree": "claude-agent" },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "subagent-start",
+    "overrides": { "agent_id": "a0b1c2d3e4f5a6b7c", "agent_type": "workit:implementer" }
+  },
+  "expect": { "kind": ["context"], "require": ["never `workit git"] }
+}

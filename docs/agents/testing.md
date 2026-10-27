@@ -54,6 +54,22 @@ runs everything; `bun test <path>` runs one file.
   `test/shared/helpers/packages.ts`), so neither tier needs `bun run build`
   first.
 
+## Agent-behaviour eval
+
+Changes to what agents see (hook text, nudges, denials, tool schemas, skills,
+verb output) are proven against real failures, not prose (#425).
+
+- `test/behavior/cases/*.json`: one sanitised hook payload or CLI call from a
+  real session, with what the agent must and must not see (`kind`,
+  `require`/`forbid` regexes, `maxLines`, `exit`). A case with `"open": "#n"`
+  is a known defect and runs as an expected failure: the PR fixing #n drops
+  the mark, so the case goes red to green. Add the case before the fix.
+- `docs/qualification/context-budget.json`: the size of every agent-facing
+  item. `test/behavior/context-budget.test.ts` fails on any drift; `bun run
+  write:budget` rewrites it. A PR that grows a value needs the
+  `context-increase` label (`.github/workflows/context-budget.yml`); cut
+  elsewhere first.
+
 ## CI shards
 
 The macOS and Windows legs run `bun scripts/test.ts shard <i>/<n>
