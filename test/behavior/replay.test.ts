@@ -139,17 +139,29 @@ const textOf = (decision: HookDecision): string =>
     .filter(Boolean)
     .join("\n");
 
+/** The case itself is broken: an open case must not count it as its defect. */
+class SetupError extends Error {}
+const setup = <T>(step: () => T): T => {
+  try {
+    return step();
+  } catch (error) {
+    throw new SetupError(String(error));
+  }
+};
+
 const run = async (spec: Case): Promise<void> => {
-  const { cwd } = workspace(spec.repo);
+  const { cwd } = setup(() => workspace(spec.repo));
   const env = { ...process.env, ...(bind(spec.env, cwd) as Record<string, string>) };
   const { expect: want } = spec;
   if ("hook" in spec) {
     const adapter = ADAPTERS[spec.hook.host];
-    const payload = fixture(spec.hook.host, spec.hook.fixture, cwd, {
-      ...(bind(spec.hook.overrides, cwd) as Record<string, unknown>),
-    });
+    const payload = setup(() =>
+      fixture(spec.hook.host, spec.hook.fixture, cwd, {
+        ...(bind(spec.hook.overrides, cwd) as Record<string, unknown>),
+      }),
+    );
     const parsed = adapter.parse(payload, env);
-    if (!parsed.ok) throw new Error(`${spec.id}: payload does not parse: ${parsed.error}`);
+    if (!parsed.ok) throw new SetupError(`payload does not parse: ${parsed.error}`);
     const decision = handleHook(parsed.input, {
       descriptor: { ...adapter.descriptor, host: parsed.input.host },
       addendum: adapter.addendum?.(parsed.input) ?? null,
@@ -199,6 +211,16 @@ test("every case names its source and a unique id", () => {
 
 for (const spec of cases) {
   const name = `${spec.id} (${spec.source})`;
-  if (spec.open) test.failing(`${name} [open ${spec.open}]`, () => run(spec), 30_000);
-  else test(name, () => run(spec), 30_000);
+  if (!spec.open) test(name, () => run(spec), 30_000);
+  // An open case must fail on its expectation, not on a broken setup, and
+  // must be unmarked once its issue is fixed.
+  else
+    test(`${name} [open ${spec.open}]`, async () => {
+      const failure: unknown = await run(spec).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      if (failure === null) throw new Error(`${spec.id} passes now: drop "open": "${spec.open}"`);
+      if (failure instanceof SetupError) throw failure;
+    }, 30_000);
 }

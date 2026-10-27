@@ -10,6 +10,11 @@ const FILE = "docs/qualification/context-budget.json";
 const base = process.argv[2];
 if (!base) throw new Error("usage: check-budget-growth.ts <base-ref>");
 
+// A base git cannot resolve is an error, never "no growth".
+if (spawnSync("git", ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]).status !== 0) {
+  console.error(`context budget: cannot resolve base ${base}`);
+  process.exit(2);
+}
 const shown = spawnSync("git", ["show", `${base}:${FILE}`], { encoding: "utf8" });
 // The base predates the budget: nothing to compare.
 const before: Record<string, number> = shown.status === 0 ? JSON.parse(shown.stdout) : {};
