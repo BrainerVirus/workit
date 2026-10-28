@@ -709,39 +709,7 @@ function issueLines(
 
 const METHODS: ReadonlySet<string> = new Set<MergeMethod>(["squash", "merge", "rebase"]);
 
-const EXIT_NAMES: Record<number, string> = {
-  1: "failed",
-  2: "invalid_input",
-  3: "blocked",
-  4: "busy",
-  5: "unavailable",
-};
-
-/**
- * Every `pr merge` that does not merge ends in one stderr line with "error"
- * and "not merged" in it (#533): agents filter the output (`2>&1 | grep -E
- * '^merged|rror'`), and a refusal such as `workit: not_ready: …` slipped
- * through that filter and read as a silent no-op. A merge prints `merged …`
- * first on stdout; under --json the envelope says it.
- */
 async function merge(argv: string[], io: Io): Promise<number> {
-  if (io.json) return mergeOnce(argv, io);
-  let reason: string | null = null;
-  const code = await mergeOnce(argv, {
-    ...io,
-    stderr: (text) => {
-      reason ??= /^workit: ([a-z][a-z_]*):/u.exec(text)?.[1] ?? null;
-      io.stderr(text);
-    },
-  });
-  if (code !== 0)
-    io.stderr(
-      `workit: error: PR not merged (${reason ?? EXIT_NAMES[code] ?? "failed"}, exit ${code})\n`,
-    );
-  return code;
-}
-
-async function mergeOnce(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
     pr: "value",
     method: "value",

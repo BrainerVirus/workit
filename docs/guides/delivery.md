@@ -343,8 +343,12 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout.
   Anything else exits non-zero and ends with
   `workit: error: PR not merged (<reason>, exit <n>)` on stderr, after the
-  refusal and its `unblock:` line. The reason is the refusal code, such as
-  `not_ready` (checks still running, behind base) or `needs_verdict`. A
+  refusal and its `unblock:` line, whether the verb refused it or the
+  command line did (an unknown option is `invalid_input`, exit 2). The reason
+  is the refusal code, such as `not_ready` (checks still running, behind
+  base) or `needs_verdict`. `pr create`, `stack land` and `git push` end a
+  non-zero exit the same way, with `PR not created`, `stack not landed` and
+  `not pushed`. A
   forge that accepts the merge while the PR stays open (a merge queue or
   auto-merge holding it) is `merge_unverified`, exit 1, and
   `workit verify-delivery merged --pr <n>` confirms it later. A filter such as

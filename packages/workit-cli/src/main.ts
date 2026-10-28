@@ -190,57 +190,72 @@ export async function main(
 
   const entry = findVerb(command);
   if (!entry) return unknown(io, command);
-  // `-h`/`--help` anywhere before a bare `--` answers before the verb loads,
-  // so no verb can act on it (or take it as a value).
-  if (wantsHelp(verbArgs)) {
-    const word = firstWord(verbArgs);
-    const sub = word === undefined ? undefined : findSubcommand(entry, word);
-    const asValue = helpAsValue(verbArgs, sub ? [sub.usage] : usageLines(entry));
-    if (asValue)
-      return emit(
-        io,
-        fail("invalid_input", asValue, {
-          unblock: `workit help ${entry.name}${sub ? ` ${sub.name}` : ""}`,
-        }),
+  // Everything from here, a refusal before the verb runs included, ends in
+  // the delivery verb's outcome line when it exits non-zero.
+  const route = async (routed: Io): Promise<number> => {
+    // `-h`/`--help` anywhere before a bare `--` answers before the verb loads,
+    // so no verb can act on it (or take it as a value).
+    if (wantsHelp(verbArgs)) {
+      const word = firstWord(verbArgs);
+      const sub = word === undefined ? undefined : findSubcommand(entry, word);
+      const asValue = helpAsValue(verbArgs, sub ? [sub.usage] : usageLines(entry));
+      if (asValue)
+        return emit(
+          routed,
+          fail("invalid_input", asValue, {
+            unblock: `workit help ${entry.name}${sub ? ` ${sub.name}` : ""}`,
+          }),
+        );
+      return help(routed, sub ? subcommandHelp(entry, sub) : verbHelp(entry));
+    }
+    const ended = endOfOptions(routed, entry, args);
+    if (typeof ended === "number") return ended;
+    const checked = checkFlags(entry, ended);
+    if ("error" in checked)
+      return emit(routed, fail("invalid_input", checked.error, { unblock: checked.unblock }));
+    if (parsed.cwd !== null) {
+      try {
+        // Existing verbs resolve from process.cwd(); keep them in step with routed.cwd.
+        process.chdir(routed.cwd);
+      } catch {
+        return emit(routed, fail("invalid_input", `--cwd: cannot enter ${routed.cwd}`));
+      }
+      // An explicit --cwd beats an inherited workspace root (task.ts and the
+      // core read WORKFLOW_WORKSPACE_ROOT before process.cwd()).
+      if (process.env.WORKFLOW_WORKSPACE_ROOT !== undefined) {
+        process.env.WORKFLOW_WORKSPACE_ROOT = routed.cwd;
+        routed.env = process.env;
+      }
+    }
+    if (options.diagnostics) (await import("./diagnostics")).installDiagnostics(command);
+    // A 2.x store migrates on first use; say so once, on stderr (see
+    // workit-core store/notes.ts; a global slot keeps core off this path).
+    (globalThis as Record<symbol, unknown>)[Symbol.for("workit.migrationReporter")] = (report: {
+      from: string;
+      to: string;
+      backup: string;
+      tasks: number;
+    }) =>
+      routed.stderr(
+        `workit: migrated ${report.tasks} task${report.tasks === 1 ? "" : "s"} from ${report.from} to ${report.to} (backup: ${report.backup})\n`,
       );
-    return help(io, sub ? subcommandHelp(entry, sub) : verbHelp(entry));
-  }
-  const ended = endOfOptions(io, entry, args);
-  if (typeof ended === "number") return ended;
-  const checked = checkFlags(entry, ended);
-  if ("error" in checked)
-    return emit(io, fail("invalid_input", checked.error, { unblock: checked.unblock }));
-  if (parsed.cwd !== null) {
-    try {
-      // Existing verbs resolve from process.cwd(); keep them in step with io.cwd.
-      process.chdir(io.cwd);
-    } catch {
-      return emit(io, fail("invalid_input", `--cwd: cannot enter ${io.cwd}`));
-    }
-    // An explicit --cwd beats an inherited workspace root (task.ts and the
-    // core read WORKFLOW_WORKSPACE_ROOT before process.cwd()).
-    if (process.env.WORKFLOW_WORKSPACE_ROOT !== undefined) {
-      process.env.WORKFLOW_WORKSPACE_ROOT = io.cwd;
-      io.env = process.env;
-    }
-  }
-  if (options.diagnostics) (await import("./diagnostics")).installDiagnostics(command);
-  // A 2.x store migrates on first use; say so once, on stderr (see
-  // workit-core store/notes.ts; a global slot keeps core off this path).
-  (globalThis as Record<symbol, unknown>)[Symbol.for("workit.migrationReporter")] = (report: {
-    from: string;
-    to: string;
-    backup: string;
-    tasks: number;
-  }) =>
-    io.stderr(
-      `workit: migrated ${report.tasks} task${report.tasks === 1 ? "" : "s"} from ${report.from} to ${report.to} (backup: ${report.backup})\n`,
-    );
-  const verb = await entry.load();
-  const runVerb = (target: Io) => guarded(target, () => verb.run(checked.args, target));
-  if (!io.json) return withFailureLine(io, command, runVerb);
-  return runJsonPure(io, command, runVerb);
+    const verb = await entry.load();
+    const runVerb = (target: Io) => guarded(target, () => verb.run(checked.args, target));
+    return routed.json ? runJsonPure(routed, command, runVerb) : runVerb(routed);
+  };
+  if (io.json) return route(io);
+  const verbWord = firstWord(verbArgs);
+  const outcome = verbWord ? OUTCOMES[`${entry.name} ${verbWord}`] : undefined;
+  return withFailureLine(io, command, route, outcome);
 }
+
+/** What a delivery verb's non-zero exit did not do, said on its last line (#533). */
+const OUTCOMES: Record<string, string> = {
+  "pr merge": "PR not merged",
+  "pr create": "PR not created",
+  "stack land": "stack not landed",
+  "git push": "not pushed",
+};
 
 /**
  * A workspaces.json problem (an ambiguous glob, an invalid vcs entry) thrown

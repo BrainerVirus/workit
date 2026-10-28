@@ -101,17 +101,31 @@ export function emit<T>(
   return exitCodeFor(envelope.code);
 }
 
+const EXIT_NAMES: Record<number, EnvelopeCode> = {
+  1: "failed",
+  2: "invalid_input",
+  3: "blocked",
+  4: "busy",
+  5: "unavailable",
+};
+
 /**
- * Run a verb so that a non-zero exit always prints a line naming it (#533):
- * a verb that fails without writing anything through `io` still leaves
- * `workit: error: <command> failed (exit N)` on stderr.
+ * Run a verb so that a non-zero exit always prints a line naming it (#533).
+ * With an `outcome` (a delivery verb: "PR not merged"), every non-zero exit,
+ * refused before the verb ran or inside it, ends with
+ * `workit: error: <outcome> (<reason>, exit N)`: agents filter output with
+ * `grep -E '^merged|error'`, and a refusal such as `workit: not_ready: …`
+ * slipped through and read as a silent no-op. Without one, a verb that fails
+ * without writing anything still leaves `workit: error: <command> failed (exit N)`.
  */
 export async function withFailureLine(
   io: Io,
   command: string,
   run: (io: Io) => Promise<number>,
+  outcome?: string,
 ): Promise<number> {
   let wrote = false;
+  let reason: string | null = null;
   const code = await run({
     ...io,
     stdout: (text) => {
@@ -120,10 +134,16 @@ export async function withFailureLine(
     },
     stderr: (text) => {
       wrote ||= text.length > 0;
+      reason ??= /^workit: ([a-z][a-z_]*):/u.exec(text)?.[1] ?? null;
       io.stderr(text);
     },
   });
-  if (code !== 0 && !wrote) io.stderr(`workit: error: ${command} failed (exit ${code})\n`);
+  if (code === 0) return code;
+  if (outcome)
+    io.stderr(
+      `workit: error: ${outcome} (${reason ?? EXIT_NAMES[code] ?? "failed"}, exit ${code})\n`,
+    );
+  else if (!wrote) io.stderr(`workit: error: ${command} failed (exit ${code})\n`);
   return code;
 }
 

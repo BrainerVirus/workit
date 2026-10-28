@@ -455,3 +455,61 @@ test("given the forge accepts the merge but the PR stays open (merge queue, auto
   );
   expect(merges(runner.calls)).toHaveLength(1);
 });
+
+// #533 review: a usage error is caught before the verb runs (unknown flag,
+// stray positional after `--`, `--help` taken as a value); it ends in the
+// same outcome line, for every delivery verb the guide names.
+const lastLine = (out: string) => out.trimEnd().split("\n").at(-1);
+
+test.each([
+  [["pr", "merge", "--bogus"], "PR not merged"],
+  [["pr", "merge", "--", "extra"], "PR not merged"],
+  [["pr", "merge", "--reason", "--help"], "PR not merged"],
+  [["pr", "create", "--bogus"], "PR not created"],
+  [["stack", "land", "--bogus"], "stack not landed"],
+  [["git", "push", "--bogus"], "not pushed"],
+])(
+  "given %p, when it is refused before the verb runs, then it ends with 'workit: error: %s'",
+  async (argv, outcome) => {
+    const { repo, runner } = setup(DOCS);
+    const result = await run(argv, repo.cwd);
+    expect(result.code).toBe(2);
+    expect(lastLine(result.stderr)).toBe(`workit: error: ${outcome} (invalid_input, exit 2)`);
+    expect(merges(runner.calls)).toEqual([]);
+  },
+);
+
+test("given a delivery verb refused before it runs under --json, then stdout is the envelope alone", async () => {
+  const { repo } = setup(DOCS);
+  const result = await run(["pr", "merge", "--bogus", "--json"], repo.cwd);
+  expect(result.code).toBe(2);
+  expect(result.json()).toMatchObject({ ok: false, code: "invalid_input" });
+  expect(result.stderr).not.toContain("not merged");
+});
+
+test("given an in-verb refusal of pr merge, then the outcome line is printed once", async () => {
+  const { repo } = setup(DOCS, {}, "github/pr-pending.json");
+  const result = await run(["pr", "merge"], repo.cwd);
+  expect(result.stderr.match(/not merged/gu)).toHaveLength(1);
+});
+
+test.each([
+  [["pr", "merge", "--squash", "--rebase"], "PR not merged"],
+  [["pr", "create", "--title", "not a conventional title"], "PR not created"],
+  [["stack", "land", "--name", "nowhere"], "stack not landed"],
+  [["git", "push", "--expect", "abc"], "not pushed"],
+])(
+  "given %p, when the verb itself refuses, then it ends with 'workit: error: %s'",
+  async (argv, outcome) => {
+    const { repo, runner } = setup(DOCS);
+    const result = await run(argv, repo.cwd);
+    expect(result.code, result.stderr).not.toBe(0);
+    expect(lastLine(result.stderr)).toMatch(
+      new RegExp(`^workit: error: ${outcome} \\([a-z_]+, exit ${result.code}\\)$`, "u"),
+    );
+    expect(result.stderr.match(/^workit: error: /gmu)).toHaveLength(1);
+    // The verb ran: its own refusal precedes the outcome line, not the router's.
+    expect(result.stderr).not.toContain("unknown option");
+    expect(merges(runner.calls)).toEqual([]);
+  },
+);
