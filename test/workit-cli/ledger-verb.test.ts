@@ -146,6 +146,11 @@ test("ledger records decisions, rulings and verdicts and lists them, including v
   expect(listed.rows[0].refs).toEqual(["docs/x.md"]);
   const onlyVerdicts = (await run(root, ["ledger", "list", "--type", "verdict", "--json"])).json();
   expect(onlyVerdicts.data.rows).toHaveLength(1);
+  const findings = await run(root, ["ledger", "list", "--type", "finding"]);
+  expect(findings.stdout).toContain("workit finding list");
+  expect(
+    (await run(root, ["ledger", "list", "--type", "finding", "--json"])).json().data.note,
+  ).toContain("workit finding list");
   const human = await run(root, ["ledger", "list"]);
   expect(human.stdout).toContain(
     "ruling [feature/x]  derive seq on read (why: no lock; cost if wrong: rows reorder)",

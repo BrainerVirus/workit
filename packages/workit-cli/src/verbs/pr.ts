@@ -10,7 +10,7 @@
 // `--subject`/`--body` (squash only) set the squash commit message.
 // ready/edit/threads/reply: the lifecycle steps `next` names (audit M13).
 import { endpointMismatch, resolveAutonomy } from "@brainervirus/workit-core/src/autonomy";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   label as issueLabel,
@@ -68,6 +68,7 @@ import {
   vcsConfig,
   type ResolvedReleaseTrack,
 } from "@brainervirus/workit-core/src/core/vcs-config";
+import { checkRoot } from "@brainervirus/workit-core/src/check-config";
 import { emit, fail, ok, type Io } from "../output";
 import {
   connect,
@@ -80,6 +81,116 @@ import {
   unverifiedFlag,
   usage,
 } from "./forge-common";
+
+const CONVENTIONAL_TYPES = [
+  "build",
+  "chore",
+  "ci",
+  "docs",
+  "feat",
+  "fix",
+  "perf",
+  "refactor",
+  "revert",
+  "style",
+  "test",
+];
+const COMMITLINT_FILES = [
+  ".commitlintrc.json",
+  ".commitlintrc",
+  ".commitlintrc.js",
+  ".commitlintrc.cjs",
+  ".commitlintrc.mjs",
+  ".commitlintrc.ts",
+  "commitlint.config.js",
+  "commitlint.config.cjs",
+  "commitlint.config.mjs",
+  "commitlint.config.ts",
+];
+
+type TitleRules = { types: string[] | null; maxHeader: number | null };
+
+/** The rule value `[level, "always", value]` of a JSON commitlint rule, unless disabled (level 0). */
+const ruleValue = (rules: Record<string, unknown>, name: string): unknown => {
+  const rule = rules[name];
+  if (!Array.isArray(rule) || rule[0] === 0 || rule[1] === "never") return undefined;
+  return rule[2];
+};
+
+/**
+ * The type and header-length rules of the repo's commitlint config (JSON forms;
+ * a JS/TS config is read for config-conventional and header-max-length only),
+ * or null when the repo has none.
+ */
+function titleRules(cwd: string): TitleRules | null {
+  let root: string;
+  try {
+    root = checkRoot(cwd);
+  } catch {
+    return null;
+  }
+  let text: string | null = null;
+  for (const name of COMMITLINT_FILES) {
+    const candidate = path.join(root, name);
+    if (!existsSync(candidate)) continue;
+    text = readFileSync(candidate, "utf8");
+    break;
+  }
+  const rules: TitleRules = { types: null, maxHeader: null };
+  if (text === null) {
+    try {
+      const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
+        commitlint?: unknown;
+      };
+      if (pkg.commitlint === undefined) return null;
+      text = JSON.stringify(pkg.commitlint);
+    } catch {
+      return null;
+    }
+  }
+  type Config = { extends?: unknown; rules?: Record<string, unknown> };
+  const parseConfig = (source: string): Config | null => {
+    try {
+      return JSON.parse(source) as Config;
+    } catch {
+      return null;
+    }
+  };
+  const config = parseConfig(text);
+  const conventional = config
+    ? JSON.stringify(config.extends ?? []).includes("config-conventional")
+    : text.includes("config-conventional");
+  if (conventional) {
+    rules.types = CONVENTIONAL_TYPES;
+    rules.maxHeader = 100;
+  }
+  if (config?.rules) {
+    const types = ruleValue(config.rules, "type-enum");
+    if (Array.isArray(types)) rules.types = types.map(String);
+    const max = ruleValue(config.rules, "header-max-length");
+    if (typeof max === "number") rules.maxHeader = max;
+  } else if (!config) {
+    const max =
+      /["']?header-max-length["']?\s*:\s*\[\s*[12]\s*,\s*["']always["']\s*,\s*(\d+)/u.exec(text);
+    if (max) rules.maxHeader = Number(max[1]);
+  }
+  return rules.types || rules.maxHeader !== null ? rules : null;
+}
+
+/** An error naming the exact rule and length a PR title breaks, or null when it passes (or no config). */
+export function prTitleError(cwd: string, title: string): string | null {
+  const rules = titleRules(cwd);
+  if (!rules) return null;
+  const header = title.split("\n", 1)[0] ?? "";
+  const parsed = /^(\w+)(\([^)]*\))?!?: \S/u.exec(header);
+  if (!parsed)
+    return `PR title ${JSON.stringify(header)} is not a Conventional Commit "<type>(<scope>): <subject>" (commitlint type-empty/subject-empty); the squash-merge title is the commit and CI lints it`;
+  if (rules.types && !rules.types.includes(parsed[1]))
+    return `PR title type "${parsed[1]}" is not allowed (commitlint type-enum: ${rules.types.join(", ")})`;
+  if (rules.maxHeader !== null && header.length > rules.maxHeader)
+    return `PR title is ${header.length} characters, over the ${rules.maxHeader} allowed (commitlint header-max-length); shorten it by ${header.length - rules.maxHeader}`;
+  return null;
+}
 
 const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]";
 const CREATE_USAGE =
@@ -400,6 +511,9 @@ async function create(argv: string[], io: Io): Promise<number> {
   if (!base)
     return usage(io, "no default target branch is configured; pass --base <b>", CREATE_USAGE);
 
+  // A given title is checked before any forge call; a --fill title once it is derived.
+  const givenProblem = flags.values.title ? prTitleError(io.cwd, flags.values.title) : null;
+  if (givenProblem) return usage(io, givenProblem, CREATE_USAGE);
   const connected = connect(io, branch);
   if (!connected.ok) return forgeFail(io, connected);
   let title = flags.values.title ?? "";
@@ -408,6 +522,10 @@ async function create(argv: string[], io: Io): Promise<number> {
     if (!filled.ok) return forgeFail(io, filled);
     title ||= filled.data.title;
     body ??= filled.data.body;
+  }
+  if (!flags.values.title) {
+    const filledProblem = prTitleError(io.cwd, title);
+    if (filledProblem) return usage(io, filledProblem, CREATE_USAGE);
   }
   const forge = connected.data.forge;
   const planned = planIssueLinks(io.cwd, {
@@ -684,6 +802,10 @@ async function edit(argv: string[], io: Io): Promise<number> {
     const read = readBodyFile(io, flags.values["body-file"]);
     if (typeof read === "string") return usage(io, read, EDIT_USAGE);
     body = read.body;
+  }
+  if (flags.values.title !== undefined) {
+    const titleProblem = prTitleError(io.cwd, flags.values.title);
+    if (titleProblem) return usage(io, titleProblem, EDIT_USAGE);
   }
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);

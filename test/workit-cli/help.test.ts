@@ -66,6 +66,8 @@ const PARSERS: Record<string, string[]> = {
   handoff: ["verbs/handoff.ts", "task.ts#parseHandoffArgs"],
 };
 PARSERS.task = [...PARSERS.task, "verbs/task.ts"];
+// `finding list` has its own read-only parser.
+PARSERS.finding = [...PARSERS.finding, "task.ts#runFindingList"];
 
 // Flags a parser names but does not accept for this verb.
 const NOT_ACCEPTED: Record<string, string[]> = {
@@ -76,7 +78,7 @@ const NOT_ACCEPTED: Record<string, string[]> = {
       name,
       [
         ...(name === "policy" ? [] : ["--judge", "--ref", "--why"]),
-        ...(name === "task" ? [] : ["--status"]),
+        ...(name === "task" || name === "finding" ? [] : ["--status"]),
       ],
     ]),
   ),
@@ -409,9 +411,9 @@ test("given --json, then help is an envelope carrying the usage and the text", (
       group: "delivery",
       subcommand: "push",
       usage:
-        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…]",
+        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]]",
       usages: [
-        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…]",
+        "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]]",
       ],
     },
   });

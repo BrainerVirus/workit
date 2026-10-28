@@ -54,7 +54,7 @@ export const TASK_ACTIONS = {
   task: ["start", "list", "inspect", "revise", "progress", "pause", "resume", "close"],
   policy: ["assess", "preview", "explain"],
   evidence: ["record"],
-  finding: ["record", "resolve"],
+  finding: ["record", "resolve", "list"],
   decision: ["record", "revoke"],
   worker: ["assign", "report", "cancel"],
   state: ["export", "import"],
@@ -151,7 +151,10 @@ async function payloadValue(
     const value = JSON.parse(source) as unknown;
     return isObject(value)
       ? { ok: true, value }
-      : { ok: false, result: failure("invalid_input", "payload must be a JSON object") };
+      : {
+          ok: false,
+          result: failure("invalid_input", "payload must be a JSON object"),
+        };
   } catch (error) {
     return {
       ok: false,
@@ -384,7 +387,11 @@ const contextFor = (
   now: deps.now ?? (() => new Date().toISOString()),
 });
 
-type RequirementEvaluation = { requirementId: string; status: string; reason: string };
+type RequirementEvaluation = {
+  requirementId: string;
+  status: string;
+  reason: string;
+};
 
 /**
  * A recorded policy with each requirement's current status, so the output
@@ -398,7 +405,11 @@ function laneOf(root: string) {
   } catch {
     verification = DEFAULT_VERIFICATION;
   }
-  const lane = branchLane(root, { head: null, workingTree: true, judgment: currentJudgment(root) });
+  const lane = branchLane(root, {
+    head: null,
+    workingTree: true,
+    judgment: currentJudgment(root),
+  });
   return {
     lane: lane.lane,
     reasons: lane.reasons,
@@ -492,7 +503,75 @@ function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false)
   }
 }
 
+const FINDING_LIST_USAGE = "workit finding list [--branch <b>] [--status open|resolved] [--json]";
+
+/** `workit finding list`: findings of this checkout's tasks, read-only, newest last. */
+function runFindingList(argv: string[], deps: TaskCliDeps): number {
+  let json = false;
+  let branch: string | undefined;
+  let status: string | undefined;
+  const fail = (message: string): number => {
+    if (json) jsonResult(outOf(deps), usage(message));
+    else write(errOf(deps), `${message}\nusage: ${FINDING_LIST_USAGE}`);
+    return 2;
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
+    const token = eq > 0 ? argv[i].slice(0, eq) : argv[i];
+    if (token === "--json") json = true;
+    else if (token === "--branch" || token === "--status") {
+      const value = eq > 0 ? argv[i].slice(eq + 1) : argv[++i];
+      if (value === undefined || !value.trim()) return fail(`${token} requires a value`);
+      if (token === "--branch") branch = value;
+      else status = value;
+    } else return fail(`unknown argument: ${argv[i]}`);
+  }
+  if (status !== undefined && status !== "open" && status !== "resolved")
+    return fail(`--status is open or resolved (got ${status})`);
+  const store = new TaskStore(workspaceRootFor(deps));
+  const index = store.listTaskIndex();
+  const tasks = store.listTasks();
+  const result: Result<unknown> = !index.ok ? index : !tasks.ok ? tasks : success(null, null, null);
+  if (!result.ok || !index.ok || !tasks.ok) {
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 1;
+  }
+  const keys = new Map(index.data.map((entry) => [entry.id, entry.key]));
+  const rows = tasks.data
+    .filter((task) => branch === undefined || keys.get(task.id) === branch)
+    .flatMap((task) =>
+      task.findings
+        .filter(
+          (item) =>
+            status === undefined || (item.data.disposition === "open") === (status === "open"),
+        )
+        .map((item) => ({
+          id: item.id,
+          taskId: task.id,
+          branch: keys.get(task.id) ?? null,
+          disposition: item.data.disposition,
+          recordedAt: item.recordedAt,
+          claim: item.data.claim,
+        })),
+    );
+  if (json) jsonResult(outOf(deps), success(null, null, { findings: rows }));
+  else if (!rows.length)
+    write(
+      outOf(deps),
+      "no findings recorded (record one: workit finding record --payload '{…}'); ledger rows hold verdicts and rulings, not findings",
+    );
+  else
+    for (const row of rows)
+      write(
+        outOf(deps),
+        `${row.id} ${row.disposition}${row.branch ? ` [${row.branch}]` : ""} (task ${row.taskId}) ${row.claim}`,
+      );
+  return 0;
+}
+
 export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Promise<number> {
+  if (argv[0] === "finding" && argv[1] === "list") return runFindingList(argv.slice(2), deps);
   const parsed = await parseTaskArgs(argv, deps);
   if (!parsed.ok) {
     if (parsed.json) jsonResult(outOf(deps), parsed.result);
@@ -508,7 +587,9 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
   try {
     // Delivered tasks close on the next task command (#322); `list` always re-reads the ledger.
     const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-    closeDeliveredTasks(store, now, { cached: parsed.parsed.action !== "list" });
+    closeDeliveredTasks(store, now, {
+      cached: parsed.parsed.action !== "list",
+    });
   } catch {
     // best effort: the next command retries
   }

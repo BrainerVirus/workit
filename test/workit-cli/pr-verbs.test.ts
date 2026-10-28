@@ -991,3 +991,30 @@ test("verify-delivery released: package specs that are not an npm name and semve
   expect((await run(["verify-delivery", "--tag", "v1&calc", "--json"], repo.cwd)).code).toBe(2);
   expect(called).toBe(0);
 });
+
+// ---------------------------------------------------------------------------
+// PR title vs the repo's commitlint rules
+
+test("pr create and pr edit refuse a title over the commitlint header length or with a bad type, before any forge call", async () => {
+  const { repo, runner } = setup("github", {});
+  writeFileSync(
+    path.join(repo.cwd, ".commitlintrc.json"),
+    JSON.stringify({ extends: ["@commitlint/config-conventional"] }),
+  );
+  const long = `feat(x): ${"a".repeat(95)}`;
+  expect(long.length).toBe(104);
+  const tooLong = await run(
+    ["pr", "create", "--base", "main", "--title", long, "--json"],
+    repo.cwd,
+  );
+  expect(tooLong.code).not.toBe(0);
+  expect(tooLong.stdout + tooLong.stderr).toContain("104 characters, over the 100 allowed");
+  expect(tooLong.stdout + tooLong.stderr).toContain("header-max-length");
+  const badType = await run(["pr", "create", "--base", "main", "--title", "wip: x"], repo.cwd);
+  expect(badType.code).not.toBe(0);
+  expect(badType.stdout + badType.stderr).toContain("type-enum");
+  const edited = await run(["pr", "edit", "--pr", "12", "--title", long], repo.cwd);
+  expect(edited.code).not.toBe(0);
+  expect(edited.stdout + edited.stderr).toContain("header-max-length");
+  expect(runner.calls).toHaveLength(0);
+});
