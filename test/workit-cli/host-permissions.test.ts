@@ -426,6 +426,8 @@ test("Given a Cursor block an older Workit wrote, When `workit upgrade --apply -
     },
     run: () => ({ status: 1, stdout: "" }),
     activeHosts: () => [],
+    // The closing doctor is not under test here; never run the real subset.
+    doctor: () => ({ checks: [] }),
     out: { write: (text) => void (stdout += text) },
   });
   expect(code, stdout).toBe(0);
