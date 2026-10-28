@@ -912,3 +912,49 @@ test("a child session with a persisted worker but no observed direct launch is d
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// #435: a mid-session model switch re-sends the compact contract once.
+test("Given a lead session, When its model changes mid-session, Then the next model call carries the contract once and no other call does", async () => {
+  const root = repository();
+  try {
+    const { sessionHooks, cleanup } = await harness(root);
+    const context = sessionHooks.get("context")!;
+    const switchParts = async (model: { id: string; providerID: string }) => {
+      const system: Array<{ type: string; text: string }> = [];
+      await context({ sessionID: "ses_v2", model, system });
+      return system.filter((part) => part.text.startsWith("<workit-model-switch>"));
+    };
+    const strong = { id: "strong", providerID: "anthropic" };
+    const flash = { id: "glm-flash", providerID: "zhipu" };
+    expect(await switchParts(strong)).toHaveLength(0);
+    expect(await switchParts(strong)).toHaveLength(0);
+    const switched = await switchParts(flash);
+    expect(switched).toHaveLength(1);
+    expect(switched[0].text).toContain("<workit-contract>");
+    expect(await switchParts(flash)).toHaveLength(0);
+    if (typeof cleanup === "function") void cleanup();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// #435: the same failing Workit tool call twice in a row names the corrected call.
+test("Given a failing workit_finding call, When the identical call fails again, Then its error ends with the corrected payload; different args do not", async () => {
+  const root = repository();
+  try {
+    const { call, cleanup } = await harness(root);
+    const bad = { schemaVersion: 1, action: "record", claim: "x" };
+    const first = await call("workit_finding", bad);
+    expect(first.ok).toBe(false);
+    expect(first.error).not.toContain("Same call failed twice:");
+    const second = await call("workit_finding", { ...bad });
+    expect(second.error.split("\n").at(-1)).toBe(
+      'Same call failed twice: workit_finding {"action":"record","claim":"<claim>","consequence":"<consequence>"}',
+    );
+    const other = await call("workit_finding", { ...bad, claim: "y" });
+    expect(other.error).not.toContain("Same call failed twice:");
+    if (typeof cleanup === "function") void cleanup();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
