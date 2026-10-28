@@ -830,13 +830,21 @@ export function applyUpgrade(plan: UpgradePlan, deps: UpgradeDeps = {}): Upgrade
     writeFileAtomic(migration.file, JSON.stringify(value, null, 2) + "\n", 0o600);
   }
   const run = runner(deps);
+  // A failed backup fails only Cursor's row: never repair without one.
+  let cursorBackupError: string | null = null;
   if (plan.entries.some((entry) => entry.host === "cursor") && existsSync(paths.cursorRoot))
-    cpSync(paths.cursorRoot, path.join(backup, "cursor-package"), {
-      recursive: true,
-    });
+    try {
+      cpSync(paths.cursorRoot, path.join(backup, "cursor-package"), { recursive: true });
+    } catch (error) {
+      cursorBackupError = `could not back up the Cursor plugin: ${errorText(error)}`;
+    }
   const listed = plan.entries.length ? listProcesses(deps) : [];
   const running = (listed ?? []).flatMap((entry) => classifyProcess(entry) ?? []);
   for (const entry of plan.entries) {
+    if (entry.host === "cursor" && cursorBackupError) {
+      hosts.push({ host: "cursor", status: "failed", reason: cursorBackupError, fix: entry.fix });
+      continue;
+    }
     if (!LIVE_HOSTS.has(entry.host)) {
       if (listed === null) {
         hosts.push({
@@ -873,9 +881,22 @@ export function applyUpgrade(plan: UpgradePlan, deps: UpgradeDeps = {}): Upgrade
       });
       continue;
     }
+    // Everything between the daemon's stop and start is caught, so the start
+    // below always runs.
     let outcome: HostOutcome;
     try {
       outcome = applyEntry(entry, { run, paths, configDir });
+      if (entry.host === "codex" && outcome.status === "updated") {
+        const agents = refreshCodexAgents(run, paths.codexHome);
+        if (!agents.ok)
+          outcome = {
+            ...outcome,
+            status: "failed",
+            reason: `${outcome.reason}; ${agents.note}`,
+            fix: agents.fix,
+          };
+        else if (agents.note) outcome = { ...outcome, reason: `${outcome.reason}; ${agents.note}` };
+      }
     } catch (error) {
       outcome = {
         host: entry.host,
@@ -883,17 +904,6 @@ export function applyUpgrade(plan: UpgradePlan, deps: UpgradeDeps = {}): Upgrade
         reason: errorText(error),
         fix: entry.fix,
       };
-    }
-    if (entry.host === "codex" && outcome.status === "updated") {
-      const agents = refreshCodexAgents(run, paths.codexHome);
-      if (!agents.ok)
-        outcome = {
-          ...outcome,
-          status: "failed",
-          reason: `${outcome.reason}; ${agents.note}`,
-          fix: agents.fix,
-        };
-      else if (agents.note) outcome = { ...outcome, reason: `${outcome.reason}; ${agents.note}` };
     }
     if (stopDaemon) {
       const started = run("codex", ["app-server", "daemon", "start"]).status === 0;
@@ -921,7 +931,16 @@ export function applyUpgrade(plan: UpgradePlan, deps: UpgradeDeps = {}): Upgrade
   }
   // Codex already current: its agent copies can still lag behind the plugin.
   if (hosts.some((entry) => entry.host === "codex" && entry.status === "current")) {
-    const agents = refreshCodexAgents(run, paths.codexHome);
+    let agents: ReturnType<typeof refreshCodexAgents>;
+    try {
+      agents = refreshCodexAgents(run, paths.codexHome);
+    } catch (error) {
+      agents = {
+        ok: false,
+        note: `agent refresh failed: ${errorText(error)}`,
+        fix: "workit upgrade --hosts=codex",
+      };
+    }
     const index = hosts.findIndex((entry) => entry.host === "codex" && entry.status === "current");
     if (!agents.ok)
       hosts[index] = {
@@ -936,7 +955,12 @@ export function applyUpgrade(plan: UpgradePlan, deps: UpgradeDeps = {}): Upgrade
         reason: `${hosts[index].reason}; ${agents.note}`,
       };
   }
-  if (plan.cli) hosts.push(applyCli(plan.cli, run, backup));
+  if (plan.cli)
+    try {
+      hosts.push(applyCli(plan.cli, run, backup));
+    } catch (error) {
+      hosts.push({ host: "cli", status: "failed", reason: errorText(error), fix: CLI_FIX });
+    }
   return done(backup);
 }
 

@@ -49,7 +49,7 @@ const world = () => {
   claudeRegistry("1.0.0");
   write(path.join(codexCache, "2.0.0/dist/launch-mcp.js"), "");
   let codexVersion = "1.0.0";
-  const state = { codexFails: false, daemon: [] as string[] };
+  const state = { codexFails: false, agentsThrow: false, daemon: [] as string[] };
   const run = (command: string, args: string[]) => {
     calls.push([command, ...args]);
     const line = args.join(" ");
@@ -87,6 +87,8 @@ const world = () => {
       if (state.codexFails) return { status: 1, stdout: "" };
       codexVersion = "2.0.0";
     }
+    if (command === "node" && args.at(-1) === "--install-agents" && state.agentsThrow)
+      throw new Error("spawn node ENOENT");
     if (command === "codex" && args[0] === "app-server") state.daemon.push(args[2]);
     if (command === "claude" && args[1] === "update") claudeRegistry("2.0.0");
     return { status: 0, stdout: "" };
@@ -296,6 +298,25 @@ test("Given Codex fails while its daemon is stopped, Then the daemon is still st
     });
     expect(w.state.daemon).toEqual(["stop", "start"]);
     expect(result.ok).toBe(false);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given the Codex agent refresh throws while its daemon is stopped, Then the daemon is still started and only Codex fails", () => {
+  const w = world();
+  try {
+    w.state.agentsThrow = true;
+    const plan = previewUpgrade(["codex"], w.deps);
+    const result = applyUpgrade(plan, {
+      ...w.deps,
+      processes: () => [{ pid: 12, state: "Ssl", args: "codex app-server" }],
+    });
+    expect(w.state.daemon).toEqual(["stop", "start"]);
+    expect(result.hosts.find((entry) => entry.host === "codex")).toMatchObject({
+      status: "failed",
+      reason: expect.stringContaining("spawn node ENOENT"),
+    });
   } finally {
     w.cleanup();
   }
