@@ -649,6 +649,61 @@ test("stack sync: after the root was squash-merged on the forge, the rest is res
   );
 });
 
+const localBranch = (forge: StackForge, branch: string) =>
+  forge.git("for-each-ref", "--format=%(objectname)", `refs/heads/${branch}`) || null;
+
+test("stack restack (#506): after the root was squash-merged, the child is rebased onto main past the old root tip, its PR retargeted to main, and the merged root branch deleted locally", async () => {
+  const forge = setup("github");
+  await plan(forge);
+  const oldA = localBranch(forge, "feature/a") as string;
+  forge.mergeExternally(11);
+  const result = await run(["stack", "restack", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  const data = result.json().data;
+  expect(data.merged).toEqual([{ branch: "feature/a", pr: 11 }]);
+  expect(data.steps[0]).toMatchObject({
+    branch: "feature/b",
+    parent: "main",
+    restack: { from: oldA },
+    retarget: { from: "feature/a", to: "main" },
+  });
+  expect(data.pruned).toEqual({ deleted: ["feature/a"], kept: [] });
+  expect(localBranch(forge, "feature/a")).toBeNull();
+  // feature/b carries only its own commits on top of main: none of a's pre-squash ones.
+  expect(isAncestor(forge.cwd, oldA, "feature/b")).toBe(false);
+  expect(isAncestor(forge.cwd, "origin/main", "feature/b")).toBe(true);
+  expect(forge.prs.get(12)?.base).toBe("main");
+  // The other branches stay; a second run deletes nothing more.
+  for (const branch of ["feature/b", "feature/c", "feature/d"])
+    expect(localBranch(forge, branch)).not.toBeNull();
+  const again = await run(["stack", "restack", "--json"], forge.cwd);
+  expect(again.code, again.stderr + again.stdout).toBe(0);
+  expect(again.json().data.pruned).toEqual({ deleted: [], kept: [] });
+  const text = await run(["stack", "restack"], forge.cwd);
+  expect(text.stdout).toContain("synced stack");
+});
+
+test("stack restack: a merged branch with local commits the stack never recorded, or one checked out, is kept and named; --dry-run deletes nothing", async () => {
+  const forge = setup("github");
+  await plan(forge);
+  forge.mergeExternally(11);
+  const dry = await run(["stack", "restack", "--dry-run", "--json"], forge.cwd);
+  expect(dry.code, dry.stderr + dry.stdout).toBe(0);
+  expect(dry.json().data.pruned).toEqual({ deleted: ["feature/a"], kept: [] });
+  expect(localBranch(forge, "feature/a")).not.toBeNull();
+  onBranch(forge, "feature/a", () => {
+    writeFileSync(path.join(forge.cwd, "late.txt"), "late\n");
+    forge.git("add", "late.txt");
+    forge.git("commit", "-qm", "chore: late");
+  });
+  const result = await run(["stack", "restack", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data.pruned.deleted).toEqual([]);
+  expect(result.json().data.pruned.kept[0]).toMatchObject({ branch: "feature/a" });
+  expect(result.json().data.pruned.kept[0].reason).toContain("not recorded");
+  expect(localBranch(forge, "feature/a")).not.toBeNull();
+});
+
 test("stack sync: a restack conflict stops blocked with the rebase-continue unblock; unprocessed branches keep their recorded state; continuing resumes", async () => {
   // Code files: a docs-only resolution would carry the verdict (#334).
   const forge = setup("github", undefined, undefined, "ts");

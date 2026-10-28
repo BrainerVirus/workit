@@ -1846,6 +1846,60 @@ export function syncStack(
   return { ok: true, data: outcome };
 }
 
+export type PruneOutcome = {
+  /** Merged stack branches deleted locally (or that would be, on a dry run). */
+  deleted: string[];
+  /** Merged stack branches left in place, with why. */
+  kept: Array<{ branch: string; reason: string }>;
+};
+
+/**
+ * Delete the local branches of merged stack entries (#506): only branches
+ * this stack recorded, only once their PR or ancestry reads merged, and only
+ * when the local tip is still the head the stack last recorded (nothing
+ * committed on it since) and no worktree has it checked out. Remote
+ * branches are left to the forge's delete-on-merge.
+ */
+export function pruneMergedBranches(
+  cwd: string,
+  stack: StackFile,
+  options: { dryRun: boolean },
+): PruneOutcome {
+  const outcome: PruneOutcome = { deleted: [], kept: [] };
+  for (const entry of stack.branches) {
+    if (!entry.merged || !safeRef(entry.branch) || entry.branch === stack.trunk) continue;
+    const tip = branchTip(cwd, entry.branch);
+    if (!tip) continue;
+    if (entry.lastHead === null || tip !== entry.lastHead) {
+      outcome.kept.push({
+        branch: entry.branch,
+        reason: `its tip ${tip.slice(0, 12)} is not recorded by the stack (last ${entry.lastHead?.slice(0, 12) ?? "none"}); commits made after it merged stay`,
+      });
+      continue;
+    }
+    const owner = worktreeOf(cwd, entry.branch);
+    if (owner) {
+      outcome.kept.push({
+        branch: entry.branch,
+        reason: `checked out in ${owner}; switch it away, then git branch -D ${entry.branch}`,
+      });
+      continue;
+    }
+    if (!options.dryRun) {
+      const removed = gitRun(cwd, ["branch", "-D", "--", entry.branch]);
+      if (!removed.ok) {
+        outcome.kept.push({
+          branch: entry.branch,
+          reason: `git branch -D failed: ${removed.stderr.trim().split("\n")[0] ?? ""}`,
+        });
+        continue;
+      }
+    }
+    outcome.deleted.push(entry.branch);
+  }
+  return outcome;
+}
+
 const commitCount = (cwd: string, base: string, head: string): number =>
   Number(gitRun(cwd, ["rev-list", "--count", "--no-merges", `${base}..${head}`]).stdout.trim()) ||
   0;

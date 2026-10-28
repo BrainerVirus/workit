@@ -623,6 +623,12 @@ export const VERBS: readonly VerbEntry[] = [
         summary: "Restack onto the moved bases, lease-push and retarget the PRs",
       },
       {
+        name: "restack",
+        usage: "workit stack restack [--name <n>] [--dry-run] [--force <branch>]…",
+        summary:
+          "After a parent merged (squash too): sync, then delete the merged stack branches locally",
+      },
+      {
         name: "land",
         usage:
           "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--timeout 20m] [--interval 30s]",

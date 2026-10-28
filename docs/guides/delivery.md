@@ -453,6 +453,7 @@ child PR on its parent branch) on GitHub and GitLab.
 workit stack plan [--trunk <b> | --track <t>] [<bottom> … <top>]   # record the chain (default: the current branch's)
 workit stack status                    # per PR: READY | WAITING | ADVANCE | COMPLETE
 workit stack sync [--local] [--dry-run] [--force <branch>]
+workit stack restack [--dry-run] [--force <branch>]                # sync, then delete the merged branches locally
 workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>]
 ```
 
@@ -467,6 +468,17 @@ workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>]
   commits are refused.
 - A restacked branch with the same patch-id and diff keeps its verdict; CI
   always runs again.
+- After a parent PR lands by squash, run `workit stack restack`. A squash
+  merge leaves the child carrying the parent's pre-squash commits, so a plain
+  rebase onto the trunk would replay them. `restack` reads the merge from the
+  forge, rebases the child with `git rebase --onto <trunk> <old parent tip>`
+  (only the child's own commits move), lease-pushes it, retargets its PR to
+  the trunk, then deletes the merged parent branch locally. It deletes only
+  branches the stack recorded, and only while the local tip is still the head
+  the stack last saw and no worktree has it checked out; otherwise it keeps
+  the branch and says why. Remote branches are left to the forge's
+  delete-on-merge. Plan the stack (`workit stack plan`) before the parent
+  merges: the recorded parent tip is what `--onto` replays from.
 - `land` merges the contiguous run from the root whose PRs are READY and
   verified, one at a time through `pr merge`'s gates, and stops at the first
   that does not qualify with a reason (`no_verdict`, `not_ready`,
@@ -576,7 +588,12 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   The lead needs a `WORKIT_SESSION_ID` (it refuses without one); a worker id
   longer than 128 characters hashes its slice part.
 - Slices are independent PRs off the trunk by default. A slice with exactly
-  one `dependsOn` is stacked on that slice's branch.
+  one `dependsOn` is stacked on that slice's branch. Once every dependency
+  has landed (a merged PR, or git finds the squashed change on the trunk),
+  `worktree create` starts the dependent slice from the trunk instead of the
+  dependency's pre-squash tip, says so in a note, and its brief names the
+  trunk as the base. `check` then diffs such a child against the trunk, so a
+  landed parent's files never read as edits outside the child's scope.
 - `plan` exits 2 (`invalid_input`) and lists every empty or placeholder brief
   field, unknown or cyclic dependency and bad glob. It exits 3 (`blocked`)
   when two slices may write the same file. It checks the trunk's files plus
@@ -643,9 +660,13 @@ resume`). It also makes `<worktree>/.workit-scratch`, hidden from git
   ignore `node_modules`, nothing is linked and a note says so. Nothing is
   linked either when a lockfile (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`,
   `package-lock.json`) differs between the main checkout and the worktree: a
-  stale main checkout would hand the slice the wrong versions. The output (and
-  `install` in `--json`) then names the exact command to run, such as
-  `bun install --frozen-lockfile --cwd <worktree>`.
+  stale main checkout would hand the slice the wrong versions. Nor when the
+  main checkout's `node_modules` were installed for an older `bun.lock` (it
+  was pulled without `bun install`): every top-level package `bun.lock` pins
+  must be installed at that version. The output (and `install` in `--json`)
+  then names the exact command to run, such as
+  `bun install --frozen-lockfile --cwd <worktree>`, and the brief's `INSTALL:`
+  line repeats it.
 - An implementer subagent is confined to such a worktree by Workit's
   pre-tool hooks (Claude Code; Codex when it names the agent on the tool
   call): its first edit or mutating git command inside one binds it
