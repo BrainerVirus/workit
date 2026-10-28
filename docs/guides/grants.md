@@ -47,8 +47,13 @@ the two, and nothing is granted when the main checkout's entries tie or its
 entry has grants without `vcs.account`. Agents add worktrees anywhere, so a
 worktree outside your stricter repo entry never picks up a broader one's
 grants. Account, policies and issues still come from the worktree's own entry.
-When a cap refuses a grant, the unblock names the entry that capped it (or
-the tied entries), not the one you would widen by mistake.
+A submodule is capped the same way by its superproject, and up the chain (a
+submodule inside a linked worktree is capped by that worktree's main
+checkout too). When git cannot tell what a checkout is (git missing, a
+broken `.git` file, a failing or timed-out command), nothing is granted
+there until it can. When a cap refuses a grant, the unblock names the entry
+that capped it (or the tied entries, or the git failure), not the one you
+would widen by mistake.
 
 ## Releasing
 
