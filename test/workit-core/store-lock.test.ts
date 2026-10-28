@@ -357,12 +357,18 @@ test("Given doctor --fix-lock is preempted while a writer reclaims the same stal
       child.stdout.on("data", (chunk) => (out += chunk));
       child.on("close", () => done(out));
     });
-  // The doctor pauses 400 ms right before removing the lock (models preemption).
+  // The doctor pauses 400 ms right before removing the lock (models
+  // preemption) and marks that moment, so the writers start only once it has
+  // judged the lock stale: under load a fixed head start was not enough (#415).
+  const paused = `${lockPath}.doctor-paused`;
   const doctor = run(`
     import fs from "node:fs";
     const rm = fs.rmSync;
     fs.rmSync = (p, ...rest) => {
-      if (String(p).endsWith("metadata.lock")) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+      if (String(p).endsWith("metadata.lock")) {
+        fs.writeFileSync(${JSON.stringify(paused)}, "");
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+      }
       return rm(p, ...rest);
     };
     const { clearStaleMetadataLock } = await import(${JSON.stringify(storeModule2)});
@@ -381,7 +387,9 @@ test("Given doctor --fix-lock is preempted while a writer reclaims the same stal
     });
     console.log(JSON.stringify({ label: ${JSON.stringify(label)}, code: r.ok ? "ok" : r.code, span }));
   `;
-  await new Promise((done) => setTimeout(done, 150));
+  for (const until = Date.now() + 20_000; !existsSync(paused) && Date.now() < until;)
+    await new Promise((done) => setTimeout(done, 10));
+  expect(existsSync(paused)).toBe(true);
   const first = run(writer("W", 800));
   await new Promise((done) => setTimeout(done, 500));
   const second = run(writer("X", 100));

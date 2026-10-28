@@ -106,8 +106,9 @@ Each leg runs `bun scripts/test.ts ci <ubuntu|macos|windows> <i>/<n>`: bun
 picks the shard's files (`bun test --shard`), balanced by the per-file
 durations in `test/timings/<leg>.json`. Ubuntu runs the unit tier as four
 shards plus a separate packaging job; macOS (three shards) and Windows (eight)
-run `test/workit-core` and `test/artifacts`. Shards run their files serially:
-under `bun test --parallel` workers hung with unreaped children (#415). Aggregator jobs
+run `test/workit-core` and `test/artifacts`. Each shard spreads its files
+across workers (`bun test --parallel`; it hung on Bun 1.4.1, not on 1.4.4,
+#415). Aggregator jobs
 keep the required check names (`test (ubuntu-latest)`, `test (macos-latest)`,
 `test (windows-latest)`).
 

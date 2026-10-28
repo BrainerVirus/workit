@@ -30,10 +30,9 @@ const PACKAGING = [
 // `setDefaultTimeout`, which wins over this flag.
 const WINDOWS_TIMEOUT_MS = 15_000;
 
-// Each CI leg's tests. Every leg runs its shard's files serially: under
-// `bun test --parallel` (Bun 1.4.1) a worker could spin forever with an
-// unreaped git/node child, hanging the job until its timeout, on Ubuntu and
-// macOS alike, depending on which files shared a worker (#415).
+// Each CI leg's tests. Every leg spreads its shard's files across workers
+// (`bun test --parallel`). On Bun 1.4.1 workers could spin forever with an
+// unreaped git/node child; Bun 1.4.4 runs the whole suite clean (#415).
 const LEGS = {
   ubuntu: PACKAGING.map((pattern) => `--path-ignore-patterns=${pattern}`),
   macos: ["./test/workit-core", "./test/artifacts"],
@@ -56,6 +55,7 @@ function runCiShard(leg: string | undefined, spec: string | undefined): number {
     `--shard=${spec}`,
     `--timings=test/timings/${leg}.json`,
     "--update-timings",
+    "--parallel",
     ...(process.platform === "win32" ? [`--timeout=${WINDOWS_TIMEOUT_MS}`] : []),
     ...select,
   ]);
