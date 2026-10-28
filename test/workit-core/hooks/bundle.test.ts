@@ -97,7 +97,7 @@ test("a hook bundle loads no doctor/setup modules or the core barrel, within its
       const size = statSync(outfile).size;
       // Printed so a PR sees how much room its hook change leaves.
       console.log(
-        `hook bundle ${entry}: ${size} B, ${BUDGET - size} B under ${BUDGET} (Bun ${Bun.version}${sizeCheckApplies ? "" : `, unpinned; sizes differ from ${PINNED_BUN}`})`,
+        `hook bundle ${entry}: ${size} B, ${BUDGET - size} B under ${BUDGET} (Bun ${Bun.version}${sizeCheckApplies ? "" : `, unpinned; the budget applies on ${PINNED_BUN}`})`,
       );
       if (sizeCheckApplies) expect(size, entry).toBeLessThanOrEqual(BUDGET);
     }
