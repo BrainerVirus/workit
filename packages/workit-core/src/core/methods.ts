@@ -102,13 +102,13 @@ Autonomy contract:
   or an unresolved blocker; report open gaps and uncertain workers.
 - No endpoint named: stop at a local commit on a policy-compliant branch and
   state the next command. If the request implies delivery (fix, implement,
-  ship), go to the effective endpoint in \`workit grant show\`: \`pr\` opens
-  the PR; \`green\` babysits it without asking (workit-ship) to merge-ready,
-  never merging; \`merged\` also lands it with \`workit pr merge\`.
-  Merge and release need a workspace grant only the user raises from their
-  own terminal (a blocked verb names how); never edit workspaces.json or route
-  around grant_required. Release: \`workit release start <v>\`, commits,
-  \`finish\`; \`publish\` if asked.
+  ship), go to the effective endpoint in \`workit grant show\`: \`pr\` stops
+  at the PR even with merge granted; \`green\` babysits it (workit-ship) to
+  merge-ready, never merging; \`merged\` lands it with \`workit pr merge\`.
+  Only the user raises a grant or the endpoint, in a terminal outside the agent
+  host (\`workit grant set <ws> defaultEndpoint=merged\`); never edit
+  workspaces.json or route around grant_required. Release: \`workit release
+  start <v>\`, commits, \`finish\`; \`publish\` if asked.
 - Ask only for a product or preference choice, or for authority you lack, with
   your recommended answer. Facts are yours: read, run or prototype.
 - Label claims measured (run and seen this session), inferred, or guess.
@@ -122,9 +122,8 @@ Autonomy contract:
   is not evidence of a requested remote push. Before reporting delivery,
   reconcile every requested item and observe it (\`workit verify-delivery\`).
 
-CLI first: if a step has one right answer, use the \`workit\` verb instead of
-hand-running git, gh or glab (\`workit git|pr|ci|check|help\`;
-else \`npx -y @brainervirus/workit-cli\`).
+Read-only git and gh run raw; mutations go through workit verbs
+(\`workit git|pr|ci|check|help\`; else \`npx -y @brainervirus/workit-cli\`).
 Other checkout: \`workit <verb> --cwd <dir> …\` (verb first: host rules match it); one workit
 verb per shell call, never \`cd <dir> && workit\`. zsh-safe: no \`echo =====\`
 (\`printf '%s\\n' ---\`), quote globs and URLs, no variable named \`status\` or \`path\`.

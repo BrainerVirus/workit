@@ -1,7 +1,6 @@
 {
   "id": "cc-isolated-implementer-raw-push",
   "source": "retro 2026-10-27 claude-code F3: implementers told never workit git",
-  "open": "#428",
   "repo": {
     "branch": "feature/x",
     "worktree": "claude-agent"

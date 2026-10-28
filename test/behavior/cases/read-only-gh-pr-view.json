@@ -1,7 +1,6 @@
 {
   "id": "read-only-gh-pr-view",
   "source": "retro 2026-10-27 opencode \u00a75 and claude-code F6: 163 ignored pr-read nudges",
-  "open": "#428",
   "repo": {
     "branch": "feature/x"
   },

@@ -6,8 +6,10 @@
 //     remote onto a protected branch or the default target, naming the
 //     workit command;
 //   - lets routine raw commands run (`git commit`, a feature-branch push,
-//     `gh pr create|view|checks`, `glab mr create|view`) with a short nudge,
-//     once per kind per session, and none on a command that runs workit.
+//     `gh pr create`, `glab mr create`) with a short nudge, once per kind per
+//     session, only for an agent no start text told how to run git
+//     (steering.ts), and none on a command that runs workit. Read-only
+//     commands (`gh pr view|checks`, `git status`) get none.
 // A raw `git commit` is recorded as the session's `commit.recorded` row so
 // the author's own verdict never reads as independent. The pre-tool hook
 // notes HEAD before the command (a marker in the commit's own repository);
@@ -1697,8 +1699,8 @@ const nudgeFor = (action: RawAction, host: HookInput["host"], session: string): 
         : `workit: prefer ${quote("workit git push")}: it refuses protected branches and verifies the remote tip.`;
     case "pr-create":
       return `workit: prefer ${quote("workit pr create --fill")} (or --title/--body): it records the PR the merge gate checks.`;
+    // Read-only: raw is fine (the contract says so once).
     case "pr-read":
-      return `workit: ${quote("workit pr status")} shows the PR, its checks and the verdict state; ${quote("workit ci wait")} waits for checks.`;
     case "merge":
       return null;
   }

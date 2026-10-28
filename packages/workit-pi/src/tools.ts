@@ -26,6 +26,7 @@ import {
   type HookEvent,
   type HookInput,
 } from "@brainervirus/workit-core/hooks";
+import { roleSteering } from "@brainervirus/workit-core/src/hooks/steering";
 import type {
   ExtensionContext,
   AgentToolResult,
@@ -205,9 +206,12 @@ export const observeToolResult = (
       toolUseId: event.toolCallId,
     });
     handleHook(post, { descriptor: PI_DESCRIPTOR, addendum: null });
-    // A Pi worker is a subagent: the raw-git nudge only, never a skill nudge.
+    // A Pi worker is a subagent: never a skill nudge, and a git nudge only
+    // when its role's brief does not already say how to run git (#428).
+    const named = process.env.WORKIT_PI_WORKER_ROLE;
+    const role = named === "implementer" ? "implementer" : named ? "judge" : null;
     const nudge = process.env.WORKIT_PI_WORKER_SESSION
-      ? rawGitPre(post, command)
+      ? rawGitPre(post, command, { nudge: roleSteering(role, false).nudges })
       : shellNudge(post, command);
     return nudge.kind === "context"
       ? { content: [...event.content, { type: "text", text: nudge.text }] }
