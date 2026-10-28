@@ -3,7 +3,7 @@
 // hook issued is never an accepted independent verdict, and it cannot retire,
 // discount or carry another row. Legitimate flows (host-issued subagent ids,
 // --as, CI --session, chained rows from an older CLI) still pass.
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
@@ -36,6 +36,9 @@ import {
   type LedgerResult,
   type SessionSource,
 } from "@/packages/workit-core/src/ledger";
+
+// Gate checks spawn git and the CLI per test: over 5 s on macOS CI (#415).
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 
 // Issued ids are issued once per user state dir: this file gets its own, so
 // ids other test files issue under the same names never collide with these.

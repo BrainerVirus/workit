@@ -1,4 +1,4 @@
-import { describe, expect, test, spyOn } from "bun:test";
+import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -8,6 +8,9 @@ import {
   publishChanged,
 } from "@/packages/workit-core/scripts/publish-changed-packages";
 import { RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release-scope";
+
+// Measured over 15 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 function repo({ tagged = true }: { tagged?: boolean } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-pubchg-"));

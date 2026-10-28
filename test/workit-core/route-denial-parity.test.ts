@@ -11,8 +11,9 @@ import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
 import { handleCursorHook } from "@/packages/workit-cursor/hooks/workit-hook";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 
-// Measured over 5 s per test on loaded Windows runners (#415).
-if (process.platform === "win32") setDefaultTimeout(60_000);
+// Every test runs every host's hook: over 5 s on macOS CI and on loaded
+// Windows runners (#415).
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 
 const previousEnv = {
   config: process.env.WORKFLOW_TOOLKIT_CONFIG,

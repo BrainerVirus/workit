@@ -163,15 +163,12 @@ test("Given slow competing writes on every attempt, When the lock budget elapses
   const budget = defaultLockTimeout();
   setDefaultLockTimeout(100);
   try {
-    const begin = performance.now();
     const result = core.task(progress(taskId));
-    const elapsed = performance.now() - begin;
     expect(result).toMatchObject({ ok: false, code: "busy" });
     // 40 ms per interleaved write against a 100 ms budget: the deadline, not
-    // the 8-attempt cap, ends the loop. The wall-clock bound is loose because
-    // CI runners stretch the sleeps; the attempt count is the real check.
+    // the 8-attempt cap, ends the loop. No wall-clock bound: loaded runners
+    // stretched the sleeps past one (1,967 ms on Windows, #415).
     expect(probe.attempts()).toBeLessThan(8);
-    expect(elapsed).toBeLessThan(1_500);
   } finally {
     setDefaultLockTimeout(budget);
   }
