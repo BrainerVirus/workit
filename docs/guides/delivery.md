@@ -692,23 +692,26 @@ workit check test --no-lease --reason "<why>"  # run it now, outside the lease (
 workit lock status                # who holds the lease; `workit lock wait` waits for a slot
 ```
 
-- **Which checks are heavy.** The named checks `test`, `build` and `typecheck`
-  are heavy by default. An ad-hoc `workit check -- <cmd>` takes the lease only
-  with `--heavy`. A raw heavy shell command an agent runs (`npx jest`, `npm
-run test:ci`) is rewritten through the lease, or denied with the exact
-  rewrite on Codex and Cursor. A chain with heavy parts is denied with each
-  part's lease command, and a command a host permission rule names runs
-  outside the lease ([verification guide](verification.md#heavy-commands-and-the-lease)).
-  `--wait <s>` sets the wait for the lease; without it the wait is `wait`
-  (600 s), capped at 100 s inside a Claude Code or OpenCode shell.
-- **The lease.** The lease has `slots` places (default 1) across every
-  worktree and agent of the user. A heavy check that finds them all taken
-  prints one `waiting for the heavy-check lease` line naming the holder's
-  check, pid, session, age and directory. It polls once a second, up to
-  `wait` seconds (default 600). If the wait runs out, it exits 4 (`busy`) and
-  lists the holders. The lease is released when the check ends, also on
-  Ctrl-C or SIGTERM. Leases are files under the Workit state dir
-  (`~/.local/state/workit/leases` on Linux).
+- **Which checks are heavy.** The named checks `test` and `build` are heavy by
+  default; `lint`, `typecheck` and `format` are light and never take the lease
+  (`resources.light` in workspaces.json changes the list). An ad-hoc
+  `workit check -- <cmd>` takes the lease only with `--heavy`. A raw heavy
+  shell command an agent runs (`npx jest`, `npm run test:ci`) is rewritten
+  through the lease, or denied with the exact rewrite on Codex and Cursor. A
+  chain with heavy parts is denied with each part's lease command, and a
+  command a host permission rule names runs outside the lease
+  ([verification guide](verification.md#heavy-commands-and-the-lease)).
+- **The lease is a queue.** It has `slots` places (default 1) across every
+  worktree and agent of the user. A heavy check that finds them taken joins a
+  first-come-first-served queue, says where it stands, and prints a status
+  line every 30 s (holder, position, elapsed). It waits up to `--wait <dur>`
+  (`90`, `90s`, `30m`, `1h`; default `resources.wait`, 30 min); `--no-wait`
+  refuses at once. Only `--no-wait` or a real timeout exits 4 (`busy`), naming
+  the holders and the queue. `workit lock status` lists holders and the queue.
+  A foreground shell tool call (about 2 min on Claude Code and OpenCode) can
+  end before a long wait: run long checks in the background. The lease is
+  released when the check ends, also on Ctrl-C or SIGTERM. Leases are files
+  under the Workit state dir (`~/.local/state/workit/leases` on Linux).
 - **Stale leases.** A lease stays held while its `workit` process runs. If
   `workit` is killed outright (SIGKILL), the lease stays held while the
   check's process group or scope still has processes, so two heavy checks
