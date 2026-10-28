@@ -57,7 +57,7 @@ type UpgradeHost = HostId | "cli";
 /** One process the OS lists: `ps -eo pid=,stat=,args=` (or tasklist on Windows). */
 export type HostProcess = { pid: number; state: string; args: string };
 /** What upgrade did for one host; the run ends with one row per host. */
-export type HostOutcome = {
+type HostOutcome = {
   host: UpgradeHost;
   status: "updated" | "current" | "skipped" | "failed";
   reason: string;
