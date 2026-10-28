@@ -240,6 +240,11 @@ A checkout pin uses `"file:///path/to/workit/packages/workit-opencode"` after
 `bun packages/workit-opencode/scripts/build.ts`. Never pin into pnpm dlx or
 `_npx` cache paths.
 
+Update with `workit upgrade` (native fallback:
+`opencode plugin update @brainervirus/workit-opencode`). OpenCode 2.x loads
+the new version live, with no restart. Uninstall with `workit uninstall`, or
+remove the entry from `plugins`.
+
 The plugin (V2 `setup()` API, self-contained bundle) registers nine tools: the
 seven task families, read-only `workit_context`, and `workit_init_apply`. It
 adds the eleven skills with `wk-*` commands (an existing user skill with the
@@ -256,7 +261,9 @@ moves an entry from the deprecated `plugin` key, and doctor warns until it does.
 
 Select Cursor in `workit init`: it registers the plugin (copied as a real
 directory into `~/.cursor/plugins/local/workit`), MCP server, session hook,
-the `workit-contract` rule and the skills. Manual MCP config:
+the `workit-contract` rule and the skills. Update with `workit upgrade`
+(it reinstalls missing plugin files; `workit upgrade --hosts=cursor` updates
+Cursor alone); uninstall with `workit uninstall`. Manual MCP config:
 
 ```json
 {
@@ -301,6 +308,14 @@ read-only for unattested callers; mutations run through
 codex plugin marketplace add https://github.com/BrainerVirus/workit.git
 codex plugin add workit@workflow-toolkit
 ```
+
+Update with `workit upgrade`: it stops the Codex app-server daemon
+(`codex app-server daemon stop`), runs
+`codex plugin marketplace upgrade workflow-toolkit` and
+`codex plugin add workit@workflow-toolkit` (the native fallback), refreshes
+the agent files and starts the daemon again. Open interactive Codex sessions
+are never killed; that host is skipped with its pid. A new Codex session picks
+up the update. Uninstall with `workit uninstall`.
 
 The plugin bundles documented lifecycle hooks and the shared MCP server.
 Reads run over MCP; mutations run through the CLI. Codex has no slash
@@ -356,6 +371,10 @@ pi install npm:@brainervirus/workit-pi
 pi install ./packages/workit-pi -l --approve   # local checkout
 ```
 
+Update with `workit upgrade` (native fallback:
+`pi update --extension npm:@brainervirus/workit-pi`); uninstall with
+`workit uninstall`.
+
 Pi 1.4.0 loads the extension and skills from the package's `pi` manifest. The
 extension uses Pi's native session identity, exposes the seven families plus
 read-only `workit_context`, and bundles a coordinator that launches fresh
@@ -375,7 +394,7 @@ reads the `packages` in `~/.pi/agent/settings.json` and `.pi/settings.json`
   extension in `pi config`), or reinstall the package; a local checkout gets
   `cd <checkout> && bun run build`.
 - stale: the package is older than the workit CLI and a newer one is
-  published. Fix: `workit upgrade` (native: `pi update npm:@brainervirus/workit-pi`), or
+  published. Fix: `workit upgrade` (native: `pi update --extension npm:@brainervirus/workit-pi`), or
   `pi install npm:@brainervirus/workit-pi@<version>` for a pinned entry. When
   the registry is unreachable, or the entry is a local checkout, an older
   package passes and the detail says it was not compared.
