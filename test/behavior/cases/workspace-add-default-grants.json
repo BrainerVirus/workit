@@ -1,0 +1,14 @@
+{
+  "id": "workspace-add-default-grants",
+  "source": "retro 2026-10-27 (#444): nested entries could only be added through the wizard; an agent shell adds one and it starts at the default grants",
+  "env": { "CLAUDECODE": "1" },
+  "cli": { "argv": ["workspace", "add", "kit", "--glob", "/home/you/work/libs/kit/**"] },
+  "expect": {
+    "exit": [0],
+    "require": [
+      "kit \\(/home/you/work/libs/kit/\\*\\*\\) added",
+      "push=true pr=true merge=false release=false rerun=true"
+    ],
+    "forbid": ["merge=true", "merge=verified"]
+  }
+}

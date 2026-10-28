@@ -1,0 +1,10 @@
+{
+  "id": "workspace-set-refuses-grant",
+  "source": "#444: an agent shell asked to let one folder land PRs must not raise the grant through workspace set",
+  "env": { "CLAUDECODE": "1" },
+  "cli": { "argv": ["workspace", "set", "ui-kit", "defaultEndpoint=merged"] },
+  "expect": {
+    "exit": [3],
+    "require": ["workit grant set ui-kit defaultEndpoint=merged", "own terminal"]
+  }
+}
