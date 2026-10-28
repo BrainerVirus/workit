@@ -10,8 +10,47 @@
 //     or the agent is a workit-implementer (worktree confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
-import { maybeHeavy, stateDir } from "@brainervirus/workit-core/src/core/heavy-words";
-import { standingPending } from "@brainervirus/workit-core/src/hooks/standing-signal";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** A Node below this package's own engines minimum cannot load the bundle: the
+ * message for a fail-open answer, else null. WORKIT_HOOK_NODE_VERSION stands
+ * in for process.versions.node (tests); an unreadable minimum never blocks. */
+const nodeFloorMessage = (): string | null => {
+  try {
+    const found = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const range = (
+      JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
+        engines?: { node?: string };
+      }
+    ).engines?.node;
+    const min = /^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(range ?? ""));
+    if (!min) return null;
+    const need = [min[1], min[2] ?? 0, min[3] ?? 0].map(Number);
+    const have = String(found).replace(/^v/, "").split(".").map(Number);
+    for (let i = 0; i < 3; i++) {
+      const a = have[i] ?? 0;
+      if (Number.isNaN(a)) return null;
+      if (a !== need[i]) return a < need[i] ? `needs Node ${range}, found ${found}` : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const tooOld = nodeFloorMessage();
+if (tooOld) {
+  process.stderr.write(`[workit] Codex hook unavailable: ${tooOld}\n`);
+  process.stdout.write("{}\n");
+  process.exit(0);
+}
+
+// Loaded after the floor check: a static import would evaluate the runtime first.
+const { maybeHeavy, stateDir } = await import("@brainervirus/workit-core/src/core/heavy-words");
+const { standingPending } = await import("@brainervirus/workit-core/src/hooks/standing-signal");
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);

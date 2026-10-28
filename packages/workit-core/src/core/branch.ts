@@ -318,6 +318,16 @@ export const validateCommitMessagePolicy = (
   };
 };
 
+/**
+ * A TypeError or ReferenceError while resolving a policy is a bug in this
+ * runtime (or a host too old for it), not a config problem the user can
+ * repair: it propagates so the hook's failure decision applies instead of a
+ * misleading "repair or select a valid workspace policy".
+ */
+const rethrowRuntimeBug = (error: unknown): void => {
+  if (error instanceof TypeError || error instanceof ReferenceError) throw error;
+};
+
 export const validateBranchNameFor = (
   workspaceRoot: string,
   name: string,
@@ -326,6 +336,7 @@ export const validateBranchNameFor = (
     const resolved = branchPolicySnapshotFor(workspaceRoot);
     return validateBranchNamePolicy(name, resolved.namePolicy, resolved.source);
   } catch (error) {
+    rethrowRuntimeBug(error);
     const correction = "repair or select a valid workspace policy before creating a branch";
     return {
       ok: false,
@@ -347,6 +358,7 @@ export const validateCommitMessageFor = (
     const resolved = commitPolicySnapshotFor(workspaceRoot);
     return validateCommitMessagePolicy(message, resolved.policy, resolved.source);
   } catch (error) {
+    rethrowRuntimeBug(error);
     const correction = "repair or select a valid workspace policy before committing";
     return {
       ok: false,

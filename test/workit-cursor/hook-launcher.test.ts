@@ -306,3 +306,25 @@ test("a .cmd shim whose path holds cmd metacharacters runs as one escaped, verba
     verbatim: false,
   });
 });
+
+test("#424: Given Node below the package engines minimum, When the launcher runs, Then it answers {} and names both versions", () => {
+  const root = plugin({ version: "1.2.3", bundled: "#!/bin/sh\necho '{\"ran\":true}'\n" });
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ name: PKG, version: "1.2.3", engines: { node: ">=24" } }),
+  );
+  const old = launch(root, SHELL_PAYLOAD, {
+    PATH: "/usr/bin:/bin",
+    WORKIT_HOOK_NODE_VERSION: "20.11.1",
+  });
+  expect(old.status).toBe(0);
+  expect(JSON.parse(old.stdout)).toEqual({});
+  expect(old.stderr.trim()).toBe(
+    "[workit] Cursor hook unavailable: needs Node >=24, found 20.11.1",
+  );
+  const ok = launch(root, SHELL_PAYLOAD, {
+    PATH: "/usr/bin:/bin",
+    WORKIT_HOOK_NODE_VERSION: "24.1.0",
+  });
+  expect(ok.stderr).not.toContain("needs Node");
+});
