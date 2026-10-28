@@ -11,6 +11,7 @@ import {
 import { claudeCodeAdapter } from "./hosts/claude-code";
 import { codexAdapter } from "./hosts/codex";
 import { cursorAdapter } from "./hosts/cursor";
+import { recordHookRun } from "./hook-runs";
 import type { HostAdapter, HostId } from "./protocol";
 
 type ProcessHost = Exclude<HostId, "opencode" | "pi">;
@@ -44,6 +45,12 @@ export async function runHookProcess(
   } catch {
     raw = undefined;
   }
+  const native = (raw as { hook_event_name?: unknown } | null | undefined)?.hook_event_name;
+  recordHookRun(
+    typeof host === "string" ? host : adapter.descriptor.host,
+    typeof native === "string" ? native : null,
+    env,
+  );
   const result =
     text === null
       ? skippedHook(adapter, undefined, env, budget, "input")

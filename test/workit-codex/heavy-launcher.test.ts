@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { readHookRuns } from "@/packages/workit-core/src/hooks/hook-runs";
 
 const LAUNCHER = path.resolve(import.meta.dir, "../../packages/workit-codex/hooks/launcher.ts");
 const dirs: string[] = [];
@@ -71,7 +72,11 @@ const run = (entry: "source" | "dist", command: string, extra: Record<string, un
   });
   const child =
     entry === "source"
-      ? spawnSync(process.execPath, [LAUNCHER], { input: payload, encoding: "utf8", env })
+      ? spawnSync(process.execPath, [LAUNCHER], {
+          input: payload,
+          encoding: "utf8",
+          env,
+        })
       : spawnSync("node", [dist], { input: payload, encoding: "utf8", env });
   expect(child.status, child.stderr).toBe(0);
   return JSON.parse(child.stdout) as {
@@ -92,7 +97,9 @@ for (const entry of ["source", "dist"] as const)
         `Run exactly: workit check --heavy -- ${command}`,
       );
     }
-    expect(run(entry, "ls -la")).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse" } });
+    expect(run(entry, "ls -la")).toEqual({
+      hookSpecificOutput: { hookEventName: "PreToolUse" },
+    });
   }, 60_000);
 
 for (const entry of ["source", "dist"] as const)
@@ -110,10 +117,26 @@ for (const entry of ["source", "dist"] as const)
 
 for (const entry of ["source", "dist"] as const)
   test(`[${entry}] Given a workit-implementer subagent with no Workit worktree, When its shell writes into the lead's checkout, Then the hook loads the runtime and denies it (#310)`, () => {
-    const implementer = { agent_id: "impl-1", agent_type: "workit-implementer" };
+    const implementer = {
+      agent_id: "impl-1",
+      agent_type: "workit-implementer",
+    };
     const output = run(entry, `echo x > ${root}/a.txt`, implementer).hookSpecificOutput;
     expect(output.permissionDecision).toBe("deny");
     expect(output.permissionDecisionReason).toContain(
       "workit worktree confinement: implementer impl-1 is not working in a Workit worktree yet",
     );
+  }, 60_000);
+
+for (const entry of ["source", "dist"] as const)
+  test(`[${entry}] Given a quiet and a gated PreToolUse, When the Codex hook runs, Then both are counted as Codex PreToolUse runs (#433)`, () => {
+    const state = env.WORKFLOW_TOOLKIT_STATE ?? "";
+    const count = () =>
+      readHookRuns(state).find((r) => r.host === "codex_cli" && r.event === "PreToolUse")?.count ??
+      0;
+    const before = count();
+    run(entry, "ls -la");
+    expect(count()).toBe(before + 1);
+    run(entry, "make test");
+    expect(count()).toBe(before + 2);
   }, 60_000);

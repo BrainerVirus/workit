@@ -23,7 +23,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { entryMismatch } from "@brainervirus/workit-core/src/autonomy";
+import { configuredGrants, entryMismatch } from "@brainervirus/workit-core/src/autonomy";
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import { inspectMetadataLock } from "@brainervirus/workit-core/src/core/store-lock";
 import {
@@ -89,7 +89,14 @@ import {
   type SessionHookRemoval,
   type SessionHookStatus,
 } from "@brainervirus/workit-core/src/git/session-hook";
-import { permissionHealth, permissionTarget, type PermissionHost } from "./host-permissions";
+import { readHookRuns } from "@brainervirus/workit-core/src/hooks/hook-runs";
+import {
+  grantedCommands,
+  permissionCoverage,
+  permissionHealth,
+  permissionTarget,
+  type PermissionHost,
+} from "./host-permissions";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
 // import the YouTrack/VCS stack just to label a credential state.
@@ -129,6 +136,10 @@ type DoctorCheckId =
   | "heavy_scope"
   | "hook_deadline"
   | "grant_endpoint"
+  | "hook_runs"
+  | "claude_grant_rules"
+  | "codex_grant_rules"
+  | "cursor_grant_rules"
   | "checks_config"
   | "claude_permissions"
   | "codex_permissions"
@@ -241,7 +252,10 @@ const findDevFromCwd = (cwd: string): string | null => {
 
 /** Running `claude` processes with their start time, from `ps` (Linux and macOS); null when unreadable. */
 const listClaudeProcesses = (): ClaudeProcess[] | null => {
-  const r = spawnSync("ps", ["-eo", "pid=,lstart=,args="], { encoding: "utf8", timeout: 5000 });
+  const r = spawnSync("ps", ["-eo", "pid=,lstart=,args="], {
+    encoding: "utf8",
+    timeout: 5000,
+  });
   if (r.status !== 0 || typeof r.stdout !== "string") return null;
   const found: ClaudeProcess[] = [];
   for (const row of r.stdout.split("\n")) {
@@ -979,7 +993,11 @@ const findPiEntry = (res: Resolved, agentDir: string): PiEntry | null => {
       settingsFile: path.join(res.cwd, ".pi", "settings.json"),
       base: path.join(res.cwd, ".pi"),
     },
-    { scope: "user" as const, settingsFile: path.join(agentDir, "settings.json"), base: agentDir },
+    {
+      scope: "user" as const,
+      settingsFile: path.join(agentDir, "settings.json"),
+      base: agentDir,
+    },
   ];
   for (const { scope, settingsFile, base } of scopes) {
     const packages = readJson(settingsFile)?.packages;
@@ -993,7 +1011,14 @@ const findPiEntry = (res: Resolved, agentDir: string): PiEntry | null => {
         const spec = npmSpecName(source.slice(4).trim());
         if (spec.name !== PI_PACKAGE) continue;
         const root = path.join(base, "npm", "node_modules", ...PI_PACKAGE.split("/"));
-        return { scope, settingsFile, source, filter, root, npm: { pinned: spec.pinned } };
+        return {
+          scope,
+          settingsFile,
+          source,
+          filter,
+          root,
+          npm: { pinned: spec.pinned },
+        };
       }
       if (/^(git:|https?:|ssh:|git@)/.test(source)) continue;
       const local = path.resolve(base, source.replace(/^~(?=\/|\\)/, res.home));
@@ -1042,7 +1067,11 @@ const piFilterKeeps = (patterns: unknown, file: string): boolean => {
 const checkPiExtension = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
   const agentDir = piAgentDirOf(res);
   if (!existsSync(agentDir) && !commandOnPath("pi", res.env))
-    return { id: "pi_extension", status: "pass", detail: "Pi not installed — skipping" };
+    return {
+      id: "pi_extension",
+      status: "pass",
+      detail: "Pi not installed — skipping",
+    };
   const installCmd = (scope: PiEntry["scope"] | "user", spec = `npm:${PI_PACKAGE}`) =>
     `pi install ${spec}${scope === "project" ? " -l" : ""}`;
   const entry = findPiEntry(res, agentDir);
@@ -1413,7 +1442,12 @@ const checkPluginFiles = (res: Resolved): DoctorCheck => {
       status: "pass",
       detail: "no registered Workit host plugin is missing its files",
     };
-  return { id: "plugin_files", status: "warn", detail: problems.join("; "), fix: fixes.join("; ") };
+  return {
+    id: "plugin_files",
+    status: "warn",
+    detail: problems.join("; "),
+    fix: fixes.join("; "),
+  };
 };
 
 // Ask the installed plugin's own hook launcher (hooks/launch.mjs --probe)
@@ -1425,7 +1459,11 @@ const CURSOR_HOOK_FIX = "Run `workit init` and select Cursor to install the bund
 
 const checkCursorHook = (res: Resolved): DoctorCheck => {
   if (!hostsFor(res.host).includes("cursor"))
-    return { id: "cursor_hook", status: "pass", detail: "cursor hook not inspected on this host" };
+    return {
+      id: "cursor_hook",
+      status: "pass",
+      detail: "cursor hook not inspected on this host",
+    };
   if (!existsSync(res.cursorPluginDir))
     return {
       id: "cursor_hook",
@@ -1468,7 +1506,12 @@ const checkCursorHook = (res: Resolved): DoctorCheck => {
     windowsHide: true,
   });
   const ms = Math.round(performance.now() - started);
-  let report: { mode?: unknown; source?: unknown; version?: unknown; error?: unknown } = {};
+  let report: {
+    mode?: unknown;
+    source?: unknown;
+    version?: unknown;
+    error?: unknown;
+  } = {};
   try {
     report = JSON.parse(probe.stdout || "{}");
   } catch {
@@ -1515,7 +1558,11 @@ const checkCursorHook = (res: Resolved): DoctorCheck => {
       detail: `${label}; probe ${ms} ms; ${silent}`,
       fix: "Open a Cursor agent chat, then re-run `workit doctor`; if this persists, re-run `workit init` with Cursor (it writes absolute hook paths)",
     };
-  return { id: "cursor_hook", status: "pass", detail: `${label}; probe ${ms} ms` };
+  return {
+    id: "cursor_hook",
+    status: "pass",
+    detail: `${label}; probe ${ms} ms`,
+  };
 };
 
 // The Cursor MCP server stamps cursor-session-last-start when Cursor starts
@@ -2209,7 +2256,10 @@ const sessionHookFinding = (hook: SessionHookStatus): Omit<DoctorCheck, "id"> =>
   const slot = `${SESSION_HOOK_NAME} hook`;
   switch (hook.state) {
     case "not_git":
-      return { status: "pass", detail: `not inside a git work tree — skipping the ${slot}` };
+      return {
+        status: "pass",
+        detail: `not inside a git work tree — skipping the ${slot}`,
+      };
     case "installed":
       return {
         status: "pass",
@@ -2501,7 +2551,10 @@ const defaultIdentityProbes = (env: NodeJS.ProcessEnv): IdentityProbes => ({
   },
   ghLogin: (e) => {
     try {
-      const out = spawnSync("gh", ["api", "user", "--jq", ".login"], { encoding: "utf8", env: e });
+      const out = spawnSync("gh", ["api", "user", "--jq", ".login"], {
+        encoding: "utf8",
+        env: e,
+      });
       const login = (out.stdout ?? "").trim();
       return out.status === 0 && login ? login : null;
     } catch {
@@ -2545,7 +2598,11 @@ export const checkGithubIdentity = (
 ): DoctorCheck => {
   const remoteHost = githubHostFromRemote(probes.origin(res.cwd) ?? "");
   if (!remoteHost)
-    return { id: "github_identity", status: "pass", detail: "no GitHub remote configured" };
+    return {
+      id: "github_identity",
+      status: "pass",
+      detail: "no GitHub remote configured",
+    };
   const vcsJson = readJson(res.env.WORKFLOW_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"));
   const workspace = workspaceProviderForIdentity(res.cwd, res.configDir, res.env);
   if (workspace.error)
@@ -2557,7 +2614,11 @@ export const checkGithubIdentity = (
     };
   const provider = identityProvider(remoteHost, vcsJson, workspace.provider);
   if (provider !== "github")
-    return { id: "github_identity", status: "pass", detail: "no GitHub remote configured" };
+    return {
+      id: "github_identity",
+      status: "pass",
+      detail: "no GitHub remote configured",
+    };
   const cliHost = String(vcsJson?.github?.host ?? "github.com").toLowerCase();
   const cliLogin = probes.ghLogin({ ...res.env, GH_HOST: cliHost });
   if (!cliLogin)
@@ -2578,7 +2639,11 @@ export const checkGitLabIdentity = (
 ): DoctorCheck => {
   const remoteHost = githubHostFromRemote(probes.origin(res.cwd) ?? "");
   if (!remoteHost)
-    return { id: "gitlab_identity", status: "pass", detail: "no GitLab remote configured" };
+    return {
+      id: "gitlab_identity",
+      status: "pass",
+      detail: "no GitLab remote configured",
+    };
   const vcsJson = readJson(res.env.WORKFLOW_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"));
   const workspace = workspaceProviderForIdentity(res.cwd, res.configDir, res.env);
   if (workspace.error)
@@ -2590,7 +2655,11 @@ export const checkGitLabIdentity = (
     };
   const provider = identityProvider(remoteHost, vcsJson, workspace.provider);
   if (provider !== "gitlab")
-    return { id: "gitlab_identity", status: "pass", detail: "no GitLab remote configured" };
+    return {
+      id: "gitlab_identity",
+      status: "pass",
+      detail: "no GitLab remote configured",
+    };
   const cliHost = String(vcsJson?.gitlab?.host ?? "gitlab.com").toLowerCase();
   const cliLogin = probes.glabLogin?.({ ...res.env, GITLAB_HOST: cliHost }) ?? null;
   if (!cliLogin)
@@ -2649,7 +2718,11 @@ const checkWorkspaceLock = (res: Resolved): DoctorCheck => {
       fix,
     };
   if (lock.state === "absent")
-    return { id: "workspace_lock", status: "pass", detail: "no metadata lock held" };
+    return {
+      id: "workspace_lock",
+      status: "pass",
+      detail: "no metadata lock held",
+    };
   if (lock.state === "stale")
     return {
       id: "workspace_lock",
@@ -2768,7 +2841,11 @@ const checkGrantEndpoint = (res: Resolved): DoctorCheck => {
         detail: line.split("; ")[0],
         fix: line.split("; ")[1],
       }
-    : { id: "grant_endpoint", status: "pass", detail: "grants and default endpoint agree" };
+    : {
+        id: "grant_endpoint",
+        status: "pass",
+        detail: "grants and default endpoint agree",
+      };
 };
 
 // The per-repo checks config lives in `.workit/checks.json`; a root
@@ -2797,7 +2874,10 @@ const checkChecksConfig = (res: Resolved): DoctorCheck => {
   };
 };
 
-export type ChecksConfigFix = { action: "moved" | "skipped" | "none"; detail: string };
+export type ChecksConfigFix = {
+  action: "moved" | "skipped" | "none";
+  detail: string;
+};
 
 /** `workit doctor --fix`: move a root `workit.checks.json` into `.workit/checks.json`. */
 export const fixChecksConfig = (options: DoctorOptions = {}): ChecksConfigFix => {
@@ -3051,7 +3131,11 @@ const workitVersionAt = (bin: string, env: NodeJS.ProcessEnv): WorkitProbe => {
         timeout: WORKIT_PROBE_TIMEOUT_MS,
         shell: true,
       })
-    : spawnSync(bin, ["--version"], { encoding: "utf8", env, timeout: WORKIT_PROBE_TIMEOUT_MS });
+    : spawnSync(bin, ["--version"], {
+        encoding: "utf8",
+        env,
+        timeout: WORKIT_PROBE_TIMEOUT_MS,
+      });
   const timedOut = r.error !== undefined && "code" in r.error && r.error.code === "ETIMEDOUT";
   const version = r.status === 0 ? ((r.stdout ?? "").match(SEMVER)?.[0] ?? null) : null;
   const probe = { version: timedOut ? null : version, timedOut };
@@ -3073,7 +3157,10 @@ const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
       version: i.version,
     })),
     { label: "Cursor plugin", version: installedPluginVersion(res) },
-    { label: "OpenCode plugin", version: installedOpenCodeCache(res)?.version ?? null },
+    {
+      label: "OpenCode plugin",
+      version: installedOpenCodeCache(res)?.version ?? null,
+    },
   ].filter((p): p is { label: string; version: string } => p.version !== null);
   const newest = plugins.reduce<{ label: string; version: string } | null>(
     (best, p) => (best && semverAtLeast(best.version, p.version) ? best : p),
@@ -3083,7 +3170,12 @@ const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
   const fix = `npm i -g ${CLI_PACKAGE}@${target} (or run it without a global install: npx -y ${CLI_PACKAGE}@${target} <command>)`;
   const bin = findOnPath(pathextNames("workit", res.env), res.env);
   if (!bin) {
-    return { id: "workit_on_path", status: "warn", detail: "no workit on PATH", fix };
+    return {
+      id: "workit_on_path",
+      status: "warn",
+      detail: "no workit on PATH",
+      fix,
+    };
   }
   const { version, timedOut } = workitVersionAt(bin, res.env);
   if (!version) {
@@ -3129,7 +3221,11 @@ const checkHostPermissions =
     const file = permissionTarget(host, paths).file;
     switch (health.state) {
       case "no-host":
-        return { id, status: "info", detail: `${host} not found; no permission block needed` };
+        return {
+          id,
+          status: "info",
+          detail: `${host} not found; no permission block needed`,
+        };
       case "absent":
         return {
           id,
@@ -3137,11 +3233,105 @@ const checkHostPermissions =
           detail: `no Workit permission block in ${file} (optional: \`${fix}\` lets agents run Workit's delivery verbs without a prompt)`,
         };
       case "ok":
-        return { id, status: "pass", detail: `Workit's permission block is current in ${file}` };
+        return {
+          id,
+          status: "pass",
+          detail: `Workit's permission block is current in ${file}`,
+        };
       default:
         return { id, status: "warn", detail: health.detail, fix };
     }
   };
+
+/**
+ * Do the host's own allow rules (and, on Claude Code, its auto-mode text)
+ * cover the Workit verbs this workspace's grants authorize (#419)? A granted
+ * `workit git push` or `workit pr merge` with no rule prompts, or is denied in
+ * auto mode, however the grant reads. Warns only for a configured workspace
+ * on an installed host, with the command that writes the rules.
+ */
+const checkGrantRules =
+  (host: PermissionHost, id: DoctorCheckId) =>
+  (res: Resolved): DoctorCheck => {
+    const paths = {
+      home: res.home,
+      env: res.codexHome ? { ...res.env, CODEX_HOME: res.codexHome } : res.env,
+      stateDir: res.stateDir,
+      cwd: res.cwd,
+    };
+    let entry: unknown = null;
+    try {
+      entry = resolveWorkspaceFrom(res.cwd, res.configDir);
+    } catch {}
+    if (!entry)
+      return {
+        id,
+        status: "info",
+        detail: "no Workit workspace here; no grants to cover",
+      };
+    const { grants } = configuredGrants(entry);
+    // Defaults grant push and pr, not merge (autonomy DEFAULT_GRANTS).
+    const granted = (["push", "pr", "merge"] as const).filter((kind) =>
+      kind === "merge" ? Boolean(grants.merge) : grants[kind] !== false,
+    );
+    const coverage = permissionCoverage(host, grantedCommands(granted), paths);
+    if (coverage.state === "no-host")
+      return {
+        id,
+        status: "info",
+        detail: `${host} not found; no rules to check`,
+      };
+    if (coverage.state === "ok")
+      return {
+        id,
+        status: "pass",
+        detail: `${host} rules cover the granted Workit verbs (${granted.join(", ") || "none"}) and the check and lock verbs`,
+      };
+    const shown = coverage.missing.slice(0, 4).join(", ");
+    return {
+      id,
+      status: "warn",
+      detail: `${host} rules in ${coverage.file} do not cover ${shown}${coverage.missing.length > 4 ? ", …" : ""}${existsSync(coverage.file) ? "" : ` (${coverage.file} does not exist yet; \`workit setup\` writes it)`}: agents get a prompt (or an auto-mode denial) on verbs the workspace grants`,
+      fix: `workit setup --hosts=${host}`,
+    };
+  };
+
+const ago = (ms: number): string => {
+  const minutes = Math.max(0, Math.round(ms / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
+};
+
+/**
+ * The hook runs each host recorded (#433): the last PreToolUse and
+ * SessionStart seen per host. Never a failure: a host whose hooks never fire
+ * and one that has not run since Workit started counting look the same, but
+ * the row at least shows what did run.
+ */
+const checkHookRuns = (res: Resolved): DoctorCheck => {
+  const runs = readHookRuns(res.hookStateDir).filter(
+    (run) => run.event === "PreToolUse" || run.event === "SessionStart",
+  );
+  if (runs.length === 0)
+    return {
+      id: "hook_runs",
+      status: "info",
+      detail:
+        "no host hook run recorded yet (counted from this Workit version on; Claude Code launcher fast-path answers and Codex PostToolUse are not counted; start an agent session, then re-run `workit doctor`)",
+    };
+  const now = Date.now();
+  const hosts = [...new Set(runs.map((run) => run.host))].toSorted();
+  const parts = hosts.map((host) => {
+    const seen = ["SessionStart", "PreToolUse"].map((event) => {
+      const run = runs.find((r) => r.host === host && r.event === event);
+      return `${event} ${run ? `${ago(now - Date.parse(run.at))} (${run.count})` : "never"}`;
+    });
+    return `${host}: ${seen.join(", ")}`;
+  });
+  return { id: "hook_runs", status: "pass", detail: parts.join("; ") };
+};
 
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
@@ -3174,10 +3364,14 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkHeavyScope,
   checkHookDeadline,
   checkGrantEndpoint,
+  checkHookRuns,
   checkChecksConfig,
   checkHostPermissions("claude-code", "claude_permissions"),
   checkHostPermissions("codex", "codex_permissions"),
   checkHostPermissions("cursor", "cursor_permissions"),
+  checkGrantRules("claude-code", "claude_grant_rules"),
+  checkGrantRules("codex", "codex_grant_rules"),
+  checkGrantRules("cursor", "cursor_grant_rules"),
 ];
 
 // AR-11/CA-40: the installer guarantees the selected host itself — runtime,
