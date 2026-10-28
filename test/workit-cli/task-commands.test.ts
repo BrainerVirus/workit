@@ -36,7 +36,7 @@ async function* bytes(value: Uint8Array, split = 1): AsyncIterable<Uint8Array> {
     yield value.slice(offset, Math.min(value.length, offset + split));
 }
 
-test("the CLI exposes exactly the seven families and 21 actions", () => {
+test("the CLI exposes exactly the seven families and 22 actions", () => {
   expect(TASK_FAMILIES).toEqual([
     "task",
     "policy",
@@ -46,7 +46,7 @@ test("the CLI exposes exactly the seven families and 21 actions", () => {
     "worker",
     "state",
   ]);
-  expect(Object.values(TASK_ACTIONS).flat()).toHaveLength(21);
+  expect(Object.values(TASK_ACTIONS).flat()).toHaveLength(22);
 });
 
 test("context read returns Git context without confirmation or metadata writes", async () => {

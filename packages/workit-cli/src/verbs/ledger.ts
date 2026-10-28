@@ -397,16 +397,28 @@ export async function run(argv: string[], io: Io): Promise<number> {
       type: values.type,
       last: last ?? 50,
     });
+    // Findings live in the task record, not the ledger: say so instead of a bare empty list.
+    const note =
+      values.type === "finding" && listed.length === 0
+        ? "findings are not ledger rows; they live in the task: workit finding list [--branch <b>] [--status open|resolved]"
+        : undefined;
     return emit(
       io,
-      ok({ path: ledger.value.path, skipped: ledger.value.skipped, rows: listed }),
+      ok({
+        path: ledger.value.path,
+        skipped: ledger.value.skipped,
+        rows: listed,
+        ...(note ? { note } : {}),
+      }),
       (data) =>
-        data.rows.length
-          ? data.rows.map((row) => {
-              const line = summarizeRow(row);
-              return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${line.labels.length ? ` (${line.labels.join(", ")})` : ""}  ${line.summary}`;
-            })
-          : "ledger is empty",
+        note
+          ? note
+          : data.rows.length
+            ? data.rows.map((row) => {
+                const line = summarizeRow(row);
+                return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${line.labels.length ? ` (${line.labels.join(", ")})` : ""}  ${line.summary}`;
+              })
+            : "ledger is empty",
     );
   }
 

@@ -86,7 +86,11 @@ export const FAMILY_ACTIONS: Record<Family, Record<string, string>> = {
     explain: "Explain the policy in force",
   },
   evidence: { record: "Record evidence against a task's requirements" },
-  finding: { record: "Record a finding", resolve: "Resolve a finding" },
+  finding: {
+    record: "Record a finding",
+    resolve: "Resolve a finding",
+    list: "List findings with their ids [--branch <b>] [--status open|resolved]",
+  },
   decision: {
     record: "Record a task decision",
     revoke: "Revoke a task decision",
@@ -143,11 +147,13 @@ const familySubcommands = (name: Family): SubcommandEntry[] => {
       usage:
         name === "task" && action === "list"
           ? `workit task list [--status all] ${FAMILY_OPTIONS}`
-          : name === "policy" && action !== "explain"
-            ? `workit policy ${action} ${POLICY_JUDGE} ${FAMILY_OPTIONS}`
-            : name === "worker" && action !== "assign"
-              ? `workit worker ${action} [<workerId>] ${FAMILY_OPTIONS}`
-              : `workit ${name} ${action} ${FAMILY_OPTIONS}`,
+          : name === "finding" && action === "list"
+            ? "workit finding list [--branch <b>] [--status open|resolved] [--json]"
+            : name === "policy" && action !== "explain"
+              ? `workit policy ${action} ${POLICY_JUDGE} ${FAMILY_OPTIONS}`
+              : name === "worker" && action !== "assign"
+                ? `workit worker ${action} [<workerId>] ${FAMILY_OPTIONS}`
+                : `workit ${name} ${action} ${FAMILY_OPTIONS}`,
       summary,
     }));
   return [...implicit, ...grammar];
@@ -525,7 +531,7 @@ export const VERBS: readonly VerbEntry[] = [
         name: "push",
         deferredFlags: ["force"],
         usage:
-          "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…]",
+          "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]]",
         summary:
           "Push the current branch and verify the remote tip (never a blind --force); --release finishes a git-flow release",
       },
@@ -714,7 +720,7 @@ export const VERBS: readonly VerbEntry[] = [
         name: "list",
         aliases: ["show"],
         usage: "workit ledger list|show [--branch <b>] [--pr <n>] [--type <t>] [--last <n>]",
-        summary: "List ledger rows, newest last",
+        summary: "List ledger rows, newest last (findings live in the task: workit finding list)",
       },
       {
         name: "check",

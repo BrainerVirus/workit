@@ -38,7 +38,7 @@ const BRANCH_USAGE =
 const COMMIT_USAGE =
   "workit git commit -m|--message <msg>… | -F|--file <file|-> [--trailer <key: value>]… [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>] [--json]";
 const PUSH_USAGE =
-  "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>…] [--json]";
+  "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]] [--json]";
 const USAGE = "workit git branch|commit|push|trailers ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
@@ -261,12 +261,18 @@ async function push(argv: string[], io: Io): Promise<number> {
     release: "list",
   });
   if (typeof flags === "string") return usage(io, flags, PUSH_USAGE);
-  const release = flags.lists.release;
+  // A comma list (--release main,develop,v1.2.0) or a repeated flag, or both.
+  const release = flags.lists.release?.flatMap((value) =>
+    value
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
   if (release) {
     if (flags.booleans.size || flags.values.expect !== undefined || flags.positionals.length)
       return usage(
         io,
-        "--release takes only ref names (repeat it: --release main --release v1.2.0)",
+        "--release takes only ref names (a comma list or a repeated flag: --release main,v1.2.0)",
         PUSH_USAGE,
       );
     return releasePush(release, io);

@@ -188,6 +188,14 @@ test("Given a finished git-flow release and no release grant, When pushed, Then 
   expect(repo.remoteTip("main")).toBe(before);
 });
 
+test("Given a finished git-flow release and no release grant, When --release gets a comma list, Then it is parsed as refs (the grant refusal, not a usage error)", async () => {
+  const repo = flowRepo(GITFLOW);
+  finishRelease(repo);
+  const refused = await run(["git", "push", "--release", "main,v1.0.0", "--json"], repo.cwd);
+  expect(refused.code).toBe(3);
+  expect(refused.json()).toMatchObject({ code: "blocked", data: { reason: "grant_required" } });
+});
+
 test("Given the release grant, When main, develop and the v tag are pushed with --release, Then they land fast-forward, are verified and recorded", async () => {
   const repo = flowRepo(GITFLOW);
   workspace(repo, { autonomy: { release: true } });
