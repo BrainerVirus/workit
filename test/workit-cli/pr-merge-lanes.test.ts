@@ -61,6 +61,7 @@ const setup = (
   files: Record<string, string>,
   entry: Record<string, unknown> = {},
   openStatus = "github/pr-passing.json",
+  options: { stayOpen?: boolean } = {},
 ) => {
   writeFileSync(
     path.join(configDir, "config.json"),
@@ -87,7 +88,8 @@ const setup = (
     "graphql find": fixture("github/find-pr.json"),
     [GH_STATUS]: () => fixture(merged ? "github/pr-merged.json" : openStatus),
     "PUT repos/o/r/pulls/12/merge": () => {
-      merged = true;
+      // stayOpen: the forge accepts the merge but the PR stays open (a merge queue).
+      merged = !options.stayOpen;
       return JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" });
     },
   };
@@ -415,3 +417,99 @@ test("given a merge on a self verdict, no verdict (lane none) or an accepted ind
   expect(verified.code).toBe(0);
   expect(verified.stdout).toMatch(/verdict \S+ accepted for that head/u);
 });
+
+// #533: a refused merge was read as silence because the agent filtered the
+// output with `2>&1 | grep -E '^merged|rror'`, and no refusal line said
+// "error". Every outcome now ends in a line such a filter keeps.
+const kept = (out: string) =>
+  out.split("\n").filter((line) => /^merged|rror|not merged/u.test(line));
+
+test("given checks still pending, when pr merge is refused, then a line naming the error and 'not merged' survives a grep for errors", async () => {
+  const { repo, runner } = setup(DOCS, {}, "github/pr-pending.json");
+  const result = await run(["pr", "merge"], repo.cwd);
+  expect(result.code).not.toBe(0);
+  expect(result.stdout).toBe("");
+  expect(kept(result.stderr)).toEqual([
+    expect.stringMatching(/^workit: error: PR not merged \(not_ready, exit \d\)/u),
+  ]);
+  expect(merges(runner.calls)).toEqual([]);
+});
+
+test("given a merge that lands, when it prints, then its first line is the merged line on stdout and stderr is empty", async () => {
+  const { repo } = setup(DOCS);
+  const result = await run(["pr", "merge"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.stdout.split("\n")[0]).toMatch(/^merged PR #12 \(squash\) at head [0-9a-f]{12}/u);
+  expect(result.stderr).toBe("");
+});
+
+test("given the forge accepts the merge but the PR stays open (merge queue, auto-merge), then pr merge says it is not merged and exits non-zero", async () => {
+  const { repo, runner } = setup(DOCS, {}, "github/pr-passing.json", { stayOpen: true });
+  const result = await run(["pr", "merge"], repo.cwd);
+  expect(result.code).toBe(1);
+  expect(result.stdout).not.toMatch(/^merged/mu);
+  expect(result.stderr).toContain("not merged yet");
+  expect(result.stderr).toContain("merge queue or auto-merge");
+  expect(kept(result.stderr)).toContainEqual(
+    expect.stringMatching(/^workit: error: PR not merged \(merge_unverified, exit 1\)/u),
+  );
+  expect(merges(runner.calls)).toHaveLength(1);
+});
+
+// #533 review: a usage error is caught before the verb runs (unknown flag,
+// stray positional after `--`, `--help` taken as a value); it ends in the
+// same outcome line, for every delivery verb the guide names.
+const lastLine = (out: string) => out.trimEnd().split("\n").at(-1);
+
+test.each([
+  [["pr", "merge", "--bogus"], "PR not merged"],
+  [["pr", "merge", "--", "extra"], "PR not merged"],
+  [["pr", "merge", "--reason", "--help"], "PR not merged"],
+  [["pr", "create", "--bogus"], "PR not created"],
+  [["stack", "land", "--bogus"], "stack not landed"],
+  [["git", "push", "--bogus"], "not pushed"],
+])(
+  "given %p, when it is refused before the verb runs, then it ends with 'workit: error: %s'",
+  async (argv, outcome) => {
+    const { repo, runner } = setup(DOCS);
+    const result = await run(argv, repo.cwd);
+    expect(result.code).toBe(2);
+    expect(lastLine(result.stderr)).toBe(`workit: error: ${outcome} (invalid_input, exit 2)`);
+    expect(merges(runner.calls)).toEqual([]);
+  },
+);
+
+test("given a delivery verb refused before it runs under --json, then stdout is the envelope alone", async () => {
+  const { repo } = setup(DOCS);
+  const result = await run(["pr", "merge", "--bogus", "--json"], repo.cwd);
+  expect(result.code).toBe(2);
+  expect(result.json()).toMatchObject({ ok: false, code: "invalid_input" });
+  expect(result.stderr).not.toContain("not merged");
+});
+
+test("given an in-verb refusal of pr merge, then the outcome line is printed once", async () => {
+  const { repo } = setup(DOCS, {}, "github/pr-pending.json");
+  const result = await run(["pr", "merge"], repo.cwd);
+  expect(result.stderr.match(/not merged/gu)).toHaveLength(1);
+});
+
+test.each([
+  [["pr", "merge", "--squash", "--rebase"], "PR not merged"],
+  [["pr", "create", "--title", "not a conventional title"], "PR not created"],
+  [["stack", "land", "--name", "nowhere"], "stack not landed"],
+  [["git", "push", "--expect", "abc"], "not pushed"],
+])(
+  "given %p, when the verb itself refuses, then it ends with 'workit: error: %s'",
+  async (argv, outcome) => {
+    const { repo, runner } = setup(DOCS);
+    const result = await run(argv, repo.cwd);
+    expect(result.code, result.stderr).not.toBe(0);
+    expect(lastLine(result.stderr)).toMatch(
+      new RegExp(`^workit: error: ${outcome} \\([a-z_]+, exit ${result.code}\\)$`, "u"),
+    );
+    expect(result.stderr.match(/^workit: error: /gmu)).toHaveLength(1);
+    // The verb ran: its own refusal precedes the outcome line, not the router's.
+    expect(result.stderr).not.toContain("unknown option");
+    expect(merges(runner.calls)).toEqual([]);
+  },
+);

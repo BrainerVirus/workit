@@ -928,7 +928,7 @@ export async function mergePullRequest(
     return {
       ok: false,
       code: "failed",
-      error: `merge_unverified: the forge accepted the merge of ${label} but still reports it ${state}${"id" in recorded ? `; recorded as pr.merged ${recorded.id} (verified: false)` : `; the pr.merged row could not be written (${recorded.error})`}`,
+      error: `merge_unverified: the forge accepted the merge of ${label} but still reports it ${state}${state === "open" ? ", so it is not merged yet (a merge queue or auto-merge may hold it)" : ""}${"id" in recorded ? `; recorded as pr.merged ${recorded.id} (verified: false)` : `; the pr.merged row could not be written (${recorded.error})`}`,
       unblock: `workit verify-delivery merged --pr ${doc.number}`,
       recorded,
     };
