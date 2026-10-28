@@ -14,16 +14,16 @@ description: Build a requested change in small verified steps - follow local pat
    Tracking it? Judge once: `workit policy assess --judge risk=normal behavior=yes
    product-choice=no plan=no` (trivial and no for a mechanical fix). Already
    judged? Cite the plan with `--ref <path>` or record the decision; don't re-judge.
-3. Small steps that each leave the tree green. Behavior change: write the
+3. Small steps, each leaving the tree green. Behavior change: write the
    acceptance as Given/When/Then and see a test fail first (workit-bdd).
-   Mechanical change: the existing checks are enough. No tautological tests:
+   Mechanical change: existing checks are enough. No tautological tests:
    a test must fail if the behavior breaks, never restate the implementation.
 4. Run the real checks, local-first: the targeted test or check for the file
-   you touched while you work, then the full configured set once at the end
+   you touched while you work, then the full set once at the end
    (`workit check test`, plus `lint` and `typecheck` when the repo has them),
    not after every edit. Heavy work runs under one machine-wide lease: an ad-hoc
-   suite is `workit check --heavy -- <cmd>`, never a hand-made flock; a busy
-   lease waits and names its holder (`workit lock status`).
+   suite is `workit check --heavy -- <cmd>`, never a hand-made flock.
+   A tool warning is a finding: fix it in this PR in the right layer, or record the false positive with evidence; pre-existing ones get their own PR.
 5. Prove the feature on its real surface with the project's `verify-<app>`
    skill; none yet? Write one (workit-verify-app). Tests show branch behavior,
    not that the feature works. The report carries what you observed: a UI
@@ -35,7 +35,7 @@ description: Build a requested change in small verified steps - follow local pat
    ship, which pushes and opens the PR with its body shape (workit-ship), only
    when that was requested, or the request implies delivery and the effective
    endpoint in `workit grant show` is `pr`, `green` or `merged`; `green` and
-   `merged` keep babysitting. Otherwise it is `commit`.
+   `merged` keep babysitting. Else `commit`.
 7. Verify as far as the review lane asks (`workit policy assess`, `workit pr
    status`). Lane none: no verdict. Lane self: after `workit check test` passes,
    record `workit ledger verdict tests-verified --self --how "<what you ran>"`;
@@ -46,12 +46,11 @@ description: Build a requested change in small verified steps - follow local pat
    every named deliverable against the target checkout and observe it (for a push:
    `workit verify-delivery push`).
 
-Independent slices that could run in parallel: fan them out (workit-fanout).
+Independent slices: fan them out (workit-fanout).
 One `implementer` slice: `workit fanout worktree create <slice>` before spawning,
-then `workit fanout brief <slice>`; no host isolation (Workit's hooks confine it).
+then `workit fanout brief <slice>`; hooks confine it.
 
-Stay inline by default (workspace `delegation: inline-first`). Hand work off
-only past the thresholds: an explorer after about 3 tool calls or 10k tokens
+Stay inline by default (`delegation: inline-first`). Hand off only past the thresholds: an explorer after about 3 tool calls or 10k tokens
 of searching, parallel writers for 2 or more disjoint units of about 100+
 lines each.
 

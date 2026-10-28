@@ -17,7 +17,7 @@ code, duration, HEAD, worktree tree key and patch-id as `observer: workit_cli`
 evidence. The exit code is the command's; `--timeout <s>` kills the whole
 process tree. It prints only the last 60 lines of the output (a failure's
 tail, never its head) and one summary line with the check name, exit code,
-duration and `log: <path>` to the full redacted log; `--full` streams the whole
+duration, `warnings: N` when the output has tool warning lines (a green check can still carry findings; `data.warnings` in JSON) and `log: <path>` to the full redacted log; `--full` streams the whole
 output as it runs instead.
 
 An ad-hoc run under a configured name (`--name test -- <other cmd>`) says
