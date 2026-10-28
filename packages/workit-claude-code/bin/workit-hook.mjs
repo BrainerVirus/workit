@@ -301,9 +301,20 @@ const fastAllow = (() => {
         return true;
       return !implementer && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }
-    // A subagent spawn that names its model has no default to fill (hooks/agent-model.ts).
-    if (value.tool_name === "Agent" || value.tool_name === "Task")
-      return typeof value.tool_input?.model === "string" && value.tool_input.model.trim() !== "";
+    // A subagent spawn that names its model has no default to fill (hooks/agent-model.ts);
+    // an implementer spawn with isolation or without a brief meets the spawn gate
+    // (hooks/spawn-gate.ts, the same WORKTREE test).
+    if (value.tool_name === "Agent" || value.tool_name === "Task") {
+      const spawn = value.tool_input ?? {};
+      if (
+        spawn.subagent_type === "workit:implementer" &&
+        (spawn.isolation !== undefined ||
+          typeof spawn.prompt !== "string" ||
+          !/^WORKTREE:[ \t]*\S(?![^\n]*not made yet)/mu.test(spawn.prompt))
+      )
+        return false;
+      return typeof spawn.model === "string" && spawn.model.trim() !== "";
+    }
     return EDITS.has(value.tool_name) && !implementer && !hasTaskStore(String(value.cwd ?? "."));
   } catch {
     return false;

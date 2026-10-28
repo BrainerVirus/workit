@@ -316,6 +316,57 @@ test("Given a workit:implementer subagent with no Workit worktree in a checkout 
   }
 });
 
+test("Given implementer spawns with isolation or without a brief, When the launcher runs, Then they reach the spawn gate; a briefed implementer and a model-named verifier stay on the fast path (#432)", () => {
+  const cwd = root();
+  const brief =
+    "GOAL: g\nWORKTREE: /w/slice  (made by `workit fanout worktree create slice`; yours alone)\n";
+  const spawn = (tool_input: Record<string, unknown>, env: Record<string, string> = {}) =>
+    runHook(
+      PLUGIN_DIR,
+      fixture("claude-code", "pre-tool-use-bash", cwd, {
+        tool_name: "Agent",
+        tool_input: { description: "d", ...tool_input },
+      }),
+      env,
+    );
+  const isolated = spawn({
+    subagent_type: "workit:implementer",
+    model: "opus",
+    isolation: "worktree",
+    prompt: brief,
+  });
+  const updated = (
+    isolated.json as { hookSpecificOutput?: { updatedInput?: Record<string, unknown> } }
+  ).hookSpecificOutput?.updatedInput;
+  expect(updated, isolated.stderr).toEqual({
+    description: "d",
+    subagent_type: "workit:implementer",
+    model: "opus",
+    prompt: brief,
+  });
+  const bare = spawn({
+    subagent_type: "workit:implementer",
+    model: "opus",
+    prompt: "fix the tests",
+  });
+  const denied = (bare.json as Specific).hookSpecificOutput;
+  expect(denied?.permissionDecision, bare.stderr).toBe("deny");
+  expect(denied?.permissionDecisionReason).toContain("`workit fanout worktree create <slice>`");
+  // A runtime that cannot start fails open loudly: an empty stderr proves the fast path answered.
+  const noRuntime = {
+    WORKIT_CLAUDE_RUNTIME: "source",
+    WORKIT_BUN: path.join(tmpdir(), "definitely-not-bun"),
+  };
+  for (const input of [
+    { subagent_type: "workit:implementer", model: "opus", prompt: brief },
+    { subagent_type: "workit:verifier", model: "sonnet", isolation: "worktree", prompt: "verify" },
+  ]) {
+    const fast = spawn(input, noRuntime);
+    expect(fast.stdout, JSON.stringify(input)).toBe("{}\n");
+    expect(fast.stderr, JSON.stringify(input)).toBe("");
+  }
+});
+
 test("SubagentStart tells an implementer Claude Code isolated, per preset, that plain git is expected but branch names stay policy-checked, naming that preset's kinds and only bases that exist", async () => {
   await withProtectedMain((configDir) => {
     /** A repository whose first branch is `trunk`, plus `extra` branches. */
