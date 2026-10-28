@@ -70,6 +70,36 @@ verb output) are proven against real failures, not prose (#425).
   `context-increase` label (`.github/workflows/context-budget.yml`); cut
   elsewhere first.
 
+### Layer 2: model-in-the-loop cases
+
+`packages/workit-claude-code/evals/*/case.yaml` runs real models in a scaffold
+repo and grades the trace with regexes. The retro classes (#425) are one case
+each: `isolated-implementer-plain-git`, `verifier-verdict-first-try`,
+`heavy-test-tail-once`, `check-output-bounded`, `read-only-no-nudge`,
+`finding-key-self-correct`, `git-status-guess` (scaffold
+`evals/scaffold/feature-repo.sh`: offline, a feature branch, a noisy
+configured `test` check). Every case is `runs: 1` and `max_turns` ≤ 8. The
+merge-granted / endpoint-pr hint needs a real forge and has no case; layer 0
+covers it. Several graders are negative regexes (`^(?![\s\S]*…)`) because the
+case format has no "absent" grader; calibrate a pattern on its first real run.
+
+`.github/workflows/claude-eval.yml` runs the suite nightly and on the `eval`
+label as a matrix over `--model sonnet` and `--model haiku` (aliases, no new
+pin: only the claude CLI version is pinned in the support matrix), each leg
+with `--max-cost-usd 1.5` (about $3 a night in all) and its own
+`claude-eval-<model>` artifact. The score is a report, not a PR gate
+(`--threshold 0`): read the per-case pass rate per model before and after a
+wording change. Weak-model parity for Claude (#435) is measured here;
+OpenCode weak models and re-injecting the contract after a model switch are a
+separate slice.
+
+Run one case locally (paid; needs a Claude credential):
+
+```bash
+claude plugin eval packages/workit-claude-code --case <name> --model haiku \
+  --runs 1 --scaffold --trust-plugin --allow-tools Bash
+```
+
 ## CI shards
 
 The macOS and Windows legs run `bun scripts/test.ts shard <i>/<n>

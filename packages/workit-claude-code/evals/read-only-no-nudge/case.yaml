@@ -1,0 +1,24 @@
+schema_version: "1.0"
+name: read-only-no-nudge
+description: >-
+  Retro class 5: read-only git (and gh, when present) gets no "prefer workit"
+  nudge (163 ignored pr-read nudges in the retro).
+tags: [retro, steering]
+context:
+  scaffold_script: ../scaffold/feature-repo.sh
+execution:
+  prompt: >-
+    Run `git status --short` and `git log --oneline -3` with the Bash tool and
+    summarise the result in one sentence.
+  max_turns: 4
+  allowed_tools: [Bash]
+runs: 1
+graders:
+  - type: regex
+    name: ran-read-only-git
+    target: trace
+    pattern: "git (-C \\S+ )?status"
+  - type: regex
+    name: no-nudge
+    target: trace
+    pattern: "^(?![\\s\\S]*(prefer `workit|workit pr status shows|workit git status))[\\s\\S]*$"

@@ -4,6 +4,11 @@ name: Claude Code plugin eval
 # needs a Claude credential, costs money, and is nondeterministic, so it is a
 # nightly / `eval`-label job, never a PR gate. The deterministic PR gate is
 # `claude plugin validate --strict` plus the hook-fixture suite in ci.yml.
+# The suite runs as a matrix over Sonnet and Haiku (#425 layer 2, #435): wording
+# changes are measured on the weaker model too. Each leg reports its score per
+# case and uploads its own results; the score is a report, never a PR gate
+# (`--threshold 0`), and each leg has its own cost ceiling (about $3 a night
+# across both).
 on:
   schedule:
     - cron: "17 5 * * *"
@@ -25,7 +30,11 @@ env:
 
 jobs:
   eval:
-    name: claude plugin eval
+    name: claude plugin eval (${{ matrix.model }})
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [sonnet, haiku]
     if: >
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'eval')
@@ -57,6 +66,7 @@ jobs:
       - name: Run eval suite
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_MODEL: ${{ matrix.model }}
         run: | # zizmor: ignore[adhoc-packages] -- exact support-matrix pin
           set -euo pipefail
           if [[ -z "${ANTHROPIC_API_KEY}" ]]; then
@@ -69,7 +79,7 @@ jobs:
           mkdir -p "$CLAUDE_CONFIG_DIR"
           "$RUNNER_TEMP/claude/node_modules/.bin/claude" plugin eval packages/workit-claude-code \
             --trust-plugin --scaffold --allow-tools Bash Write Edit \
-            --runs 1 -j 2 --max-cost-usd 4 --threshold 0.8 \
+            --model "$EVAL_MODEL" --runs 1 -j 2 --max-cost-usd 1.5 --threshold 0 \
             --no-publish --json "$RUNNER_TEMP/eval-results.json" \
             --output-dir "$RUNNER_TEMP/eval-out"
 
@@ -77,7 +87,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: claude-eval
+          name: claude-eval-${{ matrix.model }}
           path: |
             ${{ runner.temp }}/eval-results.json
             ${{ runner.temp }}/eval-out

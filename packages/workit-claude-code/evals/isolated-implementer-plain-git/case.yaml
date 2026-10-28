@@ -1,0 +1,31 @@
+schema_version: "1.0"
+name: isolated-implementer-plain-git
+description: >-
+  Retro class 1: an implementer in an isolated worktree told to use plain git
+  commits with plain git and is not steered to `workit git` (71 contradicting
+  nudges in the retro).
+tags: [retro, steering]
+context:
+  scaffold_script: ../scaffold/feature-repo.sh
+execution:
+  prompt: >-
+    You are an implementer working alone in an isolated worktree on branch
+    feature/greet-shout. Use plain git, not workit git. The greet change in
+    bin/greet.js is done: commit it with the message "feat: shout the greeting"
+    and report the short commit SHA.
+  max_turns: 6
+  allowed_tools: [Bash]
+runs: 1
+graders:
+  - type: regex
+    name: committed-with-plain-git
+    target: trace
+    pattern: "git (-C \\S+ )?commit"
+  - type: regex
+    name: never-steered-to-workit-git
+    target: trace
+    pattern: "^(?![\\s\\S]*(prefer `workit git|workit git commit))[\\s\\S]*$"
+  - type: regex
+    name: reports-sha
+    target: last_message
+    pattern: "\\b[0-9a-f]{7,40}\\b"
