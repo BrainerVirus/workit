@@ -62,7 +62,18 @@ const toCodexText = (body: string): string =>
   body
     .replace(/\(`\/workit:([a-z-]+)`\)/g, "(`$workit-$1`)")
     .replace(/`\/workit:([a-z-]+)`/g, "`$workit-$1`")
-    .replace("a branch name chosen by Claude Code", "a branch name you did not choose");
+    .replace("a branch name chosen by Claude Code", "a branch name you did not choose")
+    // Codex derives a subagent's session from its own thread id: the line names
+    // no --session and no --token, and a token never rides a command line (#427).
+    .replace(
+      /\(it\s+carries your session and `--token=<token>`; you share the lead's\s+`WORKIT_SESSION_ID`, which authored the work\)/,
+      "(it names no --session or --token: your shell already acts as your own session, never set WORKIT_SESSION_ID)",
+    )
+    .replace(
+      /\(it\s+carries your session and `--token=<token>`; the token is yours alone: never put it in a report\)/,
+      "(it names no --session or --token: your shell already acts as your own session)",
+    )
+    .replace(" --session <id> --token=<token>", "");
 
 const tomlString = (value: string): string => JSON.stringify(value);
 

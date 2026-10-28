@@ -359,28 +359,6 @@ test("Given a reviewer's issued id, When a commit is made under it through worki
 for (const [label, argv, env, error] of [
   ["its own Claude Code session", ["--session", "lead-A"], claude(), "session_flag"],
   [
-    "an OpenCode child's own session",
-    ["--session", "lead-O:child-9"],
-    {
-      WORKIT_HOST: "opencode",
-      OPENCODE_SESSION_ID: "child-9",
-      WORKIT_SESSION_ID: "lead-O:child-9",
-    },
-    "session_flag",
-  ],
-  [
-    "a Pi worker's own session",
-    ["--session", "lead-P:w-1"],
-    { WORKIT_HOST: "pi", PI_SESSION_ID: "w-1", WORKIT_SESSION_ID: "lead-P:w-1" },
-    "session_flag",
-  ],
-  [
-    "a Codex thread's own id",
-    ["--session", "thread-9"],
-    { CODEX_THREAD_ID: "thread-9" },
-    "session_flag",
-  ],
-  [
     "an unissued <lead>:<x> id from the environment under WORKIT_HOST=cursor (P5)",
     [],
     { WORKIT_HOST: "cursor", WORKIT_SESSION_ID: "lead-A:nobody" },

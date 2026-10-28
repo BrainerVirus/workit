@@ -381,6 +381,20 @@ export type SessionClaimRefusal = { error: string; unblock: string };
  * Anything else is a forged id: a verdict recorded under it would make author
  * is not verifier a naming convention.
  */
+const isOwnShellClaim = (real: RealSession, claimed: string): boolean =>
+  (claimed === real.session && !(real.kind === "declared" && claimed.includes(":"))) ||
+  (real.kind === "derived" && claimed.endsWith(`:${real.session}`));
+
+/**
+ * `claimed` is the shell's own derived session (OPENCODE_SESSION_ID,
+ * PI_SESSION_ID, CODEX_THREAD_ID), alone or as `<lead>:<it>`: a `--session`
+ * naming it adds nothing, so the CLI acts as the shell's session instead.
+ */
+export const namesOwnDerivedSession = (env: NodeJS.ProcessEnv, claimed: string): boolean => {
+  const real = realHostSession(env);
+  return real.kind === "derived" && isOwnShellClaim(real, claimed);
+};
+
 export function sessionClaimRefusal(
   env: NodeJS.ProcessEnv,
   claimed: string,
@@ -397,16 +411,17 @@ export function sessionClaimRefusal(
       unblock: `record the verdict from the ${real.host} session's own shell, where ${HOST_SET_VARIABLE[host]} is set`,
     };
   if (real.kind === "none" || !real.session) return null;
-  const ownShell =
-    (claimed === real.session && !(real.kind === "declared" && claimed.includes(":"))) ||
-    (real.kind === "derived" && claimed.endsWith(`:${real.session}`));
-  if (ownShell)
-    return options.flag
-      ? {
-          error: `session_flag: --session ${claimed} names this shell's own ${real.host} session; on a host only an issued subagent id is passed as --session`,
-          unblock: "drop --session: the shell's own session is already the acting one",
-        }
-      : null;
+  const ownShell = isOwnShellClaim(real, claimed);
+  if (ownShell) {
+    // A derived session (the host's own shell variable) cannot be replaced by
+    // a flag, so naming it is a no-op, not an error: a printed line that
+    // carries it still records. Declared sessions keep refusing the flag.
+    if (!options.flag || real.kind === "derived") return null;
+    return {
+      error: `session_flag: --session ${claimed} names this shell's own ${real.host} session; on a host only an issued subagent id is passed as --session`,
+      unblock: "drop --session: the shell's own session is already the acting one",
+    };
+  }
   const issuedClaim = claimed === real.session || claimed.startsWith(`${real.session}:`);
   if (issuedClaim) {
     const binding = issuedBinding(cwd, claimed);
