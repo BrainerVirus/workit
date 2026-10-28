@@ -577,3 +577,66 @@ test("ci wait: the final line says pass or fail (#510)", async () => {
   const { repo } = setup(fixture("github/pr-passing.json"));
   expect((await run(["ci", "wait"], repo.cwd)).stdout).toContain("CI pass");
 });
+
+const passingNodes = (): Array<{ name: string }> =>
+  JSON.parse(fixture("github/pr-passing.json")).data.repository.pullRequest.commits.nodes[0].commit
+    .statusCheckRollup.contexts.nodes;
+
+const withHeadChecks = (count: number): string => {
+  const doc = JSON.parse(fixture("github/pr-passing.json"));
+  const rollup = doc.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup;
+  rollup.contexts.nodes = rollup.contexts.nodes.slice(0, count);
+  return JSON.stringify(doc);
+};
+
+const baseChecksReply = (nodes: unknown[]): string =>
+  JSON.stringify({
+    data: {
+      repository: {
+        object: {
+          oid: "basehead",
+          statusCheckRollup: {
+            contexts: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
+          },
+        },
+      },
+    },
+  });
+
+const unreadable = replyError("HTTP 403 forbidden");
+
+test("ci wait: unreadable protection, the base ran two checks, the head shows one: waits for the other (#510)", async () => {
+  let polls = 0;
+  const { repo } = setup(
+    () => {
+      polls += 1;
+      return withHeadChecks(polls <= 3 ? 1 : 2);
+    },
+    {
+      "GET repos/o/r/branches/main": unreadable,
+      "graphql branch-checks": baseChecksReply(passingNodes()),
+    },
+  );
+  const result = await run(["ci", "wait", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({ state: "ready", polls: 4 });
+});
+
+test("ci wait: an expected check that never registers is named in the final line after the grace (#510)", async () => {
+  const { repo } = setup(withHeadChecks(1), {
+    "GET repos/o/r/branches/main": unreadable,
+    "graphql branch-checks": baseChecksReply(passingNodes()),
+  });
+  const result = await run(["ci", "wait"], repo.cwd);
+  expect(result.stdout).toContain("never registered: test (ubuntu-latest)");
+});
+
+test("ci wait: unreadable protection and an empty base list keep the 'CI none' path (#510)", async () => {
+  const { repo } = setup(noChecksDoc(), {
+    "GET repos/o/r/branches/main": unreadable,
+    "graphql branch-checks": baseChecksReply([]),
+  });
+  const result = await run(["ci", "wait"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("CI none: no CI configured");
+});

@@ -517,7 +517,16 @@ export const NO_CHECKS_GRACE_MS = 120_000;
  */
 export function waitVerdict(
   doc: PrStatusDoc,
-  options: { head?: string | null; elapsedMs: number; noChecksGraceMs?: number },
+  options: {
+    head?: string | null;
+    elapsedMs: number;
+    noChecksGraceMs?: number;
+    /**
+     * Checks the base branch ran that this head has not registered yet. Only
+     * set when branch protection is unreadable, so required names are unknown (#510).
+     */
+    expectedMissing?: readonly string[];
+  },
 ): WaitVerdict {
   if (doc.state !== "open")
     return {
@@ -542,6 +551,11 @@ export function waitVerdict(
   // Gating checks passed but another check on the head is still queued or
   // running (a non-required workflow): never green while anything runs (#440).
   if (doc.checks.pending.length > 0) return { state: "waiting", reason: "checks_pending" };
+  // Small workflows register and pass in seconds while the main CI registers
+  // later: a head still missing a check the base ran is not done within the grace.
+  const grace = options.noChecksGraceMs ?? NO_CHECKS_GRACE_MS;
+  if ((options.expectedMissing?.length ?? 0) > 0 && options.elapsedMs < grace)
+    return { state: "waiting", reason: "checks_not_registered" };
   if (checks === "passing") return { state: "ready", reason: "checks_passing" };
   // Unknown protection (null) is not "required": the grace bounds the wait.
   const ciRequired =
@@ -549,8 +563,7 @@ export function waitVerdict(
     doc.mergeState === "ci_must_pass" ||
     doc.mergeState === "ci_still_running";
   if (ciRequired) return { state: "waiting", reason: "no_checks_yet" };
-  if (options.elapsedMs < (options.noChecksGraceMs ?? NO_CHECKS_GRACE_MS))
-    return { state: "waiting", reason: "no_checks_yet" };
+  if (options.elapsedMs < grace) return { state: "waiting", reason: "no_checks_yet" };
   return { state: "ready", reason: "no_checks" };
 }
 
