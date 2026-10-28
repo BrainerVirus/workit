@@ -2,11 +2,13 @@
 // plan, the standing orders in force for the fanout (`workit ledger standing`)
 // and the slice's scratch dir, so the lead passes it to the worker verbatim.
 //
-// MODE is `resume` when the branch already exists (a retry continues it),
-// else `new`; `--attempt <n>` renders one attempt of a race on its own branch
-// `<branch>-try<n>` (refused when another slice has that branch), worktree
-// `<worktree>+try<n>` and session `<lead>-w-<slice>+try<n>`: slice ids cannot
-// contain `+`, so no attempt collides with another slice's path or session.
+// MODE is `resume` when the branch already exists with work on it (a retry
+// continues it), else `new`, also for a branch `fanout worktree create` made
+// that still sits at its base SHA (#432); `--attempt <n>` renders one
+// attempt of a race on its own branch `<branch>-try<n>` (refused when
+// another slice has that branch), worktree `<worktree>+try<n>` and session
+// `<lead>-w-<slice>+try<n>`: slice ids cannot contain `+`, so no attempt
+// collides with another slice's path or session.
 // The lead's host (WORKIT_HOST, or its own session variable) picks the identity
 // rules: Claude Code workers use the WORKIT_SESSION_ID in their env (the
 // lead's: SubagentStart issues ids only to judges); OpenCode, Pi and Codex
@@ -20,6 +22,8 @@
 // the integration tip before reporting, and nothing else. It only reads, apart
 // from hiding `.workit-scratch/` in the repository's info/exclude.
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { resolveRoleModel } from "./core/role-models";
 import { activeStanding, readLedger, type LedgerActor } from "./ledger";
 import { branchRef, fanoutFail, planLeads, type FanoutFile, type FanoutResult } from "./fanout";
@@ -64,6 +68,7 @@ const REPORT = [
   "REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,",
   "  each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),",
   "  anything out of scope as a follow-up, not a diff. Report heads when pushed; CI is waited on once, at the end.",
+  "  A PR body goes through `--body-file -` (stdin), never a shared scratch path.",
 ];
 
 /**
@@ -168,7 +173,17 @@ export function renderBrief(
       "pick another --attempt number, or rename one of the branches in the plan",
     );
   const head = branchRef(cwd, branch);
-  const mode: BriefMode = input.mode ?? (head ? "resume" : "new");
+  const planned = `${slicePath(cwd, slice)}${input.attempt === null ? "" : `+try${input.attempt}`}`;
+  const made = ledger.value.rows.findLast(
+    (row) =>
+      row.type === "fanout.worktree.created" &&
+      row.fanout === plan.name &&
+      row.slice === slice.id &&
+      typeof row.path === "string" &&
+      samePath(row.path, planned),
+  );
+  const fresh = Boolean(head) && made?.baseSha === head;
+  const mode: BriefMode = input.mode ?? (head && !fresh ? "resume" : "new");
   if (mode === "resume" && !head)
     return fanoutFail(
       "not_found",
@@ -176,7 +191,6 @@ export function renderBrief(
       `workit fanout brief ${slice.id} --mode new`,
     );
 
-  const planned = `${slicePath(cwd, slice)}${input.attempt === null ? "" : `+try${input.attempt}`}`;
   const exists = listWorktrees(cwd).some((entry) => samePath(entry.path, planned));
   excludeScratch(cwd);
   const scratch = exists ? `${planned}/${SCRATCH_DIR}` : SCRATCH_DIR;
@@ -248,6 +262,11 @@ export function renderBrief(
     exists
       ? `WORKTREE: ${planned}  (made by \`workit fanout worktree create ${slice.id}\`; yours alone)`
       : `WORKTREE: ${planned}  (not made yet: the lead runs \`workit fanout worktree create ${slice.id}\` before spawning, then renders this brief again)`,
+    ...(exists &&
+    typeof made?.install === "string" &&
+    !fs.existsSync(path.join(planned, "node_modules"))
+      ? [`INSTALL: \`${made.install}\` first: the main checkout's node_modules was not linked here`]
+      : []),
     ...identityLines(identity, minted),
     ...rules(mode, branch, slice.base, exists ? planned : null),
   ];

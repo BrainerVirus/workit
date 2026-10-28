@@ -572,9 +572,54 @@ function ancestors(slices: readonly Slice[]): Map<string, Set<string>> {
 export type Overlap = {
   path: string;
   slices: string[];
-  resolution: "owner" | "serialized";
+  resolution: "owner" | "serialized" | "regenerated";
   owner?: string;
+  /** `regenerated`: the writer the lead runs at fan-in, after each rebase. */
+  writer?: string;
 };
+
+const CODE = /\.(?:[cm]?[jt]sx?)$/u;
+
+/**
+ * Tracked files a root package.json `write:*` script regenerates, with the
+ * command that does (#432): a non-code tracked path the script's source
+ * names (`scripts/write-budget.ts` names docs/qualification/context-budget.json).
+ * Every slice may touch them; the lead runs the writer at fan-in instead.
+ */
+export function regeneratedFiles(root: string, tracked: readonly string[]): Map<string, string> {
+  const found = new Map<string, string>();
+  let scripts: Record<string, unknown>;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
+      scripts?: Record<string, unknown>;
+    };
+    scripts = manifest.scripts ?? {};
+  } catch {
+    return found;
+  }
+  const runner = fs.existsSync(path.join(root, "bun.lock"))
+    ? "bun run"
+    : fs.existsSync(path.join(root, "pnpm-lock.yaml"))
+      ? "pnpm run"
+      : fs.existsSync(path.join(root, "yarn.lock"))
+        ? "yarn run"
+        : "npm run";
+  const outputs = tracked.filter((file) => !CODE.test(file));
+  for (const [name, command] of Object.entries(scripts)) {
+    if (!name.startsWith("write:") || typeof command !== "string") continue;
+    for (const file of command.match(/[\w./-]+\.[cm]?[jt]s\b/gu) ?? []) {
+      let source: string;
+      try {
+        source = fs.readFileSync(path.join(root, file), "utf8");
+      } catch {
+        continue;
+      }
+      for (const output of outputs)
+        if (!found.has(output) && source.includes(output)) found.set(output, `${runner} ${name}`);
+    }
+  }
+  return found;
+}
 
 type OwnerSuggestion = { kind: "owner"; slice: string; paths: string[]; text: string };
 type Suggestion =
@@ -619,6 +664,7 @@ const serializeSuggestion = (ids: readonly string[]): Suggestion => {
 export function analyzeOverlap(
   plan: FanoutFile,
   candidates: Iterable<string>,
+  regenerated: ReadonlyMap<string, string> = new Map(),
 ): { overlaps: Overlap[]; conflicts: OverlapConflict[] } {
   const shared = [...DEFAULT_SHARED, ...plan.shared];
   const before = ancestors(plan.slices);
@@ -642,6 +688,11 @@ export function analyzeOverlap(
     const owners = matching.filter((slice) => any(slice.owns));
     if (owners.length === 1) {
       overlaps.push({ path: file, slices: ids, resolution: "owner", owner: owners[0].id });
+      continue;
+    }
+    const writer = spellings.map((spelling) => regenerated.get(spelling)).find(Boolean);
+    if (writer) {
+      overlaps.push({ path: file, slices: ids, resolution: "regenerated", writer });
       continue;
     }
     if (
@@ -1099,7 +1150,11 @@ export function planFanout(
   const samples = plan.slices.flatMap((slice) =>
     [...slice.scope, ...slice.owns].flatMap(scopeSamples),
   );
-  const { overlaps, conflicts } = analyzeOverlap(plan, [...tracked, ...samples]);
+  const { overlaps, conflicts } = analyzeOverlap(
+    plan,
+    [...tracked, ...samples],
+    regeneratedFiles(mainCheckout(cwd), tracked),
+  );
   if (conflicts.length)
     return fanoutFail(
       "blocked",
@@ -1195,6 +1250,11 @@ export function planFanout(
         `wave ${index + 1} has ${wave.length} slices; keep 4-${IN_FLIGHT_CAP} in flight and queue the rest`,
       );
   });
+  for (const overlap of overlaps)
+    if (overlap.writer)
+      notes.push(
+        `${overlap.path} is regenerated at fan-in: slices leave it uncommitted, and the lead runs \`${overlap.writer}\` after each rebase`,
+      );
   for (const slice of plan.slices)
     if (slice.dependsOn.length > 1 && slice.base === plan.trunk)
       notes.push(

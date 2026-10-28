@@ -162,7 +162,13 @@ function plan(argv: string[], io: Io): number {
     ),
     ...data.overlaps.map(
       (overlap) =>
-        `  shared ${overlap.path}: ${overlap.resolution === "owner" ? `owned by ${overlap.owner}` : `serialized (${overlap.slices.join(" -> ")})`}`,
+        `  shared ${overlap.path}: ${
+          overlap.resolution === "owner"
+            ? `owned by ${overlap.owner}`
+            : overlap.resolution === "regenerated"
+              ? `regenerated at fan-in (${overlap.writer})`
+              : `serialized (${overlap.slices.join(" -> ")})`
+        }`,
     ),
     `waves: ${data.waves.map((wave) => wave.join(", ")).join("  |  ")}`,
     `landing order: ${data.landingOrder.join(", ")}`,

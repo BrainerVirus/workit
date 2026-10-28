@@ -68,11 +68,12 @@ test("G Plan, general-purpose and an unknown type, W PreToolUse runs, T the inpu
 test("G an implementer brief with TIER: hard, W PreToolUse runs, T it gets opus; no tier line means standard", () => {
   const hard = spawn("Agent", {
     subagent_type: "workit:implementer",
-    prompt: "GOAL: x\nTIER: hard\n",
+    prompt: "GOAL: x\nTIER: hard\nWORKTREE: /w/x\n",
   });
   expect(hard.hookSpecificOutput?.updatedInput?.model).toBe("opus");
   expect(
-    spawn("Agent", { subagent_type: "workit:implementer" }).hookSpecificOutput?.updatedInput?.model,
+    spawn("Agent", { subagent_type: "workit:implementer", prompt: "WORKTREE: /w/x" })
+      .hookSpecificOutput?.updatedInput?.model,
   ).toBe("sonnet");
 });
 

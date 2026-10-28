@@ -8,7 +8,7 @@ ledger rows instead of pasting their content. Size the slice so the worker
 finishes it in about 150k tokens of context; split a larger one first.
 
 ```md
-MODE: <new | resume (a replacement continuing an existing branch)>
+MODE: <new | resume (a replacement continuing a branch with commits)>
 GOAL: <one observable outcome, in the user's terms>
 SCOPE: <file-scope manifest: the globs this worker may write; everything else is read-only>
   branch: <type>/<slug>   base: <trunk or parent branch>

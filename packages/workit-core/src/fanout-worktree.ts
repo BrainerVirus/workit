@@ -460,6 +460,7 @@ export function createSliceWorktree(
     sliceHash: slice.hash,
     ...(admin ? { adminId: admin.id, adminIno: admin.ino, adminToken: admin.token } : {}),
     ...(baseSha ? { baseSha } : {}),
+    ...(deps.install ? { install: deps.install } : {}),
   });
   return {
     ok: true,
