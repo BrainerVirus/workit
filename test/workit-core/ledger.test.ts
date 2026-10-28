@@ -1,5 +1,6 @@
 import { afterEach, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs, {
   appendFileSync,
   existsSync,
@@ -384,6 +385,58 @@ test("given unknown fields, garbage lines and a torn tail, the reader keeps vali
   // `attested` is never trusted: the normalized actor does not carry it.
   expect(ledger.rows[1].actor).toEqual({ host: "x", session: null, agentId: null });
   expect(ledger.skipped).toBe(3);
+});
+
+test("given a writer killed mid-append after another writer read the tail, the other writer's row still reads back intact", () => {
+  const root = repo();
+  value(recordDecision({ cwd: root, actor: actor() }, { what: "first", why: "w" }));
+  const file = value(ledgerPath(root));
+  // The race window: writer B has read the tail (a clean newline) and built
+  // its row; before its write(2) lands, writer A dies leaving a torn fragment.
+  const original = fs.writeSync;
+  let raced = false;
+  const spy = spyOn(fs, "writeSync").mockImplementation(((...args: Parameters<typeof original>) => {
+    if (!raced) {
+      raced = true;
+      const other = fs.openSync(file, "a");
+      try {
+        original(other, '{"v":1,"id":"torn","type":"deci');
+      } finally {
+        fs.closeSync(other);
+      }
+    }
+    return original(...args);
+  }) as typeof original);
+  try {
+    value(recordDecision({ cwd: root, actor: actor() }, { what: "acknowledged", why: "w" }));
+  } finally {
+    spy.mockRestore();
+  }
+  expect(raced).toBe(true);
+  value(recordDecision({ cwd: root, actor: actor() }, { what: "after", why: "w" }));
+  const ledger = read(root);
+  expect(ledger.rows.map((row) => row.what)).toEqual(["first", "acknowledged", "after"]);
+  expect(ledger.skipped).toBe(1);
+  expect(ledger.integrity?.unverified).toEqual([]);
+});
+
+test("a ledger written without fence newlines reads identically and keeps chaining", () => {
+  const root = repo();
+  for (const what of ["one", "two", "three"])
+    value(recordDecision({ cwd: root, actor: actor() }, { what, why: "w" }));
+  const file = value(ledgerPath(root));
+  const fenced = read(root);
+  // An older ledger: one row per line, no blank lines between them.
+  const compact = `${readFileSync(file, "utf8").split("\n").filter(Boolean).join("\n")}\n`;
+  writeFileSync(file, compact);
+  expect(read(root)).toEqual(fenced);
+  value(recordDecision({ cwd: root, actor: actor() }, { what: "four", why: "w" }));
+  const ledger = read(root);
+  expect(ledger.rows.map((row) => row.what)).toEqual(["one", "two", "three", "four"]);
+  expect(ledger.skipped).toBe(0);
+  expect(ledger.integrity?.unverified).toEqual([]);
+  const lastOld = compact.trimEnd().split("\n").at(-1)!;
+  expect(ledger.rows[3].prevHash).toBe(createHash("sha256").update(lastOld).digest("hex"));
 });
 
 // ---------------------------------------------------------------------------

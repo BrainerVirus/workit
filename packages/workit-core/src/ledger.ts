@@ -6,15 +6,19 @@
 //   removal and `git clean`. `<cwd>/.workit/ledger/` is used only when git
 //   says the directory is not a repository; any other git failure is
 //   `unavailable`, never a silent split into a second ledger.
-// - Concurrency: one row is one `write(2)` of at most MAX_LINE_BYTES on an
-//   O_APPEND descriptor. POSIX promises atomicity only for pipes (PIPE_BUF),
-//   not regular files; what we rely on is that local filesystems (ext4, xfs,
-//   btrfs, apfs, NTFS via FILE_APPEND_DATA) position every O_APPEND write at
-//   the end under the inode lock, so small single writes never interleave. That
-//   does not hold on network filesystems (NFS, SMB, FUSE), so when statfs
-//   reports one the append runs under an advisory lock directory instead. A
-//   short write is reported as `unavailable`, and a torn tail left by a crashed
-//   writer is fenced off with a newline so it never swallows the next row.
+// - Concurrency: one row (at most MAX_LINE_BYTES, plus its fence newline) is
+//   one `write(2)` on an O_APPEND descriptor. POSIX promises atomicity only
+//   for pipes (PIPE_BUF), not regular files; what we rely on is that local
+//   filesystems (ext4, xfs, btrfs, apfs, NTFS via FILE_APPEND_DATA) position
+//   every O_APPEND write at the end under the inode lock, so small single
+//   writes never interleave. That does not hold on network filesystems (NFS,
+//   SMB, FUSE), so when statfs reports one the append runs under an advisory
+//   lock directory instead. A short write is reported as `unavailable`. Every row is written as
+//   `\n<row>\n` in that one write, so a row always starts on a fresh line:
+//   a torn tail a killed writer leaves, even one that lands after this
+//   writer read the tail, stays on its own line and is skipped, and never
+//   swallows an acknowledged row. The cost is a blank line between rows,
+//   which the reader skips; ledgers written before the fence read the same.
 // - Reader tolerance (D17): unknown keys are kept and ignored, unparsable
 //   lines and rows without the required keys are skipped and counted, and the
 //   file is never rewritten. `seq` is the row's position among valid rows (a
@@ -629,21 +633,17 @@ type LineBuilder = (previous: string | null) => LedgerResult<string>;
 function appendLine(file: string, build: LineBuilder, options: AppendOptions): LedgerResult<void> {
   const write = (): LedgerResult<void> => {
     // a+ = O_APPEND|O_RDWR: every write lands at the end, and we can still
-    // peek at the tail to chain onto the last row and fence off a torn one.
+    // peek at the tail to chain onto the last row.
     // 0600: rows name sessions, branches and verdict notes (audit N14).
     const fd = fs.openSync(file, "a+", 0o600);
     try {
       if (process.platform !== "win32") tighten(fd);
-      const size = fs.fstatSync(fd).size;
-      let fence = "";
-      if (size > 0) {
-        const last = Buffer.alloc(1);
-        fs.readSync(fd, last, 0, 1, size - 1);
-        if (last[0] !== 0x0a) fence = "\n";
-      }
-      const line = build(lastLine(fd, size));
+      const line = build(lastLine(fd, fs.fstatSync(fd).size));
       if (!line.ok) return line;
-      const bytes = Buffer.from(fence + line.value);
+      // The leading newline is unconditional and part of the same write: a
+      // torn fragment can land after any tail check, so only a fence written
+      // with the row keeps the row from starting mid-line (#495).
+      const bytes = Buffer.from(`\n${line.value}`);
       const written = fs.writeSync(fd, bytes);
       if (written !== bytes.length)
         return err(
