@@ -13,7 +13,7 @@
         "@semantic-release/github": "12.0.10",
         "@semantic-release/npm": "13.2.0",
         "@semantic-release/release-notes-generator": "14.1.1",
-        "@types/bun": "1.4.1",
+        "@types/bun": "1.4.4",
         "@types/node": "24.13.3",
         "@types/react": "19.2.18",
         "ajv": "8.20.0",
@@ -34,7 +34,7 @@
     },
     "packages/workit-claude-code": {
       "name": "@brainervirus/workit-claude-code",
-      "version": "8.26.0",
+      "version": "8.37.2",
       "devDependencies": {
         "@brainervirus/workit-cli": "workspace:*",
         "@brainervirus/workit-core": "workspace:*",
@@ -42,7 +42,7 @@
     },
     "packages/workit-cli": {
       "name": "@brainervirus/workit-cli",
-      "version": "8.26.0",
+      "version": "8.37.2",
       "bin": {
         "workit": "./dist/index.js",
       },
@@ -59,7 +59,7 @@
     },
     "packages/workit-codex": {
       "name": "@brainervirus/workit-codex",
-      "version": "8.26.0",
+      "version": "8.37.2",
       "bin": {
         "workit-codex-hook": "./dist/workit-hook.js",
         "workit-codex-mcp": "./dist/launch-mcp.js",
@@ -71,7 +71,7 @@
     },
     "packages/workit-core": {
       "name": "@brainervirus/workit-core",
-      "version": "8.26.0",
+      "version": "8.37.2",
       "dependencies": {
         "@openclaw/fs-safe": "0.8.1",
         "zod": "4.6.5",
@@ -79,7 +79,7 @@
     },
     "packages/workit-cursor": {
       "name": "@brainervirus/workit-cursor",
-      "version": "8.26.0",
+      "version": "8.37.2",
       "bin": {
         "workit-cursor-hook": "./dist/workit-hook.js",
         "workit-cursor-mcp": "./dist/mcp-server.js",
@@ -92,7 +92,7 @@
     },
     "packages/workit-mcp": {
       "name": "@brainervirus/workit-mcp",
-      "version": "8.26.0",
+      "version": "8.37.2",
       "bin": {
         "workit-mcp": "./dist/index.js",
       },
@@ -104,7 +104,7 @@
     },
     "packages/workit-opencode": {
       "name": "@brainervirus/workit-opencode",
-      "version": "8.26.0",
+      "version": "8.37.2",
       "devDependencies": {
         "@brainervirus/workit-core": "workspace:*",
         "@opencode/plugin": "2.0.18",
@@ -112,7 +112,7 @@
     },
     "packages/workit-pi": {
       "name": "@brainervirus/workit-pi",
-      "version": "8.26.0",
+      "version": "8.37.2",
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "1.4.0",
       },
@@ -774,7 +774,7 @@
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg=="],
 
-    "@types/bun": ["@types/bun@1.4.1", "", { "dependencies": { "bun-types": "1.4.1" } }, "sha512-0AVGiTXGajf1rgKom3N+c5L7CBxuoyyv1i44M0nX4UDK0G/fnRAMiri93nHuVPIb429KKtAgj7HatVmmOjeQLA=="],
+    "@types/bun": ["@types/bun@1.4.4", "", { "dependencies": { "bun-types": "1.4.4" } }, "sha512-9wkRDXUXK124pEnAutE6n/l18j+i9GC5IAHK8TmX/2nlySETmky0OU6yL5U8pW1AoKh++AN9auDCr647BfurjQ=="],
 
     "@types/esrecurse": ["@types/esrecurse@4.3.1", "", {}, "sha512-xJBAbDifo5hpffDBuHl0Y8ywswbiAp/Wi7Y/GtAgSlZyIABppyurxVueOPE8LUQOxdlgi6Zqce7uoEpqNTeiUw=="],
 
@@ -902,7 +902,7 @@
 
     "buffer-equal-constant-time": ["buffer-equal-constant-time@1.0.1", "", {}, "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA=="],
 
-    "bun-types": ["bun-types@1.4.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-loKuVrAFZKfEv+JvWkHRS9GW5IqLuLRjVXN9p+vZvBN86O5hf/pBZQ5hSoyipsrMmWObZBDvWnlmKvjKTM0PdA=="],
+    "bun-types": ["bun-types@1.4.4", "", { "dependencies": { "@types/node": "*", "undici-types": "*" } }, "sha512-yjrJh5oGX7mMPKGd19YXyIjmEuj4G4zNC30bs7PM9Az7NQ3ndF3j6hbeRdvJTRQEhJ/FYQwW0a2moweEi2hMxQ=="],
 
     "bundle-name": ["bundle-name@4.1.1", "", { "dependencies": { "run-applescript": "^7.0.0" } }, "sha512-DdH81/zPLVS11EUgWq3tEu/xn+EzljlMYooDNdzWEnFha3R3NBMpMV1UqYIpjYHV/SgpFKMIX1Oh7o06SjM/oA=="],
 
