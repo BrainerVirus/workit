@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -490,16 +490,25 @@ export class WorkspaceConfigError extends Error {
   override name = "WorkspaceConfigError";
 }
 
-const mainCheckouts = new Map<string, string | null>();
+type Probe = { main: string | null; superproject: string | null };
+const probes = new Map<string, Probe | null>();
 
 /**
- * The main checkout of the linked worktree at `cwd` (null when cwd is not a
- * linked worktree). A worktree outside every glob (~/.codex/worktrees/…,
- * ../x, /tmp) belongs to the workspace of the checkout it was added from (B2).
+ * What git says about the checkout at `cwd`: its main checkout when it is a
+ * linked worktree, its superproject when it is a submodule; null when no
+ * `.git` sits at or above it (no repository, git is not asked). An Error when
+ * git did not answer (missing, broken gitdir, timeout): callers fail closed
+ * (#540), and a failure is never cached.
  */
-const mainCheckoutOf = (cwd: string): string | null => {
-  const cached = mainCheckouts.get(cwd);
+const probeCheckout = (cwd: string): Probe | null | Error => {
+  const cached = probes.get(cwd);
   if (cached !== undefined) return cached;
+  let dir = path.resolve(cwd);
+  while (!existsSync(path.join(dir, ".git"))) {
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
   // The repository at cwd, not one an inherited GIT_DIR/GIT_WORK_TREE names.
   const env = { ...process.env };
   for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"])
@@ -514,17 +523,62 @@ const mainCheckoutOf = (cwd: string): string | null => {
     });
     return run.status === 0 ? run.stdout : null;
   };
+  const failed = Error(`git could not tell what checkout ${cwd} is`);
+  const [gitDir, common, superproject] = (
+    git([
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-dir",
+      "--git-common-dir",
+      "--show-superproject-working-tree",
+    ]) ?? ""
+  )
+    .trim()
+    .split(/\r?\n/u);
+  if (!gitDir || !common) return failed;
   let main: string | null = null;
-  const dirs = git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]);
-  const [gitDir, common] = (dirs ?? "").trim().split(/\r?\n/u);
-  if (gitDir && common && path.resolve(gitDir) !== path.resolve(common)) {
+  if (path.resolve(gitDir) !== path.resolve(common)) {
     // The first `worktree` entry is the main one, also with --separate-git-dir
     // (where the common dir is not <main>/.git); a bare repo lists its own path.
-    const listed = /^worktree (.+)$/mu.exec(git(["worktree", "list", "--porcelain"]) ?? "")?.[1];
-    main = listed?.trim() || (path.basename(common) === ".git" ? path.dirname(common) : common);
+    const list = git(["worktree", "list", "--porcelain"]);
+    if (list === null) return failed;
+    main =
+      /^worktree (.+)$/mu.exec(list)?.[1]?.trim() ||
+      (path.basename(common) === ".git" ? path.dirname(common) : common);
   }
-  mainCheckouts.set(cwd, main);
-  return main;
+  const probe = { main, superproject: superproject || null };
+  probes.set(cwd, probe);
+  return probe;
+};
+
+/**
+ * The main checkout of the linked worktree at `cwd` (null when cwd is not a
+ * linked worktree, or git did not answer). A worktree outside every glob
+ * (~/.codex/worktrees/…, ../x, /tmp) belongs to the workspace of the checkout
+ * it was added from (B2).
+ */
+const mainCheckoutOf = (cwd: string): string | null => {
+  const probe = probeCheckout(cwd);
+  return probe instanceof Error ? null : (probe?.main ?? null);
+};
+
+/**
+ * Every checkout whose grants cap the one at `cwd` (#540): a linked
+ * worktree's main checkout, a submodule's superproject, and theirs in turn.
+ * An Error when git did not answer for one of them.
+ */
+export const checkoutsAbove = (cwd: string, seen = new Set<string>()): string[] | Error => {
+  const probe = probeCheckout(cwd);
+  if (probe instanceof Error) return probe;
+  const out: string[] = [];
+  for (const above of [probe?.main, probe?.superproject])
+    if (above && !seen.has(above)) {
+      seen.add(above);
+      const rest = checkoutsAbove(above, seen);
+      if (rest instanceof Error) return rest;
+      out.push(above, ...rest);
+    }
+  return out;
 };
 
 /**

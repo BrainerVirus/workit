@@ -37,6 +37,7 @@ import path from "node:path";
 import { resolveConfigDir } from "./core/config";
 import { writeFileAtomic } from "./core/safe-write";
 import {
+  checkoutsAbove,
   readWorkspacesResult,
   resolveWorkspaceFrom,
   validateWorkspacesDocument,
@@ -152,7 +153,7 @@ function effectiveEndpoint(
   if (context.configured.length > 0 && !context.accountConfigured)
     return {
       endpoint: "commit",
-      reason: `vcs.account missing; set vcs.account for workspace "${context.workspace ?? "?"}" in ~/.config/workit/workspaces.json`,
+      reason: `vcs.account missing; ${accountHint(context.workspace)}`,
     };
   if (endpoint === "merged" && context.grants.merge === false)
     return { endpoint: "green", reason: missing("merge") };
@@ -264,9 +265,12 @@ export type Autonomy = EndpointView & {
   verification: VerificationMode;
   /**
    * Set when the grants file was not read (see grantsOverride), or when
-   * WORKFLOW_WORKSPACE_NAME was capped at the folder's grants (#536).
+   * WORKFLOW_WORKSPACE_NAME (#536) or a linked worktree's main checkout (#540)
+   * capped the grants.
    */
   note?: string;
+  /** The unblock of each grant a cap lowered: it names the capping entry. */
+  unblocks?: Partial<Record<GrantKind, string>>;
 };
 
 export type GrantDecision =
@@ -354,26 +358,50 @@ function autonomyOf(workspace: WorkspaceConfig | null): Autonomy {
 }
 
 /**
- * #536: WORKFLOW_WORKSPACE_NAME may pick which matching entry's vcs and
- * policies apply, but any shell (an agent's too) can set it, so the effective
- * grants, endpoint and verification never exceed what the folder resolves to
- * without it: `folder`, or nothing granted when the folder's entries tie
- * (null). Explicit grants without vcs.account reach no forge, so such a
- * folder entry caps at nothing granted too.
+ * The grants, endpoint and verification of `named` never exceed what `where`
+ * resolves to without a name, or nothing granted when its entries tie (#536:
+ * WORKFLOW_WORKSPACE_NAME, which any shell can set; #540: a linked worktree's
+ * main checkout). Explicit grants without vcs.account reach no forge, so such
+ * an entry caps at nothing granted too. A lowered grant's unblock names the
+ * capping entry, never the named one. Settings that are not authority stay.
  */
-function capByFolder(named: Autonomy, folder: Autonomy | null, name: string): Autonomy {
-  if (folder?.workspace === named.workspace) return named;
+function capAt(
+  named: Autonomy,
+  where: string | Error,
+  by: string,
+  why: string,
+  main = false,
+): Autonomy {
+  let folder: Autonomy | null = null;
+  let none = "";
+  try {
+    if (where instanceof Error) throw where;
+    folder = autonomyOf(resolveWorkspaceFrom(where, grantsDir()));
+  } catch (error) {
+    // Its entries tie (the only resolver error once `named` resolved), or git
+    // did not answer (`where`): nothing granted.
+    none = (error as Error).message;
+  }
+  // A name equal to the folder's entry is the folder's resolution; a main
+  // checkout caps even its own entry, so naming it never beats the unnamed.
+  if (!main && folder?.workspace === named.workspace) return named;
   const nothing = !folder || (folder.configured.length > 0 && !folder.accountConfigured);
   const grants = { ...named.grants };
+  const unblocks = { ...named.unblocks };
   const lowered: string[] = [];
   for (const kind of GRANT_KINDS) {
-    const floor = !nothing && folder.grants[kind];
+    const floor = !nothing && folder!.grants[kind];
     if (!raises(kind, floor, grants[kind])) continue;
     grants[kind] = floor;
+    unblocks[kind] = folder
+      ? nothing
+        ? accountHint(folder.workspace)
+        : grantHint(folder.workspace, kind)
+      : `ask the user to fix: ${none}`;
     lowered.push(kind);
   }
   // The folder's effective endpoint already reflects its own grants.
-  const ceiling = (!nothing && folder.effectiveEndpoint) || DEFAULT_ENDPOINT;
+  const ceiling = (!nothing && folder!.effectiveEndpoint) || DEFAULT_ENDPOINT;
   const endpoint = raisesEndpoint(ceiling, named.effectiveEndpoint);
   if (endpoint) lowered.push("defaultEndpoint");
   // VERIFICATION_MODES runs loosest first.
@@ -382,47 +410,50 @@ function capByFolder(named: Autonomy, folder: Autonomy | null, name: string): Au
     VERIFICATION_MODES.indexOf(named.verification) < VERIFICATION_MODES.indexOf(strict);
   if (looser) lowered.push("verification");
   if (lowered.length === 0) return named;
+  const note = `${by}: ${lowered.join(", ")} capped at ${folder ? `workspace ${folder.workspace}` : `nothing (${none})`}; ${why}`;
   return {
     ...named,
     grants,
+    unblocks,
     ...(endpoint ? { effectiveEndpoint: ceiling, endpointReason: undefined } : {}),
     verification: looser ? strict : named.verification,
-    note: `WORKFLOW_WORKSPACE_NAME=${name}: ${lowered.join(", ")} capped at ${folder ? `workspace ${folder.workspace}` : "nothing (tied workspaces)"}; a name never raises grants`,
+    note: named.note ? `${named.note}; ${note}` : note,
   };
 }
 
 /** The grants for the workspace `cwd` belongs to (read-only). */
 export function resolveAutonomy(cwd: string): Autonomy {
   const override = grantsOverride();
-  if (override)
-    return {
-      workspace: null,
-      grants: { ...DEFAULT_GRANTS },
-      configured: [],
-      source: "default",
-      accountConfigured: false,
-      defaultEndpoint: DEFAULT_ENDPOINT,
-      configuredEndpoint: null,
-      effectiveEndpoint: DEFAULT_ENDPOINT,
-      verification: DEFAULT_VERIFICATION,
-      note: override,
-    };
+  // No entry: the D4 defaults.
+  if (override) return { ...autonomyOf(null), note: override };
   const name = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
-  const named = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir(), name));
-  if (name === undefined) return named;
-  let folder: Autonomy | null;
-  try {
-    folder = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir()));
-  } catch {
-    folder = null; // the folder's entries tie: nothing granted
-  }
-  return capByFolder(named, folder, name);
+  let autonomy = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir(), name));
+  if (name)
+    autonomy = capAt(
+      autonomy,
+      cwd,
+      `WORKFLOW_WORKSPACE_NAME=${name}`,
+      "a name never raises grants",
+    );
+  const above = checkoutsAbove(cwd);
+  for (const where of above instanceof Error ? [above] : above)
+    autonomy = capAt(
+      autonomy,
+      where,
+      where instanceof Error ? "git" : `checkout ${where}`,
+      "a worktree or submodule never exceeds it",
+      true,
+    );
+  return autonomy;
 }
 
 const accountOf = (entry: unknown): unknown =>
   (entry as { vcs?: { account?: unknown } } | null)?.vcs?.account;
 
 const suggested = (kind: GrantKind): string => (kind === "merge" ? "verified" : "true");
+
+const accountHint = (workspace: string | null): string =>
+  `set vcs.account for workspace "${workspace ?? "?"}" in ~/.config/workit/workspaces.json`;
 
 /** The one way to clear a missing grant: the user raises it from a terminal. */
 export const grantHint = (workspace: string | null, kind: GrantKind): string =>
@@ -460,10 +491,12 @@ export function requireGrant(
       kind,
       reason: "grant_required",
       error: `grant_required: ${kind} is not granted for ${workspace ? `workspace "${workspace}"` : "this checkout (no workspace matches it)"}${configured ? "" : " (the default ceiling stops at verified, ready)"}${autonomy.note ? `; ${autonomy.note}` : ""}`,
-      unblock: workspace
-        ? grantHint(workspace, kind)
-        : "ask the user to add a workspace for this checkout (workit init → Workspaces), then: workit grant set <workspace> " +
-          `${kind}=${suggested(kind)}`,
+      unblock:
+        autonomy.unblocks?.[kind] ??
+        (workspace
+          ? grantHint(workspace, kind)
+          : "ask the user to add a workspace for this checkout (workit init → Workspaces), then: workit grant set <workspace> " +
+            `${kind}=${suggested(kind)}`),
       workspace,
     };
   if (
@@ -477,7 +510,7 @@ export function requireGrant(
       kind,
       reason: "account_required",
       error: `account_required: workspace "${workspace ?? "?"}" has autonomy grants but no vcs.account, so the credential cannot be checked`,
-      unblock: `set vcs.account for workspace "${workspace ?? "?"}" in ~/.config/workit/workspaces.json`,
+      unblock: accountHint(workspace),
       workspace,
     };
   return {
