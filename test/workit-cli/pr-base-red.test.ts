@@ -143,7 +143,7 @@ test("given a base whose head CI failed, when merging, then it is refused as bas
     checkRun("unit", "COMPLETED", "SUCCESS"),
     checkRun("fast checks", "COMPLETED", "FAILURE"),
   ]);
-  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().error).toContain("base_red");
   expect(result.json().error).toContain("CI / fast checks");
@@ -159,7 +159,7 @@ test("given a base whose head CI failed, when merging, then it is refused as bas
 
 test("given a base whose CI is still running, when merging, then it merges with a one-line note", async () => {
   const { repo, runner } = setup([checkRun("unit", "IN_PROGRESS", null)]);
-  const result = await run(["pr", "merge"], repo.cwd);
+  const result = await run(["pr", "merge", "--keep-branch"], repo.cwd);
   expect(result.code, result.stdout + result.stderr).toBe(0);
   expect(result.stdout).toContain("CI is still running (CI / unit); merging without waiting");
   expect(merges(runner.calls)).toHaveLength(1);
@@ -167,7 +167,7 @@ test("given a base whose CI is still running, when merging, then it merges with 
 
 test("given a green base, when merging, then it merges with no base note", async () => {
   const { repo, runner } = setup([checkRun("unit", "COMPLETED", "SUCCESS")]);
-  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
   expect(result.code).toBe(0);
   expect(result.json().data.baseCi).toEqual({ note: null, override: null });
   expect(merges(runner.calls)).toHaveLength(1);
@@ -175,7 +175,7 @@ test("given a green base, when merging, then it merges with no base note", async
 
 test("given a base with no checks, when merging, then it merges", async () => {
   const { repo, runner } = setup(null);
-  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
   expect(result.code).toBe(0);
   expect(result.json().data.baseCi.note).toBeNull();
   expect(merges(runner.calls)).toHaveLength(1);
@@ -184,7 +184,15 @@ test("given a base with no checks, when merging, then it merges", async () => {
 test("given a red base, when --base-red-ok --reason is passed, then it merges and both merge rows record the reason", async () => {
   const { repo, runner } = setup([checkRun("fast checks", "COMPLETED", "FAILURE")]);
   const result = await run(
-    ["pr", "merge", "--base-red-ok", "--reason", "user asked: the fix for main itself", "--json"],
+    [
+      "pr",
+      "merge",
+      "--keep-branch",
+      "--base-red-ok",
+      "--reason",
+      "user asked: the fix for main itself",
+      "--json",
+    ],
     repo.cwd,
   );
   expect(result.code, result.stdout + result.stderr).toBe(0);
@@ -202,7 +210,7 @@ test("given a red base, when --base-red-ok --reason is passed, then it merges an
 
 test("--base-red-ok without --reason is a usage error and nothing is called", async () => {
   const { repo, runner } = setup([checkRun("fast checks", "COMPLETED", "FAILURE")]);
-  const result = await run(["pr", "merge", "--base-red-ok", "--json"], repo.cwd);
+  const result = await run(["pr", "merge", "--keep-branch", "--base-red-ok", "--json"], repo.cwd);
   expect(result.code).toBe(2);
   expect(result.stderr + result.stdout).toContain("--base-red-ok needs --reason");
   expect(runner.calls).toEqual([]);
@@ -210,7 +218,7 @@ test("--base-red-ok without --reason is a usage error and nothing is called", as
 
 test("given a failing check branch protection does not require, when merging, then it merges", async () => {
   const { repo, runner } = setup([checkRun("windows shard", "COMPLETED", "FAILURE")]);
-  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
   expect(result.code, result.stdout + result.stderr).toBe(0);
   expect(merges(runner.calls)).toHaveLength(1);
 });
@@ -219,7 +227,7 @@ test("given unreadable base checks, when merging, then it merges with a note", a
   const { repo, runner } = setup(null, {
     "graphql branch-checks": replyError("HTTP 502 bad gateway"),
   });
-  const result = await run(["pr", "merge"], repo.cwd);
+  const result = await run(["pr", "merge", "--keep-branch"], repo.cwd);
   expect(result.code, result.stdout + result.stderr).toBe(0);
   expect(result.stdout).toContain("CI not read");
   expect(result.stdout).toContain("merging anyway");
@@ -230,7 +238,7 @@ test("given an unreadable required set, when a check failed outright, then it is
   const { repo, runner } = setup([checkRun("windows shard", "COMPLETED", "FAILURE")], {
     "GET repos/o/r/rules/branches/main": replyError("HTTP 500"),
   });
-  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().error).toContain("required checks could not be read");
   expect(merges(runner.calls)).toEqual([]);
@@ -249,7 +257,7 @@ test("given a PR whose base is not a protected target (a stack's lower PR), when
     },
     lower,
   );
-  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
   expect(result.code, result.stdout + result.stderr).toBe(0);
   expect(runner.calls.filter((call) => call.op === "branch-checks")).toEqual([]);
 });
