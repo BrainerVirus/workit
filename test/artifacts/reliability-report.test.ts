@@ -71,10 +71,10 @@ test(
     // info (no host permission block, #297).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 31,
+      passed: 32,
       warned: 1,
       failed: 1,
-      total: 33,
+      total: 34,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -114,13 +114,13 @@ test(
       // hook skips recorded, #309); checks_config passes (no checks config at
       // the repo root, #354); plugin_files passes (no registered host plugin,
       // #394); the three *_permissions rows are info (no host permission
-      // block, #297).
+      // block, #297); grant_endpoint passes (no workspace grants, #431).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 31,
+        passed: 32,
         warned: 1,
         failed: 1,
-        total: 33,
+        total: 34,
         fixes: 1,
       });
     } finally {

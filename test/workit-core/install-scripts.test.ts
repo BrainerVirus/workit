@@ -283,6 +283,11 @@ function copyCoreSources(stub: string) {
       path.join(repoRoot, "packages/workit-core/src/core", name),
       path.join(stub, "packages/workit-core/src/core", name),
     );
+  // doctor's grant_endpoint row reads the grant/endpoint mismatch (#431).
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/src/autonomy.ts"),
+    path.join(stub, "packages/workit-core/src/autonomy.ts"),
+  );
   mkdirSync(path.join(stub, "packages/workit-core/src/hooks"), { recursive: true });
   for (const name of STUB_HOOK_FILES)
     cpSync(
