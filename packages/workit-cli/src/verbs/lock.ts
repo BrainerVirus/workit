@@ -1,11 +1,12 @@
 // `workit lock` (issue #325): the machine-wide heavy-check lease under its
-// own name. `status` shows who holds it, `wait` waits for a free slot without
+// own name. `status` shows who holds it and who is queued (#508), `wait`
+// waits for a free slot without
 // taking it, `run` is `workit check --heavy`, and `heavy` lists, tests and
 // extends which commands the shell hook gates (core/heavy.ts).
 //
 //   workit lock status
-//   workit lock wait [--timeout <s>]
-//   workit lock run [--shell] [--wait <s>] [--timeout <s>] -- <cmd…>
+//   workit lock wait [--timeout <dur>]
+//   workit lock run [--shell] [--wait <dur> | --no-wait] [--timeout <s>] -- <cmd…>
 //   workit lock heavy list | add <pattern> | remove <pattern> | test <cmd…>
 import fs from "node:fs";
 import path from "node:path";
@@ -20,16 +21,20 @@ import {
 } from "@brainervirus/workit-core/src/core/heavy";
 import {
   describeHolder,
+  formatWait,
   leaseDir,
+  leaseQueue,
   leaseSlots,
+  parseWait,
   resolveResourceSettings,
+  type QueueEntry,
   type SlotState,
 } from "@brainervirus/workit-core/src/core/resources";
 import { emit, fail, ok, type Io } from "../output";
 import { workspaceResources } from "./check";
 
 const USAGE =
-  "workit lock status | wait [--timeout <s>] | run [--shell] [--wait <s>] [--timeout <s>] -- <cmd…> | heavy list|add|remove|test";
+  "workit lock status | wait [--timeout <dur>] | run [--shell] [--wait <dur> | --no-wait] [--timeout <s>] -- <cmd…> | heavy list|add|remove|test";
 
 async function settingsFor(io: Io) {
   const workspace = await workspaceResources(io);
@@ -42,8 +47,9 @@ async function settingsFor(io: Io) {
 
 const held = (slots: SlotState[]) => slots.filter((slot) => slot.holder && !slot.stale);
 
-function slotLines(slots: SlotState[]): string[] {
+function slotLines(slots: SlotState[], queue: QueueEntry[] = []): string[] {
   const busy = held(slots).length;
+  const waiting = queue.filter((entry) => !entry.stale);
   return [
     `heavy-check lease: ${busy} of ${slots.length} slot${slots.length === 1 ? "" : "s"} held`,
     ...slots.map((slot) =>
@@ -51,14 +57,26 @@ function slotLines(slots: SlotState[]): string[] {
         ? `  slot ${slot.slot}: ${describeHolder(slot.holder)}${slot.stale ? ` (stale: ${slot.stale}; the next heavy check reclaims it)` : ""}`
         : `  slot ${slot.slot}: free`,
     ),
+    `queue: ${waiting.length ? `${waiting.length} waiting, first come, first served` : "empty"}`,
+    ...waiting.map((entry, index) => `  ${index + 1}. ${describeHolder(entry.holder)}`),
   ];
 }
 
 async function status(io: Io): Promise<number> {
   const settings = await settingsFor(io);
   const slots = leaseSlots(leaseDir(io.env), settings.slots);
-  return emit(io, ok({ dir: leaseDir(io.env), slots, waitMs: settings.waitMs }), (data) =>
-    slotLines(data.slots),
+  const queue = leaseQueue(leaseDir(io.env));
+  const waiting = queue.filter((entry) => !entry.stale).map((entry) => entry.holder);
+  return emit(
+    io,
+    ok({
+      dir: leaseDir(io.env),
+      slots,
+      queue: waiting,
+      waitMs: settings.waitMs,
+      light: settings.light,
+    }),
+    () => slotLines(slots, queue),
   );
 }
 
@@ -68,10 +86,10 @@ function timeoutOf(args: string[]): number | null | Error {
   const at = args.findIndex((arg) => arg === "--timeout" || arg.startsWith("--timeout="));
   if (at < 0) return null;
   const raw = args[at].includes("=") ? args[at].split("=")[1] : args[at + 1];
-  const seconds = Number(raw);
-  return Number.isFinite(seconds) && seconds >= 0
-    ? Math.round(seconds * 1000)
-    : new Error("--timeout must be a number of seconds");
+  return (
+    parseWait(raw ?? "") ??
+    new Error('--timeout must be seconds or a duration ("90", "90s", "30m", "1h")')
+  );
 }
 
 async function wait(args: string[], io: Io): Promise<number> {
@@ -88,12 +106,12 @@ async function wait(args: string[], io: Io): Promise<number> {
     const waitedMs = Date.now() - started;
     if (busy.length < slots.length)
       return emit(io, ok({ free: true, waitedMs, slots }), () => [
-        `workit: the heavy-check lease has a free slot${waitedMs ? ` after ${Math.round(waitedMs / 1000)} s` : ""}`,
+        `workit: the heavy-check lease has a free slot${waitedMs ? ` after ${formatWait(waitedMs)}` : ""}`,
       ]);
     if (waitedMs >= limit)
       return emit(
         io,
-        fail("busy", `the heavy-check lease stayed busy for ${Math.round(waitedMs / 1000)} s`, {
+        fail("busy", `the heavy-check lease stayed busy for ${formatWait(waitedMs)}`, {
           data: { free: false, waitedMs, slots },
           unblock: "workit lock status",
         }),
@@ -115,6 +133,7 @@ async function runHeavy(args: string[], io: Io): Promise<number> {
     (arg, index) =>
       arg !== "--shell" &&
       arg !== "--json" &&
+      arg !== "--no-wait" &&
       !arg.startsWith("--timeout") &&
       !arg.startsWith("--wait") &&
       !((head[index - 1] === "--timeout" || head[index - 1] === "--wait") && !arg.startsWith("-")),
@@ -123,7 +142,7 @@ async function runHeavy(args: string[], io: Io): Promise<number> {
     return emit(
       io,
       fail("invalid_input", unknown ? `unexpected ${unknown}` : "no command after --", {
-        unblock: "workit lock run [--shell] [--wait <s>] [--timeout <s>] -- <cmd…>",
+        unblock: "workit lock run [--shell] [--wait <dur> | --no-wait] [--timeout <s>] -- <cmd…>",
       }),
     );
   const check = await import("./check");

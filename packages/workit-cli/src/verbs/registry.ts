@@ -195,9 +195,10 @@ function withSubcommands(
 }
 
 const LEASE_NOTES = [
-  "The heavy-check lease: heavy work (tests, builds, lint, typecheck, installs, image builds) shares one machine-wide lease, so parallel agents and worktrees never exhaust this machine's memory and CPU. `slots` (default 1) heavy checks run at once; on Linux each also runs in a systemd scope with MemoryMax and CPUQuota.",
-  "Waiting: a heavy check that finds every slot held prints one `waiting for the heavy-check lease` line naming the holder (check, pid, session, age, directory), polls once a second, and exits 4 (busy) after `--wait <s>`, else `resources.wait` seconds (default 600, capped at 100 inside a Claude Code or OpenCode shell). `workit lock status` shows the holders; `workit lock wait` waits for a free slot.",
-  "--heavy: an ad-hoc `workit check -- <cmd>` takes the lease only with --heavy; the named checks test, build and typecheck always do. The shell hook runs a raw heavy command (`npx jest`, `npm run test:ci`, `cargo test`, `docker build`) as `workit check --heavy -- <cmd>` on Claude Code, OpenCode and Pi, and denies it with that exact command on Codex and Cursor.",
+  "The heavy-check lease: heavy work (tests, builds, installs, image builds) shares one machine-wide lease, so parallel agents and worktrees never exhaust this machine's memory and CPU. `slots` (default 1) heavy checks run at once; on Linux each also runs in a systemd scope with MemoryMax and CPUQuota.",
+  "Queueing: a heavy check that finds every slot held joins a first-come, first-served queue and prints `waiting for the heavy-check lease` naming the holder (check, pid, session, age, directory) and its position, then a status line every 30 s. It waits `--wait <dur>` (90, 90s, 30m, 1h), else `resources.wait` (default 30 min), and exits 4 (busy) only past that wait or at once with --no-wait. A waiter that is killed gives up its place. A wait longer than your shell tool's timeout belongs in a background call. `workit lock status` shows the holders and the queue.",
+  "Light checks: the named checks lint, typecheck and format (`resources.light`, set in workspaces.json) never take the lease, so they run at once beside a long suite.",
+  "--heavy: an ad-hoc `workit check -- <cmd>` takes the lease only with --heavy; the named checks test and build always do. The shell hook runs a raw heavy command (`npx jest`, `npm run test:ci`, `cargo test`, `docker build`) as `workit check --heavy -- <cmd>` on Claude Code, OpenCode and Pi, and denies it with that exact command on Codex and Cursor.",
   '--no-lease skips the lease and needs --reason "<why>". Never hand-roll a flock: the lease already queues every agent on the machine.',
   "Output: a check prints the last 60 lines of its output and one summary line with `log: <path>` to the full log; --full streams all of it.",
 ];
@@ -336,7 +337,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "check",
     group: "delivery",
     usage:
-      'workit check <name> [--full] [--task <id>] [--base <ref>] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--full] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy [--wait <s>]] [--no-lease --reason "<why>"] -- <cmd…>',
+      'workit check <name> [--full] [--task <id>] [--base <ref>] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--full] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy [--wait <dur> | --no-wait]] [--no-lease --reason "<why>"] -- <cmd…>',
     flagHints: {
       list: "workit check <name> runs a configured check; a name that is not configured prints the valid ones (workit check test|lint|typecheck|check)",
     },
@@ -345,6 +346,7 @@ export const VERBS: readonly VerbEntry[] = [
     examples: [
       "workit check test",
       "workit check --heavy -- npx jest",
+      "workit check test --wait 45m",
       "workit check --name unit -- bun test test/unit",
       'workit check test --no-lease --reason "machine is idle, debugging a hang"',
     ],
@@ -360,17 +362,18 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "status",
         usage: "workit lock status",
-        summary: "Show each lease slot: free, held (check, pid, session, age, directory) or stale",
+        summary:
+          "Show each lease slot (free, held by check, pid, session, age, directory, or stale) and the queue of waiting checks in arrival order",
       },
       {
         name: "wait",
-        usage: "workit lock wait [--timeout <s>]",
+        usage: "workit lock wait [--timeout <dur>]",
         summary:
           "Wait until a lease slot is free, without taking it (exit 0 free, 4 still busy at the timeout)",
       },
       {
         name: "run",
-        usage: "workit lock run [--shell] [--wait <s>] [--timeout <s>] -- <cmd…>",
+        usage: "workit lock run [--shell] [--wait <dur> | --no-wait] [--timeout <s>] -- <cmd…>",
         summary: "Run a command under the lease: the same as workit check --heavy -- <cmd…>",
       },
       {

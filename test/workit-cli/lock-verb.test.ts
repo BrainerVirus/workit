@@ -151,6 +151,31 @@ test("Given a lease held by another check, When `workit lock status` and `workit
   expect(status.stdout).toContain("1 of 1 slot held");
   expect(status.stdout).toContain("test, pid");
   expect(status.stdout).toContain("session s-other");
+  expect(status.stdout).toContain("queue: empty");
+  // A check queued behind it (#508) shows in arrival order.
+  mkdirSync(path.join(leases, "queue"), { recursive: true });
+  writeFileSync(
+    path.join(leases, "queue", "000000000000001-0000000000000000-waiter.json"),
+    JSON.stringify({
+      id: "00000000-0000-4000-8000-0000000000c1",
+      pid: process.pid,
+      processStart: null,
+      bootId: null,
+      check: "build",
+      cwd: "/repo/queued",
+      session: "s-queued",
+      startedAt: new Date().toISOString(),
+      scope: null,
+    }),
+  );
+  const queued = await run(root, ["lock", "status"], env);
+  expect(queued.stdout).toContain("queue: 1 waiting, first come, first served");
+  expect(queued.stdout).toContain("1. build, pid");
+  const json = await run(root, ["lock", "status", "--json"], env);
+  expect(json.json().data.queue).toEqual([expect.objectContaining({ cwd: "/repo/queued" })]);
+  const noWait = await run(root, ["lock", "run", "--no-wait", "--json", "--", BUN, "-e", "0"], env);
+  expect(noWait.code).toBe(4);
+  rmSync(path.join(leases, "queue"), { recursive: true });
   const busy = await run(root, ["lock", "wait", "--timeout", "0", "--json"], env);
   expect(busy.code).toBe(4);
   expect(busy.json()).toMatchObject({ ok: false, code: "busy" });

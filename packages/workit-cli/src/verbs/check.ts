@@ -2,7 +2,7 @@
 // record what the CLI itself observed.
 //
 //   workit check <name> [--timeout <s>] [--task <id>] [--no-lease --reason <why>] [--json]   # the configured command
-//   workit check [--name <n>] [--shell] [--heavy] [--wait <s>] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
+//   workit check [--name <n>] [--shell] [--heavy] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
 //
 // - The command runs without a shell (with --shell, pass one command string).
 //   Its combined output goes to a bounded, redacted log blob; the agent sees
@@ -22,17 +22,18 @@
 // - The tree key is taken before and after the run: a command that changed
 //   the worktree leaves stale evidence (`modifiedWorktree`).
 // - A heavy check (a named check listed in `resources.heavy`, default
-//   test/build/typecheck; an ad-hoc one only with --heavy) first takes a
-//   machine-wide lease (core/resources.ts), waiting for a free slot, and on
+//   test/build; an ad-hoc one only with --heavy) first takes a machine-wide
+//   lease (core/resources.ts), queueing first come, first served for a free
+//   slot, and on
 //   Linux with a delegated user systemd runs in its own `systemd-run --user
 //   --scope` with MemoryMax and CPUQuota. `--json` reports `lease` and `scope`.
 //   `--no-lease` skips both and needs `--reason`, recorded as `noLease`.
-//   `--wait <s>` sets the lease wait. Without it, inside a Claude Code or
-//   OpenCode shell (CLAUDECODE, OPENCODE, OPENCODE_SESSION_ID) the wait is
-//   capped at 100 s, below the shell tool's 120 s default timeout, so a busy
-//   lease answers before the host kills the call.
-// - Exit code: the command's own (4 on --timeout or a lease wait that timed
-//   out, 2 on usage). When the
+//   Light checks (`resources.light`, default lint/typecheck/format) never
+//   take it. A queued check prints a status line every 30 s (holder,
+//   position, elapsed) and waits `--wait <dur>` ("90", "90s", "30m"), else
+//   `resources.wait` (default 30 min); `--no-wait` gives up at once (#508).
+// - Exit code: the command's own (4 on --timeout, on --no-wait with the lease
+//   busy, or a lease wait that timed out, 2 on usage). When the
 //   command passed but the evidence could not be recorded, the recording
 //   error's code (busy 4, unavailable 5) so a green run is never mistaken for
 //   recorded evidence.
@@ -69,6 +70,8 @@ import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
 import {
   acquireLease,
   describeHolder,
+  formatWait,
+  parseWait,
   firstNotice,
   heldLease,
   leaseDir,
@@ -83,7 +86,7 @@ import {
 } from "@brainervirus/workit-core/src/core/resources";
 
 const USAGE =
-  'workit check <name> [--full] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <s>] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
+  'workit check <name> [--full] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
 /**
  * Output lines a check prints by default: enough for a compiler error or a
  * failing test with its stack, far below a build log (#426). --full streams all.
@@ -104,7 +107,7 @@ type Options = {
   noLease: boolean;
   /** Why the run skips the lease; required with --no-lease. */
   reason: string | null;
-  /** Cap on the lease wait (ms); null keeps resources.wait. */
+  /** The lease wait (ms): --wait, 0 for --no-wait; null keeps resources.wait. */
   waitMs: number | null;
   timeoutMs: number;
   task: string | null;
@@ -130,6 +133,7 @@ function parse(argv: readonly string[]): Options | Error {
     positionals: [],
     command: split >= 0 ? argv.slice(split + 1) : null,
   };
+  let noWait = false;
   for (let index = 0; index < head.length; index += 1) {
     const arg = head[index];
     const [flag, inline] = arg.startsWith("--") && arg.includes("=") ? arg.split(/=(.*)/su) : [arg];
@@ -150,6 +154,12 @@ function parse(argv: readonly string[]): Options | Error {
       else options.noLease = true;
       continue;
     }
+    if (flag === "--no-wait") {
+      if (options.waitMs !== null && !noWait) return new Error("--no-wait goes without --wait");
+      noWait = true;
+      options.waitMs = 0;
+      continue;
+    }
     if (
       flag === "--name" ||
       flag === "--task" ||
@@ -163,10 +173,11 @@ function parse(argv: readonly string[]): Options | Error {
       if (flag === "--name") options.name = got;
       else if (flag === "--reason") options.reason = got.trim() || null;
       else if (flag === "--wait") {
-        const seconds = Number(got);
-        if (!Number.isFinite(seconds) || seconds < 0)
-          return new Error("--wait must be a number of seconds");
-        options.waitMs = Math.round(seconds * 1000);
+        if (noWait) return new Error("--no-wait goes without --wait");
+        const waitMs = parseWait(got);
+        if (waitMs === null)
+          return new Error('--wait must be seconds or a duration ("90", "90s", "30m", "1h")');
+        options.waitMs = waitMs;
       } else if (flag === "--task") options.task = got;
       else if (flag === "--base") options.base = got;
       else {
@@ -347,32 +358,38 @@ export function countWarnings(log: string): number {
     .filter((line) => WARNING_LINE.test(line) && !NO_WARNINGS.test(line)).length;
 }
 
+/** The child's last stderr lines the bounded output always shows. */
+const STDERR_TAIL_LINES = 10;
+/** How much of the child's stderr is kept for that tail. */
+const STDERR_KEEP_CHARS = 64 * 1024;
+
 /**
  * The last `lines` lines of a check's output, after one line saying how many
  * earlier ones were left out: a failure shows its failing tail, never the head.
+ * stdout and stderr arrive on separate pipes, so under load the error a child
+ * printed last can sit earlier in the merged log; the last stderr lines
+ * (`stderr`) missing from the tail are shown after it, within the same budget.
  */
-export function boundedOutput(log: string, lines: number): string {
+export function boundedOutput(log: string, lines: number, stderr = ""): string {
   const all = tailLines(log, Number.MAX_SAFE_INTEGER);
   if (all.length === 0) return "";
-  const shown = all.slice(-lines);
+  let shown = all.slice(-lines);
+  const errors = tailLines(redactLog(stderr), STDERR_TAIL_LINES);
+  let missing: string[] = [];
+  if (errors.length) {
+    const tail = new Set(shown);
+    if (errors.some((line) => !tail.has(line))) {
+      // Room for the stderr lines and their header, plus the omitted-lines header.
+      shown = all.slice(-Math.max(1, lines - errors.length - 2));
+      const kept = new Set(shown);
+      missing = errors.filter((line) => !kept.has(line));
+    }
+  }
   const omitted = all.length - shown.length;
-  return `${omitted ? `… ${omitted} earlier line${omitted === 1 ? "" : "s"} omitted (the full log is named below; --full streams it)\n` : ""}${shown.join("\n")}\n`;
-}
-
-/** The shell tool's default timeout in Claude Code and OpenCode is 120 s. */
-const HOST_TOOL_WAIT_CAP_MS = 100_000;
-
-/**
- * The lease-wait cap inside a host shell tool that kills a call at its own
- * timeout (Claude Code, OpenCode), else null. WORKIT_HOST_WAIT_CAP_MS
- * replaces the 100 s cap (a test seam).
- */
-export function hostToolWaitCapMs(env: NodeJS.ProcessEnv): number | null {
-  if (!env.CLAUDECODE && !env.OPENCODE && !env.OPENCODE_SESSION_ID) return null;
-  const override = Number(env.WORKIT_HOST_WAIT_CAP_MS);
-  return Number.isFinite(override) && override >= 0 && env.WORKIT_HOST_WAIT_CAP_MS
-    ? override
-    : HOST_TOOL_WAIT_CAP_MS;
+  const footer = missing.length
+    ? `… the last stderr lines, which the merged log holds earlier:\n${missing.join("\n")}\n`
+    : "";
+  return `${omitted ? `… ${omitted} earlier line${omitted === 1 ? "" : "s"} omitted (the full log is named below; --full streams it)\n` : ""}${shown.join("\n")}\n${footer}`;
 }
 
 /** `resources` of the workspaces.json entry matching `cwd`, read from io.env's config dir. */
@@ -451,21 +468,35 @@ async function prepareHeavy(
     // Where the holder cannot be identified (no /proc), its lease ends with
     // the check's timeout, else after MAX_UNVERIFIED_RUN_MS.
     maxAgeMs: (timeoutMs || MAX_UNVERIFIED_RUN_MS) + 60_000,
-    onWait: (holders) =>
+    onStatus: (status) => {
+      const slots = `${settings.slots} slot${settings.slots === 1 ? "" : "s"}`;
+      const holders = status.holders.map((holder) => describeHolder(holder)).join("; ");
       io.stderr(
-        `workit: waiting for the heavy-check lease (${settings.slots} slot${settings.slots === 1 ? "" : "s"}): held by ${holders.map((holder) => describeHolder(holder)).join("; ")}\n`,
-      ),
+        status.waitedMs === 0
+          ? `workit: waiting for the heavy-check lease (${slots}): held by ${holders || "nobody; waiters ahead"}; queued at position ${status.position}, waiting up to ${formatWait(settings.waitMs)} (--wait <dur> sets it)\n`
+          : `workit: still queued for the heavy-check lease: position ${status.position}, ${formatWait(status.waitedMs)} of ${formatWait(settings.waitMs)} waited; held by ${holders || "nobody; waiters ahead"}\n`,
+      );
+    },
   });
   if (!acquired.ok && acquired.reason === "timeout") {
     const holders = acquired.holders.map((holder) => describeHolder(holder)).join("; ");
+    const waited = formatWait(acquired.waitedMs);
     emit(
       io,
       fail(
         "busy",
-        `the heavy-check lease stayed busy for ${Math.round(acquired.waitedMs / 1000)} s`,
+        settings.waitMs === 0
+          ? `the heavy-check lease is busy (--no-wait): held by ${holders || "nobody; waiters ahead"}`
+          : `the heavy-check lease stayed busy for ${waited} (position ${acquired.position} in the queue)`,
         {
-          data: { lease: { waitedMs: acquired.waitedMs, holders: acquired.holders } },
-          unblock: `wait for ${holders || "the holders"} to finish, then run it again`,
+          data: {
+            lease: {
+              waitedMs: acquired.waitedMs,
+              holders: acquired.holders,
+              position: acquired.position,
+            },
+          },
+          unblock: `wait for ${holders || "the waiters ahead"} to finish (each holder's age is shown; a full test suite takes minutes), then run it again, or queue longer with --wait 30m`,
         },
       ),
     );
@@ -597,9 +628,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       { label: "workspaces.json", trust: "machine", value: workspace.value },
       { label: CHECKS_FILE, trust: "repo", value: config.resources },
     ]);
-    const cap = hostToolWaitCapMs(io.env);
     if (options.waitMs !== null) settings.waitMs = options.waitMs;
-    else if (cap !== null) settings.waitMs = Math.min(settings.waitMs, cap);
     for (const warning of [workspace.warning, ...warnings])
       if (warning) io.stderr(`workit: resources: ${warning}\n`);
     if (options.heavy || (name !== null && settings.heavy.includes(name))) {
@@ -618,6 +647,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     io.stderr(`workit: running without the heavy-check lease: ${options.reason}\n`);
   const lease = heavy?.lease ?? null;
   let result: Awaited<ReturnType<typeof runCheckCommand>>;
+  let stderrTail = "";
   try {
     const scoped = await runScoped(
       (wrapper, sinks) =>
@@ -635,7 +665,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
       options.full
         ? { onStdout: io.json ? io.stderr : io.stdout, onStderr: io.stderr }
         : // One bounded writer (below) is the only path from the child to the agent.
-          { onStdout: () => {}, onStderr: () => {} },
+          {
+            onStdout: () => {},
+            onStderr: (text) => {
+              stderrTail = (stderrTail + text).slice(-STDERR_KEEP_CHARS);
+            },
+          },
     );
     result = scoped.result;
     if (heavy && scoped.fallback) {
@@ -768,7 +803,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       `${JSON.stringify({ ok: code === "ok", code, data, ...(error ? { error } : {}), ...(task.stillUnsatisfied[0] ? { unblock: task.stillUnsatisfied[0].unblock } : {}) })}\n`,
     );
   else {
-    if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES));
+    if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES, stderrTail));
     io.stderr(`${summary}\n`);
     if (recordError && passed) io.stderr(`workit: ${recordError.message}\n`);
     // The pre-run note already said an ad-hoc run of a configured name leaves its gate open.

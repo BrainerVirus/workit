@@ -531,7 +531,7 @@ const ASSIGNMENTS = /^\s*((?:[A-Za-z_]\w*=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'"])*
  * -- <cmd>`, the command's own text kept verbatim after `--`. It may only use
  * flags the oldest supported CLI accepts: the plugin and the CLI update
  * separately (docs/guides/verification.md), so a newer flag here would make
- * an older CLI refuse every heavy command. The CLI caps the wait itself.
+ * an older CLI refuse every heavy command. The CLI picks the wait itself (#508).
  */
 export function leaseRewrite(command: string): string | null {
   const text = command.trim();
