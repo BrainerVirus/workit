@@ -63,7 +63,7 @@ export const DEFAULT_TIMEBOX = "30 minutes";
 const REPORT = [
   "REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,",
   "  each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),",
-  "  anything out of scope as a follow-up, not a diff.",
+  "  anything out of scope as a follow-up, not a diff. Report heads when pushed; CI is waited on once, at the end.",
 ];
 
 /**

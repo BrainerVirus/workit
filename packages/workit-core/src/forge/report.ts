@@ -524,6 +524,8 @@ export function waitVerdict(
   if (options.head && !doc.head.sha.startsWith(options.head))
     return { state: "waiting", reason: "head_mismatch" };
   const checks = doc.checks.state;
+  // Fail-fast on purpose: a failing gating check ends the wait even while
+  // other checks still run (`checks.pending` in the payload lists them).
   if (checks === "failing") return { state: "failed", reason: "checks_failing" };
   // Before "pending": CI never runs on a conflicting PR, so waiting cannot help (M8).
   if (doc.conflicts && checks !== "passing")
@@ -533,6 +535,9 @@ export function waitVerdict(
       unblock: `rebase onto ${doc.base} and push; CI does not run on a conflicting PR`,
     };
   if (checks === "pending") return { state: "waiting", reason: "checks_pending" };
+  // Gating checks passed but another check on the head is still queued or
+  // running (a non-required workflow): never green while anything runs (#440).
+  if (doc.checks.pending.length > 0) return { state: "waiting", reason: "checks_pending" };
   if (checks === "passing") return { state: "ready", reason: "checks_passing" };
   const ciRequired =
     doc.checks.missingRequired === null ||
