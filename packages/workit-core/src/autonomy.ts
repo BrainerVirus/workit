@@ -244,6 +244,15 @@ export const VERIFICATION_MODES: readonly VerificationMode[] = [
   "self",
   "independent",
 ];
+/**
+ * Strictest first. `self` is the loosest: the author's own `--self` verdict
+ * satisfies even lanes that `proportional` sends to an independent verifier.
+ */
+export const VERIFICATION_STRICTNESS: readonly VerificationMode[] = [
+  "independent",
+  "proportional",
+  "self",
+];
 export const DEFAULT_VERIFICATION: VerificationMode = "proportional";
 export const verificationOf = (entry: unknown): VerificationMode => {
   const value = (entry as { verification?: unknown } | null)?.verification;
@@ -404,10 +413,9 @@ function capAt(
   const ceiling = (!nothing && folder!.effectiveEndpoint) || DEFAULT_ENDPOINT;
   const endpoint = raisesEndpoint(ceiling, named.effectiveEndpoint);
   if (endpoint) lowered.push("defaultEndpoint");
-  // VERIFICATION_MODES runs loosest first.
   const strict = folder?.verification ?? "independent";
   const looser =
-    VERIFICATION_MODES.indexOf(named.verification) < VERIFICATION_MODES.indexOf(strict);
+    VERIFICATION_STRICTNESS.indexOf(named.verification) > VERIFICATION_STRICTNESS.indexOf(strict);
   if (looser) lowered.push("verification");
   if (lowered.length === 0) return named;
   const note = `${by}: ${lowered.join(", ")} capped at ${folder ? `workspace ${folder.workspace}` : `nothing (${none})`}; ${why}`;

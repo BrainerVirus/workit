@@ -94,6 +94,18 @@ const brasilConfig = () => [
   },
 ];
 
+test("a worktree entry with verification=self is capped to its main checkout's proportional", () => {
+  write(
+    brasilConfig().map((entry) =>
+      entry.name === "brasil" ? { ...entry, verification: "proportional" } : entry,
+    ),
+  );
+  const autonomy = withName(undefined, () => resolveAutonomy(`${root}/work/wt/app`));
+  expect(autonomy.workspace).toBe("work");
+  expect(autonomy.verification).toBe("proportional");
+  expect(autonomy.note).toContain("verification");
+});
+
 test("a worktree under a broader permissive entry is capped at its main checkout's stricter entry", () => {
   write(brasilConfig());
   const worktree = `${root}/work/wt/app`;
@@ -181,7 +193,7 @@ const rng = (seed: number) => () => {
   seed = (seed * 1_103_515_245 + 12_345) & 0x7fff_ffff;
   return seed / 0x8000_0000;
 };
-const STRICT: readonly VerificationMode[] = ["independent", "self", "proportional"];
+const STRICT: readonly VerificationMode[] = ["independent", "proportional", "self"];
 type Effective = {
   allowed: Record<GrantKind, boolean>;
   forgeless: Record<GrantKind, boolean>;

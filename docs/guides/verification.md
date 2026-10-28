@@ -201,6 +201,12 @@ A current independent failed verdict or a tampered ledger still blocks every
 lane. `verification: "self"` and `"independent"` keep their earlier rules,
 including a non-author verdict to merge.
 
+Strictness runs `independent` > `proportional` > `self`. `self` is the
+loosest: under it the author's own `--self` verdict satisfies lanes that
+`proportional` sends to a non-author verifier, so setting it needs the user's
+terminal like any other raise, and a workspace name or worktree never ends up
+looser than the folder's or main checkout's entry.
+
 Spend verifiers by lane: none for `none` and `self`; one per PR after its
 last push for `focused` (a cheaper model where the host lets the lead pick
 one, e.g. Claude Code `model: sonnet` on the Agent call) and `full` (the

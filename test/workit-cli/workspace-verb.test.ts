@@ -220,7 +220,7 @@ const grantsAt = (...parts: string[]) => {
   };
 };
 const RANK = (value: unknown) => (value === true ? 2 : value === "verified" ? 1 : 0);
-const STRICT = ["independent", "self", "proportional"];
+const STRICT = ["independent", "proportional", "self"];
 const expectNoRaise = (before: ReturnType<typeof grantsAt>, after: ReturnType<typeof grantsAt>) => {
   for (const kind of ["push", "pr", "merge", "release", "rerun"] as const)
     expect(RANK(after.grants[kind]), kind).toBeLessThanOrEqual(RANK(before.grants[kind]));
@@ -744,4 +744,19 @@ test("rm of one of two equally specific entries is a raise: their shared folder 
   expect(result.json().error).toContain("push");
   expect(readFileSync(file(), "utf8")).toBe(before);
   expect(existsSync(backup())).toBe(false);
+});
+
+test("rm of a proportional entry under a self one is a raise: self is the loosest verification", async () => {
+  const tight = {
+    name: "tight",
+    glob: `${root}/work/libs/kit/**`,
+    vcs: GH,
+    verification: "proportional",
+  };
+  seed([{ ...WORK(), vcs: GH, verification: "self" }, tight]);
+  const before = readFileSync(file(), "utf8");
+  const result = await run(["rm", "tight"]);
+  expect(result.json().error).toContain("grant_raise_refused");
+  expect(result.json().error).toContain("verification");
+  expect(readFileSync(file(), "utf8")).toBe(before);
 });
