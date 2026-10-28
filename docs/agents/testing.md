@@ -105,9 +105,9 @@ claude plugin eval packages/workit-claude-code --case <name> --model haiku \
 Each leg runs `bun scripts/test.ts ci <ubuntu|macos|windows> <i>/<n>`: bun
 picks the shard's files (`bun test --shard`), balanced by the per-file
 durations in `test/timings/<leg>.json`. Ubuntu runs the unit tier as four
-serial shards plus a separate packaging job; macOS (two shards) and Windows
-(four) run `test/workit-core` and `test/artifacts` with `--parallel`. Ubuntu
-stays serial: its CLI suites hung under `--parallel` (#415). Aggregator jobs
+shards plus a separate packaging job; macOS (three shards) and Windows (six)
+run `test/workit-core` and `test/artifacts`. Shards run their files serially:
+under `bun test --parallel` workers hung with unreaped children (#415). Aggregator jobs
 keep the required check names (`test (ubuntu-latest)`, `test (macos-latest)`,
 `test (windows-latest)`).
 
