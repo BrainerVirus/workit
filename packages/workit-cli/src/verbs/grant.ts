@@ -66,7 +66,7 @@ const AGENT_ENV = [
   "AI_AGENT",
   "AGENT",
 ];
-const agentMarker = (env: NodeJS.ProcessEnv): string | undefined =>
+export const agentMarker = (env: NodeJS.ProcessEnv): string | undefined =>
   AGENT_ENV.find((name) => env[name]) ??
   Object.keys(env).find((name) => name.startsWith("CODEX_") && env[name]);
 

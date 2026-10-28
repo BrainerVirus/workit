@@ -56,7 +56,7 @@ import {
 } from "@brainervirus/workit-core/src/core/workspaces";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
-import type { GrantDeps } from "./grant";
+import { agentMarker, type GrantDeps } from "./grant";
 
 const USAGE =
   "workit workspace list | workspace add <name> --glob <g> [--from <parent>] | workspace set <name> <key>=<value>… | workspace rm <name>";
@@ -173,19 +173,6 @@ const clampToShadowed = (shadowed: Ceiling | null): Record<string, unknown> => {
       : {}),
   };
 };
-
-/** Agent hosts that export a marker into the shells they run; the list `grant set` checks. */
-const AGENT_ENV = [
-  "CLAUDECODE",
-  "OPENCODE",
-  "CURSOR_AGENT",
-  "PI_CODING_AGENT",
-  "AI_AGENT",
-  "AGENT",
-];
-const agentMarker = (env: NodeJS.ProcessEnv): string | undefined =>
-  AGENT_ENV.find((name) => env[name]) ??
-  Object.keys(env).find((name) => name.startsWith("CODEX_") && env[name]);
 
 const defaultDeps: GrantDeps = {
   interactive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
