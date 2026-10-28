@@ -17,17 +17,29 @@ const PROCESS_HOSTS: Record<string, HostId> = {
   pi: "pi",
 };
 
+const SCRIPT_RUNTIMES = new Set(["node", "nodejs", "bun"]);
+
 /** Classify one listed process. Zombies, and helpers that load no plugin
  *  (Codex's `app-server daemon pid-update-loop` watcher), are not running hosts. */
 export const classifyProcess = (proc: HostProcess): Running | null => {
   if (proc.state.startsWith("Z") || proc.args.includes("<defunct>")) return null;
   const argv0 = proc.args.trim().split(/\s+/)[0] ?? "";
-  const name = path
-    .basename(argv0.replaceAll("\\", "/"))
-    .replace(/^\[|\]$/g, "")
-    .replace(/\.exe$/i, "")
-    .toLowerCase();
-  const host = PROCESS_HOSTS[name];
+  const baseName = (value: string) =>
+    path
+      .basename(value.replaceAll("\\", "/"))
+      .replace(/^\[|\]$/g, "")
+      .replace(/\.exe$/i, "")
+      .toLowerCase();
+  let host = PROCESS_HOSTS[baseName(argv0)];
+  // A host launched as `node …/codex.js`: match the script's basename too.
+  if (!host && SCRIPT_RUNTIMES.has(baseName(argv0))) {
+    const script = proc.args
+      .trim()
+      .split(/\s+/)
+      .slice(1)
+      .find((arg) => !arg.startsWith("-"));
+    if (script) host = PROCESS_HOSTS[baseName(script).replace(/\.(?:[cm]?js|ts)$/, "")];
+  }
   if (!host) return null;
   if (host === "codex" && /\bapp-server\b/.test(proc.args))
     return /\bdaemon\s+pid-update-loop\b/.test(proc.args)

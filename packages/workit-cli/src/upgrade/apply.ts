@@ -47,6 +47,13 @@ export type UpgradeResult = {
   hosts: HostOutcome[];
 };
 
+/** The installed Workit OpenCode plugin version from `opencode plugin list`, if it prints one. */
+const opencodeVersion = (run: ReturnType<typeof runner>): string | undefined => {
+  const listing = run("opencode", ["plugin", "list"]);
+  if (listing.status !== 0) return undefined;
+  return /@brainervirus\/workit-opencode\D{0,40}?v?(\d+\.\d+\.\d+)/.exec(listing.stdout)?.[1];
+};
+
 /** Apply one plan entry; any thrown error stays this host's failure. */
 export const applyEntry = (
   entry: PlanEntry,
@@ -114,15 +121,30 @@ export const applyEntry = (
         : `${entry.installedVersion ?? "?"} -> ${entry.latest}`,
     };
   }
+  const before = entry.host === "opencode" ? opencodeVersion(run) : undefined;
   for (const command of entry.commands)
     if (run(command.command, command.args).status !== 0)
       return fail(`\`${command.command} ${command.args.join(" ")}\` failed`);
-  if (entry.host === "opencode")
+  if (entry.host === "opencode") {
+    const after = opencodeVersion(run);
+    if (before && after)
+      return after === before
+        ? {
+            host: "opencode",
+            status: "current",
+            reason: `already current (${after})`,
+          }
+        : {
+            host: "opencode",
+            status: "updated",
+            reason: `${before} -> ${after}; OpenCode V2 loads it live`,
+          };
     return {
       host: "opencode",
       status: "updated",
       reason: "scoped update ran; OpenCode V2 loads it live",
     };
+  }
   if (entry.host === "claude-code") {
     const after = claudeWorkitInstalls(home, env, null).find(
       (install) => install.id === entry.selector,
@@ -164,7 +186,9 @@ export const applyEntry = (
   return {
     host: entry.host,
     status: "updated",
-    reason: `${entry.installedVersion ?? "?"} -> ${entry.latest}`,
+    reason: entry.repair
+      ? `reinstalled missing plugin files (${entry.latest})`
+      : `${entry.installedVersion ?? "?"} -> ${entry.latest}`,
   };
 };
 

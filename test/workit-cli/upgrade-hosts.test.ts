@@ -49,7 +49,11 @@ const world = () => {
   claudeRegistry("1.0.0");
   write(path.join(codexCache, "2.0.0/dist/launch-mcp.js"), "");
   let codexVersion = "1.0.0";
-  const state = { codexFails: false, agentsThrow: false, daemon: [] as string[] };
+  const state = {
+    codexFails: false,
+    agentsThrow: false,
+    daemon: [] as string[],
+  };
   const run = (command: string, args: string[]) => {
     calls.push([command, ...args]);
     const line = args.join(" ");
@@ -466,6 +470,159 @@ test("Given doctor still finds an upgrade-fixable row, Then the run prints what 
       "Left after upgrade (workit doctor):\n  codex_agents: workit-reviewer.toml outdated\n    fix: node launch-mcp.js --install-agents\n",
     );
   } finally {
+    w.cleanup();
+  }
+});
+
+const OPENCODE_HELP = "Commands:\n  opencode plugin check\n  opencode plugin update <name>\n";
+
+const opencodeWorld = (versions: { before: string; after: string }) => {
+  const w = world();
+  write(path.join(w.home, ".config/opencode/opencode.json"), {
+    plugins: ["@brainervirus/workit-opencode"],
+  });
+  let updated = false;
+  const run = (command: string, args: string[]) => {
+    const line = args.join(" ");
+    if (command === "opencode" && line === "plugin --help") {
+      w.calls.push([command, ...args]);
+      return { status: 0, stdout: OPENCODE_HELP };
+    }
+    if (command === "opencode" && line === "plugin list") {
+      w.calls.push([command, ...args]);
+      const version = updated ? versions.after : versions.before;
+      return {
+        status: 0,
+        stdout: `@brainervirus/workit-opencode ${version}\n`,
+      };
+    }
+    if (command === "opencode" && args[1] === "update") updated = true;
+    return w.deps.run(command, args);
+  };
+  return { w, run };
+};
+
+test("Given OpenCode whose version moved, When upgrade runs, Then the row says updated with both versions", async () => {
+  const { w, run } = opencodeWorld({ before: "1.0.0", after: "2.0.0" });
+  try {
+    expect(
+      await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+        ...w.deps,
+        run,
+      }),
+    ).toBe(0);
+    expect(w.text()).toMatch(/opencode +updated +1\.0\.0 -> 2\.0\.0; OpenCode V2 loads it live/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given OpenCode already at the newest version, When upgrade runs, Then the row says already current, not updated", async () => {
+  const { w, run } = opencodeWorld({ before: "2.0.0", after: "2.0.0" });
+  try {
+    expect(
+      await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+        ...w.deps,
+        run,
+      }),
+    ).toBe(0);
+    expect(w.text()).toMatch(/opencode +already current +already current \(2\.0\.0\)/);
+    expect(w.text()).not.toMatch(/opencode +updated/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given Codex registered in config.toml with its plugin cache missing, When upgrade runs, Then Codex's own add command reinstalls it", async () => {
+  const w = world();
+  try {
+    write(
+      path.join(w.home, ".codex/config.toml"),
+      '[plugins."workit@workflow-toolkit"]\nenabled = true\n',
+    );
+    let added = false;
+    const run = (command: string, args: string[]) => {
+      const line = args.join(" ");
+      if (command === "codex" && line === "plugin list --json") {
+        w.calls.push([command, ...args]);
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            installed: added
+              ? [
+                  {
+                    name: "workit",
+                    marketplaceName: "workflow-toolkit",
+                    version: "2.0.0",
+                    source: {
+                      source: "npm",
+                      package: "@brainervirus/workit-codex",
+                    },
+                  },
+                ]
+              : [],
+          }),
+        };
+      }
+      if (command === "codex" && args[0] === "plugin" && args[1] === "add") added = true;
+      return w.deps.run(command, args);
+    };
+    const plan = previewUpgrade(["codex"], { ...w.deps, run });
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0]).toEqual(
+      expect.objectContaining({ host: "codex", repair: true, latest: "2.0.0" }),
+    );
+    expect(await runUpgradeCommand(["--hosts=codex", "--yes"], { ...w.deps, run })).toBe(0);
+    expect(ran(w.calls, "codex plugin add workit@workflow-toolkit --json")).toBe(true);
+    expect(w.text()).toMatch(/codex +updated +reinstalled missing plugin files \(2\.0\.0\)/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a host launched as `node …/codex.js`, Then the process is detected by its script basename", () => {
+  expect(
+    classifyProcess({
+      pid: 1,
+      state: "Sl",
+      args: "node /opt/lib/node_modules/@openai/codex/bin/codex.js --model x",
+    }),
+  ).toEqual(expect.objectContaining({ host: "codex", kind: "session" }));
+  expect(
+    classifyProcess({
+      pid: 2,
+      state: "Sl",
+      args: "/usr/bin/node --no-warnings /x/codex.js app-server",
+    }),
+  ).toEqual(expect.objectContaining({ host: "codex", kind: "daemon" }));
+  expect(classifyProcess({ pid: 3, state: "S", args: "node /srv/app/server.js" })).toBeNull();
+  expect(classifyProcess({ pid: 4, state: "S", args: "node /usr/bin/vim codex.ts" })).toBeNull();
+});
+
+test("Given a plain `workit upgrade` without a TTY and without --yes, Then nothing changes and it says to rerun with --yes", async () => {
+  const w = world();
+  const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", {
+    value: false,
+    configurable: true,
+  });
+  try {
+    const { confirm: _confirm, ...deps } = w.deps;
+    expect(await runUpgradeCommand([], deps)).toBe(0);
+    expect(w.text()).toContain("Not a terminal: rerun with --yes to apply.");
+    expect(w.text()).toContain("nothing changed");
+    expect(
+      w.calls.some(
+        (call) =>
+          (call[0] === "npm" && call[1] === "install") ||
+          (call[0] === "codex" && call[2] === "add") ||
+          (call[0] === "pi" && call[1] === "update") ||
+          (call[0] === "claude" && call[1] === "plugin" && call[2] === "update"),
+      ),
+    ).toBe(false);
+  } finally {
+    if (tty) Object.defineProperty(process.stdin, "isTTY", tty);
+    else delete (process.stdin as { isTTY?: boolean }).isTTY;
     w.cleanup();
   }
 });

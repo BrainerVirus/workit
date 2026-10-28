@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, lstatSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { isWorkitPlugin } from "../admin/registration";
@@ -30,6 +30,25 @@ import {
   type UpgradeDeps,
   type UpgradePlan,
 } from "./shared";
+
+/** `[plugins."workit@workflow-toolkit"]` in Codex's config.toml, not disabled. */
+const codexRegistered = (configFile: string): boolean => {
+  let text: string;
+  try {
+    text = readFileSync(configFile, "utf8");
+  } catch {
+    return false;
+  }
+  const header = `[plugins."workit@${CODEX_MARKETPLACE}"]`;
+  const start = text.split(/\r?\n/).findIndex((line) => line.trim() === header);
+  if (start < 0) return false;
+  const body = text
+    .split(/\r?\n/)
+    .slice(start + 1)
+    .join("\n")
+    .split(/^\s*\[/m)[0];
+  return !/^\s*enabled\s*=\s*false\b/m.test(body);
+};
 
 const classify = (host: HostId, selector: string): Source => ({
   host,
@@ -162,6 +181,14 @@ const sources = (
         installedVersion: plugin.version,
       });
     }
+    // Registered in config.toml but the plugin cache is missing, so the
+    // inventory omits it: reinstall with Codex's own add command.
+    if (!result.some((found) => found.host === "codex") && codexRegistered(paths.codexConfig))
+      result.push({
+        host: "codex",
+        selector: "@brainervirus/workit-codex",
+        kind: "repair",
+      });
   });
   guard("claude-code", () => {
     // User-scope installs only: a project install belongs to that project.
