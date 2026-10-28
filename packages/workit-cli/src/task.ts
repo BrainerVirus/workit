@@ -555,11 +555,14 @@ function runFindingList(argv: string[], deps: TaskCliDeps): number {
           claim: item.data.claim,
         })),
     );
-  if (json) jsonResult(outOf(deps), success(null, null, { findings: rows }));
+  const total = tasks.data.reduce((sum, task) => sum + task.findings.length, 0);
+  if (json) jsonResult(outOf(deps), success(null, null, { findings: rows, total }));
   else if (!rows.length)
     write(
       outOf(deps),
-      "no findings recorded (record one: workit finding record --payload '{…}'); ledger rows hold verdicts and rulings, not findings",
+      total
+        ? `no findings match the filters (${total} finding${total === 1 ? "" : "s"} in all; drop --branch/--status to list them)`
+        : "no findings recorded (record one: workit finding record --payload '{…}'); ledger rows hold verdicts and rulings, not findings",
     );
   else
     for (const row of rows)

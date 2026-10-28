@@ -995,26 +995,104 @@ test("verify-delivery released: package specs that are not an npm name and semve
 // ---------------------------------------------------------------------------
 // PR title vs the repo's commitlint rules
 
-test("pr create and pr edit refuse a title over the commitlint header length or with a bad type, before any forge call", async () => {
-  const { repo, runner } = setup("github", {});
+const CONVENTIONAL = { extends: ["@commitlint/config-conventional"] };
+const lintRepo = (config?: { name: string; body: string }) => {
+  // Past the title check, the forge refuses the create (so a pass is not a refusal by commitlint).
+  const made = setup("github", {
+    ...githubBase(),
+    "graphql find": fixture("github/find-none.json"),
+    "POST repos/o/r/pulls": {
+      status: 1,
+      stdout: JSON.stringify({ message: "Validation Failed" }),
+      stderr: "gh: Validation Failed (HTTP 422)\n",
+      timedOut: false,
+      missing: false,
+    },
+  });
+  if (config) writeFileSync(path.join(made.repo.cwd, config.name), config.body);
+  return made;
+};
+const titled = (repo: ForgeRepo, title: string, ...more: string[]) =>
+  run(["pr", "create", "--base", "main", "--title", title, ...more, "--json"], repo.cwd);
+const refused = (result: { stdout: string; stderr: string }) =>
+  result.stdout.includes('"invalid_input"') && /commitlint/.test(result.stdout);
+const json = (body: unknown) => ({ name: ".commitlintrc.json", body: JSON.stringify(body) });
+
+test("pr create: a title of exactly 100 characters passes and 101 is refused naming the rule and length, before any forge call", async () => {
+  const { repo, runner } = lintRepo(json(CONVENTIONAL));
+  const at100 = `feat(x): ${"a".repeat(91)}`;
+  expect(at100).toHaveLength(100);
+  expect(refused(await titled(repo, at100))).toBe(false);
+  const callsAfterPass = runner.calls.length;
+  const over = await titled(repo, `${at100}a`);
+  expect(refused(over)).toBe(true);
+  expect(over.stdout).toContain("101 characters, over the 100 allowed");
+  expect(over.stdout).toContain("header-max-length");
+  expect(runner.calls).toHaveLength(callsAfterPass);
+});
+
+test("pr create: a type outside type-enum is refused, and valid titles (breaking mark, multi-scope) pass", async () => {
+  const { repo } = lintRepo(json(CONVENTIONAL));
+  const bad = await titled(repo, "wip: x");
+  expect(refused(bad)).toBe(true);
+  expect(bad.stdout).toContain("type-enum");
+  for (const title of ["feat(cli)!: x", "fix(cli,core): y", "chore: z"])
+    expect(refused(await titled(repo, title)), title).toBe(false);
+});
+
+test("pr create: Revert, Merge and fixup titles are ignored like commitlint's defaults, unless defaultIgnores is false", async () => {
+  const { repo } = lintRepo(json(CONVENTIONAL));
+  const long = `Revert "${"a".repeat(120)}"`;
+  for (const title of [long, "Merge pull request #5 from o/x", "fixup! feat: x", "revert: x"])
+    expect(refused(await titled(repo, title)), title).toBe(false);
   writeFileSync(
     path.join(repo.cwd, ".commitlintrc.json"),
-    JSON.stringify({ extends: ["@commitlint/config-conventional"] }),
+    JSON.stringify({ ...CONVENTIONAL, defaultIgnores: false }),
   );
-  const long = `feat(x): ${"a".repeat(95)}`;
-  expect(long.length).toBe(104);
-  const tooLong = await run(
-    ["pr", "create", "--base", "main", "--title", long, "--json"],
+  expect(refused(await titled(repo, long))).toBe(true);
+});
+
+test("pr create: no commitlint config means no title check", async () => {
+  const { repo } = lintRepo();
+  expect(refused(await titled(repo, `whatever ${"a".repeat(200)}`))).toBe(false);
+});
+
+test("pr create: a JS or YAML commitlint config is not enforced and prints one note", async () => {
+  for (const config of [
+    {
+      name: "commitlint.config.js",
+      body: "export default { extends: ['@commitlint/config-conventional'] };",
+    },
+    { name: ".commitlintrc.yaml", body: "extends:\n  - '@commitlint/config-conventional'\n" },
+  ]) {
+    const { repo } = lintRepo(config);
+    const result = await titled(repo, `wip: ${"a".repeat(200)}`);
+    expect(refused(result), config.name).toBe(false);
+    expect(result.stderr).toContain("title not pre-checked, CI checks it");
+  }
+});
+
+test("pr create: a level-1 rule warns without refusing and a level-0 type-enum disables the type check", async () => {
+  const warn = lintRepo(json({ rules: { "header-max-length": [1, "always", 20] } }));
+  const warned = await titled(warn.repo, "feat: a title longer than twenty");
+  expect(refused(warned)).toBe(false);
+  expect(warned.stderr).toContain("warning: PR title is 32 characters");
+  const off = lintRepo(json({ ...CONVENTIONAL, rules: { "type-enum": [0] } }));
+  expect(refused(await titled(off.repo, "wip: x"))).toBe(false);
+});
+
+test("pr create --fill checks the derived title, and pr edit without --title is not checked", async () => {
+  const { repo } = lintRepo(json(CONVENTIONAL));
+  const filled = await run(["pr", "create", "--base", "main", "--fill", "--json"], repo.cwd);
+  expect(refused(filled)).toBe(true);
+  expect(filled.stdout).toContain("type-empty/subject-empty");
+  // No --title: the edit goes on to the forge (the replay has no such PR), never to the title check.
+  await expect(
+    run(["pr", "edit", "--pr", "12", "--add-label", "x", "--json"], repo.cwd),
+  ).rejects.toThrow("unrecorded gh call");
+  const longEdit = await run(
+    ["pr", "edit", "--pr", "12", "--title", `feat: ${"a".repeat(120)}`, "--json"],
     repo.cwd,
   );
-  expect(tooLong.code).not.toBe(0);
-  expect(tooLong.stdout + tooLong.stderr).toContain("104 characters, over the 100 allowed");
-  expect(tooLong.stdout + tooLong.stderr).toContain("header-max-length");
-  const badType = await run(["pr", "create", "--base", "main", "--title", "wip: x"], repo.cwd);
-  expect(badType.code).not.toBe(0);
-  expect(badType.stdout + badType.stderr).toContain("type-enum");
-  const edited = await run(["pr", "edit", "--pr", "12", "--title", long], repo.cwd);
-  expect(edited.code).not.toBe(0);
-  expect(edited.stdout + edited.stderr).toContain("header-max-length");
-  expect(runner.calls).toHaveLength(0);
+  expect(refused(longEdit)).toBe(true);
 });

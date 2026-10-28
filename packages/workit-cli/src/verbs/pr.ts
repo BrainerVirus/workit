@@ -98,6 +98,8 @@ const CONVENTIONAL_TYPES = [
 const COMMITLINT_FILES = [
   ".commitlintrc.json",
   ".commitlintrc",
+  ".commitlintrc.yaml",
+  ".commitlintrc.yml",
   ".commitlintrc.js",
   ".commitlintrc.cjs",
   ".commitlintrc.mjs",
@@ -108,88 +110,163 @@ const COMMITLINT_FILES = [
   "commitlint.config.ts",
 ];
 
-type TitleRules = { types: string[] | null; maxHeader: number | null };
+type TitleRules = {
+  types: { level: number; values: string[] } | null;
+  maxHeader: { level: number; value: number } | null;
+  format: number;
+  defaultIgnores: boolean;
+};
 
-/** The rule value `[level, "always", value]` of a JSON commitlint rule, unless disabled (level 0). */
-const ruleValue = (rules: Record<string, unknown>, name: string): unknown => {
+/** Mirror of @commitlint/is-ignored's default ignores, applied to the title. */
+const DEFAULT_IGNORES: RegExp[] = [
+  /^((Merge pull request)|(Merge (.*?) into (.*?)|(Merge branch (.*?)))(?:\r?\n)*$)/m,
+  /^(Merge tag (.*?))(?:\r?\n)*$/m,
+  /^(R|r)evert (.*)/,
+  /^(R|r)eapply (.*)/,
+  /^(amend|fixup|squash)!/,
+  /^(Merged (.*?)(in|into) (.*)|Merged PR (.*): (.*))/,
+  /^Merge remote-tracking branch(\s*)(.*)/,
+  /^Automatic merge(.*)/,
+  /^Auto-merged (.*?) into (.*)/,
+  /^(chore(\([^)]+\))?:\s*)?v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?\s*$/,
+];
+
+type TitleRead = { rules: TitleRules | null; note: string | null };
+const UNCHECKED = (what: string): TitleRead => ({
+  rules: null,
+  note: `commitlint config is ${what}; title not pre-checked, CI checks it`,
+});
+
+/** A JSON rule `[level, "always"|"never", value]`: its level and value, or null when unreadable or "never". */
+const readRule = (
+  rules: Record<string, unknown>,
+  name: string,
+): { level: number; value: unknown } | "off" | null => {
   const rule = rules[name];
-  if (!Array.isArray(rule) || rule[0] === 0 || rule[1] === "never") return undefined;
-  return rule[2];
+  if (rule === undefined) return null;
+  if (!Array.isArray(rule) || typeof rule[0] !== "number") return "off";
+  if (rule[0] === 0 || rule[1] === "never") return "off";
+  return { level: rule[0], value: rule[2] };
 };
 
 /**
- * The type and header-length rules of the repo's commitlint config (JSON forms;
- * a JS/TS config is read for config-conventional and header-max-length only),
- * or null when the repo has none.
+ * The title rules of the repo's commitlint config. Only JSON configs are read
+ * (extending nothing but config-conventional); any other form is left to CI
+ * with a note, so the check never refuses a title commitlint accepts.
  */
-function titleRules(cwd: string): TitleRules | null {
+function titleRules(cwd: string): TitleRead {
   let root: string;
   try {
     root = checkRoot(cwd);
   } catch {
-    return null;
+    return { rules: null, note: null };
   }
   let text: string | null = null;
-  for (const name of COMMITLINT_FILES) {
-    const candidate = path.join(root, name);
-    if (!existsSync(candidate)) continue;
-    text = readFileSync(candidate, "utf8");
+  let name = "";
+  for (const candidate of COMMITLINT_FILES) {
+    const full = path.join(root, candidate);
+    if (!existsSync(full)) continue;
+    text = readFileSync(full, "utf8");
+    name = candidate;
     break;
   }
-  const rules: TitleRules = { types: null, maxHeader: null };
   if (text === null) {
     try {
       const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
         commitlint?: unknown;
       };
-      if (pkg.commitlint === undefined) return null;
+      if (pkg.commitlint === undefined) return { rules: null, note: null };
       text = JSON.stringify(pkg.commitlint);
     } catch {
-      return null;
+      return { rules: null, note: null };
     }
   }
-  type Config = { extends?: unknown; rules?: Record<string, unknown> };
-  const parseConfig = (source: string): Config | null => {
-    try {
-      return JSON.parse(source) as Config;
-    } catch {
-      return null;
-    }
+  if (/\.[cm]?[jt]s$/u.test(name)) return UNCHECKED("JS/TS");
+  let config: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      return UNCHECKED("not a plain JSON object");
+    config = parsed as Record<string, unknown>;
+  } catch {
+    return UNCHECKED(/\.ya?ml$|^\.commitlintrc$/u.test(name) ? "YAML" : "unreadable");
+  }
+  if (config.ignores !== undefined) return UNCHECKED("using custom ignores");
+  const extend = config.extends === undefined ? [] : [config.extends].flat();
+  const known = (entry: unknown) =>
+    typeof entry === "string" && /^(@commitlint\/)?config-conventional$/u.test(entry);
+  if (!extend.every(known)) return UNCHECKED("extending a shareable config");
+  const rules: TitleRules = {
+    types: null,
+    maxHeader: null,
+    format: 0,
+    defaultIgnores: config.defaultIgnores !== false,
   };
-  const config = parseConfig(text);
-  const conventional = config
-    ? JSON.stringify(config.extends ?? []).includes("config-conventional")
-    : text.includes("config-conventional");
-  if (conventional) {
-    rules.types = CONVENTIONAL_TYPES;
-    rules.maxHeader = 100;
+  if (extend.length) {
+    rules.types = { level: 2, values: CONVENTIONAL_TYPES };
+    rules.maxHeader = { level: 2, value: 100 };
+    rules.format = 2;
   }
-  if (config?.rules) {
-    const types = ruleValue(config.rules, "type-enum");
-    if (Array.isArray(types)) rules.types = types.map(String);
-    const max = ruleValue(config.rules, "header-max-length");
-    if (typeof max === "number") rules.maxHeader = max;
-  } else if (!config) {
-    const max =
-      /["']?header-max-length["']?\s*:\s*\[\s*[12]\s*,\s*["']always["']\s*,\s*(\d+)/u.exec(text);
-    if (max) rules.maxHeader = Number(max[1]);
+  const own = (config.rules ?? {}) as Record<string, unknown>;
+  const types = readRule(own, "type-enum");
+  if (types === "off") rules.types = null;
+  else if (types && Array.isArray(types.value))
+    rules.types = { level: types.level, values: types.value.map(String) };
+  const max = readRule(own, "header-max-length");
+  if (max === "off") rules.maxHeader = null;
+  else if (max && typeof max.value === "number")
+    rules.maxHeader = { level: max.level, value: max.value };
+  for (const rule of ["type-empty", "subject-empty"]) {
+    const read = readRule(own, rule);
+    if (read === "off") rules.format = 0;
+    else if (read) rules.format = Math.max(rules.format, read.level);
   }
-  return rules.types || rules.maxHeader !== null ? rules : null;
+  return { rules, note: null };
 }
 
-/** An error naming the exact rule and length a PR title breaks, or null when it passes (or no config). */
-export function prTitleError(cwd: string, title: string): string | null {
-  const rules = titleRules(cwd);
-  if (!rules) return null;
+/**
+ * Checks a PR title against the repo's commitlint rules. `error` names the
+ * rule and length a level-2 rule refuses; `notes` carry level-1 warnings and
+ * the "left to CI" note. Anything not readable exactly is not enforced.
+ */
+export function checkPrTitle(
+  cwd: string,
+  title: string,
+): { error: string | null; notes: string[] } {
+  const { rules, note } = titleRules(cwd);
+  if (!rules) return { error: null, notes: note ? [note] : [] };
   const header = title.split("\n", 1)[0] ?? "";
-  const parsed = /^(\w+)(\([^)]*\))?!?: \S/u.exec(header);
-  if (!parsed)
-    return `PR title ${JSON.stringify(header)} is not a Conventional Commit "<type>(<scope>): <subject>" (commitlint type-empty/subject-empty); the squash-merge title is the commit and CI lints it`;
-  if (rules.types && !rules.types.includes(parsed[1]))
-    return `PR title type "${parsed[1]}" is not allowed (commitlint type-enum: ${rules.types.join(", ")})`;
-  if (rules.maxHeader !== null && header.length > rules.maxHeader)
-    return `PR title is ${header.length} characters, over the ${rules.maxHeader} allowed (commitlint header-max-length); shorten it by ${header.length - rules.maxHeader}`;
-  return null;
+  if (rules.defaultIgnores && DEFAULT_IGNORES.some((pattern) => pattern.test(title)))
+    return { error: null, notes: [] };
+  const problems: Array<{ level: number; message: string }> = [];
+  const parsed = /^(\w*)(?:\((.*)\))?!?: (.*)$/u.exec(header);
+  if (rules.format && (!parsed || !parsed[1] || !parsed[3]?.trim()))
+    problems.push({
+      level: rules.format,
+      message: `PR title ${JSON.stringify(header)} is not a Conventional Commit "<type>(<scope>): <subject>" (commitlint type-empty/subject-empty); the squash-merge title is the commit and CI lints it`,
+    });
+  else if (parsed && rules.types && !rules.types.values.includes(parsed[1]))
+    problems.push({
+      level: rules.types.level,
+      message: `PR title type "${parsed[1]}" is not allowed (commitlint type-enum: ${rules.types.values.join(", ")})`,
+    });
+  if (rules.maxHeader && header.length > rules.maxHeader.value)
+    problems.push({
+      level: rules.maxHeader.level,
+      message: `PR title is ${header.length} characters, over the ${rules.maxHeader.value} allowed (commitlint header-max-length); shorten it by ${header.length - rules.maxHeader.value}`,
+    });
+  const refused = problems.filter((problem) => problem.level >= 2);
+  return {
+    error: refused.length ? refused.map((problem) => problem.message).join("; ") : null,
+    notes: problems.filter((problem) => problem.level < 2).map((p) => `warning: ${p.message}`),
+  };
+}
+
+/** A usage refusal (exit code) when the title breaks a commitlint rule; notes and warnings go to stderr. */
+function refuseTitle(io: Io, title: string, line: string): number | null {
+  const checked = checkPrTitle(io.cwd, title);
+  for (const note of checked.notes) io.stderr(`${note}\n`);
+  return checked.error ? usage(io, checked.error, line) : null;
 }
 
 const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]";
@@ -512,8 +589,8 @@ async function create(argv: string[], io: Io): Promise<number> {
     return usage(io, "no default target branch is configured; pass --base <b>", CREATE_USAGE);
 
   // A given title is checked before any forge call; a --fill title once it is derived.
-  const givenProblem = flags.values.title ? prTitleError(io.cwd, flags.values.title) : null;
-  if (givenProblem) return usage(io, givenProblem, CREATE_USAGE);
+  const given = flags.values.title ? refuseTitle(io, flags.values.title, CREATE_USAGE) : null;
+  if (given !== null) return given;
   const connected = connect(io, branch);
   if (!connected.ok) return forgeFail(io, connected);
   let title = flags.values.title ?? "";
@@ -524,8 +601,8 @@ async function create(argv: string[], io: Io): Promise<number> {
     body ??= filled.data.body;
   }
   if (!flags.values.title) {
-    const filledProblem = prTitleError(io.cwd, title);
-    if (filledProblem) return usage(io, filledProblem, CREATE_USAGE);
+    const filled = refuseTitle(io, title, CREATE_USAGE);
+    if (filled !== null) return filled;
   }
   const forge = connected.data.forge;
   const planned = planIssueLinks(io.cwd, {
@@ -804,8 +881,8 @@ async function edit(argv: string[], io: Io): Promise<number> {
     body = read.body;
   }
   if (flags.values.title !== undefined) {
-    const titleProblem = prTitleError(io.cwd, flags.values.title);
-    if (titleProblem) return usage(io, titleProblem, EDIT_USAGE);
+    const edited = refuseTitle(io, flags.values.title, EDIT_USAGE);
+    if (edited !== null) return edited;
   }
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
