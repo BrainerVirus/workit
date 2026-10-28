@@ -9,7 +9,7 @@ import { resolveStore } from "../store/paths";
 import { canonicalJson } from "../core/task-contract";
 import { isObservedCheck, type Freshness } from "../core/task-evaluation";
 import { worktreeSignal } from "../git/rev";
-import { WorkitCore, type OperationContext } from "../core/task-engine";
+import { compactContext, type OperationContext } from "../core/task-view";
 import {
   fileSignature,
   MIGRATION_PENDING,
@@ -234,7 +234,9 @@ function entryCompactContext(
     ),
   );
   const observedFiles = filesKey(files);
-  const compact = new WorkitCore(store, context).compactContext(
+  const compact = compactContext(
+    store,
+    context,
     entry?.id ?? null,
     freshness,
     origin && { origin: origin.origin, taskId: origin.entry.id },

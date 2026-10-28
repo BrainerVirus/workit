@@ -19,10 +19,8 @@ import {
   rewriteRecordRefs,
   success,
   type Candidate,
-  type Capability,
   type Caller,
   type CheckObservation,
-  type Constraint,
   type Decision,
   type Entry,
   type Evidence,
@@ -64,13 +62,20 @@ const MAX_JUDGED_REFS = 5;
 import { currentBranch, headSha } from "../git/rev";
 import { resolveAutonomy, type VerificationMode } from "../autonomy";
 
-import { sameDirectoryIdentity, TaskStore } from "./task-store";
-import { checkoutRootOf } from "../store/paths";
+import { TaskStore } from "./task-store";
+import {
+  compactContext,
+  contextRootError,
+  environment,
+  helperEntry,
+  helperTaskGuard,
+  sameSession,
+  taskView,
+  type OperationContext,
+} from "./task-view";
 import { defaultLockTimeout } from "./store-lock";
 import {
-  compactTaskContext,
   exportDigest,
-  type InheritedDecisions,
   reconcileResume as reconcileResumeContext,
   type ResumeReconciliation,
 } from "./task-context";
@@ -85,7 +90,6 @@ import {
   boundTaskSummary,
   captureCandidate,
   checkPin,
-  signalFreshness,
   treeFreshness,
   type Freshness,
   evaluateClosure,
@@ -94,7 +98,6 @@ import {
   findingVerificationPasses,
   resolveBinding,
   verifyDecisionContentAtRoot,
-  type CandidateEnvironment,
 } from "./task-evaluation";
 
 /** The user-config verification mode for `root`; `self` when it cannot be read. */
@@ -106,20 +109,7 @@ const workspaceVerification = (root: string): VerificationMode => {
   }
 };
 
-export type OperationContext = {
-  root: string;
-  caller: Caller;
-  /** Whether the host supplied a trusted per-session caller identity. */
-  callerAttested?: boolean;
-  provenanceKind?: "host_observed" | "agent_reported";
-  capabilities: Capability[];
-  constraints: Constraint[];
-  now: Utc | (() => Utc);
-  nativeWorker?: NativeWorkerVerifier;
-  workerId?: string | null;
-  /** A child session with no worker record: it may only read the bounded task summary. */
-  readOnlyChild?: boolean;
-};
+export type { OperationContext } from "./task-view";
 
 export type ObserveCheckRequest = {
   taskId: string;
@@ -137,13 +127,6 @@ const provenance = (
   session: { kind: "host" as const, host: context.caller.host, handle: context.caller.actor },
   workerId: context.workerId ?? null,
 });
-const environment = (): CandidateEnvironment => [];
-const sameSession = (value: unknown, context: OperationContext): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  (value as any).kind === "host" &&
-  (value as any).host === context.caller.host &&
-  (value as any).handle === context.caller.actor;
 
 type WorkerBinding = {
   owner: object;
@@ -674,19 +657,7 @@ export class WorkitCore {
   }
 
   private contextRootError(): Result<null> {
-    try {
-      // The same checkout: any directory inside it resolves to its top level.
-      realpathSync(this.context.root);
-      const root = checkoutRootOf(this.context.root);
-      if (root !== this.store.root && !sameDirectoryIdentity(root, this.store.root))
-        return failure(
-          "invalid_input",
-          "operation context root does not match the task store root",
-        );
-    } catch {
-      return failure("invalid_input", "operation context root cannot be resolved");
-    }
-    return success(null, null, null);
+    return contextRootError(this.store, this.context);
   }
 
   /**
@@ -768,27 +739,12 @@ export class WorkitCore {
     task: TaskRecord,
     requireSession = false,
     requireActive = false,
-  ): Result<Entry<import("./task-contract").Worker>> {
-    const workerId = this.context.workerId ?? null;
-    if (workerId === null) return failure("permission_denied", "operation is lead-only");
-    const worker = task.workers.find((entry) => entry.id === workerId);
-    if (!worker) return failure("permission_denied", "worker is not assigned to this task");
-    if (worker.data.session && !sameSession(worker.data.session, this.context))
-      return failure("permission_denied", "worker session does not match the caller");
-    if (requireSession && (!worker.data.session || !sameSession(worker.data.session, this.context)))
-      return failure("permission_denied", "worker session has not been observed");
-    if (requireActive && worker.data.state !== "running")
-      return failure("permission_denied", "worker is not active");
-    return success(null, null, worker);
+  ): Result<Entry<Worker>> {
+    return helperEntry(task, this.context, requireSession, requireActive);
   }
 
   private helperTaskGuard(task: TaskRecord, allowRead = false): Result<null> {
-    if ((this.context.workerId ?? null) === null) return success(null, null, null);
-    const worker = this.helperEntry(task);
-    if (!worker.ok) return worker;
-    return allowRead
-      ? success(null, null, null)
-      : failure("permission_denied", "helpers cannot control task lifecycle or scope");
+    return helperTaskGuard(task, this.context, allowRead);
   }
 
   private activeWorkerBlocker(task: TaskRecord) {
@@ -1973,80 +1929,17 @@ export class WorkitCore {
     });
   }
 
-  /**
-   * Compact task context for per-turn host injection. Unlike `inspect`
-   * view:"full", it never captures a candidate: evidence and requirements are
-   * judged against the last recorded candidate, and live staleness is
-   * detected by evidence, close, resume, and full inspection, which capture.
-   */
+  /** Compact task context for per-turn host injection (task-view.ts). */
   compactContext(
     taskId: string | null,
     freshness?: Freshness,
-    /** The base branch's task (TaskStore.originTaskEntry), whose decisions are inherited. */
     origin: { origin: string; taskId: string } | null = null,
   ): Result<string> {
-    const root = this.contextRootError();
-    if (!root.ok) return root;
-    const base = origin && this.store.readStoreTask(origin.taskId);
-    const inherited: InheritedDecisions | null =
-      base?.ok && base.data
-        ? {
-            origin: origin!.origin,
-            taskId: base.data.id,
-            // A revoked decision no longer applies to anything cut from the base.
-            decisions: base.data.decisions.filter((entry) => entry.data.revoked === null),
-          }
-        : null;
-    // No task of its own yet: only what the branch inherits.
-    if (taskId === null)
-      return success(
-        null,
-        null,
-        inherited?.decisions.length ? compactTaskContext(null, inherited) : "",
-      );
-    const task = this.store.readTask(taskId);
-    if (!task.ok) return task;
-    const helper = this.helperTaskGuard(task.data, true);
-    if (!helper.ok) return helper;
-    // Per-turn path: the cheap worktree signal, never the object-writing tree hash.
-    const view = this.view(task.data, false, freshness ?? signalFreshness(this.store.root));
-    if (!view.ok) return view;
-    return success(view.revision, view.workspaceRevision, compactTaskContext(view.data, inherited));
+    return compactContext(this.store, this.context, taskId, freshness, origin);
   }
 
-  private view(
-    task: TaskRecord,
-    capture = true,
-    freshness: Freshness = treeFreshness(this.store.root),
-  ): Result<TaskView> {
-    const workspace = this.store.readWorkspace();
-    if (!workspace.ok) return workspace;
-    if (!workspace.data) return failure("not_found", "workspace not found");
-    const historical = task.status === "closed" ? task.candidates.at(-1) : undefined;
-    const current = historical
-      ? success(null, null, historical)
-      : capture
-        ? captureCandidate(this.store.root, task.intent.data.scope, environment())
-        : success<Candidate | null>(null, null, task.candidates.at(-1) ?? null);
-    if (!current.ok) return current;
-    const evaluationWorkspace = workspace.data;
-    const tree = freshness;
-    const requirements = evaluateRequirements(
-      task,
-      evaluationWorkspace,
-      this.context.capabilities,
-      current.data,
-      this.store.root,
-      this.context.caller,
-      tree,
-    );
-    return success(task.revision, workspace.data.revision, {
-      task,
-      workspace: evaluationWorkspace,
-      capabilities: this.context.capabilities,
-      requirements,
-      evidence: evaluateEvidence(task, current.data, tree),
-    });
+  private view(task: TaskRecord, capture = true, freshness?: Freshness): Result<TaskView> {
+    return taskView(this.store, this.context, task, capture, freshness);
   }
 
   reconcileResume(
