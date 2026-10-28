@@ -58,16 +58,23 @@ byte-for-byte as it was. To add or adjust one entry without the wizard:
 workit workspace list                                  # entries, and the one that applies here and why
 workit workspace add kit --glob '/home/you/work/libs/kit/**' --from work
 workit workspace set kit branchPolicy.integration=merge  # dotted keys, JSON values, null removes
+workit workspace rm kit                                # remove an entry; a possible raise needs your terminal
 ```
 
 `--from` copies the parent's `vcs`, `issues`, `branchPolicy`,
 `commitPolicy`, `trailers`, `youtrack` and `models`, never its grants,
-`defaultEndpoint` or `verification`. These verbs never raise authority, so an
-agent may run them when you ask: a new entry starts at the strictest level of
-every workspace and the defaults, so no folder it takes over gets more than it
-had; `set` refuses the grant keys, `name`, `glob`, unknown keys and, on an
-entry with grants, `vcs`. There is no `rm`: removing an entry can hand its
-folders to a looser one, so remove entries in your own editor. Raise a grant
+`defaultEndpoint` or `verification`. `list`, `add` and `set` never raise
+authority, so an agent may run them when you ask: a new entry starts at the
+strictest level of every workspace and the defaults, so no folder it takes over
+gets more than it had; `set` refuses the grant keys, `name`, `glob`, unknown
+keys and, on an entry with grants, `vcs`. `rm` hands the entry's folders to
+whichever entry or default matches them next, and a glob's text cannot say
+which (symlinks, linked worktrees), so every other entry and the defaults count
+as a possible taker. When any of them could grant more (or an equally specific
+entry could take a folder that was ambiguous), `rm` is a raise: refused in an
+agent or headless shell and confirmed by typing the workspace name in your own
+terminal. A removal that raises nothing proceeds anywhere and prints what now
+covers the removed glob. `rm` never removes the last entry. Raise a grant
 with `workit grant set` in your own terminal. Each write keeps the previous file as `workspaces.json.bak`, and
 `workit doctor` lists overlapping globs and which entry wins.
 
