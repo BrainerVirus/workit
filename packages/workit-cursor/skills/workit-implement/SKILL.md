@@ -23,8 +23,7 @@ description: Build a requested change in small verified steps - follow local pat
    (`workit check test`, plus `lint` and `typecheck` when the repo has them),
    not after every edit. Heavy work runs under one machine-wide lease: an ad-hoc
    suite is `workit check --heavy -- <cmd>`, never a hand-made flock; a busy
-   lease waits and names its holder (`workit lock status`).
-   A tool warning is a finding: fix it in this PR in the right layer, or record the false positive with evidence; pre-existing ones get their own PR.
+   lease waits and names its holder (`workit lock status`). A tool warning is a finding: fix it in this PR in the right layer, or record the false positive with evidence; pre-existing ones get their own PR.
 5. Prove the feature on its real surface with the project's `verify-<app>`
    skill; none yet? Write one (read the `workit-verify-app` skill's SKILL.md and follow it). Tests show branch behavior,
    not that the feature works. The report carries what you observed: a UI
