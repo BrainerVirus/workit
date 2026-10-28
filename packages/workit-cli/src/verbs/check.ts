@@ -206,7 +206,12 @@ type TaskOutcome = {
   note: string | null;
   evidenceId: string | null;
   satisfies: string[];
-  stillUnsatisfied: Array<{ requirement: string; ruleId: string; reason: string; unblock: string }>;
+  stillUnsatisfied: Array<{
+    requirement: string;
+    ruleId: string;
+    reason: string;
+    unblock: string;
+  }>;
   error: { code: EnvelopeCode; message: string } | null;
 };
 
@@ -262,7 +267,10 @@ async function recordInTask(
   }
   const core = new WorkitCore(store, {
     root: store.root,
-    caller: { host: "workit_cli", actor: hostSessionFromEnv(io.env).session ?? "cli" },
+    caller: {
+      host: "workit_cli",
+      actor: hostSessionFromEnv(io.env).session ?? "cli",
+    },
     provenanceKind: "host_observed",
     capabilities: [],
     constraints: [],
@@ -286,7 +294,12 @@ async function recordInTask(
     task: { id: taskId, created },
     evidenceId: recorded.data.id,
   };
-  const view = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+  const view = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId,
+    view: "summary",
+  });
   const task = store.readTask(taskId);
   if (!view.ok || !task.ok) return outcome;
   const requirements = (view.data as { requirements?: unknown }).requirements;
@@ -333,7 +346,10 @@ function environmentFingerprint(env: NodeJS.ProcessEnv) {
 }
 
 /** A ledger row stays under MAX_LINE_BYTES: long argv entries are cut. */
-function boundedArgv(argv: readonly string[]): { argv: string[]; truncated: boolean } {
+function boundedArgv(argv: readonly string[]): {
+  argv: string[];
+  truncated: boolean;
+} {
   let cut = argv.map((item) => (item.length > 200 ? `${item.slice(0, 200)}…` : item));
   if (cut.length > 24) cut = [...cut.slice(0, 24), `… ${argv.length - 24} more`];
   const truncated = cut.length !== argv.length || cut.some((item, index) => item !== argv[index]);
@@ -363,6 +379,11 @@ const STDERR_TAIL_LINES = 10;
 /** How much of the child's stderr is kept for that tail. */
 const STDERR_KEEP_CHARS = 64 * 1024;
 
+/** A line that names a failing test or error (Bun `(fail) name`, `FAIL`, `✗`, `error:`). */
+const FAILURE_LINE = /^\s*(?:\(fail\)|FAIL\b|✗|error:)/u;
+/** Failure marker lines listed from the omitted head. */
+const MAX_FAILURE_LINES = 15;
+
 /**
  * The last `lines` lines of a check's output, after one line saying how many
  * earlier ones were left out: a failure shows its failing tail, never the head.
@@ -370,26 +391,38 @@ const STDERR_KEEP_CHARS = 64 * 1024;
  * printed last can sit earlier in the merged log; the last stderr lines
  * (`stderr`) missing from the tail are shown after it, within the same budget.
  */
-export function boundedOutput(log: string, lines: number, stderr = ""): string {
+export function boundedOutput(log: string, lines: number, stderr = "", failed = false): string {
   const all = tailLines(log, Number.MAX_SAFE_INTEGER);
   if (all.length === 0) return "";
-  let shown = all.slice(-lines);
+  // A failing run also lists the failure markers its omitted head holds.
+  const markers = failed ? [...new Set(all.filter((line) => FAILURE_LINE.test(line)))] : [];
+  const listed = markers.slice(0, MAX_FAILURE_LINES);
+  const failureRoom = listed.length
+    ? listed.length + 2 + (markers.length > listed.length ? 1 : 0)
+    : 0;
+  let shown = all.slice(-Math.max(1, lines - failureRoom));
   const errors = tailLines(redactLog(stderr), STDERR_TAIL_LINES);
   let missing: string[] = [];
   if (errors.length) {
     const tail = new Set(shown);
     if (errors.some((line) => !tail.has(line))) {
       // Room for the stderr lines and their header, plus the omitted-lines header.
-      shown = all.slice(-Math.max(1, lines - errors.length - 2));
+      shown = all.slice(-Math.max(1, lines - failureRoom - errors.length - 2));
       const kept = new Set(shown);
       missing = errors.filter((line) => !kept.has(line));
     }
   }
   const omitted = all.length - shown.length;
+  const inTail = new Set([...shown, ...missing]);
+  const failures = listed.filter((line) => !inTail.has(line));
+  const more = markers.length - listed.length;
+  const failureFooter = failures.length
+    ? `… failures from the omitted lines:\n${failures.join("\n")}\n${more > 0 ? `+${more} more failures in the log\n` : ""}`
+    : "";
   const footer = missing.length
     ? `… the last stderr lines, which the merged log holds earlier:\n${missing.join("\n")}\n`
     : "";
-  return `${omitted ? `… ${omitted} earlier line${omitted === 1 ? "" : "s"} omitted (the full log is named below; --full streams it)\n` : ""}${shown.join("\n")}\n${footer}`;
+  return `${omitted ? `… ${omitted} earlier line${omitted === 1 ? "" : "s"} omitted (the full log is named below; --full streams it)\n` : ""}${failureFooter}${shown.join("\n")}\n${footer}`;
 }
 
 /** `resources` of the workspaces.json entry matching `cwd`, read from io.env's config dir. */
@@ -410,7 +443,10 @@ export async function workspaceResources(
     ) as Record<string, unknown> | null;
     return { value: workspace?.resources, warning: null };
   } catch (error) {
-    return { value: undefined, warning: `workspaces.json: ${(error as Error).message}` };
+    return {
+      value: undefined,
+      warning: `workspaces.json: ${(error as Error).message}`,
+    };
   }
 }
 
@@ -452,8 +488,17 @@ async function prepareHeavy(
   if (outer)
     return {
       lease: null,
-      leaseReport: { slot: null, waitedMs: 0, holder: null, reclaimed: [], inherited: true },
-      scope: { unit: outer.scope, reason: "inherited from the outer heavy check" },
+      leaseReport: {
+        slot: null,
+        waitedMs: 0,
+        holder: null,
+        reclaimed: [],
+        inherited: true,
+      },
+      scope: {
+        unit: outer.scope,
+        reason: "inherited from the outer heavy check",
+      },
       wrapper: null,
       env: io.env,
     };
@@ -541,7 +586,11 @@ async function prepareHeavy(
   return {
     lease,
     leaseReport,
-    scope: { unit: `${unit}.scope`, memoryMax: settings.memoryMax, cpuQuota: settings.cpuQuota },
+    scope: {
+      unit: `${unit}.scope`,
+      memoryMax: settings.memoryMax,
+      cpuQuota: settings.cpuQuota,
+    },
     wrapper: scopePrefix(unit, settings),
     env,
   };
@@ -562,7 +611,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
     if (options.positionals.length !== 1 || options.name || options.shell)
       return emit(
         io,
-        fail("invalid_input", "pass a check name, or a command after --", { unblock: USAGE }),
+        fail("invalid_input", "pass a check name, or a command after --", {
+          unblock: USAGE,
+        }),
       );
     name = options.positionals[0];
     if (config.error)
@@ -572,7 +623,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
       return emit(
         io,
         fail("not_found", `no configured check named "${name}"`, {
-          data: { configured: config.checks.map((item) => item.name), source: config.source },
+          data: {
+            configured: config.checks.map((item) => item.name),
+            source: config.source,
+          },
           unblock: config.checks.length
             ? `workit check ${config.checks.map((item) => item.name).join("|")}`
             : `add {"checks":{"${name}":"<command>"}} to .workit/checks.json, or run workit check --name ${name} -- <cmd…>`,
@@ -677,7 +731,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
       io.stderr(
         `workit: the memory/CPU scope could not start (${scoped.fallback}); ran without it\n`,
       );
-      heavy.scope = { unit: null, reason: `systemd-run failed: ${scoped.fallback}` };
+      heavy.scope = {
+        unit: null,
+        reason: `systemd-run failed: ${scoped.fallback}`,
+      };
     }
   } finally {
     lease?.release();
@@ -803,7 +860,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       `${JSON.stringify({ ok: code === "ok", code, data, ...(error ? { error } : {}), ...(task.stillUnsatisfied[0] ? { unblock: task.stillUnsatisfied[0].unblock } : {}) })}\n`,
     );
   else {
-    if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES, stderrTail));
+    if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES, stderrTail, !passed));
     io.stderr(`${summary}\n`);
     if (recordError && passed) io.stderr(`workit: ${recordError.message}\n`);
     // The pre-run note already said an ad-hoc run of a configured name leaves its gate open.
