@@ -1,7 +1,6 @@
 {
   "id": "cc-heavy-redirect-not-split",
   "source": "retro 2026-10-27 opencode \u00a76: `npm run lint >/dev/null` denied 3x as a chain",
-  "open": "#429",
   "repo": {
     "branch": "feature/x"
   },

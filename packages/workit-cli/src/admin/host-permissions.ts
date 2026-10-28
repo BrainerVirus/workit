@@ -8,8 +8,12 @@
 //   - Codex: `rules/workit.rules`, a file Workit owns;
 //   - Cursor: enumerated `Shell(workit <verb>)` in `~/.cursor/cli-config.json`.
 // OpenCode needs no write (its plugin turns an ask into an allow) and Pi has
-// no permission layer. Never: `workit check -- …`, `workit lock run -- …`,
-// `workit grant …`, or any verb outside WORKIT_ALLOWED_VERBS.
+// no permission layer. Codex and Cursor also allow the lease verbs agents run
+// (#429): `workit check <name>` for the standard check names (a prefix rule
+// cannot exclude `workit check -- <cmd>`, so the names are listed and the CLI
+// refuses `workit check <name> -- <cmd>`) and `workit lock status|wait`.
+// Never: `workit check -- …`, `workit lock run -- …`, `workit grant …`, or any
+// verb outside WORKIT_ALLOWED_VERBS.
 //
 // The merges are pure (input record in, record and added entries out), the
 // entries Workit added are recorded in its state dir so uninstall removes
@@ -52,8 +56,17 @@ const AUTO_MODE_ALLOW =
   "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `--unverified`, `--admin` or any bypass flag.";
 const DEFAULTS = "$defaults";
 
+/** Lease verbs for hosts whose rules match a prefix: standard check names, read-only lock verbs. */
+const CHECK_NAMES = ["test", "lint", "typecheck", "build", "format", "docs"] as const;
+const LOCK_VERBS = ["status", "wait"] as const;
+const LEASE_PREFIXES: readonly (readonly string[])[] = [
+  ...CHECK_NAMES.map((name) => ["check", name]),
+  ...LOCK_VERBS.map((verb) => ["lock", verb]),
+];
+
 export const CURSOR_ALLOW: readonly string[] = [
   ...WORKIT_ALLOWED_VERBS.map((verb) => `Shell(workit ${verb})`),
+  ...LEASE_PREFIXES.map((rest) => `Shell(workit ${rest.join(" ")})`),
   "Shell(workit --version)",
 ];
 
@@ -71,8 +84,12 @@ export const codexRulesText = (): string => {
         : "";
     return `prefix_rule(\n    pattern = ["workit", "${verb}"],\n    decision = "allow",\n    justification = "Workit verb: Workit's grants, verdict gates and branch policy decide",${examples}\n)\n`;
   });
+  const lease = LEASE_PREFIXES.map(
+    (rest) =>
+      `prefix_rule(\n    pattern = ${JSON.stringify(["workit", ...rest])},\n    decision = "allow",\n    justification = "Workit heavy-check lease: runs the repo's configured check, or reads the lease",\n)\n`,
+  );
   const grant = `prefix_rule(\n    pattern = ["workit", "grant"],\n    decision = "prompt",\n    justification = "Changing Workit grants needs the user",\n)\n`;
-  return `${CODEX_HEADER}\n${[...rules, grant].join("\n")}`;
+  return `${CODEX_HEADER}\n${[...rules, ...lease, grant].join("\n")}`;
 };
 
 // ---------------------------------------------------------------------------

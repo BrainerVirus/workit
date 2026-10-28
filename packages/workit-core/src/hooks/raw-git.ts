@@ -727,15 +727,19 @@ export function workitCheckTail(
     : { argv: tail, cwd };
 }
 
+const OUTPUT_FILTERS = new Set(["tail", "head", "grep"]);
+
 /**
  * The one command `command` runs after its wrappers (env prefixes, `timeout`,
  * `nice`, `flock`, `bash -c '<one command>'`), or null when it is a chain,
- * pipe, redirect, substitution, group or heredoc anywhere.
+ * pipe, redirect, substitution, group or heredoc anywhere (`shaped` allows
+ * redirects and one trailing `| tail|head|grep` filter).
  */
 export function simpleCommand(
   command: string,
   dialect: ShellDialect = "posix",
   depth = 0,
+  shaped = false,
 ): string[] | null {
   let segments: Segment[];
   try {
@@ -743,13 +747,27 @@ export function simpleCommand(
   } catch {
     return null;
   }
-  if (segments.length !== 1) return null;
+  // `shaped`: output shaping around the one command is not a chain: any
+  // redirects, and at most one trailing `| tail|head|grep …` filter.
+  const filter = shaped && segments.length === 2 ? segments[1] : null;
+  if (filter) {
+    if (
+      !segments[0].pipe ||
+      !OUTPUT_FILTERS.has(commandName(filter.words[0])) ||
+      filter.group ||
+      filter.pipe ||
+      filter.unanalyzable ||
+      filter.subs?.length ||
+      filter.stdin?.length
+    )
+      return null;
+  } else if (segments.length !== 1) return null;
   const [segment] = segments;
   if (
     segment.group ||
-    segment.pipe ||
+    (segment.pipe && !filter) ||
     segment.unanalyzable ||
-    segment.redirects.length ||
+    (segment.redirects.length && !shaped) ||
     segment.subs?.length ||
     segment.stdin?.length
   )

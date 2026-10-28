@@ -172,6 +172,19 @@ test("given one simple heavy command, when planned, then it is rewritten verbati
   });
 });
 
+test("given one heavy command followed only by redirects or one tail/head/grep filter, when planned, then it is one rewritten command", () => {
+  expect(plan("bun test 2>&1 | tail -50")).toMatchObject({
+    kind: "rewrite",
+    command: "workit check --heavy -- bun test 2>&1 | tail -50",
+  });
+  expect(plan("npm run lint >/dev/null 2>&1")).toMatchObject({
+    command: "workit check --heavy -- npm run lint >/dev/null 2>&1",
+  });
+  expect(plan("bun test | grep -v ok | head -3").kind).toBe("split");
+  expect(plan("bun test | tee out.log").kind).toBe("split");
+  expect(plan("bun test && ls").kind).toBe("split");
+});
+
 test("given a chain with a heavy part, when planned, then it is split, naming the part's lease command and never bash -c", () => {
   for (const command of [
     "git status --short && make test && touch pwned.txt",
@@ -182,7 +195,7 @@ test("given a chain with a heavy part, when planned, then it is split, naming th
     const result = plan(command);
     expect(result.kind, command).toBe("split");
     if (result.kind !== "split") continue;
-    expect(result.reason.split("(here:")[1]).not.toContain("bash -c");
+    expect(result.reason.split("now:")[1]).not.toContain("bash -c");
     expect(result.unblock).toMatch(/^workit check --heavy -- /u);
   }
   expect(plan("git status --short && make test && touch pwned.txt")).toMatchObject({
@@ -201,8 +214,8 @@ test("given an already wrapped command, a light one, or a checkout outside git, 
   }
 });
 
-test("given a deny rule naming the heavy command, when planned, then it passes through with the host-decides note", () => {
+test("given a deny rule naming the heavy command, when planned, then it passes through saying nothing", () => {
   const result = heavyPlan("npx jest", { cwd: root, env, rules: { deny: ["npx:*"], allow: [] } });
   expect(result).toMatchObject({ kind: "passthrough" });
-  if (result.kind === "passthrough") expect(result.note).toContain("the host decides");
+  if (result.kind === "passthrough") expect(result.note).toBe("");
 });

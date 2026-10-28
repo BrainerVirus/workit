@@ -1,0 +1,14 @@
+{
+  "id": "cc-heavy-real-chain-still-splits",
+  "source": "#429: only output shaping is exempt; a real chain keeps the split denial naming the first heavy segment",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": { "tool_input": { "command": "bun run build && bun test" } }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["chains heavy work", "workit check --heavy -- bun run build"]
+  }
+}

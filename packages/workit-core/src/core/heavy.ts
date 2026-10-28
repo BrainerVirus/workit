@@ -446,8 +446,8 @@ export type HeavyPlan =
   | { kind: "rewrite"; command: string; reason: string }
   /** A chain with heavy parts: run each part alone (`unblock` is the first heavy one). */
   | { kind: "split"; reason: string; unblock: string | null }
-  /** A host rule names it, or wrapping would raise it: it runs as typed. */
-  | { kind: "passthrough"; note: string };
+  /** A host rule names it, or wrapping would raise it: it runs as typed, saying nothing. */
+  | { kind: "passthrough"; note: "" };
 
 export type PlanOptions = HeavyOptions & {
   /** The host's permission rules; null where the host has none to read (Pi). */
@@ -476,7 +476,7 @@ export function heavyPlan(command: string, options: PlanOptions): HeavyPlan {
   if (!lines) return { kind: "none" };
   const heavy = heavyLines(lines, options);
   if (!heavy.length) return { kind: "none" };
-  const simple = simpleCommand(command, dialect);
+  const simple = simpleCommand(command, dialect, 0, true);
   const single = simple && !WORKIT.test(baseName(simple[0])) && heavyLines([simple], options)[0];
   const judged = single
     ? [{ words: lines.flat(), text: command }]
@@ -490,7 +490,7 @@ export function heavyPlan(command: string, options: PlanOptions): HeavyPlan {
       if (!verdict.ok)
         return {
           kind: "passthrough",
-          note: `workit: \`${command.trim()}\` is heavy but runs outside the heavy-check lease because a host permission rule names it (or \`workit\` is allowlisted); the host decides.`,
+          note: "",
         };
     }
   if (single) {
@@ -502,7 +502,7 @@ export function heavyPlan(command: string, options: PlanOptions): HeavyPlan {
   const parts = heavy.map((match) => leaseCommand(match.line));
   return {
     kind: "split",
-    reason: `heavy_command: \`${command.trim()}\` chains heavy work (${heavy.map((match) => match.reason).join("; ")}) with other commands, and a chain cannot run under the machine-wide heavy-check lease. Run each heavy part alone as \`workit check --heavy -- <segment>\` (here: ${parts.map((part) => `\`${part}\``).join("; ")}); run the other parts as their own commands.`,
+    reason: `heavy_command: \`${command.trim()}\` chains heavy work (${heavy.map((match) => match.reason).join("; ")}) with other commands, and a chain cannot run under the machine-wide heavy-check lease. Run the heavy part alone, now: \`${parts[0]}\`; then run the other parts as their own commands${parts.length > 1 ? ", each heavy one the same way" : ""}.`,
     unblock: parts[0] ?? null,
   };
 }

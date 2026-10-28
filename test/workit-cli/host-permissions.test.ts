@@ -249,7 +249,7 @@ const cursorMatches = (rule: string, command: string): boolean => {
 
 const FORBIDDEN = [
   "workit check -- rm -rf x",
-  "workit check test",
+  "workit check --name test -- rm -rf x",
   "workit lock run -- rm -rf x",
   "workit grant set work merge=true",
   "workit grant unset work merge",
@@ -269,6 +269,29 @@ test.each(FORBIDDEN)(
     expect(codexAllows.filter((p) => p.every((w, i) => words[i] === w))).toEqual([]);
   },
 );
+
+test("Given the lease verbs, Then Cursor and Codex allow `workit check <name>` and `workit lock status|wait`", () => {
+  const codexAllows = [
+    ...codexRulesText().matchAll(/pattern = \[([^\]]*)\],\n\s*decision = "allow"/gu),
+  ].map((m) => JSON.parse(`[${m[1]}]`) as string[]);
+  for (const command of [
+    "workit check test",
+    "workit check lint",
+    "workit check typecheck",
+    "workit lock status",
+    "workit lock wait --timeout 60",
+  ]) {
+    expect(
+      CURSOR_ALLOW.some((rule) => cursorMatches(rule, command)),
+      command,
+    ).toBe(true);
+    const words = command.split(" ");
+    expect(
+      codexAllows.some((p) => p.every((w, i) => words[i] === w)),
+      command,
+    ).toBe(true);
+  }
+});
 
 test("Given a delivery call, Then the Claude Code allow rules match it and a bypass flag meets an ask rule", () => {
   for (const command of [
