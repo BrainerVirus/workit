@@ -587,3 +587,7 @@ applies nothing without your approval.
 The `verify-app` skill generates a project-specific `verify-<app>` skill that
 launches, drives and observes your real CLI, web app or API, so verifiers
 check behavior rather than reading code.
+
+## Which checks a verdict needs
+
+A `test:packaging` script is the named check `packaging` (`workit check packaging`, under the lease). For a focused or full lane, `workit pr status` lists every configured check as `evidence`: fresh when a local `workit check` ran on that exact head, or, in a focused lane, when CI is green for a check of that name. A full lane needs the local run. A missing or red check is not `verified`.

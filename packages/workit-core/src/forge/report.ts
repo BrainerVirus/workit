@@ -3,6 +3,14 @@
 // and rerun planning with the rerun-once rule.
 import { aheadBehind, currentBranch, fetchRefs, hasCommit, headSha, resolveRef } from "../git/rev";
 import { appendObserved, readLedger, type LedgerActor } from "../ledger";
+import { loadCheckConfig, gateCheckNames } from "../check-config";
+import { branchLane } from "../core/policy/lane";
+import {
+  checkEvidence,
+  type CheckEvidenceDoc,
+  type CiCheck,
+  type LocalCheckRow,
+} from "../core/policy/check-evidence";
 import type { ResolvedForge } from "./resolve";
 import { rerunCounts, recordReruns, withRerunLock, type RerunRow } from "./reruns";
 import {
@@ -102,6 +110,8 @@ export type PrStatusDoc = {
     /** Required contexts that have not reported on this head; null when unknown. */
     missingRequired: string[] | null;
   };
+  /** The configured checks this head's review lane needs and their fresh evidence (#509). */
+  evidence: CheckEvidenceDoc;
   reviews: { decision: string | null; unresolvedThreads: ForgeThread[] };
   /** Every reason the PR cannot merge right now (empty when READY). */
   blockers: string[];
@@ -318,6 +328,31 @@ export function selectPr(
   return success(found.data.number);
 }
 
+/** Local runs observed on this branch, and CI's checks, folded into the lane's evidence doc. */
+export function evidenceFor(
+  cwd: string,
+  status: ForgePrStatus,
+  ci: readonly ForgeCheck[] = status.checks,
+): CheckEvidenceDoc {
+  const lane = branchLane(cwd, { base: status.base, head: status.head.sha });
+  const configured = gateCheckNames(loadCheckConfig(cwd), "verification");
+  const read = readLedger(cwd);
+  const local: LocalCheckRow[] = read.ok
+    ? read.value.rows
+        .filter((row) => row.type === "check" && row.observer === "workit_cli")
+        .map((row) => ({
+          name: String(row.name ?? ""),
+          head: String(row.head ?? ""),
+          dirty: row.dirty === true,
+          passed: row.result === "passed",
+        }))
+    : [];
+  const ciChecks: CiCheck[] = ci.flatMap((check) =>
+    check.state === "skipped" ? [] : [{ name: check.name, state: check.state }],
+  );
+  return checkEvidence({ lane: lane.lane, head: status.head.sha, configured, local, ci: ciChecks });
+}
+
 export function buildStatusDoc(
   cwd: string,
   resolved: ResolvedForge,
@@ -413,6 +448,7 @@ export function buildStatusDoc(
       passing: status.checks.filter((check) => check.state === "passing").length,
       missingRequired: missing,
     },
+    evidence: evidenceFor(cwd, status),
     reviews: { decision: status.reviewDecision, unresolvedThreads: status.threads },
     blockers: status.state === "open" ? blockers.map((blocker) => blocker.reason) : [],
     identity: options.identity ?? null,
