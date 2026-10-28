@@ -196,12 +196,31 @@ test("ci wait: checks still pending at the timeout exit 4 (pending) with determi
   expect(result.json()).toMatchObject({
     ok: false,
     code: "pending",
-    data: { state: "waiting", reason: "checks_pending", polls: 4, elapsedMs: 120_000 },
+    data: { state: "in_progress", reason: "checks_pending", polls: 4, elapsedMs: 120_000 },
     unblock: "workit ci wait --pr 12",
   });
   expect(delays).toEqual([30_000, 45_000, 45_000]);
   const usage = await run(["ci", "wait", "--interval", "0s"], repo.cwd);
   expect(usage.code).toBe(2);
+});
+
+test("ci wait: required checks pass but a non-required run is in progress keeps waiting, exit 4 in_progress (#440)", async () => {
+  const doc = JSON.parse(fixture("github/pr-pending.json"));
+  const nodes =
+    doc.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes;
+  nodes[1].status = "IN_PROGRESS";
+  nodes[1].isRequired = false;
+  const { repo } = setup(JSON.stringify(doc));
+  const result = await run(
+    ["ci", "wait", "--timeout", "1m", "--interval", "30s", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(4);
+  expect(result.json()).toMatchObject({
+    ok: false,
+    code: "pending",
+    data: { state: "in_progress", reason: "checks_pending" },
+  });
 });
 
 test("ci wait: a closed PR is blocked (exit 3), never ready; --pr with --branch is a usage error", async () => {
@@ -229,7 +248,7 @@ test("ci wait: one hard deadline covers every call, including the final status b
   });
   const result = await run(["ci", "wait", "--timeout", "1m", "--json"], repo.cwd);
   expect(result.code).toBe(4);
-  expect(result.json().data).toMatchObject({ state: "waiting", polls: 1 });
+  expect(result.json().data).toMatchObject({ state: "in_progress", polls: 1 });
   expect(statusCalls).toBe(1);
   const afterPoll = runner.calls.findIndex((call) => call.op === "status");
   // Nothing after the poll that overran: no log tails, no further API reads.
@@ -269,7 +288,7 @@ test("ci wait: given every gh call takes 5s and an account to verify, then --tim
     repo.cwd,
   );
   expect(result.code).toBe(4);
-  expect(result.json().data).toMatchObject({ state: "waiting", reason: "checks_pending" });
+  expect(result.json().data).toMatchObject({ state: "in_progress", reason: "checks_pending" });
   // The identity lookups ran inside the 30s, not before it.
   expect(runner.calls.slice(0, 2).map((call) => call.endpoint)).toEqual(["repos/o/r", "user"]);
   expect(clock).toBeLessThanOrEqual(30_000);

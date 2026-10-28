@@ -136,7 +136,11 @@ async function wait(argv: string[], io: Io): Promise<number> {
   if (!built.ok) return forgeFail(io, built);
   const doc: PrStatusDoc = built.data;
   const data = {
-    state: verdict.state,
+    // A wait that ends with runs still going says so: `in_progress`.
+    state: verdict.state === "waiting" ? "in_progress" : verdict.state,
+    ...(verdict.state === "failed" && doc.checks.pending.length > 0
+      ? { failFast: true, stillRunning: doc.checks.pending }
+      : {}),
     reason: verdict.reason,
     polls,
     elapsedMs,

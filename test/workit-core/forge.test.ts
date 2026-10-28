@@ -1378,6 +1378,20 @@ describe("S10 redaction and verdicts", () => {
       reason: "checks_passing",
     });
     expect(waitVerdict(doc("failing"), { elapsedMs: 0 }).state).toBe("failed");
+    // Fail-fast is pinned: a failing gating check ends the wait with others still running.
+    expect(
+      waitVerdict(doc("failing", { checks: { ...doc("failing").checks, pending: ["slow"] } }), {
+        elapsedMs: 0,
+      }).state,
+    ).toBe("failed");
+    // Gating checks pass while another check runs (#440): keep waiting.
+    expect(
+      waitVerdict(doc("passing", { checks: { ...doc("passing").checks, pending: ["slow"] } }), {
+        elapsedMs: 0,
+      }),
+    ).toEqual({ state: "waiting", reason: "checks_pending" });
+    // No checks registered yet inside the grace: keep waiting.
+    expect(waitVerdict(doc("none"), { elapsedMs: 5_000 }).state).toBe("waiting");
     expect(waitVerdict(doc("pending"), { elapsedMs: 0 }).state).toBe("waiting");
     expect(waitVerdict(doc("passing"), { head: "def", elapsedMs: 0 })).toEqual({
       state: "waiting",
