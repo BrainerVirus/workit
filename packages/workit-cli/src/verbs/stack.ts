@@ -5,6 +5,7 @@
 //   workit stack plan   [--name <n>] [--trunk <b> | --track <t>] [<bottom> … <top>]
 //   workit stack status [--name <n>]
 //   workit stack sync   [--name <n>] [--local] [--dry-run]
+//   workit stack restack [--name <n>] [--dry-run] [--force <branch>]…  (sync, then delete merged branches locally)
 //   workit stack land   [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase]
 //                       [--unverified --reason <why>] [--base-red-ok --reason <why>] [--timeout 20m] [--interval 30s]
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
@@ -12,6 +13,7 @@ import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import {
   landStack,
   planStack,
+  pruneMergedBranches,
   readStack,
   selectStack,
   stackStatus,
@@ -20,6 +22,7 @@ import {
   writeStack,
   type LandOutcome,
   type PlanOutcome,
+  type PruneOutcome,
   type StackError,
   type StackResult,
   type StatusOutcome,
@@ -43,9 +46,10 @@ const PLAN_USAGE =
 const STATUS_USAGE = "workit stack status [--name <n>] [--json]";
 const SYNC_USAGE =
   "workit stack sync [--name <n>] [--local] [--dry-run] [--force <branch>]… [--json]";
+const RESTACK_USAGE = "workit stack restack [--name <n>] [--dry-run] [--force <branch>]… [--json]";
 const LAND_USAGE =
   "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--timeout 20m] [--interval 30s] [--json]";
-const USAGE = "workit stack plan|status|sync|land ... (workit help stack)";
+const USAGE = "workit stack plan|status|sync|restack|land ... (workit help stack)";
 
 const short = (sha: string | null | undefined): string => (sha ? sha.slice(0, 12) : "?");
 
@@ -188,16 +192,32 @@ const renderSync = (data: SyncOutcome): string[] => [
   ),
 ];
 
-async function sync(argv: string[], io: Io): Promise<number> {
+type RestackData = SyncOutcome & { pruned: PruneOutcome };
+
+const renderRestack = (data: RestackData): string[] => [
+  ...renderSync(data),
+  ...data.pruned.deleted.map(
+    (item) =>
+      `${data.dryRun ? "would delete" : "deleted"} merged branch ${item.branch} at ${item.sha} (local; restore: git branch ${item.branch} ${item.sha})`,
+  ),
+  ...data.pruned.kept.map((item) => `kept merged branch ${item.branch}: ${item.reason}`),
+];
+
+/**
+ * sync, and with `restack` also delete the merged stack branches locally
+ * (#506): one verb after a squash merge.
+ */
+async function sync(argv: string[], io: Io, restack = false): Promise<number> {
+  const usageText = restack ? RESTACK_USAGE : SYNC_USAGE;
   const flags = parseFlags(argv, {
     name: "value",
-    local: "boolean",
+    ...(restack ? {} : { local: "boolean" as const }),
     "dry-run": "boolean",
     force: "list",
   });
-  if (typeof flags === "string") return usage(io, flags, SYNC_USAGE);
+  if (typeof flags === "string") return usage(io, flags, usageText);
   if (flags.positionals.length)
-    return usage(io, `unexpected argument ${flags.positionals[0]}`, SYNC_USAGE);
+    return usage(io, `unexpected argument ${flags.positionals[0]}`, usageText);
   const selected = selectStack(io.cwd, flags.values.name ?? null);
   if (!selected.ok) return stackFailed(io, selected);
   // --force names the branch whose changed restack may be pushed; never all.
@@ -209,7 +229,7 @@ async function sync(argv: string[], io: Io): Promise<number> {
     return usage(
       io,
       `--force ${unknown[0]}: not a branch of stack ${selected.data.name}`,
-      SYNC_USAGE,
+      usageText,
     );
   const local = flags.booleans.has("local");
   let ctx = null;
@@ -228,19 +248,26 @@ async function sync(argv: string[], io: Io): Promise<number> {
     // Re-read under the lock: another writer may have just changed it.
     const fresh = readStack(io.cwd, name);
     if (!fresh.ok) return fresh;
-    return syncStack(
+    const stack = fresh.data ?? selected.data;
+    const dryRun = flags.booleans.has("dry-run");
+    const synced = syncStack(
       io.cwd,
       ctx,
-      fresh.data ?? selected.data,
-      {
-        publish: !local,
-        dryRun: flags.booleans.has("dry-run"),
-        force,
-      },
+      stack,
+      { publish: !local, dryRun, force },
       actorFromEnv(io.env),
     );
+    if (!synced.ok || !restack) return synced;
+    return {
+      ok: true as const,
+      data: {
+        ...synced.data,
+        pruned: pruneMergedBranches(io.cwd, ctx, stack, { dryRun, actor: actorFromEnv(io.env) }),
+      },
+    };
   });
   if (!result.ok) return stackFailed(io, result);
+  if (restack) return emit(io, ok(result.data as RestackData), renderRestack);
   return emit(io, ok(result.data), renderSync);
 }
 
@@ -344,6 +371,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (sub === "plan") return plan(rest, io);
   if (sub === "status") return status(rest, io);
   if (sub === "sync") return sync(rest, io);
+  if (sub === "restack") return sync(rest, io, true);
   if (sub === "land") return land(rest, io);
   return usage(
     io,

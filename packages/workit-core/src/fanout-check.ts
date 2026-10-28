@@ -390,11 +390,20 @@ function inspect(
   }
   const parent = plan.slices.find((other) => other.branch === slice.base);
   // A landed parent whose branch is gone: diff against the head that merged.
+  // A child moved onto the trunk after its parent landed by squash (or
+  // started there) no longer contains the parent's pre-squash tip: the
+  // trunk, which holds the squashed change, is its base then (#506).
+  const parentLanded = parent ? ctx.landings.get(parent.id)?.landed === true : false;
+  const parentRef = parent
+    ? (tips.get(parent.id) ?? ctx.landings.get(parent.id)?.landedHead ?? null)
+    : null;
   const baseRef =
     slice.base === plan.trunk
       ? trunk
       : parent
-        ? (tips.get(parent.id) ?? ctx.landings.get(parent.id)?.landedHead ?? null)
+        ? parentLanded && !(parentRef && isAncestor(cwd, parentRef, head))
+          ? trunk
+          : parentRef
         : branchRef(cwd, slice.base);
   if (!SAFE(baseRef)) {
     check.reasons.push(`base ${slice.base} not found`);

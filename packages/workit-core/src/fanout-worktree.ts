@@ -27,7 +27,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { gitBranch } from "./git/ops";
 import { GIT_TIMEOUTS, gitCommonDir, pushRemoteName, resolveRef } from "./git/rev";
+import type { ResolvedForge } from "./forge/resolve";
 import { appendObserved, readLedger, type LedgerActor } from "./ledger";
+import { detectLanding, forgeBreaker, sliceStart } from "./fanout-landed";
 import { FANOUT_TOKEN_FILE } from "./hooks/worktree-confine";
 import { linkWorktreeDependencies, type LinkedDependencies } from "./worktree-deps";
 import {
@@ -281,7 +283,8 @@ const readBytes = (file: string): Buffer | null => {
  * Link the main checkout's node_modules into `worktree` only when every
  * lockfile is byte-identical in both: a stale main checkout would otherwise
  * hand the worktree the wrong dependency versions (#426). When one differs,
- * nothing is linked and `install` is the command the worker runs instead.
+ * nothing is linked and `install` is the command the worker runs instead. The
+ * same holds when the main checkout's install is older than its bun.lock.
  */
 function worktreeDependencies(
   main: string,
@@ -302,7 +305,70 @@ function worktreeDependencies(
       ],
     };
   }
+  const stale = staleBunInstall(main);
+  if (stale && !fs.existsSync(path.join(worktree, "node_modules"))) {
+    const command = `bun install --frozen-lockfile --cwd ${worktree}`;
+    return {
+      linked: null,
+      install: command,
+      notes: [
+        `the main checkout's node_modules (${main}) do not match its bun.lock (${stale}), so they were not linked; install dependencies first: ${command}`,
+      ],
+    };
+  }
   return { ...linkWorktreeDependencies(main, worktree), install: null };
+}
+
+/** Packages checked against node_modules at most (a lockfile is read whole once). */
+const STALE_SCAN = 5000;
+
+/**
+ * Why the main checkout's node_modules were installed for another bun.lock
+ * (#493), or null when every top-level package bun.lock pins is installed at
+ * its version. Bun keeps no install marker, so the installed package.json
+ * versions are the record: a checkout fast-forwarded without `bun install`
+ * shows here even though its lockfile equals the worktree's.
+ */
+function staleBunInstall(main: string): string | null {
+  if (!fs.existsSync(path.join(main, "node_modules"))) return null;
+  const text = readBytes(path.join(main, "bun.lock"))?.toString("utf8");
+  if (!text) return null;
+  let packages: Record<string, unknown>;
+  try {
+    // bun.lock is JSON with trailing commas.
+    const parsed = JSON.parse(text.replace(/,(\s*[}\]])/gu, "$1")) as { packages?: unknown };
+    if (!parsed.packages || typeof parsed.packages !== "object") return null;
+    packages = parsed.packages as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const problems: string[] = [];
+  let scanned = 0;
+  for (const [key, entry] of Object.entries(packages)) {
+    if (scanned++ >= STALE_SCAN || problems.length >= 3) break;
+    const spec = Array.isArray(entry) && typeof entry[0] === "string" ? entry[0] : null;
+    if (!spec) continue;
+    const at = spec.lastIndexOf("@");
+    if (at <= 0) continue;
+    const name = spec.slice(0, at);
+    const version = spec.slice(at + 1);
+    // Only hoisted packages under their own name, at a registry version.
+    if (name !== key || version.includes(":")) continue;
+    const manifest = readBytes(path.join(main, "node_modules", key, "package.json"));
+    if (!manifest) {
+      problems.push(`${key} missing`);
+      continue;
+    }
+    let installed: unknown;
+    try {
+      installed = (JSON.parse(manifest.toString("utf8")) as { version?: unknown }).version;
+    } catch {
+      installed = null;
+    }
+    if (installed !== version)
+      problems.push(`${key} ${String(installed ?? "?")} installed, bun.lock has ${version}`);
+  }
+  return problems.length ? problems.join("; ") : null;
 }
 
 function ensureScratch(worktree: string): string {
@@ -314,7 +380,12 @@ function ensureScratch(worktree: string): string {
 export function createSliceWorktree(
   cwd: string,
   plan: FanoutFile,
-  input: { slice: string; actor: LedgerActor },
+  input: {
+    slice: string;
+    actor: LedgerActor;
+    /** The forge for landing lookups (a dependency merged by squash); asked only when needed. */
+    forge?: () => ResolvedForge | null;
+  },
 ): FanoutResult<CreateOutcome> {
   const found = findSlice(plan, input.slice);
   if (!found.ok) return found;
@@ -407,9 +478,16 @@ export function createSliceWorktree(
       notes.push(`resumed ${slice.branch} from ${remote}/${slice.branch}`);
     } else {
       mode = "new";
-      const parent = plan.slices.find((other) => other.branch === slice.base);
+      const landedOn = dependenciesLanded(cwd, plan, slice, input.forge);
+      if (landedOn) {
+        base.base = plan.trunk;
+        notes.push(landedOn);
+      }
+      const parent = landedOn
+        ? undefined
+        : plan.slices.find((other) => other.branch === slice.base);
       const from =
-        slice.base === plan.trunk
+        base.base === plan.trunk
           ? trunkRef(cwd, plan.trunk)
           : parent
             ? branchRef(cwd, parent.branch)
@@ -424,7 +502,7 @@ export function createSliceWorktree(
         );
       const added = gitRun(cwd, ["worktree", "add", "--detach", target, from], SLOW);
       if (!added.ok) return worktreeFailed(added.stderr);
-      const branched = gitBranch(target, { name: slice.branch, base: slice.base });
+      const branched = gitBranch(target, { name: slice.branch, base: base.base });
       if (!branched.ok) {
         // The worktree was made by this call a moment ago and is clean.
         gitRun(cwd, ["worktree", "remove", target], SLOW);
@@ -460,6 +538,7 @@ export function createSliceWorktree(
     sliceHash: slice.hash,
     ...(admin ? { adminId: admin.id, adminIno: admin.ino, adminToken: admin.token } : {}),
     ...(baseSha ? { baseSha } : {}),
+    ...(base.base === slice.base ? {} : { startBase: base.base }),
     ...(deps.install ? { install: deps.install } : {}),
   });
   return {
@@ -475,6 +554,44 @@ export function createSliceWorktree(
       notes,
     },
   };
+}
+
+/**
+ * When every slice this one depends on has landed (a squash merge leaves the
+ * dependency branch at its pre-squash tip), the note saying so: the new
+ * branch then starts from the trunk. Null while any dependency is open.
+ */
+function dependenciesLanded(
+  cwd: string,
+  plan: FanoutFile,
+  slice: Slice,
+  forge: (() => ResolvedForge | null) | undefined,
+): string | null {
+  if (slice.base === plan.trunk || slice.dependsOn.length === 0) return null;
+  const deps = slice.dependsOn.map((id) => plan.slices.find((other) => other.id === id));
+  if (deps.some((dep) => !dep)) return null;
+  const trunk = trunkRef(cwd, plan.trunk);
+  if (!trunk) return null;
+  const ledger = readLedger(cwd);
+  const rows = ledger.ok ? ledger.value.rows : [];
+  const ctx = { cwd, trunk, forge: forgeBreaker(forge?.() ?? null).forge };
+  const landed: string[] = [];
+  for (const dep of deps as Slice[]) {
+    const landing = detectLanding(ctx, dep, {
+      head: branchRef(cwd, dep.branch),
+      createdFrom: sliceStart(cwd, rows, plan.name, dep),
+      parentHead: null,
+      fanout: plan.name,
+      since: dep.hashSince || plan.createdAt || null,
+      sliceHash: dep.hash || null,
+      rows,
+    });
+    if (!landing.landed) return null;
+    landed.push(
+      `${dep.branch} landed (${landing.how ?? "pr_merged"}${landing.pr ? ` #${landing.pr.number}` : ""})`,
+    );
+  }
+  return `${landed.join(", ")}: started from ${plan.trunk}, not from ${slice.base}'s pre-merge tip`;
 }
 
 const worktreeFailed = (stderr: string) =>

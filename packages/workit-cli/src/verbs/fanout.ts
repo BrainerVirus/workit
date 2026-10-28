@@ -320,6 +320,7 @@ function worktree(argv: string[], io: Io): number {
     const result = createSliceWorktree(io.cwd, selected.data, {
       slice: flags.positionals[0],
       actor,
+      forge: () => forgeFor(io, false).forge,
     });
     if (!result.ok) return failed(io, result);
     return emit(io, ok(result.data), (data: CreateOutcome) => [
