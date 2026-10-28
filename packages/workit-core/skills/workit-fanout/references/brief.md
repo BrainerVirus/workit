@@ -8,7 +8,7 @@ ledger rows instead of pasting their content. Size the slice so the worker
 finishes it in about 150k tokens of context; split a larger one first.
 
 ```md
-MODE: <new | resume (a replacement continuing a branch with commits beyond its base)>
+MODE: <new | resume (a replacement continuing a branch with commits)>
 GOAL: <one observable outcome, in the user's terms>
 SCOPE: <file-scope manifest: the globs this worker may write; everything else is read-only>
   branch: <type>/<slug>   base: <trunk or parent branch>
@@ -59,8 +59,7 @@ slice carries the brief fields the plan checks (goal, scope, acceptance,
 verify, forbidden must be filled; tier is mundane, standard or hard). `base`
 defaults to the trunk, or to the branch of a single `dependsOn` slice (a
 stack); `worktree` defaults to `../<repo>-wt/<id>`. `owns` claims a shared
-file another slice's glob also matches; a file a `write:*` script regenerates
-needs no owner: the lead runs the writer at fan-in. Globs that match no file yet are compared
+file another slice's glob also matches. Globs that match no file yet are compared
 through a sample path. Use `/` as the separator; a backslash only escapes
 literal brackets: `"app/\\[id\\]/page.tsx"`. A `reason` (`explore`, `parallel`, `backstop` or `high-risk-verify`) is rendered as the brief's `REASON:` line and is
 required unless the workspace sets `delegation` to `lead-orchestrates`. A `timebox` such as `45 minutes`
