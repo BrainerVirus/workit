@@ -4,6 +4,7 @@ import {
   verdictCommand,
 } from "@brainervirus/workit-core/src/host-session";
 import { standingSinceStart } from "@brainervirus/workit-core/src/hooks/standing";
+import { budgetStanding } from "@brainervirus/workit-core/src/hooks/budget-signal";
 import { getWorkitBootstrap } from "../bootstrap";
 import { compactContextFor, unfinishedTaskOfferFor, workerContextFor } from "../runtime";
 import { sameWorkspace } from "../shared/session";
@@ -49,7 +50,14 @@ export const injectAgentContext = (
   const verdict = session.parentID ? judgeVerdictText(root, session, workerContext) : null;
   if (verdict && !hasMarker(system, "<workit-verdict-line>"))
     system.push(textPart(`<workit-verdict-line>${verdict}</workit-verdict-line>`));
-  const standing = session.parentID ? standingFor(root, session) : null;
+  const standing = session.parentID
+    ? [
+        standingFor(root, session),
+        budgetStanding(session.directory ?? root, session.parentID, session.id),
+      ]
+        .filter(Boolean)
+        .join("\n") || null
+    : null;
   if (standing && !hasMarker(system, "<workit-standing>"))
     system.push(textPart(`<workit-standing>${standing}</workit-standing>`));
 };

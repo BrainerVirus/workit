@@ -112,9 +112,35 @@ export const claimSpawnBudget = (
     if (typeof n !== "number") return null;
     entries.splice(at, 1);
     writeAtomic(file, entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
-    const base = agentBase(store, session, agentId);
-    writeAtomic(`${base}.json`, JSON.stringify({ limit: n, told: 0 }));
-    fs.rmSync(`${base}.calls`, { force: true });
+    startBudget(store, session, agentId, n);
+    return n;
+  } catch {
+    return null;
+  }
+};
+
+const startBudget = (store: string, session: string, agentId: string | null, n: number): void => {
+  fs.mkdirSync(budgetDir(store), { recursive: true });
+  const base = agentBase(store, session, agentId);
+  writeAtomic(`${base}.json`, JSON.stringify({ limit: n, told: 0 }));
+  fs.rmSync(`${base}.calls`, { force: true });
+};
+
+/**
+ * A host that launches the worker itself (Pi) binds the budget its prompt
+ * names straight to the worker's session. Returns the limit, else null.
+ */
+export const bindBudget = (
+  cwd: string,
+  session: string,
+  agentId: string | null,
+  prompt: string,
+): number | null => {
+  try {
+    const n = spawnBudget(prompt);
+    const store = n && session ? gitStoreDir(cwd) : null;
+    if (!n || !store) return null;
+    startBudget(store, session, agentId, n);
     return n;
   } catch {
     return null;
@@ -139,24 +165,50 @@ export const tickBudget = (cwd: string, session: string, agentId: string | null)
   }
 };
 
+const lineFor = (calls: number): string =>
+  `Tool-call budget reached (${calls}): commit your work, write your report, stop.`;
+
+type Reached = { base: string; budget: Budget; reached: number };
+
+const reachedOf = (cwd: string, session: string, agentId: string | null): Reached | null => {
+  const store = session ? gitStoreDir(cwd) : null;
+  if (!store) return null;
+  const base = agentBase(store, session, agentId);
+  const budget = readBudget(`${base}.json`);
+  if (!budget) return null;
+  let count = 0;
+  try {
+    count = fs.statSync(`${base}.calls`).size;
+  } catch {
+    return null;
+  }
+  return { base, budget, reached: Math.floor(count / budget.limit) };
+};
+
 /** The one line for a budget reached and not yet told (marked told), else null. */
 export const budgetLine = (cwd: string, session: string, agentId: string | null): string | null => {
   try {
-    const store = session ? gitStoreDir(cwd) : null;
-    if (!store) return null;
-    const base = agentBase(store, session, agentId);
-    const budget = readBudget(`${base}.json`);
-    if (!budget) return null;
-    let count = 0;
-    try {
-      count = fs.statSync(`${base}.calls`).size;
-    } catch {
-      return null;
-    }
-    const reached = Math.floor(count / budget.limit);
-    if (reached <= budget.told) return null;
-    writeAtomic(`${base}.json`, JSON.stringify({ limit: budget.limit, told: reached }));
-    return `Tool-call budget reached (${budget.limit * reached}): commit your work, write your report, stop.`;
+    const at = reachedOf(cwd, session, agentId);
+    if (!at || at.reached <= at.budget.told) return null;
+    writeAtomic(`${at.base}.json`, JSON.stringify({ limit: at.budget.limit, told: at.reached }));
+    return lineFor(at.budget.limit * at.reached);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * For a host that rebuilds its context on every model call (OpenCode): the
+ * line while the budget stands reached, else null. Never marks it told.
+ */
+export const budgetStanding = (
+  cwd: string,
+  session: string,
+  agentId: string | null,
+): string | null => {
+  try {
+    const at = reachedOf(cwd, session, agentId);
+    return at && at.reached > 0 ? lineFor(at.budget.limit * at.reached) : null;
   } catch {
     return null;
   }

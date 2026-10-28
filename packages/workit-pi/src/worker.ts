@@ -16,6 +16,7 @@ import {
   resolveRoleModel,
   uniformImplementerModel,
 } from "@brainervirus/workit-core/src/core/role-models";
+import { bindBudget } from "@brainervirus/workit-core/src/hooks/budget-signal";
 import { seedStanding } from "@brainervirus/workit-core/src/hooks/standing";
 import { childSessionId } from "@brainervirus/workit-core/src/host-session";
 import {
@@ -264,6 +265,13 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     transcriptPath: null,
     event: { kind: "session.start", source: "startup" },
   });
+  // A brief that names `N tool calls` budgets the worker (hooks/budget-signal.ts).
+  bindBudget(
+    spec.cwd,
+    env.WORKIT_SESSION_ID!,
+    null,
+    `${options.pendingPrompt ?? ""}\n${assignment.objective}`,
+  );
   try {
     const spawn =
       options.spawn ?? ((command, args, spawnOptions) => nodeSpawn(command, args, spawnOptions));
