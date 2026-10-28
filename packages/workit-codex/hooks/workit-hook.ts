@@ -3,7 +3,7 @@ import {
   codexAdapter,
   codexDescriptor,
   dispatchHook,
-  runHookProcess,
+  runAdapterHook,
   type CodexHost,
 } from "@brainervirus/workit-core/hooks";
 import { PROCESS_START } from "@brainervirus/workit-core/src/hooks/deadline";
@@ -54,7 +54,7 @@ export const runCodexHook = async (
   warnOnSurfaceFallback();
   // The adapter itself, not the surface name (HOOK_ADAPTERS carries no budget):
   // the parse still names the surface (codex_cli or codex_desktop) from the env.
-  process.exitCode = await runHookProcess(
+  process.exitCode = await runAdapterHook(
     adapter,
     stdin,
     process.stdout,
