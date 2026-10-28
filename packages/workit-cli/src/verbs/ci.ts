@@ -8,6 +8,10 @@
 //
 // rerun: reruns failed jobs (or named checks) once per (PR, head, check);
 // a second rerun on the same head is `blocked` unless `--force`.
+//
+// logs --failed: the failing checks of the PR head, each with only the tail
+// of its job log (LOG_LINES lines, at most the status document's few tails),
+// so an agent never pulls a whole CI log into its context (#426).
 import {
   buildStatusDoc,
   executeRerun,
@@ -37,6 +41,11 @@ const WAIT_USAGE =
   "workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s] [--json]";
 const RERUN_USAGE =
   "workit ci rerun [--pr <n> | --branch <b>] [--check <name>… | --failed] --reason flake|infra [--force] [--json]";
+
+const LOGS_USAGE = "workit ci logs --failed [--pr <n> | --branch <b>] [--json]";
+
+/** Log lines per failing job, as `workit check` prints by default. */
+const LOG_LINES = 60;
 
 /** Budget for a single poll when --timeout is shorter (e.g. --timeout 0). */
 const ONE_POLL_MS = 20_000;
@@ -233,13 +242,61 @@ async function rerun(argv: string[], io: Io): Promise<number> {
   ]);
 }
 
+async function logs(argv: string[], io: Io): Promise<number> {
+  const flags = parseFlags(argv, { pr: "value", branch: "value", failed: "boolean" });
+  if (typeof flags === "string") return usage(io, flags, LOGS_USAGE);
+  if (flags.positionals.length)
+    return usage(io, `unexpected argument ${flags.positionals[0]}`, LOGS_USAGE);
+  if (!flags.booleans.has("failed"))
+    return usage(io, "pass --failed: only the failing steps' tails are printed", LOGS_USAGE);
+  const pr = positiveInt(flags.values.pr, "--pr");
+  if (typeof pr === "string") return usage(io, pr, LOGS_USAGE);
+  if (pr && flags.values.branch) return usage(io, "pass --pr or --branch, not both", LOGS_USAGE);
+  const connected = connect(io, flags.values.branch);
+  if (!connected.ok) return forgeFail(io, connected);
+  const resolved = connected.data;
+  const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
+  if (!number.ok) return forgeFail(io, number);
+  const status = resolved.forge.prStatus(number.data);
+  if (!status.ok) return forgeFail(io, status);
+  const doc = buildStatusDoc(io.cwd, resolved, status.data, { logLines: LOG_LINES, behind: false });
+  if (!doc.ok) return forgeFail(io, doc);
+  const data = {
+    pr: doc.data.number,
+    head: status.data.head.sha,
+    failing: doc.data.checks.failing.map((check) => ({
+      name: check.name,
+      url: check.url,
+      conclusion: check.conclusion,
+      logTail: check.logTail,
+      ...(check.logError ? { logError: check.logError } : {}),
+    })),
+  };
+  return emit(io, ok(data), () =>
+    data.failing.length
+      ? [
+          `PR #${data.pr} head ${data.head.slice(0, 7)}: ${data.failing.length} failing check${data.failing.length === 1 ? "" : "s"} (last ${LOG_LINES} log lines each)`,
+          ...data.failing.flatMap((check) => [
+            `x ${check.name}${check.conclusion ? ` (${check.conclusion})` : ""}${check.url ? ` ${check.url}` : ""}`,
+            ...(check.logTail.length
+              ? check.logTail.map((line) => `  ${line}`)
+              : [
+                  `  (no log: ${check.logError ?? "not an Actions job, or beyond the tails fetched"})`,
+                ]),
+          ]),
+        ]
+      : [`PR #${data.pr} head ${data.head.slice(0, 7)}: no failing checks`],
+  );
+}
+
 export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv;
   if (sub === "wait") return wait(rest, io);
   if (sub === "rerun") return rerun(rest, io);
+  if (sub === "logs") return logs(rest, io);
   return usage(
     io,
     sub && !sub.startsWith("-") ? `unknown ci subcommand "${sub}"` : "missing ci subcommand",
-    `${WAIT_USAGE}\n       ${RERUN_USAGE}`,
+    `${WAIT_USAGE}\n       ${RERUN_USAGE}\n       ${LOGS_USAGE}`,
   );
 }

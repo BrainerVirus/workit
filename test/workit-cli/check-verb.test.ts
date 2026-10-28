@@ -156,8 +156,8 @@ test("G `workit check -- bun test` exiting 1, T failing evidence with exit code,
   const log = readFileSync(path.join(root, ".git", "workit", data.logRef), "utf8");
   expect(log).toContain("1 fail: expected 2");
   expect(log).not.toContain("ghp_abcdefghij");
-  // The child's output went to stderr so stdout is exactly one envelope.
-  expect(failing.stderr).toContain("1 fail: expected 2");
+  // Without --full nothing streams: the envelope's logTail is the only copy.
+  expect(failing.stderr).not.toContain("1 fail: expected 2");
 
   const task = store.readTask(taskId);
   if (!task.ok) throw new Error(task.error);
@@ -865,4 +865,47 @@ test("G a repo with only .workit/checks.json, W `workit check test` runs, T it r
   const ran = await run(root, ["check", "test"]);
   expect(ran.code).toBe(0);
   expect(ran.stderr).not.toContain("note:");
+});
+
+test("G a check printing 500 lines then failing, T the agent sees its failing tail, a count of the omitted head and one summary line with the log path; --full streams it all", async () => {
+  const root = repo();
+  const script =
+    "for (let i = 1; i <= 500; i++) console.log('line ' + i); console.error('boom at the end'); process.exit(3)";
+  const bounded = await run(root, ["check", "--", BUN, "-e", script]);
+  expect(bounded.code).toBe(3);
+  const printed = bounded.stdout.split("\n");
+  expect(printed[0]).toContain("441 earlier lines omitted");
+  expect(printed.length).toBeLessThanOrEqual(62);
+  expect(bounded.stdout).toContain("boom at the end");
+  expect(bounded.stdout).toContain("line 500");
+  expect(bounded.stdout).not.toContain("line 1\n");
+  const summary = bounded.stderr.match(/workit check .*: exited 3 in \d+ ms .*; log: (\S+)/u);
+  expect(summary).not.toBeNull();
+  expect(readFileSync(summary![1], "utf8")).toContain("line 1\n");
+
+  const full = await run(root, ["check", "--full", "--", BUN, "-e", script]);
+  expect(full.stdout).toContain("line 1\n");
+  expect(full.stdout).not.toContain("earlier lines omitted");
+});
+
+test("G `test` configured, W an ad-hoc `--name test` run, T it says before running that it will not satisfy the gate, and not again after", async () => {
+  const root = repo();
+  startTask(root);
+  const ran = await run(root, ["check", "--name", "test", "--", "true"]);
+  expect(ran.code).toBe(0);
+  const note = ran.stderr.indexOf('note: "test" is configured as');
+  expect(note).toBeGreaterThanOrEqual(0);
+  expect(note).toBeLessThan(ran.stderr.indexOf("workit check test:"));
+  expect(ran.stderr).not.toContain("still unsatisfied");
+});
+
+test("G a linked worktree without .workit/checks.json, W `workit check test`, T it runs the main checkout's configured check from the worktree", async () => {
+  const root = repo();
+  const linked = path.join(mkdtempSync(path.join(os.tmpdir(), "workit-check-linked-")), "wt");
+  dirs.push(path.dirname(linked));
+  git(root, "worktree", "add", "-q", "-b", "feature/linked", linked);
+  expect(existsSync(path.join(linked, ".workit", "checks.json"))).toBe(false);
+  const ran = await run(linked, ["check", "test", "--json"]);
+  expect(ran.code).toBe(0);
+  expect(ran.json().data).toMatchObject({ name: "test", configured: true });
 });

@@ -255,8 +255,55 @@ export type CreateOutcome = {
   created: boolean;
   /** node_modules linked from the main checkout (worktree-deps.ts); null when none were. */
   dependencies: LinkedDependencies | null;
+  /** The install command to run in the worktree when its lockfile differs from the main checkout's. */
+  install: string | null;
   notes: string[];
 };
+
+/** Lockfiles in the order a package manager is picked, with its frozen install for a directory. */
+const LOCKFILES: ReadonlyArray<[string, (dir: string) => string]> = [
+  ["bun.lock", (dir) => `bun install --frozen-lockfile --cwd ${dir}`],
+  ["bun.lockb", (dir) => `bun install --frozen-lockfile --cwd ${dir}`],
+  ["pnpm-lock.yaml", (dir) => `pnpm install --frozen-lockfile --dir ${dir}`],
+  ["yarn.lock", (dir) => `yarn install --frozen-lockfile --cwd ${dir}`],
+  ["package-lock.json", (dir) => `npm ci --prefix ${dir}`],
+];
+
+const readBytes = (file: string): Buffer | null => {
+  try {
+    return fs.readFileSync(file);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Link the main checkout's node_modules into `worktree` only when every
+ * lockfile is byte-identical in both: a stale main checkout would otherwise
+ * hand the worktree the wrong dependency versions (#426). When one differs,
+ * nothing is linked and `install` is the command the worker runs instead.
+ */
+function worktreeDependencies(
+  main: string,
+  worktree: string,
+): { linked: LinkedDependencies | null; install: string | null; notes: string[] } {
+  for (const [name, install] of LOCKFILES) {
+    const ours = readBytes(path.join(main, name));
+    const theirs = readBytes(path.join(worktree, name));
+    if (ours === null && theirs === null) continue;
+    if (ours !== null && theirs !== null && ours.equals(theirs)) continue;
+    if (fs.existsSync(path.join(worktree, "node_modules"))) break;
+    const command = install(worktree);
+    return {
+      linked: null,
+      install: command,
+      notes: [
+        `${name} differs from the main checkout's (${main}), so its node_modules was not linked; install dependencies first: ${command}`,
+      ],
+    };
+  }
+  return { ...linkWorktreeDependencies(main, worktree), install: null };
+}
 
 function ensureScratch(worktree: string): string {
   const scratch = path.join(worktree, SCRATCH_DIR);
@@ -303,7 +350,7 @@ export function createSliceWorktree(
         `remove it yourself (git worktree remove ${target}) once you know what it holds`,
       );
     excludeScratch(cwd);
-    const deps = linkWorktreeDependencies(mainCheckout(cwd), target);
+    const deps = worktreeDependencies(mainCheckout(cwd), target);
     return {
       ok: true,
       data: {
@@ -313,6 +360,7 @@ export function createSliceWorktree(
         mode: resolveRef(cwd, localRef) ? "resume" : "new",
         created: false,
         dependencies: deps.linked,
+        install: deps.install,
         notes: [
           deps.linked
             ? "the worktree already exists; only its missing dependencies were linked"
@@ -392,7 +440,7 @@ export function createSliceWorktree(
   }
   excludeScratch(cwd);
   const scratch = ensureScratch(target);
-  const deps = linkWorktreeDependencies(mainCheckout(cwd), target);
+  const deps = worktreeDependencies(mainCheckout(cwd), target);
   notes.push(...deps.notes);
   const head = gitRun(target, ["rev-parse", "HEAD"]).stdout.trim();
   const baseSha = mode === "new" ? head : null;
@@ -415,7 +463,16 @@ export function createSliceWorktree(
   });
   return {
     ok: true,
-    data: { ...base, scratch, head, mode, created: true, dependencies: deps.linked, notes },
+    data: {
+      ...base,
+      scratch,
+      head,
+      mode,
+      created: true,
+      dependencies: deps.linked,
+      install: deps.install,
+      notes,
+    },
   };
 }
 

@@ -12,10 +12,16 @@ workit check --name test -- bun test    # same, if argv is exactly the configure
 workit check -- bun test src/foo.test.ts   # ad-hoc: recorded, never satisfies a gate
 ```
 
-The command runs without a shell (unless `--shell "<cmd>"`), streams its
-output, and records exit code, duration, HEAD, worktree tree key and patch-id
-as `observer: workit_cli` evidence. The exit code is the command's;
-`--timeout <s>` kills the whole process tree.
+The command runs without a shell (unless `--shell "<cmd>"`) and records exit
+code, duration, HEAD, worktree tree key and patch-id as `observer: workit_cli`
+evidence. The exit code is the command's; `--timeout <s>` kills the whole
+process tree. It prints only the last 60 lines of the output (a failure's
+tail, never its head) and one summary line with the check name, exit code,
+duration and `log: <path>` to the full redacted log; `--full` streams the whole
+output as it runs instead.
+
+An ad-hoc run under a configured name (`--name test -- <other cmd>`) says
+before it runs that it will not satisfy that name's gate.
 
 Configured checks come from `.workit/checks.json`, which lives in the
 self-ignoring `.workit/` directory so it adds nothing to your repo root or
@@ -29,6 +35,10 @@ Without it, Workit detects defaults: package.json `test`/`lint`/`typecheck`/
 `check` scripts as `<pm> run <script>`, `go test ./...`, `cargo test`,
 `pytest`, `make test`. A check is stale once the worktree changes, or if the
 check itself changed it.
+
+A linked worktree (a `workit fanout worktree create` slice, an agent's
+worktree) without its own `.workit/checks.json` reads the main checkout's, and
+runs the commands from the worktree.
 
 A root `workit.checks.json` from older versions is still read when
 `.workit/checks.json` is absent, and `workit check` prints a one-line `note:`

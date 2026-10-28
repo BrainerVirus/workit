@@ -4,9 +4,12 @@
 //   workit check <name> [--timeout <s>] [--task <id>] [--no-lease --reason <why>] [--json]   # the configured command
 //   workit check [--name <n>] [--shell] [--heavy] [--wait <s>] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
 //
-// - The command runs without a shell (with --shell, pass one command string);
-//   its output streams through (to stderr under --json, so stdout stays one
-//   envelope) while a bounded, redacted copy goes to the log blob.
+// - The command runs without a shell (with --shell, pass one command string).
+//   Its combined output goes to a bounded, redacted log blob; the agent sees
+//   only the last OUTPUT_LINES lines of it (the failing tail, never the head)
+//   and one summary line naming the full log's path (#426). --full streams
+//   the output as it runs instead (to stderr under --json, so stdout stays
+//   one envelope).
 // - The run is keyed to the code (HEAD, worktree tree key, base + patch-id)
 //   and recorded as `observer:"workit_cli"` evidence: always in the ledger
 //   (`type:"check"`), and in a task: --task, else the implicit task of the
@@ -80,7 +83,12 @@ import {
 } from "@brainervirus/workit-core/src/core/resources";
 
 const USAGE =
-  'workit check <name> [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--wait <s>] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
+  'workit check <name> [--full] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <s>] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
+/**
+ * Output lines a check prints by default: enough for a compiler error or a
+ * failing test with its stack, far below a build log (#426). --full streams all.
+ */
+export const OUTPUT_LINES = 60;
 /** Lease age bound for a check without --timeout, where the holder cannot be identified. */
 const MAX_UNVERIFIED_RUN_MS = 6 * 3_600_000;
 /** Tail lines kept on the task record (the envelope carries TAIL_LINES). */
@@ -91,6 +99,8 @@ type Options = {
   name: string | null;
   shell: boolean;
   heavy: boolean;
+  /** Stream the child's output as it runs instead of printing its tail. */
+  full: boolean;
   noLease: boolean;
   /** Why the run skips the lease; required with --no-lease. */
   reason: string | null;
@@ -110,6 +120,7 @@ function parse(argv: readonly string[]): Options | Error {
     name: null,
     shell: false,
     heavy: false,
+    full: false,
     noLease: false,
     reason: null,
     waitMs: null,
@@ -129,8 +140,9 @@ function parse(argv: readonly string[]): Options | Error {
         : next;
     };
     if (flag === "--json") continue;
-    if (flag === "--shell") {
-      options.shell = true;
+    if (flag === "--shell" || flag === "--full") {
+      if (flag === "--shell") options.shell = true;
+      else options.full = true;
       continue;
     }
     if (flag === "--heavy" || flag === "--no-lease") {
@@ -315,6 +327,18 @@ function boundedArgv(argv: readonly string[]): { argv: string[]; truncated: bool
   if (cut.length > 24) cut = [...cut.slice(0, 24), `… ${argv.length - 24} more`];
   const truncated = cut.length !== argv.length || cut.some((item, index) => item !== argv[index]);
   return { argv: cut, truncated };
+}
+
+/**
+ * The last `lines` lines of a check's output, after one line saying how many
+ * earlier ones were left out: a failure shows its failing tail, never the head.
+ */
+export function boundedOutput(log: string, lines: number): string {
+  const all = tailLines(log, Number.MAX_SAFE_INTEGER);
+  if (all.length === 0) return "";
+  const shown = all.slice(-lines);
+  const omitted = all.length - shown.length;
+  return `${omitted ? `… ${omitted} earlier line${omitted === 1 ? "" : "s"} omitted (the full log is named below; --full streams it)\n` : ""}${shown.join("\n")}\n`;
 }
 
 /** The shell tool's default timeout in Claude Code and OpenCode is 120 s. */
@@ -529,6 +553,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   const relCwd = posix(path.relative(top, runCwd));
   const configured = !options.shell && matchesNamedCheck(config, name, command, relCwd);
+  // Say before the run, not after it, that an ad-hoc run of a configured
+  // name will not satisfy that name's gate.
+  const shadowed =
+    !configured && name !== null ? config.checks.find((item) => item.name === name) : undefined;
+  if (shadowed)
+    io.stderr(
+      `note: "${name}" is configured as \`${shadowed.argv.join(" ")}\`; this ad-hoc run does not satisfy a configured gate (run workit check ${name})\n`,
+    );
   const actor = actorFromEnv(io.env);
   const branchKey: CodeKey = codeKey(io.cwd, { base: options.base });
   // codeKey keys the tree only on a checked-out branch; a detached HEAD is
@@ -582,7 +614,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
           ...(lease ? { onSpawn: (pid: number) => updateLease(lease, { pgid: pid }) } : {}),
         }),
       heavy?.wrapper ?? null,
-      { onStdout: io.json ? io.stderr : io.stdout, onStderr: io.stderr },
+      options.full
+        ? { onStdout: io.json ? io.stderr : io.stdout, onStderr: io.stderr }
+        : // One bounded writer (below) is the only path from the child to the agent.
+          { onStdout: () => {}, onStderr: () => {} },
     );
     result = scoped.result;
     if (heavy && scoped.fallback) {
@@ -599,6 +634,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const modifiedWorktree = key.tree !== null && treeAfter !== key.tree;
   const store = storeRoot(io.cwd);
   const blob = store.ok ? storeLog(store.value.root, result.log) : null;
+  const logPath = store.ok && blob ? path.join(store.value.root, blob.ref) : null;
   const tail = tailLines(result.log, TAIL_LINES);
   const passed = result.exitCode === 0 && !result.timedOut;
   const bounded = boundedArgv(command);
@@ -681,6 +717,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     patchId: key.patchId,
     logDigest: observation.logDigest,
     logRef: observation.logRef,
+    logPath,
     logTail: tail,
     outputBytes: result.outputBytes,
     logTruncated: result.truncated,
@@ -705,16 +742,19 @@ export async function run(argv: string[], io: Io): Promise<number> {
         : `exited ${result.exitCode}`
     : recordError?.message;
   const label = name ?? command.join(" ");
-  const summary = `workit check ${label}: ${passed ? "passed" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}${observation.logRef ? `; log ${observation.logRef}` : ""}`;
+  const summary = `workit check ${label}: ${passed ? "passed, exit 0" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}; log: ${logPath ?? "not stored"}`;
   if (io.json)
     io.stdout(
       `${JSON.stringify({ ok: code === "ok", code, data, ...(error ? { error } : {}), ...(task.stillUnsatisfied[0] ? { unblock: task.stillUnsatisfied[0].unblock } : {}) })}\n`,
     );
   else {
+    if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES));
     io.stderr(`${summary}\n`);
     if (recordError && passed) io.stderr(`workit: ${recordError.message}\n`);
-    for (const gap of task.stillUnsatisfied)
-      io.stderr(`  still unsatisfied: ${gap.ruleId}: ${gap.reason}\n`);
+    // The pre-run note already said an ad-hoc run of a configured name leaves its gate open.
+    if (!shadowed)
+      for (const gap of task.stillUnsatisfied)
+        io.stderr(`  still unsatisfied: ${gap.ruleId}: ${gap.reason}\n`);
   }
   if (!passed) return result.timedOut ? 4 : result.exitCode || 1;
   if (recordError)

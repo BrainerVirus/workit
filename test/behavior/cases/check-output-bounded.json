@@ -1,7 +1,6 @@
 {
   "id": "check-output-bounded",
-  "source": "retro 2026-10-27 codex \u00a72: ~170k-token build logs streamed to the agent",
-  "open": "#426",
+  "source": "retro 2026-10-27 codex §2: ~170k-token build logs streamed to the agent",
   "repo": {
     "branch": "feature/x",
     "checks": {
@@ -13,6 +12,12 @@
   },
   "expect": {
     "exit": [0],
-    "maxLines": 200
+    "require": [
+      "4940 earlier lines omitted",
+      "\n5000\n",
+      "workit check test: passed, exit 0 in \\d+ ms .*; log: /\\S+\\.log"
+    ],
+    "forbid": ["(^|\n)1\n2\n"],
+    "maxLines": 70
   }
 }

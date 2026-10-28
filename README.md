@@ -302,7 +302,7 @@ Global flags:
 | `workit ledger decision\|ruling\|verdict\|standing\|list\|check` | Decisions, rulings, SHA-keyed verdicts and a fanout's standing orders |
 | `workit git branch\|commit\|push` | Policy-checked branch/commit; leased push with verified remote tip |
 | `workit pr status\|create\|merge` | PR state and next action; SHA-bound create; gated merge |
-| `workit ci wait\|rerun` | Wait for CI on the PR head; rerun failed jobs once per head |
+| `workit ci wait\|rerun\|logs` | Wait for CI on the PR head; rerun failed jobs once per head; print the failing jobs' log tails |
 | `workit stack plan\|status\|sync\|land` | Base-branch PR stacks |
 | `workit fanout plan\|brief\|check\|status\|worktree` | Register parallel slices (complete briefs, disjoint scopes); render each worker's brief with the standing orders; watch them (STUCK, PR, CI, verdict, landed); create and release slice worktrees; gate fan-in on scope, merge conflicts and landing order |
 | `workit verify-delivery [push\|pr\|merge\|release]` | Confirm on the remote that it landed |
