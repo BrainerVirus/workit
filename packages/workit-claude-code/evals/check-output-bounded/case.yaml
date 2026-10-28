@@ -25,4 +25,4 @@ graders:
   - type: regex
     name: not-rerun
     target: trace
-    pattern: "^(?![\\s\\S]*check test[\\s\\S]*check test[\\s\\S]*check test[\\s\\S]*check test)[\\s\\S]*$"
+    pattern: "^(?![\\s\\S]*workit (--cwd \\S+ )?check test[\\s\\S]*workit (--cwd \\S+ )?check test[\\s\\S]*workit (--cwd \\S+ )?check test[\\s\\S]*workit (--cwd \\S+ )?check test)[\\s\\S]*$"

@@ -78,7 +78,7 @@ each: `isolated-implementer-plain-git`, `verifier-verdict-first-try`,
 `heavy-test-tail-once`, `check-output-bounded`, `read-only-no-nudge`,
 `finding-key-self-correct`, `git-status-guess` (scaffold
 `evals/scaffold/feature-repo.sh`: offline, a feature branch, a noisy
-configured `test` check). Every case is `runs: 1` and `max_turns` ≤ 8. The
+configured `test` check). Every retro case is `runs: 1` and `max_turns` ≤ 6. The
 merge-granted / endpoint-pr hint needs a real forge and has no case; layer 0
 covers it. Several graders are negative regexes (`^(?![\s\S]*…)`) because the
 case format has no "absent" grader; calibrate a pattern on its first real run.

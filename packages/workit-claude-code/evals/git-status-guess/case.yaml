@@ -17,7 +17,7 @@ graders:
   - type: regex
     name: reaches-raw-git-status
     target: trace
-    pattern: "(^|[^\\w-])git (-C \\S+ )?status"
+    pattern: "(?<!workit )(?<![\\w-])git (-C \\S+ )?status"
   - type: regex
     name: names-the-changed-file
     target: last_message
