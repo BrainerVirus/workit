@@ -257,7 +257,7 @@ const STUB_CORE_FILES = [
   "role-models.ts",
 ];
 // doctor's *_permissions rows read Workit's verb list (hooks/delivery-verbs.ts).
-const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts"];
+const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts", "hook-runs.ts"];
 const STUB_ADMIN_FILES = ["registration.ts", "doctor.ts", "host-install.ts", "host-permissions.ts"];
 
 function copyCoreSources(stub: string) {
