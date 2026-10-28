@@ -11,7 +11,7 @@ import type { HookDecision } from "./protocol";
 import { workitRole } from "./steering";
 
 /** A brief's WORKTREE line naming a made worktree (`fanout brief` says "not made yet" otherwise). */
-const MADE_WORKTREE = /^WORKTREE:[ \t]*\S(?![^\n]*not made yet)/mu;
+const MADE_WORKTREE = /^WORKTREE:[ \t]*(?!not made yet)\S(?![^\n]*not made yet)/mu;
 
 const UNBLOCK = "workit fanout worktree create <slice>";
 

@@ -310,7 +310,7 @@ const fastAllow = (() => {
         spawn.subagent_type === "workit:implementer" &&
         (spawn.isolation !== undefined ||
           typeof spawn.prompt !== "string" ||
-          !/^WORKTREE:[ \t]*\S(?![^\n]*not made yet)/mu.test(spawn.prompt))
+          !/^WORKTREE:[ \t]*(?!not made yet)\S(?![^\n]*not made yet)/mu.test(spawn.prompt))
       )
         return false;
       return typeof spawn.model === "string" && spawn.model.trim() !== "";

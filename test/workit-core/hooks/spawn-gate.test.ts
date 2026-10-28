@@ -86,6 +86,21 @@ test("G a brief rendered before its worktree was made, W PreToolUse runs, T it i
   expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
 });
 
+test("G a WORKTREE line that is only the not-made-yet note, W PreToolUse runs, T it is denied (no regex backtracking)", () => {
+  for (const line of [
+    "WORKTREE: not made yet",
+    "WORKTREE:  not made yet",
+    "WORKTREE:not made yet",
+  ]) {
+    const out = spawn({
+      subagent_type: "workit:implementer",
+      prompt: `GOAL: g\n${line}\n`,
+      model: "opus",
+    });
+    expect(out.hookSpecificOutput?.permissionDecision, line).toBe("deny");
+  }
+});
+
 test("G a verifier spawn with isolation and no brief, W PreToolUse runs, T it is left as written", () => {
   const out = spawn({
     subagent_type: "workit:verifier",
