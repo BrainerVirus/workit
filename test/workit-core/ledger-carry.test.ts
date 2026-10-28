@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendObserved,
+  carryLabel,
   checkVerdicts,
   ledgerPath,
   readLedger,
@@ -371,4 +372,90 @@ test("Given a unit verdict, When a `*_test.go` or `*.spec.ts` file changes, Then
     commit(root, { [file]: "b\n" }, "t2");
     expect(check(root).verdicts[0].carry).toMatchObject({ rule: "tests-only", files: [file] });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Clean rebase: the base also edited a file the branch touches, elsewhere in
+// it. The branch's patch is unchanged and the head is exactly the judged head
+// cleanly rebased, so the verdict carries; any change to the patch does not.
+
+/** Forty numbered lines, `edits` replacing some of them. */
+const NUMBERED = (edits: Record<number, string> = {}) =>
+  Array.from({ length: 40 }, (_, index) => edits[index] ?? `line ${index}`).join("\n") + "\n";
+
+/** feature/x (two commits) also edits line 2 of src/shared.ts, which main holds; judged. */
+const sharedFileRepo = (self = false) => {
+  const root = featureRepo();
+  git(root, "checkout", "-q", "main");
+  commit(root, { "src/shared.ts": NUMBERED() }, "shared");
+  git(root, "checkout", "-q", "feature/x");
+  git(root, "rebase", "-q", "main");
+  commit(root, { "src/shared.ts": NUMBERED({ 2: "line 2 branch" }) }, "edit shared");
+  const judged = self
+    ? value(
+        recordVerdict(
+          { cwd: root, actor: { host: "cli", session: "author", agentId: null } },
+          { result: "verified", how: "exercised it", kind: "review", self: true },
+        ),
+      )
+    : verdict(root);
+  return { root, judged };
+};
+
+/** main edits `line` of src/shared.ts; then feature/x is rebased onto it. */
+const moveMainAndRebase = (root: string, line: number) => {
+  git(root, "checkout", "-q", "main");
+  commit(root, { "src/shared.ts": NUMBERED({ [line]: `line ${line} main` }) }, "main moves");
+  git(root, "checkout", "-q", "feature/x");
+  return spawnSync("git", ["rebase", "-q", "main"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, GIT_EDITOR: "true" },
+  }).status;
+};
+
+test("Given a verified head, When main edits another part of a branch file and the branch is rebased cleanly, Then the verdict carries as a rebase with the patch unchanged", () => {
+  const { root, judged } = sharedFileRepo();
+  expect(moveMainAndRebase(root, 35)).toBe(0);
+  const result = check(root);
+  expect(result.head).not.toBe(judged.head);
+  expect(result.accepted).toMatchObject({ accepted: true, reasons: [] });
+  expect(result.current.basis).toBe("carried");
+  expect(result.carry).toEqual({ rule: "rebase", since: judged.head as string, files: [] });
+  expect(carryLabel(result.carry as NonNullable<typeof result.carry>)).toBe(
+    "carried (rebase: patch unchanged)",
+  );
+});
+
+test("Given a rebase whose conflict in a branch file was resolved to the judged text, When checked, Then the verdict is stale (the patch changed)", () => {
+  const { root } = sharedFileRepo();
+  expect(moveMainAndRebase(root, 2)).not.toBe(0);
+  // The resolved file is byte-identical to the judged one; the patch is not.
+  write(root, "src/shared.ts", NUMBERED({ 2: "line 2 branch" }));
+  git(root, "add", "src/shared.ts");
+  git(root, "-c", "core.editor=true", "rebase", "--continue");
+  const result = check(root);
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.carry).toBeNull();
+});
+
+test("Given a clean rebase followed by an amend of a branch line, When checked, Then the verdict is stale", () => {
+  const { root } = sharedFileRepo();
+  expect(moveMainAndRebase(root, 35)).toBe(0);
+  write(root, "src/shared.ts", NUMBERED({ 2: "line 2 branch!", 35: "line 35 main" }));
+  git(root, "add", "src/shared.ts");
+  git(root, "commit", "-q", "--amend", "--no-edit");
+  const result = check(root);
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.carry).toBeNull();
+});
+
+test("Given an author's --self verdict, When the branch is rebased cleanly, Then it carries only as self, never as an accepted verdict", () => {
+  const { root } = sharedFileRepo(true);
+  expect(moveMainAndRebase(root, 35)).toBe(0);
+  const result = check(root);
+  expect(result.verdicts[0]).toMatchObject({ basis: "carried", accepted: false });
+  expect(result.verdicts[0].reasons).toContain("self");
+  expect(result.accepted.accepted).toBe(false);
+  expect(result.review).toBe("self-reviewed");
 });
