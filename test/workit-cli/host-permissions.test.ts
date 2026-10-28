@@ -60,7 +60,9 @@ const cli = async (argv: string[], env: NodeJS.ProcessEnv) => {
 const USER_SETTINGS = {
   model: "opus",
   permissions: { allow: ["Bash(npm test)"], deny: ["Bash(rm *)"] },
-  autoMode: { environment: ["$defaults", "Org-specific CLIs: acme — deploy tool"] },
+  autoMode: {
+    environment: ["$defaults", "Org-specific CLIs: acme — deploy tool"],
+  },
   env: { FOO: "1" },
 };
 
@@ -159,7 +161,12 @@ test("Given a malformed settings.json, When setup runs, Then it is left byte-for
 test("Given a reviewed plan, When the file changes before apply, Then apply refuses it", () => {
   const { env, settings, home } = sandbox();
   writeFileSync(settings, "{}\n");
-  const plan = planHostPermissions({ hosts: ["claude-code"], env, home, bash: null });
+  const plan = planHostPermissions({
+    hosts: ["claude-code"],
+    env,
+    home,
+    bash: null,
+  });
   writeFileSync(settings, '{"model":"sonnet"}\n');
   const [entry] = applyHostPermissions(plan, { env, home });
   expect(entry?.status).toBe("failed");
@@ -270,7 +277,7 @@ test.each(FORBIDDEN)(
   },
 );
 
-test("Given the lease verbs, Then Cursor and Codex allow `workit check <name>` and `workit lock status|wait`", () => {
+test("Given the lease verbs, Then Claude Code, Cursor and Codex allow `workit check <name>` and `workit lock status|wait`", () => {
   const codexAllows = [
     ...codexRulesText().matchAll(/pattern = \[([^\]]*)\],\n\s*decision = "allow"/gu),
   ].map((m) => JSON.parse(`[${m[1]}]`) as string[]);
@@ -283,6 +290,10 @@ test("Given the lease verbs, Then Cursor and Codex allow `workit check <name>` a
   ]) {
     expect(
       CURSOR_ALLOW.some((rule) => cursorMatches(rule, command)),
+      command,
+    ).toBe(true);
+    expect(
+      CLAUDE_ALLOW.some((rule) => claudeMatches(rule, command)),
       command,
     ).toBe(true);
     const words = command.split(" ");
@@ -318,7 +329,12 @@ test("Given a drifted Claude Code block, When doctor runs, Then its permission r
   const value = JSON.parse(readFileSync(settings, "utf8"));
   value.autoMode.allow = ["$defaults"];
   writeFileSync(settings, JSON.stringify(value));
-  const report = runDoctor({ home, env, stateDir: env.WORKFLOW_TOOLKIT_STATE, cwd: scratch });
+  const report = runDoctor({
+    home,
+    env,
+    stateDir: env.WORKFLOW_TOOLKIT_STATE,
+    cwd: scratch,
+  });
   const row = report.checks.find((c) => c.id === "claude_permissions");
   expect(row?.status).toBe("warn");
   expect(row?.fix).toBe("workit setup --hosts=claude-code");
@@ -352,7 +368,13 @@ test("Given the upgrade refresh, When no block was written, Then nothing is plan
   );
   writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
   const refresh = () =>
-    planHostPermissions({ hosts: ["claude-code"], refreshOnly: true, shell: false, env, home });
+    planHostPermissions({
+      hosts: ["claude-code"],
+      refreshOnly: true,
+      shell: false,
+      env,
+      home,
+    });
   // The user removed both: the refresh leaves them out.
   expect(refresh().changes).toEqual([]);
   // An older Workit never offered `stack`: this version adds it, not `ci`.
@@ -364,7 +386,9 @@ test("Given the upgrade refresh, When no block was written, Then nothing is plan
   });
   const plan = refresh();
   expect(plan.changes).toHaveLength(1);
-  expect(plan.changes[0]?.owned.lists).toEqual({ "permissions.allow": ["Bash(workit stack *)"] });
+  expect(plan.changes[0]?.owned.lists).toEqual({
+    "permissions.allow": ["Bash(workit stack *)"],
+  });
   expect(plan.changes[0]?.after).not.toContain("Bash(workit ci *)");
   expect(plan.changes[0]?.after).not.toContain("CLAUDE_CODE_SHELL");
 });
@@ -437,7 +461,10 @@ test("Given a tampered ownership record, When uninstall runs, Then only Workit-s
   expect(after.permissions.deny).toEqual(["Bash(rm *)"]);
   expect(after.permissions.allow).toEqual(["Bash(npm test)"]);
   expect(after.autoMode.environment).toEqual(USER_SETTINGS.autoMode.environment);
-  expect(after.env).toEqual({ FOO: "1", ANTHROPIC_BASE_URL: "https://example.test" });
+  expect(after.env).toEqual({
+    FOO: "1",
+    ANTHROPIC_BASE_URL: "https://example.test",
+  });
   expect(after.model).toBe("opus");
   expect(after.permissions.ask).toBeUndefined();
 });

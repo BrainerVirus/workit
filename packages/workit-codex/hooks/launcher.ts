@@ -51,6 +51,7 @@ if (tooOld) {
 // Loaded after the floor check: a static import would evaluate the runtime first.
 const { maybeHeavy, stateDir } = await import("@brainervirus/workit-core/src/core/heavy-words");
 const { standingPending } = await import("@brainervirus/workit-core/src/hooks/standing-signal");
+const { recordHookRun } = await import("@brainervirus/workit-core/src/hooks/hook-runs");
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
@@ -109,9 +110,19 @@ const quietEvent = (): string | null => {
 };
 
 const quiet = quietEvent();
-if (quiet)
+if (quiet) {
+  // The full path records itself (runHookProcess); the quiet path counts here.
+  // PostToolUse follows every shell call and tells doctor nothing PreToolUse does not.
+  if (quiet === "PreToolUse")
+    recordHookRun(
+      process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE === "Codex Desktop" ||
+        process.env.CODEX_ELECTRON_RESOURCES_PATH
+        ? "codex_desktop"
+        : "codex_cli",
+      quiet,
+    );
   process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: quiet } })}\n`);
-else {
+} else {
   const { runCodexHook } = await import("./workit-hook");
   await runCodexHook([payload]);
 }

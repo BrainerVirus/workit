@@ -2,13 +2,14 @@
 // ship permission rules, so `workit setup` (and `workit upgrade`, for a block
 // already there) writes a Workit-owned, reversible block into each host's own
 // config after one consent that shows the exact diff:
-//   - Claude Code: enumerated `Bash(workit <verb> *)` allows, `ask` rules for
+//   - Claude Code: enumerated `Bash(workit <verb> *)` allows (and the lease
+//     verbs below), `ask` rules for
 //     Workit's bypass flags, one `autoMode.environment` and one
 //     `autoMode.allow` line, and `env.CLAUDE_CODE_SHELL` (zsh users only);
 //   - Codex: `rules/workit.rules`, a file Workit owns;
 //   - Cursor: enumerated `Shell(workit <verb>)` in `~/.cursor/cli-config.json`.
 // OpenCode needs no write (its plugin turns an ask into an allow) and Pi has
-// no permission layer. Codex and Cursor also allow the lease verbs agents run
+// no permission layer. Every host also allows the lease verbs agents run
 // (#429): `workit check <name>` for the standard check names (a prefix rule
 // cannot exclude `workit check -- <cmd>`, so the names are listed and the CLI
 // refuses `workit check <name> -- <cmd>`) and `workit lock status|wait`.
@@ -21,6 +22,7 @@
 import {
   copyFileSync,
   existsSync,
+  readdirSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -41,8 +43,17 @@ const PERMISSION_HOSTS: ReadonlySet<string> = new Set<PermissionHost>([
   "cursor",
 ]);
 
+/** Lease verbs for hosts whose rules match a prefix: standard check names, read-only lock verbs. */
+const CHECK_NAMES = ["test", "lint", "typecheck", "build", "format", "docs"] as const;
+const LOCK_VERBS = ["status", "wait"] as const;
+const LEASE_PREFIXES: readonly (readonly string[])[] = [
+  ...CHECK_NAMES.map((name) => ["check", name]),
+  ...LOCK_VERBS.map((verb) => ["lock", verb]),
+];
+
 export const CLAUDE_ALLOW: readonly string[] = [
   ...WORKIT_ALLOWED_VERBS.map((verb) => `Bash(workit ${verb} *)`),
+  ...LEASE_PREFIXES.map((rest) => `Bash(workit ${rest.join(" ")} *)`),
   "Bash(workit --version)",
 ];
 // Ask beats allow, so a bypass flag still reaches the user (also in auto mode).
@@ -55,14 +66,6 @@ const AUTO_MODE_ENVIRONMENT =
 const AUTO_MODE_ALLOW =
   "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `--unverified`, `--admin` or any bypass flag.";
 const DEFAULTS = "$defaults";
-
-/** Lease verbs for hosts whose rules match a prefix: standard check names, read-only lock verbs. */
-const CHECK_NAMES = ["test", "lint", "typecheck", "build", "format", "docs"] as const;
-const LOCK_VERBS = ["status", "wait"] as const;
-const LEASE_PREFIXES: readonly (readonly string[])[] = [
-  ...CHECK_NAMES.map((name) => ["check", name]),
-  ...LOCK_VERBS.map((verb) => ["lock", verb]),
-];
 
 export const CURSOR_ALLOW: readonly string[] = [
   ...WORKIT_ALLOWED_VERBS.map((verb) => `Shell(workit ${verb})`),
@@ -185,7 +188,12 @@ function mergeClaudeSettings(settings: Json, shell: string | null, skip: Skip = 
   if (error) return { config: settings, owned: emptyOwned(), error };
   if (shell) {
     const env = objectAt(config, ["env"], owned);
-    if (!env) return { config: settings, owned: emptyOwned(), error: "env is not an object" };
+    if (!env)
+      return {
+        config: settings,
+        owned: emptyOwned(),
+        error: "env is not an object",
+      };
     if (env.CLAUDE_CODE_SHELL === undefined) {
       env.CLAUDE_CODE_SHELL = shell;
       owned.env.CLAUDE_CODE_SHELL = shell;
@@ -214,7 +222,11 @@ const CANONICAL: Record<"claude-code" | "cursor", OwnedEntries> = {
     created: [],
     env: {},
   },
-  cursor: { lists: { "permissions.allow": [...CURSOR_ALLOW] }, created: [], env: {} },
+  cursor: {
+    lists: { "permissions.allow": [...CURSOR_ALLOW] },
+    created: [],
+    env: {},
+  },
 };
 
 const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | null => {
@@ -354,14 +366,22 @@ function missingEntries(config: Json, host: "claude-code" | "cursor"): string[] 
 // Paths, agent sessions, the ownership record
 // ---------------------------------------------------------------------------
 
-export type PermissionPaths = { home?: string; env?: NodeJS.ProcessEnv; stateDir?: string };
+export type PermissionPaths = {
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  stateDir?: string;
+};
 
 type ResolvedPaths = { home: string; env: NodeJS.ProcessEnv; stateDir: string };
 
 const resolvePaths = (options: PermissionPaths): ResolvedPaths => {
   const env = options.env ?? process.env;
   const home = options.home ?? env.HOME ?? os.homedir();
-  return { home, env, stateDir: options.stateDir ?? workitStateDir({ ...env, HOME: home }) };
+  return {
+    home,
+    env,
+    stateDir: options.stateDir ?? workitStateDir({ ...env, HOME: home }),
+  };
 };
 
 /** The file Workit edits for `host`, and the directory whose presence means the host is there. */
@@ -743,7 +763,10 @@ export function permissionHealth(
     if (text === null) return { state: "absent" };
     return text === codexRulesText()
       ? { state: "ok" }
-      : { state: "drift", detail: `${target.file} differs from this Workit version's rules` };
+      : {
+          state: "drift",
+          detail: `${target.file} differs from this Workit version's rules`,
+        };
   }
   if (text === null) return { state: "absent" };
   let value: unknown;
@@ -762,3 +785,132 @@ export function permissionHealth(
     detail: `${target.file} lacks ${missing.length} Workit entr${missing.length === 1 ? "y" : "ies"} (${missing[0]}${missing.length > 1 ? ", …" : ""})`,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Doctor: do the host's rules cover the verbs the grants authorize? (#419)
+// ---------------------------------------------------------------------------
+
+/** The commands agents run for a grant; with no host rule each one prompts or is denied in auto mode. */
+const GRANT_COMMANDS: Record<string, readonly string[]> = {
+  push: ["workit git push"],
+  pr: ["workit pr create"],
+  merge: ["workit pr merge"],
+};
+/** Always asked of a host, grant or not: the heavy-check lease an agent runs on every change. */
+const LEASE_COMMANDS: readonly string[] = LEASE_PREFIXES.map((rest) => `workit ${rest.join(" ")}`);
+
+/** The commands the granted kinds (`push`, `pr`, `merge`) and the lease verbs need a rule for. */
+export const grantedCommands = (kinds: readonly string[]): string[] => [
+  ...kinds.flatMap((kind) => GRANT_COMMANDS[kind] ?? []),
+  ...LEASE_COMMANDS,
+];
+
+// Claude Code's documented matcher: `*` matches any text; a trailing ` *` also matches the bare command.
+const claudeRuleMatches = (rule: string, command: string): boolean => {
+  const body = /^Bash\((.*)\)$/u.exec(rule)?.[1];
+  if (rule === "Bash" || body === "*" || body === "") return true;
+  if (body === undefined) return false;
+  const escaped = body
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/gu, "\\$&"))
+    .join(".*");
+  const pattern = body.endsWith(" *") ? escaped.replace(/ \.\*$/u, "(?: .*)?") : escaped;
+  return new RegExp(`^${pattern}$`, "u").test(command);
+};
+
+// cursor-agent `matchesShell`: the pattern itself, or the pattern then a space.
+const cursorRuleMatches = (rule: string, command: string): boolean => {
+  const full = /^Shell\((.*)\)$/u.exec(rule)?.[1];
+  return full !== undefined && (command === full || command.startsWith(`${full} `));
+};
+
+const stringList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+
+const readRecord = (file: string): Json | null => {
+  const text = readText(file);
+  if (text === null) return null;
+  try {
+    const value: unknown = JSON.parse(text);
+    return isRecord(value) ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Allowed `prefix_rule` patterns of every `*.rules` file in a Codex rules directory. */
+const codexAllowPatterns = (dir: string): string[][] => {
+  const patterns: string[][] = [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir).filter((name) => name.endsWith(".rules"));
+  } catch {
+    return patterns;
+  }
+  for (const name of names)
+    for (const m of (readText(path.join(dir, name)) ?? "").matchAll(
+      /pattern\s*=\s*(\[[^\]]*\])\s*,\s*decision\s*=\s*"allow"/gu,
+    ))
+      try {
+        const words: unknown = JSON.parse(m[1]);
+        if (Array.isArray(words)) patterns.push(words.map(String));
+      } catch {
+        // A pattern this parser cannot read is not counted as covering anything.
+      }
+  return patterns;
+};
+
+export type PermissionCoverage =
+  | { state: "no-host" }
+  | { state: "ok" }
+  | { state: "missing"; file: string; missing: string[] };
+
+/**
+ * Which of `commands` no allow rule of `host` covers. Claude Code reads the
+ * user settings and this project's `.claude/settings(.local).json`, and also
+ * wants an `autoMode.allow` line naming Workit when a delivery verb
+ * (push, pr, merge) is among them: auto mode denies an unlisted delivery verb
+ * even when an allow rule exists. Codex reads every `rules/*.rules`; Cursor
+ * the user CLI config and this project's `.cursor/cli.json`.
+ */
+export function permissionCoverage(
+  host: PermissionHost,
+  commands: readonly string[],
+  options: PermissionPaths & { cwd?: string } = {},
+): PermissionCoverage {
+  const target = permissionTarget(host, options);
+  if (!existsSync(target.hostDir)) return { state: "no-host" };
+  const cwd = options.cwd ?? process.cwd();
+  let missing: string[];
+  if (host === "codex") {
+    const patterns = codexAllowPatterns(path.dirname(target.file));
+    missing = commands.filter((command) => {
+      const words = command.split(" ");
+      return !patterns.some((p) => p.every((word, i) => words[i] === word));
+    });
+  } else if (host === "cursor") {
+    const rules = [target.file, path.join(cwd, ".cursor", "cli.json")].flatMap((file) =>
+      stringList(valueFrom(readRecord(file), "permissions", "allow")),
+    );
+    missing = commands.filter((command) => !rules.some((rule) => cursorRuleMatches(rule, command)));
+  } else {
+    const files = [
+      target.file,
+      path.join(cwd, ".claude", "settings.json"),
+      path.join(cwd, ".claude", "settings.local.json"),
+    ].map(readRecord);
+    const rules = files.flatMap((file) => stringList(valueFrom(file, "permissions", "allow")));
+    missing = commands.filter((command) => !rules.some((rule) => claudeRuleMatches(rule, command)));
+    const delivery = commands.some((command) => !LEASE_COMMANDS.includes(command));
+    const auto = files.flatMap((file) => stringList(valueFrom(file, "autoMode", "allow")));
+    if (delivery && !auto.some((line) => /\bworkit\b/iu.test(line)))
+      missing.push("autoMode.allow line naming workit");
+  }
+  return missing.length === 0 ? { state: "ok" } : { state: "missing", file: target.file, missing };
+}
+
+const valueFrom = (root: Json | null, ...keys: string[]): unknown => {
+  let node: unknown = root;
+  for (const key of keys) node = isRecord(node) ? node[key] : undefined;
+  return node;
+};
