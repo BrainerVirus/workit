@@ -361,6 +361,7 @@ export const codexAdapter: HostAdapter = {
         },
         permissionMode: input.permission_mode,
         transcriptPath: input.transcript_path,
+        model: input.model,
         event: protocolEvent(input),
       },
     };

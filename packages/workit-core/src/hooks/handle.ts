@@ -30,7 +30,8 @@ import {
 } from "./skill-nudge";
 import { spawnDecision } from "./spawn-gate";
 import { seedStanding, standingDelta } from "./standing";
-import { trackJudge } from "./session-marker";
+import { modelSwitchedOnDisk, trackJudge } from "./session-marker";
+import { invariantBootstrap } from "../core/methods";
 import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
 import { liveTargets, shellGate, writeGate } from "./write-gate";
@@ -166,7 +167,12 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     case "context.turn": {
       if (!usable(descriptor.context.perTurn)) return NONE;
       const current = turnContextText(input, descriptor);
-      const text = resendsOnChange(descriptor) ? changedTurnContext(input, current) : current;
+      const turn = resendsOnChange(descriptor) ? changedTurnContext(input, current) : current;
+      // A model switch (#435): the compact contract again, once.
+      const text =
+        input.model && modelSwitchedOnDisk(input)
+          ? [invariantBootstrap(), turn].filter(Boolean).join("\n")
+          : turn;
       return withContextLine(
         text ? { kind: "context", text } : NONE,
         promptNudge(input, event.prompt),

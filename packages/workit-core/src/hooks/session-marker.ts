@@ -17,6 +17,8 @@ export type SessionMarker = {
   stops: string[];
   /** Verifier and reviewer subagents of this lead that started and have not stopped. */
   judges: string[];
+  /** The last model the session reported (Codex #435): a change re-sends the contract. */
+  model: string | null;
 };
 
 /**
@@ -42,7 +44,14 @@ export const sessionMarkerFile = (
 const list = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
-const EMPTY: SessionMarker = { nudged: [], loaded: [], raw: [], stops: [], judges: [] };
+const EMPTY: SessionMarker = {
+  nudged: [],
+  loaded: [],
+  raw: [],
+  stops: [],
+  judges: [],
+  model: null,
+};
 
 const readRaw = (file: string): string => {
   try {
@@ -61,6 +70,7 @@ const parseMarker = (text: string): SessionMarker => {
       raw: list(value.raw),
       stops: list(value.stops),
       judges: list(value.judges),
+      model: typeof value.model === "string" ? value.model : null,
     };
   } catch {
     return { ...EMPTY };
@@ -122,4 +132,20 @@ export const trackJudge = (input: HookInput, agentId: string | null, running: bo
     const rest = marker.judges.filter((id) => id !== agentId);
     return { ...marker, judges: running ? [...rest, agentId] : rest };
   });
+};
+
+/**
+ * Record the session's model and say whether it differs from the last one
+ * recorded (the hook is a fresh process each time). The first model is a
+ * start, not a switch. Fails open: no store or no model reads as no switch.
+ */
+export const modelSwitchedOnDisk = (input: HookInput): boolean => {
+  const session = input.session.id;
+  const model = input.model;
+  const file = session && model ? sessionMarkerFile(input, session) : null;
+  if (!file || !model) return false;
+  const previous = readSessionMarker(file).model;
+  if (previous === model) return false;
+  updateSessionMarker(file, (marker) => ({ ...marker, model }));
+  return previous !== null;
 };

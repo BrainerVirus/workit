@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
-import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { invariantBootstrap, TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import {
   claudeCodeAdapter,
   codexAdapter,
@@ -233,4 +233,19 @@ test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issu
     if (runState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
     else process.env.WORKFLOW_TOOLKIT_STATE = runState;
   }
+});
+
+test("G a Codex thread, W its model changes between prompts, T the contract is added once; the first model only records", () => {
+  const root = repo();
+  const contract = invariantBootstrap();
+  const prompt = (model: string) => turn(root, "what changed?", { model })?.additionalContext ?? "";
+  expect(prompt("gpt-5")).not.toContain(contract);
+  expect(prompt("gpt-5")).not.toContain(contract);
+  expect(prompt("gpt-5-mini")).toContain(contract);
+  expect(prompt("gpt-5-mini")).not.toContain(contract);
+  // Another thread starts on its own model: no switch.
+  expect(
+    turn(root, "hi", { session_id: "codex-session-3", model: "gpt-5-mini" })?.additionalContext ??
+      "",
+  ).not.toContain(contract);
 });

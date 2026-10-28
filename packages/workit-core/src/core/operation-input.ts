@@ -567,10 +567,16 @@ function invalidOperation(
   const request = isObject(input) ? input : {};
   const action = typeof request.action === "string" ? request.action : "";
   const actions = OPERATION_ACTIONS[family];
-  if (!actions.includes(action))
-    return failure("invalid_input", `${family}: action must be one of ${oneOf(actions)}`, {
-      fields: [{ path: "action", reason: `got ${JSON.stringify(request.action ?? null)}` }],
-    });
+  if (!actions.includes(action)) {
+    // The family's read (list, else the first action) is the safe corrected call.
+    const common = actions.find((name) => READ_ONLY_ACTIONS.has(name)) ?? actions[0];
+    const example = JSON.stringify(exampleOperation(family, common));
+    return failure(
+      "invalid_input",
+      `${family}: action must be one of ${oneOf(actions)}. Example: ${example}`,
+      { fields: [{ path: "action", reason: `got ${JSON.stringify(request.action ?? null)}` }] },
+    );
+  }
   const own = actionKeys(family, action)!;
   const fields: { path: string; reason: string }[] = [];
   const sentence: string[] = [];

@@ -12,11 +12,7 @@ import {
   unfinishedTaskOffer as historyOffer,
   type HookInput,
 } from "@brainervirus/workit-core/hooks";
-import {
-  modelKey,
-  modelSwitched,
-  type SessionModels,
-} from "@brainervirus/workit-core/src/hooks/model-switch";
+import { modelKey } from "@brainervirus/workit-core/src/hooks/model-switch";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export const piCapabilities = (ctx?: Pick<ExtensionContext, "hasUI">): Capability[] =>
@@ -54,25 +50,30 @@ const taskTurnContext = (ctx: ExtensionContext): string | null => {
   }
 };
 
-const sessionModels: SessionModels = new Map();
+const switchedSessions = new Set<string>();
+
+/** `model_select`: a change from a known previous model owes the session one contract re-send. */
+export const noteModelSelect = (
+  event: { model: unknown; previousModel?: unknown },
+  ctx: Pick<ExtensionContext, "sessionManager">,
+): void => {
+  const next = modelKey(event.model);
+  const previous = modelKey(event.previousModel);
+  if (next && previous && next !== previous)
+    switchedSessions.add(ctx.sessionManager.getSessionId());
+};
 
 /**
- * The session's current task context as the per-turn message carries it, or
- * null when the project is untrusted or no task applies. On the first turn
- * after a model switch it leads with the compact contract, once: the new
- * model does not rely on the copy far up its inherited context.
+ * The compact contract once after a model switch, else null: the new model
+ * does not rely on the copy far up its inherited context.
  */
-export const turnContext = (ctx: ExtensionContext): string | null => {
-  const task = taskTurnContext(ctx);
-  const switched = modelSwitched(
-    sessionModels,
-    ctx.sessionManager.getSessionId(),
-    modelKey(ctx.model),
-  );
-  return switched && ctx.isProjectTrusted()
-    ? `${invariantBootstrap()}${task ? `\n${task}` : ""}`
-    : task;
-};
+export const modelSwitchContract = (ctx: ExtensionContext): string | null =>
+  switchedSessions.delete(ctx.sessionManager.getSessionId()) && ctx.isProjectTrusted()
+    ? invariantBootstrap()
+    : null;
+
+/** The session's current task context as the per-turn message carries it, or null. */
+export const turnContext = (ctx: ExtensionContext): string | null => taskTurnContext(ctx);
 
 /** The session in the shape the core's per-turn resend keys its digest by. */
 export const turnInput = (ctx: ExtensionContext): HookInput => ({

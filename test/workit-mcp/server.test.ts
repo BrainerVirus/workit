@@ -475,3 +475,19 @@ test("MCP validates the executable host allowlist", () => {
     createMcpServer("workit_cli" as never, { current: async () => context("cursor") }),
   ).toThrow(/host/i);
 });
+
+test("MCP: a second identical failing call ends with the Same call failed twice line", async () => {
+  const { client, server } = await connect("cursor", {
+    current: async () => context("cursor", root, true),
+  });
+  try {
+    const bad = { name: "workit_finding", arguments: { schemaVersion: 1, action: "record" } };
+    const first = (await client.callTool(bad)).structuredContent as { error: string };
+    expect(first.error).not.toContain("Same call failed twice:");
+    const second = (await client.callTool(bad)).structuredContent as { error: string };
+    expect(second.error).toContain("\nSame call failed twice: workit_finding {");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});

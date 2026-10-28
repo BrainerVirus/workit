@@ -28,6 +28,8 @@ import {
 import {
   piContext,
   standingNotice,
+  modelSwitchContract,
+  noteModelSelect,
   turnContext,
   turnInput,
   unfinishedTaskOffer,
@@ -530,6 +532,7 @@ export default function extension(pi: ExtensionAPI): void {
     sessions.delete(ctx.sessionManager.getSessionId());
     reconcileLostWorkers(ctx);
   });
+  pi.on("model_select", (event, ctx) => noteModelSelect(event, ctx));
   pi.on("before_agent_start", (event, ctx) => {
     // Pi 1.2+ also fires this for runs a custom message starts (Workit's own
     // stop-line continuation): they carry no prompt and no new Workit context.
@@ -539,7 +542,8 @@ export default function extension(pi: ExtensionAPI): void {
     const trusted = ctx.isProjectTrusted();
     const task = turnContext(ctx);
     let content: string | null;
-    if (sessions.has(id)) {
+    const firstTurn = !sessions.has(id);
+    if (!firstTurn) {
       // The session keeps each injected message: resend only on change.
       content = trusted ? changedTurnContext(turnInput(ctx), task) : null;
     } else {
@@ -551,6 +555,9 @@ export default function extension(pi: ExtensionAPI): void {
       if (trusted) seedTurnContext(turnInput(ctx), PI_DESCRIPTOR, task);
       content = `${workitContext(ctx, task)}${offer ? `\n\n${offer}` : ""}`;
     }
+    // The first turn's context already carries the contract.
+    const contract = modelSwitchContract(ctx);
+    if (contract && !firstTurn) content = content ? `${contract}\n${content}` : contract;
     if (content)
       return { message: contextMessage(ctx, nudge ? `${content}\n\n${nudge}` : content) };
     return nudge
