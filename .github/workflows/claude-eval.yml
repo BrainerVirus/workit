@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUN_VERSION: "1.4.1"
+  BUN_VERSION: "1.4.4"
   NODE_CURRENT: "24.20.0"
   CLAUDE_CODE_VERSION: "2.1.288"
 

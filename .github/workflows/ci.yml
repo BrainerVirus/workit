@@ -20,7 +20,7 @@ concurrency:
 # test/artifacts/packed-runtime.test.ts assert these match
 # packages/workit-core/src/core/support-matrix.ts.
 env:
-  BUN_VERSION: "1.4.1"
+  BUN_VERSION: "1.4.4"
   NODE_MINIMUM: "24"
   NODE_CURRENT: "24.20.0"
   OPENCODE_MINIMUM: "2.0.18"
