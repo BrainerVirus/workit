@@ -56,6 +56,8 @@ function runCiShard(leg: string | undefined, spec: string | undefined): number {
     `--shard=${spec}`,
     `--timings=test/timings/${leg}.json`,
     "--update-timings",
+    // Experiment (#415): does Bun 1.4.4's --parallel still hang?
+    "--parallel",
     ...(process.platform === "win32" ? [`--timeout=${WINDOWS_TIMEOUT_MS}`] : []),
     ...select,
   ]);
