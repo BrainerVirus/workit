@@ -97,6 +97,10 @@ async function wait(argv: string[], io: Io): Promise<number> {
   let errors = 0;
   let status: ForgePrStatus | null = null;
   let verdict: WaitVerdict = { state: "waiting", reason: "not_polled" };
+  // Unreadable branch protection: the base branch's check names stand in for
+  // the required ones. Read once; a failed read means no expectation (#510).
+  let baseContexts: string[] | null = null;
+  let expectedMissing: string[] = [];
   for (;;) {
     const read = resolved.forge.prStatus(number.data);
     polls += 1;
@@ -107,7 +111,13 @@ async function wait(argv: string[], io: Io): Promise<number> {
       const doc = buildStatusDoc(io.cwd, resolved, status, { logLines: 0, behind: false });
       if (!doc.ok) return forgeFail(io, doc);
       recordPrStatus(io.cwd, doc.data, actor);
-      verdict = waitVerdict(doc.data, { head, elapsedMs });
+      if (status.requiredContexts === null && baseContexts === null) {
+        const base = resolved.forge.branchChecks(status.base);
+        baseContexts = base.ok ? [...new Set(base.data.checks.map((check) => check.context))] : [];
+      }
+      const seen = new Set(status.checks.map((check) => check.context));
+      expectedMissing = (baseContexts ?? []).filter((context) => !seen.has(context));
+      verdict = waitVerdict(doc.data, { head, elapsedMs, expectedMissing });
       if (verdict.state !== "waiting") break;
     } else {
       errors += 1;
@@ -142,6 +152,7 @@ async function wait(argv: string[], io: Io): Promise<number> {
       ? { failFast: true, stillRunning: doc.checks.pending }
       : {}),
     reason: verdict.reason,
+    ...(expectedMissing.length > 0 ? { expectedMissing } : {}),
     polls,
     elapsedMs,
     timeoutMs,
@@ -149,15 +160,22 @@ async function wait(argv: string[], io: Io): Promise<number> {
   };
   if (!io.json && verdict.state !== "ready")
     for (const value of renderStatus(doc)) io.stdout(`${value}\n`);
+  const never =
+    expectedMissing.length > 0
+      ? `; checks the base ran never registered: ${expectedMissing.join(", ")}`
+      : "";
   if (verdict.state === "ready")
     return emit(io, ok(data), () => [
-      `CI ready (${verdict.reason}) after ${polls} poll${polls === 1 ? "" : "s"}, ${seconds(elapsedMs)}`,
+      (verdict.reason === "no_checks"
+        ? `CI none: no CI configured for this head (no checks registered within the grace) after ${polls} poll${polls === 1 ? "" : "s"}, ${seconds(elapsedMs)}`
+        : `CI pass (${verdict.reason}) after ${polls} poll${polls === 1 ? "" : "s"}, ${seconds(elapsedMs)}`) +
+        never,
       ...renderStatus(doc),
     ]);
   if (verdict.state === "failed")
     return emit(
       io,
-      fail("failed", `CI failed: ${doc.checks.failing.map((check) => check.name).join(", ")}`, {
+      fail("failed", `CI fail: ${doc.checks.failing.map((check) => check.name).join(", ")}`, {
         data,
         unblock: "fix the failure, or if it is a flake: workit ci rerun --failed --reason flake",
       }),

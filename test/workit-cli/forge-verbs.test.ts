@@ -50,7 +50,10 @@ afterEach(() => {
 
 const STATUS = 'graphql status {"owner":"o","name":"r","number":"12"}';
 
-const setup = (status: Reply = fixture("github/pr-failing-thread.json")) => {
+const setup = (
+  status: Reply = fixture("github/pr-failing-thread.json"),
+  extra: Record<string, Reply> = {},
+) => {
   const repo = makeForgeRepo("github");
   repos.push(repo);
   const runner = replayRunner(
@@ -66,6 +69,7 @@ const setup = (status: Reply = fixture("github/pr-failing-thread.json")) => {
       [STATUS]: status,
       "GET repos/o/r/actions/jobs/102/logs": fixture("github/job-log.txt"),
       "POST repos/o/r/actions/runs/1/rerun-failed-jobs": "",
+      ...extra,
     },
     repo.subs,
   );
@@ -177,7 +181,7 @@ test("ci wait: failing checks exit 1 with the failing log tail in the final payl
   expect(envelope).toMatchObject({
     ok: false,
     code: "failed",
-    error: "CI failed: CI / test (ubuntu-latest)",
+    error: "CI fail: CI / test (ubuntu-latest)",
     data: { state: "failed", polls: 1 },
   });
   expect(envelope.data.status.checks.failing[0].logTail.at(-1)).toBe(
@@ -534,4 +538,105 @@ test("G ci wait sees pending checks, W the session stops under endpoint green, T
     /^#12 checks passing at [0-9a-f]{12}$/,
   );
   expect(stop()).toEqual({});
+});
+
+const noChecksDoc = (): string => {
+  const doc = JSON.parse(fixture("github/pr-passing.json"));
+  doc.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes = [];
+  return JSON.stringify(doc);
+};
+
+test("ci wait: a fresh head with no check runs yet waits for registration, then for completion (#510)", async () => {
+  let polls = 0;
+  const { repo } = setup(() => {
+    polls += 1;
+    return polls <= 3 ? noChecksDoc() : fixture("github/pr-passing.json");
+  });
+  const result = await run(["ci", "wait", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({ state: "ready", reason: "checks_passing", polls: 4 });
+});
+
+test("ci wait: a head whose required checks never register is not done, exit 4 (#510)", async () => {
+  const { repo } = setup(noChecksDoc());
+  const result = await run(["ci", "wait", "--timeout", "10m", "--json"], repo.cwd);
+  expect(result.code).toBe(4);
+  expect(result.json().data).toMatchObject({ state: "in_progress", reason: "checks_pending" });
+});
+
+test("ci wait: a repo with no CI returns after the grace with a 'no CI configured' line (#510)", async () => {
+  const { repo } = setup(noChecksDoc(), {
+    "GET repos/o/r/branches/main": JSON.stringify({ name: "main", protected: false }),
+  });
+  const result = await run(["ci", "wait"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("CI none: no CI configured");
+});
+
+test("ci wait: the final line says pass or fail (#510)", async () => {
+  const { repo } = setup(fixture("github/pr-passing.json"));
+  expect((await run(["ci", "wait"], repo.cwd)).stdout).toContain("CI pass");
+});
+
+const passingNodes = (): Array<{ name: string }> =>
+  JSON.parse(fixture("github/pr-passing.json")).data.repository.pullRequest.commits.nodes[0].commit
+    .statusCheckRollup.contexts.nodes;
+
+const withHeadChecks = (count: number): string => {
+  const doc = JSON.parse(fixture("github/pr-passing.json"));
+  const rollup = doc.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup;
+  rollup.contexts.nodes = rollup.contexts.nodes.slice(0, count);
+  return JSON.stringify(doc);
+};
+
+const baseChecksReply = (nodes: unknown[]): string =>
+  JSON.stringify({
+    data: {
+      repository: {
+        object: {
+          oid: "basehead",
+          statusCheckRollup: {
+            contexts: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
+          },
+        },
+      },
+    },
+  });
+
+const unreadable = replyError("HTTP 403 forbidden");
+
+test("ci wait: unreadable protection, the base ran two checks, the head shows one: waits for the other (#510)", async () => {
+  let polls = 0;
+  const { repo } = setup(
+    () => {
+      polls += 1;
+      return withHeadChecks(polls <= 3 ? 1 : 2);
+    },
+    {
+      "GET repos/o/r/branches/main": unreadable,
+      "graphql branch-checks": baseChecksReply(passingNodes()),
+    },
+  );
+  const result = await run(["ci", "wait", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({ state: "ready", polls: 4 });
+});
+
+test("ci wait: an expected check that never registers is named in the final line after the grace (#510)", async () => {
+  const { repo } = setup(withHeadChecks(1), {
+    "GET repos/o/r/branches/main": unreadable,
+    "graphql branch-checks": baseChecksReply(passingNodes()),
+  });
+  const result = await run(["ci", "wait"], repo.cwd);
+  expect(result.stdout).toContain("never registered: test (ubuntu-latest)");
+});
+
+test("ci wait: unreadable protection and an empty base list keep the 'CI none' path (#510)", async () => {
+  const { repo } = setup(noChecksDoc(), {
+    "GET repos/o/r/branches/main": unreadable,
+    "graphql branch-checks": baseChecksReply([]),
+  });
+  const result = await run(["ci", "wait"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("CI none: no CI configured");
 });
