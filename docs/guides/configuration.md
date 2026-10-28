@@ -108,6 +108,13 @@ To add your own trailers (Co-Authored-By) in the same commit, use
 `workit git commit --trailer "Co-Authored-By: Name <email>"` (repeatable)
 instead of amending afterwards.
 
+A workspace's `deleteBranch` (default `true`) says whether `workit pr merge`
+deletes the PR's head branch, locally and on the remote, after a successful
+merge ([when it keeps one](delivery.md)). Turn it off with
+`workit workspace set <name> deleteBranch=false`; `pr merge --keep-branch` does
+it for one merge. A workspace nested inside another inherits it the way it
+inherits `trailers`.
+
 ### Issue tracker
 
 A workspace's `issues` block names the tracker its PRs and MRs link to. Any

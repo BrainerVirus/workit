@@ -402,7 +402,7 @@ test("Given git-flow, When pr merge lands a release PR on main, Then it reports 
     "reviewer-2",
   );
   expect(verdict.code, verdict.stdout + verdict.stderr).toBe(0);
-  const merged = await run(["pr", "merge", "--json"], repo.cwd);
+  const merged = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
   expect(merged.code, merged.stdout + merged.stderr).toBe(0);
   expect(merged.json().data).toMatchObject({
     base: "main",

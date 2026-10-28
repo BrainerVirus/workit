@@ -160,6 +160,13 @@ test("set changes non-grant keys by dotted path and keeps the rest", async () =>
   expect(readFileSync(file(), "utf8")).toBe(before);
 });
 
+test("set deleteBranch=false is a non-grant key; a non-boolean is refused (#384)", async () => {
+  expect((await run(["set", "work", "deleteBranch=false"])).code).toBe(0);
+  expect(byName("work").deleteBranch).toBe(false);
+  expect((await run(["set", "work", "deleteBranch=maybe"])).code).toBe(2);
+  expect(byName("work").deleteBranch).toBe(false);
+});
+
 test("list names the effective entry for the cwd and why", async () => {
   await run(["add", "kit", "--glob", `${root}/work/libs/kit/**`]);
   const result = await run(["list"], path.join(root, "work", "libs", "kit"));

@@ -102,6 +102,7 @@ const setup = (
           glob: `${repo.root.replaceAll("\\", "/")}/**`,
           vcs: { provider: "github", account: "octo" },
           autonomy: { merge: "verified" },
+          deleteBranch: false,
           ...entry,
         },
       ],

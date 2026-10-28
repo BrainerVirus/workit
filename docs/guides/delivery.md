@@ -303,7 +303,7 @@ workit pr reply --thread <id> [--body-file <f|->] [--resolve]
 workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
 workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
-workit pr merge [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]
+workit pr merge [--method squash|merge|rebase] [--delete-branch | --keep-branch] [--unverified --reason <why>]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 ```
 
@@ -339,6 +339,18 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   a `merge.unverified` ledger row, but never over a current independent
   failed verdict ([grants](grants.md#merging)). `type-check-only` never
   satisfies the gate.
+- `pr merge` deletes the head branch after a successful merge, unless
+  `--keep-branch` or the workspace says `deleteBranch: false` (set with
+  `workit workspace set <name> deleteBranch=false`; default `true`).
+  It keeps the branch, with one `kept <branch>: <why>` line and the merge
+  unaffected, when the branch is protected or the PR base or default target,
+  the PR comes from a fork, another open PR targets the branch (a stack
+  parent), or the PR's author is not the workspace's `vcs.account`; so does a
+  forge answer it cannot read. After the remote delete it deletes the local
+  branch when it is not checked out anywhere (and holds only merged commits),
+  and removes a clean worktree that `workit fanout worktree create` made on
+  it; a dirty one is kept and named. An explicit `--delete-branch` refuses a
+  protected or base branch before merging. `stack land` never deletes.
 - `verify-delivery` answers "did it land?" from the remote, never from local
   state.
 - `ci wait --timeout` bounds the whole command, from resolving the forge and

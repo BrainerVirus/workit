@@ -343,7 +343,13 @@ export async function createPullRequest(
 export type MergeInput = {
   pr: number | null;
   method: MergeMethod;
+  /** `--delete-branch`: delete, refusing a protected branch before the merge. */
   deleteBranch: boolean;
+  /**
+   * The workspace default (`deleteBranch`, no `--keep-branch`): delete when it
+   * is safe, otherwise skip with a note; never refuses the merge.
+   */
+  implicitDelete?: boolean;
   actor: LedgerActor;
   /**
    * Stack landing (S12): refuse unless the PR still targets this base and
@@ -388,7 +394,8 @@ export type MergeOutcome = {
   /** Set when `--unverified` bypassed the verdict: the reason and its ledger row. */
   unverified: { reason: string; recorded: string } | null;
   grant: { source: AutonomySource };
-  deletedBranch: boolean | { error: string };
+  /** `skipped`: the implicit default found a reason to keep the branch; the merge is unaffected. */
+  deletedBranch: boolean | { error: string } | { skipped: string };
   recorded: { id: string } | { error: string };
   /** The `pr.merge.verified` row confirming `recorded`, or why it was not written. */
   confirmed: { id: string } | { error: string };
@@ -588,6 +595,41 @@ function squashCommitList(
   return [...listed, ...(more ? [`… and ${more} more commit${more === 1 ? "" : "s"}`] : [])].join(
     "\n\n",
   );
+}
+
+/**
+ * Why the implicit delete keeps `branch`, or null when it is safe to delete:
+ * a protected, base or default-target branch, a fork's branch, a branch another
+ * open PR targets (a stack child), and a PR by someone other than the
+ * workspace's `vcs.account`. What cannot be read keeps the branch too.
+ */
+function implicitDeleteSkip(
+  cwd: string,
+  resolved: ResolvedForge,
+  doc: PrStatusDoc,
+  branch: string,
+): string | null {
+  const resolvedVcs = vcsConfig("resolve", cwd);
+  const defaultTarget =
+    resolvedVcs.ok === false ? null : String(resolvedVcs.defaultTargetBranch ?? "") || null;
+  const account = resolved.expectedAccount?.trim() ?? "";
+  const lower = branch.toLowerCase();
+  if (isProtectedTarget(cwd, branch))
+    return `${branch} is protected by the workspace branch policy`;
+  if (lower === doc.base.toLowerCase()) return `${branch} is the PR base`;
+  if (defaultTarget !== null && lower === defaultTarget.toLowerCase())
+    return `${branch} is the default target branch`;
+  if (doc.headRepo !== null) return `${branch} is a fork's branch (${doc.headRepo})`;
+  const meta = resolved.forge.prMeta(doc.number);
+  if (!meta.ok) return `could not read the PR author and head repository (${meta.error})`;
+  if (meta.data.fork !== false) return `${branch} is not known to be in ${resolved.forge.repo}`;
+  if (account && (meta.data.author ?? "").toLowerCase() !== account.toLowerCase())
+    return `the PR is by ${meta.data.author ?? "an unknown author"}, not ${account} (vcs.account)`;
+  const children = resolved.forge.openPrsInto(branch);
+  if (!children.ok) return `could not list the open PRs into ${branch} (${children.error})`;
+  if (children.data.length)
+    return `open PR ${children.data.map((n) => `#${n}`).join(", ")} targets ${branch} (a stack)`;
+  return null;
 }
 
 export async function mergePullRequest(
@@ -841,7 +883,13 @@ export async function mergePullRequest(
         : { error: confirmation.error };
 
   let deletedBranch: MergeOutcome["deletedBranch"] = false;
-  if (input.deleteBranch) {
+  const skipReason =
+    !input.deleteBranch && input.implicitDelete
+      ? implicitDeleteSkip(cwd, resolved, doc, branch)
+      : null;
+  if (!input.deleteBranch && input.implicitDelete && skipReason !== null)
+    deletedBranch = { skipped: skipReason };
+  else if (input.deleteBranch || input.implicitDelete) {
     const deleted = deleteRemoteBranch(cwd, resolved.remote, branch, head);
     // The forge may delete merged branches itself; gone is deleted.
     const gone = !deleted.ok && remoteRefTip(cwd, resolved.remote, `refs/heads/${branch}`);

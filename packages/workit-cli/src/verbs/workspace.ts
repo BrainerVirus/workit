@@ -73,6 +73,7 @@ const SETTABLE_KEYS = new Set([
   "branchPolicy",
   "commitPolicy",
   "trailers",
+  "deleteBranch",
   "liveSessionGuard",
   "youtrack",
   "models",
