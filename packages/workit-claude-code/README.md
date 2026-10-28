@@ -5,7 +5,7 @@
 
 [Workit](https://github.com/BrainerVirus/workit) plugin for Claude Code: task context on session start and per turn,
 branch policy on `git` shell commands, the before-write gate on edits and shell
-writes, eleven method skills (`/workit:<name>`),
+writes, thirteen method skills (`/workit:<name>`),
 and `verifier`, `reviewer` and `implementer` agents.
 
 ## Install
@@ -16,8 +16,9 @@ this npm package):
 ```bash
 claude plugin marketplace add BrainerVirus/workit
 claude plugin install workit@workit
-claude plugin marketplace update workit && claude plugin update workit@workit   # update
 ```
+
+Update with `workit upgrade` (native fallback: `claude plugin marketplace update workit && claude plugin update workit@workit`), then restart Claude Code; uninstall with `workit uninstall`.
 
 Local pin to a checkout (hooks and `bin/workit` run the sources with Bun):
 

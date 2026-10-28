@@ -6,7 +6,7 @@
 
 [Workit](https://github.com/BrainerVirus/workit) for OpenCode 2.0.18+: the seven task families,
 read-only `workit_context` and `workit_init_apply` as native tools, the
-eleven method skills with `/wk-*` commands, direct-child delegation, and
+thirteen method skills with `/wk-*` commands, direct-child delegation, and
 context injection on session start and after compaction. Requires Node.js 24+.
 
 ```json
@@ -15,6 +15,10 @@ context injection on session start and after compaction. Requires Node.js 24+.
   "plugins": ["@brainervirus/workit-opencode"]
 }
 ```
+
+Update with `workit upgrade` (native fallback:
+`opencode plugin update @brainervirus/workit-opencode`); OpenCode 2.x loads the
+new version live, with no restart. Uninstall with `workit uninstall`.
 
 Local checkout: run `bun packages/workit-opencode/scripts/build.ts`, then pin
 `"file:///path/to/workit/packages/workit-opencode"` in `plugins`.

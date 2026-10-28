@@ -1,6 +1,6 @@
 # Hosts: OpenCode, Cursor, Codex, Pi
 
-All hosts share one core and the same eleven skills. Each adapter maps the
+All hosts share one core and the same thirteen skills. Each adapter maps the
 contract onto what the host can actually observe; where a host cannot attest
 something, Workit labels it `agent_guided` instead of pretending. Claude Code
 has [its own guide](claude-code.md).
@@ -247,7 +247,7 @@ remove the entry from `plugins`.
 
 The plugin (V2 `setup()` API, self-contained bundle) registers nine tools: the
 seven task families, read-only `workit_context`, and `workit_init_apply`. It
-adds the eleven skills with `wk-*` commands (an existing user skill with the
+adds the thirteen skills with `wk-*` commands (an existing user skill with the
 same id wins), direct-child subagent delegation, and context injection on
 session start and after compaction. Its shell hook denies direct, unquoted
 literal branch-creation commands that break the workspace naming policy and

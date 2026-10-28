@@ -5,7 +5,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
 [Workit](https://github.com/BrainerVirus/workit) for Cursor: the shared MCP server, one native hook
-dispatcher, the `workit-contract` rule, the eleven method skills and `/wk-*`
+dispatcher, the `workit-contract` rule, the thirteen method skills and `/wk-*`
 commands. Requires Node.js 24+ and network access on first run.
 
 ## Install
@@ -17,6 +17,7 @@ npx @brainervirus/workit-cli init   # select Cursor
 The wizard copies the plugin into `~/.cursor/plugins/local/workit` (a real
 directory) and registers the MCP server and hooks. Manual MCP config and host
 limits: [hosts guide](https://github.com/BrainerVirus/workit/blob/main/docs/guides/hosts.md#cursor).
+Update with `workit upgrade` (it reinstalls missing plugin files); uninstall with `workit uninstall`.
 
 ## Runtime
 

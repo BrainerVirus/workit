@@ -17,6 +17,8 @@ workit help        # every verb; `workit help <verb>` for one
 ```
 
 Or run once without installing: `npx @brainervirus/workit-cli init`.
+`workit upgrade` updates the CLI and every host together (`--preview` only
+looks).
 
 Agents and hooks call `workit` from PATH. `workit doctor` warns (`workit_on_path`)
 when none is found, when it does not run, or when it is older than an installed

@@ -6,7 +6,7 @@
 
 The shared core of [Workit](https://github.com/BrainerVirus/workit): task event store, run ledger,
 policy, checks, forge and stack logic, host-hook protocol, and the single
-source of the eleven method skills. Every host adapter and the CLI bundle it.
+source of the thirteen method skills. Every host adapter and the CLI bundle it.
 
 End users do not install this package; install the CLI or a host plugin (see
 the [root README](https://github.com/BrainerVirus/workit#quickstart)). Use it directly only to build a

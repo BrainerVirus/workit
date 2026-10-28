@@ -1,6 +1,6 @@
 # Claude Code
 
-Workit ships as a native Claude Code plugin: hooks, the eleven method skills
+Workit ships as a native Claude Code plugin: hooks, the thirteen method skills
 (`/workit:<name>`), three agents, and `workit` on the Bash tool's `PATH`. No MCP
 server is registered: Claude has a shell, and tool schemas cost context. To
 opt in anyway, add `workit-mcp` to your own Claude settings.
