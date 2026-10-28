@@ -55,7 +55,9 @@ test("a clean Workit fanout worktree on the branch is removed with the branch", 
   const env = setup();
   const dir = worktree(env, true);
   const out = cleanupMergedBranch(env.main, "feature/x", env.head);
-  expect(out).toMatchObject({ branchDeleted: true, worktreeRemoved: dir, notes: [] });
+  expect(out).toMatchObject({ branchDeleted: true, notes: [] });
+  // git reports the long, forward-slash path; Windows temp dirs may be 8.3 short names.
+  expect(path.basename(String(out.worktreeRemoved))).toBe(path.basename(dir));
   expect(existsSync(dir)).toBe(false);
   expect(branches(env.main)).toBe("");
 });
