@@ -33,7 +33,12 @@ export const spawnBudget = (prompt: string): number | null => {
   return Number.isInteger(n) && n > 0 ? n : null;
 };
 
-/** A lead's spawn whose prompt carries a budget: queue it for the next subagent of `type`. */
+/**
+ * A lead's spawn that will run: queue its budget, or an explicit none, for
+ * the next subagent of `type`. Every spawn of a type queues one entry, so the
+ * FIFO stays aligned with the SubagentStart order. Call it only once the
+ * spawn is allowed: a denied spawn must leave no entry.
+ */
 export const noteSpawnBudget = (
   cwd: string,
   session: string,
@@ -41,11 +46,13 @@ export const noteSpawnBudget = (
   prompt: string,
 ): void => {
   try {
-    const n = spawnBudget(prompt);
-    const store = n && session ? gitStoreDir(cwd) : null;
+    const store = session ? gitStoreDir(cwd) : null;
     if (!store) return;
     fs.mkdirSync(budgetDir(store), { recursive: true });
-    fs.appendFileSync(spawnsFile(store, session), `${JSON.stringify({ type: type ?? "", n })}\n`);
+    fs.appendFileSync(
+      spawnsFile(store, session),
+      `${JSON.stringify({ type: type ?? "", n: spawnBudget(prompt) })}\n`,
+    );
   } catch {
     // Without the note the worker runs unbudgeted.
   }
@@ -53,37 +60,20 @@ export const noteSpawnBudget = (
 
 type Budget = { limit: number; told: number };
 
+/** Small files written whole; a torn read fails open as "no budget". */
 const readBudget = (file: string): Budget | null => {
   try {
-    const value = JSON.parse(fs.readFileSync(file, "utf8")) as {
-      limit?: unknown;
-      told?: unknown;
-    };
-    return typeof value.limit === "number" && value.limit > 0
-      ? {
-          limit: value.limit,
-          told: typeof value.told === "number" ? value.told : 0,
-        }
-      : null;
+    const { limit, told } = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<Budget>;
+    return typeof limit === "number" && limit > 0 ? { limit, told: Number(told) || 0 } : null;
   } catch {
     return null;
   }
 };
 
-const writeAtomic = (file: string, text: string): void => {
-  const temp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  try {
-    fs.writeFileSync(temp, text);
-    fs.renameSync(temp, file);
-  } catch (error) {
-    fs.rmSync(temp, { force: true });
-    throw error;
-  }
-};
-
 /**
- * SubagentStart: bind the first queued budget of this agent's type (else an
- * untyped one) to the agent. Returns the limit, or null when none was queued.
+ * SubagentStart: take the head entry queued for this agent's type and bind
+ * its budget to the agent. Returns the limit, or null when the entry says
+ * none or nothing was queued.
  */
 export const claimSpawnBudget = (
   cwd: string,
@@ -99,19 +89,12 @@ export const claimSpawnBudget = (
       .readFileSync(file, "utf8")
       .split("\n")
       .filter(Boolean)
-      .map((line) => {
-        try {
-          return JSON.parse(line) as { type?: unknown; n?: unknown };
-        } catch {
-          return {};
-        }
-      });
-    let at = entries.findIndex((entry) => entry.type === (agentType ?? ""));
-    if (at < 0) at = entries.findIndex((entry) => entry.type === "");
-    const n = at < 0 ? null : entries[at].n;
-    if (typeof n !== "number") return null;
-    entries.splice(at, 1);
-    writeAtomic(file, entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
+      .map((line) => JSON.parse(line) as { type?: unknown; n?: unknown });
+    const at = entries.findIndex((entry) => entry.type === (agentType ?? ""));
+    if (at < 0) return null;
+    const [{ n }] = entries.splice(at, 1);
+    fs.writeFileSync(file, entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
+    if (typeof n !== "number" || n <= 0) return null;
     startBudget(store, session, agentId, n);
     return n;
   } catch {
@@ -119,10 +102,19 @@ export const claimSpawnBudget = (
   }
 };
 
+/** Starts a budget; first ages out files of agents that never stopped, older than 7 days. */
 const startBudget = (store: string, session: string, agentId: string | null, n: number): void => {
-  fs.mkdirSync(budgetDir(store), { recursive: true });
+  const dir = budgetDir(store);
+  fs.mkdirSync(dir, { recursive: true });
+  const cutoff = Date.now() - 6048e5;
+  for (const name of fs.readdirSync(dir))
+    try {
+      if (fs.statSync(path.join(dir, name)).mtimeMs < cutoff) fs.rmSync(path.join(dir, name));
+    } catch {
+      // Another hook removed it first.
+    }
   const base = agentBase(store, session, agentId);
-  writeAtomic(`${base}.json`, JSON.stringify({ limit: n, told: 0 }));
+  fs.writeFileSync(`${base}.json`, JSON.stringify({ limit: n, told: 0 }));
   fs.rmSync(`${base}.calls`, { force: true });
 };
 
@@ -168,21 +160,21 @@ export const tickBudget = (cwd: string, session: string, agentId: string | null)
 const lineFor = (calls: number): string =>
   `Tool-call budget reached (${calls}): commit your work, write your report, stop.`;
 
-type Reached = { base: string; budget: Budget; reached: number };
-
-const reachedOf = (cwd: string, session: string, agentId: string | null): Reached | null => {
+/** The agent's base path, its budget, and how many multiples of it its calls reached. */
+const reachedOf = (cwd: string, session: string, agentId: string | null) => {
   const store = session ? gitStoreDir(cwd) : null;
-  if (!store) return null;
-  const base = agentBase(store, session, agentId);
-  const budget = readBudget(`${base}.json`);
+  const base = store && agentBase(store, session, agentId);
+  const budget = base && readBudget(`${base}.json`);
   if (!budget) return null;
-  let count = 0;
-  try {
-    count = fs.statSync(`${base}.calls`).size;
-  } catch {
-    return null;
-  }
-  return { base, budget, reached: Math.floor(count / budget.limit) };
+  return { base, budget, reached: Math.floor(fs.statSync(`${base}.calls`).size / budget.limit) };
+};
+
+/** SubagentStop: the agent's budget and counter go. */
+export const dropBudget = (cwd: string, session: string, agentId: string | null): void => {
+  const store = session ? gitStoreDir(cwd) : null;
+  if (store)
+    for (const ext of [".json", ".calls"])
+      fs.rmSync(agentBase(store, session, agentId) + ext, { force: true });
 };
 
 /** The one line for a budget reached and not yet told (marked told), else null. */
@@ -190,7 +182,7 @@ export const budgetLine = (cwd: string, session: string, agentId: string | null)
   try {
     const at = reachedOf(cwd, session, agentId);
     if (!at || at.reached <= at.budget.told) return null;
-    writeAtomic(`${at.base}.json`, JSON.stringify({ limit: at.budget.limit, told: at.reached }));
+    fs.writeFileSync(`${at.base}.json`, JSON.stringify({ ...at.budget, told: at.reached }));
     return lineFor(at.budget.limit * at.reached);
   } catch {
     return null;
@@ -214,10 +206,15 @@ export const budgetStanding = (
   }
 };
 
+/** Codex tools Workit may deny; any other PreToolUse is never denied there. */
+const CODEX_GATED = new Set(["bash", "unifiedexec", "shell", "applypatch", "edit", "write"]);
+
 /**
- * One native PreToolUse payload (Codex shape): a lead's call whose tool input
- * carries a brief with `N tool calls` queues N, and a budgeted subagent's call
- * is counted. True when the count reached the budget, so the runtime tells it.
+ * One native Codex PreToolUse payload: a lead's spawn (a tool input naming an
+ * agent type, or carrying a brief) queues its budget or an explicit none, and
+ * a budgeted subagent's call is counted. A spawn is a tool Workit never denies
+ * on Codex, so queueing here cannot outlive a denied call. True when the
+ * count reached the budget, so the runtime tells it.
  */
 export const observeHookBudget = (payload: string): boolean => {
   try {
@@ -227,18 +224,25 @@ export const observeHookBudget = (payload: string): boolean => {
     const cwd = typeof value.cwd === "string" ? value.cwd : ".";
     const agentId =
       typeof value.agent_id === "string" && value.agent_id.trim() ? value.agent_id : null;
+    if (agentId) return tickBudget(cwd, value.session_id, agentId);
+    const tool = typeof value.tool_name === "string" ? value.tool_name : "";
     const spawn = value.tool_input;
-    if (!agentId && payload.includes("TIMEBOX:") && spawn && typeof spawn === "object") {
-      const fields = spawn as Record<string, unknown>;
-      const prompt = Object.values(fields).find(
-        (field): field is string => typeof field === "string" && field.includes("TIMEBOX:"),
-      );
-      const type = [fields.agent_type, fields.subagent_type].find(
-        (field): field is string => typeof field === "string",
-      );
-      if (prompt) noteSpawnBudget(cwd, value.session_id, type ?? null, prompt);
-    }
-    return agentId ? tickBudget(cwd, value.session_id, agentId) : false;
+    if (
+      CODEX_GATED.has(tool.toLowerCase().replace(/[_-]/g, "")) ||
+      !spawn ||
+      typeof spawn !== "object"
+    )
+      return false;
+    const fields = spawn as Record<string, unknown>;
+    const prompt = Object.values(fields).find(
+      (field): field is string => typeof field === "string" && field.includes("TIMEBOX:"),
+    );
+    const type = [fields.agent_type, fields.subagent_type].find(
+      (field): field is string => typeof field === "string",
+    );
+    if (prompt !== undefined || type !== undefined)
+      noteSpawnBudget(cwd, value.session_id, type ?? null, prompt ?? "");
+    return false;
   } catch {
     return false;
   }

@@ -224,11 +224,12 @@ const setup = async (ctx: Context): Promise<() => void> => {
   const shellWorkdirs: ShellWorkdirs = new Map();
   const pendingShells: PendingShells = new Map();
   await ctx.tool.hook("execute.before", async (event) => {
-    observeBudget(
-      root,
-      { tool: event.tool, sessionID: String(event.sessionID), input: event.input },
-      lifecycle.directChildren,
-    );
+    const budgetEvent = {
+      tool: event.tool,
+      sessionID: String(event.sessionID),
+      input: event.input,
+    };
+    if (event.tool !== "subagent") observeBudget(root, budgetEvent, lifecycle.directChildren);
     if (event.tool === "shell") {
       observeShellBefore(root, event, shellWorkdirs);
       return noteShellCall(pendingShells, {
@@ -244,6 +245,8 @@ const setup = async (ctx: Context): Promise<() => void> => {
       id: String(event.id),
       input: event.input,
     });
+    // Queued only once the launch gate let the spawn through.
+    observeBudget(root, budgetEvent, lifecycle.directChildren);
   });
   // Older V2 builds have no shell domain: their shells keep OPENCODE_SESSION_ID only.
   const shellDomain = (ctx as Partial<Context>).shell;

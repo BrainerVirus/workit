@@ -2,7 +2,7 @@
 // tells it to checkpoint, report and stop, on the standing-order channel.
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -135,4 +135,103 @@ test("[codex] Given a lead tool call whose input carries a 2-call brief, When th
   expect(claimSpawnBudget(root, LEAD, "agent-x", "worker")).toBe(2);
   const shell = pre({ agent_id: "agent-x", tool_name: "shell", tool_input: { command: "ls" } });
   expect([observeHookBudget(shell), observeHookBudget(shell)]).toEqual([false, true]);
+});
+
+const budgetFiles = (root: string): string[] => {
+  try {
+    return readdirSync(path.join(root, ".git", "workit", "budget")).filter(
+      (name) => !name.startsWith("spawns-"),
+    );
+  } catch {
+    return [];
+  }
+};
+
+const queued = (root: string): string => {
+  const dir = path.join(root, ".git", "workit", "budget");
+  try {
+    return readdirSync(dir)
+      .filter((name) => name.startsWith("spawns-"))
+      .map((name) => readFileSync(path.join(dir, name), "utf8"))
+      .join("");
+  } catch {
+    return "";
+  }
+};
+
+const spawnCall = (cwd: string, agentInput: Record<string, unknown>): HookInput => ({
+  ...call(cwd, "claude_code", null),
+  event: { kind: "tool.pre", tool: "Agent", toolUseId: "t-spawn", agentInput },
+});
+
+test("[claude_code] Given an implementer spawn the gate denies, When the corrected spawn runs, Then only the allowed spawn is queued", () => {
+  const root = repo();
+  const deps = { descriptor: CLAUDE_CODE_DESCRIPTOR, addendum: null };
+  const denied = handleHook(
+    spawnCall(root, { subagent_type: "workit:implementer", model: "opus", prompt: brief(3) }),
+    deps,
+  );
+  expect(denied.kind).toBe("deny");
+  expect(queued(root)).toBe("");
+  const allowed = handleHook(
+    spawnCall(root, {
+      subagent_type: "workit:implementer",
+      model: "opus",
+      prompt: `WORKTREE: ${root}\n${brief(4)}`,
+    }),
+    deps,
+  );
+  expect(allowed.kind === "deny").toBe(false);
+  expect(queued(root)).toBe('{"type":"workit:implementer","n":4}\n');
+  expect(claimSpawnBudget(root, LEAD, "agent-1", "workit:implementer")).toBe(4);
+  expect(claimSpawnBudget(root, LEAD, "agent-2", "workit:implementer")).toBeNull();
+});
+
+test("Given an unbudgeted spawn queued before a budgeted one of the same type, When both start, Then the first gets none and the second keeps its N", () => {
+  const root = repo();
+  noteSpawnBudget(root, LEAD, "general-purpose", "look around");
+  noteSpawnBudget(root, LEAD, "general-purpose", brief(5));
+  expect(claimSpawnBudget(root, LEAD, "first", "general-purpose")).toBeNull();
+  expect(claimSpawnBudget(root, LEAD, "second", "general-purpose")).toBe(5);
+  expect(tickBudget(root, LEAD, "first")).toBe(false);
+  expect(budgetFiles(root)).toEqual(expect.arrayContaining([expect.stringMatching(/\.json$/u)]));
+});
+
+for (const [host, descriptor] of [
+  ["claude_code", CLAUDE_CODE_DESCRIPTOR],
+  ["codex_cli", CODEX_DESCRIPTOR],
+] as const)
+  test(`[${host}] Given a budgeted subagent, When it stops, Then its budget files are gone`, () => {
+    const root = repo();
+    const deps = { descriptor, addendum: null };
+    noteSpawnBudget(root, LEAD, "workit:implementer", brief(3));
+    handleHook(start(root, host, "agent-1", "workit:implementer"), deps);
+    tickBudget(root, LEAD, "agent-1");
+    expect(budgetFiles(root).length).toBe(2);
+    handleHook(
+      {
+        ...call(root, host, null),
+        event: {
+          kind: "subagent.stop",
+          agentId: "agent-1",
+          agentType: "workit:implementer",
+          lastMessage: null,
+          stopHookActive: false,
+        },
+      },
+      deps,
+    );
+    expect(budgetFiles(root)).toEqual([]);
+  });
+
+test("Given budget files older than 7 days, When a new budget starts, Then they are aged out", () => {
+  const root = repo();
+  noteSpawnBudget(root, LEAD, "t", brief(3));
+  claimSpawnBudget(root, LEAD, "old", "t");
+  const dir = path.join(root, ".git", "workit", "budget");
+  const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  for (const name of budgetFiles(root)) utimesSync(path.join(dir, name), old, old);
+  noteSpawnBudget(root, LEAD, "t", brief(3));
+  claimSpawnBudget(root, LEAD, "new", "t");
+  expect(budgetFiles(root)).toHaveLength(1);
 });

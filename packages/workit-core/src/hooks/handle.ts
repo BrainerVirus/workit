@@ -30,7 +30,7 @@ import {
 } from "./skill-nudge";
 import { spawnDecision } from "./spawn-gate";
 import { seedStanding, standingDelta } from "./standing";
-import { budgetLine, claimSpawnBudget } from "./budget-signal";
+import { budgetLine, claimSpawnBudget, dropBudget, noteSpawnBudget } from "./budget-signal";
 import { modelSwitchedOnDisk, trackJudge } from "./session-marker";
 import { invariantBootstrap } from "../core/methods";
 import { stopDecision } from "./stop";
@@ -313,8 +313,20 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     case "tool.pre":
       // Host permission policy owns other tools; a skill load is recorded.
       if (event.skill) recordSkillLoad(input, event.skill, "tool");
-      if (event.agentInput && input.host === "claude_code")
-        return spawnDecision(descriptor, input.cwd, event.agentInput);
+      if (event.agentInput && input.host === "claude_code") {
+        const spawn = spawnDecision(descriptor, input.cwd, event.agentInput);
+        // A spawn the gate lets through queues its tool-call budget, or none,
+        // for the next subagent of its type (Claude Code names an untyped one
+        // general-purpose); the launcher does so for one its fast path allows.
+        if (spawn.kind !== "deny" && !input.session.agentId)
+          noteSpawnBudget(
+            input.cwd,
+            input.session.id ?? "",
+            String(event.agentInput.subagent_type || "general-purpose"),
+            String(event.agentInput.prompt ?? ""),
+          );
+        return spawn;
+      }
       return NONE;
     case "stop":
       return usable(descriptor.events.stop.support) ? stopDecision(input, descriptor) : NONE;
@@ -322,6 +334,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     // arrive with the CLI-observed evidence model.
     case "subagent.stop":
       trackJudge(input, event.agentId, false);
+      if (input.session.id && event.agentId) dropBudget(input.cwd, input.session.id, event.agentId);
       return NONE;
     case "prompt.submit":
       return NONE;

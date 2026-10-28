@@ -87,15 +87,17 @@ test("hooks.json registers the designed events through the exec-form launcher, n
   >;
   expect(Object.keys(hooks).toSorted()).toEqual(
     // Only events whose hook changes Claude's behavior are registered:
-    // SubagentStop is never blocked, and PreCompact cannot inject context
-    // (SessionStart compact restores it). PostToolUse records raw git commits
-    // for the session; Stop continues a turn once on an unmet obligation.
+    // PreCompact cannot inject context (SessionStart compact restores it).
+    // PostToolUse records raw git commits for the session; Stop continues a
+    // turn once on an unmet obligation; SubagentStop is never blocked, the
+    // launcher only drops the stopped agent's tool-call budget files.
     [
       "PostToolUse",
       "PreToolUse",
       "SessionStart",
       "Stop",
       "SubagentStart",
+      "SubagentStop",
       "UserPromptSubmit",
     ].toSorted(),
   );

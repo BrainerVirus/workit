@@ -13,7 +13,7 @@
 // policy): a broken hook must never brick the host.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -255,13 +255,12 @@ const spawnBudget = (prompt) => {
 };
 const noteSpawnBudget = (cwd, session, type, prompt) => {
   try {
-    const n = spawnBudget(prompt);
-    const store = n && session ? gitStoreDir(cwd) : null;
+    const store = session ? gitStoreDir(cwd) : null;
     if (!store) return;
     mkdirSync(path.join(store, "budget"), { recursive: true });
     appendFileSync(
       path.join(store, "budget", `spawns-${budgetHash(session)}.jsonl`),
-      `${JSON.stringify({ type: type ?? "", n })}\n`,
+      `${JSON.stringify({ type: type ?? "", n: spawnBudget(prompt) })}\n`,
     );
   } catch {
     // Without the note the worker runs unbudgeted.
@@ -294,17 +293,8 @@ const budgetDue = (() => {
     const value = parsed;
     if (value?.hook_event_name !== "PreToolUse" || typeof value.session_id !== "string")
       return false;
-    const cwd = String(value.cwd ?? ".");
-    const spawn = value.tool_input;
-    if (
-      (value.tool_name === "Agent" || value.tool_name === "Task") &&
-      !value.agent_id &&
-      typeof spawn?.prompt === "string" &&
-      spawn.prompt.includes("TIMEBOX:")
-    )
-      noteSpawnBudget(cwd, value.session_id, spawn.subagent_type, spawn.prompt);
     return typeof value.agent_id === "string" && value.agent_id !== ""
-      ? tickBudget(cwd, value.session_id, value.agent_id)
+      ? tickBudget(String(value.cwd ?? "."), value.session_id, value.agent_id)
       : false;
   } catch {
     return false;
@@ -396,8 +386,41 @@ const fastAllow = (() => {
   }
 })();
 
+// A lead's spawn the fast path allows queues its budget or none (the runtime
+// queues one its gate lets through); a stopped subagent's budget files go.
+// Copies of handle.ts noteClaudeSpawn and budget-signal.ts dropBudget.
+const settleBudget = () => {
+  try {
+    const value = parsed;
+    const session = value?.session_id;
+    if (typeof session !== "string" || !session) return;
+    const cwd = String(value.cwd ?? ".");
+    if (value.hook_event_name === "SubagentStop") {
+      const store = gitStoreDir(cwd);
+      if (!store || typeof value.agent_id !== "string" || !value.agent_id) return;
+      const base = path.join(store, "budget", budgetHash(`${session}\0${value.agent_id}`));
+      rmSync(`${base}.json`, { force: true });
+      rmSync(`${base}.calls`, { force: true });
+      return;
+    }
+    const spawn = value.tool_input;
+    if (fastAllow && !value.agent_id && (value.tool_name === "Agent" || value.tool_name === "Task"))
+      noteSpawnBudget(
+        cwd,
+        session,
+        typeof spawn?.subagent_type === "string" && spawn.subagent_type
+          ? spawn.subagent_type
+          : "general-purpose",
+        typeof spawn?.prompt === "string" ? spawn.prompt : "",
+      );
+  } catch {
+    // Budgets fail open.
+  }
+};
+settleBudget();
+
 process.env.WORKIT_PLUGIN_ROOT = root;
-if (fastAllow) {
+if (parsed?.hook_event_name === "SubagentStop" || fastAllow) {
   process.stdout.write("{}\n");
 } else if (fromSource) {
   const run = spawnSync(process.env.WORKIT_BUN ?? "bun", [source], {

@@ -1,5 +1,5 @@
 // The worker tool-call budget on OpenCode (hooks/budget-signal.ts): a lead's
-// `subagent` call whose prompt names `N tool calls` queues N; the child binds
+// `subagent` call queues the N its prompt names (or none); the child binds
 // it on its first tool call and every call of it is counted. The line rides
 // the child's system context (injection.ts) while the budget stands reached.
 import {
@@ -25,11 +25,13 @@ export const observeBudget = (
       tickBudget(root, parent, event.sessionID);
       return;
     }
-    if (event.tool !== "subagent" || !event.input || typeof event.input !== "object") return;
-    const prompt = Object.values(event.input).find(
+    if (event.tool !== "subagent") return;
+    // Every spawn queues an entry (its budget or none), so the FIFO stays aligned.
+    const fields = event.input && typeof event.input === "object" ? Object.values(event.input) : [];
+    const prompt = fields.find(
       (field): field is string => typeof field === "string" && field.includes("TIMEBOX:"),
     );
-    if (prompt) noteSpawnBudget(root, event.sessionID, null, prompt);
+    noteSpawnBudget(root, event.sessionID, null, prompt ?? "");
   } catch {
     // Fail open: the worker runs unbudgeted.
   }
