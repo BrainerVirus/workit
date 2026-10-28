@@ -2189,7 +2189,7 @@ export function recordVerdict(
       sessionSource: context.sessionSource ?? "env",
       ...(context.sessionBound === true ? { sessionBound: true } : {}),
       evidenceRefs: input.evidenceRefs ?? [],
-      ...(key.dirty === null ? {} : untrackedField(context.cwd)),
+      ...untrackedField(context.cwd),
     },
     { now: context.now },
   );

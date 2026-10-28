@@ -72,7 +72,6 @@ import {
   parseFlags,
   positiveInt,
   renderStatus,
-  SELECTOR_FLAGS,
   selector,
   unverifiedFlag,
   usage,
@@ -106,7 +105,7 @@ const prLabel = (kind: string, number: number): string =>
   `${kind === "github" ? "PR #" : "MR !"}${number}`;
 
 async function status(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { ...SELECTOR_FLAGS, "log-lines": "value" });
+  const flags = parseFlags(argv, { pr: "value", branch: "value", "log-lines": "value" });
   if (typeof flags === "string") return usage(io, flags, STATUS_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, STATUS_USAGE);

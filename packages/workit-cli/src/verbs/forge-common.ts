@@ -87,8 +87,7 @@ export function unverifiedFlag(flags: ParsedFlags): { reason: string } | null | 
   return reason.length > MAX_REASON ? `--reason is capped at ${MAX_REASON} characters` : { reason };
 }
 
-/** The PR a verb acts on: `--pr <n>`, or the PR of `--branch <b>` (`--head` is the same flag); neither means this checkout's branch. */
-export const SELECTOR_FLAGS = { pr: "value", branch: "value", head: "value" } as const;
+/** The PR a verb acts on: `--pr <n>`, or the PR of `--branch <b>`; neither means this checkout's branch. */
 
 export function selector(
   flags: ParsedFlags,
