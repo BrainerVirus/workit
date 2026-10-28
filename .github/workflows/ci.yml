@@ -387,7 +387,7 @@ jobs:
           exit 1
 
   windows-shard:
-    name: windows shard ${{ matrix.shard }}/6
+    name: windows shard ${{ matrix.shard }}/8
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: windows-latest
@@ -397,7 +397,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -424,10 +424,10 @@ jobs:
       - name: Build packages
         run: bun run build
 
-      - name: Test workit-core and artifacts (shard ${{ matrix.shard }}/6)
+      - name: Test workit-core and artifacts (shard ${{ matrix.shard }}/8)
         env:
           SHARD: ${{ matrix.shard }}
-        run: bun scripts/test.ts ci windows "$env:SHARD/6"
+        run: bun scripts/test.ts ci windows "$env:SHARD/8"
 
       - name: Upload measured timings
         if: ${{ !cancelled() }}
