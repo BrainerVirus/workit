@@ -405,7 +405,7 @@ function makeNestedStub() {
   writeFileSync(
     path.join(home, ".config/opencode/opencode.json"),
     JSON.stringify({
-      plugin: [
+      plugins: [
         "@dietrichgebert/ponytail",
         "@brainervirus/workit-opencode",
         `workflow-toolkit-opencode@git+file://${stub}`,
@@ -541,7 +541,9 @@ test(
       const config = JSON.parse(
         readFileSync(path.join(good.home, ".config/opencode/opencode.json"), "utf8"),
       );
-      expect(config.plugin).toEqual([`file://${good.stub}/packages/workit-opencode/src/plugin.ts`]);
+      expect(config.plugins).toEqual([
+        `file://${good.stub}/packages/workit-opencode/src/plugin.ts`,
+      ]);
 
       const bad = runInstall(empty);
       expect(bad.status).not.toBe(0);
@@ -578,7 +580,7 @@ test(
       const config = JSON.parse(
         readFileSync(path.join(fixture.home, ".config/opencode/opencode.json"), "utf8"),
       );
-      expect(config.plugin).toEqual([
+      expect(config.plugins).toEqual([
         `file://${fixture.stub}/packages/workit-opencode/src/plugin.ts`,
         "@dietrichgebert/ponytail",
       ]);
@@ -620,7 +622,7 @@ test(
       const config = JSON.parse(
         readFileSync(path.join(fixture.home, ".config/opencode/opencode.json"), "utf8"),
       );
-      expect(config.plugin).toEqual([
+      expect(config.plugins).toEqual([
         `file://${realpathSync(fixture.stub)}/packages/workit-opencode/src/plugin.ts`,
       ]);
     } finally {
