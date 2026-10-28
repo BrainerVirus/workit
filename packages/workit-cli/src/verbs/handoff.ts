@@ -7,20 +7,33 @@
 //
 // --record appends the brief's note and next step to the ledger as a
 // `handoff` row, which the next brief shows as `lastHandoff`.
+//
+// The printed brief stays within MAX_BRIEF_BYTES (#426): a longer one is cut
+// in the middle (its note and next step always print) and the whole brief is
+// written under the store's handoff/ dir, whose path the brief names.
+import fs from "node:fs";
+import path from "node:path";
 import { parseArgs } from "node:util";
 import {
   actorFromEnv,
   buildHandoff,
   recordHandoff,
+  storeRoot,
   type HandoffBrief,
 } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE = "workit handoff [--note <text>] [--next <text>] [--record] [--last <n>] [--json]";
 
+/** The printed brief's bound; the full brief goes to a file. */
+export const MAX_BRIEF_BYTES = 4096;
+
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "no commit");
 
-function human(brief: HandoffBrief & { recorded: string | null }): string[] {
+type Brief = HandoffBrief & { recorded: string | null };
+
+/** The brief as lines: `body` may be cut, `tail` (note, next step, recording) always prints. */
+function render(brief: Brief): { body: string[]; tail: string[] } {
   const lines = [
     `branch: ${brief.branch ?? "(detached)"} @ ${short(brief.head)}${brief.subject ? ` ${brief.subject}` : ""}`,
   ];
@@ -66,11 +79,39 @@ function human(brief: HandoffBrief & { recorded: string | null }): string[] {
           `  #${row.seq} ${row.type}${row.branch ? ` [${row.branch}]` : ""}${row.labels.length ? ` (${row.labels.join(", ")})` : ""}  ${row.summary}`,
       ),
     );
-  if (brief.note) lines.push(`note:   ${brief.note}`);
-  lines.push(`next:   ${brief.next}`);
-  if (brief.next !== brief.nextCommand) lines.push(`next command: ${brief.nextCommand}`);
-  if (brief.recorded) lines.push(`recorded handoff ${brief.recorded}`);
-  return lines;
+  const tail: string[] = [];
+  if (brief.note) tail.push(`note:   ${brief.note}`);
+  tail.push(`next:   ${brief.next}`);
+  if (brief.next !== brief.nextCommand) tail.push(`next command: ${brief.nextCommand}`);
+  if (brief.recorded) tail.push(`recorded handoff ${brief.recorded}`);
+  return { body: lines, tail };
+}
+
+const bytes = (lines: string[]): number => Buffer.byteLength(`${lines.join("\n")}\n`);
+
+/** The brief within MAX_BRIEF_BYTES, writing the whole one to a file when it is longer. */
+function bounded(brief: Brief, cwd: string): string[] {
+  const { body, tail } = render(brief);
+  if (bytes([...body, ...tail]) <= MAX_BRIEF_BYTES) return [...body, ...tail];
+  const store = storeRoot(cwd);
+  let file: string | null = null;
+  if (store.ok)
+    try {
+      const dir = path.join(store.value.root, "handoff");
+      fs.mkdirSync(dir, { recursive: true });
+      file = path.join(dir, `${(brief.branch ?? "detached").replaceAll(/[^\w.-]+/gu, "-")}.txt`);
+      fs.writeFileSync(file, `${[...body, ...tail].join("\n")}\n`, { mode: 0o600 });
+    } catch {
+      file = null;
+    }
+  const pointer = `… cut to ${MAX_BRIEF_BYTES} bytes; full brief: ${file ?? "not written (workit handoff --json has it all)"}`;
+  const kept: string[] = [];
+  for (const line of body) {
+    const cut = line.length > 400 ? `${line.slice(0, 400)}…` : line;
+    if (bytes([...kept, cut, pointer, ...tail]) > MAX_BRIEF_BYTES) break;
+    kept.push(cut);
+  }
+  return [...kept, pointer, ...tail];
 }
 
 async function resumeBrief(argv: string[], io: Io): Promise<number> {
@@ -111,7 +152,7 @@ async function resumeBrief(argv: string[], io: Io): Promise<number> {
     if (!row.ok) return emit(io, fail(row.code, row.error, { data: { ...data, recorded } }));
     recorded = row.value.id;
   }
-  return emit(io, ok({ ...data, recorded }), human);
+  return emit(io, ok({ ...data, recorded }), (brief) => bounded(brief, io.cwd));
 }
 
 export async function run(argv: string[], io: Io): Promise<number> {

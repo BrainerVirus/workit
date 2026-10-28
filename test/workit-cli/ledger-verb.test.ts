@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -304,6 +304,29 @@ test("handoff prints a resume brief, and --record makes it the next brief's last
   expect(second.stdout).toContain("finish parser (note: parser half done)");
   expect(second.stdout).toContain("next:   workit ledger verdict verified --branch feature/x");
   expect((await run(root, ["handoff", "--last", "x", "--json"])).code).toBe(2);
+});
+
+test("G a handoff whose rulings and recent rows exceed 4 KB, T the printed brief stays within 4 KB, keeps its next step and names a file holding the whole brief", async () => {
+  const root = featureRepo();
+  for (let index = 0; index < 30; index += 1)
+    await run(root, [
+      "ledger",
+      "ruling",
+      `ruling ${index} ${"x".repeat(180)}`,
+      "--why",
+      "load",
+      "--cost-if-wrong",
+      "none",
+    ]);
+  const brief = await run(root, ["handoff", "--last", "30", "--next", "finish the parser"]);
+  expect(brief.code).toBe(0);
+  expect(Buffer.byteLength(brief.stdout)).toBeLessThanOrEqual(4096);
+  expect(brief.stdout).toContain("next:   finish the parser");
+  const file = brief.stdout.match(/full brief: (\S+)/u)?.[1];
+  expect(file).toBeDefined();
+  const full = readFileSync(file!, "utf8");
+  expect(full.length).toBeGreaterThan(4096);
+  expect(full).toContain("ruling 0 ");
 });
 
 test("ledger check names the newest verdict's result, and an ambiguous --pr says so", async () => {
