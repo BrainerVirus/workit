@@ -3313,16 +3313,18 @@ const ago = (ms: number): string => {
   return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 };
 
+/** Always shown per host, "never" when absent; every other recorded event follows by name. */
+const HOOK_RUN_BASELINE = ["SessionStart", "PreToolUse"];
+
 /**
- * The hook runs each host recorded (#433): the last PreToolUse and
- * SessionStart seen per host. Never a failure: a host whose hooks never fire
- * and one that has not run since Workit started counting look the same, but
- * the row at least shows what did run.
+ * The hook runs each host recorded (#433): SessionStart and PreToolUse per
+ * host, then every other event that has a run file (SubagentStart,
+ * UserPromptSubmit, PostToolUse, Stop…, #505). Never a failure: a host whose
+ * hooks never fire and one that has not run since Workit started counting
+ * look the same, but the row at least shows what did run.
  */
 const checkHookRuns = (res: Resolved): DoctorCheck => {
-  const runs = readHookRuns(res.hookStateDir).filter(
-    (run) => run.event === "PreToolUse" || run.event === "SessionStart",
-  );
+  const runs = readHookRuns(res.hookStateDir);
   if (runs.length === 0)
     return {
       id: "hook_runs",
@@ -3333,7 +3335,11 @@ const checkHookRuns = (res: Resolved): DoctorCheck => {
   const now = Date.now();
   const hosts = [...new Set(runs.map((run) => run.host))].toSorted();
   const parts = hosts.map((host) => {
-    const seen = ["SessionStart", "PreToolUse"].map((event) => {
+    const others = runs
+      .filter((run) => run.host === host && !HOOK_RUN_BASELINE.includes(run.event))
+      .map((run) => run.event)
+      .toSorted();
+    const seen = [...HOOK_RUN_BASELINE, ...new Set(others)].map((event) => {
       const run = runs.find((r) => r.host === host && r.event === event);
       return `${event} ${run ? `${ago(now - Date.parse(run.at))} (${run.count})` : "never"}`;
     });

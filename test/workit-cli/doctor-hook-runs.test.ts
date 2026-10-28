@@ -1,4 +1,4 @@
-// workit doctor `hook_runs` (#433): the last SessionStart and PreToolUse each host ran.
+// workit doctor `hook_runs` (#433, #505): SessionStart, PreToolUse and every other event each host ran.
 import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,4 +45,23 @@ test("Given Codex ran PreToolUse but never SessionStart, When doctor runs, Then 
   expect(row.status).toBe("pass");
   expect(row.detail).toContain("codex_cli: SessionStart never, PreToolUse 3 min ago (2)");
   expect(row.detail).toContain("cursor: SessionStart 2 h ago (1), PreToolUse never");
+});
+
+test("Given Claude Code ran SubagentStart, UserPromptSubmit, PostToolUse and Stop, When doctor runs, Then hook_runs lists every event that has a run file (#505)", () => {
+  const state = path.join(scratch, "all-events");
+  const env = { WORKFLOW_TOOLKIT_STATE: state };
+  for (const event of ["SessionStart", "PreToolUse", "SubagentStart", "UserPromptSubmit"])
+    recordHookRun("claude_code", event, env);
+  recordHookRun("claude_code", "PostToolUse", env);
+  recordHookRun("claude_code", "Stop", env);
+  recordHookRun("claude_code", "SubagentStart", env);
+  recordHookRun("codex_cli", "Stop", env);
+  const row = runsRow(state);
+  expect(row.status).toBe("pass");
+  expect(row.detail).toMatch(
+    /claude_code: SessionStart just now \(1\), PreToolUse just now \(1\), PostToolUse just now \(1\), Stop just now \(1\), SubagentStart just now \(2\), UserPromptSubmit just now \(1\)/u,
+  );
+  expect(row.detail).toContain(
+    "codex_cli: SessionStart never, PreToolUse never, Stop just now (1)",
+  );
 });
