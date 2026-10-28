@@ -14,7 +14,7 @@ import {
   cursorWorkspaceRoot,
   dispatchHook,
   parseCursorHookInput,
-  runHookProcess,
+  runAdapterHook,
   type CursorHookInput,
 } from "@brainervirus/workit-core/hooks";
 
@@ -260,7 +260,7 @@ export const runCursorHook = async (): Promise<void> => {
     process.exitCode = 0;
     return;
   }
-  process.exitCode = await runHookProcess(
+  process.exitCode = await runAdapterHook(
     cursorAdapter,
     [text],
     process.stdout,

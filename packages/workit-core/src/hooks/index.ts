@@ -34,6 +34,7 @@ export { promptNudge, recordSkillLoad, shellNudge, skillFileIn } from "./skill-n
 export { isWriteTool, writePaths } from "./hosts/fields";
 export { seedStanding, standingDelta, standingSinceStart } from "./standing";
 export { dispatchHook, failureDecision, handleHook, type HookDeps } from "./handle";
+export { runAdapterHook } from "./process";
 export { HOOK_ADAPTERS, runHookProcess } from "./run";
 export { CLAUDE_CODE_DESCRIPTOR, claudeCodeAdapter } from "./hosts/claude-code";
 export {

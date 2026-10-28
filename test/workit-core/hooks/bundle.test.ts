@@ -49,8 +49,12 @@ const HOOK_ENTRIES = [
 // 465,763 B, core run 465,299 B, Claude Code 449,479 B. The ceiling is that max
 // plus ~40 KB of headroom for wave 1.5 (#388), rounded to 510 KB. Implementer
 // worktree confinement (#310) adds ~10.5 KB: Cursor 479,926 B, Codex 476,292 B,
-// core run 475,828 B, Claude Code 460,007 B. Another Bun
-// gives different sizes, so the size check runs only on the pinned version.
+// core run 475,828 B, Claude Code 460,007 B. Wave 1.5 left Cursor at 509,968 B.
+// Host bundles then took only their own adapter (hooks/process.ts) and hooks
+// read task context through core/task-view.ts instead of the recording engine
+// (task-engine.ts): Cursor 494,579 B, Codex 429,657 B, core run 442,143 B,
+// Claude Code 430,370 B. The test prints each size and its headroom. Another
+// Bun gives different sizes, so the size check runs only on the pinned version.
 const BUDGET = 510_000;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
@@ -90,7 +94,12 @@ test("a hook bundle loads no doctor/setup modules or the core barrel, within its
         inputs.filter((input) => FORBIDDEN.test(input)),
         entry,
       ).toEqual([]);
-      if (sizeCheckApplies) expect(statSync(outfile).size, entry).toBeLessThanOrEqual(BUDGET);
+      const size = statSync(outfile).size;
+      // Printed so a PR sees how much room its hook change leaves.
+      console.log(
+        `hook bundle ${entry}: ${size} B, ${BUDGET - size} B under ${BUDGET} (Bun ${Bun.version}${sizeCheckApplies ? "" : `, unpinned; the budget applies on ${PINNED_BUN}`})`,
+      );
+      if (sizeCheckApplies) expect(size, entry).toBeLessThanOrEqual(BUDGET);
     }
   } finally {
     rmSync(out, { recursive: true, force: true });

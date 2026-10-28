@@ -1,17 +1,11 @@
-// Hook-process entry: stdin JSON → parse → handle → render → stdout, under
-// the hook's own deadline (deadline.ts).
-import {
-  dispatchWithin,
-  hookBudget,
-  PROCESS_START,
-  readWithin,
-  skippedHook,
-  type HookDeadline,
-} from "./deadline";
+// Hook-process entry by host name: maps each process host to its adapter and
+// runs it (process.ts). Host bundles import process.ts with their own adapter,
+// so they carry none of the others.
+import { PROCESS_START, type HookDeadline } from "./deadline";
 import { claudeCodeAdapter } from "./hosts/claude-code";
 import { codexAdapter } from "./hosts/codex";
 import { cursorAdapter } from "./hosts/cursor";
-import { recordHookRun } from "./hook-runs";
+import { runAdapterHook } from "./process";
 import type { HostAdapter, HostId } from "./protocol";
 
 type ProcessHost = Exclude<HostId, "opencode" | "pi">;
@@ -28,41 +22,17 @@ type Sink = { write(chunk: string): unknown };
 /** Runs one hook invocation and returns the process exit code. A broken
  * payload never throws: the host's fail policy decides what is written. Past
  * the deadline the host gets a minimal result naming the skip. */
-export async function runHookProcess(
+export const runHookProcess = (
   host: ProcessHost | HostAdapter,
   stdin: AsyncIterable<unknown> | Iterable<unknown>,
   stdout: Sink,
   stderr: Sink = process.stderr,
   env: NodeJS.ProcessEnv = process.env,
   deadline: HookDeadline = {},
-): Promise<number> {
-  const adapter = typeof host === "string" ? HOOK_ADAPTERS[host] : host;
-  const budget = hookBudget(env, deadline, adapter.descriptor.host);
-  const text = await readWithin(stdin, budget);
-  let raw: unknown;
-  try {
-    raw = text === null ? undefined : JSON.parse(text || "{}");
-  } catch {
-    raw = undefined;
-  }
-  const native = (raw as { hook_event_name?: unknown } | null | undefined)?.hook_event_name;
-  recordHookRun(
-    typeof host === "string" ? host : adapter.descriptor.host,
-    typeof native === "string" ? native : null,
-    env,
-  );
-  const result =
-    text === null
-      ? skippedHook(adapter, undefined, env, budget, "input")
-      : await dispatchWithin(adapter, raw, env, budget, deadline.dispatch);
-  if (result.skipped) stderr.write(`[workit] ${result.error}\n`);
-  else if (raw === undefined || result.error)
-    stderr.write(
-      `[workit] hook input rejected: ${raw === undefined ? "invalid JSON hook input" : result.error}\n`,
-    );
-  stdout.write(`${JSON.stringify(result.json)}\n`);
-  return result.exitCode;
-}
+): Promise<number> =>
+  typeof host === "string"
+    ? runAdapterHook(HOOK_ADAPTERS[host], stdin, stdout, stderr, env, deadline, host)
+    : runAdapterHook(host, stdin, stdout, stderr, env, deadline);
 
 if (import.meta.main) {
   const host = process.argv[2] as ProcessHost;

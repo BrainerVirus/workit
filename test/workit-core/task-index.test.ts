@@ -13,6 +13,7 @@ import {
 import type { Assessment } from "@/test/workit-core/task-fixtures";
 import { fileSignature, racySignature } from "@/packages/workit-core/src/core/task-store";
 import * as evaluation from "@/packages/workit-core/src/core/task-evaluation";
+import * as taskView from "@/packages/workit-core/src/core/task-view";
 import { compactContextFor, unfinishedTaskOfferFor } from "@/packages/workit-opencode/src/runtime";
 import { eventsFileOf, rawRecordOf, rewriteTaskLog, storeDirOf } from "./store-files";
 import { assessment, ref, scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
@@ -305,7 +306,7 @@ test("cached context invalidates when a cited decision document or the workspace
     );
     if (!injected.ok) throw new Error(injected.error);
 
-    const built = spyOn(WorkitCore.prototype, "compactContext");
+    const built = spyOn(taskView, "compactContext");
     try {
       expect(compactContextFor(root, "lead")).not.toBeNull();
       expect(compactContextFor(root, "lead")).not.toBeNull();
@@ -370,7 +371,7 @@ test("a document changed within the racy window is never served from cache", () 
       }),
     );
     if (!injected.ok) throw new Error(injected.error);
-    const built = spyOn(WorkitCore.prototype, "compactContext");
+    const built = spyOn(taskView, "compactContext");
     try {
       compactContextFor(root, "lead");
       compactContextFor(root, "lead");
