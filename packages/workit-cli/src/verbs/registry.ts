@@ -193,6 +193,7 @@ const LEASE_NOTES = [
   "Waiting: a heavy check that finds every slot held prints one `waiting for the heavy-check lease` line naming the holder (check, pid, session, age, directory), polls once a second, and exits 4 (busy) after `--wait <s>`, else `resources.wait` seconds (default 600, capped at 100 inside a Claude Code or OpenCode shell). `workit lock status` shows the holders; `workit lock wait` waits for a free slot.",
   "--heavy: an ad-hoc `workit check -- <cmd>` takes the lease only with --heavy; the named checks test, build and typecheck always do. The shell hook runs a raw heavy command (`npx jest`, `npm run test:ci`, `cargo test`, `docker build`) as `workit check --heavy -- <cmd>` on Claude Code, OpenCode and Pi, and denies it with that exact command on Codex and Cursor.",
   '--no-lease skips the lease and needs --reason "<why>". Never hand-roll a flock: the lease already queues every agent on the machine.',
+  "Output: a check prints the last 60 lines of its output and one summary line with `log: <path>` to the full log; --full streams all of it.",
 ];
 
 const VERIFY_OPTIONS =
@@ -291,7 +292,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "check",
     group: "delivery",
     usage:
-      'workit check <name> [--task <id>] [--base <ref>] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy [--wait <s>]] [--no-lease --reason "<why>"] -- <cmd…>',
+      'workit check <name> [--full] [--task <id>] [--base <ref>] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--full] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy [--wait <s>]] [--no-lease --reason "<why>"] -- <cmd…>',
     flagHints: {
       list: "workit check <name> runs a configured check; a name that is not configured prints the valid ones (workit check test|lint|typecheck|check)",
     },

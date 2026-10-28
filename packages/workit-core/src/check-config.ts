@@ -10,6 +10,10 @@
 //    self-ignoring `.workit/`, never at the repo root. A legacy root
 //    `workit.checks.json` is still read when `.workit/checks.json` is absent,
 //    with a note that it moved.
+//    In a linked worktree (a fanout slice's, an agent's) that has neither
+//    file, the main checkout's is read: `.workit/` is git-ignored, so a new
+//    worktree never has one, and it shares the main checkout's checks
+//    (#426). Configured commands still run from the worktree's own top.
 // 2. Built-in ecosystem defaults detected from the repo: package.json scripts
 //    `test`, `lint`, `typecheck`, `check` (`<pm> run <script>`, pm from the
 //    lockfile); go.mod → `go test ./...`; Cargo.toml → `cargo test`;
@@ -216,10 +220,25 @@ function detectedChecks(root: string): NamedCheck[] {
 
 const GATES = ["testing", "verification"] as const;
 
+/**
+ * The checks config file for `root`: its own, else (in a linked worktree
+ * without one) the main checkout's, else the path a new config belongs at.
+ */
+function configFileFor(root: string): string {
+  const own = checksConfigFile(root);
+  if (fs.existsSync(own)) return own;
+  const common = git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (!common || path.basename(common) !== ".git") return own;
+  const main = path.dirname(common);
+  if (path.resolve(main) === path.resolve(root)) return own;
+  const shared = checksConfigFile(main);
+  return fs.existsSync(shared) ? shared : own;
+}
+
 /** The named checks for the repository containing `cwd` (see the header). */
 export function loadCheckConfig(cwd: string): CheckConfig {
   const root = checkRoot(cwd);
-  const file = checksConfigFile(root);
+  const file = configFileFor(root);
   const legacy = path.basename(file) === LEGACY_CHECKS_FILE;
   const label = legacy ? LEGACY_CHECKS_FILE : CHECKS_FILE;
   const note = legacy

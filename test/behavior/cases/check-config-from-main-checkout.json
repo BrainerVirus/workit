@@ -1,0 +1,19 @@
+{
+  "id": "check-config-from-main-checkout",
+  "source": "retro 2026-10-27 (#426): `workit check typecheck` in a fanout worktree found no .workit/checks.json, so agents ran raw commands",
+  "repo": {
+    "branch": "feature/x",
+    "worktree": "claude-agent",
+    "checks": {
+      "typecheck": "echo typed"
+    }
+  },
+  "cli": {
+    "argv": ["check", "typecheck"]
+  },
+  "expect": {
+    "exit": [0],
+    "require": ["typed", "workit check typecheck: passed, exit 0 .*\\(configured\\)"],
+    "forbid": ["no configured check"]
+  }
+}
