@@ -14,6 +14,7 @@ import path from "node:path";
 import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { resolveAutonomy } from "@/packages/workit-core/src/autonomy";
 import type { Io } from "@/packages/workit-cli/src/output";
+import type { GrantDeps } from "@/packages/workit-cli/src/verbs/grant";
 import { runWorkspace } from "@/packages/workit-cli/src/verbs/workspace";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
@@ -62,17 +63,22 @@ afterEach(() => {
 /** An agent shell: every host marker set, headless. */
 const AGENT_ENV = { CLAUDECODE: "1", OPENCODE: "1", CODEX_SANDBOX: "seatbelt" };
 
-const run = async (argv: string[], cwd = root) => {
+const run = async (
+  argv: string[],
+  cwd = root,
+  env: NodeJS.ProcessEnv = AGENT_ENV,
+  deps?: GrantDeps,
+) => {
   let stdout = "";
   let stderr = "";
   const io: Io = {
     json: true,
     cwd,
-    env: AGENT_ENV,
+    env,
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   };
-  const code = await runWorkspace(argv, io);
+  const code = await runWorkspace(argv, io, deps);
   return { code, json: () => JSON.parse(stdout), stderr };
 };
 
@@ -176,12 +182,6 @@ test("list names the effective entry for the cwd and why", async () => {
   expect(data.effective).toBe("kit");
   expect(data.matches.toSorted()).toEqual(["kit", "work"]);
   expect(data.reason).toContain("most specific");
-});
-
-test("there is no rm: removal stays with the user's own editor", async () => {
-  const before = readFileSync(file(), "utf8");
-  expect((await run(["rm", "work"])).code).toBe(2);
-  expect(readFileSync(file(), "utf8")).toBe(before);
 });
 
 test("add refuses a duplicate name and an unknown parent", async () => {
@@ -453,3 +453,295 @@ test("model: add never raises effective authority for any cwd, worktrees include
     rmSync(outside, { recursive: true, force: true });
   }
 }, 60_000);
+
+// `workspace rm` (#453): removing an entry hands its folders to another entry
+// or the defaults, so a removal that might raise anything needs the user at
+// their own terminal, like a grant raise.
+const headless: GrantDeps = {
+  interactive: () => false,
+  ask: async () => {
+    throw new Error("a headless call must never prompt");
+  },
+};
+const terminal = (answer: string, asked: string[] = []): GrantDeps => ({
+  interactive: () => true,
+  ask: async (question) => {
+    asked.push(question);
+    return answer;
+  },
+});
+const GH = { provider: "github", account: "me" };
+/** Under work, more specific: removing it hands its folders back to work (merge=true). */
+const KIT = () => ({
+  name: "kit",
+  glob: `${root}/work/libs/kit/**`,
+  vcs: GH,
+  autonomy: { merge: false },
+});
+
+test("rm that would raise merge for a path is refused from an agent shell, even interactive", async () => {
+  seed([WORK(), KIT()]);
+  const before = readFileSync(file(), "utf8");
+  const asked: string[] = [];
+  const result = await run(["rm", "kit"], root, AGENT_ENV, terminal("kit", asked));
+  expect(result.code).not.toBe(0);
+  const envelope = result.json();
+  expect(envelope.code).toBe("blocked");
+  expect(envelope.error).toContain("grant_raise_refused");
+  expect(envelope.error).toContain("merge");
+  expect(envelope.unblock).toContain("workit workspace rm kit");
+  expect(asked).toEqual([]);
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect(existsSync(backup())).toBe(false);
+  // Headless without an agent marker is refused too.
+  expect((await run(["rm", "kit"], root, {}, headless)).json().error).toContain(
+    "grant_raise_refused",
+  );
+  expect(readFileSync(file(), "utf8")).toBe(before);
+});
+
+test("rm that would raise needs the workspace name typed at the user's own terminal", async () => {
+  seed([WORK(), KIT()]);
+  const before = readFileSync(file(), "utf8");
+  expect((await run(["rm", "kit"], root, {}, terminal("nope"))).json().code).toBe("blocked");
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  const asked: string[] = [];
+  const result = await run(["rm", "kit"], root, {}, terminal("kit\n", asked));
+  expect(result.code).toBe(0);
+  expect(asked[0]).toContain("merge");
+  expect(readFileSync(backup(), "utf8")).toBe(before);
+  expect(doc().workspaces.map((entry: { name: string }) => entry.name)).toEqual(["work"]);
+  expect(resolveAutonomy(path.join(root, "work", "libs", "kit")).workspace).toBe("work");
+});
+
+test("rm that lowers or keeps every grant succeeds from an agent shell, with a backup", async () => {
+  // loose is at least as loose as work and the defaults in every kind, and no
+  // other entry is as specific (so no folder was ambiguous before).
+  const loose = {
+    name: "loose",
+    glob: `${root}/work/libs/kit/**`,
+    vcs: GH,
+    autonomy: { push: true, pr: true, merge: true, release: true, rerun: true },
+    defaultEndpoint: "merged",
+    verification: "proportional",
+  };
+  seed([WORK(), loose]);
+  const before = readFileSync(file(), "utf8");
+  const kitDir = path.join(root, "work", "libs", "kit");
+  const was = resolveAutonomy(kitDir);
+  expect(was.workspace).toBe("loose");
+  const result = await run(["rm", "loose"]);
+  expect(result.code).toBe(0);
+  expect(readFileSync(backup(), "utf8")).toBe(before);
+  expect(byName("loose")).toBeUndefined();
+  expect(JSON.stringify(byName("work"), null, 2)).toBe(JSON.stringify(WORK(), null, 2));
+  const data = result.json().data;
+  expect(data.removed.name).toBe("loose");
+  expect(data.raises).toEqual([]);
+  // What covers the removed folders now, and with which grants.
+  expect(data.covers).toMatchObject({ at: `${root}/work/libs/kit`, workspace: "work" });
+  expect(data.takers).toContain("work");
+  const now = resolveAutonomy(kitDir);
+  expect(now.workspace).toBe("work");
+  for (const kind of ["push", "pr", "merge", "release", "rerun"] as const)
+    expect(RANK(now.grants[kind])).toBeLessThanOrEqual(RANK(was.grants[kind]));
+});
+
+test("rm of an entry stricter than the defaults is a raise: the defaults take its folders", async () => {
+  seed([WORK(), { name: "solo", glob: `${root}/solo/**`, vcs: GH, autonomy: { push: false } }]);
+  const result = await run(["rm", "solo"]);
+  expect(result.json().error).toContain("grant_raise_refused");
+  expect(result.json().error).toContain("push");
+});
+
+test("rm never removes the last entry, and refuses an unknown name", async () => {
+  const before = readFileSync(file(), "utf8");
+  const last = await run(["rm", "work"], root, {}, terminal("work"));
+  expect(last.json().code).toBe("blocked");
+  expect(last.json().error).toContain("last workspace");
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect((await run(["rm", "nope"])).json().code).toBe("not_found");
+  expect((await run(["rm"])).code).toBe(2);
+});
+
+// Model test (#453): for generated configs and every cwd, including a symlink
+// and a linked worktree outside every glob, an `rm` an agent shell is allowed
+// to run never raises the effective grants, endpoint or verification the real
+// resolver reports; one it refuses writes nothing.
+test("model: rm from an agent shell never raises effective authority for any cwd", async () => {
+  const S = root;
+  const outside = mkdtempSync(path.join(os.tmpdir(), "wk-workspace-rm-outside-")).replaceAll(
+    "\\",
+    "/",
+  );
+  try {
+    const repo = path.join(S, "w", "ui", "repo");
+    mkdirSync(repo, { recursive: true });
+    const git = (cwd: string, ...args: string[]) =>
+      expect(
+        spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd }).status,
+      ).toBe(0);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "commit", "-q", "--allow-empty", "-m", "init");
+    const worktree = path.join(outside, "wt");
+    git(repo, "worktree", "add", "-q", "-b", "side", worktree);
+
+    const GLOBS = [
+      `${S}/w/**`,
+      `${S}/w`,
+      `${S}/w/ui/**`,
+      `${S}/w/ui/repo/**`,
+      `${S}/w/*/ui/sub/**`,
+      `${S}/w*/**`,
+      `${S}/wx/**`,
+      `${S}/*/q/**`,
+      `${S}/l/**`,
+      `${outside}/wt/**`,
+    ];
+    const CWDS = [
+      [S, "w"],
+      [S, "w", "ui"],
+      [S, "w", "ui", "ui", "sub", "q"],
+      [S, "wx", "q"],
+      [S, "other", "q"],
+      [S, "w", "ui", "repo"],
+    ].map((parts) => path.join(...parts));
+    for (const cwd of CWDS) mkdirSync(cwd, { recursive: true });
+    symlinkSync(path.join(S, "w"), path.join(S, "l"));
+    CWDS.push(path.join(S, "l", "ui", "ui", "sub", "q"));
+    CWDS.push(worktree);
+
+    let seedValue = 453;
+    const rand = () => {
+      seedValue = (seedValue * 1103515245 + 12345) % 2147483648;
+      return seedValue / 2147483648;
+    };
+    const pick = <T>(items: readonly T[]): T => items[Math.floor(rand() * items.length)];
+    const VALUES = [true, false, "verified", undefined];
+    const ENDPOINTS = ["commit", "pr", "green", "merged", undefined];
+    const MODES = ["proportional", "self", "independent", undefined];
+    const ENDPOINT_ORDER = ["commit", "pr", "green", "merged"];
+    // An ambiguous folder: every command there fails, so nothing is granted.
+    const NOTHING = {
+      grants: { push: false, pr: false, merge: false, release: false, rerun: false },
+      endpoint: "commit",
+      effective: "commit",
+      verification: "independent",
+    };
+    const view = (cwd: string) => {
+      try {
+        const v = resolveAutonomy(cwd);
+        return {
+          grants: v.grants,
+          endpoint: v.defaultEndpoint,
+          effective: v.effectiveEndpoint,
+          verification: v.verification,
+        };
+      } catch {
+        return null; // ambiguous: every command there fails, nothing is granted
+      }
+    };
+
+    let removed = 0;
+    let refused = 0;
+    for (let round = 0; round < 150; round++) {
+      const globs = GLOBS.toSorted(() => rand() - 0.5);
+      const count = 2 + Math.floor(rand() * 3);
+      // Loose entries first so some removals raise nothing.
+      const loose = rand() < 0.5;
+      const existing = globs.slice(0, count).map((glob, index) => {
+        const autonomy = Object.fromEntries(
+          (["push", "pr", "merge", "release", "rerun"] as const)
+            .map((kind) => [kind, loose && index === 0 ? true : pick(VALUES)])
+            .filter(([, value]) => value !== undefined),
+        );
+        const endpoint = loose && index === 0 ? "merged" : pick(ENDPOINTS);
+        const verification = loose && index === 0 ? "proportional" : pick(MODES);
+        return {
+          name: `e${index}`,
+          glob,
+          vcs: rand() < 0.85 ? { provider: "github", account: "me" } : { provider: "github" },
+          ...(Object.keys(autonomy).length ? { autonomy } : {}),
+          ...(endpoint ? { defaultEndpoint: endpoint } : {}),
+          ...(verification ? { verification } : {}),
+        };
+      });
+      seed(existing);
+      const text = readFileSync(file(), "utf8");
+      const before = CWDS.map(view);
+      const target = loose ? "e0" : `e${Math.floor(rand() * count)}`;
+      const result = await run(["rm", target]);
+      const label0 = JSON.stringify({ existing, target });
+      if (result.code !== 0) {
+        expect(result.json().error, label0).toContain("grant_raise_refused");
+        expect(readFileSync(file(), "utf8"), label0).toBe(text);
+        refused++;
+        continue;
+      }
+      removed++;
+      const after = CWDS.map(view);
+      for (const [index, cwd] of CWDS.entries()) {
+        const now = after[index];
+        if (!now) continue;
+        const was = before[index] ?? NOTHING;
+        const label = JSON.stringify({ cwd, existing, target, was, now });
+        for (const kind of ["push", "pr", "merge", "release", "rerun"] as const)
+          expect(RANK(now.grants[kind]), `${kind} ${label}`).toBeLessThanOrEqual(
+            RANK(was.grants[kind]),
+          );
+        expect(ENDPOINT_ORDER.indexOf(now.endpoint), label).toBeLessThanOrEqual(
+          ENDPOINT_ORDER.indexOf(was.endpoint),
+        );
+        expect(ENDPOINT_ORDER.indexOf(now.effective), label).toBeLessThanOrEqual(
+          ENDPOINT_ORDER.indexOf(was.effective),
+        );
+        expect(STRICT.indexOf(now.verification), label).toBeLessThanOrEqual(
+          STRICT.indexOf(was.verification),
+        );
+      }
+      rmSync(backup(), { force: true });
+    }
+    // Both outcomes happen: the model is not vacuous either way.
+    expect(removed).toBeGreaterThan(10);
+    expect(refused).toBeGreaterThan(10);
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("rm of an entry whose grants lack vcs.account is a raise: it delivered nothing to a forge", async () => {
+  // Explicit grants without vcs.account reach no forge (autonomy.ts), so the
+  // folders had push=false in effect; work would hand them push, pr and merge.
+  seed([
+    WORK(),
+    {
+      name: "noaccount",
+      glob: `${root}/work/libs/kit/**`,
+      vcs: { provider: "github" },
+      autonomy: { push: true, pr: true, merge: true, release: true, rerun: true },
+      defaultEndpoint: "merged",
+    },
+  ]);
+  const result = await run(["rm", "noaccount"]);
+  expect(result.json().error).toContain("grant_raise_refused");
+  expect(result.json().error).toContain("push");
+});
+
+test("rm of one of two equally specific entries is a raise: their shared folder was ambiguous", async () => {
+  // <S>/work/repo matches both with the same specificity: every command there
+  // fails (nothing granted). Removing r would hand it to x with the defaults.
+  const folder = path.join(root, "work", "repo");
+  mkdirSync(folder, { recursive: true });
+  seed([
+    { name: "r", glob: `${root}/work/**`, vcs: GH },
+    { name: "x", glob: `${root}/*/repo/**`, vcs: GH },
+  ]);
+  expect(() => resolveAutonomy(folder)).toThrow();
+  const before = readFileSync(file(), "utf8");
+  const result = await run(["rm", "r"], root, AGENT_ENV, headless);
+  expect(result.code).not.toBe(0);
+  expect(result.json().error).toContain("grant_raise_refused");
+  expect(result.json().error).toContain("push");
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect(existsSync(backup())).toBe(false);
+});

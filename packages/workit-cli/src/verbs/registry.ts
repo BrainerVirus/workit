@@ -305,7 +305,8 @@ export const VERBS: readonly VerbEntry[] = [
     {
       name: "workspace",
       group: "setup",
-      summary: "Edit workspace entries without the wizard; never raises a grant",
+      summary:
+        "Edit workspace entries without the wizard; a raise (rm included) needs the user at a terminal",
       subcommands: [
         {
           name: "list",
@@ -324,14 +325,21 @@ export const VERBS: readonly VerbEntry[] = [
           summary:
             "Change non-grant keys (dotted paths, JSON values, null removes); grants stay with workit grant set",
         },
+        {
+          name: "rm",
+          usage: "workit workspace rm <name>",
+          summary:
+            "Remove an entry; if another entry or the defaults could grant its folders more, the user confirms at their own terminal",
+        },
       ],
       examples: [
         "workit workspace list",
         "workit workspace add kit --glob '/home/me/work/libs/kit/**' --from work",
         "workit workspace set kit branchPolicy.integration=merge",
+        "workit workspace rm kit",
       ],
       notes: [
-        "A new entry starts with no grants of its own. It starts at the strictest level of every entry and the defaults, so its folders never get more than they had. Remove an entry in your own editor. Raising a grant, defaultEndpoint or verification needs the user: workit grant set <name> <kind>=<value> in their own terminal.",
+        "A new entry starts with no grants of its own. It starts at the strictest level of every entry and the defaults, so its folders never get more than they had. rm counts every other entry and the defaults as a possible taker of the removed folders: when any could grant more, it is refused in an agent or headless shell and the user types the name to confirm at their own terminal; it never removes the last entry. Raising a grant, defaultEndpoint or verification needs the user: workit grant set <name> <kind>=<value> in their own terminal.",
         "Every write keeps the previous file as workspaces.json.bak. `workit doctor` lists overlapping globs and which entry wins.",
       ],
       load: () => import("./workspace"),

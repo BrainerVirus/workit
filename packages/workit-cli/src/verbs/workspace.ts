@@ -4,8 +4,9 @@
 //   workit workspace list
 //   workit workspace add <name> --glob <g> [--from <parent>]
 //   workit workspace set <name> <key>=<value>…
+//   workit workspace rm <name>
 //
-// These verbs never raise authority, so an agent shell may run them. Grants,
+// list, add and set never raise authority, so an agent shell may run them. Grants,
 // defaultEndpoint and verification stay with `workit grant set` at the user's
 // own terminal (verbs/grant.ts):
 // - `add` never copies them; `--from` copies vcs, issues, branchPolicy,
@@ -16,8 +17,15 @@
 //   resolved), so no directory it takes over can ever get more than it had.
 // - `set` refuses the grant keys and the keys that decide where grants apply
 //   (name, glob).
-// There is no `rm`: removing an entry can hand its directories to a looser
-// one, so removal stays with the user's own editor.
+// - `rm` (#453) hands the entry's directories to whichever entry or default
+//   resolves there next. Textual overlap is no bound on that (see above), so
+//   every other entry and the defaults count as a possible taker, and an
+//   entry of the same specificity may have made a directory ambiguous (where
+//   every command fails, so its baseline is nothing: no grant, no endpoint
+//   beyond commit, the strictest verification). A removal
+//   that might raise any grant, the endpoint or verification is refused in an
+//   agent or headless shell, like `grant set`, and needs the workspace name
+//   typed at the user's own terminal. It never removes the last entry.
 // Every write keeps the previous file as workspaces.json.bak, like grant set.
 import { copyFileSync, existsSync } from "node:fs";
 import {
@@ -37,6 +45,7 @@ import {
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import {
   WorkspaceConfigError,
+  globRoot,
   globSpecificity,
   overlappingEntries,
   readWorkspacesResult,
@@ -47,9 +56,11 @@ import {
   type WorkspacesResult,
 } from "@brainervirus/workit-core/src/core/workspaces";
 import { emit, fail, ok, type Io } from "../output";
+import { askLine, askOrCancel, cancelled } from "../prompt";
+import { agentMarker, type GrantDeps } from "./grant";
 
 const USAGE =
-  "workit workspace list | workspace add <name> --glob <g> [--from <parent>] | workspace set <name> <key>=<value>…";
+  "workit workspace list | workspace add <name> --glob <g> [--from <parent>] | workspace set <name> <key>=<value>… | workspace rm <name>";
 
 /** What `--from` copies: never a grant, the endpoint or verification. */
 export const INHERITED_KEYS = [
@@ -104,6 +115,22 @@ const ceilingOf = (entry: unknown): Ceiling => ({
   verification: verificationOf(entry),
 });
 
+/**
+ * What an entry really delivers, for the side of a comparison that must not be
+ * overstated: explicit grants without vcs.account reach no forge (autonomy.ts),
+ * so such an entry delivers nothing beyond a local commit.
+ */
+const deliveredCeilingOf = (entry: Entry): Ceiling => {
+  const ceiling = ceilingOf(entry);
+  const account = (entry.vcs as { account?: unknown } | undefined)?.account;
+  if (Object.keys(configuredGrants(entry).grants).length === 0 || account) return ceiling;
+  return {
+    grants: Object.fromEntries(GRANT_KINDS.map((kind) => [kind, false])) as Grants,
+    endpoint: DEFAULT_ENDPOINT,
+    verification: ceiling.verification,
+  };
+};
+
 const STRICTNESS: readonly VerificationMode[] = ["independent", "self", "proportional"];
 const looser = (current: VerificationMode, next: VerificationMode): boolean =>
   STRICTNESS.indexOf(next) > STRICTNESS.indexOf(current);
@@ -147,6 +174,18 @@ const clampToShadowed = (shadowed: Ceiling | null): Record<string, unknown> => {
       : {}),
   };
 };
+
+const defaultDeps: GrantDeps = {
+  interactive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
+  ask: (question) => askLine(question),
+};
+
+/** What `after` grants beyond `before`: grant kinds, defaultEndpoint, verification. */
+const raisedKinds = (before: Ceiling, after: Ceiling): string[] => [
+  ...GRANT_KINDS.filter((kind) => raises(kind, before.grants[kind], after.grants[kind])),
+  ...(raisesEndpoint(before.endpoint, after.endpoint) ? ["defaultEndpoint"] : []),
+  ...(looser(before.verification, after.verification) ? ["verification"] : []),
+];
 
 const usage = (io: Io, message: string): number =>
   emit(io, fail("invalid_input", `${message}\nusage: ${USAGE}`));
@@ -410,12 +449,132 @@ function set(argv: string[], io: Io): number {
   ]);
 }
 
-export async function runWorkspace(argv: string[], io: Io): Promise<number> {
+/** One possible taker of the removed entry's directories and what it would raise. */
+type Raise = { taker: string; kinds: string[]; reason: string };
+
+async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
+  const [name, extra] = argv;
+  if (!name) return usage(io, "rm needs <name>");
+  if (extra) return usage(io, `unexpected argument ${extra}`);
+  const current = load(io);
+  if (typeof current === "number") return current;
+  const entries = entriesOf(current);
+  const removed = entries.find((entry) => entry.name === name);
+  if (!removed)
+    return emit(io, fail("not_found", `no workspace named "${name}" in ${current.path}`));
+  const remaining = entries.filter((entry) => entry !== removed);
+  if (remaining.length === 0)
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `"${name}" is the last workspace in ${current.path}: it holds your vcs, policies and grants, and without it every folder falls back to the defaults; workspace rm does not remove it`,
+        {
+          unblock: `add the workspace that should replace it first (workit workspace add <name> --glob <g> --from ${name}), or edit ${current.path} in your own editor`,
+        },
+      ),
+    );
+  // Every directory the entry decided now resolves to some other entry or the
+  // defaults; which one is not decidable from the text (see the header).
+  const before = deliveredCeilingOf(removed);
+  const defaults = ceilingOf({});
+  // An ambiguous folder: every command there fails, so nothing is granted.
+  const nothing: Ceiling = {
+    grants: Object.fromEntries(GRANT_KINDS.map((kind) => [kind, false])) as Grants,
+    endpoint: DEFAULT_ENDPOINT,
+    verification: STRICTNESS[0],
+  };
+  const specificity = globSpecificity(removed.glob);
+  const raised: Raise[] = [
+    { taker: "defaults", kinds: raisedKinds(before, defaults), reason: "no entry matches" },
+    ...remaining.map((entry) => ({
+      taker: entry.name,
+      kinds: raisedKinds(before, ceilingOf(entry)),
+      reason: "may match a folder it covered",
+    })),
+    ...remaining
+      .filter((entry) => globSpecificity(entry.glob) === specificity)
+      .map((entry) => ({
+        taker: entry.name,
+        kinds: raisedKinds(nothing, ceilingOf(entry)),
+        reason: "equally specific: a folder both matched was ambiguous, with nothing granted",
+      })),
+  ].filter((raise) => raise.kinds.length > 0);
+  if (raised.length > 0) {
+    const kinds = [...new Set(raised.flatMap((raise) => raise.kinds))];
+    const detail = raised
+      .map((raise) => `${raise.taker} (${raise.reason}): ${raise.kinds.join(", ")}`)
+      .join("; ");
+    const agent = agentMarker(io.env);
+    if (!deps.interactive() || agent)
+      return emit(
+        io,
+        fail(
+          "blocked",
+          `grant_raise_refused: removing "${name}" may raise ${kinds.join(", ")} for the folders it covered (${detail}); that needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}; grants are never raised headless`,
+          {
+            unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): workit workspace rm ${name}`,
+          },
+        ),
+      );
+    const answer = await askOrCancel(io, () =>
+      deps.ask(
+        `Removing workspace "${name}" may raise ${kinds.join(", ")} for the folders it covered (${detail}). An agent there may then do more without asking. Type the workspace name to confirm: `,
+      ),
+    );
+    if (answer === null) return cancelled(io);
+    if (answer.trim() !== name)
+      return emit(io, fail("blocked", "workspace removal not confirmed; nothing was written"));
+  }
+  const result = save(current, remaining);
+  if (!result.ok) return emit(io, fail("invalid_input", result.error));
+  const at = globRoot(removed.glob);
+  let covers: { at: string; workspace: string | null; error?: string };
+  try {
+    covers = { at, workspace: resolveWorkspaceFromEntries(at, remaining)?.name ?? null };
+  } catch (error) {
+    covers = { at, workspace: null, error: error instanceof Error ? error.message : String(error) };
+  }
+  const coveringCeiling = ceilingOf(remaining.find((entry) => entry.name === covers.workspace));
+  return emit(
+    io,
+    ok({
+      path: result.path,
+      backup: result.backup,
+      removed,
+      covers: {
+        ...covers,
+        grants: coveringCeiling.grants,
+        defaultEndpoint: coveringCeiling.endpoint,
+        verification: coveringCeiling.verification,
+      },
+      takers: overlappingEntries(removed.glob, remaining).map((entry) => entry.name),
+      raises: raised,
+    }),
+    (data) => [
+      `${name} (${removed.glob}) removed from ${written(data.path, data.backup)}`,
+      data.covers.error
+        ? `  ${data.covers.at}: ${data.covers.error}`
+        : `  ${data.covers.at} is now ${data.covers.workspace ? `workspace ${data.covers.workspace}` : "under the defaults (no workspace)"}: ${GRANT_KINDS.map((kind) => `${kind}=${String(data.covers.grants[kind])}`).join(" ")}; default endpoint ${data.covers.defaultEndpoint}; verification ${data.covers.verification}`,
+      ...(data.takers.length
+        ? [`  entries whose globs may cover its other folders: ${data.takers.join(", ")}`]
+        : []),
+      "  workit workspace list --cwd <folder> shows which entry applies to a folder",
+    ],
+  );
+}
+
+export async function runWorkspace(
+  argv: string[],
+  io: Io,
+  deps: GrantDeps = defaultDeps,
+): Promise<number> {
   // Names and specs never start with --; a bare `--` before them is dropped.
   const [sub, ...rest] = argv.filter((arg) => arg !== "--json" && arg !== "--");
   if (sub === undefined || sub === "list") return list(rest, io);
   if (sub === "add") return add(rest, io);
   if (sub === "set") return set(rest, io);
+  if (sub === "rm") return rm(rest, io, deps);
   return usage(io, `unknown subcommand "${sub}"`);
 }
 
