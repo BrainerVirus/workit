@@ -1842,7 +1842,7 @@ const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbe
       registryProbed: true,
       detail:
         "registry_unreachable: cannot compare OpenCode @latest cache against published workit-opencode",
-      fix: `Retry when npm is reachable, or remove ${cache.dir} and restart OpenCode to re-resolve`,
+      fix: `Retry when npm is reachable; to update, opencode plugin update ${OPENCODE_NPM_PIN}`,
     };
   }
   if (!semverAtLeast(installed, expected)) {
@@ -1851,7 +1851,7 @@ const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbe
       status: "fail",
       registryProbed: true,
       detail: `stale_install: OpenCode @latest cache has workit-opencode ${installed} behind published ${expected}`,
-      fix: `Remove ${cache.dir} and restart OpenCode — it re-resolves @latest on the next launch`,
+      fix: `opencode plugin update ${OPENCODE_NPM_PIN} (OpenCode 2.x loads it live, no restart); without that verb, remove ${cache.dir} and relaunch OpenCode`,
     };
   }
   return {

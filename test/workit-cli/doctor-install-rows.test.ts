@@ -122,6 +122,7 @@ test.skipIf(process.platform === "win32")(
     expect(stale.status).toBe("fail");
     expect(stale.detail).toContain("8.9.0");
     expect(stale.fix).toContain(spec);
+    expect(stale.fix).toContain("opencode plugin update @brainervirus/workit-opencode");
   },
 );
 
