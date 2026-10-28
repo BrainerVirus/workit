@@ -646,7 +646,7 @@ function implicitDeleteSkip(
 
 type BaseCi =
   | { ok: true; note: string | null }
-  | { ok: false; failing: ForgeCheck[]; sha: string | null };
+  | { ok: false; failing: ForgeCheck[]; sha: string | null; requiredKnown: boolean };
 
 /**
  * The base branch head's CI before a merge lands on it: red (a failing check)
@@ -659,10 +659,17 @@ function baseCiState(cwd: string, resolved: ResolvedForge, base: string): BaseCi
   const read = resolved.forge.branchChecks(base);
   if (!read.ok)
     return { ok: true, note: `base ${base} CI not read (${read.error}); merging anyway` };
+  // Only checks branch protection requires gate; with the required set
+  // unreadable, count hard failures not known to be optional.
+  const { requiredKnown } = read.data;
   const failing = read.data.checks.filter(
-    (check) => check.state === "failing" && check.required !== false,
+    (check) =>
+      check.state === "failing" &&
+      (requiredKnown
+        ? check.required === true
+        : check.required !== false && check.conclusion === "failure"),
   );
-  if (failing.length) return { ok: false, failing, sha: read.data.sha };
+  if (failing.length) return { ok: false, failing, sha: read.data.sha, requiredKnown };
   const pending = read.data.checks.filter((check) => check.state === "pending");
   return {
     ok: true,
@@ -843,7 +850,7 @@ export async function mergePullRequest(
     const url = baseCi.failing.find((failed) => failed.url)?.url ?? null;
     if (!baseRed)
       return refuse(
-        `base_red: ${doc.base} at ${baseCi.sha?.slice(0, 12) ?? "its head"} has failing CI (${names})${url ? `: ${url}` : ""}; merging ${label} onto it would land on a red base`,
+        `base_red: ${doc.base} at ${baseCi.sha?.slice(0, 12) ?? "its head"} has failing CI (${names}${baseCi.requiredKnown ? "" : "; the required checks could not be read, so every failed check counts"})${url ? `: ${url}` : ""}; merging ${label} onto it would land on a red base`,
         `fix ${doc.base} first, or, if the user accepts it: workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --base-red-ok --reason "<why>"`,
         { reason: "base_red", blockers: baseCi.failing.map((failed) => failed.name) },
       );

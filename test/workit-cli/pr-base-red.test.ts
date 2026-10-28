@@ -8,6 +8,7 @@ import { readLedger } from "@/packages/workit-core/src/ledger";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import {
   fixture,
+  replyError,
   makeForgeRepo,
   replayRunner,
   type Call,
@@ -78,7 +79,11 @@ const baseChecks = (nodes: Node[] | null) =>
   });
 
 /** A docs-only READY PR (lane none: no verdict needed) whose base checks are `nodes`. */
-const setup = (nodes: Node[] | null) => {
+const setup = (
+  nodes: Node[] | null,
+  extra: Record<string, Reply> = {},
+  status: string | null = null,
+) => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
@@ -98,8 +103,10 @@ const setup = (nodes: Node[] | null) => {
     "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
     "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
     "graphql find": fixture("github/find-pr.json"),
-    "graphql status": () => fixture(merged ? "github/pr-merged.json" : "github/pr-passing.json"),
+    "graphql status": () =>
+      merged ? fixture("github/pr-merged.json") : (status ?? fixture("github/pr-passing.json")),
     "graphql branch-checks": baseChecks(nodes),
+    ...extra,
     "PUT repos/o/r/pulls/12/merge": () => {
       merged = true;
       return JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" });
@@ -134,16 +141,16 @@ const rows = (cwd: string, type: string) => {
 test("given a base whose head CI failed, when merging, then it is refused as base_red naming the check and run URL, and nothing merges", async () => {
   const { repo, runner } = setup([
     checkRun("unit", "COMPLETED", "SUCCESS"),
-    checkRun("test-leak", "COMPLETED", "FAILURE"),
+    checkRun("fast checks", "COMPLETED", "FAILURE"),
   ]);
   const result = await run(["pr", "merge", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().error).toContain("base_red");
-  expect(result.json().error).toContain("CI / test-leak");
+  expect(result.json().error).toContain("CI / fast checks");
   expect(result.json().error).not.toContain("CI / unit");
   expect(result.json().error).toContain(RUN_URL);
   expect(result.json()).toMatchObject({
-    data: { reason: "base_red", blockers: ["CI / test-leak"] },
+    data: { reason: "base_red", blockers: ["CI / fast checks"] },
   });
   expect(result.json().unblock).toContain("--base-red-ok --reason");
   expect(merges(runner.calls)).toEqual([]);
@@ -175,7 +182,7 @@ test("given a base with no checks, when merging, then it merges", async () => {
 });
 
 test("given a red base, when --base-red-ok --reason is passed, then it merges and both merge rows record the reason", async () => {
-  const { repo, runner } = setup([checkRun("test-leak", "COMPLETED", "FAILURE")]);
+  const { repo, runner } = setup([checkRun("fast checks", "COMPLETED", "FAILURE")]);
   const result = await run(
     ["pr", "merge", "--base-red-ok", "--reason", "user asked: the fix for main itself", "--json"],
     repo.cwd,
@@ -194,9 +201,55 @@ test("given a red base, when --base-red-ok --reason is passed, then it merges an
 });
 
 test("--base-red-ok without --reason is a usage error and nothing is called", async () => {
-  const { repo, runner } = setup([checkRun("test-leak", "COMPLETED", "FAILURE")]);
+  const { repo, runner } = setup([checkRun("fast checks", "COMPLETED", "FAILURE")]);
   const result = await run(["pr", "merge", "--base-red-ok", "--json"], repo.cwd);
   expect(result.code).toBe(2);
   expect(result.stderr + result.stdout).toContain("--base-red-ok needs --reason");
   expect(runner.calls).toEqual([]);
+});
+
+test("given a failing check branch protection does not require, when merging, then it merges", async () => {
+  const { repo, runner } = setup([checkRun("windows shard", "COMPLETED", "FAILURE")]);
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(merges(runner.calls)).toHaveLength(1);
+});
+
+test("given unreadable base checks, when merging, then it merges with a note", async () => {
+  const { repo, runner } = setup(null, {
+    "graphql branch-checks": replyError("HTTP 502 bad gateway"),
+  });
+  const result = await run(["pr", "merge"], repo.cwd);
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(result.stdout).toContain("CI not read");
+  expect(result.stdout).toContain("merging anyway");
+  expect(merges(runner.calls)).toHaveLength(1);
+});
+
+test("given an unreadable required set, when a check failed outright, then it is refused and says the set was unreadable", async () => {
+  const { repo, runner } = setup([checkRun("windows shard", "COMPLETED", "FAILURE")], {
+    "GET repos/o/r/rules/branches/main": replyError("HTTP 500"),
+  });
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("required checks could not be read");
+  expect(merges(runner.calls)).toEqual([]);
+});
+
+test("given a PR whose base is not a protected target (a stack's lower PR), when merging, then the base checks are never read", async () => {
+  const lower = fixture("github/pr-passing.json").replace(
+    '"baseRefName": "main"',
+    '"baseRefName": "feature/base"',
+  );
+  const { repo, runner } = setup(
+    [checkRun("fast checks", "COMPLETED", "FAILURE")],
+    {
+      "GET repos/o/r/branches/feature/base": replyError("HTTP 404"),
+      "GET repos/o/r/rules/branches/feature/base": "[]",
+    },
+    lower,
+  );
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(runner.calls.filter((call) => call.op === "branch-checks")).toEqual([]);
 });

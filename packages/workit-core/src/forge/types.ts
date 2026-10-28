@@ -114,7 +114,10 @@ export type ForgePrStatus = {
 export type RefChecks = {
   /** The commit the checks belong to; null when the forge did not say. */
   sha: string | null;
+  /** `required` is set from branch protection when `requiredKnown`; else it is null on GitHub. */
   checks: ForgeCheck[];
+  /** True when the branch's required checks could be read (GitLab gates on the whole pipeline). */
+  requiredKnown: boolean;
 };
 
 export type JobRef = { jobId: number; scope: string | null };

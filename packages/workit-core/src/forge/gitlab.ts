@@ -481,7 +481,7 @@ export function createGitLabForge(options: {
       );
       if (!latest.ok) return latest;
       const pipeline = Array.isArray(latest.data) ? latest.data[0] : undefined;
-      if (!pipeline) return success({ sha: tip, checks: [] });
+      if (!pipeline) return success({ sha: tip, checks: [], requiredKnown: true });
       const scope = String(pipeline.project_id ?? encodeURIComponent(repo));
       const jobs = pages(
         `projects/${scope}/pipelines/${pipeline.id}/jobs`,
@@ -510,7 +510,7 @@ export function createGitLabForge(options: {
             web_url: pipeline.web_url,
           }),
         );
-      return success({ sha: tip, checks });
+      return success({ sha: tip, checks, requiredKnown: true });
     },
 
     jobLogTail(job, lines) {

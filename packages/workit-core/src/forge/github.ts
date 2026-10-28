@@ -480,12 +480,13 @@ export function createGitHubForge(options: {
         if (!rollup.contexts.pageInfo.hasNextPage) break;
         cursor = rollup.contexts.pageInfo.endCursor;
       }
-      return success({
-        sha,
-        checks: latestPerName(
-          contexts.map(checkFromContext).filter((check): check is ForgeCheck => check !== null),
-        ),
-      });
+      const required = requiredContexts(branch);
+      const checks = latestPerName(
+        contexts.map(checkFromContext).filter((check): check is ForgeCheck => check !== null),
+      ).map((check) =>
+        required ? { ...check, required: required.includes(check.context) } : check,
+      );
+      return success({ sha, checks, requiredKnown: required !== null });
     },
 
     jobLogTail(job, lines) {
