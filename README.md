@@ -344,9 +344,10 @@ Global flags:
 ## Upgrading
 
 Upgrade every host together: newer store records are refused by older
-runtimes. `workit upgrade` shows a per-host plan, asks once, applies with a
-backup, and ends with a per-host table and doctor's verdict; `--preview` changes
-nothing, `--yes` skips the question.
+runtimes. `workit upgrade` shows a per-host plan, asks once (`--yes` skips the
+question, `--preview` changes nothing), applies with a backup, and ends with a
+per-host table and doctor's verdict. Running hosts, the Codex daemon, backups
+and `--hosts`: [setup and upgrades](docs/guides/configuration.md#setup-and-upgrades).
 
 | From | Key breaks |
 | --- | --- |

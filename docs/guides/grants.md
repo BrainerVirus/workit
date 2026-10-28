@@ -143,7 +143,10 @@ version does not know is reported (`endpointIssue`) and read as `commit`;
 the rest of the file still applies.
 
 When workspace globs overlap, the match with the most literal path components
-wins; equally specific matches need an explicit workspace name. The
+wins; equally specific matches need an explicit workspace name.
+`workit workspace list` shows which entry applies to the current directory and
+why; `workit workspace add|set` adds or edits an entry without the wizard and
+never raises a grant ([config files](configuration.md#config-files)). The
 `WORKFLOW_TOOLKIT_CONFIG`, `WORKFLOW_TOOLKIT_CONFIG_DIR` and `XDG_CONFIG_HOME`
 overrides never redirect grants: while one is set, grants resolve to the
 defaults.
