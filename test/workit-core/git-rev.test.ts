@@ -598,13 +598,27 @@ const script = (dir: string, name: string, body: string): string => {
   return file;
 };
 
+// A killed process is a zombie until its new parent reaps it, and
+// `kill(pid, 0)` still succeeds on a zombie: count one as dead (Linux reads
+// the state from /proc) and give the reaper a moment under a loaded runner.
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  try {
+    return readFileSync(`/proc/${pid}/stat`, "utf8").split(") ").at(-1)?.[0] !== "Z";
+  } catch {
+    return true;
+  }
+};
+const aliveAfterReap = (pid: number, ms = 3_000): boolean => {
+  for (const until = Date.now() + ms; Date.now() < until;) {
+    if (!alive(pid)) return false;
+    Bun.sleepSync(50);
+  }
+  return alive(pid);
 };
 
 const startServer = async (mode: "stall" | "401") => {
@@ -696,7 +710,7 @@ test.skipIf(!posix)(
     if (!tip.ok) expect(tip.error).toContain("timed out after 1500 ms");
     const sshPid = Number(readFileSync(pidFile, "utf8").trim());
     expect(sshPid).toBeGreaterThan(0);
-    expect(alive(sshPid)).toBe(false);
+    expect(aliveAfterReap(sshPid)).toBe(false);
 
     // HTTPS to a server that accepts and never answers: git-remote-https has
     // the credential URL in its argv and must not survive the timeout.
