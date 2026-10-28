@@ -27,6 +27,10 @@ import {
   type HookInput,
 } from "@brainervirus/workit-core/hooks";
 import { roleSteering } from "@brainervirus/workit-core/src/hooks/steering";
+import {
+  escalateToolFailure,
+  type FailureMemo,
+} from "@brainervirus/workit-core/src/hooks/repeat-failure";
 import type {
   ExtensionContext,
   AgentToolResult,
@@ -71,26 +75,37 @@ const trustedForMutation = (ctx: ExtensionContext, action: unknown): Result<null
   return failure("permission_denied", "Pi project is not trusted for Workit mutations");
 };
 
+const failures: FailureMemo = new Map();
+
 const executeFamily = async (
   family: OperationFamily,
   input: unknown,
   ctx: ExtensionContext,
 ): Promise<PiToolResult> => {
+  const result = runFamily(family, input, ctx);
+  return output(
+    escalateToolFailure(failures, piContext(ctx).caller.actor, `workit_${family}`, input, result),
+  );
+};
+
+const runFamily = (
+  family: OperationFamily,
+  input: unknown,
+  ctx: ExtensionContext,
+): Result<unknown> => {
   // Pi may deliver structured params as JSON strings (host transport quirk);
   // flat-input normalization decodes them.
   const parsed = parseAdvertisedOperation(family, input, "pi");
-  if (!parsed.ok) return output(parsed);
+  if (!parsed.ok) return parsed;
   const trust = trustedForMutation(ctx, (parsed.data as { action?: unknown }).action);
-  if (!trust.ok) return output(trust);
+  if (!trust.ok) return trust;
   const context = piContext(ctx);
   const core = new WorkitCore(new TaskStore(ctx.cwd), context);
   const run = core[family] as unknown as (request: unknown) => Result<unknown>;
   const result = run.call(core, parsed.data);
-  return output(
-    family === "task" && (context.workerId ?? null) !== null
-      ? briefInspectResult(parsed.data, result)
-      : result,
-  );
+  return family === "task" && (context.workerId ?? null) !== null
+    ? briefInspectResult(parsed.data, result)
+    : result;
 };
 
 export const registerWorkitTools = (

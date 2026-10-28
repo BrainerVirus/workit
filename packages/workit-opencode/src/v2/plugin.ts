@@ -20,7 +20,12 @@ import { WORKIT_TOOL_CATALOG, workitFamilyOf } from "../shared/tools";
 import { nativeWorkerFor, workerCoordinatorFor, type DirectChildren } from "../tools/workit";
 import { createContextTool } from "../tools/context";
 import { createV2Lifecycle } from "./lifecycle";
-import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from "./injection";
+import {
+  injectAgentContext,
+  injectCompactionContext,
+  injectHistoryOffer,
+  injectModelSwitch,
+} from "./injection";
 import { evaluateShellPermission } from "./permissions";
 import { childSessionId } from "@brainervirus/workit-core/src/host-session";
 import { childDenial, childMayInspect, childMayRecord, childTaskMissing } from "./child-identity";
@@ -35,6 +40,15 @@ import { injectSkillNudge, observeSkillLoad } from "./skills";
 import { createStopControl } from "./stop";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
+import {
+  escalateToolFailure,
+  type FailureMemo,
+} from "@brainervirus/workit-core/src/hooks/repeat-failure";
+import {
+  modelKey,
+  modelSwitched,
+  type SessionModels,
+} from "@brainervirus/workit-core/src/hooks/model-switch";
 
 /** V2-native session facts a Workit call is bound to. A present `parentID`
  * means a child session: worker lineage is validated by the lifecycle port
@@ -100,6 +114,8 @@ const setup = async (ctx: Context): Promise<() => void> => {
   const sourceMarker = markSourcesLoaded(pluginSourceFiles);
   let staleSourcesWarned = false;
   const historyOfferSessions = new Set<string>();
+  const sessionModels: SessionModels = new Map();
+  const failureMemo: FailureMemo = new Map();
   const lifecycle = createV2Lifecycle({
     root,
     getSession: async (sessionID) => {
@@ -148,9 +164,13 @@ const setup = async (ctx: Context): Promise<() => void> => {
         // the tool stays code-mode-only and is never offered to the model.
         options: { codemode: false },
         execute: async (input: unknown, tool) => {
+          const respond = (value: unknown) =>
+            resultContent(
+              escalateToolFailure(failureMemo, String(tool.sessionID), spec.name, input, value),
+            );
           const session = await sessionFacts(ctx, tool.sessionID);
           if (session === null || !sameWorkspace(root, session.directory))
-            return resultContent(
+            return respond(
               failure(
                 "permission_denied",
                 "OpenCode session location does not match the plugin checkout",
@@ -175,30 +195,27 @@ const setup = async (ctx: Context): Promise<() => void> => {
               lead !== null && lead.parentID === undefined && sameWorkspace(root, lead.directory);
             const inspecting = childMayInspect(family, input);
             if (!directChild || family === null || !(inspecting || childMayRecord(family, input)))
-              return resultContent(failure("permission_denied", childDenial(identity)));
+              return respond(failure("permission_denied", childDenial(identity)));
             if (inspecting)
-              return resultContent(
+              return respond(
                 runFamily(family, input, { ...session, id: identity }, store, null, true),
               );
             if (childTaskMissing(store, input))
-              return resultContent(
+              return respond(
                 failure(
                   "not_found",
                   "no task for this branch yet: the lead starts one (workit_task start) before a child records on it, or pass taskId",
                 ),
               );
-            return resultContent(
-              runFamily(family, input, { ...session, id: identity }, store, null),
-            );
+            return respond(runFamily(family, input, { ...session, id: identity }, store, null));
           }
-          if (family !== null)
-            return resultContent(runFamily(family, input, session, store, workerId));
+          if (family !== null) return respond(runFamily(family, input, session, store, workerId));
           if (spec.name === "workit_init_apply") {
             // The shared executor already returns the contract JSON; prose
             // checking stays core-side.
             return { content: executeInitApply(input as never, root, initApplyRuntime) };
           }
-          return resultContent(failure("not_found", `unknown Workit tool ${spec.name}`));
+          return respond(failure("not_found", `unknown Workit tool ${spec.name}`));
         },
       });
     }
@@ -234,7 +251,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
   await ctx.tool.hook("execute.after", async (event) => {
     if (event.tool === "shell") {
       settleShellCall(pendingShells, { sessionID: String(event.sessionID), input: event.input });
-      return observeShellResult(root, event as never);
+      return observeShellResult(root, event as never, failureMemo);
     }
     if (event.tool !== "subagent") return;
     await lifecycle.executeAfter({
@@ -255,6 +272,8 @@ const setup = async (ctx: Context): Promise<() => void> => {
     injectAgentContext(root, session, lifecycle.directChildren, event.system);
     injectHistoryOffer(root, session, historyOfferSessions, event.system);
     if (session) injectSkillNudge(root, session, event.messages, event.system);
+    if (modelSwitched(sessionModels, String(event.sessionID), modelKey(event.model)))
+      injectModelSwitch(root, session, lifecycle.directChildren, event.system);
     if (!staleSourcesWarned) {
       const changed = changedSourcesSinceLoad(sourceMarker);
       if (changed.length > 0) {

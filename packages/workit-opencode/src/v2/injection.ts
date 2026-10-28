@@ -98,6 +98,30 @@ const judgeVerdictText = (
   return `If this session verifies or reviews a candidate, record its verdict with exactly this command (pick the result and kind, live when you drove the real surface, name the candidate branch if it differs, say what you ran): \`${line}\`. Your shell already acts as your own Workit session ${childSessionId(session.parentID ?? "", session.id)}: pass no --session or --token, and never set WORKIT_SESSION_ID by hand.`;
 };
 
+/**
+ * After a mid-session model switch, once: the session's compact contract (the
+ * bootstrap for a lead, the worker context for a validated child) and its
+ * task context, appended last so the new model reads them nearest its turn.
+ */
+export const injectModelSwitch = (
+  root: string,
+  session: InjectionSession | null,
+  directChildren: Map<string, string>,
+  system: SystemPart[],
+): void => {
+  if (!session || !sameWorkspace(root, session.directory)) return;
+  const contract = session.parentID
+    ? workerContextFor(root, session.id, session.parentID, directChildren)
+    : getWorkitBootstrap();
+  const taskContext = compactContextFor(root, session.id);
+  const parts = [
+    contract,
+    taskContext && `<workit-task-context>${taskContext}</workit-task-context>`,
+  ].filter(Boolean);
+  if (parts.length === 0) return;
+  system.push(textPart(`<workit-model-switch>\n${parts.join("\n")}\n</workit-model-switch>`));
+};
+
 export const injectHistoryOffer = (
   root: string,
   session: InjectionSession | null,
