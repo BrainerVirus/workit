@@ -168,10 +168,37 @@ test("G a held lease and a fake clock, W a check waits out a 30 min wait, T it p
     position: 1,
     ahead: 0,
     waitedMs: 0,
+    first: true,
     holders: [{ check: "suite", cwd: "/repo/suite" }],
   });
-  expect(statuses[1].waitedMs).toBe(30_000);
+  expect(statuses[1]).toMatchObject({ waitedMs: 30_000, first: false });
   expect(queueFiles(dir)).toEqual([]);
+  holder.lease.release();
+});
+
+test("G time passes before the first status report, T it is still flagged first (the opening line, not 'still queued')", async () => {
+  const dir = leasesDir();
+  const holder = await acquireLease(options(dir, { check: "suite" }));
+  if (!holder.ok) throw new Error(holder.reason);
+  let now = 1_000_000;
+  const statuses: QueueStatus[] = [];
+  await acquireLease(
+    options(dir, {
+      waitMs: 5_000,
+      pollMs: 1_000,
+      clock: {
+        // A loaded runner: the clock has moved before the first report.
+        now: () => (now += 7),
+        sleep: async (ms) => {
+          now += ms;
+          await Promise.resolve();
+        },
+      },
+      onStatus: (status) => statuses.push(status),
+    }),
+  );
+  expect(statuses[0].waitedMs).toBeGreaterThan(0);
+  expect(statuses[0].first).toBe(true);
   holder.lease.release();
 });
 

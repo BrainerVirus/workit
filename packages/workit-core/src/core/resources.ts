@@ -450,6 +450,8 @@ export type QueueStatus = {
   /** The live holders of the slots. */
   holders: LeaseHolder[];
   waitedMs: number;
+  /** The first report of this wait (whatever time has already passed). */
+  first: boolean;
 };
 
 export type Clock = { now: () => number; sleep: (ms: number) => Promise<void> };
@@ -733,6 +735,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
           ahead,
           holders,
           waitedMs: waited,
+          first: nextStatus === 0,
         });
         nextStatus = waited + (options.statusEveryMs ?? 30_000);
       }
