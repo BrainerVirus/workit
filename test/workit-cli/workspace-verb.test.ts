@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:te
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { resolveAutonomy } from "@/packages/workit-core/src/autonomy";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { runWorkspace } from "@/packages/workit-cli/src/verbs/workspace";
@@ -196,4 +197,20 @@ test("add refuses a duplicate name and an unknown parent", async () => {
     "not_found",
   );
   expect((await run(["add", "x", "--glob", `${root}/[ab]/**`])).code).toBe(2);
+});
+
+test("doctor reports overlapping globs and which entry wins", async () => {
+  await run(["add", "kit", "--glob", `${root}/work/libs/kit/**`]);
+  await run(["add", "twin", "--glob", `${root}/work/*`]);
+  const check = runDoctor({
+    cwd: root,
+    home: configHome.home,
+    configDir: configHome.configDir,
+    stateDir: path.join(root, "state"),
+    env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: configHome.configDir },
+  }).checks.find((item) => item.id === "workspace_mismatch");
+  expect(check?.detail).toContain(`overlap: kit inside work, kit wins at ${root}/work/libs/kit`);
+  // `work/**` and `work/*` share one literal segment count: a tie.
+  expect(check?.detail).toContain(`overlap: twin and work tie at ${root}/work (ambiguous)`);
+  expect(check?.status).toBe("fail");
 });
