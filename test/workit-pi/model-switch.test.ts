@@ -6,8 +6,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { invariantBootstrap } from "@/packages/workit-core/src/core";
-import { turnContext } from "@/packages/workit-pi/src/context";
-import { registerWorkitTools } from "@/packages/workit-pi/src/tools";
+import {
+  modelSwitchContract,
+  noteModelSelect,
+  turnContext,
+} from "@/packages/workit-pi/src/context";
+import { observeToolResult, registerWorkitTools } from "@/packages/workit-pi/src/tools";
 
 const fakeCtx = (root: string, session: string) => {
   const ctx = {
@@ -20,16 +24,41 @@ const fakeCtx = (root: string, session: string) => {
   return ctx;
 };
 
-test("Given a Pi session, When its model changes, Then only the next turn context carries the contract", () => {
+test("Given a Pi session, When model_select reports a change, Then the contract is owed once and a first model owes nothing", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "workit-pi-switch-"));
   try {
     const ctx = fakeCtx(root, "pi-switch");
-    const contract = invariantBootstrap();
-    expect(turnContext(ctx as never) ?? "").not.toContain(contract);
-    expect(turnContext(ctx as never) ?? "").not.toContain(contract);
-    ctx.model = { id: "deepseek-flash", provider: "deepseek" };
-    expect(turnContext(ctx as never)).toContain(contract);
-    expect(turnContext(ctx as never) ?? "").not.toContain(contract);
+    const strong = { id: "strong", provider: "anthropic" };
+    const flash = { id: "deepseek-flash", provider: "deepseek" };
+    noteModelSelect({ model: strong, previousModel: undefined }, ctx as never);
+    expect(modelSwitchContract(ctx as never)).toBeNull();
+    noteModelSelect({ model: flash, previousModel: strong }, ctx as never);
+    expect(modelSwitchContract(ctx as never)).toBe(invariantBootstrap());
+    expect(modelSwitchContract(ctx as never)).toBeNull();
+    noteModelSelect({ model: flash, previousModel: flash }, ctx as never);
+    expect(modelSwitchContract(ctx as never)).toBeNull();
+    expect(turnContext(ctx as never) ?? "").not.toContain(invariantBootstrap());
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Given failing bash workit calls, When the identical command fails twice, Then the second result names the unblock", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "workit-pi-cli-"));
+  try {
+    const ctx = fakeCtx(root, "pi-cli");
+    const event = (output: string) => ({
+      toolName: "bash",
+      toolCallId: "c",
+      isError: true,
+      input: { command: "workit check bogus" },
+      content: [{ type: "text", text: output }],
+    });
+    const out = "workit: unknown check\nunblock: workit check typecheck";
+    const first = observeToolResult(event(out) as never, ctx as never);
+    expect(JSON.stringify(first ?? "")).not.toContain("Same call failed twice:");
+    const second = observeToolResult(event(out) as never, ctx as never);
+    expect(JSON.stringify(second)).toContain("Same call failed twice: workit check typecheck");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -26,6 +26,10 @@ import {
 } from "@brainervirus/workit-core/src/core/boundary";
 import type { Host, Result } from "@brainervirus/workit-core/src/core/task-contract";
 import { briefInspectResult } from "@brainervirus/workit-core/src/core/task-evaluation";
+import {
+  escalateToolFailure,
+  type FailureMemo,
+} from "@brainervirus/workit-core/src/hooks/repeat-failure";
 import { redactSecrets } from "@brainervirus/workit-core/src/core/logger";
 import { readExternalContext } from "@brainervirus/workit-core/src/core/context-read";
 
@@ -153,8 +157,13 @@ const sanitizeFailure = (result: Result<unknown>, workspaceRoot?: string): Resul
   return sanitize(result) as Result<unknown>;
 };
 
-const resultForClient = (result: Result<unknown>, workspaceRoot?: string): CallToolResult => {
-  const safe = sanitizeFailure(result, workspaceRoot);
+const resultForClient = (
+  result: Result<unknown>,
+  workspaceRoot?: string,
+  escalate: (safe: Result<unknown>) => Result<unknown> = (safe) => safe,
+): CallToolResult => {
+  // Escalate after sanitizing: the transport keeps one line of an error.
+  const safe = escalate(sanitizeFailure(result, workspaceRoot));
   return {
     content: [{ type: "text", text: JSON.stringify(safe) }],
     structuredContent: safe,
@@ -200,6 +209,8 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
     ].filter((file) => existsSync(file)),
   );
   let staleWarned = false;
+  // Per process: one MCP server serves one host session.
+  const failures: FailureMemo = new Map();
   const server = new Server(
     { name: "workit", version: VERSION },
     { capabilities: { tools: {}, resources: {} } },
@@ -346,8 +357,16 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
           workspaceRoot,
         );
       }
+      const escalate = (safe: Result<unknown>) =>
+        escalateToolFailure(
+          failures,
+          context.caller.actor || "mcp",
+          toolName,
+          request.params.arguments,
+          safe,
+        );
       const parsed = parseAdvertisedOperation(family, request.params.arguments, host);
-      if (!parsed.ok) return resultForClient(parsed, workspaceRoot);
+      if (!parsed.ok) return resultForClient(parsed, workspaceRoot, escalate);
       if (context.callerAttested !== true && requiresCallerIdentity(parsed.data))
         return resultForClient(
           {
@@ -369,6 +388,7 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
           ? briefInspectResult(parsed.data, result)
           : result,
         workspaceRoot,
+        escalate,
       );
     } catch (error) {
       return thrownResult(toolName, error, workspaceRoot);

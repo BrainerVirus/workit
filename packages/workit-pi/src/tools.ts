@@ -29,6 +29,7 @@ import {
 import { roleSteering } from "@brainervirus/workit-core/src/hooks/steering";
 import {
   escalateToolFailure,
+  repeatedCliFailure,
   type FailureMemo,
 } from "@brainervirus/workit-core/src/hooks/repeat-failure";
 import type {
@@ -210,9 +211,16 @@ export const observeToolResult = (
   ctx: ExtensionContext,
 ): { content: ToolResultEvent["content"] } | undefined => {
   try {
-    if (event.toolName !== "bash" || event.isError) return undefined;
+    if (event.toolName !== "bash") return undefined;
     const command = (event.input as { command?: unknown } | undefined)?.command;
     if (typeof command !== "string") return undefined;
+    const shown = event.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+    const session = piContext(ctx).caller.actor;
+    const repeated = repeatedCliFailure(failures, session, command, shown);
+    if (event.isError)
+      return repeated
+        ? { content: [...event.content, { type: "text", text: repeated }] }
+        : undefined;
     const post = hookInput(ctx, {
       kind: "shell.post",
       command,
@@ -228,8 +236,11 @@ export const observeToolResult = (
     const nudge = process.env.WORKIT_PI_WORKER_SESSION
       ? rawGitPre(post, command, { nudge: roleSteering(role, false).nudges })
       : shellNudge(post, command);
-    return nudge.kind === "context"
-      ? { content: [...event.content, { type: "text", text: nudge.text }] }
+    const extra = [nudge.kind === "context" ? nudge.text : null, repeated].filter(
+      (text): text is string => text !== null,
+    );
+    return extra.length > 0
+      ? { content: [...event.content, { type: "text", text: extra.join("\n\n") }] }
       : undefined;
   } catch {
     return undefined;

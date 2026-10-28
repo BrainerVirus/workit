@@ -135,3 +135,22 @@ test("given a minimal example per action, then it is accepted", () => {
       expect(parsed.ok, `${family} ${action}: ${JSON.stringify(parsed)}`).toBe(true);
     }
 });
+
+test("G an unknown action, W a family rejects it, T the error carries an Example that itself parses", () => {
+  for (const family of OPERATION_FAMILIES) {
+    const parsed = parseAdvertisedOperation(
+      family,
+      { schemaVersion: 1, action: "bogus" },
+      "cursor",
+    );
+    if (parsed.ok) throw new Error("bogus action accepted");
+    const example = /Example: (\{.*\})$/.exec(parsed.error)?.[1];
+    expect(example, family).toBeDefined();
+    const again = parseAdvertisedOperation(
+      family,
+      { schemaVersion: 1, ...JSON.parse(example!) },
+      "cursor",
+    );
+    expect(again.ok, family).toBe(true);
+  }
+});

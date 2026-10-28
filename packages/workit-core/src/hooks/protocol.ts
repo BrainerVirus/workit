@@ -90,6 +90,8 @@ export type HookInput = {
   session: Session;
   permissionMode: string | null;
   transcriptPath: string | null;
+  /** The host's current model, where every hook input carries it (Codex). */
+  model?: string | null;
   event: HookEvent;
 };
 
