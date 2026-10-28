@@ -5,7 +5,7 @@ description: >-
   `git status` on the next call rather than looping on workit verbs.
 tags: [retro, steering]
 context:
-  scaffold_script: ../scaffold/feature-repo.sh
+  scaffold_script: scaffold.sh
 execution:
   prompt: >-
     Run `workit git status` with the Bash tool exactly as typed. If it fails,

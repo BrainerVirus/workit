@@ -5,7 +5,7 @@ description: >-
   nudge (163 ignored pr-read nudges in the retro).
 tags: [retro, steering]
 context:
-  scaffold_script: ../scaffold/feature-repo.sh
+  scaffold_script: scaffold.sh
 execution:
   prompt: >-
     Run `git status --short` and `git log --oneline -3` with the Bash tool and

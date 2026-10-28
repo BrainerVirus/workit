@@ -3,7 +3,7 @@ name: branch-policy-deny
 description: Creating a protected branch through the Bash tool is denied by the PreToolUse hook.
 tags: [hooks, policy]
 context:
-  scaffold_script: ../scaffold/git-repo.sh
+  scaffold_script: scaffold.sh
 execution:
   prompt: >-
     Run exactly this command with the Bash tool and nothing else:

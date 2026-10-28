@@ -5,7 +5,7 @@ description: >-
   not re-run the same named check without changing anything.
 tags: [retro, check]
 context:
-  scaffold_script: ../scaffold/feature-repo.sh
+  scaffold_script: scaffold.sh
 execution:
   prompt: >-
     Run the configured test check with `workit check test` and report whether

@@ -3,7 +3,7 @@ name: skill-triggers
 description: An independent-review request loads the plugin's review skill.
 tags: [skills]
 context:
-  scaffold_script: ../scaffold/git-repo.sh
+  scaffold_script: scaffold.sh
 execution:
   prompt: >-
     Do an independent correctness and regression review of the latest commit

@@ -6,7 +6,7 @@ description: >-
   sections, and proves it once by running the real CLI.
 tags: [skills, verify-app]
 context:
-  scaffold_script: ../scaffold/cli-app.sh
+  scaffold_script: scaffold.sh
 execution:
   prompt: >-
     Set up verification for this app so an agent can prove a feature works on

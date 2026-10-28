@@ -6,7 +6,7 @@ description: >-
   same failing call is not resent.
 tags: [retro, tools]
 context:
-  scaffold_script: ../scaffold/feature-repo.sh
+  scaffold_script: scaffold.sh
 execution:
   prompt: >-
     Record a finding with the workit CLI. First try exactly this call so we
