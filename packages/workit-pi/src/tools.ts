@@ -208,7 +208,8 @@ export const observeToolResult = (
     handleHook(post, { descriptor: PI_DESCRIPTOR, addendum: null });
     // A Pi worker is a subagent: never a skill nudge, and a git nudge only
     // when its role's brief does not already say how to run git (#428).
-    const role = process.env.WORKIT_PI_WORKER_ROLE === "implementer" ? "implementer" : "judge";
+    const named = process.env.WORKIT_PI_WORKER_ROLE;
+    const role = named === "implementer" ? "implementer" : named ? "judge" : null;
     const nudge = process.env.WORKIT_PI_WORKER_SESSION
       ? rawGitPre(post, command, { nudge: roleSteering(role, false).nudges })
       : shellNudge(post, command);

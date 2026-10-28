@@ -271,8 +271,8 @@ test("agent-critical delivery rules stay stated", () => {
     "utf8",
   );
   const rules: Array<[string, string, string]> = [
-    // CLI-first replaced "prefer native host Git/shell": one right answer, one verb.
-    ["bootstrap", bootstrap, "if a step has one right answer, use the `workit` verb"],
+    // One line: raw reads are fine, mutations take the verb (#428).
+    ["bootstrap", bootstrap, "Read-only git and gh run raw; mutations go through workit verbs"],
     ["bootstrap", bootstrap, "A local-commit endpoint does not imply PR readiness"],
     ["bootstrap", bootstrap, "reconcile every requested item"],
     ["bootstrap", bootstrap, "a local commit alone is not evidence of a requested remote push"],
@@ -448,8 +448,10 @@ test("bootstrap routes every endpoint above commit and keeps green short of a me
   for (const endpoint of DEFAULT_ENDPOINTS.filter((value) => value !== DEFAULT_ENDPOINT))
     expect(bootstrap, endpoint).toContain(`\`${endpoint}\``);
   for (const rule of [
-    "`green` babysits it without asking (workit-ship) to merge-ready",
-    "never merging; `merged` also lands it with `workit pr merge`",
+    "`green` babysits it (workit-ship) to merge-ready",
+    "never merging; `merged` lands it with `workit pr merge`",
+    "`pr` stops at the PR even with merge granted",
+    "`workit grant set <ws> defaultEndpoint=merged`",
   ])
     expect(bootstrap, rule).toMatch(phrase(rule));
 });

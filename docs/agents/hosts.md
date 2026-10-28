@@ -29,11 +29,17 @@ These rules are guarded by tests; the failure names what to fix.
 (no git spawn except reading a new commit) and is shared by every host: Claude
 Code, Codex and Cursor through `handleHook`, OpenCode through
 `v2/permissions.ts` and `v2/shell.ts`, Pi through `src/tools.ts`. It denies
-gate bypasses only inside a Workit workspace, nudges routine raw commands, and
+gate bypasses only inside a Workit workspace, nudges routine raw mutations
+(commit, push, PR create; never a read-only `gh pr view` or `git status`), and
 records raw commits for the session (post-tool event; Cursor, which has none
 registered, settles a pending marker on the next shell command). Keep the
 classification string-only: hook latency is guarded by the bundle size test
 and the Codex entry-size test in `test/workit-core/hooks/bundle.test.ts`.
+`src/hooks/steering.ts` (`agentSteering`/`roleSteering`) is the one source
+for how a role runs git: the SubagentStart text and the nudge set both read
+it, so a Workit implementer or judge, already told at start, gets no git
+nudge. Every `workit …` a hook text suggests must exist in the CLI registry
+(`test/workit-core/hooks/steering-reachability.test.ts`).
 
 `src/hooks/skill-nudge.ts` (same hosts, same fail-open rule) adds the skill
 nudges: a prompt phrase table (`PROMPT_INTENTS`, phrases only, by precedence;

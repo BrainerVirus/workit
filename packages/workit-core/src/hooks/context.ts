@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { allowedKinds, branchPolicySnapshotFor } from "../core/branch";
 import { invariantBootstrap } from "../core/methods";
 import { resolveStore } from "../store/paths";
 import { canonicalJson } from "../core/task-contract";
@@ -298,6 +299,40 @@ export const sessionContextText = (
 };
 
 /** Per-turn task context only (no bootstrap or offer), or null when none applies. */
+/** The checkout holding `cwd` and its branch, read from the git dir (no spawn). */
+const checkoutAt = (cwd: string): { root: string; branch: string | null } | null => {
+  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+    const dotGit = path.join(dir, ".git");
+    if (fs.existsSync(dotGit)) {
+      const admin = fs.statSync(dotGit).isFile()
+        ? path.resolve(
+            dir,
+            /^gitdir:\s*(.+)$/mu.exec(fs.readFileSync(dotGit, "utf8"))?.[1]?.trim() ?? "",
+          )
+        : dotGit;
+      const head = fs.readFileSync(path.join(admin, "HEAD"), "utf8").trim();
+      return { root: dir, branch: /^ref: refs\/heads\/(.+)$/u.exec(head)?.[1] ?? null };
+    }
+    if (path.dirname(dir) === dir) return null;
+  }
+};
+
+/** One short line: where the agent is and which branch kinds it may create (#431). */
+export const whereLine = (cwd: string): string | null => {
+  try {
+    const checkout = checkoutAt(cwd);
+    if (!checkout) return null;
+    const allowed = branchPolicySnapshotFor(cwd).namePolicy.allowed;
+    const kinds = allowed.some((pattern) => pattern.source === "^.*$")
+      ? "any"
+      : allowedKinds(allowed).join(", ") || "see `workit help git`";
+    const place = checkout.root === path.resolve(cwd) ? "" : ` in ${checkout.root}`;
+    return `cwd ${cwd}${place} on ${checkout.branch ?? "detached HEAD"}; branch kinds: ${kinds}`;
+  } catch {
+    return null;
+  }
+};
+
 export const turnContextText = (input: HookInput, descriptor: HostDescriptor): string | null => {
   try {
     const text = sessionCompactContext(
@@ -307,7 +342,9 @@ export const turnContextText = (input: HookInput, descriptor: HostDescriptor): s
       descriptor.context.task,
     );
     if (text === MIGRATION_PENDING_NOTE) return text;
-    return text ? `<workit-task-context>${text}</workit-task-context>` : null;
+    return text
+      ? `<workit-task-context>${[whereLine(input.cwd), text].filter(Boolean).join("\n")}</workit-task-context>`
+      : null;
   } catch {
     return null;
   }
