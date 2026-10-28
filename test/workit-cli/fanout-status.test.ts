@@ -222,6 +222,51 @@ for (const kind of ["github", "gitlab"] as const)
     );
   });
 
+/** Slice a's PR squash-merged on the forge while this checkout's origin/main is not fetched. */
+const staleTrunk = async () => {
+  const forge = forgeSetup();
+  await stackPlan(forge);
+  await verify(forge.cwd, "feature/a");
+  const before = forge.git("rev-parse", "refs/remotes/origin/main");
+  const merged = forge.mergeExternally(11);
+  return { forge, before, merged };
+};
+
+test("fanout status: given a PR the forge reports merged and an origin/main that has not been fetched since, when shown online, then it fetches the trunk once and reads landed, not reverted", async () => {
+  const { forge, before, merged } = await staleTrunk();
+  expect(forge.git("rev-parse", "refs/remotes/origin/main")).toBe(before);
+  const { byId } = await status(forge.cwd);
+  expect(byId.a).toMatchObject({ state: "landed", landed: { how: "pr_merged", pr: 11 } });
+  expect(byId.a.notes).toEqual([]);
+  expect(forge.git("rev-parse", "refs/remotes/origin/main")).toBe(merged);
+});
+
+test("fanout status: given a stale origin/main and a merged PR that was then really reverted, when shown online, then the fetch happens and the slice still reads reverted", async () => {
+  const { forge } = await staleTrunk();
+  const other = path.join(forge.root, "reverter");
+  git(forge.root, "clone", "-q", forge.bare, other);
+  git(other, "rm", "-q", "a.txt");
+  git(other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "revert a");
+  git(other, "push", "-q", "origin", "HEAD:refs/heads/main");
+  const { byId } = await status(forge.cwd);
+  expect(byId.a.landed).toBeNull();
+  expect(byId.a.notes).toEqual([
+    "landed (pr_merged #11), then reverted on the trunk: its paths read as before it",
+  ]);
+});
+
+test("fanout status: given a stale origin/main and a fetch that fails, when shown online, then the slice is not called reverted and the note gives the fetch command", async () => {
+  const { forge, before } = await staleTrunk();
+  const gone = path.join(forge.root, "no-such-remote.git");
+  git(forge.cwd, "config", "remote.origin.url", gone);
+  const { byId } = await status(forge.cwd);
+  expect(byId.a).toMatchObject({ state: "landed", landed: { how: "pr_merged", pr: 11 } });
+  expect(byId.a.notes).toEqual([
+    "origin/main could not be refreshed, so a revert check may be stale: run git fetch origin main",
+  ]);
+  expect(forge.git("rev-parse", "refs/remotes/origin/main")).toBe(before);
+});
+
 test("fanout check: given the same landed slice a with the forge turned off, when checked, then a reads as not started and b waits for it (the forge is what tells a squash merge after the branch is gone)", async () => {
   const forge = forgeSetup();
   await stackPlan(forge);
