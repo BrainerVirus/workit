@@ -5,7 +5,7 @@
 // Anything else (behavior, a risk path, an opaque file, an unreadable diff,
 // a row the gates cannot trust) is stale, and a stale verdict whose change is
 // small and off risk paths asks only a focused re-verify of that change.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -21,6 +21,9 @@ import {
   type VerdictKind,
   type VerdictResult,
 } from "@/packages/workit-core/src/ledger";
+
+// Each test rebases real git repos: over 15 s per test on a Windows shard (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 const dirs: string[] = [];
 afterEach(() => {

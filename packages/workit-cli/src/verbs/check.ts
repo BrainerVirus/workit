@@ -472,7 +472,7 @@ async function prepareHeavy(
       const slots = `${settings.slots} slot${settings.slots === 1 ? "" : "s"}`;
       const holders = status.holders.map((holder) => describeHolder(holder)).join("; ");
       io.stderr(
-        status.waitedMs === 0
+        status.first
           ? `workit: waiting for the heavy-check lease (${slots}): held by ${holders || "nobody; waiters ahead"}; queued at position ${status.position}, waiting up to ${formatWait(settings.waitMs)} (--wait <dur> sets it)\n`
           : `workit: still queued for the heavy-check lease: position ${status.position}, ${formatWait(status.waitedMs)} of ${formatWait(settings.waitMs)} waited; held by ${holders || "nobody; waiters ahead"}\n`,
       );
