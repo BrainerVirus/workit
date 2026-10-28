@@ -495,7 +495,9 @@ test("--actor stamps the session handle a hook can match and --confirm is accept
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+  // Loaded full-run flake: 5.6 s on Linux with parallel workers, over the 5 s
+  // default. Alone it takes 0.1-0.2 s; 20 s is ~3.5x the loaded time.
+}, 20_000);
 
 test("Given a worker assigned on one branch, When `workit worker cancel` runs on another without --task, Then it cancels the worker on its own task, and a failure names the exact --task command", async () => {
   const root = fixture();

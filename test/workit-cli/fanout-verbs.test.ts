@@ -894,7 +894,9 @@ test("fanout plan with release tracks: given the checkout is on a develop-line f
   const data = result.json().data;
   expect(data.trunk).toBe("develop");
   expect(data.slices[0].base).toBe("develop");
-});
+  // Loaded full-run flake: 7.7 s on Linux with parallel workers, over the 5 s
+  // default. Alone it takes ~0.5 s; 25 s is ~3.2x the loaded time.
+}, 25_000);
 
 test("fanout plan with release tracks: given a checkout whose release line cannot be told apart, when planned without --trunk, then it blocks (exit 3) asking for --track, and --track nun picks nun-develop", async () => {
   const repo = tracked();

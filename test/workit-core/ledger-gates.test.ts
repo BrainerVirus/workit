@@ -368,7 +368,10 @@ test("Given the legitimate verdict flows, When checked, Then each is accepted", 
     } as never),
   );
   expect(check(older).accepted.accepted).toBe(true);
-});
+  // Windows (15 s default) hit this twice on 2026-10-28 (release sync PR #448,
+  // shard 3/3). Linux takes ~0.5 s alone, so the 60 s is for the Windows runner
+  // only, the same ceiling as WINDOWS_SLOW_FILES; no Windows duration is measured.
+}, 60_000);
 
 test("Given a forged pass and a legitimate independent pass, When checked, Then the legitimate one is accepted and the forged row only warns", () => {
   const root = featureRepo();

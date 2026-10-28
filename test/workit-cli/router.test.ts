@@ -198,9 +198,12 @@ test("global --json works before and after the command", async () => {
     });
   }
   // Existing verbs that parse --json themselves get it from either position.
+  // The registry probe (`npm view`) is pointed at a missing binary so doctor
+  // stays offline: it fails open and never waits on the network.
   const doctor = spawnSync("bun", [mainEntry, "--json", "--cwd", repoRoot, "doctor"], {
     cwd: repoRoot,
     encoding: "utf8",
+    env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_CMD: path.join(scratch, "no-npm") },
   });
   expect(() => JSON.parse(doctor.stdout)).not.toThrow();
   expect(parseGlobals(["--json", "--cwd", "/x", "doctor"])).toEqual({
@@ -208,7 +211,9 @@ test("global --json works before and after the command", async () => {
     cwd: "/x",
     rest: ["doctor"],
   });
-});
+  // Measured 3.0-3.1 s locally with doctor offline (4.9 s when it reached npm):
+  // 10 s is ~3x that.
+}, 10_000);
 
 test("envelope codes map to the shared exit codes", () => {
   const io: Io = { json: true, cwd: ".", env: {}, stdout: () => {}, stderr: () => {} };
