@@ -211,7 +211,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       "FAN-IN: one PR per slice. Never rebase, retarget, merge or force-push: the lead owns topology.",
       "REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,",
       "  each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),",
-      "  anything out of scope as a follow-up, not a diff.",
+      "  anything out of scope as a follow-up, not a diff. Report heads when pushed; CI is waited on once, at the end.",
       "STANDING:",
       "  - no new dependencies",
       "  - ask nothing; record rulings",
