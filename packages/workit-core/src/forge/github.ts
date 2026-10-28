@@ -29,6 +29,8 @@ export const PR_STATUS_QUERY = `query($owner: String!, $name: String!, $number: 
 
 export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number url state baseRefName headRefName headRefOid headRepositoryOwner { login } } } } }`;
 
+export const BRANCH_CHECKS_QUERY = `query($owner: String!, $name: String!, $ref: String!, $contexts: String) { repository(owner: $owner, name: $name) { object(expression: $ref) { ... on Commit { oid statusCheckRollup { contexts(first: 100, after: $contexts) { pageInfo { hasNextPage endCursor } nodes { __typename ... on CheckRun { name status conclusion detailsUrl databaseId checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state targetUrl } } } } } } } }`;
+
 const READY_MUTATION = `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
 const DRAFT_MUTATION = `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
 const REPLY_MUTATION = `mutation($thread: ID!, $body: String!) { addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, body: $body }) { comment { url } } }`;
@@ -111,6 +113,12 @@ type GqlPr = {
       };
     }>;
   };
+};
+
+type BranchChecksData = {
+  repository: {
+    object: { oid?: string; statusCheckRollup: { contexts: Page<GqlContext> } | null } | null;
+  } | null;
 };
 
 type GqlResponse<T> = { data?: T; errors?: Array<{ message?: string; type?: string }> };
@@ -449,6 +457,35 @@ export function createGitHubForge(options: {
         truncated: threadPage.hasNextPage || contextPage.hasNextPage,
       };
       return success(status);
+    },
+
+    branchChecks(branch) {
+      const contexts: GqlContext[] = [];
+      let sha: string | null = null;
+      let cursor: string | null = null;
+      for (let page = 1; page <= maxPages; page += 1) {
+        const data: ForgeResult<BranchChecksData> = graphql<BranchChecksData>(
+          BRANCH_CHECKS_QUERY,
+          { owner, name, ref: `refs/heads/${branch}`, contexts: cursor },
+          `checks on ${branch}`,
+        );
+        if (!data.ok) return data;
+        const commit: NonNullable<BranchChecksData["repository"]>["object"] =
+          data.data.repository?.object ?? null;
+        if (!commit) return failure("not_found", `branch ${branch} was not found`);
+        sha = commit.oid ?? sha;
+        const rollup: { contexts: Page<GqlContext> } | null = commit.statusCheckRollup;
+        if (!rollup) break;
+        contexts.push(...rollup.contexts.nodes);
+        if (!rollup.contexts.pageInfo.hasNextPage) break;
+        cursor = rollup.contexts.pageInfo.endCursor;
+      }
+      return success({
+        sha,
+        checks: latestPerName(
+          contexts.map(checkFromContext).filter((check): check is ForgeCheck => check !== null),
+        ),
+      });
     },
 
     jobLogTail(job, lines) {

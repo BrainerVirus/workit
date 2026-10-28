@@ -110,6 +110,13 @@ export type ForgePrStatus = {
   truncated: boolean;
 };
 
+/** The checks on the latest commit of a branch (the merge guard reads the base's). */
+export type RefChecks = {
+  /** The commit the checks belong to; null when the forge did not say. */
+  sha: string | null;
+  checks: ForgeCheck[];
+};
+
 export type JobRef = { jobId: number; scope: string | null };
 
 export type RerunTarget =
@@ -196,6 +203,8 @@ export interface Forge {
   repoInfo(repo: string): ForgeResult<RepoInfo>;
   findPr(head: string, match: PrMatch): ForgeResult<PrRef | null>;
   prStatus(n: number): ForgeResult<ForgePrStatus>;
+  /** The checks on the head commit of branch `branch`; empty when CI has not reported for it. */
+  branchChecks(branch: string): ForgeResult<RefChecks>;
   jobLogTail(job: JobRef, lines: number): ForgeResult<string[]>;
   rerun(target: RerunTarget): ForgeResult<void>;
   /** Open a PR/MR; `headSha` is the head the forge reports right after creation. */

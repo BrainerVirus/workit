@@ -85,7 +85,7 @@ const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60
 const CREATE_USAGE =
   "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--json]";
 const MERGE_USAGE =
-  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--json]";
+  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
 const EDIT_USAGE =
   "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--json]";
@@ -503,13 +503,23 @@ async function merge(argv: string[], io: Io): Promise<number> {
     "delete-branch": "boolean",
     "keep-branch": "boolean",
     unverified: "boolean",
+    "base-red-ok": "boolean",
     reason: "value",
     subject: "value",
     body: "value",
     "body-file": "value",
   });
   if (typeof flags === "string") return usage(io, flags, MERGE_USAGE);
-  const unverified = unverifiedFlag(flags);
+  const baseRedOk = flags.booleans.has("base-red-ok");
+  const baseRedReason = flags.values.reason?.trim();
+  if (baseRedOk && !baseRedReason)
+    return usage(
+      io,
+      "--base-red-ok needs --reason <why merging onto a red base is fine>",
+      MERGE_USAGE,
+    );
+  // One --reason serves --unverified and --base-red-ok, alone or together.
+  const unverified = baseRedOk && !flags.booleans.has("unverified") ? null : unverifiedFlag(flags);
   if (typeof unverified === "string") return usage(io, unverified, MERGE_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, MERGE_USAGE);
@@ -552,6 +562,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
       implicitDelete: !flags.booleans.has("keep-branch") && workspaceDeleteBranch(io.cwd),
       actor: actorFromEnv(io.env),
       ...(unverified ? { unverified } : {}),
+      ...(baseRedOk && baseRedReason ? { baseRedOk: { reason: baseRedReason } } : {}),
       ...(subject !== undefined ? { subject } : {}),
       ...(body !== undefined ? { body } : {}),
     },
@@ -579,6 +590,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
     data.unverified
       ? `UNVERIFIED: merged without a verdict (--unverified: ${data.unverified.reason}); ledger ${data.unverified.recorded}`
       : `verdict ${data.verdict.verdictId ?? "?"} accepted for that head${data.verdict.cover ? ` (stack verdict on ${data.verdict.cover.branch} @ ${data.verdict.cover.head.slice(0, 12)})` : data.verdict.carry ? ` (${carryLabel(data.verdict.carry)})` : ""}`,
+    ...(data.baseCi.note ? [data.baseCi.note] : []),
     ...(data.mergeBack.length
       ? [
           `merge back: ${data.base} is the ${data.mergeBackTrack} production branch; bring it into ${data.mergeBack.join(", ")}`,

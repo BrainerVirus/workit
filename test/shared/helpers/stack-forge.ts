@@ -274,6 +274,8 @@ export function makeStackForge(
         }));
       return out({ data: { repository: { pullRequests: { nodes } } } });
     }
+    if (call.endpoint === "graphql" && call.query?.includes("object(expression:"))
+      return out({ data: { repository: { object: { oid: "base", statusCheckRollup: null } } } });
     if (call.endpoint === "graphql") {
       const pr = prs.get(Number(call.vars.number));
       return out({ data: { repository: { pullRequest: pr ? githubPr(pr) : null } } });
@@ -363,6 +365,8 @@ export function makeStackForge(
     }
     if (new RegExp(`^${GL_PROJECT}/merge_requests/\\d+/discussions\\?`, "u").test(endpoint))
       return out([]);
+    // The merge guard's base-CI read: no pipeline on the base.
+    if (call.method === "GET" && /\/pipelines\?ref=/u.test(endpoint)) return out([]);
     const jobs = /^projects\/\d+\/pipelines\/(\d+)\/(jobs|bridges)\?/u.exec(endpoint);
     if (jobs) {
       if (jobs[2] === "bridges") return out([]);

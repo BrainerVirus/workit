@@ -27,7 +27,7 @@ export type Call = {
   vars: Record<string, string>;
   /** Every `-f`/`-F` pair in order, so repeated array keys (`labels[]`) stay visible. */
   pairs: Array<[string, string]>;
-  /** "status" | "find" | "node", or the mutation's field name, for GraphQL calls. */
+  /** "status" | "find" | "node" | "branch-checks", or the mutation's field name, for GraphQL calls. */
   op: string | null;
   /** The per-call credential the runner was handed (tests assert on it). */
   token: string | undefined;
@@ -39,6 +39,14 @@ export const replyError = (stderr: string, status = 1): CliRun => ({
   status,
   stdout: "",
   stderr,
+  timedOut: false,
+  missing: false,
+});
+
+const reply200 = (stdout: string): CliRun => ({
+  status: 0,
+  stdout,
+  stderr: "",
   timedOut: false,
   missing: false,
 });
@@ -68,9 +76,11 @@ const parseCall = (bin: CliBin, args: readonly string[], token?: string): Call =
           ? (/\{\s*(\w+)\(/u.exec(value)?.[1] ?? "mutation")
           : value.includes("pullRequests(headRefName")
             ? "find"
-            : value.includes("node(id:")
-              ? "node"
-              : "status";
+            : value.includes("object(expression:")
+              ? "branch-checks"
+              : value.includes("node(id:")
+                ? "node"
+                : "status";
       else {
         vars[key] = value;
         pairs.push([key, value]);
@@ -108,6 +118,15 @@ export function replayRunner(
         ? [`graphql ${call.op} ${JSON.stringify(call.vars)}`, `graphql ${call.op}`]
         : [`${call.method} ${call.endpoint}`];
     const key = keys.find((candidate) => candidate in routes);
+    // The merge guard's base-CI read: no checks on the base unless a test routes some.
+    if (!key && call.op === "branch-checks")
+      return reply200(
+        JSON.stringify({
+          data: { repository: { object: { oid: "base", statusCheckRollup: null } } },
+        }),
+      );
+    if (!key && call.method === "GET" && /\/pipelines\?ref=/u.test(call.endpoint))
+      return reply200("[]");
     if (!key) throw new Error(`unrecorded ${bin} call: ${keys[0]}`);
     const route = routes[key];
     const reply = typeof route === "function" ? route(call) : route;
