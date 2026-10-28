@@ -62,7 +62,8 @@ Or install a single host by hand:
 ```bash
 claude plugin marketplace add BrainerVirus/workit
 claude plugin install workit@workit
-# update later (Claude Code does not auto-update plugins by default):
+# update later with `workit upgrade`; the native fallback (Claude Code does not
+# auto-update plugins by default):
 claude plugin marketplace update workit && claude plugin update workit@workit
 ```
 
@@ -90,8 +91,9 @@ Skills appear as `/workit:<name>`, plus `verifier`, `reviewer` and
 }
 ```
 
-Update later with `opencode plugin update @brainervirus/workit-opencode`
-(only Workit; other plugins stay as they are). OpenCode 2.x loads the new
+Update later with `workit upgrade`, which runs
+`opencode plugin update @brainervirus/workit-opencode` (only Workit; other
+plugins stay as they are; run it yourself as the fallback). OpenCode 2.x loads the new
 version live, with no restart.
 
 Local pin: build once with `bun packages/workit-opencode/scripts/build.ts`, then
@@ -103,7 +105,8 @@ use `"plugins": ["file:///path/to/workit/packages/workit-opencode"]`.
 <summary><strong>Cursor</strong></summary>
 
 Run `npx @brainervirus/workit-cli init` and select Cursor: it installs the
-plugin (MCP server, session hook, contract rule, skills). Manual MCP setup is
+plugin (MCP server, session hook, contract rule, skills). `workit upgrade`
+updates it, and reinstalls its plugin files when they are missing. Manual MCP setup is
 in [the hosts guide](docs/guides/hosts.md#cursor).
 
 </details>
@@ -116,6 +119,8 @@ codex plugin marketplace add https://github.com/BrainerVirus/workit.git
 codex plugin add workit@workflow-toolkit
 ```
 
+Update later with `workit upgrade` (it stops and restarts the Codex app-server
+daemon around the update and refreshes the Codex agent files).
 Skills are invoked as `$workit-<name>` or from the `/skills` picker.
 
 </details>
@@ -127,6 +132,8 @@ Skills are invoked as `$workit-<name>` or from the `/skills` picker.
 pi install npm:@brainervirus/workit-pi
 pi install ./packages/workit-pi -l --approve   # local checkout
 ```
+
+Update later with `workit upgrade` (fallback: `pi update --extension npm:@brainervirus/workit-pi`).
 
 </details>
 
@@ -297,7 +304,7 @@ Global flags:
 | `workit init` | Interactive setup wizard (hosts, config, optional project files) |
 | `workit setup [--hosts=…] [--dry-run \| --yes]` | Write Workit's host permission block after showing the diff |
 | `workit doctor [--json] [--fix-lock]` | Offline installation health; clear a stale store lock |
-| `workit upgrade [--apply --confirm]` | Preview, then apply, package and config upgrades |
+| `workit upgrade [--preview \| --yes]` | Upgrade the CLI and every host after one confirmation, then verify |
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
 | `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs |
 | `workit uninstall` | Remove host registrations (keeps `~/.config/workit`) |
@@ -321,7 +328,9 @@ Global flags:
 ## Upgrading
 
 Upgrade every host together: newer store records are refused by older
-runtimes. `workit upgrade` previews; `--apply --confirm` applies with a backup.
+runtimes. `workit upgrade` shows a per-host plan, asks once, applies with a
+backup, and ends with a per-host table and doctor's verdict; `--preview` changes
+nothing, `--yes` skips the question.
 
 | From | Key breaks |
 | --- | --- |

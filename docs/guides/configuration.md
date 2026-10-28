@@ -10,17 +10,39 @@ installs host applications or reloads running sessions. Project setup (hygiene
 files, gitignore entries) defaults to No.
 
 ```bash
-workit upgrade                         # read-only preview
-workit upgrade --apply --confirm       # back up config, apply, verify installed versions
-workit upgrade --cli --apply --confirm # also update a global npm CLI (--hosts=none: CLI only)
+workit upgrade                  # show the plan, ask once, apply, verify
+workit upgrade --yes            # the same without the question (scripts, CI)
+workit upgrade --preview        # read-only: ends with "preview only; nothing changed"
+workit upgrade --hosts=none --cli --yes   # only the global npm CLI
 workit launch <host> --auto-upgrade -- <host args>   # upgrade before starting a host
 ```
 
-`--hosts=opencode,cursor,codex,pi` limits the hosts. Backups go to
+One run covers the global CLI (a managed npm global install; links and npx are
+left alone), the Claude Code plugin (`claude plugin marketplace update` and
+`claude plugin update`), Codex (and its agent files), Pi, Cursor, OpenCode
+(`opencode plugin update @brainervirus/workit-opencode`, on an OpenCode that
+has it; V2 loads it live), and the permission blocks `workit setup` already
+wrote. A registered Cursor whose plugin files are missing is reinstalled with
+the same installer `workit init` uses, without touching workspaces or other
+config.
+
+Each host upgrades on its own: one failing host never stops the others. The run
+ends with a table (updated, already current, skipped, failed, each with its
+reason and the native command that fixes it) and exits 1 if any host failed.
+It then runs doctor's version, asset, agent and permission checks and prints
+"clean" or what is left.
+
+Running hosts: zombie processes and helpers that load no plugin are ignored.
+The Codex app-server daemon is stopped with `codex app-server daemon stop` and
+started again after the update, whatever the update did. An open interactive
+session is never killed: that host is skipped with its pid and command line.
+
+`--hosts=opencode,cursor,codex,pi,claude-code` limits the hosts (and leaves the
+CLI out unless `--cli`). `--apply --confirm` still works as the scripted alias
+of `--yes` and prints JSON (as does `--json`). Backups go to
 `~/.local/state/workit/upgrades/`. Local checkout sources and exact version
-pins are left alone. `launch --auto-upgrade` refuses to replace plugins loaded
-by a running instance; a registry outage starts the unchanged install with a
-warning.
+pins are left alone. A registry outage starts `launch --auto-upgrade` on the
+unchanged install with a warning.
 
 ## Config files
 

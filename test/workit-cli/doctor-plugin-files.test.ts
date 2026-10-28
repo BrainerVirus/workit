@@ -46,7 +46,7 @@ test("G Cursor settings register a plugin dir that is empty, W doctor runs, T pl
   expect(result.status).toBe("warn");
   expect(result.detail).toContain(pluginDir);
   expect(result.detail).toContain("empty");
-  expect(result.fix).toContain("workit init");
+  expect(result.fix).toContain("workit upgrade --hosts=cursor");
   expect(result.fix).toContain("Cursor");
 });
 
