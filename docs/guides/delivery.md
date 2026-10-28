@@ -474,10 +474,14 @@ workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>]
   forge, rebases the child with `git rebase --onto <trunk> <old parent tip>`
   (only the child's own commits move), lease-pushes it, retargets its PR to
   the trunk, then deletes the merged parent branch locally. It deletes only
-  branches the stack recorded, and only while the local tip is still the head
-  the stack last saw and no worktree has it checked out; otherwise it keeps
-  the branch and says why. Remote branches are left to the forge's
-  delete-on-merge. Plan the stack (`workit stack plan`) before the parent
+  branches the stack recorded, never the trunk or a protected branch, only
+  while the local tip is still the head the stack last saw and no worktree
+  has it checked out, and only when no commit can be lost: the tip is on the
+  trunk, is the head the PR merged at, or is contained in the branch's
+  current remote tip. Otherwise it keeps the branch and says why. Each
+  deletion prints the sha (`git branch <name> <sha>` restores it) and is
+  recorded in the ledger (`stack.branch.deleted`). A failed sync deletes
+  nothing. Remote branches are left to the forge's delete-on-merge. Plan the stack (`workit stack plan`) before the parent
   merges: the recorded parent tip is what `--onto` replays from.
 - `land` merges the contiguous run from the root whose PRs are READY and
   verified, one at a time through `pr merge`'s gates, and stops at the first

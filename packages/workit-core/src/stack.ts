@@ -39,6 +39,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { requireGrant, type GrantDecision } from "./autonomy";
+import { isProtectedTarget } from "./core/branch";
 import { classifyLockOwner, localLockHost, processStartOf } from "./core/store-lock";
 import { mergePullRequest, type Sleep } from "./forge/pr-ops";
 import {
@@ -1847,57 +1848,105 @@ export function syncStack(
 }
 
 export type PruneOutcome = {
-  /** Merged stack branches deleted locally (or that would be, on a dry run). */
-  deleted: string[];
+  /** Merged stack branches deleted locally (or that would be, on a dry run), with the tip to restore. */
+  deleted: Array<{ branch: string; sha: string }>;
   /** Merged stack branches left in place, with why. */
   kept: Array<{ branch: string; reason: string }>;
 };
 
 /**
- * Delete the local branches of merged stack entries (#506): only branches
- * this stack recorded, only once their PR or ancestry reads merged, and only
- * when the local tip is still the head the stack last recorded (nothing
- * committed on it since) and no worktree has it checked out. Remote
- * branches are left to the forge's delete-on-merge.
+ * Delete the local branches of merged stack entries (#506). Only branches
+ * this stack recorded, never the trunk or a protected name, never one a
+ * worktree has checked out, only while the local tip is still the head the
+ * stack last recorded, and only when no commit can be lost: the tip is on
+ * the trunk, or is the head the PR merged at, or is contained in the
+ * branch's current remote tip. Each deletion names its sha (restore with
+ * `git branch <name> <sha>`) and is recorded in the ledger. Remote branches
+ * are left to the forge's delete-on-merge.
  */
 export function pruneMergedBranches(
   cwd: string,
+  ctx: Ctx | null,
   stack: StackFile,
-  options: { dryRun: boolean },
+  options: { dryRun: boolean; actor: LedgerActor },
 ): PruneOutcome {
   const outcome: PruneOutcome = { deleted: [], kept: [] };
+  const remote = remoteFor(cwd, ctx?.resolved ?? null, stack.trunk);
+  const trunkSha = trunkTip(cwd, remote, stack.trunk);
+  const keep = (branch: string, reason: string) => outcome.kept.push({ branch, reason });
   for (const entry of stack.branches) {
     if (!entry.merged || !safeRef(entry.branch) || entry.branch === stack.trunk) continue;
     const tip = branchTip(cwd, entry.branch);
     if (!tip) continue;
+    if (isProtectedTarget(cwd, entry.branch)) {
+      keep(entry.branch, "a protected branch under the workspace branch policy; never deleted");
+      continue;
+    }
     if (entry.lastHead === null || tip !== entry.lastHead) {
-      outcome.kept.push({
-        branch: entry.branch,
-        reason: `its tip ${tip.slice(0, 12)} is not recorded by the stack (last ${entry.lastHead?.slice(0, 12) ?? "none"}); commits made after it merged stay`,
-      });
+      keep(
+        entry.branch,
+        `its tip ${tip.slice(0, 12)} is not recorded by the stack (last ${entry.lastHead?.slice(0, 12) ?? "none"}); commits made after it merged stay`,
+      );
       continue;
     }
     const owner = worktreeOf(cwd, entry.branch);
     if (owner) {
-      outcome.kept.push({
-        branch: entry.branch,
-        reason: `checked out in ${owner}; switch it away, then git branch -D ${entry.branch}`,
-      });
+      keep(
+        entry.branch,
+        `checked out in ${owner}; switch it away, then git branch -D ${entry.branch}`,
+      );
+      continue;
+    }
+    const safe = safeToDelete(cwd, ctx, remote, trunkSha, entry, tip);
+    if (safe === null) {
+      keep(
+        entry.branch,
+        `${tip.slice(0, 12)} is not on ${stack.trunk}, not the head its PR merged at and not on ${remote}/${entry.branch}: deleting it could lose commits (push them, or delete it yourself)`,
+      );
       continue;
     }
     if (!options.dryRun) {
       const removed = gitRun(cwd, ["branch", "-D", "--", entry.branch]);
       if (!removed.ok) {
-        outcome.kept.push({
-          branch: entry.branch,
-          reason: `git branch -D failed: ${removed.stderr.trim().split("\n")[0] ?? ""}`,
-        });
+        keep(entry.branch, `git branch -D failed: ${removed.stderr.trim().split("\n")[0] ?? ""}`);
         continue;
       }
+      appendObserved(cwd, {
+        type: "stack.branch.deleted",
+        actor: options.actor,
+        stack: stack.name,
+        branch: entry.branch,
+        head: tip,
+        pr: entry.pr,
+        because: safe,
+      });
     }
-    outcome.deleted.push(entry.branch);
+    outcome.deleted.push({ branch: entry.branch, sha: tip });
   }
   return outcome;
+}
+
+/** Why deleting `branch` at `tip` loses nothing, or null when it might. */
+function safeToDelete(
+  cwd: string,
+  ctx: Ctx | null,
+  remote: string,
+  trunkSha: string | null,
+  entry: StackEntry,
+  tip: string,
+): "on_trunk" | "merged_head" | "on_remote" | null {
+  if (trunkSha && isAncestor(cwd, tip, trunkSha)) return "on_trunk";
+  if (ctx && entry.pr) {
+    const read = statusDoc(ctx, entry.pr);
+    if (read.ok && read.data.state === "merged" && read.data.head.sha === tip) return "merged_head";
+  }
+  const own = pushRemoteName(cwd, entry.branch) ?? remote;
+  const remoteTip = remoteRefTip(cwd, own, `refs/heads/${entry.branch}`);
+  if (remoteTip.ok && remoteTip.sha) {
+    if (!hasCommit(cwd, remoteTip.sha)) fetchRefs(cwd, own, [remoteTip.sha]);
+    if (hasCommit(cwd, remoteTip.sha) && isAncestor(cwd, tip, remoteTip.sha)) return "on_remote";
+  }
+  return null;
 }
 
 const commitCount = (cwd: string, base: string, head: string): number =>

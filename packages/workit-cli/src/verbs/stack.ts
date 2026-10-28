@@ -197,7 +197,8 @@ type RestackData = SyncOutcome & { pruned: PruneOutcome };
 const renderRestack = (data: RestackData): string[] => [
   ...renderSync(data),
   ...data.pruned.deleted.map(
-    (branch) => `${data.dryRun ? "would delete" : "deleted"} merged branch ${branch} (local)`,
+    (item) =>
+      `${data.dryRun ? "would delete" : "deleted"} merged branch ${item.branch} at ${item.sha} (local; restore: git branch ${item.branch} ${item.sha})`,
   ),
   ...data.pruned.kept.map((item) => `kept merged branch ${item.branch}: ${item.reason}`),
 ];
@@ -259,7 +260,10 @@ async function sync(argv: string[], io: Io, restack = false): Promise<number> {
     if (!synced.ok || !restack) return synced;
     return {
       ok: true as const,
-      data: { ...synced.data, pruned: pruneMergedBranches(io.cwd, stack, { dryRun }) },
+      data: {
+        ...synced.data,
+        pruned: pruneMergedBranches(io.cwd, ctx, stack, { dryRun, actor: actorFromEnv(io.env) }),
+      },
     };
   });
   if (!result.ok) return stackFailed(io, result);
