@@ -12,6 +12,11 @@ import {
   unfinishedTaskOffer as historyOffer,
   type HookInput,
 } from "@brainervirus/workit-core/hooks";
+import {
+  modelKey,
+  modelSwitched,
+  type SessionModels,
+} from "@brainervirus/workit-core/src/hooks/model-switch";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export const piCapabilities = (ctx?: Pick<ExtensionContext, "hasUI">): Capability[] =>
@@ -34,11 +39,7 @@ export const piContext = (ctx: ExtensionContext): OperationContext => ({
   now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
 });
 
-/**
- * The session's current task context as the per-turn message carries it, or
- * null when the project is untrusted or no task applies.
- */
-export const turnContext = (ctx: ExtensionContext): string | null => {
+const taskTurnContext = (ctx: ExtensionContext): string | null => {
   if (!ctx.isProjectTrusted()) return null;
   try {
     const text = sessionCompactContext(
@@ -51,6 +52,26 @@ export const turnContext = (ctx: ExtensionContext): string | null => {
     // Static contract guidance remains useful when state is unavailable.
     return null;
   }
+};
+
+const sessionModels: SessionModels = new Map();
+
+/**
+ * The session's current task context as the per-turn message carries it, or
+ * null when the project is untrusted or no task applies. On the first turn
+ * after a model switch it leads with the compact contract, once: the new
+ * model does not rely on the copy far up its inherited context.
+ */
+export const turnContext = (ctx: ExtensionContext): string | null => {
+  const task = taskTurnContext(ctx);
+  const switched = modelSwitched(
+    sessionModels,
+    ctx.sessionManager.getSessionId(),
+    modelKey(ctx.model),
+  );
+  return switched && ctx.isProjectTrusted()
+    ? `${invariantBootstrap()}${task ? `\n${task}` : ""}`
+    : task;
 };
 
 /** The session in the shape the core's per-turn resend keys its digest by. */
@@ -83,7 +104,7 @@ export const standingNotice = (ctx: ExtensionContext): string | null => {
 /** The session contract: bootstrap plus `taskContext` (see turnContext). */
 export const workitContext = (
   ctx: ExtensionContext,
-  taskContext: string | null = turnContext(ctx),
+  taskContext: string | null = taskTurnContext(ctx),
 ): string => {
   const session = ctx.sessionManager.getSessionId();
   if (!ctx.isProjectTrusted())

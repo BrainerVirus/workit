@@ -18,6 +18,10 @@ import {
   shellPolicy,
   type HookInput,
 } from "@brainervirus/workit-core/hooks";
+import {
+  repeatedCliFailure,
+  type FailureMemo,
+} from "@brainervirus/workit-core/src/hooks/repeat-failure";
 
 type Content = { type: string; text?: string };
 type ShellResult = { content?: string | ReadonlyArray<Content> } & Record<string, unknown>;
@@ -113,8 +117,30 @@ export const observeShellBefore = (
   }
 };
 
-/** The OpenCode shell tool's completed result: record a noted raw commit and nudge. Never throws. */
-export const observeShellResult = (root: string, event: ShellAfterEvent): void => {
+const outputText = (content: ShellResult["content"]): string =>
+  typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map((part) => (typeof part.text === "string" ? part.text : "")).join("\n")
+      : "";
+
+const appendText = (result: ShellResult, text: string): ShellResult =>
+  typeof result.content === "string"
+    ? { ...result, content: `${result.content}\n\n${text}` }
+    : Array.isArray(result.content)
+      ? { ...result, content: [...result.content, { type: "text", text }] }
+      : result;
+
+/**
+ * The OpenCode shell tool's completed result: record a noted raw commit and
+ * nudge, and escalate a `workit …` command that failed the same way twice in
+ * a row (`failures`, per session). Never throws.
+ */
+export const observeShellResult = (
+  root: string,
+  event: ShellAfterEvent,
+  failures: FailureMemo = new Map(),
+): void => {
   try {
     if (event.tool !== "shell" || event.status !== "completed") return;
     const shell = commandOf(event.input);
@@ -123,14 +149,17 @@ export const observeShellResult = (root: string, event: ShellAfterEvent): void =
     rawGitPost(input, shell.command, callKey(String(event.id), shell.command));
     const nudge = shellNudge(input, shell.command);
     const result = event.result;
-    if (nudge.kind !== "context" || !result) return;
-    if (typeof result.content === "string")
-      event.result = { ...result, content: `${result.content}\n\n${nudge.text}` };
-    else if (Array.isArray(result.content))
-      event.result = {
-        ...result,
-        content: [...result.content, { type: "text", text: nudge.text }],
-      };
+    if (!result) return;
+    const repeated = repeatedCliFailure(
+      failures,
+      String(event.sessionID),
+      shell.command,
+      outputText(result.content),
+    );
+    const extra = [nudge.kind === "context" ? nudge.text : null, repeated].filter(
+      (text): text is string => text !== null,
+    );
+    if (extra.length > 0) event.result = appendText(result, extra.join("\n\n"));
   } catch {
     // Fail open: observation never breaks the tool result.
   }
