@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -12,6 +12,12 @@ import {
   handleCursorHook,
   parseCursorHookInput,
 } from "@/packages/workit-cursor/hooks/workit-hook";
+
+// Hooks under test read Workit state from their workspace root: give them a
+// scratch root, never this checkout, whose real state (learnings) leaked into
+// hook output in a full run.
+const scratchRoot = mkdtempSync(path.join(tmpdir(), "workit-cursor-root-"));
+afterAll(() => rmSync(scratchRoot, { recursive: true, force: true }));
 
 test("Cursor hook capabilities are honest about documented surfaces", () => {
   expect(cursorCapabilities()).toContainEqual(
@@ -43,7 +49,7 @@ test("Cursor hook rejects malformed trust-boundary inputs", () => {
       hook_event_name: "preToolUse",
       conversation_id: "conv-1",
       session_id: "conv-2",
-      workspace_roots: [process.cwd()],
+      workspace_roots: [scratchRoot],
       tool_name: "Write",
     }),
   ).toMatchObject({ ok: false, error: "conversation_id and session_id must match" });
@@ -129,24 +135,31 @@ test("shell hooks pass through when cwd is missing and redirections are opaque",
 });
 
 test("blocking shell hooks pass ambiguous writes through while advisory events stay nonblocking", () => {
-  expect(
-    handleCursorHook({
-      hook_event_name: "beforeShellExecution",
-      conversation_id: "conv-1",
-      workspace_roots: [process.cwd()],
-      command: 'printf x > "src/${TARGET}"',
-    }),
-  ).toEqual({ permission: "allow" });
-  expect(
-    handleCursorHook({
-      hook_event_name: "preCompact",
-      conversation_id: "conv-1",
-      workspace_roots: [process.cwd()],
-    }),
-  ).toEqual({
-    user_message:
-      "Workit context may be stale after compaction; re-run inspection or resume before acting.",
-  });
+  // A scratch root, never this checkout: its real Workit state (learnings)
+  // leaked into the preCompact message in a full run.
+  const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
+  try {
+    expect(
+      handleCursorHook({
+        hook_event_name: "beforeShellExecution",
+        conversation_id: "conv-1",
+        workspace_roots: [root],
+        command: 'printf x > "src/${TARGET}"',
+      }),
+    ).toEqual({ permission: "allow" });
+    expect(
+      handleCursorHook({
+        hook_event_name: "preCompact",
+        conversation_id: "conv-1",
+        workspace_roots: [root],
+      }),
+    ).toEqual({
+      user_message:
+        "Workit context may be stale after compaction; re-run inspection or resume before acting.",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 const runHookProcess = (payload: unknown) =>
@@ -165,8 +178,8 @@ test("a blocking payload with no workspace or no conversation id is allowed with
       conversation_id: "c1",
       command: "ls",
     },
-    { hook_event_name: "preToolUse", workspace_roots: [process.cwd()], tool_name: "Write" },
-    { hook_event_name: "subagentStart", workspace_roots: [process.cwd()], subagent_id: "s1" },
+    { hook_event_name: "preToolUse", workspace_roots: [scratchRoot], tool_name: "Write" },
+    { hook_event_name: "subagentStart", workspace_roots: [scratchRoot], subagent_id: "s1" },
   ]) {
     const result = runHookProcess(payload);
     const label = JSON.stringify(payload);
@@ -177,14 +190,14 @@ test("a blocking payload with no workspace or no conversation id is allowed with
     expect(output.user_message, label).toBe(output.agent_message);
   }
   expect(
-    handleCursorHook({ hook_event_name: "sessionStart", workspace_roots: [process.cwd()] }),
+    handleCursorHook({ hook_event_name: "sessionStart", workspace_roots: [scratchRoot] }),
   ).toEqual({});
 });
 
 test("a blocking payload that is placeable but inconsistent fails open with a logged reason", () => {
   const result = runHookProcess({
     hook_event_name: "beforeShellExecution",
-    workspace_roots: [process.cwd()],
+    workspace_roots: [scratchRoot],
     conversation_id: "conv-a",
     session_id: "conv-b",
     command: "ls",
@@ -310,7 +323,7 @@ test("session start remains advisory and restores compact context once", () => {
   const result = handleCursorHook({
     hook_event_name: "sessionStart",
     session_id: "conv-1",
-    workspace_roots: [process.cwd()],
+    workspace_roots: [scratchRoot],
   });
   expect(result).toHaveProperty("additional_context");
   expect(result).not.toHaveProperty("permission");

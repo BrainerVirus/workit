@@ -24,8 +24,9 @@ import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
 import { fixture, tempRoot } from "./hook-fixtures";
 
-// Measured over 15 s per test on loaded Windows runners (#415).
-if (process.platform === "win32") setDefaultTimeout(60_000);
+// Spawns git and the hook per test: over 15 s on loaded Windows runners and
+// about 19 s on a parallel macOS shard (#415).
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 
 // #463: a SubagentStart records an issued session id in the state dir, so each
 // test gets its own rather than sharing the run-wide registry.
