@@ -103,7 +103,11 @@ const releaseTrackSchema = z
       ["requiredChecks", track.requiredChecks ?? []],
     ] as const) {
       if (new Set(values).size !== values.length) {
-        context.addIssue({ code: "custom", path: [field], message: "entries must be unique" });
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "entries must be unique",
+        });
       }
     }
     if (
@@ -192,7 +196,10 @@ const workspaceConfigSchema = z
       .passthrough()
       .optional(),
     youtrack: z
-      .object({ baseUrl: nonBlank.optional(), link_issues: z.boolean().optional() })
+      .object({
+        baseUrl: nonBlank.optional(),
+        link_issues: z.boolean().optional(),
+      })
       .passthrough()
       .optional(),
     /**
@@ -302,9 +309,16 @@ export const workspacesRevision = (contents: string | null): string =>
 
 export const validateWorkspacesDocument = (parsed: unknown, file: string): WorkspacesResult => {
   if (!isConfigObject(parsed)) {
-    return { status: "malformed", path: file, entries: [], error: `${file} is not a JSON object` };
+    return {
+      status: "malformed",
+      path: file,
+      entries: [],
+      error: `${file} is not a JSON object`,
+    };
   }
-  const validated = workspacesFileSchema.safeParse(parsed, { reportInput: true });
+  const validated = workspacesFileSchema.safeParse(parsed, {
+    reportInput: true,
+  });
   if (!validated.success) {
     const detail = validated.error.issues
       .map((issue) => {
@@ -353,7 +367,12 @@ export const readWorkspacesResult = (dir: string = configDir()): WorkspacesResul
     raw = readFileSync(file, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return { status: "missing", path: file, entries: [], revision: workspacesRevision(null) };
+      return {
+        status: "missing",
+        path: file,
+        entries: [],
+        revision: workspacesRevision(null),
+      };
     return {
       status: "malformed",
       path: file,
@@ -373,7 +392,10 @@ export const readWorkspacesResult = (dir: string = configDir()): WorkspacesResul
       error: `${file} is not valid JSON`,
     };
   }
-  return { ...validateWorkspacesDocument(parsed, file), revision: workspacesRevision(raw) };
+  return {
+    ...validateWorkspacesDocument(parsed, file),
+    revision: workspacesRevision(raw),
+  };
 };
 
 /** Parse the workspaces.json list under an explicit config dir; [] when missing/malformed. */
@@ -615,7 +637,7 @@ export const workspaceOverlaps = (
     for (const b of entries.slice(i + 1)) {
       const aInB = matchWorkspace(b.glob, globRoot(a.glob));
       const bInA = matchWorkspace(a.glob, globRoot(b.glob));
-      if (!aInB && !bInA) continue;
+      if (!aInB && !bInA && !globsMayOverlap(a.glob, b.glob)) continue;
       const [inner, outer] =
         aInB && !bInA
           ? [a, b]
@@ -818,7 +840,10 @@ export const resolveRuntimeReleaseTracks = (
 ): { workspace: string; releaseTracks: unknown } | null => {
   const matched = matchRuntimeWorkspace(cwd);
   return matched
-    ? { workspace: matched.selected.name, releaseTracks: matched.selected.releaseTracks }
+    ? {
+        workspace: matched.selected.name,
+        releaseTracks: matched.selected.releaseTracks,
+      }
     : null;
 };
 
@@ -846,7 +871,10 @@ const inheritedSetting = (
   const enclosing = matches
     .filter((entry) => entry !== selected)
     .toSorted((a, b) => globSpecificity(b.glob) - globSpecificity(a.glob));
-  return { workspace: selected.name, source: [selected, ...enclosing].find(has) ?? null };
+  return {
+    workspace: selected.name,
+    source: [selected, ...enclosing].find(has) ?? null,
+  };
 };
 
 /** Whether `pr merge` deletes the head branch by default: true unless a covering entry sets `deleteBranch: false`. */
@@ -906,8 +934,18 @@ export const workspaceDelegation = (cwd: string, dir?: string): DelegationMode =
 export const modelSources = (
   cwd: string,
   dir?: string,
-): Array<{ name: string; global: boolean; models: unknown; tierModels: unknown }> => {
-  const out: Array<{ name: string; global: boolean; models: unknown; tierModels: unknown }> = [];
+): Array<{
+  name: string;
+  global: boolean;
+  models: unknown;
+  tierModels: unknown;
+}> => {
+  const out: Array<{
+    name: string;
+    global: boolean;
+    models: unknown;
+    tierModels: unknown;
+  }> = [];
   try {
     const matched = matchRuntimeWorkspace(cwd, dir);
     if (matched) {
@@ -1099,7 +1137,10 @@ export const resolveWorkspacePolicy = (
         status: "resolved" as const,
         profileName: null,
         workspace: null,
-        provenance: { branchPolicy: "user-default", commitPolicy: "user-default" },
+        provenance: {
+          branchPolicy: "user-default",
+          commitPolicy: "user-default",
+        },
       };
   if (selected.status === "invalid") return selected;
   return {
@@ -1130,7 +1171,11 @@ export const selectReleaseTrack = (
       error: `workspace ${JSON.stringify(workspace.name)} has no release track ${JSON.stringify(requestedTrack)}`,
     };
   }
-  return { status: "selected", name: requestedTrack, track: tracks[requestedTrack] };
+  return {
+    status: "selected",
+    name: requestedTrack,
+    track: tracks[requestedTrack],
+  };
 };
 
 /**

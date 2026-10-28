@@ -3,7 +3,7 @@
 // both runtimes: the local pin (monorepo sources with bun) and the installed
 // layout (bundled dist/). Outputs must satisfy the hook output schema pinned
 // from Claude Code 2.1.288 and never answer `allow`.
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import {
   cpSync,
   existsSync,
@@ -27,6 +27,18 @@ import { installedPlugin, outputProblem, PLUGIN_DIR, runHook } from "./plugin-he
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { recordDecision } from "@/packages/workit-core/src/ledger";
 import { resolveStore } from "@/packages/workit-core/src/store/paths";
+
+// #463: a SubagentStart records an issued session id in the state dir, so each
+// test gets its own rather than sharing the run-wide registry.
+let savedState: string | undefined;
+beforeEach(() => {
+  savedState = process.env.WORKFLOW_TOOLKIT_STATE;
+  process.env.WORKFLOW_TOOLKIT_STATE = tempRoot("workit-hook-state-");
+});
+afterEach(() => {
+  if (savedState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = savedState;
+});
 
 /** Moves `taskId` forward, which changes its compact context. */
 const progress = (root: string, taskId: string, nextAction: string) => {
@@ -126,13 +138,22 @@ for (const [label, plugin] of RUNTIMES) {
         "`workit:ship`",
       );
       const hook = (payload: Record<string, unknown>) =>
-        runHook(plugin(), { ...fixture("claude-code", "pre-tool-use-bash", cwd), ...payload });
-      const prompt = hook({ hook_event_name: "UserPromptSubmit", prompt: "brainstorm the API" });
+        runHook(plugin(), {
+          ...fixture("claude-code", "pre-tool-use-bash", cwd),
+          ...payload,
+        });
+      const prompt = hook({
+        hook_event_name: "UserPromptSubmit",
+        prompt: "brainstorm the API",
+      });
       expect(outputProblem("UserPromptSubmit", prompt.json)).toBeNull();
       expect((prompt.json as Specific).hookSpecificOutput?.additionalContext).toContain(
         "`workit:shape`",
       );
-      const skill = hook({ tool_name: "Skill", tool_input: { skill: "workit:ship" } });
+      const skill = hook({
+        tool_name: "Skill",
+        tool_input: { skill: "workit:ship" },
+      });
       expect(skill.json).toEqual({});
       expect(bash("PreToolUse", "workit pr create --fill")).toBeUndefined();
     });
@@ -196,13 +217,22 @@ for (const [label, plugin] of RUNTIMES) {
     const shell = (command: string) =>
       runHook(
         plugin(),
-        fixture("claude-code", "pre-tool-use-bash", cwd, { tool_input: { command } }),
+        fixture("claude-code", "pre-tool-use-bash", cwd, {
+          tool_input: { command },
+        }),
       ).json as Specific;
     expect(shell("echo x > src/a.ts").hookSpecificOutput?.permissionDecision).toBe("deny");
     expect(shell("ls -la")).toEqual({});
     expect(
       recordDecision(
-        { cwd, actor: { host: "claude_code", session: "claude-session-1", agentId: null } },
+        {
+          cwd,
+          actor: {
+            host: "claude_code",
+            session: "claude-session-1",
+            agentId: null,
+          },
+        },
         { what: "option A", why: "the user chose A" },
       ).ok,
     ).toBe(true);
@@ -336,7 +366,9 @@ test("Given implementer spawns with isolation or without a brief, When the launc
     prompt: brief,
   });
   const updated = (
-    isolated.json as { hookSpecificOutput?: { updatedInput?: Record<string, unknown> } }
+    isolated.json as {
+      hookSpecificOutput?: { updatedInput?: Record<string, unknown> };
+    }
   ).hookSpecificOutput?.updatedInput;
   expect(updated, isolated.stderr).toEqual({
     description: "d",
@@ -359,7 +391,12 @@ test("Given implementer spawns with isolation or without a brief, When the launc
   };
   for (const input of [
     { subagent_type: "workit:implementer", model: "opus", prompt: brief },
-    { subagent_type: "workit:verifier", model: "sonnet", isolation: "worktree", prompt: "verify" },
+    {
+      subagent_type: "workit:verifier",
+      model: "sonnet",
+      isolation: "worktree",
+      prompt: "verify",
+    },
   ]) {
     const fast = spawn(input, noRuntime);
     expect(fast.stdout, JSON.stringify(input)).toBe("{}\n");
@@ -382,17 +419,25 @@ test("SubagentStart tells an implementer Claude Code isolated, per preset, that 
     /** An implementer Claude Code isolated in `<checkout>/.claude/worktrees/agent-<id>`. */
     const context = (checkoutDir: string) => {
       const cwd = path.join(checkoutDir, ".claude", "worktrees", "agent-agent-1");
-      Bun.spawnSync(["git", "worktree", "add", "-q", "--detach", cwd], { cwd: checkoutDir });
+      Bun.spawnSync(["git", "worktree", "add", "-q", "--detach", cwd], {
+        cwd: checkoutDir,
+      });
       return (
         (
           runHook(
             PLUGIN_DIR,
-            fixture("claude-code", "subagent-start", cwd, { agent_type: "workit:implementer" }),
+            fixture("claude-code", "subagent-start", cwd, {
+              agent_type: "workit:implementer",
+            }),
           ).json as Specific
         ).hookSpecificOutput?.additionalContext ?? ""
       );
     };
-    const custom = { preset: "custom", allowed: ["task/*", "release/*"], protected: ["main"] };
+    const custom = {
+      preset: "custom",
+      allowed: ["task/*", "release/*"],
+      protected: ["main"],
+    };
     const table: Array<[string, Record<string, unknown>, string, string[], RegExp | null]> = [
       [
         "git-flow",
@@ -498,7 +543,9 @@ test("SubagentStart gives the worktree implementer write guidance and keeps othe
       (
         runHook(
           PLUGIN_DIR,
-          fixture("claude-code", "subagent-start", isolatedDir, { agent_type: agent }),
+          fixture("claude-code", "subagent-start", isolatedDir, {
+            agent_type: agent,
+          }),
         ).json as Specific
       ).hookSpecificOutput?.additionalContext ?? "";
     expect(text, agent).toContain("working in its own git worktree");
@@ -519,7 +566,9 @@ test("SubagentStart gives the worktree implementer write guidance and keeps othe
   const explorer = (
     runHook(
       PLUGIN_DIR,
-      fixture("claude-code", "subagent-start", worktree, { agent_type: "general-purpose" }),
+      fixture("claude-code", "subagent-start", worktree, {
+        agent_type: "general-purpose",
+      }),
     ).json as Specific
   ).hookSpecificOutput?.additionalContext;
   expect(explorer?.startsWith("Run git as plain, separate commands")).toBe(true);
@@ -552,7 +601,9 @@ test("a malformed payload or a missing bundle fails open with an empty decision 
   // An installed layout whose dist/ is missing (a broken package).
   const broken = path.join(mkdtempSync(path.join(tmpdir(), "workit-claude-broken-")), "workit");
   roots.push(path.dirname(broken));
-  cpSync(path.join(PLUGIN_DIR, "bin"), path.join(broken, "bin"), { recursive: true });
+  cpSync(path.join(PLUGIN_DIR, "bin"), path.join(broken, "bin"), {
+    recursive: true,
+  });
   const missing = runHook(broken, fixture("claude-code", "pre-tool-use-bash", root()));
   expect(missing.status).toBe(0);
   expect(missing.json).toEqual({});

@@ -160,7 +160,12 @@ export const stackDeps: {
 // ---------------------------------------------------------------------------
 // git plumbing
 
-type GitRun = { ok: boolean; stdout: string; stderr: string; timedOut: boolean };
+type GitRun = {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+};
 
 const gitRun = (cwd: string, args: string[], timeoutMs: number = GIT_TIMEOUTS.local): GitRun => {
   const run = spawnSync("git", args, {
@@ -245,7 +250,13 @@ const trackedDirt = (dir: string): boolean => {
 
 export type RestackOutcome =
   | { ok: true; head: string }
-  | { ok: false; conflict: boolean; timedOut?: boolean; worktree: string; error: string };
+  | {
+      ok: false;
+      conflict: boolean;
+      timedOut?: boolean;
+      worktree: string;
+      error: string;
+    };
 
 /** Where sync checks out branches nobody has checked out (never the user's checkout). */
 const scratchDir = (cwd: string): string | null => {
@@ -269,14 +280,26 @@ function gitRestack(
   let dir = owner;
   if (!dir) {
     const scratch = scratchDir(cwd);
-    if (!scratch) return { ok: false, conflict: false, worktree: cwd, error: "no store root" };
+    if (!scratch)
+      return {
+        ok: false,
+        conflict: false,
+        worktree: cwd,
+        error: "no store root",
+      };
     fs.mkdirSync(scratch, { recursive: true });
     dir = path.join(
       scratch,
       `${input.branch.replace(/[^A-Za-z0-9._-]+/gu, "_").slice(0, 40)}-${randomBytes(4).toString("hex")}`,
     );
     const added = gitRun(cwd, ["worktree", "add", "-q", dir, input.branch], GIT_TIMEOUTS.worktree);
-    if (!added.ok) return { ok: false, conflict: false, worktree: cwd, error: firstLine(added) };
+    if (!added.ok)
+      return {
+        ok: false,
+        conflict: false,
+        worktree: cwd,
+        error: firstLine(added),
+      };
   }
   const run = gitRun(
     dir,
@@ -304,7 +327,12 @@ function gitRestack(
         error: `git rebase did not finish within ${stackDeps.rebaseTimeoutMs} ms`,
       };
     if (rebaseInProgress(dir))
-      return { ok: false, conflict: true, worktree: dir, error: firstLine(run) };
+      return {
+        ok: false,
+        conflict: true,
+        worktree: dir,
+        error: firstLine(run),
+      };
     if (!owner) gitRun(cwd, ["worktree", "remove", "--force", dir]);
     return { ok: false, conflict: false, worktree: dir, error: firstLine(run) };
   }
@@ -312,7 +340,12 @@ function gitRestack(
   const head = branchTip(cwd, input.branch);
   return head
     ? { ok: true, head }
-    : { ok: false, conflict: false, worktree: dir, error: `${input.branch} vanished` };
+    : {
+        ok: false,
+        conflict: false,
+        worktree: dir,
+        error: `${input.branch} vanished`,
+      };
 }
 
 /** Remove temporary sync worktrees that are clean and not mid-rebase. */
@@ -489,7 +522,10 @@ export function listStacks(cwd: string): StackResult<StackFile[]> {
     // Only files at the name's own path count (a renamed copy is ignored).
     if (parsed && fileFor(parsed.name) === name) out.push(parsed);
   }
-  return { ok: true, data: out.toSorted((a, b) => a.name.localeCompare(b.name)) };
+  return {
+    ok: true,
+    data: out.toSorted((a, b) => a.name.localeCompare(b.name)),
+  };
 }
 
 /** The stack `name`, else the one holding the current branch, else the only one. */
@@ -539,7 +575,12 @@ const OWNERLESS_STALE_MS = 30_000;
 
 const OWNER = "owner";
 
-type LockOwner = { pid: number; processStart: string | null; host: string; nonce: string };
+type LockOwner = {
+  pid: number;
+  processStart: string | null;
+  host: string;
+  nonce: string;
+};
 
 const readOwner = (lock: string): { raw: string | null; age: number | null } => {
   let raw: string | null = null;
@@ -1039,7 +1080,13 @@ export type BranchStatus = {
 
 export type Qualification =
   | { ok: true }
-  | { ok: false; reason: StopReason; detail: string; unblock: string; ready: boolean };
+  | {
+      ok: false;
+      reason: StopReason;
+      detail: string;
+      unblock: string;
+      ready: boolean;
+    };
 
 export type StatusOutcome = {
   name: string;
@@ -1063,7 +1110,10 @@ const noun = (resolved: ResolvedForge, pr: number): string =>
 function statusDoc(ctx: Ctx, pr: number): ForgeResult<PrStatusDoc> {
   const status = ctx.resolved.forge.prStatus(pr);
   if (!status.ok) return status;
-  return buildStatusDoc(ctx.cwd, ctx.resolved, status.data, { logLines: 0, behind: false });
+  return buildStatusDoc(ctx.cwd, ctx.resolved, status.data, {
+    logLines: 0,
+    behind: false,
+  });
 }
 
 /**
@@ -1094,7 +1144,10 @@ export function repoMismatch(ctx: Pick<Ctx, "resolved">, stack: StackFile): Stac
       "blocked",
       `repo_mismatch: stack ${stack.name} was planned on ${stack.forge ?? "?"} ${stack.repo ?? "?"}, but this checkout resolves to ${kind} ${repo}`,
       `workit stack plan --name ${stack.name} <branch…>  # re-plan it here, or run from the right checkout`,
-      { planned: { forge: stack.forge, repo: stack.repo }, resolved: { forge: kind, repo } },
+      {
+        planned: { forge: stack.forge, repo: stack.repo },
+        resolved: { forge: kind, repo },
+      },
     );
   return null;
 }
@@ -1332,7 +1385,12 @@ export type SyncStep = {
   pr: number | null;
   parent: string;
   /** null: already on its parent. */
-  restack: { from: string; onto: string; head: string | null; carried: boolean | null } | null;
+  restack: {
+    from: string;
+    onto: string;
+    head: string | null;
+    carried: boolean | null;
+  } | null;
   push: { pushed: boolean; forced: boolean; sha: string } | null;
   retarget: { from: string; to: string } | null;
 };
@@ -1383,7 +1441,11 @@ function detectMerged(
         isAncestor(cwd, tip, trunkSha);
     }
     if (merged) {
-      entry.merged = { pr: entry.pr, mergeSha: null, at: new Date().toISOString() };
+      entry.merged = {
+        pr: entry.pr,
+        mergeSha: null,
+        at: new Date().toISOString(),
+      };
       newly.push({ branch: entry.branch, pr: entry.pr });
     }
   }
@@ -1407,21 +1469,34 @@ function pushBranch(
   const remote = remoteRefTip(cwd, plan.data.rawUrl, `refs/heads/${branch}`);
   if (!remote.ok) return stackFail(remote.code, remote.error);
   if (remote.sha === plan.data.sha)
-    return { ok: true, data: { pushed: false, forced: false, sha: plan.data.sha } };
+    return {
+      ok: true,
+      data: { pushed: false, forced: false, sha: plan.data.sha },
+    };
   const grant = requireGrant(cwd, "push", { forge: !plan.data.local });
   if (!grant.allowed)
-    return stackFail("blocked", grant.error, grant.unblock, { reason: grant.reason });
+    return stackFail("blocked", grant.error, grant.unblock, {
+      reason: grant.reason,
+    });
   const force = remote.sha !== null && !isAncestor(cwd, remote.sha, plan.data.sha);
   const expect = !force
     ? null
     : remote.sha === priorTip
       ? priorTip
       : (recordedRemoteTip(cwd, plan.data) ?? null);
-  const pushed = executePush(cwd, plan.data, { forceWithLease: force, expect, actor });
+  const pushed = executePush(cwd, plan.data, {
+    forceWithLease: force,
+    expect,
+    actor,
+  });
   if (!pushed.ok) return { ...fromForge(pushed), data: { branch } };
   return {
     ok: true,
-    data: { pushed: pushed.data.pushed, forced: pushed.data.forced, sha: plan.data.sha },
+    data: {
+      pushed: pushed.data.pushed,
+      forced: pushed.data.forced,
+      sha: plan.data.sha,
+    },
   };
 }
 
@@ -1584,7 +1659,11 @@ export function syncStack(
                 "blocked",
                 `conflict restacking ${entry.branch} onto ${parent.name}: ${rebased.error}`,
                 `resolve the conflicts in ${rebased.worktree}, git rebase --continue, then workit stack sync  # or git rebase --abort`,
-                { conflict: entry.branch, worktree: rebased.worktree, progress: outcome },
+                {
+                  conflict: entry.branch,
+                  worktree: rebased.worktree,
+                  progress: outcome,
+                },
               )
             : stackFail(
                 "failed",
@@ -1670,13 +1749,21 @@ export function syncStack(
           p: patchId(cwd, fromBase, fromHead),
           d: diffHash(cwd, fromBase, fromHead),
         };
-        const after = { p: patchId(cwd, parentTip, newTip), d: diffHash(cwd, parentTip, newTip) };
+        const after = {
+          p: patchId(cwd, parentTip, newTip),
+          d: diffHash(cwd, parentTip, newTip),
+        };
         const equal =
           before.d !== null &&
           before.d === after.d &&
           before.p !== null &&
           before.p === after.p &&
-          sameOwnChange(cwd, { from: fromHead, to: newTip, fromBase, toBase: parentTip });
+          sameOwnChange(cwd, {
+            from: fromHead,
+            to: newTip,
+            fromBase,
+            toBase: parentTip,
+          });
         appendObserved(cwd, {
           type: "stack.restacked",
           actor,
@@ -1692,7 +1779,13 @@ export function syncStack(
           forced,
         });
         if (step.restack) step.restack.carried = equal;
-        else step.restack = { from: fromBase, onto: parentTip, head: newTip, carried: equal };
+        else
+          step.restack = {
+            from: fromBase,
+            onto: parentTip,
+            head: newTip,
+            carried: equal,
+          };
       }
       if (options.publish) {
         touchStackLock();
@@ -1721,7 +1814,10 @@ export function syncStack(
             });
           const updated = ctx.resolved.forge.updateBase(entry.pr, parent.name);
           if (!updated.ok)
-            return { ...fromForge(updated), data: { branch: entry.branch, progress: outcome } };
+            return {
+              ...fromForge(updated),
+              data: { branch: entry.branch, progress: outcome },
+            };
           appendObserved(cwd, {
             type: "pr.retargeted",
             actor,
@@ -1766,6 +1862,8 @@ export type LandOptions = {
   method: MergeMethod;
   /** Land without verdicts (`merge: true` only); each bypass is recorded. */
   unverified?: { reason: string } | null;
+  /** Merge onto a red base (`--base-red-ok`); each merge records the reason. */
+  baseRedOk?: { reason: string } | null;
   /** How long to wait for CI on a PR that was just restacked. */
   timeoutMs: number;
   intervalMs: number;
@@ -1775,7 +1873,12 @@ export type LandOutcome = {
   name: string;
   dryRun: boolean;
   /** `unverified`: the ledger row of an `--unverified` bypass, else null. */
-  landed: Array<{ pr: number; branch: string; mergeSha: string | null; unverified: string | null }>;
+  landed: Array<{
+    pr: number;
+    branch: string;
+    mergeSha: string | null;
+    unverified: string | null;
+  }>;
   /** Dry run: the PRs that qualify now, in order (later ones assume a clean restack). */
   wouldLand: Array<{ pr: number; branch: string }>;
   stoppedAt: {
@@ -1849,7 +1952,9 @@ export async function landStack(
     const grant = requireGrant(ctx.cwd, "merge");
     if (!grant.allowed)
       return failWith(
-        stackFail("blocked", grant.error, grant.unblock, { reason: "grant_required" }),
+        stackFail("blocked", grant.error, grant.unblock, {
+          reason: "grant_required",
+        }),
       );
     if (!grant.allowUnverified)
       return failWith(
@@ -1959,6 +2064,7 @@ export async function landStack(
         actor: ctx.actor,
         expect: { base: stack.trunk, branch: entry.branch },
         ...(bypass && !verdict.satisfied ? { unverified: bypass } : {}),
+        ...(options.baseRedOk ? { baseRedOk: options.baseRedOk } : {}),
       },
       ctx.sleep,
     );
@@ -1982,7 +2088,11 @@ export async function landStack(
       mergeSha: merged.data.mergeSha,
       unverified: merged.data.unverified?.recorded ?? null,
     });
-    entry.merged = { pr, mergeSha: merged.data.mergeSha, at: new Date().toISOString() };
+    entry.merged = {
+      pr,
+      mergeSha: merged.data.mergeSha,
+      at: new Date().toISOString(),
+    };
     const written = writeStack(ctx.cwd, stack);
     if (!written.ok) return failWith(written);
     // Move the next PR onto the trunk: restack, lease push, retarget. The

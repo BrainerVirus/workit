@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { readdirSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -8,6 +8,18 @@ import {
   dispatchHook,
 } from "@/packages/workit-core/src/hooks/index";
 import { fixture, startTask, tempRoot, withProtectedMain } from "./hook-fixtures";
+
+// #463: a SubagentStart records an issued session id in the state dir, so each
+// test gets its own rather than sharing the run-wide registry.
+let savedState: string | undefined;
+beforeEach(() => {
+  savedState = process.env.WORKFLOW_TOOLKIT_STATE;
+  process.env.WORKFLOW_TOOLKIT_STATE = tempRoot("workit-hook-state-");
+});
+afterEach(() => {
+  if (savedState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = savedState;
+});
 
 const RUN = path.resolve(import.meta.dir, "../../../packages/workit-core/src/hooks/run.ts");
 const FIXTURES = path.resolve(import.meta.dir, "../../fixtures/hooks/claude-code");

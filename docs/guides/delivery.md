@@ -21,11 +21,11 @@ workit git push --release main [--release develop] [--release v<version>]   # fi
 Where a branch starts and its PR lands when `--base` (or `pr create --base`)
 is left out, per branch-policy preset:
 
-| Kind | git-flow | github-flow | custom |
-| --- | --- | --- | --- |
-| `feature/`, `bugfix/` | develop → develop | main → main | default target → default target, if the policy allows the kind |
-| `release/` | develop → main, then merge back | main → main | the same, if allowed |
-| `hotfix/` | main → main, then merge back | main → main | the same, if allowed |
+| Kind                  | git-flow                        | github-flow | custom                                                         |
+| --------------------- | ------------------------------- | ----------- | -------------------------------------------------------------- |
+| `feature/`, `bugfix/` | develop → develop               | main → main | default target → default target, if the policy allows the kind |
+| `release/`            | develop → main, then merge back | main → main | the same, if allowed                                           |
+| `hotfix/`             | main → main, then merge back    | main → main | the same, if allowed                                           |
 
 github-flow allows any name, so every kind (and any other name) starts from
 and lands on main; trunk-based does the same on its trunk. custom starts every
@@ -37,11 +37,11 @@ merging back.
 
 The git-flow route in detail:
 
-| Kind | Starts from | PR lands on | Then |
-| --- | --- | --- | --- |
-| `feature/`, `bugfix/` | develop | develop | |
-| `release/` | develop | main | merge main back into develop, tag `v<version>` |
-| `hotfix/` | main | main | merge main back into develop, tag `v<version>` |
+| Kind                  | Starts from | PR lands on | Then                                           |
+| --------------------- | ----------- | ----------- | ---------------------------------------------- |
+| `feature/`, `bugfix/` | develop     | develop     |                                                |
+| `release/`            | develop     | main        | merge main back into develop, tag `v<version>` |
+| `hotfix/`             | main        | main        | merge main back into develop, tag `v<version>` |
 
 develop is the workspace's `branchPolicy.developBranch`, else the default
 target when it is not the production branch, else `develop`; production is
@@ -198,7 +198,7 @@ and a delete (`--delete`, `:chore/old`), is never judged.
   env assignments or wrappers, quoted or not, from a subdirectory or a linked
   worktree (the directory git runs in picks the workspace policy). Only new
   names are judged: a branch that already exists there (`git branch -f
-  legacy HEAD`) is not. A command that changes into a directory is judged
+legacy HEAD`) is not. A command that changes into a directory is judged
   only when that directory already exists in a Workit workspace, so a scratch
   repository (`cd "$(mktemp -d)"`, `git init x && cd x`, a fresh clone) is
   left alone. A Claude Code
@@ -357,7 +357,8 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   base. Checks still running only print a note, and a base with no checks or
   green checks merges quietly. `--base-red-ok --reason "<why>"` overrides it
   and records the reason in the `pr.merge.intent` and `pr.merged` rows; one
-  `--reason` serves it and `--unverified` together.
+  `--reason` serves it and `--unverified` together. `stack land` takes the
+  same `--base-red-ok --reason` and passes it to every merge it makes.
 - `verify-delivery` answers "did it land?" from the remote, never from local
   state.
 - `ci wait --timeout` bounds the whole command, from resolving the forge and
@@ -381,13 +382,13 @@ YouTrack id or URL is a YouTrack issue, an issue URL names its forge, and a
 number is an issue on the workspace's GitHub or GitLab tracker
 ([`issues.provider`](configuration.md#issue-tracker)), else on the PR's forge:
 
-| `--issue` | Body line |
-| --- | --- |
-| `#42`, `42`, `https://github.com/o/r/issues/42` on a GitHub PR | `Closes #42` (`Refs #42` with `--refs`) |
-| `owner/repo#42` | `Closes owner/repo#42` |
-| `7` on a GitLab MR | `Closes #7` in the MR description |
+| `--issue`                                                            | Body line                                                 |
+| -------------------------------------------------------------------- | --------------------------------------------------------- |
+| `#42`, `42`, `https://github.com/o/r/issues/42` on a GitHub PR       | `Closes #42` (`Refs #42` with `--refs`)                   |
+| `owner/repo#42`                                                      | `Closes owner/repo#42`                                    |
+| `7` on a GitLab MR                                                   | `Closes #7` in the MR description                         |
 | `7` on a GitHub PR with GitLab issues (`issues.repo: group/project`) | `Related to: https://gitlab.com/group/project/-/issues/7` |
-| `IRPT-74`, `https://you.youtrack.cloud/issue/IRPT-74` | `Related to: <baseUrl>/issue/IRPT-74` |
+| `IRPT-74`, `https://you.youtrack.cloud/issue/IRPT-74`                | `Related to: <baseUrl>/issue/IRPT-74`                     |
 
 A closing keyword does not cross forges, so an issue on the other forge is a
 `Related to:` line with its URL.
@@ -411,16 +412,16 @@ With a workspace `defaultEndpoint` of `green` or `merged`
 ([grants](grants.md#default-endpoint)), an agent that opens a PR keeps
 babysitting it without asking. `pr status` names the step in `babysit`:
 
-| `babysit` | Means | The agent |
-| --- | --- | --- |
-| `wait` | checks pending | runs `workit ci wait`, in the background where the host allows |
-| `wait-forge` | CI done, but the PR is in a merge queue or the forge is still computing mergeability | re-checks `workit pr status` in the background with backoff, at most 5 times, then stops and reports |
-| `fix-ci` | a gating check failed | one `workit ci rerun --failed --reason flake\|infra` for a clear flake or infra failure; otherwise reproduces with `workit check`, fixes and pushes |
-| `address-threads` | unresolved threads or changes requested | lists them with `workit pr threads`, fixes or replies with a reasoned dismissal (`workit pr reply`) |
-| `update-branch` | conflicts or a rebase the forge requires | rebases its own branch (or `workit stack sync`) and pushes with `--force-with-lease` |
-| `mark-ready` | a draft with nothing else open (even with a review pending) | runs `workit pr ready` |
-| `ready` | nothing left for the agent; a human approval may still be pending | stops (`green`), or lands with `workit pr merge` once the verdict is accepted (`merged`) |
-| `merged` | the PR is merged | observes it with `workit verify-delivery merge` |
+| `babysit`         | Means                                                                                | The agent                                                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wait`            | checks pending                                                                       | runs `workit ci wait`, in the background where the host allows                                                                                      |
+| `wait-forge`      | CI done, but the PR is in a merge queue or the forge is still computing mergeability | re-checks `workit pr status` in the background with backoff, at most 5 times, then stops and reports                                                |
+| `fix-ci`          | a gating check failed                                                                | one `workit ci rerun --failed --reason flake\|infra` for a clear flake or infra failure; otherwise reproduces with `workit check`, fixes and pushes |
+| `address-threads` | unresolved threads or changes requested                                              | lists them with `workit pr threads`, fixes or replies with a reasoned dismissal (`workit pr reply`)                                                 |
+| `update-branch`   | conflicts or a rebase the forge requires                                             | rebases its own branch (or `workit stack sync`) and pushes with `--force-with-lease`                                                                |
+| `mark-ready`      | a draft with nothing else open (even with a review pending)                          | runs `workit pr ready`                                                                                                                              |
+| `ready`           | nothing left for the agent; a human approval may still be pending                    | stops (`green`), or lands with `workit pr merge` once the verdict is accepted (`merged`)                                                            |
+| `merged`          | the PR is merged                                                                     | observes it with `workit verify-delivery merge`                                                                                                     |
 
 A branch that is only behind its base reads `ready`: `behindBase` is
 information, so a busy base never starts a rebase/CI loop or drops approvals.
@@ -452,7 +453,7 @@ child PR on its parent branch) on GitHub and GitLab.
 workit stack plan [--trunk <b> | --track <t>] [<bottom> … <top>]   # record the chain (default: the current branch's)
 workit stack status                    # per PR: READY | WAITING | ADVANCE | COMPLETE
 workit stack sync [--local] [--dry-run] [--force <branch>]
-workit stack land [--dry-run] [--max <n>]
+workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>]
 ```
 
 - The order is stored in `<git common dir>/workit/stacks/`, shared by every
@@ -516,7 +517,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   reads every row on the branch, and editing one slice never unlinks a merged
   sibling. A new plan (not a re-plan) under a name that still has standing
   orders in force warns and lists them, with `workit ledger standing clear
-  --fanout <n>` to drop them if they belong to an earlier run.
+--fanout <n>` to drop them if they belong to an earlier run.
 - `"fanIn": "integration"` is the one-PR mode: the trunk is an integration
   branch (planning refuses it on origin's default branch), each worker merges
   the integration tip into its branch before reporting, and the lead lands
@@ -631,7 +632,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   its native isolation) adds the slice's worktree at its planned path. A new
   slice starts at its base and gets its branch through `workit git branch`
   (branch policy applies); an existing branch is checked out as it is (`MODE:
-  resume`). It also makes `<worktree>/.workit-scratch`, hidden from git
+resume`). It also makes `<worktree>/.workit-scratch`, hidden from git
   through the repository's `info/exclude`, for the worker's temp files.
   Where the main checkout has `node_modules` (also `packages/*/node_modules`)
   that git ignores, the worktree gets its own: relative links such as
@@ -656,7 +657,7 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   `update-ref`, `symbolic-ref` writes, tag deletes, delete pushes, force
   pushes with a refspec, refspec pushes with `:` or `+`, `git replace|filter-branch|gc|prune|repack|sparse-checkout`,
   `git config` and `git remote` writes, `git stash drop|clear`, and `workit
-  fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
+fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
   command whose writes Workit cannot read (`python -c`, `node -e`, `xargs rm`,
   `find -delete`) counts as a change in the directory it runs in, and a link
   inside the worktree may not point outside it. After a `cd -`, `cd "$VAR"` or
@@ -694,7 +695,7 @@ workit lock status                # who holds the lease; `workit lock wait` wait
 - **Which checks are heavy.** The named checks `test`, `build` and `typecheck`
   are heavy by default. An ad-hoc `workit check -- <cmd>` takes the lease only
   with `--heavy`. A raw heavy shell command an agent runs (`npx jest`, `npm
-  run test:ci`) is rewritten through the lease, or denied with the exact
+run test:ci`) is rewritten through the lease, or denied with the exact
   rewrite on Codex and Cursor. A chain with heavy parts is denied with each
   part's lease command, and a command a host permission rule names runs
   outside the lease ([verification guide](verification.md#heavy-commands-and-the-lease)).
@@ -748,7 +749,12 @@ only tighten them, so a repo cannot break the machine-wide limit: it can add
     {
       "name": "work",
       "glob": "/home/me/work/**",
-      "resources": { "slots": 1, "memoryMax": "40%", "cpuQuota": "70%", "scope": true }
+      "resources": {
+        "slots": 1,
+        "memoryMax": "40%",
+        "cpuQuota": "70%",
+        "scope": true
+      }
     }
   ]
 }
@@ -761,15 +767,15 @@ only tighten them, so a repo cannot break the machine-wide limit: it can add
 }
 ```
 
-| Field       | Default                      | Where     | Meaning                                                                |
-| ----------- | ---------------------------- | --------- | ---------------------------------------------------------------------- |
-| `heavy`     | `test`, `build`, `typecheck` | both      | Named checks that take the lease; a repo only adds to the list         |
-| `slots`     | `1`                          | workspace | Heavy checks that may run at once on the machine (1-64)                |
-| `memoryMax` | `40%` of RAM                 | both      | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
-| `cpuQuota`  | `70%` of all CPUs            | both      | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
-| `wait`      | `600`                        | both      | Seconds to wait for the lease before exit 4                            |
-| `scope`     | `true`                       | workspace | `false` keeps the lease but runs without a systemd scope               |
-| `heavyCommands` | none                     | repo      | Extra shell commands the hook gates (`["mvn verify", "task test:*"]`)  |
+| Field           | Default                      | Where     | Meaning                                                                |
+| --------------- | ---------------------------- | --------- | ---------------------------------------------------------------------- |
+| `heavy`         | `test`, `build`, `typecheck` | both      | Named checks that take the lease; a repo only adds to the list         |
+| `slots`         | `1`                          | workspace | Heavy checks that may run at once on the machine (1-64)                |
+| `memoryMax`     | `40%` of RAM                 | both      | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
+| `cpuQuota`      | `70%` of all CPUs            | both      | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
+| `wait`          | `600`                        | both      | Seconds to wait for the lease before exit 4                            |
+| `scope`         | `true`                       | workspace | `false` keeps the lease but runs without a systemd scope               |
+| `heavyCommands` | none                         | repo      | Extra shell commands the hook gates (`["mvn verify", "task test:*"]`)  |
 
 An invalid field prints a `workit: resources:` warning and keeps the earlier
 value, so a typo never turns the lease off. The lease lives in the CLI, so it

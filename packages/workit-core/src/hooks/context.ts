@@ -223,7 +223,10 @@ function entryCompactContext(
     return hit.value;
   const task = entry ? store.readTask(entry.id) : null;
   if (task && !task.ok) return null;
-  const freshness: Freshness = { mode: "signal", current: () => recentSignal(store.root) };
+  const freshness: Freshness = {
+    mode: "signal",
+    current: () => recentSignal(store.root),
+  };
   const observed = task?.data.evidence.some(isObservedCheck) ?? false;
   const files = (task?.data.decisions ?? []).flatMap((decision) =>
     decision.data.binding.contentRefs.flatMap((ref) =>
@@ -298,7 +301,6 @@ export const sessionContextText = (
   return `<workit-contract>\n${invariantBootstrap()}${compact}${offer ? `\n${offer}` : ""}${options.addendum ? `\n${options.addendum}` : ""}\n</workit-contract>`;
 };
 
-/** Per-turn task context only (no bootstrap or offer), or null when none applies. */
 /** The checkout holding `cwd` and its branch, read from the git dir (no spawn). */
 const checkoutAt = (cwd: string): { root: string; branch: string | null } | null => {
   for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
@@ -311,7 +313,10 @@ const checkoutAt = (cwd: string): { root: string; branch: string | null } | null
           )
         : dotGit;
       const head = fs.readFileSync(path.join(admin, "HEAD"), "utf8").trim();
-      return { root: dir, branch: /^ref: refs\/heads\/(.+)$/u.exec(head)?.[1] ?? null };
+      return {
+        root: dir,
+        branch: /^ref: refs\/heads\/(.+)$/u.exec(head)?.[1] ?? null,
+      };
     }
     if (path.dirname(dir) === dir) return null;
   }
@@ -333,6 +338,7 @@ export const whereLine = (cwd: string): string | null => {
   }
 };
 
+/** Per-turn task context only (no bootstrap or offer), or null when none applies. */
 export const turnContextText = (input: HookInput, descriptor: HostDescriptor): string | null => {
   try {
     const text = sessionCompactContext(
@@ -422,7 +428,9 @@ export const changedTurnContext = (input: HookInput, text: string | null): strin
   if (!file) return text;
   const digest = digestOf(text);
   try {
-    const previous = JSON.parse(fs.readFileSync(file, "utf8")) as { digest?: unknown };
+    const previous = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      digest?: unknown;
+    };
     if (previous.digest === digest) return null;
   } catch {
     // Missing or unreadable digest: treat as changed.

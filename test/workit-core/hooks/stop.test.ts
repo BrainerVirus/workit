@@ -24,6 +24,18 @@ import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
 import { fixture, tempRoot } from "./hook-fixtures";
 
+// #463: a SubagentStart records an issued session id in the state dir, so each
+// test gets its own rather than sharing the run-wide registry.
+let savedState: string | undefined;
+beforeEach(() => {
+  savedState = process.env.WORKFLOW_TOOLKIT_STATE;
+  process.env.WORKFLOW_TOOLKIT_STATE = tempRoot("workit-hook-state-");
+});
+afterEach(() => {
+  if (savedState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = savedState;
+});
+
 const roots: string[] = [];
 afterAll(() => {
   for (const dir of roots) rmSync(dir, { recursive: true, force: true });
@@ -35,7 +47,11 @@ beforeEach(() => {
   writeFileSync(
     path.join(home.configDir, "config.json"),
     JSON.stringify({
-      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+      branchPolicy: {
+        preset: "custom",
+        allowed: ["feature/*"],
+        protected: ["main"],
+      },
     }),
   );
 });
@@ -51,7 +67,11 @@ const git = (cwd: string, ...args: string[]) => {
 };
 
 const SESSION = "s-lead";
-const actor = (session: string) => ({ host: "claude_code", session, agentId: null });
+const actor = (session: string) => ({
+  host: "claude_code",
+  session,
+  agentId: null,
+});
 
 /** A Workit checkout on feature/x with an `origin` remote that has main only. */
 const repo = (
@@ -157,7 +177,10 @@ const prStatus = (
 
 /** Forget which obligations the session was already told about (the stop marker). */
 const forgetRaised = (root: string) =>
-  rmSync(path.join(root, ".git", "workit", "hooks"), { recursive: true, force: true });
+  rmSync(path.join(root, ".git", "workit", "hooks"), {
+    recursive: true,
+    force: true,
+  });
 
 const claudeStop = (cwd: string, extra: Record<string, unknown> = {}) =>
   dispatchHook(
@@ -482,7 +505,10 @@ test("G Codex Stop, W an unmet obligation, T decision block; stop_hook_active al
   commit(root, "a.txt", "codex-session-1");
   const stop = (extra: Record<string, unknown> = {}) =>
     dispatchHook(codexAdapter, fixture("codex", "stop", root, extra), {}).json;
-  expect(stop()).toEqual({ decision: "block", reason: expect.stringContaining("workit git push") });
+  expect(stop()).toEqual({
+    decision: "block",
+    reason: expect.stringContaining("workit git push"),
+  });
   expect(stop({ stop_hook_active: true })).toEqual({});
   expect(stop({ last_assistant_message: "Want me to push?" })).toEqual({});
 });
@@ -495,18 +521,29 @@ test("G Cursor stop, W an unmet obligation and a transcript, T followup_message 
     writeFileSync(
       transcript,
       [
-        JSON.stringify({ role: "user", message: { content: [{ type: "text", text: "go" }] } }),
-        JSON.stringify({ role: "assistant", message: { content: [{ type: "text", text }] } }),
+        JSON.stringify({
+          role: "user",
+          message: { content: [{ type: "text", text: "go" }] },
+        }),
+        JSON.stringify({
+          role: "assistant",
+          message: { content: [{ type: "text", text }] },
+        }),
         JSON.stringify({ type: "turn_ended", status: "success" }),
       ].join("\n"),
     );
   const stop = (extra: Record<string, unknown> = {}) =>
     dispatchHook(
       cursorAdapter,
-      fixture("cursor", "stop", root, { transcript_path: transcript, ...extra }),
+      fixture("cursor", "stop", root, {
+        transcript_path: transcript,
+        ...extra,
+      }),
     ).json;
   say("Committed the change.");
-  expect(stop()).toEqual({ followup_message: expect.stringContaining("workit git push") });
+  expect(stop()).toEqual({
+    followup_message: expect.stringContaining("workit git push"),
+  });
   expect(stop({ loop_count: 1 })).toEqual({});
   expect(stop({ status: "aborted" })).toEqual({});
   expect(stop({ transcript_path: null })).toEqual({});

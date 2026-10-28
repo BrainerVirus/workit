@@ -81,7 +81,11 @@ const rows = (cwd: string, type: string) => {
 
 const setup = (
   kind: "github" | "gitlab",
-  autonomy: Record<string, unknown> = { push: true, pr: true, merge: "verified" },
+  autonomy: Record<string, unknown> = {
+    push: true,
+    pr: true,
+    merge: "verified",
+  },
   branches?: string[],
   extension?: string,
 ) => {
@@ -106,12 +110,21 @@ const setup = (
       ],
     }),
   );
-  Object.assign(forgeDeps, { runner: forge.runner, sleep: async () => {}, now: () => 0 });
+  Object.assign(forgeDeps, {
+    runner: forge.runner,
+    sleep: async () => {},
+    now: () => 0,
+  });
   // The checkout's push URL names the forge; real pushes go to the bare remote.
   stackDeps.pushPlan = (cwd, branch) => {
     const plan = pushPreflight(cwd, { branch });
     return plan.ok
-      ? success({ ...plan.data, remote: forge.bare, rawUrl: forge.bare, url: forge.bare })
+      ? success({
+          ...plan.data,
+          remote: forge.bare,
+          rawUrl: forge.bare,
+          url: forge.bare,
+        })
       : plan;
   };
   forge.git("switch", "-q", (branches ?? ["feature/d"]).at(-1) as string);
@@ -151,13 +164,20 @@ for (const kind of ["github", "gitlab"] as const)
     expect((await verdict(forge, "feature/b")).code).toBe(0);
     const d = forge.tip("feature/d");
     const ready = await run(["stack", "status", "--json"], forge.cwd);
-    expect(ready.json().data).toMatchObject({ verdict: "READY", next: "workit stack land" });
+    expect(ready.json().data).toMatchObject({
+      verdict: "READY",
+      next: "workit stack land",
+    });
 
     const result = await run(["stack", "land", "--json"], forge.cwd);
     expect(result.code, result.stderr + result.stdout).toBe(0);
     const data = result.json().data;
     expect(data.landed.map((item: { pr: number }) => item.pr)).toEqual([11, 12]);
-    expect(data.stoppedAt).toMatchObject({ pr: 13, branch: "feature/c", reason: "no_verdict" });
+    expect(data.stoppedAt).toMatchObject({
+      pr: 13,
+      branch: "feature/c",
+      reason: "no_verdict",
+    });
     expect(data.retargeted).toEqual([12, 13]);
     expect(forge.writes).toEqual(["merge 11", "retarget 12 main", "merge 12", "retarget 13 main"]);
     // PR3 now sits on the trunk that holds both squashes; PR4 kept its base and head.
@@ -182,6 +202,96 @@ for (const kind of ["github", "gitlab"] as const)
     expect(after.json().data).toMatchObject({ verdict: "WAITING" });
     expect(after.json().data.reason).toContain("no_verdict");
   });
+
+/** The forge's runner, but the base branch's head CI has one failing required check. */
+const redBase = (forge: StackForge) => {
+  const inner = forge.runner;
+  forge.runner = (bin, args, options) => {
+    if (args.includes("repos/o/r/branches/main"))
+      return {
+        status: 0,
+        timedOut: false,
+        missing: false,
+        stderr: "",
+        stdout: JSON.stringify({
+          protected: true,
+          protection: { required_status_checks: { contexts: ["test"] } },
+        }),
+      };
+    if (args.some((arg) => arg.includes("object(expression:")))
+      return {
+        status: 0,
+        timedOut: false,
+        missing: false,
+        stderr: "",
+        stdout: JSON.stringify({
+          data: {
+            repository: {
+              object: {
+                oid: "basehead",
+                statusCheckRollup: {
+                  contexts: {
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: [
+                      {
+                        __typename: "CheckRun",
+                        name: "test",
+                        status: "COMPLETED",
+                        conclusion: "FAILURE",
+                        detailsUrl: null,
+                        databaseId: 1,
+                        checkSuite: null,
+                        isRequired: true,
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        }),
+      };
+    return inner(bin, args, options);
+  };
+  Object.assign(forgeDeps, { runner: forge.runner });
+};
+
+test("stack land: a red base refuses the merge, and --base-red-ok --reason passes through to every merge and is recorded", async () => {
+  const forge = setup("github");
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  redBase(forge);
+  const refused = await run(["stack", "land", "--json"], forge.cwd);
+  expect(refused.json().data.landed).toEqual([]);
+  expect(refused.json().data.stoppedAt).toMatchObject({
+    pr: 11,
+    reason: "merge_refused",
+  });
+  expect(refused.json().data.stoppedAt.detail).toContain("base_red");
+  expect(forge.writes).toEqual([]);
+
+  const needsReason = await run(["stack", "land", "--base-red-ok"], forge.cwd);
+  expect(needsReason.code).toBe(2);
+  expect(needsReason.stderr).toContain("--base-red-ok needs --reason");
+
+  const landed = await run(
+    [
+      "stack",
+      "land",
+      "--base-red-ok",
+      "--reason",
+      "main CI is down for an unrelated outage",
+      "--json",
+    ],
+    forge.cwd,
+  );
+  expect(landed.code, landed.stderr + landed.stdout).toBe(0);
+  expect(landed.json().data.landed.map((item: { pr: number }) => item.pr)).toEqual([11]);
+  expect(forge.writes).toContain("merge 11");
+  expect(rows(forge.cwd, "pr.merged")[0]).toMatchObject({
+    baseRedOk: "main CI is down for an unrelated outage",
+  });
+});
 
 test("stack land: given no merge grant, then nothing merges and it stops at verified, ready", async () => {
   const forge = setup("github", { push: true, pr: true, merge: false });
@@ -461,7 +571,10 @@ test("stack status and land --dry-run: a root PR that does not target the trunk 
   (forge.prs.get(11) as { base: string }).base = "develop";
   forge.git("push", "-q", forge.bare, "main:refs/heads/develop");
   const status = await run(["stack", "status", "--json"], forge.cwd);
-  expect(status.json().data).toMatchObject({ verdict: "WAITING", next: "workit stack sync" });
+  expect(status.json().data).toMatchObject({
+    verdict: "WAITING",
+    next: "workit stack sync",
+  });
   expect(status.json().data.reason).toContain("base_not_trunk");
   const dry = await run(["stack", "land", "--dry-run", "--json"], forge.cwd);
   expect(dry.json().data).toMatchObject({
@@ -480,7 +593,10 @@ test("stack sync: after the root was squash-merged on the forge, the rest is res
   const oldB = forge.tip("feature/b") as string;
   forge.mergeExternally(11);
   const advance = await run(["stack", "status", "--json"], forge.cwd);
-  expect(advance.json().data).toMatchObject({ verdict: "ADVANCE", next: "workit stack sync" });
+  expect(advance.json().data).toMatchObject({
+    verdict: "ADVANCE",
+    next: "workit stack sync",
+  });
 
   const result = await run(["stack", "sync", "--json"], forge.cwd);
   expect(result.code, result.stderr + result.stdout).toBe(0);
@@ -544,7 +660,10 @@ test("stack sync: a restack conflict stops blocked with the rebase-continue unbl
   const result = await run(["stack", "sync", "--json"], forge.cwd);
   expect(result.code).toBe(3);
   const json = result.json();
-  expect(json).toMatchObject({ code: "blocked", data: { conflict: "feature/b" } });
+  expect(json).toMatchObject({
+    code: "blocked",
+    data: { conflict: "feature/b" },
+  });
   expect(json.unblock).toContain("git rebase --continue, then workit stack sync");
   const stack = readStack(forge.cwd, "feature/a");
   if (!stack.ok || !stack.data) throw new Error("no stack");
@@ -557,7 +676,9 @@ test("stack sync: a restack conflict stops blocked with the rebase-continue unbl
   // The branch being moved keeps its last verified state plus what is moving.
   const { pendingRestack, ...recordedB } = byBranch.get("feature/b") as Record<string, unknown>;
   expect(recordedB).toEqual(plannedBy.get("feature/b") as Record<string, unknown>);
-  expect(pendingRestack).toMatchObject({ tip: planned.stack.branches[1].lastHead });
+  expect(pendingRestack).toMatchObject({
+    tip: planned.stack.branches[1].lastHead,
+  });
   expect(forge.writes).toEqual(["merge 11 (external)"]);
 
   // The rebase ran in a temporary worktree under the store, never in the
@@ -591,7 +712,9 @@ test("stack sync: a restack conflict stops blocked with the rebase-continue unbl
   expect((await run(["stack", "sync", "--force", "feature/zz", "--json"], forge.cwd)).code).toBe(2);
   // Forcing another branch does not cover feature/b.
   const other = await run(["stack", "sync", "--force", "feature/c", "--json"], forge.cwd);
-  expect(other.json()).toMatchObject({ data: { reason: "content_changed", branch: "feature/b" } });
+  expect(other.json()).toMatchObject({
+    data: { reason: "content_changed", branch: "feature/b" },
+  });
   expect(forge.tip("feature/b")).toBe(oldRemoteB);
   const resumed = await run(["stack", "sync", "--force", "feature/b", "--json"], forge.cwd);
   expect(resumed.code, resumed.stderr + resumed.stdout).toBe(0);
@@ -623,7 +746,10 @@ test("stack sync --local rebases without the forge, and --dry-run reports withou
   const refs = forge.git("for-each-ref", "refs/heads");
   const dry = await run(["stack", "sync", "--local", "--dry-run", "--json"], forge.cwd);
   expect(dry.code, dry.stderr).toBe(0);
-  expect(dry.json().data.steps[0]).toMatchObject({ branch: "feature/a", restack: { head: null } });
+  expect(dry.json().data.steps[0]).toMatchObject({
+    branch: "feature/a",
+    restack: { head: null },
+  });
   expect(forge.git("for-each-ref", "refs/heads")).toBe(refs);
   const local = await run(["stack", "sync", "--local", "--json"], forge.cwd);
   expect(local.code, local.stderr).toBe(0);
@@ -664,9 +790,14 @@ test("stack: a live writer holding the stack makes a second command busy (exit 4
   holdLock(lock, owner(process.pid));
   const busy = await run(["stack", "sync", "--local", "--json"], forge.cwd);
   expect(busy.code).toBe(4);
-  expect(busy.json()).toMatchObject({ code: "busy", data: { pid: process.pid } });
+  expect(busy.json()).toMatchObject({
+    code: "busy",
+    data: { pid: process.pid },
+  });
   // A pid that no longer exists, same machine identity.
-  const dead = spawnSync(process.execPath, ["-e", "process.pid"], { encoding: "utf8" }).pid;
+  const dead = spawnSync(process.execPath, ["-e", "process.pid"], {
+    encoding: "utf8",
+  }).pid;
   rmSync(lock, { recursive: true, force: true });
   holdLock(lock, owner(dead));
   const reclaimed = await run(["stack", "sync", "--local", "--json"], forge.cwd);
@@ -678,7 +809,9 @@ test("stack lock: a foreign-identity holder is never judged by local pids (busy 
   const forge = setup("github");
   await plan(forge);
   const lock = lockOf(forge);
-  const dead = spawnSync(process.execPath, ["-e", "process.pid"], { encoding: "utf8" }).pid;
+  const dead = spawnSync(process.execPath, ["-e", "process.pid"], {
+    encoding: "utf8",
+  }).pid;
   // Same pid that is dead here, but from another host / pid namespace: not ours to judge.
   holdLock(lock, owner(dead, "other-host#1:boot"));
   expect((await run(["stack", "sync", "--local", "--json"], forge.cwd)).code).toBe(4);
@@ -820,7 +953,10 @@ test("stack sync: a dirty checkout that has a stack branch checked out is refuse
   const d = forge.git("rev-parse", "feature/d");
   const result = await run(["stack", "sync", "--json"], forge.cwd);
   expect(result.code).toBe(3);
-  expect(result.json()).toMatchObject({ code: "blocked", data: { branch: "feature/d" } });
+  expect(result.json()).toMatchObject({
+    code: "blocked",
+    data: { branch: "feature/d" },
+  });
   expect(result.json().error).toContain("dirty_worktree");
   expect(forge.git("rev-parse", "feature/d")).toBe(d);
   expect(readFileSync(path.join(forge.cwd, "README.md"), "utf8")).toBe("local edit\n");
@@ -860,14 +996,22 @@ test("stack land: the owner/project binding is re-checked: a same-named PR the l
   await run(["stack", "plan", "feature/a", "--json"], forge.cwd);
   await verdict(forge, "feature/a");
   // The forge now reports another PR as feature/a's (e.g. reopened elsewhere).
-  forge.prs.set(99, { number: 99, branch: "feature/a", base: "main", state: "open" });
+  forge.prs.set(99, {
+    number: 99,
+    branch: "feature/a",
+    base: "main",
+    state: "open",
+  });
   (forge.prs.get(11) as { state: string }).state = "closed";
   const dry = await run(["stack", "land", "--dry-run", "--json"], forge.cwd);
   expect(dry.json().data.stoppedAt).toMatchObject({ pr: 11 });
   expect(["pr_mismatch", "pr_closed"]).toContain(dry.json().data.stoppedAt.reason);
   (forge.prs.get(11) as { state: string }).state = "open";
   const land = await run(["stack", "land", "--dry-run", "--json"], forge.cwd);
-  expect(land.json().data.stoppedAt).toMatchObject({ pr: 11, reason: "pr_mismatch" });
+  expect(land.json().data.stoppedAt).toMatchObject({
+    pr: 11,
+    reason: "pr_mismatch",
+  });
 });
 
 test("stack plan: a parent rewritten under its child keeps the recorded base, so sync replays only the child's commits; a fresh plan over a rewritten parent is refused with the exact rebase", async () => {
@@ -946,12 +1090,21 @@ test("verdict carry: only CLI-observed, patch-equal restack rows carry; an agent
     patchEqual: true,
   };
   const actor = { host: "cli", session: "agent-x", agentId: null };
-  const asserted = appendRow(forge.cwd, { type: "stack.restacked", actor, ...link } as never);
+  const asserted = appendRow(forge.cwd, {
+    type: "stack.restacked",
+    actor,
+    ...link,
+  } as never);
   expect(asserted.ok).toBe(true);
   const check = async () =>
     (await run(["ledger", "check", "--branch", "feature/b", "--json"], forge.cwd)).json().data;
   expect(await check()).toMatchObject({ accepted: { accepted: false } });
-  appendObserved(forge.cwd, { type: "stack.restacked", actor, ...link, patchEqual: false });
+  appendObserved(forge.cwd, {
+    type: "stack.restacked",
+    actor,
+    ...link,
+    patchEqual: false,
+  });
   expect(await check()).toMatchObject({ accepted: { accepted: false } });
   // Positive control: the same link observed as patch-equal does carry.
   appendObserved(forge.cwd, { type: "stack.restacked", actor, ...link });
@@ -1024,7 +1177,9 @@ test("stack lock: a live holder on this machine is never stale, however old its 
 });
 
 const hook = (forge: StackForge, name: string, seconds: number) =>
-  writeFileSync(path.join(forge.hooks, name), `#!/bin/sh\nsleep ${seconds}\n`, { mode: 0o755 });
+  writeFileSync(path.join(forge.hooks, name), `#!/bin/sh\nsleep ${seconds}\n`, {
+    mode: 0o755,
+  });
 
 test("stack sync: while another process is inside a slow rebase (post-rewrite hook), a second sync is busy", async () => {
   const forge = setup("github", undefined, ["feature/a", "feature/b"]);
@@ -1052,7 +1207,10 @@ test("stack sync: a rebase that outlives the bound reports timed_out, not a conf
   stackDeps.rebaseTimeoutMs = 1_000;
   const result = await run(["stack", "sync", "--local", "--json"], forge.cwd);
   expect(result.code).toBe(1);
-  expect(result.json()).toMatchObject({ code: "failed", data: { reason: "timed_out" } });
+  expect(result.json()).toMatchObject({
+    code: "failed",
+    data: { reason: "timed_out" },
+  });
   expect(result.json().error).toContain("timed_out");
   expect(result.json().data.conflict).toBeUndefined();
 });
@@ -1126,5 +1284,8 @@ test("pr merge: given a lower PR of a stack verified at the top, then pr status 
   });
   const merged = await run(["pr", "merge", "--pr", "11", "--keep-branch", "--json"], forge.cwd);
   expect(merged.code, merged.stderr + merged.stdout).toBe(0);
-  expect(merged.json().data.verdict).toMatchObject({ accepted: true, verdictId: topId });
+  expect(merged.json().data.verdict).toMatchObject({
+    accepted: true,
+    verdictId: topId,
+  });
 });

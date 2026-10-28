@@ -77,7 +77,10 @@ const featureRepo = (): string => {
 const verdict = (root: string, kind: VerdictKind = "review", result: VerdictResult = "verified") =>
   value(
     recordVerdict(
-      { cwd: root, actor: { host: "cli", session: "reviewer-2", agentId: null } },
+      {
+        cwd: root,
+        actor: { host: "cli", session: "reviewer-2", agentId: null },
+      },
       { result, how: "exercised it", kind },
     ),
   );
@@ -108,7 +111,10 @@ test("Given a verified head, When an empty commit or a comment-only edit follows
   commit(root, { "src/app.ts": `// Adds two numbers.\n${APP}` }, "docs: comment");
   const result = check(root);
   expect(result.accepted.accepted).toBe(true);
-  expect(result.verdicts[0].carry).toMatchObject({ rule: "lane-none", files: ["src/app.ts"] });
+  expect(result.verdicts[0].carry).toMatchObject({
+    rule: "lane-none",
+    files: ["src/app.ts"],
+  });
 });
 
 test("Given a verified head, When the follow-up changes source code, Then the verdict is stale and a focused re-verify names the file", () => {
@@ -116,7 +122,10 @@ test("Given a verified head, When the follow-up changes source code, Then the ve
   const judged = verdict(root);
   commit(root, { "src/app.ts": APP.replace("a + b", "a + b + 0") }, "fix");
   const result = check(root);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
   expect(result.current.basis).toBe("stale");
   expect(result.verdicts[0].carry).toBeNull();
   expect(result.reverify).toEqual({
@@ -144,8 +153,14 @@ test("Given a live or review verdict, When a test-only change follows, Then it d
     verdict(root, kind);
     commit(root, { "test/app.test.ts": "export {};\n" }, "test");
     const result = check(root);
-    expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
-    expect(result.reverify).toMatchObject({ scope: "focused", files: ["test/app.test.ts"] });
+    expect(result.accepted).toMatchObject({
+      accepted: false,
+      reasons: ["stale"],
+    });
+    expect(result.reverify).toMatchObject({
+      scope: "focused",
+      files: ["test/app.test.ts"],
+    });
   }
 });
 
@@ -155,7 +170,10 @@ test("Given a verified head, When a comment-only edit lands on a risk path, Then
   verdict(root);
   commit(root, { "src/auth/login.ts": "// Logs in.\nexport const login = 1;\n" }, "comment");
   const result = check(root);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
   expect(result.reverify).toBeNull();
 });
 
@@ -163,11 +181,17 @@ test("Given a unit verdict, When a binary or a lockfile changes, Then the verdic
   const binary = featureRepo();
   verdict(binary, "unit");
   commit(binary, { "test/fixture.bin": Buffer.from([0, 1, 2, 0]) }, "fixture");
-  expect(check(binary).accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(check(binary).accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
   const lock = featureRepo();
   verdict(lock, "unit");
   commit(lock, { "bun.lock": "{}\n" }, "deps");
-  expect(check(lock).accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(check(lock).accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
 });
 
 test("Given a verified head, When the branch is rebased onto a moved main and then gets a docs commit, Then the verdict still carries", () => {
@@ -180,7 +204,10 @@ test("Given a verified head, When the branch is rebased onto a moved main and th
   commit(root, { "docs/usage.md": "Use add().\n" }, "docs");
   const result = check(root);
   expect(result.accepted.accepted).toBe(true);
-  expect(result.verdicts[0].carry).toMatchObject({ rule: "lane-none", files: ["docs/usage.md"] });
+  expect(result.verdicts[0].carry).toMatchObject({
+    rule: "lane-none",
+    files: ["docs/usage.md"],
+  });
 });
 
 test("Given a rebase that also rewrote the branch's code, When checked, Then the verdict is stale", () => {
@@ -191,14 +218,20 @@ test("Given a rebase that also rewrote the branch's code, When checked, Then the
   git(root, "checkout", "-q", "feature/x");
   git(root, "rebase", "-q", "main");
   commit(root, { "src/app.ts": APP.replace("a + b", "b + a") }, "swap");
-  expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(check(root).accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
 });
 
 test("Given an independent failure, When a docs-only commit follows, Then the failure carries too and still blocks", () => {
   const root = featureRepo();
   verdict(root, "review", "failed");
   commit(root, { "README.md": "# app\n\nmore\n" }, "docs");
-  expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  expect(check(root).accepted).toMatchObject({
+    accepted: false,
+    reasons: ["failing_verdict"],
+  });
 });
 
 test("Given a hand-appended verdict, When a docs-only commit follows, Then it never carries", () => {
@@ -234,7 +267,11 @@ test("Given a hand-appended verdict, When a docs-only commit follows, Then it ne
   );
   commit(root, { "README.md": "# app\n\nmore\n" }, "docs");
   const result = check(root);
-  expect(result.verdicts[0]).toMatchObject({ basis: "stale", carry: null, accepted: false });
+  expect(result.verdicts[0]).toMatchObject({
+    basis: "stale",
+    carry: null,
+    accepted: false,
+  });
   expect(result.accepted.accepted).toBe(false);
 });
 
@@ -274,14 +311,20 @@ test("Given a rebase that moved the judged edit from isAdmin to isGuest (same co
   movedHunkAfterRebase(root, {});
   const result = check(root);
   expect(result.current.basis).toBe("stale");
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
 });
 
 test("Given the moved edit after a rebase plus a docs file, When checked, Then the verdict is stale, not carried as lane none", () => {
   const root = featureRepo();
   movedHunkAfterRebase(root, { "docs/x.md": "hi\n" });
   const result = check(root);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
   expect(result.verdicts[0].carry).toBeNull();
   expect(result.reverify?.files).toContain("src/roles.ts");
 });
@@ -293,7 +336,10 @@ test("Given a pure rebase whose base also edited a branch file, When checked, Th
   commit(root, { "test/app.test.ts": "// base side\n" }, "main edits a branch file");
   git(root, "checkout", "-q", "feature/x");
   git(root, "rebase", "-q", "-X", "theirs", "main");
-  expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(check(root).accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
 });
 
 test("Given a CLI-observed patch-equal restack row over a moved edit, When checked, Then it does not carry", () => {
@@ -327,7 +373,10 @@ test("Given a CLI-observed patch-equal restack row over a moved edit, When check
       }),
     );
   restacked(head);
-  expect(check(root).accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(check(root).accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
   // Control: the same row over an identical restack carries.
   git(root, "reset", "-q", "--hard", "HEAD~1");
   const same = commit(root, { "src/roles.ts": ROLES("true", "false") }, "admin early true");
@@ -348,7 +397,10 @@ test("Given a verified head, When requirements.txt gains a dependency and CMakeL
     "deps2",
   );
   const result = check(root);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
   expect(result.verdicts[0].carry).toBeNull();
 });
 
@@ -359,7 +411,10 @@ test("Given a unit verdict, When a runtime file under src/fixtures/ or spec/ cha
     verdict(root, "unit", "tests-verified");
     commit(root, { [file]: "admin = true\n" }, "cfg2");
     const result = check(root);
-    expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+    expect(result.accepted).toMatchObject({
+      accepted: false,
+      reasons: ["stale"],
+    });
     expect(result.verdicts[0].carry).toBeNull();
   }
 });
@@ -370,7 +425,10 @@ test("Given a unit verdict, When a `*_test.go` or `*.spec.ts` file changes, Then
     commit(root, { [file]: "a\n" }, "t");
     verdict(root, "unit", "tests-verified");
     commit(root, { [file]: "b\n" }, "t2");
-    expect(check(root).verdicts[0].carry).toMatchObject({ rule: "tests-only", files: [file] });
+    expect(check(root).verdicts[0].carry).toMatchObject({
+      rule: "tests-only",
+      files: [file],
+    });
   }
 });
 
@@ -394,8 +452,16 @@ const sharedFileRepo = (self = false) => {
   const judged = self
     ? value(
         recordVerdict(
-          { cwd: root, actor: { host: "cli", session: "author", agentId: null } },
-          { result: "verified", how: "exercised it", kind: "review", self: true },
+          {
+            cwd: root,
+            actor: { host: "cli", session: "author", agentId: null },
+          },
+          {
+            result: "verified",
+            how: "exercised it",
+            kind: "review",
+            self: true,
+          },
         ),
       )
     : verdict(root);
@@ -421,7 +487,11 @@ test("Given a verified head, When main edits another part of a branch file and t
   expect(result.head).not.toBe(judged.head);
   expect(result.accepted).toMatchObject({ accepted: true, reasons: [] });
   expect(result.current.basis).toBe("carried");
-  expect(result.carry).toEqual({ rule: "rebase", since: judged.head as string, files: [] });
+  expect(result.carry).toEqual({
+    rule: "rebase",
+    since: judged.head as string,
+    files: [],
+  });
   expect(carryLabel(result.carry as NonNullable<typeof result.carry>)).toBe(
     "carried (rebase: patch unchanged)",
   );
@@ -435,7 +505,10 @@ test("Given a rebase whose conflict in a branch file was resolved to the judged 
   git(root, "add", "src/shared.ts");
   git(root, "-c", "core.editor=true", "rebase", "--continue");
   const result = check(root);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
   expect(result.carry).toBeNull();
 });
 
@@ -446,7 +519,10 @@ test("Given a clean rebase followed by an amend of a branch line, When checked, 
   git(root, "add", "src/shared.ts");
   git(root, "commit", "-q", "--amend", "--no-edit");
   const result = check(root);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["stale"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
   expect(result.carry).toBeNull();
 });
 
@@ -454,7 +530,10 @@ test("Given an author's --self verdict, When the branch is rebased cleanly, Then
   const { root } = sharedFileRepo(true);
   expect(moveMainAndRebase(root, 35)).toBe(0);
   const result = check(root);
-  expect(result.verdicts[0]).toMatchObject({ basis: "carried", accepted: false });
+  expect(result.verdicts[0]).toMatchObject({
+    basis: "carried",
+    accepted: false,
+  });
   expect(result.verdicts[0].reasons).toContain("self");
   expect(result.accepted.accepted).toBe(false);
   expect(result.review).toBe("self-reviewed");
@@ -476,4 +555,66 @@ test("Given a verified head, When the branch's files stay byte-identical (a reba
     expect(result.current.basis).toBe("carried");
     expect(result.carry).toBeNull();
   }
+});
+
+const BIG = Array.from({ length: 60 }, (_, index) => `line ${index + 1}\n`).join("");
+
+/**
+ * big.txt on main; feature/x edits line 35 and is judged. Main then edits line
+ * 33 (near enough to change the hunk's context, so the exact keys read stale),
+ * and the branch is rebased onto it. `own` is the branch's edit after the rebase.
+ */
+const restackOverSharedEdit = (own: string) => {
+  const root = featureRepo();
+  git(root, "checkout", "-q", "main");
+  commit(root, { "big.txt": BIG }, "big");
+  git(root, "checkout", "-q", "feature/x");
+  git(root, "rebase", "-q", "main");
+  const fromBase = git(root, "rev-parse", "main");
+  const fromHead = commit(
+    root,
+    { "big.txt": BIG.replace("line 35\n", "line 35 changed\n") },
+    "edit 35",
+  );
+  verdict(root);
+  git(root, "checkout", "-q", "main");
+  const toBase = commit(root, { "big.txt": BIG.replace("line 33\n", "line 33 near\n") }, "near");
+  git(root, "checkout", "-q", "feature/x");
+  git(root, "reset", "-q", "--hard", "HEAD~1");
+  git(root, "rebase", "-q", "main");
+  const head = commit(
+    root,
+    {
+      "big.txt": BIG.replace("line 33\n", "line 33 near\n").replace("line 35\n", own),
+    },
+    "edit 35 again",
+  );
+  value(
+    appendObserved(root, {
+      type: "stack.restacked",
+      actor: { host: "cli", session: "author", agentId: null },
+      stack: "s",
+      branch: "feature/x",
+      head,
+      fromHead,
+      fromBase,
+      toBase,
+      patchEqual: true,
+      forced: false,
+    }),
+  );
+  return root;
+};
+
+test("Given a restack row whose base also edited a file the branch touches, When the head is the judged head cleanly rebased, Then the verdict carries", () => {
+  const root = restackOverSharedEdit("line 35 changed\n");
+  expect(check(root).accepted.accepted).toBe(true);
+});
+
+test("Given the same restack row but the branch's patch also changed, When checked, Then it does not carry", () => {
+  const root = restackOverSharedEdit("line 35 changed differently\n");
+  expect(check(root).accepted).toMatchObject({
+    accepted: false,
+    reasons: ["stale"],
+  });
 });

@@ -110,7 +110,11 @@ export const PR_ROW_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /** Who wrote a row. Unverified: the environment says so (D18). */
-export type LedgerActor = { host: string; session: string | null; agentId: string | null };
+export type LedgerActor = {
+  host: string;
+  session: string | null;
+  agentId: string | null;
+};
 
 /** The code state a row was recorded against (§2.2). */
 export type CodeKey = {
@@ -180,7 +184,11 @@ export type VerdictRow = RowCommon & {
   untracked?: string[];
   untrackedCount?: number;
 };
-export type HandoffRow = RowCommon & { type: "handoff"; note: string | null; next: string };
+export type HandoffRow = RowCommon & {
+  type: "handoff";
+  note: string | null;
+  next: string;
+};
 /**
  * A lead's standing order for every worker of a fanout ("no new dependencies").
  * `stop` marks the stop line: running workers stop and report.
@@ -801,7 +809,11 @@ export type UnverifiedRow = {
   reason: UnverifiedReason;
 };
 /** The hash chain over the file: rows the CLI wrote, rows from before the chain, and the rest. */
-export type LedgerIntegrity = { chained: number; legacy: number; unverified: UnverifiedRow[] };
+export type LedgerIntegrity = {
+  chained: number;
+  legacy: number;
+  unverified: UnverifiedRow[];
+};
 export type LedgerRead = {
   path: string;
   rows: ReadRow[];
@@ -950,7 +962,12 @@ export function readLedger(
     });
   return {
     ok: true,
-    value: { path: file.value, rows, skipped, integrity: options.integrity ? integrity : null },
+    value: {
+      path: file.value,
+      rows,
+      skipped,
+      integrity: options.integrity ? integrity : null,
+    },
   };
 }
 
@@ -997,7 +1014,12 @@ const tamperedWarning = (cwd: string, breaks: readonly UnverifiedRow[]): string 
       ", ",
     )}${breaks.length > 3 ? ", …" : ""}): no verdict is accepted until it is repaired. ${tamperedUnblock(cwd)}`;
 
-export type RowFilter = { branch?: string; pr?: number; type?: string; last?: number };
+export type RowFilter = {
+  branch?: string;
+  pr?: number;
+  type?: string;
+  last?: number;
+};
 
 export function filterRows(rows: readonly ReadRow[], filter: RowFilter): ReadRow[] {
   const matched = rows.filter(
@@ -1088,7 +1110,11 @@ export function codeKey(
 
 export type VerdictBasis = "fresh" | "carried" | "stale" | "none";
 
-type Keyed = { head: string | null; patchId: string | null; diffHash: string | null };
+type Keyed = {
+  head: string | null;
+  patchId: string | null;
+  diffHash: string | null;
+};
 
 /** fresh: same head · carried: same non-null patch-id AND exact diff · stale: otherwise. */
 export function verdictBasis(verdict: Keyed, current: Keyed): Exclude<VerdictBasis, "none"> {
@@ -1170,7 +1196,11 @@ export type VerdictCheck = {
    * What merge gates read: an accepted strong (`verified`/`tests-verified`)
    * verdict and no current independent failure. `type-check-only` never counts.
    */
-  accepted: { accepted: boolean; verdict: ReadRow | null; reasons: RejectReason[] };
+  accepted: {
+    accepted: boolean;
+    verdict: ReadRow | null;
+    reasons: RejectReason[];
+  };
   review: ReviewLabel;
   /** The newest current, strong, self verdict when `review` is self-reviewed. */
   selfVerdict: ReadRow | null;
@@ -1269,7 +1299,10 @@ export function authorSessions(
   cwd: string,
   rows: readonly ReadRow[],
   branch: string,
-  range: { base: string | null; head: string | null } = { base: null, head: null },
+  range: { base: string | null; head: string | null } = {
+    base: null,
+    head: null,
+  },
   scope: BranchScope = branchScope(cwd, branch),
 ): Set<string> {
   const sessions = new Set<string>();
@@ -1437,7 +1470,7 @@ function effectiveOf(
  * head to the current head. With `exactIn` (the checkout), each link is
  * re-read with exact blobs (sameOwnChange, #334), so a row recorded before
  * that check carries a pass only when the branch's own files are identical
- * across the restack. Null keeps every observed link: a failure keeps
+ * across the restack or the head is the judged head cleanly rebased (#468). Null keeps every observed link: a failure keeps
  * applying through them (failing closed the other way).
  */
 const restackExact = new WeakMap<ReadRow, boolean>();
@@ -1454,15 +1487,18 @@ function restackCarries(
     const cwd = exactIn;
     let known = restackExact.get(row);
     if (known === undefined) {
-      known =
-        typeof row.fromBase === "string" &&
-        typeof row.toBase === "string" &&
-        sameOwnChange(cwd, {
-          from: fromHead,
-          to: head,
-          fromBase: row.fromBase,
-          toBase: row.toBase,
-        });
+      // Identical own blobs, or the head is exactly the judged head cleanly
+      // rebased onto the moved base (#468): a base edit elsewhere in a shared file.
+      const range =
+        typeof row.fromBase === "string" && typeof row.toBase === "string"
+          ? {
+              from: fromHead,
+              to: head,
+              fromBase: row.fromBase,
+              toBase: row.toBase,
+            }
+          : null;
+      known = range !== null && (sameOwnChange(cwd, range) || cleanRebase(cwd, range));
       restackExact.set(row, known);
     }
     return known;
@@ -1510,7 +1546,10 @@ export function checkVerdicts(
     const cacheKey = `${base}\0${at}`;
     let key = keyCache.get(cacheKey);
     if (!key) {
-      key = { patchId: patchId(cwd, base, at), diffHash: diffHash(cwd, base, at) };
+      key = {
+        patchId: patchId(cwd, base, at),
+        diffHash: diffHash(cwd, base, at),
+      };
       keyCache.set(cacheKey, key);
     }
     return key;
@@ -1575,7 +1614,10 @@ export function checkVerdicts(
   const exactCarry = (row: ReadRow): boolean =>
     FAILING.has(String(row.result)) || exactMatch(row) !== null;
   const keyBasis = (row: ReadRow): Exclude<VerdictBasis, "none"> => {
-    const basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
+    const basis = verdictBasis(row, {
+      head,
+      ...keyFor(row.base ?? fallbackBase),
+    });
     return basis === "carried" && !exactCarry(row) ? "stale" : basis;
   };
   /** A pass the exact keys carry only through a clean rebase (the base also edited a branch file). */
@@ -1736,7 +1778,11 @@ export function checkVerdicts(
       (entry) => entry.accepted && STRONG_RESULTS.has(String(entry.verdict.result)),
     ) ?? null;
   const accepted = tampered.length
-    ? { accepted: false, verdict: null, reasons: ["ledger_tampered"] as RejectReason[] }
+    ? {
+        accepted: false,
+        verdict: null,
+        reasons: ["ledger_tampered"] as RejectReason[],
+      }
     : newestAccepted && !failing
       ? { accepted: true, verdict: newestAccepted.verdict, reasons: [] }
       : {
@@ -1789,7 +1835,10 @@ export function checkVerdicts(
     selfVerdict: accepted.accepted ? null : (selfEntry?.verdict ?? null),
     base: newestCurrent?.verdict.base ?? fallbackBase,
     patchId: keyFor(newestCurrent?.verdict.base ?? fallbackBase).patchId,
-    current: { basis: newestCurrent?.basis ?? "none", verdict: newestCurrent?.verdict ?? null },
+    current: {
+      basis: newestCurrent?.basis ?? "none",
+      verdict: newestCurrent?.verdict ?? null,
+    },
     carry: carryEntry?.carry ?? null,
     reverify,
     accepted,
@@ -1868,7 +1917,13 @@ function checkSupersede(
 
 export function recordDecision(
   context: RecordContext,
-  input: { what?: string; why?: string; refs?: string[]; by?: string; views?: string[] },
+  input: {
+    what?: string;
+    why?: string;
+    refs?: string[];
+    by?: string;
+    views?: string[];
+  },
 ): LedgerResult<DecisionRow> {
   if (input.by !== undefined && input.by !== "decider")
     return err("invalid_input", `--by takes "decider", got "${input.by}"`);
@@ -2081,7 +2136,11 @@ export function clearStanding(
 /** Lift the stop line: clear each stop order in force and keep the others; lead only. */
 export function liftStop(
   context: RecordContext,
-  input: { fanout: string; lead: string | null; leads?: readonly string[] | null },
+  input: {
+    fanout: string;
+    lead: string | null;
+    leads?: readonly string[] | null;
+  },
 ): LedgerResult<StandingClearedRow[]> {
   const lead = leadOnly(context, input.lead);
   if (!lead.ok) return lead;
@@ -2242,10 +2301,16 @@ export function recordVerdict(
   );
 }
 
-function untrackedField(cwd: string): { untracked?: string[]; untrackedCount?: number } {
+function untrackedField(cwd: string): {
+  untracked?: string[];
+  untrackedCount?: number;
+} {
   const files = untrackedFiles(cwd);
   return files.length
-    ? { untracked: files.slice(0, MAX_UNTRACKED_LISTED), untrackedCount: files.length }
+    ? {
+        untracked: files.slice(0, MAX_UNTRACKED_LISTED),
+        untrackedCount: files.length,
+      }
     : {};
 }
 
@@ -2255,7 +2320,12 @@ export function recordHandoff(
 ): LedgerResult<HandoffRow> {
   return appendRow<HandoffRow>(
     context.cwd,
-    { ...common(context, noteKey(context)), type: "handoff", note: input.note, next: input.next },
+    {
+      ...common(context, noteKey(context)),
+      type: "handoff",
+      note: input.note,
+      next: input.next,
+    },
     { now: context.now },
   );
 }
@@ -2404,7 +2474,12 @@ export function stackPosition(root: string, branch: string): StackPosition | nul
   return null;
 }
 
-export type CheckFreshness = { name: string; result: string | null; fresh: boolean; at: string };
+export type CheckFreshness = {
+  name: string;
+  result: string | null;
+  fresh: boolean;
+  at: string;
+};
 
 type VerdictSummary = Omit<VerdictEntry, "verdict"> & { summary: string };
 
@@ -2453,7 +2528,11 @@ const dirtyState = (cwd: string): HandoffBrief["dirty"] => {
     // Renames and copies carry the source path as the next entry.
     if (entry[0] === "R" || entry[0] === "C") index += 1;
   }
-  return { dirty: paths.length > 0, files: paths.length, paths: paths.slice(0, MAX_DIRTY_PATHS) };
+  return {
+    dirty: paths.length > 0,
+    files: paths.length,
+    paths: paths.slice(0, MAX_DIRTY_PATHS),
+  };
 };
 
 const nextCommandFor = (brief: Omit<HandoffBrief, "nextCommand" | "next">): string => {
@@ -2521,7 +2600,11 @@ export function buildHandoff(
   }));
   const lastHandoffRow = mine.findLast((row) => row.type === "handoff");
   const partial: Omit<HandoffBrief, "nextCommand" | "next"> = {
-    store: { root: store.value.root, shared: store.value.shared, ledger: ledger.path },
+    store: {
+      root: store.value.root,
+      shared: store.value.shared,
+      ledger: ledger.path,
+    },
     branch,
     head,
     subject: head ? git(cwd, ["log", "-1", "--format=%s", head]) : null,
@@ -2559,6 +2642,10 @@ export function buildHandoff(
   const nextCommand = nextCommandFor(partial);
   return {
     ok: true,
-    value: { ...partial, nextCommand, next: options.next?.trim() || nextCommand },
+    value: {
+      ...partial,
+      nextCommand,
+      next: options.next?.trim() || nextCommand,
+    },
   };
 }

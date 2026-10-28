@@ -87,13 +87,19 @@ export const FAMILY_ACTIONS: Record<Family, Record<string, string>> = {
   },
   evidence: { record: "Record evidence against a task's requirements" },
   finding: { record: "Record a finding", resolve: "Resolve a finding" },
-  decision: { record: "Record a task decision", revoke: "Revoke a task decision" },
+  decision: {
+    record: "Record a task decision",
+    revoke: "Revoke a task decision",
+  },
   worker: {
     assign: "Assign a worker to a task",
     report: "Report a worker's result",
     cancel: "Cancel a worker assignment",
   },
-  state: { export: "Export a task's state (v1)", import: "Import an exported task state" },
+  state: {
+    export: "Export a task's state (v1)",
+    import: "Import an exported task state",
+  },
 };
 
 const POLICY_JUDGE =
@@ -615,7 +621,7 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "land",
         usage:
-          "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--timeout 20m] [--interval 30s]",
+          "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--timeout 20m] [--interval 30s]",
         summary: "Merge the stack root first, restacking the rest as each lands",
       },
     ],

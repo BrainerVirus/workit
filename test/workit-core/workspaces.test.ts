@@ -13,6 +13,7 @@ import {
   validateWorkspaceGlob,
   validateWorkspacesDocument,
   workspacesPath,
+  workspaceOverlaps,
   workspaceDelegation,
   workspaceTrailers,
   type WorkspaceConfig,
@@ -213,7 +214,12 @@ test("any forge works with any issue tracker; an unknown tracker is invalid, an 
             name: "github-gitlab-issues",
             glob: "/home/*/mixed/**",
             vcs: { provider: "github" },
-            issues: { provider: "gitlab", link: true, relation: "refs", backlink: true },
+            issues: {
+              provider: "gitlab",
+              link: true,
+              relation: "refs",
+              backlink: true,
+            },
           },
         ],
       }),
@@ -452,7 +458,9 @@ test("readWorkspacesResult validates typed entries and keeps unrelated JSON meta
 
       writeWorkspaces(
         dir,
-        JSON.stringify({ workspaces: [{ name: "bad", glob: "**", vcs: { provider: "unknown" } }] }),
+        JSON.stringify({
+          workspaces: [{ name: "bad", glob: "**", vcs: { provider: "unknown" } }],
+        }),
       );
       const invalid = readWorkspacesResult();
       expect(invalid.status).toBe("invalid");
@@ -577,7 +585,11 @@ test("runtime policy resolution isolates unrelated invalid workspace settings", 
           glob: "/home/*/personal/**",
           vcs: { provider: "github" },
           youtrack: { link_issues: true },
-          branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+          branchPolicy: {
+            preset: "custom",
+            allowed: ["feature/*"],
+            protected: ["main"],
+          },
           commitPolicy: { preset: "conventional" },
         },
         {
@@ -663,7 +675,11 @@ test("multiple release tracks require an explicit selection and preserve each tr
     mergeBackBranches: [integrationBranch],
     pullRequestTarget: productionBranch,
     tagNamespace,
-    versionSource: { kind: "package-json", path: "package.json", field: "version" },
+    versionSource: {
+      kind: "package-json",
+      path: "package.json",
+      field: "version",
+    },
     requiredChecks: ["build", "test"],
   });
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-tracks-"));
@@ -687,7 +703,10 @@ test("multiple release tracks require an explicit selection and preserve each tr
       const workspace = resolveWorkspace("/home/u/dual/repo");
       expect(workspace).not.toBeNull();
       const ambiguous = selectReleaseTrack(workspace!);
-      expect(ambiguous).toEqual({ status: "choice_required", choices: ["nun", "standard"] });
+      expect(ambiguous).toEqual({
+        status: "choice_required",
+        choices: ["nun", "standard"],
+      });
       const selected = selectReleaseTrack(workspace!, "nun");
       expect(selected.status).toBe("selected");
       if (selected.status !== "selected") return;
@@ -703,7 +722,14 @@ test("multiple release tracks require an explicit selection and preserve each tr
 
 test("defaultEndpoint: green and merged are valid, and an unknown value does not invalidate the file", () => {
   const document = (defaultEndpoint: unknown) => ({
-    workspaces: [{ name: "w", glob: "/w/**", defaultEndpoint, autonomy: { merge: "verified" } }],
+    workspaces: [
+      {
+        name: "w",
+        glob: "/w/**",
+        defaultEndpoint,
+        autonomy: { merge: "verified" },
+      },
+    ],
   });
   for (const value of ["commit", "pr", "green", "merged", "deployed", 3]) {
     const result = validateWorkspacesDocument(document(value), "workspaces.json");
@@ -725,7 +751,9 @@ test("workspaceDelegation: defaults to inline-first, reads lead-orchestrates, ig
   });
   writeWorkspaces(
     dir,
-    JSON.stringify({ workspaces: [{ ...entry, delegation: "lead-orchestrates" }] }),
+    JSON.stringify({
+      workspaces: [{ ...entry, delegation: "lead-orchestrates" }],
+    }),
   );
   withIsolatedConfig(dir, () => {
     expect(workspaceDelegation(cwd)).toBe("lead-orchestrates");
@@ -737,4 +765,18 @@ test("workspaceDelegation: defaults to inline-first, reads lead-orchestrates, ig
     expect(workspaceDelegation(cwd)).toBe("inline-first");
   });
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("workspaceOverlaps reports a mid-glob wildcard overlap the roots do not show", () => {
+  const overlaps = workspaceOverlaps([
+    { name: "wide", glob: "/w/*/ui/**" },
+    { name: "narrow", glob: "/w/ui/**" },
+  ]);
+  expect(overlaps).toHaveLength(1);
+  expect(
+    workspaceOverlaps([
+      { name: "a", glob: "/w/a/**" },
+      { name: "b", glob: "/w/b/**" },
+    ]),
+  ).toEqual([]);
 });
