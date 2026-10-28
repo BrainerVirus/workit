@@ -488,3 +488,41 @@ test("grant show: without the push or pr grant, pr, green and merged act as comm
   });
   expect(plain.endpointReason).toBeUndefined();
 });
+
+test("grant show: a workspace name that would raise grants is capped, with one note line (#536)", async () => {
+  writeFileSync(
+    file(),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "work",
+          glob: `${checkout.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "github", account: "octo" },
+          autonomy: { merge: true },
+        },
+        {
+          name: "brasil",
+          glob: `${checkout.replaceAll("\\", "/")}/repo/**`,
+          vcs: { provider: "github", account: "octo" },
+          autonomy: { merge: false },
+        },
+      ],
+    }),
+  );
+  const saved = process.env.WORKFLOW_WORKSPACE_NAME;
+  process.env.WORKFLOW_WORKSPACE_NAME = "work";
+  try {
+    const result = await run(["show"], headless);
+    expect(result.json().data).toMatchObject({ workspace: "work", grants: { merge: false } });
+    const notes = (await run(["show"], headless, {}, false))
+      .text()
+      .split("\n")
+      .filter((line) => line.includes("WORKFLOW_WORKSPACE_NAME"));
+    expect(notes).toEqual([
+      "note: WORKFLOW_WORKSPACE_NAME=work: merge capped at workspace brasil; a name never raises grants",
+    ]);
+  } finally {
+    if (saved === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
+    else process.env.WORKFLOW_WORKSPACE_NAME = saved;
+  }
+});
