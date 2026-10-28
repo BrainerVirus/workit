@@ -1,7 +1,6 @@
 {
   "id": "cc-isolated-implementer-raw-commit",
   "source": "retro 2026-10-27 claude-code F3: 71 contradicting nudges",
-  "open": "#428",
   "repo": {
     "branch": "feature/x",
     "worktree": "claude-agent"

@@ -406,7 +406,6 @@ test("G a Workit workspace, W routine raw delivery commands, T they run with a n
       ["git push -u origin feature/x", "workit git push"],
       ["git push --force origin feature/x", "workit git push --force-with-lease"],
       ["gh pr create --fill", "workit pr create"],
-      ["gh pr view 4 && gh pr checks 4", "workit pr status"],
       ["glab mr create --fill", "workit pr create"],
     ];
     // A commit whose message is "help" is still a commit.
@@ -416,7 +415,22 @@ test("G a Workit workspace, W routine raw delivery commands, T they run with a n
       expect(out?.permissionDecision, command).toBeUndefined();
       expect(out?.additionalContext, command).toContain(verb);
     }
-    for (const command of ["git status", "git log -3", "git diff main", "git fetch origin"])
+    // Read-only git and gh run raw with no nudge (#428).
+    for (const command of [
+      "git status",
+      "git log -3",
+      "git diff main",
+      "git show HEAD",
+      "git branch --list",
+      "git rev-parse HEAD",
+      "git fetch origin",
+      "gh pr view 4 && gh pr checks 4",
+      "gh pr list",
+      "gh pr status",
+      "gh pr diff 4",
+      "gh run view 1",
+      "gh run list",
+    ])
       expect(claude(root, command).json, command).toEqual({});
   });
 });
@@ -953,14 +967,11 @@ test("G an unwritable ledger, W a raw commit PostToolUse, T no error escapes and
   });
 });
 
-test("G one main session, W repeated raw gh pr view / push / commit, T each nudge kind shows once; a command running workit gets none; denies still apply", async () => {
+test("G one main session, W repeated raw push / commit, T each nudge kind shows once; a command running workit gets none; denies still apply", async () => {
   await withProtectedMain(() => {
     const root = repo({ branch: "feature/x" });
     const say = (command: string, session = "s-throttle") =>
       claudeOut(root, command, { session_id: session })?.additionalContext ?? "";
-    expect(say("gh pr view 4")).toContain("workit pr status");
-    expect(say("gh pr view 4")).toBe("");
-    expect(say("gh pr checks 4")).toBe("");
     expect(say("git push -u origin feature/x")).toContain("workit git push");
     expect(say("git push origin feature/x")).toBe("");
     // A blind force push is its own kind: its warning still shows once.
@@ -968,11 +979,25 @@ test("G one main session, W repeated raw gh pr view / push / commit, T each nudg
     expect(say("git commit -qam 'feat: x'")).toContain("workit git commit -m");
     expect(say("git commit -qam 'feat: y'")).toBe("");
     // Another session, or a subagent of this one, is nudged on its own.
-    expect(say("gh pr view 4", "s-other")).toContain("workit pr status");
+    expect(say("git push origin feature/x", "s-other")).toContain("workit git push");
     expect(
-      claudeOut(root, "gh pr view 4", { session_id: "s-throttle", agent_id: "a1" })
+      claudeOut(root, "git push origin feature/x", { session_id: "s-throttle", agent_id: "a1" })
         ?.additionalContext,
-    ).toContain("workit pr status");
+    ).toContain("workit git push");
+    // A Workit role's start text already says how it runs git (steering.ts):
+    // an implementer or a judge gets no git nudge, and denies still apply.
+    for (const agent_type of ["workit:implementer", "workit:verifier"]) {
+      const agent = { session_id: "s-role", agent_id: `a-${agent_type.slice(7)}`, agent_type };
+      for (const command of [
+        "git commit -qam 'feat: r'",
+        "git push origin feature/x",
+        "gh pr create --fill",
+      ])
+        expect(claudeOut(root, command, agent)?.additionalContext ?? "", command).not.toMatch(
+          /(?:^|\n)workit: /,
+        );
+      expect(claudeOut(root, "gh pr merge 4", agent)?.permissionDecision).toBe("deny");
+    }
     // A command that runs a workit verb itself gets no raw-git nudge (the
     // once-per-session workit-ship skill line is a different nudge).
     for (const [index, command] of [

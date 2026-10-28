@@ -34,7 +34,8 @@ import { trackJudge } from "./session-marker";
 import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
 import { liveTargets, shellGate, writeGate } from "./write-gate";
-import { confineImplementer, confineImplementerShell, hostIsolated } from "./worktree-confine";
+import { confineImplementer, confineImplementerShell } from "./worktree-confine";
+import { agentSteering, workitRole } from "./steering";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
 export type HookDeps = { descriptor: HostDescriptor; addendum: string | null };
@@ -47,29 +48,6 @@ const resendsOnChange = (descriptor: HostDescriptor): boolean =>
 
 /** Sessions already offered unfinished tasks in this process. */
 const offered = new Set<string>();
-
-const ROLES: Readonly<Record<string, "implementer" | "judge">> = {
-  implementer: "implementer",
-  verifier: "judge",
-  reviewer: "judge",
-};
-
-/**
- * The Workit agent role an agent type names, spelled the host's way
- * (`descriptor.subagents.agentPrefix`): Claude Code namespaces plugin agents
- * (`workit:implementer`, so a bare `workit-implementer` is someone else's);
- * other hosts name custom agents freely (`workit-implementer`). The
- * implementer is the one subagent that writes; verifier and reviewer are
- * read-only judges that record verdicts as their own session.
- */
-const workitRole = (
-  descriptor: HostDescriptor,
-  agentType: string,
-): "implementer" | "judge" | null => {
-  const prefix = descriptor.subagents.agentPrefix;
-  const name = agentType.startsWith(prefix) ? agentType.slice(prefix.length) : "";
-  return Object.hasOwn(ROLES, name) ? ROLES[name] : null;
-};
 
 /** A tool call made by a Workit implementer subagent (the host names its agent type). */
 const implementerAgent = (input: HookInput, descriptor: HostDescriptor): boolean =>
@@ -84,9 +62,6 @@ const subagentSession = (session: string | null, agentId: string): string =>
     .join(":")
     .replace(/[^A-Za-z0-9_.:@/+-]/g, "-")
     .slice(0, 128);
-
-/** A Claude Code worktree path: `<repo>/.claude/worktrees/<name>`. */
-const CLAUDE_WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/]/;
 
 /**
  * Claude Code's worktree isolation refuses any command that wraps git
@@ -106,21 +81,17 @@ const subagentStartText = (
   event: Extract<HookInput["event"], { kind: "subagent.start" }>,
 ): string => {
   const session = input.session.id ?? null;
-  const role = workitRole(descriptor, event.agentType);
+  const { role, isolated, git } = agentSteering(descriptor, input.cwd, {
+    type: event.agentType,
+    id: event.agentId,
+  });
   const who = `${descriptor.label} subagent ${event.agentId} (${event.agentType})`;
-  // An implementer is host-isolated only when the host put it in its own
-  // worktree (`.claude/worktrees/agent-<id>`); by default the lead makes one.
-  const isolated =
-    descriptor.subagents.worktreeIsolation === "native" &&
-    (role === "implementer"
-      ? hostIsolated(input.cwd, event.agentId)
-      : CLAUDE_WORKTREE.test(input.cwd));
   const guide = role === "implementer" ? branchGuidance(input.cwd) : null;
-  if (role === "implementer" && isolated)
+  if (git === "plain")
     return `Workit observed ${who} working in its own git worktree: it may edit and commit there, within its brief's scope. ${isolatedGit(input.cwd)} Plain git is expected here, and the branch name is still policy-checked: a raw \`git switch -c\`, \`git checkout -b\`, \`git branch\` or \`git worktree add -b\` onto a protected or non-compliant name is denied, so use a policy-compliant branch.${guide ? ` ${guide}` : " (e.g. feature/<slug>)"} Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
   if (isolated)
     return `${isolatedGit(input.cwd)}\n${subagentStartText({ ...input, cwd: "" }, descriptor, event)}`;
-  if (role === "implementer")
+  if (git === "workit")
     // No host isolation: the lead makes the worktree, Workit's hooks confine
     // the implementer to it (worktree-confine.ts), and workit git works there.
     return `Workit observed ${who} as an implementer: it edits and commits only in its own git worktree, the one its brief names (the lead makes it with \`workit fanout worktree create <slice>\` before spawning), never in the lead's checkout, within its brief's scope. Workit binds it to the first Workit worktree it changes: from then on an edit or a mutating git command outside that worktree is denied, and before then so is one outside every Workit worktree. Run Workit against the worktree one verb per call, never \`cd … &&\` chains or \`$VAR\` paths: \`workit git --cwd <worktree> commit -m "<message>" -- <paths>\`, \`workit check --cwd <worktree> <name>\` (verb first, so host allow rules match). The worktree is on the brief's branch once the lead made it; otherwise switch with \`workit git --cwd <worktree> branch <branch> --base <base>\` (or \`--kind <kind> --slug <slug>\`, which picks the base); branch policy hooks still deny protected or non-compliant branches, raw git included.${guide ? ` ${guide}` : " (e.g. feature/<slug>)"} Never record a verdict on your own work. Never push, open a PR, or merge unless the brief asks for it.`;
@@ -272,8 +243,14 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       // An in-process plugin shows nudges on the tool result (shellNudge):
       // spending the once-per-session nudge here would lose it.
       if (descriptor.transport !== "hook-process") return rewritten(null);
+      // Only an agent no start text told how to run git is nudged (#428).
+      const { nudges } = agentSteering(descriptor, input.cwd, {
+        type: input.session.agentType,
+        id: input.session.agentId,
+      });
+      const nudge = canDeny ? rawGitPre(input, event.command, { nudge: nudges }) : NONE;
       const nudged = withContextLine(
-        withContextLine(canDeny ? rawGitPre(input, event.command) : NONE, aside),
+        withContextLine(nudge, aside),
         shipNudge(input, event.command),
       );
       // A deny always wins over the cwd rewrite.
