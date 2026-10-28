@@ -32,7 +32,8 @@ those files since the judged head and reuse green CI there (no fresh install, no
      leaky abstraction). Judgment only; lint owns nits.
 4. **Tests:** run suites under the heavy-check lease (`workit check test`,
    `workit check --heavy -- <cmd>`); `workit test-audit --diff`. Would each new test fail if the
-   behavior broke? Triage the findings (workit-test-audit).
+   behavior broke? Triage the findings (workit-test-audit). Every configured check (`packaging`
+   too) needs a run on this head or green CI; `workit pr status` `evidence` lists them.
 5. **Blast radius:** for each touched contract, caller, config or migration,
    state the one fact it is safe because of and run the proof. Anything
    unproven is labeled UNPROVEN, never assumed safe: `references/impact.md`.

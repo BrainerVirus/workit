@@ -911,6 +911,21 @@ test("G a merged log where the child's last stderr line landed early (separate p
   expect(inTail.match(/boom at the end/gu)).toHaveLength(1);
 });
 
+test("G a failing run whose `(fail)` lines scrolled into the omitted head, T the bounded output names them within the line budget", () => {
+  const stdout = Array.from({ length: 500 }, (_, index) => `line ${index + 1}`);
+  const fails = ["(fail) alpha [1.00ms]", "(fail) beta [2.00ms]", "(fail) gamma [3.00ms]"];
+  const log = [...stdout.slice(0, 10), ...fails, ...stdout.slice(10)].join("\n") + "\n";
+  const shown = boundedOutput(log, 60, "", true);
+  for (const line of fails) expect(shown).toContain(line);
+  expect(shown).toContain("line 500");
+  expect(shown.split("\n").filter(Boolean).length).toBeLessThanOrEqual(60);
+  expect(boundedOutput(log, 60, "", false)).not.toContain("(fail) alpha");
+  const many = Array.from({ length: 20 }, (_, index) => `(fail) t${index}`);
+  const capped = boundedOutput([...many, ...stdout].join("\n") + "\n", 60, "", true);
+  expect(capped).toContain("+5 more failures in the log");
+  expect(capped.split("\n").filter(Boolean).length).toBeLessThanOrEqual(60);
+});
+
 test("G `test` configured, W an ad-hoc `--name test` run, T it says before running that it will not satisfy the gate, and not again after", async () => {
   const root = repo();
   startTask(root);

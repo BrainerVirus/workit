@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import type { ForgeRunner } from "@brainervirus/workit-core/src/forge/exec";
 import type { PrStatusDoc } from "@brainervirus/workit-core/src/forge/report";
+import { evidenceLines } from "@brainervirus/workit-core/src/core/policy/check-evidence";
 import {
   checkIdentity,
   checkPushIdentity,
@@ -239,6 +240,7 @@ export function renderStatus(doc: PrStatusDoc): string[] {
       `  - ${thread.path ? `${thread.path}${thread.line ? `:${thread.line}` : ""} ` : ""}@${thread.author ?? "?"}${thread.isBot ? " (bot)" : ""}: ${thread.body}`,
     );
   if (doc.truncated) lines.push("(lists truncated at the page cap)");
+  if (doc.evidence) lines.push(...evidenceLines(doc.evidence));
   if (doc.blockers.length) lines.push(`blockers: ${doc.blockers.join(", ")}`);
   if (doc.identity?.note) lines.push(`identity: ${doc.identity.note}`);
   if (doc.babysit) lines.push(`babysit: ${doc.babysit}`);

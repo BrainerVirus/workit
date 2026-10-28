@@ -32,7 +32,7 @@ export {
 } from "./heavy-scope";
 
 /** Named checks that take the lease when nothing is configured. */
-export const DEFAULT_HEAVY_CHECKS = ["test", "build"];
+export const DEFAULT_HEAVY_CHECKS = ["test", "build", "packaging"];
 /**
  * Named checks that never take the lease unless the machine lists them heavy:
  * they finish in seconds, so they must not queue behind a 10-minute suite (#508).

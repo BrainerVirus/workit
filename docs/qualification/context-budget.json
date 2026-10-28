@@ -26,12 +26,12 @@
   "skill.workit-fanout": 21139,
   "skill.workit-implement": 4372,
   "skill.workit-retro": 7857,
-  "skill.workit-review": 5149,
+  "skill.workit-review": 5273,
   "skill.workit-shape": 9262,
   "skill.workit-ship": 7721,
   "skill.workit-test-audit": 2394,
   "skill.workit-verify-app": 5301,
   "agent.implementer": 2596,
   "agent.reviewer": 1899,
-  "agent.verifier": 2383
+  "agent.verifier": 2526
 }

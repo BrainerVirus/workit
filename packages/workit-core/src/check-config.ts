@@ -32,6 +32,8 @@ import path from "node:path";
 
 /** The package.json scripts that count as named checks when no checks config exists. */
 export const SCRIPT_CHECKS = ["test", "lint", "typecheck", "check"] as const;
+/** Scripts run as a check under another name: `test:packaging` is `workit check packaging` (#509). */
+const SCRIPT_CHECK_ALIASES = { packaging: "test:packaging" } as const;
 export const CHECKS_FILE = ".workit/checks.json";
 export const LEGACY_CHECKS_FILE = "workit.checks.json";
 
@@ -206,6 +208,10 @@ function detectedChecks(root: string): NamedCheck[] {
     for (const name of SCRIPT_CHECKS) {
       const script = scripts[name];
       if (typeof script === "string" && script.trim() !== "") add(scriptCheck(pm, name));
+    }
+    for (const [name, script] of Object.entries(SCRIPT_CHECK_ALIASES)) {
+      const body = scripts[script];
+      if (typeof body === "string" && body.trim() !== "") add({ ...scriptCheck(pm, script), name });
     }
   }
   const plain = (name: string, argv: string[]): NamedCheck => ({ name, argv, accepts: [argv] });

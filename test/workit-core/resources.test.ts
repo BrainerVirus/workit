@@ -77,12 +77,12 @@ const base = (dir: string) => ({
   pollMs: 20,
 });
 
-test("G no resources config, T one slot, test/build heavy, lint/typecheck/format light, a 30 min wait, 40% RAM and 70% of the CPUs", () => {
+test("G no resources config, T one slot, test/build/packaging heavy, lint/typecheck/format light, a 30 min wait, 40% RAM and 70% of the CPUs", () => {
   const { settings, warnings } = resolveResourceSettings([], HOST);
   expect(warnings).toEqual([]);
   expect(settings).toEqual({
     slots: 1,
-    heavy: ["test", "build"],
+    heavy: ["test", "build", "packaging"],
     light: ["lint", "typecheck", "format"],
     memoryMax: "13743895347",
     cpuQuota: "560%",
@@ -178,14 +178,17 @@ test("G light checks (#508), T the machine can make a light check heavy or a hea
     ["lint", "format"],
   ]);
   const machineLight = resolve(["machine", { light: ["build", "lint"] }]).settings;
-  expect([machineLight.heavy, machineLight.light]).toEqual([["test"], ["build", "lint"]]);
+  expect([machineLight.heavy, machineLight.light]).toEqual([
+    ["test", "packaging"],
+    ["build", "lint"],
+  ]);
   const repoHeavy = resolve(["repo", { heavy: ["typecheck"] }]).settings;
   expect([repoHeavy.heavy, repoHeavy.light]).toEqual([
-    ["test", "build", "typecheck"],
+    ["test", "build", "packaging", "typecheck"],
     ["lint", "format"],
   ]);
   const repoLight = resolve(["repo", { light: ["test"] }]);
-  expect(repoLight.settings.heavy).toEqual(["test", "build"]);
+  expect(repoLight.settings.heavy).toEqual(["test", "build", "packaging"]);
   expect(repoLight.warnings).toEqual([
     "repo: light: is machine-wide; set it in your workspaces.json, not in the repo",
   ]);

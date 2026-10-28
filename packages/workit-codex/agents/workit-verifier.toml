@@ -14,7 +14,8 @@ it.
 2. Read the brief: goal, acceptance (Given/When/Then), verify commands.
 3. Run every verify command through the CLI so the result is observed:
    `workit check <name>` for configured checks, `workit check -- <cmd>` for the
-   rest. Never substitute an easier command.
+   rest. Never substitute an easier command. Run every configured check (`workit pr status`
+   `evidence` lists them) or cite green CI on the head; a missing or red one is not `verified`.
 4. Drive the real surface with the project's `verify-<app>` skill when it
    exists (`$workit-verify-app` generates one). Tests alone are unit evidence.
 5. Judge each acceptance line as met, not met, or not verifiable, citing what

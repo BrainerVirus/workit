@@ -363,6 +363,11 @@ const STDERR_TAIL_LINES = 10;
 /** How much of the child's stderr is kept for that tail. */
 const STDERR_KEEP_CHARS = 64 * 1024;
 
+/** A line that names a failing test or error (Bun `(fail) name`, `FAIL`, `✗`, `error:`). */
+const FAILURE_LINE = /^\s*(?:\(fail\)|FAIL\b|✗|error:)/u;
+/** Failure marker lines listed from the omitted head. */
+const MAX_FAILURE_LINES = 15;
+
 /**
  * The last `lines` lines of a check's output, after one line saying how many
  * earlier ones were left out: a failure shows its failing tail, never the head.
@@ -370,26 +375,36 @@ const STDERR_KEEP_CHARS = 64 * 1024;
  * printed last can sit earlier in the merged log; the last stderr lines
  * (`stderr`) missing from the tail are shown after it, within the same budget.
  */
-export function boundedOutput(log: string, lines: number, stderr = ""): string {
+export function boundedOutput(log: string, lines: number, stderr = "", failed = false): string {
   const all = tailLines(log, Number.MAX_SAFE_INTEGER);
   if (all.length === 0) return "";
-  let shown = all.slice(-lines);
+  // A failing run also lists the failure markers its omitted head holds.
+  const markers = failed ? [...new Set(all.filter((line) => FAILURE_LINE.test(line)))] : [];
+  const listed = markers.slice(0, MAX_FAILURE_LINES);
+  const more = markers.length - listed.length;
+  const failureRoom = listed.length ? listed.length + 2 + (more > 0 ? 1 : 0) : 0;
+  let shown = all.slice(-Math.max(1, lines - failureRoom));
   const errors = tailLines(redactLog(stderr), STDERR_TAIL_LINES);
   let missing: string[] = [];
   if (errors.length) {
     const tail = new Set(shown);
     if (errors.some((line) => !tail.has(line))) {
       // Room for the stderr lines and their header, plus the omitted-lines header.
-      shown = all.slice(-Math.max(1, lines - errors.length - 2));
+      shown = all.slice(-Math.max(1, lines - failureRoom - errors.length - 2));
       const kept = new Set(shown);
       missing = errors.filter((line) => !kept.has(line));
     }
   }
   const omitted = all.length - shown.length;
+  const inTail = new Set([...shown, ...missing]);
+  const failures = listed.filter((line) => !inTail.has(line));
+  const failureFooter = failures.length
+    ? `… failures from the omitted lines:\n${failures.join("\n")}\n${more > 0 ? `+${more} more failures in the log\n` : ""}`
+    : "";
   const footer = missing.length
     ? `… the last stderr lines, which the merged log holds earlier:\n${missing.join("\n")}\n`
     : "";
-  return `${omitted ? `… ${omitted} earlier line${omitted === 1 ? "" : "s"} omitted (the full log is named below; --full streams it)\n` : ""}${shown.join("\n")}\n${footer}`;
+  return `${omitted ? `… ${omitted} earlier line${omitted === 1 ? "" : "s"} omitted (the full log is named below; --full streams it)\n` : ""}${failureFooter}${shown.join("\n")}\n${footer}`;
 }
 
 /** `resources` of the workspaces.json entry matching `cwd`, read from io.env's config dir. */
@@ -803,7 +818,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       `${JSON.stringify({ ok: code === "ok", code, data, ...(error ? { error } : {}), ...(task.stillUnsatisfied[0] ? { unblock: task.stillUnsatisfied[0].unblock } : {}) })}\n`,
     );
   else {
-    if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES, stderrTail));
+    if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES, stderrTail, !passed));
     io.stderr(`${summary}\n`);
     if (recordError && passed) io.stderr(`workit: ${recordError.message}\n`);
     // The pre-run note already said an ad-hoc run of a configured name leaves its gate open.
