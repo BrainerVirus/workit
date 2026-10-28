@@ -228,8 +228,9 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "upgrade",
     group: "setup",
-    usage: "workit upgrade [--hosts=a,b|none] [--cli] [--preview | --apply --confirm]",
-    summary: "Preview upgrades (--apply --confirm to apply)",
+    usage:
+      "workit upgrade [--hosts=a,b|none] [--cli] [--preview | --yes | --apply --confirm] [--json]",
+    summary: "Upgrade the CLI and every host after one confirmation, then verify with doctor",
     load: () => import("./upgrade"),
   },
   {

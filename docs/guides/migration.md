@@ -1,8 +1,9 @@
 # Migration: 2.x to 6.x
 
 Upgrade every host together. A runtime that reads a store record written by a
-newer major stops with "upgrade Workit" instead of guessing. Preview first with
-`workit upgrade`, then `workit upgrade --apply --confirm`.
+newer major stops with "upgrade Workit" instead of guessing. Run `workit upgrade`:
+it shows the plan, asks once and upgrades the CLI and every host
+(`workit upgrade --preview` only looks).
 
 ## 3.0: OpenCode V1 removed, admin code moved to the CLI
 

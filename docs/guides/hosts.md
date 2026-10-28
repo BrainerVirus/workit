@@ -76,7 +76,7 @@ command to run yourself. `workit uninstall` removes the entries it added
 (recorded in Workit's state dir, and only entries shaped like Workit's own:
 `Bash(workit …)`, `Shell(workit …)`, its two `autoMode` lines, the
 `CLAUDE_CODE_SHELL` bash path it set, the Codex rules file).
-`workit upgrade --apply --confirm` adds only the entries new in this Workit
+`workit upgrade` adds only the entries new in this Workit
 version to a block it already wrote, never one you removed, and prints the
 diff in the preview and again when it applies. `workit doctor` has a
 `claude_permissions`, `codex_permissions` and `cursor_permissions` row.
@@ -218,7 +218,7 @@ session the same way, so plain `git commit`s on every host carry the trailer
 
 The full guide is [claude-code.md](claude-code.md). One thing about updates:
 Claude Code loads its plugins once, when the process starts. After
-`claude plugin update workit@workit`, a running session, `/resume` inside it
+`workit upgrade` (or its native fallback `claude plugin update workit@workit`), a running session, `/resume` inside it
 and the subagents it spawns keep running the old hook. Quit Claude Code and
 start it again (`claude --resume <session id>` keeps the conversation). When
 the hook sees a newer installed version it tells the agent once to ask you to
@@ -340,6 +340,7 @@ already wrote breaks `config.toml`. `workit doctor` checks both:
   startup "Trust all and continue").
 - `codex_agents` warns when the agents are missing or outdated in
   `~/.codex/agents/`, or when one of them is a symlink. The fix is
+  `workit upgrade` (it refreshes them), or by hand
   `node "<plugin root>/dist/launch-mcp.js" --install-agents`, then a new
   Codex session. A plugin too old to bundle agents gets
   `codex plugin remove workit@<marketplace> && codex plugin add workit@<marketplace>`.
@@ -374,7 +375,7 @@ reads the `packages` in `~/.pi/agent/settings.json` and `.pi/settings.json`
   extension in `pi config`), or reinstall the package; a local checkout gets
   `cd <checkout> && bun run build`.
 - stale: the package is older than the workit CLI and a newer one is
-  published. Fix: `pi update npm:@brainervirus/workit-pi`, or
+  published. Fix: `workit upgrade` (native: `pi update npm:@brainervirus/workit-pi`), or
   `pi install npm:@brainervirus/workit-pi@<version>` for a pinned entry. When
   the registry is unreachable, or the entry is a local checkout, an older
   package passes and the detail says it was not compared.

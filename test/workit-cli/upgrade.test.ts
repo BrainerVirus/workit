@@ -99,7 +99,17 @@ test("local and exact pins stay unchanged; stale previews and running hosts bloc
     }
     writeFileSync(f.host, JSON.stringify({ plugins: ["@brainervirus/workit-opencode"] }));
     const plan = previewUpgrade(["pi"], f.deps);
-    expect(applyUpgrade(plan, { ...f.deps, activeHosts: () => ["pi"] }).ok).toBe(false);
+    const open = applyUpgrade(plan, {
+      ...f.deps,
+      processes: () => [{ pid: 42, state: "S+", args: "pi --session" }],
+    });
+    expect(open.hosts).toContainEqual({
+      host: "pi",
+      status: "skipped",
+      reason: "close pi (pid 42: pi --session), then rerun",
+      fix: "workit upgrade --hosts=pi",
+    });
+    expect(f.calls.some((call) => call[0] === "pi" && call[1] === "update")).toBe(false);
     writeFileSync(
       f.host,
       JSON.stringify({ plugins: ["@brainervirus/workit-opencode"], model: "changed" }),
@@ -385,7 +395,8 @@ test("OpenCode unsupported scoped update is visible and never falls back to upda
     const plan = previewUpgrade(["opencode"], f.deps);
     expect(plan.ok).toBe(true);
     expect(plan.entries).toEqual([]);
-    expect(plan.skipped[0]?.reason).toContain("scoped native updates are unavailable");
+    expect(plan.skipped[0]?.reason).toContain("no `opencode plugin update`");
+    expect(plan.skipped[0]?.fix).toBe("opencode plugin update @brainervirus/workit-opencode");
     let output = "";
     expect(
       await runLaunchCommand(["opencode", "--auto-upgrade", "--", "--version"], {
@@ -397,11 +408,15 @@ test("OpenCode unsupported scoped update is visible and never falls back to upda
         },
       }),
     ).toBe(0);
-    expect(output).toContain("preserved");
-    // Only version probes and the launch itself; never a plugin update.
+    expect(output).toContain("opencode plugin update @brainervirus/workit-opencode");
+    // Only probes and the launch itself; never a plugin update.
     const opencodeCalls = f.calls.filter((call) => call[0] === "opencode");
     expect(opencodeCalls.at(-1)).toEqual(["opencode", "--version"]);
-    expect(opencodeCalls.every((call) => call.join(" ") === "opencode --version")).toBe(true);
+    expect(
+      opencodeCalls.every((call) =>
+        ["opencode --version", "opencode plugin --help"].includes(call.join(" ")),
+      ),
+    ).toBe(true);
   } finally {
     f.cleanup();
   }
@@ -414,7 +429,7 @@ test("conflicting Workit registrations stop upgrade without changing either sour
     writeFileSync(f.host, JSON.stringify({ plugins: pins }));
     const plan = previewUpgrade(["opencode"], f.deps);
     expect(plan.ok).toBe(false);
-    expect(plan.blocked[0]).toContain("conflicting Workit registrations");
+    expect(plan.failed[0]?.reason).toContain("conflicting Workit registrations");
     expect(applyUpgrade(plan, f.deps).ok).toBe(false);
     expect(JSON.parse(readFileSync(f.host, "utf8")).plugins).toEqual(pins);
   } finally {
@@ -457,10 +472,15 @@ test("--preview is the explicit name of the default preview and refuses --apply"
     const out: string[] = [];
     const deps = { ...f.deps, out: { write: (text: string) => out.push(text) } };
     expect(await runUpgradeCommand(["--hosts=pi", "--preview"], deps)).toBe(0);
-    expect(JSON.parse(out.join("")).entries).toBeDefined();
+    expect(out.join("")).toContain("pi          update 2.0.2 -> 2.1.0");
+    expect(out.join("")).toEndWith(
+      "preview only; nothing changed. Apply with: workit upgrade --hosts=pi --yes\n",
+    );
+    expect(f.calls.some((call) => call[0] === "pi" && call[1] === "update")).toBe(false);
     out.length = 0;
     expect(await runUpgradeCommand(["--preview", "--apply", "--confirm"], deps)).toBe(2);
-    expect(out.join("")).toContain("[--preview | --apply --confirm]");
+    expect(await runUpgradeCommand(["--preview", "--yes"], deps)).toBe(2);
+    expect(out.join("")).toContain("[--preview | --yes | --apply --confirm]");
   } finally {
     f.cleanup();
   }
