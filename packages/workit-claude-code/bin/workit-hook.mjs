@@ -281,10 +281,17 @@ const tickBudget = (cwd, session, agentId) => {
     return false;
   }
 };
+const parsed = (() => {
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+})();
 // Counted before any fast path, so a call the fast path answers counts too.
 const budgetDue = (() => {
   try {
-    const value = JSON.parse(payload);
+    const value = parsed;
     if (value?.hook_event_name !== "PreToolUse" || typeof value.session_id !== "string")
       return false;
     const cwd = String(value.cwd ?? ".");
@@ -341,7 +348,8 @@ const markerFor = (session, installed) =>
 
 const fastAllow = (() => {
   try {
-    const value = JSON.parse(payload);
+    if (parsed === undefined) return false;
+    const value = parsed;
     const command = value?.tool_input?.command;
     if (
       value?.hook_event_name === "PreToolUse" &&
