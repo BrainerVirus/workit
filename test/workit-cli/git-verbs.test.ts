@@ -274,7 +274,7 @@ test("git commit: the session goes into a Workit-Session trailer and an observed
 // D18: a verifier must be a different session. `--as <role>` only mints a
 // distinct id per verifier; it never turns the author (or no session at all)
 // into an independent verifier. The lead hands each verifier its own session.
-test("Given the lead's commit, When the lead records with --as verifier, Then it is refused as the author, and with no session it is self", async () => {
+test("Given the lead's commit, When the lead records with --as verifier, Then it is refused as the author, and with no session it is refused as unbound (#505)", async () => {
   const repo = setup();
   repo.git("switch", "-q", "-c", "feature/slice");
   repo.write("s.txt", "s\n");
@@ -293,8 +293,8 @@ test("Given the lead's commit, When the lead records with --as verifier, Then it
     repo.cwd,
     bare,
   );
-  expect(anon.code).toBe(0);
-  expect(anon.json().data).toMatchObject({ self: true, selfReason: "no_session" });
+  expect(anon.code).toBe(3);
+  expect(anon.stdout + anon.stderr).toContain("no_session");
   const check = await run(["ledger", "check", "--json"], repo.cwd);
   expect(check.json().data.accepted.accepted).toBe(false);
 });
