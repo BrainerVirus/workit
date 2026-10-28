@@ -1,7 +1,6 @@
 {
   "id": "cc-heavy-tail-filter-not-split",
   "source": "retro 2026-10-27 claude-code F6 and opencode \u00a76: output-shaping pipes on a heavy command",
-  "open": "#429",
   "repo": {
     "branch": "feature/x"
   },

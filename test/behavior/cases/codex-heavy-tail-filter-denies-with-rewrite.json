@@ -1,0 +1,15 @@
+{
+  "id": "codex-heavy-tail-filter-denies-with-rewrite",
+  "source": "retro 2026-10-27 codex: a shaped heavy command is one command; Codex cannot rewrite, so the deny carries the exact lease command",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "codex",
+    "fixture": "pre-tool-use-bash",
+    "overrides": { "tool_input": { "command": "bun test 2>&1 | tail -50" } }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["workit check --heavy -- bun test 2>&1 \\| tail -50"],
+    "forbid": ["chains heavy work"]
+  }
+}

@@ -328,7 +328,7 @@ test("Given another live session owns the checkout, When a write runs inside the
   expect(output?.permissionDecisionReason).toContain("live-session guard");
 });
 
-test("Given Claude Code rules, When a heavy command is named or only workit is allowlisted, Then it runs as typed with a note, and bypassPermissions skips the allowlist check", () => {
+test("Given Claude Code rules, When a heavy command is named or only workit is allowlisted, Then it runs as typed, silently, and bypassPermissions skips the allowlist check", () => {
   const root = repo();
   const settings = path.join(home, ".claude", "settings.json");
   mkdirSync(path.dirname(settings), { recursive: true });
@@ -336,7 +336,7 @@ test("Given Claude Code rules, When a heavy command is named or only workit is a
   const named = claude(root, "npx jest");
   expect(named?.updatedInput).toBeUndefined();
   expect(named?.permissionDecision).toBeUndefined();
-  expect(named?.additionalContext).toContain("runs outside the heavy-check lease");
+  expect(named?.additionalContext).toBeUndefined();
   writeFileSync(settings, JSON.stringify({ permissions: { allow: ["Bash(workit:*)"] } }));
   expect(claude(root, "make test")?.updatedInput).toBeUndefined();
   expect(claude(root, "make test", { permission_mode: "bypassPermissions" })?.updatedInput).toEqual(
