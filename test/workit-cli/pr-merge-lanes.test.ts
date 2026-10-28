@@ -392,3 +392,26 @@ test("given a verdict carried over a clean rebase, when CI on the new head is re
   expect(merged.json().data.blockers).toContain("required_checks_failing");
   expect(merges(runner.calls)).toEqual([]);
 });
+
+// #505: the human merge line says "accepted" only when the gate accepted a verdict.
+test("given a merge on a self verdict, no verdict (lane none) or an accepted independent one, when it prints, then it says accepted only for the accepted one", async () => {
+  const self = setup(SMALL);
+  await selfVerdict(self.repo);
+  const selfMerge = await run(["pr", "merge"], self.repo.cwd);
+  expect(selfMerge.code).toBe(0);
+  expect(selfMerge.stdout).not.toMatch(/verdict \S+ accepted for that head/u);
+  expect(selfMerge.stdout).toContain("self-reviewed (lane self): the author's verdict");
+  expect(selfMerge.stdout).toContain("no independent verdict accepted for that head");
+
+  const docs = setup(DOCS);
+  const docsMerge = await run(["pr", "merge"], docs.repo.cwd);
+  expect(docsMerge.code).toBe(0);
+  expect(docsMerge.stdout).not.toMatch(/verdict \S+ accepted for that head/u);
+  expect(docsMerge.stdout).toContain("no verdict required (lane none)");
+
+  const risky = setup(RISKY);
+  await independentVerdict(risky.repo);
+  const verified = await run(["pr", "merge"], risky.repo.cwd);
+  expect(verified.code).toBe(0);
+  expect(verified.stdout).toMatch(/verdict \S+ accepted for that head/u);
+});

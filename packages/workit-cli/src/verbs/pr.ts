@@ -290,6 +290,27 @@ function verdictBlock(
   };
 }
 
+/**
+ * The verdict a merge went through on, said the way the gate read it (#505):
+ * "accepted" only for an accepted verdict, never for the author's own (lane
+ * self) or for a lane that needs none.
+ */
+const mergedOnLine = (verdict: {
+  accepted: boolean;
+  verdictId: string | null;
+  review: string;
+  lane: string;
+  cover?: StackCover | null;
+  carry?: CarryNote | null;
+}): string => {
+  if (verdict.review === "self-reviewed")
+    return `self-reviewed (lane ${verdict.lane}): the author's verdict ${verdict.verdictId ?? "?"}; no independent verdict accepted for that head`;
+  if (!verdict.verdictId) return `no verdict required (lane ${verdict.lane})`;
+  if (!verdict.accepted && !verdict.cover && !verdict.carry)
+    return `verdict ${verdict.verdictId} satisfied lane ${verdict.lane}; not an accepted independent verdict for that head`;
+  return `verdict ${verdict.verdictId} accepted for that head${verdict.cover ? ` (stack verdict on ${verdict.cover.branch} @ ${verdict.cover.head.slice(0, 12)})` : verdict.carry ? ` (${carryLabel(verdict.carry)})` : ""}`;
+};
+
 /** How the accepted verdict applies: fresh, carried (and why), or a stack verdict above it. */
 const acceptedHow = (verdict: {
   basis: string;
@@ -589,7 +610,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
     `merged ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number} (${data.method}) at head ${data.head.slice(0, 12)}${data.mergeSha ? ` -> ${data.mergeSha.slice(0, 12)}` : ""}`,
     data.unverified
       ? `UNVERIFIED: merged without a verdict (--unverified: ${data.unverified.reason}); ledger ${data.unverified.recorded}`
-      : `verdict ${data.verdict.verdictId ?? "?"} accepted for that head${data.verdict.cover ? ` (stack verdict on ${data.verdict.cover.branch} @ ${data.verdict.cover.head.slice(0, 12)})` : data.verdict.carry ? ` (${carryLabel(data.verdict.carry)})` : ""}`,
+      : mergedOnLine(data.verdict),
     ...(data.baseCi.note ? [data.baseCi.note] : []),
     ...(data.mergeBack.length
       ? [

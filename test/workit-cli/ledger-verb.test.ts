@@ -213,10 +213,39 @@ test("an author session's verdict is blocked (exit 3) unless --self", async () =
   expect(self.json().data).toMatchObject({ self: true, actor: { session: "s-author" } });
   const check = await run(root, ["ledger", "check", "--json"]);
   expect(check.json().data.accepted).toMatchObject({ accepted: false });
+  // #505: no session to bind is refused, never stored as a (self: no session) row.
   const anonymous = await run(root, ["ledger", "verdict", "verified", "--how", "x", "--json"], {
     WORKIT_SESSION_ID: "",
   });
-  expect(anonymous.json().data).toMatchObject({ self: true, selfReason: "no_session" });
+  expect(anonymous.code).toBe(3);
+  expect(anonymous.json()).toMatchObject({ ok: false, code: "blocked" });
+  expect(anonymous.json().error).toContain("no_session");
+  expect(anonymous.json().unblock).toContain("SubagentStart");
+  expect(anonymous.json().unblock).toContain("--self");
+});
+
+test("Given no host session in the shell, When a verifier records a verdict without --self or --session (or with --as), Then it is refused naming the missing SubagentStart binding and no row is written (#505)", async () => {
+  const root = featureRepo();
+  for (const extra of [[], ["--as", "verifier"]]) {
+    const refused = await run(
+      root,
+      ["ledger", "verdict", "verified", "--kind", "unit", "--how", "x", ...extra, "--json"],
+      { WORKIT_SESSION_ID: "" },
+    );
+    expect(refused.code, extra.join(" ")).toBe(3);
+    expect(refused.json().error).toContain("no_session");
+    expect(refused.json().unblock).toContain("SubagentStart");
+    expect(refused.json().unblock).toContain("workit doctor");
+  }
+  const list = await run(root, ["ledger", "list", "--json"]);
+  expect(JSON.stringify(list.json())).not.toContain('"type":"verdict"');
+  const self = await run(
+    root,
+    ["ledger", "verdict", "verified", "--how", "x", "--self", "--json"],
+    { WORKIT_SESSION_ID: "" },
+  );
+  expect(self.code).toBe(0);
+  expect(self.json().data).toMatchObject({ self: true });
 });
 
 test("Given no passing `workit check test` on the head, When an author records --self, Then it is recorded with a warning (also after a dirty-tree run); after a clean one, without", async () => {
@@ -344,7 +373,9 @@ test("ledger check names the newest verdict's result, and an ambiguous --pr says
   expect(ambiguous.json().error).toContain("ambiguous (feature/copy, feature/x)");
   const human = await run(root, ["handoff"], { WORKIT_SESSION_ID: "" });
   expect(human.stdout).toContain("verdict [feature/x]  failed [review]");
-  await run(root, ["ledger", "verdict", "verified", "--how", "x"], { WORKIT_SESSION_ID: "" });
+  await run(root, ["ledger", "verdict", "verified", "--how", "x", "--self"], {
+    WORKIT_SESSION_ID: "",
+  });
   expect((await run(root, ["handoff"])).stdout).toContain("verdict [feature/x] (self)  verified");
 });
 
