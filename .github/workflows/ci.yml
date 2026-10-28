@@ -416,8 +416,20 @@ jobs:
           cache: npm
           cache-dependency-path: bun.lock
 
-      # No bun cache on Windows: restore (80-90 s) plus install (~20 s) took
-      # longer than a cold `bun install` (70-75 s) (CI runs, 2026-10-28).
+      # Windows: the bun download cache restored slower (80-90 s) than a cold
+      # `bun install` (70-75 s) (CI runs, 2026-10-28), so cache the installed
+      # node_modules trees instead. The key is the OS plus the lockfile hash and
+      # there is no restore-keys fallback, so a changed bun.lock never reuses a
+      # stale tree. `bun install --frozen-lockfile` still runs: on a hit it only
+      # verifies and relinks workspaces, on a miss it is the cold install.
+      - name: Restore node_modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+          key: node-modules-${{ runner.os }}-bun${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+
       - name: Install deps
         run: bun install --frozen-lockfile
 
