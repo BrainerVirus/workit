@@ -87,11 +87,7 @@ export const systemNpm: NpmRunner = (args) => {
     encoding: "utf8" as const,
     timeout: 30_000,
     killSignal: "SIGKILL" as const,
-    env: {
-      ...process.env,
-      NO_UPDATE_NOTIFIER: "1",
-      npm_config_update_notifier: "false",
-    },
+    env: { ...process.env, NO_UPDATE_NOTIFIER: "1", npm_config_update_notifier: "false" },
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
   };
@@ -104,11 +100,7 @@ export const systemNpm: NpmRunner = (args) => {
     process.platform === "win32"
       ? spawnSync(`${npmCmd} ${args.join(" ")}`, { ...options, shell: true })
       : spawnSync("npm", [...args], options);
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 };
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(absent)");
@@ -189,17 +181,9 @@ export function verifyPushed(
 export function verifyPr(
   cwd: string,
   resolved: ResolvedForge,
-  input: {
-    pr?: number | null;
-    branch?: string | null;
-    sha?: string | null;
-    actor: LedgerActor;
-  },
+  input: { pr?: number | null; branch?: string | null; sha?: string | null; actor: LedgerActor },
 ): ForgeResult<DeliveryReport> {
-  const number = selectPr(cwd, resolved, {
-    pr: input.pr ?? null,
-    branch: input.branch ?? null,
-  });
+  const number = selectPr(cwd, resolved, { pr: input.pr ?? null, branch: input.branch ?? null });
   if (!number.ok) {
     if (number.code !== "not_found") return number;
     const branch = input.branch ?? currentBranch(cwd);
@@ -212,13 +196,7 @@ export function verifyPr(
           sha: input.sha ?? null,
           pr: null,
           observations: [
-            {
-              kind: "pr_state",
-              expected: "open",
-              observed: null,
-              ok: false,
-              note: number.error,
-            },
+            { kind: "pr_state", expected: "open", observed: null, ok: false, note: number.error },
           ],
         },
         input.actor,
@@ -230,12 +208,7 @@ export function verifyPr(
   const pr = status.data;
   const sha = input.sha ?? resolveRef(cwd, `refs/heads/${pr.head.branch}`) ?? pr.head.sha;
   const observations: Observation[] = [
-    {
-      kind: "pr_state",
-      expected: "open|merged",
-      observed: pr.state,
-      ok: pr.state !== "closed",
-    },
+    { kind: "pr_state", expected: "open|merged", observed: pr.state, ok: pr.state !== "closed" },
     {
       kind: "pr_head",
       expected: sha,
@@ -243,21 +216,13 @@ export function verifyPr(
       ok: pr.head.sha.startsWith(sha),
       ...(pr.head.sha.startsWith(sha)
         ? {}
-        : {
-            note: `the PR head is ${short(pr.head.sha)}; push ${short(sha)} (workit git push)`,
-          }),
+        : { note: `the PR head is ${short(pr.head.sha)}; push ${short(sha)} (workit git push)` }),
     },
   ];
   return success(
     finish(
       cwd,
-      {
-        expect: "pr",
-        branch: pr.head.branch,
-        sha,
-        pr: pr.number,
-        observations,
-      },
+      { expect: "pr", branch: pr.head.branch, sha, pr: pr.number, observations },
       input.actor,
     ),
   );
@@ -269,21 +234,13 @@ export function verifyMerged(
   resolved: ResolvedForge,
   input: { pr?: number | null; branch?: string | null; actor: LedgerActor },
 ): ForgeResult<DeliveryReport> {
-  const number = selectPr(cwd, resolved, {
-    pr: input.pr ?? null,
-    branch: input.branch ?? null,
-  });
+  const number = selectPr(cwd, resolved, { pr: input.pr ?? null, branch: input.branch ?? null });
   if (!number.ok) return number;
   const status = resolved.forge.prStatus(number.data);
   if (!status.ok) return status;
   const pr = status.data;
   const observations: Observation[] = [
-    {
-      kind: "pr_state",
-      expected: "merged",
-      observed: pr.state,
-      ok: pr.state === "merged",
-    },
+    { kind: "pr_state", expected: "merged", observed: pr.state, ok: pr.state === "merged" },
   ];
   if (pr.state === "merged") {
     const ledger = readLedger(cwd);
@@ -325,13 +282,7 @@ export function verifyMerged(
   return success(
     finish(
       cwd,
-      {
-        expect: "merged",
-        branch: pr.head.branch,
-        sha: pr.head.sha,
-        pr: pr.number,
-        observations,
-      },
+      { expect: "merged", branch: pr.head.branch, sha: pr.head.sha, pr: pr.number, observations },
       input.actor,
     ),
   );
@@ -366,12 +317,7 @@ const npmView = (stdout: string): NpmView | null => {
 
 export function verifyReleased(
   cwd: string,
-  input: {
-    tag?: string | null;
-    pkg?: string | null;
-    sha?: string | null;
-    actor: LedgerActor;
-  },
+  input: { tag?: string | null; pkg?: string | null; sha?: string | null; actor: LedgerActor },
   npm: NpmRunner = systemNpm,
 ): ForgeResult<DeliveryReport> {
   if (!input.tag && !input.pkg)
@@ -439,14 +385,10 @@ export function verifyReleased(
         observed: gitHead,
         ok: gitHead !== null && gitHead.startsWith(commit),
         ...(gitHead === null
-          ? {
-              note: `unverified: ${spec.name}@${version} was published without a gitHead`,
-            }
+          ? { note: `unverified: ${spec.name}@${version} was published without a gitHead` }
           : gitHead.startsWith(commit)
             ? {}
-            : {
-                note: `${spec.name}@${version} was published from ${short(gitHead)}`,
-              }),
+            : { note: `${spec.name}@${version} was published from ${short(gitHead)}` }),
       });
   }
   return success(

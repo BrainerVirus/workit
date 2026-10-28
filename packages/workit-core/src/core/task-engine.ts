@@ -134,11 +134,7 @@ const provenance = (
 ) => ({
   kind,
   host: context.caller.host,
-  session: {
-    kind: "host" as const,
-    host: context.caller.host,
-    handle: context.caller.actor,
-  },
+  session: { kind: "host" as const, host: context.caller.host, handle: context.caller.actor },
   workerId: context.workerId ?? null,
 });
 const environment = (): CandidateEnvironment => [];
@@ -375,11 +371,7 @@ const refsWithinScope = (refs: Ref[], scope: Scope): boolean =>
   refs.every(
     (ref) =>
       ref.kind !== "file" ||
-      bindingCovers(scope, {
-        description: "",
-        paths: [ref.path],
-        exclusions: [],
-      }),
+      bindingCovers(scope, { description: "", paths: [ref.path], exclusions: [] }),
   );
 
 /** Actions that take a taskId; without one they apply to the implicit task. */
@@ -789,10 +781,7 @@ export class WorkitCore {
    * stay CAS-enforced downstream. Call after loading task/workspace records.
    */
   private fillRevisions(
-    input: {
-      expectedRevision?: string;
-      expectedWorkspaceRevision?: string | null;
-    },
+    input: { expectedRevision?: string; expectedWorkspaceRevision?: string | null },
     task?: { revision: string },
     workspace?: { revision: string } | null,
   ): void {
@@ -1218,11 +1207,7 @@ export class WorkitCore {
       head: branch ? headSha(root) : null,
       taskId,
       input: judgeInputSummary(input),
-      judgment: {
-        ...calls,
-        refs: refs.slice(0, MAX_JUDGED_REFS),
-        refCount: refs.length,
-      },
+      judgment: { ...calls, refs: refs.slice(0, MAX_JUDGED_REFS), refCount: refs.length },
       requirements: (policy?.requirements ?? []).map((requirement) => requirement.ruleId),
       lifted,
       why,
@@ -1315,11 +1300,7 @@ export class WorkitCore {
             // A fix stands while its verification still passes on the current
             // tree; it reopens only on lapse or direct contradiction. Judged
             // dispositions never auto-reopen.
-            const withEntry = {
-              ...current,
-              candidates,
-              evidence: [...current.evidence, entry],
-            };
+            const withEntry = { ...current, candidates, evidence: [...current.evidence, entry] };
             const statuses = new Map(
               evaluateEvidence(
                 withEntry,
@@ -1341,14 +1322,7 @@ export class WorkitCore {
               );
             return verified && !contradicted
               ? finding
-              : {
-                  ...finding,
-                  data: {
-                    ...finding.data,
-                    disposition: "open",
-                    resolution: null,
-                  },
-                };
+              : { ...finding, data: { ...finding.data, disposition: "open", resolution: null } };
           }),
         });
       },
@@ -1742,11 +1716,7 @@ export class WorkitCore {
         if (!existing) return failure("not_found", "finding not found");
         const data =
           input.disposition === "open"
-            ? {
-                ...existing.data,
-                disposition: "open" as const,
-                resolution: null,
-              }
+            ? { ...existing.data, disposition: "open" as const, resolution: null }
             : {
                 ...existing.data,
                 disposition: input.disposition,
@@ -1780,19 +1750,13 @@ export class WorkitCore {
     const result = this.retryOmittedRevisions(value, () => this.workerOnce(value));
     // A cancel/report whose task was resolved from the worker id names the
     // exact command for that task (every host and the CLI see the same text).
-    const { action, taskId } = (value ?? {}) as {
-      action?: unknown;
-      taskId?: unknown;
-    };
+    const { action, taskId } = (value ?? {}) as { action?: unknown; taskId?: unknown };
     return result.ok ||
       (request as { taskId?: unknown } | null)?.taskId !== undefined ||
       typeof taskId !== "string" ||
       !WORKER_ADDRESSED_ACTIONS.has(`worker.${String(action)}`)
       ? result
-      : {
-          ...result,
-          error: `${result.error}; run \`${workerCommand(taskId, value)}\``,
-        };
+      : { ...result, error: `${result.error}; run \`${workerCommand(taskId, value)}\`` };
   }
 
   private workerOnce(request: unknown): Result<Entry<Worker>> {
@@ -1849,9 +1813,7 @@ export class WorkitCore {
         return failure(
           "invalid_input",
           "reviewer assignment needs the review requirement ids it will evidence",
-          {
-            requirementIds: reviewRequirements.map((requirement) => requirement.id),
-          },
+          { requirementIds: reviewRequirements.map((requirement) => requirement.id) },
         );
       if (
         input.assignment.candidateId &&
@@ -1871,12 +1833,7 @@ export class WorkitCore {
             id: workerId,
             recordedAt: mutation.now,
             provenance: provenance(this.context, "agent_reported"),
-            data: {
-              assignment: input.assignment,
-              state: "assigned",
-              session: null,
-              report: null,
-            },
+            data: { assignment: input.assignment, state: "assigned", session: null, report: null },
           };
           return success(mutation.revision, null, {
             ...current,
@@ -2249,11 +2206,7 @@ export class WorkitCore {
           return update
             ? {
                 ...entry,
-                data: {
-                  ...entry.data,
-                  state: update.state,
-                  session: update.session,
-                },
+                data: { ...entry.data, state: update.state, session: update.session },
               }
             : entry;
         }),
@@ -2274,11 +2227,7 @@ export class WorkitCore {
         dependentAction: "resume",
         refs: [],
       });
-    return success(null, null, {
-      ...base.data,
-      workerUpdates: updates,
-      blockers,
-    });
+    return success(null, null, { ...base.data, workerUpdates: updates, blockers });
   }
 
   private transition(input: any, status: "active" | "paused"): Result<TaskSummary> {
@@ -2387,10 +2336,7 @@ export class WorkitCore {
       task.data.id,
       input.expectedRevision,
       (current, context) =>
-        success(context.revision, null, {
-          ...current,
-          progress: input.progress,
-        }),
+        success(context.revision, null, { ...current, progress: input.progress }),
       trustedNow(this.context),
     );
     if (!changed.ok) return changed;
@@ -2426,10 +2372,7 @@ export class WorkitCore {
             data: input.intent,
           },
           policy: null,
-          progress: {
-            ...current.progress,
-            summary: `Policy invalidated: ${input.reason}`,
-          },
+          progress: { ...current.progress, summary: `Policy invalidated: ${input.reason}` },
         }),
     });
     if (!changed.ok) return changed;
@@ -2455,10 +2398,7 @@ export class WorkitCore {
     const taskForView =
       withCandidate.id === task.data.candidates.at(-1)?.id
         ? task.data
-        : {
-            ...task.data,
-            candidates: [...task.data.candidates, withCandidate],
-          };
+        : { ...task.data, candidates: [...task.data.candidates, withCandidate] };
     const tree = treeFreshness(this.store.root);
     const requirements = evaluateRequirements(
       taskForView,
