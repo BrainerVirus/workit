@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import {
   CHECK_OBSERVATION_PATH,
   POLICY_VERSION,
@@ -57,14 +57,20 @@ import {
   normalizeJudgment,
   ownLiftedBlockers,
 } from "./policy/judgment";
-import { MAX_LINE_BYTES, appendObserved, observedRowBytes, readLedger } from "../ledger";
+import {
+  MAX_LINE_BYTES,
+  appendObserved,
+  ledgerPath,
+  observedRowBytes,
+  readLedger,
+} from "../ledger";
 
 /** Refs kept in a `policy.judged` row (the task store keeps all of them). */
 const MAX_JUDGED_REFS = 5;
 import { currentBranch, headSha } from "../git/rev";
 import { resolveAutonomy, type VerificationMode } from "../autonomy";
 
-import { sameDirectoryIdentity, TaskStore } from "./task-store";
+import { fileSignature, racySignature, sameDirectoryIdentity, TaskStore } from "./task-store";
 import { checkoutRootOf } from "../store/paths";
 import { defaultLockTimeout } from "./store-lock";
 import {
@@ -665,6 +671,13 @@ export type DeliverySweep = {
   pending: { taskId: string; pr: number }[];
 };
 
+let sweepWarned = false;
+const warnSweepOnce = (error: unknown) => {
+  if (sweepWarned) return;
+  sweepWarned = true;
+  console.error(`workit: delivery sweep skipped: ${String(error)}`);
+};
+
 const VERIFY_HINT = "workit verify-delivery merged";
 
 /**
@@ -675,12 +688,29 @@ const VERIFY_HINT = "workit verify-delivery merged";
  * next action. Tasks without a PR, or with a worker that blocks closing, are
  * left alone. Best effort: a failed read or write skips the task.
  */
-export function closeDeliveredTasks(store: TaskStore, now: Utc): DeliverySweep {
+export function closeDeliveredTasks(
+  store: TaskStore,
+  now: Utc,
+  options: { cached?: boolean } = {},
+): DeliverySweep {
   const out: DeliverySweep = { closed: [], pending: [] };
   const index = store.listStoreIndex();
   if (!index.ok) return out;
   const open = index.data.filter((entry) => entry.status !== "closed" && entry.branch !== null);
   if (open.length === 0) return out;
+  // Hot paths sweep only when the ledger or the open-task set changed.
+  const file = options.cached ? ledgerPath(store.root) : null;
+  const signature = file?.ok
+    ? `${fileSignature(file.value) ?? "-"}|${open.map((entry) => entry.id).join(",")}`
+    : null;
+  const marker = file?.ok ? `${file.value}.delivery-sweep` : null;
+  if (signature && marker) {
+    try {
+      if (readFileSync(marker, "utf8") === signature) return out;
+    } catch {
+      // no marker yet
+    }
+  }
   const ledger = readLedger(store.root);
   if (!ledger.ok) return out;
   const rows = ledger.value.rows as {
@@ -743,6 +773,18 @@ export function closeDeliveredTasks(store: TaskStore, now: Utc): DeliverySweep {
       now,
     );
     if (closed.ok) out.closed.push(entry.id);
+  }
+  if (
+    signature &&
+    marker &&
+    out.closed.length === 0 &&
+    !racySignature(signature.split("|")[0] ?? "")
+  ) {
+    try {
+      writeFileSync(marker, signature);
+    } catch {
+      // the next call sweeps again
+    }
   }
   return out;
 }
@@ -809,7 +851,11 @@ export class WorkitCore {
   private implicitTask(family: OperationFamily, raw: unknown): Result<unknown> {
     // Flat tool inputs become the canonical request first (S17).
     const request = normalizeOperationInput(family, raw, this.context.caller.host);
-    closeDeliveredTasks(this.store, trustedNow(this.context));
+    try {
+      closeDeliveredTasks(this.store, trustedNow(this.context), { cached: true });
+    } catch (error) {
+      warnSweepOnce(error);
+    }
     if (typeof request !== "object" || request === null || Array.isArray(request))
       return success(null, null, request);
     const value = request as { action?: unknown; taskId?: unknown };
