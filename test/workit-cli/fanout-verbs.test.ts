@@ -353,6 +353,44 @@ test("fanout plan: given two slices that both list package.json, when planned, t
   ]);
 });
 
+test("fanout plan: given two slices that both touch a file a write:* script regenerates, when planned, then it is no overlap: the lead runs the writer at fan-in (#432)", async () => {
+  const repo = makeRepo();
+  write(repo.cwd, {
+    "package.json":
+      '{ "name": "app", "scripts": { "write:budget": "bun scripts/write-budget.ts" } }\n',
+    "scripts/write-budget.ts": "// Rewrites docs/budget.json from src/core/model.ts.\n",
+    "docs/budget.json": "{}\n",
+  });
+  git(repo.cwd, "add", "-A");
+  git(repo.cwd, "commit", "-qm", "chore: writer");
+  const result = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(
+      planDoc([
+        slice("a", ["src/api/**", "docs/budget.json", "src/core/model.ts"], {
+          owns: ["src/core/model.ts"],
+        }),
+        slice("b", ["src/ui/**", "docs/budget.json"]),
+      ]),
+    ),
+    "--json",
+  ]);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  const { overlaps, notes } = result.json().data;
+  expect(overlaps).toEqual([
+    {
+      path: "docs/budget.json",
+      slices: ["a", "b"],
+      resolution: "regenerated",
+      writer: "npm run write:budget",
+    },
+  ]);
+  expect(notes).toContain(
+    "docs/budget.json is regenerated at fan-in: slices leave it uncommitted, and the lead runs `npm run write:budget` after each rebase",
+  );
+});
+
 test("fanout plan: given a slice that depends on another and shares its files, when planned, then the overlap is serialized, it is stacked on its dependency's branch and runs in the second wave", async () => {
   const repo = makeRepo();
   const result = await run(repo.cwd, [
