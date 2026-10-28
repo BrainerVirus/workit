@@ -212,6 +212,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       "REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,",
       "  each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),",
       "  anything out of scope as a follow-up, not a diff. Report heads when pushed; CI is waited on once, at the end.",
+      "  A PR body goes through `--body-file -` (stdin), never a shared scratch path.",
       "STANDING:",
       "  - no new dependencies",
       "  - ask nothing; record rulings",
@@ -262,6 +263,38 @@ test("fanout brief: given the slice's worktree made by fanout worktree create an
     `  3. Commit with \`workit git --cwd ${wt} commit -m <msg> -- <paths in SCOPE>\``,
   );
   expect(data.text).toContain("  - none recorded beyond this brief");
+});
+
+test("fanout brief: given a worktree fanout worktree create just made, with no commit beyond its base, when rendered, then MODE is new with no resume line (#432)", async () => {
+  const { root, cwd } = repo();
+  await plan(cwd, root, "usage", [slice("a", ["a.ts"])]);
+  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(created.code, created.stderr + created.stdout).toBe(0);
+  const data = await brief(cwd, "a");
+  expect(data.mode).toBe("new");
+  expect(data.text).toStartWith("MODE: new\n");
+  expect(data.text).not.toContain("  resume:");
+  expect(data.text).toContain("already on feature/a: edit files under it");
+  expect(data.text).not.toContain("INSTALL:");
+});
+
+test("fanout brief: given a worktree whose lockfile differs from the main checkout's, when rendered, then INSTALL names the install command until node_modules exists (#432)", async () => {
+  const { root, cwd } = repo();
+  writeFileSync(path.join(cwd, "bun.lock"), "{}\n");
+  git(cwd, "add", "bun.lock");
+  git(cwd, "commit", "-qm", "chore: lock");
+  await plan(cwd, root, "usage", [slice("a", ["a.ts"])]);
+  writeFileSync(path.join(cwd, "bun.lock"), '{"changed":true}\n');
+  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(created.code, created.stderr + created.stdout).toBe(0);
+  const wt = path.join(root, "app-wt", "a");
+  expect(created.json().data.install).toBe(`bun install --frozen-lockfile --cwd ${wt}`);
+  const data = await brief(cwd, "a");
+  expect(data.text).toContain(
+    `INSTALL: \`bun install --frozen-lockfile --cwd ${wt}\` first: the main checkout's node_modules was not linked here`,
+  );
+  mkdirSync(path.join(wt, "node_modules"));
+  expect((await brief(cwd, "a")).text).not.toContain("INSTALL:");
 });
 
 test("fanout brief: given a race of two attempts at one slice, when each is rendered, then each has its own branch and session, and --mode resume on a missing branch is refused", async () => {
