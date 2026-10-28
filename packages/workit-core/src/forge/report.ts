@@ -9,7 +9,7 @@ import {
   checkEvidence,
   type CheckEvidenceDoc,
   type CiCheck,
-  type LocalCheckRow,
+  localCheckRows,
 } from "../core/policy/check-evidence";
 import type { ResolvedForge } from "./resolve";
 import { rerunCounts, recordReruns, withRerunLock, type RerunRow } from "./reruns";
@@ -337,16 +337,7 @@ export function evidenceFor(
   const lane = branchLane(cwd, { base: status.base, head: status.head.sha });
   const configured = gateCheckNames(loadCheckConfig(cwd), "verification");
   const read = readLedger(cwd);
-  const local: LocalCheckRow[] = read.ok
-    ? read.value.rows
-        .filter((row) => row.type === "check" && row.observer === "workit_cli")
-        .map((row) => ({
-          name: String(row.name ?? ""),
-          head: String(row.head ?? ""),
-          dirty: row.dirty === true,
-          passed: row.result === "passed",
-        }))
-    : [];
+  const local = read.ok ? localCheckRows(read.value.rows) : [];
   const ciChecks: CiCheck[] = ci.flatMap((check) =>
     check.state === "skipped" ? [] : [{ name: check.name, state: check.state }],
   );

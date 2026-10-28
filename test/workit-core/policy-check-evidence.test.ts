@@ -62,3 +62,30 @@ test("G a none or self lane, T no check run is needed", () => {
       satisfied: true,
     });
 });
+
+test("G this repo's real CI job names, T `lint` matches none, `test` the test gates, `packaging` the packaging job", () => {
+  const names = [
+    "fast checks",
+    "PR title (commitlint)",
+    "context budget growth",
+    "ubuntu shard 1/4",
+    "ubuntu packaging",
+    "test (ubuntu-latest)",
+    "test (macos-latest)",
+    "test (windows-latest)",
+  ];
+  const matched = (check: string) =>
+    names.filter(
+      (name) =>
+        checkEvidence({
+          lane: "focused",
+          head: HEAD,
+          configured: [check],
+          local: [],
+          ci: [{ name, state: "passing" }],
+        }).satisfied,
+    );
+  expect(matched("lint")).toEqual([]);
+  expect(matched("test")).toEqual(names.filter((name) => name.startsWith("test (")));
+  expect(matched("packaging")).toEqual(["ubuntu packaging"]);
+});

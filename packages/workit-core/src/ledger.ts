@@ -184,6 +184,8 @@ export type VerdictRow = RowCommon & {
   /** The issued session's own subagent presented the token its hook bound the id to. */
   sessionBound?: boolean;
   evidenceRefs: string[];
+  /** The configured checks' evidence on the head when an independent verified verdict was recorded (#509). */
+  checkEvidence?: { name: string; status: string; via: string | null }[];
   /** Untracked files in the judged worktree when the verdict was recorded (they do not block it). */
   untracked?: string[];
   untrackedCount?: number;
@@ -2214,6 +2216,7 @@ export function recordVerdict(
     surface?: string | null;
     self?: boolean;
     evidenceRefs?: string[];
+    checkEvidence?: { name: string; status: string; via: string | null }[];
     /**
      * A role id derived from another session (`--as`): the session it was
      * derived from. `null` means it was derived from no session, which makes
@@ -2295,6 +2298,7 @@ export function recordVerdict(
       sessionSource: context.sessionSource ?? "env",
       ...(context.sessionBound === true ? { sessionBound: true } : {}),
       evidenceRefs: input.evidenceRefs ?? [],
+      ...(input.checkEvidence?.length ? { checkEvidence: input.checkEvidence } : {}),
       ...untrackedField(context.cwd),
     },
     { now: context.now },

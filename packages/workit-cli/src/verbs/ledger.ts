@@ -83,6 +83,10 @@ import {
   namesOwnDerivedSession,
   sessionClaimRefusal,
 } from "@brainervirus/workit-core/src/host-session";
+import {
+  verdictEvidence,
+  type CheckEvidenceDoc,
+} from "@brainervirus/workit-core/src/core/policy/check-evidence";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 
@@ -505,6 +509,28 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ? null
       : sessionClaimRefusal(io.env, claimed, io.cwd, { token, flag: acting.source === "flag" });
   if (refusal) return emit(io, fail("blocked", refusal.error, { unblock: refusal.unblock }));
+  // A verified verdict needs the configured checks: a red one refuses it, a missing one warns (#509).
+  const evidence =
+    values.self !== true && (rest[0] === "verified" || rest[0] === "tests-verified")
+      ? verdictCheckEvidence(io.cwd, target.value, values.base ?? null)
+      : null;
+  const redCheck = evidence?.needed.find((item) => item.status === "failing");
+  if (redCheck)
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `check_failing: the configured check "${redCheck.name}" is failing on ${evidence?.head.slice(0, 12)} (${redCheck.via ?? "local"} run); a ${rest[0]} verdict cannot be recorded`,
+        {
+          unblock: `fix it, then workit check ${redCheck.name} on this head, or record failed/blocked`,
+        },
+      ),
+    );
+  const missingChecks = evidence?.needed.filter((item) => item.status === "missing") ?? [];
+  if (missingChecks.length)
+    io.stderr(
+      `warning: no fresh run on ${evidence?.head.slice(0, 12)} of the configured check${missingChecks.length === 1 ? "" : "s"} ${missingChecks.map((item) => item.name).join(", ")}; the verdict records it as missing\n`,
+    );
   // Bound: the id's own subagent presented the token its hook gave it.
   const bound = claimed !== null && issuedTokenMatches(io.cwd, claimed, token);
   const verdict = await recorded(
@@ -517,6 +543,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
         surface: values.surface ?? null,
         self: values.self === true,
         evidenceRefs: values.evidence,
+        ...(evidence?.needed.length
+          ? {
+              checkEvidence: evidence.needed.map(({ name, status, via }) => ({
+                name,
+                status,
+                via,
+              })),
+            }
+          : {}),
         ...("derivedFrom" in acting ? { derivedFrom: acting.derivedFrom } : {}),
       },
     ),
@@ -539,6 +574,18 @@ export async function run(argv: string[], io: Io): Promise<number> {
         : "gate: unknown (ledger unreadable)",
     ].join("\n"),
   );
+}
+
+/** The evidence of the target branch's head, or null when its head or the ledger cannot be read. */
+function verdictCheckEvidence(
+  cwd: string,
+  branch: string | null,
+  base: string | null,
+): CheckEvidenceDoc | null {
+  const head = branch === null ? headSha(cwd) : resolveRef(cwd, branch);
+  const ledger = readLedger(cwd);
+  if (!head || !ledger.ok) return null;
+  return verdictEvidence(cwd, { head, base, rows: ledger.value.rows });
 }
 
 type GateReading = { accepted: boolean; reasons: string[]; verdictId: string | null };

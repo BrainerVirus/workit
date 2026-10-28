@@ -2,7 +2,8 @@
 // fresh evidence there (#509): a local `workit check` run on that exact
 // commit, or (where the lane lets CI cover it) a green CI check of that name.
 // A focused lane lets CI cover a check; a full lane needs a local run.
-import type { ReviewLane } from "./lane";
+import { gateCheckNames, loadCheckConfig } from "../../check-config";
+import { branchLane, type ReviewLane } from "./lane";
 
 export type CheckEvidenceStatus = "fresh" | "failing" | "missing";
 
@@ -37,8 +38,39 @@ export function neededChecks(lane: ReviewLane, configured: readonly string[]): s
   return names.length ? names : [...configured];
 }
 
+/** The check name as a whole word of the CI job name: `lint` is not `(commitlint)`. */
 const ciMatch = (ci: CiCheck, name: string): boolean =>
-  ci.name.toLowerCase().includes(name.toLowerCase());
+  new RegExp(
+    `(^|[^a-z0-9])${name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}([^a-z0-9]|$)`,
+    "iu",
+  ).test(ci.name);
+
+/** The observed `workit check` rows of a ledger, as evidence input. */
+export function localCheckRows(rows: readonly Record<string, unknown>[]): LocalCheckRow[] {
+  return rows
+    .filter((row) => row.type === "check" && row.observer === "workit_cli")
+    .map((row) => ({
+      name: String(row.name ?? ""),
+      head: String(row.head ?? ""),
+      dirty: row.dirty === true,
+      passed: row.result === "passed",
+    }));
+}
+
+/** The evidence of `head` on `branch` (local runs only; CI is read by `pr status`). */
+export function verdictEvidence(
+  cwd: string,
+  input: { head: string; base?: string | null; rows: readonly Record<string, unknown>[] },
+): CheckEvidenceDoc {
+  const lane = branchLane(cwd, { base: input.base ?? null, head: input.head });
+  return checkEvidence({
+    lane: lane.lane,
+    head: input.head,
+    configured: gateCheckNames(loadCheckConfig(cwd), "verification"),
+    local: localCheckRows(input.rows),
+    ci: [],
+  });
+}
 
 export function checkEvidence(input: {
   lane: ReviewLane;

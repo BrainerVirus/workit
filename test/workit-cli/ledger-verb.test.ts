@@ -699,3 +699,61 @@ test("Given an untracked probe file, When a verdict is recorded, Then it is acce
   expect(dirty.code).toBe(3);
   expect(dirty.json().error).toContain("dirty_worktree");
 });
+
+// #509: a verified verdict needs the configured checks on the head.
+const packagingRepo = (): string => {
+  const root = featureRepo();
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ scripts: { test: "x", "test:packaging": "y" } }),
+  );
+  writeFileSync(
+    path.join(root, "big.ts"),
+    Array.from({ length: 150 }, (_, index) => `export const v${index} = ${index};`).join("\n"),
+  );
+  git(root, "add", ".");
+  git(root, "commit", "-qm", "behavior change");
+  return root;
+};
+const checkRow = (root: string, name: string, result: "passed" | "failed") =>
+  appendObserved(root, {
+    type: "check",
+    actor: { host: "cli", session: "s-author", agentId: null },
+    branch: "feature/x",
+    head: git(root, "rev-parse", "HEAD"),
+    name,
+    result,
+  });
+const verified = (root: string) =>
+  run(root, ["ledger", "verdict", "verified", "--how", "x", "--json"]);
+
+test("G a red packaging run on the head, T `verified` is refused with exit 3 naming the check", async () => {
+  const root = packagingRepo();
+  checkRow(root, "test", "passed");
+  checkRow(root, "packaging", "failed");
+  const refused = await verified(root);
+  expect(refused.code).toBe(3);
+  expect(refused.json().error).toContain('"packaging" is failing');
+});
+
+test("G packaging never run, T `verified` records with a warning and the evidence snapshot on the row", async () => {
+  const root = packagingRepo();
+  checkRow(root, "test", "passed");
+  const result = await verified(root);
+  expect(result.code).toBe(0);
+  expect(result.stderr).toContain("packaging");
+  expect(result.json().data.checkEvidence).toContainEqual({
+    name: "packaging",
+    status: "missing",
+    via: null,
+  });
+});
+
+test("G every configured check fresh on the head, T `verified` records without a check warning", async () => {
+  const root = packagingRepo();
+  checkRow(root, "test", "passed");
+  checkRow(root, "packaging", "passed");
+  const result = await verified(root);
+  expect(result.code).toBe(0);
+  expect(result.stderr).not.toContain("configured check");
+});
