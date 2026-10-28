@@ -291,8 +291,7 @@ export const VERBS: readonly VerbEntry[] = [
     {
       name: "workspace",
       group: "setup",
-      summary:
-        "List, add, change or remove workspaces.json entries without the wizard; never raises a grant (agent shells may run it)",
+      summary: "Edit workspace entries without the wizard; never raises a grant",
       subcommands: [
         {
           name: "list",
