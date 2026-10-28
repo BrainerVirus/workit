@@ -95,8 +95,7 @@ Update later with `opencode plugin update @brainervirus/workit-opencode`
 version live, with no restart.
 
 Local pin: build once with `bun packages/workit-opencode/scripts/build.ts`, then
-use `"plugins": ["file:///path/to/workit/packages/workit-opencode"]`. OpenCode
-1.x must stay on `@brainervirus/workit-opencode@2`.
+use `"plugins": ["file:///path/to/workit/packages/workit-opencode"]`.
 
 </details>
 
@@ -326,7 +325,7 @@ runtimes. `workit upgrade` previews; `--apply --confirm` applies with a backup.
 
 | From | Key breaks |
 | --- | --- |
-| 2.x → 3.0 | OpenCode V1 adapter removed (OpenCode 2.0.18+; 1.x stays on `workit-opencode@2`); `workit cutover` removed |
+| 2.x → 3.0 | OpenCode V1 adapter removed (OpenCode 2.0.18+); `workit cutover` removed |
 | 3.x → 4.0 | Task state moves to `.git/workit/` event store, implicit task per branch; old `.workit/` migrates on first CLI use (backup kept) |
 | 4.x → 5.0 | Skill set v3: 16 skills merged into 11; old `wk-*` aliases removed; `ledger verdict --as` never makes the author independent |
 | 5.x → 6.0 | Approval receipts, `autoApprove`, managed external actions and the writer/checkout lease are gone; authority is host permissions plus autonomy grants |
@@ -344,7 +343,7 @@ Details and the skill rename table: [migration guide](docs/guides/migration.md).
 | Store grows large | `workit gc --dry-run`, then `workit gc` |
 | `recovery` copies from 2.x reported | `workit gc --prune-recovery --yes` |
 | Claude Code hook prints `[workit] Claude Code hook unavailable` | The hook failed open: install Bun for a local pin, or reinstall the plugin |
-| OpenCode fails `opencode_version` | Upgrade OpenCode to 2.0.18+, or pin `@brainervirus/workit-opencode@2` |
+| OpenCode fails `opencode_version` | Upgrade OpenCode to 2.0.18+ |
 
 More: [configuration and storage](docs/guides/configuration.md).
 

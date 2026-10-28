@@ -107,7 +107,7 @@ test("mergeOpenCodePlugins preserves unrelated workflow-toolkit-containing ids (
   const existing = ["some-workflow-toolkit-helper", "@brainervirus/workit-opencode", PIN];
   const { config, changed } = mergeOpenCodePlugins(existing, PIN);
   expect(config).toEqual([PIN, "some-workflow-toolkit-helper"]);
-  expect(changed).toEqual(["plugin"]);
+  expect(changed).toEqual(["plugins"]);
 });
 
 // AR-04: prefix-shared helper packages survive a registration merge unchanged.
@@ -124,7 +124,7 @@ test("mergeOpenCodePlugins preserves prefix-shared helper packages (AR-04)", () 
     "@brainervirus/workit-opencode-helper",
     "@brainervirus/workit-cursor-tools",
   ]);
-  expect(changed).toEqual(["plugin"]);
+  expect(changed).toEqual(["plugins"]);
 });
 
 test("mergeOpenCodePlugins dedups legacy + current identities to a single pin", () => {
@@ -136,7 +136,7 @@ test("mergeOpenCodePlugins dedups legacy + current identities to a single pin", 
   ];
   const { config, changed } = mergeOpenCodePlugins(existing, PIN);
   expect(config).toEqual([PIN, "@dietrichgebert/ponytail"]);
-  expect(changed).toEqual(["plugin"]);
+  expect(changed).toEqual(["plugins"]);
 });
 
 test("mergeOpenCodeConfig dedups plugins and preserves unrelated settings byte-for-byte", () => {
@@ -144,7 +144,7 @@ test("mergeOpenCodeConfig dedups plugins and preserves unrelated settings byte-f
     model: "gpt-5",
     theme: "dark",
     $schema: "https://opencode.ai/config.json",
-    plugin: [
+    plugins: [
       "@dietrichgebert/ponytail",
       "workflow-toolkit-opencode@git+file:///old/checkout",
       "@brainervirus/workit-opencode",
@@ -152,8 +152,8 @@ test("mergeOpenCodeConfig dedups plugins and preserves unrelated settings byte-f
     ],
   };
   const { config, changed } = mergeOpenCodeConfig(input, PIN);
-  expect(config.plugin).toEqual([PIN, "@dietrichgebert/ponytail"]);
-  expect(changed).toEqual(["plugin"]);
+  expect(config.plugins).toEqual([PIN, "@dietrichgebert/ponytail"]);
+  expect(changed).toEqual(["plugins"]);
   for (const key of ["model", "theme", "$schema"]) {
     expect(JSON.stringify(config[key]), key).toBe(JSON.stringify(input[key]));
   }
@@ -162,7 +162,7 @@ test("mergeOpenCodeConfig dedups plugins and preserves unrelated settings byte-f
 
 test("mergeOpenCodeConfig preserves every skill path without ownership evidence", () => {
   const input = {
-    plugin: ["other-plugin"],
+    plugins: ["other-plugin"],
     skills: {
       paths: [
         "/x/share/workflow-toolkit/skills",
@@ -180,12 +180,12 @@ test("mergeOpenCodeConfig preserves every skill path without ownership evidence"
     "/other/custom-skills",
   ]);
   expect(skills.enabled).toEqual(["wk-commit"]);
-  expect(changed).toEqual(["plugin"]);
+  expect(changed).toEqual(["plugins"]);
 });
 
 test("mergeOpenCodeConfig preserves similarly named and canonical Workit skill paths", () => {
   const input = {
-    plugin: ["other-plugin"],
+    plugins: ["other-plugin"],
     skills: {
       paths: [
         "/x/share/workflow-toolkit/skills",
@@ -201,21 +201,32 @@ test("mergeOpenCodeConfig preserves similarly named and canonical Workit skill p
     "~/projects/my-workflow-toolkit-skills",
     "~/.config/opencode/skills",
   ]);
-  expect(changed).toEqual(["plugin"]);
+  expect(changed).toEqual(["plugins"]);
 });
 
 test("mergeOpenCodeConfig reports no changes when the config is already canonical", () => {
-  const input = { plugin: [PIN], skills: { paths: ["/other/skills"] } };
+  const input = { plugins: [PIN], skills: { paths: ["/other/skills"] } };
   const { config, changed } = mergeOpenCodeConfig(input, PIN);
-  expect(config.plugin).toEqual([PIN]);
+  expect(config.plugins).toEqual([PIN]);
   expect(changed).toEqual([]);
 });
 
 test("mergeOpenCodeConfig tolerates a missing config and a string plugin field", () => {
   const { config } = mergeOpenCodeConfig(undefined, PIN);
-  expect(config.plugin).toEqual([PIN]);
+  expect(config.plugins).toEqual([PIN]);
   const str = mergeOpenCodeConfig({ plugin: "@brainervirus/workit-opencode" }, PIN);
-  expect(str.config.plugin).toEqual([PIN]);
+  expect(str.config.plugins).toEqual([PIN]);
+  expect(str.config.plugin).toBeUndefined();
+});
+
+test("mergeOpenCodeConfig moves a Workit entry out of the deprecated plugin key", () => {
+  const { config, changed } = mergeOpenCodeConfig(
+    { plugin: ["@brainervirus/workit-opencode", "<other>"] },
+    PIN,
+  );
+  expect(config.plugins).toEqual([PIN]);
+  expect(config.plugin).toEqual(["<other>"]);
+  expect(changed).toEqual(["plugins", "plugin"]);
 });
 
 test("mergeCursorSettings writes the canonical workit identity and removes exact legacy entries", () => {

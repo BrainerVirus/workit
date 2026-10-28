@@ -181,7 +181,7 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     // file:// into node_modules / dlx cache).
     const opencodeCfg = path.join(home, ".config", "opencode", "opencode.json");
     const oc = JSON.parse(readFileSync(opencodeCfg, "utf8"));
-    expect(oc.plugin).toContain("@brainervirus/workit-opencode");
+    expect(oc.plugins).toContain("@brainervirus/workit-opencode");
 
     // Cursor: settings + mcp + the plugin package copied package-locally
     const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");

@@ -54,7 +54,7 @@ test("workit doctor --json reflects a broken fixture in the exit status", () => 
   mkdirSync(path.dirname(fixture.opencodeConfig), { recursive: true });
   writeFileSync(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: ["workit-opencode@git+file:///nonexistent/stale"] }),
+    JSON.stringify({ plugins: ["workit-opencode@git+file:///nonexistent/stale"] }),
   );
   try {
     const bad = runCli(["doctor", "--json"], fixture.cwd);

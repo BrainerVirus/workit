@@ -116,7 +116,7 @@ test.skipIf(process.platform === "win32")(
     );
     const config = path.join(doctor.home, ".config", "opencode", "opencode.json");
     mkdirSync(path.dirname(config), { recursive: true });
-    writeFileSync(config, JSON.stringify({ plugin: ["@brainervirus/workit-opencode"] }));
+    writeFileSync(config, JSON.stringify({ plugins: ["@brainervirus/workit-opencode"] }));
 
     const stale = row(doctor.run(), "stale_install");
     expect(stale.status).toBe("fail");

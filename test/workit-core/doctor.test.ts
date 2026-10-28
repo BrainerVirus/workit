@@ -478,7 +478,7 @@ test("opencode @latest cache behind published runtime is stale_install fail", ()
     path.join(pkgDir, "package.json"),
     JSON.stringify({ name: OPENCODE_NPM_PIN, version: "0.11.0" }),
   );
-  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [OPENCODE_NPM_PIN] }));
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugins: [OPENCODE_NPM_PIN] }));
   try {
     const report = runDoctor({
       host: "opencode",
@@ -499,7 +499,7 @@ test("opencode @latest cache behind published runtime is stale_install fail", ()
     rmSync(cacheRoot, { recursive: true, force: true });
     writeConfig(
       fixture.opencodeConfig,
-      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+      JSON.stringify({ plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
     );
   }
 });
@@ -512,7 +512,7 @@ test("opencode @latest cache matching published runtime passes", () => {
     path.join(pkgDir, "package.json"),
     JSON.stringify({ name: OPENCODE_NPM_PIN, version: "1.0.4" }),
   );
-  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [`${OPENCODE_NPM_PIN}@latest`] }));
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugins: [`${OPENCODE_NPM_PIN}@latest`] }));
   try {
     const report = runDoctor({
       host: "opencode",
@@ -530,13 +530,13 @@ test("opencode @latest cache matching published runtime passes", () => {
     rmSync(cacheRoot, { recursive: true, force: true });
     writeConfig(
       fixture.opencodeConfig,
-      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+      JSON.stringify({ plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
     );
   }
 });
 
 test("opencode exact version pin skips registry comparison", () => {
-  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [`${OPENCODE_NPM_PIN}@1.0.4`] }));
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugins: [`${OPENCODE_NPM_PIN}@1.0.4`] }));
   try {
     const report = runDoctor({
       host: "opencode",
@@ -553,7 +553,7 @@ test("opencode exact version pin skips registry comparison", () => {
   } finally {
     writeConfig(
       fixture.opencodeConfig,
-      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+      JSON.stringify({ plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
     );
   }
 });
@@ -566,7 +566,7 @@ test("opencode cache registry-unreachable yields warning, not stale_install", ()
     path.join(pkgDir, "package.json"),
     JSON.stringify({ name: OPENCODE_NPM_PIN, version: "0.11.0" }),
   );
-  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [OPENCODE_NPM_PIN] }));
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugins: [OPENCODE_NPM_PIN] }));
   try {
     const report = runDoctor({
       host: "opencode",
@@ -586,7 +586,7 @@ test("opencode cache registry-unreachable yields warning, not stale_install", ()
     rmSync(cacheRoot, { recursive: true, force: true });
     writeConfig(
       fixture.opencodeConfig,
-      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+      JSON.stringify({ plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
     );
   }
 });
@@ -599,7 +599,7 @@ test("cli host reports OpenCode @latest cache lag after cursor checks pass", () 
     path.join(pkgDir, "package.json"),
     JSON.stringify({ name: OPENCODE_NPM_PIN, version: "0.11.0" }),
   );
-  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [OPENCODE_NPM_PIN] }));
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugins: [OPENCODE_NPM_PIN] }));
   try {
     const report = runDoctor({
       host: "cli",
@@ -618,7 +618,7 @@ test("cli host reports OpenCode @latest cache lag after cursor checks pass", () 
     rmSync(cacheRoot, { recursive: true, force: true });
     writeConfig(
       fixture.opencodeConfig,
-      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+      JSON.stringify({ plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
     );
   }
 });
@@ -627,7 +627,7 @@ test("detects a stale opencode pin and clears once re-pinned", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: ["workit-opencode@git+file:///nonexistent/stale"],
+      plugins: ["workit-opencode@git+file:///nonexistent/stale"],
     }),
   );
   const report = run();
@@ -638,17 +638,30 @@ test("detects a stale opencode pin and clears once re-pinned", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+      plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
     }),
   );
   expect(check(run(), "stale_pin").status).toBe("pass");
+});
+
+test("warns when Workit is registered only under the deprecated plugin key", () => {
+  writeConfig(
+    fixture.opencodeConfig,
+    JSON.stringify({
+      plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+    }),
+  );
+  const row = check(run(), "stale_pin");
+  expect(row.status).toBe("warn");
+  expect(row.detail).toContain('"plugins"');
+  expect(row.fix).toBe("workit setup --hosts=opencode");
 });
 
 test("detects a stale git+file workit pin and clears once re-pinned", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: ["workflow-toolkit-opencode@git+file:///legacy"],
+      plugins: ["workflow-toolkit-opencode@git+file:///legacy"],
     }),
   );
   const report = run();
@@ -661,7 +674,7 @@ test("detects a stale git+file workit pin and clears once re-pinned", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+      plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
     }),
   );
   expect(check(run(), "stale_pin").status).toBe("pass");
@@ -669,7 +682,7 @@ test("detects a stale git+file workit pin and clears once re-pinned", () => {
 
 test("detects a workit pin pointing at a deleted file and clears once restored", () => {
   const plugin = path.join(fixture.dev, "packages/workit-opencode/src/plugin.ts");
-  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [`file://${plugin}`] }));
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugins: [`file://${plugin}`] }));
   rmSync(plugin, { force: true });
   try {
     const report = run();
@@ -688,7 +701,7 @@ test("accepts a string plugin entry (not just an array) when checking the pin", 
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: `file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`,
+      plugins: `file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`,
     }),
   );
   try {
@@ -697,7 +710,7 @@ test("accepts a string plugin entry (not just an array) when checking the pin", 
     writeConfig(
       fixture.opencodeConfig,
       JSON.stringify({
-        plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+        plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
       }),
     );
   }
@@ -707,7 +720,7 @@ test("cursor host never inspects the opencode config for stale pins", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: ["workflow-toolkit-opencode@git+file:///legacy"],
+      plugins: ["workflow-toolkit-opencode@git+file:///legacy"],
     }),
   );
   try {
@@ -725,7 +738,7 @@ test("cursor host never inspects the opencode config for stale pins", () => {
     writeConfig(
       fixture.opencodeConfig,
       JSON.stringify({
-        plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+        plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
       }),
     );
   }
@@ -1241,7 +1254,7 @@ test("detects duplicate opencode registration and clears once deduplicated", () 
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: [
+      plugins: [
         "workflow-toolkit-opencode@git+file:///legacy",
         `file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`,
       ],
@@ -1255,7 +1268,7 @@ test("detects duplicate opencode registration and clears once deduplicated", () 
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+      plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
     }),
   );
   expect(check(run(), "duplicate_registration").status).toBe("pass");
@@ -1517,7 +1530,7 @@ test("stale_pin fails fragile pnpm dlx file:// pins", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: [
+      plugins: [
         "file:///Users/me/Library/Caches/pnpm/dlx/abc/node_modules/@brainervirus/workit-opencode/dist/plugin.js",
       ],
     }),
@@ -1527,7 +1540,7 @@ test("stale_pin fails fragile pnpm dlx file:// pins", () => {
   expect(check(report, "stale_pin").detail).toContain("cache path");
   writeConfig(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: ["@brainervirus/workit-opencode"] }),
+    JSON.stringify({ plugins: ["@brainervirus/workit-opencode"] }),
   );
   expect(check(run(), "stale_pin").status).toBe("pass");
 });
@@ -1632,7 +1645,7 @@ test("installer fails on a broken selected-host registration", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugin: ["workit-opencode@git+file:///nonexistent/stale"],
+      plugins: ["workit-opencode@git+file:///nonexistent/stale"],
     }),
   );
   try {
@@ -1641,7 +1654,7 @@ test("installer fails on a broken selected-host registration", () => {
     writeConfig(
       fixture.opencodeConfig,
       JSON.stringify({
-        plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+        plugins: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
       }),
     );
   }
@@ -1961,8 +1974,9 @@ test.skipIf(process.platform === "win32")(
       expect(old.detail).toContain(
         `older than the supported minimum ${SUPPORT_MATRIX.opencode.minimum}`,
       );
-      expect(old.fix).toContain('"@brainervirus/workit-opencode@2"');
-      expect(old.fix).toContain('"plugin" array');
+      expect(old.fix).toContain("upgrade OpenCode");
+      expect(old.fix).not.toContain("workit-opencode@2");
+      expect(old.fix).not.toContain('"plugin"');
       expect(withVersion("opencode v2.0.21").status).toBe("pass");
     } finally {
       rmSync(opencode, { force: true });

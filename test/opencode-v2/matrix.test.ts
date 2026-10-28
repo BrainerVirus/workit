@@ -109,7 +109,7 @@ const v2V1Config = (artifact: LaneArtifact) =>
       $schema: "https://opencode.ai/config.json",
       model: "stub/stub-model",
       providers: v2Provider(),
-      plugin: [artifact.pluginDir],
+      plugins: [artifact.pluginDir],
       permission: { bash: { "*git *worktree*": "deny" } },
       command: {
         "wk-user": {

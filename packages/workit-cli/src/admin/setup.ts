@@ -42,7 +42,6 @@ import {
   isWorkitPlugin,
   mergeCursorHooks,
   mergeCursorMcp,
-  mergeOpenCodePlugins,
   mergeCursorSettings,
   mergeOpenCodeConfig,
   OPENCODE_NPM_PIN,
@@ -928,33 +927,19 @@ function applyOpenCode(root: string | null, res: ResolvedApply): SetupResultEntr
       detail: `cannot merge into malformed config: ${existing.error} — repair or remove the file`,
     };
   }
+  const listOf = (value: unknown): unknown[] =>
+    Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
   const configuredPlugins =
     existing.kind === "record"
-      ? Array.isArray(existing.value.plugins)
-        ? existing.value.plugins
-        : typeof existing.value.plugins === "string"
-          ? [existing.value.plugins]
-          : typeof existing.value.plugin === "string"
-            ? [existing.value.plugin]
-            : Array.isArray(existing.value.plugin)
-              ? existing.value.plugin
-              : []
+      ? [...listOf(existing.value.plugins), ...listOf(existing.value.plugin)]
       : [];
   const configuredPin = configuredPlugins.find(
     (entry): entry is string => typeof entry === "string" && isWorkitPlugin(entry),
   );
   const pin = configuredPin ?? resolvedPin;
   const base = existing.kind === "record" ? existing.value : {};
-  const merged =
-    existing.kind === "record" && Object.hasOwn(existing.value, "plugins")
-      ? (() => {
-          const plugins = mergeOpenCodePlugins(existing.value.plugins, pin);
-          return {
-            config: { ...existing.value, plugins: plugins.config },
-            changed: plugins.changed.length > 0 ? ["plugins"] : [],
-          };
-        })()
-      : mergeOpenCodeConfig(base, pin);
+  const merged = mergeOpenCodeConfig(base, pin);
+  const moved = merged.changed.includes("plugin");
   if (merged.changed.length === 0) {
     return {
       platform: "opencode",
@@ -969,7 +954,9 @@ function applyOpenCode(root: string | null, res: ResolvedApply): SetupResultEntr
         platform: "opencode",
         file: res.opencodeConfig,
         status: "Configured",
-        detail: `pinned ${pin}`,
+        detail: moved
+          ? `pinned ${pin}; moved the Workit entry from the deprecated "plugin" key to "plugins"`
+          : `pinned ${pin}`,
       }
     : {
         platform: "opencode",

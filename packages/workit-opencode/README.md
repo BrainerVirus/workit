@@ -17,8 +17,7 @@ context injection on session start and after compaction. Requires Node.js 24+.
 ```
 
 Local checkout: run `bun packages/workit-opencode/scripts/build.ts`, then pin
-`"file:///path/to/workit/packages/workit-opencode"`. OpenCode 1.x must stay on
-`"plugin": ["@brainervirus/workit-opencode@2"]`.
+`"file:///path/to/workit/packages/workit-opencode"` in `plugins`.
 
 Effects (git, forge, files) run through OpenCode's native tools and the
 `workit` CLI under OpenCode permissions plus the workspace

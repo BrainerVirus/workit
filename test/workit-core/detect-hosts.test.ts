@@ -52,7 +52,7 @@ test("config directories do not detect host presence; registrations mark configu
     mkdirSync(path.join(home, ".config", "opencode"), { recursive: true });
     writeFileSync(
       path.join(home, ".config", "opencode", "opencode.json"),
-      JSON.stringify({ plugin: ["workit"] }),
+      JSON.stringify({ plugins: ["workit"] }),
       "utf8",
     );
     mkdirSync(path.join(home, ".cursor"), { recursive: true });

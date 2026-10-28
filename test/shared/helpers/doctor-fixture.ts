@@ -181,7 +181,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
 
   writeFileSync(
     opencodeConfig,
-    JSON.stringify({ plugin: [`file://${dev}/packages/workit-opencode/src/plugin.ts`] }),
+    JSON.stringify({ plugins: [`file://${dev}/packages/workit-opencode/src/plugin.ts`] }),
   );
   writeFileSync(
     cursorSettings,

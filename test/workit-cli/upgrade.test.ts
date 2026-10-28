@@ -431,7 +431,8 @@ test("upgrade warns before applying when the OpenCode host is 1.x (Workit 3 is V
         : f.deps.run(command, args);
     const plan = previewUpgrade(["opencode"], { ...f.deps, run });
     expect(plan.warnings?.[0]).toContain("opencode 1.18.34");
-    expect(plan.warnings?.[0]).toContain('"@brainervirus/workit-opencode@2"');
+    expect(plan.warnings?.[0]).toContain("upgrade OpenCode");
+    expect(plan.warnings?.[0]).not.toContain("workit-opencode@2");
     const out: string[] = [];
     await runUpgradeCommand(["--hosts=opencode", "--apply", "--confirm"], {
       ...f.deps,
