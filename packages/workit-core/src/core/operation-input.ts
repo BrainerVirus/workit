@@ -184,9 +184,11 @@ export function flatOperationJsonSchema(
   // Reads advertise only what reads take: no revisions, and task reads only their filters.
   const readField = (name: string) =>
     name === "taskId" || (family === "task" ? READ_TASK_FIELDS.has(name) : family === "policy");
+  // Only advertise what some listed action takes (derived from the contract).
+  const taken = (name: string) =>
+    family === "policy" || actions.some((action) => actionKeys(family, action)?.accepted.has(name));
   for (const [name, field] of Object.entries({ ...COMMON, ...spec.fields }))
-    if (options.readOnly ? readField(name) : !(family === "state" && name === "expectedRevision"))
-      properties[name] = property(field);
+    if (options.readOnly ? readField(name) : taken(name)) properties[name] = property(field);
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
@@ -482,6 +484,129 @@ export function normalizeOperationInput(
   return request;
 }
 
+// ---------------------------------------------------------------------------
+// per-action keys, derived from the contract
+
+type ZodLike = {
+  _zod: { def: { type: string; shape?: Record<string, ZodLike>; innerType?: ZodLike } };
+};
+const defOf = (node: ZodLike) => node._zod.def;
+const unwrap = (node: ZodLike): ZodLike => {
+  let inner = node;
+  while (["optional", "nullable"].includes(defOf(inner).type) && defOf(inner).innerType)
+    inner = defOf(inner).innerType!;
+  return inner;
+};
+/** Contract keys the flat form renames. */
+const FLAT_NAME: Record<string, string> = {
+  authorityRefs: "refs",
+  contentRefs: "refs",
+  statedChoice: "choice",
+  reviewContext: "reviewSession",
+};
+const NOT_FLAT = new Set(["schemaVersion", "action", "workspaceId"]);
+
+export type ActionKeys = { accepted: Set<string>; required: string[] };
+
+/**
+ * What one action of a family takes, read from the advertised contract:
+ * every top-level key, the keys of its nested objects (flat form, renamed per
+ * FLAT_NAME), and the required scalars. Lists, scopes and nullables are
+ * defaulted by normalization, so they are accepted but never required.
+ */
+export function actionKeys(family: OperationFamily, action: string): ActionKeys | null {
+  const options = (advertisedOperationSchemas[family] as unknown as { options: ZodLike[] }).options;
+  const option = options.find((item) => {
+    const literal = defOf(item).shape?.action as unknown as { _zod: { def: { values: string[] } } };
+    return literal._zod.def.values.includes(action);
+  });
+  if (!option) return null;
+  const out: ActionKeys = { accepted: new Set(), required: [] };
+  const walk = (shape: Record<string, ZodLike>, nested: boolean): void => {
+    for (const [key, node] of Object.entries(shape)) {
+      if (NOT_FLAT.has(key) || (nested && key === "taskId")) continue;
+      const inner = unwrap(node);
+      const type = defOf(inner).type;
+      const needed = !["optional", "nullable"].includes(defOf(node).type);
+      if (key === "scope")
+        for (const name of ["scope", "paths", "exclusions"]) out.accepted.add(name);
+      else if (type === "object" && key !== "bundle" && !(key in FLAT_NAME)) {
+        out.accepted.add(key);
+        walk(defOf(inner).shape!, true);
+      } else {
+        const name = FLAT_NAME[key] ?? key;
+        out.accepted.add(name);
+        if (needed && type !== "array" && type !== "record" && !out.required.includes(name))
+          out.required.push(name);
+      }
+    }
+  };
+  walk(defOf(option).shape!, false);
+  return out;
+}
+
+/** A minimal valid flat payload for one action: required scalars with placeholders. */
+export function exampleOperation(family: OperationFamily, action: string): Record<string, unknown> {
+  const keys = actionKeys(family, action);
+  const example: Record<string, unknown> = { action };
+  for (const name of keys?.required ?? [])
+    example[name] = FLAT[family].fields[name]?.enum?.[0] ?? `<${name}>`;
+  if (family === "policy" && !keys?.required.length && action !== "explain")
+    example.riskTier = "normal";
+  return example;
+}
+
+const oneOf = (values: readonly string[]): string => values.join(" | ");
+
+/** Every invalid_input the hosts return: the exact fix for this family and action. */
+function invalidOperation(
+  family: OperationFamily,
+  input: unknown,
+  error: ZodErrorLike,
+): Result<never> {
+  const request = isObject(input) ? input : {};
+  const action = typeof request.action === "string" ? request.action : "";
+  const actions = OPERATION_ACTIONS[family];
+  if (!actions.includes(action))
+    return failure("invalid_input", `${family}: action must be one of ${oneOf(actions)}`, {
+      fields: [{ path: "action", reason: `got ${JSON.stringify(request.action ?? null)}` }],
+    });
+  const own = actionKeys(family, action)!;
+  const fields: { path: string; reason: string }[] = [];
+  const sentence: string[] = [];
+  for (const issue of error.issues) {
+    if (issue.code === "unrecognized_keys") {
+      for (const key of issue.keys) {
+        const home = actions.find(
+          (other) => other !== action && actionKeys(family, other)!.accepted.has(key),
+        );
+        const reason = home
+          ? `${key} belongs to action: ${home}`
+          : `${key} is not a field of ${family} ${action}; it takes ${[...own.accepted].join(", ")}`;
+        fields.push({ path: key, reason });
+        sentence.push(reason);
+      }
+      continue;
+    }
+    const last = String(issue.path.at(-1) ?? "");
+    const name = Object.entries(FLAT_NAME).find(([contract]) => contract === last)?.[1] ?? last;
+    const missing = issue.code === "invalid_type" && /received undefined/.test(issue.message);
+    // A nested container (binding, intent, ...) is absent because its flat fields are.
+    const absent = own.required.filter((key) => !(key in request));
+    const needs = missing && issue.path.length === 1 && absent.length ? absent.join(", ") : name;
+    const reason = missing ? `${family} ${action} requires ${needs}` : `${name}: ${issue.message}`;
+    fields.push({ path: issue.path.join("."), reason });
+    sentence.push(reason);
+  }
+  const example = JSON.stringify(exampleOperation(family, action));
+  return failure("invalid_input", `${[...new Set(sentence)].join("; ")}. Example: ${example}`, {
+    fields,
+  });
+}
+type ZodErrorLike = {
+  issues: { code: string; keys: string[]; path: PropertyKey[]; message: string }[];
+};
+
 /**
  * Host-side validation before the engine runs: normalize, then parse against
  * the advertised contract (taskId optional: the engine resolves the branch's
@@ -497,10 +622,5 @@ export function parseAdvertisedOperation(
     return failure("unsupported_version", "unsupported schema version", { operation: family });
   const parsed = advertisedOperationSchemas[family].safeParse(request);
   if (parsed.success) return success(null, null, request);
-  return failure("invalid_input", "operation input is invalid", {
-    fields: parsed.error.issues.map((issue) => ({
-      path: issue.code === "unrecognized_keys" ? issue.keys.join(".") : issue.path.join("."),
-      reason: issue.message,
-    })),
-  });
+  return invalidOperation(family, request, parsed.error as unknown as ZodErrorLike);
 }

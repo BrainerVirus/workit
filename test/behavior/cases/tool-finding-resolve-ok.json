@@ -1,0 +1,14 @@
+{
+  "id": "tool-finding-resolve-ok",
+  "source": "retro 2026-10-27 opencode: the action that takes disposition must accept it",
+  "tool": {
+    "family": "finding",
+    "input": {
+      "action": "resolve",
+      "findingId": "0123456789ab",
+      "disposition": "fixed",
+      "reason": "r"
+    }
+  },
+  "expect": { "require": ["^ok$"] }
+}

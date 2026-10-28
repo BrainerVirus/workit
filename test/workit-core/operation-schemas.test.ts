@@ -3,10 +3,13 @@
 import { expect, test } from "bun:test";
 import {
   flatOperationJsonSchema,
+  parseAdvertisedOperation,
   normalizeOperationInput,
   OPERATION_FAMILIES,
   operationSchemas,
 } from "@/packages/workit-core/src/core";
+import { actionKeys, exampleOperation } from "@/packages/workit-core/src/core/operation-input";
+import { OPERATION_ACTIONS } from "@/packages/workit-core/src/core/task-contract";
 
 const propertyDepth = (node: unknown): number => {
   if (!node || typeof node !== "object") return 0;
@@ -106,4 +109,29 @@ test("canonical nested payloads pass through normalization unchanged in meaning"
     },
   };
   expect(normalizeOperationInput("task", canonical, "workit_cli")).toEqual(canonical);
+});
+
+test("given an advertised key, then at least one action of its family accepts it", () => {
+  for (const family of OPERATION_FAMILIES) {
+    const properties = Object.keys(
+      (flatOperationJsonSchema(family)!.properties ?? {}) as Record<string, unknown>,
+    ).filter((key) => key !== "action");
+    const accepted = new Set(
+      OPERATION_ACTIONS[family].flatMap((action) => [...actionKeys(family, action)!.accepted]),
+    );
+    if (family === "policy") continue; // every policy key is a judgment value
+    for (const key of properties) expect(accepted.has(key), `${family}.${key}`).toBe(true);
+  }
+});
+
+test("given a minimal example per action, then it is accepted", () => {
+  for (const family of OPERATION_FAMILIES)
+    for (const action of OPERATION_ACTIONS[family]) {
+      if (family === "state" && action === "import") continue; // needs a real bundle
+      const example = exampleOperation(family, action);
+      for (const key of ["findingId", "workerId", "decisionId"])
+        if (key in example) example[key] = "01234567-89ab-4cde-8f01-23456789abcd";
+      const parsed = parseAdvertisedOperation(family, example, "opencode");
+      expect(parsed.ok, `${family} ${action}: ${JSON.stringify(parsed)}`).toBe(true);
+    }
 });

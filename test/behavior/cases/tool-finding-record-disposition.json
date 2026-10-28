@@ -1,0 +1,18 @@
+{
+  "id": "tool-finding-record-disposition",
+  "source": "retro 2026-10-27 opencode: `finding record` with disposition rejected 34% of tool calls, resent 3x",
+  "tool": {
+    "family": "finding",
+    "input": {
+      "action": "record",
+      "claim": "c",
+      "consequence": "d",
+      "disposition": "fixed",
+      "reason": "r"
+    }
+  },
+  "expect": {
+    "require": ["disposition belongs to action: resolve", "Example: \\{\"action\":\"record\""],
+    "forbid": ["operation input is invalid"]
+  }
+}

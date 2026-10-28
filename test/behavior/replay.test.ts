@@ -3,7 +3,10 @@
 // sanitised hook payload or CLI call plus what an agent must (and must not)
 // see. A case marked `open` names the issue that fixes it and runs as an
 // expected failure, so the fixing PR has to drop the mark: the case is the
-// slice's red-then-green proof. See docs/agents/testing.md#agent-behaviour-eval.
+// slice's red-then-green proof. A `tool` case calls the shared entry every
+// host's flat tool uses (parseAdvertisedOperation) with a payload and checks
+// the result's text: error, field reasons and guidance, or `ok` on success.
+// See docs/agents/testing.md#agent-behaviour-eval.
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -16,6 +19,7 @@ import {
   handleHook,
   type HookDecision,
 } from "@/packages/workit-core/src/hooks/index";
+import { parseAdvertisedOperation, type OperationFamily } from "@/packages/workit-core/src/core";
 import { fixture, tempRoot } from "@/test/workit-core/hooks/hook-fixtures";
 
 type Host = "claude-code" | "codex" | "cursor";
@@ -29,6 +33,7 @@ type Case = {
 } & (
   | { hook: { host: Host; fixture: string; overrides?: Record<string, unknown> }; expect: Expect }
   | { cli: { argv: string[] }; expect: Expect & { exit?: number[] } }
+  | { tool: { family: OperationFamily; input: unknown }; expect: Expect }
 );
 
 const ADAPTERS = { "claude-code": claudeCodeAdapter, codex: codexAdapter, cursor: cursorAdapter };
@@ -150,6 +155,11 @@ const setup = <T>(step: () => T): T => {
 };
 
 const run = async (spec: Case): Promise<void> => {
+  if ("tool" in spec) {
+    const result = parseAdvertisedOperation(spec.tool.family, spec.tool.input, "opencode");
+    check(result.ok ? "ok" : `${result.error}\n${JSON.stringify(result.details)}`, spec.expect);
+    return;
+  }
   const { cwd } = setup(() => workspace(spec.repo));
   const env = { ...process.env, ...(bind(spec.env, cwd) as Record<string, string>) };
   const { expect: want } = spec;
