@@ -21,7 +21,8 @@
 //   resolves there next. Textual overlap is no bound on that (see above), so
 //   every other entry and the defaults count as a possible taker, and an
 //   entry of the same specificity may have made a directory ambiguous (where
-//   nothing is granted, held to the defaults as add's model does). A removal
+//   every command fails, so its baseline is nothing: no grant, no endpoint
+//   beyond commit, the strictest verification). A removal
 //   that might raise any grant, the endpoint or verification is refused in an
 //   agent or headless shell, like `grant set`, and needs the workspace name
 //   typed at the user's own terminal. It never removes the last entry.
@@ -477,6 +478,12 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
   // defaults; which one is not decidable from the text (see the header).
   const before = deliveredCeilingOf(removed);
   const defaults = ceilingOf({});
+  // An ambiguous folder: every command there fails, so nothing is granted.
+  const nothing: Ceiling = {
+    grants: Object.fromEntries(GRANT_KINDS.map((kind) => [kind, false])) as Grants,
+    endpoint: DEFAULT_ENDPOINT,
+    verification: STRICTNESS[0],
+  };
   const specificity = globSpecificity(removed.glob);
   const raised: Raise[] = [
     { taker: "defaults", kinds: raisedKinds(before, defaults), reason: "no entry matches" },
@@ -489,7 +496,7 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       .filter((entry) => globSpecificity(entry.glob) === specificity)
       .map((entry) => ({
         taker: entry.name,
-        kinds: raisedKinds(defaults, ceilingOf(entry)),
+        kinds: raisedKinds(nothing, ceilingOf(entry)),
         reason: "equally specific: a folder both matched was ambiguous, with nothing granted",
       })),
   ].filter((raise) => raise.kinds.length > 0);

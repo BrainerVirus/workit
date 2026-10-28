@@ -137,7 +137,7 @@ test("the gate catches a seeded fake verb, subcommand and flag", () => {
   const seeded = [
     "Run `workit frobnicate` first.",
     "```bash",
-    "workit workspace rm work",
+    "workit workspace frobnicate work",
     "workit check lint --no-such-flag",
     "workit upgrade --preview   # fine",
     "```",
@@ -145,7 +145,7 @@ test("the gate catches a seeded fake verb, subcommand and flag", () => {
   const found = findings("seeded.md", seeded);
   expect(found).toHaveLength(3);
   expect(found[0]).toContain('unknown verb "frobnicate"');
-  expect(found[1]).toContain('unknown workspace subcommand "rm"');
+  expect(found[1]).toContain('unknown workspace subcommand "frobnicate"');
   expect(found[2]).toContain("unknown option --no-such-flag");
 });
 

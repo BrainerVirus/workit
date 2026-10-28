@@ -621,11 +621,12 @@ test("model: rm from an agent shell never raises effective authority for any cwd
     const ENDPOINTS = ["commit", "pr", "green", "merged", undefined];
     const MODES = ["proportional", "self", "independent", undefined];
     const ENDPOINT_ORDER = ["commit", "pr", "green", "merged"];
-    const DEFAULTS = {
-      grants: { push: true, pr: true, merge: false, release: false, rerun: true },
+    // An ambiguous folder: every command there fails, so nothing is granted.
+    const NOTHING = {
+      grants: { push: false, pr: false, merge: false, release: false, rerun: false },
       endpoint: "commit",
       effective: "commit",
-      verification: "proportional",
+      verification: "independent",
     };
     const view = (cwd: string) => {
       try {
@@ -682,7 +683,7 @@ test("model: rm from an agent shell never raises effective authority for any cwd
       for (const [index, cwd] of CWDS.entries()) {
         const now = after[index];
         if (!now) continue;
-        const was = before[index] ?? DEFAULTS;
+        const was = before[index] ?? NOTHING;
         const label = JSON.stringify({ cwd, existing, target, was, now });
         for (const kind of ["push", "pr", "merge", "release", "rerun"] as const)
           expect(RANK(now.grants[kind]), `${kind} ${label}`).toBeLessThanOrEqual(
@@ -724,4 +725,23 @@ test("rm of an entry whose grants lack vcs.account is a raise: it delivered noth
   const result = await run(["rm", "noaccount"]);
   expect(result.json().error).toContain("grant_raise_refused");
   expect(result.json().error).toContain("push");
+});
+
+test("rm of one of two equally specific entries is a raise: their shared folder was ambiguous", async () => {
+  // <S>/work/repo matches both with the same specificity: every command there
+  // fails (nothing granted). Removing r would hand it to x with the defaults.
+  const folder = path.join(root, "work", "repo");
+  mkdirSync(folder, { recursive: true });
+  seed([
+    { name: "r", glob: `${root}/work/**`, vcs: GH },
+    { name: "x", glob: `${root}/*/repo/**`, vcs: GH },
+  ]);
+  expect(() => resolveAutonomy(folder)).toThrow();
+  const before = readFileSync(file(), "utf8");
+  const result = await run(["rm", "r"], root, AGENT_ENV, headless);
+  expect(result.code).not.toBe(0);
+  expect(result.json().error).toContain("grant_raise_refused");
+  expect(result.json().error).toContain("push");
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect(existsSync(backup())).toBe(false);
 });
