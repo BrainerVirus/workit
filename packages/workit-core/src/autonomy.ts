@@ -37,7 +37,7 @@ import path from "node:path";
 import { resolveConfigDir } from "./core/config";
 import { writeFileAtomic } from "./core/safe-write";
 import {
-  mainCheckoutOf,
+  checkoutsAbove,
   readWorkspacesResult,
   resolveWorkspaceFrom,
   validateWorkspacesDocument,
@@ -365,14 +365,22 @@ function autonomyOf(workspace: WorkspaceConfig | null): Autonomy {
  * an entry caps at nothing granted too. A lowered grant's unblock names the
  * capping entry, never the named one. Settings that are not authority stay.
  */
-function capAt(named: Autonomy, where: string, by: string, why: string, main = false): Autonomy {
+function capAt(
+  named: Autonomy,
+  where: string | Error,
+  by: string,
+  why: string,
+  main = false,
+): Autonomy {
   let folder: Autonomy | null = null;
-  let tie = "";
+  let none = "";
   try {
+    if (where instanceof Error) throw where;
     folder = autonomyOf(resolveWorkspaceFrom(where, grantsDir()));
   } catch (error) {
-    // Its entries tie (the only error once `named` resolved): nothing granted.
-    tie = `ask the user to resolve the tie: ${(error as Error).message}`;
+    // Its entries tie (the only resolver error once `named` resolved), or git
+    // did not answer (`where`): nothing granted.
+    none = (error as Error).message;
   }
   // A name equal to the folder's entry is the folder's resolution; a main
   // checkout caps even its own entry, so naming it never beats the unnamed.
@@ -389,7 +397,7 @@ function capAt(named: Autonomy, where: string, by: string, why: string, main = f
       ? nothing
         ? accountHint(folder.workspace)
         : grantHint(folder.workspace, kind)
-      : tie;
+      : `ask the user to fix: ${none}`;
     lowered.push(kind);
   }
   // The folder's effective endpoint already reflects its own grants.
@@ -402,7 +410,7 @@ function capAt(named: Autonomy, where: string, by: string, why: string, main = f
     VERIFICATION_MODES.indexOf(named.verification) < VERIFICATION_MODES.indexOf(strict);
   if (looser) lowered.push("verification");
   if (lowered.length === 0) return named;
-  const note = `${by}: ${lowered.join(", ")} capped at ${folder ? `workspace ${folder.workspace}` : "nothing (tied workspaces)"}; ${why}`;
+  const note = `${by}: ${lowered.join(", ")} capped at ${folder ? `workspace ${folder.workspace}` : `nothing (${none})`}; ${why}`;
   return {
     ...named,
     grants,
@@ -427,10 +435,16 @@ export function resolveAutonomy(cwd: string): Autonomy {
       `WORKFLOW_WORKSPACE_NAME=${name}`,
       "a name never raises grants",
     );
-  const main = mainCheckoutOf(cwd);
-  return main
-    ? capAt(autonomy, main, `main checkout ${main}`, "a worktree never exceeds it", true)
-    : autonomy;
+  const above = checkoutsAbove(cwd);
+  for (const where of above instanceof Error ? [above] : above)
+    autonomy = capAt(
+      autonomy,
+      where,
+      where instanceof Error ? "git" : `checkout ${where}`,
+      "a worktree or submodule never exceeds it",
+      true,
+    );
+  return autonomy;
 }
 
 const accountOf = (entry: unknown): unknown =>

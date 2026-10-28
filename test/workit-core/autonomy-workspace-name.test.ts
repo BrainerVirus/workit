@@ -94,7 +94,7 @@ test("naming one of two tied entries grants nothing beyond nothing-granted", () 
   }
   expect(named.effectiveEndpoint).toBe("commit");
   expect(named.verification).toBe("independent");
-  expect(named.note).toContain("tie");
+  expect(named.note).toContain("ambiguous");
 });
 
 test("naming the most specific entry changes nothing", () => {
