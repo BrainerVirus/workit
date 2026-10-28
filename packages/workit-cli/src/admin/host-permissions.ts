@@ -57,8 +57,8 @@ const AUTO_MODE_ALLOW =
 const DEFAULTS = "$defaults";
 
 /** Lease verbs for hosts whose rules match a prefix: standard check names, read-only lock verbs. */
-export const CHECK_NAMES = ["test", "lint", "typecheck", "build", "format", "docs"] as const;
-export const LOCK_VERBS = ["status", "wait"] as const;
+const CHECK_NAMES = ["test", "lint", "typecheck", "build", "format", "docs"] as const;
+const LOCK_VERBS = ["status", "wait"] as const;
 const LEASE_PREFIXES: readonly (readonly string[])[] = [
   ...CHECK_NAMES.map((name) => ["check", name]),
   ...LOCK_VERBS.map((verb) => ["lock", verb]),
