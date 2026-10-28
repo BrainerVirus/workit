@@ -875,3 +875,28 @@ test("fanout worktree create: given node_modules is not git-ignored, when create
   expect(existsSync(path.join(root, "app-wt", "a", "node_modules"))).toBe(false);
   expect(created.json().data.notes.join("\n")).toContain("node_modules is not ignored by git");
 });
+
+test("fanout worktree create: given the main checkout's bun.lock differs from the worktree's, when created, then node_modules is not linked and the exact install command is printed; an identical lockfile still links", async () => {
+  const { root, cwd } = workspaceRepo();
+  writeFileSync(path.join(cwd, "bun.lock"), '{"lockfileVersion":1,"pi":"1.4.0"}\n');
+  git(cwd, "add", "bun.lock");
+  git(cwd, "commit", "-qm", "chore: lock");
+  await plan(cwd, root, [slice("a", ["packages/lib/**"]), slice("b", ["b.ts"])]);
+  const same = await run(cwd, ["fanout", "worktree", "create", "b", "--json"]);
+  expect(same.code, same.stderr + same.stdout).toBe(0);
+  expect(same.json().data).toMatchObject({
+    dependencies: { dirs: ["node_modules"] },
+    install: null,
+  });
+
+  // A stale main checkout: its working copy pins other versions than the slice's base.
+  writeFileSync(path.join(cwd, "bun.lock"), '{"lockfileVersion":1,"pi":"0.85.0"}\n');
+  const wt = path.join(root, "app-wt", "a");
+  const json = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(json.code, json.stderr + json.stdout).toBe(0);
+  const install = `bun install --frozen-lockfile --cwd ${json.json().data.path}`;
+  expect(json.json().data).toMatchObject({ dependencies: null, install });
+  expect(existsSync(path.join(wt, "node_modules"))).toBe(false);
+  const human = await run(cwd, ["fanout", "worktree", "create", "a"]);
+  expect(human.stdout + human.stderr).toContain(install);
+});
