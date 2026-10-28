@@ -112,6 +112,13 @@ since its spawn-heavy tests timed out under parallel load (#415). Aggregator job
 keep the required check names (`test (ubuntu-latest)`, `test (macos-latest)`,
 `test (windows-latest)`).
 
+No file may dominate a Windows shard, since those run serially: the forge suites
+are split by area under `test/workit-core/forge/` (shared harness in
+`forge/shared.ts`). Windows shards cache the installed `node_modules` trees,
+keyed by OS, Bun version and the `bun.lock` hash with no fallback key (a cold
+`bun install` took 70-75 s; the bun download cache restored slower than that).
+`bun install --frozen-lockfile` still runs after the restore.
+
 Every shard uploads the durations it measured (`timings-<leg>-<i>` artifacts).
 Refresh the committed files when the balance drifts: download a green run's
 artifacts and merge each leg's shards into `test/timings/<leg>.json`.
