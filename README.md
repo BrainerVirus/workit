@@ -176,7 +176,9 @@ never merging) or `merged` (`green`, then `workit pr merge`; it acts as `green`
 until the workspace has the merge grant). Without the `push` or `pr` grant any
 of them acts as `commit`; `workit grant show` reports the effective endpoint. Raising a grant or the endpoint needs
 you at a terminal; agents can only lower them. See
-[grants](docs/guides/grants.md).
+[grants](docs/guides/grants.md). `workit workspace list|add|set` adds or
+adjusts one entry without the wizard and never raises a grant
+([configuration](docs/guides/configuration.md#config-files)).
 
 **Policy.** Judge tracked work in four calls (`workit policy assess --judge
 risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no`,

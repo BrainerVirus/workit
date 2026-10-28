@@ -61,6 +61,7 @@ import {
   readWorkspacesResult,
   resolveWorkspaceFrom,
   resolveWorkspacePolicy,
+  workspaceOverlaps,
   workspaceTrailers,
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces";
@@ -2088,7 +2089,35 @@ const branchPresetLine = (res: Resolved, workspace: WorkspaceConfig | null): str
   }
 };
 
+/**
+ * Overlapping globs and which entry wins where both match (the most specific;
+ * a tie is ambiguous and makes every command there fail), #444.
+ */
 const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
+  const check = checkWorkspaceMatch(res);
+  const result = readWorkspacesResult(res.configDir);
+  if (result.status !== "valid") return check;
+  const overlaps = workspaceOverlaps(result.entries);
+  if (overlaps.length === 0) return check;
+  const lines = overlaps.map((overlap) =>
+    overlap.winner
+      ? `overlap: ${overlap.inner} inside ${overlap.outer}, ${overlap.winner} wins at ${overlap.at}`
+      : `overlap: ${overlap.inner} and ${overlap.outer} tie at ${overlap.at} (ambiguous)`,
+  );
+  const ties = overlaps.filter((overlap) => !overlap.winner);
+  return {
+    ...check,
+    detail: [check.detail, ...lines].join("; "),
+    ...(ties.length && check.status === "pass"
+      ? {
+          status: "warn" as const,
+          fix: `Make one glob more specific than the other in ${result.path} (workit workspace list shows the effective entry)`,
+        }
+      : {}),
+  };
+};
+
+const checkWorkspaceMatch = (res: Resolved): DoctorCheck => {
   const result = readWorkspacesResult(res.configDir);
   const file = result.path;
   if (result.status === "missing" || (result.status === "valid" && result.entries.length === 0))

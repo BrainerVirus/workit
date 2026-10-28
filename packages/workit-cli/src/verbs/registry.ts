@@ -287,6 +287,43 @@ export const VERBS: readonly VerbEntry[] = [
     },
     { optional: true },
   ),
+  withSubcommands(
+    {
+      name: "workspace",
+      group: "setup",
+      summary: "Edit workspace entries without the wizard; never raises a grant",
+      subcommands: [
+        {
+          name: "list",
+          usage: "workit workspace list",
+          summary: "Show every entry and the one that applies to --cwd, and why",
+        },
+        {
+          name: "add",
+          usage: "workit workspace add <name> --glob <glob> [--from <parent>]",
+          summary:
+            "Add an entry; --from copies vcs, issues, branchPolicy, commitPolicy, trailers, youtrack and models, never grants",
+        },
+        {
+          name: "set",
+          usage: "workit workspace set <name> <key>=<value>…",
+          summary:
+            "Change non-grant keys (dotted paths, JSON values, null removes); grants stay with workit grant set",
+        },
+      ],
+      examples: [
+        "workit workspace list",
+        "workit workspace add kit --glob '/home/me/work/libs/kit/**' --from work",
+        "workit workspace set kit branchPolicy.integration=merge",
+      ],
+      notes: [
+        "A new entry starts with no grants of its own. It starts at the strictest level of every entry and the defaults, so its folders never get more than they had. Remove an entry in your own editor. Raising a grant, defaultEndpoint or verification needs the user: workit grant set <name> <kind>=<value> in their own terminal.",
+        "Every write keeps the previous file as workspaces.json.bak. `workit doctor` lists overlapping globs and which entry wins.",
+      ],
+      load: () => import("./workspace"),
+    },
+    { optional: true },
+  ),
   ...TASK_FAMILY_NAMES.map(family),
   {
     name: "check",

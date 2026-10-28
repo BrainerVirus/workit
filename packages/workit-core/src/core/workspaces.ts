@@ -327,11 +327,15 @@ export const validateWorkspacesDocument = (parsed: unknown, file: string): Works
       };
     }
   }
+  // The schema has no transforms, so the parsed entries hold the same values;
+  // returning them (not zod's output) keeps the user's key order, so a write
+  // that leaves an entry alone keeps it byte-for-byte (#444).
+  const document = parsed as Record<string, unknown>;
   return {
     status: "valid",
     path: file,
-    entries: validated.data.workspaces ?? [],
-    document: parsed as Record<string, unknown>,
+    entries: (document.workspaces as WorkspaceConfig[] | undefined) ?? [],
+    document,
   };
 };
 
@@ -541,11 +545,95 @@ const canonicalGlob = (glob: string): string => {
   return real + (prefix.endsWith("/") ? "/" : "") + rest;
 };
 
-const globSpecificity = (glob: string): number =>
+/** The literal path segments of a glob; the most specific matching glob wins. */
+export const globSpecificity = (glob: string): number =>
   glob
     .replaceAll("\\", "/")
     .split("/")
     .filter((segment) => segment.length > 0 && !/[*?[\]{]/.test(segment)).length;
+
+/** The literal directory a glob starts from: `/home/u/work/**` -> `/home/u/work`. */
+export const globRoot = (glob: string): string => {
+  const normalized = glob.replaceAll("\\", "/");
+  const wild = /[*?[\]{]/.exec(normalized);
+  const prefix = wild ? normalized.slice(0, wild.index) : normalized;
+  return prefix.replace(/\/+$/u, "") || "/";
+};
+
+/** The text of a glob before its first wildcard, in both its logical and real form. */
+const literalPrefixes = (glob: string): string[] => {
+  const normalized = glob.replaceAll("\\", "/");
+  const prefixOf = (value: string) => {
+    const wild = /[*?[\]{]/.exec(value);
+    return wild ? value.slice(0, wild.index) : value;
+  };
+  return [
+    ...new Set([prefixOf(normalized), prefixOf(canonicalGlob(normalized).replaceAll("\\", "/"))]),
+  ];
+};
+
+/**
+ * Whether two globs might match a common path. Every path a glob matches
+ * starts with its literal prefix, so globs whose prefixes are not one a text
+ * prefix of the other never overlap; anything else is treated as overlapping
+ * (conservative: #444's verbs refuse or clamp rather than risk a raise).
+ */
+const globsMayOverlap = (a: string, b: string): boolean =>
+  literalPrefixes(a).some((pa) =>
+    literalPrefixes(b).some((pb) => pa.startsWith(pb) || pb.startsWith(pa)),
+  );
+
+/** Every entry whose glob may match a path `glob` matches. */
+export const overlappingEntries = <T extends { name: string; glob: string }>(
+  glob: string,
+  entries: readonly T[],
+): T[] => entries.filter((entry) => globsMayOverlap(entry.glob, glob));
+
+export type WorkspaceOverlap = {
+  /** The entry nested inside (or tied with) `outer`. */
+  inner: string;
+  outer: string;
+  /** Where both match: the inner glob's root. */
+  at: string;
+  /** The entry selected there; null when the globs tie (ambiguous). */
+  winner: string | null;
+};
+
+/** Pairs of entries whose globs both match some directory, and which one wins. */
+export const workspaceOverlaps = (
+  entries: readonly { name: string; glob: string }[],
+): WorkspaceOverlap[] => {
+  const out: WorkspaceOverlap[] = [];
+  for (const [i, a] of entries.entries())
+    for (const b of entries.slice(i + 1)) {
+      const aInB = matchWorkspace(b.glob, globRoot(a.glob));
+      const bInA = matchWorkspace(a.glob, globRoot(b.glob));
+      if (!aInB && !bInA) continue;
+      const [inner, outer] =
+        aInB && !bInA
+          ? [a, b]
+          : bInA && !aInB
+            ? [b, a]
+            : globSpecificity(a.glob) >= globSpecificity(b.glob)
+              ? [a, b]
+              : [b, a];
+      const si = globSpecificity(inner.glob);
+      const so = globSpecificity(outer.glob);
+      out.push({
+        inner: inner.name,
+        outer: outer.name,
+        at: globRoot(inner.glob),
+        winner: si === so ? null : si > so ? inner.name : outer.name,
+      });
+    }
+  return out;
+};
+
+/** Every entry whose glob matches cwd (its logical and real path, or its main checkout). */
+export const workspaceMatches = <T extends { name: string; glob: string }>(
+  cwd: string,
+  entries: readonly T[],
+): T[] => matchingEntries(cwd, entries);
 
 const selectWorkspaceMatch = <T extends { name: string; glob: string }>(
   matches: T[],
