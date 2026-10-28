@@ -159,18 +159,74 @@ jobs:
           exit "$failed"
 
   # Every test directory on Linux (unit + packaging tiers), so a new suite
-  # cannot silently escape CI.
-  test:
-    name: test (ubuntu-latest)
+  # cannot silently escape CI. The unit tier runs as four shards balanced by
+  # test/timings/ubuntu.json; the packaging tier is its own job.
+  unit:
+    name: ubuntu shard ${{ matrix.shard }}/4
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       # Shell/context tests resolve real revision ranges (HEAD~1, ranges), so
       # the checkout needs full history rather than the default shallow clone.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_CURRENT }}
+
+      - name: Restore bun cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      # The dev-checkout install tests install the adapters from this
+      # checkout; dist/ and the vendored skills are build products
+      # (gitignored), so the checkout must be built before testing.
+      - name: Build packages
+        run: bun run build
+
+      - name: Test (unit tier, shard ${{ matrix.shard }}/4)
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: bun scripts/test.ts ci ubuntu "$SHARD/4"
+
+      - name: Upload measured timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: timings-ubuntu-${{ matrix.shard }}
+          path: test/timings/ubuntu.json
+          retention-days: 14
+
+  packaging:
+    name: ubuntu packaging
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -204,9 +260,6 @@ jobs:
       - name: Validate Cursor Marketplace artifact
         run: bun run validate:cursor-marketplace
 
-      # The dev-checkout install tests install the adapters from this
-      # checkout; dist/ and the vendored skills are build products
-      # (gitignored), so the checkout must be built before testing.
       - name: Build packages
         run: bun run build
 
@@ -227,11 +280,6 @@ jobs:
           "$claude" plugin validate --strict .
           echo "WORKIT_CLAUDE_BIN=$claude" >> "$GITHUB_ENV"
 
-      # Both tiers together cover every test directory (scripts/test.ts):
-      # the unit tier excludes exactly the packaging suites.
-      - name: Test (unit tier)
-        run: bun run test
-
       - name: Test (packaging tier)
         run: bun run test:packaging
 
@@ -240,17 +288,43 @@ jobs:
       - name: Verify release candidate
         run: bun run verify:release-candidate
 
+  test:
+    name: test (ubuntu-latest)
+    needs: [changes, unit, packaging]
+    # Always runs, so a failed, timed-out or cancelled leg fails this required
+    # check instead of skipping it (a skipped check counts as passing).
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every Ubuntu leg
+        env:
+          LEGS: ${{ needs.unit.result }} ${{ needs.packaging.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+        run: |
+          echo "ubuntu legs: $LEGS (docs_only=$DOCS_ONLY)"
+          if [[ "$LEGS" == "success success" ]]; then exit 0; fi
+          if [[ "$LEGS" == "skipped skipped" && "$DOCS_ONLY" == true ]]; then exit 0; fi
+          exit 1
+
   # workit-core owns the bash script/portability tests and the packed-artifact
-  # gates (CA-26); both also run on macOS and Windows with the declared Node.
-  # `bun scripts/test.ts shard` picks the files and the per-test timeouts.
-  portability:
-    name: test (macos-latest)
+  # gates (CA-26); both also run on macOS and Windows with the declared Node,
+  # files spread across workers (`--parallel`) and shards balanced by
+  # test/timings/<os>.json. "test (macos-latest)" and "test (windows-latest)"
+  # aggregate the shards under the required check names.
+  macos-shard:
+    name: macos shard ${{ matrix.shard }}/2
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: macos-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -282,24 +356,49 @@ jobs:
       - name: Build packages
         run: bun run build
 
-      - name: Test workit-core and artifacts
-        run: bun scripts/test.ts shard 1/1 test/workit-core test/artifacts
+      - name: Test workit-core and artifacts (shard ${{ matrix.shard }}/2)
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: bun scripts/test.ts ci macos "$SHARD/2"
 
-  # The Windows run of the same suite is the critical path (~13 min serial),
-  # so it runs as three balanced shards; "test (windows-latest)" below
-  # aggregates them under the required check name.
+      - name: Upload measured timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: timings-macos-${{ matrix.shard }}
+          path: test/timings/macos.json
+          retention-days: 14
+
+  portability:
+    name: test (macos-latest)
+    needs: [changes, macos-shard]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every macOS shard
+        env:
+          SHARDS: ${{ needs.macos-shard.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+        run: |
+          echo "macos shards: $SHARDS (docs_only=$DOCS_ONLY)"
+          if [[ "$SHARDS" == success ]]; then exit 0; fi
+          if [[ "$SHARDS" == skipped && "$DOCS_ONLY" == true ]]; then exit 0; fi
+          exit 1
+
   windows-shard:
-    name: windows shard ${{ matrix.shard }}/3
+    name: windows shard ${{ matrix.shard }}/4
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -326,16 +425,22 @@ jobs:
       - name: Build packages
         run: bun run build
 
-      - name: Test workit-core and artifacts (shard ${{ matrix.shard }}/3)
+      - name: Test workit-core and artifacts (shard ${{ matrix.shard }}/4)
         env:
           SHARD: ${{ matrix.shard }}
-        run: bun scripts/test.ts shard "$env:SHARD/3" test/workit-core test/artifacts
+        run: bun scripts/test.ts ci windows "$env:SHARD/4"
+
+      - name: Upload measured timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: timings-windows-${{ matrix.shard }}
+          path: test/timings/windows.json
+          retention-days: 14
 
   windows:
     name: test (windows-latest)
     needs: [changes, windows-shard]
-    # Always runs, so a failed, timed-out or cancelled shard fails this
-    # required check instead of skipping it (a skipped check counts as passing).
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

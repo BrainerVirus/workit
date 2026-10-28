@@ -102,15 +102,23 @@ claude plugin eval packages/workit-claude-code --case <name> --model haiku \
 
 ## CI shards
 
-The macOS and Windows legs run `bun scripts/test.ts shard <i>/<n>
-test/workit-core test/artifacts`: files are split by the measured Windows
-weights in `SHARD_WEIGHTS` (balance only; every file runs in some shard).
-Windows runs three shards, aggregated into the required `test (windows-latest)`
-check. On Windows the per-test default timeout is 15 s; files listed in
-`WINDOWS_SLOW_FILES` get 60 s. A test slower than that needs its own timeout
-argument, not a longer blanket. Jobs time out after 20 minutes; nothing
-retries a failed test. PRs touching only `docs/**` (outside
-`docs/qualification/`) or root/`.github/` Markdown skip the test legs.
+Each leg runs `bun scripts/test.ts ci <ubuntu|macos|windows> <i>/<n>`: bun
+picks the shard's files (`bun test --shard`), balanced by the per-file
+durations in `test/timings/<leg>.json`. Ubuntu runs the unit tier as four
+serial shards plus a separate packaging job; macOS (two shards) and Windows
+(four) run `test/workit-core` and `test/artifacts` with `--parallel`. Ubuntu
+stays serial: its CLI suites hung under `--parallel` (#415). Aggregator jobs
+keep the required check names (`test (ubuntu-latest)`, `test (macos-latest)`,
+`test (windows-latest)`).
+
+Every shard uploads the durations it measured (`timings-<leg>-<i>` artifacts).
+Refresh the committed files when the balance drifts: download a green run's
+artifacts and merge each leg's shards into `test/timings/<leg>.json`.
+
+On Windows the per-test default timeout is 15 s; a file that needs more sets
+its own `setDefaultTimeout` (Windows-only where Linux is fast). Jobs time out
+after 15 minutes; nothing retries a failed test. PRs touching only `docs/**`
+(outside `docs/qualification/`) or root/`.github/` Markdown skip the test legs.
 
 ## Opt-in suites
 

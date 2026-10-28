@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -10,6 +10,9 @@ import {
 import { lintCommitMessage } from "@/packages/workit-core/src/git/ops";
 import { resolveCommitPolicy } from "@/packages/workit-core/src/core/config";
 import type { ToolkitConfig } from "@/packages/workit-core/src/core/config";
+
+// Measured over 5 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 const baseConfig = (over: Partial<ToolkitConfig> = {}): ToolkitConfig => ({
   locale: "en",

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +10,9 @@ import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
 import { handleCursorHook } from "@/packages/workit-cursor/hooks/workit-hook";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
+
+// Measured over 5 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 const previousEnv = {
   config: process.env.WORKFLOW_TOOLKIT_CONFIG,
