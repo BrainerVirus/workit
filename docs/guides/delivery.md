@@ -14,7 +14,10 @@ and name the variables: unset them, or `cd` into the repository and run the
 verb there. Read-only verbs still run under them, so a dotfile repository
 keeps working. The shell hook likewise denies a raw `git push` that one of
 these points at a protected branch, or at a repository it cannot read
-(`GIT_DIR=$X git push`).
+(`GIT_DIR=$X git push`). A folder whose `.git` is a `gitdir:` file or a
+symlink into another checkout's repository is capped at that checkout's
+grants, and at none when no checkout owns the git directory (a
+`--separate-git-dir` repository).
 
 ## Branch, commit, push
 
