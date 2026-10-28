@@ -51,7 +51,19 @@ export type UpgradeResult = {
 const opencodeVersion = (run: ReturnType<typeof runner>): string | undefined => {
   const listing = run("opencode", ["plugin", "list"]);
   if (listing.status !== 0) return undefined;
-  return /@brainervirus\/workit-opencode\D{0,40}?v?(\d+\.\d+\.\d+)/.exec(listing.stdout)?.[1];
+  // Table: `ID  VERSION  SOURCE`; the row whose last field is the Workit package.
+  for (const line of listing.stdout.split(/\r?\n/)) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 3) continue;
+    const source = fields[fields.length - 1].replace(/^file:\/\//, "");
+    const version = fields[fields.length - 2];
+    if (
+      /^(?:npm:)?@brainervirus\/workit-opencode(?:@[^/\s]+)?$/.test(source) &&
+      /^\d+\.\d+\.\d+$/.test(version)
+    )
+      return version;
+  }
+  return undefined;
 };
 
 /** Apply one plan entry; any thrown error stays this host's failure. */

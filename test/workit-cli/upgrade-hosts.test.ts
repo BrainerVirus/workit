@@ -476,7 +476,7 @@ test("Given doctor still finds an upgrade-fixable row, Then the run prints what 
 
 const OPENCODE_HELP = "Commands:\n  opencode plugin check\n  opencode plugin update <name>\n";
 
-const opencodeWorld = (versions: { before: string; after: string }) => {
+const opencodeWorld = (versions: { before: string; after: string }, extraRow = false) => {
   const w = world();
   write(path.join(w.home, ".config/opencode/opencode.json"), {
     plugins: ["@brainervirus/workit-opencode"],
@@ -493,7 +493,9 @@ const opencodeWorld = (versions: { before: string; after: string }) => {
       const version = updated ? versions.after : versions.before;
       return {
         status: 0,
-        stdout: `@brainervirus/workit-opencode ${version}\n`,
+        stdout: `ID           VERSION  SOURCE\n${
+          extraRow ? "commandcode  0.12.17  @brainervirus/opencode-commandcode\n" : ""
+        }workit       ${version}   @brainervirus/workit-opencode\n`,
       };
     }
     if (command === "opencode" && args[1] === "update") updated = true;
@@ -623,6 +625,21 @@ test("Given a plain `workit upgrade` without a TTY and without --yes, Then nothi
   } finally {
     if (tty) Object.defineProperty(process.stdin, "isTTY", tty);
     else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    w.cleanup();
+  }
+});
+
+test("Given an unrelated plugin row above Workit's in `opencode plugin list`, When upgrade runs, Then the Workit row's version is the one reported", async () => {
+  const { w, run } = opencodeWorld({ before: "8.37.0", after: "8.38.0" }, true);
+  try {
+    expect(
+      await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+        ...w.deps,
+        run,
+      }),
+    ).toBe(0);
+    expect(w.text()).toMatch(/opencode +updated +8\.37\.0 -> 8\.38\.0; OpenCode V2 loads it live/);
+  } finally {
     w.cleanup();
   }
 });
