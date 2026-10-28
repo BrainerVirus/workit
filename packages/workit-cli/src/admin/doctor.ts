@@ -208,6 +208,8 @@ export type DoctorOptions = {
   scopeProbe?: (env: NodeJS.ProcessEnv) => ScopeProbe;
   /** Running `claude` processes (test seam; default reads `ps`; null = unreadable). */
   claudeProcesses?: () => ClaudeProcess[] | null;
+  /** `upgrade`: only the version, asset, agent and permission checks `workit upgrade` can fix. */
+  only?: "upgrade";
 };
 
 export type ClaudeProcess = { pid: number; startedMs: number; args: string };
@@ -1425,7 +1427,7 @@ const checkPluginFiles = (res: Resolved): DoctorCheck => {
       problems.push(
         `Cursor registers the Workit plugin at ${entry}, but that directory is ${state}`,
       );
-      fixes.push("Run `workit init` and select Cursor to install the plugin files");
+      fixes.push("Run `workit upgrade --hosts=cursor` to reinstall the plugin files");
     }
   }
   for (const install of codexWorkitInstalls(res)) {
@@ -3381,6 +3383,22 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkGrantRules("cursor", "cursor_grant_rules"),
 ];
 
+/** What `workit upgrade` verifies at its end: findings an upgrade can fix. */
+const UPGRADE_CHECKS = new Set<(res: Resolved) => DoctorCheck>([
+  checkVersions,
+  checkCodexPin,
+  checkCodexAgents,
+  checkPiExtension,
+  checkOpencodeVersion,
+  checkClaudePlugin,
+  checkAssets,
+  checkLauncher,
+  checkPluginFiles,
+  checkStalePin,
+  checkStaleInstall,
+  ...RUN_CHECKS.slice(-6),
+]);
+
 // AR-11/CA-40: the installer guarantees the selected host itself — runtime,
 // assets, launchers, registration, and required utilities — plus the config it
 // just wrote. Those defects stay failures with nonzero status; only optional
@@ -3398,7 +3416,9 @@ const INSTALLER_REQUIRED = new Set<DoctorCheckId>([
 
 export const runDoctor = (options: DoctorOptions = {}): DoctorReport => {
   const res = resolve(options);
-  const raw = RUN_CHECKS.map((fn) => fn(res));
+  const raw = (
+    options.only === "upgrade" ? RUN_CHECKS.filter((fn) => UPGRADE_CHECKS.has(fn)) : RUN_CHECKS
+  ).map((fn) => fn(res));
   const checks = res.installer
     ? raw.map((c) =>
         c.status === "fail" && !INSTALLER_REQUIRED.has(c.id)
