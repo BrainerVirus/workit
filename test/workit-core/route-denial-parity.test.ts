@@ -268,7 +268,7 @@ test("Given a Workit workspace, When a git alias, push.default, remote.<name>.pu
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 30_000); // macOS CI took over 5 s (2026-10-28, main ed482e44): it runs every host's hook; Linux ~0.8 s.
 
 test("Given a Workit workspace, When a deferred branch-creation form (#277 ruling mv7kwhzy) names a new off-policy branch, Then all five hosts deny it; an existing or compliant name passes", async () => {
   const root = workspace();
