@@ -40,6 +40,7 @@ import {
   readWorkspacesResult,
   resolveWorkspaceFrom,
   validateWorkspacesDocument,
+  type WorkspaceConfig,
 } from "./core/workspaces";
 
 /**
@@ -261,7 +262,10 @@ export type Autonomy = EndpointView & {
   source: AutonomySource;
   accountConfigured: boolean;
   verification: VerificationMode;
-  /** Set when the grants file was not read (see grantsOverride). */
+  /**
+   * Set when the grants file was not read (see grantsOverride), or when
+   * WORKFLOW_WORKSPACE_NAME was capped at the folder's grants (#536).
+   */
   note?: string;
 };
 
@@ -326,27 +330,8 @@ export function configuredGrants(entry: unknown): {
   return legacy ? { grants: legacy, source: "autoApprove" } : { grants: {}, source: "default" };
 }
 
-/** The grants for the workspace `cwd` belongs to (read-only). */
-export function resolveAutonomy(cwd: string): Autonomy {
-  const override = grantsOverride();
-  if (override)
-    return {
-      workspace: null,
-      grants: { ...DEFAULT_GRANTS },
-      configured: [],
-      source: "default",
-      accountConfigured: false,
-      defaultEndpoint: DEFAULT_ENDPOINT,
-      configuredEndpoint: null,
-      effectiveEndpoint: DEFAULT_ENDPOINT,
-      verification: DEFAULT_VERIFICATION,
-      note: override,
-    };
-  const workspace = resolveWorkspaceFrom(
-    cwd,
-    grantsDir(),
-    process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
-  );
+/** The grants one resolved workspace entry (or none) gives. */
+function autonomyOf(workspace: WorkspaceConfig | null): Autonomy {
   const { grants, source } = configuredGrants(workspace);
   const full = { ...DEFAULT_GRANTS, ...grants };
   const configured = GRANT_KINDS.filter((kind) => grants[kind] !== undefined);
@@ -365,6 +350,83 @@ export function resolveAutonomy(cwd: string): Autonomy {
     }),
     verification: verificationOf(workspace),
   };
+}
+
+const STRICTNESS: readonly VerificationMode[] = ["independent", "self", "proportional"];
+
+/**
+ * #536: WORKFLOW_WORKSPACE_NAME may pick which matching entry's vcs and
+ * policies apply, but any shell (an agent's too) can set it, so the effective
+ * grants, endpoint and verification never exceed what the folder resolves to
+ * without it: `folder`, or nothing granted when the folder's entries tie
+ * (null). Explicit grants without vcs.account reach no forge, so such a
+ * folder entry caps at nothing granted too.
+ */
+function capByFolder(named: Autonomy, folder: Autonomy | null, name: string): Autonomy {
+  if (folder?.workspace === named.workspace) return named;
+  const nothing = !folder || (folder.configured.length > 0 && !folder.accountConfigured);
+  const grants = { ...named.grants };
+  const lowered: string[] = [];
+  for (const kind of GRANT_KINDS) {
+    const floor = nothing ? false : folder.grants[kind];
+    if (raises(kind, floor, grants[kind])) {
+      grants[kind] = floor;
+      lowered.push(kind);
+    }
+  }
+  const ceiling = folder?.effectiveEndpoint ?? DEFAULT_ENDPOINT;
+  const endpoint = raisesEndpoint(ceiling, named.defaultEndpoint) ? ceiling : named.defaultEndpoint;
+  const { workspace, configured, accountConfigured } = named;
+  const view = endpointView(
+    { defaultEndpoint: endpoint },
+    { workspace, grants, configured, accountConfigured },
+  );
+  if (raisesEndpoint(view.effectiveEndpoint, named.effectiveEndpoint))
+    lowered.push("defaultEndpoint");
+  const strictest = folder ? folder.verification : STRICTNESS[0];
+  const verification =
+    STRICTNESS.indexOf(named.verification) > STRICTNESS.indexOf(strictest)
+      ? strictest
+      : named.verification;
+  if (verification !== named.verification) lowered.push("verification");
+  if (lowered.length === 0) return named;
+  return {
+    ...named,
+    grants,
+    ...view,
+    configuredEndpoint: named.configuredEndpoint,
+    ...(named.endpointIssue ? { endpointIssue: named.endpointIssue } : {}),
+    verification,
+    note: `WORKFLOW_WORKSPACE_NAME=${name} selects workspace ${named.workspace ?? "?"}; ${lowered.join(", ")} capped at what this folder grants without the name (${folder ? `workspace ${folder.workspace ?? "none"}` : "nothing: its workspaces tie"}): a name never raises grants`,
+  };
+}
+
+/** The grants for the workspace `cwd` belongs to (read-only). */
+export function resolveAutonomy(cwd: string): Autonomy {
+  const override = grantsOverride();
+  if (override)
+    return {
+      workspace: null,
+      grants: { ...DEFAULT_GRANTS },
+      configured: [],
+      source: "default",
+      accountConfigured: false,
+      defaultEndpoint: DEFAULT_ENDPOINT,
+      configuredEndpoint: null,
+      effectiveEndpoint: DEFAULT_ENDPOINT,
+      verification: DEFAULT_VERIFICATION,
+      note: override,
+    };
+  const name = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
+  const named = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir(), name));
+  if (name === undefined) return named;
+  let folder: Autonomy | null;
+  try {
+    folder = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir()));
+  } catch {
+    folder = null; // the folder's entries tie: nothing granted
+  }
+  return capByFolder(named, folder, name);
 }
 
 const accountOf = (entry: unknown): unknown =>

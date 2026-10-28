@@ -31,6 +31,15 @@ Protected-branch pushes stay denied, except git-flow main and develop under
 the `release` grant ([Releasing](#releasing)); outside git-flow a protected
 branch only moves through a PR.
 
+When several workspaces match a folder, the most specific one sets its
+grants. `WORKFLOW_WORKSPACE_NAME` can pick another matching entry for its
+account, policies and issues, but never more authority: grants,
+`defaultEndpoint` and `verification` stay at most what the folder gets
+without the name, and nothing is granted when equally specific entries tie.
+Any shell can set the variable, an agent's included, so only you raise grants,
+with `workit grant set`. `workit grant show` prints a note when a name was
+capped.
+
 ## Releasing
 
 `release: true` (`workit grant set <workspace> release=true`, from your own
