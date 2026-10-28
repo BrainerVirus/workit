@@ -52,6 +52,8 @@ if (tooOld) {
 const { maybeHeavy, stateDir } = await import("@brainervirus/workit-core/src/core/heavy-words");
 const { standingPending } = await import("@brainervirus/workit-core/src/hooks/standing-signal");
 const { recordHookRun } = await import("@brainervirus/workit-core/src/hooks/hook-runs");
+const { noteSpawnBudget, tickBudget } =
+  await import("@brainervirus/workit-core/src/hooks/budget-signal");
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
@@ -64,6 +66,47 @@ const WRITE_TOOLS = new Set(["applypatch", "edit", "write"]);
 const mentionsIssued = (text: string): boolean => {
   const flat = (value: string) => value.replaceAll("\\", "/").toLowerCase();
   return /issued/i.test(text) || flat(text).includes(flat(stateDir(process.env)));
+};
+
+/**
+ * The worker tool-call budget (hooks/budget-signal.ts), before any quiet
+ * answer so every call counts: a lead's spawn whose message carries a brief
+ * with `N tool calls` queues N, and a budgeted subagent's call is counted.
+ * True when the count reached the budget, so the runtime tells it.
+ */
+const budgetDue = (): boolean => {
+  try {
+    const value = JSON.parse(payload) as {
+      hook_event_name?: unknown;
+      session_id?: unknown;
+      agent_id?: unknown;
+      cwd?: unknown;
+      tool_input?: unknown;
+    };
+    if (value.hook_event_name !== "PreToolUse" || typeof value.session_id !== "string")
+      return false;
+    const cwd = typeof value.cwd === "string" ? value.cwd : ".";
+    const agentId =
+      typeof value.agent_id === "string" && value.agent_id.trim() ? value.agent_id : null;
+    if (
+      !agentId &&
+      payload.includes("TIMEBOX:") &&
+      value.tool_input &&
+      typeof value.tool_input === "object"
+    ) {
+      const spawn = value.tool_input as Record<string, unknown>;
+      const prompt = Object.values(spawn).find(
+        (field): field is string => typeof field === "string" && field.includes("TIMEBOX:"),
+      );
+      const type = [spawn.agent_type, spawn.subagent_type].find(
+        (field): field is string => typeof field === "string",
+      );
+      if (prompt) noteSpawnBudget(cwd, value.session_id, type ?? null, prompt);
+    }
+    return agentId ? tickBudget(cwd, value.session_id, agentId) : false;
+  } catch {
+    return false;
+  }
 };
 
 /** The event name when the answer is "no decision" without the runtime, else null. */
@@ -109,7 +152,7 @@ const quietEvent = (): string | null => {
   }
 };
 
-const quiet = quietEvent();
+const quiet = budgetDue() ? null : quietEvent();
 if (quiet) {
   // The full path records itself (runHookProcess); the quiet path counts here.
   // PostToolUse follows every shell call and tells doctor nothing PreToolUse does not.

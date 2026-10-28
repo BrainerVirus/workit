@@ -64,6 +64,15 @@ export type BriefOutcome = {
 
 export const DEFAULT_TIMEBOX = "30 minutes";
 
+/** The TIMEBOX line's tool-call budget when the slice names none (hooks/budget-signal.ts). */
+export const DEFAULT_TOOL_CALLS = 120;
+
+/** The slice's TIMEBOX text plus a tool-call budget unless it already names one. */
+const timeboxText = (timebox: string | null): string => {
+  const text = timebox ?? DEFAULT_TIMEBOX;
+  return /\b\d+\s+tool calls\b/u.test(text) ? text : `${text}, ${DEFAULT_TOOL_CALLS} tool calls`;
+};
+
 const REPORT = [
   "REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,",
   "  each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),",
@@ -151,7 +160,12 @@ function workerSession(lead: string, slice: string, attempt: number | null): str
 export function renderBrief(
   cwd: string,
   plan: FanoutFile,
-  input: { slice: string; mode: BriefMode | null; attempt: number | null; actor: LedgerActor },
+  input: {
+    slice: string;
+    mode: BriefMode | null;
+    attempt: number | null;
+    actor: LedgerActor;
+  },
 ): FanoutResult<BriefOutcome> {
   const found = findSlice(plan, input.slice);
   if (!found.ok) return found;
@@ -250,7 +264,7 @@ export function renderBrief(
           `  verifier: model ${verifier.model}${verifier.effort ? `  effort ${verifier.effort}` : ""}  (${verifier.source})`,
         ]
       : []),
-    `TIMEBOX: ${slice.timebox ?? DEFAULT_TIMEBOX}; past it without a new commit you will be replaced`,
+    `TIMEBOX: ${timeboxText(slice.timebox)}; past it without a new commit you will be replaced`,
     scratchLine,
     `FORBIDDEN: ${slice.forbidden.join("; ")}`,
     ...fanIn,

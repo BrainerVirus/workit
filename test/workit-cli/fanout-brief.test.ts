@@ -205,7 +205,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       "VERIFY: workit check test",
       "REASON: parallel",
       "TIER: mundane",
-      "TIMEBOX: 45 minutes; past it without a new commit you will be replaced",
+      "TIMEBOX: 45 minutes, 120 tool calls; past it without a new commit you will be replaced",
       "SCRATCH: .workit-scratch/ at your worktree root (mkdir -p it; git ignores it; never a shared path)",
       "FORBIDDEN: no edits outside SCOPE; no new packages",
       "FAN-IN: one PR per slice. Never rebase, retarget, merge or force-push: the lead owns topology.",

@@ -30,6 +30,7 @@ import {
 } from "./skill-nudge";
 import { spawnDecision } from "./spawn-gate";
 import { seedStanding, standingDelta } from "./standing";
+import { budgetLine, claimSpawnBudget } from "./budget-signal";
 import { modelSwitchedOnDisk, trackJudge } from "./session-marker";
 import { invariantBootstrap } from "../core/methods";
 import { stopDecision } from "./stop";
@@ -125,9 +126,11 @@ const subagentStartText = (
 const PRE_TOOL = new Set<HookEventKind>(["shell.pre", "write.pre", "tool.pre"]);
 
 /**
- * A running worker's standing-order delta rides any pre-tool answer that lets
- * the call run. In-process hosts deliver it on their own channel (OpenCode's
- * system context, Pi's tool result), so it is never spent here for them.
+ * A running worker's standing-order delta, and its tool-call budget line once
+ * the launcher counted it reached (budget-signal.ts), ride any pre-tool answer
+ * that lets the call run. In-process hosts deliver them on their own channel
+ * (OpenCode's system context, Pi's tool result), so they are never spent here
+ * for them.
  */
 export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
   const decision = decide(input, deps);
@@ -138,7 +141,13 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
     decision.kind === "ask"
   )
     return decision;
-  const delta = standingDelta(input);
+  const delta =
+    [
+      standingDelta(input),
+      input.session.id ? budgetLine(input.cwd, input.session.id, input.session.agentId) : null,
+    ]
+      .filter(Boolean)
+      .join("\n") || null;
   if (!delta) return decision;
   return decision.kind === "rewrite" || decision.kind === "update-input"
     ? { ...decision, text: [decision.text, delta].filter(Boolean).join("\n") }
@@ -285,7 +294,12 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     case "subagent.start":
       if (workitRole(descriptor, event.agentType) === "judge")
         trackJudge(input, event.agentId, true);
-      seedStanding({ ...input, session: { ...input.session, agentId: event.agentId } });
+      seedStanding({
+        ...input,
+        session: { ...input.session, agentId: event.agentId },
+      });
+      if (input.session.id)
+        claimSpawnBudget(input.cwd, input.session.id, event.agentId, event.agentType);
       return {
         kind: "context",
         text: subagentStartText(input, descriptor, event),
