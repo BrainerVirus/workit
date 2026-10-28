@@ -1,6 +1,6 @@
 # Claude Code
 
-Workit ships as a native Claude Code plugin: hooks, the eleven method skills
+Workit ships as a native Claude Code plugin: hooks, the thirteen method skills
 (`/workit:<name>`), three agents, and `workit` on the Bash tool's `PATH`. No MCP
 server is registered: Claude has a shell, and tool schemas cost context. To
 opt in anyway, add `workit-mcp` to your own Claude settings.
@@ -14,11 +14,12 @@ opt in anyway, add `workit-mcp` to your own Claude settings.
 ```bash
 claude plugin marketplace add BrainerVirus/workit
 claude plugin install workit@workit
-claude plugin marketplace update workit && claude plugin update workit@workit   # update
 ```
 
-`workit init` can do this for you. `workit doctor` warns (`claude_plugin`) when
-a newer version is published. `workit uninstall` runs the native
+`workit init` can do this for you. Update with `workit upgrade` (native
+fallback: `claude plugin marketplace update workit && claude plugin update
+workit@workit`), then restart Claude Code ([updates](hosts.md#claude-code)).
+`workit doctor` warns (`claude_plugin`) when a newer version is published. `workit uninstall` runs the native
 `claude plugin uninstall` for each install that applies where you run it.
 
 **Permissions.** A plugin cannot ship permission rules, and in auto mode the

@@ -4,7 +4,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
 [Workit](https://github.com/BrainerVirus/workit) for Pi (stock 1.4.0): a native extension with the
-seven task families plus read-only `workit_context`, the eleven method
+seven task families plus read-only `workit_context`, the thirteen method
 skills, session and compaction continuity, and a coordinator that launches
 fresh reviewer/investigator processes and scoped implementers. Requires
 Node.js 24+.
@@ -13,6 +13,8 @@ Node.js 24+.
 pi install npm:@brainervirus/workit-pi
 pi install ./packages/workit-pi -l --approve   # local checkout
 ```
+
+Update with `workit upgrade` (native fallback: `pi update --extension npm:@brainervirus/workit-pi`); uninstall with `workit uninstall`.
 
 Pi discovers the extension and skills from the package's `pi` manifest
 (`./dist/workit.js`, `./skills`). Pi project trust still gates mutations.

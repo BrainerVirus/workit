@@ -4,13 +4,15 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
 [Workit](https://github.com/BrainerVirus/workit) for Codex CLI and desktop: native plugin manifest,
-documented lifecycle hooks, the shared MCP server and the eleven method skills.
+documented lifecycle hooks, the shared MCP server and the thirteen method skills.
 Requires Node.js 24+.
 
 ```bash
 codex plugin marketplace add https://github.com/BrainerVirus/workit.git
 codex plugin add workit@workflow-toolkit
 ```
+
+Update with `workit upgrade` (native fallback: `codex plugin marketplace upgrade workflow-toolkit && codex plugin add workit@workflow-toolkit`), then start a new Codex session; uninstall with `workit uninstall`.
 
 Reads run over MCP (`workit-codex-mcp`); mutations run through the `workit`
 CLI because MCP is read-only for unattested callers. Invoke skills as
