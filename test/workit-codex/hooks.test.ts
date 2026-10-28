@@ -1,7 +1,7 @@
 // Codex hook parity: per-turn task context and the skill prompt nudge on
 // UserPromptSubmit, and the verifier/reviewer session naming and implementer
 // worktree guidance on SubagentStart, driven by agent type rather than host.
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -17,6 +17,20 @@ import { sessionClaimRefusal } from "@/packages/workit-core/src/host-session";
 const roots: string[] = [];
 afterAll(() => {
   for (const dir of roots) rmSync(dir, { recursive: true, force: true });
+});
+
+// Verdict ids are issued per user: each test gets its own registry, so an id
+// another test file issued earlier in the same run cannot read as "already issued".
+let state: string | undefined;
+beforeEach(() => {
+  state = process.env.WORKFLOW_TOOLKIT_STATE;
+  const dir = tempRoot("workit-codex-hooks-state-");
+  roots.push(dir);
+  process.env.WORKFLOW_TOOLKIT_STATE = dir;
+});
+afterEach(() => {
+  if (state === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = state;
 });
 
 /** A Workit workspace checkout on feature/x. */
