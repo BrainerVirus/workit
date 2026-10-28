@@ -213,8 +213,13 @@ A verdict is keyed to the head it judged. It still applies to a newer head
 
 - **Rebase:** the change against the base has the same patch-id and the same
   exact diff, or `workit stack sync` observed a patch-equal restack, and
-  every file the branch changes is byte-identical at both heads while the
-  base left it alone.
+  either every file the branch changes is byte-identical at both heads while
+  the base left it alone, or the new head is exactly the judged head rebased
+  cleanly onto the moved base: a 3-way merge of the judged head onto the new
+  fork point, anchored at the old one, has no conflict and gives the new
+  head's tree. So a base commit that edits another part of a branch file
+  keeps the verdict. It reads `carried (rebase: patch unchanged)`. Only the
+  verdict carries: the merge still needs green CI on the new head.
 - **Lane-none follow-up:** the branch's own change since the judged head is
   lane `none`: docs, comment or formatting edits, generated copies, or an
   empty commit (a CI retrigger). Base changes from a rebase are left out.
@@ -230,14 +235,16 @@ risk path (even a comment there), a lockfile or binary, a lint or formatter
 config change, or a diff Workit cannot read. A hand-appended or untrusted
 verdict row never carries. When the branch was rebased between the two
 heads, files are compared by exact content, not by diff text: a file whose
-result differs, or that the base also changed, counts (so an edit moved
-within a file, or a rebase onto a base that touched a branch file, needs a
-new verdict), and none of them counts as a comment or formatting edit. A
-carried independent failure still blocks.
+result differs, or that the base also changed outside a clean rebase, counts
+(so an edit moved within a file, a conflict resolved by hand, or an amend
+after the rebase needs a new verdict), and none of them counts as a comment
+or formatting edit. A carried `--self` verdict stays self: it never satisfies
+a lane that needs a non-author verdict. A carried independent failure still
+blocks.
 
 `workit ledger check` and `workit pr status` show the reason, for example
 `carried (lane none since 1a2b3c4d5e6f)`. In `--json`, the verdict's `carry`
-holds `rule` (`lane-none` or `tests-only`), `since` and `files`. When the
+holds `rule` (`rebase`, `lane-none` or `tests-only`), `since` and `files`. When the
 newest passing verdict is stale only because of a small change off risk
 paths (that change's lane is `self`), `pr status` prints
 `reverify: focused (<files>)` (`verdict.reverify` in JSON). The verifier then

@@ -17,7 +17,8 @@
 import { mergeBase, fileAt } from "../../git/rev";
 import { computeLane, driftFiles, kindOf, parseRiskPaths, RISK_PATHS_FILE } from "./lane";
 
-export type CarryRule = "lane-none" | "tests-only";
+/** `rebase`: the same patch on a moved base (ledger.ts exact carry), never a drift rule. */
+export type CarryRule = "lane-none" | "tests-only" | "rebase";
 
 export type Drift =
   | { carries: true; rule: CarryRule; since: string; files: string[] }

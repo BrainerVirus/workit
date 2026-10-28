@@ -33,7 +33,8 @@
 //   `base`, the stable patch-id of `base...head` and an exact diff hash. It is
 //   `fresh` (same head; verdicts on a dirty worktree are refused, so the head
 //   is the judged tree), `carried` (new head, same patch-id AND same exact
-//   diff AND, for a pass, byte-identical own files the base left alone: a
+//   diff AND, for a pass, byte-identical own files the base left alone, or
+//   a head that is exactly the judged head cleanly rebased (cleanRebase): a
 //   rebase that only moved the base; or a trusted verdict whose
 //   follow-up change is lane none, or test-only for a unit verdict, see
 //   core/policy/carry.ts) or `stale`.
@@ -336,6 +337,32 @@ export function diffHash(cwd: string, base: string, head: string): string | null
     hash.update("\n");
   }
   return `sha256:${hash.digest("hex")}`;
+}
+
+/**
+ * Whether `to` (on `toBase`) is exactly the judged `from` (on `fromBase`)
+ * rebased cleanly onto the moved base: a 3-way merge of `from` onto
+ * `merge-base(toBase, to)` with `merge-base(fromBase, from)` as the ancestor
+ * has no conflict and yields `to`'s tree. Hunks are anchored to the
+ * ancestor, so an edit moved elsewhere in a file, a conflict resolved by
+ * hand, or any other change in the branch's files makes the trees differ.
+ * False when git cannot tell (no `merge-tree --merge-base`, before 2.40).
+ */
+function cleanRebase(
+  cwd: string,
+  range: { from: string; to: string; fromBase: string; toBase: string },
+): boolean {
+  if (!Object.values(range).every(safeRef)) return false;
+  const fromFork = git(cwd, ["merge-base", range.fromBase, range.from]);
+  const toFork = git(cwd, ["merge-base", range.toBase, range.to]);
+  if (!fromFork || !toFork || fromFork === toFork) return false;
+  const merged = gitRun(
+    cwd,
+    ["merge-tree", "--write-tree", "--no-messages", `--merge-base=${fromFork}`, toFork, range.from],
+    GIT_TIMEOUTS.worktree,
+  );
+  const tree = merged.ok ? merged.stdout.split("\n")[0]?.trim() : null;
+  return Boolean(tree) && tree === git(cwd, ["rev-parse", "--verify", "-q", `${range.to}^{tree}`]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1124,7 +1151,9 @@ export type Reverify = { scope: "focused"; since: string; files: string[] };
 
 /** `carried (lane none since <head>)`: how a carried verdict reads in `ledger check` and `pr status`. */
 export const carryLabel = (carry: CarryNote): string =>
-  `carried (${carry.rule === "lane-none" ? "lane none" : "tests only"} since ${carry.since.slice(0, 12)})`;
+  carry.rule === "rebase"
+    ? "carried (rebase: patch unchanged)"
+    : `carried (${carry.rule === "lane-none" ? "lane none" : "tests only"} since ${carry.since.slice(0, 12)})`;
 
 export type VerdictCheck = {
   branch: string;
@@ -1516,31 +1545,49 @@ export function checkVerdicts(
   };
   // The same patch-id and diff hash are not enough to carry a pass (#334):
   // both drop hunk line numbers, so an edit moved within a file keeps them.
-  // The branch's own files must be identical blobs too (sameOwnChange). A
-  // failure keeps the looser carry: it fails closed by applying more.
-  const exactCache = new Map<ReadRow, boolean>();
-  const exactCarry = (row: ReadRow): boolean => {
-    if (FAILING.has(String(row.result))) return true;
+  // The branch's own files must be identical blobs too (sameOwnChange), or
+  // the head must be exactly the judged head cleanly rebased onto the moved
+  // base (cleanRebase): a base edit elsewhere in a file the branch touches.
+  // A failure keeps the looser carry: it fails closed by applying more.
+  // How a pass's own files match: identical blobs, a clean rebase, or neither.
+  const exactCache = new Map<ReadRow, "same" | "rebase" | null>();
+  const exactMatch = (row: ReadRow): "same" | "rebase" | null => {
     let exact = exactCache.get(row);
     if (exact === undefined) {
       const toBase = row.base ?? fallbackBase;
       const toBaseSha = toBase ? resolveCommit(cwd, toBase) : null;
       const fromBase = row.baseSha ?? toBaseSha;
-      exact = Boolean(
-        row.head &&
-        head &&
-        toBaseSha &&
-        fromBase &&
-        sameOwnChange(cwd, { from: row.head, to: head, fromBase, toBase: toBaseSha }),
-      );
+      const range =
+        row.head && head && toBaseSha && fromBase
+          ? { from: row.head, to: head, fromBase, toBase: toBaseSha }
+          : null;
+      exact = !range
+        ? null
+        : sameOwnChange(cwd, range)
+          ? "same"
+          : cleanRebase(cwd, range)
+            ? "rebase"
+            : null;
       exactCache.set(row, exact);
     }
     return exact;
   };
+  const exactCarry = (row: ReadRow): boolean =>
+    FAILING.has(String(row.result)) || exactMatch(row) !== null;
   const keyBasis = (row: ReadRow): Exclude<VerdictBasis, "none"> => {
     const basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
     return basis === "carried" && !exactCarry(row) ? "stale" : basis;
   };
+  /** A pass the exact keys carry only through a clean rebase (the base also edited a branch file). */
+  const rebaseNote = (row: ReadRow): CarryNote | null =>
+    row.head &&
+    head &&
+    row.head !== head &&
+    !FAILING.has(String(row.result)) &&
+    keyBasis(row) === "carried" &&
+    exactMatch(row) === "rebase"
+      ? { rule: "rebase", since: row.head, files: [] }
+      : null;
   const restacked = (row: ReadRow): boolean =>
     restackCarries(FAILING.has(String(row.result)) ? null : cwd, rows, branch, row.head, head);
   /** The follow-up carry of a verdict the exact keys and restacks do not carry. */
@@ -1646,7 +1693,7 @@ export function checkVerdicts(
       independent: independence.length === 0,
       accepted: reasons.length === 0,
       reasons,
-      carry: basis === "carried" ? carryOf(row) : null,
+      carry: basis === "carried" ? (rebaseNote(row) ?? carryOf(row)) : null,
       verdict: row,
     });
     // The author's own failure never displaces an independent pass, but it

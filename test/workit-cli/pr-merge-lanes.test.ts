@@ -57,7 +57,11 @@ const GH_STATUS = 'graphql status {"owner":"o","name":"r","number":"12"}';
  * A READY PR whose feature/x commit holds exactly `files` (the fixture's
  * feature.txt replaced), under a workspace granting `merge: verified`.
  */
-const setup = (files: Record<string, string>, entry: Record<string, unknown> = {}) => {
+const setup = (
+  files: Record<string, string>,
+  entry: Record<string, unknown> = {},
+  openStatus = "github/pr-passing.json",
+) => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
@@ -81,7 +85,7 @@ const setup = (files: Record<string, string>, entry: Record<string, unknown> = {
     "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
     "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
     "graphql find": fixture("github/find-pr.json"),
-    [GH_STATUS]: () => fixture(merged ? "github/pr-merged.json" : "github/pr-passing.json"),
+    [GH_STATUS]: () => fixture(merged ? "github/pr-merged.json" : openStatus),
     "PUT repos/o/r/pulls/12/merge": () => {
       merged = true;
       return JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" });
@@ -330,5 +334,60 @@ test("given a verified head and a follow-up changing src code, then the verdict 
   const merged = await run(["pr", "merge", "--json"], repo.cwd);
   expect(merged.code).toBe(3);
   expect(merged.json().error).toContain("stale");
+  expect(merges(runner.calls)).toEqual([]);
+});
+
+// A clean rebase onto a base that also edited another part of a branch file
+// keeps the PR's patch: the verdict carries, labelled as such. Only the
+// verdict carries: red CI on the new head still refuses the merge.
+const NUMBERED = (edits: Record<number, string> = {}) =>
+  Array.from({ length: 40 }, (_, index) => edits[index] ?? `line ${index}`).join("\n") + "\n";
+
+const rebasedOverSharedFile = async (openStatus?: string) => {
+  const { repo, runner } = setup(RISKY, {}, openStatus);
+  const onMain = (files: Record<string, string>) => {
+    repo.git("switch", "-q", "main");
+    for (const [file, text] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(repo.cwd, file)), { recursive: true });
+      writeFileSync(path.join(repo.cwd, file), text);
+    }
+    repo.git("add", "-A");
+    repo.git("commit", "-q", "-m", "main moves");
+    repo.git("switch", "-q", "feature/x");
+    repo.git("rebase", "-q", "main");
+    repo.subs["{{HEAD}}"] = repo.git("rev-parse", "HEAD");
+  };
+  onMain({ "src/shared.ts": NUMBERED() });
+  const judged = followUp(repo, { "src/shared.ts": NUMBERED({ 2: "line 2 branch" }) });
+  await independentVerdict(repo);
+  onMain({ "src/shared.ts": NUMBERED({ 35: "line 35 main" }) });
+  expect(repo.git("rev-parse", "HEAD")).not.toBe(judged);
+  return { repo, runner, judged };
+};
+
+test("given a verified head, when the branch is rebased cleanly over a base edit in a branch file, then the verdict carries as a rebase and the PR merges", async () => {
+  const { repo, runner, judged } = await rebasedOverSharedFile();
+  const status = await run(["pr", "status", "--json"], repo.cwd);
+  expect(status.json().data.verdict).toMatchObject({
+    accepted: true,
+    basis: "carried",
+    carry: { rule: "rebase", since: judged, files: [] },
+  });
+  expect((await run(["pr", "status"], repo.cwd)).stdout).toContain(
+    "verdict: accepted (carried (rebase: patch unchanged))",
+  );
+  const merged = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(merged.code, merged.stdout + merged.stderr).toBe(0);
+  expect(merged.json().data.verdict).toMatchObject({ accepted: true, review: "verified" });
+  expect(merges(runner.calls)).toHaveLength(1);
+});
+
+test("given a verdict carried over a clean rebase, when CI on the new head is red, then the merge is still refused", async () => {
+  const { repo, runner } = await rebasedOverSharedFile("github/pr-failing-thread.json");
+  const status = await run(["pr", "status", "--log-lines", "0", "--json"], repo.cwd);
+  expect(status.json().data.verdict).toMatchObject({ accepted: true, carry: { rule: "rebase" } });
+  const merged = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(merged.code).toBe(3);
+  expect(merged.json().data.blockers).toContain("required_checks_failing");
   expect(merges(runner.calls)).toEqual([]);
 });
