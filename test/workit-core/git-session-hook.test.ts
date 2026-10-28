@@ -625,7 +625,7 @@ test("Given husky v9 scripts that only mention the helper, Then the slot stays b
     writeFileSync(path.join(root, ".husky", "prepare-commit-msg"), script, { mode: 0o644 });
     expect(stateAfter(root), script).toEqual(expected);
   }
-});
+}, 45_000); // Windows CI: 4-6 s, once over 15 s under load (2026-10-28, PR #482); Linux ~0.6-4 s.
 
 test("Given a hand-written hook that comments the line out or is not executable, Then the slot stays blocked; the executable real line is manual", () => {
   const cases: Array<[string, number, Outcome]> = [
@@ -668,7 +668,7 @@ test("Given lefthook configs where the job is commented out or under commit-msg,
     installSessionHook(root);
     expect(stateAfter(root), config).toEqual(expected);
   }
-});
+}, 45_000); // Windows CI: 4-6 s, once over 15 s under load (2026-10-28, PR #482); Linux ~0.6-4 s.
 
 test("Given an older Workit hook, When installed, Then it is rewritten to the current script", () => {
   const root = repo();
