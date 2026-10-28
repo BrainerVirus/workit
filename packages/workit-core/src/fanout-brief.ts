@@ -197,6 +197,8 @@ export function renderBrief(
       samePath(row.path, planned),
   );
   const fresh = Boolean(head) && made?.baseSha === head;
+  // A dependent slice made after its dependencies landed starts on the trunk (#506).
+  const sliceBase = typeof made?.startBase === "string" ? made.startBase : slice.base;
   const mode: BriefMode = input.mode ?? (head && !fresh ? "resume" : "new");
   if (mode === "resume" && !head)
     return fanoutFail(
@@ -237,7 +239,7 @@ export function renderBrief(
     `GOAL: ${slice.goal}`,
     `SCOPE: ${slice.scope.join(", ")}`,
     ...(slice.owns.length ? [`  owns: ${slice.owns.join(", ")}`] : []),
-    `  branch: ${branch}   base: ${slice.base}`,
+    `  branch: ${branch}   base: ${sliceBase}`,
     `CONTEXT: ${slice.context ?? "none given: read the files in SCOPE and the neighbours they import"}`,
     ...(slice.issues.length
       ? [
@@ -246,7 +248,7 @@ export function renderBrief(
       : []),
     ...(mode === "resume" && head
       ? [
-          `  resume: continue ${branch} from ${head.slice(0, 12)}; read \`git log ${slice.base}..${branch}\` and \`workit ledger list --branch ${branch}\` (the last report, verdicts, rulings)`,
+          `  resume: continue ${branch} from ${head.slice(0, 12)}; read \`git log ${sliceBase}..${branch}\` and \`workit ledger list --branch ${branch}\` (the last report, verdicts, rulings)`,
         ]
       : []),
     "ACCEPTANCE:",
@@ -282,7 +284,7 @@ export function renderBrief(
       ? [`INSTALL: \`${made.install}\` first: the main checkout's node_modules was not linked here`]
       : []),
     ...identityLines(identity, minted),
-    ...rules(mode, branch, slice.base, exists ? planned : null),
+    ...rules(mode, branch, sliceBase, exists ? planned : null),
   ];
   return {
     ok: true,
@@ -292,7 +294,7 @@ export function renderBrief(
       mode,
       attempt: input.attempt,
       branch,
-      base: slice.base,
+      base: sliceBase,
       tier: slice.tier,
       issues: slice.issues,
       model: model?.model ?? null,
