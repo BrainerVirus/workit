@@ -318,13 +318,8 @@ jobs:
           cache: npm
           cache-dependency-path: bun.lock
 
-      - name: Restore bun cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
-
+      # No bun cache on Windows: restoring it took 80-90 s, a cold
+      # `bun install` about 20 s (CI runs, 2026-10-28).
       - name: Install deps
         run: bun install --frozen-lockfile
 

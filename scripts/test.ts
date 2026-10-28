@@ -71,8 +71,13 @@ const WINDOWS_SLOW_FILES = new Set([
 ]);
 const WINDOWS_SLOW_TIMEOUT_MS = 60_000;
 
+// CI runners have 4 cores and the suite is mostly process spawns, so CI runs
+// files across workers. Local runs stay serial: they share the machine-wide
+// heavy-check lease, which caps CPU and memory.
+const PARALLEL = process.env.CI ? ["--parallel"] : [];
+
 const bunTest = (args: string[]): number =>
-  spawnSync("bun", ["test", ...args], { stdio: "inherit" }).status ?? 1;
+  spawnSync("bun", ["test", ...PARALLEL, ...args], { stdio: "inherit" }).status ?? 1;
 
 const testFiles = (dirs: string[]): string[] =>
   dirs
