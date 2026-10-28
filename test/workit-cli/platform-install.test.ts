@@ -98,7 +98,7 @@ test("selected OpenCode applies, registers package-native assets, doctor verifie
     const opencodeCfg = path.join(home, ".config", "opencode", "opencode.json");
     expect(statusOf(result, opencodeCfg)).toBe("Installed");
     const cfg = JSON.parse(readFileSync(opencodeCfg, "utf8"));
-    expect(cfg.plugin).toContain(`file://${repoRoot}/packages/workit-opencode/src/plugin.ts`);
+    expect(cfg.plugins).toContain(`file://${repoRoot}/packages/workit-opencode/src/plugin.ts`);
 
     // doctor verified the just-written registration (offline, installer-scoped)
     expect(result.doctor.length).toBe(1);
@@ -417,7 +417,7 @@ test("unrelated config is preserved byte-for-byte; credentials never clobbered (
     expect(cfg.model).toBe("gpt-5");
     expect(cfg.theme).toBe("dark");
     expect(cfg.custom).toEqual({ a: 1 });
-    expect(cfg.plugin).toBeDefined();
+    expect(cfg.plugins).toBeDefined();
     // a file the apply never touches stays byte-identical
     expect(readFileSync(unrelated, "utf8")).toBe('{"apiKey":"should-not-change"}\n');
   } finally {

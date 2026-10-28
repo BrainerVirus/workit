@@ -7,8 +7,8 @@ newer major stops with "upgrade Workit" instead of guessing. Preview first with
 ## 3.0: OpenCode V1 removed, admin code moved to the CLI
 
 - The plugin exports only the V2 `setup()` entry and needs OpenCode 2.0.18+.
-  OpenCode 1.x hosts pin `{ "plugin": ["@brainervirus/workit-opencode@2"] }`.
-  After upgrading OpenCode, use `"plugins": ["@brainervirus/workit-opencode"]`.
+  Register it as `"plugins": ["@brainervirus/workit-opencode"]`; `workit setup
+  --hosts=opencode` moves a Workit entry out of the deprecated `plugin` key.
 - `workit cutover` and its doctor checks are removed.
 - Setup, doctor, upgrade, host-install and uninstall code moved from
   `@brainervirus/workit-core` into the CLI; deep imports of those paths break.

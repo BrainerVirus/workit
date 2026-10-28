@@ -248,9 +248,9 @@ session start and after compaction. Its shell hook denies direct, unquoted
 literal branch-creation commands that break the workspace naming policy and
 the raw git/forge gate bypasses above.
 
-**OpenCode 1.x** can only load the removed V1 entry. Stay on Workit 2.x there:
-`{ "plugin": ["@brainervirus/workit-opencode@2"] }`. `workit doctor` fails
-`opencode_version` on a 1.x CLI.
+Workit needs OpenCode 2.0.18+: `workit doctor` fails `opencode_version` on an
+older CLI. Register Workit under `plugins`; `workit setup --hosts=opencode`
+moves an entry from the deprecated `plugin` key, and doctor warns until it does.
 
 ## Cursor
 

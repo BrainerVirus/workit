@@ -330,7 +330,7 @@ const parsesAsConfigObject = (p: string): boolean => {
   }
 };
 
-// V2 uses plugins; V1 accepts plugin as a string or array. Inspect both.
+// V2 registers under `plugins`; the deprecated `plugin` key is still read so doctor can flag it.
 const pluginEntries = (cfg: Record<string, any> | null): string[] => {
   const entries = [cfg?.plugins, cfg?.plugin].flatMap((value) =>
     Array.isArray(value) ? value : typeof value === "string" ? [value] : [],
@@ -524,9 +524,8 @@ const checkVersions = (res: Resolved): DoctorCheck => {
   };
 };
 
-/** Repair text for an OpenCode 1.x host: Workit 3 ships only the V2
- * `setup()` plugin entry, so a 1.x host needs the 2.x plugin line. */
-export const OPENCODE_V1_FIX = `OpenCode < ${SUPPORT_MATRIX.opencode.minimum} cannot load Workit 3 (V2 plugin API only): upgrade OpenCode to ${SUPPORT_MATRIX.opencode.minimum}+, or stay on Workit 2.x by pinning "@brainervirus/workit-opencode@2" in the opencode.json "plugin" array`;
+/** Repair text for an OpenCode older than the V2 minimum. */
+export const OPENCODE_V1_FIX = `OpenCode < ${SUPPORT_MATRIX.opencode.minimum} cannot load Workit (V2 plugin API only): upgrade OpenCode to ${SUPPORT_MATRIX.opencode.minimum}+`;
 
 /**
  * The installed OpenCode CLI must speak the V2 plugin API (Workit 3 retired
@@ -1684,6 +1683,14 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
       status: "fail",
       detail: `workit pin points at a missing file: ${entries[0]}`,
       fix: "Run `workit init` (or restore the checkout and re-run install-opencode-plugin.sh)",
+    };
+  }
+  if (pluginEntries({ plugins: cfg?.plugins }).length === 0) {
+    return {
+      id: "stale_pin",
+      status: "warn",
+      detail: `workit is registered under the deprecated "plugin" key; move it to "plugins" (${entries[0]})`,
+      fix: "workit setup --hosts=opencode",
     };
   }
   return { id: "stale_pin", status: "pass", detail: "opencode pin resolves" };

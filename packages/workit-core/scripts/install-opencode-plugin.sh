@@ -46,7 +46,8 @@ const data = JSON.parse(fs.readFileSync(path, "utf8"));
 const { config, changed } = mergeOpenCodeConfig(data, process.env.PIN_PATH!);
 fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
 console.log("Pinned:", process.env.PIN_PATH!);
-if (changed.includes("plugin")) console.log("Deduplicated Workit plugin entries");
+if (changed.includes("plugins")) console.log("Registered Workit under plugins (deduplicated)");
+if (changed.includes("plugin")) console.log("Moved the Workit entry from the deprecated plugin key to plugins");
 if (changed.includes("skills.paths")) console.log("Dropped share skill paths");
 console.log("Native skills/commands via ~/.config/opencode/{skills,commands}");
 '

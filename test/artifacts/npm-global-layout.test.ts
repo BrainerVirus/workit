@@ -111,7 +111,7 @@ test.skipIf(!npmRegistryOk)(
       // OpenCode registered and cached the plugin itself (opencode 2.x layout).
       const opencodeConfig = path.join(home, ".config", "opencode", "opencode.json");
       mkdirSync(path.dirname(opencodeConfig), { recursive: true });
-      writeFileSync(opencodeConfig, JSON.stringify({ plugin: [OPENCODE] }, null, 2) + "\n");
+      writeFileSync(opencodeConfig, JSON.stringify({ plugins: [OPENCODE] }, null, 2) + "\n");
       const opencodePack = extractTarball(byName(packs, OPENCODE).tarball);
       const cached = path.join(
         home,

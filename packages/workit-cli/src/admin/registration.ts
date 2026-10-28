@@ -48,14 +48,20 @@ export function isWorkitPlugin(value: unknown): boolean {
 }
 
 /** Deduplicate every legacy/current Workit plugin identity to one dev pin. */
-export function mergeOpenCodePlugins(plugin: unknown, pin: string): MergeResult<unknown[]> {
-  const existing = Array.isArray(plugin) ? plugin : typeof plugin === "string" ? [plugin] : [];
+export function mergeOpenCodePlugins(plugins: unknown, pin: string): MergeResult<unknown[]> {
+  const existing = Array.isArray(plugins) ? plugins : typeof plugins === "string" ? [plugins] : [];
   const config = [pin, ...existing.filter((p) => !isWorkitPlugin(p))];
-  const changed = JSON.stringify(config) !== JSON.stringify(existing) ? ["plugin"] : [];
+  const changed = JSON.stringify(config) !== JSON.stringify(existing) ? ["plugins"] : [];
   return { config, changed };
 }
 
-/** Merge an existing OpenCode config with a dev pin; preserve unrelated keys. */
+/**
+ * Merge an existing OpenCode config with a pin; preserve unrelated keys. The
+ * Workit entry lives in the V2 `plugins` key. A Workit entry found under the
+ * deprecated `plugin` key moves to `plugins`; other entries there stay put
+ * (the key is dropped once empty). `changed` names `plugins` when it was
+ * written and `plugin` when the deprecated key lost an entry.
+ */
 export function mergeOpenCodeConfig(
   config: unknown,
   pin: string,
@@ -63,9 +69,23 @@ export function mergeOpenCodeConfig(
   const base = isRecord(config) ? { ...config } : {};
   const changed: string[] = [];
 
-  const plugins = mergeOpenCodePlugins(base.plugin, pin);
-  if (plugins.changed.length > 0) {
-    base.plugin = plugins.config;
+  const plugins = mergeOpenCodePlugins(base.plugins, pin);
+  const hadLegacy = base.plugin !== undefined;
+  const legacy = Array.isArray(base.plugin)
+    ? base.plugin
+    : typeof base.plugin === "string"
+      ? [base.plugin]
+      : [];
+  const legacyRest = legacy.filter((p) => !isWorkitPlugin(p));
+  const legacyMoved = legacyRest.length !== legacy.length;
+  // A legacy Workit entry carries a different pin shape, so rewrite whenever it moves.
+  if (plugins.changed.length > 0 || legacyMoved) {
+    base.plugins = plugins.config;
+    changed.push("plugins");
+  }
+  if (legacyMoved) {
+    if (legacyRest.length > 0) base.plugin = legacyRest;
+    else if (hadLegacy) delete base.plugin;
     changed.push("plugin");
   }
 
