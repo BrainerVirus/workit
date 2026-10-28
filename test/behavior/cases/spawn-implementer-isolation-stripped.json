@@ -1,0 +1,19 @@
+{
+  "id": "spawn-implementer-isolation-stripped",
+  "source": "#432 retro 2026-10-27: 239 worktree-isolation refusals in implementers spawned with isolation: worktree",
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "tool_name": "Agent",
+      "tool_input": {
+        "description": "slice",
+        "subagent_type": "workit:implementer",
+        "model": "opus",
+        "isolation": "worktree",
+        "prompt": "MODE: new\nGOAL: g\nWORKTREE: /w/slice  (made by `workit fanout worktree create slice`; yours alone)\n"
+      }
+    }
+  },
+  "expect": { "kind": ["update-input"], "require": ["removed isolation"] }
+}

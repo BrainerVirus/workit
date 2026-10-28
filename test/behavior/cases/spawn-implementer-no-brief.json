@@ -1,0 +1,22 @@
+{
+  "id": "spawn-implementer-no-brief",
+  "source": "#432 retro 2026-10-27: 38 of 200 spawns without a brief; 40 workers with 0 fanout plan|brief",
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "tool_name": "Agent",
+      "tool_input": {
+        "description": "fix",
+        "subagent_type": "workit:implementer",
+        "model": "opus",
+        "isolation": "worktree",
+        "prompt": "fix the tests"
+      }
+    }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["`workit fanout worktree create <slice>`", "workit fanout brief <slice>"]
+  }
+}

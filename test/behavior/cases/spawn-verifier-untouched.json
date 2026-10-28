@@ -1,0 +1,18 @@
+{
+  "id": "spawn-verifier-untouched",
+  "source": "#432: the implementer spawn gate leaves other agent types as written",
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "tool_name": "Agent",
+      "tool_input": {
+        "description": "verify",
+        "subagent_type": "workit:verifier",
+        "model": "sonnet",
+        "prompt": "verify feature/x"
+      }
+    }
+  },
+  "expect": { "kind": ["none"] }
+}
