@@ -54,7 +54,9 @@ there). `workit uninstall` removes exactly what it added, and `workit doctor`
 reports drift. Per-host details are in
 [the hosts guide](docs/guides/hosts.md#host-permissions-workit-setup).
 
-Or install a single host by hand:
+Or install a single host by hand. Whatever the install path, every host
+updates with `workit upgrade` and uninstalls with `workit uninstall` (pick the
+host); the native commands below are the fallback.
 
 <details>
 <summary><strong>Claude Code</strong></summary>
@@ -62,10 +64,12 @@ Or install a single host by hand:
 ```bash
 claude plugin marketplace add BrainerVirus/workit
 claude plugin install workit@workit
-# update later with `workit upgrade`; the native fallback (Claude Code does not
-# auto-update plugins by default):
-claude plugin marketplace update workit && claude plugin update workit@workit
 ```
+
+Update: `workit upgrade` (fallback: `claude plugin marketplace update workit &&
+claude plugin update workit@workit`; Claude Code does not auto-update plugins by
+default). Restart Claude Code afterwards: it loads plugins once per process.
+Uninstall: `workit uninstall`, or `claude plugin uninstall workit@workit`.
 
 Pin to a local checkout instead (sources run with Bun, edits apply without a
 rebuild; disable the marketplace copy with `claude plugin disable workit@workit`):
@@ -91,10 +95,12 @@ Skills appear as `/workit:<name>`, plus `verifier`, `reviewer` and
 }
 ```
 
-Update later with `workit upgrade`, which runs
-`opencode plugin update @brainervirus/workit-opencode` (only Workit; other
-plugins stay as they are; run it yourself as the fallback). OpenCode 2.x loads the new
-version live, with no restart.
+Update: `workit upgrade` (fallback:
+`opencode plugin update @brainervirus/workit-opencode`; other plugins stay as
+they are). OpenCode 2.x loads the new version live, with no restart. Use the
+`plugins` key; `workit setup --hosts=opencode` moves an entry out of the
+deprecated `plugin` key. Uninstall: `workit uninstall`, or remove the entry
+from `plugins`.
 
 Local pin: build once with `bun packages/workit-opencode/scripts/build.ts`, then
 use `"plugins": ["file:///path/to/workit/packages/workit-opencode"]`.
@@ -105,9 +111,10 @@ use `"plugins": ["file:///path/to/workit/packages/workit-opencode"]`.
 <summary><strong>Cursor</strong></summary>
 
 Run `npx @brainervirus/workit-cli init` and select Cursor: it installs the
-plugin (MCP server, session hook, contract rule, skills). `workit upgrade`
-updates it, and reinstalls its plugin files when they are missing. Manual MCP setup is
-in [the hosts guide](docs/guides/hosts.md#cursor).
+plugin (MCP server, session hook, contract rule, skills). Update:
+`workit upgrade` (fallback: `workit upgrade --hosts=cursor`), which also
+reinstalls missing plugin files. Uninstall: `workit uninstall`. Manual MCP
+setup is in [the hosts guide](docs/guides/hosts.md#cursor).
 
 </details>
 
@@ -119,8 +126,11 @@ codex plugin marketplace add https://github.com/BrainerVirus/workit.git
 codex plugin add workit@workflow-toolkit
 ```
 
-Update later with `workit upgrade` (it stops and restarts the Codex app-server
-daemon around the update and refreshes the Codex agent files).
+Update: `workit upgrade`, which stops and restarts the Codex app-server daemon
+around the update and refreshes the Codex agent files (fallback:
+`codex plugin marketplace upgrade workflow-toolkit && codex plugin add
+workit@workflow-toolkit`, then a new Codex session). Uninstall:
+`workit uninstall`.
 Skills are invoked as `$workit-<name>` or from the `/skills` picker.
 
 </details>
@@ -133,7 +143,8 @@ pi install npm:@brainervirus/workit-pi
 pi install ./packages/workit-pi -l --approve   # local checkout
 ```
 
-Update later with `workit upgrade` (fallback: `pi update --extension npm:@brainervirus/workit-pi`).
+Update: `workit upgrade` (fallback: `pi update --extension
+npm:@brainervirus/workit-pi`). Uninstall: `workit uninstall`.
 
 </details>
 
@@ -146,7 +157,8 @@ workit help
 ```
 
 Every verb works without a host; hosts just put `workit` and the skills in
-front of the agent.
+front of the agent. Update with `workit upgrade --hosts=none --cli`; remove
+with `npm rm -g @brainervirus/workit-cli`.
 
 </details>
 
@@ -303,24 +315,28 @@ Global flags:
 | --- | --- |
 | `workit init` | Interactive setup wizard (hosts, config, optional project files) |
 | `workit setup [--hosts=…] [--dry-run \| --yes]` | Write Workit's host permission block after showing the diff |
-| `workit doctor [--json] [--fix-lock]` | Offline installation health; clear a stale store lock |
-| `workit upgrade [--preview \| --yes]` | Upgrade the CLI and every host after one confirmation, then verify |
+| `workit doctor [--json] [--fix] [--fix-lock]` | Offline installation health; repair what it can; clear a stale store lock |
+| `workit upgrade [--preview \| --yes] [--hosts=…] [--cli]` | Upgrade the CLI and every host after one confirmation, then verify with doctor |
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
 | `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs |
-| `workit uninstall` | Remove host registrations (keeps `~/.config/workit`) |
+| `workit uninstall` | Pick hosts and remove their registrations (keeps `~/.config/workit`) |
 | `workit grant show\|set\|unset` | Workspace autonomy grants and `defaultEndpoint` |
+| `workit workspace list\|add\|set` | List, add or edit workspace entries without the wizard; never raises a grant |
+| `workit models show` | The model and effort each role (decider, implementer tiers, verifier, reviewer) runs on for a host |
 | `workit task status\|start\|note\|close\|adopt` | The current branch's task |
 | `workit handoff` | Resume brief: branch, HEAD, dirty state, verdict, next command |
 | `workit check <name>` | Run a configured check and record observed evidence |
+| `workit lock status\|wait\|run\|heavy` | The machine-wide heavy-check lease: holders, waiting, running a command under it, heavy patterns |
 | `workit test-audit [--diff] [--mutate]` | Flag tautological tests; optional diff-scoped mutation |
 | `workit knowledge lint` | Lint AGENTS.md budget, local links, scaffold-only and duplicated rules; register as `workit check knowledge` |
-| `workit ledger decision\|ruling\|verdict\|standing\|list\|check` | Decisions, rulings, SHA-keyed verdicts and a fanout's standing orders |
-| `workit git branch\|commit\|push` | Policy-checked branch/commit; leased push with verified remote tip |
-| `workit pr status\|create\|merge` | PR state and next action; SHA-bound create; gated merge |
+| `workit ledger decision\|ruling\|verdict\|standing\|list\|check\|verify-integrity` | Decisions, rulings, SHA-keyed verdicts, a fanout's standing orders and the hash chain |
+| `workit git branch\|commit\|push\|trailers` | Policy-checked branch/commit; leased push with verified remote tip |
+| `workit pr status\|create\|ready\|edit\|threads\|reply\|merge` | PR state and next action; SHA-bound create; review threads; gated merge |
 | `workit ci wait\|rerun\|logs` | Wait for CI on the PR head; rerun failed jobs once per head; print the failing jobs' log tails |
 | `workit stack plan\|status\|sync\|land` | Base-branch PR stacks |
 | `workit fanout plan\|brief\|check\|status\|worktree` | Register parallel slices (complete briefs, disjoint scopes); render each worker's brief with the standing orders; watch them (STUCK, PR, CI, verdict, landed); create and release slice worktrees; gate fan-in on scope, merge conflicts and landing order |
 | `workit verify-delivery [push\|pr\|merge\|release]` | Confirm on the remote that it landed |
+| `workit release start\|finish\|publish` | git-flow releases without the git-flow binary: cut, finish (merge, tag, merge back) and publish per release track |
 | `workit youtrack note\|time\|meeting` | YouTrack comments and work time |
 | `workit changelog apply` | Add entries under the changelog's Unreleased section |
 | `workit <family> <action>` | Low-level task families: `task`, `policy`, `evidence`, `finding`, `decision`, `worker`, `state` |
@@ -343,16 +359,24 @@ Details and the skill rename table: [migration guide](docs/guides/migration.md).
 
 ## Troubleshooting
 
-| Symptom | Fix |
-| --- | --- |
-| Something is off after install or upgrade | `workit doctor` (or `--json`); each finding names its repair |
-| Hook says `workit migration pending` | Run `workit task status` once in that checkout; hooks never migrate |
-| A command returns `busy` (exit 4) | Another workit process holds the store or stack lock; retry. A dead holder is reclaimed automatically; `workit doctor --fix-lock` clears a stale one |
-| `blocked` (exit 3) on push/PR/merge | Read `unblock` in the output: usually a missing grant (`workit grant show`) or a `gh`/`glab` login that is not the workspace account |
-| Store grows large | `workit gc --dry-run`, then `workit gc` |
-| `recovery` copies from 2.x reported | `workit gc --prune-recovery --yes` |
-| Claude Code hook prints `[workit] Claude Code hook unavailable` | The hook failed open: install Bun for a local pin, or reinstall the plugin |
-| OpenCode fails `opencode_version` | Upgrade OpenCode to 2.0.18+ |
+Run `workit doctor` (or `--json`) first: each row names its check id and its
+repair. The table maps common symptoms to those ids.
+
+| Symptom | Doctor check | Fix |
+| --- | --- | --- |
+| Something is off after install or upgrade | `versions`, `stale_install`, `stale_pin` | `workit upgrade`; each finding names its repair |
+| Hook says `workit migration pending` | none | Run `workit task status` once in that checkout; hooks never migrate |
+| A command returns `busy` (exit 4) | `workspace_lock` | Another workit process holds the store or stack lock; retry. A dead holder is reclaimed automatically; `workit doctor --fix-lock` clears a stale one. For the heavy-check lease, `workit lock status` names the holder |
+| `blocked` (exit 3) on push/PR/merge | `grant_endpoint`, `github_identity`, `gitlab_identity` | Read `unblock` in the output: usually a missing grant (`workit grant show`) or a `gh`/`glab` login that is not the workspace account |
+| Agents get permission prompts for `workit` verbs | `claude_permissions`, `codex_permissions`, `cursor_permissions`, `*_grant_rules` | `workit setup` in your own terminal |
+| Hook answers `workit context skipped: host under load` | `hook_deadline` | Rare under normal load; see the [Claude Code guide](docs/guides/claude-code.md) for `WORKIT_HOOK_DEADLINE_MS` |
+| Store grows large | none | `workit gc --dry-run`, then `workit gc` |
+| `recovery` copies from 2.x reported | none | `workit gc --prune-recovery --yes` |
+| Claude Code hook prints `[workit] Claude Code hook unavailable` | `claude_plugin`, `claude_session_plugin` | The hook failed open: install Bun for a local pin, or `workit upgrade` and restart Claude Code |
+| Codex hooks do not run | `codex_hooks` | Trust them with `/hooks` in Codex |
+| Codex verifier or reviewer agents missing | `codex_agents` | `workit upgrade`, then a new Codex session |
+| OpenCode fails `opencode_version` | `opencode_version` | Upgrade OpenCode to 2.0.18+ |
+| Pi does not load Workit | `pi_extension` | See [Pi](docs/guides/hosts.md#pi) |
 
 More: [configuration and storage](docs/guides/configuration.md).
 
