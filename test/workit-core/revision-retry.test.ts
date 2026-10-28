@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +9,9 @@ import {
   setDefaultLockTimeout,
 } from "@/packages/workit-core/src/core/store-lock";
 import { caller, scope, taskStartRequest } from "./task-fixtures";
+
+// Measured over 5 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 // Engine revision retry (design §0 item 14): a revision the caller omitted is
 // not a compare-and-swap request, so losing the race to another writer on it

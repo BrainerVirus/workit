@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +10,9 @@ import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
 import { handleCursorHook } from "@/packages/workit-cursor/hooks/workit-hook";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
+
+// Measured over 5 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 const previousEnv = {
   config: process.env.WORKFLOW_TOOLKIT_CONFIG,
@@ -220,55 +223,61 @@ test("Given a Workit workspace, When gh api or glab api merges a PR/MR (any flag
   }
 });
 
-test("Given a Workit workspace, When a git alias, push.default, remote.<name>.push, a glob refspec or another name for origin pushes onto main, Then all five hosts deny it", async () => {
-  const root = workspace();
-  try {
-    git(root, "config", "alias.pp", "push");
-    git(root, "config", "branch.feature/x.remote", "origin");
-    git(root, "config", "branch.feature/x.merge", "refs/heads/main");
-    const origin = path.join(root, ".git", "origin.git").replaceAll("\\", "/");
-    for (const command of [
-      "git pp origin HEAD:main",
-      "git -c alias.p=push p origin HEAD:main",
-      "git -c alias.p='!git push origin HEAD:main' p",
-      "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p origin HEAD:main",
-      "git -c help.autocorrect=immediate puhs origin HEAD:main",
-      // feature/x tracks main: push.default=upstream pushes onto it.
-      "git -c push.default=upstream push",
-      "git -c push.default=matching push origin",
-      "git -c remote.origin.push=HEAD:main push",
-      "git push origin 'refs/heads/*:refs/heads/*'",
-      "git push backup HEAD:main",
-      `git push '${origin}' HEAD:main`,
-      `git -c url.${path.posix.dirname(origin)}/.insteadOf=zz: push zz:origin.git HEAD:main`,
-      "git push origin HEAD:heads/main",
-      // Quoting and nested scripts hide the tool's name from a text match.
-      "g''it push origin HEAD:main",
-      "pwsh -c git push origin HEAD:main",
-      "echo 'git push origin HEAD:main' | bash",
-      // A dry run undone, wrappers with option values, a computed remote.
-      "git push --dry-run --no-dry-run origin HEAD:main",
-      "nice -n 5 git push origin HEAD:main",
-      "timeout -s KILL 30 git push origin HEAD:main",
-      "env -S 'git push origin HEAD:main'",
-      'git push "$(git remote get-url origin)" HEAD:main',
-    ])
-      expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
-    for (const command of [
-      "git pp origin feature/x",
-      "git push",
-      "git push origin",
-      "git -c push.default=current push",
-      "git push origin 'refs/heads/feature/*:refs/heads/feature/*'",
-      "git push backup feature/x",
-      "git push --dry-run origin HEAD:main",
-      "git push -u origin $(git branch --show-current)",
-    ])
-      expect(await denialsByHost(root, command), command).toEqual(allHosts(false));
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-}, 30_000); // macOS CI took over 5 s (2026-10-28, main ed482e44): it runs every host's hook; Linux ~0.8 s.
+test(
+  "Given a Workit workspace, When a git alias, push.default, remote.<name>.push, a glob refspec or another name for origin pushes onto main, Then all five hosts deny it",
+  async () => {
+    const root = workspace();
+    try {
+      git(root, "config", "alias.pp", "push");
+      git(root, "config", "branch.feature/x.remote", "origin");
+      git(root, "config", "branch.feature/x.merge", "refs/heads/main");
+      const origin = path.join(root, ".git", "origin.git").replaceAll("\\", "/");
+      for (const command of [
+        "git pp origin HEAD:main",
+        "git -c alias.p=push p origin HEAD:main",
+        "git -c alias.p='!git push origin HEAD:main' p",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p origin HEAD:main",
+        "git -c help.autocorrect=immediate puhs origin HEAD:main",
+        // feature/x tracks main: push.default=upstream pushes onto it.
+        "git -c push.default=upstream push",
+        "git -c push.default=matching push origin",
+        "git -c remote.origin.push=HEAD:main push",
+        "git push origin 'refs/heads/*:refs/heads/*'",
+        "git push backup HEAD:main",
+        `git push '${origin}' HEAD:main`,
+        `git -c url.${path.posix.dirname(origin)}/.insteadOf=zz: push zz:origin.git HEAD:main`,
+        "git push origin HEAD:heads/main",
+        // Quoting and nested scripts hide the tool's name from a text match.
+        "g''it push origin HEAD:main",
+        "pwsh -c git push origin HEAD:main",
+        "echo 'git push origin HEAD:main' | bash",
+        // A dry run undone, wrappers with option values, a computed remote.
+        "git push --dry-run --no-dry-run origin HEAD:main",
+        "nice -n 5 git push origin HEAD:main",
+        "timeout -s KILL 30 git push origin HEAD:main",
+        "env -S 'git push origin HEAD:main'",
+        'git push "$(git remote get-url origin)" HEAD:main',
+      ])
+        expect(await denialsByHost(root, command), command).toEqual(allHosts(true));
+      for (const command of [
+        "git pp origin feature/x",
+        "git push",
+        "git push origin",
+        "git -c push.default=current push",
+        "git push origin 'refs/heads/feature/*:refs/heads/feature/*'",
+        "git push backup feature/x",
+        "git push --dry-run origin HEAD:main",
+        "git push -u origin $(git branch --show-current)",
+      ])
+        expect(await denialsByHost(root, command), command).toEqual(allHosts(false));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    // It runs every host's hook: Linux ~0.8 s, macOS CI over 5 s, a parallel
+    // Windows shard 31 s (2026-10-28, #415).
+  },
+  process.platform === "win32" ? 90_000 : 30_000,
+);
 
 test("Given a Workit workspace, When a deferred branch-creation form (#277 ruling mv7kwhzy) names a new off-policy branch, Then all five hosts deny it; an existing or compliant name passes", async () => {
   const root = workspace();

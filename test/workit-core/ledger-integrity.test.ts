@@ -1,7 +1,7 @@
 // Verification integrity (audit 2026-10-07, D18 honest-mistake model): the
 // row hash chain, supersede scope, stale/self shadowing, renames, other
 // worktrees, the configured trunk and the cost of same-session re-reviews.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
@@ -25,6 +25,9 @@ import {
   type LedgerRead,
   type LedgerResult,
 } from "@/packages/workit-core/src/ledger";
+
+// Measured over 5 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 const dirs: string[] = [];
 afterEach(() => {

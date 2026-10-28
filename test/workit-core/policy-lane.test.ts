@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -16,6 +16,9 @@ import {
   type LaneInput,
 } from "@/packages/workit-core/src/core/policy/lane";
 import { cosmeticChange } from "@/packages/workit-core/src/core/policy/substance";
+
+// Measured over 5 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 // #333 review lanes: none / self / focused / full, computed from the diff.
 

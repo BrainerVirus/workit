@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import fs, {
   appendFileSync,
@@ -35,6 +35,9 @@ import {
   type LedgerRead,
   type LedgerResult,
 } from "@/packages/workit-core/src/ledger";
+
+// Measured over 5 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 // S13 run ledger (design §2.1, §2.2; D13, D17, D18): append-only, shared across
 // worktrees, safe for concurrent appenders, SHA-keyed verdicts with exact

@@ -237,22 +237,27 @@ test("an explicitly started task takes the branch over; a closed task frees it",
 // ---------------------------------------------------------------------------
 // the log
 
-test("Given 1,000 writes to one task, Then the task dir holds events.jsonl + snapshot only, size linear in the events, and gc bounds it without losing the latest state", () => {
+// 400 writes show every property (linear growth half to full, gc keeping
+// COMPACT_KEEP events); 1,000 took over 60 s on a parallel Windows runner (#415).
+const WRITES = 400;
+
+test("Given 400 writes to one task, Then the task dir holds events.jsonl + snapshot only, size linear in the events, and gc bounds it without losing the latest state", () => {
   const root = tempDir("wk-s15-bounded-");
   const store = new TaskStore(root);
   const task = implicit(root)!.task;
   const sizes: number[] = [];
   let revision = task.revision;
   const started = performance.now();
-  for (let index = 1; index <= 1000; index += 1) {
+  for (let index = 1; index <= WRITES; index += 1) {
     const written = store.mutateTask(task.id, revision, (current) =>
       success(null, null, { ...current, progress: progress(`step ${index}`) }),
     );
     if (!written.ok) throw new Error(written.error);
     revision = written.data.revision;
-    if (index === 500 || index === 1000) sizes.push(statSync(eventsFileOf(root, task.id)).size);
+    if (index === WRITES / 2 || index === WRITES)
+      sizes.push(statSync(eventsFileOf(root, task.id)).size);
   }
-  const perWriteMs = (performance.now() - started) / 1000;
+  const perWriteMs = (performance.now() - started) / WRITES;
   expect(readdirSync(taskDirOf(root, task.id)).toSorted()).toEqual([
     "events.jsonl",
     "snapshot.json",
@@ -262,8 +267,8 @@ test("Given 1,000 writes to one task, Then the task dir holds events.jsonl + sna
   const [half, full] = sizes;
   expect(full / half).toBeGreaterThan(1.8);
   expect(full / half).toBeLessThan(2.2);
-  expect((full - half) / 500).toBeLessThan(recordBytes);
-  expect(eventsOf(root, task.id)).toHaveLength(1001);
+  expect((full - half) / (WRITES / 2)).toBeLessThan(recordBytes);
+  expect(eventsOf(root, task.id)).toHaveLength(WRITES + 1);
   // gc folds old events into a checkpoint and keeps the recent ones.
   const before = store.readTask(task.id);
   const collected = store.collectGarbage();
@@ -275,7 +280,7 @@ test("Given 1,000 writes to one task, Then the task dir holds events.jsonl + sna
   expect(events).toHaveLength(COMPACT_KEEP + 1);
   expect(events[0]).toMatchObject({
     type: "task.checkpoint",
-    seq: 1001 - COMPACT_KEEP,
+    seq: WRITES + 1 - COMPACT_KEEP,
   });
   expect(statSync(eventsFileOf(root, task.id)).size).toBeLessThan(full / 5);
   expect(new TaskStore(root).readTask(task.id)).toEqual(before);
@@ -284,9 +289,9 @@ test("Given 1,000 writes to one task, Then the task dir holds events.jsonl + sna
   // Appends continue the sequence after compaction.
   const after = store.mutateTask(task.id, revision, identity);
   expect(after.ok).toBe(true);
-  expect(eventsOf(root, task.id).at(-1)?.seq).toBe(1002);
+  expect(eventsOf(root, task.id).at(-1)?.seq).toBe(WRITES + 2);
   console.log(
-    `S15 1,000 writes: ${(full / 1024).toFixed(1)} KB log (${Math.round((full - half) / 500)} B/event vs ${recordBytes} B record), ${perWriteMs.toFixed(2)} ms/write; after gc ${(statSync(eventsFileOf(root, task.id)).size / 1024).toFixed(1)} KB`,
+    `S15 ${WRITES} writes: ${(full / 1024).toFixed(1)} KB log (${Math.round((full - half) / (WRITES / 2))} B/event vs ${recordBytes} B record), ${perWriteMs.toFixed(2)} ms/write; after gc ${(statSync(eventsFileOf(root, task.id)).size / 1024).toFixed(1)} KB`,
   );
 }, 60_000);
 

@@ -15,8 +15,10 @@ import path from "node:path";
 for (const key of ["OPENCODE_SESSION_ID", "PI_SESSION_ID", "CODEX_THREAD_ID", "WORKIT_HOST"])
   delete process.env[key];
 
-if (!process.env.WORKFLOW_TOOLKIT_STATE) {
-  const dir = mkdtempSync(path.join(tmpdir(), "wk-test-state-"));
-  process.env.WORKFLOW_TOOLKIT_STATE = dir;
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
-}
+// Always a fresh dir, never an inherited one: `bun test --parallel` workers
+// inherit the coordinator's env, and a shared dir made every worker share one
+// ledger and its locks, and the first worker to finish deleted it under the
+// rest (CI hangs, #415).
+const dir = mkdtempSync(path.join(tmpdir(), "wk-test-state-"));
+process.env.WORKFLOW_TOOLKIT_STATE = dir;
+afterAll(() => rmSync(dir, { recursive: true, force: true }));

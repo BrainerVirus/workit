@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -28,6 +28,9 @@ import {
   resolveSshHost,
   worktreeTree,
 } from "@/packages/workit-core/src/git/rev";
+
+// Measured over 5 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 // S9a core/git/rev (design §2.0, §2.2; D16): code-state keys for evidence and
 // verdicts, and forge derivation from the push remote host.
