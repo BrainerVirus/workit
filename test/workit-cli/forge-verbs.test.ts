@@ -126,6 +126,19 @@ test("pr status --json returns the status document in the shared envelope", asyn
   expect(human.stdout).toEndWith("next: RESOLVE_THREADS\n");
 });
 
+test("ci logs --failed prints each failing check of the PR head with only its log tail", async () => {
+  const { repo } = setup();
+  const human = await run(["ci", "logs", "--failed"], repo.cwd);
+  expect(human.code, human.stderr).toBe(0);
+  expect(human.stdout).toContain("1 failing check (last 60 log lines each)");
+  expect(human.stdout).toContain("x CI / test (ubuntu-latest) (failure)");
+  expect(human.stdout).toContain("  ##[error]Process completed with exit code 1.");
+  expect(human.stdout.split("\n").length).toBeLessThanOrEqual(64);
+  const json = await run(["ci", "logs", "--failed", "--json"], repo.cwd);
+  expect(json.json().data.failing[0].logTail.length).toBeLessThanOrEqual(60);
+  expect((await run(["ci", "logs"], repo.cwd)).code).toBe(2);
+});
+
 test("pr usage errors exit 2", async () => {
   const { repo } = setup();
   expect((await run(["pr", "status", "--pr", "abc", "--json"], repo.cwd)).json()).toMatchObject({

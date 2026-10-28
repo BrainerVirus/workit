@@ -423,12 +423,13 @@ test("given --json, then help is an envelope carrying the usage and the text", (
   expect(verb.usage).toBe(
     "workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
   );
-  expect(verb.usages).toHaveLength(2);
+  expect(verb.usages).toHaveLength(3);
   expect(verb.usages[1]).toStartWith("workit ci rerun ");
+  expect(verb.usages[2]).toStartWith("workit ci logs --failed");
   const listed = JSON.parse(cli(["help", "--json"]).stdout).data.verbs;
   expect(listed.find((entry: { name: string }) => entry.name === "ci")).toMatchObject({
     group: "delivery",
-    usage: "workit ci wait|rerun [options]",
+    usage: "workit ci wait|rerun|logs [options]",
     usages: verb.usages,
   });
 });

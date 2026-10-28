@@ -426,7 +426,8 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "ci",
     group: "delivery",
-    summary: "Wait for CI on the PR head (exit 0/1/3/4), or rerun failed jobs once per head",
+    summary:
+      "Wait for CI on the PR head (exit 0/1/3/4), read the failing jobs' log tails, or rerun failed jobs once per head",
     subcommands: [
       {
         name: "wait",
@@ -440,8 +441,17 @@ export const VERBS: readonly VerbEntry[] = [
           "workit ci rerun [--pr <n> | --branch <b>] [--check <name>… | --failed] --reason flake|infra [--force]",
         summary: "Rerun failed jobs once per head, with a recorded reason",
       },
+      {
+        name: "logs",
+        usage: "workit ci logs --failed [--pr <n> | --branch <b>]",
+        summary: "The failing checks of the PR head, each with its job log's last 60 lines",
+      },
     ],
-    examples: ["workit ci wait --timeout 30m", "workit ci rerun --failed --reason flake"],
+    examples: [
+      "workit ci wait --timeout 30m",
+      "workit ci logs --failed",
+      "workit ci rerun --failed --reason flake",
+    ],
     load: () => import("./ci"),
   }),
   withSubcommands({
