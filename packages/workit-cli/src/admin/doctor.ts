@@ -1427,7 +1427,7 @@ const checkPluginFiles = (res: Resolved): DoctorCheck => {
       problems.push(
         `Cursor registers the Workit plugin at ${entry}, but that directory is ${state}`,
       );
-      fixes.push("Run `workit upgrade --hosts=cursor` to reinstall the plugin files");
+      fixes.push("Run `workit upgrade --hosts=cursor` to reinstall the Cursor plugin files");
     }
   }
   for (const install of codexWorkitInstalls(res)) {

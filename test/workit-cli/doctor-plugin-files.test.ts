@@ -77,3 +77,38 @@ test("G Codex config enables a workit plugin whose cache is gone, W doctor runs,
   writeFileSync(path.join(bare.home, ".codex", "config.toml"), `model = "x"\n`);
   expect(row(bare.run()).status).toBe("pass");
 });
+
+test("G `workit upgrade` ends verified, W doctor runs with only: upgrade, T it runs the version, asset, agent and permission checks and nothing else", () => {
+  const doctor = doctorFor("upgrade-only");
+  const report = runDoctor({
+    host: "cli",
+    home: doctor.home,
+    cwd: doctor.home,
+    workspaceRoot: doctor.home,
+    configDir: path.join(doctor.home, ".config", "workit"),
+    stateDir: path.join(doctor.home, ".local", "state", "workit"),
+    env: { ...process.env, HOME: doctor.home, WORKFLOW_TOOLKIT_DEV: "" },
+    only: "upgrade",
+  });
+  expect(report.checks.map((check) => check.id).toSorted()).toEqual(
+    [
+      "versions",
+      "codex_pin",
+      "codex_agents",
+      "pi_extension",
+      "opencode_version",
+      "claude_plugin",
+      "assets",
+      "launcher",
+      "plugin_files",
+      "stale_pin",
+      "stale_install",
+      "claude_permissions",
+      "codex_permissions",
+      "cursor_permissions",
+      "claude_grant_rules",
+      "codex_grant_rules",
+      "cursor_grant_rules",
+    ].toSorted(),
+  );
+});
