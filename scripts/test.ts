@@ -58,6 +58,9 @@ const DEFAULT_WEIGHT = 1.6;
 // of their own keep 60 s; annotating those tests lets a file leave this list.
 const WINDOWS_TIMEOUT_MS = 15_000;
 const WINDOWS_SLOW_FILES = new Set([
+  // Windows timeouts seen on main and PRs 2026-10-28 (#415).
+  "test/artifacts/ci-changes.test.ts",
+  "test/workit-core/policy-lane.test.ts",
   "test/workit-core/commit-flavor.test.ts",
   "test/workit-core/doctor.test.ts",
   "test/workit-core/git-rev.test.ts",

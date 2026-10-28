@@ -361,4 +361,4 @@ test("Given 20 alternating same-session failed/verified rows on distinct heads, 
     .split("\n")
     .filter((line) => line.includes('"event":"start"')).length;
   expect(calls).toBeLessThan(CALLS_BOUND);
-}, 30_000);
+}, 90_000); // Windows runners measured over 30 s (2026-10-28, #415); Linux ~1 s.
