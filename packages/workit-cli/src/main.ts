@@ -3,6 +3,7 @@
 // module and hand it argv + io. `--version` and `help` load nothing else, and
 // only `init`/`uninstall` ever load ink/react (through index.tsx).
 import path from "node:path";
+import { gitRedirectRefusal, gitRedirectsIn } from "@brainervirus/workit-core/src/git/env-redirect";
 import { sessionClaimRefusal } from "@brainervirus/workit-core/src/host-session";
 import pkg from "../package.json" with { type: "json" };
 import {
@@ -213,6 +214,15 @@ export async function main(
     const checked = checkFlags(entry, ended);
     if ("error" in checked)
       return emit(routed, fail("invalid_input", checked.error, { unblock: checked.unblock }));
+    const gated = gatedVerb(entry, checked.args);
+    if (gated) {
+      // The git children inherit the process environment, whatever io.env says.
+      const redirects = gitRedirectsIn(routed.env, process.env);
+      if (redirects.length) {
+        const refusal = gitRedirectRefusal(redirects, gated, routed.cwd);
+        return emit(routed, fail("blocked", refusal.error, { unblock: refusal.unblock }));
+      }
+    }
     if (parsed.cwd !== null) {
       try {
         // Existing verbs resolve from process.cwd(); keep them in step with routed.cwd.
@@ -248,6 +258,27 @@ export async function main(
   const outcome = verbWord ? OUTCOMES[`${entry.name} ${verbWord}`] : undefined;
   return withFailureLine(io, command, route, outcome);
 }
+
+/**
+ * The subcommands that act under a grant (push, release, pr, merge, rerun):
+ * refused while GIT_DIR and friends point git away from the checkout whose
+ * grants they read (#545). Read-only subcommands run under them.
+ */
+const GRANT_GATED: Record<string, ReadonlySet<string>> = {
+  git: new Set(["push"]),
+  release: new Set(["start", "finish", "publish"]),
+  pr: new Set(["create", "merge", "ready", "edit"]),
+  stack: new Set(["sync", "restack", "land"]),
+  ci: new Set(["rerun"]),
+};
+
+/** `<verb> <subcommand>` when it is grant-gated, else null. */
+const gatedVerb = (entry: VerbEntry, args: readonly string[]): string | null => {
+  const word = firstWord(args);
+  const sub = word === undefined ? undefined : findSubcommand(entry, word);
+  const name = sub?.name ?? word;
+  return name !== undefined && GRANT_GATED[entry.name]?.has(name) ? `${entry.name} ${name}` : null;
+};
 
 /** What a delivery verb's non-zero exit did not do, said on its last line (#533). */
 const OUTCOMES: Record<string, string> = {
