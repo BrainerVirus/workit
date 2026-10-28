@@ -357,6 +357,14 @@ that does not count is never silent.
 An issued id never authors code: `workit git commit` refuses it
 (`judge_session`) and runs the same claim check as a verdict.
 
+A verdict without `--self` that has no session at all (no `--session`, no
+`WORKIT_SESSION_ID`, no host variable) is refused (`no_session`) instead of
+being stored as a self verdict no gate accepts. On Claude Code the unblock
+names the `--session` and `--token` the SubagentStart hook gave the verifier;
+when it gave none, check `workit doctor` (`hook_runs`, `hook_issued_sessions`,
+`claude_session_plugin`: a session started before a plugin update runs the old
+hooks) and spawn a fresh `workit:verifier`.
+
 A made-up `<lead>-v1` is refused as `--session` on Claude Code, Codex,
 OpenCode and Pi, and as `WORKIT_SESSION_ID` where the host sets its own
 variable (Codex, OpenCode, Pi). A `--self` verdict is never accepted, so it
