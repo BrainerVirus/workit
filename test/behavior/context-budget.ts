@@ -153,6 +153,28 @@ export const measureBudget = async (): Promise<Record<string, number>> => {
       stderr: () => {},
     });
     sizes["cli.help"] = help.length;
+    // Lines a verb prints (stdout and stderr, as the agent's shell tool reads
+    // them): a 5000-line check and a fresh branch's handoff brief (#426).
+    const lines = async (argv: string[]): Promise<number> => {
+      let out = "";
+      await main(argv, {
+        cwd: repo,
+        stdout: (text) => {
+          out += text;
+        },
+        stderr: (text) => {
+          out += text;
+        },
+      });
+      return out.split("\n").length;
+    };
+    sizes["cli.handoff.lines"] = await lines(["handoff"]);
+    mkdirSync(path.join(repo, ".workit"), { recursive: true });
+    writeFileSync(
+      path.join(repo, ".workit", "checks.json"),
+      JSON.stringify({ checks: { fixture: "seq 1 5000" } }),
+    );
+    sizes["cli.check.lines"] = await lines(["check", "fixture"]);
   });
 
   let schemas = 0;

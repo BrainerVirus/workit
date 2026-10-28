@@ -302,6 +302,7 @@ workit pr threads                      # unresolved review threads, one line eac
 workit pr reply --thread <id> [--body-file <f|->] [--resolve]
 workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
+workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
 workit pr merge [--method squash|merge|rebase] [--delete-branch] [--unverified --reason <why>]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 ```
@@ -619,7 +620,12 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   inside the worktree, installed packages link to the main checkout's (about
   20 ms for this repository, no install). Tests in the worktree then import
   its own workspace packages, not the main checkout's. When git does not
-  ignore `node_modules`, nothing is linked and a note says so.
+  ignore `node_modules`, nothing is linked and a note says so. Nothing is
+  linked either when a lockfile (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`,
+  `package-lock.json`) differs between the main checkout and the worktree: a
+  stale main checkout would hand the slice the wrong versions. The output (and
+  `install` in `--json`) then names the exact command to run, such as
+  `bun install --frozen-lockfile --cwd <worktree>`.
 - An implementer subagent is confined to such a worktree by Workit's
   pre-tool hooks (Claude Code; Codex when it names the agent on the tool
   call): its first edit or mutating git command inside one binds it
