@@ -347,7 +347,7 @@ describe("S10 redaction and verdicts", () => {
       reason: "head_mismatch",
     });
     expect(waitVerdict(doc("none"), { elapsedMs: 0 }).reason).toBe("no_checks_yet");
-    expect(waitVerdict(doc("none"), { elapsedMs: 100_000 })).toEqual({
+    expect(waitVerdict(doc("none"), { elapsedMs: 130_000 })).toEqual({
       state: "ready",
       reason: "no_checks",
     });

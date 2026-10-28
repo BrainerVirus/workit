@@ -503,8 +503,12 @@ export type WaitState = "ready" | "waiting" | "failed" | "blocked";
 
 export type WaitVerdict = { state: WaitState; reason: string; unblock?: string };
 
-/** Checks never appeared: after this grace a PR known to need none reads ready. */
-export const NO_CHECKS_GRACE_MS = 90_000;
+/**
+ * Checks never appeared: after this grace a PR with no missing required check
+ * reads "none" (no CI configured). A forge is slow to register the runs of a
+ * freshly pushed head, so the grace is generous (#510).
+ */
+export const NO_CHECKS_GRACE_MS = 120_000;
 
 /**
  * CI verdict for the PR head. Only gating checks count; a closed or merged
@@ -539,8 +543,9 @@ export function waitVerdict(
   // running (a non-required workflow): never green while anything runs (#440).
   if (doc.checks.pending.length > 0) return { state: "waiting", reason: "checks_pending" };
   if (checks === "passing") return { state: "ready", reason: "checks_passing" };
+  // Unknown protection (null) is not "required": the grace bounds the wait.
   const ciRequired =
-    doc.checks.missingRequired === null ||
+    (doc.checks.missingRequired?.length ?? 0) > 0 ||
     doc.mergeState === "ci_must_pass" ||
     doc.mergeState === "ci_still_running";
   if (ciRequired) return { state: "waiting", reason: "no_checks_yet" };

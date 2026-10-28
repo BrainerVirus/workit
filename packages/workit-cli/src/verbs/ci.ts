@@ -151,13 +151,15 @@ async function wait(argv: string[], io: Io): Promise<number> {
     for (const value of renderStatus(doc)) io.stdout(`${value}\n`);
   if (verdict.state === "ready")
     return emit(io, ok(data), () => [
-      `CI ready (${verdict.reason}) after ${polls} poll${polls === 1 ? "" : "s"}, ${seconds(elapsedMs)}`,
+      verdict.reason === "no_checks"
+        ? `CI none: no CI configured for this head (no checks registered within the grace) after ${polls} poll${polls === 1 ? "" : "s"}, ${seconds(elapsedMs)}`
+        : `CI pass (${verdict.reason}) after ${polls} poll${polls === 1 ? "" : "s"}, ${seconds(elapsedMs)}`,
       ...renderStatus(doc),
     ]);
   if (verdict.state === "failed")
     return emit(
       io,
-      fail("failed", `CI failed: ${doc.checks.failing.map((check) => check.name).join(", ")}`, {
+      fail("failed", `CI fail: ${doc.checks.failing.map((check) => check.name).join(", ")}`, {
         data,
         unblock: "fix the failure, or if it is a flake: workit ci rerun --failed --reason flake",
       }),
