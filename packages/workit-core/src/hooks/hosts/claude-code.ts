@@ -44,11 +44,12 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     // SubagentStart output is additionalContext only: it cannot block or bind.
     "subagent.start": { support: "native", native: "SubagentStart" },
     "prompt.submit": { support: "native", native: "UserPromptSubmit" },
-    // Claude Code has SubagentStop and PreCompact, but the plugin registers
-    // neither: events list what workit registers (docs/agents/hosts.md, Host
-    // parity). A subagent's stop is never blocked; compaction restore runs on
-    // SessionStart source=compact.
-    "subagent.stop": { support: "none", native: null },
+    // SubagentStop is never blocked: the launcher answers it itself, dropping
+    // the stopped agent's tool-call budget files (hooks/budget-signal.ts).
+    // Claude Code has PreCompact, but the plugin does not register it: events
+    // list what workit registers (docs/agents/hosts.md, Host parity);
+    // compaction restore runs on SessionStart source=compact.
+    "subagent.stop": { support: "native", native: "SubagentStop" },
     "compact.pre": { support: "none", native: null },
     // `{"decision":"block","reason"}` continues the turn; the input carries
     // `stop_hook_active` and `last_assistant_message` (claude 2.1.295).

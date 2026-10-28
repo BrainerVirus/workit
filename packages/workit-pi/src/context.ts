@@ -14,6 +14,7 @@ import {
 } from "@brainervirus/workit-core/hooks";
 import { modelKey } from "@brainervirus/workit-core/src/hooks/model-switch";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { budgetLine, tickBudget } from "@brainervirus/workit-core/src/hooks/budget-signal";
 
 export const piCapabilities = (ctx?: Pick<ExtensionContext, "hasUI">): Capability[] =>
   capabilitiesFor(PI_DESCRIPTOR, { ui: ctx?.hasUI === true });
@@ -100,6 +101,18 @@ export const standingNotice = (ctx: ExtensionContext): string | null => {
   const worker = process.env.WORKIT_PI_WORKER_SESSION && process.env.WORKIT_SESSION_ID?.trim();
   const input = turnInput(ctx);
   return standingDelta(worker ? { ...input, session: { ...input.session, id: worker } } : input);
+};
+
+/**
+ * Count this tool call against the worker's tool-call budget; at N (and 2N…)
+ * the one budget line, which rides the tool result like a standing change.
+ */
+export const budgetNotice = (ctx: ExtensionContext): string | null => {
+  if (!ctx.isProjectTrusted()) return null;
+  const session =
+    (process.env.WORKIT_PI_WORKER_SESSION && process.env.WORKIT_SESSION_ID?.trim()) ||
+    ctx.sessionManager.getSessionId();
+  return tickBudget(ctx.cwd, session, null) ? budgetLine(ctx.cwd, session, null) : null;
 };
 
 /** The session contract: bootstrap plus `taskContext` (see turnContext). */

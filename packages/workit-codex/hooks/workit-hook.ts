@@ -2,12 +2,12 @@ import {
   capabilitiesFor,
   codexAdapter,
   codexDescriptor,
-  detectCodexSurface,
   dispatchHook,
   runHookProcess,
   type CodexHost,
 } from "@brainervirus/workit-core/hooks";
 import { PROCESS_START } from "@brainervirus/workit-core/src/hooks/deadline";
+import { budgetHooks } from "@brainervirus/workit-core/src/hooks/budget-signal";
 
 export {
   detectCodexSurface,
@@ -42,15 +42,20 @@ export const codexCapabilities = (host: CodexHost, availability: Availability = 
     "subagent.stop": availability.subagentStop,
   });
 
+/** Codex counts calls in its launcher, so its adapter carries the tool-call budget (HookDeps.budget). */
+const adapter = { ...codexAdapter, budget: budgetHooks };
+
 export const handleCodexHook = (raw: unknown): Record<string, unknown> =>
-  dispatchHook(codexAdapter, raw, process.env).json;
+  dispatchHook(adapter, raw, process.env).json;
 
 export const runCodexHook = async (
   stdin: AsyncIterable<unknown> | Iterable<unknown> = process.stdin,
 ): Promise<void> => {
   warnOnSurfaceFallback();
+  // The adapter itself, not the surface name (HOOK_ADAPTERS carries no budget):
+  // the parse still names the surface (codex_cli or codex_desktop) from the env.
   process.exitCode = await runHookProcess(
-    detectCodexSurface(process.env),
+    adapter,
     stdin,
     process.stdout,
     process.stderr,

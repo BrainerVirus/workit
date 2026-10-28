@@ -44,7 +44,7 @@ const PARITY: Record<
     "write.pre": "PreToolUse",
     "shell.post": "PostToolUse",
     "subagent.start": "SubagentStart",
-    "subagent.stop": null,
+    "subagent.stop": "SubagentStop",
     "compact.pre": null,
     stop: "Stop",
   },

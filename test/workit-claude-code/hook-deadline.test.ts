@@ -87,10 +87,11 @@ test("Given the shipped hooks.json, When Claude reads it, Then prompt, tool and 
   expect(timeouts).toEqual({
     SessionStart: [20],
     UserPromptSubmit: [15],
-    PreToolUse: [15, 15, 15, 15, 15],
+    PreToolUse: [15, 15, 15, 15, 15, 15],
     PostToolUse: [15],
     Stop: [20],
     SubagentStart: [15],
+    SubagentStop: [15],
   });
 });
 

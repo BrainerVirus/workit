@@ -52,6 +52,8 @@ if (tooOld) {
 const { maybeHeavy, stateDir } = await import("@brainervirus/workit-core/src/core/heavy-words");
 const { standingPending } = await import("@brainervirus/workit-core/src/hooks/standing-signal");
 const { recordHookRun } = await import("@brainervirus/workit-core/src/hooks/hook-runs");
+// The worker tool-call budget: every PreToolUse counts, quiet or not.
+const { observeHookBudget } = await import("@brainervirus/workit-core/src/hooks/budget-signal");
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
@@ -109,7 +111,7 @@ const quietEvent = (): string | null => {
   }
 };
 
-const quiet = quietEvent();
+const quiet = observeHookBudget(payload) ? null : quietEvent();
 if (quiet) {
   // The full path records itself (runHookProcess); the quiet path counts here.
   // PostToolUse follows every shell call and tells doctor nothing PreToolUse does not.

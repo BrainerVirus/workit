@@ -7,6 +7,7 @@
 // per-turn task context only when it changed (descriptor turnResend on-change).
 import { appendFileSync } from "node:fs";
 import { stalePluginNotice } from "./stale-plugin";
+import { budgetHooks, type BudgetHooks } from "@brainervirus/workit-core/src/hooks/budget-signal";
 import { claudeCodeAdapter, type HostAdapter } from "@brainervirus/workit-core/hooks";
 import {
   dispatchWithin,
@@ -29,7 +30,12 @@ export const CLAUDE_ADDENDUM =
   "`reviewer` are read-only non-authors that record `workit ledger verdict` with the " +
   "`--session` the SubagentStart hook names for them (subagents share this session's WORKIT_SESSION_ID).";
 
-const adapter: HostAdapter = { ...claudeCodeAdapter, addendum: () => CLAUDE_ADDENDUM };
+// The worker tool-call budget rides the adapter to dispatchHook (HookDeps.budget).
+const adapter: HostAdapter & { budget: BudgetHooks } = {
+  ...claudeCodeAdapter,
+  addendum: () => CLAUDE_ADDENDUM,
+  budget: budgetHooks,
+};
 type Payload = Record<string, unknown>;
 
 const isRecord = (value: unknown): value is Payload =>

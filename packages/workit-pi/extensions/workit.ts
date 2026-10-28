@@ -30,6 +30,7 @@ import {
   standingNotice,
   modelSwitchContract,
   noteModelSelect,
+  budgetNotice,
   turnContext,
   turnInput,
   unfinishedTaskOffer,
@@ -618,7 +619,7 @@ export default function extension(pi: ExtensionAPI): void {
     const observed = observeResult(event, ctx);
     let standing: string | null = null;
     try {
-      standing = standingNotice(ctx);
+      standing = [standingNotice(ctx), budgetNotice(ctx)].filter(Boolean).join("\n") || null;
     } catch {
       // Fail open: the result is unchanged.
     }

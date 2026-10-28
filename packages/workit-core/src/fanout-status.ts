@@ -92,10 +92,15 @@ export type StatusOptions = {
   host?: string | null;
 };
 
-/** A TIMEBOX such as `45 minutes`, `2h` or `1h30m`, in ms; null without a unit or otherwise. */
+/**
+ * A TIMEBOX such as `45 minutes`, `2h` or `1h30m`, in ms; null without a unit
+ * or otherwise. A tool-call budget beside it (`45 minutes, 80 tool calls`) is
+ * not time: only the rest is parsed, so `80 tool calls` alone is null.
+ */
 export function timeboxMs(text: string | null): number | null {
-  if (!text || /^\s*\d+(?:\.\d+)?\s*$/u.test(text)) return null;
-  const ms = parseDuration(text);
+  const time = text?.replace(/[\s,;]*\b\d+\s+tool calls\b[\s,;]*/gu, " ").trim();
+  if (!time || /^\d+(?:\.\d+)?$/u.test(time)) return null;
+  const ms = parseDuration(time);
   return ms && ms > 0 ? ms : null;
 }
 

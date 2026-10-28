@@ -13,6 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { timeboxMs } from "@/packages/workit-core/src/fanout-status";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
 import type { ForgeRunner } from "@/packages/workit-core/src/forge/exec";
 import { readLedger } from "@/packages/workit-core/src/ledger";
@@ -899,4 +900,15 @@ test("fanout worktree create: given the main checkout's bun.lock differs from th
   expect(existsSync(path.join(wt, "node_modules"))).toBe(false);
   const human = await run(cwd, ["fanout", "worktree", "create", "a"]);
   expect(human.stdout + human.stderr).toContain(install);
+});
+
+test("Given a TIMEBOX with a tool-call budget, When its stuck threshold is read, Then only the minutes count", () => {
+  expect(timeboxMs("45 minutes, 80 tool calls")).toBe(45 * 60_000);
+  expect(timeboxMs("80 tool calls, 45 minutes")).toBe(45 * 60_000);
+  expect(timeboxMs("80 tool calls")).toBeNull();
+  expect(timeboxMs("45 minutes")).toBe(45 * 60_000);
+  expect(timeboxMs("2h")).toBe(2 * 3_600_000);
+  expect(timeboxMs("1h30m")).toBe(90 * 60_000);
+  expect(timeboxMs("45")).toBeNull();
+  expect(timeboxMs(null)).toBeNull();
 });

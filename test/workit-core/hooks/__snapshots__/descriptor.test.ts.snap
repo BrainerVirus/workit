@@ -183,8 +183,8 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
         "support": "native",
       },
       "subagent.stop": {
-        "native": null,
-        "support": "none",
+        "native": "SubagentStop",
+        "support": "native",
       },
       "tool.pre": {
         "native": "PreToolUse",

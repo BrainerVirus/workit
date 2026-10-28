@@ -1,6 +1,7 @@
 // Deep subpath on purpose: the package root re-exports the whole schema/effect
 // runtime, and only the identity `define` (plus its types) is used here. The
 // packed-artifact test proves the bundle stays free of @opencode/* imports.
+import { observeBudget } from "./budget";
 import { define, type Context } from "@opencode/plugin/promise/plugin";
 import {
   TaskStore,
@@ -223,6 +224,12 @@ const setup = async (ctx: Context): Promise<() => void> => {
   const shellWorkdirs: ShellWorkdirs = new Map();
   const pendingShells: PendingShells = new Map();
   await ctx.tool.hook("execute.before", async (event) => {
+    const budgetEvent = {
+      tool: event.tool,
+      sessionID: String(event.sessionID),
+      input: event.input,
+    };
+    if (event.tool !== "subagent") observeBudget(root, budgetEvent, lifecycle.directChildren);
     if (event.tool === "shell") {
       observeShellBefore(root, event, shellWorkdirs);
       return noteShellCall(pendingShells, {
@@ -238,6 +245,8 @@ const setup = async (ctx: Context): Promise<() => void> => {
       id: String(event.id),
       input: event.input,
     });
+    // Queued only once the launch gate let the spawn through.
+    observeBudget(root, budgetEvent, lifecycle.directChildren);
   });
   // Older V2 builds have no shell domain: their shells keep OPENCODE_SESSION_ID only.
   const shellDomain = (ctx as Partial<Context>).shell;
