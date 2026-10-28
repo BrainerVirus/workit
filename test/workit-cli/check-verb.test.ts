@@ -924,6 +924,13 @@ test("countWarnings counts tool warning lines, not prose", () => {
     ["npm", "npm WARN deprecated left-pad@1.0.0\nnpm warn old lockfile", 2],
     ["maven", "[WARNING] The POM is missing\n[INFO] BUILD SUCCESS", 1],
     ["colored", "\u001b[33mwarning:\u001b[0m careful", 1],
+    [
+      "oxlint piped",
+      "a.js:1:7: warning eslint(no-unused-vars): Variable 'a' is declared but never used.\nb.js:2:1: error eslint(no-debugger): x",
+      1,
+    ],
+    ["gcc", "main.c:3:5: warning: unused variable 'x' [-Wunused-variable]", 1],
+    ["none found", "warning: no warnings found\nwarn: 0 warnings", 0],
     ["prose", "we warn users that a warning: appears later\nno warnings here", 0],
   ];
   for (const [name, log, count] of fixtures)
