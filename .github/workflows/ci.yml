@@ -416,8 +416,8 @@ jobs:
           cache: npm
           cache-dependency-path: bun.lock
 
-      # No bun cache on Windows: restoring it took 80-90 s, a cold
-      # `bun install` about 20 s (CI runs, 2026-10-28).
+      # No bun cache on Windows: restore (80-90 s) plus install (~20 s) took
+      # longer than a cold `bun install` (70-75 s) (CI runs, 2026-10-28).
       - name: Install deps
         run: bun install --frozen-lockfile
 
