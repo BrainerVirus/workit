@@ -90,7 +90,7 @@ test("G `workit upgrade` ends verified, W doctor runs with only: upgrade, T it r
     env: { ...process.env, HOME: doctor.home, WORKFLOW_TOOLKIT_DEV: "" },
     only: "upgrade",
   });
-  expect(report.checks.map((check) => check.id).toSorted()).toEqual(
+  expect(report.checks.map((check): string => check.id).toSorted()).toEqual(
     [
       "versions",
       "codex_pin",
