@@ -358,16 +358,33 @@ export function countWarnings(log: string): number {
     .filter((line) => WARNING_LINE.test(line) && !NO_WARNINGS.test(line)).length;
 }
 
+/** The child's last stderr lines the bounded output always shows. */
+const STDERR_TAIL_LINES = 10;
+/** How much of the child's stderr is kept for that tail. */
+const STDERR_KEEP_CHARS = 64 * 1024;
+
 /**
  * The last `lines` lines of a check's output, after one line saying how many
  * earlier ones were left out: a failure shows its failing tail, never the head.
+ * stdout and stderr arrive on separate pipes, so under load the error a child
+ * printed last can sit earlier in the merged log; the last stderr lines
+ * (`stderr`) missing from the tail are shown after it, within the same budget.
  */
-export function boundedOutput(log: string, lines: number): string {
+export function boundedOutput(log: string, lines: number, stderr = ""): string {
   const all = tailLines(log, Number.MAX_SAFE_INTEGER);
   if (all.length === 0) return "";
-  const shown = all.slice(-lines);
+  let shown = all.slice(-lines);
+  const errors = tailLines(redactLog(stderr), STDERR_TAIL_LINES);
+  let missing: string[] = [];
+  if (errors.some((line) => !shown.includes(line))) {
+    shown = all.slice(-Math.max(1, lines - errors.length - 1));
+    missing = errors.filter((line) => !shown.includes(line));
+  }
   const omitted = all.length - shown.length;
-  return `${omitted ? `… ${omitted} earlier line${omitted === 1 ? "" : "s"} omitted (the full log is named below; --full streams it)\n` : ""}${shown.join("\n")}\n`;
+  const footer = missing.length
+    ? `… the last stderr lines, which the merged log holds earlier:\n${missing.join("\n")}\n`
+    : "";
+  return `${omitted ? `… ${omitted} earlier line${omitted === 1 ? "" : "s"} omitted (the full log is named below; --full streams it)\n` : ""}${shown.join("\n")}\n${footer}`;
 }
 
 /** `resources` of the workspaces.json entry matching `cwd`, read from io.env's config dir. */
@@ -625,6 +642,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     io.stderr(`workit: running without the heavy-check lease: ${options.reason}\n`);
   const lease = heavy?.lease ?? null;
   let result: Awaited<ReturnType<typeof runCheckCommand>>;
+  let stderrTail = "";
   try {
     const scoped = await runScoped(
       (wrapper, sinks) =>
@@ -642,7 +660,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
       options.full
         ? { onStdout: io.json ? io.stderr : io.stdout, onStderr: io.stderr }
         : // One bounded writer (below) is the only path from the child to the agent.
-          { onStdout: () => {}, onStderr: () => {} },
+          {
+            onStdout: () => {},
+            onStderr: (text) => {
+              stderrTail = (stderrTail + text).slice(-STDERR_KEEP_CHARS);
+            },
+          },
     );
     result = scoped.result;
     if (heavy && scoped.fallback) {
@@ -775,7 +798,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       `${JSON.stringify({ ok: code === "ok", code, data, ...(error ? { error } : {}), ...(task.stillUnsatisfied[0] ? { unblock: task.stillUnsatisfied[0].unblock } : {}) })}\n`,
     );
   else {
-    if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES));
+    if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES, stderrTail));
     io.stderr(`${summary}\n`);
     if (recordError && passed) io.stderr(`workit: ${recordError.message}\n`);
     // The pre-run note already said an ad-hoc run of a configured name leaves its gate open.

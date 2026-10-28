@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import * as z from "zod";
 import { main } from "@/packages/workit-cli/src/main";
-import { countWarnings } from "@/packages/workit-cli/src/verbs/check";
+import { boundedOutput, countWarnings } from "@/packages/workit-cli/src/verbs/check";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import type { Assessment } from "@/test/workit-core/task-fixtures";
 import {
@@ -887,6 +887,18 @@ test("G a check printing 500 lines then failing, T the agent sees its failing ta
   const full = await run(root, ["check", "--full", "--", BUN, "-e", script]);
   expect(full.stdout).toContain("line 1\n");
   expect(full.stdout).not.toContain("earlier lines omitted");
+});
+
+test("G a merged log where the child's last stderr line landed early (separate pipes under load), T the bounded output still shows it and stays within the line budget", () => {
+  const stdout = Array.from({ length: 500 }, (_, index) => `line ${index + 1}`);
+  const log = ["boom at the end", ...stdout].join("\n") + "\n";
+  const shown = boundedOutput(log, 60, "boom at the end\n");
+  expect(shown).toContain("boom at the end");
+  expect(shown).toContain("line 500");
+  expect(shown.split("\n").filter(Boolean).length).toBeLessThanOrEqual(61);
+  // Already in the tail: nothing is repeated.
+  const inTail = boundedOutput(`${stdout.join("\n")}\nboom at the end\n`, 60, "boom at the end\n");
+  expect(inTail.match(/boom at the end/gu)).toHaveLength(1);
 });
 
 test("G `test` configured, W an ad-hoc `--name test` run, T it says before running that it will not satisfy the gate, and not again after", async () => {
