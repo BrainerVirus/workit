@@ -303,7 +303,7 @@ workit pr reply --thread <id> [--body-file <f|->] [--resolve]
 workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
 workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
-workit pr merge [--method squash|merge|rebase] [--delete-branch | --keep-branch] [--unverified --reason <why>]
+workit pr merge [--method squash|merge|rebase] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 ```
 
@@ -351,6 +351,13 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   and removes a clean worktree that `workit fanout worktree create` made on
   it; a dirty one is kept and named. An explicit `--delete-branch` refuses a
   protected or base branch before merging. `stack land` never deletes.
+- `pr merge` also reads the CI of the base branch's head (a protected target
+  only). A failing check there refuses the merge (`base_red`, exit 3), naming
+  the failing checks and the run URL, so a PR never lands silently on a red
+  base. Checks still running only print a note, and a base with no checks or
+  green checks merges quietly. `--base-red-ok --reason "<why>"` overrides it
+  and records the reason in the `pr.merge.intent` and `pr.merged` rows; one
+  `--reason` serves it and `--unverified` together.
 - `verify-delivery` answers "did it land?" from the remote, never from local
   state.
 - `ci wait --timeout` bounds the whole command, from resolving the forge and

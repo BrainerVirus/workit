@@ -449,7 +449,7 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "merge",
         usage:
-          "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>]",
+          "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>]",
         summary:
           "Merge when READY, verified by a non-author and granted; --subject/--body set the squash message",
       },

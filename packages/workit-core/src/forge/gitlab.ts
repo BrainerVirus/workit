@@ -465,6 +465,54 @@ export function createGitLabForge(options: {
       return success(status);
     },
 
+    branchChecks(branch) {
+      const tip = baseTip(branch);
+      if (!tip) return failure("not_found", `branch ${branch} was not found`);
+      const latest = apiJson<
+        Array<{ id: number; project_id?: number; status: string; web_url?: string }>
+      >(
+        runner,
+        "glab",
+        apiHost,
+        api(
+          `${project}/pipelines?ref=${encodeURIComponent(branch)}&sha=${tip}&order_by=id&sort=desc&per_page=1`,
+        ),
+        `pipelines on ${branch}`,
+      );
+      if (!latest.ok) return latest;
+      const pipeline = Array.isArray(latest.data) ? latest.data[0] : undefined;
+      if (!pipeline) return success({ sha: tip, checks: [], requiredKnown: true });
+      const scope = String(pipeline.project_id ?? encodeURIComponent(repo));
+      const jobs = pages(
+        `projects/${scope}/pipelines/${pipeline.id}/jobs`,
+        `pipeline ${pipeline.id} jobs`,
+      );
+      if (!jobs.ok) return jobs;
+      const bridges = pages(
+        `projects/${scope}/pipelines/${pipeline.id}/bridges`,
+        `pipeline ${pipeline.id} bridges`,
+      );
+      if (!bridges.ok) return bridges;
+      const checks = [
+        ...(jobs.data.items as GlJob[]).map((job) => checkFromJob(job, pipeline.id, scope)),
+        ...(bridges.data.items as GlBridge[]).map((bridge) =>
+          checkFromBridge(bridge, pipeline.id, scope),
+        ),
+      ];
+      if (
+        stateOf(pipeline.status, false) === "failing" &&
+        !checks.some((check) => check.state === "failing")
+      )
+        checks.push(
+          pipelineCheck("failing", pipeline.status, {
+            id: pipeline.id,
+            project_id: pipeline.project_id ?? 0,
+            web_url: pipeline.web_url,
+          }),
+        );
+      return success({ sha: tip, checks, requiredKnown: true });
+    },
+
     jobLogTail(job, lines) {
       const scope = job.scope ?? encodeURIComponent(repo);
       const text = apiText(

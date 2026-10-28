@@ -46,7 +46,14 @@ import type { LaneNeed, ReviewLane } from "../core/policy/lane";
 import { laneLabel, prLaneGate } from "../core/policy/pr-lane";
 import { buildStatusDoc, selectPr, type PrStatusDoc } from "./report";
 import type { ResolvedForge } from "./resolve";
-import { failure, success, type ForgeResult, type MergeMethod, type PrRef } from "./types";
+import {
+  failure,
+  success,
+  type ForgeCheck,
+  type ForgeResult,
+  type MergeMethod,
+  type PrRef,
+} from "./types";
 
 export type Sleep = (ms: number) => Promise<void>;
 
@@ -358,6 +365,8 @@ export type MergeInput = {
   expect?: { base: string; branch: string };
   /** Merge without a verdict (`merge: true` only); the reason is recorded. */
   unverified?: { reason: string };
+  /** Merge onto a base whose latest CI is red (`--base-red-ok`); the reason is recorded. */
+  baseRedOk?: { reason: string };
   /** Squash commit subject and body (`--subject`, `--body`); unset parts use the defaults. */
   subject?: string;
   body?: string;
@@ -393,6 +402,8 @@ export type MergeOutcome = {
   };
   /** Set when `--unverified` bypassed the verdict: the reason and its ledger row. */
   unverified: { reason: string; recorded: string } | null;
+  /** The base branch's CI at its head: a one-line note when it was not green, and the override used. */
+  baseCi: { note: string | null; override: { reason: string } | null };
   grant: { source: AutonomySource };
   /** `skipped`: the implicit default found a reason to keep the branch; the merge is unaffected. */
   deletedBranch: boolean | { error: string } | { skipped: string };
@@ -454,6 +465,7 @@ export type MergeRefusal = {
     | "closed"
     | "protected_branch"
     | "base_mismatch"
+    | "base_red"
     | "ledger_tampered"
     | "intent_unrecorded";
   next?: string;
@@ -632,6 +644,41 @@ function implicitDeleteSkip(
   return null;
 }
 
+type BaseCi =
+  | { ok: true; note: string | null }
+  | { ok: false; failing: ForgeCheck[]; sha: string | null; requiredKnown: boolean };
+
+/**
+ * The base branch head's CI before a merge lands on it: red (a failing check)
+ * refuses, pending or unreadable proceeds with a note, green or no checks
+ * proceeds quietly. Only a protected target is guarded: a stack's lower
+ * branch is its own PR's business.
+ */
+function baseCiState(cwd: string, resolved: ResolvedForge, base: string): BaseCi {
+  if (!isProtectedTarget(cwd, base)) return { ok: true, note: null };
+  const read = resolved.forge.branchChecks(base);
+  if (!read.ok)
+    return { ok: true, note: `base ${base} CI not read (${read.error}); merging anyway` };
+  // Only checks branch protection requires gate; with the required set
+  // unreadable, count hard failures not known to be optional.
+  const { requiredKnown } = read.data;
+  const failing = read.data.checks.filter(
+    (check) =>
+      check.state === "failing" &&
+      (requiredKnown
+        ? check.required === true
+        : check.required !== false && check.conclusion === "failure"),
+  );
+  if (failing.length) return { ok: false, failing, sha: read.data.sha, requiredKnown };
+  const pending = read.data.checks.filter((check) => check.state === "pending");
+  return {
+    ok: true,
+    note: pending.length
+      ? `base ${base} CI is still running (${pending.map((check) => check.name).join(", ")}); merging without waiting`
+      : null,
+  };
+}
+
 export async function mergePullRequest(
   cwd: string,
   resolved: ResolvedForge,
@@ -648,6 +695,13 @@ export async function mergePullRequest(
       `unverified_refused: workspace ${grant.workspace ? `"${grant.workspace}"` : "(none)"} grants merge: "verified", which never merges without an accepted independent verdict`,
       "a non-author session verifies the head (workit-review), then merge without --unverified",
       { reason: "unverified_refused" },
+    );
+
+  const baseRed = input.baseRedOk ?? null;
+  if (baseRed && !baseRed.reason.trim())
+    return failure(
+      "invalid_input",
+      "--base-red-ok needs --reason <why merging onto a red base is fine>",
     );
 
   const number = selectPr(cwd, resolved, { pr: input.pr });
@@ -789,6 +843,20 @@ export async function mergePullRequest(
     );
   }
 
+  const baseCi = baseCiState(cwd, resolved, doc.base);
+  let baseRedOverride: { reason: string } | null = null;
+  if (!baseCi.ok) {
+    const names = baseCi.failing.map((failed) => failed.name).join(", ");
+    const url = baseCi.failing.find((failed) => failed.url)?.url ?? null;
+    if (!baseRed)
+      return refuse(
+        `base_red: ${doc.base} at ${baseCi.sha?.slice(0, 12) ?? "its head"} has failing CI (${names}${baseCi.requiredKnown ? "" : "; the required checks could not be read, so every failed check counts"})${url ? `: ${url}` : ""}; merging ${label} onto it would land on a red base`,
+        `fix ${doc.base} first, or, if the user accepts it: workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --base-red-ok --reason "<why>"`,
+        { reason: "base_red", blockers: baseCi.failing.map((failed) => failed.name) },
+      );
+    baseRedOverride = baseRed;
+  }
+
   const squashMessage = squashMessageFor(cwd, resolved, input, doc);
   if (squashMessage && !squashMessage.ok) return squashMessage;
   // The intent goes in before the forge write: a merge call that errors after
@@ -806,6 +874,7 @@ export async function mergePullRequest(
     review: verdict.review,
     lane: verdict.lane,
     ...(unverified ? { unverified: unverified.recorded } : {}),
+    ...(baseRedOverride ? { baseRedOk: baseRedOverride.reason } : {}),
     grant: grant.source,
   });
   if (!intent.ok)
@@ -841,6 +910,7 @@ export async function mergePullRequest(
     review: verdict.review,
     lane: verdict.lane,
     ...(unverified ? { unverified: unverified.recorded } : {}),
+    ...(baseRedOverride ? { baseRedOk: baseRedOverride.reason } : {}),
     grant: grant.source,
     intent: intentId,
     verified: false,
@@ -909,6 +979,14 @@ export async function mergePullRequest(
       mergeSha: merged.data.mergeSha,
       verdict,
       unverified,
+      baseCi: {
+        note: baseRedOverride
+          ? `base ${doc.base} CI is red; merged anyway (--base-red-ok: ${baseRedOverride.reason})`
+          : baseCi.ok
+            ? baseCi.note
+            : null,
+        override: baseRedOverride,
+      },
       grant: { source: grant.source },
       deletedBranch,
       recorded,
