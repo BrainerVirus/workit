@@ -31,6 +31,7 @@ import {
   VERIFICATION_MODES,
   GRANT_KINDS,
   isDefaultEndpoint,
+  endpointMismatch,
   isGrantKind,
   listGrants,
   raises,
@@ -146,6 +147,9 @@ function show(argv: string[], io: Io): number {
       rows.flatMap((entry) => [
         `${entry.name} (${entry.glob})`,
         ...describe(entry.grants, entry.configured, entry, entry.verification),
+        ...(endpointMismatch({ ...entry, workspace: entry.name })
+          ? [`note: ${endpointMismatch({ ...entry, workspace: entry.name })}`]
+          : []),
       ]),
     );
   }
@@ -171,6 +175,7 @@ function show(argv: string[], io: Io): number {
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
     ...describe(data.grants, data.configured, data, data.verification),
+    ...(endpointMismatch(data) ? [`note: ${endpointMismatch(data)}`] : []),
     ...describeReleaseTracks(tracks).map((line) => `  ${line}`),
     "raising a grant needs the user: workit grant set <workspace> <kind>=<value>",
   ]);
@@ -236,7 +241,9 @@ async function change(
         fail(
           "blocked",
           `grant_raise_refused: raising ${raised.map(({ kind }) => kind).join(", ")} needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}; grants are never raised headless`,
-          { unblock: `ask the user to run, in their own terminal: ${command}` },
+          {
+            unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${command}`,
+          },
         ),
       );
     const answer = await askOrCancel(io, () =>

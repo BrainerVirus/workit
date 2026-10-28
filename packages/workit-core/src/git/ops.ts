@@ -111,6 +111,20 @@ export const gitError = (run: { stderr: string; stdout?: string }, max = 3): str
   return lines.slice(-max).join(" / ").slice(0, 400) || "git failed";
 };
 
+/**
+ * One line naming the rule a commit-msg hook (commitlint) refused, from its
+ * `✖ … [rule]` output: `commit refused by commit-msg hook: header-max-length 100 (got 104)`.
+ * Null when the output names no rule.
+ */
+export const hookRefusal = (output: string): string | null => {
+  const match = /✖\s+(.*?)\s*\[([\w-]+)\]/u.exec(output);
+  if (!match) return null;
+  const [, text, rule] = match;
+  const limit = /(?:longer|shorter|exceed\w*|more|less|than)\D*?(\d+)/iu.exec(text)?.[1];
+  const got = /(?:current length is|got|is)\s+(\d+)/iu.exec(text)?.[1];
+  return `commit refused by commit-msg hook: ${rule}${limit ? ` ${limit}` : ""}${got ? ` (got ${got})` : ""}${limit || got ? "" : ` (${text})`}`;
+};
+
 /** Past this many lines, hook output keeps its head and tail. */
 const OUTPUT_LINES = 200;
 /** A longer output line (a minified bundle, a JSON blob) is cut here. */
@@ -753,11 +767,14 @@ export function gitCommit(
     // Decided here: the session hook's helper skips its own `workit git trailers` call.
     env: { ...(input.env ?? process.env), WORKIT_TRAILERS: trailersOn ? "on" : "off" },
   });
-  if (!committed.ok)
+  if (!committed.ok) {
+    const output = gitOutput(committed);
+    const refusal = hookRefusal(output);
     return failure(
       "failed",
-      `git commit failed (a hook or git refused it):\n${gitOutput(committed)}`,
+      `git commit failed (a hook or git refused it):\n${output}${refusal ? `\n${refusal}` : ""}`,
     );
+  }
   const sha = headSha(cwd);
   if (!sha) return failure("failed", "the commit did not resolve");
   // A merge commit lists what it brought in relative to its first parent.

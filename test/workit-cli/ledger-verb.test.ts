@@ -639,3 +639,32 @@ test("Given a hand-appended ledger row, When `workit ledger verify-integrity` ru
   expect(check.stdout).toContain("accepted; review: verified");
   expect(check.stdout).toContain("warning: ledger row hand-1");
 });
+
+test("Given an untracked probe file, When a verdict is recorded, Then it is accepted and the row lists the file; a tracked edit is still refused", async () => {
+  const root = featureRepo();
+  writeFileSync(path.join(root, "probe.log"), "scratch\n");
+  const recorded = await run(root, [
+    "ledger",
+    "verdict",
+    "verified",
+    "--how",
+    "ran it",
+    "--self",
+    "--json",
+  ]);
+  expect(recorded.code, recorded.stderr + recorded.stdout).toBe(0);
+  expect(recorded.json().data).toMatchObject({ untracked: ["probe.log"], untrackedCount: 1 });
+
+  writeFileSync(path.join(root, "feature.txt"), "edited\n");
+  const dirty = await run(root, [
+    "ledger",
+    "verdict",
+    "verified",
+    "--how",
+    "ran it",
+    "--self",
+    "--json",
+  ]);
+  expect(dirty.code).toBe(3);
+  expect(dirty.json().error).toContain("dirty_worktree");
+});

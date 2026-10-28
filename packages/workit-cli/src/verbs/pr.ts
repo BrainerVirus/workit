@@ -9,6 +9,7 @@
 // `--unverified --reason` (merge: true only) bypasses the verdict, recorded.
 // `--subject`/`--body` (squash only) set the squash commit message.
 // ready/edit/threads/reply: the lifecycle steps `next` names (audit M13).
+import { endpointMismatch, resolveAutonomy } from "@brainervirus/workit-core/src/autonomy";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -71,6 +72,8 @@ import {
   parseFlags,
   positiveInt,
   renderStatus,
+  SELECTOR_FLAGS,
+  selector,
   unverifiedFlag,
   usage,
 } from "./forge-common";
@@ -79,7 +82,7 @@ const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60
 const CREATE_USAGE =
   "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--json]";
 const MERGE_USAGE =
-  "workit pr merge [--pr <n>] [--method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch] [--unverified --reason <why>] [--json]";
+  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--keep-branch] [--unverified --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
 const EDIT_USAGE =
   "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--json]";
@@ -103,24 +106,24 @@ const prLabel = (kind: string, number: number): string =>
   `${kind === "github" ? "PR #" : "MR !"}${number}`;
 
 async function status(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { pr: "value", branch: "value", "log-lines": "value" });
+  const flags = parseFlags(argv, { ...SELECTOR_FLAGS, "log-lines": "value" });
   if (typeof flags === "string") return usage(io, flags, STATUS_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, STATUS_USAGE);
-  const pr = positiveInt(flags.values.pr, "--pr");
-  if (typeof pr === "string") return usage(io, pr, STATUS_USAGE);
-  if (pr && flags.values.branch) return usage(io, "pass --pr or --branch, not both", STATUS_USAGE);
+  const picked = selector(flags);
+  if (typeof picked === "string") return usage(io, picked, STATUS_USAGE);
+  const { pr, branch: pickedBranch } = picked;
   const logLines =
     flags.values["log-lines"] === "0" ? 0 : positiveInt(flags.values["log-lines"], "--log-lines");
   if (typeof logLines === "string") return usage(io, logLines, STATUS_USAGE);
   if (logLines !== null && logLines > 500)
     return usage(io, "--log-lines is capped at 500", STATUS_USAGE);
 
-  const connected = connect(io, flags.values.branch);
+  const connected = connect(io, pickedBranch);
   if (!connected.ok) return forgeFail(io, connected);
   const report = prStatusReport(io.cwd, connected.data, {
     pr,
-    branch: flags.values.branch ?? null,
+    branch: pickedBranch,
     logLines: logLines ?? 60,
     identity: connected.data.identity,
     actor: actorFromEnv(io.env),
@@ -446,8 +449,18 @@ async function create(argv: string[], io: Io): Promise<number> {
     ...issueLines(links, opened, linked, backlinks, data.number),
     ...planned.data.warnings.map((warning) => `note: ${warning}`),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
-    `next: ${data.next}`,
+    `next: ${data.next}${endpointNote(io.cwd)}`,
   ]);
+}
+
+/** `; <grant/endpoint mismatch>` when the workspace grants more than its endpoint does. */
+function endpointNote(cwd: string): string {
+  try {
+    const line = endpointMismatch(resolveAutonomy(cwd));
+    return line ? `; ${line}` : "";
+  } catch {
+    return "";
+  }
 }
 
 function issueLines(
@@ -481,7 +494,11 @@ async function merge(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
     pr: "value",
     method: "value",
+    squash: "boolean",
+    merge: "boolean",
+    rebase: "boolean",
     "delete-branch": "boolean",
+    "keep-branch": "boolean",
     unverified: "boolean",
     reason: "value",
     subject: "value",
@@ -493,11 +510,19 @@ async function merge(argv: string[], io: Io): Promise<number> {
   if (typeof unverified === "string") return usage(io, unverified, MERGE_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, MERGE_USAGE);
-  const pr = positiveInt(flags.values.pr, "--pr");
-  if (typeof pr === "string") return usage(io, pr, MERGE_USAGE);
-  const method = (flags.values.method ?? "squash") as MergeMethod;
+  const picked = selector(flags);
+  if (typeof picked === "string") return usage(io, picked, MERGE_USAGE);
+  const { pr } = picked;
+  const aliases = (["squash", "merge", "rebase"] as const).filter((name) =>
+    flags.booleans.has(name),
+  );
+  if (aliases.length > 1 || (aliases.length === 1 && flags.values.method !== undefined))
+    return usage(io, "pass one of --squash, --merge, --rebase or --method", MERGE_USAGE);
+  const method = aliases[0] ?? flags.values.method ?? "squash";
   if (!METHODS.has(method))
     return usage(io, "--method must be squash, merge or rebase", MERGE_USAGE);
+  if (flags.booleans.has("delete-branch") && flags.booleans.has("keep-branch"))
+    return usage(io, "pass --delete-branch or --keep-branch, not both", MERGE_USAGE);
   const { subject } = flags.values;
   if (flags.values.body !== undefined && flags.values["body-file"] !== undefined)
     return usage(io, "pass --body or --body-file, not both", MERGE_USAGE);
@@ -568,8 +593,9 @@ async function ready(argv: string[], io: Io): Promise<number> {
   if (typeof flags === "string") return usage(io, flags, READY_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, READY_USAGE);
-  const pr = positiveInt(flags.values.pr, "--pr");
-  if (typeof pr === "string") return usage(io, pr, READY_USAGE);
+  const picked = selector(flags);
+  if (typeof picked === "string") return usage(io, picked, READY_USAGE);
+  const { pr } = picked;
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
   const result = readyPullRequest(io.cwd, connected.data, {
@@ -596,8 +622,9 @@ async function edit(argv: string[], io: Io): Promise<number> {
   if (typeof flags === "string") return usage(io, flags, EDIT_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, EDIT_USAGE);
-  const pr = positiveInt(flags.values.pr, "--pr");
-  if (typeof pr === "string") return usage(io, pr, EDIT_USAGE);
+  const picked = selector(flags);
+  if (typeof picked === "string") return usage(io, picked, EDIT_USAGE);
+  const { pr } = picked;
   let body: string | undefined;
   if (flags.values["body-file"] !== undefined) {
     const read = readBodyFile(io, flags.values["body-file"]);
@@ -632,8 +659,9 @@ async function threads(argv: string[], io: Io): Promise<number> {
   if (typeof flags === "string") return usage(io, flags, THREADS_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, THREADS_USAGE);
-  const pr = positiveInt(flags.values.pr, "--pr");
-  if (typeof pr === "string") return usage(io, pr, THREADS_USAGE);
+  const picked = selector(flags);
+  if (typeof picked === "string") return usage(io, picked, THREADS_USAGE);
+  const { pr } = picked;
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
   const result = listThreads(io.cwd, connected.data, { pr });
@@ -658,8 +686,9 @@ async function reply(argv: string[], io: Io): Promise<number> {
   if (typeof flags === "string") return usage(io, flags, REPLY_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, REPLY_USAGE);
-  const pr = positiveInt(flags.values.pr, "--pr");
-  if (typeof pr === "string") return usage(io, pr, REPLY_USAGE);
+  const picked = selector(flags);
+  if (typeof picked === "string") return usage(io, picked, REPLY_USAGE);
+  const { pr } = picked;
   const thread = flags.values.thread;
   if (!thread) return usage(io, "--thread <id> is required (workit pr threads)", REPLY_USAGE);
   let body: string | null = null;

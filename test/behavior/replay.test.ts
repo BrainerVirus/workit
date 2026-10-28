@@ -28,7 +28,13 @@ type Case = {
   id: string;
   source: string;
   open?: string;
-  repo?: { branch?: string; worktree?: "claude-agent"; checks?: Record<string, string> };
+  repo?: {
+    branch?: string;
+    worktree?: "claude-agent";
+    checks?: Record<string, string>;
+    /** Workspace entries for workspaces.json; `__CWD__` in a glob is the repo path. */
+    workspaces?: Record<string, unknown>[];
+  };
   env?: Record<string, string>;
 } & (
   | { hook: { host: Host; fixture: string; overrides?: Record<string, unknown> }; expect: Expect }
@@ -123,6 +129,11 @@ const workspace = (repo: Case["repo"] = {}): { cwd: string } => {
       JSON.stringify({ checks: repo.checks }),
     );
   }
+  if (repo.workspaces)
+    writeFileSync(
+      path.join(process.env.WORKFLOW_TOOLKIT_CONFIG_DIR ?? "", "workspaces.json"),
+      JSON.stringify({ workspaces: bind(repo.workspaces, root) }),
+    );
   if (repo.worktree !== "claude-agent") return { cwd: root };
   const cwd = path.join(root, ".claude", "worktrees", `agent-${AGENT_ID}`);
   git(root, "worktree", "add", "-q", "-b", `worktree-agent-${AGENT_ID}`, cwd);
