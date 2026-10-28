@@ -123,7 +123,8 @@ Every shard uploads the durations it measured (`timings-<leg>-<i>` artifacts).
 Refresh the committed files when the balance drifts: download a green run's
 artifacts and merge each leg's shards into `test/timings/<leg>.json`.
 
-On Windows the per-test default timeout is 15 s; a file that needs more sets
+On Windows and on the parallel Ubuntu and macOS shards the per-test default
+timeout is 15 s; a file that needs more sets
 its own `setDefaultTimeout` (Windows-only where Linux is fast). Jobs time out
 after 15 minutes; nothing retries a failed test. PRs touching only `docs/**`
 (outside `docs/qualification/`) or root/`.github/` Markdown skip the test legs.
