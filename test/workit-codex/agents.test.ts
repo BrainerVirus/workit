@@ -81,7 +81,8 @@ test("Given the judges, Then they run read-only and record verdicts as their own
     const agent = read(judge);
     expect(agent.sandbox_mode, judge).toBe("read-only");
     expect(agent.developer_instructions, judge).toContain("workit ledger verdict");
-    expect(agent.developer_instructions, judge).toContain("--session <id>");
+    expect(agent.developer_instructions, judge).not.toContain("--session <id>");
+    expect(agent.developer_instructions, judge).not.toContain("--token=<token>");
     expect(agent.developer_instructions, judge).toContain("SubagentStart hook");
   }
   const implementer = read("implementer");

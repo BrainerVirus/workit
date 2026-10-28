@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { main } from "@/packages/workit-cli/src/main";
 import { appendObserved } from "@/packages/workit-core/src/ledger";
+import { sessionClaimRefusal } from "@/packages/workit-core/src/host-session";
 import {
   claudeCodeAdapter,
   codexAdapter,
@@ -95,14 +96,15 @@ test("Given a verifier and a reviewer spawned on Claude Code, When they start, T
   }
 });
 
-test("Given a verifier and a reviewer spawned on Codex, When they start, Then the same line is injected through SubagentStart", () => {
+test("Given a verifier and a reviewer spawned on Codex, When they start, Then the line carries no --session and no --token", () => {
   const root = repo();
-  expect(lineIn(codex(root, "workit-verifier"))).toMatch(
-    /^workit ledger verdict <verified\|failed\|blocked> --kind <live\|unit> --branch feature\/x --session codex-session-1:agent-1 --token=[0-9a-f]{36} --how /u,
+  expect(lineIn(codex(root, "workit-verifier"))).toBe(
+    'workit ledger verdict <verified|failed|blocked> --kind <live|unit> --branch feature/x --how "<what you ran and saw>"',
   );
-  expect(lineIn(codex(root, "workit-reviewer", "agent-2"))).toMatch(
-    /^workit ledger verdict <verified\|failed\|blocked> --kind review --branch feature\/x --session codex-session-1:agent-2 --token=/u,
+  expect(lineIn(codex(root, "workit-reviewer", "agent-2"))).toBe(
+    'workit ledger verdict <verified|failed|blocked> --kind review --branch feature/x --how "<what you ran and saw>"',
   );
+  expect(codex(root, "workit-verifier", "agent-3")).not.toMatch(/--token|--session/u);
 });
 
 test("Given SubagentStart fired again for an id already issued, When the judge starts, Then it gets no command (one without the token is refused) and is told to spawn a fresh verifier", () => {
@@ -157,4 +159,42 @@ test("Given the verdict line a Claude Code verifier received, When it runs it as
     kind: "live",
     actor: { session: "claude-session-1:agent-1" },
   });
+});
+
+// Contract: the line each host hands out, with its placeholders filled, passes
+// the CLI's own session claim check from that host's child shell.
+const fill = (line: string): string[] => argvOf(line).filter((arg) => arg !== "--how");
+const flagValue = (argv: string[], name: string): string | undefined => {
+  const at = argv.findIndex((arg) => arg === name);
+  return at < 0 ? undefined : argv[at + 1];
+};
+const tokenOf = (argv: string[]): string | undefined =>
+  argv.find((arg) => arg.startsWith("--token="))?.slice("--token=".length);
+
+test("Given the line Claude Code hands a verifier, When the claim check runs from the inherited lead env, Then it passes with the token the line carries", () => {
+  const root = repo();
+  const argv = fill(lineIn(claude(root, "workit:verifier")) ?? "");
+  const env = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "claude-session-1" };
+  const session = flagValue(argv, "--session") ?? "";
+  expect(sessionClaimRefusal(env, session, root, { token: tokenOf(argv), flag: true })).toBeNull();
+});
+
+test("Given the line Codex hands a verifier, When it runs from a child whose CODEX_THREAD_ID is the agent id, Then it names no session and a stray --session <lead>:<agent> is still accepted", () => {
+  const root = repo();
+  const argv = fill(lineIn(codex(root, "workit-verifier", "agent-1")) ?? "");
+  expect(flagValue(argv, "--session")).toBeUndefined();
+  expect(tokenOf(argv)).toBeUndefined();
+  const env = { CODEX_THREAD_ID: "agent-1" };
+  expect(sessionClaimRefusal(env, "agent-1", root)).toBeNull();
+  expect(sessionClaimRefusal(env, "codex-session-1:agent-1", root, { flag: true })).toBeNull();
+});
+
+test("Given the OpenCode and Pi child shells, When a --session naming their own derived session is claimed, Then it is accepted as a no-op", () => {
+  const root = repo();
+  expect(
+    sessionClaimRefusal({ OPENCODE_SESSION_ID: "child-9" }, "lead-O:child-9", root, { flag: true }),
+  ).toBeNull();
+  expect(
+    sessionClaimRefusal({ PI_SESSION_ID: "w-1" }, "lead-P:w-1", root, { flag: true }),
+  ).toBeNull();
 });

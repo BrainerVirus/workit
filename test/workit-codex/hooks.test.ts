@@ -107,8 +107,8 @@ test("G a Codex SubagentStart, T Workit judges get their own session and the imp
     ["workit-reviewer", "agent-2"],
   ]) {
     const text = start(judge, id);
-    expect(text, judge).toContain(`Its own Workit session is codex-session-1:${id}`);
-    expect(text, judge).toContain(`--session codex-session-1:${id}`);
+    expect(text, judge).toContain("Its shell already acts as its own Workit session");
+    expect(text, judge).not.toMatch(/--session codex|--token=/u);
   }
   const implementer = start("workit-implementer");
   expect(implementer).toContain("its own git worktree");
@@ -185,30 +185,26 @@ test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issu
         fixture("claude-code", "subagent-start", root, { agent_type: "workit:verifier" }),
       ).json,
     );
-    const codexToken = tokenIn(codex("subagent-start", root, { agent_type: "workit-verifier" }));
+    const codexLine = codex("subagent-start", root, { agent_type: "workit-verifier" });
     expect(claudeToken).not.toBeNull();
-    expect(codexToken).not.toBeNull();
-    // A replayed SubagentStart for the same agent mints nothing new (mv8daa5d P1),
-    // and the first text says an older CLI needs updating, not a dead end.
-    const replay = codex("subagent-start", root, { agent_type: "workit-verifier" });
+    // Codex's child shell proves its own identity: no token, nothing issued (#427).
+    expect(tokenIn(codexLine)).toBeNull();
+    expect(JSON.stringify(codexLine)).not.toContain("--session");
+    expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root)?.error).toContain(
+      "forged_session",
+    );
+    // A replayed SubagentStart for the same Claude agent mints nothing new (mv8daa5d P1).
+    const replay = dispatchHook(
+      claudeCodeAdapter,
+      fixture("claude-code", "subagent-start", root, { agent_type: "workit:verifier" }),
+    ).json;
     expect(tokenIn(replay)).toBeNull();
-    expect(JSON.stringify(replay)).toContain("codex-session-1:agent-1");
-    const fresh = codex("subagent-start", root, {
-      agent_type: "workit-verifier",
-      agent_id: "agent-5",
-    });
-    expect(JSON.stringify(fresh)).toContain("workit upgrade --cli");
+    expect(JSON.stringify(replay)).toContain("claude-session-1:agent-1");
     expect(
       sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root, { token: claudeToken }),
     ).toBeNull();
-    expect(
-      sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root, { token: codexToken }),
-    ).toBeNull();
     // The lead read the id, not the token: it cannot act as its verifier.
     expect(sessionClaimRefusal(claudeLead, "claude-session-1:agent-1", root)?.error).toContain(
-      "unbound_session",
-    );
-    expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-1", root)?.error).toContain(
       "unbound_session",
     );
     for (const [env, invented] of [

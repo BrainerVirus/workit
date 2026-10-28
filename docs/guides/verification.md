@@ -338,10 +338,11 @@ reports that plugin as out of date. The token needs a CLI at least as new as
 the plugin: the SubagentStart text says to update an older CLI that rejects
 `--token`.
 
-On a host, `--session` takes only an issued id. Naming the shell's own
-session (`--session <lead>` on Claude Code, an OpenCode child's
-`<lead>:<child>`, a Pi worker's id, a Codex thread id) is refused as
-`session_flag`: drop `--session`, the shell's own session already acts. Every
+On a host, `--session` takes only an issued id. Naming a declared shell
+session (`--session <lead>` on Claude Code) is refused as `session_flag`:
+drop `--session`, the shell's own session already acts. Naming a session the
+shell derives itself (an OpenCode child's `<lead>:<child>`, a Pi worker's id,
+a Codex thread id) is accepted as a no-op. Every
 recorded verdict prints the gates' reading of its branch (`gate: <branch>
 accepted` or `not accepted (<reasons>)`; `data.gate` in JSON), so a verdict
 that does not count is never silent.

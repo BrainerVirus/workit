@@ -80,6 +80,7 @@ import {
 import { currentBranch, headSha, resolveRef } from "@brainervirus/workit-core/src/git/rev";
 import {
   issuedTokenMatches,
+  namesOwnDerivedSession,
   sessionClaimRefusal,
 } from "@brainervirus/workit-core/src/host-session";
 import { ensureImplicitTask } from "./implicit-task";
@@ -164,6 +165,8 @@ const actorFor = (io: Io, values: Values): Acting | Error => {
   if (values.session !== undefined) {
     if (!SESSION_SAFE.test(values.session))
       return new Error("--session must be 1-128 characters of [A-Za-z0-9_.:@/+-]");
+    // The shell's own derived session named by hand is no override: act as the env.
+    if (namesOwnDerivedSession(io.env, values.session)) return { actor, source: "env" };
     return { actor: { ...actor, session: values.session }, source: "flag" };
   }
   if (values.as !== undefined) {
