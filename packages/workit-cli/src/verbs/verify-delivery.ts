@@ -16,6 +16,8 @@ import {
   type DeliveryEndpoint,
   type DeliveryReport,
 } from "@brainervirus/workit-core/src/forge/verify";
+import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";
+import { closeDeliveredTasks } from "@brainervirus/workit-core/src/core/task-delivery";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
 import { connect, forgeDeps, forgeFail, parseFlags, positiveInt, usage } from "./forge-common";
@@ -93,6 +95,16 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   if (!result.ok) return forgeFail(io, result);
   const report = result.data;
+  if (report.delivered && expect === "merged") {
+    try {
+      closeDeliveredTasks(
+        new TaskStore(io.cwd),
+        new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      );
+    } catch {
+      // The next task read repairs it from the ledger.
+    }
+  }
   if (report.delivered) return emit(io, ok(report), render);
   const failed = report.observations.filter((entry) => !entry.ok);
   // Human mode: the observations too, not just the error line.
