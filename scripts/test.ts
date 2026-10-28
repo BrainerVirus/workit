@@ -30,14 +30,18 @@ const PACKAGING = [
 // `setDefaultTimeout`, which wins over this flag.
 const WINDOWS_TIMEOUT_MS = 15_000;
 
-// Each CI leg's tests. Every leg runs its shard's files serially: under
-// `bun test --parallel` (Bun 1.4.1) a worker could spin forever with an
-// unreaped git/node child, hanging the job until its timeout, on Ubuntu and
-// macOS alike, depending on which files shared a worker (#415).
+// Each CI leg's tests, and whether its shard's files run across workers
+// (`bun test --parallel`). Ubuntu and macOS do: on Bun 1.4.4 they finish in
+// about half the time. Windows stays serial: in parallel its spawn-heavy
+// tests timed out at 15 s for a small gain. (On Bun 1.4.1 workers could spin
+// forever with an unreaped child, #415.)
 const LEGS = {
-  ubuntu: PACKAGING.map((pattern) => `--path-ignore-patterns=${pattern}`),
-  macos: ["./test/workit-core", "./test/artifacts"],
-  windows: ["./test/workit-core", "./test/artifacts"],
+  ubuntu: {
+    select: PACKAGING.map((pattern) => `--path-ignore-patterns=${pattern}`),
+    parallel: true,
+  },
+  macos: { select: ["./test/workit-core", "./test/artifacts"], parallel: true },
+  windows: { select: ["./test/workit-core", "./test/artifacts"], parallel: false },
 } as const;
 
 const bunTest = (args: string[]): number =>
@@ -47,8 +51,8 @@ const bunTest = (args: string[]): number =>
 // test/timings/<leg>.json, then rewrites that file with what this shard
 // measured; CI uploads it so the committed timings can be refreshed.
 function runCiShard(leg: string | undefined, spec: string | undefined): number {
-  const select = LEGS[leg as keyof typeof LEGS];
-  if (!select || !/^\d+\/\d+$/.test(spec ?? "")) {
+  const config = LEGS[leg as keyof typeof LEGS];
+  if (!config || !/^\d+\/\d+$/.test(spec ?? "")) {
     console.error(`usage: bun scripts/test.ts ci <${Object.keys(LEGS).join("|")}> <i>/<n>`);
     return 2;
   }
@@ -56,8 +60,9 @@ function runCiShard(leg: string | undefined, spec: string | undefined): number {
     `--shard=${spec}`,
     `--timings=test/timings/${leg}.json`,
     "--update-timings",
+    ...(config.parallel ? ["--parallel"] : []),
     ...(process.platform === "win32" ? [`--timeout=${WINDOWS_TIMEOUT_MS}`] : []),
-    ...select,
+    ...config.select,
   ]);
 }
 
