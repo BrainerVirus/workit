@@ -44,8 +44,9 @@ type RestPr = {
   merged?: boolean;
   draft?: boolean;
   title?: string;
-  base?: { ref?: string };
-  head?: { ref?: string };
+  base?: { ref?: string; repo?: { full_name?: string } | null };
+  head?: { ref?: string; repo?: { full_name?: string } | null };
+  user?: { login?: string } | null;
 };
 
 type Page<T> = { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: T[] };
@@ -587,8 +588,25 @@ export function createGitHubForge(options: {
         title: value.title ?? "",
         base: value.base?.ref ?? "",
         headBranch: value.head?.ref ?? "",
+        author: value.user?.login ?? null,
+        // A deleted fork has no head repo: not ours, so a fork.
+        fork:
+          value.base?.repo?.full_name === undefined
+            ? null
+            : value.head?.repo?.full_name?.toLowerCase() !==
+              value.base.repo.full_name.toLowerCase(),
       };
       return success(meta);
+    },
+
+    openPrsInto(branch) {
+      const list = rest<Array<{ number?: number }>>(
+        `repos/${repo}/pulls?state=open&base=${encodeURIComponent(branch)}&per_page=100`,
+        `open pull requests into ${branch}`,
+      );
+      if (!list.ok) return list;
+      if (!Array.isArray(list.data)) return failure("failed", "pull request list is not a list");
+      return success(list.data.flatMap((pr) => (typeof pr.number === "number" ? [pr.number] : [])));
     },
 
     setDraft(number, draft) {

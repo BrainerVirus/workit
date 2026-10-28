@@ -157,6 +157,13 @@ const workspaceConfigSchema = z
      */
     trailers: z.boolean().optional(),
     /**
+     * Whether `workit pr merge` deletes the head branch after a merge (default
+     * true); `--keep-branch` opts out for one merge. Skipped, never refused,
+     * for a protected or base branch, a fork, a stack parent and a foreign
+     * author (forge/pr-ops.ts).
+     */
+    deleteBranch: z.boolean().optional(),
+    /**
      * Whether the live-session guard denies edits in a checkout another live
      * agent session owns (default true; core/live-session.ts).
      */
@@ -841,6 +848,11 @@ const inheritedSetting = (
     .toSorted((a, b) => globSpecificity(b.glob) - globSpecificity(a.glob));
   return { workspace: selected.name, source: [selected, ...enclosing].find(has) ?? null };
 };
+
+/** Whether `pr merge` deletes the head branch by default: true unless a covering entry sets `deleteBranch: false`. */
+export const workspaceDeleteBranch = (cwd: string, dir?: string): boolean =>
+  inheritedSetting(cwd, dir, (entry) => typeof entry.deleteBranch === "boolean")?.source
+    ?.deleteBranch !== false;
 
 /**
  * Whether commits in cwd's workspace carry the `Workit-Session:` trailer.

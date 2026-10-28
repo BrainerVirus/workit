@@ -161,6 +161,10 @@ export type PrMeta = {
   title: string;
   base: string;
   headBranch: string;
+  /** The author's login; null when the forge does not say. */
+  author: string | null;
+  /** The head comes from another repository than the PR's; null when unknown. */
+  fork: boolean | null;
 };
 
 /** What `workit pr edit` changes; unset fields are left alone. */
@@ -205,6 +209,8 @@ export interface Forge {
   updateBase(n: number, base: string): ForgeResult<void>;
   /** Title, draft flag, base and state of one PR/MR. */
   prMeta(n: number): ForgeResult<PrMeta>;
+  /** Numbers of the open PRs/MRs that target `branch` as their base (stack children). */
+  openPrsInto(branch: string): ForgeResult<number[]>;
   /** Mark a draft ready (`draft: false`) or convert it back to a draft. */
   setDraft(n: number, draft: boolean): ForgeResult<void>;
   editPr(n: number, edit: PrEdit): ForgeResult<void>;

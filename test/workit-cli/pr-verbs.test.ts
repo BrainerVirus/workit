@@ -71,6 +71,7 @@ const workspace = (repo: ForgeRepo, entry: Record<string, unknown>) =>
           name: "w",
           glob: `${repo.root.replaceAll("\\", "/")}/**`,
           verification: "self",
+          deleteBranch: false,
           ...entry,
         },
       ],
@@ -555,7 +556,10 @@ test("pr merge: READY + accepted verdict merges with the head SHA guard and reco
   const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
   grantMerge(repo);
   await verdict(repo);
-  const result = await run(["pr", "merge", "--method", "squash", "--json"], repo.cwd);
+  const result = await run(
+    ["pr", "merge", "--method", "squash", "--keep-branch", "--json"],
+    repo.cwd,
+  );
   expect(result.code).toBe(0);
   expect(result.json().data).toMatchObject({
     number: 12,

@@ -1124,7 +1124,7 @@ test("pr merge: given a lower PR of a stack verified at the top, then pr status 
     verdictId: topId,
     cover: { branch: "feature/c", verdictId: topId },
   });
-  const merged = await run(["pr", "merge", "--pr", "11", "--json"], forge.cwd);
+  const merged = await run(["pr", "merge", "--pr", "11", "--keep-branch", "--json"], forge.cwd);
   expect(merged.code, merged.stderr + merged.stdout).toBe(0);
   expect(merged.json().data.verdict).toMatchObject({ accepted: true, verdictId: topId });
 });

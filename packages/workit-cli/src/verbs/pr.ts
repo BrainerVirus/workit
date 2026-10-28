@@ -39,11 +39,15 @@ import {
   mergePullRequest,
   nextHint,
   type CreateOutcome,
-  type MergeOutcome,
 } from "@brainervirus/workit-core/src/forge/pr-ops";
 import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
+import { workspaceDeleteBranch } from "@brainervirus/workit-core/src/core/workspaces";
+import {
+  cleanupMergedBranch,
+  type LocalCleanup,
+} from "@brainervirus/workit-core/src/forge/merge-cleanup";
 import {
   branchKindOf,
   flowMismatch,
@@ -81,7 +85,7 @@ const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60
 const CREATE_USAGE =
   "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--json]";
 const MERGE_USAGE =
-  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch] [--unverified --reason <why>] [--json]";
+  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
 const EDIT_USAGE =
   "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--json]";
@@ -497,6 +501,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
     merge: "boolean",
     rebase: "boolean",
     "delete-branch": "boolean",
+    "keep-branch": "boolean",
     unverified: "boolean",
     reason: "value",
     subject: "value",
@@ -508,6 +513,8 @@ async function merge(argv: string[], io: Io): Promise<number> {
   if (typeof unverified === "string") return usage(io, unverified, MERGE_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, MERGE_USAGE);
+  if (flags.booleans.has("delete-branch") && flags.booleans.has("keep-branch"))
+    return usage(io, "pass --delete-branch or --keep-branch, not both", MERGE_USAGE);
   const picked = selector(flags);
   if (typeof picked === "string") return usage(io, picked, MERGE_USAGE);
   const { pr } = picked;
@@ -542,6 +549,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
       pr,
       method,
       deleteBranch: flags.booleans.has("delete-branch"),
+      implicitDelete: !flags.booleans.has("keep-branch") && workspaceDeleteBranch(io.cwd),
       actor: actorFromEnv(io.env),
       ...(unverified ? { unverified } : {}),
       ...(subject !== undefined ? { subject } : {}),
@@ -562,7 +570,11 @@ async function merge(argv: string[], io: Io): Promise<number> {
               : {},
       }),
     );
-  return emit(io, ok(result.data), (data: MergeOutcome) => [
+  const cleanup: LocalCleanup | null =
+    result.data.deletedBranch === true
+      ? cleanupMergedBranch(io.cwd, result.data.branch, result.data.head)
+      : null;
+  return emit(io, ok({ ...result.data, localCleanup: cleanup }), (data) => [
     `merged ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number} (${data.method}) at head ${data.head.slice(0, 12)}${data.mergeSha ? ` -> ${data.mergeSha.slice(0, 12)}` : ""}`,
     data.unverified
       ? `UNVERIFIED: merged without a verdict (--unverified: ${data.unverified.reason}); ledger ${data.unverified.recorded}`
@@ -575,8 +587,21 @@ async function merge(argv: string[], io: Io): Promise<number> {
     ...(data.deletedBranch === true
       ? [`deleted ${data.branch}`]
       : typeof data.deletedBranch === "object"
-        ? [`branch not deleted: ${data.deletedBranch.error}`]
+        ? [
+            "skipped" in data.deletedBranch
+              ? `kept ${data.branch}: ${data.deletedBranch.skipped}`
+              : `branch not deleted: ${data.deletedBranch.error}`,
+          ]
         : []),
+    ...(data.localCleanup
+      ? [
+          ...(data.localCleanup.worktreeRemoved
+            ? [`removed worktree ${data.localCleanup.worktreeRemoved}`]
+            : []),
+          ...(data.localCleanup.branchDeleted ? [`deleted local ${data.branch}`] : []),
+          ...data.localCleanup.notes,
+        ]
+      : []),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     ...("error" in data.confirmed && !("error" in data.recorded)
       ? [`ledger: merge not confirmed in the ledger (${data.confirmed.error})`]

@@ -229,7 +229,10 @@ shape  →  implement  →  review  →  ship
 4. **Ship**: `workit git push`, `workit pr create --issue <#n|ID>` (links the
    issue on GitHub, GitLab or YouTrack), `workit ci wait`,
    `workit pr status`; `workit pr merge` only when the PR is READY, verified and
-   the `merge` grant allows it. `workit verify-delivery` confirms it landed.
+   the `merge` grant allows it, and then deletes the merged head branch
+   (workspace `deleteBranch`, `--keep-branch` to opt out; never a protected,
+   fork, stack-parent or foreign-author branch). `workit verify-delivery`
+   confirms it landed.
 
 For independent slices, **fanout** runs one worker per isolated worktree with
 a fixed brief and file-scope manifest, and a non-author verifier per slice.

@@ -36,6 +36,8 @@ type GlMr = {
   sha: string;
   diff_refs?: { base_sha?: string | null } | null;
   source_project_id?: number;
+  target_project_id?: number;
+  author?: { username?: string } | null;
   head_pipeline?: {
     id: number;
     sha: string;
@@ -626,8 +628,28 @@ export function createGitLabForge(options: {
         title: value.title ?? "",
         base: value.target_branch,
         headBranch: value.source_branch,
+        author: value.author?.username ?? null,
+        fork:
+          value.source_project_id === undefined || value.target_project_id === undefined
+            ? null
+            : value.source_project_id !== value.target_project_id,
       };
       return success(meta);
+    },
+
+    openPrsInto(branch) {
+      const list = apiJson<GlMr[]>(
+        runner,
+        "glab",
+        apiHost,
+        api(
+          `${project}/merge_requests?state=opened&target_branch=${encodeURIComponent(branch)}&per_page=100`,
+        ),
+        `open merge requests into ${branch}`,
+      );
+      if (!list.ok) return list;
+      if (!Array.isArray(list.data)) return failure("failed", "merge request list is not a list");
+      return success(list.data.map((mr) => mr.iid));
     },
 
     setDraft(iid, draft) {
