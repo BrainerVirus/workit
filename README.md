@@ -90,6 +90,10 @@ Skills appear as `/workit:<name>`, plus `verifier`, `reviewer` and
 }
 ```
 
+Update later with `opencode plugin update @brainervirus/workit-opencode`
+(only Workit; other plugins stay as they are). OpenCode 2.x loads the new
+version live, with no restart.
+
 Local pin: build once with `bun packages/workit-opencode/scripts/build.ts`, then
 use `"plugins": ["file:///path/to/workit/packages/workit-opencode"]`. OpenCode
 1.x must stay on `@brainervirus/workit-opencode@2`.
