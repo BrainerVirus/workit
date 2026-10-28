@@ -26,8 +26,8 @@
 // Every write accepts --supersedes <id> (same type, same session only), plus
 // --branch/--pr to key it. Verdicts are agent-asserted; the acting session is
 // WORKIT_SESSION_ID or the host's own shell session (host-session.ts), and
-// without one a verdict is recorded as self. `--session <id>` names the acting
-// session explicitly; `--as <role>` mints a fresh one
+// without one a verdict is refused unless it is --self (#505). `--session
+// <id>` names the acting session explicitly; `--as <role>` mints a fresh one
 // (`<session or host>:<role>:<random>`) for a verifier or reviewer subagent
 // that shares its lead's environment. An independent verdict is refused
 // unless its session is this shell's real host session or a host-derived
@@ -180,6 +180,11 @@ const actorFor = (io: Io, values: Values): Acting | Error => {
   }
   return { actor, source: "env" };
 };
+
+const NO_SESSION_ERROR =
+  "no_session: this verdict cannot bind a host session (WORKIT_SESSION_ID is unset or empty and no --session was named), so it would be stored as a self verdict that no gate accepts; nothing was recorded";
+const NO_SESSION_UNBLOCK =
+  "a Claude Code verifier or reviewer passes exactly the `--session <lead>:<agent id> --token=<token>` its SubagentStart hook put in its context; none there means that hook did not bind it (check `workit doctor`: hook_runs lists SubagentStart, hook_issued_sessions passes), so the lead spawns a fresh workit:verifier or workit:reviewer. On Codex, OpenCode and Pi record from the agent's own shell, where the host sets its session. The author records `--self` instead (never accepted as independent)";
 
 /** The session a verdict claims to act as: an --as id is checked by the session it derives from. */
 const claimedSession = (acting: Acting): string | null =>
@@ -490,6 +495,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
   // An independent verdict acts only as this shell's own host session or a
   // host-derived child of it; a self verdict is never accepted, so it is not checked.
   const claimed = values.self === true ? null : claimedSession(acting);
+  // No session to act as: the row would be a (self: no session) verdict that
+  // never counts, so a judge whose binding never arrived is told so (#505).
+  if (values.self !== true && claimed === null)
+    return emit(io, fail("blocked", NO_SESSION_ERROR, { unblock: NO_SESSION_UNBLOCK }));
   const token = values.token ?? io.env.WORKIT_SESSION_TOKEN ?? null;
   const refusal =
     claimed === null
