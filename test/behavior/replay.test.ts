@@ -20,6 +20,7 @@ import {
   type HookDecision,
 } from "@/packages/workit-core/src/hooks/index";
 import { parseAdvertisedOperation, type OperationFamily } from "@/packages/workit-core/src/core";
+import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { fixture, tempRoot } from "@/test/workit-core/hooks/hook-fixtures";
 
 type Host = "claude-code" | "codex" | "cursor";
@@ -28,7 +29,13 @@ type Case = {
   id: string;
   source: string;
   open?: string;
-  repo?: { branch?: string; worktree?: "claude-agent"; checks?: Record<string, string> };
+  repo?: {
+    branch?: string;
+    worktree?: "claude-agent";
+    checks?: Record<string, string>;
+    /** Workspace entries for workspaces.json; `__CWD__` in a glob is the repo path. */
+    workspaces?: Record<string, unknown>[];
+  };
   env?: Record<string, string>;
 } & (
   | { hook: { host: Host; fixture: string; overrides?: Record<string, unknown> }; expect: Expect }
@@ -94,7 +101,10 @@ beforeEach(() => {
     XDG_CONFIG_HOME: path.join(home, ".config"),
   });
 });
+let grantsSwap: ConfigHome | null = null;
 afterEach(() => {
+  grantsSwap?.restore();
+  grantsSwap = null;
   for (const key of KEYS)
     if (saved[key] === undefined) delete process.env[key];
     else process.env[key] = saved[key];
@@ -121,6 +131,22 @@ const workspace = (repo: Case["repo"] = {}): { cwd: string } => {
     writeFileSync(
       path.join(root, ".workit", "checks.json"),
       JSON.stringify({ checks: repo.checks }),
+    );
+  }
+  if (repo.workspaces) {
+    // Grants are read only from the account home's config dir (never an
+    // override), so swap that home in-process and point the config there too.
+    grantsSwap = useConfigHome("workit-behavior-grants-");
+    process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = grantsSwap.configDir;
+    writeFileSync(
+      path.join(grantsSwap.configDir, "config.json"),
+      JSON.stringify({
+        branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+      }),
+    );
+    writeFileSync(
+      path.join(grantsSwap.configDir, "workspaces.json"),
+      JSON.stringify({ workspaces: bind(repo.workspaces, root) }),
     );
   }
   if (repo.worktree !== "claude-agent") return { cwd: root };

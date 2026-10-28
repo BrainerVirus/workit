@@ -87,6 +87,20 @@ export function unverifiedFlag(flags: ParsedFlags): { reason: string } | null | 
   return reason.length > MAX_REASON ? `--reason is capped at ${MAX_REASON} characters` : { reason };
 }
 
+/** The PR a verb acts on: `--pr <n>`, or the PR of `--branch <b>`; neither means this checkout's branch. */
+
+export function selector(
+  flags: ParsedFlags,
+): { pr: number | null; branch: string | null } | string {
+  const pr = positiveInt(flags.values.pr, "--pr");
+  if (typeof pr === "string") return pr;
+  const branch = flags.values.branch ?? flags.values.head ?? null;
+  if (flags.values.branch !== undefined && flags.values.head !== undefined)
+    return "pass --branch or --head, not both";
+  if (pr && branch) return "pass --pr or --branch, not both";
+  return { pr, branch };
+}
+
 export function positiveInt(value: string | undefined, flag: string): number | null | string {
   if (value === undefined) return null;
   return /^[1-9]\d{0,8}$/u.test(value) ? Number(value) : `${flag} must be a positive integer`;

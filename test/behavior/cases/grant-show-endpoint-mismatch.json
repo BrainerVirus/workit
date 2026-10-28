@@ -1,0 +1,22 @@
+{
+  "id": "grant-show-endpoint-mismatch",
+  "source": "user report 2026-10-27: merge granted, endpoint pr stopped at the PR with no word why (#431)",
+  "repo": {
+    "branch": "feature/x",
+    "workspaces": [
+      {
+        "name": "app",
+        "glob": "__CWD__",
+        "defaultEndpoint": "pr",
+        "autonomy": { "merge": true }
+      }
+    ]
+  },
+  "cli": { "argv": ["grant", "show"] },
+  "expect": {
+    "exit": [0],
+    "require": [
+      "merge granted, but endpoint pr stops at the PR; to land on green: workit grant set app defaultEndpoint=merged \\(your terminal\\)"
+    ]
+  }
+}

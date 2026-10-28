@@ -179,6 +179,9 @@ const COMMAND_HINTS: Record<string, string> = {
   status:
     "workit task status (this branch's task) or workit pr status (its PR); workit handoff prints the whole picture",
   context: "workit handoff prints the branch, HEAD, dirty state, verdict and next command",
+  config: "workit grant show prints the workspace settings; workit doctor checks the install",
+  issue:
+    "workit youtrack <action> handles tracker issues; gh api repos/<owner>/<repo>/issues/<n> reads a GitHub one",
 };
 
 /** The one-line unblock for an unknown command. */

@@ -1,0 +1,11 @@
+{
+  "id": "grammar-pr-merge-squash",
+  "source": "retro 2026-10-27: `workit pr merge --squash` guessed (#431)",
+  "repo": { "branch": "feature/x" },
+  "cli": { "argv": ["pr", "merge", "--squash", "--rebase"] },
+  "expect": {
+    "exit": [2],
+    "require": ["pass one of --squash, --merge, --rebase or --method"],
+    "forbid": ["unknown option"]
+  }
+}

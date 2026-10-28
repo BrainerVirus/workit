@@ -1,0 +1,16 @@
+{
+  "id": "grant-raise-refused-wording",
+  "source": "retro 2026-10-27: an agent sent the user to Claude Code's `!` prefix, which is refused (#431)",
+  "repo": {
+    "branch": "feature/x",
+    "workspaces": [{ "name": "app", "glob": "__CWD__" }]
+  },
+  "cli": { "argv": ["grant", "set", "app", "merge=true"] },
+  "env": { "CLAUDECODE": "1" },
+  "expect": {
+    "exit": [3],
+    "require": [
+      "a terminal outside the agent host \\(not Claude Code's `!` prefix or an agent shell\\)"
+    ]
+  }
+}

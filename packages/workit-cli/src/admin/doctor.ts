@@ -23,6 +23,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { entryMismatch } from "@brainervirus/workit-core/src/autonomy";
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import { inspectMetadataLock } from "@brainervirus/workit-core/src/core/store-lock";
 import {
@@ -127,6 +128,7 @@ type DoctorCheckId =
   | "log_writable"
   | "heavy_scope"
   | "hook_deadline"
+  | "grant_endpoint"
   | "checks_config"
   | "claude_permissions"
   | "codex_permissions"
@@ -2752,6 +2754,23 @@ const checkHookDeadline = (res: Resolved): DoctorCheck => {
   };
 };
 
+// A grant that reaches further than the endpoint (merge granted, endpoint pr)
+// stops silently at the PR; say so.
+const checkGrantEndpoint = (res: Resolved): DoctorCheck => {
+  let line: string | null = null;
+  try {
+    line = entryMismatch(resolveWorkspaceFrom(res.cwd, res.configDir));
+  } catch {}
+  return line
+    ? {
+        id: "grant_endpoint",
+        status: "warn",
+        detail: line.split("; ")[0],
+        fix: line.split("; ")[1],
+      }
+    : { id: "grant_endpoint", status: "pass", detail: "grants and default endpoint agree" };
+};
+
 // The per-repo checks config lives in `.workit/checks.json`; a root
 // `workit.checks.json` is still read but is a legacy location.
 const checkChecksConfig = (res: Resolved): DoctorCheck => {
@@ -3154,6 +3173,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkLogWritable,
   checkHeavyScope,
   checkHookDeadline,
+  checkGrantEndpoint,
   checkChecksConfig,
   checkHostPermissions("claude-code", "claude_permissions"),
   checkHostPermissions("codex", "codex_permissions"),

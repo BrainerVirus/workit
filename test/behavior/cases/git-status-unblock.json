@@ -1,7 +1,6 @@
 {
   "id": "git-status-unblock",
   "source": "retro 2026-10-27 codex \u00a76 and opencode \u00a75: `workit git status` guessed, then raw git",
-  "open": "#431",
   "repo": {
     "branch": "feature/x"
   },

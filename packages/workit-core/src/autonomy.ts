@@ -158,6 +158,48 @@ function effectiveEndpoint(
   return { endpoint };
 }
 
+const STOPS: Record<DefaultEndpoint, string> = {
+  commit: "the local commit",
+  pr: "the PR",
+  green: "a green PR",
+  merged: "the merge",
+};
+
+/**
+ * One line when an explicit grant reaches further than the endpoint: `merge`
+ * granted but the endpoint stops at the PR, or `pr` granted with endpoint
+ * `commit`. Defaults never trigger it (pr is on by default), so only a grant
+ * the user wrote counts. Null when grant and endpoint agree.
+ */
+export function endpointMismatch(view: {
+  workspace: string | null;
+  grants: Grants;
+  configured: readonly GrantKind[];
+  defaultEndpoint: DefaultEndpoint;
+}): string | null {
+  const { defaultEndpoint: endpoint } = view;
+  const ws = view.workspace ?? "<workspace>";
+  const explicit = (kind: GrantKind) =>
+    view.configured.includes(kind) && view.grants[kind] !== false;
+  if (explicit("merge") && endpoint !== "merged")
+    return `merge granted, but endpoint ${endpoint} stops at ${STOPS[endpoint]}; to land on green: workit grant set ${ws} defaultEndpoint=merged (your terminal)`;
+  if (explicit("pr") && endpoint === "commit")
+    return `pr granted, but endpoint commit stops at the local commit; to open PRs: workit grant set ${ws} defaultEndpoint=pr (your terminal)`;
+  return null;
+}
+
+/** The mismatch line for one workspace entry as stored (null for no entry). */
+export function entryMismatch(entry: unknown): string | null {
+  if (!entry) return null;
+  const { grants } = configuredGrants(entry);
+  return endpointMismatch({
+    workspace: (entry as { name?: string }).name ?? null,
+    grants: { ...DEFAULT_GRANTS, ...grants },
+    configured: GRANT_KINDS.filter((kind) => grants[kind] !== undefined),
+    defaultEndpoint: endpointOf(entry).endpoint,
+  });
+}
+
 /** The endpoint fields every grant view carries. */
 export type EndpointView = {
   /** As configured (an unknown value reads as the default, see endpointIssue). */

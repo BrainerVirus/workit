@@ -175,6 +175,9 @@ export type VerdictRow = RowCommon & {
   /** The issued session's own subagent presented the token its hook bound the id to. */
   sessionBound?: boolean;
   evidenceRefs: string[];
+  /** Untracked files in the judged worktree when the verdict was recorded (they do not block it). */
+  untracked?: string[];
+  untrackedCount?: number;
 };
 export type HandoffRow = RowCommon & { type: "handoff"; note: string | null; next: string };
 /**
@@ -2055,6 +2058,20 @@ export function liftStop(
   return { ok: true, value: cleared };
 }
 
+/** Tracked files changed or staged in `cwd`'s worktree; null when git cannot say. */
+function trackedDirty(cwd: string): boolean | null {
+  const status = gitRun(cwd, ["status", "--porcelain", "--untracked-files=no"]);
+  return status.ok ? status.stdout.trim().length > 0 : null;
+}
+
+const MAX_UNTRACKED_LISTED = 20;
+
+/** Untracked, non-ignored files in `cwd`'s worktree: they never change the head a verdict judges. */
+function untrackedFiles(cwd: string): string[] {
+  const listed = gitRun(cwd, ["ls-files", "--others", "--exclude-standard"]);
+  return listed.ok ? listed.stdout.split("\n").filter(Boolean) : [];
+}
+
 /**
  * Is `branch` checked out, with uncommitted changes, in another worktree of
  * this repository? (`codeKey` sees only the cwd's own worktree.)
@@ -2063,13 +2080,13 @@ function dirtyElsewhere(cwd: string, branch: string, head: string): boolean {
   // A checkout of exactly the branch head (a verifier's detached worktree)
   // judges what it holds: clean judges that head, whatever state another
   // checkout of the branch is in; dirty (or unreadable) does not.
-  if (headSha(cwd) === head) return worktreeTree(cwd)?.dirty !== false;
+  if (headSha(cwd) === head) return trackedDirty(cwd) !== false;
   const list = git(cwd, ["worktree", "list", "--porcelain"]);
   let worktree: string | null = null;
   for (const line of (list ?? "").split("\n")) {
     if (line.startsWith("worktree ")) worktree = line.slice("worktree ".length);
     else if (line === `branch refs/heads/${branch}` && worktree) {
-      const status = gitRun(worktree, ["status", "--porcelain", "--untracked-files=normal"]);
+      const status = gitRun(worktree, ["status", "--porcelain", "--untracked-files=no"]);
       return status.ok && status.stdout.trim().length > 0;
     }
   }
@@ -2123,10 +2140,16 @@ export function recordVerdict(
   if (!ledger.ok) return ledger;
   const key = codeKey(context.cwd, { branch, base: context.base });
   if (!key.head) return err("not_found", `branch "${branch}" has no commit to judge`);
-  if (key.dirty === true || (key.dirty === null && dirtyElsewhere(context.cwd, branch, key.head)))
+  // Tracked changes only: an untracked probe file cannot change the head, and
+  // is recorded on the row instead.
+  const dirty =
+    key.dirty === null
+      ? dirtyElsewhere(context.cwd, branch, key.head)
+      : trackedDirty(context.cwd) !== false;
+  if (dirty)
     return err(
       "blocked",
-      `dirty_worktree: ${branch} has uncommitted changes, so its head is not what was judged`,
+      `dirty_worktree: ${branch} has uncommitted changes to tracked files, so its head is not what was judged`,
       "commit or stash the changes, re-check, then record the verdict",
     );
   const session = context.actor.session;
@@ -2166,9 +2189,17 @@ export function recordVerdict(
       sessionSource: context.sessionSource ?? "env",
       ...(context.sessionBound === true ? { sessionBound: true } : {}),
       evidenceRefs: input.evidenceRefs ?? [],
+      ...untrackedField(context.cwd),
     },
     { now: context.now },
   );
+}
+
+function untrackedField(cwd: string): { untracked?: string[]; untrackedCount?: number } {
+  const files = untrackedFiles(cwd);
+  return files.length
+    ? { untracked: files.slice(0, MAX_UNTRACKED_LISTED), untrackedCount: files.length }
+    : {};
 }
 
 export function recordHandoff(

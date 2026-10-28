@@ -331,7 +331,7 @@ async function push(argv: string[], io: Io): Promise<number> {
   return emit(io, warnings.length ? { ...envelope, warnings } : envelope, (data) => [
     data.pushed
       ? `pushed ${data.branch} ${short(data.previous)} -> ${short(data.sha)} to ${data.remote}${data.forced ? " (force-with-lease)" : ""}; remote tip verified`
-      : `${data.remote}/${data.branch} is already at ${short(data.sha)}; remote tip verified`,
+      : `nothing to push: ${data.remote}/${data.branch} is already at ${short(data.sha)}`,
     ...(data.upstream ? [`upstream: ${data.remote}/${data.branch}`] : []),
   ]);
 }
@@ -376,7 +376,7 @@ async function releasePush(names: string[], io: Io): Promise<number> {
     ...data.refs.map((ref) =>
       ref.pushed
         ? `pushed ${ref.name} ${short(ref.previous)} -> ${short(ref.sha)} to ${data.remote}; remote tip verified`
-        : `${data.remote} ${ref.name} is already at ${short(ref.sha)}; remote tip verified`,
+        : `nothing to push: ${data.remote} ${ref.name} is already at ${short(ref.sha)}`,
     ),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
   ]);
@@ -393,8 +393,16 @@ function trailers(argv: string[], io: Io): number {
   return emit(io, ok(state), (data) => (data.enabled ? "on" : "off"));
 }
 
+const READ_ONLY = new Set(["status", "diff", "log", "fetch", "show", "blame"]);
+
 export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv;
+  if (sub !== undefined && READ_ONLY.has(sub))
+    return usage(
+      io,
+      `workit git has no ${sub}`,
+      `read-only git is fine raw: \`git -C ${io.cwd} ${sub}\``,
+    );
   if (sub === "branch") return branch(rest, io);
   if (sub === "commit") return commit(rest, io);
   if (sub === "push") return push(rest, io);
