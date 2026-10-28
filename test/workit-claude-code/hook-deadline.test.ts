@@ -6,6 +6,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { readHookRuns } from "@/packages/workit-core/src/hooks/hook-runs";
 import { fixture, tempRoot } from "@/test/workit-core/hooks/hook-fixtures";
 import { installedPlugin, outputProblem, PLUGIN_DIR, runHook } from "./plugin-helpers";
 
@@ -92,3 +93,17 @@ test("Given the shipped hooks.json, When Claude reads it, Then prompt, tool and 
     SubagentStart: [15],
   });
 });
+
+for (const [runtime, plugin] of RUNTIMES) {
+  test(`Given a ${runtime} UserPromptSubmit, When Claude runs the hook, Then the run is recorded for doctor's hook_runs (#433)`, () => {
+    const state = scratch("workit-claude-runs-state-");
+    const run = runHook(plugin(), fixture("claude-code", "user-prompt-submit", scratch("root")), {
+      WORKFLOW_TOOLKIT_STATE: state,
+    });
+    expect(run.status).toBe(0);
+    const runs = readHookRuns(state);
+    expect(runs.map((r) => [r.host, r.event, r.count])).toEqual([
+      ["claude_code", "UserPromptSubmit", 1],
+    ]);
+  });
+}

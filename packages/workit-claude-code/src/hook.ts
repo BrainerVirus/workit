@@ -16,6 +16,7 @@ import {
   skippedHook,
   type HookDeadline,
 } from "@brainervirus/workit-core/src/hooks/deadline";
+import { recordHookRun } from "@brainervirus/workit-core/src/hooks/hook-runs";
 
 type Sink = { write(chunk: string): unknown };
 
@@ -90,6 +91,12 @@ export async function runClaudeHook(
   } catch {
     raw = undefined;
   }
+  // doctor's hook_runs; the launcher's fast path answers before this runs and is not counted.
+  recordHookRun(
+    adapter.descriptor.host,
+    isRecord(raw) ? text(raw.hook_event_name) || null : null,
+    env,
+  );
   const result =
     input === null
       ? skippedHook(adapter, undefined, env, budget, "input")

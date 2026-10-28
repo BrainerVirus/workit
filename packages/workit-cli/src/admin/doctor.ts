@@ -3291,7 +3291,7 @@ const checkGrantRules =
     return {
       id,
       status: "warn",
-      detail: `${host} rules in ${coverage.file} do not cover ${shown}${coverage.missing.length > 4 ? ", …" : ""}: agents get a prompt (or an auto-mode denial) on verbs the workspace grants`,
+      detail: `${host} rules in ${coverage.file} do not cover ${shown}${coverage.missing.length > 4 ? ", …" : ""}${existsSync(coverage.file) ? "" : ` (${coverage.file} does not exist yet; \`workit setup\` writes it)`}: agents get a prompt (or an auto-mode denial) on verbs the workspace grants`,
       fix: `workit setup --hosts=${host}`,
     };
   };
@@ -3319,7 +3319,7 @@ const checkHookRuns = (res: Resolved): DoctorCheck => {
       id: "hook_runs",
       status: "info",
       detail:
-        "no host hook run recorded yet (hooks are counted from this Workit version on; start an agent session, then re-run `workit doctor`)",
+        "no host hook run recorded yet (counted from this Workit version on; Claude Code launcher fast-path answers and Codex PostToolUse are not counted; start an agent session, then re-run `workit doctor`)",
     };
   const now = Date.now();
   const hosts = [...new Set(runs.map((run) => run.host))].toSorted();

@@ -810,6 +810,11 @@ const claudeRuleMatches = (rule: string, command: string): boolean => {
   const body = /^Bash\((.*)\)$/u.exec(rule)?.[1];
   if (rule === "Bash" || body === "*" || body === "") return true;
   if (body === undefined) return false;
+  // Legacy prefix syntax `Bash(workit:*)`: the command, or the prefix then a word boundary.
+  if (body.endsWith(":*") && !body.slice(0, -2).includes("*")) {
+    const prefix = body.slice(0, -2);
+    return command === prefix || command.startsWith(`${prefix} `);
+  }
   const escaped = body
     .split("*")
     .map((part) => part.replace(/[.+?^${}()|[\]\\]/gu, "\\$&"))

@@ -196,3 +196,33 @@ test("Given no workspace entry or no installed host, When doctor runs, Then the 
   rmSync(path.join(granted.home, ".cursor"), { recursive: true });
   expect(rows(granted.home, granted.cwd).get("cursor_grant_rules")?.status).toBe("info");
 });
+
+test("Given legacy, wildcard and bare Claude rules, When doctor runs, Then each covers the Workit verbs", () => {
+  for (const rule of ["Bash(workit:*)", "Bash(workit *)", "Bash(*)", "Bash"]) {
+    const { home, cwd } = setup({ autonomy: { push: true } });
+    writeFileSync(
+      path.join(home, ".claude", "settings.json"),
+      JSON.stringify({ permissions: { allow: [rule] }, autoMode: { allow: ["workit ok"] } }),
+    );
+    const row = rows(home, cwd).get("claude_grant_rules")!;
+    expect(row.status, `${rule}: ${row.detail}`).toBe("pass");
+  }
+  const { home, cwd } = setup({ autonomy: { push: true } });
+  writeFileSync(
+    path.join(home, ".claude", "settings.json"),
+    JSON.stringify({
+      permissions: { allow: ["Bash(workitx:*)"] },
+      autoMode: { allow: ["workit"] },
+    }),
+  );
+  expect(rows(home, cwd).get("claude_grant_rules")?.status).toBe("warn");
+});
+
+test("Given ~/.cursor without a cli-config, When doctor runs, Then the warning says the file does not exist and setup writes it", () => {
+  const { home, cwd } = setup({ autonomy: { push: true } });
+  const row = rows(home, cwd).get("cursor_grant_rules")!;
+  expect(row.status).toBe("warn");
+  expect(row.detail).toContain("does not exist yet");
+  expect(row.detail).toContain("`workit setup` writes it");
+  expect(row.fix).toBe("workit setup --hosts=cursor");
+});
