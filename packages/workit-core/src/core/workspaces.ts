@@ -545,11 +545,86 @@ const canonicalGlob = (glob: string): string => {
   return real + (prefix.endsWith("/") ? "/" : "") + rest;
 };
 
-const globSpecificity = (glob: string): number =>
+/** The literal path segments of a glob; the most specific matching glob wins. */
+export const globSpecificity = (glob: string): number =>
   glob
     .replaceAll("\\", "/")
     .split("/")
     .filter((segment) => segment.length > 0 && !/[*?[\]{]/.test(segment)).length;
+
+/** The literal directory a glob starts from: `/home/u/work/**` -> `/home/u/work`. */
+export const globRoot = (glob: string): string => {
+  const normalized = glob.replaceAll("\\", "/");
+  const wild = /[*?[\]{]/.exec(normalized);
+  const prefix = wild ? normalized.slice(0, wild.index) : normalized;
+  return prefix.replace(/\/+$/u, "") || "/";
+};
+
+/**
+ * The entries a glob nests inside: those matching its root directory, keeping
+ * only the most specific (several when they tie). These are the entries that
+ * selected the glob's directories before it, so a new or removed entry is
+ * compared against them (#444: workspace verbs never raise authority).
+ */
+export const enclosingEntries = <T extends { name: string; glob: string }>(
+  glob: string,
+  entries: readonly T[],
+  exclude?: string,
+): T[] => {
+  const root = globRoot(glob);
+  const matches = entries.filter(
+    (entry) => entry.name !== exclude && matchWorkspace(entry.glob, root),
+  );
+  if (matches.length === 0) return [];
+  const top = Math.max(...matches.map((entry) => globSpecificity(entry.glob)));
+  return matches.filter((entry) => globSpecificity(entry.glob) === top);
+};
+
+export type WorkspaceOverlap = {
+  /** The entry nested inside (or tied with) `outer`. */
+  inner: string;
+  outer: string;
+  /** Where both match: the inner glob's root. */
+  at: string;
+  /** The entry selected there; null when the globs tie (ambiguous). */
+  winner: string | null;
+};
+
+/** Pairs of entries whose globs both match some directory, and which one wins. */
+export const workspaceOverlaps = (
+  entries: readonly { name: string; glob: string }[],
+): WorkspaceOverlap[] => {
+  const out: WorkspaceOverlap[] = [];
+  for (const [i, a] of entries.entries())
+    for (const b of entries.slice(i + 1)) {
+      const aInB = matchWorkspace(b.glob, globRoot(a.glob));
+      const bInA = matchWorkspace(a.glob, globRoot(b.glob));
+      if (!aInB && !bInA) continue;
+      const [inner, outer] =
+        aInB && !bInA
+          ? [a, b]
+          : bInA && !aInB
+            ? [b, a]
+            : globSpecificity(a.glob) >= globSpecificity(b.glob)
+              ? [a, b]
+              : [b, a];
+      const si = globSpecificity(inner.glob);
+      const so = globSpecificity(outer.glob);
+      out.push({
+        inner: inner.name,
+        outer: outer.name,
+        at: globRoot(inner.glob),
+        winner: si === so ? null : si > so ? inner.name : outer.name,
+      });
+    }
+  return out;
+};
+
+/** Every entry whose glob matches cwd (its logical and real path, or its main checkout). */
+export const workspaceMatches = <T extends { name: string; glob: string }>(
+  cwd: string,
+  entries: readonly T[],
+): T[] => matchingEntries(cwd, entries);
 
 const selectWorkspaceMatch = <T extends { name: string; glob: string }>(
   matches: T[],
