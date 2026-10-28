@@ -714,11 +714,15 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
           position: ahead + 1,
         };
       if (!queued) {
-        writeTicket(ticket, ticketRecord);
-        queued = true;
+        // Handlers first, then one event-loop turn so Bun has armed them, then
+        // the ticket: a signal that lands as the ticket appears must find a
+        // handler, not the default action that leaves the ticket behind.
         process.on("exit", leave);
         process.on("SIGINT", onSignal);
         process.on("SIGTERM", onSignal);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        writeTicket(ticket, ticketRecord);
+        queued = true;
       } else if (!fs.existsSync(ticket)) {
         // Wrongly reclaimed (a clock step past its age bound): stand in the same place again.
         writeTicket(ticket, ticketRecord);
