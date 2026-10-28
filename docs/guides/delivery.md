@@ -717,7 +717,7 @@ workit check test --no-lease --reason "<why>"  # run it now, outside the lease (
 workit lock status                # who holds the lease; `workit lock wait` waits for a slot
 ```
 
-- **Which checks are heavy.** The named checks `test` and `build` are heavy by
+- **Which checks are heavy.** The named checks `test`, `build` and `packaging` are heavy by
   default; `lint`, `typecheck` and `format` are light and never take the lease
   (`resources.light` in workspaces.json changes the list). An ad-hoc
   `workit check -- <cmd>` takes the lease only with `--heavy`. A raw heavy
