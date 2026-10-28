@@ -29,6 +29,7 @@ import {
   DEFAULT_GRANTS,
   DEFAULT_VERIFICATION,
   VERIFICATION_MODES,
+  VERIFICATION_STRICTNESS,
   GRANT_KINDS,
   isDefaultEndpoint,
   endpointMismatch,
@@ -104,11 +105,6 @@ const endpointLabel = (view: EndpointView): string =>
     ? view.defaultEndpoint
     : `${view.defaultEndpoint} (effective: ${view.effectiveEndpoint}${view.endpointReason ? `, ${view.endpointReason}` : ""})`;
 
-const VERIFICATION_STRICTNESS: readonly VerificationMode[] = [
-  "independent",
-  "self",
-  "proportional",
-];
 const VERIFICATION_TEXT: Record<VerificationMode, string> = {
   proportional:
     "the review lane from the diff decides: none needs no verdict, self the author's --self verdict, focused and full a non-author verdict, also to merge",
@@ -226,8 +222,8 @@ async function change(
     .map(({ kind, value }) => ({ kind, value: String(value ?? DEFAULT_GRANTS[kind]) }));
   if (endpoint && raisesEndpoint(entry.defaultEndpoint, endpoint))
     raised.push({ kind: "defaultEndpoint", value: endpoint });
-  // Strictest first: independent > self (merge still needs a non-author
-  // verdict) > proportional (the lane may ask for less).
+  // Strictest first: independent > proportional > self (the author's own
+  // verdict satisfies even lanes proportional sends to a verifier).
   const strictness = (mode: VerificationMode) => VERIFICATION_STRICTNESS.indexOf(mode);
   const target = verification === null ? DEFAULT_VERIFICATION : verification;
   if (target !== undefined && strictness(target) > strictness(entry.verification))

@@ -79,6 +79,23 @@ test("a broader workspace named in a nested repo never lifts the nested entry's 
   });
 });
 
+test("a name's verification=self under a proportional folder entry is capped to proportional", () => {
+  write([
+    { name: "loose", glob: `${root}/v/**`, vcs: account, verification: "self" },
+    {
+      name: "tight",
+      glob: `${root}/v/tight/**`,
+      vcs: account,
+      verification: "proportional",
+    },
+  ]);
+  const cwd = `${root}/v/tight/repo`;
+  const named = withName("loose", () => resolveAutonomy(cwd));
+  expect(named.workspace).toBe("loose");
+  expect(named.verification).toBe("proportional");
+  expect(named.note).toContain("verification");
+});
+
 test("naming one of two tied entries grants nothing beyond nothing-granted", () => {
   write([
     { name: "a", glob: `${root}/tie/**`, vcs: account, autonomy: { merge: true, release: true } },
@@ -121,7 +138,7 @@ const rng = (seed: number) => () => {
   seed = (seed * 1_103_515_245 + 12_345) & 0x7fff_ffff;
   return seed / 0x8000_0000;
 };
-const STRICT: readonly VerificationMode[] = ["independent", "self", "proportional"];
+const STRICT: readonly VerificationMode[] = ["independent", "proportional", "self"];
 
 type Effective = {
   allowed: Record<GrantKind, boolean>;

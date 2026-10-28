@@ -295,9 +295,17 @@ test("verification=independent (user config, S17) tightens headless, makes norma
   };
   // Unset is proportional (#333): the review lane decides.
   expect(rules()).toEqual(["check:test", "verdict:lane"]);
-  // proportional -> self tightens, so it goes through headless.
-  expect((await run(["set", "w", "verification=self"], headless)).code).toBe(0);
+  // proportional -> self is a raise (self is the loosest): the user only.
+  const raiseToSelf = await run(["set", "w", "verification=self"], headless);
+  expect(raiseToSelf.code).not.toBe(0);
+  expect(raiseToSelf.json().error).toContain("grant_raise_refused");
+  expect(entry().verification).toBeUndefined();
+  expect((await run(["set", "w", "verification=self"], interactive("w"))).code).toBe(0);
   expect(rules()).toEqual(["check:test", "verdict:self"]);
+  // self -> proportional and self -> independent lower, so headless may.
+  expect((await run(["set", "w", "verification=proportional"], headless)).code).toBe(0);
+  expect(rules()).toEqual(["check:test", "verdict:lane"]);
+  expect((await run(["set", "w", "verification=self"], interactive("w"))).code).toBe(0);
   const tightened = await run(["set", "w", "verification=independent"], headless);
   expect(tightened.code).toBe(0);
   expect(entry().verification).toBe("independent");

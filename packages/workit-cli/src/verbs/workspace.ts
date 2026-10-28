@@ -40,6 +40,7 @@ import {
   verificationOf,
   type DefaultEndpoint,
   type Grants,
+  VERIFICATION_STRICTNESS,
   type VerificationMode,
 } from "@brainervirus/workit-core/src/autonomy";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
@@ -131,7 +132,7 @@ const deliveredCeilingOf = (entry: Entry): Ceiling => {
   };
 };
 
-const STRICTNESS: readonly VerificationMode[] = ["independent", "self", "proportional"];
+const STRICTNESS = VERIFICATION_STRICTNESS;
 const looser = (current: VerificationMode, next: VerificationMode): boolean =>
   STRICTNESS.indexOf(next) > STRICTNESS.indexOf(current);
 
