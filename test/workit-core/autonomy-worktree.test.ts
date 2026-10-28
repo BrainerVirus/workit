@@ -244,7 +244,7 @@ test("model: over generated configs, a worktree never exceeds its main checkout,
     [`${root}/m/a/wt2`, `${root}/m/x/main`, `${root}/m/a/plain`],
   ] as const;
   let compared = 0;
-  for (let round = 0; round < 60; round += 1) {
+  for (let round = 0; round < 100; round += 1) {
     const count = 2 + Math.floor(next() * 3);
     const entries = Array.from({ length: count }, (_, index) => {
       const autonomy = Object.fromEntries(
@@ -276,5 +276,5 @@ test("model: over generated configs, a worktree never exceeds its main checkout,
       if (named) atMost(named, unnamed, `named ${entry.name} ${context}`);
     }
   }
-  expect(compared).toBeGreaterThan(30);
+  expect(compared).toBeGreaterThan(50);
 });

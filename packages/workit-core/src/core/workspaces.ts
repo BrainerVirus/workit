@@ -495,9 +495,10 @@ const mainCheckouts = new Map<string, string | null>();
 /**
  * The main checkout of the linked worktree at `cwd` (null when cwd is not a
  * linked worktree). A worktree outside every glob (~/.codex/worktrees/…,
- * ../x, /tmp) belongs to the workspace of the checkout it was added from (B2).
+ * ../x, /tmp) belongs to the workspace of the checkout it was added from (B2);
+ * its grants never exceed that checkout's (#540, autonomy.ts).
  */
-const mainCheckoutOf = (cwd: string): string | null => {
+export const mainCheckoutOf = (cwd: string): string | null => {
   const cached = mainCheckouts.get(cwd);
   if (cached !== undefined) return cached;
   // The repository at cwd, not one an inherited GIT_DIR/GIT_WORK_TREE names.

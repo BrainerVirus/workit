@@ -40,6 +40,16 @@ Any shell can set the variable, an agent's included, so only you raise grants,
 with `workit grant set`. `workit grant show` prints a note when a name was
 capped.
 
+A linked worktree takes the workspace its own path matches (or, when none
+does, its main checkout's), but never more authority than its main checkout:
+grants, the effective `defaultEndpoint` and `verification` are the lower of
+the two, and nothing is granted when the main checkout's entries tie or its
+entry has grants without `vcs.account`. Agents add worktrees anywhere, so a
+worktree outside your stricter repo entry never picks up a broader one's
+grants. Account, policies and issues still come from the worktree's own entry.
+When a cap refuses a grant, the unblock names the entry that capped it (or
+the tied entries), not the one you would widen by mistake.
+
 ## Releasing
 
 `release: true` (`workit grant set <workspace> release=true`, from your own
