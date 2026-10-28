@@ -1,5 +1,14 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
@@ -162,33 +171,10 @@ test("list names the effective entry for the cwd and why", async () => {
   expect(data.reason).toContain("most specific");
 });
 
-test("rm removes an entry, but not one whose removal raises a grant", async () => {
-  await run(["add", "solo", "--glob", `${root}/solo/**`]);
-  expect((await run(["rm", "solo"])).code).toBe(0);
-  expect(byName("solo")).toBeUndefined();
-  // kit is clamped below work: removing it hands its folders work's merge grant.
-  await run(["add", "kit", "--glob", `${root}/work/libs/kit/**`]);
-  expect((await run(["rm", "kit"])).code).toBe(3);
-  // A nested entry stricter than its parent: removing it would hand its
-  // folders the parent's merge grant.
-  writeFileSync(
-    file(),
-    JSON.stringify({
-      workspaces: [
-        WORK(),
-        {
-          name: "brasil",
-          glob: `${root}/work/brasil/**`,
-          autonomy: { merge: false },
-        },
-      ],
-    }),
-  );
-  const refused = await run(["rm", "brasil"]);
-  expect(refused.code).toBe(3);
-  expect(refused.json().error).toContain("merge");
-  expect(byName("brasil")).toBeDefined();
-  expect((await run(["rm", "nope"])).code).not.toBe(0);
+test("there is no rm: removal stays with the user's own editor", async () => {
+  const before = readFileSync(file(), "utf8");
+  expect((await run(["rm", "work"])).code).toBe(2);
+  expect(readFileSync(file(), "utf8")).toBe(before);
 });
 
 test("add refuses a duplicate name and an unknown parent", async () => {
@@ -238,7 +224,7 @@ const expectNoRaise = (before: ReturnType<typeof grantsAt>, after: ReturnType<ty
 const seed = (workspaces: Record<string, unknown>[]) =>
   writeFileSync(file(), `${JSON.stringify({ workspaces }, null, 2)}\n`);
 
-test("add with a mid-glob * is clamped to every entry it may overlap, not only its root's", async () => {
+test("add with a mid-glob * is clamped below a stricter entry it may overlap", async () => {
   // work at <S>/w/**, strict at <S>/w/ui/**; the new glob's root is <S>/w, but
   // at <S>/w/ui/ui/sub/q it beats strict (more literal segments).
   seed([
@@ -282,31 +268,6 @@ test("add with a ? in the glob is refused before anything is written", async () 
   expect(existsSync(backup())).toBe(false);
 });
 
-test("rm with a mid-glob * is refused when any entry that may take over grants more", async () => {
-  // X wins at <S>/w/ui/x/y/q; removing it would hand that folder to loose (merge true).
-  seed([
-    { name: "work", glob: `${root}/w/**`, autonomy: { merge: false } },
-    { name: "loose", glob: `${root}/w/ui/**`, autonomy: { merge: true } },
-    { name: "X", glob: `${root}/w/*/x/y/**`, autonomy: { merge: false } },
-  ]);
-  const before = grantsAt("w", "ui", "x", "y", "q");
-  expect(before.workspace).toBe("X");
-  const result = await run(["rm", "X"]);
-  expect(result.code).toBe(3);
-  expect(result.json().error).toContain("loose grants more (merge)");
-  const after = grantsAt("w", "ui", "x", "y", "q");
-  expect(after).toEqual(before);
-  // Once loose is no looser than X, the removal goes through.
-  seed([
-    { name: "work", glob: `${root}/w/**`, autonomy: { merge: false } },
-    { name: "loose", glob: `${root}/w/ui/**`, autonomy: { merge: false } },
-    { name: "X", glob: `${root}/w/*/x/y/**`, autonomy: { merge: false } },
-  ]);
-  const prior = grantsAt("w", "ui", "x", "y", "q");
-  expect((await run(["rm", "X"])).code).toBe(0);
-  expectNoRaise(prior, grantsAt("w", "ui", "x", "y", "q"));
-});
-
 test("set refuses unknown keys, case variants of known ones and unsafe segments", async () => {
   const before = readFileSync(file(), "utf8");
   for (const spec of [
@@ -329,6 +290,159 @@ test("set refuses vcs changes on an entry with grants of its own", async () => {
   const result = await run(["set", "work", "vcs.account=someone-else"]);
   expect(result.code).toBe(3);
   expect(byName("work").vcs.account).toBe("me");
-  await run(["add", "plain", "--glob", `${root}/plain/**`]);
+  // An entry without grants of its own may change its vcs. (A new entry from
+  // `add` carries the lowered grants of the strictest entry, so it is seeded.)
+  seed([WORK(), { name: "plain", glob: `${root}/plain/**` }]);
   expect((await run(["set", "plain", 'vcs={"provider":"github","account":"me"}'])).code).toBe(0);
 });
+
+// Model test (decider ruling mvrgug5f): for generated configs and every cwd,
+// including a linked worktree outside every glob, `add` never raises the
+// effective grants, default endpoint or verification the real resolver reports.
+test("model: add never raises effective authority for any cwd, worktrees included", async () => {
+  const S = root;
+  const outside = mkdtempSync(path.join(os.tmpdir(), "wk-workspace-outside-")).replaceAll(
+    "\\",
+    "/",
+  );
+  try {
+    const repo = path.join(S, "w", "ui", "repo");
+    mkdirSync(repo, { recursive: true });
+    const git = (cwd: string, ...args: string[]) =>
+      expect(
+        spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd }).status,
+      ).toBe(0);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "commit", "-q", "--allow-empty", "-m", "init");
+    const worktree = path.join(outside, "wt");
+    git(repo, "worktree", "add", "-q", "-b", "side", worktree);
+
+    const GLOBS = [
+      `${S}/w/**`,
+      `${S}/w`,
+      `${S}/w/ui`,
+      `${S}/w/ui/**`,
+      `${S}/w/ui/repo/**`,
+      `${S}/w/*/ui/sub/**`,
+      `${S}/w/*/x/y/**`,
+      `${S}/w*/**`,
+      `${S}/wx/**`,
+      `${S}/*/q/**`,
+      `${S}/l/**`,
+      // The worktree lives outside every glob above and resolves through its
+      // main checkout; a new glob over it shares no text with those globs.
+      `${outside}/**`,
+      `${outside}/wt/**`,
+    ];
+    const CWDS = [
+      [S, "w"],
+      [S, "w", "ui"],
+      [S, "w", "ui", "ui", "sub", "q"],
+      [S, "w", "a", "x", "y", "q"],
+      [S, "w", "ui", "x", "y", "q"],
+      [S, "wx", "q"],
+      [S, "wy"],
+      [S, "other", "q"],
+      [S, "w", "ui", "repo"],
+    ].map((parts) => path.join(...parts));
+    for (const cwd of CWDS) mkdirSync(cwd, { recursive: true });
+    // A symlink into the tree: S/l -> S/w.
+    symlinkSync(path.join(S, "w"), path.join(S, "l"));
+    CWDS.push(path.join(S, "l", "ui", "ui", "sub", "q"));
+    CWDS.push(worktree);
+
+    let seedValue = 444;
+    const rand = () => {
+      seedValue = (seedValue * 1103515245 + 12345) % 2147483648;
+      return seedValue / 2147483648;
+    };
+    const pick = <T>(items: readonly T[]): T => items[Math.floor(rand() * items.length)];
+    const VALUES = [true, false, "verified", undefined];
+    const ENDPOINTS = ["commit", "pr", "green", "merged", undefined];
+    const MODES = ["proportional", "self", "independent", undefined];
+    const ENDPOINT_ORDER = ["commit", "pr", "green", "merged"];
+
+    const view = (cwd: string) => {
+      try {
+        const v = resolveAutonomy(cwd);
+        return {
+          grants: v.grants,
+          endpoint: v.defaultEndpoint,
+          effective: v.effectiveEndpoint,
+          verification: v.verification,
+        };
+      } catch {
+        return null; // ambiguous: every command there fails, nothing is granted
+      }
+    };
+
+    let compared = 0;
+    for (let round = 0; round < 120; round++) {
+      const globs = GLOBS.toSorted(() => rand() - 0.5);
+      const count = 1 + Math.floor(rand() * 4);
+      const existing = globs.slice(0, count).map((glob, index) => {
+        const autonomy = Object.fromEntries(
+          (["push", "pr", "merge", "release", "rerun"] as const)
+            .map((kind) => [kind, pick(VALUES)])
+            .filter(([, value]) => value !== undefined),
+        );
+        const endpoint = pick(ENDPOINTS);
+        const verification = pick(MODES);
+        return {
+          name: `e${index}`,
+          glob,
+          vcs: { provider: "github", account: "me" },
+          ...(Object.keys(autonomy).length ? { autonomy } : {}),
+          ...(endpoint ? { defaultEndpoint: endpoint } : {}),
+          ...(verification ? { verification } : {}),
+        };
+      });
+      seed(existing);
+      const before = CWDS.map(view);
+      const added = await run([
+        "add",
+        "fresh",
+        "--glob",
+        globs[count],
+        ...(rand() < 0.5 ? ["--from", "e0"] : []),
+      ]);
+      expect(added.code, JSON.stringify({ existing, glob: globs[count] })).toBe(0);
+      const after = CWDS.map(view);
+      for (const [index, cwd] of CWDS.entries()) {
+        const was = before[index];
+        const now = after[index];
+        if (!now) continue;
+        const label = JSON.stringify({ cwd, existing, glob: globs[count], was, now });
+        // Ambiguous before (every command failed there): now it must still
+        // stay within the defaults.
+        const baseline = was ?? {
+          grants: { push: true, pr: true, merge: false, release: false, rerun: true },
+          endpoint: "commit",
+          effective: "commit",
+          verification: "proportional",
+        };
+        for (const kind of ["push", "pr", "merge", "release", "rerun"] as const)
+          expect(RANK(now.grants[kind]), `${kind} ${label}`).toBeLessThanOrEqual(
+            RANK(baseline.grants[kind]),
+          );
+        expect(ENDPOINT_ORDER.indexOf(now.endpoint), label).toBeLessThanOrEqual(
+          ENDPOINT_ORDER.indexOf(baseline.endpoint),
+        );
+        expect(ENDPOINT_ORDER.indexOf(now.effective), label).toBeLessThanOrEqual(
+          ENDPOINT_ORDER.indexOf(baseline.effective),
+        );
+        expect(STRICT.indexOf(now.verification), label).toBeLessThanOrEqual(
+          STRICT.indexOf(baseline.verification),
+        );
+        compared++;
+      }
+      rmSync(backup(), { force: true });
+    }
+    expect(compared).toBeGreaterThan(300);
+    // The worktree outside every glob resolved through its main checkout at least once.
+    seed([{ name: "repo", glob: `${S}/w/ui/repo/**`, autonomy: { merge: false } }]);
+    expect(resolveAutonomy(worktree).workspace).toBe("repo");
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
+}, 60_000);

@@ -316,7 +316,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   "test-audit": [["--bogus"], ["--diff", "no-such-base"]],
   knowledge: [[], ["bogus"], ["lint"]],
   grant: [["bogus"], ["set"], ["set", "w", "merge=verified"]],
-  workspace: [["bogus"], ["add"], ["set", "nope", "defaultEndpoint=merged"], ["rm", "nope"]],
+  workspace: [["bogus"], ["add"], ["set", "nope", "defaultEndpoint=merged"]],
   youtrack: [[], ["note"]],
   changelog: [[], ["apply"]],
 };

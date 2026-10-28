@@ -4,19 +4,20 @@
 //   workit workspace list
 //   workit workspace add <name> --glob <g> [--from <parent>]
 //   workit workspace set <name> <key>=<value>…
-//   workit workspace rm <name>
 //
 // These verbs never raise authority, so an agent shell may run them. Grants,
 // defaultEndpoint and verification stay with `workit grant set` at the user's
 // own terminal (verbs/grant.ts):
 // - `add` never copies them; `--from` copies vcs, issues, branchPolicy,
 //   commitPolicy, trailers, youtrack and models only. A new entry starts at
-//   the defaults lowered to every entry whose glob may overlap its own, so no
-//   directory it takes over ever gets more than it had.
+//   the strictest level of every entry and the defaults: textual glob overlap
+//   is not a safe bound (a linked worktree outside every glob resolves through
+//   its main checkout's entry, and symlinks after a wildcard are not
+//   resolved), so no directory it takes over can ever get more than it had.
 // - `set` refuses the grant keys and the keys that decide where grants apply
 //   (name, glob).
-// - `rm` refuses when any entry that may take over one of its directories
-//   (or the defaults, where no entry covers them) grants more.
+// There is no `rm`: removing an entry can hand its directories to a looser
+// one, so removal stays with the user's own editor.
 // Every write keeps the previous file as workspaces.json.bak, like grant set.
 import { copyFileSync, existsSync } from "node:fs";
 import {
@@ -36,7 +37,6 @@ import {
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import {
   WorkspaceConfigError,
-  globCovers,
   globSpecificity,
   overlappingEntries,
   readWorkspacesResult,
@@ -49,7 +49,7 @@ import {
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE =
-  "workit workspace list | workspace add <name> --glob <g> [--from <parent>] | workspace set <name> <key>=<value>… | workspace rm <name>";
+  "workit workspace list | workspace add <name> --glob <g> [--from <parent>] | workspace set <name> <key>=<value>…";
 
 /** What `--from` copies: never a grant, the endpoint or verification. */
 export const INHERITED_KEYS = [
@@ -95,12 +95,6 @@ type Ceiling = {
   verification: VerificationMode;
 };
 
-const DEFAULT_CEILING: Ceiling = {
-  grants: { ...DEFAULT_GRANTS },
-  endpoint: DEFAULT_ENDPOINT,
-  verification: DEFAULT_VERIFICATION,
-};
-
 const ceilingOf = (entry: unknown): Ceiling => ({
   grants: { ...DEFAULT_GRANTS, ...configuredGrants(entry).grants },
   endpoint: isDefaultEndpoint((entry as { defaultEndpoint?: unknown } | null)?.defaultEndpoint)
@@ -113,14 +107,7 @@ const STRICTNESS: readonly VerificationMode[] = ["independent", "self", "proport
 const looser = (current: VerificationMode, next: VerificationMode): boolean =>
   STRICTNESS.indexOf(next) > STRICTNESS.indexOf(current);
 
-/** What `next` grants beyond `current`, by name; empty when it never raises. */
-export const ceilingRaises = (current: Ceiling, next: Ceiling): string[] => [
-  ...GRANT_KINDS.filter((kind) => raises(kind, current.grants[kind], next.grants[kind])),
-  ...(raisesEndpoint(current.endpoint, next.endpoint) ? ["defaultEndpoint"] : []),
-  ...(looser(current.verification, next.verification) ? ["verification"] : []),
-];
-
-/** The lowest of the shadowed entries' ceilings (a tie selects none: take the strictest). */
+/** The strictest of these entries' ceilings, kind by kind; null for none. */
 const shadowedCeiling = (shadowed: readonly Entry[]): Ceiling | null => {
   if (shadowed.length === 0) return null;
   const ceilings = shadowed.map(ceilingOf);
@@ -141,9 +128,9 @@ const shadowedCeiling = (shadowed: readonly Entry[]): Ceiling | null => {
 };
 
 /**
- * The grant fields a new entry needs so it never exceeds the entries it
- * shadows: the defaults, lowered where the shadowed ceiling is lower. Only
- * ever lowers (each value is at most the default), so it needs no terminal.
+ * The grant fields a new entry needs so it never exceeds `floor`: the
+ * defaults, lowered where `floor` is lower. Only ever lowers (each value is
+ * at most the default), so it needs no terminal.
  */
 const clampToShadowed = (shadowed: Ceiling | null): Record<string, unknown> => {
   if (!shadowed) return {};
@@ -290,12 +277,13 @@ function add(argv: string[], io: Io): number {
         ]),
       )
     : {};
+  // Capped at every entry, not only the overlapping ones (see the header).
   const shadowed = overlappingEntries(glob, entries);
   const entry: Entry = {
     name,
     glob,
     ...inherited,
-    ...clampToShadowed(shadowedCeiling(shadowed)),
+    ...clampToShadowed(shadowedCeiling(entries)),
   };
   const result = save(current, [...entries, entry]);
   if (!result.ok) return emit(io, fail("invalid_input", result.error));
@@ -315,9 +303,8 @@ function add(argv: string[], io: Io): number {
     (data) => [
       `${name} (${glob}) added to ${written(data.path, data.backup)}`,
       ...(data.inherited.length ? [`  from ${from}: ${data.inherited.join(", ")}`] : []),
-      ...(data.shadows.length
-        ? [`  overlaps: ${data.shadows.join(", ")} (grants lowered to the strictest)`]
-        : []),
+      ...(data.shadows.length ? [`  overlaps: ${data.shadows.join(", ")}`] : []),
+      `  grants start at the strictest level of every workspace and the defaults:`,
       `  grants: ${GRANT_KINDS.map((kind) => `${kind}=${String(data.grants[kind])}`).join(" ")}; default endpoint ${data.defaultEndpoint}; verification ${data.verification}`,
       `  raising a grant needs the user, in their own terminal: workit grant set ${name} <kind>=<value>`,
     ],
@@ -422,67 +409,12 @@ function set(argv: string[], io: Io): number {
   ]);
 }
 
-function rm(argv: string[], io: Io): number {
-  const [name, extra] = argv;
-  if (!name) return usage(io, "rm needs <name>");
-  if (extra) return usage(io, `unexpected argument ${extra}`);
-  const current = load(io);
-  if (typeof current === "number") return current;
-  const entries = entriesOf(current);
-  const entry = entries.find((item) => item.name === name);
-  if (!entry) return emit(io, fail("not_found", `no workspace named "${name}" in ${current.path}`));
-  // Anyone that may select one of its paths afterwards: every overlapping
-  // entry, and the defaults unless one of them matches all of its paths.
-  const fallback = overlappingEntries(entry.glob, entries, name);
-  const takers: { name: string; ceiling: Ceiling }[] = [
-    ...fallback.map((item) => ({ name: item.name, ceiling: ceilingOf(item) })),
-    ...(fallback.some((item) => globCovers(item.glob, entry.glob))
-      ? []
-      : [{ name: "the defaults", ceiling: DEFAULT_CEILING }]),
-  ];
-  const own = ceilingOf(entry);
-  const raisers = takers
-    .map((taker) => ({ ...taker, raised: ceilingRaises(own, taker.ceiling) }))
-    .filter((taker) => taker.raised.length > 0);
-  if (raisers.length) {
-    const named = raisers.find((taker) => taker.name !== "the defaults");
-    return emit(
-      io,
-      fail(
-        "blocked",
-        `removing ${name} may raise authority under ${entry.glob}: ${raisers.map((taker) => `${taker.name} grants more (${taker.raised.join(", ")})`).join("; ")}`,
-        {
-          unblock: named
-            ? `lower ${named.name} first (workit grant set ${named.name} …), or ask the user to remove ${name} in their own editor`
-            : `ask the user to remove ${name} in their own editor`,
-        },
-      ),
-    );
-  }
-  const result = save(
-    current,
-    entries.filter((item) => item !== entry),
-  );
-  if (!result.ok) return emit(io, fail("invalid_input", result.error));
-  return emit(
-    io,
-    ok({
-      path: result.path,
-      backup: result.backup,
-      removed: name,
-      fallback: fallback.map((item) => item.name),
-    }),
-    (data) => [`${name} removed from ${written(data.path, data.backup)}`],
-  );
-}
-
 export async function runWorkspace(argv: string[], io: Io): Promise<number> {
   // Names and specs never start with --; a bare `--` before them is dropped.
   const [sub, ...rest] = argv.filter((arg) => arg !== "--json" && arg !== "--");
   if (sub === undefined || sub === "list") return list(rest, io);
   if (sub === "add") return add(rest, io);
   if (sub === "set") return set(rest, io);
-  if (sub === "rm") return rm(rest, io);
   return usage(io, `unknown subcommand "${sub}"`);
 }
 

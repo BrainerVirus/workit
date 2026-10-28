@@ -310,11 +310,6 @@ export const VERBS: readonly VerbEntry[] = [
           summary:
             "Change non-grant keys (dotted paths, JSON values, null removes); grants stay with workit grant set",
         },
-        {
-          name: "rm",
-          usage: "workit workspace rm <name>",
-          summary: "Remove an entry, unless the entry that takes over its folders grants more",
-        },
       ],
       examples: [
         "workit workspace list",
@@ -322,7 +317,7 @@ export const VERBS: readonly VerbEntry[] = [
         "workit workspace set kit branchPolicy.integration=merge",
       ],
       notes: [
-        "A new entry starts with no grants of its own. It is clamped to the strictest entry whose glob may overlap its own, so its folders never get more than they had. Raising a grant, defaultEndpoint or verification needs the user: workit grant set <name> <kind>=<value> in their own terminal.",
+        "A new entry starts with no grants of its own. It starts at the strictest level of every entry and the defaults, so its folders never get more than they had. Remove an entry in your own editor. Raising a grant, defaultEndpoint or verification needs the user: workit grant set <name> <kind>=<value> in their own terminal.",
         "Every write keeps the previous file as workspaces.json.bak. `workit doctor` lists overlapping globs and which entry wins.",
       ],
       load: () => import("./workspace"),

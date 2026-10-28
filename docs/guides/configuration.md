@@ -36,18 +36,17 @@ byte-for-byte as it was. To add or adjust one entry without the wizard:
 workit workspace list                                  # entries, and the one that applies here and why
 workit workspace add kit --glob '/home/you/work/libs/kit/**' --from work
 workit workspace set kit branchPolicy.integration=merge  # dotted keys, JSON values, null removes
-workit workspace rm kit
 ```
 
 `--from` copies the parent's `vcs`, `issues`, `branchPolicy`,
 `commitPolicy`, `trailers`, `youtrack` and `models`, never its grants,
 `defaultEndpoint` or `verification`. These verbs never raise authority, so an
-agent may run them when you ask: a new entry starts at the defaults, lowered
-to the strictest entry whose glob may overlap its own; `set` refuses the grant
-keys, `name`, `glob`, unknown keys and, on an entry with grants, `vcs`; `rm`
-refuses when any entry that may take over its folders (or the defaults, where
-none covers them all) grants more. Raise a grant with `workit grant set` in your own
-terminal. Each write keeps the previous file as `workspaces.json.bak`, and
+agent may run them when you ask: a new entry starts at the strictest level of
+every workspace and the defaults, so no folder it takes over gets more than it
+had; `set` refuses the grant keys, `name`, `glob`, unknown keys and, on an
+entry with grants, `vcs`. There is no `rm`: removing an entry can hand its
+folders to a looser one, so remove entries in your own editor. Raise a grant
+with `workit grant set` in your own terminal. Each write keeps the previous file as `workspaces.json.bak`, and
 `workit doctor` lists overlapping globs and which entry wins.
 
 A workspace's `defaultEndpoint` sets how far an unnamed delivery request goes:
