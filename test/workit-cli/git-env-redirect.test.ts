@@ -3,7 +3,7 @@
 // repository whose grants were never read, so it is refused before it loads;
 // read-only verbs keep working (dotfile repositories use GIT_DIR daily).
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -166,3 +166,39 @@ test("Given a dotfile-style GIT_DIR, When read-only verbs run, Then none is refu
   const trailers = await run(["git", "trailers"], repo.cwd, env);
   expect(trailers.code, trailers.stdout + trailers.stderr).toBe(0);
 });
+
+// #548 fix round: no variable needed when the folder's own `.git` is a
+// pointer (a `gitdir:` file or a symlink) into another checkout's repository.
+for (const kind of ["gitdir file", "symlink"] as const)
+  test.skipIf(kind === "symlink" && process.platform === "win32")(
+    `Given a folder under a permissive workspace whose .git is a ${kind} to a strict repository, When workit git push runs there, Then it is capped at the strict repository and origin does not move`,
+    async () => {
+      const repo = strictRepo();
+      const open = plainFolder();
+      const glob = (dir: string) => `${dir.replaceAll("\\", "/")}/**`;
+      writeFileSync(
+        path.join(configHome.configDir, "workspaces.json"),
+        JSON.stringify({
+          workspaces: [
+            { name: "strict", glob: glob(repo.root), autonomy: { release: false, push: false } },
+            { name: "open", glob: glob(open), autonomy: { release: true, push: true } },
+          ],
+        }),
+      );
+      const folder = path.join(open, "pointer");
+      mkdirSync(folder);
+      const gitDir = path.join(repo.cwd, ".git");
+      if (kind === "symlink") symlinkSync(gitDir, path.join(folder, ".git"));
+      else writeFileSync(path.join(folder, ".git"), `gitdir: ${gitDir}\n`);
+      const develop = repo.remoteTip("develop");
+      const release = await run(["git", "push", "--release", "develop", "--json"], folder);
+      expect(release.code, release.stdout + release.stderr).toBe(3);
+      expect(release.stdout).toContain("grant_required");
+      expect(repo.remoteTip("develop")).toBe(develop);
+      repo.git("switch", "-q", "-c", "feature/x");
+      const push = await run(["git", "push", "--json"], folder);
+      expect(push.code, push.stdout + push.stderr).toBe(3);
+      expect(push.stdout).toContain("grant_required");
+      expect(repo.remoteTip("feature/x")).toBeNull();
+    },
+  );

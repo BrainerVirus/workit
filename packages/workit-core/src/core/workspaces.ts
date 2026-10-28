@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -537,7 +537,18 @@ const probeCheckout = (cwd: string): Probe | null | Error => {
     .split(/\r?\n/u);
   if (!gitDir || !common) return failed;
   let main: string | null = null;
-  if (path.resolve(gitDir) !== path.resolve(common)) {
+  if (path.resolve(gitDir) === path.resolve(common)) {
+    // Its own repository only when `.git` here is that directory itself: a
+    // `gitdir:` file or a symlink into another checkout's repository is capped
+    // at that checkout (#548); an owner that cannot be named caps at nothing.
+    const real = realpathOf(common);
+    if (!ownGitDir(path.join(dir, ".git"), real)) {
+      const owner = gitDirOwner(real);
+      if (owner === null)
+        return Error(`${cwd} uses the repository at ${real}, owned by no checkout workit can name`);
+      if (owner !== realpathOf(dir)) main = owner;
+    }
+  } else {
     // The first `worktree` entry is the main one, also with --separate-git-dir
     // (where the common dir is not <main>/.git); a bare repo lists its own path.
     const list = git(["worktree", "list", "--porcelain"]);
@@ -549,6 +560,30 @@ const probeCheckout = (cwd: string): Probe | null | Error => {
   const probe = { main, superproject: superproject || null };
   probes.set(cwd, probe);
   return probe;
+};
+
+/** Is `dotGit` a real directory (not a symlink) that is the repository at `real`? */
+const ownGitDir = (dotGit: string, real: string): boolean => {
+  try {
+    return lstatSync(dotGit).isDirectory() && realpathOf(dotGit) === real;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The checkout a git directory belongs to: `<checkout>/.git`, or the
+ * superproject of `<checkout>/.git/modules/<name>` (also through one of its
+ * linked worktrees, `.git/worktrees/<w>/modules/<name>`); null for anything else
+ * (a `--separate-git-dir`, a bare repository).
+ */
+const gitDirOwner = (real: string): string | null => {
+  const parts = real.split(/[\\/]/u);
+  const at = parts.lastIndexOf(".git");
+  if (at < 1) return null;
+  const rest = parts.slice(at + 1);
+  const module = rest[0] === "modules" || (rest[0] === "worktrees" && rest[2] === "modules");
+  return rest.length === 0 || module ? parts.slice(0, at).join(path.sep) || path.sep : null;
 };
 
 /**

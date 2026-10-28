@@ -145,3 +145,12 @@ test("a folder in no repository needs no git and is not capped", () => {
   process.env.PATH = `${root}/empty`;
   expect(resolveAutonomy(`${root}/work/plain`).grants.merge).toBe(true);
 });
+
+test("#548: a checkout whose git directory no checkout owns (--separate-git-dir) caps at nothing; its own .git directory does not", () => {
+  write([permissive()]);
+  const sep = `${root}/work/sep`;
+  mkdirSync(sep, { recursive: true });
+  git(sep, "init", "-q", "--separate-git-dir", `${root}/sep.git`);
+  expect(nothingGranted(sep).note).toContain("owned by no checkout");
+  expect(resolveAutonomy(`${root}/work/main`).grants.merge).toBe(true);
+});
