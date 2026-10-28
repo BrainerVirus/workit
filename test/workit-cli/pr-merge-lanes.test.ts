@@ -61,6 +61,7 @@ const setup = (
   files: Record<string, string>,
   entry: Record<string, unknown> = {},
   openStatus = "github/pr-passing.json",
+  options: { stayOpen?: boolean } = {},
 ) => {
   writeFileSync(
     path.join(configDir, "config.json"),
@@ -87,7 +88,8 @@ const setup = (
     "graphql find": fixture("github/find-pr.json"),
     [GH_STATUS]: () => fixture(merged ? "github/pr-merged.json" : openStatus),
     "PUT repos/o/r/pulls/12/merge": () => {
-      merged = true;
+      // stayOpen: the forge accepts the merge but the PR stays open (a merge queue).
+      merged = !options.stayOpen;
       return JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" });
     },
   };
@@ -414,4 +416,42 @@ test("given a merge on a self verdict, no verdict (lane none) or an accepted ind
   const verified = await run(["pr", "merge"], risky.repo.cwd);
   expect(verified.code).toBe(0);
   expect(verified.stdout).toMatch(/verdict \S+ accepted for that head/u);
+});
+
+// #533: a refused merge was read as silence because the agent filtered the
+// output with `2>&1 | grep -E '^merged|rror'`, and no refusal line said
+// "error". Every outcome now ends in a line such a filter keeps.
+const kept = (out: string) =>
+  out.split("\n").filter((line) => /^merged|rror|not merged/u.test(line));
+
+test("given checks still pending, when pr merge is refused, then a line naming the error and 'not merged' survives a grep for errors", async () => {
+  const { repo, runner } = setup(DOCS, {}, "github/pr-pending.json");
+  const result = await run(["pr", "merge"], repo.cwd);
+  expect(result.code).not.toBe(0);
+  expect(result.stdout).toBe("");
+  expect(kept(result.stderr)).toEqual([
+    expect.stringMatching(/^workit: error: PR not merged \(not_ready, exit \d\)/u),
+  ]);
+  expect(merges(runner.calls)).toEqual([]);
+});
+
+test("given a merge that lands, when it prints, then its first line is the merged line on stdout and stderr is empty", async () => {
+  const { repo } = setup(DOCS);
+  const result = await run(["pr", "merge"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.stdout.split("\n")[0]).toMatch(/^merged PR #12 \(squash\) at head [0-9a-f]{12}/u);
+  expect(result.stderr).toBe("");
+});
+
+test("given the forge accepts the merge but the PR stays open (merge queue, auto-merge), then pr merge says it is not merged and exits non-zero", async () => {
+  const { repo, runner } = setup(DOCS, {}, "github/pr-passing.json", { stayOpen: true });
+  const result = await run(["pr", "merge"], repo.cwd);
+  expect(result.code).toBe(1);
+  expect(result.stdout).not.toMatch(/^merged/mu);
+  expect(result.stderr).toContain("not merged yet");
+  expect(result.stderr).toContain("merge queue or auto-merge");
+  expect(kept(result.stderr)).toContainEqual(
+    expect.stringMatching(/^workit: error: PR not merged \(merge_unverified, exit 1\)/u),
+  );
+  expect(merges(runner.calls)).toHaveLength(1);
 });

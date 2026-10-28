@@ -17,7 +17,15 @@ import {
   wantsHelp,
   type HelpDoc,
 } from "./help";
-import { emit, fail, ok, type EnvelopeCode, type Io } from "./output";
+import {
+  emit,
+  fail,
+  flushStreams,
+  ok,
+  withFailureLine,
+  type EnvelopeCode,
+  type Io,
+} from "./output";
 import {
   TASK_FAMILY_NAMES,
   VERBS,
@@ -230,7 +238,7 @@ export async function main(
     );
   const verb = await entry.load();
   const runVerb = (target: Io) => guarded(target, () => verb.run(checked.args, target));
-  if (!io.json) return runVerb(io);
+  if (!io.json) return withFailureLine(io, command, runVerb);
   return runJsonPure(io, command, runVerb);
 }
 
@@ -383,5 +391,8 @@ const unknown = (io: Io, command: string): number =>
   );
 
 if (import.meta.main) {
-  process.exit(await main(process.argv.slice(2), {}, { diagnostics: true }));
+  const code = await main(process.argv.slice(2), {}, { diagnostics: true });
+  // A piped stdout or stderr may still hold output: hand it over before exiting.
+  await flushStreams();
+  process.exit(code);
 }

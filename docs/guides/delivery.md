@@ -339,6 +339,18 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   a `merge.unverified` ledger row, but never over a current independent
   failed verdict ([grants](grants.md#merging)). `type-check-only` never
   satisfies the gate.
+- `pr merge` ends one of two ways. A merge exits 0 and prints
+  `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout.
+  Anything else exits non-zero and ends with
+  `workit: error: PR not merged (<reason>, exit <n>)` on stderr, after the
+  refusal and its `unblock:` line. The reason is the refusal code, such as
+  `not_ready` (checks still running, behind base) or `needs_verdict`. A
+  forge that accepts the merge while the PR stays open (a merge queue or
+  auto-merge holding it) is `merge_unverified`, exit 1, and
+  `workit verify-delivery merged --pr <n>` confirms it later. A filter such as
+  `2>&1 | grep -E '^merged|error'` keeps both lines; check the exit code too.
+  Under `--json` the envelope's `ok` and `code` carry the same outcome. Every
+  Workit verb that exits non-zero prints at least one line saying so.
 - `pr merge` deletes the head branch after a successful merge, unless
   `--keep-branch` or the workspace says `deleteBranch: false` (set with
   `workit workspace set <name> deleteBranch=false`; default `true`).

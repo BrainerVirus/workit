@@ -100,3 +100,61 @@ export function emit<T>(
   }
   return exitCodeFor(envelope.code);
 }
+
+/**
+ * Run a verb so that a non-zero exit always prints a line naming it (#533):
+ * a verb that fails without writing anything through `io` still leaves
+ * `workit: error: <command> failed (exit N)` on stderr.
+ */
+export async function withFailureLine(
+  io: Io,
+  command: string,
+  run: (io: Io) => Promise<number>,
+): Promise<number> {
+  let wrote = false;
+  const code = await run({
+    ...io,
+    stdout: (text) => {
+      wrote ||= text.length > 0;
+      io.stdout(text);
+    },
+    stderr: (text) => {
+      wrote ||= text.length > 0;
+      io.stderr(text);
+    },
+  });
+  if (code !== 0 && !wrote) io.stderr(`workit: error: ${command} failed (exit ${code})\n`);
+  return code;
+}
+
+type Flushable = {
+  write: (chunk: string, done: (error?: Error | null) => void) => boolean;
+};
+
+/**
+ * Resolve once everything queued on `streams` is handed to the OS, so a
+ * `process.exit` after it loses no output when stdout or stderr is a pipe.
+ * A stream that never drains (its reader gone) is given up after `timeoutMs`.
+ */
+export const flushStreams = async (
+  streams: readonly Flushable[] = [process.stdout, process.stderr],
+  timeoutMs = 2_000,
+): Promise<void> => {
+  await Promise.all(
+    streams.map(
+      (stream) =>
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, timeoutMs);
+          const done = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          try {
+            stream.write("", done);
+          } catch {
+            done();
+          }
+        }),
+    ),
+  );
+};
