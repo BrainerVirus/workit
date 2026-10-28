@@ -459,3 +459,21 @@ test("Given an author's --self verdict, When the branch is rebased cleanly, Then
   expect(result.accepted.accepted).toBe(false);
   expect(result.review).toBe("self-reviewed");
 });
+
+test("Given a verified head, When the branch's files stay byte-identical (a rebase over another file, or a re-commit of the same tree), Then the verdict carries with no rebase note", () => {
+  const rebased = featureRepo();
+  verdict(rebased);
+  git(rebased, "checkout", "-q", "main");
+  commit(rebased, { "src/other.ts": "export const other = 1;\n" }, "unrelated");
+  git(rebased, "checkout", "-q", "feature/x");
+  git(rebased, "rebase", "-q", "main");
+  const recommitted = featureRepo();
+  verdict(recommitted);
+  git(recommitted, "commit", "-q", "--amend", "-m", "feature, reworded");
+  for (const root of [rebased, recommitted]) {
+    const result = check(root);
+    expect(result.accepted).toMatchObject({ accepted: true, reasons: [] });
+    expect(result.current.basis).toBe("carried");
+    expect(result.carry).toBeNull();
+  }
+});

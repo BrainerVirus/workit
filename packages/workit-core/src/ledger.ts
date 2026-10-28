@@ -1549,9 +1549,9 @@ export function checkVerdicts(
   // the head must be exactly the judged head cleanly rebased onto the moved
   // base (cleanRebase): a base edit elsewhere in a file the branch touches.
   // A failure keeps the looser carry: it fails closed by applying more.
-  const exactCache = new Map<ReadRow, boolean>();
-  const exactCarry = (row: ReadRow): boolean => {
-    if (FAILING.has(String(row.result))) return true;
+  // How a pass's own files match: identical blobs, a clean rebase, or neither.
+  const exactCache = new Map<ReadRow, "same" | "rebase" | null>();
+  const exactMatch = (row: ReadRow): "same" | "rebase" | null => {
     let exact = exactCache.get(row);
     if (exact === undefined) {
       const toBase = row.base ?? fallbackBase;
@@ -1561,18 +1561,31 @@ export function checkVerdicts(
         row.head && head && toBaseSha && fromBase
           ? { from: row.head, to: head, fromBase, toBase: toBaseSha }
           : null;
-      exact = Boolean(range && (sameOwnChange(cwd, range) || cleanRebase(cwd, range)));
+      exact = !range
+        ? null
+        : sameOwnChange(cwd, range)
+          ? "same"
+          : cleanRebase(cwd, range)
+            ? "rebase"
+            : null;
       exactCache.set(row, exact);
     }
     return exact;
   };
+  const exactCarry = (row: ReadRow): boolean =>
+    FAILING.has(String(row.result)) || exactMatch(row) !== null;
   const keyBasis = (row: ReadRow): Exclude<VerdictBasis, "none"> => {
     const basis = verdictBasis(row, { head, ...keyFor(row.base ?? fallbackBase) });
     return basis === "carried" && !exactCarry(row) ? "stale" : basis;
   };
-  /** A verdict on another head that the exact keys carry: the same patch on a moved base. */
+  /** A pass the exact keys carry only through a clean rebase (the base also edited a branch file). */
   const rebaseNote = (row: ReadRow): CarryNote | null =>
-    row.head && head && row.head !== head && keyBasis(row) === "carried"
+    row.head &&
+    head &&
+    row.head !== head &&
+    !FAILING.has(String(row.result)) &&
+    keyBasis(row) === "carried" &&
+    exactMatch(row) === "rebase"
       ? { rule: "rebase", since: row.head, files: [] }
       : null;
   const restacked = (row: ReadRow): boolean =>
