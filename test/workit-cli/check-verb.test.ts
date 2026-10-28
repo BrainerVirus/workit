@@ -45,9 +45,7 @@ const git = (cwd: string, ...args: string[]): string => {
 
 /** A repo on a feature branch whose `test` check is `bun -e <exit 0>`. */
 const repo = (
-  checks: Record<string, string[]> | null = {
-    test: [BUN, "-e", "process.exit(0)"],
-  },
+  checks: Record<string, string[]> | null = { test: [BUN, "-e", "process.exit(0)"] },
 ) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-check-"));
   dirs.push(root);
@@ -65,30 +63,15 @@ const repo = (
 
 const behavioral = (): Assessment["signals"] => ({
   ...assessment().signals,
-  approachUnknown: {
-    value: false,
-    basis: "inferred",
-    reason: "known",
-    refs: [],
-  },
-  productChoiceOpen: {
-    value: false,
-    basis: "inferred",
-    reason: "settled",
-    refs: [],
-  },
+  approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
+  productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
   behaviorChange: {
     value: true,
     basis: "observed",
     reason: "behavior",
     refs: [{ kind: "external", url: "https://example.test/r" }],
   },
-  mechanicalLowRisk: {
-    value: false,
-    basis: "inferred",
-    reason: "behavioral",
-    refs: [],
-  },
+  mechanicalLowRisk: { value: false, basis: "inferred", reason: "behavioral", refs: [] },
 });
 
 /** An active task with a close-time `testing` requirement (behavioral-verification). */
@@ -117,20 +100,11 @@ const startTask = (root: string) => {
   const testing = task.data.policy.requirements.find((item) => item.dimension === "testing")!;
   expect(testing.before).toBe("close");
   const status = () => {
-    const view = core.task({
-      schemaVersion: 1,
-      action: "inspect",
-      taskId,
-      view: "summary",
-    });
+    const view = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
     if (!view.ok) throw new Error(view.error);
     return (
       view.data as {
-        requirements: Array<{
-          requirementId: string;
-          status: string;
-          reason: string;
-        }>;
+        requirements: Array<{ requirementId: string; status: string; reason: string }>;
       }
     ).requirements.find((item) => item.requirementId === testing.id)!;
   };
@@ -142,11 +116,7 @@ const run = async (cwd: string, argv: string[]) => {
   let stderr = "";
   const code = await main(argv, {
     cwd,
-    env: {
-      ...process.env,
-      WORKIT_SESSION_ID: "s-agent",
-      WORKFLOW_WORKSPACE_ROOT: "",
-    },
+    env: { ...process.env, WORKIT_SESSION_ID: "s-agent", WORKFLOW_WORKSPACE_ROOT: "" },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   });
@@ -168,11 +138,7 @@ test("G `workit check -- bun test` exiting 1, T failing evidence with exit code,
   ]);
   expect(failing.code).toBe(1);
   const envelope = failing.json();
-  expect(envelope).toMatchObject({
-    ok: false,
-    code: "failed",
-    error: "exited 1",
-  });
+  expect(envelope).toMatchObject({ ok: false, code: "failed", error: "exited 1" });
   const data = envelope.data;
   expect(data).toMatchObject({
     name: "test",
@@ -197,20 +163,12 @@ test("G `workit check -- bun test` exiting 1, T failing evidence with exit code,
   const task = store.readTask(taskId);
   if (!task.ok) throw new Error(task.error);
   const entry = task.data.evidence.find((item) => item.id === data.evidenceId)!;
-  expect(entry.provenance).toMatchObject({
-    kind: "host_observed",
-    host: "workit_cli",
-  });
+  expect(entry.provenance).toMatchObject({ kind: "host_observed", host: "workit_cli" });
   expect(entry.data).toMatchObject({
     kind: "check",
     result: "failed",
     exitCode: 1,
-    observation: {
-      observer: "workit_cli",
-      tree: data.tree,
-      head: data.head,
-      attestation: null,
-    },
+    observation: { observer: "workit_cli", tree: data.tree, head: data.head, attestation: null },
   });
   expect(task.data.critical).toContain(CHECK_OBSERVATION_PATH);
   expect(status()).toMatchObject({ status: "unsatisfied" });
@@ -247,21 +205,13 @@ test("G `workit check -- true` while `test` is configured, T the testing require
   });
   // A configured name with a different command is still ad-hoc.
   const renamed = await run(root, ["check", "--json", "--name", "test", "--", "true"]);
-  expect(renamed.json().data).toMatchObject({
-    name: "test",
-    configured: false,
-    satisfies: [],
-  });
+  expect(renamed.json().data).toMatchObject({ name: "test", configured: false, satisfies: [] });
   expect(status().status).toBe("unsatisfied");
 
   const named = await run(root, ["check", "test", "--json"]);
   expect(named.code).toBe(0);
   expect(named.json()).toMatchObject({ ok: true, code: "ok" });
-  expect(named.json().data).toMatchObject({
-    name: "test",
-    configured: true,
-    stillUnsatisfied: [],
-  });
+  expect(named.json().data).toMatchObject({ name: "test", configured: true, stillUnsatisfied: [] });
   expect(named.json().data.satisfies).toHaveLength(1);
   expect(status()).toMatchObject({ status: "satisfied" });
 
@@ -301,14 +251,9 @@ test("G an agent-recorded `evidence.record {kind:check,result:passed}`, T it doe
     exitCode: 0,
     reviewContext: null,
   };
-  expect(
-    core.evidence({
-      schemaVersion: 1,
-      action: "record",
-      taskId,
-      evidence: reported,
-    }).ok,
-  ).toBe(true);
+  expect(core.evidence({ schemaVersion: 1, action: "record", taskId, evidence: reported }).ok).toBe(
+    true,
+  );
   expect(status()).toMatchObject({
     status: "unsatisfied",
     reason: expect.stringContaining("agent-reported checks are notes"),
@@ -412,12 +357,7 @@ test("a forged configured observation whose argv is not the configured command d
   expect(
     cli.observeCheck({
       taskId,
-      observation: checkObservation({
-        name: "test",
-        configured: true,
-        argv: ["true"],
-        tree,
-      }),
+      observation: checkObservation({ name: "test", configured: true, argv: ["true"], tree }),
     }).ok,
   ).toBe(true);
   expect(status()).toMatchObject({
@@ -427,16 +367,11 @@ test("a forged configured observation whose argv is not the configured command d
 });
 
 test("a check that changes the worktree reports modifiedWorktree and leaves stale evidence", async () => {
-  const root = repo({
-    test: [BUN, "-e", "require('fs').writeFileSync('out.txt', 'x')"],
-  });
+  const root = repo({ test: [BUN, "-e", "require('fs').writeFileSync('out.txt', 'x')"] });
   const { status } = startTask(root);
   const result = await run(root, ["check", "test", "--json"]);
   expect(result.code).toBe(0);
-  expect(result.json().data).toMatchObject({
-    configured: true,
-    modifiedWorktree: true,
-  });
+  expect(result.json().data).toMatchObject({ configured: true, modifiedWorktree: true });
   expect(status()).toMatchObject({
     status: "unsatisfied",
     reason: expect.stringContaining("stale"),
@@ -483,10 +418,7 @@ test("usage: unknown names, --shell with argv, and the exit code mirrors the com
   const root = repo();
   const missing = await run(root, ["check", "lint", "--json"]);
   expect(missing.code).toBe(1);
-  expect(missing.json()).toMatchObject({
-    code: "not_found",
-    unblock: "workit check test",
-  });
+  expect(missing.json()).toMatchObject({ code: "not_found", unblock: "workit check test" });
   const shellArgv = await run(root, ["check", "--shell", "--json", "--", "echo", "hi"]);
   expect(shellArgv.code).toBe(2);
   const shell = await run(root, ["check", "--shell", "--json", "--", "exit 3"]);
@@ -518,10 +450,7 @@ test("concurrent checks on one task all record (omitted revisions retry, never r
           const child = spawn(
             BUN,
             [path.join(ROOT, "packages/workit-cli/src/main.ts"), "check", "test", "--json"],
-            {
-              cwd: root,
-              env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: "" },
-            },
+            { cwd: root, env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: "" } },
           );
           let stdout = "";
           let stderr = "";
@@ -533,10 +462,7 @@ test("concurrent checks on one task all record (omitted revisions retry, never r
   );
   for (const result of runs) {
     expect(result.code, result.stdout + result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout).data.task).toEqual({
-      id: taskId,
-      created: false,
-    });
+    expect(JSON.parse(result.stdout).data.task).toEqual({ id: taskId, created: false });
   }
   const task = store.readTask(taskId);
   if (!task.ok) throw new Error(task.error);
@@ -586,14 +512,8 @@ test("observed-check freshness: tree vs signal modes, modified worktree, and a c
   });
   const task = (status: string, item = entry()) =>
     ({ status, evidence: [item], candidates: [], policy: null }) as never;
-  const tree = (value: string) => ({
-    mode: "tree" as const,
-    current: () => value,
-  });
-  const signal = (value: string) => ({
-    mode: "signal" as const,
-    current: () => value,
-  });
+  const tree = (value: string) => ({ mode: "tree" as const, current: () => value });
+  const signal = (value: string) => ({ mode: "signal" as const, current: () => value });
   expect(evaluateEvidence(task("active"), null, tree("t1"))[0].status).toBe("passed");
   expect(evaluateEvidence(task("active"), null, tree("t2"))[0].status).toBe("stale");
   expect(evaluateEvidence(task("active"), null, signal("s1"))[0].status).toBe("passed");
@@ -624,9 +544,7 @@ const heavyRepo = (
   dirs.push(state, config);
   writeFileSync(
     path.join(config, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [{ name: "here", glob: "**", resources: machine }],
-    }),
+    JSON.stringify({ workspaces: [{ name: "here", glob: "**", resources: machine }] }),
   );
   const env = {
     ...process.env,
@@ -660,11 +578,9 @@ const cli = (cwd: string, argv: string[], env: NodeJS.ProcessEnv) => {
   let stderr = "";
   child.stdout.on("data", (chunk) => (stdout += chunk));
   child.stderr.on("data", (chunk) => (stderr += chunk));
-  const done = new Promise<{
-    code: number | null;
-    stdout: string;
-    stderr: string;
-  }>((resolve) => child.on("close", (code) => resolve({ code, stdout, stderr })));
+  const done = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) =>
+    child.on("close", (code) => resolve({ code, stdout, stderr })),
+  );
   return { child, done };
 };
 
@@ -702,11 +618,7 @@ test("G two `workit check test` runs in different worktrees, W the first holds t
   const [a, b] = await Promise.all([first.done, second.done]);
   expect(a.code, a.stderr).toBe(0);
   expect(b.code, b.stderr).toBe(0);
-  expect(JSON.parse(a.stdout).data.lease).toMatchObject({
-    slot: 0,
-    waitedMs: 0,
-    holder: null,
-  });
+  expect(JSON.parse(a.stdout).data.lease).toMatchObject({ slot: 0, waitedMs: 0, holder: null });
   const lease = JSON.parse(b.stdout).data.lease;
   expect(lease.waitedMs).toBeGreaterThan(0);
   expect(lease.holder).toMatchObject({
@@ -736,11 +648,7 @@ test("G the lease is held elsewhere, T an ad-hoc check runs without it, --heavy 
   expect(queued.json()).toMatchObject({
     ok: false,
     code: "busy",
-    data: {
-      lease: {
-        holders: [{ check: "build", cwd: "/elsewhere", session: "s-other" }],
-      },
-    },
+    data: { lease: { holders: [{ check: "build", cwd: "/elsewhere", session: "s-other" }] } },
   });
   expect((await runEnv(root, ["check", "test", "--json"], env)).code).toBe(4);
   const lint = await runEnv(root, ["check", "lint", "--json"], env);
@@ -761,9 +669,7 @@ test("G the lease is held elsewhere, T an ad-hoc check runs without it, --heavy 
 test("G a stale lease from a dead process, T `workit check test` reclaims it and says so", async () => {
   const { root, env, leases } = heavyRepo({ test: SLOW(10) });
   const dead = Number(
-    spawnSync(BUN, ["-e", "console.log(process.pid)"], {
-      encoding: "utf8",
-    }).stdout.trim(),
+    spawnSync(BUN, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim(),
   );
   writeLease(leases, {
     id: "00000000-0000-4000-8000-00000000000a",
@@ -775,11 +681,7 @@ test("G a stale lease from a dead process, T `workit check test` reclaims it and
   const result = await runEnv(root, ["check", "test", "--json"], env);
   expect(result.code, result.stderr).toBe(0);
   expect(result.json().data.lease.reclaimed).toEqual([
-    expect.objectContaining({
-      pid: dead,
-      cwd: "/gone",
-      reason: `holder pid ${dead} is gone`,
-    }),
+    expect.objectContaining({ pid: dead, cwd: "/gone", reason: `holder pid ${dead} is gone` }),
   ]);
   expect(result.stderr).toContain("reclaimed a stale heavy-check lease");
   // Released when the run ends.
@@ -789,22 +691,10 @@ test("G a stale lease from a dead process, T `workit check test` reclaims it and
 test("G an outer heavy check's WORKIT_LEASE, T a nested heavy check reuses that lease instead of deadlocking on it", async () => {
   const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { wait: 0 });
   const id = "00000000-0000-4000-8000-00000000000b";
-  writeLease(leases, {
-    id,
-    pid: process.pid,
-    check: "test",
-    cwd: "/outer",
-    session: "s-heavy",
-  });
-  const nested = await runEnv(root, ["check", "test", "--json"], {
-    ...env,
-    WORKIT_LEASE: id,
-  });
+  writeLease(leases, { id, pid: process.pid, check: "test", cwd: "/outer", session: "s-heavy" });
+  const nested = await runEnv(root, ["check", "test", "--json"], { ...env, WORKIT_LEASE: id });
   expect(nested.code, nested.stderr).toBe(0);
-  expect(nested.json().data.lease).toMatchObject({
-    inherited: true,
-    slot: null,
-  });
+  expect(nested.json().data.lease).toMatchObject({ inherited: true, slot: null });
   // The outer lease is untouched.
   expect(existsSync(path.join(leases, "slot-0.json"))).toBe(true);
 });
@@ -844,13 +734,7 @@ test("G workspaces.json resources mark lint heavy, T `workit check lint` takes t
   writeFileSync(
     path.join(config, "workspaces.json"),
     JSON.stringify({
-      workspaces: [
-        {
-          name: "here",
-          glob: "**",
-          resources: { heavy: ["lint"], scope: false },
-        },
-      ],
+      workspaces: [{ name: "here", glob: "**", resources: { heavy: ["lint"], scope: false } }],
     }),
   );
   const lint = await runEnv(root, ["check", "lint", "--json"], env);
@@ -859,17 +743,12 @@ test("G workspaces.json resources mark lint heavy, T `workit check lint` takes t
 });
 
 /** Does a scope actually start here? (The skip guard for the real systemd path.) */
-const probe = scopePrefix(`workit-probe-${process.pid}`, {
-  memoryMax: "1G",
-  cpuQuota: "50%",
-});
+const probe = scopePrefix(`workit-probe-${process.pid}`, { memoryMax: "1G", cpuQuota: "50%" });
 const userSystemd =
   process.platform === "linux" &&
   scopeSupport(process.env).ok &&
-  spawnSync(probe[0], [...probe.slice(1), "true"], {
-    stdio: "ignore",
-    timeout: 10_000,
-  }).status === 0;
+  spawnSync(probe[0], [...probe.slice(1), "true"], { stdio: "ignore", timeout: 10_000 }).status ===
+    0;
 
 test.skipIf(!userSystemd)(
   "G a delegated user systemd, T `workit check test` runs in a workit scope with the configured limits",
@@ -888,10 +767,7 @@ test.skipIf(!userSystemd)(
     const result = await runEnv(root, ["check", "test", "--json"], env);
     expect(result.code, result.stderr).toBe(0);
     const data = result.json().data;
-    expect(data.scope).toMatchObject({
-      memoryMax: "2147483648",
-      cpuQuota: "200%",
-    });
+    expect(data.scope).toMatchObject({ memoryMax: "2147483648", cpuQuota: "200%" });
     expect(data.scope.unit).toMatch(/^workit-check-[0-9a-f]{8}-\d+\.scope$/u);
     expect(data.logTail).toHaveLength(2);
     expect(data.logTail[0]).toEndWith(`/${data.scope.unit}`);
@@ -935,9 +811,7 @@ test.skipIf(process.platform === "win32")(
     // `test` itself sleeps 30 s; a short --heavy run shows the reclaim.
     const after = await runEnv(root, ["check", "--heavy", "--json", "--", ...SLOW(10)], env);
     expect(after.code, after.stderr).toBe(0);
-    expect(after.json().data.lease.reclaimed[0]).toMatchObject({
-      check: "test",
-    });
+    expect(after.json().data.lease.reclaimed[0]).toMatchObject({ check: "test" });
   },
   60_000,
 );
@@ -946,26 +820,13 @@ test.skipIf(process.platform !== "linux")(
   "G a WORKIT_LEASE leaked from an unrelated live process, T the check does not skip the queue",
   async () => {
     const { root, env, leases } = heavyRepo({ test: SLOW(10) }, { wait: 0 });
-    const sibling = spawn(BUN, ["-e", "setTimeout(() => {}, 30000)"], {
-      stdio: "ignore",
-    });
+    const sibling = spawn(BUN, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
     try {
       const id = "00000000-0000-4000-8000-0000000000f1";
-      writeLease(leases, {
-        id,
-        pid: sibling.pid,
-        check: "test",
-        cwd: "/sibling",
-        session: "s-x",
-      });
-      const forged = await runEnv(root, ["check", "test", "--json"], {
-        ...env,
-        WORKIT_LEASE: id,
-      });
+      writeLease(leases, { id, pid: sibling.pid, check: "test", cwd: "/sibling", session: "s-x" });
+      const forged = await runEnv(root, ["check", "test", "--json"], { ...env, WORKIT_LEASE: id });
       expect(forged.code).toBe(4);
-      expect(forged.json().data.lease.holders[0]).toMatchObject({
-        cwd: "/sibling",
-      });
+      expect(forged.json().data.lease.holders[0]).toMatchObject({ cwd: "/sibling" });
     } finally {
       sibling.kill("SIGKILL");
     }
