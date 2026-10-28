@@ -1,6 +1,6 @@
 import { type HostOutcome, type UpgradePlan } from "./shared";
 
-export const pad = (text: string) => text.padEnd(12);
+const pad = (text: string) => text.padEnd(12);
 
 export const summary = (
   plan: UpgradePlan,

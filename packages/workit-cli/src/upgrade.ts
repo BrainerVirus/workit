@@ -13,10 +13,10 @@ import { planCli, previewUpgrade } from "./upgrade/plan";
 import { askConfirm, summary, table } from "./upgrade/report";
 import { HOSTS, LAUNCH_HOSTS, runner, upgradePaths, type UpgradeDeps } from "./upgrade/shared";
 
-export { applyUpgrade, type UpgradeResult } from "./upgrade/apply";
+export { applyUpgrade } from "./upgrade/apply";
 export { previewUpgrade } from "./upgrade/plan";
 export { classifyProcess } from "./upgrade/processes";
-export type { HostProcess, UpgradeDeps, UpgradePlan } from "./upgrade/shared";
+export type { HostProcess, UpgradeDeps } from "./upgrade/shared";
 
 const USAGE =
   "Usage: workit upgrade [--hosts=opencode,cursor,codex,pi,claude-code|none] [--cli] [--preview | --yes | --apply --confirm] [--json]\n";

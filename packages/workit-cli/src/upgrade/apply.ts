@@ -67,7 +67,7 @@ const opencodeVersion = (run: ReturnType<typeof runner>): string | undefined => 
 };
 
 /** Apply one plan entry; any thrown error stays this host's failure. */
-export const applyEntry = (
+const applyEntry = (
   entry: PlanEntry,
   context: {
     run: ReturnType<typeof runner>;
