@@ -235,6 +235,21 @@ test("pr merge: when the open-PR list cannot be read the branch is kept", async 
   await skipped({ children: "error" }, /could not list the open PRs/);
 });
 
+test("pr merge: a head branch a custom policy protects is kept, the merge still lands", async () => {
+  const repo = setup();
+  writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main", "feature/x"] },
+    }),
+  );
+  const result = await merge(repo);
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data.deletedBranch).toEqual({
+    skipped: expect.stringMatching(/feature\/x is protected/),
+  });
+});
+
 test("pr merge: a protected branch (develop -> main under gitflow) is kept, the merge still lands", async () => {
   const repo = setup({ head: "develop" });
   writeFileSync(
