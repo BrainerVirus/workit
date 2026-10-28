@@ -1,0 +1,12 @@
+{
+  "id": "tool-decision-record-missing-presented",
+  "source": "retro 2026-10-27 opencode: `decision record` without `presented` failed with a path-only error",
+  "tool": {
+    "family": "decision",
+    "input": { "action": "record", "purpose": "design", "response": "approved" }
+  },
+  "expect": {
+    "require": ["decision record requires presented", "Example: \\{\"action\":\"record\""],
+    "forbid": ["binding\\.presented: Invalid"]
+  }
+}
