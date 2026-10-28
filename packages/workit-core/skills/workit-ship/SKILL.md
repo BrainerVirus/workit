@@ -53,7 +53,7 @@ the same check. Fix round and recheck both failed: a decider (workit-fanout).
 6. **Verified.** The lane in `workit pr status` decides: none, no verdict; self, your `--self` verdict; focused or full, one non-author verifier per PR after the last push (workit-review), on Claude Code with `workit models show --role verifier`'s `model` and `effort`. A docs-only push keeps the verdict (`carried`); `reverify: focused` re-checks only the new diff; one verdict at a stack's top covers its unchanged lower PRs. Land when
    granted: `workit stack land` or `workit pr merge`; `--unverified --reason` if asked.
 7. **Observe it landed:** `workit verify-delivery pr` or `merge`. After a failed
-   verdict or a check red 3+ times, at any endpoint offer `/wk-retro` in one
+   verdict or a check red 3+ times, at any endpoint: offer `/wk-retro` in one
    line of the final or stop report; never pause the loop for it.
 
 ## Example
