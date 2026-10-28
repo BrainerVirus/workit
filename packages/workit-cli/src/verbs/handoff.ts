@@ -89,6 +89,17 @@ function render(brief: Brief): { body: string[]; tail: string[] } {
 
 const bytes = (lines: string[]): number => Buffer.byteLength(`${lines.join("\n")}\n`);
 
+const TAIL_LINE_BYTES = 480;
+
+/** A tail line (note, next) cut to TAIL_LINE_BYTES so huge values cannot push the brief past its bound. */
+const capLine = (line: string): string =>
+  Buffer.byteLength(line) <= TAIL_LINE_BYTES
+    ? line
+    : `${Buffer.from(line)
+        .subarray(0, TAIL_LINE_BYTES)
+        .toString()
+        .replace(/\uFFFD$/u, "")}… (cut)`;
+
 /** The brief within MAX_BRIEF_BYTES, writing the whole one to a file when it is longer. */
 function bounded(brief: Brief, cwd: string): string[] {
   const { body, tail } = render(brief);
@@ -100,18 +111,21 @@ function bounded(brief: Brief, cwd: string): string[] {
       const dir = path.join(store.value.root, "handoff");
       fs.mkdirSync(dir, { recursive: true });
       file = path.join(dir, `${(brief.branch ?? "detached").replaceAll(/[^\w.-]+/gu, "-")}.txt`);
-      fs.writeFileSync(file, `${[...body, ...tail].join("\n")}\n`, { mode: 0o600 });
+      fs.writeFileSync(file, `${[...body, ...tail].join("\n")}\n`, {
+        mode: 0o600,
+      });
     } catch {
       file = null;
     }
   const pointer = `… cut to ${MAX_BRIEF_BYTES} bytes; full brief: ${file ?? "not written (workit handoff --json has it all)"}`;
+  const cappedTail = tail.map(capLine);
   const kept: string[] = [];
   for (const line of body) {
     const cut = line.length > 400 ? `${line.slice(0, 400)}…` : line;
-    if (bytes([...kept, cut, pointer, ...tail]) > MAX_BRIEF_BYTES) break;
+    if (bytes([...kept, cut, pointer, ...cappedTail]) > MAX_BRIEF_BYTES) break;
     kept.push(cut);
   }
-  return [...kept, pointer, ...tail];
+  return [...kept, pointer, ...cappedTail];
 }
 
 async function resumeBrief(argv: string[], io: Io): Promise<number> {
@@ -134,7 +148,12 @@ async function resumeBrief(argv: string[], io: Io): Promise<number> {
   }
   const last = values.last === undefined ? 10 : Number(values.last);
   if (!Number.isInteger(last) || last < 1)
-    return emit(io, fail("invalid_input", "--last must be a positive integer", { unblock: USAGE }));
+    return emit(
+      io,
+      fail("invalid_input", "--last must be a positive integer", {
+        unblock: USAGE,
+      }),
+    );
   const built = buildHandoff(io.cwd, {
     last,
     note: values.note ?? null,

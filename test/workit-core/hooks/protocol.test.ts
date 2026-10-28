@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import {
   CLAUDE_CODE_DESCRIPTOR,
@@ -17,6 +17,18 @@ import {
   type HostDescriptor,
 } from "@/packages/workit-core/src/hooks/index";
 import { fixture, startTask, tempRoot, withProtectedMain } from "./hook-fixtures";
+
+// #463: a SubagentStart records an issued session id in the state dir, so each
+// test gets its own rather than sharing the run-wide registry.
+let savedState: string | undefined;
+beforeEach(() => {
+  savedState = process.env.WORKFLOW_TOOLKIT_STATE;
+  process.env.WORKFLOW_TOOLKIT_STATE = tempRoot("workit-hook-state-");
+});
+afterEach(() => {
+  if (savedState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
+  else process.env.WORKFLOW_TOOLKIT_STATE = savedState;
+});
 
 // Design §1.3: which native hook carries each protocol event, per host.
 // null means workit registers no native hook for the event (the host may
@@ -155,7 +167,12 @@ test("every host maps the same protocol events onto its documented native hooks"
 const input = (root: string, event: HookInput["event"], host: HookInput["host"] = "codex_cli") => ({
   host,
   cwd: root,
-  session: { id: `session-${crypto.randomUUID()}`, agentId: null, agentType: null, parentId: null },
+  session: {
+    id: `session-${crypto.randomUUID()}`,
+    agentId: null,
+    agentType: null,
+    parentId: null,
+  },
   permissionMode: null,
   transcriptPath: null,
   event,
@@ -178,11 +195,18 @@ test("shell.pre denies noncompliant branch creation in any form, with the correc
       // A host that cannot render a deny never claims one.
       expect(
         handleHook(
-          input(root, { kind: "shell.pre", command: "git checkout -b main", toolUseId: null }),
+          input(root, {
+            kind: "shell.pre",
+            command: "git checkout -b main",
+            toolUseId: null,
+          }),
           {
             descriptor: {
               ...CODEX_DESCRIPTOR,
-              shellPolicy: { ...CODEX_DESCRIPTOR.shellPolicy, deny: "undocumented" },
+              shellPolicy: {
+                ...CODEX_DESCRIPTOR.shellPolicy,
+                deny: "undocumented",
+              },
             },
             addendum: null,
           },
@@ -200,7 +224,13 @@ test("events without S8 behavior stay no-ops on every host", () => {
     for (const descriptor of Object.values(DESCRIPTORS))
       for (const event of [
         { kind: "tool.pre", tool: "Write", toolUseId: null },
-        { kind: "shell.post", command: "ls", stdout: "", exitCode: 0, toolUseId: null },
+        {
+          kind: "shell.post",
+          command: "ls",
+          stdout: "",
+          exitCode: 0,
+          toolUseId: null,
+        },
         {
           kind: "subagent.stop",
           agentId: null,
@@ -252,7 +282,12 @@ test("the unfinished-task offer is shared: once per host session, startup only, 
     const codex = handleHook(
       {
         ...input(root, { kind: "session.start", source: "startup" }),
-        session: { id: "claude-mine", agentId: null, agentType: null, parentId: null },
+        session: {
+          id: "claude-mine",
+          agentId: null,
+          agentType: null,
+          parentId: null,
+        },
       },
       {
         descriptor: {
@@ -278,12 +313,16 @@ test("fail policy: pre-tool parse errors deny only on fail-closed hosts; start e
       {},
     );
     expect(codex.error).toBe("tool_input.command is required for shell tools");
-    expect(codex.json).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse" } });
+    expect(codex.json).toEqual({
+      hookSpecificOutput: { hookEventName: "PreToolUse" },
+    });
     expect(codex.exitCode).toBe(0);
     // Cursor fails open too (audit N7): the same failure answers allow.
     const cursor = dispatchHook(
       cursorAdapter,
-      fixture("cursor", "before-shell-execution", root, { workspace_roots: [] }),
+      fixture("cursor", "before-shell-execution", root, {
+        workspace_roots: [],
+      }),
       {},
     );
     expect(cursor.error).toBe("a workspace root is required");

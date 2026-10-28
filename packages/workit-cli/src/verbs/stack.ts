@@ -6,7 +6,7 @@
 //   workit stack status [--name <n>]
 //   workit stack sync   [--name <n>] [--local] [--dry-run]
 //   workit stack land   [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase]
-//                       [--unverified --reason <why>] [--timeout 20m] [--interval 30s]
+//                       [--unverified --reason <why>] [--base-red-ok --reason <why>] [--timeout 20m] [--interval 30s]
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import {
@@ -44,19 +44,29 @@ const STATUS_USAGE = "workit stack status [--name <n>] [--json]";
 const SYNC_USAGE =
   "workit stack sync [--name <n>] [--local] [--dry-run] [--force <branch>]… [--json]";
 const LAND_USAGE =
-  "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--timeout 20m] [--interval 30s] [--json]";
+  "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--timeout 20m] [--interval 30s] [--json]";
 const USAGE = "workit stack plan|status|sync|land ... (workit help stack)";
 
 const short = (sha: string | null | undefined): string => (sha ? sha.slice(0, 12) : "?");
 
 const stackFailed = (io: Io, result: StackError): number =>
-  emit(io, fail(result.code, result.error, { unblock: result.unblock, data: result.data ?? {} }));
+  emit(
+    io,
+    fail(result.code, result.error, {
+      unblock: result.unblock,
+      data: result.data ?? {},
+    }),
+  );
 
 const label = (forge: string | null, pr: number | null): string =>
   pr === null ? "no PR" : `${forge === "gitlab" ? "MR !" : "PR #"}${pr}`;
 
 async function plan(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { name: "value", trunk: "value", track: "value" });
+  const flags = parseFlags(argv, {
+    name: "value",
+    trunk: "value",
+    track: "value",
+  });
   if (typeof flags === "string") return usage(io, flags, PLAN_USAGE);
   const name = flags.values.name ?? null;
   const existingByName = name ? readStack(io.cwd, name) : null;
@@ -135,7 +145,12 @@ async function status(argv: string[], io: Io): Promise<number> {
   const connected = connect(io, selected.data.branches[0]?.branch ?? null);
   if (!connected.ok) return forgeFail(io, connected);
   const result = stackStatus(
-    { cwd: io.cwd, resolved: connected.data, actor: actorFromEnv(io.env), sleep: forgeDeps.sleep },
+    {
+      cwd: io.cwd,
+      resolved: connected.data,
+      actor: actorFromEnv(io.env),
+      sleep: forgeDeps.sleep,
+    },
     selected.data,
   );
   if (!result.ok) return stackFailed(io, result);
@@ -240,10 +255,20 @@ async function land(argv: string[], io: Io): Promise<number> {
     timeout: "value",
     interval: "value",
     unverified: "boolean",
+    "base-red-ok": "boolean",
     reason: "value",
   });
   if (typeof flags === "string") return usage(io, flags, LAND_USAGE);
-  const unverified = unverifiedFlag(flags);
+  const baseRedOk = flags.booleans.has("base-red-ok");
+  const baseRedReason = flags.values.reason?.trim();
+  if (baseRedOk && !baseRedReason)
+    return usage(
+      io,
+      "--base-red-ok needs --reason <why merging onto a red base is fine>",
+      LAND_USAGE,
+    );
+  // One --reason serves --unverified and --base-red-ok, alone or together.
+  const unverified = baseRedOk && !flags.booleans.has("unverified") ? null : unverifiedFlag(flags);
   if (typeof unverified === "string") return usage(io, unverified, LAND_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, LAND_USAGE);
@@ -274,7 +299,15 @@ async function land(argv: string[], io: Io): Promise<number> {
         sleep: forgeDeps.sleep,
       },
       fresh.data ?? selected.data,
-      { dryRun: flags.booleans.has("dry-run"), max, method, timeoutMs, intervalMs, unverified },
+      {
+        dryRun: flags.booleans.has("dry-run"),
+        max,
+        method,
+        timeoutMs,
+        intervalMs,
+        unverified,
+        baseRedOk: baseRedOk && baseRedReason ? { reason: baseRedReason } : null,
+      },
     );
   });
   if (!result.ok) return stackFailed(io, result);
