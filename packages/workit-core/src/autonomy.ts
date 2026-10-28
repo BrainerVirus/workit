@@ -336,14 +336,15 @@ function autonomyOf(workspace: WorkspaceConfig | null): Autonomy {
   const full = { ...DEFAULT_GRANTS, ...grants };
   const configured = GRANT_KINDS.filter((kind) => grants[kind] !== undefined);
   const accountConfigured = Boolean(workspace?.vcs?.account);
+  const name = workspace?.name ?? null;
   return {
-    workspace: workspace?.name ?? null,
+    workspace: name,
     grants: full,
     configured,
     source,
     accountConfigured,
     ...endpointView(workspace, {
-      workspace: workspace?.name ?? null,
+      workspace: name,
       grants: full,
       configured,
       accountConfigured,
@@ -351,8 +352,6 @@ function autonomyOf(workspace: WorkspaceConfig | null): Autonomy {
     verification: verificationOf(workspace),
   };
 }
-
-const STRICTNESS: readonly VerificationMode[] = ["independent", "self", "proportional"];
 
 /**
  * #536: WORKFLOW_WORKSPACE_NAME may pick which matching entry's vcs and
@@ -368,36 +367,27 @@ function capByFolder(named: Autonomy, folder: Autonomy | null, name: string): Au
   const grants = { ...named.grants };
   const lowered: string[] = [];
   for (const kind of GRANT_KINDS) {
-    const floor = nothing ? false : folder.grants[kind];
-    if (raises(kind, floor, grants[kind])) {
-      grants[kind] = floor;
-      lowered.push(kind);
-    }
+    const floor = !nothing && folder.grants[kind];
+    if (!raises(kind, floor, grants[kind])) continue;
+    grants[kind] = floor;
+    lowered.push(kind);
   }
-  const ceiling = folder?.effectiveEndpoint ?? DEFAULT_ENDPOINT;
-  const endpoint = raisesEndpoint(ceiling, named.defaultEndpoint) ? ceiling : named.defaultEndpoint;
-  const { workspace, configured, accountConfigured } = named;
-  const view = endpointView(
-    { defaultEndpoint: endpoint },
-    { workspace, grants, configured, accountConfigured },
-  );
-  if (raisesEndpoint(view.effectiveEndpoint, named.effectiveEndpoint))
-    lowered.push("defaultEndpoint");
-  const strictest = folder ? folder.verification : STRICTNESS[0];
-  const verification =
-    STRICTNESS.indexOf(named.verification) > STRICTNESS.indexOf(strictest)
-      ? strictest
-      : named.verification;
-  if (verification !== named.verification) lowered.push("verification");
+  // The folder's effective endpoint already reflects its own grants.
+  const ceiling = (!nothing && folder.effectiveEndpoint) || DEFAULT_ENDPOINT;
+  const endpoint = raisesEndpoint(ceiling, named.effectiveEndpoint);
+  if (endpoint) lowered.push("defaultEndpoint");
+  // VERIFICATION_MODES runs loosest first.
+  const strict = folder?.verification ?? "independent";
+  const looser =
+    VERIFICATION_MODES.indexOf(named.verification) < VERIFICATION_MODES.indexOf(strict);
+  if (looser) lowered.push("verification");
   if (lowered.length === 0) return named;
   return {
     ...named,
     grants,
-    ...view,
-    configuredEndpoint: named.configuredEndpoint,
-    ...(named.endpointIssue ? { endpointIssue: named.endpointIssue } : {}),
-    verification,
-    note: `WORKFLOW_WORKSPACE_NAME=${name} selects workspace ${named.workspace ?? "?"}; ${lowered.join(", ")} capped at what this folder grants without the name (${folder ? `workspace ${folder.workspace ?? "none"}` : "nothing: its workspaces tie"}): a name never raises grants`,
+    ...(endpoint ? { effectiveEndpoint: ceiling, endpointReason: undefined } : {}),
+    verification: looser ? strict : named.verification,
+    note: `WORKFLOW_WORKSPACE_NAME=${name}: ${lowered.join(", ")} capped at ${folder ? `workspace ${folder.workspace}` : "nothing (tied workspaces)"}; a name never raises grants`,
   };
 }
 

@@ -519,7 +519,7 @@ test("grant show: a workspace name that would raise grants is capped, with one n
       .split("\n")
       .filter((line) => line.includes("WORKFLOW_WORKSPACE_NAME"));
     expect(notes).toEqual([
-      "note: WORKFLOW_WORKSPACE_NAME=work selects workspace work; merge capped at what this folder grants without the name (workspace brasil): a name never raises grants",
+      "note: WORKFLOW_WORKSPACE_NAME=work: merge capped at workspace brasil; a name never raises grants",
     ]);
   } finally {
     if (saved === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;

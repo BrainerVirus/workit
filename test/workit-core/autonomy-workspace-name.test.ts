@@ -68,8 +68,9 @@ test("a broader workspace named in a nested repo never lifts the nested entry's 
   expect(named.workspace).toBe("work");
   // ...but merge, the endpoint and verification stay at brasil's.
   expect(named.grants.merge).toBe(false);
-  expect(named.effectiveEndpoint).not.toBe("merged");
-  expect(named.defaultEndpoint).toBe("commit");
+  // work's configured endpoint shows, but it acts as brasil's.
+  expect(named.defaultEndpoint).toBe("merged");
+  expect(named.effectiveEndpoint).toBe("commit");
   expect(named.verification).toBe("independent");
   expect(named.note).toContain("brasil");
   expect(withName("work", () => requireGrant(cwd, "merge"))).toMatchObject({
