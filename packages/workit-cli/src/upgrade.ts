@@ -708,7 +708,7 @@ const applyEntry = (
     return {
       host: "opencode",
       status: "updated",
-      reason: "updated; OpenCode V2 loads it live",
+      reason: "scoped update ran; OpenCode V2 loads it live",
     };
   if (entry.host === "claude-code") {
     const after = claudeWorkitInstalls(home, env, null).find(
@@ -834,8 +834,7 @@ export function applyUpgrade(plan: UpgradePlan, deps: UpgradeDeps = {}): Upgrade
     cpSync(paths.cursorRoot, path.join(backup, "cursor-package"), {
       recursive: true,
     });
-  const needsStop = plan.entries.some((entry) => !LIVE_HOSTS.has(entry.host));
-  const listed = needsStop ? listProcesses(deps) : [];
+  const listed = plan.entries.length ? listProcesses(deps) : [];
   const running = (listed ?? []).flatMap((entry) => classifyProcess(entry) ?? []);
   for (const entry of plan.entries) {
     if (!LIVE_HOSTS.has(entry.host)) {
