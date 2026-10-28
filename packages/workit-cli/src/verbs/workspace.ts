@@ -10,13 +10,13 @@
 // defaultEndpoint and verification stay with `workit grant set` at the user's
 // own terminal (verbs/grant.ts):
 // - `add` never copies them; `--from` copies vcs, issues, branchPolicy,
-//   commitPolicy, trailers, youtrack and models only. A new entry nested in
-//   another starts at the defaults clamped to the entry it shadows, so the
-//   directories it takes over never get more than they had.
+//   commitPolicy, trailers, youtrack and models only. A new entry starts at
+//   the defaults lowered to every entry whose glob may overlap its own, so no
+//   directory it takes over ever gets more than it had.
 // - `set` refuses the grant keys and the keys that decide where grants apply
 //   (name, glob).
-// - `rm` refuses when the entry that would take over its directories grants
-//   more than the removed one did.
+// - `rm` refuses when any entry that may take over one of its directories
+//   (or the defaults, where no entry covers them) grants more.
 // Every write keeps the previous file as workspaces.json.bak, like grant set.
 import { copyFileSync, existsSync } from "node:fs";
 import {
@@ -36,8 +36,9 @@ import {
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import {
   WorkspaceConfigError,
-  enclosingEntries,
+  globCovers,
   globSpecificity,
+  overlappingEntries,
   readWorkspacesResult,
   resolveWorkspaceFromEntries,
   validateWorkspaceGlob,
@@ -65,6 +66,25 @@ export const INHERITED_KEYS = [
 const GRANT_KEYS = new Set(["autonomy", "autoApprove", "defaultEndpoint", "verification"]);
 /** Keys that decide where an entry's grants apply. */
 const SCOPE_KEYS = new Set(["name", "glob"]);
+/** The top-level keys `set` changes: the schema's non-grant, non-scope keys. */
+const SETTABLE_KEYS = new Set([
+  "vcs",
+  "issues",
+  "branchPolicy",
+  "commitPolicy",
+  "trailers",
+  "liveSessionGuard",
+  "youtrack",
+  "models",
+  "fanout",
+  "delegation",
+  "defaultProfile",
+  "profiles",
+  "releaseTracks",
+  "resources",
+]);
+const SEGMENT = /^[A-Za-z0-9_-]+$/u;
+const UNSAFE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
 
 type Entry = Record<string, unknown> & { name: string; glob: string };
 
@@ -270,7 +290,7 @@ function add(argv: string[], io: Io): number {
         ]),
       )
     : {};
-  const shadowed = enclosingEntries(glob, entries);
+  const shadowed = overlappingEntries(glob, entries);
   const entry: Entry = {
     name,
     glob,
@@ -296,7 +316,7 @@ function add(argv: string[], io: Io): number {
       `${name} (${glob}) added to ${written(data.path, data.backup)}`,
       ...(data.inherited.length ? [`  from ${from}: ${data.inherited.join(", ")}`] : []),
       ...(data.shadows.length
-        ? [`  nested in: ${data.shadows.join(", ")} (${name} wins there)`]
+        ? [`  overlaps: ${data.shadows.join(", ")} (grants lowered to the strictest)`]
         : []),
       `  grants: ${GRANT_KINDS.map((kind) => `${kind}=${String(data.grants[kind])}`).join(" ")}; default endpoint ${data.defaultEndpoint}; verification ${data.verification}`,
       `  raising a grant needs the user, in their own terminal: workit grant set ${name} <kind>=<value>`,
@@ -323,7 +343,8 @@ function set(argv: string[], io: Io): number {
     if (eq <= 0) return usage(io, `${spec}: expected <key>=<value>`);
     const key = spec.slice(0, eq);
     const keyPath = key.split(".");
-    if (keyPath.some((part) => !part)) return usage(io, `${spec}: empty key segment`);
+    if (keyPath.some((part) => !SEGMENT.test(part) || UNSAFE_SEGMENTS.has(part)))
+      return usage(io, `${spec}: each key segment is letters, digits, _ or -`);
     if (GRANT_KEYS.has(keyPath[0])) {
       grantSpecs.push(spec);
       continue;
@@ -338,6 +359,13 @@ function set(argv: string[], io: Io): number {
             unblock: `ask the user to edit ${keyPath[0]} of "${name}" in their own editor, or add a new entry: workit workspace add <name> --glob <g> --from ${name}`,
           },
         ),
+      );
+    // Anything else (a case variant such as Autonomy or GLOB included) would
+    // be an inert key: refused, never written.
+    if (!SETTABLE_KEYS.has(keyPath[0]))
+      return usage(
+        io,
+        `${spec}: unknown key ${keyPath[0]} (settable: ${[...SETTABLE_KEYS].join(", ")})`,
       );
     changes.push({ path: keyPath, value: parseSetValue(spec.slice(eq + 1)) });
   }
@@ -357,6 +385,23 @@ function set(argv: string[], io: Io): number {
   const entries = structuredClone(entriesOf(current));
   const entry = entries.find((item) => item.name === name);
   if (!entry) return emit(io, fail("not_found", `no workspace named "${name}" in ${current.path}`));
+  // Configured grants need vcs.account (autonomy.ts): changing the entry's vcs
+  // could switch them on or move them to another credential.
+  const credential = changes.find((change) => change.path[0] === "vcs");
+  if (
+    credential &&
+    (configuredGrants(entry).source !== "default" || entry.defaultEndpoint !== undefined)
+  )
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `${name} has grants of its own; its vcs decides the account they act through, so workspace set does not change it`,
+        {
+          unblock: `ask the user to change ${credential.path.join(".")} of "${name}" in their own editor, or to unset the grants first (workit grant unset ${name} …)`,
+        },
+      ),
+    );
   for (const change of changes) {
     let target: Record<string, unknown> = entry;
     for (const part of change.path.slice(0, -1)) {
@@ -386,21 +431,34 @@ function rm(argv: string[], io: Io): number {
   const entries = entriesOf(current);
   const entry = entries.find((item) => item.name === name);
   if (!entry) return emit(io, fail("not_found", `no workspace named "${name}" in ${current.path}`));
-  const fallback = enclosingEntries(entry.glob, entries, name);
-  const raised = ceilingRaises(ceilingOf(entry), shadowedCeiling(fallback) ?? DEFAULT_CEILING);
-  if (raised.length)
+  // Anyone that may select one of its paths afterwards: every overlapping
+  // entry, and the defaults unless one of them matches all of its paths.
+  const fallback = overlappingEntries(entry.glob, entries, name);
+  const takers: { name: string; ceiling: Ceiling }[] = [
+    ...fallback.map((item) => ({ name: item.name, ceiling: ceilingOf(item) })),
+    ...(fallback.some((item) => globCovers(item.glob, entry.glob))
+      ? []
+      : [{ name: "the defaults", ceiling: DEFAULT_CEILING }]),
+  ];
+  const own = ceilingOf(entry);
+  const raisers = takers
+    .map((taker) => ({ ...taker, raised: ceilingRaises(own, taker.ceiling) }))
+    .filter((taker) => taker.raised.length > 0);
+  if (raisers.length) {
+    const named = raisers.find((taker) => taker.name !== "the defaults");
     return emit(
       io,
       fail(
         "blocked",
-        `removing ${name} raises ${raised.join(", ")} for ${entry.glob}: ${fallback.length ? fallback.map((item) => item.name).join(", ") : "the defaults"} would apply there`,
+        `removing ${name} may raise authority under ${entry.glob}: ${raisers.map((taker) => `${taker.name} grants more (${taker.raised.join(", ")})`).join("; ")}`,
         {
-          unblock: fallback.length
-            ? `lower ${fallback[0].name} first (workit grant set ${fallback[0].name} …), or ask the user to remove ${name} in their own editor`
+          unblock: named
+            ? `lower ${named.name} first (workit grant set ${named.name} …), or ask the user to remove ${name} in their own editor`
             : `ask the user to remove ${name} in their own editor`,
         },
       ),
     );
+  }
   const result = save(
     current,
     entries.filter((item) => item !== entry),

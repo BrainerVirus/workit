@@ -147,7 +147,7 @@ test("set changes non-grant keys by dotted path and keeps the rest", async () =>
   expect(work.autonomy).toEqual(WORK().autonomy);
   // An invalid value is refused by the schema, nothing written.
   const before = readFileSync(file(), "utf8");
-  expect((await run(["set", "work", "vcs.provider=svn"])).code).toBe(2);
+  expect((await run(["set", "work", "commitPolicy.preset=nope"])).code).toBe(2);
   expect(readFileSync(file(), "utf8")).toBe(before);
 });
 
@@ -213,4 +213,122 @@ test("doctor reports overlapping globs and which entry wins", async () => {
   // `work/**` and `work/*` share one literal segment count: a tie.
   expect(check?.detail).toContain(`overlap: twin and work tie at ${root}/work (ambiguous)`);
   expect(check?.status).toBe("fail");
+});
+
+const grantsAt = (...parts: string[]) => {
+  const dir = path.join(root, ...parts);
+  mkdirSync(dir, { recursive: true });
+  const view = resolveAutonomy(dir);
+  return {
+    workspace: view.workspace,
+    grants: view.grants,
+    endpoint: view.effectiveEndpoint,
+    verification: view.verification,
+  };
+};
+const RANK = (value: unknown) => (value === true ? 2 : value === "verified" ? 1 : 0);
+const STRICT = ["independent", "self", "proportional"];
+const expectNoRaise = (before: ReturnType<typeof grantsAt>, after: ReturnType<typeof grantsAt>) => {
+  for (const kind of ["push", "pr", "merge", "release", "rerun"] as const)
+    expect(RANK(after.grants[kind]), kind).toBeLessThanOrEqual(RANK(before.grants[kind]));
+  expect(STRICT.indexOf(after.verification)).toBeLessThanOrEqual(
+    STRICT.indexOf(before.verification),
+  );
+};
+const seed = (workspaces: Record<string, unknown>[]) =>
+  writeFileSync(file(), `${JSON.stringify({ workspaces }, null, 2)}\n`);
+
+test("add with a mid-glob * is clamped to every entry it may overlap, not only its root's", async () => {
+  // work at <S>/w/**, strict at <S>/w/ui/**; the new glob's root is <S>/w, but
+  // at <S>/w/ui/ui/sub/q it beats strict (more literal segments).
+  seed([
+    {
+      name: "work",
+      glob: `${root}/w/**`,
+      vcs: { provider: "github", account: "me" },
+      autonomy: { push: true, pr: true, merge: true },
+    },
+    {
+      name: "strict",
+      glob: `${root}/w/ui/**`,
+      vcs: { provider: "github", account: "me" },
+      autonomy: { push: false, pr: false, merge: false, release: false, rerun: false },
+      verification: "independent",
+    },
+  ]);
+  const before = grantsAt("w", "ui", "ui", "sub", "q");
+  expect(before.workspace).toBe("strict");
+  const added = await run(["add", "ev", "--glob", `${root}/w/*/ui/sub/**`, "--from", "work"]);
+  expect(added.code).toBe(0);
+  const after = grantsAt("w", "ui", "ui", "sub", "q");
+  expect(after.workspace).toBe("ev");
+  expectNoRaise(before, after);
+  expect(after.grants).toEqual({
+    push: false,
+    pr: false,
+    merge: false,
+    release: false,
+    rerun: false,
+  });
+  expect(after.verification).toBe("independent");
+});
+
+test("add with a ? in the glob is refused before anything is written", async () => {
+  seed([{ name: "work", glob: `${root}/w/**` }]);
+  const before = readFileSync(file(), "utf8");
+  const result = await run(["add", "ev", "--glob", `${root}/w/?/ui/**`, "--from", "work"]);
+  expect(result.code).toBe(2);
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect(existsSync(backup())).toBe(false);
+});
+
+test("rm with a mid-glob * is refused when any entry that may take over grants more", async () => {
+  // X wins at <S>/w/ui/x/y/q; removing it would hand that folder to loose (merge true).
+  seed([
+    { name: "work", glob: `${root}/w/**`, autonomy: { merge: false } },
+    { name: "loose", glob: `${root}/w/ui/**`, autonomy: { merge: true } },
+    { name: "X", glob: `${root}/w/*/x/y/**`, autonomy: { merge: false } },
+  ]);
+  const before = grantsAt("w", "ui", "x", "y", "q");
+  expect(before.workspace).toBe("X");
+  const result = await run(["rm", "X"]);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("loose grants more (merge)");
+  const after = grantsAt("w", "ui", "x", "y", "q");
+  expect(after).toEqual(before);
+  // Once loose is no looser than X, the removal goes through.
+  seed([
+    { name: "work", glob: `${root}/w/**`, autonomy: { merge: false } },
+    { name: "loose", glob: `${root}/w/ui/**`, autonomy: { merge: false } },
+    { name: "X", glob: `${root}/w/*/x/y/**`, autonomy: { merge: false } },
+  ]);
+  const prior = grantsAt("w", "ui", "x", "y", "q");
+  expect((await run(["rm", "X"])).code).toBe(0);
+  expectNoRaise(prior, grantsAt("w", "ui", "x", "y", "q"));
+});
+
+test("set refuses unknown keys, case variants of known ones and unsafe segments", async () => {
+  const before = readFileSync(file(), "utf8");
+  for (const spec of [
+    "Autonomy.merge=true",
+    "DefaultEndpoint=merged",
+    "GLOB=/**",
+    "__proto__.x=1",
+    " trailers=true",
+    "vcs.__proto__=1",
+    "nonsense=1",
+  ]) {
+    const result = await run(["set", "work", spec]);
+    expect(result.code, spec).toBe(2);
+  }
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect(existsSync(backup())).toBe(false);
+});
+
+test("set refuses vcs changes on an entry with grants of its own", async () => {
+  const result = await run(["set", "work", "vcs.account=someone-else"]);
+  expect(result.code).toBe(3);
+  expect(byName("work").vcs.account).toBe("me");
+  await run(["add", "plain", "--glob", `${root}/plain/**`]);
+  expect((await run(["set", "plain", 'vcs={"provider":"github","account":"me"}'])).code).toBe(0);
 });

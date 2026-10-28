@@ -42,10 +42,11 @@ workit workspace rm kit
 `--from` copies the parent's `vcs`, `issues`, `branchPolicy`,
 `commitPolicy`, `trailers`, `youtrack` and `models`, never its grants,
 `defaultEndpoint` or `verification`. These verbs never raise authority, so an
-agent may run them when you ask: a new entry nested in another starts at the
-defaults, lowered where the entry it shadows grants less; `set` refuses the
-grant keys, `name` and `glob`; `rm` refuses when the entry that takes over the
-folders grants more. Raise a grant with `workit grant set` in your own
+agent may run them when you ask: a new entry starts at the defaults, lowered
+to the strictest entry whose glob may overlap its own; `set` refuses the grant
+keys, `name`, `glob`, unknown keys and, on an entry with grants, `vcs`; `rm`
+refuses when any entry that may take over its folders (or the defaults, where
+none covers them all) grants more. Raise a grant with `workit grant set` in your own
 terminal. Each write keeps the previous file as `workspaces.json.bak`, and
 `workit doctor` lists overlapping globs and which entry wins.
 

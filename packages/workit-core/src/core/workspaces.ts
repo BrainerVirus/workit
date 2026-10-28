@@ -560,25 +560,48 @@ export const globRoot = (glob: string): string => {
   return prefix.replace(/\/+$/u, "") || "/";
 };
 
+/** The text of a glob before its first wildcard, in both its logical and real form. */
+const literalPrefixes = (glob: string): string[] => {
+  const normalized = glob.replaceAll("\\", "/");
+  const prefixOf = (value: string) => {
+    const wild = /[*?[\]{]/.exec(value);
+    return wild ? value.slice(0, wild.index) : value;
+  };
+  return [
+    ...new Set([prefixOf(normalized), prefixOf(canonicalGlob(normalized).replaceAll("\\", "/"))]),
+  ];
+};
+
 /**
- * The entries a glob nests inside: those matching its root directory, keeping
- * only the most specific (several when they tie). These are the entries that
- * selected the glob's directories before it, so a new or removed entry is
- * compared against them (#444: workspace verbs never raise authority).
+ * Whether two globs might match a common path. Every path a glob matches
+ * starts with its literal prefix, so globs whose prefixes are not one a text
+ * prefix of the other never overlap; anything else is treated as overlapping
+ * (conservative: #444's verbs refuse or clamp rather than risk a raise).
  */
-export const enclosingEntries = <T extends { name: string; glob: string }>(
+export const globsMayOverlap = (a: string, b: string): boolean =>
+  literalPrefixes(a).some((pa) =>
+    literalPrefixes(b).some((pb) => pa.startsWith(pb) || pb.startsWith(pa)),
+  );
+
+/**
+ * Whether `outer` matches every path `inner` matches: `outer` is `<dir>/**`
+ * with no other wildcard and `inner`'s literal prefix lies inside `<dir>`.
+ */
+export const globCovers = (outer: string, inner: string): boolean => {
+  const o = outer.replaceAll("\\", "/");
+  if (!o.endsWith("/**")) return false;
+  const dir = o.slice(0, -3);
+  if (/[*?[\]{]/.test(dir)) return false;
+  const prefix = literalPrefixes(inner)[0];
+  return prefix === dir || prefix.startsWith(`${dir}/`);
+};
+
+/** Every entry (but `exclude`) whose glob may match a path `glob` matches. */
+export const overlappingEntries = <T extends { name: string; glob: string }>(
   glob: string,
   entries: readonly T[],
   exclude?: string,
-): T[] => {
-  const root = globRoot(glob);
-  const matches = entries.filter(
-    (entry) => entry.name !== exclude && matchWorkspace(entry.glob, root),
-  );
-  if (matches.length === 0) return [];
-  const top = Math.max(...matches.map((entry) => globSpecificity(entry.glob)));
-  return matches.filter((entry) => globSpecificity(entry.glob) === top);
-};
+): T[] => entries.filter((entry) => entry.name !== exclude && globsMayOverlap(entry.glob, glob));
 
 export type WorkspaceOverlap = {
   /** The entry nested inside (or tied with) `outer`. */

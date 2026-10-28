@@ -322,7 +322,7 @@ export const VERBS: readonly VerbEntry[] = [
         "workit workspace set kit branchPolicy.integration=merge",
       ],
       notes: [
-        "A new entry starts with no grants of its own. Nested in another entry, it is clamped to that entry where the defaults would grant more, so its folders never get more than they had. Raising a grant, defaultEndpoint or verification needs the user: workit grant set <name> <kind>=<value> in their own terminal.",
+        "A new entry starts with no grants of its own. It is clamped to the strictest entry whose glob may overlap its own, so its folders never get more than they had. Raising a grant, defaultEndpoint or verification needs the user: workit grant set <name> <kind>=<value> in their own terminal.",
         "Every write keeps the previous file as workspaces.json.bak. `workit doctor` lists overlapping globs and which entry wins.",
       ],
       load: () => import("./workspace"),
