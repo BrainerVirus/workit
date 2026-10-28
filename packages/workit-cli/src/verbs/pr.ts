@@ -82,7 +82,7 @@ const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60
 const CREATE_USAGE =
   "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--json]";
 const MERGE_USAGE =
-  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--keep-branch] [--unverified --reason <why>] [--json]";
+  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch] [--unverified --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
 const EDIT_USAGE =
   "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--json]";
@@ -498,7 +498,6 @@ async function merge(argv: string[], io: Io): Promise<number> {
     merge: "boolean",
     rebase: "boolean",
     "delete-branch": "boolean",
-    "keep-branch": "boolean",
     unverified: "boolean",
     reason: "value",
     subject: "value",
@@ -521,8 +520,6 @@ async function merge(argv: string[], io: Io): Promise<number> {
   const method = aliases[0] ?? flags.values.method ?? "squash";
   if (!METHODS.has(method))
     return usage(io, "--method must be squash, merge or rebase", MERGE_USAGE);
-  if (flags.booleans.has("delete-branch") && flags.booleans.has("keep-branch"))
-    return usage(io, "pass --delete-branch or --keep-branch, not both", MERGE_USAGE);
   const { subject } = flags.values;
   if (flags.values.body !== undefined && flags.values["body-file"] !== undefined)
     return usage(io, "pass --body or --body-file, not both", MERGE_USAGE);
