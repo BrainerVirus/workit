@@ -213,3 +213,33 @@ export const budgetStanding = (
     return null;
   }
 };
+
+/**
+ * One native PreToolUse payload (Codex shape): a lead's call whose tool input
+ * carries a brief with `N tool calls` queues N, and a budgeted subagent's call
+ * is counted. True when the count reached the budget, so the runtime tells it.
+ */
+export const observeHookBudget = (payload: string): boolean => {
+  try {
+    const value = JSON.parse(payload) as Record<string, unknown>;
+    if (value.hook_event_name !== "PreToolUse" || typeof value.session_id !== "string")
+      return false;
+    const cwd = typeof value.cwd === "string" ? value.cwd : ".";
+    const agentId =
+      typeof value.agent_id === "string" && value.agent_id.trim() ? value.agent_id : null;
+    const spawn = value.tool_input;
+    if (!agentId && payload.includes("TIMEBOX:") && spawn && typeof spawn === "object") {
+      const fields = spawn as Record<string, unknown>;
+      const prompt = Object.values(fields).find(
+        (field): field is string => typeof field === "string" && field.includes("TIMEBOX:"),
+      );
+      const type = [fields.agent_type, fields.subagent_type].find(
+        (field): field is string => typeof field === "string",
+      );
+      if (prompt) noteSpawnBudget(cwd, value.session_id, type ?? null, prompt);
+    }
+    return agentId ? tickBudget(cwd, value.session_id, agentId) : false;
+  } catch {
+    return false;
+  }
+};

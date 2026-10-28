@@ -9,6 +9,7 @@ import {
   budgetLine,
   claimSpawnBudget,
   noteSpawnBudget,
+  observeHookBudget,
   spawnBudget,
   tickBudget,
 } from "@/packages/workit-core/src/hooks/budget-signal";
@@ -120,4 +121,18 @@ test("Given the Claude Code launcher's copy, Then it parses the same TIMEBOX bud
     expect(source).toContain("`spawns-${");
     expect(source).toContain("`${base}.calls`");
   }
+});
+
+test("[codex] Given a lead tool call whose input carries a 2-call brief, When the subagent's PreToolUse payloads arrive, Then the 2nd is due", () => {
+  const root = repo();
+  const pre = (extra: Record<string, unknown>) =>
+    JSON.stringify({ hook_event_name: "PreToolUse", session_id: LEAD, cwd: root, ...extra });
+  expect(
+    observeHookBudget(
+      pre({ tool_name: "spawn_agent", tool_input: { agent_type: "worker", message: brief(2) } }),
+    ),
+  ).toBe(false);
+  expect(claimSpawnBudget(root, LEAD, "agent-x", "worker")).toBe(2);
+  const shell = pre({ agent_id: "agent-x", tool_name: "shell", tool_input: { command: "ls" } });
+  expect([observeHookBudget(shell), observeHookBudget(shell)]).toEqual([false, true]);
 });
