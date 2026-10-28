@@ -2,7 +2,7 @@
 // session that stops with a ledger-provable unmet obligation is continued
 // once, with the obligation and the workit command that clears it; it can
 // always stop after that, and never when it asks the user a question.
-import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -23,6 +23,9 @@ import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
 import { fixture, tempRoot } from "./hook-fixtures";
+
+// Measured over 15 s per test on loaded Windows runners (#415).
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 // #463: a SubagentStart records an issued session id in the state dir, so each
 // test gets its own rather than sharing the run-wide registry.
