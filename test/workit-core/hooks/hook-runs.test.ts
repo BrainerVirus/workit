@@ -1,6 +1,6 @@
 // #433: a per-host, per-event record of hook runs, so "zero hook events" is diagnosable.
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { readHookRuns, recordHookRun } from "@/packages/workit-core/src/hooks/hook-runs";
@@ -40,10 +40,13 @@ test("Given no event name, or a state dir that cannot be written, When recorded,
   recordHookRun("codex_cli", null, env);
   recordHookRun("codex_cli", undefined, env);
   expect(readHookRuns(env.WORKFLOW_TOOLKIT_STATE)).toEqual([]);
-  recordHookRun("codex_cli", "PreToolUse", {
-    WORKFLOW_TOOLKIT_STATE: "/dev/null/state",
-  });
-  expect(readHookRuns("/dev/null/state")).toEqual([]);
+  // A state dir under a regular file cannot be created on any OS (`/dev/null` is
+  // an ordinary, writable path on Windows).
+  const blocker = path.join(scratch, "not-a-dir");
+  writeFileSync(blocker, "");
+  const unwritable = path.join(blocker, "state");
+  recordHookRun("codex_cli", "PreToolUse", { WORKFLOW_TOOLKIT_STATE: unwritable });
+  expect(readHookRuns(unwritable)).toEqual([]);
 });
 
 test("Given a Codex hook process, When it handles a SessionStart, Then the run is recorded for that surface", async () => {
