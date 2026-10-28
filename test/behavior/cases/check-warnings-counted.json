@@ -1,0 +1,17 @@
+{
+  "id": "check-warnings-counted",
+  "source": "retro 2026-10-27: green checks that printed tool warnings were read as clean",
+  "repo": {
+    "branch": "feature/x",
+    "checks": {
+      "lint": "printf 'warning: unused a\\nwarning: unused b\\nFound 2 warnings\\n'"
+    }
+  },
+  "cli": {
+    "argv": ["check", "lint"]
+  },
+  "expect": {
+    "exit": [0],
+    "require": ["workit check lint: passed, exit 0 in \\d+ ms \\(configured; warnings: 2\\)"]
+  }
+}

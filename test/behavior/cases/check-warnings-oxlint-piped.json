@@ -1,0 +1,17 @@
+{
+  "id": "check-warnings-oxlint-piped",
+  "source": "verifier of #461: oxlint without a TTY prints file:line:col: warning, not the pty form",
+  "repo": {
+    "branch": "feature/x",
+    "checks": {
+      "lint": "printf \"a.js:1:7: warning eslint(no-unused-vars): Variable 'a' is declared but never used.\\n\""
+    }
+  },
+  "cli": {
+    "argv": ["check", "lint"]
+  },
+  "expect": {
+    "exit": [0],
+    "require": ["configured; warnings: 1\\)"]
+  }
+}

@@ -329,6 +329,24 @@ function boundedArgv(argv: readonly string[]): { argv: string[]; truncated: bool
   return { argv: cut, truncated };
 }
 
+const ANSI_COLOR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
+// Warning lines of common tools, anchored at the line start so prose that only
+// contains the word is not counted: oxlint/rustc "warning[...]:" and "warning:", eslint stylish
+// "3:5  warning  ...", piped oxlint/gcc "a.js:1:7: warning ...", tsc "warning TS6133", "⚠", "npm WARN"/"npm warn"/"WARN ", maven "[WARNING]", bun "warn:".
+const WARNING_LINE =
+  /^\s*(?:⚠|\[(?:WARN|WARNING|warn|warning)\]|(?:npm\s+)?(?:WARN\s|warn\s)|warn(?:ing)?(?:\[[^\]]*\])?:|\d+:\d+\s+warning\s|\S+\(\d+,\d+\):\s*warning\s|\S+:\d+:\d+:\s*warning\b)/;
+// "warning: no warnings found", "warn: 0 warnings": a statement that there are none.
+const NO_WARNINGS = /\b(?:no|0|zero|none)\s+warnings?\b/i;
+
+/** How many lines of a check's output are tool warnings (a green check can still print them). */
+export function countWarnings(log: string): number {
+  return redactLog(log)
+    .replace(ANSI_COLOR, "")
+    .split("\n")
+    .filter((line) => WARNING_LINE.test(line) && !NO_WARNINGS.test(line)).length;
+}
+
 /**
  * The last `lines` lines of a check's output, after one line saying how many
  * earlier ones were left out: a failure shows its failing tail, never the head.
@@ -700,6 +718,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const storeDir = io.env.WORKFLOW_WORKSPACE_ROOT || top;
   const task: TaskOutcome = await recordInTask(io, storeDir, options.task, observation, unblockFor);
 
+  const warnings = countWarnings(result.log);
   const data = {
     evidenceId: task.evidenceId,
     ledgerRowId: observation.ledgerRowId,
@@ -720,6 +739,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     logPath,
     logTail: tail,
     outputBytes: result.outputBytes,
+    warnings,
     logTruncated: result.truncated,
     task: task.task,
     lease: heavy?.leaseReport ?? null,
@@ -742,7 +762,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         : `exited ${result.exitCode}`
     : recordError?.message;
   const label = name ?? command.join(" ");
-  const summary = `workit check ${label}: ${passed ? "passed, exit 0" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}; log: ${logPath ?? "not stored"}`;
+  const summary = `workit check ${label}: ${passed ? "passed, exit 0" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${warnings ? `; warnings: ${warnings}` : ""}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}; log: ${logPath ?? "not stored"}`;
   if (io.json)
     io.stdout(
       `${JSON.stringify({ ok: code === "ok", code, data, ...(error ? { error } : {}), ...(task.stillUnsatisfied[0] ? { unblock: task.stillUnsatisfied[0].unblock } : {}) })}\n`,

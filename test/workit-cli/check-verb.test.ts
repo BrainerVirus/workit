@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import * as z from "zod";
 import { main } from "@/packages/workit-cli/src/main";
+import { countWarnings } from "@/packages/workit-cli/src/verbs/check";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import type { Assessment } from "@/test/workit-core/task-fixtures";
 import {
@@ -908,4 +909,30 @@ test("G a linked worktree without .workit/checks.json, W `workit check test`, T 
   const ran = await run(linked, ["check", "test", "--json"]);
   expect(ran.code).toBe(0);
   expect(ran.json().data).toMatchObject({ name: "test", configured: true });
+});
+
+test("countWarnings counts tool warning lines, not prose", () => {
+  const fixtures: Array<[string, string, number]> = [
+    [
+      "oxlint",
+      "  ⚠ eslint(no-unused-vars): x is unused\n  ⚠ eslint(no-console): no\nFound 2 warnings.",
+      2,
+    ],
+    ["eslint", "/a.ts\n  3:5  warning  Unexpected any  no-explicit-any\n  4:1  error  bad  x", 1],
+    ["tsc", "src/a.ts(1,7): warning TS6133: 'x' is declared but never used.", 1],
+    ["bun", "warn: something is deprecated\nwarning: also", 2],
+    ["npm", "npm WARN deprecated left-pad@1.0.0\nnpm warn old lockfile", 2],
+    ["maven", "[WARNING] The POM is missing\n[INFO] BUILD SUCCESS", 1],
+    ["colored", "\u001b[33mwarning:\u001b[0m careful", 1],
+    [
+      "oxlint piped",
+      "a.js:1:7: warning eslint(no-unused-vars): Variable 'a' is declared but never used.\nb.js:2:1: error eslint(no-debugger): x",
+      1,
+    ],
+    ["gcc", "main.c:3:5: warning: unused variable 'x' [-Wunused-variable]", 1],
+    ["none found", "warning: no warnings found\nwarn: 0 warnings", 0],
+    ["prose", "we warn users that a warning: appears later\nno warnings here", 0],
+  ];
+  for (const [name, log, count] of fixtures)
+    expect([name, countWarnings(log)]).toEqual([name, count]);
 });
