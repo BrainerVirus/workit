@@ -710,7 +710,8 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   the holders and the queue. `workit lock status` lists holders and the queue.
   A foreground shell tool call (about 2 min on Claude Code and OpenCode) can
   end before a long wait: run long checks in the background. The lease is
-  released when the check ends, also on Ctrl-C or SIGTERM. Leases are files
+  released when the check ends, and a queued check gives up its place when it
+  stops waiting, also on Ctrl-C or SIGTERM. Leases are files
   under the Workit state dir (`~/.local/state/workit/leases` on Linux).
 - **Stale leases.** A lease stays held while its `workit` process runs. If
   `workit` is killed outright (SIGKILL), the lease stays held while the

@@ -895,7 +895,17 @@ test("G a merged log where the child's last stderr line landed early (separate p
   const shown = boundedOutput(log, 60, "boom at the end\n");
   expect(shown).toContain("boom at the end");
   expect(shown).toContain("line 500");
-  expect(shown.split("\n").filter(Boolean).length).toBeLessThanOrEqual(61);
+  expect(shown.split("\n").filter(Boolean).length).toBeLessThanOrEqual(60);
+  // Ten stderr lines, all early in the merged log: all shown, still within 60 lines.
+  const errors = Array.from({ length: 10 }, (_, index) => `error ${index + 1}`);
+  const many = boundedOutput(
+    [...errors, ...stdout].join("\n") + "\n",
+    60,
+    errors.join("\n") + "\n",
+  );
+  for (const line of errors) expect(many).toContain(line);
+  expect(many).toContain("line 500");
+  expect(many.split("\n").filter(Boolean).length).toBeLessThanOrEqual(60);
   // Already in the tail: nothing is repeated.
   const inTail = boundedOutput(`${stdout.join("\n")}\nboom at the end\n`, 60, "boom at the end\n");
   expect(inTail.match(/boom at the end/gu)).toHaveLength(1);

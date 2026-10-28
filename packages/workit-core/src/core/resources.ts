@@ -654,8 +654,15 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     maxAgeMs: options.waitMs + 60_000,
   };
   let queued = false;
+  // Ctrl-C or SIGTERM while queued: give up the place, then exit as the signal would.
+  const onSignal = (signal: NodeJS.Signals) => {
+    leave();
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
   const leave = () => {
     process.off("exit", leave);
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
     if (queued) removeOwn(ticket, record.id);
     queued = false;
   };
@@ -710,6 +717,8 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         writeTicket(ticket, ticketRecord);
         queued = true;
         process.on("exit", leave);
+        process.on("SIGINT", onSignal);
+        process.on("SIGTERM", onSignal);
       } else if (!fs.existsSync(ticket)) {
         // Wrongly reclaimed (a clock step past its age bound): stand in the same place again.
         writeTicket(ticket, ticketRecord);

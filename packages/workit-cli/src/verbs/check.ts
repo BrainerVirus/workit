@@ -376,9 +376,14 @@ export function boundedOutput(log: string, lines: number, stderr = ""): string {
   let shown = all.slice(-lines);
   const errors = tailLines(redactLog(stderr), STDERR_TAIL_LINES);
   let missing: string[] = [];
-  if (errors.some((line) => !shown.includes(line))) {
-    shown = all.slice(-Math.max(1, lines - errors.length - 1));
-    missing = errors.filter((line) => !shown.includes(line));
+  if (errors.length) {
+    const tail = new Set(shown);
+    if (errors.some((line) => !tail.has(line))) {
+      // Room for the stderr lines and their header, plus the omitted-lines header.
+      shown = all.slice(-Math.max(1, lines - errors.length - 2));
+      const kept = new Set(shown);
+      missing = errors.filter((line) => !kept.has(line));
+    }
   }
   const omitted = all.length - shown.length;
   const footer = missing.length

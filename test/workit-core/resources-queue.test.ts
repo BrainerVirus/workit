@@ -2,7 +2,7 @@
 // served, prints a periodic status line while they wait, and a waiter that
 // dies gives up its place.
 import { afterEach, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -218,3 +218,20 @@ test("G wait durations, T seconds, s/m/h suffixes parse and junk does not", () =
   expect(parseWait("soon")).toBeNull();
   expect(parseWait("")).toBeNull();
 });
+
+test("G a queued waiter, W it gets SIGTERM, T it removes its ticket and exits 143", async () => {
+  const dir = leasesDir();
+  const holder = await acquireLease(options(dir, { check: "suite" }));
+  if (!holder.ok) throw new Error(holder.reason);
+  const module = path.resolve(import.meta.dir, "../../packages/workit-core/src/core/resources.ts");
+  const script = `const { acquireLease } = await import(${JSON.stringify(module)});
+await acquireLease({ dir: ${JSON.stringify(dir)}, slots: 1, check: "waiter", cwd: "/w", session: null, waitMs: 60000, pollMs: 20, probe: { alive: () => true, boot: null } });
+process.exit(0);`;
+  const child = spawn(process.execPath, ["-e", script], { stdio: "ignore" });
+  const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+  await until(() => queueFiles(dir).length === 1, 15_000);
+  child.kill("SIGTERM");
+  expect(await exited).toBe(143);
+  expect(queueFiles(dir)).toEqual([]);
+  holder.lease.release();
+}, 30_000);
