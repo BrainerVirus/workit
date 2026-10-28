@@ -3,7 +3,7 @@
 // denied with the workit command to run instead; routine raw delivery
 // commands run with a short nudge; a raw commit is recorded for the session
 // so its own verdict is not independent. Hooks fail open.
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -24,6 +24,10 @@ import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permi
 import { observeShellBefore, observeShellResult } from "@/packages/workit-opencode/src/v2/shell";
 import { enforceToolPolicy, observeToolResult } from "@/packages/workit-pi/src/tools";
 import { fixture, tempRoot, withProtectedMain } from "./hook-fixtures";
+
+// Spawns git and every host's hook per test: about 19 s on a parallel macOS
+// shard (#415).
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 
 const roots: string[] = [];
 afterAll(() => {

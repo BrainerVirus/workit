@@ -1,10 +1,13 @@
 // The release guard against bundles that inline a registry copy of a
 // workspace package (8.0.0 shipped 7.7.0's core in every adapter but pi).
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+// Runs npm in a scratch workspace: over 15 s on loaded Windows runners (#415).
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 
 const SCRIPT = path.resolve(
   import.meta.dir,
