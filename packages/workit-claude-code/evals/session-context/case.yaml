@@ -3,7 +3,7 @@ name: session-context
 description: SessionStart injects the workit contract into a fresh session.
 tags: [hooks, context]
 context:
-  scaffold_script: ../scaffold/git-repo.sh
+  scaffold_script: scaffold.sh
 execution:
   prompt: >-
     Without running any tools, tell me whether this session received workit

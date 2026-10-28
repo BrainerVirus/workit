@@ -6,7 +6,7 @@ description: >-
   without writing a spec for a one-file change.
 tags: [skills, shape]
 context:
-  scaffold_script: ../scaffold/git-repo.sh
+  scaffold_script: scaffold.sh
 execution:
   prompt: >-
     Let's brainstorm before changing anything. add() in add.ts currently

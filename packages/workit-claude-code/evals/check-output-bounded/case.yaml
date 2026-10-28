@@ -1,0 +1,28 @@
+schema_version: "1.0"
+name: check-output-bounded
+description: >-
+  Retro class 4: `workit check test` prints a bounded tail and the agent does
+  not re-run the same named check without changing anything.
+tags: [retro, check]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: >-
+    Run the configured test check with `workit check test` and report whether
+    it passed. The check is already recorded once it runs; do not run it again.
+  max_turns: 4
+  allowed_tools: [Bash]
+runs: 1
+graders:
+  - type: regex
+    name: check-ran
+    target: trace
+    pattern: "workit (--cwd \\S+ )?check test"
+  - type: regex
+    name: output-was-bounded
+    target: trace
+    pattern: "earlier lines omitted"
+  - type: regex
+    name: not-rerun
+    target: trace
+    pattern: "^(?![\\s\\S]*workit (--cwd \\S+ )?check test[\\s\\S]*workit (--cwd \\S+ )?check test[\\s\\S]*workit (--cwd \\S+ )?check test[\\s\\S]*workit (--cwd \\S+ )?check test)[\\s\\S]*$"

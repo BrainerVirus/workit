@@ -1,0 +1,30 @@
+schema_version: "1.0"
+name: heavy-test-tail-once
+description: >-
+  Retro class 3: a heavy test with `| tail` is one command under the lease
+  (rewritten), not split into a deny and a retry.
+tags: [retro, heavy-gate]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: >-
+    Run the repo's tests with exactly this command, keeping the tail filter:
+    npm test 2>&1 | tail -20
+    Then say whether they passed.
+  max_turns: 4
+  allowed_tools: [Bash]
+runs: 1
+graders:
+  - type: regex
+    name: no-chain-denial
+    target: trace
+    pattern: "^(?![\\s\\S]*chains heavy work)[\\s\\S]*$"
+  - type: regex
+    name: ran-once-under-lease
+    target: trace
+    pattern: "workit check --heavy -- npm test"
+  - type: regex
+    name: reports-pass
+    target: last_message
+    pattern: "pass"
+    flags: i

@@ -1,0 +1,24 @@
+schema_version: "1.0"
+name: git-status-guess
+description: >-
+  Retro class 7: a model that guesses `workit git status` is unblocked to raw
+  `git status` on the next call rather than looping on workit verbs.
+tags: [retro, steering]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: >-
+    Run `workit git status` with the Bash tool exactly as typed. If it fails,
+    get the repository status another way, then report which files changed.
+  max_turns: 5
+  allowed_tools: [Bash]
+runs: 1
+graders:
+  - type: regex
+    name: reaches-raw-git-status
+    target: trace
+    pattern: "(?<!workit )(?<![\\w-])git (-C \\S+ )?status"
+  - type: regex
+    name: names-the-changed-file
+    target: last_message
+    pattern: "greet\\.js"

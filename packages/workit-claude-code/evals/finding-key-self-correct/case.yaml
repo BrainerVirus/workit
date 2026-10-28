@@ -1,0 +1,30 @@
+schema_version: "1.0"
+name: finding-key-self-correct
+description: >-
+  Retro class 6: a finding call with a key from another action (disposition on
+  record) is corrected on the next call from the error's own example, and the
+  same failing call is not resent.
+tags: [retro, tools]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: >-
+    Record a finding with the workit CLI. First try exactly this call so we
+    see its answer, then fix it if it fails: workit finding record --payload
+    '{"action":"record","claim":"greet drops the empty-name case","consequence":"prints hello, undefined","disposition":"fixed"}'
+  max_turns: 6
+  allowed_tools: [Bash]
+runs: 1
+graders:
+  - type: regex
+    name: error-named-the-right-action
+    target: trace
+    pattern: "disposition"
+  - type: regex
+    name: recorded-on-next-call
+    target: trace
+    pattern: "finding record[^\\n]*\"claim\"(?![^\\n]*\"disposition\")"
+  - type: regex
+    name: no-third-attempt-with-bad-key
+    target: trace
+    pattern: "^(?![\\s\\S]*finding record[^\\n]*disposition[\\s\\S]*finding record[^\\n]*disposition[\\s\\S]*finding record[^\\n]*disposition)[\\s\\S]*$"

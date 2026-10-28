@@ -1,0 +1,28 @@
+schema_version: "1.0"
+name: verifier-verdict-first-try
+description: >-
+  Retro class 2: a verifier given the printed verdict line records it on the
+  first try, with no --self and no refused session flag.
+tags: [retro, verdict]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: >-
+    You are the verifier for branch feature/greet-shout, which you did not
+    write. Commit nothing. Run `node bin/greet.js ada`, then record your
+    verdict with the line Workit printed for you:
+    workit ledger verdict <verified|failed|blocked> --kind live --branch
+    feature/greet-shout --how "<what you ran and saw>". Fill the placeholders,
+    run it once, and report the exit code.
+  max_turns: 6
+  allowed_tools: [Bash]
+runs: 1
+graders:
+  - type: regex
+    name: verdict-command-run
+    target: trace
+    pattern: "workit (--cwd \\S+ )?ledger verdict (verified|failed|blocked)\\b[^\\n]*--kind live"
+  - type: regex
+    name: no-self-no-refusal
+    target: trace
+    pattern: "^(?![\\s\\S]*(--self|session_flag|unknown flag|usage: workit ledger verdict))[\\s\\S]*$"
