@@ -30,7 +30,7 @@ import {
 } from "./skill-nudge";
 import { spawnDecision } from "./spawn-gate";
 import { seedStanding, standingDelta } from "./standing";
-import { budgetLine, claimSpawnBudget, dropBudget, noteSpawnBudget } from "./budget-signal";
+import type { BudgetHooks } from "./budget-signal";
 import { modelSwitchedOnDisk, trackJudge } from "./session-marker";
 import { invariantBootstrap } from "../core/methods";
 import { stopDecision } from "./stop";
@@ -40,7 +40,16 @@ import { confineImplementer, confineImplementerShell } from "./worktree-confine"
 import { agentSteering, workitRole } from "./steering";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
-export type HookDeps = { descriptor: HostDescriptor; addendum: string | null };
+/**
+ * `budget`: the worker tool-call budget (budget-signal.ts budgetHooks), given
+ * only by the hosts that count calls in their launcher (Claude Code, Codex),
+ * so other hook bundles do not carry it.
+ */
+export type HookDeps = {
+  descriptor: HostDescriptor;
+  addendum: string | null;
+  budget?: BudgetHooks;
+};
 
 const usable = (value: Support) => value === "native" || value === "partial";
 const NONE: HookDecision = { kind: "none" };
@@ -142,12 +151,7 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
   )
     return decision;
   const delta =
-    [
-      standingDelta(input),
-      input.session.id ? budgetLine(input.cwd, input.session.id, input.session.agentId) : null,
-    ]
-      .filter(Boolean)
-      .join("\n") || null;
+    [standingDelta(input), deps.budget?.line(input) ?? null].filter(Boolean).join("\n") || null;
   if (!delta) return decision;
   return decision.kind === "rewrite" || decision.kind === "update-input"
     ? { ...decision, text: [decision.text, delta].filter(Boolean).join("\n") }
@@ -298,8 +302,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         ...input,
         session: { ...input.session, agentId: event.agentId },
       });
-      if (input.session.id)
-        claimSpawnBudget(input.cwd, input.session.id, event.agentId, event.agentType);
+      deps.budget?.start(input, event.agentId, event.agentType);
       return {
         kind: "context",
         text: subagentStartText(input, descriptor, event),
@@ -315,16 +318,9 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       if (event.skill) recordSkillLoad(input, event.skill, "tool");
       if (event.agentInput && input.host === "claude_code") {
         const spawn = spawnDecision(descriptor, input.cwd, event.agentInput);
-        // A spawn the gate lets through queues its tool-call budget, or none,
-        // for the next subagent of its type (Claude Code names an untyped one
-        // general-purpose); the launcher does so for one its fast path allows.
-        if (spawn.kind !== "deny" && !input.session.agentId)
-          noteSpawnBudget(
-            input.cwd,
-            input.session.id ?? "",
-            String(event.agentInput.subagent_type || "general-purpose"),
-            String(event.agentInput.prompt ?? ""),
-          );
+        // A spawn the gate lets through queues its tool-call budget, or
+        // none; the launcher does so for one its fast path allows.
+        if (spawn.kind !== "deny") deps.budget?.spawn(input, event.agentInput);
         return spawn;
       }
       return NONE;
@@ -334,7 +330,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     // arrive with the CLI-observed evidence model.
     case "subagent.stop":
       trackJudge(input, event.agentId, false);
-      if (input.session.id && event.agentId) dropBudget(input.cwd, input.session.id, event.agentId);
+      if (event.agentId) deps.budget?.stop(input, event.agentId);
       return NONE;
     case "prompt.submit":
       return NONE;
@@ -362,7 +358,7 @@ export const failureDecision = (
 
 /** Parse, handle, and render one native payload. `error` is set on any failure. */
 export const dispatchHook = (
-  adapter: HostAdapter,
+  adapter: HostAdapter & { budget?: BudgetHooks },
   raw: unknown,
   env: NodeJS.ProcessEnv = process.env,
 ): RenderedHook & { error: string | null } => {
@@ -380,6 +376,7 @@ export const dispatchHook = (
     const decision = handleHook(parsed.input, {
       descriptor,
       addendum: adapter.addendum?.(parsed.input) ?? null,
+      budget: adapter.budget,
     });
     return { ...adapter.render(decision, parsed.native), error: null };
   } catch (error) {

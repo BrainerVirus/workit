@@ -8,6 +8,7 @@ import {
   type CodexHost,
 } from "@brainervirus/workit-core/hooks";
 import { PROCESS_START } from "@brainervirus/workit-core/src/hooks/deadline";
+import { budgetHooks } from "@brainervirus/workit-core/src/hooks/budget-signal";
 
 export {
   detectCodexSurface,
@@ -43,7 +44,7 @@ export const codexCapabilities = (host: CodexHost, availability: Availability = 
   });
 
 export const handleCodexHook = (raw: unknown): Record<string, unknown> =>
-  dispatchHook(codexAdapter, raw, process.env).json;
+  dispatchHook({ ...codexAdapter, budget: budgetHooks }, raw, process.env).json;
 
 export const runCodexHook = async (
   stdin: AsyncIterable<unknown> | Iterable<unknown> = process.stdin,

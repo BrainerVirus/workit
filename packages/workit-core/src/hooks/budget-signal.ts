@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { gitStoreDir } from "./standing-signal";
+import type { HookInput } from "./protocol";
 
 const hash = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 32);
 
@@ -246,4 +247,38 @@ export const observeHookBudget = (payload: string): boolean => {
   } catch {
     return false;
   }
+};
+
+/** What handleHook does with a budget, for the hosts whose entry passes it (HookDeps.budget). */
+export type BudgetHooks = {
+  /** A pre-tool answer that lets the call run: the line once reached. */
+  line: (input: HookInput) => string | null;
+  /** SubagentStart: bind the queued budget. */
+  start: (input: HookInput, agentId: string, agentType: string) => void;
+  /** A lead's spawn the gate let through (Claude Code: untyped is general-purpose). */
+  spawn: (input: HookInput, spawn: Record<string, unknown>) => void;
+  /** SubagentStop: drop the agent's files. */
+  stop: (input: HookInput, agentId: string) => void;
+};
+
+export const budgetHooks: BudgetHooks = {
+  line: (input) => budgetLine(input.cwd, input.session.id ?? "", input.session.agentId),
+  start: (input, agentId, agentType) =>
+    void claimSpawnBudget(input.cwd, input.session.id ?? "", agentId, agentType),
+  spawn: (input, spawn) => {
+    if (!input.session.agentId)
+      noteSpawnBudget(
+        input.cwd,
+        input.session.id ?? "",
+        String(spawn.subagent_type || "general-purpose"),
+        String(spawn.prompt ?? ""),
+      );
+  },
+  stop: (input, agentId) => {
+    try {
+      dropBudget(input.cwd, input.session.id ?? "", agentId);
+    } catch {
+      // Aged out by the next startBudget.
+    }
+  },
 };

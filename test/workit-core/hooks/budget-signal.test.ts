@@ -6,6 +6,7 @@ import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  budgetHooks,
   budgetLine,
   claimSpawnBudget,
   noteSpawnBudget,
@@ -59,7 +60,7 @@ for (const [host, descriptor] of [
 ] as const)
   test(`[${host}] Given a worker spawned with a budget of 3, When it makes its 3rd and 6th call, Then one line each, never a deny`, () => {
     const root = repo();
-    const deps = { descriptor, addendum: null };
+    const deps = { descriptor, addendum: null, budget: budgetHooks };
     noteSpawnBudget(root, LEAD, "workit:implementer", brief(3));
     handleHook(start(root, host, "agent-1", "workit:implementer"), deps);
     const told: Array<string | null> = [];
@@ -83,7 +84,7 @@ for (const [host, descriptor] of [
 
 test("Given no budget on the spawn, When the worker calls tools, Then nothing is counted or said", () => {
   const root = repo();
-  const deps = { descriptor: CLAUDE_CODE_DESCRIPTOR, addendum: null };
+  const deps = { descriptor: CLAUDE_CODE_DESCRIPTOR, addendum: null, budget: budgetHooks };
   noteSpawnBudget(root, LEAD, "workit:implementer", "GOAL: x\nTIMEBOX: 30 minutes\n");
   handleHook(start(root, "claude_code", "agent-1", "workit:implementer"), deps);
   for (let i = 0; i < 5; i++) expect(tickBudget(root, LEAD, "agent-1")).toBe(false);
@@ -166,7 +167,7 @@ const spawnCall = (cwd: string, agentInput: Record<string, unknown>): HookInput 
 
 test("[claude_code] Given an implementer spawn the gate denies, When the corrected spawn runs, Then only the allowed spawn is queued", () => {
   const root = repo();
-  const deps = { descriptor: CLAUDE_CODE_DESCRIPTOR, addendum: null };
+  const deps = { descriptor: CLAUDE_CODE_DESCRIPTOR, addendum: null, budget: budgetHooks };
   const denied = handleHook(
     spawnCall(root, { subagent_type: "workit:implementer", model: "opus", prompt: brief(3) }),
     deps,
@@ -203,7 +204,7 @@ for (const [host, descriptor] of [
 ] as const)
   test(`[${host}] Given a budgeted subagent, When it stops, Then its budget files are gone`, () => {
     const root = repo();
-    const deps = { descriptor, addendum: null };
+    const deps = { descriptor, addendum: null, budget: budgetHooks };
     noteSpawnBudget(root, LEAD, "workit:implementer", brief(3));
     handleHook(start(root, host, "agent-1", "workit:implementer"), deps);
     tickBudget(root, LEAD, "agent-1");
