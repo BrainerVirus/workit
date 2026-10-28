@@ -327,11 +327,15 @@ export const validateWorkspacesDocument = (parsed: unknown, file: string): Works
       };
     }
   }
+  // The schema has no transforms, so the parsed entries hold the same values;
+  // returning them (not zod's output) keeps the user's key order, so a write
+  // that leaves an entry alone keeps it byte-for-byte (#444).
+  const document = parsed as Record<string, unknown>;
   return {
     status: "valid",
     path: file,
-    entries: validated.data.workspaces ?? [],
-    document: parsed as Record<string, unknown>,
+    entries: (document.workspaces as WorkspaceConfig[] | undefined) ?? [],
+    document,
   };
 };
 
