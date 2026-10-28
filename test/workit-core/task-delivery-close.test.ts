@@ -5,11 +5,11 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { TaskStore, WorkitCore, success } from "@/packages/workit-core/src/core";
 import type { Provenance } from "@/packages/workit-core/src/core/task-contract";
 import * as ledger from "@/packages/workit-core/src/ledger";
-import { appendObserved } from "@/packages/workit-core/src/ledger";
-import { verifyMerged } from "@/packages/workit-core/src/forge/verify";
+import { closeDeliveredTasks } from "@/packages/workit-core/src/core/task-delivery";
+import { appendObserved, readLedger } from "@/packages/workit-core/src/ledger";
 import { caller } from "./task-fixtures";
 
 setDefaultTimeout(30_000);
@@ -72,7 +72,9 @@ const statusOf = (root: string, taskId: string) => {
   if (!read.ok) throw new Error(read.error);
   return read.data;
 };
+const stamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 const listOpen = (root: string) => {
+  closeDeliveredTasks(new TaskStore(root), stamp());
   const listed = coreFor(root).task({ schemaVersion: 1, action: "list" });
   if (!listed.ok) throw new Error(listed.error);
   return listed.data as { id: string }[];
@@ -123,8 +125,7 @@ test("Given a task with no PR, When tasks are listed, Then it is untouched", () 
 test("Given an unchanged ledger, When implicitTask runs twice, Then the second call does not read the ledger; a new merge plus verified delivery is swept on the next call", async () => {
   const root = repo("feature/cached");
   const taskId = startTask(root);
-  const core = coreFor(root);
-  const touch = () => core.state({ schemaVersion: 1, action: "inspect", view: "summary" });
+  const touch = () => closeDeliveredTasks(new TaskStore(root), stamp(), { cached: true });
   // Settle the ledger past the racy window so the signature is trusted.
   record(root, "commit.recorded", "feature/cached");
   await Bun.sleep(2100);
@@ -143,32 +144,82 @@ test("Given an unchanged ledger, When implicitTask runs twice, Then the second c
   expect(statusOf(root, taskId).status).toBe("closed");
 });
 
-test("Given verify-delivery merged records delivery.verified, Then the branch task is closed at once", () => {
-  const root = repo("feature/verify");
-  const remote = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "wk-task-remote-")));
-  dirs.push(remote);
-  git(remote, "init", "-q", "--bare", "-b", "main");
-  git(root, "remote", "add", "origin", remote);
-  git(root, "push", "-q", "origin", "main");
-  const mergeSha = git(root, "rev-parse", "main");
+test("Given a merged and verified delivery, Then the closure cites both ledger row ids", () => {
+  const root = repo("feature/cite");
   const taskId = startTask(root);
-  record(root, "pr.merged", "feature/verify", { mergeSha, method: "squash" });
-  const forge = {
-    prStatus: () => ({
-      ok: true,
-      data: {
-        number: 7,
-        state: "merged",
-        base: "main",
-        head: { branch: "feature/verify", sha: "abc123" },
-      },
-    }),
-  };
-  const result = verifyMerged(root, { forge, baseRemote: "origin" } as never, {
-    pr: 7,
-    branch: "feature/verify",
-    actor,
+  record(root, "pr.merged", "feature/cite", { mergeSha: "def456" });
+  record(root, "delivery.verified", "feature/cite", { expect: "merged", observations: [] });
+  listOpen(root);
+  const rows = readLedger(root);
+  if (!rows.ok) throw new Error(rows.error);
+  const ids = rows.value.rows.map((row) => row.id);
+  const summary = statusOf(root, taskId).closure?.summary ?? "";
+  for (const id of ids) expect(summary).toContain(id);
+});
+
+test("Given a branch name reused after an earlier merge, When tasks are listed, Then the newer task is not closed", async () => {
+  const root = repo("feature/reused");
+  record(root, "pr.merged", "feature/reused", { mergeSha: "def456" });
+  record(root, "delivery.verified", "feature/reused", { expect: "merged", observations: [] });
+  await Bun.sleep(1100);
+  const taskId = startTask(root);
+  expect(listOpen(root).map((item) => item.id)).toContain(taskId);
+  expect(statusOf(root, taskId).status).toBe("active");
+});
+
+test("Given delivery verified for a different PR than the merged one, When tasks are listed, Then the task stays active", () => {
+  const root = repo("feature/mismatch");
+  const taskId = startTask(root);
+  record(root, "pr.merged", "feature/mismatch", { mergeSha: "def456" });
+  record(root, "delivery.verified", "feature/mismatch", {
+    expect: "merged",
+    pr: 8,
+    observations: [],
   });
-  expect(result).toMatchObject({ ok: true, data: { delivered: true } });
-  expect(statusOf(root, taskId).status).toBe("closed");
+  expect(listOpen(root).map((item) => item.id)).toContain(taskId);
+  expect(statusOf(root, taskId).status).toBe("active");
+});
+
+test("Given a task with a running worker, When the delivery is verified, Then it is skipped until the worker is gone and an uncached list closes it", () => {
+  const root = repo("feature/worker");
+  const assigned = coreFor(root).worker({
+    schemaVersion: 1,
+    action: "assign",
+    assignment: {
+      role: "implementer",
+      objective: "do the slice",
+      scope: { description: "checkout", paths: ["."], exclusions: [] },
+      decisionIds: [],
+      requirementIds: [],
+      candidateId: null,
+      stoppingCondition: "report",
+    },
+  });
+  if (!assigned.ok) throw new Error(assigned.error);
+  const workerId = assigned.data.id;
+  const taskId = new TaskStore(root).implicitTask({ provenance, create: false });
+  if (!taskId.ok || !taskId.data) throw new Error("no task");
+  const id = taskId.data.task.id;
+  const setState = (state: "unknown" | "stopped") => {
+    const store = new TaskStore(root);
+    const current = store.readTask(id);
+    if (!current.ok) throw new Error(current.error);
+    const changed = store.mutateTask(id, current.data.revision, (task, context) =>
+      success(context.revision, null, {
+        ...task,
+        workers: task.workers.map((worker) =>
+          worker.id === workerId ? { ...worker, data: { ...worker.data, state } } : worker,
+        ),
+      }),
+    );
+    if (!changed.ok) throw new Error(changed.error);
+  };
+  setState("unknown");
+  record(root, "pr.merged", "feature/worker", { mergeSha: "def456" });
+  record(root, "delivery.verified", "feature/worker", { expect: "merged", observations: [] });
+  expect(listOpen(root).map((item) => item.id)).toContain(id);
+  expect(statusOf(root, id).status).toBe("active");
+  setState("stopped");
+  expect(listOpen(root).map((item) => item.id)).not.toContain(id);
+  expect(statusOf(root, id).status).toBe("closed");
 });

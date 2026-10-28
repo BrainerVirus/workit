@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import {
   CHECK_OBSERVATION_PATH,
   POLICY_VERSION,
@@ -57,20 +57,14 @@ import {
   normalizeJudgment,
   ownLiftedBlockers,
 } from "./policy/judgment";
-import {
-  MAX_LINE_BYTES,
-  appendObserved,
-  ledgerPath,
-  observedRowBytes,
-  readLedger,
-} from "../ledger";
+import { MAX_LINE_BYTES, appendObserved, observedRowBytes } from "../ledger";
 
 /** Refs kept in a `policy.judged` row (the task store keeps all of them). */
 const MAX_JUDGED_REFS = 5;
 import { currentBranch, headSha } from "../git/rev";
 import { resolveAutonomy, type VerificationMode } from "../autonomy";
 
-import { fileSignature, racySignature, sameDirectoryIdentity, TaskStore } from "./task-store";
+import { sameDirectoryIdentity, TaskStore } from "./task-store";
 import { checkoutRootOf } from "../store/paths";
 import { defaultLockTimeout } from "./store-lock";
 import {
@@ -666,129 +660,6 @@ const importedTask = (
   return task;
 };
 
-export type DeliverySweep = {
-  closed: string[];
-  pending: { taskId: string; pr: number }[];
-};
-
-let sweepWarned = false;
-const warnSweepOnce = (error: unknown) => {
-  if (sweepWarned) return;
-  sweepWarned = true;
-  console.error(`workit: delivery sweep skipped: ${String(error)}`);
-};
-
-const VERIFY_HINT = "workit verify-delivery merged";
-
-/**
- * Close every open task whose branch the ledger shows merged (`pr.merged`) and
- * delivered (`delivery.verified`, expect merged) after the task began, so a
- * delivered task stops showing as active (#322). A merge without a verified
- * delivery leaves the task open and names `workit verify-delivery merged` as its
- * next action. Tasks without a PR, or with a worker that blocks closing, are
- * left alone. Best effort: a failed read or write skips the task.
- */
-export function closeDeliveredTasks(
-  store: TaskStore,
-  now: Utc,
-  options: { cached?: boolean } = {},
-): DeliverySweep {
-  const out: DeliverySweep = { closed: [], pending: [] };
-  const index = store.listStoreIndex();
-  if (!index.ok) return out;
-  const open = index.data.filter((entry) => entry.status !== "closed" && entry.branch !== null);
-  if (open.length === 0) return out;
-  // Hot paths sweep only when the ledger or the open-task set changed.
-  const file = options.cached ? ledgerPath(store.root) : null;
-  const signature = file?.ok
-    ? `${fileSignature(file.value) ?? "-"}|${open.map((entry) => entry.id).join(",")}`
-    : null;
-  const marker = file?.ok ? `${file.value}.delivery-sweep` : null;
-  if (signature && marker) {
-    try {
-      if (readFileSync(marker, "utf8") === signature) return out;
-    } catch {
-      // no marker yet
-    }
-  }
-  const ledger = readLedger(store.root);
-  if (!ledger.ok) return out;
-  const rows = ledger.value.rows as {
-    type: string;
-    branch?: unknown;
-    pr?: unknown;
-    at: string;
-    expect?: unknown;
-  }[];
-  const after = (row: { at: string }, since: string) => Date.parse(row.at) >= Date.parse(since);
-  for (const entry of open) {
-    const merged = rows.findLast(
-      (row) =>
-        row.type === "pr.merged" &&
-        row.branch === entry.branch &&
-        typeof row.pr === "number" &&
-        after(row, entry.createdAt),
-    );
-    if (!merged) continue;
-    const pr = merged.pr as number;
-    const verified = rows.findLast(
-      (row) =>
-        row.type === "delivery.verified" &&
-        row.expect === "merged" &&
-        row.branch === entry.branch &&
-        (row.pr === undefined || row.pr === pr),
-    );
-    if (!verified) {
-      const next = `PR #${pr} is merged but delivery is not verified: run \`${VERIFY_HINT}\``;
-      if (entry.progress.nextAction !== next) {
-        store.mutateTask(entry.id, entry.revision, (task, context) =>
-          success(context.revision, null, {
-            ...task,
-            progress: { ...task.progress, nextAction: next },
-          }),
-        );
-      }
-      out.pending.push({ taskId: entry.id, pr });
-      continue;
-    }
-    const task = store.readTask(entry.id);
-    if (!task.ok || task.data.status === "closed") continue;
-    if (task.data.workers.some((worker) => workerBlocksTransition("close", worker.data.state)))
-      continue;
-    const closed = store.mutateTask(
-      entry.id,
-      task.data.revision,
-      (value, context) =>
-        success(context.revision, null, {
-          ...value,
-          status: "closed",
-          closure: {
-            outcome: "verified",
-            at: context.now,
-            summary: `delivered: PR #${pr} merged and delivery verified`,
-            decisionIds: [],
-            evidenceIds: [],
-          },
-        }),
-      now,
-    );
-    if (closed.ok) out.closed.push(entry.id);
-  }
-  if (
-    signature &&
-    marker &&
-    out.closed.length === 0 &&
-    !racySignature(signature.split("|")[0] ?? "")
-  ) {
-    try {
-      writeFileSync(marker, signature);
-    } catch {
-      // the next call sweeps again
-    }
-  }
-  return out;
-}
-
 export class WorkitCore {
   private readonly authorityOwner = {};
 
@@ -851,11 +722,6 @@ export class WorkitCore {
   private implicitTask(family: OperationFamily, raw: unknown): Result<unknown> {
     // Flat tool inputs become the canonical request first (S17).
     const request = normalizeOperationInput(family, raw, this.context.caller.host);
-    try {
-      closeDeliveredTasks(this.store, trustedNow(this.context), { cached: true });
-    } catch (error) {
-      warnSweepOnce(error);
-    }
     if (typeof request !== "object" || request === null || Array.isArray(request))
       return success(null, null, request);
     const value = request as { action?: unknown; taskId?: unknown };
@@ -1052,7 +918,6 @@ export class WorkitCore {
         return this.summary(created.data);
       }
       case "list": {
-        closeDeliveredTasks(this.store, trustedNow(this.context));
         const listed = this.store.listTasks();
         if (!listed.ok) return listed;
         const status = input.status ?? "open";

@@ -13,6 +13,7 @@ import {
   laneNeed,
   untrackedRiskPathsWarning,
 } from "@brainervirus/workit-core/src/core/policy/lane";
+import { closeDeliveredTasks } from "@brainervirus/workit-core/src/core/task-delivery";
 import { sameDirectoryIdentity } from "@brainervirus/workit-core/src/core/task-store";
 import {
   OPERATION_FAMILIES,
@@ -503,8 +504,16 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
     return parsed.usage ? 2 : 1;
   }
   const root = workspaceRootFor(deps);
+  const store = new TaskStore(root);
+  try {
+    // Delivered tasks close on the next task command (#322); `list` always re-reads the ledger.
+    const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    closeDeliveredTasks(store, now, { cached: parsed.parsed.action !== "list" });
+  } catch {
+    // best effort: the next command retries
+  }
   const core = new WorkitCore(
-    new TaskStore(root),
+    store,
     // --actor overrides the provenance actor (e.g. a Codex session id the
     // hook can match); otherwise the ambient actor.
     contextFor(

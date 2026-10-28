@@ -28,8 +28,6 @@ import {
 } from "../git/rev";
 import { appendObserved, readLedger, type LedgerActor } from "../ledger";
 import { selectPr } from "./report";
-import { TaskStore } from "../core/task-store";
-import { closeDeliveredTasks } from "../core/task-engine";
 import type { ResolvedForge } from "./resolve";
 import { redactText } from "./redact";
 import { failure, success, type ForgeResult } from "./types";
@@ -127,13 +125,6 @@ function finish(
       })),
     });
     out.recorded = row.ok ? { id: String(row.value.id) } : { error: row.error };
-    if (row.ok && report.expect === "merged") {
-      try {
-        closeDeliveredTasks(new TaskStore(cwd), new Date().toISOString().replace(/\.\d{3}Z$/, "Z"));
-      } catch {
-        // The next task read repairs it from the ledger.
-      }
-    }
   }
   return out;
 }

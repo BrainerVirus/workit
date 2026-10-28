@@ -5,6 +5,7 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
+import { TaskStore } from "@/packages/workit-core/src/core";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import {
   fixture,
@@ -555,6 +556,17 @@ test("pr merge: given a reviewer's failed verdict on an earlier head, when the s
 test("pr merge: READY + accepted verdict merges with the head SHA guard and records pr.merged", async () => {
   const { repo, runner } = setup("github", mergeRoutes("github/pr-passing.json"));
   grantMerge(repo);
+  const bound = new TaskStore(repo.cwd).implicitTask({
+    provenance: {
+      kind: "agent_reported",
+      host: "workit_cli",
+      session: { kind: "host", host: "workit_cli", handle: "cli" },
+      workerId: null,
+    },
+    create: true,
+  });
+  if (!bound.ok || !bound.data) throw new Error("no implicit task");
+  const taskId = bound.data.task.id;
   await verdict(repo);
   const result = await run(
     ["pr", "merge", "--method", "squash", "--keep-branch", "--json"],
@@ -593,7 +605,9 @@ test("pr merge: READY + accepted verdict merges with the head SHA guard and reco
   expect(verified.json().data.observations).toEqual([
     expect.objectContaining({ kind: "pr_state", observed: "merged", ok: true }),
     expect.objectContaining({ kind: "merge_on_base", expected: repo.base, ok: true }),
-  ]);
+  ]); // delivery verified: the branch's task closes at once (#322).
+  const task = new TaskStore(repo.cwd).readTask(taskId);
+  expect(task.ok && task.data.status).toBe("closed");
 });
 
 test("pr merge: a PR landing on a track's production branch reports the merge-back branches", async () => {
