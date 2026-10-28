@@ -382,7 +382,7 @@ function capAt(named: Autonomy, where: string, by: string, why: string, main = f
   const unblocks = { ...named.unblocks };
   const lowered: string[] = [];
   for (const kind of GRANT_KINDS) {
-    const floor = !nothing && folder.grants[kind];
+    const floor = !nothing && folder!.grants[kind];
     if (!raises(kind, floor, grants[kind])) continue;
     grants[kind] = floor;
     unblocks[kind] = folder
@@ -393,7 +393,7 @@ function capAt(named: Autonomy, where: string, by: string, why: string, main = f
     lowered.push(kind);
   }
   // The folder's effective endpoint already reflects its own grants.
-  const ceiling = (!nothing && folder.effectiveEndpoint) || DEFAULT_ENDPOINT;
+  const ceiling = (!nothing && folder!.effectiveEndpoint) || DEFAULT_ENDPOINT;
   const endpoint = raisesEndpoint(ceiling, named.effectiveEndpoint);
   if (endpoint) lowered.push("defaultEndpoint");
   // VERIFICATION_MODES runs loosest first.

@@ -135,6 +135,17 @@ test("a worktree whose main checkout's entries tie grants nothing and names the 
   expect(decision.unblock).not.toContain("grant set wide");
 });
 
+test("a main checkout entry with grants but no vcs.account caps its worktrees at nothing", () => {
+  write([
+    { name: "work", glob: `${root}/work/**`, vcs: account, autonomy: { merge: true } },
+    { name: "brasil", glob: `${root}/work/clients/brasil/**`, autonomy: { merge: "verified" } },
+  ]);
+  const worktree = `${root}/work/wt/app`;
+  const decision = withName(undefined, () => requireGrant(worktree, "push", { forge: false }));
+  if (decision.allowed) throw new Error("expected a refusal");
+  expect(decision.unblock).toContain('set vcs.account for workspace "brasil"');
+});
+
 test("a name-capped refusal names the folder's entry, not the named one", () => {
   write(brasilConfig());
   const cwd = `${root}/work/clients/brasil/app`;
