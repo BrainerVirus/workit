@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +22,9 @@ import {
   runCheckCommand,
   tailLines,
 } from "@/packages/workit-core/src/checks";
+
+// Spawning children is slow on a loaded parallel shard (macOS, Windows).
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 
 // Named-check config and the bounded, redacted runner behind `workit check` (S9b).
 
