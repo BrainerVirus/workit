@@ -1,0 +1,6 @@
+{
+  "id": "check-help-exit-zero",
+  "source": "retro 2026-10-27 claude-code F9 regression: `workit check --help` exited 2",
+  "cli": { "argv": ["check", "--help"] },
+  "expect": { "exit": [0], "require": ["workit check"] }
+}

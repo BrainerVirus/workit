@@ -1,0 +1,21 @@
+{
+  "id": "cc-heavy-tail-filter-not-split",
+  "source": "retro 2026-10-27 claude-code F6 and opencode \u00a76: output-shaping pipes on a heavy command",
+  "open": "#429",
+  "repo": {
+    "branch": "feature/x"
+  },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "tool_input": {
+        "command": "bun test 2>&1 | tail -50"
+      }
+    }
+  },
+  "expect": {
+    "kind": ["rewrite", "none"],
+    "forbid": ["chains heavy work"]
+  }
+}

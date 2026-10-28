@@ -1,0 +1,21 @@
+{
+  "id": "codex-verifier-line-no-token-argv",
+  "source": "retro 2026-10-27 codex \u00a71: the token lands in the rollout",
+  "open": "#427",
+  "repo": {
+    "branch": "feature/x"
+  },
+  "hook": {
+    "host": "codex",
+    "fixture": "subagent-start",
+    "overrides": {
+      "agent_id": "a0b1c2d3e4f5a6b7c",
+      "agent_type": "workit-verifier"
+    }
+  },
+  "expect": {
+    "kind": ["context"],
+    "require": ["workit ledger verdict"],
+    "forbid": ["--token[= ]"]
+  }
+}

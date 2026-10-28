@@ -1,0 +1,18 @@
+{
+  "id": "check-output-bounded",
+  "source": "retro 2026-10-27 codex \u00a72: ~170k-token build logs streamed to the agent",
+  "open": "#426",
+  "repo": {
+    "branch": "feature/x",
+    "checks": {
+      "test": "seq 1 5000"
+    }
+  },
+  "cli": {
+    "argv": ["check", "test"]
+  },
+  "expect": {
+    "exit": [0],
+    "maxLines": 200
+  }
+}

@@ -1,0 +1,39 @@
+# What Workit puts in an agent's context (hook text, schemas, skills, agents,
+# help) may only grow on purpose: a PR that raises a value in
+# docs/qualification/context-budget.json needs the `context-increase` label.
+# The drift itself is caught by test/behavior/context-budget.test.ts.
+name: Context budget
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: context-budget-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  growth:
+    name: context budget growth
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The PR merge commit and its first parent (the base tip).
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.1"
+
+      - name: Compare with the base
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: bun scripts/check-budget-growth.ts HEAD^1
