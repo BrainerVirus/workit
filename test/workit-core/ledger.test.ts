@@ -491,8 +491,9 @@ test("given a verdict at SHA A, a base-only rebase carries it, and a content cha
 });
 
 // #334 review: patch-id and diff hash drop hunk line numbers, so carry needs
-// exact blobs; a base edit in a file the branch touches is drift (fail closed).
-test("a base change elsewhere in the same file makes the verdict stale", () => {
+// exact blobs, or the head must be exactly the judged head cleanly rebased: a
+// base edit elsewhere in a file the branch touches keeps the patch and carries.
+test("a base change elsewhere in the same file carries the verdict as a clean rebase", () => {
   const root = repo();
   commit(root, "a.py", BASE_FILE, "base");
   git(root, "checkout", "-qb", "feature/x");
@@ -500,6 +501,19 @@ test("a base change elsewhere in the same file makes the verdict stale", () => {
   value(recordVerdict(reviewer()(root), { result: "verified", how: "ran it" }));
   git(root, "checkout", "-q", "main");
   commit(root, "a.py", BASE_FILE.replace("line 2\n", "line 2 base edit\n"), "far edit");
+  git(root, "checkout", "-q", "feature/x");
+  git(root, "rebase", "-q", "main");
+  const rebased = checkVerdicts(root, "feature/x", read(root).rows);
+  expect(rebased.current.basis).toBe("carried");
+  expect(rebased.carry?.rule).toBe("rebase");
+  // An edit within three lines of the branch's hunk changes its context: stale.
+  git(root, "checkout", "-q", "main");
+  commit(
+    root,
+    "a.py",
+    BASE_FILE.replace("line 2\n", "line 2 base edit\n").replace("line 33\n", "line 33 near\n"),
+    "near edit",
+  );
   git(root, "checkout", "-q", "feature/x");
   git(root, "rebase", "-q", "main");
   expect(checkVerdicts(root, "feature/x", read(root).rows).current.basis).toBe("stale");
