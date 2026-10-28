@@ -32,9 +32,15 @@ export {
 } from "./heavy-scope";
 
 /** Named checks that take the lease when nothing is configured. */
-export const DEFAULT_HEAVY_CHECKS = ["test", "build", "typecheck"];
+export const DEFAULT_HEAVY_CHECKS = ["test", "build"];
+/**
+ * Named checks that never take the lease unless the machine lists them heavy:
+ * they finish in seconds, so they must not queue behind a 10-minute suite (#508).
+ */
+export const DEFAULT_LIGHT_CHECKS = ["lint", "typecheck", "format"];
 const DEFAULT_SLOTS = 1;
-const DEFAULT_WAIT_S = 600;
+/** A queued heavy check waits its turn this long by default (#508). */
+const DEFAULT_WAIT_S = 1800;
 const DEFAULT_MEMORY_SHARE = 0.4;
 const DEFAULT_CPU_SHARE = 0.7;
 const MAX_SLOTS = 64;
@@ -48,6 +54,8 @@ export type ResourceSettings = {
   slots: number;
   /** Named checks that are heavy. */
   heavy: string[];
+  /** Named checks that never take the lease (disjoint from `heavy`). */
+  light: string[];
   /** systemd MemoryMax for a heavy check's scope, in bytes. */
   memoryMax: string;
   /** systemd CPUQuota for a heavy check's scope (percent of one CPU). */
@@ -123,6 +131,7 @@ export function resolveResourceSettings(
   const settings: ResourceSettings = {
     slots: DEFAULT_SLOTS,
     heavy: [...DEFAULT_HEAVY_CHECKS],
+    light: [...DEFAULT_LIGHT_CHECKS],
     memoryMax: "",
     cpuQuota: "",
     waitMs: DEFAULT_WAIT_S * 1000,
@@ -166,7 +175,21 @@ export function resolveResourceSettings(
       if (!Array.isArray(heavy) || !heavy.every((item) => typeof item === "string"))
         warn("heavy", "must be a list of check names");
       // A repo adds heavy checks; it never makes the machine's heavy ones light.
-      else settings.heavy = repo ? [...new Set([...settings.heavy, ...heavy])] : heavy;
+      else {
+        settings.heavy = repo ? [...new Set([...settings.heavy, ...heavy])] : heavy;
+        settings.light = settings.light.filter((name) => !heavy.includes(name));
+      }
+    }
+    if (value.light !== undefined) {
+      const light = value.light;
+      // Exempting a check from the lease loosens it: the machine owner's word only.
+      if (repo) machineOnly("light");
+      else if (!Array.isArray(light) || !light.every((item) => typeof item === "string"))
+        warn("light", "must be a list of check names");
+      else {
+        settings.light = light;
+        settings.heavy = settings.heavy.filter((name) => !light.includes(name));
+      }
     }
     if (value.memoryMax !== undefined) {
       const next = memoryValue(value.memoryMax, host);
@@ -181,8 +204,16 @@ export function resolveResourceSettings(
       else cpu = next;
     }
     if (value.wait !== undefined) {
-      if (typeof value.wait === "number" && value.wait >= 0) settings.waitMs = value.wait * 1000;
-      else warn("wait", "must be a number of seconds");
+      const wait =
+        typeof value.wait === "number"
+          ? value.wait >= 0
+            ? value.wait * 1000
+            : null
+          : typeof value.wait === "string"
+            ? parseWait(value.wait)
+            : null;
+      if (wait !== null) settings.waitMs = wait;
+      else warn("wait", 'must be a number of seconds or a duration ("30m")');
     }
   }
   settings.memoryMax = String(memory);
@@ -402,14 +433,37 @@ export type AcquireOptions = {
   maxAgeMs?: number;
   /** Called once, when the first attempt finds every slot held. */
   onWait?: (holders: LeaseHolder[]) => void;
+  /** Called when the wait starts and every `statusEveryMs` after (default 30 s). */
+  onStatus?: (status: QueueStatus) => void;
+  statusEveryMs?: number;
   /** Overrides for tests. */
   probe?: LeaseProbe;
   pid?: number;
+  clock?: Clock;
 };
+
+/** Where a waiter stands: 1 is next in line. */
+export type QueueStatus = {
+  position: number;
+  /** Live waiters ahead of this one. */
+  ahead: number;
+  /** The live holders of the slots. */
+  holders: LeaseHolder[];
+  waitedMs: number;
+};
+
+export type Clock = { now: () => number; sleep: (ms: number) => Promise<void> };
 
 export type AcquireResult =
   | { ok: true; lease: HeldLease }
-  | { ok: false; reason: "timeout"; holders: LeaseHolder[]; waitedMs: number }
+  | {
+      ok: false;
+      reason: "timeout";
+      holders: LeaseHolder[];
+      waitedMs: number;
+      /** Where this waiter stood when it gave up. */
+      position: number;
+    }
   | { ok: false; reason: "unavailable"; error: string };
 
 /** One pass over the slots: the slot taken, or the live holders. */
@@ -455,19 +509,118 @@ function tryOnce(
   return { holders };
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const realClock: Clock = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
 
 /** Remove `file` only while it still holds lease `id`: a reclaimed and retaken slot is someone else's. */
 function removeOwn(file: string, id: string): void {
   if (parseLease(readText(file))?.id === id) fs.rmSync(file, { force: true });
 }
 
+// ---------------------------------------------------------------------------
+// the queue (issue #508)
+//
+// A waiter writes a ticket, `<leases>/queue/<ms>-<ns>-<id>.json` (a lease
+// record naming its process), and takes a slot only while fewer live waiters
+// stand ahead of it than there are free slots: first come, first served. A
+// ticket whose process died is stale by the same test as a slot
+// (staleReason), and the next waiter removes it under the same mkdir guard.
+// An older CLI that does not queue still races for a free slot; it can jump
+// the queue, never break it.
+
+export const queueDir = (dir: string): string => path.join(dir, "queue");
+
+const TICKET = /^\d{15}-\d{16}-[\w-]+\.json$/u;
+
+/** A ticket name that sorts in arrival order. */
+const ticketName = (now: number, id: string): string =>
+  `${String(now).padStart(15, "0")}-${String(process.hrtime.bigint() % 10n ** 16n).padStart(16, "0")}-${id}.json`;
+
+export type QueueEntry = {
+  file: string;
+  holder: LeaseHolder;
+  id: string | null;
+  stale: string | null;
+};
+
+/** The queue's tickets in arrival order. Read-only: nothing is removed. */
+export function leaseQueue(dir: string, probe: LeaseProbe = {}): QueueEntry[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(queueDir(dir));
+  } catch {
+    return [];
+  }
+  const entries: QueueEntry[] = [];
+  for (const name of names.filter((item) => item.endsWith(".json")).toSorted()) {
+    const file = path.join(queueDir(dir), name);
+    const record = parseLease(readText(file));
+    if (!record) continue;
+    entries.push({
+      file,
+      holder: holderOf(record),
+      id: record.id,
+      stale: staleReason(record, probe),
+    });
+  }
+  return entries;
+}
+
+/** The live tickets ahead of `own`, removing stale ones on the way. */
+function waitersAhead(options: AcquireOptions, own: string): number {
+  let ahead = 0;
+  for (const entry of leaseQueue(options.dir, options.probe)) {
+    if (path.basename(entry.file) >= own) break;
+    if (!TICKET.test(path.basename(entry.file))) continue;
+    if (
+      entry.stale &&
+      reclaim(entry.file, (current) => !current || staleReason(current, options.probe) !== null)
+    )
+      continue;
+    ahead += 1;
+  }
+  return ahead;
+}
+
+/** Live holders of the slots, read without reclaiming. */
+function liveHolders(options: AcquireOptions): LeaseHolder[] {
+  return leaseSlots(options.dir, options.slots, options.probe)
+    .filter((slot) => slot.holder && !slot.stale)
+    .map((slot) => slot.holder as LeaseHolder);
+}
+
+function writeTicket(file: string, record: LeaseRecord): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+}
+
+/** "90", "90s", "30m", "1.5h" as ms; null when it is none of those. */
+export function parseWait(text: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)([smh]?)$/u.exec(text.trim());
+  if (!match) return null;
+  const unit = { "": 1000, s: 1000, m: 60_000, h: 3_600_000 }[match[2]] ?? 1000;
+  return Math.round(Number(match[1]) * unit);
+}
+
+/** "12m 5s" or "40s". */
+export function formatWait(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
+}
+
 /**
- * Take one of `slots` machine-wide lease slots, waiting (polling every
- * `pollMs`) up to `waitMs` for a live holder to finish. The returned lease is
+ * Take one of `slots` machine-wide lease slots. A slot free and nobody queued
+ * ahead: it is taken at once. Otherwise the caller queues (a ticket in
+ * `queue/`) and polls every `pollMs`, first come, first served, up to
+ * `waitMs`; `onStatus` reports its place now and then. The returned lease is
  * released by `release()`, and on process exit as a backstop.
  */
 export async function acquireLease(options: AcquireOptions): Promise<AcquireResult> {
+  const clock = options.clock ?? realClock;
   const pid = options.pid ?? process.pid;
   const boot = bootId();
   const record: LeaseRecord = {
@@ -481,7 +634,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     check: options.check,
     cwd: options.cwd,
     session: options.session,
-    startedAt: new Date().toISOString(),
+    startedAt: new Date(clock.now()).toISOString(),
     scope: null,
   };
   try {
@@ -489,47 +642,97 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
   } catch (error) {
     return { ok: false, reason: "unavailable", error: (error as Error).message };
   }
-  const started = Date.now();
+  const started = clock.now();
   const reclaimed: HeldLease["reclaimed"] = [];
   let waitedOn: LeaseHolder[] = [];
-  for (;;) {
-    let outcome: ReturnType<typeof tryOnce>;
-    try {
-      outcome = tryOnce(options, record, reclaimed);
-    } catch (error) {
-      return { ok: false, reason: "unavailable", error: (error as Error).message };
+  const name = ticketName(started, record.id);
+  const ticket = path.join(queueDir(options.dir), name);
+  // A ticket outlives a waiter that never finds the slot it would take on
+  // platforms without a process start time; its age bound is the wait.
+  const ticketRecord: LeaseRecord = {
+    ...record,
+    maxAgeMs: options.waitMs + 60_000,
+  };
+  let queued = false;
+  const leave = () => {
+    process.off("exit", leave);
+    if (queued) removeOwn(ticket, record.id);
+    queued = false;
+  };
+  let nextStatus = 0;
+  try {
+    for (;;) {
+      const waited = clock.now() - started;
+      const ahead = queued ? waitersAhead(options, name) : waitersAhead(options, "~");
+      const free = options.slots - liveHolders(options).length;
+      if (ahead < free) {
+        const outcome = tryOnce(options, record, reclaimed);
+        if ("slot" in outcome) {
+          const waitedMs = queued ? waited : 0;
+          leave();
+          const { file, slot } = outcome;
+          let released = false;
+          const release = () => {
+            if (released) return;
+            released = true;
+            process.off("exit", release);
+            removeOwn(file, record.id);
+          };
+          process.on("exit", release);
+          return {
+            ok: true,
+            lease: {
+              record,
+              slot,
+              file,
+              waitedOn,
+              waitedMs,
+              reclaimed,
+              release,
+            },
+          };
+        }
+      }
+      const holders = liveHolders(options);
+      if (!waitedOn.length) {
+        waitedOn = holders;
+        options.onWait?.(holders);
+      }
+      if (waited >= options.waitMs)
+        return {
+          ok: false,
+          reason: "timeout",
+          holders,
+          waitedMs: waited,
+          position: ahead + 1,
+        };
+      if (!queued) {
+        writeTicket(ticket, ticketRecord);
+        queued = true;
+        process.on("exit", leave);
+      } else if (!fs.existsSync(ticket)) {
+        // Wrongly reclaimed (a clock step past its age bound): stand in the same place again.
+        writeTicket(ticket, ticketRecord);
+      }
+      if (waited >= nextStatus) {
+        options.onStatus?.({
+          position: ahead + 1,
+          ahead,
+          holders,
+          waitedMs: waited,
+        });
+        nextStatus = waited + (options.statusEveryMs ?? 30_000);
+      }
+      await clock.sleep(Math.min(options.pollMs ?? 2000, Math.max(1, options.waitMs - waited)));
     }
-    if ("slot" in outcome) {
-      const { file, slot } = outcome;
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        process.off("exit", release);
-        removeOwn(file, record.id);
-      };
-      process.on("exit", release);
-      return {
-        ok: true,
-        lease: {
-          record,
-          slot,
-          file,
-          waitedOn,
-          waitedMs: waitedOn.length ? Date.now() - started : 0,
-          reclaimed,
-          release,
-        },
-      };
-    }
-    const waited = Date.now() - started;
-    if (!waitedOn.length) {
-      waitedOn = outcome.holders;
-      options.onWait?.(outcome.holders);
-    }
-    if (waited >= options.waitMs)
-      return { ok: false, reason: "timeout", holders: outcome.holders, waitedMs: waited };
-    await sleep(Math.min(options.pollMs ?? 2000, Math.max(1, options.waitMs - waited)));
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "unavailable",
+      error: (error as Error).message,
+    };
+  } finally {
+    leave();
   }
 }
 

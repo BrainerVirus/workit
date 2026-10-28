@@ -77,15 +77,16 @@ const base = (dir: string) => ({
   pollMs: 20,
 });
 
-test("G no resources config, T one slot, test/build/typecheck heavy, 40% RAM and 70% of the CPUs", () => {
+test("G no resources config, T one slot, test/build heavy, lint/typecheck/format light, a 30 min wait, 40% RAM and 70% of the CPUs", () => {
   const { settings, warnings } = resolveResourceSettings([], HOST);
   expect(warnings).toEqual([]);
   expect(settings).toEqual({
     slots: 1,
-    heavy: ["test", "build", "typecheck"],
+    heavy: ["test", "build"],
+    light: ["lint", "typecheck", "format"],
     memoryMax: "13743895347",
     cpuQuota: "560%",
-    waitMs: 600_000,
+    waitMs: 1_800_000,
     scope: true,
   });
 });
@@ -109,9 +110,10 @@ test("G machine resources, T they set every field, and a bad field keeps the ear
   expect(settings).toEqual({
     slots: 3,
     heavy: ["test", "e2e"],
+    light: ["lint", "typecheck", "format"],
     memoryMax: "8589934592",
     cpuQuota: "400%",
-    waitMs: 600_000,
+    waitMs: 1_800_000,
     scope: false,
   });
   expect(warnings).toHaveLength(4);
@@ -145,6 +147,7 @@ test("G a repo .workit/checks.json, T it can only tighten the machine's limits: 
   expect(settings).toEqual({
     slots: 1,
     heavy: ["test", "e2e"],
+    light: ["lint", "typecheck", "format"],
     memoryMax: "13743895347",
     cpuQuota: "560%",
     waitMs: 30_000,
@@ -161,6 +164,33 @@ test("G a repo .workit/checks.json, T it can only tighten the machine's limits: 
     HOST,
   ).settings;
   expect([lower.memoryMax, lower.cpuQuota]).toEqual(["4294967296", "200%"]);
+});
+
+test("G light checks (#508), T the machine can make a light check heavy or a heavy one light, a repo can make one heavy but never light", () => {
+  const resolve = (...sources: Array<["machine" | "repo", unknown]>) =>
+    resolveResourceSettings(
+      sources.map(([trust, value]) => ({ label: trust, trust, value })),
+      HOST,
+    );
+  const machineHeavy = resolve(["machine", { heavy: ["test", "typecheck"] }]).settings;
+  expect([machineHeavy.heavy, machineHeavy.light]).toEqual([
+    ["test", "typecheck"],
+    ["lint", "format"],
+  ]);
+  const machineLight = resolve(["machine", { light: ["build", "lint"] }]).settings;
+  expect([machineLight.heavy, machineLight.light]).toEqual([["test"], ["build", "lint"]]);
+  const repoHeavy = resolve(["repo", { heavy: ["typecheck"] }]).settings;
+  expect([repoHeavy.heavy, repoHeavy.light]).toEqual([
+    ["test", "build", "typecheck"],
+    ["lint", "format"],
+  ]);
+  const repoLight = resolve(["repo", { light: ["test"] }]);
+  expect(repoLight.settings.heavy).toEqual(["test", "build"]);
+  expect(repoLight.warnings).toEqual([
+    "repo: light: is machine-wide; set it in your workspaces.json, not in the repo",
+  ]);
+  expect(resolve(["machine", { wait: "45m" }]).settings.waitMs).toBe(2_700_000);
+  expect(resolve(["machine", { wait: "soon" }]).warnings).toHaveLength(1);
 });
 
 test("G a free slot, T acquire writes the holder, a second acquire times out naming it, release frees the slot", async () => {

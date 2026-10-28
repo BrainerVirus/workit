@@ -510,3 +510,48 @@ be checked and is reclaimed after a 10-minute TTL. `workit doctor` warns about
 stale locks; `workit doctor --fix-lock` clears one under the same guard, and
 `--fix-lock --force --yes` is the escape hatch for an owner that cannot be
 verified.
+
+## Heavy-check queue
+
+The machine-wide heavy-check lease
+([delivery guide](delivery.md#heavy-checks-share-the-machine)) is a queue, not
+a door that shuts. A heavy check that finds every slot held takes a ticket and
+waits its turn, first come, first served, across every agent and worktree of
+the user. It prints where it stands when it starts waiting and every 30 s
+after:
+
+```text
+workit: waiting for the heavy-check lease (1 slot): held by test, pid 4121, session s-a, 3m 10s, /work/wt/a; queued at position 2, waiting up to 30m (--wait <dur> sets it)
+workit: still queued for the heavy-check lease: position 1, 4m 30s of 30m waited; held by test, pid 4121, …
+```
+
+```bash
+workit check test                 # queues up to resources.wait (default 30 min)
+workit check test --wait 45m      # wait longer: 90, 90s, 30m and 1h all work
+workit check test --no-wait       # exit 4 at once if the lease is busy
+workit lock status                # the holders, then the queue in arrival order
+```
+
+- **Exit 4** (`busy`) means `--no-wait` met a busy lease, or the wait really
+  ran out. The message names the holders with their age and this check's
+  place in the queue.
+- **Light checks.** The named checks `lint`, `typecheck` and `format` are
+  light: they never take the lease, so they run at once beside a long suite.
+  The machine owner sets the list with `resources.light` in
+  `workspaces.json`; listing a check under `resources.heavy` there makes it
+  heavy again. A repo's `.workit/checks.json` can add heavy checks (that
+  removes them from the light list) but cannot mark one light.
+- **A waiter that dies gives up its place.** A ticket holds while its
+  `workit` process runs; the next waiter removes a ticket whose process is
+  gone, by the same test as a stale lease. A shell tool that kills a long
+  call (Claude Code and OpenCode stop a foreground call after 2 minutes by
+  default) therefore costs the place in line: run a long wait in a
+  background call, or with a longer tool timeout.
+- **`resources.wait`** takes seconds (`1800`) or a duration (`"30m"`), from
+  either config file.
+
+| Field   | Default                       | Where     | Meaning                                     |
+| ------- | ----------------------------- | --------- | ------------------------------------------- |
+| `light` | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease      |
+| `heavy` | `test`, `build`               | both      | Named checks that queue; a repo only adds   |
+| `wait`  | `1800` (30 min)               | both      | How long a queued check waits before exit 4 |

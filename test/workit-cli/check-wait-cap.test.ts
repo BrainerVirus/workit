@@ -1,14 +1,13 @@
-// The lease wait inside a host shell tool (#325): Claude Code and OpenCode
-// kill a shell call at 120 s, so `workit check` caps its lease wait there
-// (100 s; WORKIT_HOST_WAIT_CAP_MS replaces it in tests). An explicit
-// --wait wins; outside those hosts the configured wait applies.
+// The lease wait (#508, replacing #325's 100 s host cap): a queued check
+// waits its turn, `--wait <dur>` or `resources.wait` (default 30 min), inside
+// a Claude Code or OpenCode shell too; `--no-wait` answers at once; light
+// checks never wait.
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
-import { hostToolWaitCapMs } from "@/packages/workit-cli/src/verbs/check";
 
 const BUN = process.execPath;
 const dirs: string[] = [];
@@ -25,6 +24,13 @@ const temp = (prefix: string) => {
 const setup = (waitS: number) => {
   const root = temp("wk-wait-cap-");
   spawnSync("git", ["init", "-q", "-b", "feature/wait"], { cwd: root });
+  mkdirSync(path.join(root, ".workit"));
+  writeFileSync(
+    path.join(root, ".workit", "checks.json"),
+    JSON.stringify({
+      checks: { typecheck: [BUN, "-e", "0"], test: [BUN, "-e", "0"] },
+    }),
+  );
   const state = temp("wk-wait-cap-state-");
   const config = temp("wk-wait-cap-config-");
   writeFileSync(
@@ -56,7 +62,6 @@ const setup = (waitS: number) => {
     WORKFLOW_TOOLKIT_STATE: state,
     WORKFLOW_TOOLKIT_CONFIG_DIR: config,
     WORKIT_LEASE: "",
-    WORKIT_HOST_WAIT_CAP_MS: "200",
   };
   for (const key of ["CLAUDECODE", "OPENCODE", "OPENCODE_SESSION_ID"]) delete env[key];
   return { root, env };
@@ -73,30 +78,70 @@ const heavy = async (root: string, env: NodeJS.ProcessEnv, flags: string[] = [])
   return { code, waitedMs: JSON.parse(stdout).data?.lease?.waitedMs as number };
 };
 
-test("Given the host markers, Then the cap is 100 s inside Claude Code and OpenCode and none elsewhere", () => {
-  expect(hostToolWaitCapMs({ CLAUDECODE: "1" })).toBe(100_000);
-  expect(hostToolWaitCapMs({ OPENCODE: "1" })).toBe(100_000);
-  expect(hostToolWaitCapMs({ OPENCODE_SESSION_ID: "ses_1" })).toBe(100_000);
-  expect(hostToolWaitCapMs({})).toBeNull();
-  expect(hostToolWaitCapMs({ CLAUDECODE: "1", WORKIT_HOST_WAIT_CAP_MS: "200" })).toBe(200);
-});
+const named = async (root: string, env: NodeJS.ProcessEnv, name: string, flags: string[] = []) => {
+  let stdout = "";
+  let stderr = "";
+  const code = await main(["check", name, ...flags, "--json"], {
+    cwd: root,
+    env,
+    stdout: (text) => void (stdout += text),
+    stderr: (text) => void (stderr += text),
+  });
+  return { code, stderr, data: JSON.parse(stdout).data };
+};
 
-test("Given a held lease in a Claude Code or OpenCode shell, When a heavy check waits, Then it gives up busy at the host cap, not the configured wait", async () => {
+test("Given a held lease in a Claude Code or OpenCode shell, When a heavy check waits, Then it waits the configured wait, not a 100 s host cap", async () => {
   for (const marker of ["CLAUDECODE", "OPENCODE"]) {
-    const { root, env } = setup(30);
+    const { root, env } = setup(2);
     const started = Date.now();
     const result = await heavy(root, { ...env, [marker]: "1" });
     expect(result.code, marker).toBe(4);
-    expect(Date.now() - started, marker).toBeLessThan(5_000);
+    expect(Date.now() - started, marker).toBeGreaterThanOrEqual(1_800);
   }
-});
+}, 20_000);
 
-test("Given an explicit --wait, When a heavy check waits in a Claude Code shell, Then --wait wins over the cap", async () => {
+test("Given a held lease, When a heavy check runs with --wait 1s, Then the duration sets the wait", async () => {
   const { root, env } = setup(30);
   const started = Date.now();
-  const result = await heavy(root, { ...env, CLAUDECODE: "1" }, ["--wait", "5"]);
+  const result = await heavy(root, env, ["--wait", "1s"]);
   expect(result.code).toBe(4);
-  expect(Date.now() - started).toBeGreaterThanOrEqual(4_500);
+  expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+  expect(Date.now() - started).toBeLessThan(10_000);
+}, 20_000);
+
+test("Given a held lease, When a heavy check runs with --no-wait, Then it exits 4 at once naming the holder", async () => {
+  const { root, env } = setup(30);
+  let stdout = "";
+  const started = Date.now();
+  const code = await main(["check", "--heavy", "--no-wait", "--json", "--", BUN, "-e", "0"], {
+    cwd: root,
+    env,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  });
+  expect(code).toBe(4);
+  expect(Date.now() - started).toBeLessThan(2_000);
+  const envelope = JSON.parse(stdout);
+  expect(envelope).toMatchObject({ ok: false, code: "busy" });
+  expect(envelope.error).toContain("--no-wait");
+});
+
+test("Given --wait and --no-wait together, or a junk --wait, Then the usage is refused", async () => {
+  const { root, env } = setup(30);
+  expect((await heavy(root, env, ["--wait", "1m", "--no-wait"])).code).toBe(2);
+  expect((await heavy(root, env, ["--wait", "soon"])).code).toBe(2);
+});
+
+test("Given a held lease, When `workit check typecheck` runs, Then it runs at once without the lease (a light check), while `test` queues", async () => {
+  const { root, env } = setup(30);
+  const started = Date.now();
+  const light = await named(root, env, "typecheck");
+  expect(light.code, light.stderr).toBe(0);
+  expect(light.data.lease).toBeNull();
+  expect(Date.now() - started).toBeLessThan(5_000);
+  const queued = await named(root, env, "test", ["--wait", "1"]);
+  expect(queued.code).toBe(4);
+  expect(queued.stderr).toContain("queued at position 1, waiting up to 1s");
 }, 20_000);
 
 test("Given no host marker, When a heavy check waits, Then the configured wait applies", async () => {
