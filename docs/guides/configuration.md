@@ -29,6 +29,26 @@ Global config lives in `~/.config/workit/` (`config.json`, `workspaces.json`,
 globs to hosting (GitHub/GitLab), trackers, branch/commit policy and
 [grants](grants.md); the narrowest glob wins.
 
+`workit init` edits the entries you open and leaves every other entry
+byte-for-byte as it was. To add or adjust one entry without the wizard:
+
+```bash
+workit workspace list                                  # entries, and the one that applies here and why
+workit workspace add kit --glob '/home/you/work/libs/kit/**' --from work
+workit workspace set kit branchPolicy.integration=merge  # dotted keys, JSON values, null removes
+workit workspace rm kit
+```
+
+`--from` copies the parent's `vcs`, `issues`, `branchPolicy`,
+`commitPolicy`, `trailers`, `youtrack` and `models`, never its grants,
+`defaultEndpoint` or `verification`. These verbs never raise authority, so an
+agent may run them when you ask: a new entry nested in another starts at the
+defaults, lowered where the entry it shadows grants less; `set` refuses the
+grant keys, `name` and `glob`; `rm` refuses when the entry that takes over the
+folders grants more. Raise a grant with `workit grant set` in your own
+terminal. Each write keeps the previous file as `workspaces.json.bak`, and
+`workit doctor` lists overlapping globs and which entry wins.
+
 A workspace's `defaultEndpoint` sets how far an unnamed delivery request goes:
 `commit` (default), `pr`, `green` (babysit the PR until merge-ready, never
 merging) or `merged` (`green`, then merge; needs the `merge` grant, otherwise
