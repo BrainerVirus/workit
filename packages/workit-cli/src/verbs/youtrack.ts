@@ -121,7 +121,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   const results: { step: string; status: OnceOutcome["status"]; note?: string }[] = [];
   for (const entry of steps) {
-    const outcome = await progressFor(io).run(entry.label, () => entry.run());
+    // fetch and file work only, never a spawnSync, so Ctrl-C may clear the frame.
+    const outcome = await progressFor(io).run(entry.label, () => entry.run(), undefined, {
+      signals: true,
+    });
     results.push({
       step: entry.label,
       status: outcome.status,

@@ -15,11 +15,21 @@ export type ProgressStep = {
   /** Finish the step: clear the spinner line, leave one status line. */
   end: (status: StepStatus, note?: string) => void;
 };
+export type RunOptions = { signals?: boolean };
 export type Progress = {
   readonly mode: ProgressMode;
   start: (label: string) => ProgressStep;
-  /** An async step; a throw ends it as failed and rethrows. */
-  run: <T>(label: string, fn: () => Promise<T>, classify?: (value: T) => StepStatus) => Promise<T>;
+  /**
+   * An async step; a throw ends it as failed and rethrows. `signals: true`
+   * keeps a SIGINT/SIGTERM handler that clears the frame and re-raises: only
+   * for work that never blocks in a spawnSync, which would defer the signal.
+   */
+  run: <T>(
+    label: string,
+    fn: () => Promise<T>,
+    classify?: (value: T) => StepStatus,
+    options?: RunOptions,
+  ) => Promise<T>;
   /**
    * A step around synchronous work. A timer cannot tick while the thread is
    * blocked, so on the real stderr a helper process draws the frames; on any
@@ -187,10 +197,11 @@ export function createProgress(options: ProgressOptions = {}): Progress {
   return {
     mode,
     start,
-    async run(label, fn, classify) {
-      // Same as runSync: the work may block in a spawnSync between awaits, so no
-      // handler may defer Ctrl-C; the default action ends the process at once.
-      const step = start(label, false);
+    async run(label, fn, classify, runOptions) {
+      // By default, as runSync: the work may block in a spawnSync between
+      // awaits, so no handler may defer Ctrl-C; the default action ends the
+      // process at once. A caller whose work never blocks opts in to the clear.
+      const step = start(label, runOptions?.signals === true);
       try {
         const value = await fn();
         step.end(classify ? classify(value) : "done");

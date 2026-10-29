@@ -182,6 +182,25 @@ test("run installs no SIGINT/SIGTERM handler either: its work may block between 
   expect(p.count()).toBe(0);
 });
 
+test("run with signals:true registers SIGINT/SIGTERM, clears the line and re-raises", async () => {
+  const p = procRig();
+  const { progress, writes } = rig({ proc: p.proc });
+  let during: string[] = [];
+  await progress.run(
+    "Updating the CLI",
+    async () => {
+      during = [...p.listeners.entries()].filter(([, l]) => l.length).map(([e]) => e);
+      p.listeners.get("SIGINT")![0]();
+    },
+    undefined,
+    { signals: true },
+  );
+  expect(during).toEqual(expect.arrayContaining(["SIGINT", "SIGTERM", "exit"]));
+  expect(writes.join("")).toContain("\r\x1b[2K");
+  expect(p.kills).toEqual([[4242, "SIGINT"]]);
+  expect(p.count()).toBe(0);
+});
+
 test("Ctrl-C during a runSync wait ends the process by SIGINT at once, as without a spinner", async () => {
   const script = `
     const { spawnSync } = require("node:child_process");
