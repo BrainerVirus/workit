@@ -18,11 +18,14 @@
 // definition of this slice never links; editing a sibling changes nothing.
 // A landing whose changed paths read on the trunk exactly as before it (a
 // revert) is not landed; the note says so.
+// A merged PR whose trunk ref lacks the merge (a remote-tracking ref not
+// fetched since) is not read as a revert at once: the trunk is fetched once
+// per run and the check repeats; a failed fetch leaves it landed, with a note.
 // The forge is asked through a breaker: after the first unavailable answer
 // (gh/glab missing, not logged in, timed out) it is not asked again in the
 // same run, and git decides the rest.
 import { spawnSync } from "node:child_process";
-import { GIT_TIMEOUTS, hasCommit, mergeBase, patchId } from "./git/rev";
+import { fetchRefs, GIT_TIMEOUTS, hasCommit, mergeBase, patchId } from "./git/rev";
 import type { ResolvedForge } from "./forge/resolve";
 import type { ForgeResult, PrRef } from "./forge/types";
 import { gitRun, type Slice } from "./fanout";
@@ -46,6 +49,8 @@ export type LandingContext = {
   /** The trunk ref (e.g. refs/remotes/origin/main). */
   trunk: string;
   forge: ResolvedForge | null;
+  /** Fetch the trunk's remote-tracking ref; an error text when it failed, else null. Set on first need, once per run. */
+  refreshTrunk?: () => string | null;
   /** Trunk patch-ids per fork point, filled lazily. */
   cache?: Map<string, Set<string>>;
 };
@@ -78,6 +83,25 @@ export function forgeBreaker(resolved: ResolvedForge | null): ForgeBreaker {
   forge.findPr = guard(inner.findPr.bind(inner));
   forge.prStatus = guard(inner.prStatus.bind(inner));
   return { forge: { ...resolved, forge }, down: () => tripped };
+}
+
+/**
+ * A once-only refresh of a remote-tracking trunk ref (`git fetch <remote>
+ * <trunk>`, quiet, that one ref); undefined when the trunk is not one.
+ */
+export function trunkRefresher(cwd: string, trunk: string): (() => string | null) | undefined {
+  const match = /^refs\/remotes\/([^/]+)\/(.+)$/u.exec(trunk);
+  if (!match) return undefined;
+  const [, remote, name] = match;
+  let result: string | null | undefined;
+  return () => {
+    if (result !== undefined) return result;
+    const fetched = fetchRefs(cwd, remote, [`+refs/heads/${name}:${trunk}`]);
+    result = fetched.ok
+      ? null
+      : `${remote}/${name} could not be refreshed, so a revert check may be stale: run git fetch ${remote} ${name}`;
+    return result;
+  };
 }
 
 const isAncestor = (cwd: string, a: string, b: string): boolean =>
@@ -261,6 +285,14 @@ export function detectLanding(
       !reverted(ctx.cwd, ctx.trunk, landedHead, input.createdFrom)
     )
       return { ...out, landed: true, how, landedHead };
+    if (how === "pr_merged" && ctx.forge) {
+      // The forge says merged; a stale remote-tracking trunk may just not show it yet.
+      ctx.refreshTrunk ??= trunkRefresher(ctx.cwd, ctx.trunk) ?? (() => null);
+      const failed = ctx.refreshTrunk();
+      if (failed) return { ...out, landed: true, how, landedHead, note: failed };
+      if (!reverted(ctx.cwd, ctx.trunk, landedHead, input.createdFrom))
+        return { ...out, landed: true, how, landedHead };
+    }
     return {
       ...out,
       note: `landed (${how}${out.pr ? ` #${out.pr.number}` : ""}), then reverted on the trunk: its paths read as before it`,
