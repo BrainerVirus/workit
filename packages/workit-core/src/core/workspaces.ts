@@ -594,11 +594,13 @@ const ownGitDir = (dotGit: string, real: string): boolean => {
   }
 };
 
-const INTERNALS = ["refs", "objects", "config", "packed-refs", "commondir", "info", "hooks"];
+// What decides the repository git acts on; hooks and info cannot change refs,
+// objects or the remote, so a shared hooks folder keeps the grants.
+const INTERNALS = ["refs", "objects", "config", "packed-refs", "commondir"];
 
 /**
  * Whether the git directory at `real` owns what git reads through it (#552):
- * true when every present internal resolves inside it; the one checkout
+ * true when every present INTERNALS entry resolves inside it; the one checkout
  * (gitDirOwner) whose git directory the borrowed ones resolve into; false
  * when one resolves elsewhere, dangles, or they name several checkouts.
  */

@@ -235,11 +235,32 @@ test.skipIf(!unix)(
     rmSync(`${cfg}/.git/config`);
     borrow(`${cfg}/.git`, ["config"]);
     expect(resolveAutonomy(cfg).grants.release).toBe(false);
+    const stray = `${root}/work/stray`;
+    init(stray);
+    writeFileSync(`${root}/packed-refs-elsewhere`, "");
+    symlinkSync(`${root}/packed-refs-elsewhere`, `${stray}/.git/packed-refs`);
+    nothingGranted(stray);
+  },
+);
+
+test.skipIf(!unix)(
+  "#552: hooks and info symlinked to a shared folder or into another repository keep the checkout's grants",
+  () => {
+    strictWorkspaces();
+    const { strictGit } = strictAndBorrower("s4");
+    mkdirSync(`${root}/hooks-shared`, { recursive: true });
     const loose = `${root}/work/loose`;
     init(loose);
-    mkdirSync(`${root}/hooks-elsewhere`, { recursive: true });
     rmSync(`${loose}/.git/hooks`, { recursive: true, force: true });
-    symlinkSync(`${root}/hooks-elsewhere`, `${loose}/.git/hooks`);
-    nothingGranted(loose);
+    symlinkSync(`${root}/hooks-shared`, `${loose}/.git/hooks`);
+    rmSync(`${loose}/.git/info`, { recursive: true, force: true });
+    symlinkSync(`${strictGit}/info`, `${loose}/.git/info`);
+    expect(resolveAutonomy(loose).grants.release).toBe(true);
+    expect(resolveAutonomy(loose).grants.merge).toBe(true);
+    const into = `${root}/work/into`;
+    init(into);
+    rmSync(`${into}/.git/hooks`, { recursive: true, force: true });
+    symlinkSync(`${strictGit}/hooks`, `${into}/.git/hooks`);
+    expect(resolveAutonomy(into).grants.release).toBe(true);
   },
 );

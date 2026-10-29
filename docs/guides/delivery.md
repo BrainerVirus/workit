@@ -18,9 +18,10 @@ these points at a protected branch, or at a repository it cannot read
 symlink into another checkout's repository is capped at that checkout's
 grants, and at none when no checkout owns the git directory (a
 `--separate-git-dir` repository). The same holds when the git directory's
-`refs`, `objects`, `config`, `packed-refs`, `commondir`, `info` or `hooks`
-resolve into another repository, and a repository with no `.git` entry
-(bare, or a bare-style folder) gets no grants.
+`refs`, `objects`, `config`, `packed-refs` or `commondir` resolve into
+another repository (a shared `hooks` or `info` folder does not count), and a
+repository with no `.git` entry (bare, or a bare-style folder) gets no
+grants.
 
 ## Branch, commit, push
 
