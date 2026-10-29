@@ -3,7 +3,18 @@
 // the table has no repeated status words, doctor names the installed fix and
 // Codex processes older than the plugin are reported. Temp HOME, injected deps.
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
@@ -11,7 +22,12 @@ import { cursorMcpServerEntry } from "@/packages/workit-cli/src/admin/registrati
 import { createProgress } from "@/packages/workit-cli/src/progress";
 import { applyUpgrade, previewUpgrade } from "@/packages/workit-cli/src/upgrade";
 import { table } from "@/packages/workit-cli/src/upgrade/report";
-import { stderrTail, type CommandResult } from "@/packages/workit-cli/src/upgrade/shared";
+import {
+  asyncRunner,
+  runner,
+  stderrTail,
+  type CommandResult,
+} from "@/packages/workit-cli/src/upgrade/shared";
 
 const write = (file: string, value: unknown) => {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -306,3 +322,104 @@ test("Given a spinner on a TTY, When synchronous work runs, Then the ticker draw
   ]);
   expect(writes.at(-1)).toContain("Planning the upgrade");
 });
+
+// The default runners, with no injected runner: executables at absolute paths
+// (what planHostInstall emits for node and the npm CLI) must run as given.
+const script = (file: string, body: string) => {
+  write(file, `#!/bin/sh\n${body}\n`);
+  chmodSync(file, 0o755);
+  return file;
+};
+
+test.skipIf(process.platform === "win32")(
+  "Given an absolute executable path, Then both default runners run it, and a missing one reports why on stderr",
+  async () => {
+    const home = tempHome();
+    try {
+      const tool = script(path.join(home, "bin/tool"), 'echo "out $1"; echo "err" >&2; exit 3');
+      const deps = { home, env: { PATH: path.join(home, "bin") } };
+      const sync = runner(deps)(tool, ["x"]);
+      const spawned = await asyncRunner(deps)(tool, ["x"]);
+      for (const result of [sync, spawned]) {
+        expect(result.status).toBe(3);
+        expect(result.stdout).toContain("out x");
+        expect(result.stderr).toContain("err");
+      }
+      const missing = path.join(home, "bin/missing");
+      for (const result of [runner(deps)(missing, []), await asyncRunner(deps)(missing, [])]) {
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("does not exist or is not executable");
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given fake node and npm executables and no injected runner, When upgrade repairs Cursor, Then the real runners run the install and the row is updated with dist files in place",
+  async () => {
+    const home = tempHome();
+    try {
+      // A complete Cursor package: the real tree plus launchable dist entries.
+      const template = path.join(home, "template");
+      cpSync(path.join(import.meta.dir, "../../packages/workit-cursor"), template, {
+        recursive: true,
+      });
+      const manifest = JSON.parse(readFileSync(path.join(template, "package.json"), "utf8"));
+      write(path.join(template, "package.json"), { ...manifest, version: "2.0.0" });
+      for (const entry of ["mcp-server.js", "cursor-session-start.js"])
+        write(path.join(template, "dist", entry), "#!/usr/bin/env node\nconsole.log(1);\n");
+      const bin = path.join(home, "bin");
+      script(
+        path.join(bin, "node"),
+        `case "$1" in
+  -e|--check) exit 0 ;;
+  *npm-cli.js)
+    while [ $# -gt 0 ]; do [ "$1" = "--prefix" ] && prefix="$2"; shift; done
+    mkdir -p "$prefix/node_modules/@brainervirus"
+    cp -r "$FAKE_CURSOR_TEMPLATE" "$prefix/node_modules/@brainervirus/workit-cursor"
+    echo "$prefix" >> "$FAKE_NPM_LOG" ;;
+esac
+exit 0`,
+      );
+      const npmCli = script(
+        path.join(home, "npm-lib/node_modules/npm/bin/npm-cli.js"),
+        'echo "2.0.0"',
+      );
+      symlinkSync(npmCli, path.join(bin, "npm"));
+      write(path.join(home, ".config/workit/config.json"), { locale: "en" });
+      write(path.join(home, ".cursor/mcp.json"), {
+        mcpServers: {
+          workit: {
+            command: "npx",
+            args: ["-y", "--package=@brainervirus/workit-cursor", "workit-cursor-mcp"],
+          },
+        },
+      });
+      const log = path.join(home, "npm.log");
+      const deps = {
+        home,
+        env: {
+          PATH: `${bin}:/usr/bin:/bin`,
+          FAKE_CURSOR_TEMPLATE: template,
+          FAKE_NPM_LOG: log,
+          WORKFLOW_TOOLKIT_DEV: "",
+        },
+        processes: () => [],
+      };
+      const plan = previewUpgrade(["cursor"], deps);
+      expect(plan.failed).toEqual([]);
+      const result = await applyUpgrade(plan, deps);
+      const cursor = result.hosts.find((entry) => entry.host === "cursor");
+      expect(cursor?.reason).not.toContain("failed");
+      expect(cursor?.status).toBe("updated");
+      expect(readFileSync(log, "utf8")).toContain(".workit-package-bootstrap");
+      expect(existsSync(path.join(home, ".cursor/plugins/local/workit/dist/mcp-server.js"))).toBe(
+        true,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);

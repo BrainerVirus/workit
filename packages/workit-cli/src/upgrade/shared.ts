@@ -179,8 +179,8 @@ export const runner = (deps: UpgradeDeps) =>
     let step: HostInstallCommand;
     try {
       step = hostCommand(command, args, { home, env });
-    } catch {
-      return { status: 1, stdout: "" };
+    } catch (error) {
+      return { status: 1, stdout: "", stderr: errorText(error) };
     }
     const result = runHostCommand(step, { home, env });
     return { status: result.exitCode, stdout: result.stdout, stderr: result.stderr };
@@ -204,11 +204,15 @@ export const asyncRunner = (
     let step: HostInstallCommand;
     try {
       step = hostCommand(command, args, { home, env });
-    } catch {
-      return Promise.resolve({ status: 1, stdout: "" });
+    } catch (error) {
+      return Promise.resolve({ status: 1, stdout: "", stderr: errorText(error) });
     }
     if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(step.command))
-      return Promise.resolve({ status: 1, stdout: "" });
+      return Promise.resolve({
+        status: 1,
+        stdout: "",
+        stderr: `Cannot safely execute batch shim ${step.command}`,
+      });
     const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env, HOME: home };
     childEnv.CODEX_HOME = env.CODEX_HOME ?? path.join(home, ".codex");
     childEnv.PI_CODING_AGENT_DIR = env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent");
@@ -233,8 +237,8 @@ export const asyncRunner = (
           windowsHide: true,
           shell: false,
         });
-      } catch {
-        resolve({ status: 1, stdout: "" });
+      } catch (error) {
+        resolve({ status: 1, stdout: "", stderr: errorText(error) });
         return;
       }
       const timer = setTimeout(() => {
@@ -254,8 +258,9 @@ export const asyncRunner = (
   };
 };
 
-export const errorText = (error: unknown): string =>
-  error instanceof Error ? error.message : "installed source could not be read";
+export function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : "installed source could not be read";
+}
 
 // Pi lists the configured source followed by its resolved package directory.
 // Confirm the package identity and version rather than accepting a source name alone.
