@@ -202,3 +202,41 @@ for (const kind of ["gitdir file", "symlink"] as const)
       expect(repo.remoteTip("feature/x")).toBeNull();
     },
   );
+
+// #552: no pointer at all. The folder's git directory is its own on disk, but
+// its refs, objects and config are symlinks into a strict repository: a
+// bare-style folder (no .git entry) or a real .git directory.
+for (const shape of ["bare-style folder", "real .git directory"] as const)
+  test.skipIf(process.platform === "win32")(
+    `Given a ${shape} under a permissive workspace that borrows a strict repository's refs, objects and config, When workit git push runs there, Then it is refused and origin does not move`,
+    async () => {
+      const repo = strictRepo();
+      const open = plainFolder();
+      const glob = (dir: string) => `${dir.replaceAll("\\", "/")}/**`;
+      writeFileSync(
+        path.join(configHome.configDir, "workspaces.json"),
+        JSON.stringify({
+          workspaces: [
+            { name: "strict", glob: glob(repo.root), autonomy: { release: false, push: false } },
+            { name: "open", glob: glob(open), autonomy: { release: true, push: true } },
+          ],
+        }),
+      );
+      const folder = path.join(open, "borrower");
+      const gitDir = shape === "bare-style folder" ? folder : path.join(folder, ".git");
+      mkdirSync(gitDir, { recursive: true });
+      const strictGit = path.join(repo.cwd, ".git");
+      for (const name of ["objects", "refs", "config"])
+        symlinkSync(path.join(strictGit, name), path.join(gitDir, name));
+      writeFileSync(path.join(gitDir, "HEAD"), "ref: refs/heads/develop\n");
+      const develop = repo.remoteTip("develop");
+      const release = await run(["git", "push", "--release", "develop", "--json"], folder);
+      expect(release.code, release.stdout + release.stderr).toBe(3);
+      expect(repo.remoteTip("develop")).toBe(develop);
+      repo.git("branch", "feature/x");
+      writeFileSync(path.join(gitDir, "HEAD"), "ref: refs/heads/feature/x\n");
+      const push = await run(["git", "push", "--set-upstream", "--json"], folder);
+      expect(push.code, push.stdout + push.stderr).toBe(3);
+      expect(repo.remoteTip("feature/x")).toBeNull();
+    },
+  );

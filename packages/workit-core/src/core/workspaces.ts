@@ -505,6 +505,19 @@ const probeCheckout = (cwd: string): Probe | null | Error => {
   if (cached !== undefined) return cached;
   let dir = path.resolve(cwd);
   while (!existsSync(path.join(dir, ".git"))) {
+    // Git's own discovery: a folder holding HEAD, objects and refs is a
+    // repository with no work tree (bare, or bare-style with borrowed
+    // internals, #552). Only the git directory of a checkout git can name
+    // (cwd inside `<checkout>/.git`) keeps grants, capped at that checkout.
+    if (["HEAD", "objects", "refs"].every((name) => existsSync(path.join(dir, name)))) {
+      const real = realpathOf(dir);
+      const owner = ownInternals(real) === true ? gitDirOwner(real) : null;
+      if (owner === null)
+        return Error(`${cwd} is in a repository with no work tree at ${real}: no grants apply`);
+      const probe = { main: owner, superproject: null };
+      probes.set(cwd, probe);
+      return probe;
+    }
     const up = path.dirname(dir);
     if (up === dir) return null;
     dir = up;
@@ -548,6 +561,16 @@ const probeCheckout = (cwd: string): Probe | null | Error => {
         return Error(`${cwd} uses the repository at ${real}, owned by no checkout workit can name`);
       if (owner !== realpathOf(dir)) main = owner;
     }
+    // Its refs, objects and config must be its own too (#552): borrowed ones
+    // cap at the checkout that owns them, or at nothing.
+    const lender = ownInternals(real);
+    if (lender === false)
+      return Error(`${cwd} borrows git internals from outside ${real} that no checkout owns`);
+    if (lender !== true && lender !== realpathOf(dir)) {
+      if (main !== null && main !== lender)
+        return Error(`${cwd} mixes the repositories of ${main} and ${lender}`);
+      main = lender;
+    }
   } else {
     // The first `worktree` entry is the main one, also with --separate-git-dir
     // (where the common dir is not <main>/.git); a bare repo lists its own path.
@@ -569,6 +592,38 @@ const ownGitDir = (dotGit: string, real: string): boolean => {
   } catch {
     return false;
   }
+};
+
+const INTERNALS = ["refs", "objects", "config", "packed-refs", "commondir", "info", "hooks"];
+
+/**
+ * Whether the git directory at `real` owns what git reads through it (#552):
+ * true when every present internal resolves inside it; the one checkout
+ * (gitDirOwner) whose git directory the borrowed ones resolve into; false
+ * when one resolves elsewhere, dangles, or they name several checkouts.
+ */
+const ownInternals = (real: string): true | string | false => {
+  let lender: string | null = null;
+  for (const name of INTERNALS) {
+    const at = path.join(real, name);
+    try {
+      lstatSync(at);
+    } catch {
+      continue;
+    }
+    let resolved: string;
+    try {
+      resolved = (realpathSync.native ?? realpathSync)(at);
+    } catch {
+      return false;
+    }
+    const rel = path.relative(real, resolved);
+    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) continue;
+    const owner = path.basename(resolved) === name ? gitDirOwner(path.dirname(resolved)) : null;
+    if (owner === null || (lender !== null && lender !== owner)) return false;
+    lender = owner;
+  }
+  return lender ?? true;
 };
 
 /**
