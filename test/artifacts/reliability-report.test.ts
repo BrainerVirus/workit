@@ -70,13 +70,14 @@ test(
     // (no registered host plugin, #394); the three *_permissions rows are
     // info (no host permission block, #297); hook_runs and the three *_grant_rules
     // rows are info (no hook run recorded, no workspace, #419, #433);
-    // codex_session_plugin passes (no Codex process running, #561).
+    // codex_session_plugin passes (no Codex process running, #561); updates
+    // is info (the launch update check's setting, local files only).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 37,
+      passed: 38,
       warned: 1,
       failed: 1,
-      total: 39,
+      total: 40,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -118,13 +119,14 @@ test(
       // #394); the three *_permissions rows are info (no host permission
       // block, #297); grant_endpoint passes (no workspace grants, #431); hook_runs and the three
       // *_grant_rules rows are info (#419, #433); codex_session_plugin passes
-      // (no Codex process running, #561).
+      // (no Codex process running, #561); updates is info (the launch update
+      // check's setting, local files only).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 37,
+        passed: 38,
         warned: 1,
         failed: 1,
-        total: 39,
+        total: 40,
         fixes: 1,
       });
     } finally {

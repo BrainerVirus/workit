@@ -11,6 +11,7 @@ import {
 import { createProgress } from "./progress";
 import { createStyle } from "./style";
 import { applyUpgrade } from "./upgrade/apply";
+import { runUpdateCheck, runSetUpdates } from "./upgrade/check";
 import { planCli, previewUpgrade } from "./upgrade/plan";
 import { askConfirm, summary, table } from "./upgrade/report";
 import { HOSTS, LAUNCH_HOSTS, runner, upgradePaths, type UpgradeDeps } from "./upgrade/shared";
@@ -21,10 +22,22 @@ export { classifyProcess } from "./upgrade/processes";
 export type { HostProcess, UpgradeDeps } from "./upgrade/shared";
 
 const USAGE =
-  "Usage: workit upgrade [--hosts=opencode,cursor,codex,pi,claude-code|none] [--cli] [--preview | --yes | --apply --confirm] [--json]\n";
+  "Usage: workit upgrade [--hosts=opencode,cursor,codex,pi,claude-code|none] [--cli] [--preview | --yes | --apply --confirm] [--json]\n       workit upgrade --check [--json]\n       workit upgrade --set-updates=prompt|auto|off\n";
 
 export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}): Promise<number> {
   const out = deps.out ?? process.stdout;
+  // Read-only and settings forms: one flag each (plus --json for --check).
+  const setting = argv.find((arg) => arg.startsWith("--set-updates="));
+  if (argv.includes("--check") || setting) {
+    const extra = argv.filter((arg) => arg !== "--check" && arg !== "--json" && arg !== setting);
+    if (extra.length || (setting && argv.length > 1)) {
+      out.write(USAGE);
+      return 2;
+    }
+    return setting
+      ? runSetUpdates(setting.slice("--set-updates=".length), deps)
+      : runUpdateCheck(argv.includes("--json"), deps);
+  }
   const flags = new Set(argv);
   const unknown = argv.filter(
     (arg) =>
@@ -61,9 +74,11 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   // Issue #297: refresh a Workit permission block `workit setup` already
   // wrote (never add one, never set the shell); the diff is part of the plan.
   const { home, env } = upgradePaths(deps);
-  // Color only when the report goes to the real stdout; an injected `out` stays plain.
+  // Color only when the report goes to the real stdout or stderr (the launch
+  // check's upgrade); an injected `out` stays plain.
   const style = createStyle({
-    stream: out === process.stdout ? process.stdout : undefined,
+    stream:
+      out === process.stdout ? process.stdout : out === process.stderr ? process.stderr : undefined,
     env,
     json,
   });
@@ -134,6 +149,7 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
         ...(entry.status === "written" ? {} : { fix: `workit setup --hosts=${entry.host}` }),
       });
   }
+  deps.onResult?.(result.hosts);
   const failed = !result.ok || !permissionsOk;
   const cliVersion = result.hosts.some((h) => h.host === "cli" && h.status === "updated")
     ? plan.cli!.latest

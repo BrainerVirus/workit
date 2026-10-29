@@ -236,8 +236,9 @@ export const VERBS: readonly VerbEntry[] = [
     name: "upgrade",
     group: "setup",
     usage:
-      "workit upgrade [--hosts=a,b|none] [--cli] [--preview | --yes | --apply --confirm] [--json]",
-    summary: "Upgrade the CLI and every host after one confirmation, then verify with doctor",
+      "workit upgrade [--hosts=a,b|none] [--cli] [--preview | --yes | --apply --confirm | --check] [--set-updates=prompt|auto|off] [--json]",
+    summary:
+      "Upgrade the CLI and every host after one confirmation, then verify with doctor; --check compares installed and latest versions",
     load: () => import("./upgrade"),
   },
   {

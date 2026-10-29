@@ -15,6 +15,8 @@ workit upgrade --yes            # the same without the question (scripts, CI)
 workit upgrade --preview        # read-only: ends with "preview only; nothing changed"
 workit upgrade --hosts=none --cli --yes   # only the global npm CLI
 workit launch <host> --auto-upgrade -- <host args>   # upgrade before starting a host
+workit upgrade --check          # installed vs latest per component; changes nothing
+workit upgrade --set-updates=auto   # prompt (default) | auto | off
 ```
 
 A CLI older than 8.38.0 has no `--yes` and fails with `unknown option --yes`.
@@ -67,6 +69,51 @@ of `--yes` and prints JSON (as does `--json`). Backups go to
 `~/.local/state/workit/upgrades/`. Local checkout sources and exact version
 pins are left alone. A registry outage starts `launch --auto-upgrade` on the
 unchanged install with a warning.
+
+### Update check on launch
+
+Workit keeps itself current the way the Codex CLI does. When you start any
+`workit` command in your own terminal and a newer CLI release is known, it
+asks once on stderr:
+
+```text
+Workit update available: 8.41.1 -> 8.42.0  [u]pgrade now / [s]kip for now / [n]ever for this version:
+```
+
+`u` runs the full upgrade (`workit upgrade --yes`: the CLI and every host
+plugin together, never one without the other), prints its per-host table, then
+runs the command you typed with the new binary (only if the CLI package was
+replaced; a failed host is named with its fix). Everything the check prints
+goes to stderr. Ctrl-C or Ctrl-D at the question prints `Cancelled.`, exits
+130 and runs nothing. `s` (or Enter) asks again on the
+first launch after 24 hours. `n` stays silent for that version and asks again
+when a newer one is published.
+
+The `updates` setting in `~/.config/workit/config.json` picks the behavior; set
+it with `workit upgrade --set-updates=<mode>`:
+
+| `updates` | On an interactive launch with a newer release |
+| --- | --- |
+| `prompt` (default) | Ask as above |
+| `auto` | Say it is upgrading, run the full upgrade, then your command. A failed upgrade prints the per-host table and still runs your command with the old version |
+| `off` | Nothing; upgrade by hand with `workit upgrade` |
+
+The command never waits on the network. The latest version is cached in Workit
+state (`~/.local/state/workit/update-check.json`) for 24 hours; a stale cache is
+refreshed by a detached background process that prints nothing, and an offline
+or failing registry is silent. The check runs only on an interactive human
+launch: stdin, stdout and stderr are terminals (any redirection skips it), `CI` is unset, there is no `--json`,
+and the shell is not an agent host's (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
+or any `CODEX_*`, `OPENCODE*`, `CURSOR_*` or `PI_*` variable except
+`CODEX_HOME` and `PI_CODING_AGENT_DIR`). Hooks and the MCP server never have a
+terminal, so they never check. Every other launch, and `workit upgrade`, `help` and `--version`
+themselves, behaves exactly as before.
+
+`workit upgrade --check` asks the registry for the CLI and each installed host
+package, prints installed and latest versions per component with the command
+to apply, shows the `updates` setting, and changes nothing (exit 0; `--json`
+gives the same data). `workit doctor` shows the setting and the cached latest
+version with its age in its `updates` row, read from local files only.
 
 ## Config files
 

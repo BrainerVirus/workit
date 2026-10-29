@@ -90,6 +90,7 @@ import {
   type SessionHookStatus,
 } from "@brainervirus/workit-core/src/git/session-hook";
 import { readHookRuns } from "@brainervirus/workit-core/src/hooks/hook-runs";
+import { readUpdateCache, readUpdatesMode } from "../update-settings";
 import {
   grantedCommands,
   permissionCoverage,
@@ -142,6 +143,7 @@ type DoctorCheckId =
   | "codex_grant_rules"
   | "cursor_grant_rules"
   | "checks_config"
+  | "updates"
   | "claude_permissions"
   | "codex_permissions"
   | "cursor_permissions";
@@ -222,6 +224,8 @@ type Resolved = {
   home: string;
   configDir: string;
   stateDir: string;
+  /** The dirs the caller passed (a fixture); unset, readers resolve them from env like the CLI. */
+  explicitDirs: { config?: string; state?: string };
   cwd: string;
   workspaceRoot: string;
   dev: string | null;
@@ -301,6 +305,7 @@ const resolve = (options: DoctorOptions): Resolved => {
   // there is a dev checkout (`""` read as one by some rows and none by others).
   const dev = options.dev?.trim() || env.WORKFLOW_TOOLKIT_DEV?.trim() || findDevFromCwd(cwd);
   return {
+    explicitDirs: { config: options.configDir, state: options.stateDir },
     host: options.host ?? "cli",
     home,
     configDir,
@@ -3379,6 +3384,30 @@ const checkGrantRules =
     };
   };
 
+/**
+ * The launch update check's setting and its cached registry answer
+ * (update-settings.ts). Local files only: no registry call, no spawn. Always
+ * info: a newer release is offered on the next interactive launch.
+ */
+const checkUpdates = (res: Resolved): DoctorCheck => {
+  // The same resolution as `--set-updates`, `--check` and the launch check
+  // (XDG_CONFIG_HOME, XDG_STATE_HOME); a fixture's explicit dirs win.
+  const mode = readUpdatesMode(res.env, res.explicitDirs.config);
+  const cache = readUpdateCache(res.env, res.explicitDirs.state);
+  const checked =
+    cache.checkedAt === undefined
+      ? ""
+      : ` (checked ${ago(Math.max(0, Date.now() - cache.checkedAt))})`;
+  const latest = cache.latest
+    ? `latest CLI ${cache.latest}${checked}`
+    : "no latest CLI version cached yet";
+  return {
+    id: "updates",
+    status: "info",
+    detail: `updates: ${mode}; ${latest}${cache.skipped ? `; ${cache.skipped} skipped` : ""}`,
+  };
+};
+
 const ago = (ms: number): string => {
   const minutes = Math.max(0, Math.round(ms / 60_000));
   if (minutes < 1) return "just now";
@@ -3456,6 +3485,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkGrantEndpoint,
   checkHookRuns,
   checkChecksConfig,
+  checkUpdates,
   checkHostPermissions("claude-code", "claude_permissions"),
   checkHostPermissions("codex", "codex_permissions"),
   checkHostPermissions("cursor", "cursor_permissions"),
