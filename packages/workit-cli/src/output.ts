@@ -66,7 +66,10 @@ export type Io = {
    * The real streams behind stdout/stderr, when they are the process's own:
    * human output colors only for a terminal. Absent (a capture, a test) = plain.
    */
-  terminals?: { stdout?: TerminalStream; stderr?: TerminalStream };
+  terminals?: {
+    stdout?: TerminalStream;
+    stderr?: TerminalStream & { write?: (text: string) => unknown };
+  };
 };
 
 export type Verb = { run: (argv: string[], io: Io) => Promise<number> };

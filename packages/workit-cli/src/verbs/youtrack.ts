@@ -8,6 +8,7 @@
 //   workit youtrack note <ISSUE> (--markdown <text> | --file <path>) [--minutes <n>] [--date auto|YYYY-MM-DD]
 //   workit youtrack time <ISSUE> --minutes <n> [--text <t>] [--date auto|YYYY-MM-DD]
 //   workit youtrack meeting <ISSUE> --minutes <n> --text <t> [--date auto|YYYY-MM-DD]
+import { progressFor } from "../progress";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { youTrackWorkDateMs } from "@brainervirus/workit-core/src/core/youtrack";
@@ -120,7 +121,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   const results: { step: string; status: OnceOutcome["status"]; note?: string }[] = [];
   for (const entry of steps) {
-    const outcome = await entry.run();
+    const outcome = await progressFor(io).run(entry.label, () => entry.run());
     results.push({
       step: entry.label,
       status: outcome.status,

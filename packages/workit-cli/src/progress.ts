@@ -218,3 +218,18 @@ export function createProgress(options: ProgressOptions = {}): Progress {
     },
   };
 }
+
+/**
+ * The spinner for a verb's waits, on the process's own stderr only: an Io whose
+ * stderr is captured (a test, an agent wrapper) or --json gets no frames.
+ */
+export const progressFor = (io: {
+  json: boolean;
+  env: NodeJS.ProcessEnv;
+  terminals?: { stderr?: { isTTY?: boolean; columns?: number; write?: (text: string) => unknown } };
+}): Progress => {
+  const stderr = io.terminals?.stderr;
+  // Pass the stream itself: runSync's helper process draws only on the real stderr.
+  const stream = stderr?.write ? (stderr as NonNullable<ProgressOptions["stream"]>) : undefined;
+  return createProgress({ json: io.json, env: io.env, ...(stream ? { stream } : {}) });
+};

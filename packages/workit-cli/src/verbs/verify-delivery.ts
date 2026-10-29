@@ -8,6 +8,7 @@
 //
 // Exit 0 when every observation holds (delivered), 1 when one does not, with
 // the observations in `data` either way.
+import { progressFor } from "../progress";
 import {
   verifyMerged,
   verifyPr,
@@ -78,20 +79,37 @@ export async function run(argv: string[], io: Io): Promise<number> {
   let result;
   if (expect === "pushed") {
     if (pr) return usage(io, "push is checked by --branch, not --pr", USAGE);
-    result = verifyPushed(io.cwd, { branch, sha, actor });
+    result = progressFor(io).runSync(
+      "Checking the push",
+      () => verifyPushed(io.cwd, { branch, sha, actor }),
+      (r) => (r.ok ? "done" : "failed"),
+    );
   } else if (expect === "released") {
-    result = verifyReleased(
-      io.cwd,
-      { tag: flags.values.tag ?? null, pkg: flags.values.package ?? null, sha, actor },
-      forgeDeps.npm,
+    result = progressFor(io).runSync(
+      "Checking the release",
+      () =>
+        verifyReleased(
+          io.cwd,
+          { tag: flags.values.tag ?? null, pkg: flags.values.package ?? null, sha, actor },
+          forgeDeps.npm,
+        ),
+      (r) => (r.ok ? "done" : "failed"),
     );
   } else {
     const connected = connect(io, branch);
     if (!connected.ok) return forgeFail(io, connected);
     result =
       expect === "pr"
-        ? verifyPr(io.cwd, connected.data, { pr, branch, sha, actor })
-        : verifyMerged(io.cwd, connected.data, { pr, branch, actor });
+        ? progressFor(io).runSync(
+            `Checking the PR`,
+            () => verifyPr(io.cwd, connected.data, { pr, branch, sha, actor }),
+            (r) => (r.ok ? "done" : "failed"),
+          )
+        : progressFor(io).runSync(
+            "Checking the merge",
+            () => verifyMerged(io.cwd, connected.data, { pr, branch, actor }),
+            (r) => (r.ok ? "done" : "failed"),
+          );
   }
   if (!result.ok) return forgeFail(io, result);
   const report = result.data;

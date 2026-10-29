@@ -11,7 +11,7 @@ import {
   inspectMetadataLock,
 } from "@brainervirus/workit-core/src/core/store-lock";
 import { emit, fail, type Io } from "../output";
-import { createProgress } from "../progress";
+import { progressFor } from "../progress";
 import { createStyle, wrap, type Style } from "../style";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 import { workspaceRootFor } from "../task";
@@ -99,7 +99,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   // The spinner draws only on a TTY and never under --json; the checks block the
   // thread, so its helper process keeps the frames moving.
-  const report = createProgress({ stream: process.stderr, json: io.json }).runSync(
+  const report = progressFor(io).runSync(
     "Checking Workit (workit doctor)",
     () =>
       runDoctor({

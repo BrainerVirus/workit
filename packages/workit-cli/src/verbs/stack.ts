@@ -8,6 +8,7 @@
 //   workit stack restack [--name <n>] [--dry-run] [--force <branch>]…  (sync, then delete merged branches locally)
 //   workit stack land   [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase]
 //                       [--unverified --reason <why>] [--base-red-ok --reason <why>] [--timeout 20m] [--interval 30s]
+import { progressFor } from "../progress";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import {
@@ -244,28 +245,36 @@ async function sync(argv: string[], io: Io, restack = false): Promise<number> {
     };
   }
   const name = selected.data.name;
-  const result = await withStackLock(io.cwd, name, async () => {
-    // Re-read under the lock: another writer may have just changed it.
-    const fresh = readStack(io.cwd, name);
-    if (!fresh.ok) return fresh;
-    const stack = fresh.data ?? selected.data;
-    const dryRun = flags.booleans.has("dry-run");
-    const synced = syncStack(
-      io.cwd,
-      ctx,
-      stack,
-      { publish: !local, dryRun, force },
-      actorFromEnv(io.env),
-    );
-    if (!synced.ok || !restack) return synced;
-    return {
-      ok: true as const,
-      data: {
-        ...synced.data,
-        pruned: pruneMergedBranches(io.cwd, ctx, stack, { dryRun, actor: actorFromEnv(io.env) }),
-      },
-    };
-  });
+  const result = await progressFor(io).run(
+    restack ? `Restacking ${name}` : `Syncing ${name}`,
+    () =>
+      withStackLock(io.cwd, name, async () => {
+        // Re-read under the lock: another writer may have just changed it.
+        const fresh = readStack(io.cwd, name);
+        if (!fresh.ok) return fresh;
+        const stack = fresh.data ?? selected.data;
+        const dryRun = flags.booleans.has("dry-run");
+        const synced = syncStack(
+          io.cwd,
+          ctx,
+          stack,
+          { publish: !local, dryRun, force },
+          actorFromEnv(io.env),
+        );
+        if (!synced.ok || !restack) return synced;
+        return {
+          ok: true as const,
+          data: {
+            ...synced.data,
+            pruned: pruneMergedBranches(io.cwd, ctx, stack, {
+              dryRun,
+              actor: actorFromEnv(io.env),
+            }),
+          },
+        };
+      }),
+    (r) => (r.ok ? "done" : "failed"),
+  );
   if (!result.ok) return stackFailed(io, result);
   if (restack) return emit(io, ok(result.data as RestackData), renderRestack);
   return emit(io, ok(result.data), renderSync);
@@ -315,28 +324,33 @@ async function land(argv: string[], io: Io): Promise<number> {
   const connected = connect(io, selected.data.branches[0]?.branch ?? null);
   if (!connected.ok) return forgeFail(io, connected);
   const name = selected.data.name;
-  const result = await withStackLock(io.cwd, name, async () => {
-    const fresh = readStack(io.cwd, name);
-    if (!fresh.ok) return fresh;
-    return landStack(
-      {
-        cwd: io.cwd,
-        resolved: connected.data,
-        actor: actorFromEnv(io.env),
-        sleep: forgeDeps.sleep,
-      },
-      fresh.data ?? selected.data,
-      {
-        dryRun: flags.booleans.has("dry-run"),
-        max,
-        method,
-        timeoutMs,
-        intervalMs,
-        unverified,
-        baseRedOk: baseRedOk && baseRedReason ? { reason: baseRedReason } : null,
-      },
-    );
-  });
+  const result = await progressFor(io).run(
+    `Landing ${name}`,
+    () =>
+      withStackLock(io.cwd, name, async () => {
+        const fresh = readStack(io.cwd, name);
+        if (!fresh.ok) return fresh;
+        return landStack(
+          {
+            cwd: io.cwd,
+            resolved: connected.data,
+            actor: actorFromEnv(io.env),
+            sleep: forgeDeps.sleep,
+          },
+          fresh.data ?? selected.data,
+          {
+            dryRun: flags.booleans.has("dry-run"),
+            max,
+            method,
+            timeoutMs,
+            intervalMs,
+            unverified,
+            baseRedOk: baseRedOk && baseRedReason ? { reason: baseRedReason } : null,
+          },
+        );
+      }),
+    (r) => (r.ok ? "done" : "failed"),
+  );
   if (!result.ok) return stackFailed(io, result);
   const kind = connected.data.forge.kind;
   return emit(io, ok(result.data), (data: LandOutcome) =>

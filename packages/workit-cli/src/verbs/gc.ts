@@ -4,6 +4,7 @@
 // prunes `workit check` log blobs (LOG_RETENTION). A 2.x `.workit/recovery`
 // directory left by migration is only reported unless `--prune-recovery --yes`.
 // `--dry-run` is read-only.
+import { progressFor } from "../progress";
 import { LOG_RETENTION, pruneCheckLogs } from "@brainervirus/workit-core/src/checks";
 import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";
 import { emit, fail, ok, type Io } from "../output";
@@ -24,7 +25,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const store = new TaskStore(workspaceRootFor({ cwd: io.cwd }));
   const location = store.location();
   const logs = location.ok ? pruneCheckLogs(location.data.dir, { dryRun }) : null;
-  const result = store.collectGarbage({ dryRun, pruneRecovery });
+  const result = progressFor(io).runSync(
+    "Collecting garbage",
+    () => store.collectGarbage({ dryRun, pruneRecovery }),
+    (r) => (r.ok ? "done" : "failed"),
+  );
   if (!result.ok)
     return emit(
       io,

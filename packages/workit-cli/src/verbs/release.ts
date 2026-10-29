@@ -6,6 +6,7 @@
 //   workit release start <version> [--hotfix] [--track <t>]
 //   workit release finish [<version>] [--track <t>] [--dry-run]
 //   workit release publish [<version>]
+import { progressFor } from "../progress";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import { verifyReleased } from "@brainervirus/workit-core/src/forge/verify";
 import {
@@ -123,19 +124,28 @@ async function releasePr(io: Io, plan: FinishPlan, dryRun: boolean): Promise<num
     );
   const switched = switchToRelease(io.cwd, plan);
   if (!switched.ok) return forgeFail(io, switched);
-  const pushed = await subVerb(() => import("./git"), ["push", "--set-upstream"], io);
+  const pushed = await progressFor(io).run(
+    `Pushing ${plan.branch}`,
+    () => subVerb(() => import("./git"), ["push", "--set-upstream"], io),
+    (r) => (r.ok ? "done" : "failed"),
+  );
   if (!pushed.ok) return emit(io, pushed);
-  const pr = await subVerb(
-    () => import("./pr"),
-    [
-      "create",
-      "--base",
-      plan.production,
-      "--title",
-      title,
-      `--body=${plan.changelog ?? `Release ${plan.version}`}`,
-    ],
-    io,
+  const pr = await progressFor(io).run(
+    "Opening the release PR",
+    () =>
+      subVerb(
+        () => import("./pr"),
+        [
+          "create",
+          "--base",
+          plan.production,
+          "--title",
+          title,
+          `--body=${plan.changelog ?? `Release ${plan.version}`}`,
+        ],
+        io,
+      ),
+    (r) => (r.ok ? "done" : "failed"),
   );
   if (!pr.ok) return emit(io, pr);
   recordReleaseStep(io.cwd, actorFromEnv(io.env), plan, {
@@ -188,13 +198,22 @@ async function finish(argv: string[], io: Io): Promise<number> {
   if (!release.allowed) return blocked(io, release);
   if (!push.allowed) return blocked(io, push);
   const resume = `workit release finish ${plan.version}${plan.track ? ` --track ${plan.track}` : ""}`;
-  const merged = finishLocally(io.cwd, plan, actor);
+  const merged = progressFor(io).runSync(
+    `Merging release ${plan.version} locally`,
+    () => finishLocally(io.cwd, plan, actor),
+    (r) => (r.ok ? "done" : "failed"),
+  );
   if (!merged.ok) return forgeFail(io, merged, { step: "merge", resume });
   const notes = [...plan.notes];
-  const pushed = await subVerb(
-    () => import("./git"),
-    ["push", ...[...plan.pushBranches, plan.tag].flatMap((ref) => ["--release", ref])],
-    io,
+  const pushed = await progressFor(io).run(
+    "Pushing the release branches and tag",
+    () =>
+      subVerb(
+        () => import("./git"),
+        ["push", ...[...plan.pushBranches, plan.tag].flatMap((ref) => ["--release", ref])],
+        io,
+      ),
+    (r) => (r.ok ? "done" : "failed"),
   );
   if (!pushed.ok) return emit(io, { ...pushed, data: { ...pushed.data, step: "push", resume } });
   // A published release branch goes too, as git-flow does (only at the tip it had).

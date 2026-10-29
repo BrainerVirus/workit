@@ -66,7 +66,7 @@ import {
   type CodeKey,
 } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, type EnvelopeCode, type Io } from "../output";
-import { createProgress, type ProgressStep } from "../progress";
+import { progressFor, type ProgressStep } from "../progress";
 import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
 import {
   acquireLease,
@@ -473,7 +473,7 @@ async function prepareHeavy(
       wrapper: null,
       env: io.env,
     };
-  const progress = createProgress({ stream: process.stderr, json: io.json });
+  const progress = progressFor(io);
   let waiting: ProgressStep | null = null;
   const acquired = await acquireLease({
     dir,
