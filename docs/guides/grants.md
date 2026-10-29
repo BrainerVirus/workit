@@ -98,7 +98,24 @@ claims never exceeds its grants, wherever the folder is:
   never one `HOME` or `GIT_CONFIG_GLOBAL` points elsewhere) or the system
   config is your setup and is allowed.
 - None of this runs, and no extra git is asked, while no workspace sets
-  `remotes`.
+  `remotes` (pushes and PRs; `grant show` and doctor still read your remotes
+  once for their note).
+
+**What this protects against, and what it does not.** `remotes` stops an agent
+that follows Workit's rules from carrying a permissive folder's grants to a
+stricter workspace's repository by accident: a clone or fork of that repository
+inside a permissive folder, a remote added by tooling, the same repository
+spelled as https, `git@host:`, `ssh://` or an ssh host alias, and a push
+redirected by `pushurl`, `pushInsteadOf`, `pushRemote`, an include or
+`GIT_CONFIG_*`. It caps Workit's own verbs (`workit git push`, `workit pr`,
+`workit release`, stack and CI verbs). It is not a boundary against an agent
+that sets out to evade it. A raw `git push` of a feature branch is only nudged,
+never refused, and the same goes for a push through an `ssh` program placed
+earlier on `PATH`, or through a hand-built git directory whose `refs`, `objects`
+or `commondir` point into a claimed local repository. Workit does not try to
+detect these. As the [trust model](#trust-model) says, the hard boundary is your
+host's permission prompt and sandbox: deny or ask on raw `git push` and on edits
+to `PATH` in the repositories you want held to their workspace's grants.
 
 **Forks.** In a fork whose `upstream` is a claimed repository, a push to your
 own `origin` keeps the folder's grants; a PR whose base is the upstream, or a
