@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +21,18 @@ import {
 import type { BranchPreset, ToolkitConfig } from "../../packages/workit-core/src/core/config";
 import { emptyDetection } from "../../packages/workit-cli/src/admin/detect-hosts";
 import { SearchSelect, LOCALE_LANGUAGE_MAP } from "../../packages/workit-cli/src/search-select";
+
+// React reports a render-loop or act() problem through console.error only; a
+// wizard that logs one is broken even when every frame still looks right.
+let consoleError: ReturnType<typeof spyOn<Console, "error">>;
+beforeEach(() => {
+  consoleError = spyOn(console, "error").mockImplementation(() => {});
+});
+afterEach(() => {
+  const calls = consoleError.mock.calls.map((call) => String(call[0]));
+  consoleError.mockRestore();
+  expect(calls).toEqual([]);
+});
 
 const ENTER = "\r";
 // Ink defers a lone \x1b for 20ms to disambiguate escape sequences (a wall-clock
@@ -97,7 +109,11 @@ function at(preset: BranchPreset, screen: WizardScreen): WizardDraft {
   // Teleporting the screen skips the selects that would commit values, so
   // commit them explicitly — gated screens key on values, not the screen.
   const d = draft(preset);
-  const committed = reducer(d, { type: "set", field: "branchPreset", value: preset });
+  const committed = reducer(d, {
+    type: "set",
+    field: "branchPreset",
+    value: preset,
+  });
   return { ...committed, screen };
 }
 
@@ -107,7 +123,11 @@ function at(preset: BranchPreset, screen: WizardScreen): WizardDraft {
 
 test("next advances through the sequential screens", async () => {
   await withNonGitRoot(() => {
-    let d = reducer(draft("gitflow"), { type: "set", field: "platforms", value: ["opencode"] });
+    let d = reducer(draft("gitflow"), {
+      type: "set",
+      field: "platforms",
+      value: ["opencode"],
+    });
     // Note: withNonGitRoot pins WORKFLOW_WORKSPACE_ROOT, so the basePath
     // screen is skipped in both directions here (see the D-06 tests).
     const sequence: WizardScreen[] = [
@@ -207,7 +227,10 @@ test("cancel and apply both terminate on the exit screen with the right flag", (
 });
 
 test("empty locale cannot be committed from the select screen", () => {
-  let d = { ...at("gitflow", "locale"), values: { ...at("gitflow", "locale").values, locale: "" } };
+  let d = {
+    ...at("gitflow", "locale"),
+    values: { ...at("gitflow", "locale").values, locale: "" },
+  };
   d = reducer(d, { type: "next" });
   expect(d.screen).toBe("locale");
   expect(d.errors.locale).toContain("locale is required");
@@ -224,18 +247,45 @@ test("unchanged set values return the same draft object", () => {
   // message and an unchanged dispatch is a true no-op.
   let settled = draft("custom");
   settled = reducer(settled, { type: "set", field: "locale", value: "es-CL" });
-  settled = reducer(settled, { type: "set", field: "branchAllowed", value: "feature/*" });
-  settled = reducer(settled, { type: "set", field: "branchProtected", value: "main" });
-  settled = reducer(settled, { type: "set", field: "baseUrl", value: "https://yt.example.com" });
-  settled = reducer(settled, { type: "set", field: "vcsProvider", value: "github" });
-  settled = reducer(settled, { type: "set", field: "applyProject", value: true });
-  settled = reducer(settled, { type: "set", field: "platforms", value: ["opencode"] });
+  settled = reducer(settled, {
+    type: "set",
+    field: "branchAllowed",
+    value: "feature/*",
+  });
+  settled = reducer(settled, {
+    type: "set",
+    field: "branchProtected",
+    value: "main",
+  });
+  settled = reducer(settled, {
+    type: "set",
+    field: "baseUrl",
+    value: "https://yt.example.com",
+  });
+  settled = reducer(settled, {
+    type: "set",
+    field: "vcsProvider",
+    value: "github",
+  });
+  settled = reducer(settled, {
+    type: "set",
+    field: "applyProject",
+    value: true,
+  });
+  settled = reducer(settled, {
+    type: "set",
+    field: "platforms",
+    value: ["opencode"],
+  });
 
   const wsName = reducer(reducer(draft("gitflow"), { type: "workspaceAdd" }), {
     type: "workspaceDraftName",
     value: "work",
   });
-  const wsGlob = reducer(wsName, { type: "workspaceDraftGlob", value: "/work/**" });
+  const wsGlob = reducer(wsName, {
+    type: "workspaceDraftGlob",
+    value: "/work/**",
+  });
 
   const proposal: BranchPolicyProposal = {
     preset: "gitflow",
@@ -243,9 +293,18 @@ test("unchanged set values return the same draft object", () => {
     integration: "pr",
     protected: ["main"],
     allowed: ["feature/*"],
-    prefixes: { feature: "feature/", bugfix: "bugfix/", release: "release/", hotfix: "hotfix/" },
+    prefixes: {
+      feature: "feature/",
+      bugfix: "bugfix/",
+      release: "release/",
+      hotfix: "hotfix/",
+    },
   };
-  const withPolicy = reducer(settled, { type: "set", field: "branchPolicy", value: proposal });
+  const withPolicy = reducer(settled, {
+    type: "set",
+    field: "branchPolicy",
+    value: proposal,
+  });
 
   const cases: { name: string; state: WizardDraft; action: WizardAction }[] = [
     {
@@ -253,7 +312,11 @@ test("unchanged set values return the same draft object", () => {
       state: settled,
       action: { type: "set", field: "platforms", value: ["opencode"] },
     },
-    { name: "locale", state: settled, action: { type: "set", field: "locale", value: "es-CL" } },
+    {
+      name: "locale",
+      state: settled,
+      action: { type: "set", field: "locale", value: "es-CL" },
+    },
     {
       name: "branchPreset",
       state: settled,
@@ -272,7 +335,11 @@ test("unchanged set values return the same draft object", () => {
     {
       name: "baseUrl",
       state: settled,
-      action: { type: "set", field: "baseUrl", value: "https://yt.example.com" },
+      action: {
+        type: "set",
+        field: "baseUrl",
+        value: "https://yt.example.com",
+      },
     },
     {
       name: "vcsProvider",
@@ -319,27 +386,51 @@ test("unchanged set values return the same draft object", () => {
 test("changed set values return a new draft with the expected value", () => {
   const base = draft("gitflow");
 
-  const locale = reducer(base, { type: "set", field: "locale", value: "es-CL" });
+  const locale = reducer(base, {
+    type: "set",
+    field: "locale",
+    value: "es-CL",
+  });
   expect(locale).not.toBe(base);
   expect(locale.values.locale).toBe("es-CL");
 
-  const platforms = reducer(base, { type: "set", field: "platforms", value: ["opencode"] });
+  const platforms = reducer(base, {
+    type: "set",
+    field: "platforms",
+    value: ["opencode"],
+  });
   expect(platforms).not.toBe(base);
   expect(platforms.values.platforms).toEqual(["opencode"]);
 
-  const preset = reducer(base, { type: "set", field: "branchPreset", value: "custom" });
+  const preset = reducer(base, {
+    type: "set",
+    field: "branchPreset",
+    value: "custom",
+  });
   expect(preset).not.toBe(base);
   expect(preset.values.branchPreset).toBe("custom");
 
-  const vcs = reducer(base, { type: "set", field: "vcsProvider", value: "github" });
+  const vcs = reducer(base, {
+    type: "set",
+    field: "vcsProvider",
+    value: "github",
+  });
   expect(vcs).not.toBe(base);
   expect(vcs.values.vcsProvider).toBe("github");
 
-  const apply = reducer(base, { type: "set", field: "applyProject", value: true });
+  const apply = reducer(base, {
+    type: "set",
+    field: "applyProject",
+    value: true,
+  });
   expect(apply).not.toBe(base);
   expect(apply.values.applyProject).toBe(true);
 
-  const allowed = reducer(base, { type: "set", field: "branchAllowed", value: "feature/*" });
+  const allowed = reducer(base, {
+    type: "set",
+    field: "branchAllowed",
+    value: "feature/*",
+  });
   expect(allowed).not.toBe(base);
   expect(allowed.values.branchAllowed).toBe("feature/*");
 });
@@ -768,7 +859,10 @@ test("locale selection preserves English and scrolls beyond the first five optio
   const selected: string[] = [];
   const tty = await renderInk(
     <SearchSelect
-      options={LOCALE_LANGUAGE_MAP.map(({ label, locale }) => ({ label, value: locale }))}
+      options={LOCALE_LANGUAGE_MAP.map(({ label, locale }) => ({
+        label,
+        value: locale,
+      }))}
       value="en"
       onSelect={(value) => selected.push(value)}
     />,

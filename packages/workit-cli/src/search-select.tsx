@@ -1,3 +1,4 @@
+import { inkColor } from "./steps/ink-style";
 import { Box, Text, useInput } from "ink";
 import { TextInput } from "@inkjs/ui";
 import { useMemo, useState, type JSX } from "react";
@@ -121,7 +122,11 @@ export function SearchSelect<T extends string>({
         <Text dimColor>No matches</Text>
       ) : (
         filtered.slice(offset, offset + VISIBLE_ROWS).map((option, i) => (
-          <Text key={option.value} color={i + offset === index ? "cyan" : "dim"}>
+          <Text
+            key={option.value}
+            color={i + offset === index ? inkColor("accent") : undefined}
+            dimColor={i + offset !== index}
+          >
             {i + offset === index ? "❯ " : "  "}
             {option.label}
           </Text>

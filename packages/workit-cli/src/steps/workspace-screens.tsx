@@ -1,5 +1,5 @@
+import { inkColor, StableTextInput } from "./ink-style";
 import { Box, Text } from "ink";
-import { TextInput } from "@inkjs/ui";
 import type { JSX } from "react";
 import { matchWorkspace } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import { workspaceEditorValue } from "../logic";
@@ -69,9 +69,15 @@ export function WorkspacesScreen({ draft, dispatch }: ScreenProps): JSX.Element 
           if (value.startsWith("edit:"))
             dispatch({ type: "workspaceEdit", index: Number(value.slice(5)) });
           else if (value.startsWith("remove:"))
-            dispatch({ type: "workspaceRemove", index: Number(value.slice(7)) });
+            dispatch({
+              type: "workspaceRemove",
+              index: Number(value.slice(7)),
+            });
           else if (value.startsWith("advanced:"))
-            dispatch({ type: "workspaceAdvancedOpen", index: Number(value.slice(9)) });
+            dispatch({
+              type: "workspaceAdvancedOpen",
+              index: Number(value.slice(9)),
+            });
           else if (value === "global-commit") dispatch({ type: "globalCommitOpen" });
           else if (value === "add") dispatch({ type: "workspaceAdd" });
           else if (value === "current") dispatch({ type: "workspaceAddCurrent", path: base });
@@ -92,13 +98,15 @@ export function WorkspaceNameScreen({ draft, dispatch }: ScreenProps): JSX.Eleme
           ? "New workspace name:"
           : `Edit workspace name (${draft.values.workspaces[draft.workspaceIndex]?.name ?? ""}):`}
       </Text>
-      <TextInput
+      <StableTextInput
         placeholder={SCREEN_PLACEHOLDERS.workspaceName}
         defaultValue={draft.workspaceDraft?.name ?? ""}
         onChange={(value) => dispatch({ type: "workspaceDraftName", value })}
         onSubmit={() => dispatch({ type: "next" })}
       />
-      {draft.errors.workspaceName && <Text color="red">{draft.errors.workspaceName}</Text>}
+      {draft.errors.workspaceName && (
+        <Text color={inkColor("fail")}>{draft.errors.workspaceName}</Text>
+      )}
       <Text dimColor>Enter to continue · Esc Back</Text>
     </Box>
   );
@@ -110,7 +118,7 @@ export function WorkspaceGlobScreen({ draft, dispatch }: ScreenProps): JSX.Eleme
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 5 — Workspaces · Pattern</Text>
       <Text dimColor>Workspace pattern (glob, e.g. /work/**):</Text>
-      <TextInput
+      <StableTextInput
         placeholder={SCREEN_PLACEHOLDERS.workspaceGlob}
         defaultValue={glob}
         onChange={(value) => dispatch({ type: "workspaceDraftGlob", value })}
@@ -122,14 +130,16 @@ export function WorkspaceGlobScreen({ draft, dispatch }: ScreenProps): JSX.Eleme
           {workspacePreviewTargets(resolveBasePath(draft.values)).map((target) => {
             const matches = matchWorkspace(glob, target);
             return (
-              <Text key={target} color={matches ? "green" : "red"}>
+              <Text key={target} color={inkColor(matches ? "ok" : "fail")}>
                 {matches ? "✓ matches" : "✗ no match"} {target}
               </Text>
             );
           })}
         </Box>
       )}
-      {draft.errors.workspaceGlob && <Text color="red">{draft.errors.workspaceGlob}</Text>}
+      {draft.errors.workspaceGlob && (
+        <Text color={inkColor("fail")}>{draft.errors.workspaceGlob}</Text>
+      )}
       <Text dimColor>Enter to continue · Esc Back</Text>
     </Box>
   );
@@ -190,7 +200,7 @@ export function WorkspaceAdvancedValueScreen({ draft, dispatch }: ScreenProps): 
           onSelect={(value) => field && dispatch({ type: "workspaceAdvancedSet", field, value })}
         />
       ) : (
-        <TextInput
+        <StableTextInput
           defaultValue={current}
           onSubmit={(value) => field && dispatch({ type: "workspaceAdvancedSet", field, value })}
         />
@@ -238,7 +248,7 @@ export function GlobalCommitPatternScreen({ draft, dispatch }: ScreenProps): JSX
     <Box flexDirection="column" gap={1}>
       <Text bold>Advanced global commit policy · Custom pattern</Text>
       <Text dimColor>Regular expression matched against the commit subject line.</Text>
-      <TextInput
+      <StableTextInput
         defaultValue={draft.values.commitPolicy.pattern ?? ""}
         onChange={(value) => dispatch({ type: "globalCommitPattern", value })}
         onSubmit={() => dispatch({ type: "globalCommitPatternDone" })}

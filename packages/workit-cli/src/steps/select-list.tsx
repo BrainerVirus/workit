@@ -1,3 +1,4 @@
+import { inkColor } from "./ink-style";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useRef, useState, type JSX } from "react";
 
@@ -52,7 +53,11 @@ export function SelectList<T extends string>({
   return (
     <Box flexDirection="column" gap={0}>
       {options.map((option, i) => (
-        <Text key={option.value} color={i === index ? "cyan" : "dim"}>
+        <Text
+          key={option.value}
+          color={i === index ? inkColor("accent") : undefined}
+          dimColor={i !== index}
+        >
           {i === index ? "❯ " : "  "}
           {option.label}
         </Text>

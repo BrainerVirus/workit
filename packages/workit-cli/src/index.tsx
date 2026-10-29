@@ -23,6 +23,7 @@ import { applyWizardBranchPolicy } from "./logic";
 import { logger } from "./diagnostics";
 import { createProgress, type Progress } from "./progress";
 import { createStyle, type Style } from "./style";
+import { dropSignalListenersAddedSince, snapshotSignalListeners } from "./steps/ink-signals";
 
 // The interactive wizards (`workit init`, `workit uninstall`). This is the
 // only module that loads ink/react; the router (main.ts) imports it lazily
@@ -105,6 +106,7 @@ export async function runInit() {
   // CA-02: open on a clean screen so the npx banner never shares a frame with
   // the wizard.
   process.stdout.write("\x1b[2J\x1b[H");
+  const signals = snapshotSignalListeners();
   const instance = render(
     <Wizard
       // Live auto-detect: installed hosts preselect, registered ones are
@@ -132,6 +134,7 @@ export async function runInit() {
     // onExit-driven teardown and also tears down when waitUntilExit rejects
     // (tree crash), restoring the terminal in real usage too.
     instance.unmount();
+    dropSignalListenersAddedSince(signals);
   }
   // CA-02: wipe the wizard's final frame before any post-exit output
   // (apply summary, blocked paths, cancel message) so summary lines never
@@ -265,6 +268,7 @@ export async function runUninstall() {
   }
   const outcomes: UninstallOutcome[] = [];
   let done: () => void = () => {};
+  const signals = snapshotSignalListeners();
   const instance = render(
     <UninstallWizard
       onExit={(outcome) => {
@@ -283,6 +287,7 @@ export async function runUninstall() {
     // Same lifecycle guarantee as runInit: never leave a live Ink instance
     // mounted on this stdout, even if waitUntilExit rejects.
     instance.unmount();
+    dropSignalListenersAddedSince(signals);
   }
   const outcome = outcomes[0];
   if (!outcome || !outcome.confirmed || !outcome.plan) {

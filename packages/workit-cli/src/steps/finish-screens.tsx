@@ -1,5 +1,6 @@
+import { inkColor, StableTextInput } from "./ink-style";
 import { Box, Text } from "ink";
-import { ConfirmInput, TextInput } from "@inkjs/ui";
+import { ConfirmInput } from "@inkjs/ui";
 import { useCallback, useEffect, useState, type JSX } from "react";
 import { mergePreset, readConfig } from "@brainervirus/workit-core/src/core/config.ts";
 import {
@@ -88,20 +89,22 @@ export function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Elemen
       {policy ? (
         <Box flexDirection="column" gap={0}>
           <Text>
-            Detected preset: <Text color="green">{policy.preset}</Text>
+            Detected preset: <Text color={inkColor("ok")}>{policy.preset}</Text>
           </Text>
           <Text>
-            Develop branch: <Text color="green">{policy.developBranch ?? "—"}</Text>
+            Develop branch: <Text color={inkColor("ok")}>{policy.developBranch ?? "—"}</Text>
           </Text>
           <Text>
-            Integration: <Text color="green">{policy.integration}</Text>
+            Integration: <Text color={inkColor("ok")}>{policy.integration}</Text>
           </Text>
           <Text>
             Prefixes:{" "}
-            <Text color="green">{Object.values(policy.prefixes ?? {}).join(", ") || "—"}</Text>
+            <Text color={inkColor("ok")}>
+              {Object.values(policy.prefixes ?? {}).join(", ") || "—"}
+            </Text>
           </Text>
           <Text>
-            Protected: <Text color="green">{policy.protected?.join(", ") || "—"}</Text>
+            Protected: <Text color={inkColor("ok")}>{policy.protected?.join(", ") || "—"}</Text>
           </Text>
         </Box>
       ) : (
@@ -183,8 +186,12 @@ export function BasePathScreen({ draft, dispatch }: ScreenProps): JSX.Element {
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 5 — Workspace root</Text>
       <Text dimColor>Absolute path where your projects live (e.g. /work):</Text>
-      <TextInput defaultValue={draft.values.basePath} onChange={onChange} onSubmit={onSubmit} />
-      {draft.errors.basePath && <Text color="red">{draft.errors.basePath}</Text>}
+      <StableTextInput
+        defaultValue={draft.values.basePath}
+        onChange={onChange}
+        onSubmit={onSubmit}
+      />
+      {draft.errors.basePath && <Text color={inkColor("fail")}>{draft.errors.basePath}</Text>}
       <Text dimColor>Enter to continue · Esc Back</Text>
     </Box>
   );
@@ -195,7 +202,7 @@ export function BranchPolicyDevelopScreen({ draft, dispatch }: ScreenProps): JSX
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 5 — Branch policy · Develop branch</Text>
       <Text dimColor>Integration/develop branch name (leave empty to unset):</Text>
-      <TextInput
+      <StableTextInput
         placeholder={SCREEN_PLACEHOLDERS.branchPolicyDevelop}
         defaultValue={
           draft.values.branchPolicy?.developBranch ??
@@ -223,7 +230,7 @@ export function ProjectScreen({ draft, dispatch }: ScreenProps): JSX.Element {
     return (
       <Box flexDirection="column" gap={1}>
         <Text bold>Step 6 — Project setup</Text>
-        <Text color="yellow">Skipped: {target.refused}</Text>
+        <Text color={inkColor("warn")}>Skipped: {target.refused}</Text>
         <ConfirmInput
           defaultChoice="confirm"
           submitOnEnter={false}
@@ -273,7 +280,9 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   // blocks Apply: no confirm control is mounted until it is fixed.
   // CA-07: the preview's hygiene target is the same displayed base path
   // runInit will pass to Apply.
-  const preview = buildSetupPreview(draft.values, { cwd: resolveBasePath(draft.values) });
+  const preview = buildSetupPreview(draft.values, {
+    cwd: resolveBasePath(draft.values),
+  });
   const policyPreview = (() => {
     try {
       const current = readConfig();
@@ -311,42 +320,44 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   const canApply = preview.ok && policyPreview.error === null;
   return (
     <Box flexDirection="column" gap={1}>
-      <Text bold color="cyan">
+      <Text bold color={inkColor("accent")}>
         Review
       </Text>
       <Text>
-        Platforms: <Text color="green">{draft.values.platforms.join(", ") || "—"}</Text>
+        Platforms: <Text color={inkColor("ok")}>{draft.values.platforms.join(", ") || "—"}</Text>
       </Text>
       <Text>
-        Locale: <Text color="green">{draft.values.locale}</Text>
+        Locale: <Text color={inkColor("ok")}>{draft.values.locale}</Text>
       </Text>
       <Text>
-        Branch policy: <Text color="green">{policy.preset}</Text> — allowed:{" "}
+        Branch policy: <Text color={inkColor("ok")}>{policy.preset}</Text> — allowed:{" "}
         {policy.allowed.join(", ")} · protected: {policy.protected.join(", ")}
       </Text>
       {policyPreview.error === null ? (
         <Box flexDirection="column" gap={0}>
           <Text>
-            Sample checkout: <Text color="green">{resolveBasePath(draft.values)}</Text>
+            Sample checkout: <Text color={inkColor("ok")}>{resolveBasePath(draft.values)}</Text>
             {policyPreview.workspace
               ? ` · workspace ${policyPreview.workspace}`
               : " · no matching workspace"}
           </Text>
           <Text>
-            Effective branch policy: <Text color="green">{policyPreview.branchPreset}</Text> ·
-            target {policyPreview.target} · source {policyPreview.branchSource}
+            Effective branch policy:{" "}
+            <Text color={inkColor("ok")}>{policyPreview.branchPreset}</Text> · target{" "}
+            {policyPreview.target} · source {policyPreview.branchSource}
           </Text>
           <Text>
-            Effective commit policy: <Text color="green">{policyPreview.commitPreset}</Text> ·
-            source {policyPreview.commitSource}
+            Effective commit policy:{" "}
+            <Text color={inkColor("ok")}>{policyPreview.commitPreset}</Text> · source{" "}
+            {policyPreview.commitSource}
           </Text>
         </Box>
       ) : (
-        <Text color="red">Policy preview failed: {policyPreview.error}</Text>
+        <Text color={inkColor("fail")}>Policy preview failed: {policyPreview.error}</Text>
       )}
       <Text>
         YouTrack base URL:{" "}
-        <Text color="green">
+        <Text color={inkColor("ok")}>
           {draft.values.issueTracker === "youtrack"
             ? draft.values.baseUrl.trim()
               ? draft.values.baseUrl
@@ -355,21 +366,21 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
         </Text>
       </Text>
       <Text>
-        VCS provider: <Text color="green">{draft.values.vcsProvider}</Text>
+        VCS provider: <Text color={inkColor("ok")}>{draft.values.vcsProvider}</Text>
       </Text>
       <Text>
         Project hygiene:{" "}
         {preview.projectRefused ? (
-          <Text color="yellow">skipped — {preview.projectRefused}</Text>
+          <Text color={inkColor("warn")}>skipped — {preview.projectRefused}</Text>
         ) : (
-          <Text color="green">{draft.values.applyProject ? "yes" : "no"}</Text>
+          <Text color={inkColor("ok")}>{draft.values.applyProject ? "yes" : "no"}</Text>
         )}
       </Text>
       {preview.overrides.length > 0 && (
         <Box flexDirection="column" gap={0}>
           <Text bold>Environment overrides (not applied by the wizard):</Text>
           {preview.overrides.map((o) => (
-            <Text key={o.envKey} color="yellow">
+            <Text key={o.envKey} color={inkColor("warn")}>
               {o.envKey} → {o.affects}: {o.value}
             </Text>
           ))}
@@ -382,18 +393,18 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
             <Text key={row.key}>{row.text}</Text>
           ))}
           {preview.preserved.map((p) => (
-            <Text key={p} color="green">
+            <Text key={p} color={inkColor("ok")}>
               preserve {p} (existing token)
             </Text>
           ))}
         </Box>
       ) : (
         <Box flexDirection="column" gap={0}>
-          <Text bold color="red">
+          <Text bold color={inkColor("fail")}>
             Apply blocked — malformed configuration:
           </Text>
           {preview.blocked.map((b) => (
-            <Text key={b} color="red">
+            <Text key={b} color={inkColor("fail")}>
               {b}
             </Text>
           ))}

@@ -1,5 +1,5 @@
+import { inkColor, StableTextInput } from "./ink-style";
 import { Box, Text } from "ink";
-import { TextInput } from "@inkjs/ui";
 import { useState, type Dispatch, type JSX } from "react";
 import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
@@ -110,7 +110,7 @@ export function WorkspaceCollectionEditor({
 }): JSX.Element {
   const [view, setView] = useState<View>({ mode: "main" });
   const workspace = draft.workspaceDraft;
-  if (!workspace) return <Text color="red">Workspace draft is unavailable.</Text>;
+  if (!workspace) return <Text color={inkColor("fail")}>Workspace draft is unavailable.</Text>;
   switch (view.mode) {
     case "main":
       return <MainMenu workspace={workspace} dispatch={dispatch} setView={setView} />;
@@ -262,7 +262,7 @@ function NameInput({
     <Box flexDirection="column" gap={1}>
       <Text bold>{collection.createTitle}</Text>
       <Text dimColor>{collection.nameLabel}</Text>
-      <TextInput
+      <StableTextInput
         onSubmit={(value) => {
           const next = value.trim();
           if (!next) setError(collection.emptyError);
@@ -270,7 +270,7 @@ function NameInput({
           else onCreate(next);
         }}
       />
-      {error && <Text color="red">{error}</Text>}
+      {error && <Text color={inkColor("fail")}>{error}</Text>}
       <Text dimColor>Enter to create · Esc Back</Text>
     </Box>
   );
@@ -336,7 +336,7 @@ function EntryFieldValue({
       {choices ? (
         <SelectList options={choices} value={current ?? choices[0].value} onSelect={onSave} />
       ) : (
-        <TextInput defaultValue={current ?? ""} onSubmit={onSave} />
+        <StableTextInput defaultValue={current ?? ""} onSubmit={onSave} />
       )}
       <Text dimColor>{collection.valueFooter}</Text>
     </Box>
