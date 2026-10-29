@@ -7,8 +7,8 @@ import { OPENCODE_PACKAGE, type CommandResult, type UpgradeDeps } from "./shared
 
 type AsyncRun = (command: string, args: string[]) => Promise<CommandResult>;
 
-export const PLUGIN_API = ["api", "plugin.list"];
-export const OPENCODE_READY_TIMEOUT_MS = 20_000;
+const PLUGIN_API = ["api", "plugin.list"];
+const OPENCODE_READY_TIMEOUT_MS = 20_000;
 const READY_INTERVAL_MS = 500;
 export const OPENCODE_NOT_READY = `OpenCode did not finish loading its plugins (opencode api plugin.list never listed ${OPENCODE_PACKAGE})`;
 
@@ -32,7 +32,7 @@ const isWorkitTarget = (target: unknown): boolean =>
  * (`{location, data:[{id, source:{type,target,version,outdated}, state:{status}}]}`),
  * or null when the output is not that shape (the api operation is unavailable).
  */
-export const parsePluginApi = (result: CommandResult): OpencodePlugin | null => {
+const parsePluginApi = (result: CommandResult): OpencodePlugin | null => {
   if (result.status !== 0) return null;
   let parsed: unknown;
   try {
@@ -55,7 +55,7 @@ export const parsePluginApi = (result: CommandResult): OpencodePlugin | null => 
 };
 
 /** The Workit row of `opencode plugin list` (`ID  VERSION  SOURCE`), for an OpenCode without the api. */
-export const parsePluginList = (result: CommandResult): OpencodePlugin => {
+const parsePluginList = (result: CommandResult): OpencodePlugin => {
   if (result.status === 0)
     for (const line of result.stdout.split(/\r?\n/)) {
       const fields = line.trim().split(/\s+/);

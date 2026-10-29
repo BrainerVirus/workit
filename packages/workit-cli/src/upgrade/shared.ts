@@ -45,7 +45,7 @@ export const stderrTail = (text: string | undefined, lines = 5): string =>
     .join(" | ");
 
 /** The first `Error: …` line a command printed (stdout or stderr), so a reason never reads as bare stack frames. */
-export const errorLine = (result: CommandResult): string | undefined =>
+const errorLine = (result: CommandResult): string | undefined =>
   `${result.stdout}\n${result.stderr ?? ""}`
     .split(/\r?\n/)
     .map((line) => line.trim())

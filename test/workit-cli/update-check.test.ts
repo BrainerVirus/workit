@@ -361,6 +361,124 @@ test("given --check, then it prints installed vs latest and the apply command, c
   expect(out).not.toContain("Everything is current.");
 });
 
+/** OpenCode registered with Workit, whose service reports the plugin through `opencode api plugin.list`. */
+const opencodeService =
+  (plugin: { version: string; outdated?: boolean }, versions: Record<string, string>) =>
+  (command: string, args: string[]): { status: number; stdout: string } => {
+    if (command === "opencode" && args.join(" ") === "api plugin.list")
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          location: { directory: "/home/user" },
+          data: [
+            { id: "builtin-auth", source: { type: "builtin" }, state: { status: "active" } },
+            {
+              id: "workit",
+              source: {
+                type: "package",
+                target: "@brainervirus/workit-opencode",
+                version: plugin.version,
+                ...(plugin.outdated ? { outdated: true } : {}),
+              },
+              state: { status: "active" },
+            },
+          ],
+        }),
+      };
+    return registry(versions)(command, args);
+  };
+
+const registerOpencode = (home: string) => {
+  mkdirSync(path.join(home, ".config/opencode"), { recursive: true });
+  writeFileSync(
+    path.join(home, ".config/opencode/opencode.json"),
+    JSON.stringify({ plugin: ["@brainervirus/workit-opencode"] }),
+  );
+};
+
+test("given --check with OpenCode, then the installed version and the outdated flag come from opencode api plugin.list", async () => {
+  const t = setup(undefined, { locale: "en", updates: "prompt" });
+  registerOpencode(t.home);
+  let out = "";
+  const deps = {
+    home: t.home,
+    env: t.env,
+    run: opencodeService(
+      { version: "8.44.0", outdated: true },
+      { "@brainervirus/workit-cli": pkg.version, "@brainervirus/workit-opencode": "8.44.1" },
+    ),
+    out: { write: (text: string) => void (out += text) },
+  };
+  expect(await runUpgradeCommand(["--check"], deps)).toBe(0);
+  expect(out).toMatch(/ opencode +8\.44\.0 -> 8\.44\.1 +update available\n/);
+  expect(out).not.toContain("installed version unknown");
+  // Same version on the registry, but OpenCode says the plugin is outdated.
+  out = "";
+  expect(
+    await runUpgradeCommand(["--check", "--json"], {
+      ...deps,
+      run: opencodeService(
+        { version: "8.44.0", outdated: true },
+        { "@brainervirus/workit-cli": pkg.version, "@brainervirus/workit-opencode": "8.44.0" },
+      ),
+    }),
+  ).toBe(0);
+  expect(JSON.parse(out).components).toContainEqual({
+    component: "opencode",
+    package: "@brainervirus/workit-opencode",
+    installed: "8.44.0",
+    latest: "8.44.0",
+    status: "update",
+  });
+});
+
+test("given --check where every probe takes 1 s, then the probes run at once behind one Checking spinner", async () => {
+  const t = setup(undefined, { locale: "en", updates: "prompt" });
+  registerOpencode(t.home);
+  const run = opencodeService(
+    { version: "8.44.1" },
+    {
+      "@brainervirus/workit-cli": pkg.version,
+      "@brainervirus/workit-opencode": "8.44.1",
+      "@brainervirus/workit-cursor": "8.44.1",
+      "@brainervirus/workit-codex": "8.44.1",
+      "@brainervirus/workit-pi": "8.44.1",
+      "@brainervirus/workit-claude-code": "8.44.1",
+    },
+  );
+  let probes = 0;
+  const labels: string[] = [];
+  let out = "";
+  const began = Date.now();
+  expect(
+    await runUpgradeCommand(["--check"], {
+      home: t.home,
+      env: t.env,
+      run,
+      runAsync: async (command, args) => {
+        probes++;
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        return run(command, args);
+      },
+      progress: {
+        mode: "plain",
+        start: () => ({ label: () => {}, end: () => {} }),
+        run: (label, fn) => {
+          labels.push(label);
+          return fn();
+        },
+        runSync: (_label, fn) => fn(),
+      },
+      out: { write: (text: string) => void (out += text) },
+    }),
+  ).toBe(0);
+  // Sequential, these probes would take one second each.
+  expect(probes).toBeGreaterThanOrEqual(5);
+  expect(Date.now() - began).toBeLessThan(3_000);
+  expect(labels).toEqual(["Checking 6 hosts"]);
+  expect(out).toMatch(/ opencode +8\.44\.1 -> 8\.44\.1 +current\n/);
+});
+
 test("given --set-updates, then config.json keeps its other keys; a bad mode is a usage error", async () => {
   const t = setup(undefined, { locale: "es-CL", custom: { keep: true } });
   let out = "";
