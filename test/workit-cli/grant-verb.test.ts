@@ -542,8 +542,9 @@ test("grant show warns when this checkout's origin is a stricter workspace's rem
   spawnSync("git", ["init", "-q"], { cwd: repo });
   spawnSync("git", ["remote", "add", "origin", "git@github.com:acme/strict.git"], { cwd: repo });
   const none = (await run(["show"], headless, {}, false)).text();
+  expect(none).not.toContain("warning:");
   expect(none).toContain(
-    "warning: workspace w claims no remotes, so a folder outside it whose origin is git@github.com:acme/strict.git keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set w remotes=git@github.com:acme/strict.git",
+    "note: workspace w claims no remotes, so a folder outside it whose origin is git@github.com:acme/strict.git keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set w remotes=git@github.com:acme/strict.git",
   );
   writeFileSync(
     file(),
@@ -569,6 +570,7 @@ test("grant show warns when this checkout's origin is a stricter workspace's rem
   const shown = await run(["show"], headless);
   expect(shown.json().data.grants.push).toBe(false);
   expect(shown.json().data.note).toContain("capped at workspace strict");
+  expect(shown.json().data.remoteNotes).toBeUndefined();
   expect(shown.json().data.remoteWarnings).toEqual([
     "remote origin git@github.com:acme/strict.git is claimed by workspace strict (https://github.com/acme/strict): grants here never exceed strict's",
   ]);

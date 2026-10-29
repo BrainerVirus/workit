@@ -512,33 +512,39 @@ export function remoteClaims(
 
 /**
  * What `grant show` and doctor warn about remotes (#549): a remote of this
- * checkout another workspace claims (grants here are capped at it), and a
- * workspace that claims no remotes (a checkout elsewhere whose origin is its
- * remote keeps that folder's grants), with the command that sets them.
+ * checkout another workspace claims (a warning: grants here are capped at
+ * it), and a workspace that claims no remotes (a note, since every entry
+ * starts without: a checkout elsewhere whose origin is its remote keeps that
+ * folder's grants), with the command that sets them.
  */
-export function remoteWarnings(cwd: string, dir: string = grantsDir()): string[] {
+export function remoteFindings(
+  cwd: string,
+  dir: string = grantsDir(),
+): { warnings: string[]; notes: string[] } {
   let own: WorkspaceConfig | null = null;
   try {
     own = resolveWorkspaceFrom(cwd, dir);
   } catch {
-    return [];
+    return { warnings: [], notes: [] };
   }
   const claims = remoteClaims(cwd, dir);
-  if (claims instanceof Error) return [`${claims.message}: grants here are capped at nothing`];
-  const out = claims
+  if (claims instanceof Error)
+    return { warnings: [`${claims.message}: grants here are capped at nothing`], notes: [] };
+  const warnings = claims
     .filter((claim) => claim.workspace !== own?.name)
     .map(
       (claim) =>
         `remote ${claim.remote} ${claim.url} is claimed by workspace ${claim.workspace} (${claim.pattern}): grants here never exceed ${claim.workspace}'s`,
     );
+  const notes: string[] = [];
   if (own && !own.remotes?.length) {
     const remotes = checkoutRemotes(cwd);
     const origin = remotes instanceof Error ? undefined : remotes.find((r) => r.name === "origin");
-    out.push(
+    notes.push(
       `workspace ${own.name} claims no remotes, so a folder outside it whose origin is ${origin ? origin.url : "one of its remotes"} keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set ${own.name} remotes=${origin ? origin.url : "<url>"}`,
     );
   }
-  return out;
+  return { warnings, notes };
 }
 
 const accountOf = (entry: unknown): unknown =>

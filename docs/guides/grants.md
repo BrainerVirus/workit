@@ -89,8 +89,8 @@ folder's `origin` as the default, and `workit workspace rm` of an entry with
 
 `workit grant show` and `workit doctor` (`grant_remotes`) warn when this
 checkout's remote is claimed by another workspace (its grants are capped
-there) and when its workspace claims no remotes, with the command to set
-them.
+there). When its workspace claims no remotes, they print a note (doctor:
+`info`) with the command to set them.
 
 ## Releasing
 

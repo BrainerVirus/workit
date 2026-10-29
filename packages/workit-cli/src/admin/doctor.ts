@@ -26,7 +26,7 @@ import path from "node:path";
 import {
   configuredGrants,
   entryMismatch,
-  remoteWarnings,
+  remoteFindings,
 } from "@brainervirus/workit-core/src/autonomy";
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import { inspectMetadataLock } from "@brainervirus/workit-core/src/core/store-lock";
@@ -2906,19 +2906,19 @@ const checkGrantEndpoint = (res: Resolved): DoctorCheck => {
 // remote too (#549). Warn when this checkout's remote is another workspace's,
 // or when its workspace claims none.
 const checkGrantRemotes = (res: Resolved): DoctorCheck => {
-  const warnings = remoteWarnings(res.cwd, res.configDir);
-  if (warnings.length === 0)
+  const { warnings, notes } = remoteFindings(res.cwd, res.configDir);
+  if (warnings.length === 0 && notes.length === 0)
     return { id: "grant_remotes", status: "pass", detail: "remote URLs and workspaces agree" };
+  // A stricter workspace's remote here is the risk (warn); a workspace with no
+  // remotes is every entry's starting point, so it informs only.
+  const lines = [...warnings, ...notes];
   const command = /workit workspace set \S+ remotes=\S+/u;
+  const fix = lines.map((line) => command.exec(line)?.[0]).find(Boolean);
   return {
     id: "grant_remotes",
-    status: "warn",
-    detail: warnings.map((line) => line.replace(/; to claim it.*$/u, "")).join("; "),
-    ...(warnings.some((line) => command.test(line))
-      ? {
-          fix: `in your own terminal: ${warnings.map((line) => command.exec(line)?.[0]).find(Boolean)}`,
-        }
-      : {}),
+    status: warnings.length ? "warn" : "info",
+    detail: lines.map((line) => line.replace(/; to claim it.*$/u, "")).join("; "),
+    ...(fix ? { fix: `in your own terminal: ${fix}` } : {}),
   };
 };
 
