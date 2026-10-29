@@ -322,6 +322,7 @@ Global flags:
 | `workit setup [--hosts=…] [--dry-run \| --yes]` | Write Workit's host permission block after showing the diff |
 | `workit doctor [--json] [--fix] [--fix-lock]` | Offline installation health; repair what it can; clear a stale store lock |
 | `workit upgrade [--preview \| --yes] [--hosts=…] [--cli]` | Upgrade the CLI and every host after one confirmation, then verify with doctor |
+| `workit upgrade --check` / `--set-updates=prompt\|auto\|off` | Compare installed and latest versions; choose how a launch handles a new release |
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
 | `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs |
 | `workit uninstall` | Pick hosts and remove their registrations (keeps `~/.config/workit`) |
@@ -353,6 +354,16 @@ runtimes. `workit upgrade` shows a per-host plan, asks once (`--yes` skips the
 question, `--preview` changes nothing), applies with a backup, and ends with a
 per-host table and doctor's verdict. Running hosts, the Codex daemon, backups
 and `--hosts`: [setup and upgrades](docs/guides/configuration.md#setup-and-upgrades).
+
+Workit also checks for a new release when you start any `workit` command in
+your own terminal (never in CI, a pipe, `--json` or an agent host). It asks
+`[u]pgrade now / [s]kip for now / [n]ever for this version`; upgrading always
+updates the CLI and every host plugin together, then reruns your command. Set
+`updates` to `auto` to upgrade without asking or `off` to never check, with
+`workit upgrade --set-updates=<mode>`; `workit upgrade --check` shows installed
+vs latest and changes nothing. The check reads a 24 h cache refreshed in the
+background, so no command waits on the network:
+[update check on launch](docs/guides/configuration.md#update-check-on-launch).
 
 | From | Key breaks |
 | --- | --- |

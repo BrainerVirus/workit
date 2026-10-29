@@ -24,7 +24,7 @@ export const UPDATE_TTL_MS = 24 * 60 * 60 * 1000;
 /** Set on the re-executed command and on the refresh child: neither checks again. */
 const QUIET_ENV = "WORKIT_UPDATE_CHECK";
 /** Marks the detached child that refreshes the cache (main.ts runs only that). */
-export const REFRESH_ENV = "WORKIT_UPDATE_REFRESH";
+const REFRESH_ENV = "WORKIT_UPDATE_REFRESH";
 
 export type UpdateCache = {
   /** When the registry was last asked (a failed lookup counts: offline stays quiet). */
@@ -102,12 +102,7 @@ export const writeUpdatesMode = (env: NodeJS.ProcessEnv, mode: UpdatesMode): str
  * terminal has none of them; the config-location variables a person may
  * export in a shell profile (CODEX_HOME, PI_CODING_AGENT_DIR) do not count.
  */
-const AGENT_VARIABLES = new Set([
-  "CLAUDECODE",
-  "CLAUDE_CODE_ENTRYPOINT",
-  "WORKIT_HOOK",
-  "WORKIT_MCP",
-]);
+const AGENT_VARIABLES = new Set(["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"]);
 const AGENT_PREFIXES = ["CODEX_", "OPENCODE", "CURSOR_", "PI_"];
 const PROFILE_VARIABLES = new Set(["CODEX_HOME", "PI_CODING_AGENT_DIR"]);
 

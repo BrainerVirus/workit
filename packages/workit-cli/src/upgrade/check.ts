@@ -77,9 +77,14 @@ export function runUpdateCheck(json: boolean, deps: UpgradeDeps): number {
   ];
   const failed: HostOutcome[] = [];
   const installed = sources(paths, run, HOSTS, failed);
+  const unreadableBy = new Map(failed.map((entry) => [entry.host, entry]));
+  const versionBy = new Map<string, string | undefined>();
+  for (const source of installed)
+    if (!versionBy.has(source.host) || source.installedVersion)
+      versionBy.set(source.host, versionBy.get(source.host) ?? source.installedVersion);
   for (const host of HOSTS) {
     const name = `@brainervirus/workit-${host}`;
-    const unreadable = failed.find((entry) => entry.host === host);
+    const unreadable = unreadableBy.get(host);
     if (unreadable) {
       components.push({
         component: host,
@@ -91,9 +96,8 @@ export function runUpdateCheck(json: boolean, deps: UpgradeDeps): number {
       });
       continue;
     }
-    const found = installed.filter((source) => source.host === host);
-    if (found.length === 0) continue;
-    const version = found.find((source) => source.installedVersion)?.installedVersion;
+    if (!versionBy.has(host)) continue;
+    const version = versionBy.get(host);
     const newest = latest(name);
     components.push({
       component: host,

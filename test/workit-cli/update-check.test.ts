@@ -109,7 +109,12 @@ test("given a non-interactive launch, then nothing is asked, upgraded, refreshed
     ["OpenCode", {}, {}, { OPENCODE_SESSION_ID: "s" }],
     ["Cursor", {}, {}, { CURSOR_AGENT: "1" }],
     ["Pi", {}, {}, { PI_SESSION_ID: "p" }],
-    ["hook process", {}, {}, { WORKIT_HOOK: "1" }],
+    [
+      "hook or MCP process (no terminal)",
+      { stdin: { isTTY: false }, stderr: { isTTY: false } },
+      {},
+      {},
+    ],
     ["re-executed command", {}, {}, { WORKIT_UPDATE_CHECK: "0" }],
     ["workit upgrade itself", {}, { command: "upgrade", argv: ["upgrade"] }, {}],
     ["workit --version", {}, { command: "--version", argv: ["--version"] }, {}],
@@ -267,15 +272,26 @@ const registry =
 test("given --check, then it prints installed vs latest and the apply command, changes nothing, exits 0", async () => {
   const t = setup(undefined, { locale: "en", updates: "auto" });
   const config = readFileSync(path.join(t.home, ".config/workit/config.json"), "utf8");
+  // One installed host (Cursor's plugin files), already at its latest version.
+  const cursorRoot = path.join(t.home, ".cursor/plugins/local/workit");
+  mkdirSync(cursorRoot, { recursive: true });
+  writeFileSync(
+    path.join(cursorRoot, "package.json"),
+    JSON.stringify({ name: "@brainervirus/workit-cursor", version: "98.0.0" }),
+  );
   let out = "";
   const deps = {
     home: t.home,
     env: t.env,
-    run: registry({ "@brainervirus/workit-cli": "99.0.0" }),
+    run: registry({
+      "@brainervirus/workit-cli": "99.0.0",
+      "@brainervirus/workit-cursor": "98.0.0",
+    }),
     out: { write: (text: string) => void (out += text) },
   };
   expect(await runUpgradeCommand(["--check"], deps)).toBe(0);
-  expect(out).toContain(`cli  ${pkg.version} -> 99.0.0  update available`);
+  expect(out).toContain(`  cli     ${pkg.version} -> 99.0.0  update available\n`);
+  expect(out).toContain("  cursor  98.0.0 -> 98.0.0  current\n");
   expect(out).toContain("updates: auto");
   expect(out).toContain("Apply with: workit upgrade --yes");
   expect(out).toContain("nothing changed");
@@ -294,6 +310,13 @@ test("given --check, then it prints installed vs latest and the apply command, c
         installed: pkg.version,
         latest: "99.0.0",
         status: "update",
+      },
+      {
+        component: "cursor",
+        package: "@brainervirus/workit-cursor",
+        installed: "98.0.0",
+        latest: "98.0.0",
+        status: "current",
       },
     ],
     apply: "workit upgrade --yes",
