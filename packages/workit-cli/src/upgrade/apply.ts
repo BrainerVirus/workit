@@ -9,6 +9,7 @@ import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import { createProgress, type StepStatus } from "../progress";
 import { classifyProcess, describe, listProcesses } from "./processes";
+import { OPENCODE_NOT_READY, readOpencodePlugin, waitForOpencodePlugin } from "./opencode";
 import {
   CLI_FIX,
   CODEX_MARKETPLACE,
@@ -60,30 +61,13 @@ export type UpgradeResult = {
   hosts: HostOutcome[];
 };
 
-/** The installed Workit OpenCode plugin version from `opencode plugin list`, if it prints one. */
-const opencodeVersion = async (
-  run: ReturnType<typeof asyncRunner>,
-): Promise<string | undefined> => {
-  const listing = await run("opencode", ["plugin", "list"]);
-  if (listing.status !== 0) return undefined;
-  // Table: `ID  VERSION  SOURCE`; the row whose last field is the Workit package.
-  for (const line of listing.stdout.split(/\r?\n/)) {
-    const fields = line.trim().split(/\s+/);
-    if (fields.length < 3) continue;
-    const source = fields[fields.length - 1].replace(/^file:\/\//, "");
-    const version = fields[fields.length - 2];
-    if (
-      /^(?:npm:)?@brainervirus\/workit-opencode(?:@[^/\s]+)?$/.test(source) &&
-      /^\d+\.\d+\.\d+$/.test(version)
-    )
-      return version;
-  }
-  return undefined;
-};
+/** The installed Workit OpenCode plugin version, as OpenCode itself reports it. */
+const opencodeVersion = async (run: ReturnType<typeof asyncRunner>): Promise<string | undefined> =>
+  (await readOpencodePlugin(run)).version;
 
 /**
  * OpenCode's row from the plugin version before the update, after it, and the
- * published target. `opencode plugin list` can report the old version for a
+ * published target. OpenCode can report the old version for a
  * moment after the update rewrote the cache, so a reading below the target is
  * taken once more. Only a version that already equaled the target before the
  * update is "already current"; a version below the target is never current.
@@ -126,6 +110,7 @@ const applyEntry = async (
     runAsync: ReturnType<typeof asyncRunner>;
     paths: ReturnType<typeof upgradePaths>;
     configDir: string;
+    opencodeReady?: UpgradeDeps["opencodeReady"];
   },
 ): Promise<HostOutcome> => {
   const { runAsync, paths, configDir } = context;
@@ -215,7 +200,14 @@ const applyEntry = async (
         : `${entry.installedVersion ?? "?"} -> ${entry.latest}`,
     };
   }
-  const before = entry.host === "opencode" ? await opencodeVersion(runAsync) : undefined;
+  let before: string | undefined;
+  if (entry.host === "opencode") {
+    // OpenCode's service activates plugins in the background: an update that
+    // arrives first fails with `Plugin is not configured`. Wait until it lists Workit.
+    const ready = await waitForOpencodePlugin(runAsync, context.opencodeReady);
+    if (!ready) return fail(OPENCODE_NOT_READY);
+    before = ready.version;
+  }
   for (const command of entry.commands) {
     let result = await runAsync(command.command, command.args);
     // A cold package cache or a transient registry error fails `opencode plugin
@@ -466,7 +458,12 @@ export async function applyUpgrade(
       // below always runs.
       let outcome: HostOutcome;
       try {
-        outcome = await applyEntry(entry, { runAsync, paths, configDir });
+        outcome = await applyEntry(entry, {
+          runAsync,
+          paths,
+          configDir,
+          opencodeReady: deps.opencodeReady,
+        });
         if (entry.host === "codex" && outcome.status === "updated") {
           const agents = await refreshCodexAgents(runAsync, paths.codexHome);
           if (!agents.ok)

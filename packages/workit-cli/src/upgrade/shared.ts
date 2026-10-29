@@ -44,13 +44,23 @@ export const stderrTail = (text: string | undefined, lines = 5): string =>
     .slice(-lines)
     .join(" | ");
 
-/** "`cmd args` failed" plus the stderr tail when the command printed one. */
+/** The first `Error: …` line a command printed (stdout or stderr), so a reason never reads as bare stack frames. */
+export const errorLine = (result: CommandResult): string | undefined =>
+  `${result.stdout}\n${result.stderr ?? ""}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => /\bError:/.test(line));
+
+/** "`cmd args` failed" plus the error message line and the stderr tail. */
 export const failureReason = (
   command: { command: string; args: string[] },
   result: CommandResult,
 ): string => {
   const tail = stderrTail(result.stderr);
-  return `\`${command.command} ${command.args.join(" ")}\` failed${tail ? `: ${tail}` : ""}`;
+  const message = errorLine(result);
+  const detail = message && !tail.includes(message) ? [message, tail].filter(Boolean) : [tail];
+  const text = detail.filter(Boolean).join(" | ");
+  return `\`${command.command} ${command.args.join(" ")}\` failed${text ? `: ${text}` : ""}`;
 };
 /** One process the OS lists: `ps -eo pid=,stat=,args=` (or tasklist on Windows). */
 export type HostProcess = { pid: number; state: string; args: string };
@@ -81,6 +91,13 @@ export type UpgradeDeps = {
   progress?: Progress;
   /** The per-host rows of an applied upgrade (the launch check names failed hosts). */
   onResult?: (hosts: HostOutcome[]) => void;
+  /** OpenCode's plugin readiness wait (test seam; default polls every 0.5 s for 20 s). */
+  opencodeReady?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  };
   /** How long one planning probe may run (test seam; default 20 s). */
   probeTimeoutMs?: number;
   /** The CLI version the running entry has on disk now (test seam; default reads its package.json). */

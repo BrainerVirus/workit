@@ -66,7 +66,7 @@ async function upgradeOnce(
     }
     return setting
       ? runSetUpdates(setting.slice("--set-updates=".length), deps)
-      : runUpdateCheck(argv.includes("--json"), deps);
+      : await runUpdateCheck(argv.includes("--json"), deps);
   }
   const flags = new Set(argv);
   const unknown = argv.filter(
