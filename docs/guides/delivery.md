@@ -32,7 +32,7 @@ workit git commit -m "feat: x" -- <paths>       # convention-checked; --all take
 workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last commit; -F <file|-> reads the message
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]
-workit git push --release main [--release develop] [--release v<version>]   # finish a release or hotfix (release grant)
+workit git push --release main,develop,v<version>   # finish a release or hotfix (release grant); a comma list, a repeated flag, or both
 ```
 
 ### Branch kinds per preset
@@ -166,7 +166,7 @@ the merged commit and push it with `workit git push --release <tag>`.
 
 `workit git push` never pushes a protected branch. Finishing a release or
 hotfix can need protected branches and the release tag on the remote, so
-`workit git push --release <ref>` (repeat `--release` for each ref) pushes:
+`workit git push --release <ref>` (a comma list such as `--release main,develop,v1.4.0`, a repeated flag, or both) pushes:
 
 - in git-flow, the production and develop branches (and a git-flow release
   track's production, integration and merge-back branches); in github-flow,
@@ -330,6 +330,14 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   that SHA as the PR head. It ends with a `next:` line (`next` in `--json`):
   a non-author verifies the head, then what the effective endpoint does
   (stop, babysit, or land after verification).
+- `pr create` and `pr edit --title` check the title against the repository's
+  commitlint rules before the forge call: the type list, the header length and
+  an empty type or subject, with commitlint's default ignores (merge, revert,
+  fixup and version-bump titles). Only a JSON config (`.commitlintrc*`, or
+  `commitlint` in `package.json`) that extends nothing but `config-conventional`
+  is read; a JS, TS or YAML config, custom `ignores` or another shareable config
+  is left to CI and a note says so. A level-2 rule refuses with a usage error
+  naming the rule broken; a level-1 rule only warns.
 - `pr create --fill` takes the title from the oldest commit and the body from
   the commit messages (one commit: its body; several: each subject with its
   body), leaving out Workit's `Workit-Session:` trailer. `--body-file -` reads
@@ -395,7 +403,18 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   `--reason` serves it and `--unverified` together. `stack land` takes the
   same `--base-red-ok --reason` and passes it to every merge it makes.
 - `verify-delivery` answers "did it land?" from the remote, never from local
-  state.
+  state. A task whose branch the ledger shows merged (`pr.merged`) and
+  verified (`delivery.verified`, `merged`) is closed by `verify-delivery
+  merged` and swept again on the next `workit task` command, so a delivered
+  task stops showing as active. A merge without a verified delivery leaves
+  the task open and names `workit verify-delivery merged` as its next
+  action; a task with no PR, or with a worker that blocks closing, is left
+  alone.
+- `ci wait` ends with one summary line: `CI pass (<why>) after <n> polls`,
+  `CI fail: <failing checks>` (exit 1) or `CI none: no CI configured for this
+  head` (exit 0: nothing registered within the grace window, so nothing can
+  fail). Before it reports a fresh head ready it expects the checks the base
+  branch ran; any that never registered are listed on the `pass` line.
 - `ci wait --timeout` bounds the whole command, from resolving the forge and
   checking the account to the last poll. A conflicting PR stops the wait at
   once (`blocked: conflicts`): CI does not run on it.
@@ -683,7 +702,11 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   `spawnable` lists slices that can start now (every dependency landed, or a
   stacked child whose only open dependency is its verified parent). Without
   `gh`/`glab` it still answers (exit 0), says the forge is off, and its next
-  step asks for a PR (`workit pr create`) before any merge.
+  step asks for a PR (`workit pr create`) before any merge. When a slice's PR
+  merged on the forge while the local remote-tracking trunk is not fetched,
+  `status` and `check` fetch that one ref once per run before judging a
+  revert, so a merged slice is not called reverted on a stale trunk; if the
+  fetch fails the slice stays landed and a note says to run `git fetch`.
 - `worktree create` (on every host; Claude Code's implementer no longer uses
   its native isolation) adds the slice's worktree at its planned path. A new
   slice starts at its base and gets its branch through `workit git branch`
@@ -833,11 +856,12 @@ only tighten them, so a repo cannot break the machine-wide limit: it can add
 
 | Field           | Default                      | Where     | Meaning                                                                |
 | --------------- | ---------------------------- | --------- | ---------------------------------------------------------------------- |
-| `heavy`         | `test`, `build`, `typecheck` | both      | Named checks that take the lease; a repo only adds to the list         |
+| `heavy`         | `test`, `build`, `packaging` | both      | Named checks that take the lease; a repo only adds to the list         |
+| `light`         | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease; a repo cannot set it           |
 | `slots`         | `1`                          | workspace | Heavy checks that may run at once on the machine (1-64)                |
 | `memoryMax`     | `40%` of RAM                 | both      | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
 | `cpuQuota`      | `70%` of all CPUs            | both      | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
-| `wait`          | `600`                        | both      | Seconds to wait for the lease before exit 4                            |
+| `wait`          | `1800`                       | both      | Seconds (or a duration such as `"30m"`) to wait for the lease before exit 4 |
 | `scope`         | `true`                       | workspace | `false` keeps the lease but runs without a systemd scope               |
 | `heavyCommands` | none                         | repo      | Extra shell commands the hook gates (`["mvn verify", "task test:*"]`)  |
 

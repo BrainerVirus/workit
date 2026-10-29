@@ -140,10 +140,23 @@ test("concurrent appends lose no records", async () => {
           logger.info("concurrent", { worker: workerId, seq: n, id: workerId + "-" + n });
         }
       `;
-      const child = spawn(process.execPath, ["-e", code], { stdio: "ignore" });
-      child.on("exit", (status) =>
-        status === 0 ? resolve() : reject(new Error(`worker ${workerId} exited ${status}`)),
-      );
+      // A worker stalled once on a loaded macOS runner (whole file: ~230 ms
+      // normally). Kill a stalled one and name it with its stderr, before the
+      // test timeout hides which worker hung and why.
+      const child = spawn(process.execPath, ["-e", code], { stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => (stderr += chunk));
+      const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+      child.on("exit", (status, signal) => {
+        clearTimeout(timer);
+        if (status === 0) resolve();
+        else
+          reject(
+            new Error(
+              `worker ${workerId} exited ${status ?? signal}: ${stderr.trim() || "(no stderr)"}`,
+            ),
+          );
+      });
       child.on("error", reject);
     });
 
@@ -154,7 +167,7 @@ test("concurrent appends lose no records", async () => {
   const ids = new Set(records.map((r) => String((r.record.context as { id?: unknown }).id)));
   expect(ids.size).toBe(4 * 25);
   for (const { record } of records) assertJsonValue(record);
-});
+}, 30_000);
 
 test("injectable sinks receive every event", () => {
   const stateDir = tempDir();
