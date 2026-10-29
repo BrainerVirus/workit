@@ -317,6 +317,13 @@ the agent files and starts the daemon again. Open interactive Codex sessions
 are never killed; that host is skipped with its pid. A new Codex session picks
 up the update. Uninstall with `workit uninstall`.
 
+A running Codex app-server or CLI process loads the plugin once, when it
+starts. `workit doctor` (`codex_session_plugin`, Linux and macOS) warns for
+each `codex` process that started before the installed Workit plugin version
+was written (the plugin cache directory's time); new Codex sessions load the
+update. Where a host's processes cannot be listed (Windows has no `ps`), the row
+is informational and the check does not run.
+
 The plugin bundles documented lifecycle hooks and the shared MCP server.
 Reads run over MCP; mutations run through the CLI. Codex has no slash
 aliases: use `$workit-<name>` or the `/skills` picker. Native Codex

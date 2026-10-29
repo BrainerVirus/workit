@@ -121,9 +121,9 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     permissionsOk = written.every((entry) => entry.status === "written");
     for (const entry of written)
       result.hosts.push({
-        host: entry.host,
+        host: "permissions",
         status: entry.status === "written" ? "updated" : "failed",
-        reason: `permission block ${entry.status === "written" ? "refreshed" : entry.status} in ${entry.file}`,
+        reason: `${entry.host} block ${entry.status === "written" ? "refreshed" : entry.status} in ${entry.file}`,
         ...(entry.status === "written" ? {} : { fix: `workit setup --hosts=${entry.host}` }),
       });
   }

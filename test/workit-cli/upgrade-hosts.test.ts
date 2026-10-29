@@ -528,7 +528,7 @@ test("Given OpenCode already at the newest version, When upgrade runs, Then the 
         run,
       }),
     ).toBe(0);
-    expect(w.text()).toMatch(/opencode +already current +already current \(2\.0\.0\)/);
+    expect(w.text()).toMatch(/opencode +already current +\(2\.0\.0\)/);
     expect(w.text()).not.toMatch(/opencode +updated/);
   } finally {
     w.cleanup();

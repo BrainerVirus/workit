@@ -25,8 +25,26 @@ export type Command = {
   args: string[];
   purpose?: string;
 } & Partial<HostInstallCommand>;
-export type CommandResult = { status: number | null; stdout: string };
-export type UpgradeHost = HostId | "cli";
+export type CommandResult = { status: number | null; stdout: string; stderr?: string };
+export type UpgradeHost = HostId | "cli" | "permissions";
+
+/** The last few lines of a command's stderr, for a failed row's reason. */
+export const stderrTail = (text: string | undefined, lines = 5): string =>
+  (text ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-lines)
+    .join(" | ");
+
+/** "`cmd args` failed" plus the stderr tail when the command printed one. */
+export const failureReason = (
+  command: { command: string; args: string[] },
+  result: CommandResult,
+): string => {
+  const tail = stderrTail(result.stderr);
+  return `\`${command.command} ${command.args.join(" ")}\` failed${tail ? `: ${tail}` : ""}`;
+};
 /** One process the OS lists: `ps -eo pid=,stat=,args=` (or tasklist on Windows). */
 export type HostProcess = { pid: number; state: string; args: string };
 /** What upgrade did for one host; the run ends with one row per host. */
@@ -165,7 +183,7 @@ export const runner = (deps: UpgradeDeps) =>
       return { status: 1, stdout: "" };
     }
     const result = runHostCommand(step, { home, env });
-    return { status: result.exitCode, stdout: result.stdout };
+    return { status: result.exitCode, stdout: result.stdout, stderr: result.stderr };
   });
 
 const COMMAND_TIMEOUT_MS = 60_000;
@@ -198,19 +216,20 @@ export const asyncRunner = (
     childEnv.XDG_CONFIG_HOME = env.XDG_CONFIG_HOME ?? path.join(home, ".config");
     return new Promise<CommandResult>((resolve) => {
       let stdout = "";
+      let stderr = "";
       let settled = false;
       const finish = (status: number | null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ status, stdout });
+        resolve({ status, stdout, stderr });
       };
       let child: ReturnType<typeof spawn>;
       try {
         child = spawn(step.command, step.args, {
           cwd: step.cwd,
           env: childEnv,
-          stdio: ["ignore", "pipe", "ignore"],
+          stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true,
           shell: false,
         });
@@ -224,7 +243,12 @@ export const asyncRunner = (
       }, COMMAND_TIMEOUT_MS);
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => (stdout += chunk));
-      child.on("error", () => finish(1));
+      child.stderr?.setEncoding("utf8");
+      child.stderr?.on("data", (chunk: string) => (stderr = (stderr + chunk).slice(-4000)));
+      child.on("error", (error) => {
+        stderr += error.message;
+        finish(1);
+      });
       child.on("close", (code) => finish(code ?? 1));
     });
   };
