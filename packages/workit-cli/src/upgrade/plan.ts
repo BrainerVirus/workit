@@ -330,10 +330,12 @@ export function previewUpgrade(hosts: HostId[] = HOSTS, deps: UpgradeDeps = {}):
         });
         continue;
       }
+      const published = registryVersion(run, OPENCODE_PACKAGE);
       plan.entries.push({
         host: "opencode",
         selector: source.selector,
         latest: "",
+        ...(published ? { published } : {}),
         commands: [{ command: "opencode", args: ["plugin", "update", OPENCODE_PACKAGE] }],
         fix: OPENCODE_UPDATE,
       });

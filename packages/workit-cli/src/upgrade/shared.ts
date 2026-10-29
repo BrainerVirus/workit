@@ -87,6 +87,8 @@ export type PlanEntry = {
   selector: string;
   /** Empty when the host resolves the version itself (Claude Code, OpenCode). */
   latest: string;
+  /** OpenCode: the published version its own update resolves to, when the registry answered. */
+  published?: string;
   commands: Command[];
   /** A registered host whose plugin files are missing: reinstall, never just update. */
   repair?: boolean;

@@ -498,6 +498,8 @@ const opencodeWorld = (versions: { before: string; after: string }, extraRow = f
         }workit       ${version}   @brainervirus/workit-opencode\n`,
       };
     }
+    if (command === "npm" && line === "view @brainervirus/workit-opencode version")
+      return { status: 0, stdout: `${versions.after}\n` };
     if (command === "opencode" && args[1] === "update") updated = true;
     return w.deps.run(command, args);
   };
@@ -639,6 +641,50 @@ test("Given an unrelated plugin row above Workit's in `opencode plugin list`, Wh
       }),
     ).toBe(0);
     expect(w.text()).toMatch(/opencode +updated +8\.37\.0 -> 8\.38\.0; OpenCode V2 loads it live/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+/** OpenCode whose `plugin list` reports the new version only some calls after the update. */
+const laggingOpencode = (lag: number) => {
+  const { w, run: base } = opencodeWorld({ before: "8.40.8", after: "8.40.8" });
+  let updated = false;
+  let listsAfter = 0;
+  const run = (command: string, args: string[]) => {
+    const line = args.join(" ");
+    if (command === "npm" && line === "view @brainervirus/workit-opencode version")
+      return { status: 0, stdout: "8.44.0\n" };
+    if (command === "opencode" && args[1] === "update") updated = true;
+    if (command === "opencode" && line === "plugin list" && updated && ++listsAfter > lag) {
+      w.calls.push([command, ...args]);
+      return {
+        status: 0,
+        stdout: "ID      VERSION  SOURCE\nworkit  8.44.0   @brainervirus/workit-opencode\n",
+      };
+    }
+    return base(command, args);
+  };
+  return { w, run };
+};
+
+test("Given `opencode plugin list` still reports the old version right after the update, When upgrade runs, Then the row reads the target as updated, never already current", async () => {
+  const { w, run } = laggingOpencode(1);
+  try {
+    expect(await runUpgradeCommand(["--hosts=opencode", "--yes"], { ...w.deps, run })).toBe(0);
+    expect(w.text()).toMatch(/opencode +updated +8\.40\.8 -> 8\.44\.0/);
+    expect(w.text()).not.toContain("already current (8.40.8)");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given `opencode plugin list` never reports the target, When upgrade runs, Then the row never calls an older version current and names the target", async () => {
+  const { w, run } = laggingOpencode(Number.POSITIVE_INFINITY);
+  try {
+    await runUpgradeCommand(["--hosts=opencode", "--yes"], { ...w.deps, run });
+    expect(w.text()).not.toMatch(/already current/);
+    expect(w.text()).toMatch(/opencode .*8\.40\.8.*8\.44\.0/);
   } finally {
     w.cleanup();
   }
