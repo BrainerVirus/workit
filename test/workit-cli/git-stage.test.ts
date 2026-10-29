@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -120,6 +120,30 @@ test("git commit -- <path>: a path staged in part commits its staged hunk only; 
   expect(notes[0]).toContain("f.txt");
   expect(notes[0]).toContain("--whole");
   expect(leftoverIndexes(repo.cwd)).toEqual([]);
+});
+
+test("git commit -- <path>: a private index a killed commit left behind is swept; a live commit's is kept", async () => {
+  const repo = twoHunkRepo("f.txt");
+  stageFirstHunk(repo.cwd, "f.txt");
+  const gitDir = path.resolve(repo.cwd, gitIn(repo.cwd, "rev-parse", "--git-dir").trim());
+  const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+  const live = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"]);
+  try {
+    const now = Date.now();
+    const kept = `workit-commit-${live.pid}-${now}.index`;
+    for (const name of [
+      `workit-commit-${dead}-${now}.index`,
+      `workit-commit-${dead}-${now}.index.lock`,
+      `workit-commit-${live.pid}-${now - 2 * 60 * 60_000}.index`,
+      kept,
+    ])
+      writeFileSync(path.join(gitDir, name), "stale");
+    const result = await run(["git", "commit", "-m", "feat: line two", "--", "f.txt"], repo.cwd);
+    expect(result.code).toBe(0);
+    expect(leftoverIndexes(repo.cwd)).toEqual([kept]);
+  } finally {
+    live.kill();
+  }
 });
 
 test("git commit -- <paths>: partial, unstaged and staged paths mixed, from a subdirectory", async () => {

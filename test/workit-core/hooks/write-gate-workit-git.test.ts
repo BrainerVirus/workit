@@ -83,11 +83,13 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+const posix = (text: string) => text.replaceAll("\\", "/");
+
 /** A Claude Code Bash PreToolUse from implementer `impl-stage`, in the lead's cwd. */
 const bash = (command: string) => {
   const payload = fixture("claude-code", "pre-tool-use-write", lead, {
     tool_name: "Bash",
-    tool_input: { command: command.replaceAll("\\", "/") },
+    tool_input: { command: posix(command) },
   });
   payload.agent_id = "impl-stage";
   payload.agent_type = "workit:implementer";
@@ -98,15 +100,17 @@ const bash = (command: string) => {
 };
 
 test("Given workit git stage|unstage --cwd <dir>, Then the write gate names <dir> as mutated; --help is inert", () => {
+  // A POSIX shell drops an unquoted `\` (Windows paths): spell them with `/`.
+  const at = posix(lead);
   for (const command of [
-    `workit git --cwd ${lead} stage -- f.ts`,
-    `workit git stage --cwd ${lead} --patch hunk.patch`,
-    `workit --cwd ${lead} git unstage -- f.ts`,
+    `workit git --cwd ${at} stage -- f.ts`,
+    `workit git stage --cwd ${at} --patch hunk.patch`,
+    `workit --cwd ${at} git unstage -- f.ts`,
   ])
     expect(shellMutationTargets(root, command, "posix"), command).toContain(
       path.join(lead, ".workit-live-target"),
     );
-  expect(shellMutationTargets(root, `workit git --cwd ${lead} stage --help`, "posix")).toEqual([]);
+  expect(shellMutationTargets(root, `workit git --cwd ${at} stage --help`, "posix")).toEqual([]);
 });
 
 test("Given an implementer bound to its worktree, When it runs workit git stage|unstage, Then its worktree is allowed and another checkout is denied", () => {

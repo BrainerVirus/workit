@@ -23,7 +23,7 @@
 //   the tip workit last recorded, and success only when the remote tip
 //   observed afterwards equals the local SHA (`push.verified` row).
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import {
   branchKindOf,
@@ -627,6 +627,41 @@ const literalTop = (file: string) => `:(top,literal)${file}`;
  * with every staged change outside `paths` put back to HEAD, as `--only`
  * would leave it out. The caller removes the file.
  */
+const PRIVATE_INDEX = /^workit-commit-(\d+)-(\d+)\.index(?:\.lock)?$/u;
+const PRIVATE_INDEX_TTL_MS = 60 * 60_000;
+
+const processAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists under another user.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/**
+ * Best effort: remove private indexes (and their locks) a killed commit left
+ * in `dir`, those whose process is gone or that are over an hour old.
+ */
+function sweepPrivateIndexes(dir: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const match = PRIVATE_INDEX.exec(name);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const stale =
+      Date.now() - Number(match[2]) > PRIVATE_INDEX_TTL_MS ||
+      (pid !== process.pid && !processAlive(pid));
+    if (stale) rmSync(path.join(dir, name), { force: true });
+  }
+}
+
 function pathCommitIndex(
   cwd: string,
   paths: readonly string[],
@@ -635,6 +670,7 @@ function pathCommitIndex(
   const where = (name: string) =>
     path.resolve(cwd, git(cwd, ["rev-parse", "--git-path", name]).stdout.trim());
   const file = where(`workit-commit-${process.pid}-${Date.now()}.index`);
+  sweepPrivateIndexes(path.dirname(file));
   try {
     copyFileSync(where("index"), file);
   } catch (error) {
