@@ -105,7 +105,7 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     }
   }
   if (json) for (const warning of plan.warnings ?? []) out.write(`warning: ${warning}\n`);
-  const result = applyUpgrade(plan, { ...deps, progress });
+  const result = await applyUpgrade(plan, { ...deps, progress });
   let permissionsOk = true;
   let written: ReturnType<typeof applyHostPermissions> | undefined;
   if (
@@ -113,7 +113,11 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     !permissions.refused &&
     !result.error?.startsWith("configuration changed")
   ) {
-    written = applyHostPermissions(permissions, { home, env });
+    written = progress.runSync(
+      "Refreshing the permission block",
+      () => applyHostPermissions(permissions, { home, env }),
+      (entries) => (entries.every((entry) => entry.status === "written") ? "done" : "failed"),
+    );
     permissionsOk = written.every((entry) => entry.status === "written");
     for (const entry of written)
       result.hosts.push({
@@ -202,7 +206,7 @@ export async function runLaunchCommand(argv: string[], deps: UpgradeDeps = {}): 
         (deps.out ?? process.stderr).write(
           `${skipped.host}: ${skipped.reason}${skipped.fix ? ` (run: ${skipped.fix})` : ""}\n`,
         );
-      const result = applyUpgrade(plan, deps);
+      const result = await applyUpgrade(plan, deps);
       if (!result.ok) {
         (deps.out ?? process.stdout).write(`${result.error}\n`);
         return 1;

@@ -63,7 +63,7 @@ const fixture = () => {
   };
 };
 
-test("upgrade previews without writes, applies one scoped native update and preserves unrelated configuration", () => {
+test("upgrade previews without writes, applies one scoped native update and preserves unrelated configuration", async () => {
   const f = fixture();
   try {
     const before = readFileSync(f.host, "utf8");
@@ -74,7 +74,7 @@ test("upgrade previews without writes, applies one scoped native update and pres
     expect(plan.entries[0]?.commands).toEqual([
       { command: "pi", args: ["update", "--extension", "npm:@brainervirus/workit-pi"] },
     ]);
-    expect(applyUpgrade(plan, f.deps).ok).toBe(true);
+    expect((await applyUpgrade(plan, f.deps)).ok).toBe(true);
     expect(readFileSync(f.host, "utf8")).toBe(before);
     const after = JSON.parse(readFileSync(f.config, "utf8"));
     expect(after.trustedPaths).toBeUndefined();
@@ -86,7 +86,7 @@ test("upgrade previews without writes, applies one scoped native update and pres
   }
 });
 
-test("local and exact pins stay unchanged; stale previews and running hosts block updates", () => {
+test("local and exact pins stay unchanged; stale previews and running hosts block updates", async () => {
   const f = fixture();
   try {
     for (const pin of [
@@ -100,7 +100,7 @@ test("local and exact pins stay unchanged; stale previews and running hosts bloc
     }
     writeFileSync(f.host, JSON.stringify({ plugins: ["@brainervirus/workit-opencode"] }));
     const plan = previewUpgrade(["pi"], f.deps);
-    const open = applyUpgrade(plan, {
+    const open = await applyUpgrade(plan, {
       ...f.deps,
       processes: () => [{ pid: 42, state: "S+", args: "pi --session" }],
     });
@@ -115,7 +115,7 @@ test("local and exact pins stay unchanged; stale previews and running hosts bloc
       f.host,
       JSON.stringify({ plugins: ["@brainervirus/workit-opencode"], model: "changed" }),
     );
-    expect(applyUpgrade(plan, f.deps).error).toContain("configuration changed");
+    expect((await applyUpgrade(plan, f.deps)).error).toContain("configuration changed");
   } finally {
     f.cleanup();
   }
@@ -169,7 +169,7 @@ test("upgrade command rejects unreviewed apply and unknown hosts without mutatio
   }
 });
 
-test("Pi verification rejects a source-only listing and requires the resolved package version", () => {
+test("Pi verification rejects a source-only listing and requires the resolved package version", async () => {
   const f = fixture();
   try {
     const settings = path.join(f.home, ".pi/agent/settings.json");
@@ -203,7 +203,7 @@ test("Pi verification rejects a source-only listing and requires the resolved pa
     };
     const plan = previewUpgrade(["pi"], deps);
     expect(plan.entries).toHaveLength(1);
-    expect(applyUpgrade(plan, deps).error).toContain("package version");
+    expect((await applyUpgrade(plan, deps)).error).toContain("package version");
   } finally {
     f.cleanup();
   }
@@ -336,7 +336,7 @@ test("env-only HOME isolates inherited roots and Codex inventory failure blocks 
   }
 });
 
-test("Cursor package drift rejects a reviewed plan before installation", () => {
+test("Cursor package drift rejects a reviewed plan before installation", async () => {
   const f = fixture();
   try {
     const pkg = path.join(f.home, ".cursor/plugins/local/workit/package.json");
@@ -344,7 +344,7 @@ test("Cursor package drift rejects a reviewed plan before installation", () => {
     writeFileSync(pkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "2.0.2" }));
     const plan = previewUpgrade([], f.deps);
     writeFileSync(pkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "2.0.3" }));
-    expect(applyUpgrade(plan, f.deps).error).toContain("configuration changed");
+    expect((await applyUpgrade(plan, f.deps)).error).toContain("configuration changed");
   } finally {
     f.cleanup();
   }
@@ -423,7 +423,7 @@ test("OpenCode unsupported scoped update is visible and never falls back to upda
   }
 });
 
-test("conflicting Workit registrations stop upgrade without changing either source", () => {
+test("conflicting Workit registrations stop upgrade without changing either source", async () => {
   const f = fixture();
   try {
     const pins = ["@brainervirus/workit-opencode", "@brainervirus/workit-opencode@2.0.1"];
@@ -431,7 +431,7 @@ test("conflicting Workit registrations stop upgrade without changing either sour
     const plan = previewUpgrade(["opencode"], f.deps);
     expect(plan.ok).toBe(false);
     expect(plan.failed[0]?.reason).toContain("conflicting Workit registrations");
-    expect(applyUpgrade(plan, f.deps).ok).toBe(false);
+    expect((await applyUpgrade(plan, f.deps)).ok).toBe(false);
     expect(JSON.parse(readFileSync(f.host, "utf8")).plugins).toEqual(pins);
   } finally {
     f.cleanup();
@@ -549,4 +549,38 @@ test("upgrade shows a step per host and action on a TTY and nothing for --json o
   expect(tty.out).toContain("Verified: workit doctor is clean");
   expect((await stepsFor(["--hosts=pi", "--yes"], false)).writes).toEqual([]);
   expect((await stepsFor(["--hosts=pi", "--yes", "--json"], true)).writes).toEqual([]);
+});
+
+test("upgrade keeps the spinner ticking while a host command runs asynchronously", async () => {
+  const f = fixture();
+  try {
+    const writes: string[] = [];
+    const ticks: (() => void)[] = [];
+    const progress = createProgress({
+      stream: { isTTY: true, write: (text) => writes.push(text) },
+      env: {},
+      setInterval: (tick) => ticks.push(tick),
+      clearInterval: () => {},
+    });
+    const sync = f.deps.run;
+    let during = 0;
+    const code = await runUpgradeCommand(["--hosts=pi", "--yes"], {
+      ...f.deps,
+      progress,
+      out: { write: () => {} },
+      doctor: () => ({ checks: [] }),
+      runAsync: async (command, args) => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const before = writes.length;
+        for (const tick of ticks) tick();
+        during += writes.length - before;
+        return sync(command, args);
+      },
+    });
+    expect(code).toBe(0);
+    expect(during).toBeGreaterThan(0);
+    expect(writes.some((text) => text.includes("Updating pi (0s)"))).toBe(true);
+  } finally {
+    f.cleanup();
+  }
 });
