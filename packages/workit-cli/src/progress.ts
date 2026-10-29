@@ -119,7 +119,7 @@ export function createProgress(options: ProgressOptions = {}): Progress {
         ? { done: "ok", failed: "x", skipped: "-" }
         : { done: "✓", failed: "✗", skipped: "–" };
 
-  const start = (initial: string): ProgressStep => {
+  const start = (initial: string, signals = true): ProgressStep => {
     if (mode === "off" || !stream) return NOOP_STEP;
     let text = initial;
     let finished = false;
@@ -148,7 +148,7 @@ export function createProgress(options: ProgressOptions = {}): Progress {
       for (const [event, handler] of handlers) proc.off(event, handler);
       handlers.length = 0;
     };
-    if (mode === "spinner") {
+    if (mode === "spinner" && signals) {
       const onSignal = (signal: string) => () => {
         if (!finished) {
           finished = true;
@@ -158,10 +158,12 @@ export function createProgress(options: ProgressOptions = {}): Progress {
         release();
         proc.kill(proc.pid, signal);
       };
+      handlers.push(["SIGINT", onSignal("SIGINT")], ["SIGTERM", onSignal("SIGTERM")]);
+    }
+    if (mode === "spinner") {
       const onExit = () => {
         if (!finished) stream.write(CLEAR);
       };
-      handlers.push(["SIGINT", onSignal("SIGINT")], ["SIGTERM", onSignal("SIGTERM")]);
       handlers.push(["exit", onExit]);
       for (const [event, handler] of handlers) proc.on(event, handler);
     }
@@ -186,7 +188,9 @@ export function createProgress(options: ProgressOptions = {}): Progress {
     mode,
     start,
     async run(label, fn, classify) {
-      const step = start(label);
+      // Same as runSync: the work may block in a spawnSync between awaits, so no
+      // handler may defer Ctrl-C; the default action ends the process at once.
+      const step = start(label, false);
       try {
         const value = await fn();
         step.end(classify ? classify(value) : "done");
@@ -197,7 +201,10 @@ export function createProgress(options: ProgressOptions = {}): Progress {
       }
     },
     runSync(label, fn, classify) {
-      const step = start(label);
+      // No signal handler here: one would hold Ctrl-C until the blocking call
+      // returns, and the verb would report its killed child as a failure. The
+      // default action ends the process at once, as it does without a spinner.
+      const step = start(label, false);
       const ticker =
         mode === "spinner" && stream
           ? (options.spawnTicker ?? ((text, began) => defaultTicker(text, began, stream)))(
