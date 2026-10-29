@@ -369,7 +369,10 @@ export function previewUpgrade(
         latest: "",
         ...(published ? { published } : {}),
         ...(reading?.version ? { installedVersion: reading.version } : {}),
-        commands: [{ command: "opencode", args: ["plugin", "update", OPENCODE_PACKAGE] }],
+        // HOME's location: the one the readiness wait covered (see ./opencode).
+        commands: [
+          { command: "opencode", args: ["plugin", "update", OPENCODE_PACKAGE], cwd: home },
+        ],
         fix: OPENCODE_UPDATE,
       });
       continue;

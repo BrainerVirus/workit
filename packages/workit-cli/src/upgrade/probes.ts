@@ -113,12 +113,13 @@ export const runProbes = async (
     const ready =
       hosts.includes("opencode") && opencodeRegistersWorkit(paths.opencodeConfig)
         ? waitForOpencodePlugin(
-            (command, args) =>
-              run(command, args).catch((error: unknown): CommandResult => ({
+            (command, args, where) =>
+              run(command, args, where).catch((error: unknown): CommandResult => ({
                 status: 1,
                 stdout: "",
                 stderr: error instanceof Error ? error.message : String(error),
               })),
+            paths.home,
             deps.opencodeReady,
           ).then((reading): [string, CommandResult] => [
             OPENCODE_READY_KEY,

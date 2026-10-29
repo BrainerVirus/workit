@@ -62,8 +62,10 @@ export type UpgradeResult = {
 };
 
 /** The installed Workit OpenCode plugin version, as OpenCode itself reports it. */
-const opencodeVersion = async (run: ReturnType<typeof asyncRunner>): Promise<string | undefined> =>
-  (await readOpencodePlugin(run)).version;
+const opencodeVersion = async (
+  run: ReturnType<typeof asyncRunner>,
+  home: string,
+): Promise<string | undefined> => (await readOpencodePlugin(run, home)).version;
 
 /**
  * OpenCode's row from the plugin version before the update, after it, and the
@@ -76,11 +78,12 @@ const opencodeOutcome = async (
   before: string | undefined,
   target: string | undefined,
   runAsync: ReturnType<typeof asyncRunner>,
+  home: string,
 ): Promise<HostOutcome> => {
   const below = (version: string | undefined) =>
     target !== undefined && (version === undefined || !versionAtLeast(version, target));
-  let after = await opencodeVersion(runAsync);
-  if (below(after)) after = (await opencodeVersion(runAsync)) ?? after;
+  let after = await opencodeVersion(runAsync, home);
+  if (below(after)) after = (await opencodeVersion(runAsync, home)) ?? after;
   const live = "OpenCode V2 loads it live";
   if (before && target && versionAtLeast(before, target))
     return { host: "opencode", status: "current", reason: `already current (${before})` };
@@ -204,19 +207,20 @@ const applyEntry = async (
   if (entry.host === "opencode") {
     // OpenCode's service activates plugins in the background: an update that
     // arrives first fails with `Plugin is not configured`. Wait until it lists Workit.
-    const ready = await waitForOpencodePlugin(runAsync, context.opencodeReady);
+    const ready = await waitForOpencodePlugin(runAsync, home, context.opencodeReady);
     if (!ready) return fail(OPENCODE_NOT_READY);
     before = ready.version;
   }
   for (const command of entry.commands) {
-    let result = await runAsync(command.command, command.args);
+    const where = command.cwd ? { cwd: command.cwd } : undefined;
+    let result = await runAsync(command.command, command.args, where);
     // A cold package cache or a transient registry error fails `opencode plugin
     // update` once and succeeds moments later: retry it once before it reads FAILED.
     if (result.status !== 0 && entry.host === "opencode")
-      result = await runAsync(command.command, command.args);
+      result = await runAsync(command.command, command.args, where);
     if (result.status !== 0) return fail(failureReason(command, result));
   }
-  if (entry.host === "opencode") return opencodeOutcome(before, entry.published, runAsync);
+  if (entry.host === "opencode") return opencodeOutcome(before, entry.published, runAsync, home);
   if (entry.host === "claude-code") {
     const after = claudeWorkitInstalls(home, env, null).find(
       (install) => install.id === entry.selector,

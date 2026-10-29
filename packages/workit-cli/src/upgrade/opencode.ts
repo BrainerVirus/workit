@@ -1,13 +1,25 @@
 // OpenCode v2 forwards `opencode plugin …` to its shared background service. A
 // location there builds a baseline first and activates package plugins in a
 // background PluginBoot fiber, so a plugin command that arrives before that
-// fails with `Plugin is not configured`. Workit asks the service itself
-// (`opencode api plugin.list`) and waits until it lists the Workit package.
-import { OPENCODE_PACKAGE, type CommandResult, type UpgradeDeps } from "./shared";
+// fails with `Plugin is not configured`. `opencode api plugin.list` answers for
+// the service's default location (HOME) whatever the cwd, while `plugin list`
+// and `plugin update` act on the cwd's location. So every OpenCode plugin
+// command runs in ONE location, the user's HOME (the service default, the warm
+// one; package plugins are global, so the location does not change what is
+// updated), the api call names it with `x-opencode-directory`, and readiness
+// needs both the api and `plugin list` in that location to list Workit.
+import { OPENCODE_PACKAGE, type CommandResult, type RunOptions, type UpgradeDeps } from "./shared";
 
-type AsyncRun = (command: string, args: string[]) => Promise<CommandResult>;
+type AsyncRun = (command: string, args: string[], options?: RunOptions) => Promise<CommandResult>;
 
-const PLUGIN_API = ["api", "plugin.list"];
+/** `opencode api plugin.list` for the location at `home`. */
+const pluginApiArgs = (home: string): string[] => [
+  "api",
+  "plugin.list",
+  "-H",
+  `x-opencode-directory:${home}`,
+];
+const PLUGIN_LIST = ["plugin", "list"];
 const OPENCODE_READY_TIMEOUT_MS = 20_000;
 const READY_INTERVAL_MS = 500;
 export const OPENCODE_NOT_READY = `OpenCode did not finish loading its plugins (opencode api plugin.list never listed ${OPENCODE_PACKAGE})`;
@@ -27,10 +39,18 @@ const isWorkitTarget = (target: unknown): boolean =>
   typeof target === "string" &&
   /^(?:npm:)?@brainervirus\/workit-opencode(?:@[^/\s]+)?$/.test(target);
 
+/** An `opencode api` that does not know the operation (an older 2.x), not a service still starting. */
+const lacksApi = (result: CommandResult): boolean =>
+  result.status !== 0 &&
+  !result.timedOut &&
+  /\b(?:unknown|unrecognized|unsupported) (?:command|operation|argument)|\bno such (?:command|operation)/i.test(
+    `${result.stdout}\n${result.stderr ?? ""}`,
+  );
+
 /**
  * The Workit entry from `opencode api plugin.list` JSON
  * (`{location, data:[{id, source:{type,target,version,outdated}, state:{status}}]}`),
- * or null when the output is not that shape (the api operation is unavailable).
+ * or null when the call failed or printed something else (not ready yet).
  */
 const parsePluginApi = (result: CommandResult): OpencodePlugin | null => {
   if (result.status !== 0) return null;
@@ -54,7 +74,7 @@ const parsePluginApi = (result: CommandResult): OpencodePlugin | null => {
   };
 };
 
-/** The Workit row of `opencode plugin list` (`ID  VERSION  SOURCE`), for an OpenCode without the api. */
+/** The Workit row of `opencode plugin list` (`ID  VERSION  SOURCE`); `No plugins found` is not listed. */
 const parsePluginList = (result: CommandResult): OpencodePlugin => {
   if (result.status === 0)
     for (const line of result.stdout.split(/\r?\n/)) {
@@ -68,20 +88,23 @@ const parsePluginList = (result: CommandResult): OpencodePlugin => {
   return { via: "list", listed: false };
 };
 
-/** One reading: the api when OpenCode has it, else the text listing. */
-export const readOpencodePlugin = async (run: AsyncRun): Promise<OpencodePlugin> =>
-  parsePluginApi(await run("opencode", PLUGIN_API)) ??
-  parsePluginList(await run("opencode", ["plugin", "list"]));
+/** One reading in HOME's location: the api when it answers, else the text listing. */
+export const readOpencodePlugin = async (run: AsyncRun, home: string): Promise<OpencodePlugin> =>
+  parsePluginApi(await run("opencode", pluginApiArgs(home), { cwd: home })) ??
+  parsePluginList(await run("opencode", PLUGIN_LIST, { cwd: home }));
 
 type ReadyOptions = NonNullable<UpgradeDeps["opencodeReady"]>;
 
 /**
- * Poll `opencode api plugin.list` until the service lists the Workit package,
- * bounded by `timeoutMs`. Returns the reading, or null when it never appeared.
- * An OpenCode without the api operation falls back to one text listing.
+ * Poll until OpenCode lists the Workit package in HOME's location, bounded by
+ * `timeoutMs`; null when it never did. Ready needs `plugin list` (the location
+ * the update runs in) to list Workit, and the api to list it too unless this
+ * OpenCode lacks the api operation. A failed or erroring api call, or `No
+ * plugins found`, is not ready yet: the poll goes on.
  */
 export const waitForOpencodePlugin = async (
   run: AsyncRun,
+  home: string,
   options: ReadyOptions = {},
 ): Promise<OpencodePlugin | null> => {
   const timeoutMs = options.timeoutMs ?? OPENCODE_READY_TIMEOUT_MS;
@@ -90,11 +113,20 @@ export const waitForOpencodePlugin = async (
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const deadline = now() + timeoutMs;
+  let textOnly = false;
   for (;;) {
-    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- a readiness poll: each reading decides whether to wait for the next one.
-    const reading = parsePluginApi(await run("opencode", PLUGIN_API));
-    if (!reading) return parsePluginList(await run("opencode", ["plugin", "list"]));
-    if (reading.listed) return reading;
+    let api: OpencodePlugin | null = null;
+    if (!textOnly) {
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- a readiness poll: each reading decides whether to wait for the next one.
+      const result = await run("opencode", pluginApiArgs(home), { cwd: home });
+      api = parsePluginApi(result);
+      textOnly = !api && lacksApi(result);
+    }
+    if (textOnly || api?.listed) {
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- the location the update runs in must list Workit too.
+      const text = parsePluginList(await run("opencode", PLUGIN_LIST, { cwd: home }));
+      if (text.listed) return api?.listed ? { ...api, version: api.version ?? text.version } : text;
+    }
     if (now() >= deadline) return null;
     // react-doctor-disable-next-line react-doctor/async-await-in-loop -- the poll interval between readings.
     await sleep(Math.min(intervalMs, Math.max(0, deadline - now())));

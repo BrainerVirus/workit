@@ -365,7 +365,7 @@ test("given --check, then it prints installed vs latest and the apply command, c
 const opencodeService =
   (plugin: { version: string; outdated?: boolean }, versions: Record<string, string>) =>
   (command: string, args: string[]): { status: number; stdout: string } => {
-    if (command === "opencode" && args.join(" ") === "api plugin.list")
+    if (command === "opencode" && args[0] === "api" && args[1] === "plugin.list")
       return {
         status: 0,
         stdout: JSON.stringify({
@@ -384,6 +384,11 @@ const opencodeService =
             },
           ],
         }),
+      };
+    if (command === "opencode" && args.join(" ") === "plugin list")
+      return {
+        status: 0,
+        stdout: `ID      VERSION  SOURCE\nworkit  ${plugin.version}   @brainervirus/workit-opencode\n`,
       };
     return registry(versions)(command, args);
   };
