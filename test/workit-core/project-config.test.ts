@@ -36,14 +36,15 @@ test("CI enforces lint and format checks", () => {
 test("lefthook's install postinstall never runs on dependency install", () => {
   // `lefthook install` from the npm package's postinstall ignores
   // no_auto_install and writes into the .git/hooks shared by every worktree.
-  // Hooks are opt-in via `bun run hooks:install` only. bun blocks the script
-  // unless lefthook is trusted; pnpm and yarn are told not to build it; npm
-  // cannot install this workspace (workspace: protocol).
+  // Hooks are opt-in via `bun run hooks:install` only (scripts/install-hooks.ts
+  // runs `lefthook install` and strips another checkout's absolute path). bun
+  // blocks the script unless lefthook is trusted; pnpm and yarn are told not
+  // to build it; npm cannot install this workspace (workspace: protocol).
   const pkg = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../../package.json"), "utf8"));
   expect(pkg.trustedDependencies ?? []).not.toContain("lefthook");
   expect(pkg.pnpm?.neverBuiltDependencies).toContain("lefthook");
   expect(pkg.dependenciesMeta?.lefthook?.built).toBe(false);
-  expect(pkg.scripts["hooks:install"]).toBe("lefthook install");
+  expect(pkg.scripts["hooks:install"]).toBe("bun scripts/install-hooks.ts");
   const lefthook = readFileSync(path.resolve(import.meta.dir, "../../lefthook.yml"), "utf8");
   expect(lefthook).toContain("no_auto_install: true");
 });
