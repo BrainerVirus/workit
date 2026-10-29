@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -8,6 +8,18 @@ import { Wizard } from "../../packages/workit-cli/src/steps";
 import type { SetupValues } from "../../packages/workit-cli/src/wizard-state";
 import { emptyDetection } from "../../packages/workit-cli/src/admin/detect-hosts";
 import { renderInk, type InkTty } from "../shared/helpers/ink-tty";
+
+// React reports a render-loop or act() problem through console.error only; a
+// wizard that logs one is broken even when every frame still looks right.
+let consoleError: ReturnType<typeof spyOn<Console, "error">>;
+beforeEach(() => {
+  consoleError = spyOn(console, "error").mockImplementation(() => {});
+});
+afterEach(() => {
+  const calls = consoleError.mock.calls.map((call) => String(call[0]));
+  consoleError.mockRestore();
+  expect(calls).toEqual([]);
+});
 
 // Golden transcripts of the setup wizard: every screen and every mode of the
 // advanced workspace editor, frame by frame. They pin what a user sees and what

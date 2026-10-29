@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +10,18 @@ import { applyWizardBranchPolicy } from "../../packages/workit-cli/src/logic";
 import type { SetupValues } from "../../packages/workit-cli/src/wizard-state";
 import { initApplyData } from "../../packages/workit-core/src/core/init";
 import { emptyDetection } from "../../packages/workit-cli/src/admin/detect-hosts";
+
+// React reports a render-loop or act() problem through console.error only; a
+// wizard that logs one is broken even when every frame still looks right.
+let consoleError: ReturnType<typeof spyOn<Console, "error">>;
+beforeEach(() => {
+  consoleError = spyOn(console, "error").mockImplementation(() => {});
+});
+afterEach(() => {
+  const calls = consoleError.mock.calls.map((call) => String(call[0]));
+  consoleError.mockRestore();
+  expect(calls).toEqual([]);
+});
 
 // Task 5 (CA-06): the CLI wizard's branch-policy apply must write byte-identical
 // bytes to the host init action (branch_policy) on the same fixture. The Wizard
@@ -52,7 +64,10 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
         onExit={(complete, values) => {
           if (complete) exitValues = values;
         }}
-        detection={{ ...emptyDetection(), opencode: { detected: true, configured: false } }}
+        detection={{
+          ...emptyDetection(),
+          opencode: { detected: true, configured: false },
+        }}
       />,
     );
     // platforms SPACE+ENTER, locale/branchPreset ENTERs, issueTracker

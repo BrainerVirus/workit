@@ -1,5 +1,5 @@
+import { inkColor, StableTextInput } from "./ink-style";
 import { Box, Text } from "ink";
-import { TextInput } from "@inkjs/ui";
 import type { JSX } from "react";
 import { emptyDetection } from "../admin/detect-hosts";
 import { SearchSelect } from "../search-select";
@@ -35,7 +35,7 @@ export function PlatformsScreen({
           dispatch({ type: "next" });
         }}
       />
-      {draft.errors.platforms && <Text color="red">{draft.errors.platforms}</Text>}
+      {draft.errors.platforms && <Text color={inkColor("fail")}>{draft.errors.platforms}</Text>}
       <Text dimColor>Enter to continue · Esc Cancel</Text>
     </Box>
   );
@@ -47,7 +47,7 @@ export function LocaleScreen({ draft, dispatch, onSearchQueryChange }: ScreenPro
       <Text bold>Step 2 — Global config · Locale</Text>
       <Text dimColor>Locale (BCP-47):</Text>
       <Text>
-        Current: <Text color="green">{draft.values.locale}</Text>
+        Current: <Text color={inkColor("ok")}>{draft.values.locale}</Text>
       </Text>
       {/* Searchable language picker: typing filters, Enter commits the
           highlighted row's BCP-47 tag. Other… keeps the existing validated
@@ -66,7 +66,7 @@ export function LocaleScreen({ draft, dispatch, onSearchQueryChange }: ScreenPro
           }
         }}
       />
-      {draft.errors.locale && <Text color="red">{draft.errors.locale}</Text>}
+      {draft.errors.locale && <Text color={inkColor("fail")}>{draft.errors.locale}</Text>}
       <Text dimColor>Type to filter · Enter to continue · b Back · Esc Cancel</Text>
     </Box>
   );
@@ -77,12 +77,12 @@ export function LocaleOtherScreen({ draft, dispatch }: ScreenProps): JSX.Element
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 2 — Global config · Locale (custom)</Text>
       <Text dimColor>Type a BCP-47 locale (e.g. en or es-CL):</Text>
-      <TextInput
+      <StableTextInput
         placeholder={SCREEN_PLACEHOLDERS.localeOther}
         onChange={(value) => dispatch({ type: "set", field: "locale", value })}
         onSubmit={() => dispatch({ type: "next" })}
       />
-      {draft.errors.locale && <Text color="red">{draft.errors.locale}</Text>}
+      {draft.errors.locale && <Text color={inkColor("fail")}>{draft.errors.locale}</Text>}
       <Text dimColor>Enter to continue · Esc Back</Text>
     </Box>
   );
@@ -103,10 +103,10 @@ export function BranchPresetScreen({ draft, dispatch }: ScreenProps): JSX.Elemen
       <Text dimColor>{BRANCH_PRESET_DESCRIPTIONS[draft.values.branchPreset]}</Text>
       <Box flexDirection="column" gap={0}>
         <Text>
-          Allowed: <Text color="green">{policy.allowed.join(", ") || "—"}</Text>
+          Allowed: <Text color={inkColor("ok")}>{policy.allowed.join(", ") || "—"}</Text>
         </Text>
         <Text>
-          Protected: <Text color="green">{policy.protected.join(", ") || "—"}</Text>
+          Protected: <Text color={inkColor("ok")}>{policy.protected.join(", ") || "—"}</Text>
         </Text>
       </Box>
       <Text dimColor>
@@ -123,13 +123,15 @@ export function BranchAllowedScreen({ draft, dispatch }: ScreenProps): JSX.Eleme
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 2 — Global config · Allowed branch patterns</Text>
       <Text dimColor>Allowed branch patterns (comma-separated):</Text>
-      <TextInput
+      <StableTextInput
         placeholder={SCREEN_PLACEHOLDERS.branchAllowed}
         defaultValue={draft.values.branchAllowed}
         onChange={(value) => dispatch({ type: "set", field: "branchAllowed", value })}
         onSubmit={() => dispatch({ type: "next" })}
       />
-      {draft.errors.branchAllowed && <Text color="red">{draft.errors.branchAllowed}</Text>}
+      {draft.errors.branchAllowed && (
+        <Text color={inkColor("fail")}>{draft.errors.branchAllowed}</Text>
+      )}
       <Text dimColor>Enter to continue · Esc Back</Text>
     </Box>
   );
@@ -140,13 +142,15 @@ export function BranchProtectedScreen({ draft, dispatch }: ScreenProps): JSX.Ele
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 2 — Global config · Protected branch names</Text>
       <Text dimColor>Protected branch names (comma-separated):</Text>
-      <TextInput
+      <StableTextInput
         placeholder={SCREEN_PLACEHOLDERS.branchProtected}
         defaultValue={draft.values.branchProtected}
         onChange={(value) => dispatch({ type: "set", field: "branchProtected", value })}
         onSubmit={() => dispatch({ type: "next" })}
       />
-      {draft.errors.branchProtected && <Text color="red">{draft.errors.branchProtected}</Text>}
+      {draft.errors.branchProtected && (
+        <Text color={inkColor("fail")}>{draft.errors.branchProtected}</Text>
+      )}
       <Text dimColor>Enter to continue · Esc Back</Text>
     </Box>
   );
@@ -176,13 +180,13 @@ export function YoutrackScreen({ draft, dispatch }: ScreenProps): JSX.Element {
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 3 — YouTrack</Text>
       <Text dimColor>Base URL (https):</Text>
-      <TextInput
+      <StableTextInput
         placeholder={SCREEN_PLACEHOLDERS.youtrack}
         defaultValue={draft.values.baseUrl}
         onChange={(value) => dispatch({ type: "set", field: "baseUrl", value })}
         onSubmit={() => dispatch({ type: "next" })}
       />
-      {draft.errors.baseUrl && <Text color="red">{draft.errors.baseUrl}</Text>}
+      {draft.errors.baseUrl && <Text color={inkColor("fail")}>{draft.errors.baseUrl}</Text>}
       <Text dimColor>Enter to continue · Esc Back</Text>
     </Box>
   );

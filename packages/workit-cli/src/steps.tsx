@@ -1,3 +1,4 @@
+import { inkColor } from "./steps/ink-style";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useReducer, useRef, type JSX } from "react";
 import { createInitialDraft, reducer, type SetupValues, type WizardScreen } from "./wizard-state";
@@ -140,7 +141,7 @@ export function Wizard({
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Text bold color="cyan">
+      <Text bold color={inkColor("accent")}>
         workit — workflow rails for agentic coding
       </Text>
       {/* Screen changes mount the same element types (TextInput/SelectList) at the

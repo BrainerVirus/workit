@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -37,6 +37,18 @@ import {
 import { isolatedEnv } from "../shared/helpers/packages";
 import type { ToolkitConfig } from "../../packages/workit-core/src/core/config";
 import { emptyDetection, type HostId } from "../../packages/workit-cli/src/admin/detect-hosts";
+
+// React reports a render-loop or act() problem through console.error only; a
+// wizard that logs one is broken even when every frame still looks right.
+let consoleError: ReturnType<typeof spyOn<Console, "error">>;
+beforeEach(() => {
+  consoleError = spyOn(console, "error").mockImplementation(() => {});
+});
+afterEach(() => {
+  const calls = consoleError.mock.calls.map((call) => String(call[0]));
+  consoleError.mockRestore();
+  expect(calls).toEqual([]);
+});
 
 // Task 15 (WZ-12, WZ-16): the workspace draft supports current-project setup and
 // add/edit/remove, every accepted pattern shows a match preview produced by the
@@ -198,7 +210,11 @@ test("loadWorkspacesFrom parses the on-disk list and ignores non-arrays", () => 
 test("workspaceAdd starts an empty draft; workspaceSave appends the entry", () => {
   let d = reducer(draftWith([]), { type: "workspaceAdd" });
   expect(d.screen).toBe("workspaceName");
-  expect(d.workspaceDraft).toEqual({ name: "", glob: "", vcs: { provider: "gitlab" } });
+  expect(d.workspaceDraft).toEqual({
+    name: "",
+    glob: "",
+    vcs: { provider: "gitlab" },
+  });
   d = reducer(d, { type: "workspaceDraftName", value: "work" });
   d = reducer(d, { type: "workspaceDraftGlob", value: "/work/**" });
   d = reducer(d, { type: "workspaceSave" });
@@ -303,7 +319,11 @@ test("advanced workspace reducer preserves unknown fields and round-trips profil
     commitPolicy: { preset: "ticket-prefix" },
   });
   expect(saved.releaseTracks?.production).toMatchObject({
-    versionSource: { kind: "package-json", path: "apps/web/package.json", field: "version" },
+    versionSource: {
+      kind: "package-json",
+      path: "apps/web/package.json",
+      field: "version",
+    },
     requiredChecks: ["lint", "test"],
   });
   const inherited = setWorkspaceEditorValue(
@@ -316,7 +336,11 @@ test("advanced workspace reducer preserves unknown fields and round-trips profil
 
 test("first scoped field edit inherits the selected global preset without copying policy lists", () => {
   let draft = draftWith([entry("repo", "/work/repo/**")]);
-  draft = reducer(draft, { type: "set", field: "branchPreset", value: "github-flow" });
+  draft = reducer(draft, {
+    type: "set",
+    field: "branchPreset",
+    value: "github-flow",
+  });
   draft = reducer(draft, { type: "globalCommitPreset", value: "custom" });
   draft = reducer(draft, { type: "globalCommitPattern", value: "^WKT" });
   draft = reducer(draft, { type: "workspaceAdvancedOpen", index: 0 });
@@ -335,7 +359,10 @@ test("first scoped field edit inherits the selected global preset without copyin
     allowed: ["feature/*"],
   });
   expect(draft.workspaceDraft?.branchPolicy?.protected).toBeUndefined();
-  expect(draft.workspaceDraft?.commitPolicy).toEqual({ preset: "custom", pattern: "^WKT-\\d+" });
+  expect(draft.workspaceDraft?.commitPolicy).toEqual({
+    preset: "custom",
+    pattern: "^WKT-\\d+",
+  });
 });
 
 test("workspaceRemove splices the entry out", () => {
@@ -346,12 +373,18 @@ test("workspaceRemove splices the entry out", () => {
   expect(d.values.workspaces).toEqual([entry("personal", "/p/**")]);
   // an out-of-range index is a no-op
   expect(
-    reducer(draftWith([entry("work", "/work/**")]), { type: "workspaceRemove", index: 5 }),
+    reducer(draftWith([entry("work", "/work/**")]), {
+      type: "workspaceRemove",
+      index: 5,
+    }),
   ).toEqual(draftWith([entry("work", "/work/**")]));
 });
 
 test("workspaceAddCurrent derives name + pattern from the current project path", () => {
-  const d = reducer(draftWith([]), { type: "workspaceAddCurrent", path: "/home/u/proj" });
+  const d = reducer(draftWith([]), {
+    type: "workspaceAddCurrent",
+    path: "/home/u/proj",
+  });
   expect(d.screen).toBe("workspaces");
   expect(d.values.workspaces).toEqual([
     { name: "proj", glob: "/home/u/proj/**", vcs: { provider: "gitlab" } },
@@ -360,12 +393,18 @@ test("workspaceAddCurrent derives name + pattern from the current project path",
 
 test("workspaceAddCurrent provider follows the wizard VCS selection", () => {
   const github = reducer(
-    { ...draftWith([]), values: { ...draftWith([]).values, vcsProvider: "github" } },
+    {
+      ...draftWith([]),
+      values: { ...draftWith([]).values, vcsProvider: "github" },
+    },
     { type: "workspaceAddCurrent", path: "/home/u/proj" },
   );
   expect(github.values.workspaces[0].vcs?.provider).toBe("github");
   const skip = reducer(
-    { ...draftWith([]), values: { ...draftWith([]).values, vcsProvider: "skip" } },
+    {
+      ...draftWith([]),
+      values: { ...draftWith([]).values, vcsProvider: "skip" },
+    },
     { type: "workspaceAddCurrent", path: "/home/u/proj" },
   );
   // Skipped selection omits the section: no silent provider assumption.
@@ -470,7 +509,10 @@ test("buildSetupPreview: removing every workspace writes an empty list", () => {
       JSON.stringify({ workspaces: [entry("work", "/work/**")] }, null, 2) + "\n",
       "utf8",
     );
-    const preview = buildSetupPreview(previewValues({ workspaces: [] }), { dir, env: {} });
+    const preview = buildSetupPreview(previewValues({ workspaces: [] }), {
+      dir,
+      env: {},
+    });
     const ws = preview.mutations.find((m) => m.type === "update-workspaces") as Extract<
       SetupMutation,
       { type: "update-workspaces" }
@@ -547,7 +589,11 @@ test("workspace preview preserves unrelated fields and rejects a changed revisio
     concurrent.futureConfig = { retain: "concurrent edit" };
     writeFileSync(file, JSON.stringify(concurrent, null, 2) + "\n", "utf8");
 
-    const result = applySetupPreview(preview, { configDir: dir, home, env: {} });
+    const result = applySetupPreview(preview, {
+      configDir: dir,
+      home,
+      env: {},
+    });
     expect(result.ok).toBe(false);
     expect(result.entries[0]?.detail).toContain("changed after preview");
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
@@ -1072,7 +1118,10 @@ test("choosing GitHub Issues defaults new workspaces to github with issues linke
     expect(captured?.issueTracker).toBe("github");
     expect(captured?.baseUrl).toBe("");
     expect(captured?.workspaces[0].vcs?.provider).toBe("github");
-    expect(captured?.workspaces[0].issues).toEqual({ provider: "github", link_on_pr: true });
+    expect(captured?.workspaces[0].issues).toEqual({
+      provider: "github",
+      link_on_pr: true,
+    });
     tty.unmount();
   } finally {
     process.chdir(previous);

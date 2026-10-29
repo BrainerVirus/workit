@@ -1,3 +1,4 @@
+import { inkColor } from "./ink-style";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useRef, useState, type JSX } from "react";
 import type { HostDetection, HostId } from "../admin/detect-hosts";
@@ -78,7 +79,11 @@ export function HostPicker({
             ? option.label
             : `${checked ? "[✓]" : "[ ]"} ${option.label}${detection[host].configured ? " · already configured" : detection[host].detected ? " · detected" : " · unavailable"}`;
         return (
-          <Text key={option.value} color={row === index ? "cyan" : undefined} dimColor={!detected}>
+          <Text
+            key={option.value}
+            color={row === index ? inkColor("accent") : undefined}
+            dimColor={!detected}
+          >
             {row === index ? "❯ " : "  "}
             {label}
           </Text>
