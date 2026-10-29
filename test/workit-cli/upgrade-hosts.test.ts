@@ -498,6 +498,8 @@ const opencodeWorld = (versions: { before: string; after: string }, extraRow = f
         }workit       ${version}   @brainervirus/workit-opencode\n`,
       };
     }
+    if (command === "npm" && line === "view @brainervirus/workit-opencode version")
+      return { status: 0, stdout: `${versions.after}\n` };
     if (command === "opencode" && args[1] === "update") updated = true;
     return w.deps.run(command, args);
   };
@@ -639,6 +641,267 @@ test("Given an unrelated plugin row above Workit's in `opencode plugin list`, Wh
       }),
     ).toBe(0);
     expect(w.text()).toMatch(/opencode +updated +8\.37\.0 -> 8\.38\.0; OpenCode V2 loads it live/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+/** OpenCode whose `plugin list` reports the new version only some calls after the update. */
+const laggingOpencode = (lag: number) => {
+  const { w, run: base } = opencodeWorld({ before: "8.40.8", after: "8.40.8" });
+  let updated = false;
+  let listsAfter = 0;
+  const run = (command: string, args: string[]) => {
+    const line = args.join(" ");
+    if (command === "npm" && line === "view @brainervirus/workit-opencode version")
+      return { status: 0, stdout: "8.44.0\n" };
+    if (command === "opencode" && args[1] === "update") updated = true;
+    if (command === "opencode" && line === "plugin list" && updated && ++listsAfter > lag) {
+      w.calls.push([command, ...args]);
+      return {
+        status: 0,
+        stdout: "ID      VERSION  SOURCE\nworkit  8.44.0   @brainervirus/workit-opencode\n",
+      };
+    }
+    return base(command, args);
+  };
+  return { w, run };
+};
+
+test("Given `opencode plugin list` still reports the old version right after the update, When upgrade runs, Then the row reads the target as updated, never already current", async () => {
+  const { w, run } = laggingOpencode(1);
+  try {
+    expect(await runUpgradeCommand(["--hosts=opencode", "--yes"], { ...w.deps, run })).toBe(0);
+    expect(w.text()).toMatch(/opencode +updated +8\.40\.8 -> 8\.44\.0/);
+    expect(w.text()).not.toContain("already current (8.40.8)");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given `opencode plugin list` never reports the target, When upgrade runs, Then the row never calls an older version current and names the target", async () => {
+  const { w, run } = laggingOpencode(Number.POSITIVE_INFINITY);
+  try {
+    await runUpgradeCommand(["--hosts=opencode", "--yes"], { ...w.deps, run });
+    expect(w.text()).not.toMatch(/already current/);
+    expect(w.text()).toMatch(/opencode .*8\.40\.8.*8\.44\.0/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+/** The new binary, in process: the same command with the env the old one hands it. */
+const newBinary =
+  (w: ReturnType<typeof world>, seen: { argv: string[]; env: Record<string, string> }[]) =>
+  async (argv: string[], env: Record<string, string>) => {
+    seen.push({ argv, env });
+    return runUpgradeCommand(argv, { ...w.deps, env: { ...env } });
+  };
+
+test("Given a plain `workit upgrade` with a newer CLI, When it applies, Then the CLI installs first and the new binary upgrades the hosts with one table and exit code", async () => {
+  const w = world();
+  try {
+    const seen: { argv: string[]; env: Record<string, string> }[] = [];
+    const code = await runUpgradeCommand([], {
+      ...w.deps,
+      cliOnDisk: () => "2.0.0",
+      reexec: newBinary(w, seen),
+    });
+    expect(code, w.text()).toBe(0);
+    const install = w.calls.findIndex((call) => call.join(" ").startsWith("npm install --global"));
+    const firstHost = w.calls.findIndex((call) =>
+      /^(?:claude plugin update|codex plugin add|pi update)\b/.test(call.join(" ")),
+    );
+    expect(install).toBeGreaterThanOrEqual(0);
+    expect(install).toBeLessThan(firstHost);
+    // Re-executed once, with the hosts only, confirmed, and never re-planning the CLI.
+    expect(seen).toHaveLength(1);
+    expect(seen[0].argv).toEqual(["--yes", "--hosts=opencode,cursor,codex,pi,claude-code"]);
+    expect(
+      w.calls.filter((call) => call.join(" ").startsWith("npm install --global")),
+    ).toHaveLength(1);
+    expect(w.calls.filter((call) => call.join(" ") === "npm root --global")).toHaveLength(2);
+    const text = w.text();
+    expect(text).toContain("Continuing the upgrade with the new CLI");
+    expect(text).toMatch(/cli +updated +1\.0\.0 -> 2\.0\.0/);
+    expect(text).toMatch(/claude-code +updated +1\.0\.0 -> 2\.0\.0/);
+    expect(text).toMatch(/pi +updated +1\.0\.0 -> 2\.0\.0/);
+    expect(text.match(/^Result:/gm)).toHaveLength(1);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given the new binary fails a host, Then the exit code is 1 and the table still has the CLI row", async () => {
+  const w = world();
+  try {
+    w.state.codexFails = true;
+    const seen: { argv: string[]; env: Record<string, string> }[] = [];
+    const rows: string[] = [];
+    const code = await runUpgradeCommand(["--yes"], {
+      ...w.deps,
+      cliOnDisk: () => "2.0.0",
+      reexec: newBinary(w, seen),
+      onResult: (hosts) => rows.push(...hosts.map((h) => `${h.host}:${h.status}`)),
+    });
+    expect(code).toBe(1);
+    expect(w.text()).toMatch(/cli +updated/);
+    expect(w.text()).toMatch(/codex +FAILED/);
+    expect(rows).toContain("cli:updated");
+    expect(rows).toContain("codex:failed");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given the CLI install fails, Then the hosts still upgrade with the current code, the CLI row says so, and nothing is re-executed", async () => {
+  const w = world();
+  try {
+    const seen: { argv: string[]; env: Record<string, string> }[] = [];
+    const run = (command: string, args: string[]) =>
+      command === "npm" && args[0] === "install"
+        ? { status: 1, stdout: "", stderr: "EACCES" }
+        : w.deps.run(command, args);
+    const code = await runUpgradeCommand(["--yes"], {
+      ...w.deps,
+      run,
+      cliOnDisk: () => "1.0.0",
+      reexec: newBinary(w, seen),
+    });
+    expect(code).toBe(1);
+    expect(seen).toHaveLength(0);
+    const text = w.text();
+    expect(text).toMatch(
+      /cli +FAILED +CLI update failed.*hosts upgraded with workit \d+\.\d+\.\d+/,
+    );
+    expect(text).toMatch(/pi +updated +1\.0\.0 -> 2\.0\.0/);
+    expect(text).toMatch(/claude-code +updated/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("Given every host probe takes 1 s, When upgrade plans, Then the probes run at once and planning takes about one probe, not their sum", async () => {
+  const w = world();
+  try {
+    let probes = 0;
+    const runAsync = async (command: string, args: string[]) => {
+      probes++;
+      await sleep(1000);
+      return w.deps.run(command, args);
+    };
+    const started = Date.now();
+    expect(await runUpgradeCommand(["--preview"], { ...w.deps, runAsync })).toBe(0);
+    const elapsed = Date.now() - started;
+    expect(probes).toBeGreaterThanOrEqual(5);
+    expect(elapsed).toBeLessThan(3000);
+    expect(w.text()).toContain("cli         update 1.0.0 -> 2.0.0");
+    expect(w.text()).toMatch(/codex +update 1\.0\.0 -> 2\.0\.0/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given one probe never answers, When upgrade plans, Then that host reads could not check after the probe timeout and the others still plan", async () => {
+  const w = world();
+  try {
+    const runAsync = async (command: string, args: string[]) =>
+      command === "codex" && args.join(" ") === "plugin list --json"
+        ? new Promise<never>(() => {})
+        : w.deps.run(command, args);
+    const started = Date.now();
+    expect(
+      await runUpgradeCommand(["--preview"], { ...w.deps, runAsync, probeTimeoutMs: 200 }),
+    ).toBe(0);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(w.text()).toMatch(
+      /codex +cannot upgrade: could not check: `codex plugin list --json` timed out/,
+    );
+    expect(w.text()).toMatch(/pi +update 1\.0\.0 -> 2\.0\.0/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+/** A stand-in for the new CLI's entry script: one JSON report on stdout, its code in the rows file. */
+const fakeEntry = (home: string, code: number) => {
+  const file = path.join(home, "new-cli.mjs");
+  write(
+    file,
+    `import { writeFileSync } from "node:fs";
+const rows = [{ host: "cli", status: "updated", reason: "1.0.0 -> 2.0.0" }, { host: "pi", status: ${code ? '"failed"' : '"updated"'}, reason: "x" }];
+writeFileSync(process.env.WORKIT_UPGRADE_ROWS, JSON.stringify({ code: ${code}, rows }));
+process.stdout.write(JSON.stringify({ ok: ${code === 0}, argv: process.argv.slice(2), hosts: rows }, null, 2) + "\\n");
+`,
+  );
+  return file;
+};
+
+test("Given --yes --json and a CLI that updates, When the new CLI finishes, Then stdout is one JSON document and the exit code is the new CLI's", async () => {
+  for (const code of [0, 1]) {
+    const w = world();
+    try {
+      const rows: string[] = [];
+      const result = await runUpgradeCommand(["--yes", "--json"], {
+        ...w.deps,
+        cliEntry: fakeEntry(w.home, code),
+        cliOnDisk: () => "2.0.0",
+        onResult: (hosts) => rows.push(...hosts.map((h) => `${h.host}:${h.status}`)),
+      });
+      expect(result).toBe(code);
+      const report = JSON.parse(w.text());
+      expect(report.argv).toEqual([
+        "upgrade",
+        "--yes",
+        "--json",
+        "--hosts=opencode,cursor,codex,pi,claude-code",
+      ]);
+      expect(rows).toEqual(["cli:updated", code ? "pi:failed" : "pi:updated"]);
+    } finally {
+      w.cleanup();
+    }
+  }
+});
+
+test("Given --yes --json and a failed CLI install, Then stdout is one JSON document with the CLI row failed", async () => {
+  const w = world();
+  try {
+    const run = (command: string, args: string[]) =>
+      command === "npm" && args[0] === "install"
+        ? { status: 1, stdout: "", stderr: "EACCES" }
+        : w.deps.run(command, args);
+    expect(
+      await runUpgradeCommand(["--yes", "--json"], { ...w.deps, run, cliOnDisk: () => "1.0.0" }),
+    ).toBe(1);
+    const report = JSON.parse(w.text());
+    expect(report.hosts.find((h: { host: string }) => h.host === "cli").status).toBe("failed");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given the re-executed upgrade fails a host, Then it hands its exit code back and exits 0, so the failure line prints once (from the older CLI)", async () => {
+  const w = world();
+  try {
+    w.state.codexFails = true;
+    const rowsFile = path.join(w.home, "rows.json");
+    const code = await runUpgradeCommand(["--yes", "--hosts=codex"], {
+      ...w.deps,
+      env: {
+        WORKIT_UPGRADE_CONTINUE: JSON.stringify([
+          { host: "cli", status: "updated", reason: "1.0.0 -> 2.0.0" },
+        ]),
+        WORKIT_UPGRADE_ROWS: rowsFile,
+      },
+    });
+    expect(code).toBe(0);
+    const back = JSON.parse(readFileSync(rowsFile, "utf8"));
+    expect(back.code).toBe(1);
+    expect(
+      back.rows.map((row: { host: string; status: string }) => `${row.host}:${row.status}`),
+    ).toEqual(["cli:updated", "codex:failed"]);
   } finally {
     w.cleanup();
   }

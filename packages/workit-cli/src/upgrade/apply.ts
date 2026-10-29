@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, mkdirSync, copyFileSync, chmodSync, cpSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import pkg from "../../package.json" with { type: "json" };
 import { claudeWorkitInstalls } from "../admin/host-install";
 import { readSetupState } from "../admin/setup-state";
 import { type HostCommandResult } from "../admin/host-install";
@@ -52,6 +53,8 @@ const codexPluginRoot = (codexHome: string): string | null => {
 
 export type UpgradeResult = {
   ok: boolean;
+  /** The exit code of the new CLI that finished the upgrade after the CLI step. */
+  handedOff?: number;
   backup?: string;
   error?: string;
   hosts: HostOutcome[];
@@ -76,6 +79,44 @@ const opencodeVersion = async (
       return version;
   }
   return undefined;
+};
+
+/**
+ * OpenCode's row from the plugin version before the update, after it, and the
+ * published target. `opencode plugin list` can report the old version for a
+ * moment after the update rewrote the cache, so a reading below the target is
+ * taken once more. Only a version that already equaled the target before the
+ * update is "already current"; a version below the target is never current.
+ */
+const opencodeOutcome = async (
+  before: string | undefined,
+  target: string | undefined,
+  runAsync: ReturnType<typeof asyncRunner>,
+): Promise<HostOutcome> => {
+  const below = (version: string | undefined) =>
+    target !== undefined && (version === undefined || !versionAtLeast(version, target));
+  let after = await opencodeVersion(runAsync);
+  if (below(after)) after = (await opencodeVersion(runAsync)) ?? after;
+  const live = "OpenCode V2 loads it live";
+  if (before && target && versionAtLeast(before, target))
+    return { host: "opencode", status: "current", reason: `already current (${before})` };
+  if (after && below(after))
+    return {
+      host: "opencode",
+      status: "updated",
+      reason: `update ran, but OpenCode still lists ${after} (published ${target}); the doctor below checks its package cache`,
+    };
+  if (before && after && after !== before)
+    return { host: "opencode", status: "updated", reason: `${before} -> ${after}; ${live}` };
+  // Same version and no target to compare with (the registry did not answer).
+  if (before && after)
+    return {
+      host: "opencode",
+      status: "current",
+      reason: `unchanged (${after}); the published version could not be read`,
+    };
+  if (after) return { host: "opencode", status: "updated", reason: `now ${after}; ${live}` };
+  return { host: "opencode", status: "updated", reason: `scoped update ran; ${live}` };
 };
 
 /** Apply one plan entry; any thrown error stays this host's failure. */
@@ -183,26 +224,7 @@ const applyEntry = async (
       result = await runAsync(command.command, command.args);
     if (result.status !== 0) return fail(failureReason(command, result));
   }
-  if (entry.host === "opencode") {
-    const after = await opencodeVersion(runAsync);
-    if (before && after)
-      return after === before
-        ? {
-            host: "opencode",
-            status: "current",
-            reason: `already current (${after})`,
-          }
-        : {
-            host: "opencode",
-            status: "updated",
-            reason: `${before} -> ${after}; OpenCode V2 loads it live`,
-          };
-    return {
-      host: "opencode",
-      status: "updated",
-      reason: "scoped update ran; OpenCode V2 loads it live",
-    };
-  }
+  if (entry.host === "opencode") return opencodeOutcome(before, entry.published, runAsync);
   if (entry.host === "claude-code") {
     const after = claudeWorkitInstalls(home, env, null).find(
       (install) => install.id === entry.selector,
@@ -277,6 +299,10 @@ const refreshCodexAgents = async (
 export async function applyUpgrade(
   plan: UpgradePlan,
   deps: UpgradeDeps = {},
+  options: {
+    /** After the CLI updated: let the new CLI finish (its exit code), or undefined to go on here. */
+    handoff?: (cli: HostOutcome) => Promise<number | undefined>;
+  } = {},
 ): Promise<UpgradeResult> {
   const hosts: HostOutcome[] = [...plan.failed];
   const done = (backup?: string): UpgradeResult => {
@@ -341,6 +367,32 @@ export async function applyUpgrade(
   const progress = deps.progress ?? createProgress({ json: true });
   const statusOf = (outcome: HostOutcome | undefined): StepStatus =>
     outcome?.status === "failed" ? "failed" : outcome?.status === "updated" ? "done" : "skipped";
+  // The CLI goes first, so the host steps run with the new release's code:
+  // the new CLI finishes them, or (a failed CLI install) this one does and says so.
+  if (plan.cli) {
+    let cli: HostOutcome;
+    try {
+      cli = await progress.run(
+        "Updating the CLI",
+        () => applyCli(plan.cli!, runAsync, backup),
+        statusOf,
+        { signals: true },
+      );
+    } catch (error) {
+      cli = { host: "cli", status: "failed", reason: errorText(error), fix: CLI_FIX };
+    }
+    if (cli.status === "updated" && options.handoff) {
+      const code = await options.handoff(cli);
+      if (code !== undefined) return { ...done(backup), hosts: [...hosts, cli], handedOff: code };
+      if (plan.entries.length)
+        cli = {
+          ...cli,
+          reason: `${cli.reason}; the new CLI could not be started, hosts upgraded with workit ${pkg.version}`,
+        };
+    } else if (cli.status === "failed" && plan.entries.length)
+      cli = { ...cli, reason: `${cli.reason}; hosts upgraded with workit ${pkg.version}` };
+    hosts.push(cli);
+  }
   // A failed backup fails only Cursor's row: never repair without one.
   let cursorBackupError: string | null = null;
   if (plan.entries.some((entry) => entry.host === "cursor") && existsSync(paths.cursorRoot))
@@ -501,24 +553,6 @@ export async function applyUpgrade(
         reason: `${hosts[index].reason}; ${agents.note}`,
       };
   }
-  if (plan.cli)
-    try {
-      hosts.push(
-        await progress.run(
-          "Updating the CLI",
-          () => applyCli(plan.cli!, runAsync, backup),
-          statusOf,
-          { signals: true },
-        ),
-      );
-    } catch (error) {
-      hosts.push({
-        host: "cli",
-        status: "failed",
-        reason: errorText(error),
-        fix: CLI_FIX,
-      });
-    }
   return done(backup);
 }
 

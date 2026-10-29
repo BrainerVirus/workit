@@ -277,6 +277,13 @@ const listProcessesMatching = (match: (args: string) => boolean): ClaudeProcess[
   return found;
 };
 
+/** `ps` lstart has one-second resolution: a process that started in the same
+ *  second as an install (the daemon `workit upgrade` restarts) reads up to a
+ *  second early, so a start within this slack of the install counts as after it. */
+const PS_START_SLACK_MS = 2000;
+const startedBefore = (proc: ClaudeProcess, installedMs: number): boolean =>
+  proc.startedMs + PS_START_SLACK_MS < installedMs;
+
 /** Running `claude` processes with their start time. */
 const listClaudeProcesses = (): ClaudeProcess[] | null =>
   listProcessesMatching((args) => /^(\S*\/)?claude(\s|$)/.test(args));
@@ -314,7 +321,9 @@ const resolve = (options: DoctorOptions): Resolved => {
     workspaceRoot: options.workspaceRoot ?? env.WORKFLOW_WORKSPACE_ROOT ?? cwd,
     dev,
     opencodeConfig:
-      options.opencodeConfig ?? path.join(home, ".config", "opencode", "opencode.json"),
+      options.opencodeConfig ??
+      // As upgrade and OpenCode itself: XDG_CONFIG_HOME first, else ~/.config.
+      path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "opencode", "opencode.json"),
     opencodePackageCacheDir: options.opencodePackageCacheDir ?? null,
     cursorSettings: options.cursorSettings ?? path.join(home, ".cursor", "settings.json"),
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
@@ -1896,10 +1905,24 @@ const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbe
   };
 };
 
+/** The CLI's view checks both hosts: a stale Cursor install never hides a stale OpenCode cache. */
 const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
-  if (res.host === "opencode") {
-    return checkOpenCodePackageCache(res);
-  }
+  if (res.host === "opencode") return checkOpenCodePackageCache(res);
+  const cursor = checkCursorStaleInstall(res);
+  if (res.host !== "cli") return cursor;
+  const oc = checkOpenCodePackageCache(res);
+  if (oc.status === "pass") return cursor;
+  if (cursor.status === "pass") return oc;
+  if (oc.id !== "stale_install") return cursor;
+  return {
+    ...cursor,
+    registryProbed: Boolean(cursor.registryProbed || oc.registryProbed),
+    detail: `${cursor.detail}; ${oc.detail}`,
+    fix: [cursor.fix, oc.fix].filter(Boolean).join("; "),
+  };
+};
+
+const checkCursorStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
   if (res.host !== "cursor" && res.host !== "cli") {
     return {
       id: "stale_install",
@@ -2046,10 +2069,6 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
       registryProbed: true,
       detail: `installed local-dist workit-cursor ${installed} matches the published runtime ${expected}`,
     };
-    if (res.host === "cli") {
-      const oc = checkOpenCodePackageCache(res);
-      if (oc.status !== "pass") return oc;
-    }
     return cursorOk;
   }
   const cursorOk = {
@@ -2060,10 +2079,6 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
         ? "installed workit-cursor selectors are canonical"
         : `installed workit-cursor ${installed} on canonical selectors (hooks run this version through the pinned launcher; MCP resolves @latest at launch)`,
   };
-  if (res.host === "cli") {
-    const oc = checkOpenCodePackageCache(res);
-    if (oc.status !== "pass") return oc;
-  }
   return cursorOk;
 };
 
@@ -3042,7 +3057,7 @@ const checkClaudeSessionPlugin = (res: Resolved): DoctorCheck => {
       status: "info",
       detail: "could not list running claude processes (ps) — skipping",
     };
-  const stale = running.filter((proc) => proc.startedMs < latest.at);
+  const stale = running.filter((proc) => startedBefore(proc, latest.at));
   if (stale.length === 0)
     return {
       id,
@@ -3099,7 +3114,7 @@ const checkCodexSessionPlugin = (res: Resolved): DoctorCheck => {
       status: "info",
       detail: "could not list running codex processes (ps) — skipping",
     };
-  const stale = running.filter((proc) => proc.startedMs < latest.at);
+  const stale = running.filter((proc) => startedBefore(proc, latest.at));
   if (stale.length === 0)
     return {
       id,
