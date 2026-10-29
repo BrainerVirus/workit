@@ -14,6 +14,7 @@ import { projectTarget, type ProjectTarget } from "@brainervirus/workit-core/src
 import { buildSetupPreview, parseList, type SetupMutation } from "../logic";
 import { resolveBasePath } from "../wizard-state";
 import { SelectList } from "./select-list";
+import { SphereSpinner } from "./sphere-spinner";
 import type { ScreenProps } from "./screen-props";
 import { effectivePolicy, SCREEN_PLACEHOLDERS } from "./options";
 
@@ -104,7 +105,7 @@ export function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Elemen
           </Text>
         </Box>
       ) : (
-        <Text dimColor>Detecting branch policy…</Text>
+        <SphereSpinner label="Detecting branch policy" />
       )}
       <SelectList
         options={BRANCH_POLICY_ACTIONS}

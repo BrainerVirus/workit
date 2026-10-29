@@ -21,6 +21,8 @@ import {
 } from "./admin/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
 import { logger } from "./diagnostics";
+import { createProgress, type Progress } from "./progress";
+import { createStyle, type Style } from "./style";
 
 // The interactive wizards (`workit init`, `workit uninstall`). This is the
 // only module that loads ink/react; the router (main.ts) imports it lazily
@@ -30,27 +32,46 @@ import { logger } from "./diagnostics";
 // Configured / Skipped / Failed), the post-apply doctor summary, and the
 // /wk-status + doctor completion guidance. Partial failures propagate to a
 // nonzero exit code.
-function printApplySummary(result: SetupResult): void {
+const stdoutStyle = (): Style => createStyle({ stream: process.stdout, env: process.env });
+
+// The wizard's waits outside Ink. The setup apply and the host detection block
+// the thread in spawnSync, so each runs under progress.runSync: a helper process
+// keeps the sphere turning on stderr, which an Ink timer could not.
+const initProgress = (): Progress => createProgress({ stream: process.stderr, env: process.env });
+
+const statusPaint = (style: Style, status: string): string =>
+  status === "Failed"
+    ? style.fail(status)
+    : status === "Skipped"
+      ? style.warn(status)
+      : style.ok(status);
+
+function printApplySummary(result: SetupResult, style: Style): void {
   for (const entry of result.entries) {
     console.log(
-      `${entry.status.padEnd(11)} ${entry.file}${entry.detail ? ` — ${entry.detail}` : ""}`,
+      `${statusPaint(style, entry.status)}${" ".repeat(Math.max(0, 11 - entry.status.length))} ${style.path(entry.file)}${entry.detail ? ` — ${entry.detail}` : ""}`,
     );
   }
   for (const report of result.doctor) {
     console.log(
-      `doctor ${report.host}: ${report.ok ? "healthy" : "problems found"} (${report.summary.failed} failed)`,
+      `doctor ${report.host}: ${report.ok ? style.ok("healthy") : style.fail("problems found")} (${report.summary.failed} failed)`,
     );
   }
-  console.log(result.ok ? "Setup complete." : "Setup finished with problems.");
-  for (const line of setupCompletionGuidance()) console.log(line);
+  console.log(
+    result.ok ? style.ok("Setup complete.") : style.warn("Setup finished with problems."),
+  );
+  for (const line of setupCompletionGuidance()) {
+    console.log(line.replace(/`([^`]+)`/g, (_, command: string) => style.command(command)));
+  }
 }
 
 // WZ-06 / RL-01: the one friendly blocked output for malformed setup state,
 // shared by the pre-wizard guard and the post-Apply preview guard.
 function printMalformedBlocked(state: SetupState): void {
-  console.log("Apply blocked — malformed configuration:");
+  const style = stdoutStyle();
+  console.log(style.fail("Apply blocked — malformed configuration:"));
   for (const entry of [state.config, state.youtrack, state.vcs, state.workspaces]) {
-    if (entry.status === "malformed") console.log(`  ${entry.error ?? entry.file}`);
+    if (entry.status === "malformed") console.log(`  ${style.path(entry.error ?? entry.file)}`);
   }
 }
 
@@ -77,6 +98,7 @@ export async function runInit() {
     for (const line of setupCompletionGuidance()) console.log(line);
     process.exit(1);
   }
+  const progress = initProgress();
   logger.info(EVENT.installSteps, { step: "wizard_start" });
   const exits: Array<{ complete: boolean; values?: SetupValues }> = [];
   let done: () => void = () => {};
@@ -87,7 +109,7 @@ export async function runInit() {
     <Wizard
       // Live auto-detect: installed hosts preselect, registered ones are
       // tagged.
-      detection={detectHosts()}
+      detection={progress.runSync("Detecting installed hosts", () => detectHosts())}
       onExit={(complete, values) => {
         exits.push({ complete, values });
         done();
@@ -125,7 +147,13 @@ export async function runInit() {
       printMalformedBlocked(preview.state);
       process.exit(1);
     }
-    const result = applySetupPreview(preview, { cwd: base, env: process.env });
+    // Blocking: host installs spawn the host CLIs and the post-apply doctor runs
+    // inside, so the sphere comes from the helper process, not an Ink timer.
+    const result = progress.runSync(
+      "Installing hosts, writing permissions and checking with doctor",
+      () => applySetupPreview(preview, { cwd: base, env: process.env }),
+      (applied) => (applied.ok ? "done" : "failed"),
+    );
     // CA-06: the branch-policy screen is applied separately through the shared
     // proposal→write helper (byte-identical to the host init action) right
     // after the setup preview; its status line joins the summary below. The
@@ -133,16 +161,24 @@ export async function runInit() {
     // cannot drift.
     let exitCode = result.exitCode;
     if (exit.values.branchPolicy) {
-      const bp = applyWizardBranchPolicy(exit.values.branchPolicy, base, process.env);
+      const policy = exit.values.branchPolicy;
+      const bp = progress.runSync(
+        "Writing the branch policy",
+        () => applyWizardBranchPolicy(policy, base, process.env),
+        (written) => (written.ok ? "done" : "failed"),
+      );
+      const style = stdoutStyle();
       if (bp.ok) {
-        console.log(`${String(bp.status).padEnd(11)} ${bp.config_path} — branch policy`);
+        console.log(
+          `${style.ok(String(bp.status).padEnd(11))} ${style.path(bp.config_path)} — branch policy`,
+        );
       } else {
-        console.log("branch policy apply failed — " + (bp.error ?? "unknown"));
+        console.log(style.fail("branch policy apply failed") + " — " + (bp.error ?? "unknown"));
         exitCode = 1;
       }
     }
     logger.info(EVENT.installSteps, { step: "wizard_apply", ok: result.ok });
-    printApplySummary(result);
+    printApplySummary(result, stdoutStyle());
     process.exit(exitCode);
   }
   logger.info(EVENT.installSteps, {
