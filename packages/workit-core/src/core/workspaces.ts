@@ -16,6 +16,7 @@ import {
 } from "./config";
 import type { CommitFlavorPreset } from "./commit-flavors";
 import { repoBranchPreset } from "./branch-policy";
+import { remotePattern } from "./remotes";
 
 export type VcsProvider = "gitlab" | "github";
 
@@ -183,6 +184,20 @@ const workspaceConfigSchema = z
      * global default.
      */
     models: z.object({ roles: z.unknown().optional() }).passthrough().optional(),
+    /**
+     * Remote URLs this entry owns (#549): a checkout pushing to or opening PRs
+     * on one never exceeds this entry's grants, wherever the folder is
+     * (core/remotes.ts normalizes them; `/*` claims a whole owner). Grant-like:
+     * only the user changes it, in their own terminal.
+     */
+    remotes: z
+      .array(
+        nonBlank.refine(
+          (pattern) => remotePattern(pattern) !== null,
+          "is not a remote URL (https://host/owner/repo, git@host:owner/repo, a path, or owner/*)",
+        ),
+      )
+      .optional(),
     /** Autonomy grants (D15): only ever set here, by the user. */
     autonomy: z
       .object(

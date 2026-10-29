@@ -36,8 +36,10 @@ import os from "node:os";
 import path from "node:path";
 import { resolveConfigDir } from "./core/config";
 import { writeFileAtomic } from "./core/safe-write";
+import { checkoutRemotes, remoteMatches } from "./core/remotes";
 import {
   checkoutsAbove,
+  loadWorkspacesFrom,
   readWorkspacesResult,
   resolveWorkspaceFrom,
   validateWorkspacesDocument,
@@ -115,7 +117,11 @@ export const raisesEndpoint = (current: DefaultEndpoint, next: DefaultEndpoint):
  * version does not know falls back to `commit` and is reported in `issue`, so
  * a newer Workit's endpoint never invalidates the file for an older one.
  */
-function endpointOf(entry: unknown): { raw: unknown; endpoint: DefaultEndpoint; issue?: string } {
+function endpointOf(entry: unknown): {
+  raw: unknown;
+  endpoint: DefaultEndpoint;
+  issue?: string;
+} {
   const raw = (entry as { defaultEndpoint?: unknown } | null)?.defaultEndpoint;
   if (raw === undefined) return { raw, endpoint: DEFAULT_ENDPOINT };
   if (isDefaultEndpoint(raw)) return { raw, endpoint: raw };
@@ -376,7 +382,7 @@ function autonomyOf(workspace: WorkspaceConfig | null): Autonomy {
  */
 function capAt(
   named: Autonomy,
-  where: string | Error,
+  where: string | Error | { entry: WorkspaceConfig },
   by: string,
   why: string,
   main = false,
@@ -385,7 +391,9 @@ function capAt(
   let none = "";
   try {
     if (where instanceof Error) throw where;
-    folder = autonomyOf(resolveWorkspaceFrom(where, grantsDir()));
+    folder = autonomyOf(
+      typeof where === "string" ? resolveWorkspaceFrom(where, grantsDir()) : where.entry,
+    );
   } catch (error) {
     // Its entries tie (the only resolver error once `named` resolved), or git
     // did not answer (`where`): nothing granted.
@@ -452,7 +460,60 @@ export function resolveAutonomy(cwd: string): Autonomy {
       "a worktree or submodule never exceeds it",
       true,
     );
-  return autonomy;
+  return capAtRemotes(autonomy, cwd);
+}
+
+/**
+ * Every entry whose `remotes` claims one of the checkout's remote URLs caps
+ * its grants (#549): grants follow the folder, so a fresh repository whose
+ * origin is a stricter workspace's remote would otherwise push there with the
+ * folder's grants. Git is asked only when some entry claims remotes; a git
+ * error or an unreadable URL caps at nothing.
+ */
+function capAtRemotes(autonomy: Autonomy, cwd: string): Autonomy {
+  const claiming = loadWorkspacesFrom(grantsDir()).filter((entry) => entry.remotes?.length);
+  if (claiming.length === 0) return autonomy;
+  const remotes = checkoutRemotes(cwd);
+  if (remotes instanceof Error)
+    return capAt(autonomy, remotes, "git", "a remote URL that cannot be read never raises grants");
+  let capped = autonomy;
+  for (const remote of remotes)
+    for (const entry of claiming) {
+      const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
+      if (pattern)
+        capped = capAt(
+          capped,
+          { entry },
+          `remote ${remote.name} ${remote.url} (workspace ${entry.name} claims ${pattern})`,
+          "a checkout never exceeds the workspace that owns its remote",
+        );
+    }
+  return capped;
+}
+
+/** The entries whose `remotes` claim one of `cwd`'s remote URLs (grant show, doctor). */
+export function remoteClaims(
+  cwd: string,
+): { remote: string; url: string; workspace: string; pattern: string }[] | Error {
+  const claiming = loadWorkspacesFrom(grantsDir()).filter((entry) => entry.remotes?.length);
+  if (claiming.length === 0) return [];
+  const remotes = checkoutRemotes(cwd);
+  if (remotes instanceof Error) return remotes;
+  return remotes.flatMap((remote) =>
+    claiming.flatMap((entry) => {
+      const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
+      return pattern
+        ? [
+            {
+              remote: remote.name,
+              url: remote.url,
+              workspace: entry.name,
+              pattern,
+            },
+          ]
+        : [];
+    }),
+  );
 }
 
 const accountOf = (entry: unknown): unknown =>
@@ -546,7 +607,11 @@ export type GrantWrite =
       configured: GrantKind[];
       verification: VerificationMode;
     })
-  | { ok: false; code: "not_found" | "invalid_input" | "failed"; error: string };
+  | {
+      ok: false;
+      code: "not_found" | "invalid_input" | "failed";
+      error: string;
+    };
 
 /**
  * Set (`value`) or unset (`undefined`) grants of a named workspace in the
@@ -566,9 +631,17 @@ export function writeGrants(
 ): GrantWrite {
   const current = readWorkspacesResult(dir);
   if (current.status === "missing")
-    return { ok: false, code: "not_found", error: `${current.path} does not exist` };
+    return {
+      ok: false,
+      code: "not_found",
+      error: `${current.path} does not exist`,
+    };
   if (current.status !== "valid" || !current.document)
-    return { ok: false, code: "invalid_input", error: current.error ?? "invalid workspaces.json" };
+    return {
+      ok: false,
+      code: "invalid_input",
+      error: current.error ?? "invalid workspaces.json",
+    };
   const document = structuredClone(current.document) as {
     workspaces?: Record<string, unknown>[];
   };
@@ -606,11 +679,19 @@ export function writeGrants(
   else entry.autonomy = autonomy;
   const validated = validateWorkspacesDocument(document, current.path);
   if (validated.status !== "valid")
-    return { ok: false, code: "invalid_input", error: validated.error ?? "invalid result" };
+    return {
+      ok: false,
+      code: "invalid_input",
+      error: validated.error ?? "invalid result",
+    };
   // Re-read just before writing: a concurrent edit wins over this one.
   const latest = readWorkspacesResult(dir);
   if (latest.revision !== current.revision)
-    return { ok: false, code: "failed", error: `${current.path} changed; retry` };
+    return {
+      ok: false,
+      code: "failed",
+      error: `${current.path} changed; retry`,
+    };
   let backup: string | null = null;
   try {
     if (existsSync(current.path)) {

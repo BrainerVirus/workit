@@ -3,6 +3,7 @@
 // repository whose grants were never read, so it is refused before it loads;
 // read-only verbs keep working (dotfile repositories use GIT_DIR daily).
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -87,7 +88,11 @@ test("Given a strict repository and a plain folder under a permissive workspace,
     JSON.stringify({
       workspaces: [
         { name: "strict", glob: glob(repo.root), autonomy: { release: false } },
-        { name: "open", glob: glob(plain), autonomy: { release: true, push: true } },
+        {
+          name: "open",
+          glob: glob(plain),
+          autonomy: { release: true, push: true },
+        },
       ],
     }),
   );
@@ -96,12 +101,18 @@ test("Given a strict repository and a plain folder under a permissive workspace,
   const inside = await run(["git", "push", "--release", "develop", "--json"], repo.cwd);
   expect(inside.code, inside.stdout + inside.stderr).toBe(3);
   expect(inside.stdout).toContain("grant_required");
-  const vars = { GIT_DIR: path.join(repo.cwd, ".git"), GIT_WORK_TREE: repo.cwd };
+  const vars = {
+    GIT_DIR: path.join(repo.cwd, ".git"),
+    GIT_WORK_TREE: repo.cwd,
+  };
   const redirected = await withProcessEnv(vars, () =>
     run(["git", "push", "--release", "develop", "--json"], plain),
   );
   expect(redirected.code, redirected.stdout + redirected.stderr).toBe(3);
-  const envelope = JSON.parse(redirected.stdout) as { error: string; unblock: string };
+  const envelope = JSON.parse(redirected.stdout) as {
+    error: string;
+    unblock: string;
+  };
   expect(envelope.error).toContain("git_env_redirect: GIT_DIR, GIT_WORK_TREE are set");
   expect(envelope.unblock).toBe(
     "unset GIT_DIR GIT_WORK_TREE, or cd into the repository and run workit git push there",
@@ -129,10 +140,16 @@ test("Given each redirecting git variable, When any grant-gated verb runs, Then 
   const cwd = plainFolder();
   for (const name of GIT_REDIRECT_ENV)
     for (const argv of GATED) {
-      const result = await run([...argv, "--json"], cwd, { ...process.env, [name]: "/elsewhere" });
+      const result = await run([...argv, "--json"], cwd, {
+        ...process.env,
+        [name]: "/elsewhere",
+      });
       const label = `${name} ${argv.join(" ")}`;
       expect(result.code, label).toBe(3);
-      const envelope = JSON.parse(result.stdout) as { error: string; unblock: string };
+      const envelope = JSON.parse(result.stdout) as {
+        error: string;
+        unblock: string;
+      };
       expect(envelope.error, label).toStartWith(`git_env_redirect: ${name} is set`);
       expect(envelope.unblock, label).toStartWith(`unset ${name}, or cd into the repository`);
     }
@@ -180,8 +197,16 @@ for (const kind of ["gitdir file", "symlink"] as const)
         path.join(configHome.configDir, "workspaces.json"),
         JSON.stringify({
           workspaces: [
-            { name: "strict", glob: glob(repo.root), autonomy: { release: false, push: false } },
-            { name: "open", glob: glob(open), autonomy: { release: true, push: true } },
+            {
+              name: "strict",
+              glob: glob(repo.root),
+              autonomy: { release: false, push: false },
+            },
+            {
+              name: "open",
+              glob: glob(open),
+              autonomy: { release: true, push: true },
+            },
           ],
         }),
       );
@@ -217,8 +242,16 @@ for (const shape of ["bare-style folder", "real .git directory"] as const)
         path.join(configHome.configDir, "workspaces.json"),
         JSON.stringify({
           workspaces: [
-            { name: "strict", glob: glob(repo.root), autonomy: { release: false, push: false } },
-            { name: "open", glob: glob(open), autonomy: { release: true, push: true } },
+            {
+              name: "strict",
+              glob: glob(repo.root),
+              autonomy: { release: false, push: false },
+            },
+            {
+              name: "open",
+              glob: glob(open),
+              autonomy: { release: true, push: true },
+            },
           ],
         }),
       );
@@ -240,3 +273,68 @@ for (const shape of ["bare-style folder", "real .git directory"] as const)
       expect(repo.remoteTip("feature/x")).toBeNull();
     },
   );
+
+// #549: no pointer and no variable. A fresh repository inside a permissive
+// workspace whose origin is the strict workspace's remote: grants follow the
+// folder unless the strict entry claims the remote in `remotes`.
+const freshClone = (repo: RemoteRepo, open: string): string => {
+  const fresh = path.join(open, "x");
+  mkdirSync(fresh);
+  const git = (...args: string[]) => {
+    const result = spawnSync("git", args, { cwd: fresh, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  };
+  git("init", "-q", "-b", "main");
+  git("config", "user.name", "t");
+  git("config", "user.email", "t@t");
+  git("config", "commit.gpgsign", "false");
+  git("remote", "add", "origin", repo.bare);
+  git("fetch", "-q", "origin");
+  git("switch", "-q", "-c", "develop", "origin/develop");
+  writeFileSync(path.join(fresh, "fresh.txt"), "fresh\n");
+  git("add", "-A");
+  git("commit", "-qm", "chore: fresh");
+  return fresh;
+};
+
+for (const claimed of [true, false])
+  test(`Given a fresh repository in a permissive workspace whose origin is a strict workspace's remote${claimed ? " that strict claims in remotes" : " that no entry claims"}, When workit git push --release develop runs there, Then ${claimed ? "it exits 3 grant_required naming strict and develop does not move" : "the folder's grants apply (remotes is opt-in)"}`, async () => {
+    const repo = strictRepo();
+    const open = plainFolder();
+    const glob = (dir: string) => `${dir.replaceAll("\\", "/")}/**`;
+    writeFileSync(
+      path.join(configHome.configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "strict",
+            glob: glob(repo.root),
+            autonomy: { release: false, push: false },
+            ...(claimed ? { remotes: [repo.bare] } : {}),
+          },
+          {
+            name: "open",
+            glob: glob(open),
+            autonomy: { release: true, push: true },
+          },
+        ],
+      }),
+    );
+    const fresh = freshClone(repo, open);
+    const develop = repo.remoteTip("develop");
+    const result = await run(["git", "push", "--release", "develop", "--json"], fresh);
+    if (!claimed) {
+      expect(result.code, result.stdout + result.stderr).toBe(0);
+      expect(repo.remoteTip("develop")).not.toBe(develop);
+      return;
+    }
+    expect(result.code, result.stdout + result.stderr).toBe(3);
+    const envelope = JSON.parse(result.stdout) as {
+      error: string;
+      unblock: string;
+    };
+    expect(envelope.error).toContain("grant_required");
+    expect(envelope.error).toContain(`workspace strict claims ${repo.bare}`);
+    expect(envelope.unblock).toContain(`workspace "strict"`);
+    expect(repo.remoteTip("develop")).toBe(develop);
+  });
