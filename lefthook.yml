@@ -4,16 +4,21 @@
 # dependency install: bun does not trust it, and package.json opts pnpm/yarn out.
 no_auto_install: true
 
+# The format job only checks. A fix here cannot be kept: `git commit -- <paths>`
+# (what `workit git commit` runs) hooks against a temporary index, so a staged
+# fix lands in the commit but never in the real index, leaving the clone at MM.
+# Tools come from the committing checkout's pinned node_modules, not `bunx`
+# (which fetches an unpinned oxfmt/oxlint in a worktree without an install).
 pre-commit:
   parallel: true
   jobs:
     - name: format
       glob: "*.{ts,tsx,js,cjs,mjs,json,jsonc,yml,yaml}"
-      run: bunx oxfmt --no-error-on-unmatched-pattern {staged_files}
-      stage_fixed: true
+      run: node_modules/.bin/oxfmt --check --config .oxfmtrc.json --no-error-on-unmatched-pattern {staged_files}
+      fail_text: staged files are not formatted; run `bun run format`, `git add` them, commit again
     - name: lint
       glob: "*.{ts,tsx,js,cjs,mjs}"
-      run: bunx oxlint --no-error-on-unmatched-pattern {staged_files}
+      run: node_modules/.bin/oxlint --no-error-on-unmatched-pattern {staged_files}
 
 # semantic-release derives versions from Conventional Commits, so a malformed
 # message silently changes release behavior.

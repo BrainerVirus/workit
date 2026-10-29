@@ -143,3 +143,15 @@ after 15 minutes; nothing retries a failed test. PRs touching only `docs/**`
 CI also runs `bun run knip` (unused files/exports and reachability),
 `bun run doctor` (react-doctor on the CLI UI; success ends with `react-doctor: scanned <n> files, 0 issues`, any warning exits non-zero, and a run that never prints that line did not pass), actionlint and zizmor, which
 `bun run check` does not, and lints the PR title with commitlint. Run knip after deleting or moving exports.
+
+## Git hooks
+
+`lefthook.yml` runs `node_modules/.bin/oxfmt --check` and `oxlint` on staged
+files, never `bunx` (an unpinned download in a worktree without an install). The
+format job only checks: `git commit -- <paths>`, which `workit git commit` runs,
+hooks against a temporary index, so a fix made there reaches the commit but not
+the real index and leaves `git status` at `MM`. After this fix, reinstall once
+per clone with `bun run hooks:install`; it also removes the absolute lefthook
+path (for example another worktree's `node_modules`) that `lefthook install`
+bakes into the shared `.git/hooks`. `test/artifacts/install-hooks.test.ts`
+covers both with a temp repo and a linked worktree.
