@@ -380,6 +380,40 @@ test("G a feature branch and a sibling repo on main, W the sibling is entered on
   });
 });
 
+test("G a protected repository and a sibling folder, W a raw push onto main redirected there by git's environment, T it is denied; one whose target git cannot be read is denied too (#545)", async () => {
+  await withProtectedMain(() => {
+    const parent = tempRoot("workit-raw-git-env-");
+    roots.push(parent);
+    const root = repo({ branch: "feature/x", at: path.join(parent, "strict") });
+    git(root, "remote", "add", "origin", path.join(parent, "origin.git"));
+    // A plain repository outside every Workit workspace.
+    const other = repo({ at: path.join(parent, "other"), store: false });
+    const gitDir = sq(path.join(root, ".git"));
+    for (const command of [
+      `GIT_DIR=${gitDir} GIT_WORK_TREE=${sq(root)} git push origin main`,
+      `env GIT_DIR=${gitDir} git push origin main`,
+      `export GIT_DIR=${gitDir}; git push origin main`,
+      `git --git-dir=${gitDir} push origin main`,
+      // The common directory holds the refs and the remotes git pushes.
+      `GIT_COMMON_DIR=${gitDir} git push origin main`,
+      `export GIT_COMMON_DIR=${gitDir}; git push origin main`,
+      // Where git would push cannot be read: refused rather than waved through.
+      "GIT_DIR=$STRICT git push origin main",
+      'git --git-dir "$STRICT" push origin main',
+    ])
+      expect(claudeOut(other, command)?.permissionDecision, command).toBe("deny");
+    const unknown = claudeOut(other, "GIT_DIR=$STRICT git push origin main");
+    expect(unknown?.permissionDecisionReason).toContain("Unset GIT_DIR, or cd into the repository");
+    // Reads and a dotfile repository's own push stay allowed.
+    for (const command of [
+      "GIT_DIR=$STRICT git status",
+      `GIT_DIR=${gitDir} git log -1`,
+      "GIT_DIR=$HOME/.dotfiles GIT_WORK_TREE=$HOME git commit -qam x",
+    ])
+      expect(claudeOut(other, command)?.permissionDecision, command).toBeUndefined();
+  });
+});
+
 test("G Claude Code's PowerShell tool, W git -C <path with a backslash> push onto main, T the path is read as PowerShell does", async () => {
   await withProtectedMain(() => {
     const parent = tempRoot("workit-raw-git-ps-");

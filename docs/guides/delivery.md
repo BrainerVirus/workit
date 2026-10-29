@@ -4,6 +4,21 @@ The delivery verbs do the mechanical part of shipping and record what they
 observed in the run ledger. Each one checks the workspace
 [grants](grants.md) where it applies; a host deny always wins.
 
+Grants are read for the folder the verb runs in, while git follows
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`,
+`GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and
+`GIT_NAMESPACE`. With any of them set, the grant-gated verbs (`git push`,
+`release start|finish|publish`, `pr create|merge|ready|edit`,
+`stack sync|restack|land`, `ci rerun`) refuse with `git_env_redirect`
+and name the variables: unset them, or `cd` into the repository and run the
+verb there. Read-only verbs still run under them, so a dotfile repository
+keeps working. The shell hook likewise denies a raw `git push` that one of
+these points at a protected branch, or at a repository it cannot read
+(`GIT_DIR=$X git push`). A folder whose `.git` is a `gitdir:` file or a
+symlink into another checkout's repository is capped at that checkout's
+grants, and at none when no checkout owns the git directory (a
+`--separate-git-dir` repository).
+
 ## Branch, commit, push
 
 ```bash

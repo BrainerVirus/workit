@@ -54,6 +54,9 @@ export type RawInvocation = {
   /** Its standard input when the command line spells it out: a heredoc, a
    * here-string or a literal `echo …|`/`printf …|`. */
   stdin?: string;
+  /** The variable or option that moved git to a repository the hook cannot
+   * read (`GIT_DIR=$X`, `--git-dir "$X"`): `dir` is then undefined. */
+  redirect?: string;
 };
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "mksh", "yash", "fish"]);
@@ -487,20 +490,25 @@ const gitInvocation = (
   let here = dir;
   const config = [...inherited];
   let gitDir = env.GIT_DIR;
+  let from = "GIT_DIR";
   let index = 0;
   for (; index < words.length; index++) {
     const word = words[index];
     if (word === "-C") here = words[index + 1] ? joinDir(here, words[++index]) : here;
     else if (GIT_CONFIG_OPTIONS.has(word)) {
-      if (word === "--git-dir") gitDir = words[index + 1];
+      if (word === "--git-dir") [gitDir, from] = [words[index + 1], "--git-dir"];
       if (words[index + 1] !== undefined) config.push(word, words[++index]);
     } else if (/^--(?:config-env|git-dir)=/.test(word)) {
-      if (word.startsWith("--git-dir=")) gitDir = word.slice("--git-dir=".length);
+      if (word.startsWith("--git-dir="))
+        [gitDir, from] = [word.slice("--git-dir=".length), "--git-dir"];
       config.push(word);
     } else if (GIT_VALUE_OPTIONS.has(word)) index++;
     else if (!word.startsWith("-")) break;
   }
+  // The common directory holds the refs and remotes a push reads (#545).
+  if (env.GIT_COMMON_DIR) [gitDir, from] = [env.GIT_COMMON_DIR, "GIT_COMMON_DIR"];
   // `--git-dir x/.git` (or GIT_DIR) works on the repository at x, wherever the shell is.
+  const known = here !== undefined;
   if (gitDir) here = joinDir(here, gitDir.replace(/(?:^|[\\/]+)\.git[\\/]*$/, "") || ".");
   return {
     tool: "git",
@@ -509,6 +517,7 @@ const gitInvocation = (
     ...(config.length ? { config } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(stdin === undefined ? {} : { stdin }),
+    ...(known && here === undefined ? { redirect: from } : {}),
   };
 };
 
@@ -1836,6 +1845,11 @@ export function rawGitPre(
     const nudges = new Map<string, string>();
     let store: string | null = null;
     const cache: ConfigCache = new Map();
+    // A push git's environment sends to a repository the hook cannot read (#545).
+    const blind = rawInvocations(command, dialect).find(
+      (raw) => raw.redirect && rawAction(raw)?.kind === "push",
+    );
+    if (blind?.redirect) return deny(blindRedirect(blind.redirect));
     for (const { action, repo, invocation } of actionsIn(input.cwd, command, dialect, cache)) {
       store ??= repo.location.dir;
       if (action.kind === "merge") return deny(refusal(action, null));
@@ -1856,6 +1870,9 @@ export function rawGitPre(
 }
 
 const deny = (reason: string): HookDecision => ({ kind: "deny", reason, unblock: null });
+
+const blindRedirect = (from: string): string =>
+  `workit: ${quote(from)} sends this push to a repository the shell hook cannot read, so it does not run. ${from.startsWith("-") ? `Drop ${quote(from)}` : `Unset ${from}`}, or cd into the repository and push with ${quote("workit git push")}.`;
 
 /**
  * A command the shell hook could not analyze is refused, not waved through:
