@@ -520,7 +520,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "git",
     group: "delivery",
     summary:
-      "Policy-checked branch and commit (Workit-Session trailer); push with a lease and a verified remote tip",
+      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and a verified remote tip",
     subcommands: [
       {
         name: "branch",
@@ -532,9 +532,20 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "commit",
         usage:
-          "workit git commit -m|--message <msg>… | -F|--file <file|-> [--trailer <key: value>]… [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>]",
+          "workit git commit -m|--message <msg>… | -F|--file <file|-> [--trailer <key: value>]… [--amend [--no-edit]] [--allow-empty] [-a|--all | --staged | [--whole] [--] <paths…>]",
         summary:
-          "Commit (or --amend) with a linted Conventional Commit message, the session trailer (unless the workspace sets trailers: false) and any --trailer",
+          "Commit (or --amend) with a linted Conventional Commit message, the session trailer (unless the workspace sets trailers: false) and any --trailer; a path staged in part commits its staged hunks only (--whole for all of it), --staged commits exactly the index",
+      },
+      {
+        name: "stage",
+        usage: "workit git stage --patch <file|-> | [--] <paths…>",
+        summary:
+          "Stage selected hunks without git add -p: apply a unified diff to the index only (checked first); or stage whole paths",
+      },
+      {
+        name: "unstage",
+        usage: "workit git unstage [--] <paths…>",
+        summary: "Put paths back to HEAD in the index; the working tree keeps the changes",
       },
       {
         name: "push",
@@ -556,6 +567,8 @@ export const VERBS: readonly VerbEntry[] = [
       'workit git commit -m "fix(cli): answer help flags first" --all',
       'workit git commit -m "feat: x" --trailer "Co-Authored-By: Name <email>" --all',
       "workit git commit --amend --no-edit -- src/forgotten.ts",
+      "workit git stage --patch hunks.patch  # a git diff trimmed to the hunks to commit",
+      'workit git commit --staged -m "fix(a): one focused change"',
       "workit git push --set-upstream",
     ],
     load: () => import("./git"),

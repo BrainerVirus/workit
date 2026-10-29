@@ -10,7 +10,10 @@
 // - commit: never on a protected branch; the subject must pass the workspace
 //   commit convention (auto = the flavor the history uses). Only the index,
 //   the named paths (`--only` semantics) or, with --all, everything is
-//   committed: unrelated dirt is never swept in implicitly. The acting session
+//   committed: unrelated dirt is never swept in implicitly. A named path the
+//   user staged in part (`git add -p`, `workit git stage --patch`) commits its
+//   staged content only, unless --whole; --staged commits exactly the index.
+//   The acting session
 //   goes into a `Workit-Session:` trailer and a `commit.recorded` ledger row,
 //   so a verdict from the same session reads as the author's (D18). A
 //   workspace with `trailers: false` gets the ledger row only. `--trailer`
@@ -20,7 +23,7 @@
 //   the tip workit last recorded, and success only when the remote tip
 //   observed afterwards equals the local SHA (`push.verified` row).
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import {
   branchKindOf,
@@ -424,6 +427,8 @@ export type CommitOutcome = {
   amended: string | null;
   /** Follow-ups the agent should know (an amended commit that was already pushed). */
   notes: string[];
+  /** Named paths staged in part: only their staged content was committed. */
+  keptPartial: string[];
   /** The ledger row id, or why it could not be written (the commit stands). */
   recorded: { id: string } | { error: string };
 };
@@ -601,6 +606,61 @@ function resyncCommittedPaths(cwd: string, paths: readonly string[]): void {
     git(cwd, ["reset", "-q", "HEAD", "--", ...stale.map((file) => `:(top,literal)${file}`)]);
 }
 
+/**
+ * Files under `paths` staged in part: the index differs from HEAD and the
+ * working tree differs from the index. Top-relative names.
+ */
+function partiallyStaged(cwd: string, paths: readonly string[]): string[] {
+  const names = (...args: string[]) =>
+    nulList(
+      git(cwd, ["diff", "--name-only", "-z", "--no-renames", ...args, "--", ...paths]).stdout,
+    );
+  const unstaged = new Set(names());
+  return names("--cached").filter((file) => unstaged.has(file));
+}
+
+const literalTop = (file: string) => `:(top,literal)${file}`;
+
+/**
+ * A private index for a path-form commit that keeps partial staging: a copy
+ * of the real index (the named paths already added, partial files as staged)
+ * with every staged change outside `paths` put back to HEAD, as `--only`
+ * would leave it out. The caller removes the file.
+ */
+function pathCommitIndex(
+  cwd: string,
+  paths: readonly string[],
+  env: NodeJS.ProcessEnv,
+): { file: string } | { error: string } {
+  const where = (name: string) =>
+    path.resolve(cwd, git(cwd, ["rev-parse", "--git-path", name]).stdout.trim());
+  const file = where(`workit-commit-${process.pid}-${Date.now()}.index`);
+  try {
+    copyFileSync(where("index"), file);
+  } catch (error) {
+    return {
+      error: `could not copy the index: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const indexEnv = { ...env, GIT_INDEX_FILE: file };
+  const staged = (...pathspec: string[]) =>
+    nulList(
+      git(cwd, ["diff", "--cached", "--name-only", "-z", "--no-renames", "--", ...pathspec], {
+        env: indexEnv,
+      }).stdout,
+    );
+  const inside = new Set(staged(...paths));
+  const outside = staged().filter((name) => !inside.has(name));
+  if (outside.length) {
+    const reset = git(cwd, ["reset", "-q", "--", ...outside.map(literalTop)], { env: indexEnv });
+    if (!reset.ok) {
+      rmSync(file, { force: true });
+      return { error: `could not leave out the other staged changes: ${gitError(reset)}` };
+    }
+  }
+  return { file };
+}
+
 export function gitCommit(
   cwd: string,
   input: {
@@ -608,6 +668,10 @@ export function gitCommit(
     message?: string | null;
     all?: boolean;
     paths?: readonly string[];
+    /** With paths: commit each one's whole working tree even when staged in part. */
+    whole?: boolean;
+    /** Commit exactly the index; nothing is added. */
+    staged?: boolean;
     /** Replace the branch's last commit (`git commit --amend`). */
     amend?: boolean;
     /** Record a commit even when it changes no file. */
@@ -636,6 +700,16 @@ export function gitCommit(
     );
   const paths = input.paths ?? [];
   if (input.all && paths.length) return failure("invalid_input", "pass --all or paths, not both");
+  if (input.staged && (input.all || paths.length || input.whole))
+    return failure(
+      "invalid_input",
+      "--staged commits the index as is: drop --all, --whole and paths",
+    );
+  if (input.whole && !paths.length)
+    return failure(
+      "invalid_input",
+      "--whole applies to named paths: workit git commit --whole -- <paths>",
+    );
   const progress = operationInProgress(cwd);
   if (progress && !progress.commitAllowed) return inProgressFailure(progress.operation, "commit");
   const branch = progress?.branch ?? currentBranch(cwd);
@@ -744,24 +818,43 @@ export function gitCommit(
       "drop the Workit-Session line (or the trailer.<alias>.key config that expands into it)",
     );
   args.push("-m", finalMessage);
+  let keptPartial: string[] = [];
+  let partialIndex: string | null = null;
   if (paths.length) {
     if (paths.some((value) => value.startsWith("-") || !value.trim()))
       return failure("invalid_input", "paths must not be empty or start with -");
+    // A file staged in part keeps its index entry: its staged hunks are the
+    // commit, its unstaged rest stays in the working tree (--whole adds it).
+    keptPartial = input.whole ? [] : partiallyStaged(cwd, paths);
+    const partial = new Set(keptPartial);
+    const top = git(cwd, ["rev-parse", "--show-prefix"]).stdout.trim();
     // A path already removed from disk and index (`git rm`) has nothing to
     // add, and `git add` would fail on it; the commit below still records it.
     const tracked = new Set(nulList(git(cwd, ["ls-files", "-z", "--", ...paths]).stdout));
     const addable = paths.filter(
       (value) =>
-        existsSync(path.resolve(cwd, value)) ||
-        [...tracked].some((file) => file === value || file.startsWith(`${value}/`)),
+        !partial.has(path.posix.normalize(`${top}${value.replaceAll("\\", "/")}`)) &&
+        (existsSync(path.resolve(cwd, value)) ||
+          [...tracked].some((file) => file === value || file.startsWith(`${value}/`))),
     );
     if (addable.length) {
-      const added = git(cwd, ["add", "-A", "--", ...addable]);
+      const added = git(cwd, [
+        "add",
+        "-A",
+        "--",
+        ...addable,
+        ...keptPartial.map((file) => `:(exclude,top,literal)${file}`),
+      ]);
       if (!added.ok) return failure("failed", `git add failed: ${gitError(added)}`);
     }
     if (changeRequired && git(cwd, ["diff", "--cached", "--quiet", "HEAD", "--", ...paths]).ok)
       return nothingToCommit(`${paths.join(", ")} has no change to commit`);
-    args.push("--", ...paths);
+    if (keptPartial.length) {
+      // `--only` would take each path's working tree: commit a private index instead.
+      const built = pathCommitIndex(cwd, paths, input.env ?? process.env);
+      if ("error" in built) return failure("failed", built.error);
+      partialIndex = built.file;
+    } else args.push("--", ...paths);
   } else if (input.all) {
     const added = git(cwd, ["add", "-A"]);
     if (!added.ok) return failure("failed", `git add failed: ${gitError(added)}`);
@@ -771,6 +864,12 @@ export function gitCommit(
     const staged = git(cwd, ["diff", "--cached", "--name-only", "-z"]);
     if (staged.ok && !staged.stdout.replaceAll("\0", "")) {
       const dirt = dirtEntries(cwd);
+      if (input.staged)
+        return failure(
+          "blocked",
+          `nothing_staged: --staged commits the index, and nothing is staged${dirt.length ? ` (${dirt.length} unstaged change(s))` : ""}`,
+          "workit git stage --patch <file|-> (selected hunks) or workit git stage -- <paths>, then commit --staged",
+        );
       if (!dirt.length) return nothingToCommit("the working tree is clean");
       return failure(
         "blocked",
@@ -782,11 +881,20 @@ export function gitCommit(
       );
     }
   }
-  const committed = git(cwd, args, {
-    timeoutMs: COMMIT_TIMEOUT_MS,
-    // Decided here: the session hook's helper skips its own `workit git trailers` call.
-    env: { ...(input.env ?? process.env), WORKIT_TRAILERS: trailersOn ? "on" : "off" },
-  });
+  let committed: Run;
+  try {
+    committed = git(cwd, args, {
+      timeoutMs: COMMIT_TIMEOUT_MS,
+      // Decided here: the session hook's helper skips its own `workit git trailers` call.
+      env: {
+        ...(input.env ?? process.env),
+        WORKIT_TRAILERS: trailersOn ? "on" : "off",
+        ...(partialIndex ? { GIT_INDEX_FILE: partialIndex } : {}),
+      },
+    });
+  } finally {
+    if (partialIndex) rmSync(partialIndex, { force: true });
+  }
   if (!committed.ok) {
     const output = gitOutput(committed);
     const refusal = hookRefusal(output);
@@ -848,6 +956,7 @@ export function gitCommit(
     sessionTrailer,
     amended: previous,
     notes,
+    keptPartial,
     recorded: row.ok ? { id: String(row.value.id) } : { error: row.error },
   });
 }
