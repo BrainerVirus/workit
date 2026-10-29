@@ -347,6 +347,7 @@ export async function applyUpgrade(
       const stopDaemon = entry.host === "codex" && daemons.length > 0;
       if (
         stopDaemon &&
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- hosts upgrade one at a time on purpose: the Codex daemon must stop before its update and start after it, and the per-step progress lines read in order.
         (
           await progress.run(
             "Stopping the Codex app-server daemon",
