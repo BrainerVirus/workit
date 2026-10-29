@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -5,6 +6,7 @@ import { createHash } from "node:crypto";
 import { type HostId } from "../admin/detect-hosts";
 import { hostCommand, runHostCommand, type HostInstallCommand } from "../admin/host-install";
 import { type DoctorCheck } from "../admin/doctor";
+import { type Progress } from "../progress";
 
 /** Hosts `workit launch` can start. */
 export const LAUNCH_HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
@@ -39,6 +41,8 @@ export type UpgradeDeps = {
   home?: string;
   env?: NodeJS.ProcessEnv;
   run?: (command: string, args: string[]) => CommandResult;
+  /** Async runner for the apply phase (test seam; defaults to `run`, else a bounded spawn). */
+  runAsync?: (command: string, args: string[]) => Promise<CommandResult>;
   /** Legacy seam: hosts with an open interactive session. */
   activeHosts?: () => HostId[];
   /** Running processes (test seam; default reads `ps`; null = unreadable). */
@@ -48,6 +52,8 @@ export type UpgradeDeps = {
   /** The closing verification (default: doctor's upgrade checks). */
   doctor?: (cliVersion: string) => { checks: DoctorCheck[] };
   out?: { write: (text: string) => void };
+  /** Step feedback on stderr (default: none; the CLI passes a TTY spinner). */
+  progress?: Progress;
 };
 export type Source = {
   host: HostId;
@@ -161,6 +167,68 @@ export const runner = (deps: UpgradeDeps) =>
     const result = runHostCommand(step, { home, env });
     return { status: result.exitCode, stdout: result.stdout };
   });
+
+const COMMAND_TIMEOUT_MS = 60_000;
+
+/**
+ * The apply phase's runner: same result shape and the same 60 s bound as the
+ * sync one, but a spawn, so the progress spinner keeps ticking while npm or a
+ * host CLI works.
+ */
+export const asyncRunner = (
+  deps: UpgradeDeps,
+): ((command: string, args: string[]) => Promise<CommandResult>) => {
+  if (deps.runAsync) return deps.runAsync;
+  const injected = deps.run;
+  if (injected) return async (command, args) => injected(command, args);
+  return (command, args) => {
+    const { home, env } = upgradePaths(deps);
+    let step: HostInstallCommand;
+    try {
+      step = hostCommand(command, args, { home, env });
+    } catch {
+      return Promise.resolve({ status: 1, stdout: "" });
+    }
+    if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(step.command))
+      return Promise.resolve({ status: 1, stdout: "" });
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env, HOME: home };
+    childEnv.CODEX_HOME = env.CODEX_HOME ?? path.join(home, ".codex");
+    childEnv.PI_CODING_AGENT_DIR = env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent");
+    childEnv.CLAUDE_CONFIG_DIR = env.CLAUDE_CONFIG_DIR ?? path.join(home, ".claude");
+    childEnv.XDG_CONFIG_HOME = env.XDG_CONFIG_HOME ?? path.join(home, ".config");
+    return new Promise<CommandResult>((resolve) => {
+      let stdout = "";
+      let settled = false;
+      const finish = (status: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ status, stdout });
+      };
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(step.command, step.args, {
+          cwd: step.cwd,
+          env: childEnv,
+          stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
+          shell: false,
+        });
+      } catch {
+        resolve({ status: 1, stdout: "" });
+        return;
+      }
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        finish(1);
+      }, COMMAND_TIMEOUT_MS);
+      child.stdout?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => (stdout += chunk));
+      child.on("error", () => finish(1));
+      child.on("close", (code) => finish(code ?? 1));
+    });
+  };
+};
 
 export const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : "installed source could not be read";

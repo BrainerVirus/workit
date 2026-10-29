@@ -8,6 +8,7 @@ import {
   permissionDiff,
   planHostPermissions,
 } from "./admin/host-permissions";
+import { createProgress } from "./progress";
 import { applyUpgrade } from "./upgrade/apply";
 import { planCli, previewUpgrade } from "./upgrade/plan";
 import { askConfirm, summary, table } from "./upgrade/report";
@@ -48,9 +49,13 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   const legacy = flags.has("--apply");
   const json = flags.has("--json") || legacy;
   const run = runner(deps);
-  const plan = previewUpgrade(raw as HostId[], deps);
-  // The global CLI is part of the default upgrade; --hosts narrows it to hosts unless --cli.
-  if (hostFlag === undefined || flags.has("--cli")) planCli(plan, run);
+  const progress = deps.progress ?? createProgress({ stream: process.stderr, json });
+  const plan = progress.runSync("Planning the upgrade", () => {
+    const planned = previewUpgrade(raw as HostId[], deps);
+    // The global CLI is part of the default upgrade; --hosts narrows it to hosts unless --cli.
+    if (hostFlag === undefined || flags.has("--cli")) planCli(planned, run);
+    return planned;
+  });
   plan.ok = plan.blocked.length === 0 && plan.failed.length === 0;
   // Issue #297: refresh a Workit permission block `workit setup` already
   // wrote (never add one, never set the shell); the diff is part of the plan.
@@ -100,7 +105,7 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     }
   }
   if (json) for (const warning of plan.warnings ?? []) out.write(`warning: ${warning}\n`);
-  const result = applyUpgrade(plan, deps);
+  const result = await applyUpgrade(plan, { ...deps, progress });
   let permissionsOk = true;
   let written: ReturnType<typeof applyHostPermissions> | undefined;
   if (
@@ -108,7 +113,11 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     !permissions.refused &&
     !result.error?.startsWith("configuration changed")
   ) {
-    written = applyHostPermissions(permissions, { home, env });
+    written = progress.runSync(
+      "Refreshing the permission block",
+      () => applyHostPermissions(permissions, { home, env }),
+      (entries) => (entries.every((entry) => entry.status === "written") ? "done" : "failed"),
+    );
     permissionsOk = written.every((entry) => entry.status === "written");
     for (const entry of written)
       result.hosts.push({
@@ -122,10 +131,12 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   const cliVersion = result.hosts.some((h) => h.host === "cli" && h.status === "updated")
     ? plan.cli!.latest
     : pkg.version;
-  const report = (
-    deps.doctor ??
-    ((version: string) => runDoctor({ home, env, cliVersion: version, only: "upgrade" }))
-  )(cliVersion);
+  const report = progress.runSync("Checking the result with workit doctor", () =>
+    (
+      deps.doctor ??
+      ((version: string) => runDoctor({ home, env, cliVersion: version, only: "upgrade" }))
+    )(cliVersion),
+  );
   const left = report.checks.filter((check) => check.status === "warn" || check.status === "fail");
   if (json) {
     out.write(
@@ -195,7 +206,7 @@ export async function runLaunchCommand(argv: string[], deps: UpgradeDeps = {}): 
         (deps.out ?? process.stderr).write(
           `${skipped.host}: ${skipped.reason}${skipped.fix ? ` (run: ${skipped.fix})` : ""}\n`,
         );
-      const result = applyUpgrade(plan, deps);
+      const result = await applyUpgrade(plan, deps);
       if (!result.ok) {
         (deps.out ?? process.stdout).write(`${result.error}\n`);
         return 1;

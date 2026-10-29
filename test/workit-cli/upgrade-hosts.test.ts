@@ -291,12 +291,12 @@ test("Given Codex's app-server daemon is running, Then it is stopped, Codex upda
   }
 });
 
-test("Given Codex fails while its daemon is stopped, Then the daemon is still started again", () => {
+test("Given Codex fails while its daemon is stopped, Then the daemon is still started again", async () => {
   const w = world();
   try {
     w.state.codexFails = true;
     const plan = previewUpgrade(["codex"], w.deps);
-    const result = applyUpgrade(plan, {
+    const result = await applyUpgrade(plan, {
       ...w.deps,
       processes: () => [{ pid: 12, state: "Ssl", args: "codex app-server" }],
     });
@@ -307,12 +307,12 @@ test("Given Codex fails while its daemon is stopped, Then the daemon is still st
   }
 });
 
-test("Given the Codex agent refresh throws while its daemon is stopped, Then the daemon is still started and only Codex fails", () => {
+test("Given the Codex agent refresh throws while its daemon is stopped, Then the daemon is still started and only Codex fails", async () => {
   const w = world();
   try {
     w.state.agentsThrow = true;
     const plan = previewUpgrade(["codex"], w.deps);
-    const result = applyUpgrade(plan, {
+    const result = await applyUpgrade(plan, {
       ...w.deps,
       processes: () => [{ pid: 12, state: "Ssl", args: "codex app-server" }],
     });
@@ -424,7 +424,7 @@ test("Given Cursor registered in mcp.json with its plugin dir missing, Then upgr
       }
       return w.deps.run(command, args);
     };
-    const result = applyUpgrade(plan, { ...w.deps, run });
+    const result = await applyUpgrade(plan, { ...w.deps, run });
     const cursor = result.hosts.find((entry) => entry.host === "cursor");
     // The wizard's installer ran: the plugin dir is back with the requested version.
     expect(

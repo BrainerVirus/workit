@@ -58,6 +58,11 @@ Or install a single host by hand. Whatever the install path, every host
 updates with `workit upgrade` and uninstalls with `workit uninstall` (pick the
 host); the native commands below are the fallback.
 
+A CLI older than 8.38.0 has no `--yes` (it fails with `unknown option --yes`).
+Update the CLI once with `npm i -g @brainervirus/workit-cli@latest` (or, on the
+old CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
+`workit upgrade`.
+
 <details>
 <summary><strong>Claude Code</strong></summary>
 

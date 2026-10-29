@@ -17,6 +17,18 @@ workit upgrade --hosts=none --cli --yes   # only the global npm CLI
 workit launch <host> --auto-upgrade -- <host args>   # upgrade before starting a host
 ```
 
+A CLI older than 8.38.0 has no `--yes` and fails with `unknown option --yes`.
+Update it once with `npm i -g @brainervirus/workit-cli@latest` (or, on the old
+CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
+`workit upgrade`.
+
+On a terminal, upgrade shows a spinner on stderr with the current step (planning,
+each host, the Codex daemon stop and restart, the doctor check) and leaves one
+`✓`, `✗` or `–` line per step. It stays silent with `--json`, `CI=true`, and
+when stderr is not a terminal; `NO_COLOR` or `TERM=dumb` print the finished
+step lines without animation. `workit ci wait` and a queued `workit check`
+show the same spinner.
+
 One run covers the global CLI (a managed npm global install; links and npx are
 left alone), the Claude Code plugin (`claude plugin marketplace update` and
 `claude plugin update`), Codex (and its agent files), Pi, Cursor, OpenCode

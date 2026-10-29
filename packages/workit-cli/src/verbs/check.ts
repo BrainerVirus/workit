@@ -66,6 +66,7 @@ import {
   type CodeKey,
 } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, type EnvelopeCode, type Io } from "../output";
+import { createProgress, type ProgressStep } from "../progress";
 import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
 import {
   acquireLease,
@@ -472,6 +473,8 @@ async function prepareHeavy(
       wrapper: null,
       env: io.env,
     };
+  const progress = createProgress({ stream: process.stderr, json: io.json });
+  let waiting: ProgressStep | null = null;
   const acquired = await acquireLease({
     dir,
     slots: settings.slots,
@@ -486,6 +489,12 @@ async function prepareHeavy(
     onStatus: (status) => {
       const slots = `${settings.slots} slot${settings.slots === 1 ? "" : "s"}`;
       const holders = status.holders.map((holder) => describeHolder(holder)).join("; ");
+      if (progress.mode === "spinner") {
+        const text = `Waiting for the heavy-check lease: held by ${holders || "nobody; waiters ahead"}, queue position ${status.position}`;
+        if (waiting) waiting.label(text);
+        else waiting = progress.start(text);
+        return;
+      }
       io.stderr(
         status.first
           ? `workit: waiting for the heavy-check lease (${slots}): held by ${holders || "nobody; waiters ahead"}; queued at position ${status.position}, waiting up to ${formatWait(settings.waitMs)} (--wait <dur> sets it)\n`
@@ -493,6 +502,7 @@ async function prepareHeavy(
       );
     },
   });
+  (waiting as ProgressStep | null)?.end(acquired.ok ? "done" : "failed");
   if (!acquired.ok && acquired.reason === "timeout") {
     const holders = acquired.holders.map((holder) => describeHolder(holder)).join("; ");
     const waited = formatWait(acquired.waitedMs);
