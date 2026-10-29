@@ -3,9 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { type HostId } from "../admin/detect-hosts";
 import { CLI_PACKAGE } from "../update-check";
+import { OPENCODE_NOT_READY, waitForOpencodePlugin, type OpencodePlugin } from "./opencode";
 import {
   OPENCODE_PACKAGE,
   asyncRunner,
+  objectOrNull,
   upgradePaths,
   type CommandResult,
   type UpgradeDeps,
@@ -29,6 +31,38 @@ export const opencodeScratchEnv = (deps: UpgradeDeps, scratch: string): NodeJS.P
 
 const registry = (name: string): [string, string[]] => ["npm", ["view", name, "version"]];
 
+/** The cache key of OpenCode's readiness reading (see `opencodeReading`). */
+const OPENCODE_READY_KEY = "opencode-ready";
+
+/**
+ * What the readiness probe learned: the Workit plugin as OpenCode reports it,
+ * null when OpenCode never listed it in time, undefined when it was not probed.
+ */
+export const opencodeReading = (probes?: ProbeCache): OpencodePlugin | null | undefined => {
+  const result = probes?.get(OPENCODE_READY_KEY);
+  if (!result) return undefined;
+  return result.status === 0 ? (JSON.parse(result.stdout) as OpencodePlugin) : null;
+};
+
+/** A Workit npm registration in opencode.json (a local checkout has no package to wait for). */
+const opencodeRegistersWorkit = (file: string): boolean => {
+  const config = objectOrNull(file);
+  return [config?.plugins, config?.plugin]
+    .flatMap((value: unknown) => (Array.isArray(value) ? value : []))
+    .some(
+      (pin: unknown) =>
+        typeof pin === "string" &&
+        /^(?:npm:)?@brainervirus\/workit-opencode(?:@[^/\s]+)?$/.test(pin),
+    );
+};
+
+export type ProbeOptions = {
+  /** `workit upgrade --check`: versions only, no OpenCode --version/--help probes. */
+  check?: boolean;
+  /** More registry versions to read (the check also reports Claude Code's). */
+  registries?: string[];
+};
+
 /**
  * Every command planning would run for these hosts (and the CLI), started at
  * once on the async runner, each bounded by its own timeout: planning then
@@ -39,6 +73,7 @@ export const runProbes = async (
   hosts: HostId[],
   cli: boolean,
   deps: UpgradeDeps,
+  options: ProbeOptions = {},
 ): Promise<ProbeCache> => {
   const paths = upgradePaths(deps);
   const timeoutMs = deps.probeTimeoutMs ?? PROBE_TIMEOUT_MS;
@@ -49,11 +84,17 @@ export const runProbes = async (
   const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-upgrade-opencode-"));
   try {
     if (hosts.includes("opencode") && existsSync(paths.opencodeConfig)) {
-      const opencode = asyncRunner({ ...deps, env: opencodeScratchEnv(deps, scratch) }, timeoutMs);
-      add("opencode", ["--version"], opencode);
-      add("opencode", ["plugin", "--help"], opencode);
+      if (!options.check) {
+        const opencode = asyncRunner(
+          { ...deps, env: opencodeScratchEnv(deps, scratch) },
+          timeoutMs,
+        );
+        add("opencode", ["--version"], opencode);
+        add("opencode", ["plugin", "--help"], opencode);
+      }
       add(...registry(OPENCODE_PACKAGE));
     }
+    for (const name of options.registries ?? []) add(...registry(name));
     if (hosts.includes("cursor")) add(...registry("@brainervirus/workit-cursor"));
     if (hosts.includes("codex")) {
       add("codex", ["plugin", "list", "--json"]);
@@ -67,6 +108,26 @@ export const runProbes = async (
       add("npm", ["root", "--global"]);
       add(...registry(CLI_PACKAGE));
     }
+    // OpenCode's service: the real env (its plugin commands talk to the running
+    // service), and its own readiness bound instead of the one-probe timeout.
+    const ready =
+      hosts.includes("opencode") && opencodeRegistersWorkit(paths.opencodeConfig)
+        ? waitForOpencodePlugin(
+            (command, args, where) =>
+              run(command, args, where).catch((error: unknown): CommandResult => ({
+                status: 1,
+                stdout: "",
+                stderr: error instanceof Error ? error.message : String(error),
+              })),
+            paths.home,
+            deps.opencodeReady,
+          ).then((reading): [string, CommandResult] => [
+            OPENCODE_READY_KEY,
+            reading
+              ? { status: 0, stdout: JSON.stringify(reading) }
+              : { status: 1, stdout: "", stderr: OPENCODE_NOT_READY },
+          ])
+        : undefined;
     const results = await Promise.all(
       probes.map(async ([command, args, runner]) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -97,7 +158,7 @@ export const runProbes = async (
         }
       }),
     );
-    return new Map(results);
+    return new Map([...results, ...(ready ? [await ready] : [])]);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

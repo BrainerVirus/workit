@@ -33,6 +33,8 @@ export type CommandResult = {
   /** A planning probe that did not answer in time (its host reads "could not check"). */
   timedOut?: boolean;
 };
+/** Where a command runs (OpenCode's plugin commands act on the cwd's location). */
+export type RunOptions = { cwd?: string };
 export type UpgradeHost = HostId | "cli" | "permissions";
 
 /** The last few lines of a command's stderr, for a failed row's reason. */
@@ -44,13 +46,23 @@ export const stderrTail = (text: string | undefined, lines = 5): string =>
     .slice(-lines)
     .join(" | ");
 
-/** "`cmd args` failed" plus the stderr tail when the command printed one. */
+/** The first `Error: …` line a command printed (stdout or stderr), so a reason never reads as bare stack frames. */
+const errorLine = (result: CommandResult): string | undefined =>
+  `${result.stdout}\n${result.stderr ?? ""}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => /\bError:/.test(line));
+
+/** "`cmd args` failed" plus the error message line and the stderr tail. */
 export const failureReason = (
   command: { command: string; args: string[] },
   result: CommandResult,
 ): string => {
   const tail = stderrTail(result.stderr);
-  return `\`${command.command} ${command.args.join(" ")}\` failed${tail ? `: ${tail}` : ""}`;
+  const message = errorLine(result);
+  const detail = message && !tail.includes(message) ? [message, tail].filter(Boolean) : [tail];
+  const text = detail.filter(Boolean).join(" | ");
+  return `\`${command.command} ${command.args.join(" ")}\` failed${text ? `: ${text}` : ""}`;
 };
 /** One process the OS lists: `ps -eo pid=,stat=,args=` (or tasklist on Windows). */
 export type HostProcess = { pid: number; state: string; args: string };
@@ -65,9 +77,9 @@ export type HostOutcome = {
 export type UpgradeDeps = {
   home?: string;
   env?: NodeJS.ProcessEnv;
-  run?: (command: string, args: string[]) => CommandResult;
+  run?: (command: string, args: string[], options?: RunOptions) => CommandResult;
   /** Async runner for the apply phase (test seam; defaults to `run`, else a bounded spawn). */
-  runAsync?: (command: string, args: string[]) => Promise<CommandResult>;
+  runAsync?: (command: string, args: string[], options?: RunOptions) => Promise<CommandResult>;
   /** Legacy seam: hosts with an open interactive session. */
   activeHosts?: () => HostId[];
   /** Running processes (test seam; default reads `ps`; null = unreadable). */
@@ -81,6 +93,13 @@ export type UpgradeDeps = {
   progress?: Progress;
   /** The per-host rows of an applied upgrade (the launch check names failed hosts). */
   onResult?: (hosts: HostOutcome[]) => void;
+  /** OpenCode's plugin readiness wait (test seam; default polls every 0.5 s for 20 s). */
+  opencodeReady?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  };
   /** How long one planning probe may run (test seam; default 20 s). */
   probeTimeoutMs?: number;
   /** The CLI version the running entry has on disk now (test seam; default reads its package.json). */
@@ -196,11 +215,11 @@ export const digest = (file: string): string =>
   existsSync(file) ? createHash("sha256").update(readFileSync(file)).digest("hex") : "missing";
 export const runner = (deps: UpgradeDeps) =>
   deps.run ??
-  ((command: string, args: string[]): CommandResult => {
+  ((command: string, args: string[], options?: RunOptions): CommandResult => {
     const { home, env } = upgradePaths(deps);
     let step: HostInstallCommand;
     try {
-      step = hostCommand(command, args, { home, env });
+      step = hostCommand(command, args, { home, env, cwd: options?.cwd });
     } catch (error) {
       return { status: 1, stdout: "", stderr: errorText(error) };
     }
@@ -218,15 +237,15 @@ const COMMAND_TIMEOUT_MS = 60_000;
 export const asyncRunner = (
   deps: UpgradeDeps,
   timeoutMs = COMMAND_TIMEOUT_MS,
-): ((command: string, args: string[]) => Promise<CommandResult>) => {
+): ((command: string, args: string[], options?: RunOptions) => Promise<CommandResult>) => {
   if (deps.runAsync) return deps.runAsync;
   const injected = deps.run;
-  if (injected) return async (command, args) => injected(command, args);
-  return (command, args) => {
+  if (injected) return async (command, args, options) => injected(command, args, options);
+  return (command, args, options) => {
     const { home, env } = upgradePaths(deps);
     let step: HostInstallCommand;
     try {
-      step = hostCommand(command, args, { home, env });
+      step = hostCommand(command, args, { home, env, cwd: options?.cwd });
     } catch (error) {
       return Promise.resolve({ status: 1, stdout: "", stderr: errorText(error) });
     }

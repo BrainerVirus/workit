@@ -49,6 +49,7 @@ const world = () => {
   claudeRegistry("1.0.0");
   write(path.join(codexCache, "2.0.0/dist/launch-mcp.js"), "");
   let codexVersion = "1.0.0";
+  let opencodeVersion = "1.0.0";
   const state = {
     codexFails: false,
     agentsThrow: false,
@@ -95,6 +96,16 @@ const world = () => {
       throw new Error("spawn node ENOENT");
     if (command === "codex" && args[0] === "app-server") state.daemon.push(args[2]);
     if (command === "claude" && args[1] === "update") claudeRegistry("2.0.0");
+    // An older OpenCode 2.x: no `api` operation, its text listing names Workit.
+    if (command === "opencode" && args[0] === "api")
+      return { status: 1, stdout: "", stderr: 'Error: unknown command "api"\n' };
+    if (command === "opencode" && line === "plugin update @brainervirus/workit-opencode")
+      opencodeVersion = "2.0.0";
+    if (command === "opencode" && line === "plugin list")
+      return {
+        status: 0,
+        stdout: `ID      VERSION  SOURCE\nworkit  ${opencodeVersion}    @brainervirus/workit-opencode\n`,
+      };
     return { status: 0, stdout: "" };
   };
   const out: string[] = [];
@@ -374,7 +385,7 @@ test("Given OpenCode with `opencode plugin update`, Then upgrade runs the scoped
       w.calls.some((call) => call[0] === "opencode" && call[2] === "update" && call.length === 3),
     ).toBe(false);
     expect(w.text()).toMatch(
-      /opencode +updated +scoped update ran; OpenCode V2 loads it live; restart opencode serve \(pid 77/,
+      /opencode +updated +1\.0\.0 -> 2\.0\.0; OpenCode V2 loads it live; restart opencode serve \(pid 77/,
     );
   } finally {
     w.cleanup();
@@ -902,6 +913,236 @@ test("Given the re-executed upgrade fails a host, Then it hands its exit code ba
     expect(
       back.rows.map((row: { host: string; status: string }) => `${row.host}:${row.status}`),
     ).toEqual(["cli:updated", "codex:failed"]);
+  } finally {
+    w.cleanup();
+  }
+});
+
+/**
+ * OpenCode v2 behind its background service, as measured on 2.2.0:
+ * - `opencode api plugin.list` answers for the service's default location
+ *   (HOME) whatever the cwd; it errors for its first `apiErrorsFor` calls and
+ *   lists only builtins until its PluginBoot fiber activated Workit (`bootAfter`).
+ * - `plugin list` / `plugin update` act on the cwd's location, which boots on
+ *   its first plugin command and stays cold for `coldFor` commands there: `No
+ *   plugins found`, and the update fails with `Plugin is not configured`.
+ */
+const servicedOpencode = (options: {
+  bootAfter: number;
+  coldFor?: number;
+  apiErrorsFor?: number;
+  before?: string;
+  after?: string;
+  updateError?: string;
+}) => {
+  const w = world();
+  write(path.join(w.home, ".config/opencode/opencode.json"), {
+    plugins: ["@brainervirus/workit-opencode"],
+  });
+  let apiCalls = 0;
+  let updated = false;
+  const locations = new Map<string, number>();
+  const invocations: { args: string; cwd: string | undefined }[] = [];
+  const warm = (cwd: string | undefined) => {
+    const key = cwd ?? process.cwd();
+    const seen = (locations.get(key) ?? 0) + 1;
+    locations.set(key, seen);
+    return seen > (options.coldFor ?? 0);
+  };
+  const version = () => (updated ? (options.after ?? "2.0.0") : (options.before ?? "1.0.0"));
+  const builtin = { id: "builtin-auth", source: { type: "builtin" }, state: { status: "active" } };
+  const run = (command: string, args: string[], where?: { cwd?: string }) => {
+    const line = args.join(" ");
+    if (command === "opencode" && line === "plugin --help")
+      return { status: 0, stdout: OPENCODE_HELP };
+    if (command === "opencode" && args[0] !== "--version")
+      invocations.push({ args: line, cwd: where?.cwd });
+    if (command === "opencode" && args[0] === "api" && args[1] === "plugin.list") {
+      w.calls.push([command, ...args]);
+      if (++apiCalls <= (options.apiErrorsFor ?? 0))
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Error: Unable to connect to the background service\n",
+        };
+      const booted = apiCalls - (options.apiErrorsFor ?? 0) > options.bootAfter;
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          location: { directory: w.home },
+          data: [
+            builtin,
+            ...(booted
+              ? [
+                  {
+                    id: "workit",
+                    source: {
+                      type: "package",
+                      target: "@brainervirus/workit-opencode",
+                      version: version(),
+                      ...(updated ? {} : { outdated: true }),
+                    },
+                    state: { status: "active" },
+                  },
+                ]
+              : []),
+          ],
+        }),
+      };
+    }
+    if (command === "opencode" && line === "plugin list") {
+      w.calls.push([command, ...args]);
+      return warm(where?.cwd)
+        ? {
+            status: 0,
+            stdout: `ID      VERSION  SOURCE\nworkit  ${version()}   @brainervirus/workit-opencode\n`,
+          }
+        : { status: 0, stdout: "No plugins found\n" };
+    }
+    if (command === "opencode" && args[1] === "update") {
+      w.calls.push([command, ...args]);
+      if (!warm(where?.cwd))
+        return {
+          status: 1,
+          stdout: "",
+          stderr:
+            "Error: Plugin is not configured: @brainervirus/workit-opencode\n    at <anonymous> (/$bunfs/root/chunk-a.js:6:22917)\n",
+        };
+      if (options.updateError) return { status: 1, stdout: "", stderr: options.updateError };
+      updated = true;
+      return { status: 0, stdout: "" };
+    }
+    if (command === "npm" && line === "view @brainervirus/workit-opencode version")
+      return { status: 0, stdout: `${options.after ?? "2.0.0"}\n` };
+    return w.deps.run(command, args);
+  };
+  return { w, run, invocations };
+};
+
+/** Every OpenCode plugin command ran in HOME's location, and the api named it. */
+const expectHomeLocation = (
+  invocations: { args: string; cwd: string | undefined }[],
+  home: string,
+) => {
+  expect(invocations.length).toBeGreaterThan(0);
+  for (const call of invocations) {
+    expect(call.cwd).toBe(home);
+    if (call.args.startsWith("api "))
+      expect(call.args).toBe(`api plugin.list -H x-opencode-directory:${home}`);
+  }
+};
+
+test("Given the api is ready for HOME while the update's location is still cold, When upgrade runs, Then it waits for that location and the update runs once", async () => {
+  const { w, run, invocations } = servicedOpencode({ bootAfter: 0, coldFor: 3 });
+  try {
+    const code = await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+      ...w.deps,
+      run,
+      opencodeReady: { intervalMs: 1 },
+    });
+    expect(code).toBe(0);
+    expect(updates(w.calls)).toBe(1);
+    expect(w.text()).toMatch(/opencode +updated +1\.0\.0 -> 2\.0\.0; OpenCode V2 loads it live/);
+    expect(w.text()).not.toContain("Plugin is not configured");
+    expectHomeLocation(invocations, w.home);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given `opencode api plugin.list` errors for a few calls and then answers, When upgrade runs, Then it keeps waiting and the update succeeds once", async () => {
+  const { w, run, invocations } = servicedOpencode({ bootAfter: 0, apiErrorsFor: 3 });
+  try {
+    const code = await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+      ...w.deps,
+      run,
+      opencodeReady: { intervalMs: 1 },
+    });
+    expect(code).toBe(0);
+    expect(updates(w.calls)).toBe(1);
+    expect(w.text()).toMatch(/opencode +updated +1\.0\.0 -> 2\.0\.0/);
+    expectHomeLocation(invocations, w.home);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given the text listing says `No plugins found` for the whole wait, When upgrade runs, Then OpenCode is not ready and nothing is updated", async () => {
+  const { w, run } = servicedOpencode({ bootAfter: 0, coldFor: Number.POSITIVE_INFINITY });
+  try {
+    await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+      ...w.deps,
+      run,
+      opencodeReady: { timeoutMs: 60, intervalMs: 5 },
+    });
+    expect(updates(w.calls)).toBe(0);
+    expect(w.text()).toContain("OpenCode did not finish loading its plugins");
+  } finally {
+    w.cleanup();
+  }
+});
+
+const updates = (calls: string[][]) =>
+  calls.filter((call) => call.join(" ") === "opencode plugin update @brainervirus/workit-opencode")
+    .length;
+
+test("Given OpenCode's service lists Workit only after a few readings, When upgrade runs, Then it waits and the update runs once", async () => {
+  const { w, run } = servicedOpencode({ bootAfter: 3 });
+  try {
+    const code = await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+      ...w.deps,
+      run,
+      opencodeReady: { intervalMs: 1 },
+    });
+    expect(code).toBe(0);
+    expect(updates(w.calls)).toBe(1);
+    expect(w.text()).toMatch(/opencode +updated +1\.0\.0 -> 2\.0\.0; OpenCode V2 loads it live/);
+    expect(w.text()).not.toContain("Plugin is not configured");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given OpenCode's service never lists Workit, When upgrade runs, Then the wait is bounded, nothing is updated and the row says OpenCode did not finish loading", async () => {
+  const { w, run } = servicedOpencode({ bootAfter: Number.POSITIVE_INFINITY });
+  try {
+    const began = Date.now();
+    await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+      ...w.deps,
+      run,
+      opencodeReady: { timeoutMs: 60, intervalMs: 5 },
+    });
+    expect(Date.now() - began).toBeLessThan(5_000);
+    expect(updates(w.calls)).toBe(0);
+    expect(w.text()).toContain(
+      "OpenCode did not finish loading its plugins (opencode api plugin.list never listed @brainervirus/workit-opencode)",
+    );
+    expect(w.text()).toContain("opencode plugin update @brainervirus/workit-opencode");
+    expect(w.text()).not.toMatch(/opencode .*\b\d+\.\d+\.\d+ -> /);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given `opencode plugin update` fails with an Error line followed by stack frames, When upgrade runs, Then the row shows the Error line, not only frames", async () => {
+  const frames = Array.from(
+    { length: 8 },
+    (_, index) => `    at frame${index} (/x/opencode.js:${index}:1)`,
+  );
+  const { w, run } = servicedOpencode({
+    bootAfter: 0,
+    updateError: `Error: Plugin is not configured: @brainervirus/workit-opencode\n${frames.join("\n")}\n`,
+  });
+  try {
+    await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+      ...w.deps,
+      run,
+      opencodeReady: { intervalMs: 1 },
+    });
+    expect(updates(w.calls)).toBe(2);
+    expect(w.text()).toMatch(
+      /opencode +FAILED +`opencode plugin update @brainervirus\/workit-opencode` failed: Error: Plugin is not configured: @brainervirus\/workit-opencode \| at frame3/,
+    );
   } finally {
     w.cleanup();
   }

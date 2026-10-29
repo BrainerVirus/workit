@@ -242,7 +242,11 @@ A checkout pin uses `"file:///path/to/workit/packages/workit-opencode"` after
 
 Update with `workit upgrade` (native fallback:
 `opencode plugin update @brainervirus/workit-opencode`). OpenCode 2.x loads
-the new version live, with no restart. Uninstall with `workit uninstall`, or
+the new version live, with no restart. OpenCode v2 loads plugins in its
+background service, so Workit runs its OpenCode plugin commands in your home
+directory's location and waits (up to 20 s) until both `opencode api
+plugin.list` and `opencode plugin list` there list the Workit plugin before it
+reads the version or updates it. Uninstall with `workit uninstall`, or
 remove the entry from `plugins`.
 
 The plugin (V2 `setup()` API, self-contained bundle) registers nine tools: the

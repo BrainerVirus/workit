@@ -139,9 +139,19 @@ const opencodeHome = () => {
     plugins: ["@brainervirus/workit-opencode"],
   });
   const calls: string[] = [];
+  let version = "1.0.0";
   const run = (command: string, args: string[]): CommandResult => {
     if (command === "opencode" && args.join(" ") === "plugin --help")
       return { status: 0, stdout: "Commands:\n  opencode plugin update <name>\n" };
+    // An older OpenCode 2.x: no `api` operation, its text listing names Workit.
+    if (command === "opencode" && args[0] === "api")
+      return { status: 1, stdout: "", stderr: 'Error: unknown command "api"\n' };
+    if (command === "opencode" && args[1] === "update") version = "2.0.0";
+    if (command === "opencode" && args.join(" ") === "plugin list")
+      return {
+        status: 0,
+        stdout: `ID      VERSION  SOURCE\nworkit  ${version}    @brainervirus/workit-opencode\n`,
+      };
     return { status: 0, stdout: "" };
   };
   return { home, calls, run };

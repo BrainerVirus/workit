@@ -11,11 +11,13 @@ import {
   writeUpdateCache,
   writeUpdatesMode,
 } from "../update-check";
-import { sources } from "./plan";
+import { createProgress } from "../progress";
+import { OPENCODE_NOT_READY } from "./opencode";
+import { probedRunner, sources } from "./plan";
+import { opencodeReading, runProbes } from "./probes";
 import {
   HOSTS,
   registryVersion,
-  runner,
   upgradePaths,
   versionAtLeast,
   type HostOutcome,
@@ -53,10 +55,19 @@ const LABEL: Record<ComponentStatus, string> = {
   unreadable: "could not be read",
 };
 
-export function runUpdateCheck(json: boolean, deps: UpgradeDeps): number {
+export async function runUpdateCheck(json: boolean, deps: UpgradeDeps): Promise<number> {
   const out = deps.out ?? process.stdout;
   const paths = upgradePaths(deps);
-  const run = runner(deps);
+  const progress = deps.progress ?? createProgress({ stream: process.stderr, json });
+  const checking = HOSTS.length + 1;
+  // Every registry and inventory probe at once (the CLI's too), behind one spinner.
+  const probes = await progress.run(`Checking ${checking} hosts`, () =>
+    runProbes(HOSTS, true, deps, {
+      check: true,
+      registries: ["@brainervirus/workit-claude-code"],
+    }),
+  );
+  const run = probedRunner(deps, probes);
   const latest = (name: string) => registryVersion(run, name);
   const cliLatest = latest(CLI_PACKAGE);
   // The launch check reads this cache; a check that reached the registry refreshes it.
@@ -97,14 +108,28 @@ export function runUpdateCheck(json: boolean, deps: UpgradeDeps): number {
       continue;
     }
     if (!versionBy.has(host)) continue;
-    const version = versionBy.get(host);
+    // OpenCode's own reading: the version its service loaded and its `outdated` flag.
+    const reading = host === "opencode" ? opencodeReading(probes) : undefined;
+    if (reading === null) {
+      components.push({
+        component: host,
+        package: name,
+        installed: null,
+        latest: null,
+        status: "unreadable",
+        reason: OPENCODE_NOT_READY,
+      });
+      continue;
+    }
+    const version = versionBy.get(host) ?? reading?.version;
     const newest = latest(name);
+    const status = statusOf(version, newest);
     components.push({
       component: host,
       package: name,
       installed: version ?? null,
       latest: newest ?? null,
-      status: statusOf(version, newest),
+      status: reading?.outdated && status === "current" ? "update" : status,
     });
   }
   const pending = components.some(

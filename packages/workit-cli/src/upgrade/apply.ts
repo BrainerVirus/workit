@@ -9,6 +9,7 @@ import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import { createProgress, type StepStatus } from "../progress";
 import { classifyProcess, describe, listProcesses } from "./processes";
+import { OPENCODE_NOT_READY, readOpencodePlugin, waitForOpencodePlugin } from "./opencode";
 import {
   CLI_FIX,
   CODEX_MARKETPLACE,
@@ -60,30 +61,15 @@ export type UpgradeResult = {
   hosts: HostOutcome[];
 };
 
-/** The installed Workit OpenCode plugin version from `opencode plugin list`, if it prints one. */
+/** The installed Workit OpenCode plugin version, as OpenCode itself reports it. */
 const opencodeVersion = async (
   run: ReturnType<typeof asyncRunner>,
-): Promise<string | undefined> => {
-  const listing = await run("opencode", ["plugin", "list"]);
-  if (listing.status !== 0) return undefined;
-  // Table: `ID  VERSION  SOURCE`; the row whose last field is the Workit package.
-  for (const line of listing.stdout.split(/\r?\n/)) {
-    const fields = line.trim().split(/\s+/);
-    if (fields.length < 3) continue;
-    const source = fields[fields.length - 1].replace(/^file:\/\//, "");
-    const version = fields[fields.length - 2];
-    if (
-      /^(?:npm:)?@brainervirus\/workit-opencode(?:@[^/\s]+)?$/.test(source) &&
-      /^\d+\.\d+\.\d+$/.test(version)
-    )
-      return version;
-  }
-  return undefined;
-};
+  home: string,
+): Promise<string | undefined> => (await readOpencodePlugin(run, home)).version;
 
 /**
  * OpenCode's row from the plugin version before the update, after it, and the
- * published target. `opencode plugin list` can report the old version for a
+ * published target. OpenCode can report the old version for a
  * moment after the update rewrote the cache, so a reading below the target is
  * taken once more. Only a version that already equaled the target before the
  * update is "already current"; a version below the target is never current.
@@ -92,11 +78,12 @@ const opencodeOutcome = async (
   before: string | undefined,
   target: string | undefined,
   runAsync: ReturnType<typeof asyncRunner>,
+  home: string,
 ): Promise<HostOutcome> => {
   const below = (version: string | undefined) =>
     target !== undefined && (version === undefined || !versionAtLeast(version, target));
-  let after = await opencodeVersion(runAsync);
-  if (below(after)) after = (await opencodeVersion(runAsync)) ?? after;
+  let after = await opencodeVersion(runAsync, home);
+  if (below(after)) after = (await opencodeVersion(runAsync, home)) ?? after;
   const live = "OpenCode V2 loads it live";
   if (before && target && versionAtLeast(before, target))
     return { host: "opencode", status: "current", reason: `already current (${before})` };
@@ -126,6 +113,7 @@ const applyEntry = async (
     runAsync: ReturnType<typeof asyncRunner>;
     paths: ReturnType<typeof upgradePaths>;
     configDir: string;
+    opencodeReady?: UpgradeDeps["opencodeReady"];
   },
 ): Promise<HostOutcome> => {
   const { runAsync, paths, configDir } = context;
@@ -215,16 +203,24 @@ const applyEntry = async (
         : `${entry.installedVersion ?? "?"} -> ${entry.latest}`,
     };
   }
-  const before = entry.host === "opencode" ? await opencodeVersion(runAsync) : undefined;
+  let before: string | undefined;
+  if (entry.host === "opencode") {
+    // OpenCode's service activates plugins in the background: an update that
+    // arrives first fails with `Plugin is not configured`. Wait until it lists Workit.
+    const ready = await waitForOpencodePlugin(runAsync, home, context.opencodeReady);
+    if (!ready) return fail(OPENCODE_NOT_READY);
+    before = ready.version;
+  }
   for (const command of entry.commands) {
-    let result = await runAsync(command.command, command.args);
+    const where = command.cwd ? { cwd: command.cwd } : undefined;
+    let result = await runAsync(command.command, command.args, where);
     // A cold package cache or a transient registry error fails `opencode plugin
     // update` once and succeeds moments later: retry it once before it reads FAILED.
     if (result.status !== 0 && entry.host === "opencode")
-      result = await runAsync(command.command, command.args);
+      result = await runAsync(command.command, command.args, where);
     if (result.status !== 0) return fail(failureReason(command, result));
   }
-  if (entry.host === "opencode") return opencodeOutcome(before, entry.published, runAsync);
+  if (entry.host === "opencode") return opencodeOutcome(before, entry.published, runAsync, home);
   if (entry.host === "claude-code") {
     const after = claudeWorkitInstalls(home, env, null).find(
       (install) => install.id === entry.selector,
@@ -466,7 +462,12 @@ export async function applyUpgrade(
       // below always runs.
       let outcome: HostOutcome;
       try {
-        outcome = await applyEntry(entry, { runAsync, paths, configDir });
+        outcome = await applyEntry(entry, {
+          runAsync,
+          paths,
+          configDir,
+          opencodeReady: deps.opencodeReady,
+        });
         if (entry.host === "codex" && outcome.status === "updated") {
           const agents = await refreshCodexAgents(runAsync, paths.codexHome);
           if (!agents.ok)

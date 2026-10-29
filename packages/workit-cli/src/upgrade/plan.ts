@@ -1,5 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, lstatSync, readFileSync } from "node:fs";
-import { opencodeScratchEnv, probeKey, type ProbeCache } from "./probes";
+import { opencodeReading, opencodeScratchEnv, probeKey, type ProbeCache } from "./probes";
+import { OPENCODE_NOT_READY } from "./opencode";
 import path from "node:path";
 import os from "node:os";
 import { isWorkitPlugin } from "../admin/registration";
@@ -349,13 +350,29 @@ export function previewUpgrade(
         });
         continue;
       }
+      // OpenCode loads plugins in the background: a service that never listed
+      // Workit would fail the update with `Plugin is not configured`.
+      const reading = opencodeReading(probes);
+      if (reading === null) {
+        plan.failed.push({
+          host: "opencode",
+          status: "failed",
+          reason: OPENCODE_NOT_READY,
+          fix: OPENCODE_UPDATE,
+        });
+        continue;
+      }
       const published = registryVersion(run, OPENCODE_PACKAGE);
       plan.entries.push({
         host: "opencode",
         selector: source.selector,
         latest: "",
         ...(published ? { published } : {}),
-        commands: [{ command: "opencode", args: ["plugin", "update", OPENCODE_PACKAGE] }],
+        ...(reading?.version ? { installedVersion: reading.version } : {}),
+        // HOME's location: the one the readiness wait covered (see ./opencode).
+        commands: [
+          { command: "opencode", args: ["plugin", "update", OPENCODE_PACKAGE], cwd: home },
+        ],
         fix: OPENCODE_UPDATE,
       });
       continue;
