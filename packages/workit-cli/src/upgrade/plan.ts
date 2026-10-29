@@ -67,7 +67,7 @@ const classify = (host: HostId, selector: string): Source => ({
 // Read only owned registrations. A checkout or intentional exact pin is never
 // converted into a floating package as a side effect of upgrading another host.
 // Each host is read on its own: one unreadable host fails only that host.
-const sources = (
+export const sources = (
   paths: ReturnType<typeof upgradePaths>,
   run: ReturnType<typeof runner>,
   hosts: HostId[],

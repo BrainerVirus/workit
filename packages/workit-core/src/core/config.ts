@@ -26,9 +26,21 @@ export type BranchPreset = "gitflow" | "github-flow" | "trunk-based" | "custom";
 export type ToolkitConfig = {
   locale: string;
   localeOptions: string[];
-  branchPolicy: { preset: BranchPreset; allowed: string[]; protected: string[] };
+  branchPolicy: {
+    preset: BranchPreset;
+    allowed: string[];
+    protected: string[];
+  };
   commitPolicy: { preset: CommitFlavorPreset; pattern?: string };
+  /** How an interactive launch handles a newer release (default `prompt`). */
+  updates?: UpdatesMode;
 };
+
+/** `prompt` asks on an interactive launch, `auto` upgrades without asking, `off` never checks. */
+export type UpdatesMode = "prompt" | "auto" | "off";
+export const UPDATES_MODES: readonly UpdatesMode[] = ["prompt", "auto", "off"];
+export const isUpdatesMode = (value: unknown): value is UpdatesMode =>
+  UPDATES_MODES.includes(value as UpdatesMode);
 
 export const PRESETS: Record<BranchPreset, { allowed: string[]; protected: string[] }> = {
   gitflow: {
@@ -109,7 +121,11 @@ export const ensureConfigDir = (dir: string = resolveConfigDir()): string => {
       else if (entry.isFile()) copyFileSync(src, dest);
     } catch (err) {
       migrationFailed = true;
-      diagnosticLogger?.warn(EVENT.migration, { from: src, ok: false, ...errorDetail(err) });
+      diagnosticLogger?.warn(EVENT.migration, {
+        from: src,
+        ok: false,
+        ...errorDetail(err),
+      });
       // Task 10 advisory: never leak the raw legacy source path to the terminal —
       // the structured warn above carries it through the sanitized logger.
       console.warn(
@@ -176,10 +192,18 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { status: "malformed", path: file, error: `${file} is not valid JSON` };
+    return {
+      status: "malformed",
+      path: file,
+      error: `${file} is not valid JSON`,
+    };
   }
   if (!isConfigObject(parsed)) {
-    return { status: "malformed", path: file, error: `${file} is not a JSON object` };
+    return {
+      status: "malformed",
+      path: file,
+      error: `${file} is not a JSON object`,
+    };
   }
   // Only known keys are read: legacy fields such as the removed global
   // `timezone` are tolerated and ignored, never an error.
@@ -222,6 +246,7 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
         ? { pattern: input.commitPolicy.pattern }
         : {}),
     },
+    ...(isUpdatesMode(input.updates) ? { updates: input.updates } : {}),
   };
   if (!Object.hasOwn(PRESETS, input.branchPolicy?.preset as string))
     unchosenBranchPolicy.add(config);
@@ -264,6 +289,8 @@ export const mergeConfigValues = (input: ConfigInput, current: ToolkitConfig): T
   localeOptions: input.localeOptions ?? current.localeOptions,
   branchPolicy: mergePreset(input.preset ?? current.branchPolicy.preset, input, current),
   commitPolicy: input.commitPolicy ?? current.commitPolicy,
+  // Set only by `workit upgrade --set-updates`; every other write keeps it.
+  ...(current.updates ? { updates: current.updates } : {}),
 });
 
 export const writeConfig = (config: ToolkitConfig): void => {

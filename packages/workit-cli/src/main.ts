@@ -201,6 +201,27 @@ export async function main(
 
   const entry = findVerb(command);
   if (!entry) return unknown(io, command);
+  // Only the real process at a person's terminal checks for a newer release
+  // (update-check.ts); a caller that replaces a stream never does.
+  if (
+    !io.json &&
+    overrides.stdout === undefined &&
+    overrides.stderr === undefined &&
+    process.stdin.isTTY &&
+    process.stderr.isTTY
+  ) {
+    const { launchUpdateCheck } = await import("./update-check");
+    const reexecuted = await launchUpdateCheck(
+      { argv, command, json: parsed.json },
+      {
+        env: io.env,
+        stdin: process.stdin,
+        stderr: process.stderr,
+        write: (text) => void process.stderr.write(text),
+      },
+    );
+    if (reexecuted !== undefined) return reexecuted;
+  }
   // Everything from here, a refusal before the verb runs included, ends in
   // the delivery verb's outcome line when it exits non-zero.
   const route = async (routed: Io): Promise<number> => {
@@ -443,10 +464,17 @@ const describe = (entry: VerbEntry) => ({
 const unknown = (io: Io, command: string): number =>
   emit(
     io,
-    fail("invalid_input", `unknown command "${command}"`, { unblock: commandUnblock(command) }),
+    fail("invalid_input", `unknown command "${command}"`, {
+      unblock: commandUnblock(command),
+    }),
   );
 
 if (import.meta.main) {
+  // The detached child update-check.ts starts: refresh the version cache, print nothing.
+  if (process.env.WORKIT_UPDATE_REFRESH === "1") {
+    (await import("./update-check")).refreshUpdateCache(process.env);
+    process.exit(0);
+  }
   const code = await main(process.argv.slice(2), {}, { diagnostics: true });
   // A piped stdout or stderr may still hold output: hand it over before exiting.
   await flushStreams();
