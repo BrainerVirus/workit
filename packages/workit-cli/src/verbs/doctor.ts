@@ -4,7 +4,7 @@
 // reflects the cleaned state. `--fix` installs the prepare-commit-msg hook that adds the
 // Workit-Session trailer to plain git commits, in a Workit workspace only.
 import pkg from "../../package.json" with { type: "json" };
-import { fixChecksConfig, fixSessionHook, runDoctor } from "../admin/doctor";
+import { fixChecksConfig, fixSessionHook, runDoctor, type DoctorReport } from "../admin/doctor";
 import { lintKnowledge } from "@brainervirus/workit-core/src/knowledge";
 import {
   clearStaleMetadataLock,
@@ -12,6 +12,7 @@ import {
 } from "@brainervirus/workit-core/src/core/store-lock";
 import { emit, fail, type Io } from "../output";
 import { createProgress } from "../progress";
+import { createStyle, wrap, type Style } from "../style";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 import { workspaceRootFor } from "../task";
 
@@ -147,18 +148,74 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (sessionHook) io.stdout(`fix: session hook ${sessionHook.action}: ${sessionHook.detail}\n`);
   if (checksConfig && checksConfig.action !== "none")
     io.stdout(`fix: checks config ${checksConfig.action}: ${checksConfig.detail}\n`);
-  io.stdout(
-    `workit doctor — ${report.ok ? "healthy" : "problems found"} (${report.offline ? "offline" : "online"})\n`,
-  );
-  for (const check of report.checks) {
-    const mark = check.status === "fail" ? "FAIL" : check.status === "warn" ? "WARN" : "ok  ";
-    io.stdout(`${mark} ${check.id} — ${check.detail}\n`);
-    // A multi-line fix (config lines to paste) stays under its check.
-    if (check.fix) io.stdout(`     fix: ${check.fix.replaceAll("\n", "\n          ")}\n`);
-  }
-  io.stdout(`${knowledgeLine}\n`);
-  io.stdout(
-    `passed ${report.summary.passed} / warned ${report.summary.warned} / failed ${report.summary.failed}\n`,
-  );
+  for (const line of renderDoctor(
+    report,
+    knowledgeLine,
+    createStyle({ stream: process.stdout, env: io.env, json: io.json }),
+  ))
+    io.stdout(`${line}\n`);
   return report.exitCode;
+}
+
+const ID_COLUMN = 28;
+
+/**
+ * The human report. Without color it is the plain line format agents and pipes
+ * have always read; with color the status words and ids are highlighted, the
+ * details wrap under one column, and failures and warnings repeat at the end.
+ */
+export function renderDoctor(report: DoctorReport, knowledgeLine: string, style: Style): string[] {
+  const summary = `passed ${report.summary.passed} / warned ${report.summary.warned} / failed ${report.summary.failed}`;
+  const header = `workit doctor — ${report.ok ? "healthy" : "problems found"} (${report.offline ? "offline" : "online"})`;
+  if (!style.enabled) {
+    const lines = [header];
+    for (const check of report.checks) {
+      const mark = check.status === "fail" ? "FAIL" : check.status === "warn" ? "WARN" : "ok  ";
+      lines.push(`${mark} ${check.id} — ${check.detail}`);
+      // A multi-line fix (config lines to paste) stays under its check.
+      if (check.fix) lines.push(`     fix: ${check.fix.replaceAll("\n", "\n          ")}`);
+    }
+    return [...lines, knowledgeLine, summary];
+  }
+  const marks: Record<DoctorReport["checks"][number]["status"], string> = {
+    pass: style.ok("ok  "),
+    info: style.info("info"),
+    warn: style.warn("WARN"),
+    fail: style.fail("FAIL"),
+  };
+  const idWidth = Math.min(
+    ID_COLUMN,
+    Math.max(0, ...report.checks.map((check) => check.id.length)),
+  );
+  const column = 5 + idWidth + 2;
+  const fixLines = (fix: string) =>
+    `     fix: ${fix
+      .split("\n")
+      .map((line) => style.command(line))
+      .join("\n          ")}`;
+  const row = (check: DoctorReport["checks"][number]) => {
+    const id = check.id.padEnd(idWidth);
+    const used = 5 + id.length + 2;
+    return `${marks[check.status]} ${style.bold(id)}  ${wrap(check.detail, style.width, column, used)}`;
+  };
+  const lines = [
+    `workit doctor — ${report.ok ? style.ok("healthy") : style.fail("problems found")} ${style.dim(`(${report.offline ? "offline" : "online"})`)}`,
+  ];
+  for (const check of report.checks) {
+    lines.push(row(check));
+    if (check.fix) lines.push(fixLines(check.fix));
+  }
+  lines.push(style.dim(wrap(knowledgeLine, style.width, 5)));
+  const attention = report.checks.filter((c) => c.status === "fail" || c.status === "warn");
+  if (attention.length > 0) {
+    lines.push("", style.bold("Needs attention:"));
+    for (const check of attention) {
+      lines.push(row(check));
+      if (check.fix) lines.push(fixLines(check.fix));
+    }
+  }
+  const paint =
+    report.summary.failed > 0 ? style.fail : report.summary.warned > 0 ? style.warn : style.ok;
+  lines.push(paint(summary));
+  return lines;
 }
