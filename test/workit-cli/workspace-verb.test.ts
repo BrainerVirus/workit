@@ -760,3 +760,72 @@ test("rm of a proportional entry under a self one is a raise: self is the looses
   expect(result.json().error).toContain("verification");
   expect(readFileSync(file(), "utf8")).toBe(before);
 });
+
+// #549: `remotes` caps every checkout of a claimed remote, so adding or
+// removing one is the user's, like a grant.
+test("set remotes is refused from an agent shell and headless, both adding and removing, and changes nothing", async () => {
+  seed([{ ...WORK(), remotes: ["git@github.com:acme/*"] }]);
+  const before = readFileSync(file(), "utf8");
+  for (const spec of ["remotes=https://github.com/acme/app", "remotes=null"]) {
+    const asked: string[] = [];
+    const agent = await run(["set", "work", spec], root, AGENT_ENV, terminal("work", asked));
+    expect(agent.json().code, spec).toBe("blocked");
+    expect(agent.json().error, spec).toContain("grant_raise_refused");
+    expect(agent.json().unblock, spec).toContain("workit workspace set work");
+    expect(asked, spec).toEqual([]);
+    const headlessRun = await run(["set", "work", spec], root, {}, headless);
+    expect(headlessRun.json().error, spec).toContain("grant_raise_refused");
+    expect(readFileSync(file(), "utf8"), spec).toBe(before);
+  }
+});
+
+test("set remotes at the user's terminal needs the name typed, validates patterns, and writes the list", async () => {
+  seed([WORK()]);
+  const before = readFileSync(file(), "utf8");
+  const bad = await run(["set", "work", "remotes=ext::sh"], root, {}, terminal("work"));
+  expect(bad.json().code).toBe("invalid_input");
+  expect((await run(["set", "work", "remotes=a/b"], root, {}, terminal("no"))).json().code).toBe(
+    "blocked",
+  );
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  const done = await run(
+    ["set", "work", "remotes=git@github.com:acme/*,https://gitlab.com/x/y"],
+    root,
+    {},
+    terminal("work"),
+  );
+  expect(done.code).toBe(0);
+  expect(byName("work").remotes).toEqual(["git@github.com:acme/*", "https://gitlab.com/x/y"]);
+  expect((await run(["set", "work", "remotes=null"], root, {}, terminal("work"))).code).toBe(0);
+  expect(byName("work").remotes).toBeUndefined();
+});
+
+test("add offers the folder's origin as remotes at the user's terminal, and sets none in an agent shell", async () => {
+  const repo = path.join(root, "work", "libs", "kit");
+  spawnSync("git", ["init", "-q"], { cwd: repo });
+  spawnSync("git", ["remote", "add", "origin", "git@github.com:acme/kit.git"], { cwd: repo });
+  const asked: string[] = [];
+  const offered = await run(["add", "kit", "--glob", `${repo}/**`], repo, {}, terminal("", asked));
+  expect(offered.code).toBe(0);
+  expect(asked[0]).toContain("[git@github.com:acme/kit.git]");
+  expect(byName("kit").remotes).toEqual(["git@github.com:acme/kit.git"]);
+  const agent = await run(["add", "kit2", "--glob", `${repo}/sub/**`], repo, AGENT_ENV, headless);
+  expect(agent.code).toBe(0);
+  expect(byName("kit2").remotes).toBeUndefined();
+});
+
+test("rm of an entry with remotes is a raise: checkouts of its remotes stop being capped", async () => {
+  const loose = {
+    name: "loose",
+    glob: `${root}/**`,
+    vcs: GH,
+    autonomy: { push: false, pr: false },
+  };
+  seed([
+    WORK(),
+    { ...loose, name: "claims", glob: `${root}/claims/**`, remotes: ["a.example/x/y"] },
+  ]);
+  const result = await run(["rm", "claims"], root, AGENT_ENV, headless);
+  expect(result.json().code).toBe("blocked");
+  expect(result.json().error).toContain("remotes");
+});

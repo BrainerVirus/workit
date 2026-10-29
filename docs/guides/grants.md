@@ -55,6 +55,87 @@ there until it can. When a cap refuses a grant, the unblock names the entry
 that capped it (or the tied entries, or the git failure), not the one you
 would widen by mistake.
 
+## Remotes
+
+Grants follow the folder. A fresh repository inside a permissive workspace
+whose `origin` is a stricter workspace's remote would otherwise push, open
+PRs and merge there with the permissive grants. List the remote URLs a
+workspace owns in its `remotes`, and every checkout whose remote URLs it
+claims never exceeds its grants, wherever the folder is:
+
+```json
+{ "name": "work", "glob": "/work/**", "remotes": ["git@github.com:acme/*", "https://gitlab.example/team/app"] }
+```
+
+- The ssh, `git@host:owner/repo` and https forms of one repository compare
+  equal; the host and the path compare case-insensitively, and a trailing
+  `.git` is ignored. A pattern ending in `/*` claims everything under that
+  owner or group. A local path claims that repository.
+- Each action is matched by what it targets: `workit git push` (and
+  `--release`, `release finish` and `publish`, a stack push) by every push URL
+  of the remote git pushes the branch to (`branch.<b>.pushRemote`,
+  `remote.pushDefault`, `branch.<b>.remote`, then `origin`; `pushurl` and
+  `pushInsteadOf` applied); a PR, merge, stack land or CI rerun by the forge
+  repository it acts on (the PR's base). Elsewhere every remote of the
+  checkout counts. Several matching entries give the lowest of them, and the
+  refusal names the capping workspace and the remote it matched.
+- A local path or `file://` URL compares as the repository git reaches
+  (symlinks followed before `..`, git's `X`, `X.git` and `X/.git` forms, a
+  relative path from the checkout's top). An ssh host alias resolves through
+  your `~/.ssh/config` as Workit's forge detection does (`github-work.com`
+  with `HostName github.com` is `github.com`), and `ssh.github.com` is
+  `github.com`.
+- A target Workit cannot resolve (an unknown remote, a `<transport>::`
+  helper URL, a local path that names no repository, a `~user` or `..` forge
+  path, a git error) grants nothing there.
+- A push whose transport is overridden reaches something its URL does not
+  name, so it grants nothing: the remote's `receivepack` or `vcs`,
+  `core.gitProxy`, or `core.sshCommand` set in the repository, a worktree, an
+  include, `-c` or `GIT_CONFIG_*`, and `GIT_SSH`, `GIT_SSH_COMMAND` or
+  `GIT_PROXY_COMMAND` in the environment, or a `GIT_EXEC_PATH` other than
+  git's own (git sets its own for hooks; that one is fine). A `core.sshCommand` in your own
+  `~/.gitconfig` (or `~/.config/git/config`, read from your account's home,
+  never one `HOME` or `GIT_CONFIG_GLOBAL` points elsewhere) or the system
+  config is your setup and is allowed.
+- None of this runs, and no extra git is asked, while no workspace sets
+  `remotes` (pushes and PRs; `grant show` and doctor still read your remotes
+  once for their note).
+
+**What this protects against, and what it does not.** `remotes` stops an agent
+that follows Workit's rules from carrying a permissive folder's grants to a
+stricter workspace's repository by accident: a clone or fork of that repository
+inside a permissive folder, a remote added by tooling, the same repository
+spelled as https, `git@host:`, `ssh://` or an ssh host alias, and a push
+redirected by `pushurl`, `pushInsteadOf`, `pushRemote`, an include or
+`GIT_CONFIG_*`. It caps Workit's own verbs (`workit git push`, `workit pr`,
+`workit release`, stack and CI verbs). It is not a boundary against an agent
+that sets out to evade it. A raw `git push` of a feature branch is only nudged,
+never refused, and the same goes for a push through an `ssh` program placed
+earlier on `PATH`, or through a hand-built git directory whose `refs`, `objects`
+or `commondir` point into a claimed local repository. Workit does not try to
+detect these. As the [trust model](#trust-model) says, the hard boundary is your
+host's permission prompt and sandbox: deny or ask on raw `git push` and on edits
+to `PATH` in the repositories you want held to their workspace's grants.
+
+**Forks.** In a fork whose `upstream` is a claimed repository, a push to your
+own `origin` keeps the folder's grants; a PR whose base is the upstream, or a
+push that a `pushurl`, `pushInsteadOf` or `pushRemote` sends to it, is capped
+at the claiming workspace. `workit grant show` prints the push target and the
+entry that caps it.
+
+`remotes` decides where an entry's grants reach, so only you change it, at
+your own terminal: `workit workspace set work remotes=git@github.com:acme/*`
+(a JSON array or a comma-separated list; `remotes=null` removes it) asks you
+to type the workspace name and is refused from an agent or headless shell,
+adding or removing. `workit workspace add` at your terminal offers the
+folder's `origin` as the default, and `workit workspace rm` of an entry with
+`remotes` counts as a raise.
+
+`workit grant show` and `workit doctor` (`grant_remotes`) warn when this
+checkout's remote is claimed by another workspace (its grants are capped
+there). When its workspace claims no remotes, they print a note (doctor:
+`info`) with the command to set them.
+
 ## Releasing
 
 `release: true` (`workit grant set <workspace> release=true`, from your own

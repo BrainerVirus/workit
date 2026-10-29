@@ -8,6 +8,7 @@
 //   workit release publish [<version>]
 import { progressFor } from "../progress";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
+import { pushTarget } from "@brainervirus/workit-core/src/core/remotes";
 import { verifyReleased } from "@brainervirus/workit-core/src/forge/verify";
 import {
   deleteRemoteBranch,
@@ -178,8 +179,11 @@ async function finish(argv: string[], io: Io): Promise<number> {
   }
   const actor = actorFromEnv(io.env);
   const local = isLocalRemote(io.cwd, plan.remote);
-  const release = requireGrant(io.cwd, "release");
-  const push = requireGrant(io.cwd, "push", { forge: !local });
+  // The remote the finish pushes to; none named: every remote counts.
+  const remote = plan.remote;
+  const target = remote ? () => pushTarget(io.cwd, remote) : undefined;
+  const release = requireGrant(io.cwd, "release", { target });
+  const push = requireGrant(io.cwd, "push", { forge: !local, target });
   const steps = stepsOf(plan);
   // Said before anything merges; never blocking.
   for (const warning of plan.warnings) io.stderr(`warning: ${warning}\n`);
@@ -300,7 +304,10 @@ async function publish(argv: string[], io: Io): Promise<number> {
   const identity = plan.data.local ? null : pushIdentity(io, plan.data.branch);
   if (identity && !identity.ok) return forgeFail(io, identity);
   const checked = identity?.data ?? null;
-  const grant = requireGrant(io.cwd, "push", { forge: checked?.forge != null });
+  const grant = requireGrant(io.cwd, "push", {
+    forge: checked?.forge != null,
+    target: () => pushTarget(io.cwd, plan.data.remote),
+  });
   if (!grant.allowed) return blocked(io, grant);
   const actor = actorFromEnv(io.env);
   const result = executePush(io.cwd, plan.data, {

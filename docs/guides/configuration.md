@@ -161,6 +161,12 @@ covers the removed glob. `rm` never removes the last entry. Raise a grant
 with `workit grant set` in your own terminal. Each write keeps the previous file as `workspaces.json.bak`, and
 `workit doctor` lists overlapping globs and which entry wins.
 
+`remotes` lists the remote URLs a workspace owns: a checkout anywhere whose
+remote it claims never exceeds its grants ([grants](grants.md#remotes)). Like
+a grant, only you change it: `workit workspace set <name> remotes=<url>,…`
+needs your terminal and the workspace name typed, and `add` at your terminal
+offers the folder's `origin`.
+
 A workspace's `defaultEndpoint` sets how far an unnamed delivery request goes:
 `commit` (default), `pr`, `green` (babysit the PR until merge-ready, never
 merging) or `merged` (`green`, then merge; needs the `merge` grant, otherwise

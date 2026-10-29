@@ -39,9 +39,10 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { requireGrant, type GrantDecision } from "./autonomy";
+import { pushTarget } from "./core/remotes";
 import { isProtectedTarget } from "./core/branch";
 import { classifyLockOwner, localLockHost, processStartOf } from "./core/store-lock";
-import { mergePullRequest, type Sleep } from "./forge/pr-ops";
+import { baseTarget, mergePullRequest, type Sleep } from "./forge/pr-ops";
 import {
   buildStatusDoc,
   pollDelay,
@@ -1277,7 +1278,7 @@ export function stackStatus(ctx: Ctx, stack: StackFile): StackResult<StatusOutco
   if (!ledger.ok) return stackFail(ledger.code, ledger.error, ledger.unblock);
   const remote = remoteFor(ctx.cwd, ctx.resolved, stack.trunk);
   const trunkSha = trunkTip(ctx.cwd, remote, stack.trunk);
-  const grant = requireGrant(ctx.cwd, "merge");
+  const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
   const branches: BranchStatus[] = [];
   let verdict: StackVerdict | null = null;
   let reason: string | null = null;
@@ -1474,7 +1475,10 @@ function pushBranch(
       ok: true,
       data: { pushed: false, forced: false, sha: plan.data.sha },
     };
-  const grant = requireGrant(cwd, "push", { forge: !plan.data.local });
+  const grant = requireGrant(cwd, "push", {
+    forge: !plan.data.local,
+    target: () => pushTarget(cwd, plan.data.remote),
+  });
   if (!grant.allowed)
     return stackFail("blocked", grant.error, grant.unblock, {
       reason: grant.reason,
@@ -1807,7 +1811,7 @@ export function syncStack(
       if (doc && doc.state === "open" && doc.base !== parent.name) {
         step.retarget = { from: doc.base, to: parent.name };
         if (!options.dryRun) {
-          const grant = requireGrant(cwd, "pr");
+          const grant = requireGrant(cwd, "pr", { target: baseTarget(ctx.resolved) });
           if (!grant.allowed)
             return stackFail("blocked", grant.error, grant.unblock, {
               reason: grant.reason,
@@ -2052,7 +2056,7 @@ export async function landStack(
   if (mismatch) return failWith(mismatch);
   const bypass = options.unverified ?? null;
   if (bypass) {
-    const grant = requireGrant(ctx.cwd, "merge");
+    const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
     if (!grant.allowed)
       return failWith(
         stackFail("blocked", grant.error, grant.unblock, {
@@ -2125,7 +2129,7 @@ export async function landStack(
         continue;
       }
     }
-    const grant = requireGrant(ctx.cwd, "merge");
+    const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
     const verdict = verdictOf(ctx.cwd, entry.branch, ledgerRows(), doc);
     // A dry run predicts the retarget the real run would do first.
     const effective =

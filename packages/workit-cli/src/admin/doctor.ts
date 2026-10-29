@@ -23,7 +23,11 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { configuredGrants, entryMismatch } from "@brainervirus/workit-core/src/autonomy";
+import {
+  configuredGrants,
+  entryMismatch,
+  remoteFindings,
+} from "@brainervirus/workit-core/src/autonomy";
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import { inspectMetadataLock } from "@brainervirus/workit-core/src/core/store-lock";
 import {
@@ -138,6 +142,7 @@ type DoctorCheckId =
   | "heavy_scope"
   | "hook_deadline"
   | "grant_endpoint"
+  | "grant_remotes"
   | "hook_runs"
   | "claude_grant_rules"
   | "codex_grant_rules"
@@ -2897,6 +2902,26 @@ const checkGrantEndpoint = (res: Resolved): DoctorCheck => {
       };
 };
 
+// Grants follow the folder; a workspace's `remotes` makes them follow the
+// remote too (#549). Warn when this checkout's remote is another workspace's,
+// or when its workspace claims none.
+const checkGrantRemotes = (res: Resolved): DoctorCheck => {
+  const { warnings, notes } = remoteFindings(res.cwd, res.configDir);
+  if (warnings.length === 0 && notes.length === 0)
+    return { id: "grant_remotes", status: "pass", detail: "remote URLs and workspaces agree" };
+  // A stricter workspace's remote here is the risk (warn); a workspace with no
+  // remotes is every entry's starting point, so it informs only.
+  const lines = [...warnings, ...notes];
+  const command = /workit workspace set \S+ remotes=\S+/u;
+  const fix = lines.map((line) => command.exec(line)?.[0]).find(Boolean);
+  return {
+    id: "grant_remotes",
+    status: warnings.length ? "warn" : "info",
+    detail: lines.map((line) => line.replace(/; to claim it.*$/u, "")).join("; "),
+    ...(fix ? { fix: `in your own terminal: ${fix}` } : {}),
+  };
+};
+
 // The per-repo checks config lives in `.workit/checks.json`; a root
 // `workit.checks.json` is still read but is a legacy location.
 const checkChecksConfig = (res: Resolved): DoctorCheck => {
@@ -3498,6 +3523,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkHeavyScope,
   checkHookDeadline,
   checkGrantEndpoint,
+  checkGrantRemotes,
   checkHookRuns,
   checkChecksConfig,
   checkUpdates,
