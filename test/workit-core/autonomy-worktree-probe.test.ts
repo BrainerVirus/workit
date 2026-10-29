@@ -1,7 +1,15 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { GRANT_KINDS, requireGrant, resolveAutonomy } from "@/packages/workit-core/src/autonomy";
@@ -154,3 +162,105 @@ test("#548: a checkout whose git directory no checkout owns (--separate-git-dir)
   expect(nothingGranted(sep).note).toContain("owned by no checkout");
   expect(resolveAutonomy(`${root}/work/main`).grants.merge).toBe(true);
 });
+
+// #552: a git directory whose refs, objects or config are symlinks into
+// another repository is not the folder's own.
+const strictAndBorrower = (at: string) => {
+  const strict = `${root}/work/clients/brasil/${at}`;
+  init(strict);
+  const strictGit = `${strict}/.git`;
+  const borrow = (gitDir: string, names = ["objects", "refs", "config"]) => {
+    mkdirSync(gitDir, { recursive: true });
+    for (const name of names) symlinkSync(`${strictGit}/${name}`, `${gitDir}/${name}`);
+    writeFileSync(`${gitDir}/HEAD`, "ref: refs/heads/master\n");
+  };
+  return { strict, strictGit, borrow };
+};
+const strictWorkspaces = () =>
+  write([
+    permissive(),
+    {
+      name: "brasil",
+      glob: `${root}/work/clients/brasil/**`,
+      vcs: account,
+      autonomy: { merge: false, release: false },
+      verification: "independent",
+    },
+  ]);
+
+test.skipIf(!unix)(
+  "#552: a bare-style folder (no .git entry) borrowing another repository caps at nothing",
+  () => {
+    strictWorkspaces();
+    const { borrow } = strictAndBorrower("s1");
+    borrow(`${root}/work/bare-style`);
+    expect(nothingGranted(`${root}/work/bare-style`).note).toContain("git");
+    mkdirSync(`${root}/work/bare-style/sub`, { recursive: true });
+    nothingGranted(`${root}/work/bare-style/sub`);
+  },
+);
+
+test("#552: a bare repository under a permissive workspace caps at nothing", () => {
+  write([permissive()]);
+  git(root, "init", "-q", "--bare", `${root}/work/plain.git`);
+  nothingGranted(`${root}/work/plain.git`);
+  // Inside a checkout's own git directory git names the checkout: not capped.
+  expect(resolveAutonomy(`${root}/work/main/.git`).grants.merge).toBe(true);
+  expect(resolveAutonomy(`${root}/work/main/.git/refs`).grants.merge).toBe(true);
+});
+
+test.skipIf(!unix)(
+  "#552: a real .git directory whose refs, objects and config are symlinks into a strict checkout is capped at that checkout",
+  () => {
+    strictWorkspaces();
+    const { borrow } = strictAndBorrower("s2");
+    borrow(`${root}/work/real/.git`);
+    const autonomy = resolveAutonomy(`${root}/work/real`);
+    expect(autonomy.grants.merge).toBe(false);
+    expect(autonomy.grants.release).toBe(false);
+    expect(autonomy.verification).toBe("independent");
+    const decision = requireGrant(`${root}/work/real`, "release");
+    if (decision.allowed) throw new Error("expected a refusal");
+    expect(decision.unblock).toContain("brasil");
+  },
+);
+
+test.skipIf(!unix)(
+  "#552: one borrowed internal (config) is enough to cap; one pointing at no git directory caps at nothing",
+  () => {
+    strictWorkspaces();
+    const { borrow } = strictAndBorrower("s3");
+    const cfg = `${root}/work/cfg`;
+    init(cfg);
+    rmSync(`${cfg}/.git/config`);
+    borrow(`${cfg}/.git`, ["config"]);
+    expect(resolveAutonomy(cfg).grants.release).toBe(false);
+    const stray = `${root}/work/stray`;
+    init(stray);
+    writeFileSync(`${root}/packed-refs-elsewhere`, "");
+    symlinkSync(`${root}/packed-refs-elsewhere`, `${stray}/.git/packed-refs`);
+    nothingGranted(stray);
+  },
+);
+
+test.skipIf(!unix)(
+  "#552: hooks and info symlinked to a shared folder or into another repository keep the checkout's grants",
+  () => {
+    strictWorkspaces();
+    const { strictGit } = strictAndBorrower("s4");
+    mkdirSync(`${root}/hooks-shared`, { recursive: true });
+    const loose = `${root}/work/loose`;
+    init(loose);
+    rmSync(`${loose}/.git/hooks`, { recursive: true, force: true });
+    symlinkSync(`${root}/hooks-shared`, `${loose}/.git/hooks`);
+    rmSync(`${loose}/.git/info`, { recursive: true, force: true });
+    symlinkSync(`${strictGit}/info`, `${loose}/.git/info`);
+    expect(resolveAutonomy(loose).grants.release).toBe(true);
+    expect(resolveAutonomy(loose).grants.merge).toBe(true);
+    const into = `${root}/work/into`;
+    init(into);
+    rmSync(`${into}/.git/hooks`, { recursive: true, force: true });
+    symlinkSync(`${strictGit}/hooks`, `${into}/.git/hooks`);
+    expect(resolveAutonomy(into).grants.release).toBe(true);
+  },
+);

@@ -17,7 +17,11 @@ these points at a protected branch, or at a repository it cannot read
 (`GIT_DIR=$X git push`). A folder whose `.git` is a `gitdir:` file or a
 symlink into another checkout's repository is capped at that checkout's
 grants, and at none when no checkout owns the git directory (a
-`--separate-git-dir` repository).
+`--separate-git-dir` repository). The same holds when the git directory's
+`refs`, `objects`, `config`, `packed-refs` or `commondir` resolve into
+another repository (a shared `hooks` or `info` folder does not count), and a
+repository with no `.git` entry (bare, or a bare-style folder) gets no
+grants.
 
 ## Branch, commit, push
 
