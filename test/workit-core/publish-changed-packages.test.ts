@@ -198,15 +198,25 @@ describe("publishChanged", () => {
       try {
         publishChanged({
           root: r.root,
-          run: (_cmd, _args, opts) => {
-            ran.push(path.basename(opts.cwd));
+          pause: () => {},
+          run: (_cmd, args, opts) => {
+            ran.push(`${args[0]} ${path.basename(opts.cwd)}`);
             if (opts.cwd.endsWith("workit-opencode")) throw new Error("boom");
           },
         });
       } catch (e) {
         err = e;
       }
-      expect(ran).toEqual(["workit-mcp", "workit-opencode", "workit-cursor", "workit-codex"]);
+      // The failed package is checked on the registry and retried once.
+      expect(ran).toEqual([
+        "publish workit-mcp",
+        "publish workit-opencode",
+        "view workit-opencode",
+        "publish workit-opencode",
+        "view workit-opencode",
+        "publish workit-cursor",
+        "publish workit-codex",
+      ]);
       const message = (err as Error).message;
       expect(message).toContain("publish failed for 1 package(s): workit-opencode");
       expect(message).toContain("published: workit-mcp, workit-cursor, workit-codex");
@@ -286,5 +296,83 @@ describe("publishChanged", () => {
     } finally {
       r.cleanup();
     }
+  });
+});
+
+describe("publishChanged recovers a failed npm publish (v8.41.0)", () => {
+  const TLOG =
+    "npm error code TLOG_CREATE_ENTRY_ERROR\nnpm error (409) an equivalent entry already exists in the transparency log";
+
+  // One changed package (workit-opencode at 0.8.10); `script` answers each
+  // npm call in order and records it.
+  function attempt(script: Array<string | Error>) {
+    const r = repo();
+    r.change("packages/workit-opencode/src/i.ts", "c\n");
+    const calls: string[] = [];
+    const pauses: number[] = [];
+    const log = spyOn(console, "log");
+    try {
+      const result = publishChanged({
+        root: r.root,
+        pause: (ms) => pauses.push(ms),
+        run: (cmd, args) => {
+          calls.push(`${cmd} ${args.join(" ")}`);
+          const next = script.shift();
+          if (next instanceof Error) throw next;
+          return next ?? "";
+        },
+      });
+      return { result, calls, pauses, lines: log.mock.calls.map((c) => String(c[0])) };
+    } catch (error) {
+      return {
+        error: error as Error,
+        calls,
+        pauses,
+        lines: log.mock.calls.map((c) => String(c[0])),
+      };
+    } finally {
+      log.mockRestore();
+      r.cleanup();
+    }
+  }
+  const PUBLISH = "npm publish --access public";
+  const VIEW = "npm view @brainervirus/workit-opencode@0.8.10 version";
+
+  test("a failed publish whose version is already on the registry counts as published", () => {
+    const out = attempt([new Error(TLOG), "0.8.10\n"]);
+    expect(out.calls).toEqual([PUBLISH, VIEW]);
+    expect(out.result?.published).toEqual(["workit-opencode"]);
+    expect(out.pauses).toEqual([]);
+    expect(out.lines.find((l) => l.startsWith("published "))).toEndWith(
+      "(already on the registry)",
+    );
+  });
+
+  test("a TLOG 409 with the version absent is retried once and succeeds", () => {
+    const out = attempt([new Error(TLOG), new Error("npm error code E404"), "+ published"]);
+    expect(out.calls).toEqual([PUBLISH, VIEW, PUBLISH]);
+    expect(out.result?.published).toEqual(["workit-opencode"]);
+    expect(out.pauses).toHaveLength(1);
+    expect(out.lines.some((l) => l.includes("TLOG_CREATE_ENTRY_ERROR"))).toBe(true);
+    expect(out.lines.find((l) => l.startsWith("published "))).not.toContain("already on");
+  });
+
+  test("only that exact version counts: an older version on the registry is not a success", () => {
+    const out = attempt([new Error("ETIMEDOUT"), "0.8.9\n", "+ published"]);
+    expect(out.calls).toEqual([PUBLISH, VIEW, PUBLISH]);
+    expect(out.result?.published).toEqual(["workit-opencode"]);
+  });
+
+  test("a retry that errors but landed on the registry counts as published", () => {
+    const out = attempt([new Error(TLOG), "", new Error(TLOG), "0.8.10"]);
+    expect(out.calls).toEqual([PUBLISH, VIEW, PUBLISH, VIEW]);
+    expect(out.result?.published).toEqual(["workit-opencode"]);
+  });
+
+  test("two failures with the version absent fail loudly after exactly one retry", () => {
+    const out = attempt([new Error(TLOG), "", new Error("still failing"), ""]);
+    expect(out.calls).toEqual([PUBLISH, VIEW, PUBLISH, VIEW]);
+    expect(out.error?.message).toContain("publish failed for 1 package(s): workit-opencode");
+    expect(out.lines).toContain("publish failed workit-opencode: still failing");
   });
 });
