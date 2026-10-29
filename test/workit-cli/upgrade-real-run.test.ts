@@ -300,6 +300,22 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
+test.skipIf(process.platform === "win32")(
+  "Given the app-server daemon the upgrade restarted (ps start 14:23:50.000, plugin dir 14:23:50.29), Then it counts as started after the install",
+  () => {
+    // ps lstart has one-second resolution: the restart lands in the same second as the install.
+    const startedMs = Math.floor(INSTALLED / 1000) * 1000;
+    expect(startedMs).toBeLessThan(INSTALLED);
+    expect(
+      codexDoctor("same-second", [{ pid: 7, startedMs, args: "codex app-server" }]).status,
+    ).toBe("info");
+    expect(
+      codexDoctor("three-seconds", [{ pid: 8, startedMs: INSTALLED - 3_000, args: "codex" }])
+        .status,
+    ).toBe("warn");
+  },
+);
+
 test("Given a spinner on a TTY, When synchronous work runs, Then the ticker draws during it and stops before the step line", () => {
   const writes: string[] = [];
   const events: string[] = [];

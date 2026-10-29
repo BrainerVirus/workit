@@ -94,6 +94,16 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
+  "G a claude process whose one-second ps start is within 2 s of the install, W doctor runs, T it counts as started after it",
+  () => {
+    const sameSecond = Math.floor(INSTALLED / 1000) * 1000;
+    expect(
+      row(doctorFor("same-second", [{ pid: 9, startedMs: sameSecond, args: "claude" }])).status,
+    ).toBe("info");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
   "G every claude process started after the install, or none run, or ps fails, or no plugin, W doctor runs, T the row is info and never fails",
   () => {
     for (const report of [
