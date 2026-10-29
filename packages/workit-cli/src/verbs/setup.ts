@@ -9,6 +9,7 @@ import {
 } from "../admin/host-permissions";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
+import { colorDiff, createStyle } from "../style";
 
 const ALL_HOSTS = ["claude-code", "codex", "cursor", "opencode", "pi"];
 const USAGE =
@@ -52,9 +53,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
     ...(io.env.HOME ? { home: io.env.HOME } : {}),
   });
   const say = io.json ? io.stderr : io.stdout;
+  // --json sends the diff to stderr for a person to read: color follows that stream.
+  const style = createStyle({
+    stream: io.json ? io.terminals?.stderr : io.terminals?.stdout,
+    env: io.env,
+  });
   for (const note of plan.notes) say(`${note}\n`);
-  for (const blocked of plan.blocked) say(`blocked: ${blocked}\n`);
-  for (const change of plan.changes) say(`${permissionDiff(change)}\n`);
+  for (const blocked of plan.blocked) say(`${style.warn("blocked:")} ${blocked}\n`);
+  for (const change of plan.changes) say(`${colorDiff(permissionDiff(change), style)}\n`);
   const summary = {
     changes: plan.changes.map((c) => ({ host: c.host, file: c.file })),
     notes: plan.notes,
@@ -85,7 +91,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       );
     const answer = await askOrCancel(io, () =>
       askLine(
-        "Write Workit's permission block shown above? [y/N] ",
+        `${style.bold("Write Workit's permission block shown above?")} [y/N] `,
         io.json ? process.stderr : process.stdout,
       ),
     );
@@ -105,7 +111,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       fail("failed", failed.map((e) => `${e.file}: ${e.detail ?? "failed"}`).join("; "), { data }),
     );
   return emit(io, ok(data), () => [
-    ...entries.map((e) => `written ${e.file}`),
+    ...entries.map((e) => `${style.ok("written")} ${style.path(e.file)}`),
     "Restart the host sessions to load the new permissions. `workit uninstall` removes them.",
   ]);
 }
