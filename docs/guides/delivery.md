@@ -234,6 +234,12 @@ legacy HEAD`) is not. A command that changes into a directory is judged
   `edit`, and a revert or merge without conflicts (`--no-commit`).
 - A failing hook's output is kept whole (head and tail past 200 lines, lines
   cut at 1000 characters).
+- Auto-fix pre-commit hooks (lint-staged, `prettier --write`, lefthook
+  `stage_fixed`, `eslint --fix`) work with `git commit -- <paths>`: the commit
+  gets the fixed files, and afterwards each named path whose file now matches
+  the commit is clean in the index too, so `git status` shows no `MM`. A named
+  path the hook left different on disk keeps its index entry, and changes you
+  staged on other paths stay staged.
 - `git push` never pushes a protected branch and succeeds only when the remote
   tip equals the local SHA afterwards. It forces only with
   `--force-with-lease`, leased on the tip Workit itself last pushed (otherwise

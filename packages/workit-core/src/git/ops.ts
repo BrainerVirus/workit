@@ -581,6 +581,26 @@ const nothingToCommit = (what: string) =>
     "workit git commit --allow-empty -m '<msg>'  # only to record an empty commit on purpose",
   );
 
+/**
+ * After a path-form (`--only`) commit, point the real index at HEAD for each
+ * named path whose working tree already matches HEAD. Git runs pre-commit on
+ * a temporary index there, so an auto-fix hook (lint-staged, `stage_fixed`)
+ * fixes the commit and the working tree while the real index keeps the
+ * pre-hook copy (`MM`). Paths whose working tree still differs from HEAD, and
+ * anything outside `paths`, keep their index entries.
+ */
+function resyncCommittedPaths(cwd: string, paths: readonly string[]): void {
+  const names = (...args: string[]) =>
+    new Set(
+      nulList(git(cwd, ["diff", "--name-only", "-z", ...args, "HEAD", "--", ...paths]).stdout),
+    );
+  const worktreeDiffers = names();
+  const stale = [...names("--cached")].filter((file) => !worktreeDiffers.has(file));
+  // diff prints paths from the top, without pathspec magic: match them literally.
+  if (stale.length)
+    git(cwd, ["reset", "-q", "HEAD", "--", ...stale.map((file) => `:(top,literal)${file}`)]);
+}
+
 export function gitCommit(
   cwd: string,
   input: {
@@ -777,6 +797,7 @@ export function gitCommit(
   }
   const sha = headSha(cwd);
   if (!sha) return failure("failed", "the commit did not resolve");
+  if (paths.length) resyncCommittedPaths(cwd, paths);
   // A merge commit lists what it brought in relative to its first parent.
   const merge = git(cwd, ["rev-parse", "-q", "--verify", `${sha}^2`]).ok;
   const files = nulList(

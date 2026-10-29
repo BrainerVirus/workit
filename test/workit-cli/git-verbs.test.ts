@@ -688,6 +688,110 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
+// An auto-fix pre-commit hook (lint-staged, lefthook stage_fixed): it rewrites
+// each staged *.txt file to upper case and re-adds it to the index git hands
+// the hook (GIT_INDEX_FILE). A `keep-*` file also gets a note in the working
+// tree only, so its working tree still differs from the commit afterwards.
+const AUTOFIX_HOOK = `#!/bin/sh
+[ -n "$GIT_INDEX_FILE" ] || { echo "pre-commit: GIT_INDEX_FILE unset" >&2; exit 1; }
+git diff --cached --name-only --diff-filter=ACM -- '*.txt' | while read -r f; do
+  tr a-z A-Z < "$f" > "$f.fix" && mv "$f.fix" "$f" && git add -- "$f"
+  case "$f" in keep-*) echo "note" >> "$f" ;; esac
+done
+`;
+
+const autofixRepo = () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/a");
+  writeFileSync(path.join(repo.git("config", "core.hooksPath"), "pre-commit"), AUTOFIX_HOOK, {
+    mode: 0o755,
+  });
+  return repo;
+};
+
+/** Paths whose index entry differs from HEAD (staged) / whose working tree differs from the index. */
+const indexState = (cwd: string) => {
+  const names = (...args: string[]) =>
+    spawnSync("git", ["diff", "--name-only", ...args], { cwd, encoding: "utf8" })
+      .stdout.split("\n")
+      .filter(Boolean)
+      .toSorted();
+  return { staged: names("--cached"), unstaged: names() };
+};
+
+test.skipIf(process.platform === "win32")(
+  "git commit -- <paths>: an auto-fix pre-commit hook leaves the committed paths clean in the real index",
+  async () => {
+    const repo = autofixRepo();
+    repo.write("a.txt", "hello\n");
+    repo.write("keep-b.txt", "kept\n");
+    repo.write("staged.md", "the user's own staged change\n");
+    repo.git("add", "staged.md");
+    const result = await run(
+      ["git", "commit", "--json", "-m", "feat: fixed", "--", "a.txt", "keep-b.txt"],
+      repo.cwd,
+    );
+    expect(result.code).toBe(0);
+    expect(result.json().data.files).toEqual(["a.txt", "keep-b.txt"]);
+    expect(repo.git("show", "HEAD:a.txt")).toBe("HELLO");
+    expect(repo.git("show", "HEAD:keep-b.txt")).toBe("KEPT");
+    // a.txt: working tree == HEAD, so its index entry is HEAD's, not the pre-hook copy.
+    expect(repo.git("show", ":a.txt")).toBe("HELLO");
+    // keep-b.txt still differs from HEAD in the working tree: its index entry is untouched.
+    expect(repo.git("show", ":keep-b.txt")).toBe("kept");
+    // The user's staged path was not committed and stays staged.
+    expect(indexState(repo.cwd)).toEqual({
+      staged: ["keep-b.txt", "staged.md"],
+      unstaged: ["keep-b.txt"],
+    });
+    expect(result.json().data.leftDirty).toBe(2);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git commit -- <paths>: in a linked worktree an auto-fix hook leaves the committed path clean",
+  async () => {
+    const repo = autofixRepo();
+    const linked = path.join(repo.root, "linked");
+    repo.git("worktree", "add", "-q", "-b", "feature/b", linked);
+    writeFileSync(path.join(linked, "a.txt"), "hello\n");
+    const result = await run(["git", "commit", "-m", "feat: fixed", "--", "a.txt"], linked);
+    expect(result.code).toBe(0);
+    const show = (spec: string) =>
+      spawnSync("git", ["show", spec], { cwd: linked, encoding: "utf8" }).stdout;
+    expect(show("HEAD:a.txt")).toBe("HELLO\n");
+    expect(show(":a.txt")).toBe("HELLO\n");
+    expect(indexState(linked)).toEqual({ staged: [], unstaged: [] });
+    // The main checkout's index is not the linked worktree's.
+    expect(indexState(repo.cwd)).toEqual({ staged: [], unstaged: [] });
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "git commit -- <paths>: a failing pre-commit hook records no commit and leaves the index as staged",
+  async () => {
+    const repo = autofixRepo();
+    writeFileSync(
+      path.join(repo.git("config", "core.hooksPath"), "pre-commit"),
+      '#!/bin/sh\necho "pre-commit: lint failed" >&2\nexit 1\n',
+      { mode: 0o755 },
+    );
+    repo.write("a.txt", "hello\n");
+    const head = repo.git("rev-parse", "HEAD");
+    const result = await run(
+      ["git", "commit", "--json", "-m", "feat: refused", "--", "a.txt"],
+      repo.cwd,
+    );
+    expect(result.code).toBe(1);
+    expect(result.json().error).toContain("pre-commit: lint failed");
+    expect(repo.git("rev-parse", "HEAD")).toBe(head);
+    expect(readFileSync(path.join(repo.cwd, "a.txt"), "utf8")).toBe("hello\n");
+    expect(repo.git("show", ":a.txt")).toBe("hello");
+    expect(indexState(repo.cwd)).toEqual({ staged: ["a.txt"], unstaged: [] });
+    expect(rows(repo.cwd, "commit.recorded")).toHaveLength(0);
+  },
+);
+
 // ---------------------------------------------------------------------------
 // identity and grants (forge remote; nothing reaches the network)
 
