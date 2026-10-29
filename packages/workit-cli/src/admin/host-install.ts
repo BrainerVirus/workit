@@ -41,7 +41,11 @@ export function hostCommand(
 ): HostInstallCommand {
   const executable = findHostExecutable(name, options);
   if (!executable)
-    throw new Error(`${name} executable was not found on PATH or supported user bin directories`);
+    throw new Error(
+      path.isAbsolute(name) || name.includes("/") || name.includes("\\")
+        ? `${name} does not exist or is not executable`
+        : `${name} executable was not found on PATH or supported user bin directories`,
+    );
   if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executable)) {
     const node = findHostExecutable("node", options);
     if (!node) throw new Error(`Node.js is required to run the ${name} Windows shim`);
@@ -117,6 +121,16 @@ export function findHostExecutable(
   name: string,
   options: { home?: string; env?: NodeJS.ProcessEnv } = {},
 ): string | null {
+  // An absolute or explicitly relative executable is used as given, never searched on PATH.
+  if (path.isAbsolute(name) || name.includes("/") || name.includes("\\")) {
+    try {
+      if (!statSync(name).isFile()) return null;
+      if (process.platform !== "win32") accessSync(name, constants.X_OK);
+      return name;
+    } catch {
+      return null;
+    }
+  }
   const env = options.env ?? process.env;
   const home = options.home ?? env.HOME ?? os.homedir();
   const suffixes = process.platform === "win32" ? ["", ".exe", ".cmd", ".bat"] : [""];

@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { claudeWorkitInstalls } from "../admin/host-install";
 import { readSetupState } from "../admin/setup-state";
+import { type HostCommandResult } from "../admin/host-install";
 import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import { createProgress, type StepStatus } from "../progress";
@@ -16,8 +17,9 @@ import {
   object,
   objectOrNull,
   piInstalledVersion,
+  failureReason,
+  stderrTail,
   asyncRunner,
-  runner,
   upgradePaths,
   versionAtLeast,
   type HostOutcome,
@@ -25,6 +27,12 @@ import {
   type UpgradeDeps,
   type UpgradePlan,
 } from "./shared";
+
+/** A setup entry's detail: its first line, then the last five when it ran long. */
+const briefDetail = (detail: string): string => {
+  const lines = detail.split(/\r?\n/).filter((line) => line.trim());
+  return (lines.length > 6 ? [lines[0], ...lines.slice(-5)] : lines).join(" | ");
+};
 
 /** The newest Workit Codex plugin Codex cached (what its launcher installs agents from). */
 const codexPluginRoot = (codexHome: string): string | null => {
@@ -74,13 +82,12 @@ const opencodeVersion = async (
 const applyEntry = async (
   entry: PlanEntry,
   context: {
-    run: ReturnType<typeof runner>;
     runAsync: ReturnType<typeof asyncRunner>;
     paths: ReturnType<typeof upgradePaths>;
     configDir: string;
   },
 ): Promise<HostOutcome> => {
-  const { run, runAsync, paths, configDir } = context;
+  const { runAsync, paths, configDir } = context;
   const { home, env } = paths;
   const fail = (reason: string): HostOutcome => ({
     host: entry.host,
@@ -91,6 +98,31 @@ const applyEntry = async (
   if (entry.host === "cursor") {
     // The init wizard's installer: setup's install-host + install-adapter
     // mutations, scoped to Cursor; workspaces and other config stay untouched.
+    const commands = entry.commands.map((command) => ({
+      ...command,
+      purpose: command.purpose ?? "Upgrade Cursor",
+    }));
+    // The host commands (npm) wait on the async runner so the spinner keeps
+    // moving; setup's synchronous installer then replays their recorded results
+    // and goes on with the file steps (copy, settings, mcp.json).
+    const recorded = new Map<object, HostCommandResult>();
+    let history = "";
+    for (const command of commands) {
+      if (command.skipWhenOutputIncludes && history.includes(command.skipWhenOutputIncludes))
+        continue;
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- the install commands are ordered: each needs the one before it, and the first failure stops the rest.
+      const outcome = await runAsync(command.command, command.args);
+      const result = {
+        exitCode: outcome.status ?? 1,
+        stdout: outcome.stdout,
+        stderr: outcome.stderr ?? "",
+      };
+      recorded.set(command, result);
+      history += `\n${result.stdout}\n${result.stderr}`;
+      if (result.exitCode !== 0) break;
+    }
+    const cursorSettings = path.join(home, ".cursor", "settings.json");
+    const cursorMcp = path.join(home, ".cursor", "mcp.json");
     const preview: SetupPreview = {
       ok: true,
       blocked: [],
@@ -103,12 +135,13 @@ const applyEntry = async (
           type: "install-host",
           platform: "cursor",
           path: path.join(home, ".cursor/plugins/local/.workit-package-bootstrap"),
-          commands: entry.commands.map((command) => ({
-            ...command,
-            purpose: command.purpose ?? "Upgrade Cursor",
-          })),
+          commands,
         },
         { type: "install-adapter", platform: "cursor", path: paths.cursorRoot },
+        // The same registrations the init wizard writes: a stale or non-canonical
+        // workit MCP entry is rewritten to the current launcher, other servers stay.
+        { type: "register-platform", platform: "cursor", path: cursorSettings },
+        { type: "register-platform", platform: "cursor", path: cursorMcp },
       ],
     };
     const result = applySetupPreview(preview, {
@@ -116,16 +149,19 @@ const applyEntry = async (
       env,
       cwd: home,
       preferInstalledAdapter: true,
-      runHostCommand: (command) => {
-        const outcome = run(command.command, command.args);
-        return {
-          exitCode: outcome.status ?? 1,
-          stdout: outcome.stdout,
-          stderr: "",
-        };
-      },
+      runHostCommand: (command) =>
+        recorded.get(command) ?? {
+          exitCode: 1,
+          stdout: "",
+          stderr: "command did not run",
+        },
     });
     const installed = objectOrNull(path.join(paths.cursorRoot, "package.json"));
+    const problems = result.entries
+      .filter((one) => one.status === "Failed")
+      .map((one) => one.detail ?? `${one.file} failed`);
+    if (problems.length)
+      return fail(`Cursor install failed: ${problems.map(briefDetail).join("; ")}`);
     if (!result.ok || installed?.version !== entry.latest)
       return fail(
         "Cursor install did not verify the requested package version; inspect the installer before retrying",
@@ -139,9 +175,14 @@ const applyEntry = async (
     };
   }
   const before = entry.host === "opencode" ? await opencodeVersion(runAsync) : undefined;
-  for (const command of entry.commands)
-    if ((await runAsync(command.command, command.args)).status !== 0)
-      return fail(`\`${command.command} ${command.args.join(" ")}\` failed`);
+  for (const command of entry.commands) {
+    let result = await runAsync(command.command, command.args);
+    // A cold package cache or a transient registry error fails `opencode plugin
+    // update` once and succeeds moments later: retry it once before it reads FAILED.
+    if (result.status !== 0 && entry.host === "opencode")
+      result = await runAsync(command.command, command.args);
+    if (result.status !== 0) return fail(failureReason(command, result));
+  }
   if (entry.host === "opencode") {
     const after = await opencodeVersion(runAsync);
     if (before && after)
@@ -182,7 +223,10 @@ const applyEntry = async (
     entry.host === "codex"
       ? await runAsync("codex", ["plugin", "list", "--json"])
       : await runAsync("pi", ["list"]);
-  if (verify.status !== 0) return fail("update verification failed");
+  if (verify.status !== 0)
+    return fail(
+      `update verification failed${stderrTail(verify.stderr) ? `: ${stderrTail(verify.stderr)}` : ""}`,
+    );
   if (entry.host === "codex") {
     let installed: Record<string, any>[] = [];
     try {
@@ -220,9 +264,14 @@ const refreshCodexAgents = async (
   const launcher = root && path.join(root, "dist", "launch-mcp.js");
   if (!launcher || !existsSync(launcher)) return { ok: true, note: "" };
   const fix = `node ${JSON.stringify(launcher)} --install-agents`;
-  return (await run("node", [launcher, "--install-agents"])).status === 0
+  const refreshed = await run("node", [launcher, "--install-agents"]);
+  return refreshed.status === 0
     ? { ok: true, note: "agents refreshed" }
-    : { ok: false, note: "agent refresh failed", fix };
+    : {
+        ok: false,
+        note: `agent refresh failed${stderrTail(refreshed.stderr) ? `: ${stderrTail(refreshed.stderr)}` : ""}`,
+        fix,
+      };
 };
 
 export async function applyUpgrade(
@@ -288,7 +337,6 @@ export async function applyUpgrade(
     delete value.trustedPaths;
     writeFileAtomic(migration.file, JSON.stringify(value, null, 2) + "\n", 0o600);
   }
-  const run = runner(deps);
   const runAsync = asyncRunner(deps);
   const progress = deps.progress ?? createProgress({ json: true });
   const statusOf = (outcome: HostOutcome | undefined): StepStatus =>
@@ -357,7 +405,7 @@ export async function applyUpgrade(
         hosts.push({
           host: "codex",
           status: "failed",
-          reason: `could not stop the Codex app-server daemon (${daemons.map(describe).join("; ")})`,
+          reason: `could not stop the Codex app-server daemon (${daemons.map(describe).join("; ")})${stderrTail(stopped.stderr) ? `: ${stderrTail(stopped.stderr)}` : ""}`,
           fix: "codex app-server daemon stop && workit upgrade --hosts=codex",
         });
         continue;
@@ -366,7 +414,7 @@ export async function applyUpgrade(
       // below always runs.
       let outcome: HostOutcome;
       try {
-        outcome = await applyEntry(entry, { run, runAsync, paths, configDir });
+        outcome = await applyEntry(entry, { runAsync, paths, configDir });
         if (entry.host === "codex" && outcome.status === "updated") {
           const agents = await refreshCodexAgents(runAsync, paths.codexHome);
           if (!agents.ok)
@@ -377,7 +425,10 @@ export async function applyUpgrade(
               fix: agents.fix,
             };
           else if (agents.note)
-            outcome = { ...outcome, reason: `${outcome.reason}; ${agents.note}` };
+            outcome = {
+              ...outcome,
+              reason: `${outcome.reason}; ${agents.note}`,
+            };
         }
       } catch (error) {
         outcome = {
@@ -488,12 +539,14 @@ const applyCli = async (
   cpSync(path.join(cli.root, "@brainervirus/workit-cli"), cliBackup, {
     recursive: true,
   });
-  if (
-    (await run("npm", ["install", "--global", `@brainervirus/workit-cli@${cli.latest}`])).status !==
-    0
-  )
+  const install = await run("npm", [
+    "install",
+    "--global",
+    `@brainervirus/workit-cli@${cli.latest}`,
+  ]);
+  if (install.status !== 0)
     return fail(
-      `CLI update failed; preserved package at ${cliBackup}; use npm to repair or run node ${path.join(cliBackup, "dist/index.js")}`,
+      `CLI update failed${stderrTail(install.stderr) ? ` (${stderrTail(install.stderr)})` : ""}; preserved package at ${cliBackup}; use npm to repair or run node ${path.join(cliBackup, "dist/index.js")}`,
     );
   const installed = objectOrNull(path.join(cli.root, "@brainervirus/workit-cli/package.json"));
   if (installed?.name !== "@brainervirus/workit-cli" || installed.version !== cli.latest)

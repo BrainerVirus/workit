@@ -114,6 +114,7 @@ type DoctorCheckId =
   | "opencode_version"
   | "claude_plugin"
   | "claude_session_plugin"
+  | "codex_session_plugin"
   | "hook_issued_sessions"
   | "workit_on_path"
   | "assets"
@@ -208,6 +209,8 @@ export type DoctorOptions = {
   scopeProbe?: (env: NodeJS.ProcessEnv) => ScopeProbe;
   /** Running `claude` processes (test seam; default reads `ps`; null = unreadable). */
   claudeProcesses?: () => ClaudeProcess[] | null;
+  /** Running Codex app-server and CLI processes (test seam; default reads `ps`; null = unreadable). */
+  codexProcesses?: () => ClaudeProcess[] | null;
   /** `upgrade`: only the version, asset, agent and permission checks `workit upgrade` can fix. */
   only?: "upgrade";
 };
@@ -240,6 +243,7 @@ type Resolved = {
   cliVersion: string | null;
   scopeProbe: (env: NodeJS.ProcessEnv) => ScopeProbe;
   claudeProcesses: () => ClaudeProcess[] | null;
+  codexProcesses: () => ClaudeProcess[] | null;
 };
 
 const findDevFromCwd = (cwd: string): string | null => {
@@ -252,8 +256,8 @@ const findDevFromCwd = (cwd: string): string | null => {
   }
 };
 
-/** Running `claude` processes with their start time, from `ps` (Linux and macOS); null when unreadable. */
-const listClaudeProcesses = (): ClaudeProcess[] | null => {
+/** Running processes whose command `match`es, with their start time, from `ps` (Linux and macOS); null when unreadable. */
+const listProcessesMatching = (match: (args: string) => boolean): ClaudeProcess[] | null => {
   const r = spawnSync("ps", ["-eo", "pid=,lstart=,args="], {
     encoding: "utf8",
     timeout: 5000,
@@ -262,12 +266,25 @@ const listClaudeProcesses = (): ClaudeProcess[] | null => {
   const found: ClaudeProcess[] = [];
   for (const row of r.stdout.split("\n")) {
     const m = /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/.exec(row);
-    if (!m || !/^(\S*\/)?claude(\s|$)/.test(m[3])) continue;
+    if (!m || !match(m[3])) continue;
     const startedMs = Date.parse(m[2]);
     if (Number.isFinite(startedMs)) found.push({ pid: Number(m[1]), startedMs, args: m[3] });
   }
   return found;
 };
+
+/** Running `claude` processes with their start time. */
+const listClaudeProcesses = (): ClaudeProcess[] | null =>
+  listProcessesMatching((args) => /^(\S*\/)?claude(\s|$)/.test(args));
+
+/** Running Codex CLI and app-server processes (`codex` or `node .../codex.js`); the pid-update-loop watcher loads no plugin. */
+const listCodexProcesses = (): ClaudeProcess[] | null =>
+  listProcessesMatching(
+    (args) =>
+      /^(\S*\/)?codex(\.js)?(\s|$)|^(\S*\/)?node(js)?\s+(\S+\s+)*?\S*\/codex(\.js)?(\s|$)/.test(
+        args,
+      ) && !/\bdaemon\s+pid-update-loop\b/.test(args),
+  );
 
 const resolve = (options: DoctorOptions): Resolved => {
   const env = options.env ?? process.env;
@@ -307,6 +324,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     cliVersion: options.cliVersion ?? null,
     scopeProbe: options.scopeProbe ?? probeScope,
     claudeProcesses: options.claudeProcesses ?? listClaudeProcesses,
+    codexProcesses: options.codexProcesses ?? listCodexProcesses,
   };
 };
 
@@ -1387,7 +1405,9 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
       id: "launcher",
       status: "fail",
       detail: `missing or invalid launcher entry: ${missing.join("; ")}`,
-      fix: `Rebuild and reinstall the workit package (bun run build) — dist entries must be non-empty Node launchers`,
+      fix: dev
+        ? `Rebuild and reinstall the workit package (bun run build) — dist entries must be non-empty Node launchers`
+        : "workit upgrade --hosts=cursor — it reinstalls the plugin files and re-registers the MCP launcher",
     };
   }
   if (!dev && res.host !== "cursor") {
@@ -3039,6 +3059,60 @@ const checkClaudeSessionPlugin = (res: Resolved): DoctorCheck => {
 };
 
 /**
+ * Codex loads a plugin when its app-server or CLI process starts; a process
+ * that started before the installed Workit plugin version was written keeps
+ * the old hooks until it restarts. The plugin cache directory's mtime is the
+ * install time. Never fails; Windows has no `ps`, so it is not checked.
+ */
+const checkCodexSessionPlugin = (res: Resolved): DoctorCheck => {
+  const id = "codex_session_plugin" as const;
+  if (process.platform === "win32")
+    return {
+      id,
+      status: "info",
+      detail: "running Codex processes are not checked on Windows",
+    };
+  const installs = codexWorkitInstalls(res).filter((install) => install.root && install.version);
+  const stamped = installs.flatMap((install) => {
+    try {
+      return [{ install, at: statSync(install.root!).mtimeMs }];
+    } catch {
+      return [];
+    }
+  });
+  const latest = stamped.toSorted((a, b) => b.at - a.at)[0];
+  if (!latest)
+    return {
+      id,
+      status: "info",
+      detail: "no Workit Codex plugin install recorded — skipping",
+    };
+  const running = res.codexProcesses();
+  if (running === null)
+    return {
+      id,
+      status: "info",
+      detail: "could not list running codex processes (ps) — skipping",
+    };
+  const stale = running.filter((proc) => proc.startedMs < latest.at);
+  if (stale.length === 0)
+    return {
+      id,
+      status: "info",
+      detail: `${running.length} running codex process(es), none started before Workit ${latest.install.version} was installed`,
+    };
+  const rows = stale.map(
+    (proc) =>
+      `pid ${proc.pid} started ${new Date(proc.startedMs).toISOString()} (${proc.args.slice(0, 60)})`,
+  );
+  return {
+    id,
+    status: "warn",
+    detail: `started before Workit ${latest.install.version} was installed: ${rows.join("; ")}; they keep the old plugin until restarted, new Codex sessions load it`,
+  };
+};
+
+/**
  * host-session.ts ISSUED_SESSIONS_MARKER, kept as a literal so the doctor does
  * not pull the store layer into its import graph (the installer runs it from
  * a minimal copy of core); test/workit-cli/doctor-issued-sessions.test.ts
@@ -3358,6 +3432,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkOpencodeVersion,
   checkClaudePlugin,
   checkClaudeSessionPlugin,
+  checkCodexSessionPlugin,
   checkHookIssuedSessions,
   checkWorkitOnPath,
   checkAssets,

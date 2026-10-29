@@ -25,8 +25,26 @@ export type Command = {
   args: string[];
   purpose?: string;
 } & Partial<HostInstallCommand>;
-export type CommandResult = { status: number | null; stdout: string };
-export type UpgradeHost = HostId | "cli";
+export type CommandResult = { status: number | null; stdout: string; stderr?: string };
+export type UpgradeHost = HostId | "cli" | "permissions";
+
+/** The last few lines of a command's stderr, for a failed row's reason. */
+export const stderrTail = (text: string | undefined, lines = 5): string =>
+  (text ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-lines)
+    .join(" | ");
+
+/** "`cmd args` failed" plus the stderr tail when the command printed one. */
+export const failureReason = (
+  command: { command: string; args: string[] },
+  result: CommandResult,
+): string => {
+  const tail = stderrTail(result.stderr);
+  return `\`${command.command} ${command.args.join(" ")}\` failed${tail ? `: ${tail}` : ""}`;
+};
 /** One process the OS lists: `ps -eo pid=,stat=,args=` (or tasklist on Windows). */
 export type HostProcess = { pid: number; state: string; args: string };
 /** What upgrade did for one host; the run ends with one row per host. */
@@ -161,11 +179,11 @@ export const runner = (deps: UpgradeDeps) =>
     let step: HostInstallCommand;
     try {
       step = hostCommand(command, args, { home, env });
-    } catch {
-      return { status: 1, stdout: "" };
+    } catch (error) {
+      return { status: 1, stdout: "", stderr: errorText(error) };
     }
     const result = runHostCommand(step, { home, env });
-    return { status: result.exitCode, stdout: result.stdout };
+    return { status: result.exitCode, stdout: result.stdout, stderr: result.stderr };
   });
 
 const COMMAND_TIMEOUT_MS = 60_000;
@@ -186,11 +204,15 @@ export const asyncRunner = (
     let step: HostInstallCommand;
     try {
       step = hostCommand(command, args, { home, env });
-    } catch {
-      return Promise.resolve({ status: 1, stdout: "" });
+    } catch (error) {
+      return Promise.resolve({ status: 1, stdout: "", stderr: errorText(error) });
     }
     if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(step.command))
-      return Promise.resolve({ status: 1, stdout: "" });
+      return Promise.resolve({
+        status: 1,
+        stdout: "",
+        stderr: `Cannot safely execute batch shim ${step.command}`,
+      });
     const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env, HOME: home };
     childEnv.CODEX_HOME = env.CODEX_HOME ?? path.join(home, ".codex");
     childEnv.PI_CODING_AGENT_DIR = env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent");
@@ -198,24 +220,25 @@ export const asyncRunner = (
     childEnv.XDG_CONFIG_HOME = env.XDG_CONFIG_HOME ?? path.join(home, ".config");
     return new Promise<CommandResult>((resolve) => {
       let stdout = "";
+      let stderr = "";
       let settled = false;
       const finish = (status: number | null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ status, stdout });
+        resolve({ status, stdout, stderr });
       };
       let child: ReturnType<typeof spawn>;
       try {
         child = spawn(step.command, step.args, {
           cwd: step.cwd,
           env: childEnv,
-          stdio: ["ignore", "pipe", "ignore"],
+          stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true,
           shell: false,
         });
-      } catch {
-        resolve({ status: 1, stdout: "" });
+      } catch (error) {
+        resolve({ status: 1, stdout: "", stderr: errorText(error) });
         return;
       }
       const timer = setTimeout(() => {
@@ -224,14 +247,20 @@ export const asyncRunner = (
       }, COMMAND_TIMEOUT_MS);
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => (stdout += chunk));
-      child.on("error", () => finish(1));
+      child.stderr?.setEncoding("utf8");
+      child.stderr?.on("data", (chunk: string) => (stderr = (stderr + chunk).slice(-4000)));
+      child.on("error", (error) => {
+        stderr += error.message;
+        finish(1);
+      });
       child.on("close", (code) => finish(code ?? 1));
     });
   };
 };
 
-export const errorText = (error: unknown): string =>
-  error instanceof Error ? error.message : "installed source could not be read";
+export function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : "installed source could not be read";
+}
 
 // Pi lists the configured source followed by its resolved package directory.
 // Confirm the package identity and version rather than accepting a source name alone.

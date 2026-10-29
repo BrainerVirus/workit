@@ -69,13 +69,14 @@ test(
     // passes (no checks config at the repo root, #354); plugin_files passes
     // (no registered host plugin, #394); the three *_permissions rows are
     // info (no host permission block, #297); hook_runs and the three *_grant_rules
-    // rows are info (no hook run recorded, no workspace, #419, #433).
+    // rows are info (no hook run recorded, no workspace, #419, #433);
+    // codex_session_plugin passes (no Codex process running, #561).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 36,
+      passed: 37,
       warned: 1,
       failed: 1,
-      total: 38,
+      total: 39,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -116,13 +117,14 @@ test(
       // the repo root, #354); plugin_files passes (no registered host plugin,
       // #394); the three *_permissions rows are info (no host permission
       // block, #297); grant_endpoint passes (no workspace grants, #431); hook_runs and the three
-      // *_grant_rules rows are info (#419, #433).
+      // *_grant_rules rows are info (#419, #433); codex_session_plugin passes
+      // (no Codex process running, #561).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 36,
+        passed: 37,
         warned: 1,
         failed: 1,
-        total: 38,
+        total: 39,
         fixes: 1,
       });
     } finally {

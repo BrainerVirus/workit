@@ -39,12 +39,23 @@ const LABEL: Record<HostOutcome["status"], string> = {
   failed: "FAILED",
 };
 
+/** The reason without a leading copy of the status label ("already current (1.2.3)" under "already current"). */
+const reasonFor = (entry: HostOutcome): string => {
+  const label = LABEL[entry.status];
+  const head = entry.reason.slice(0, label.length);
+  return entry.status !== "failed" &&
+    head.toLowerCase() === label.toLowerCase() &&
+    !/^[a-z]/i.test(entry.reason[label.length] ?? "")
+    ? entry.reason.slice(label.length).replace(/^[\s:;,-]+/, "")
+    : entry.reason;
+};
+
 export const table = (hosts: HostOutcome[]): string =>
   [
     "Result:",
     ...hosts.map(
       (entry) =>
-        `  ${pad(entry.host)}${LABEL[entry.status].padEnd(16)}${entry.reason}${
+        `  ${pad(entry.host)}${LABEL[entry.status].padEnd(16)}${reasonFor(entry)}${
           entry.fix && entry.status !== "updated" && entry.status !== "current"
             ? `\n  ${pad("")}${"".padEnd(16)}fix: ${entry.fix}`
             : ""

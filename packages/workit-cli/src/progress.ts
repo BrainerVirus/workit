@@ -3,6 +3,9 @@
 // under --json, CI=true, or a non-TTY stream (an agent host), so stdout and
 // piped stderr stay byte-identical to a run without it. Dependency-free.
 
+import { spawn } from "node:child_process";
+import path from "node:path";
+
 export type StepStatus = "done" | "failed" | "skipped";
 type ProgressMode = "spinner" | "plain" | "off";
 export type ProgressStep = {
@@ -18,17 +21,24 @@ export type Progress = {
   run: <T>(label: string, fn: () => Promise<T>, classify?: (value: T) => StepStatus) => Promise<T>;
   /**
    * A step around synchronous work. A timer cannot tick while the thread is
-   * blocked, so it shows one static line instead of an animation.
+   * blocked, so on the real stderr a helper process draws the frames; on any
+   * other stream it shows one static line.
    */
   runSync: <T>(label: string, fn: () => T, classify?: (value: T) => StepStatus) => T;
 };
 export type ProgressOptions = {
-  stream?: { isTTY?: boolean; columns?: number; write: (text: string) => unknown };
+  stream?: {
+    isTTY?: boolean;
+    columns?: number;
+    write: (text: string) => unknown;
+  };
   env?: NodeJS.ProcessEnv;
   json?: boolean;
   now?: () => number;
   setInterval?: (tick: () => void, ms: number) => unknown;
   clearInterval?: (timer: unknown) => void;
+  /** Draws the spinner while synchronous work blocks this thread (default: a helper process on the real stderr). */
+  spawnTicker?: (label: string, began: number) => { stop: () => void } | undefined;
   /** Process seam for interrupt cleanup (default: the real process). */
   proc?: ProgressProcess;
 };
@@ -42,6 +52,52 @@ type ProgressProcess = {
 const FRAMES = ["·", "✢", "✳", "∗", "✻", "✽"];
 const FRAME_MS = 120;
 const CLEAR = "\r\x1b[2K";
+
+// The helper redraws the same line as `draw` below from its own process, so the
+// frames keep moving while the parent thread sits in a spawnSync. It ends with
+// its parent (a vanished ppid) and after ten minutes, so it can never linger.
+const TICKER_SOURCE = `
+const frames = ${JSON.stringify(FRAMES)};
+const { WORKIT_TICK_LABEL: label, WORKIT_TICK_BEGAN: began, WORKIT_TICK_COLS: cols } = process.env;
+const parent = process.ppid;
+let frame = 0;
+const timer = setInterval(() => {
+  let alive = process.ppid === parent;
+  if (alive) try { process.kill(parent, 0); } catch { alive = false; }
+  if (!alive || Date.now() - Number(began) > 600000) process.exit(0);
+  frame += 1;
+  const seconds = Math.floor((Date.now() - Number(began)) / 1000);
+  let line = frames[frame % frames.length] + " " + label + " (" + seconds + "s)";
+  if (Number(cols) && line.length >= Number(cols)) line = line.slice(0, Math.max(1, Number(cols) - 2)) + "…";
+  process.stderr.write(${JSON.stringify(CLEAR)} + line);
+}, ${FRAME_MS});
+`;
+
+const defaultTicker = (
+  label: string,
+  began: number,
+  stream: NonNullable<ProgressOptions["stream"]>,
+): { stop: () => void } | undefined => {
+  if (stream !== process.stderr) return undefined;
+  if (!/^(?:node|nodejs|bun)(?:\.exe)?$/i.test(path.basename(process.execPath))) return undefined;
+  try {
+    const child = spawn(process.execPath, ["-e", TICKER_SOURCE], {
+      env: {
+        ...process.env,
+        WORKIT_TICK_LABEL: label,
+        WORKIT_TICK_BEGAN: String(began),
+        WORKIT_TICK_COLS: String(stream.columns ?? 0),
+      },
+      stdio: ["ignore", "ignore", "inherit"],
+      windowsHide: true,
+    });
+    child.on("error", () => {});
+    child.unref();
+    return { stop: () => void child.kill("SIGKILL") };
+  } catch {
+    return undefined;
+  }
+};
 
 const truthy = (value: string | undefined): boolean =>
   value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
@@ -148,11 +204,20 @@ export function createProgress(options: ProgressOptions = {}): Progress {
     },
     runSync(label, fn, classify) {
       const step = start(label);
+      const ticker =
+        mode === "spinner" && stream
+          ? (options.spawnTicker ?? ((text, began) => defaultTicker(text, began, stream)))(
+              label,
+              now(),
+            )
+          : undefined;
       try {
         const value = fn();
+        ticker?.stop();
         step.end(classify ? classify(value) : "done");
         return value;
       } catch (error) {
+        ticker?.stop();
         step.end("failed");
         throw error;
       }
