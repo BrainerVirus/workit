@@ -102,3 +102,55 @@ test("NO_COLOR and TERM=dumb print plain finished lines without animation", () =
   dumb.progress.start("Step").end("failed");
   expect(dumb.writes).toEqual(["x Step\n"]);
 });
+
+const procRig = () => {
+  const listeners = new Map<string, ((...args: any[]) => void)[]>();
+  const kills: [number, string][] = [];
+  const proc = {
+    pid: 4242,
+    on: (event: string, fn: (...args: any[]) => void) =>
+      listeners.set(event, [...(listeners.get(event) ?? []), fn]),
+    off: (event: string, fn: (...args: any[]) => void) =>
+      listeners.set(
+        event,
+        (listeners.get(event) ?? []).filter((x) => x !== fn),
+      ),
+    kill: (pid: number, signal: string) => kills.push([pid, signal]),
+  };
+  const count = () => [...listeners.values()].reduce((sum, list) => sum + list.length, 0);
+  return { proc, listeners, kills, count };
+};
+
+test("a SIGINT mid-step clears the spinner line, removes handlers and re-raises the signal", () => {
+  const p = procRig();
+  const { progress, writes } = rig({ proc: p.proc });
+  progress.start("Updating codex");
+  expect(p.count()).toBe(3);
+  p.listeners.get("SIGINT")![0]();
+  expect(writes.at(-1)).toBe("\r\x1b[2K");
+  expect(p.count()).toBe(0);
+  expect(p.kills).toEqual([[4242, "SIGINT"]]);
+});
+
+test("a SIGTERM re-raises SIGTERM, and exit clears an unfinished line", () => {
+  const p = procRig();
+  const { progress, writes } = rig({ proc: p.proc });
+  progress.start("Updating codex");
+  p.listeners.get("exit")![0]();
+  expect(writes.at(-1)).toBe("\r\x1b[2K");
+  p.listeners.get("SIGTERM")![0]();
+  expect(p.kills).toEqual([[4242, "SIGTERM"]]);
+});
+
+test("ending a step removes every handler, and off and plain modes install none", () => {
+  const p = procRig();
+  const { progress } = rig({ proc: p.proc });
+  progress.start("one").end("done");
+  progress.start("two").end("failed");
+  expect(p.count()).toBe(0);
+  for (const over of [{ isTTY: false }, { json: true }, { env: { NO_COLOR: "1" } }]) {
+    const q = procRig();
+    rig({ proc: q.proc, ...over }).progress.start("x");
+    expect(q.count()).toBe(0);
+  }
+});

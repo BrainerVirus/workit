@@ -29,6 +29,14 @@ export type ProgressOptions = {
   now?: () => number;
   setInterval?: (tick: () => void, ms: number) => unknown;
   clearInterval?: (timer: unknown) => void;
+  /** Process seam for interrupt cleanup (default: the real process). */
+  proc?: ProgressProcess;
+};
+type ProgressProcess = {
+  pid: number;
+  on: (event: string, listener: (...args: any[]) => void) => unknown;
+  off: (event: string, listener: (...args: any[]) => void) => unknown;
+  kill: (pid: number, signal: string) => unknown;
 };
 
 const FRAMES = ["·", "✢", "✳", "∗", "✻", "✽"];
@@ -53,6 +61,7 @@ export function createProgress(options: ProgressOptions = {}): Progress {
   const now = options.now ?? Date.now;
   const every = options.setInterval ?? ((tick, ms) => setInterval(tick, ms));
   const stop = options.clearInterval ?? ((timer) => clearInterval(timer as NodeJS.Timeout));
+  const proc: ProgressProcess = options.proc ?? process;
   const ascii = env.TERM === "dumb";
   const glyphs: Record<StepStatus, string> =
     mode === "spinner"
@@ -82,6 +91,30 @@ export function createProgress(options: ProgressOptions = {}): Progress {
         draw();
       }, FRAME_MS);
     }
+    // A frame left on screen by an interrupt would sit before the shell prompt:
+    // clear it, drop our handlers, then end the way the process would have.
+    const handlers: [string, (...args: any[]) => void][] = [];
+    const release = () => {
+      for (const [event, handler] of handlers) proc.off(event, handler);
+      handlers.length = 0;
+    };
+    if (mode === "spinner") {
+      const onSignal = (signal: string) => () => {
+        if (!finished) {
+          finished = true;
+          if (timer !== undefined) stop(timer);
+          stream.write(CLEAR);
+        }
+        release();
+        proc.kill(proc.pid, signal);
+      };
+      const onExit = () => {
+        if (!finished) stream.write(CLEAR);
+      };
+      handlers.push(["SIGINT", onSignal("SIGINT")], ["SIGTERM", onSignal("SIGTERM")]);
+      handlers.push(["exit", onExit]);
+      for (const [event, handler] of handlers) proc.on(event, handler);
+    }
     return {
       label: (next) => {
         text = next;
@@ -91,6 +124,7 @@ export function createProgress(options: ProgressOptions = {}): Progress {
         if (finished) return;
         finished = true;
         if (timer !== undefined) stop(timer);
+        release();
         stream.write(
           `${mode === "spinner" ? CLEAR : ""}${glyphs[status]} ${text}${note ? `: ${note}` : ""}\n`,
         );
