@@ -195,8 +195,9 @@ test(
     const npmEntries = cfg.plugins.filter(isNpm);
     expect(npmEntries).toHaveLength(8);
     for (const entry of npmEntries) expect(opts(entry).npmPublish).toBe(false);
-    // selective publish lands after the bumpers and before the GitHub
-    // release/tag plugin (AR-16).
+    // selective publish lands after the bumpers (AR-16). The GitHub release
+    // plugin is listed before it: a partial npm failure must still leave a
+    // GitHub release with notes (v8.41.0 had a tag and packages but none).
     const lastNpmIdx = cfg.plugins.reduce<number>((acc, p, i) => (isNpm(p) ? i : acc), -1);
     const publishIdx = cfg.plugins.findIndex((p) => typeof opts(p).publishCmd === "string");
     // The publisher must diff against the PREVIOUS tag: semantic-release creates
@@ -205,7 +206,9 @@ test(
     expect(opts(cfg.plugins[publishIdx]).publishCmd).toContain("${lastRelease.gitTag}");
     const githubIdx = cfg.plugins.findIndex((p) => nameOf(p) === "@semantic-release/github");
     expect(publishIdx).toBeGreaterThan(lastNpmIdx);
-    expect(githubIdx).toBeGreaterThan(publishIdx);
+    expect(githubIdx).toBeGreaterThan(lastNpmIdx);
+    expect(githubIdx).toBeLessThan(publishIdx);
+    expect(cfg.plugins.filter((p) => nameOf(p) === "@semantic-release/github")).toHaveLength(1);
   },
   { timeout: 60_000 },
 );

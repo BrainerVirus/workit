@@ -77,6 +77,11 @@ module.exports = {
           "bun packages/workit-core/scripts/rewrite-workspace-deps.ts && bun packages/workit-core/scripts/verify-bundle-sources.ts --installs-only && bun run build && bun packages/workit-core/scripts/verify-bundle-sources.ts",
       },
     ],
+    // The GitHub release is created BEFORE npm publishing: plugins of one
+    // step run in list order, and a publish failure used to stop the chain
+    // before this plugin ran (v8.41.0: tag and packages, no release or
+    // notes). A failing publishCmd below still fails the job.
+    "@semantic-release/github",
     // AR-16: publish only packages with payload changes since the PREVIOUS
     // tag. ${lastRelease.gitTag} is mandatory here: semantic-release creates
     // the NEW release tag before publish plugins run, so latestTag() inside
@@ -88,6 +93,5 @@ module.exports = {
           "bun packages/workit-core/scripts/publish-changed-packages.ts ${lastRelease.gitTag}",
       },
     ],
-    "@semantic-release/github",
   ],
 };

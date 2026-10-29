@@ -3,6 +3,7 @@
 // changed since the previous v* tag; logs an exact skip line per unchanged
 // package so release logs answer "what shipped?" without leaving the terminal.
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   latestTag,
@@ -58,6 +59,52 @@ const internalDependencies = (root: string, pkg: string): string[] => {
   );
 };
 
+type Run = (cmd: string, args: string[], o: { cwd: string }) => unknown;
+
+const RETRY_PAUSE_MS = 10_000;
+const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+// npm view prints the version only when that exact version is on the registry.
+const onRegistry = (run: Run, cwd: string, spec: string, version: string): boolean => {
+  try {
+    return String(run("npm", ["view", spec, "version"], { cwd }) ?? "").trim() === version;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Publishes one package. A failed `npm publish` is checked against the
+ * registry first (a publish can land and still report an error), then retried
+ * once in a fresh process: v8.41.0 lost workit-core to a transient sigstore
+ * `TLOG_CREATE_ENTRY_ERROR` (409, "an equivalent entry already exists").
+ * Returns how it ended up on the registry; throws the last error otherwise.
+ */
+function publishOne(run: Run, cwd: string, pause: (ms: number) => void): "published" | "present" {
+  const manifest = JSON.parse(readFileSync(resolve(cwd, "package.json"), "utf8")) as {
+    name: string;
+    version: string;
+  };
+  const spec = `${manifest.name}@${manifest.version}`;
+  const publish = () => run("npm", ["publish", "--access", "public"], { cwd });
+  try {
+    publish();
+    return "published";
+  } catch (first) {
+    console.log(`publish of ${spec} failed: ${message(first)}; checking the registry`);
+    if (onRegistry(run, cwd, spec, manifest.version)) return "present";
+    console.log(`${spec} is not on the registry; retrying the publish once`);
+    pause(RETRY_PAUSE_MS);
+    try {
+      publish();
+      return "published";
+    } catch (second) {
+      if (onRegistry(run, cwd, spec, manifest.version)) return "present";
+      throw second;
+    }
+  }
+}
+
 export function publishChanged(opts: {
   root: string;
   dryRun?: boolean;
@@ -69,13 +116,25 @@ export function publishChanged(opts: {
    * empty and would skip every package.
    */
   fromTag?: string;
-  run?: (cmd: string, args: string[], o: { cwd: string }) => unknown;
+  run?: Run;
+  /** Wait before the single publish retry. Default: a blocking sleep. */
+  pause?: (ms: number) => void;
 }): { published: string[]; skipped: string[]; tag: string | null } {
   const { root, dryRun = false } = opts;
+  // stdout is captured so `npm view` can be read; stderr (npm's progress and
+  // errors) stays on the release log.
   const run =
     opts.run ??
-    ((cmd: string, args: string[], o: { cwd: string }) =>
-      execFileSync(cmd, args, { cwd: o.cwd, encoding: "utf8", stdio: "inherit" }));
+    ((cmd: string, args: string[], o: { cwd: string }) => {
+      const out = execFileSync(cmd, args, {
+        cwd: o.cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      if (args[0] !== "view") process.stdout.write(out);
+      return out;
+    });
+  const pause = opts.pause ?? ((ms: number) => Bun.sleepSync(ms));
   const tag =
     opts.fromTag !== undefined ? (opts.fromTag === "" ? null : opts.fromTag) : latestTag(root);
   // First-ever release: everything ships.
@@ -94,16 +153,21 @@ export function publishChanged(opts: {
       continue;
     }
     const cwd = resolve(root, "packages", pkg);
+    let outcome: "published" | "present" = "published";
     try {
-      if (!dryRun) run("npm", ["publish", "--access", "public"], { cwd });
+      if (!dryRun) outcome = publishOne(run, cwd, pause);
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
+      const error = message(e);
       failed.push({ pkg, error });
       console.log(`publish failed ${pkg}: ${error}`);
       continue;
     }
     published.push(pkg);
-    console.log(`published ${pkg} @ ${cwd}`);
+    console.log(
+      outcome === "present"
+        ? `published ${pkg} @ ${cwd} (already on the registry)`
+        : `published ${pkg} @ ${cwd}`,
+    );
   }
   if (failed.length > 0) {
     const summary = `publish failed for ${failed.length} package(s): ${failed.map((f) => f.pkg).join(", ")}; published: ${published.join(", ") || "none"}. A first publish of a new @brainervirus package needs an npm token allowed to create packages in the scope.`;
