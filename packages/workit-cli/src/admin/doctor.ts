@@ -321,7 +321,9 @@ const resolve = (options: DoctorOptions): Resolved => {
     workspaceRoot: options.workspaceRoot ?? env.WORKFLOW_WORKSPACE_ROOT ?? cwd,
     dev,
     opencodeConfig:
-      options.opencodeConfig ?? path.join(home, ".config", "opencode", "opencode.json"),
+      options.opencodeConfig ??
+      // As upgrade and OpenCode itself: XDG_CONFIG_HOME first, else ~/.config.
+      path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "opencode", "opencode.json"),
     opencodePackageCacheDir: options.opencodePackageCacheDir ?? null,
     cursorSettings: options.cursorSettings ?? path.join(home, ".cursor", "settings.json"),
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
