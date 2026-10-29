@@ -24,8 +24,11 @@ Update it once with `npm i -g @brainervirus/workit-cli@latest` (or, on the old
 CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
 `workit upgrade`.
 
-On a terminal, upgrade shows a spinner on stderr with the current step (planning,
-each host, the Codex daemon stop and restart, the doctor check) and leaves one
+Planning checks every host at once (registry versions and host inventories,
+each probe bounded by its own timeout), so it takes about as long as the slowest
+host; a host whose probe does not answer is listed as could not check. On a
+terminal, upgrade shows a spinner on stderr with the current step (`Checking N
+hosts`, each host, the Codex daemon stop and restart, the doctor check) and leaves one
 `✓`, `✗` or `–` line per step. It stays silent with `--json`, `CI=true`, and
 when stderr is not a terminal; `NO_COLOR` or `TERM=dumb` print the finished
 step lines without animation. `workit ci wait` and `ci rerun`, a queued
@@ -52,11 +55,19 @@ wrote. A registered Cursor whose plugin files are missing is reinstalled with
 the same installer `workit init` uses, without touching workspaces or other
 config.
 
+The CLI updates first. When it updated, `workit upgrade` continues on the new
+version: it starts the new CLI with the same flags, limited to the hosts, so the
+host steps run with the release you just installed. The table and the exit code
+cover both. If the CLI install fails, the hosts still upgrade with the current
+CLI and its row says so.
+
 Each host upgrades on its own: one failing host never stops the others. The run
 ends with a table (updated, already current, skipped, failed, each with its
 reason and the native command that fixes it) and exits 1 if any host failed.
-It then runs doctor's version, asset, agent and permission checks and prints
-"clean" or what is left.
+It then runs doctor's version, asset, agent, stale-install and permission
+checks and prints "clean" or what is left. The OpenCode row compares the plugin
+version before and after the update with the published one: it is "already
+current" only when it already matched before the update.
 
 Running hosts: zombie processes and helpers that load no plugin are ignored.
 The Codex app-server daemon is stopped with `codex app-server daemon stop` and

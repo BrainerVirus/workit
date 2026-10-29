@@ -253,7 +253,7 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   if (result.backup) out.write(`Backup: ${style.path(result.backup)}\n`);
   out.write(
     left.length === 0
-      ? `${style.ok("Verified:")} workit doctor is clean for versions, assets, agents and permissions.\n`
+      ? `${style.ok("Verified:")} workit doctor is clean for versions, assets, agents, stale installs and permissions.\n`
       : `${style.warn("Left after upgrade (workit doctor):")}\n${left
           .map(
             (check) =>
