@@ -8,7 +8,14 @@
 // one; package plugins are global, so the location does not change what is
 // updated), the api call names it with `x-opencode-directory`, and readiness
 // needs both the api and `plugin list` in that location to list Workit.
-import { OPENCODE_PACKAGE, type CommandResult, type RunOptions, type UpgradeDeps } from "./shared";
+import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
+import {
+  OPENCODE_PACKAGE,
+  versionAtLeast,
+  type CommandResult,
+  type RunOptions,
+  type UpgradeDeps,
+} from "./shared";
 
 type AsyncRun = (command: string, args: string[], options?: RunOptions) => Promise<CommandResult>;
 
@@ -113,12 +120,26 @@ export const waitForOpencodePlugin = async (
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const deadline = now() + timeoutMs;
+  // A 1.x host has no background service to wait for (Workit 3 is V2-only and
+  // planning already warns about it): its version, read alongside the first
+  // api reading, ends the wait at once.
+  const [versionResult, firstApi] = await Promise.all([
+    run("opencode", ["--version"], { cwd: home }),
+    run("opencode", pluginApiArgs(home), { cwd: home }),
+  ]);
+  const installed = versionResult.stdout.match(/\d+\.\d+\.\d+/)?.[0];
+  if (installed && !versionAtLeast(installed, SUPPORT_MATRIX.opencode.minimum))
+    return { via: "list", listed: true, version: installed };
+  let pending: CommandResult | undefined = firstApi;
   let textOnly = false;
   for (;;) {
     let api: OpencodePlugin | null = null;
     if (!textOnly) {
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- a readiness poll: each reading decides whether to wait for the next one.
-      const result = await run("opencode", pluginApiArgs(home), { cwd: home });
+      const result =
+        pending ??
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- a readiness poll: each reading decides whether to wait for the next one.
+        (await run("opencode", pluginApiArgs(home), { cwd: home }));
+      pending = undefined;
       api = parsePluginApi(result);
       textOnly = !api && lacksApi(result);
     }
