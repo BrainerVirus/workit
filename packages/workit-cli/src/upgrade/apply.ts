@@ -345,17 +345,15 @@ export async function applyUpgrade(
       // command and always start it again, whatever the update did.
       const daemons = running.filter((proc) => proc.host === "codex" && proc.kind === "daemon");
       const stopDaemon = entry.host === "codex" && daemons.length > 0;
-      if (
-        stopDaemon &&
-        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- hosts upgrade one at a time on purpose: the Codex daemon must stop before its update and start after it, and the per-step progress lines read in order.
-        (
+      const stopped = stopDaemon
+        ? // react-doctor-disable-next-line react-doctor/async-await-in-loop -- hosts upgrade one at a time on purpose: the Codex daemon must stop before its update and start after it, and the per-step progress lines read in order.
           await progress.run(
             "Stopping the Codex app-server daemon",
             () => runAsync("codex", ["app-server", "daemon", "stop"]),
             (result) => (result.status === 0 ? "done" : "failed"),
           )
-        ).status !== 0
-      ) {
+        : null;
+      if (stopped && stopped.status !== 0) {
         hosts.push({
           host: "codex",
           status: "failed",
