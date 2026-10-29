@@ -119,8 +119,23 @@ jobs:
             --jq '.[] | select((.isCrossRepository | not) and (.headRefName | startswith("chore/manifest-sync-"))) | "\(.number)\t\(.headRefName)"')
           # A later non-releasing main push re-runs this step while the
           # previous sync PR is still open; that PR already carries the change.
+          # Strict branch protection leaves it BEHIND each time main moves
+          # (#559), so bring its branch up to date here. GH_TOKEN is the PAT
+          # when set, so the update triggers CI and auto-merge can finish.
+          # Bookkeeping only: this never fails the release.
           if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
             echo "${BRANCH} already exists; its sync PR is pending"
+            SYNC_PR=$(gh pr list --state open --base main --head "${BRANCH}" --json number --jq '.[0].number // empty' || true)
+            if [[ -n "${SYNC_PR}" ]]; then
+              MERGE_STATE=$(gh pr view "${SYNC_PR}" --json mergeStateStatus --jq .mergeStateStatus || true)
+              if [[ "${MERGE_STATE}" == "BEHIND" ]]; then
+                if gh api -X PUT "repos/${GITHUB_REPOSITORY}/pulls/${SYNC_PR}/update-branch" >/dev/null; then
+                  echo "updated sync PR #${SYNC_PR} with main"
+                else
+                  echo "could not update sync PR #${SYNC_PR}; update its branch manually"
+                fi
+              fi
+            fi
             exit 0
           fi
           git config user.name "github-actions[bot]"

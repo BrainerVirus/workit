@@ -122,6 +122,16 @@ test(
     expect(syncRun).toMatch(
       /gh pr close[^\n]*--comment "Superseded by v\$\{VERSION\}"[^\n]*--delete-branch/,
     );
+    // #559: a re-run that finds the sync branch already pushed updates its
+    // PR when main moved past it (BEHIND), and never fails the release.
+    const pending = syncRun.slice(syncRun.indexOf("already exists; its sync PR is pending"));
+    const pendingBlock = pending.slice(0, pending.indexOf("exit 0"));
+    expect(pendingBlock).toContain('"${MERGE_STATE}" == "BEHIND"');
+    expect(pendingBlock).toContain(
+      'gh api -X PUT "repos/${GITHUB_REPOSITORY}/pulls/${SYNC_PR}/update-branch"',
+    );
+    expect(pendingBlock).toMatch(/if gh api -X PUT [^\n]*update-branch[^\n]*; then/);
+    expect(pendingBlock).toContain("could not update sync PR");
     // Deferred auto-merge does not reliably delete heads; a closed-PR cleanup
     // workflow must remove chore/manifest-sync-* branches after merge.
     const cleanup = read(".github/workflows/cleanup-manifest-sync-branch.yml");
