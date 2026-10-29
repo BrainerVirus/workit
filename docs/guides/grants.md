@@ -55,6 +55,43 @@ there until it can. When a cap refuses a grant, the unblock names the entry
 that capped it (or the tied entries, or the git failure), not the one you
 would widen by mistake.
 
+## Remotes
+
+Grants follow the folder. A fresh repository inside a permissive workspace
+whose `origin` is a stricter workspace's remote would otherwise push, open
+PRs and merge there with the permissive grants. List the remote URLs a
+workspace owns in its `remotes`, and every checkout whose remote URLs it
+claims never exceeds its grants, wherever the folder is:
+
+```json
+{ "name": "work", "glob": "/work/**", "remotes": ["git@github.com:acme/*", "https://gitlab.example/team/app"] }
+```
+
+- The ssh, `git@host:owner/repo` and https forms of one repository compare
+  equal; the host and the path compare case-insensitively, and a trailing
+  `.git` is ignored. A pattern ending in `/*` claims everything under that
+  owner or group. A local path claims that repository.
+- Every fetch and push URL of the checkout counts, as git resolves them
+  (`pushurl` and `insteadOf` applied), so pushing, PRs, merges, stacks,
+  releases and CI reruns are all capped. A checkout matched by several
+  entries gets the lowest of them, and the refusal names the capping
+  workspace and the remote it matched.
+- A remote URL Workit cannot read (a `<transport>::` helper, for example) or
+  a git error grants nothing there.
+
+`remotes` decides where an entry's grants reach, so only you change it, at
+your own terminal: `workit workspace set work remotes=git@github.com:acme/*`
+(a JSON array or a comma-separated list; `remotes=null` removes it) asks you
+to type the workspace name and is refused from an agent or headless shell,
+adding or removing. `workit workspace add` at your terminal offers the
+folder's `origin` as the default, and `workit workspace rm` of an entry with
+`remotes` counts as a raise.
+
+`workit grant show` and `workit doctor` (`grant_remotes`) warn when this
+checkout's remote is claimed by another workspace (its grants are capped
+there) and when its workspace claims no remotes, with the command to set
+them.
+
 ## Releasing
 
 `release: true` (`workit grant set <workspace> release=true`, from your own
