@@ -583,6 +583,25 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
+  "Given an innocent origin and a GIT_EXEC_PATH other than git's own, When workit git push runs, Then it exits 3; git's own exec path (as git sets it for hooks) still pushes",
+  async () => {
+    const { innocent, attacker, tip } = claimedWorld();
+    const fake = attacker(innocent, "atk-exec-fake");
+    await refused(fake, ["git", "push", "--set-upstream"], "GIT_EXEC_PATH", {
+      GIT_EXEC_PATH: path.join(path.dirname(innocent), "fake-exec"),
+    });
+    expect(tip(innocent)).toBeNull();
+    const own = spawnSync("git", ["--exec-path"], { encoding: "utf8" }).stdout.trim();
+    const hook = attacker(innocent, "atk-exec-own");
+    const pushed = await withProcessEnv({ GIT_EXEC_PATH: own }, () =>
+      run(["git", "push", "--set-upstream", "--json"], hook),
+    );
+    expect(pushed.code, `${pushed.stdout}${pushed.stderr}`).toBe(0);
+    expect(tip(innocent)).not.toBeNull();
+  },
+);
+
+test.skipIf(process.platform === "win32")(
   "Given a fresh git-flow checkout whose origin reaches strict through a symlink or a receivepack, When workit git push --release develop runs, Then it exits 3 and develop does not move",
   async () => {
     const { repo, open, innocent, git } = claimedWorld();

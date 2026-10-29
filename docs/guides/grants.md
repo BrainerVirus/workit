@@ -92,7 +92,8 @@ claims never exceeds its grants, wherever the folder is:
   name, so it grants nothing: the remote's `receivepack` or `vcs`,
   `core.gitProxy`, or `core.sshCommand` set in the repository, a worktree, an
   include, `-c` or `GIT_CONFIG_*`, and `GIT_SSH`, `GIT_SSH_COMMAND` or
-  `GIT_PROXY_COMMAND` in the environment. A `core.sshCommand` in your own
+  `GIT_PROXY_COMMAND` in the environment, or a `GIT_EXEC_PATH` other than
+  git's own (git sets its own for hooks; that one is fine). A `core.sshCommand` in your own
   `~/.gitconfig` (or `~/.config/git/config`, read from your account's home,
   never one `HOME` or `GIT_CONFIG_GLOBAL` points elsewhere) or the system
   config is your setup and is allowed.

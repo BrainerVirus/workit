@@ -290,6 +290,15 @@ const transportOverride = (
 ): string | null => {
   const env = TRANSPORT_ENV.find((name) => process.env[name]);
   if (env) return env;
+  // GIT_EXEC_PATH can swap the git-receive-pack a local push runs. git sets it
+  // for its own hooks, so only a value other than git's own exec path counts.
+  const execPath = process.env.GIT_EXEC_PATH;
+  if (execPath) {
+    const { GIT_EXEC_PATH: _set, ...rest } = process.env;
+    const own = spawnSync("git", ["--exec-path"], { env: rest, encoding: "utf8" });
+    if (own.status !== 0 || realOrSelf(own.stdout.trim()) !== realOrSelf(execPath))
+      return "GIT_EXEC_PATH";
+  }
   // The subsection keeps its case in git's canonical key.
   const name = escapeRegex(remote);
   const run = git([
