@@ -128,8 +128,11 @@ export const waitForOpencodePlugin = async (
     run("opencode", pluginApiArgs(home), { cwd: home }),
   ]);
   const installed = versionResult.stdout.match(/\d+\.\d+\.\d+/)?.[0];
-  if (installed && !versionAtLeast(installed, SUPPORT_MATRIX.opencode.minimum))
-    return { via: "list", listed: true, version: installed };
+  if (installed && !versionAtLeast(installed, SUPPORT_MATRIX.opencode.minimum)) {
+    // That is OpenCode's own version: the plugin's comes from its listing, if any.
+    const text = parsePluginList(await run("opencode", PLUGIN_LIST, { cwd: home }));
+    return text.listed ? text : { via: "list", listed: true };
+  }
   let pending: CommandResult | undefined = firstApi;
   let textOnly = false;
   for (;;) {
