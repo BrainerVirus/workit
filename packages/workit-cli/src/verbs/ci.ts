@@ -26,6 +26,7 @@ import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import type { ForgePrStatus } from "@brainervirus/workit-core/src/forge/types";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import { emit, fail, ok, type Io } from "../output";
+import { createProgress } from "../progress";
 import {
   connect,
   forgeDeps,
@@ -101,6 +102,11 @@ async function wait(argv: string[], io: Io): Promise<number> {
   // the required ones. Read once; a failed read means no expectation (#510).
   let baseContexts: string[] | null = null;
   let expectedMissing: string[] = [];
+  const waiting = createProgress({ stream: process.stderr, json: io.json }).start("Waiting for CI");
+  const abort = (...args: [Parameters<typeof forgeFail>[1], Record<string, unknown>?]) => {
+    waiting.end("failed");
+    return forgeFail(io, ...args);
+  };
   for (;;) {
     const read = resolved.forge.prStatus(number.data);
     polls += 1;
@@ -109,7 +115,7 @@ async function wait(argv: string[], io: Io): Promise<number> {
       errors = 0;
       status = read.data;
       const doc = buildStatusDoc(io.cwd, resolved, status, { logLines: 0, behind: false });
-      if (!doc.ok) return forgeFail(io, doc);
+      if (!doc.ok) return abort(doc);
       recordPrStatus(io.cwd, doc.data, actor);
       if (status.requiredContexts === null && baseContexts === null) {
         const base = resolved.forge.branchChecks(status.base);
@@ -119,16 +125,23 @@ async function wait(argv: string[], io: Io): Promise<number> {
       expectedMissing = (baseContexts ?? []).filter((context) => !seen.has(context));
       verdict = waitVerdict(doc.data, { head, elapsedMs, expectedMissing });
       if (verdict.state !== "waiting") break;
+      const pending = doc.data.checks.pending;
+      waiting.label(
+        `Waiting for CI: ${pending.length} check${pending.length === 1 ? "" : "s"} pending${pending.length ? ` (${pending.slice(0, 3).join(", ")}${pending.length > 3 ? ", …" : ""})` : ""}`,
+      );
     } else {
       errors += 1;
-      if (read.code !== "unavailable" && read.code !== "failed") return forgeFail(io, read);
-      if (errors >= MAX_POLL_ERRORS) return forgeFail(io, read, { polls });
+      if (read.code !== "unavailable" && read.code !== "failed") return abort(read);
+      if (errors >= MAX_POLL_ERRORS) return abort(read, { polls });
     }
     const remaining = deadline - forgeDeps.now();
     if (remaining <= 0) break;
     await forgeDeps.sleep(Math.min(pollDelay(intervalMs, polls - 1), remaining));
   }
   const elapsedMs = forgeDeps.now() - started;
+  waiting.end(
+    verdict.state === "ready" ? "done" : verdict.state === "waiting" ? "skipped" : "failed",
+  );
   if (!status)
     return emit(
       io,

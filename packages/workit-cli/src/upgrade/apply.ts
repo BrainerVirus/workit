@@ -5,6 +5,7 @@ import { claudeWorkitInstalls } from "../admin/host-install";
 import { readSetupState } from "../admin/setup-state";
 import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
+import { createProgress, type StepStatus } from "../progress";
 import { classifyProcess, describe, listProcesses } from "./processes";
 import {
   CLI_FIX,
@@ -279,6 +280,9 @@ export function applyUpgrade(plan: UpgradePlan, deps: UpgradeDeps = {}): Upgrade
     writeFileAtomic(migration.file, JSON.stringify(value, null, 2) + "\n", 0o600);
   }
   const run = runner(deps);
+  const progress = deps.progress ?? createProgress({ json: true });
+  const statusOf = (outcome: HostOutcome | undefined): StepStatus =>
+    outcome?.status === "failed" ? "failed" : outcome?.status === "updated" ? "done" : "skipped";
   // A failed backup fails only Cursor's row: never repair without one.
   let cursorBackupError: string | null = null;
   if (plan.entries.some((entry) => entry.host === "cursor") && existsSync(paths.cursorRoot))
@@ -292,98 +296,120 @@ export function applyUpgrade(plan: UpgradePlan, deps: UpgradeDeps = {}): Upgrade
   const listed = plan.entries.length ? listProcesses(deps) : [];
   const running = (listed ?? []).flatMap((entry) => classifyProcess(entry) ?? []);
   for (const entry of plan.entries) {
-    if (entry.host === "cursor" && cursorBackupError) {
-      hosts.push({
-        host: "cursor",
-        status: "failed",
-        reason: cursorBackupError,
-        fix: entry.fix,
-      });
-      continue;
-    }
-    if (!LIVE_HOSTS.has(entry.host)) {
-      if (listed === null) {
-        hosts.push({
-          host: entry.host,
-          status: "skipped",
-          reason: `running processes could not be listed; close ${entry.host} and rerun`,
-          fix: `workit upgrade --hosts=${entry.host}`,
-        });
-        continue;
-      }
-      const sessions = running.filter(
-        (proc) => proc.host === entry.host && proc.kind === "session",
-      );
-      if (sessions.length) {
-        hosts.push({
-          host: entry.host,
-          status: "skipped",
-          reason: `close ${entry.host} (${sessions.map(describe).join("; ")}), then rerun`,
-          fix: `workit upgrade --hosts=${entry.host}`,
-        });
-        continue;
-      }
-    }
-    // Codex's app-server daemon holds the plugin: stop it with Codex's own
-    // command and always start it again, whatever the update did.
-    const daemons = running.filter((proc) => proc.host === "codex" && proc.kind === "daemon");
-    const stopDaemon = entry.host === "codex" && daemons.length > 0;
-    if (stopDaemon && run("codex", ["app-server", "daemon", "stop"]).status !== 0) {
-      hosts.push({
-        host: "codex",
-        status: "failed",
-        reason: `could not stop the Codex app-server daemon (${daemons.map(describe).join("; ")})`,
-        fix: "codex app-server daemon stop && workit upgrade --hosts=codex",
-      });
-      continue;
-    }
-    // Everything between the daemon's stop and start is caught, so the start
-    // below always runs.
-    let outcome: HostOutcome;
+    const before = hosts.length;
+    const step = progress.start(`Updating ${entry.host}`);
     try {
-      outcome = applyEntry(entry, { run, paths, configDir });
-      if (entry.host === "codex" && outcome.status === "updated") {
-        const agents = refreshCodexAgents(run, paths.codexHome);
-        if (!agents.ok)
+      if (entry.host === "cursor" && cursorBackupError) {
+        hosts.push({
+          host: "cursor",
+          status: "failed",
+          reason: cursorBackupError,
+          fix: entry.fix,
+        });
+        continue;
+      }
+      if (!LIVE_HOSTS.has(entry.host)) {
+        if (listed === null) {
+          hosts.push({
+            host: entry.host,
+            status: "skipped",
+            reason: `running processes could not be listed; close ${entry.host} and rerun`,
+            fix: `workit upgrade --hosts=${entry.host}`,
+          });
+          continue;
+        }
+        const sessions = running.filter(
+          (proc) => proc.host === entry.host && proc.kind === "session",
+        );
+        if (sessions.length) {
+          hosts.push({
+            host: entry.host,
+            status: "skipped",
+            reason: `close ${entry.host} (${sessions.map(describe).join("; ")}), then rerun`,
+            fix: `workit upgrade --hosts=${entry.host}`,
+          });
+          continue;
+        }
+      }
+      // Codex's app-server daemon holds the plugin: stop it with Codex's own
+      // command and always start it again, whatever the update did.
+      const daemons = running.filter((proc) => proc.host === "codex" && proc.kind === "daemon");
+      const stopDaemon = entry.host === "codex" && daemons.length > 0;
+      if (
+        stopDaemon &&
+        progress.runSync(
+          "Stopping the Codex app-server daemon",
+          () => run("codex", ["app-server", "daemon", "stop"]),
+          (result) => (result.status === 0 ? "done" : "failed"),
+        ).status !== 0
+      ) {
+        hosts.push({
+          host: "codex",
+          status: "failed",
+          reason: `could not stop the Codex app-server daemon (${daemons.map(describe).join("; ")})`,
+          fix: "codex app-server daemon stop && workit upgrade --hosts=codex",
+        });
+        continue;
+      }
+      // Everything between the daemon's stop and start is caught, so the start
+      // below always runs.
+      let outcome: HostOutcome;
+      try {
+        outcome = applyEntry(entry, { run, paths, configDir });
+        if (entry.host === "codex" && outcome.status === "updated") {
+          const agents = refreshCodexAgents(run, paths.codexHome);
+          if (!agents.ok)
+            outcome = {
+              ...outcome,
+              status: "failed",
+              reason: `${outcome.reason}; ${agents.note}`,
+              fix: agents.fix,
+            };
+          else if (agents.note)
+            outcome = { ...outcome, reason: `${outcome.reason}; ${agents.note}` };
+        }
+      } catch (error) {
+        outcome = {
+          host: entry.host,
+          status: "failed",
+          reason: errorText(error),
+          fix: entry.fix,
+        };
+      }
+      if (stopDaemon) {
+        const started =
+          progress.runSync(
+            "Restarting the Codex app-server daemon",
+            () => run("codex", ["app-server", "daemon", "start"]),
+            (result) => (result.status === 0 ? "done" : "failed"),
+          ).status === 0;
+        outcome = started
+          ? {
+              ...outcome,
+              reason: `${outcome.reason}; app-server daemon stopped and started again`,
+            }
+          : {
+              ...outcome,
+              status: "failed",
+              reason: `${outcome.reason}; the app-server daemon did not start again`,
+              fix: "codex app-server daemon start",
+            };
+      }
+      if (entry.host === "opencode") {
+        const servers = running.filter(
+          (proc) => proc.host === "opencode" && proc.kind === "daemon",
+        );
+        if (servers.length && outcome.status === "updated")
           outcome = {
             ...outcome,
-            status: "failed",
-            reason: `${outcome.reason}; ${agents.note}`,
-            fix: agents.fix,
+            reason: `${outcome.reason}; restart opencode serve (${servers.map(describe).join("; ")}) to load it`,
           };
-        else if (agents.note) outcome = { ...outcome, reason: `${outcome.reason}; ${agents.note}` };
       }
-    } catch (error) {
-      outcome = {
-        host: entry.host,
-        status: "failed",
-        reason: errorText(error),
-        fix: entry.fix,
-      };
+      hosts.push(outcome);
+    } finally {
+      const added = hosts.length > before ? hosts[hosts.length - 1] : undefined;
+      step.end(statusOf(added), added && added.status !== "updated" ? added.reason : undefined);
     }
-    if (stopDaemon) {
-      const started = run("codex", ["app-server", "daemon", "start"]).status === 0;
-      outcome = started
-        ? {
-            ...outcome,
-            reason: `${outcome.reason}; app-server daemon stopped and started again`,
-          }
-        : {
-            ...outcome,
-            status: "failed",
-            reason: `${outcome.reason}; the app-server daemon did not start again`,
-            fix: "codex app-server daemon start",
-          };
-    }
-    if (entry.host === "opencode") {
-      const servers = running.filter((proc) => proc.host === "opencode" && proc.kind === "daemon");
-      if (servers.length && outcome.status === "updated")
-        outcome = {
-          ...outcome,
-          reason: `${outcome.reason}; restart opencode serve (${servers.map(describe).join("; ")}) to load it`,
-        };
-    }
-    hosts.push(outcome);
   }
   // Codex already current: its agent copies can still lag behind the plugin.
   if (hosts.some((entry) => entry.host === "codex" && entry.status === "current")) {
@@ -413,7 +439,9 @@ export function applyUpgrade(plan: UpgradePlan, deps: UpgradeDeps = {}): Upgrade
   }
   if (plan.cli)
     try {
-      hosts.push(applyCli(plan.cli, run, backup));
+      hosts.push(
+        progress.runSync("Updating the CLI", () => applyCli(plan.cli!, run, backup), statusOf),
+      );
     } catch (error) {
       hosts.push({
         host: "cli",

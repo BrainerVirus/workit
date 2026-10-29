@@ -8,6 +8,7 @@ import {
   runLaunchCommand,
   runUpgradeCommand,
 } from "@/packages/workit-cli/src/upgrade";
+import { createProgress } from "@/packages/workit-cli/src/progress";
 
 const fixture = () => {
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-upgrade-"));
@@ -515,3 +516,37 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("upgrade shows a step per host and action on a TTY and nothing for --json or a non-TTY", async () => {
+  const stepsFor = async (argv: string[], isTTY: boolean) => {
+    const f = fixture();
+    try {
+      const writes: string[] = [];
+      const progress = createProgress({
+        stream: { isTTY, write: (text) => writes.push(text) },
+        env: { NO_COLOR: "1" },
+        json: argv.includes("--json"),
+      });
+      const out: string[] = [];
+      const code = await runUpgradeCommand(argv, {
+        ...f.deps,
+        progress,
+        out: { write: (text) => out.push(text) },
+        doctor: () => ({ checks: [] }),
+      });
+      return { code, writes, out: out.join("") };
+    } finally {
+      f.cleanup();
+    }
+  };
+  const tty = await stepsFor(["--hosts=pi", "--yes"], true);
+  expect(tty.code).toBe(0);
+  expect(tty.writes).toEqual([
+    "✓ Planning the upgrade\n",
+    "✓ Updating pi\n",
+    "✓ Checking the result with workit doctor\n",
+  ]);
+  expect(tty.out).toContain("Verified: workit doctor is clean");
+  expect((await stepsFor(["--hosts=pi", "--yes"], false)).writes).toEqual([]);
+  expect((await stepsFor(["--hosts=pi", "--yes", "--json"], true)).writes).toEqual([]);
+});

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { type HostId } from "../admin/detect-hosts";
 import { hostCommand, runHostCommand, type HostInstallCommand } from "../admin/host-install";
 import { type DoctorCheck } from "../admin/doctor";
+import { type Progress } from "../progress";
 
 /** Hosts `workit launch` can start. */
 export const LAUNCH_HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
@@ -48,6 +49,8 @@ export type UpgradeDeps = {
   /** The closing verification (default: doctor's upgrade checks). */
   doctor?: (cliVersion: string) => { checks: DoctorCheck[] };
   out?: { write: (text: string) => void };
+  /** Step feedback on stderr (default: none; the CLI passes a TTY spinner). */
+  progress?: Progress;
 };
 export type Source = {
   host: HostId;
