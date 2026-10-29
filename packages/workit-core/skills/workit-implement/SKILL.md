@@ -30,7 +30,7 @@ description: Build a requested change in small verified steps - follow local pat
    change a screenshot or console/network check (chrome devtools or
    agent-browser), an API a quoted real response. App not runnable? Say so
    plainly, never claim success.
-6. Commit: `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`). One file holding two changes: stage one change's hunks with `workit git stage --patch <file|->` (a `git diff -- <file>` cut to them), then `workit git commit --staged -m …`; a path staged in part commits only its staged hunks (`--whole` takes the file).
+6. Commit: `workit git commit -m "<type>: <what>" -- <paths>` (or `--all`). One file holding two changes: stage one change's hunks with `workit git stage --patch <file|->` (a `git diff -- <file>` cut to them), then commit exactly the index: `--staged` in place of paths; a path staged in part commits only its staged hunks (`--whole` takes the file).
    No endpoint named? Stop here and state the next command. Hand delivery to
    ship, which pushes and opens the PR with its body shape (workit-ship), only
    when that was requested, or the request implies delivery and the effective
