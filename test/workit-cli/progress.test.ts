@@ -35,11 +35,11 @@ const rig = (overrides: Partial<ProgressOptions> & { isTTY?: boolean } = {}) => 
 test("spinner frames advance with elapsed seconds and the line clears on done", () => {
   const { progress, writes, advance, cleared } = rig();
   const step = progress.start("Updating codex");
-  advance(120);
+  advance(140);
   advance(1200);
-  expect(writes[0]).toContain("· Updating codex (0s)");
-  expect(writes[1]).toContain("✢ Updating codex (0s)");
-  expect(writes[2]).toContain("✳ Updating codex (1s)");
+  expect(writes[0]).toContain("\x1b[36m◐\x1b[0m Updating codex (0s)");
+  expect(writes[1]).toContain("◓\x1b[0m Updating codex (0s)");
+  expect(writes[2]).toContain("◑\x1b[0m Updating codex (1s)");
   step.end("done");
   expect(cleared()).toBe(true);
   const last = writes.at(-1)!;
@@ -154,3 +154,56 @@ test("ending a step removes every handler, and off and plain modes install none"
     expect(q.count()).toBe(0);
   }
 });
+
+test("runSync installs no SIGINT/SIGTERM handler while its work blocks the thread", () => {
+  // A JS handler defers the signal until the blocking call returns, so the verb
+  // would read its killed child as a failure instead of dying by the signal.
+  const p = procRig();
+  const { progress } = rig({ proc: p.proc, spawnTicker: () => undefined });
+  let during: string[] = [];
+  const value = progress.runSync("Checking the push", () => {
+    during = [...p.listeners.entries()].filter(([, list]) => list.length).map(([event]) => event);
+    return 3;
+  });
+  expect(value).toBe(3);
+  expect(during).not.toContain("SIGINT");
+  expect(during).not.toContain("SIGTERM");
+  expect(p.count()).toBe(0);
+});
+
+test("run installs no SIGINT/SIGTERM handler either: its work may block between awaits", async () => {
+  const p = procRig();
+  const { progress } = rig({ proc: p.proc });
+  let during: string[] = [];
+  await progress.run("Merging PR #1", async () => {
+    during = [...p.listeners.entries()].filter(([, list]) => list.length).map(([event]) => event);
+  });
+  expect(during).toEqual(["exit"]);
+  expect(p.count()).toBe(0);
+});
+
+test("Ctrl-C during a runSync wait ends the process by SIGINT at once, as without a spinner", async () => {
+  const script = `
+    const { spawnSync } = require("node:child_process");
+    const { createProgress } = require(${JSON.stringify(require.resolve("@/packages/workit-cli/src/progress"))});
+    const progress = createProgress({
+      stream: { isTTY: true, write: (t) => process.stderr.write(t) },
+      env: {},
+      spawnTicker: () => undefined,
+    });
+    process.stdout.write("ready\\n");
+    progress.runSync("Waiting", () => spawnSync("sleep", ["6"]));
+    process.stdout.write("returned\\n");
+    process.exit(5);
+  `;
+  const child = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "ignore" });
+  const reader = child.stdout.getReader();
+  let seen = "";
+  while (!seen.includes("ready")) seen += new TextDecoder().decode((await reader.read()).value);
+  const sent = Date.now();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  child.kill("SIGINT");
+  await child.exited;
+  expect(child.signalCode).toBe("SIGINT");
+  expect(Date.now() - sent).toBeLessThan(3000);
+}, 15_000);

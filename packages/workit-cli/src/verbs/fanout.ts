@@ -6,6 +6,7 @@
 //   workit fanout check    [<slice>…] [--name <n>] [--base <ref>] [--offline]
 //   workit fanout status   [--name <n>] [--stuck-after 30m] [--offline]
 //   workit fanout worktree create|release <slice> [--name <n>] [--force]
+import { progressFor } from "../progress";
 import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedForge } from "@brainervirus/workit-core/src/forge/resolve";
@@ -226,11 +227,16 @@ function check(argv: string[], io: Io): number {
   if (typeof flags === "string") return usage(io, flags, CHECK_USAGE);
   const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
   if (!selected.ok) return failed(io, selected);
-  const result = checkFanout(io.cwd, selected.data, {
-    only: flags.positionals,
-    trunkRef: flags.values.base ?? null,
-    forge: forgeFor(io, flags.booleans.has("offline")).forge,
-  });
+  const result = progressFor(io).runSync(
+    "Checking the fan-out slices",
+    () =>
+      checkFanout(io.cwd, selected.data, {
+        only: flags.positionals,
+        trunkRef: flags.values.base ?? null,
+        forge: forgeFor(io, flags.booleans.has("offline")).forge,
+      }),
+    (r) => (r.ok ? "done" : "failed"),
+  );
   if (!result.ok) return failed(io, result);
   if (result.data.ready) return emit(io, ok(result.data), renderCheck);
   // Blocked: the full report stays in data; humans get it on stdout too.
@@ -286,11 +292,16 @@ function status(argv: string[], io: Io): number {
   const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
   if (!selected.ok) return failed(io, selected);
   const forge = forgeFor(io, flags.booleans.has("offline"));
-  const result = fanoutStatus(io.cwd, selected.data, {
-    forge: forge.forge,
-    forgeError: forge.error,
-    stuckAfterMs,
-  });
+  const result = progressFor(io).runSync(
+    "Reading the fan-out status",
+    () =>
+      fanoutStatus(io.cwd, selected.data, {
+        forge: forge.forge,
+        forgeError: forge.error,
+        stuckAfterMs,
+      }),
+    (r) => (r.ok ? "done" : "failed"),
+  );
   if (!result.ok) return failed(io, result);
   return emit(io, ok(result.data), renderStatus);
 }

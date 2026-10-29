@@ -26,8 +26,20 @@ On a terminal, upgrade shows a spinner on stderr with the current step (planning
 each host, the Codex daemon stop and restart, the doctor check) and leaves one
 `✓`, `✗` or `–` line per step. It stays silent with `--json`, `CI=true`, and
 when stderr is not a terminal; `NO_COLOR` or `TERM=dumb` print the finished
-step lines without animation. `workit ci wait` and a queued `workit check`
-show the same spinner.
+step lines without animation. `workit ci wait` and `ci rerun`, a queued
+`workit check`, `doctor`, `pr create` and `pr merge`, `stack land` and
+`restack`, `release start` and `finish`, `verify-delivery`, `fanout status` and
+`check`, `gc` and the `youtrack` steps show the same spinner while they wait.
+
+Human output is colored on a terminal: `workit doctor` status words and a
+closing list of what needs attention, the `workit upgrade` plan and result,
+the `workit setup` permission diff (`+` green, `-` red), and `workit: error:`
+lines in red. Color follows the same rules as the spinner: it is off with
+`--json`, `CI=true`, `NO_COLOR` set, `TERM=dumb`, or when the output is not a
+terminal, so pipes, CI logs and agent hosts read plain text. `FORCE_COLOR=1`
+turns it on for a pipe (never under `--json`). The spinner uses 24-bit color
+when `COLORTERM` is `truecolor` or `24bit`, else the 256-color palette when
+`TERM` names it, else plain cyan.
 
 One run covers the global CLI (a managed npm global install; links and npx are
 left alone), the Claude Code plugin (`claude plugin marketplace update` and

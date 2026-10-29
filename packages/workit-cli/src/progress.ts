@@ -5,9 +5,10 @@
 
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { SPINNER_FRAMES, SPINNER_FRAME_MS, spinnerPaint, terminalMode } from "./style";
 
 export type StepStatus = "done" | "failed" | "skipped";
-type ProgressMode = "spinner" | "plain" | "off";
+type ProgressMode = ReturnType<typeof terminalMode>;
 export type ProgressStep = {
   /** Change the label the spinner shows (e.g. the checks still pending). */
   label: (text: string) => void;
@@ -49,8 +50,8 @@ type ProgressProcess = {
   kill: (pid: number, signal: string) => unknown;
 };
 
-const FRAMES = ["·", "✢", "✳", "∗", "✻", "✽"];
-const FRAME_MS = 120;
+const FRAMES = SPINNER_FRAMES;
+const FRAME_MS = SPINNER_FRAME_MS;
 const CLEAR = "\r\x1b[2K";
 
 // The helper redraws the same line as `draw` below from its own process, so the
@@ -59,6 +60,7 @@ const CLEAR = "\r\x1b[2K";
 const TICKER_SOURCE = `
 const frames = ${JSON.stringify(FRAMES)};
 const { WORKIT_TICK_LABEL: label, WORKIT_TICK_BEGAN: began, WORKIT_TICK_COLS: cols } = process.env;
+const spinnerPaint = ${spinnerPaint.toString()};
 const parent = process.ppid;
 let frame = 0;
 const timer = setInterval(() => {
@@ -67,9 +69,9 @@ const timer = setInterval(() => {
   if (!alive || Date.now() - Number(began) > 600000) process.exit(0);
   frame += 1;
   const seconds = Math.floor((Date.now() - Number(began)) / 1000);
-  let line = frames[frame % frames.length] + " " + label + " (" + seconds + "s)";
-  if (Number(cols) && line.length >= Number(cols)) line = line.slice(0, Math.max(1, Number(cols) - 2)) + "…";
-  process.stderr.write(${JSON.stringify(CLEAR)} + line);
+  let line = label + " (" + seconds + "s)";
+  if (Number(cols) && line.length + 2 >= Number(cols)) line = line.slice(0, Math.max(1, Number(cols) - 4)) + "…";
+  process.stderr.write(${JSON.stringify(CLEAR)} + spinnerPaint(Date.now() - Number(began), process.env, frames[frame % frames.length]) + " " + line);
 }, ${FRAME_MS});
 `;
 
@@ -99,20 +101,11 @@ const defaultTicker = (
   }
 };
 
-const truthy = (value: string | undefined): boolean =>
-  value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
-
-const modeFor = (options: ProgressOptions, env: NodeJS.ProcessEnv): ProgressMode => {
-  if (options.json || !options.stream?.isTTY || truthy(env.CI)) return "off";
-  if (truthy(env.NO_COLOR) || env.TERM === "dumb") return "plain";
-  return "spinner";
-};
-
 const NOOP_STEP: ProgressStep = { label: () => {}, end: () => {} };
 
 export function createProgress(options: ProgressOptions = {}): Progress {
   const env = options.env ?? process.env;
-  const mode = modeFor(options, env);
+  const mode = terminalMode({ ...options, env });
   const stream = options.stream;
   const now = options.now ?? Date.now;
   const every = options.setInterval ?? ((tick, ms) => setInterval(tick, ms));
@@ -126,7 +119,7 @@ export function createProgress(options: ProgressOptions = {}): Progress {
         ? { done: "ok", failed: "x", skipped: "-" }
         : { done: "✓", failed: "✗", skipped: "–" };
 
-  const start = (initial: string): ProgressStep => {
+  const start = (initial: string, signals = true): ProgressStep => {
     if (mode === "off" || !stream) return NOOP_STEP;
     let text = initial;
     let finished = false;
@@ -134,10 +127,11 @@ export function createProgress(options: ProgressOptions = {}): Progress {
     let frame = 0;
     const draw = () => {
       const seconds = Math.floor((now() - began) / 1000);
-      let line = `${FRAMES[frame % FRAMES.length]} ${text} (${seconds}s)`;
-      if (stream.columns && line.length >= stream.columns)
-        line = `${line.slice(0, Math.max(1, stream.columns - 2))}…`;
-      stream.write(`${CLEAR}${line}`);
+      let line = `${text} (${seconds}s)`;
+      if (stream.columns && line.length + 2 >= stream.columns)
+        line = `${line.slice(0, Math.max(1, stream.columns - 4))}…`;
+      const glyph = spinnerPaint(now() - began, env, FRAMES[frame % FRAMES.length] ?? "");
+      stream.write(`${CLEAR}${glyph} ${line}`);
     };
     let timer: unknown;
     if (mode === "spinner") {
@@ -154,7 +148,7 @@ export function createProgress(options: ProgressOptions = {}): Progress {
       for (const [event, handler] of handlers) proc.off(event, handler);
       handlers.length = 0;
     };
-    if (mode === "spinner") {
+    if (mode === "spinner" && signals) {
       const onSignal = (signal: string) => () => {
         if (!finished) {
           finished = true;
@@ -164,10 +158,12 @@ export function createProgress(options: ProgressOptions = {}): Progress {
         release();
         proc.kill(proc.pid, signal);
       };
+      handlers.push(["SIGINT", onSignal("SIGINT")], ["SIGTERM", onSignal("SIGTERM")]);
+    }
+    if (mode === "spinner") {
       const onExit = () => {
         if (!finished) stream.write(CLEAR);
       };
-      handlers.push(["SIGINT", onSignal("SIGINT")], ["SIGTERM", onSignal("SIGTERM")]);
       handlers.push(["exit", onExit]);
       for (const [event, handler] of handlers) proc.on(event, handler);
     }
@@ -192,7 +188,9 @@ export function createProgress(options: ProgressOptions = {}): Progress {
     mode,
     start,
     async run(label, fn, classify) {
-      const step = start(label);
+      // Same as runSync: the work may block in a spawnSync between awaits, so no
+      // handler may defer Ctrl-C; the default action ends the process at once.
+      const step = start(label, false);
       try {
         const value = await fn();
         step.end(classify ? classify(value) : "done");
@@ -203,7 +201,10 @@ export function createProgress(options: ProgressOptions = {}): Progress {
       }
     },
     runSync(label, fn, classify) {
-      const step = start(label);
+      // No signal handler here: one would hold Ctrl-C until the blocking call
+      // returns, and the verb would report its killed child as a failure. The
+      // default action ends the process at once, as it does without a spinner.
+      const step = start(label, false);
       const ticker =
         mode === "spinner" && stream
           ? (options.spawnTicker ?? ((text, began) => defaultTicker(text, began, stream)))(
@@ -224,3 +225,18 @@ export function createProgress(options: ProgressOptions = {}): Progress {
     },
   };
 }
+
+/**
+ * The spinner for a verb's waits, on the process's own stderr only: an Io whose
+ * stderr is captured (a test, an agent wrapper) or --json gets no frames.
+ */
+export const progressFor = (io: {
+  json: boolean;
+  env: NodeJS.ProcessEnv;
+  terminals?: { stderr?: { isTTY?: boolean; columns?: number; write?: (text: string) => unknown } };
+}): Progress => {
+  const stderr = io.terminals?.stderr;
+  // Pass the stream itself: runSync's helper process draws only on the real stderr.
+  const stream = stderr?.write ? (stderr as NonNullable<ProgressOptions["stream"]>) : undefined;
+  return createProgress({ json: io.json, env: io.env, ...(stream ? { stream } : {}) });
+};

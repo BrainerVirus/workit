@@ -9,6 +9,7 @@
 // `--unverified --reason` (merge: true only) bypasses the verdict, recorded.
 // `--subject`/`--body` (squash only) set the squash commit message.
 // ready/edit/threads/reply: the lifecycle steps `next` names (audit M13).
+import { progressFor } from "../progress";
 import { endpointMismatch, resolveAutonomy } from "@brainervirus/workit-core/src/autonomy";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -614,19 +615,24 @@ async function create(argv: string[], io: Io): Promise<number> {
   if (!planned.ok) return usage(io, planned.error, CREATE_USAGE);
   const links = planned.data.links;
   const actor = actorFromEnv(io.env);
-  const result = await createPullRequest(
-    io.cwd,
-    connected.data,
-    {
-      base,
-      title,
-      body: withIssueLines(body ?? "", links),
-      draft: flags.booleans.has("draft"),
-      actor,
-      labels: flags.lists.label ?? [],
-      reviewers: flags.lists.reviewer ?? [],
-    },
-    forgeDeps.sleep,
+  const result = await progressFor(io).run(
+    "Opening the pull request",
+    () =>
+      createPullRequest(
+        io.cwd,
+        connected.data,
+        {
+          base,
+          title,
+          body: withIssueLines(body ?? "", links),
+          draft: flags.booleans.has("draft"),
+          actor,
+          labels: flags.lists.label ?? [],
+          reviewers: flags.lists.reviewer ?? [],
+        },
+        forgeDeps.sleep,
+      ),
+    (r) => (r.ok ? "done" : "failed"),
   );
   if (!result.ok) return forgeFail(io, result);
   // Only a PR this call opened carries the lines; a reused one keeps its body.
@@ -636,7 +642,9 @@ async function create(argv: string[], io: Io): Promise<number> {
     : [];
   const backlinks: BacklinkOutcome[] =
     opened && planned.data.backlink && links.length
-      ? await postBacklinks(io.cwd, connected.data, result.data, links, { env: io.env })
+      ? await progressFor(io).run("Posting issue backlinks", () =>
+          postBacklinks(io.cwd, connected.data, result.data, links, { env: io.env }),
+        )
       : [];
   const created = {
     ...result.data,
@@ -768,21 +776,26 @@ async function merge(argv: string[], io: Io): Promise<number> {
 
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
-  const result = await mergePullRequest(
-    io.cwd,
-    connected.data,
-    {
-      pr,
-      method,
-      deleteBranch: flags.booleans.has("delete-branch"),
-      implicitDelete: !flags.booleans.has("keep-branch") && workspaceDeleteBranch(io.cwd),
-      actor: actorFromEnv(io.env),
-      ...(unverified ? { unverified } : {}),
-      ...(baseRedOk && baseRedReason ? { baseRedOk: { reason: baseRedReason } } : {}),
-      ...(subject !== undefined ? { subject } : {}),
-      ...(body !== undefined ? { body } : {}),
-    },
-    forgeDeps.sleep,
+  const result = await progressFor(io).run(
+    `Merging PR #${pr}`,
+    () =>
+      mergePullRequest(
+        io.cwd,
+        connected.data,
+        {
+          pr,
+          method,
+          deleteBranch: flags.booleans.has("delete-branch"),
+          implicitDelete: !flags.booleans.has("keep-branch") && workspaceDeleteBranch(io.cwd),
+          actor: actorFromEnv(io.env),
+          ...(unverified ? { unverified } : {}),
+          ...(baseRedOk && baseRedReason ? { baseRedOk: { reason: baseRedReason } } : {}),
+          ...(subject !== undefined ? { subject } : {}),
+          ...(body !== undefined ? { body } : {}),
+        },
+        forgeDeps.sleep,
+      ),
+    (r) => (r.ok ? "done" : "failed"),
   );
   if (!result.ok)
     return emit(

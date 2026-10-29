@@ -26,7 +26,7 @@ import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import type { ForgePrStatus } from "@brainervirus/workit-core/src/forge/types";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import { emit, fail, ok, type Io } from "../output";
-import { createProgress } from "../progress";
+import { progressFor } from "../progress";
 import {
   connect,
   forgeDeps,
@@ -102,7 +102,7 @@ async function wait(argv: string[], io: Io): Promise<number> {
   // the required ones. Read once; a failed read means no expectation (#510).
   let baseContexts: string[] | null = null;
   let expectedMissing: string[] = [];
-  const waiting = createProgress({ stream: process.stderr, json: io.json }).start("Waiting for CI");
+  const waiting = progressFor(io).start("Waiting for CI");
   const abort = (...args: [Parameters<typeof forgeFail>[1], Record<string, unknown>?]) => {
     waiting.end("failed");
     return forgeFail(io, ...args);
@@ -257,14 +257,23 @@ async function rerun(argv: string[], io: Io): Promise<number> {
     );
   const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
   if (!number.ok) return forgeFail(io, number);
-  const status = resolved.forge.prStatus(number.data);
+  const status = progressFor(io).runSync(
+    `Reading PR #${number.data} checks`,
+    () => resolved.forge.prStatus(number.data),
+    (r) => (r.ok ? "done" : "failed"),
+  );
   if (!status.ok) return forgeFail(io, status);
-  const done = executeRerun(io.cwd, resolved, status.data, {
-    failed: names.length === 0,
-    names,
-    reason,
-    force: flags.booleans.has("force"),
-  });
+  const done = progressFor(io).runSync(
+    "Rerunning the checks",
+    () =>
+      executeRerun(io.cwd, resolved, status.data, {
+        failed: names.length === 0,
+        names,
+        reason,
+        force: flags.booleans.has("force"),
+      }),
+    (r) => (r.ok ? "done" : "failed"),
+  );
   if (!done.ok) return forgeFail(io, done);
   const outcome = done.data;
   return emit(io, ok(outcome), () => [

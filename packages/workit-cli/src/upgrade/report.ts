@@ -1,34 +1,42 @@
+import { createStyle, type Style } from "../style";
 import { type HostOutcome, type UpgradePlan } from "./shared";
 
 const pad = (text: string) => text.padEnd(12);
+const PLAIN = createStyle({ json: true });
 
 export const summary = (
   plan: UpgradePlan,
   permissions: { host: string; file: string }[],
+  style: Style = PLAIN,
 ): string => {
-  const lines = ["Workit upgrade plan:"];
-  if (plan.cli) lines.push(`  ${pad("cli")}update ${plan.cli.installed} -> ${plan.cli.latest}`);
+  const host = (name: string) => `  ${style.bold(pad(name))}`;
+  const run = (fix: string | undefined) => (fix ? ` (run: ${style.command(fix)})` : "");
+  const version = (from: string, to: string) => `update ${style.dim(from)} -> ${style.ok(to)}`;
+  const lines = [style.bold("Workit upgrade plan:")];
+  if (plan.cli) lines.push(`${host("cli")}${version(plan.cli.installed, plan.cli.latest)}`);
   for (const entry of plan.entries) {
     const what = entry.repair
       ? `reinstall missing plugin files (${entry.latest})`
       : entry.latest
-        ? `update ${entry.installedVersion ?? "?"} -> ${entry.latest}`
-        : `update (${entry.commands.map((c) => `${c.command} ${c.args.join(" ")}`).join(" && ")})`;
-    lines.push(`  ${pad(entry.host)}${what}`);
+        ? version(entry.installedVersion ?? "?", entry.latest)
+        : `update (${style.command(entry.commands.map((c) => `${c.command} ${c.args.join(" ")}`).join(" && "))})`;
+    lines.push(`${host(entry.host)}${what}`);
   }
   for (const skipped of plan.skipped)
     lines.push(
-      `  ${pad(skipped.host)}${skipped.reason.startsWith("already current") ? "" : "skip: "}${skipped.reason}${skipped.fix ? ` (run: ${skipped.fix})` : ""}`,
+      `${host(skipped.host)}${skipped.reason.startsWith("already current") ? style.dim(skipped.reason) : `${style.warn("skip:")} ${skipped.reason}`}${run(skipped.fix)}`,
     );
   for (const failed of plan.failed)
     lines.push(
-      `  ${pad(failed.host)}cannot upgrade: ${failed.reason}${failed.fix ? ` (run: ${failed.fix})` : ""}`,
+      `${host(failed.host)}${style.fail("cannot upgrade:")} ${failed.reason}${run(failed.fix)}`,
     );
-  for (const migration of plan.migrations) lines.push(`  ${pad("config")}${migration.description}`);
+  for (const migration of plan.migrations) lines.push(`${host("config")}${migration.description}`);
   for (const change of permissions)
-    lines.push(`  ${pad("permissions")}refresh the ${change.host} block in ${change.file}`);
-  for (const blocked of plan.blocked) lines.push(`  blocked: ${blocked}`);
-  for (const warning of plan.warnings ?? []) lines.push(`  warning: ${warning}`);
+    lines.push(
+      `${host("permissions")}refresh the ${change.host} block in ${style.path(change.file)}`,
+    );
+  for (const blocked of plan.blocked) lines.push(`  ${style.fail("blocked:")} ${blocked}`);
+  for (const warning of plan.warnings ?? []) lines.push(`  ${style.warn("warning:")} ${warning}`);
   return lines.join("\n") + "\n";
 };
 
@@ -50,17 +58,27 @@ const reasonFor = (entry: HostOutcome): string => {
     : entry.reason;
 };
 
-export const table = (hosts: HostOutcome[]): string =>
+const PAINT: Record<HostOutcome["status"], keyof Style> = {
+  updated: "ok",
+  current: "dim",
+  skipped: "warn",
+  failed: "fail",
+};
+
+export const table = (hosts: HostOutcome[], style: Style = PLAIN): string =>
   [
-    "Result:",
-    ...hosts.map(
-      (entry) =>
-        `  ${pad(entry.host)}${LABEL[entry.status].padEnd(16)}${reasonFor(entry)}${
-          entry.fix && entry.status !== "updated" && entry.status !== "current"
-            ? `\n  ${pad("")}${"".padEnd(16)}fix: ${entry.fix}`
-            : ""
-        }`,
-    ),
+    style.bold("Result:"),
+    ...hosts.map((entry) => {
+      const paint = style[PAINT[entry.status]] as (text: string) => string;
+      const reason = reasonFor(entry);
+      return `  ${style.bold(pad(entry.host))}${paint(LABEL[entry.status])}${" ".repeat(16 - LABEL[entry.status].length)}${
+        entry.status === "current" ? style.dim(reason) : reason
+      }${
+        entry.fix && entry.status !== "updated" && entry.status !== "current"
+          ? `\n  ${pad("")}${"".padEnd(16)}fix: ${style.command(entry.fix)}`
+          : ""
+      }`;
+    }),
   ].join("\n") + "\n";
 
 export const askConfirm = async (question: string, out: { write: (text: string) => void }) => {
