@@ -17,6 +17,30 @@ title is the commit semantic-release reads. A breaking change needs `!` in the
 PR title (`fix!: …`); a `BREAKING CHANGE:` footer only counts if it lands in
 the squash body.
 
+Release notes have a section for every type that can trigger a release (feat,
+fix, perf, revert, refactor, docs, test, build, ci, chore), so a refactor-only
+release still lists its commit. `style` and the `chore(release)` manifest-sync
+commits stay out (`presetConfig.types` in `release.config.cjs`).
+
+The GitHub release (tag, notes) is created before npm publishing, so a
+publish failure can no longer leave a tag without a release. For each changed
+package, `publish-changed-packages.ts` checks a failed `npm publish` against
+the registry (`npm view <name>@<version> version`). A version already there
+counts as published. Otherwise it retries once, in a new process, which covers
+transient errors such as sigstore's `TLOG_CREATE_ENTRY_ERROR` (409). A package
+that still fails makes the job fail with a summary after the others are
+published. Re-publish it by hand from the tag.
+
+Releases that went out header-only or without a GitHub release can be repaired
+with `bun scripts/backfill-release-notes.ts <from-tag>..<to-tag>`. It
+regenerates the notes with the release config and prints what it would change.
+Add `--apply` to edit header-only releases and create missing ones (never
+marked latest). It needs `gh` authenticated with write access to the repo.
+
+When the manifest-sync PR is still open on a later main push, the release job
+updates its branch if GitHub reports it `BEHIND`. A failed update never fails
+the release.
+
 `bun run verify:release-candidate` checks the release candidate (CI runs it);
 `bun run validate:cursor-marketplace` checks the Cursor marketplace manifest.
 
