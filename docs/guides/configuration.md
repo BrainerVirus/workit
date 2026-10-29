@@ -109,7 +109,8 @@ themselves, behaves exactly as before.
 `workit upgrade --check` asks the registry for the CLI and each installed host
 package, prints installed and latest versions per component with the command
 to apply, shows the `updates` setting, and changes nothing (exit 0; `--json`
-gives the same data).
+gives the same data). `workit doctor` shows the setting and the cached latest
+version with its age in its `updates` row, read from local files only.
 
 ## Config files
 

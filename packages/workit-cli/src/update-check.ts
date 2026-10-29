@@ -37,11 +37,13 @@ export type UpdateCache = {
   snoozedAt?: number;
 };
 
-const cacheFile = (env: NodeJS.ProcessEnv): string => path.join(stateDir(env), "update-check.json");
+const cacheFile = (env: NodeJS.ProcessEnv, dir = stateDir(env)): string =>
+  path.join(dir, "update-check.json");
 
-export const readUpdateCache = (env: NodeJS.ProcessEnv): UpdateCache => {
+/** The cache, or {} when missing or unreadable; `dir` overrides Workit state (doctor's). */
+export const readUpdateCache = (env: NodeJS.ProcessEnv, dir?: string): UpdateCache => {
   try {
-    const data: unknown = JSON.parse(readFileSync(cacheFile(env), "utf8"));
+    const data: unknown = JSON.parse(readFileSync(cacheFile(env, dir), "utf8"));
     return isConfigObject(data) ? (data as UpdateCache) : {};
   } catch {
     return {};
@@ -61,13 +63,13 @@ export const writeUpdateCache = (env: NodeJS.ProcessEnv, cache: UpdateCache): vo
   }
 };
 
-const configFile = (env: NodeJS.ProcessEnv): string =>
-  path.join(upgradePaths({ env }).configDir, "config.json");
+const configFile = (env: NodeJS.ProcessEnv, dir = upgradePaths({ env }).configDir): string =>
+  path.join(dir, "config.json");
 
 /** The global `updates` setting; a missing, malformed or unknown value is `prompt`. */
-export const readUpdatesMode = (env: NodeJS.ProcessEnv): UpdatesMode => {
+export const readUpdatesMode = (env: NodeJS.ProcessEnv, dir?: string): UpdatesMode => {
   try {
-    const data = JSON.parse(readFileSync(configFile(env), "utf8")) as {
+    const data = JSON.parse(readFileSync(configFile(env, dir), "utf8")) as {
       updates?: unknown;
     };
     return isConfigObject(data) && isUpdatesMode(data.updates) ? data.updates : "prompt";
