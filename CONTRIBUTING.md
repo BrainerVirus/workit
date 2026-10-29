@@ -12,8 +12,15 @@ this page is the short version.
 git clone https://github.com/BrainerVirus/workit.git
 cd workit
 bun install --frozen-lockfile
-bun run hooks:install   # optional: format/lint on commit, commitlint on commit-msg
+bun run hooks:install   # optional: format/lint check on commit, commitlint on commit-msg
 ```
+
+The pre-commit hook checks, it does not rewrite: an unformatted staged file
+fails the commit with `run bun run format`; format, `git add`, commit again.
+Re-run `bun run hooks:install` after pulling a change to `lefthook.yml` or if
+a worktree's hook points at a removed checkout (one `.git/hooks` serves every
+worktree of the clone). It needs `bun install` in the worktree you commit
+from: the hook runs that worktree's pinned `node_modules/.bin/oxfmt`.
 
 To try your changes in a host, pin it to your checkout (see the
 [Claude Code](docs/guides/claude-code.md) and [hosts](docs/guides/hosts.md)

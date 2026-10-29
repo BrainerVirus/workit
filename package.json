@@ -41,7 +41,7 @@
     "doctor": "bun run ./scripts/react-doctor.ts",
     "doctor:raw": "react-doctor -y --no-telemetry --blocking warning --json",
     "knip": "knip --no-progress --no-config-hints && knip --no-progress --production --files && bun scripts/check-reachability.ts",
-    "hooks:install": "lefthook install",
+    "hooks:install": "bun scripts/install-hooks.ts",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "bun scripts/test.ts unit",
