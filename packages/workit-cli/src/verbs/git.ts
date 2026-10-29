@@ -2,7 +2,8 @@
 // identity check and the grant seam; the rules live in core git/ops.ts.
 //
 //   workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]
-//   workit git commit (-m <msg> | -F <file|->) [--trailer "K: v"]… [--amend [--no-edit]] [--allow-empty] [--all | [--] <paths…>]
+//   workit git commit (-m <msg> | -F <file|->) [--trailer "K: v"]… [--amend [--no-edit]] [--allow-empty] [--all | --staged | [--whole] [--] <paths…>]
+//   workit git stage --patch <file|-> | [--] <paths…>;  workit git unstage [--] <paths…>
 //   workit git trailers  (prints on|off: whether this workspace writes Workit-Session trailers)
 //   workit git push [--set-upstream] [--force-with-lease [--expect <sha>]]
 //   workit git push --release <main|develop|v-tag>…  (repeatable)
@@ -27,6 +28,7 @@ import {
   type CommitOutcome,
   type ReleasePushOutcome,
 } from "@brainervirus/workit-core/src/git/ops";
+import { gitStage, gitUnstage, type StageOutcome } from "@brainervirus/workit-core/src/git/stage";
 import { workspaceTrailers } from "@brainervirus/workit-core/src/core/workspaces";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { ensureImplicitTask } from "./implicit-task";
@@ -36,10 +38,12 @@ import { forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
 const BRANCH_USAGE =
   "workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
 const COMMIT_USAGE =
-  "workit git commit -m|--message <msg>… | -F|--file <file|-> [--trailer <key: value>]… [--amend [--no-edit]] [--allow-empty] [-a|--all | [--] <paths…>] [--json]";
+  "workit git commit -m|--message <msg>… | -F|--file <file|-> [--trailer <key: value>]… [--amend [--no-edit]] [--allow-empty] [-a|--all | --staged | [--whole] [--] <paths…>] [--json]";
+const STAGE_USAGE = "workit git stage --patch <file|-> | [--] <paths…> [--json]";
+const UNSTAGE_USAGE = "workit git unstage [--] <paths…> [--json]";
 const PUSH_USAGE =
   "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]] [--json]";
-const USAGE = "workit git branch|commit|push|trailers ... (workit help git)";
+const USAGE = "workit git branch|commit|stage|unstage|push|trailers ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
 
@@ -111,24 +115,28 @@ type CommitArgs = {
   amend: boolean;
   noEdit: boolean;
   allowEmpty: boolean;
+  staged: boolean;
+  whole: boolean;
   paths: string[];
 };
 
 const COMMIT_SWITCHES: Record<
   string,
-  keyof Pick<CommitArgs, "all" | "amend" | "noEdit" | "allowEmpty">
+  keyof Pick<CommitArgs, "all" | "amend" | "noEdit" | "allowEmpty" | "staged" | "whole">
 > = {
   "-a": "all",
   "--all": "all",
   "--amend": "amend",
   "--no-edit": "noEdit",
   "--allow-empty": "allowEmpty",
+  "--staged": "staged",
+  "--whole": "whole",
 };
 
 /**
  * `-m` (repeatable, joined like git), `-F`/`--file` (`-` reads stdin),
  * `--trailer` (repeatable),
- * `--amend`, `--no-edit`, `--allow-empty`, `--all`/`-a`, paths positionally
+ * `--amend`, `--no-edit`, `--allow-empty`, `--all`/`-a`, `--staged`, `--whole`, paths positionally
  * or after `--`.
  */
 function parseCommit(argv: readonly string[]): CommitArgs | string {
@@ -140,6 +148,8 @@ function parseCommit(argv: readonly string[]): CommitArgs | string {
     amend: false,
     noEdit: false,
     allowEmpty: false,
+    staged: false,
+    whole: false,
     paths: [],
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -206,6 +216,14 @@ async function commit(argv: string[], io: Io): Promise<number> {
   if (typeof parsed === "string") return usage(io, parsed, COMMIT_USAGE);
   if (parsed.all && parsed.paths.length)
     return usage(io, "pass --all or paths, not both", COMMIT_USAGE);
+  if (parsed.staged && (parsed.all || parsed.paths.length || parsed.whole))
+    return usage(
+      io,
+      "--staged commits the index as is: drop --all, --whole and paths",
+      COMMIT_USAGE,
+    );
+  if (parsed.whole && !parsed.paths.length)
+    return usage(io, "--whole applies to named paths (-- <paths…>)", COMMIT_USAGE);
   if (parsed.noEdit && !parsed.amend)
     return usage(io, "--no-edit only applies with --amend", COMMIT_USAGE);
   const given = parsed.messages.length + parsed.files.length > 0;
@@ -226,6 +244,8 @@ async function commit(argv: string[], io: Io): Promise<number> {
     message,
     all: parsed.all,
     paths: parsed.paths,
+    whole: parsed.whole,
+    staged: parsed.staged,
     amend: parsed.amend,
     allowEmpty: parsed.allowEmpty,
     trailers: parsed.trailers,
@@ -233,6 +253,10 @@ async function commit(argv: string[], io: Io): Promise<number> {
     env: io.env,
   });
   if (!result.ok) return forgeFail(io, result);
+  if (result.data.keptPartial.length)
+    io.stderr(
+      `note: committed only the staged part of ${result.data.keptPartial.join(", ")}; the unstaged rest stays in the working tree (--whole commits the whole file)\n`,
+    );
   await ensureImplicitTask(io);
   return emit(io, ok(result.data), (data: CommitOutcome) => [
     `${data.branch} ${short(data.sha)} ${data.message.split("\n", 1)[0]} (${data.files.length ? `${data.files.length} file${data.files.length === 1 ? "" : "s"}` : "empty commit"})${data.amended ? `, amends ${short(data.amended)}` : ""}`,
@@ -243,6 +267,58 @@ async function commit(argv: string[], io: Io): Promise<number> {
       ? []
       : ["note: WORKIT_SESSION_ID is unset; this commit has no session author"]),
   ]);
+}
+
+/** The patch text from `--patch <file|->` (a path relative to the checkout, or `-` for stdin). */
+function readPatch(file: string, io: Io): string | { error: string } {
+  try {
+    return file === "-"
+      ? readFileSync(0, "utf8")
+      : readFileSync(path.resolve(io.cwd, file), "utf8");
+  } catch (error) {
+    return {
+      error: `cannot read --patch ${file}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+const stagedLines = (data: StageOutcome) => [
+  data.staged.length
+    ? `staged (${data.staged.length}): ${data.staged.join(", ")}`
+    : "nothing is staged",
+];
+
+/**
+ * `workit git stage --patch <file|->` puts selected hunks in the index only;
+ * `workit git stage -- <paths>` stages whole paths. Commit them with --staged.
+ */
+function stage(argv: string[], io: Io): number {
+  const flags = parseFlags(argv, { patch: "value" });
+  if (typeof flags === "string") return usage(io, flags, STAGE_USAGE);
+  const patchFile = flags.values.patch;
+  if (patchFile !== undefined && flags.positionals.length)
+    return usage(io, "pass --patch or paths, not both", STAGE_USAGE);
+  if (patchFile === undefined && !flags.positionals.length)
+    return usage(io, "missing --patch <file|-> or paths", STAGE_USAGE);
+  let result;
+  if (patchFile === undefined) result = gitStage(io.cwd, { paths: flags.positionals });
+  else {
+    const patch = readPatch(patchFile, io);
+    if (typeof patch !== "string") return usage(io, patch.error, STAGE_USAGE);
+    result = gitStage(io.cwd, { patch });
+  }
+  if (!result.ok) return forgeFail(io, result);
+  return emit(io, ok(result.data), stagedLines);
+}
+
+/** `workit git unstage -- <paths>`: back to HEAD in the index; the working tree keeps them. */
+function unstage(argv: string[], io: Io): number {
+  const flags = parseFlags(argv, {});
+  if (typeof flags === "string") return usage(io, flags, UNSTAGE_USAGE);
+  if (!flags.positionals.length) return usage(io, "missing paths", UNSTAGE_USAGE);
+  const result = gitUnstage(io.cwd, flags.positionals);
+  if (!result.ok) return forgeFail(io, result);
+  return emit(io, ok(result.data), stagedLines);
 }
 
 async function push(argv: string[], io: Io): Promise<number> {
@@ -411,6 +487,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
     );
   if (sub === "branch") return branch(rest, io);
   if (sub === "commit") return commit(rest, io);
+  if (sub === "stage") return stage(rest, io);
+  if (sub === "unstage") return unstage(rest, io);
   if (sub === "push") return push(rest, io);
   if (sub === "trailers") return trailers(rest, io);
   return usage(

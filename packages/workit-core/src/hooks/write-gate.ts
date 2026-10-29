@@ -381,8 +381,8 @@ const MUTATING_GIT = new Set([
 ]);
 /** Subcommands whose `-n` means `--dry-run` (for `commit`, `-n` skips hooks). */
 const DRY_N = new Set(["add", "clean", "rm", "mv"]);
-/** `workit git` verbs that commit or move HEAD in the checkout. */
-const MUTATING_WORKIT_GIT = new Set(["commit", "branch"]);
+/** `workit git` verbs that commit, move HEAD or change the index in the checkout. */
+const MUTATING_WORKIT_GIT = new Set(["commit", "branch", "stage", "unstage"]);
 
 /** A placeholder file name that stands for its directory (an unknown write, a git command). */
 const DIR_TARGET = ".workit-live-target";
@@ -462,7 +462,7 @@ const homeExpanded = (file: string): string => {
 
 /**
  * Per top-level segment, the files it writes (redirects, `touch`, `rm`,
- * `sed -i`…) and `workit git commit|branch`, resolved against the
+ * `sed -i`…) and `workit git commit|branch|stage|unstage`, resolved against the
  * directory that segment runs in (`cd`, `pushd`/`popd`, `( … )` groups). A
  * relative target in an unknown directory is skipped.
  */
@@ -568,7 +568,7 @@ const workitCwd = (dir: string, args: string[]): { at: string; args: string[] } 
 /**
  * Where one shell command changes files: the files it writes and, as
  * `<dir>/.workit-live-target`, each directory a mutating git or
- * `workit git commit|branch` runs in or an unknown write happens in.
+ * `workit git commit|branch|stage|unstage` runs in or an unknown write happens in.
  * `strict` (an implementer's confinement) also reads `-c` shell scripts and
  * `$(…)`, counts writers the analysis cannot see in the directory they run
  * in, and judges `ln` sources. Absolute paths; [] when the command cannot be

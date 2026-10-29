@@ -281,7 +281,7 @@ test("Given every workit command in skills, references, agents and the bootstrap
           ).toBe(true);
       if (verb === "git" && sub === "commit")
         expect(
-          / --all\b| -- \S/.test(call),
+          / --all\b| --staged\b| -- \S/.test(call),
           `${source}: "workit ${call}" names nothing to commit`,
         ).toBe(true);
     }
