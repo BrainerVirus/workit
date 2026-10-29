@@ -35,11 +35,11 @@ const rig = (overrides: Partial<ProgressOptions> & { isTTY?: boolean } = {}) => 
 test("spinner frames advance with elapsed seconds and the line clears on done", () => {
   const { progress, writes, advance, cleared } = rig();
   const step = progress.start("Updating codex");
-  advance(120);
+  advance(140);
   advance(1200);
-  expect(writes[0]).toContain("· Updating codex (0s)");
-  expect(writes[1]).toContain("✢ Updating codex (0s)");
-  expect(writes[2]).toContain("✳ Updating codex (1s)");
+  expect(writes[0]).toContain("\x1b[36m◐\x1b[0m Updating codex (0s)");
+  expect(writes[1]).toContain("◓\x1b[0m Updating codex (0s)");
+  expect(writes[2]).toContain("◑\x1b[0m Updating codex (1s)");
   step.end("done");
   expect(cleared()).toBe(true);
   const last = writes.at(-1)!;
