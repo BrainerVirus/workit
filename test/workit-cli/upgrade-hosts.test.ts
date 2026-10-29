@@ -780,3 +780,47 @@ test("Given the CLI install fails, Then the hosts still upgrade with the current
     w.cleanup();
   }
 });
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("Given every host probe takes 1 s, When upgrade plans, Then the probes run at once and planning takes about one probe, not their sum", async () => {
+  const w = world();
+  try {
+    let probes = 0;
+    const runAsync = async (command: string, args: string[]) => {
+      probes++;
+      await sleep(1000);
+      return w.deps.run(command, args);
+    };
+    const started = Date.now();
+    expect(await runUpgradeCommand(["--preview"], { ...w.deps, runAsync })).toBe(0);
+    const elapsed = Date.now() - started;
+    expect(probes).toBeGreaterThanOrEqual(5);
+    expect(elapsed).toBeLessThan(3000);
+    expect(w.text()).toContain("cli         update 1.0.0 -> 2.0.0");
+    expect(w.text()).toMatch(/codex +update 1\.0\.0 -> 2\.0\.0/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given one probe never answers, When upgrade plans, Then that host reads could not check after the probe timeout and the others still plan", async () => {
+  const w = world();
+  try {
+    const runAsync = async (command: string, args: string[]) =>
+      command === "codex" && args.join(" ") === "plugin list --json"
+        ? new Promise<never>(() => {})
+        : w.deps.run(command, args);
+    const started = Date.now();
+    expect(
+      await runUpgradeCommand(["--preview"], { ...w.deps, runAsync, probeTimeoutMs: 200 }),
+    ).toBe(0);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(w.text()).toMatch(
+      /codex +cannot upgrade: could not check: `codex plugin list --json` timed out/,
+    );
+    expect(w.text()).toMatch(/pi +update 1\.0\.0 -> 2\.0\.0/);
+  } finally {
+    w.cleanup();
+  }
+});

@@ -26,7 +26,13 @@ export type Command = {
   args: string[];
   purpose?: string;
 } & Partial<HostInstallCommand>;
-export type CommandResult = { status: number | null; stdout: string; stderr?: string };
+export type CommandResult = {
+  status: number | null;
+  stdout: string;
+  stderr?: string;
+  /** A planning probe that did not answer in time (its host reads "could not check"). */
+  timedOut?: boolean;
+};
 export type UpgradeHost = HostId | "cli" | "permissions";
 
 /** The last few lines of a command's stderr, for a failed row's reason. */
@@ -75,6 +81,8 @@ export type UpgradeDeps = {
   progress?: Progress;
   /** The per-host rows of an applied upgrade (the launch check names failed hosts). */
   onResult?: (hosts: HostOutcome[]) => void;
+  /** How long one planning probe may run (test seam; default 20 s). */
+  probeTimeoutMs?: number;
   /** The CLI version the running entry has on disk now (test seam; default reads its package.json). */
   cliOnDisk?: () => string | undefined;
   /** Run `workit upgrade <argv>` with the newly installed CLI and extra env; its exit code,
@@ -207,6 +215,7 @@ const COMMAND_TIMEOUT_MS = 60_000;
  */
 export const asyncRunner = (
   deps: UpgradeDeps,
+  timeoutMs = COMMAND_TIMEOUT_MS,
 ): ((command: string, args: string[]) => Promise<CommandResult>) => {
   if (deps.runAsync) return deps.runAsync;
   const injected = deps.run;
@@ -256,7 +265,7 @@ export const asyncRunner = (
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
         finish(1);
-      }, COMMAND_TIMEOUT_MS);
+      }, timeoutMs);
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => (stdout += chunk));
       child.stderr?.setEncoding("utf8");

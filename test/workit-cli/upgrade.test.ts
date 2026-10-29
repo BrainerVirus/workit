@@ -542,7 +542,7 @@ test("upgrade shows a step per host and action on a TTY and nothing for --json o
   const tty = await stepsFor(["--hosts=pi", "--yes"], true);
   expect(tty.code).toBe(0);
   expect(tty.writes).toEqual([
-    "✓ Planning the upgrade\n",
+    "✓ Checking 1 host\n",
     "✓ Updating pi\n",
     "✓ Checking the result with workit doctor\n",
   ]);

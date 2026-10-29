@@ -15,12 +15,12 @@ import { createProgress } from "./progress";
 import { createStyle } from "./style";
 import { applyUpgrade } from "./upgrade/apply";
 import { runUpdateCheck, runSetUpdates } from "./upgrade/check";
-import { planCli, previewUpgrade } from "./upgrade/plan";
+import { planCli, previewUpgrade, probedRunner } from "./upgrade/plan";
+import { runProbes } from "./upgrade/probes";
 import { askConfirm, summary, table } from "./upgrade/report";
 import {
   HOSTS,
   LAUNCH_HOSTS,
-  runner,
   upgradePaths,
   type HostOutcome,
   type UpgradeDeps,
@@ -72,17 +72,23 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   // `--apply --confirm` is the scripted alias of `--yes`; it keeps its JSON report.
   const legacy = flags.has("--apply");
   const json = flags.has("--json") || legacy;
-  const run = runner(deps);
   const { home, env } = upgradePaths(deps);
   // Set by an older CLI that just installed this one: the CLI is done, finish the hosts.
   const continued = env[CONTINUE_ENV] !== undefined ? priorRows(env[CONTINUE_ENV]) : undefined;
   const progress = deps.progress ?? createProgress({ stream: process.stderr, json });
-  const plan = progress.runSync("Planning the upgrade", () => {
-    const planned = previewUpgrade(raw as HostId[], deps);
-    // The global CLI is part of the default upgrade; --hosts narrows it to hosts unless --cli.
-    if (!continued && (hostFlag === undefined || flags.has("--cli"))) planCli(planned, run);
-    return planned;
-  });
+  // The global CLI is part of the default upgrade; --hosts narrows it to hosts unless --cli.
+  const withCli = !continued && (hostFlag === undefined || flags.has("--cli"));
+  const checking = raw.length + (withCli ? 1 : 0);
+  const plan = await progress.run(
+    `Checking ${checking} ${checking === 1 ? "host" : "hosts"}`,
+    async () => {
+      // Every registry and inventory probe at once; planning then reads their results.
+      const probes = await runProbes(raw as HostId[], withCli, deps);
+      const planned = previewUpgrade(raw as HostId[], deps, probes);
+      if (withCli) planCli(planned, probedRunner(deps, probes));
+      return planned;
+    },
+  );
   plan.ok = plan.blocked.length === 0 && plan.failed.length === 0;
   // Issue #297: refresh a Workit permission block `workit setup` already
   // wrote (never add one, never set the shell); the diff is part of the plan.

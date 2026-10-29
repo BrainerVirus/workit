@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, rmSync, lstatSync, readFileSync } from "node:fs";
+import { opencodeScratchEnv, probeKey, type ProbeCache } from "./probes";
 import path from "node:path";
 import os from "node:os";
 import { isWorkitPlugin } from "../admin/registration";
@@ -139,6 +140,7 @@ export const sources = (
       const found = classify("pi", source);
       if (found.kind === "floating") {
         const inventory = run("pi", ["list"]);
+        if (inventory.timedOut) throw new Error(`could not check: ${inventory.stderr}`);
         if (inventory.status === 0)
           found.installedVersion = piInstalledVersion(inventory.stdout, source);
       }
@@ -147,6 +149,7 @@ export const sources = (
   });
   guard("codex", () => {
     const listing = run("codex", ["plugin", "list", "--json"]);
+    if (listing.timedOut) throw new Error(`could not check: ${listing.stderr}`);
     if (listing.status !== 0) {
       let available = false;
       try {
@@ -205,27 +208,33 @@ export const sources = (
 
 /** Run an OpenCode probe with its XDG data/state/cache dirs in a throwaway
  *  place: OpenCode logs there even for --version and --help. */
-const opencodeProbe = (deps: UpgradeDeps, args: string[]): CommandResult => {
+const opencodeProbe = (deps: UpgradeDeps, args: string[], probes?: ProbeCache): CommandResult => {
+  const cached = probes?.get(probeKey("opencode", args));
+  if (cached) return cached;
   const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-upgrade-opencode-"));
   try {
-    return runner({
-      ...deps,
-      env: {
-        ...deps.env,
-        XDG_DATA_HOME: path.join(scratch, "data"),
-        XDG_STATE_HOME: path.join(scratch, "state"),
-        XDG_CACHE_HOME: path.join(scratch, "cache"),
-      },
-    })("opencode", args);
+    return runner({ ...deps, env: opencodeScratchEnv(deps, scratch) })("opencode", args);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
 };
 
-export function previewUpgrade(hosts: HostId[] = HOSTS, deps: UpgradeDeps = {}): UpgradePlan {
+/** The planning runner: a probe's result when `runProbes` already has it, else the command. */
+export const probedRunner = (deps: UpgradeDeps, probes?: ProbeCache): ReturnType<typeof runner> => {
+  const run = runner(deps);
+  return probes
+    ? (command, args) => probes.get(probeKey(command, args)) ?? run(command, args)
+    : run;
+};
+
+export function previewUpgrade(
+  hosts: HostId[] = HOSTS,
+  deps: UpgradeDeps = {},
+  probes?: ProbeCache,
+): UpgradePlan {
   const paths = upgradePaths(deps);
   const { home, configDir } = paths;
-  const run = runner(deps);
+  const run = probedRunner(deps, probes);
   const state = readSetupState(configDir);
   const plan: UpgradePlan = {
     ok: true,
@@ -266,7 +275,7 @@ export function previewUpgrade(hosts: HostId[] = HOSTS, deps: UpgradeDeps = {}):
   // leaves a 1.x host with a plugin it cannot load. Unknown versions stay quiet.
   let opencodeHelp: string | undefined;
   if (installedSources.some((source) => source.host === "opencode")) {
-    const probe = opencodeProbe(deps, ["--version"]);
+    const probe = opencodeProbe(deps, ["--version"], probes);
     const installed = probe.status === 0 ? probe.stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
     if (installed && !versionAtLeast(installed, SUPPORT_MATRIX.opencode.minimum))
       (plan.warnings ??= []).push(`opencode ${installed}: ${OPENCODE_V1_FIX}`);
@@ -320,7 +329,17 @@ export function previewUpgrade(hosts: HostId[] = HOSTS, deps: UpgradeDeps = {}):
     if (source.host === "opencode") {
       // OpenCode 2.2+ updates one named plugin (`opencode plugin update <pkg>`);
       // an OpenCode without it is skipped, never updated wholesale.
-      opencodeHelp ??= opencodeProbe(deps, ["plugin", "--help"]).stdout;
+      const help = opencodeProbe(deps, ["plugin", "--help"], probes);
+      if (help.timedOut) {
+        plan.failed.push({
+          host: "opencode",
+          status: "failed",
+          reason: `could not check: ${help.stderr}`,
+          fix: OPENCODE_UPDATE,
+        });
+        continue;
+      }
+      opencodeHelp ??= help.stdout;
       if (!/^\s*(?:opencode\s+plugin\s+)?update\b/m.test(opencodeHelp)) {
         plan.skipped.push({
           host: "opencode",
