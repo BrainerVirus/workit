@@ -141,5 +141,5 @@ after 15 minutes; nothing retries a failed test. PRs touching only `docs/**`
 ## CI-only checks
 
 CI also runs `bun run knip` (unused files/exports and reachability),
-`bun run doctor` (react-doctor on the CLI UI), actionlint and zizmor, which
+`bun run doctor` (react-doctor on the CLI UI; success ends with `react-doctor: scanned <n> files, 0 issues`, any warning exits non-zero, and a run that never prints that line did not pass), actionlint and zizmor, which
 `bun run check` does not, and lints the PR title with commitlint. Run knip after deleting or moving exports.
