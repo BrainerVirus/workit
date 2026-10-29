@@ -1,25 +1,19 @@
 import { expect, test } from "bun:test";
-import { createRequire } from "node:module";
-import { generateNotes } from "@semantic-release/release-notes-generator";
+import { REPO_ROOT } from "@/test/shared/helpers/packages";
+import { releaseNotes } from "@/scripts/backfill-release-notes";
 
 // The release notes writer must list every commit type that can trigger a
 // release. analyze-release-scope releases on any product-path change, so a
 // release cut by a single refactor/docs/test/chore commit must not ship a
-// header-only GitHub release (v8.38.3, v8.38.1, v8.37.4, …).
-
-const require = createRequire(import.meta.url);
-const config = require("../../release.config.cjs") as { plugins: unknown[] };
-const notesPlugin = config.plugins.find(
-  (p) => Array.isArray(p) && p[0] === "@semantic-release/release-notes-generator",
-) as [string, Record<string, unknown>];
+// header-only GitHub release (v8.38.3, v8.38.1, v8.37.4, …). releaseNotes runs
+// @semantic-release/release-notes-generator with release.config.cjs's options.
 
 const notes = (...messages: string[]): Promise<string> =>
-  generateNotes(notesPlugin[1], {
+  releaseNotes(REPO_ROOT, {
     commits: messages.map((message, i) => ({ message, hash: `${i}`.padStart(40, "a") })),
     lastRelease: { gitTag: "v8.38.2" },
     nextRelease: { version: "8.38.3", gitTag: "v8.38.3" },
     options: { repositoryUrl: "https://github.com/BrainerVirus/workit.git" },
-    cwd: process.cwd(),
   });
 
 const body = (text: string): string[] =>
