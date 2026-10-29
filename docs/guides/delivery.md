@@ -29,6 +29,9 @@ grants.
 workit git branch feature/x [--base <b>] [--track <t>]   # policy-checked name, from the fetched default target
 workit git branch --kind feature|bugfix|release|hotfix --slug <s>   # the kind picks the base (per preset, below)
 workit git commit -m "feat: x" -- <paths>       # convention-checked; --all takes every change
+workit git stage --patch <file|->                # stage selected hunks (a unified diff) in the index only
+workit git stage -- <paths> / workit git unstage -- <paths>   # whole paths in or out of the index
+workit git commit --staged -m "fix: y"          # exactly the index, nothing added
 workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last commit; -F <file|-> reads the message
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]
@@ -240,6 +243,15 @@ legacy HEAD`) is not. A command that changes into a directory is judged
   the commit is clean in the index too, so `git status` shows no `MM`. A named
   path the hook left different on disk keeps its index entry, and changes you
   staged on other paths stay staged.
+- Focused commits from one file: a named path you staged in part (`git add
+  -p`, or `workit git stage --patch` where no interactive prompt exists)
+  commits only its staged hunks, its unstaged rest stays in the working tree,
+  and a note names it; `--whole` commits the whole file. Agents stage hunks
+  by cutting `git diff -- <file>` down to the hunks they want (whole hunks;
+  line counts are recounted) and passing it to `workit git stage --patch
+  <file|->`, which checks the patch against the index and changes only the
+  index; then `workit git commit --staged -m …` commits exactly the index and
+  refuses when nothing is staged. Pre-commit hooks run as for any commit.
 - `git push` never pushes a protected branch and succeeds only when the remote
   tip equals the local SHA afterwards. It forces only with
   `--force-with-lease`, leased on the tip Workit itself last pushed (otherwise
