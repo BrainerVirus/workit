@@ -16,7 +16,11 @@
 //   its main checkout's entry, and symlinks after a wildcard are not
 //   resolved), so no directory it takes over can ever get more than it had.
 // - `set` refuses the grant keys and the keys that decide where grants apply
-//   (name, glob).
+//   (name, glob). `remotes` (#549) caps every checkout of a claimed remote at
+//   the entry's grants, so adding or removing one is the user's, like a
+//   grant: `set` changes it only at an interactive terminal outside an agent,
+//   with the workspace name typed to confirm. `add` offers the folder's origin
+//   as the new entry's `remotes` there, and sets none headless.
 // - `rm` (#453) hands the entry's directories to whichever entry or default
 //   resolves there next. Textual overlap is no bound on that (see above), so
 //   every other entry and the defaults count as a possible taker, and an
@@ -43,6 +47,7 @@ import {
   VERIFICATION_STRICTNESS,
   type VerificationMode,
 } from "@brainervirus/workit-core/src/autonomy";
+import { checkoutRemotes, remotePattern } from "@brainervirus/workit-core/src/core/remotes";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import {
   WorkspaceConfigError,
@@ -76,6 +81,10 @@ export const INHERITED_KEYS = [
 
 /** Keys only `workit grant set` changes, at the user's own terminal. */
 const GRANT_KEYS = new Set(["autonomy", "autoApprove", "defaultEndpoint", "verification"]);
+/** Remote URLs whose checkouts an entry caps (#549): the user's, like a grant. */
+const REMOTES_KEY = "remotes";
+const remotesOf = (entry: Entry): string[] =>
+  Array.isArray(entry.remotes) ? (entry.remotes as string[]) : [];
 /** Keys that decide where an entry's grants apply. */
 const SCOPE_KEYS = new Set(["name", "glob"]);
 /** The top-level keys `set` changes: the schema's non-grant, non-scope keys. */
@@ -284,7 +293,56 @@ const flagValue = (argv: string[], flag: string): string | undefined | null => {
   return argv[index + 1] ?? null;
 };
 
-function add(argv: string[], io: Io): number {
+/** `remotes=` as a JSON array, or comma-separated patterns; `null` removes. */
+const parseRemotes = (raw: string): string[] | null | Error => {
+  const value = parseSetValue(raw);
+  if (value === null) return null;
+  const patterns = Array.isArray(value)
+    ? value
+    : String(value)
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+  const bad = patterns.find((item) => typeof item !== "string" || remotePattern(item) === null);
+  if (bad !== undefined || patterns.length === 0)
+    return Error(
+      `remotes: ${bad === undefined ? "no pattern given" : `${JSON.stringify(bad)} is not a remote URL`} (https://host/owner/repo, git@host:owner/repo, a path, or owner/*)`,
+    );
+  return patterns as string[];
+};
+
+/** The origin URL of the folder `add` runs for: the glob's root, else cwd. */
+const originOf = (glob: string, cwd: string): string | null => {
+  for (const where of [globRoot(glob), cwd]) {
+    const remotes = existsSync(where) ? checkoutRemotes(where) : [];
+    if (remotes instanceof Error) continue;
+    const origin = remotes.find((remote) => remote.name === "origin");
+    if (origin) return origin.url;
+  }
+  return null;
+};
+
+/** Ask the user whether the new entry claims its folder's origin (#549). */
+const askRemotes = async (
+  glob: string,
+  io: Io,
+  deps: GrantDeps,
+): Promise<string[] | undefined | null> => {
+  if (!deps.interactive() || agentMarker(io.env)) return undefined;
+  const origin = originOf(glob, io.cwd);
+  const answer = await askOrCancel(io, () =>
+    deps.ask(
+      `Remote URLs this workspace owns (a checkout pushing to one never exceeds its grants), comma-separated${origin ? ` [${origin}]` : ""}; - for none: `,
+    ),
+  );
+  if (answer === null) return null;
+  const typed = answer.trim() || origin || "-";
+  if (typed === "-") return undefined;
+  const parsed = parseRemotes(typed);
+  return parsed instanceof Error || parsed === null ? undefined : parsed;
+};
+
+async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
   const positional = argv.filter(
     (arg, index) => !arg.startsWith("--") && !["--glob", "--from"].includes(argv[index - 1] ?? ""),
   );
@@ -320,11 +378,14 @@ function add(argv: string[], io: Io): number {
     : {};
   // Capped at every entry, not only the overlapping ones (see the header).
   const shadowed = overlappingEntries(glob, entries);
+  const remotes = await askRemotes(glob, io, deps);
+  if (remotes === null) return cancelled(io);
   const entry: Entry = {
     name,
     glob,
     ...inherited,
     ...clampToShadowed(shadowedCeiling(entries)),
+    ...(remotes ? { remotes } : {}),
   };
   const result = save(current, [...entries, entry]);
   if (!result.ok) return emit(io, fail("invalid_input", result.error));
@@ -345,6 +406,9 @@ function add(argv: string[], io: Io): number {
       `${name} (${glob}) added to ${written(data.path, data.backup)}`,
       ...(data.inherited.length ? [`  from ${from}: ${data.inherited.join(", ")}`] : []),
       ...(data.shadows.length ? [`  overlaps: ${data.shadows.join(", ")}`] : []),
+      remotesOf(data.workspace).length
+        ? `  remotes: ${remotesOf(data.workspace).join(", ")}`
+        : `  no remotes: a checkout elsewhere whose origin is this workspace's remote keeps its own folder's grants; the user can set them: workit workspace set ${name} remotes=<url>`,
       `  grants start at the strictest level of every workspace and the defaults:`,
       `  grants: ${GRANT_KINDS.map((kind) => `${kind}=${String(data.grants[kind])}`).join(" ")}; default endpoint ${data.defaultEndpoint}; verification ${data.verification}`,
       `  raising a grant needs the user, in their own terminal: workit grant set ${name} <kind>=<value>`,
@@ -361,10 +425,11 @@ const parseSetValue = (raw: string): unknown => {
   }
 };
 
-function set(argv: string[], io: Io): number {
+async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
   const [name, ...specs] = argv;
   if (!name || specs.length === 0) return usage(io, "set needs <name> and <key>=<value>");
   const grantSpecs: string[] = [];
+  const remoteSpecs: string[] = [];
   const changes: { path: string[]; value: unknown }[] = [];
   for (const spec of specs) {
     const eq = spec.indexOf("=");
@@ -375,6 +440,14 @@ function set(argv: string[], io: Io): number {
       return usage(io, `${spec}: each key segment is letters, digits, _ or -`);
     if (GRANT_KEYS.has(keyPath[0])) {
       grantSpecs.push(spec);
+      continue;
+    }
+    if (keyPath[0] === REMOTES_KEY) {
+      if (keyPath.length > 1) return usage(io, `${spec}: remotes takes the whole list`);
+      const remotes = parseRemotes(spec.slice(eq + 1));
+      if (remotes instanceof Error) return usage(io, remotes.message);
+      remoteSpecs.push(spec);
+      changes.push({ path: keyPath, value: remotes });
       continue;
     }
     if (SCOPE_KEYS.has(keyPath[0]))
@@ -413,6 +486,31 @@ function set(argv: string[], io: Io): number {
   const entries = structuredClone(entriesOf(current));
   const entry = entries.find((item) => item.name === name);
   if (!entry) return emit(io, fail("not_found", `no workspace named "${name}" in ${current.path}`));
+  if (remoteSpecs.length) {
+    // Removing a claim raises the checkouts it capped; adding one moves where
+    // this entry's grants reach. Either is the user's, at their own terminal.
+    const command = `workit workspace set ${name} ${remoteSpecs.map((spec) => `'${spec}'`).join(" ")}`;
+    const agent = agentMarker(io.env);
+    if (!deps.interactive() || agent)
+      return emit(
+        io,
+        fail(
+          "blocked",
+          `grant_raise_refused: remotes decides which checkouts "${name}"'s grants cap; changing it needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}`,
+          {
+            unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${command}`,
+          },
+        ),
+      );
+    const answer = await askOrCancel(io, () =>
+      deps.ask(
+        `Change the remotes of workspace "${name}" to ${remoteSpecs.join(" ")}? Checkouts of a remote no longer listed keep their own folder's grants. Type the workspace name to confirm: `,
+      ),
+    );
+    if (answer === null) return cancelled(io);
+    if (answer.trim() !== name)
+      return emit(io, fail("blocked", "remotes change not confirmed; nothing was written"));
+  }
   // Configured grants need vcs.account (autonomy.ts): changing the entry's vcs
   // could switch them on or move them to another credential.
   const credential = changes.find((change) => change.path[0] === "vcs");
@@ -500,6 +598,16 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
         kinds: raisedKinds(nothing, ceilingOf(entry)),
         reason: "equally specific: a folder both matched was ambiguous, with nothing granted",
       })),
+    // Its remotes capped checkouts anywhere (#549); they stop being capped.
+    ...(remotesOf(removed).length
+      ? [
+          {
+            taker: "checkouts of its remotes",
+            kinds: ["remotes"],
+            reason: `no longer capped at ${name}: ${remotesOf(removed).join(", ")}`,
+          },
+        ]
+      : []),
   ].filter((raise) => raise.kinds.length > 0);
   if (raised.length > 0) {
     const kinds = [...new Set(raised.flatMap((raise) => raise.kinds))];
@@ -573,8 +681,8 @@ export async function runWorkspace(
   // Names and specs never start with --; a bare `--` before them is dropped.
   const [sub, ...rest] = argv.filter((arg) => arg !== "--json" && arg !== "--");
   if (sub === undefined || sub === "list") return list(rest, io);
-  if (sub === "add") return add(rest, io);
-  if (sub === "set") return set(rest, io);
+  if (sub === "add") return add(rest, io, deps);
+  if (sub === "set") return set(rest, io, deps);
   if (sub === "rm") return rm(rest, io, deps);
   return usage(io, `unknown subcommand "${sub}"`);
 }
