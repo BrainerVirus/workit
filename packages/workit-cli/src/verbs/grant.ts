@@ -37,6 +37,7 @@ import {
   listGrants,
   raises,
   raisesEndpoint,
+  remoteWarnings,
   resolveAutonomy,
   writeGrants,
   type DefaultEndpoint,
@@ -159,14 +160,20 @@ function show(argv: string[], io: Io): number {
   // decides where push/pr/merge land, so the grant view shows it too.
   const tracks = releaseTracksReport(io.cwd);
   const tierModelIssues = [...workspaceTierModelIssues(io.cwd), ...roleModelIssues(io.cwd)];
+  // Remote URLs another workspace claims, or none claimed here (#549).
+  const remotes = autonomy.note?.includes("grants are read only from")
+    ? []
+    : remoteWarnings(io.cwd);
   const shown = {
     ...autonomy,
+    ...(remotes.length ? { remoteWarnings: remotes } : {}),
     ...(tracks.tracks.length || tracks.error ? { releaseTracks: tracks } : {}),
     ...(tierModelIssues.length ? { tierModelIssues } : {}),
   };
   return emit(io, ok(shown), (data) => [
     ...(data.note ? [`note: ${data.note}`] : []),
     ...tierModelIssues.map((issue) => `note: ${issue}`),
+    ...remotes.map((warning) => `warning: ${warning}`),
     data.workspace
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",

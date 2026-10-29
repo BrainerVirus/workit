@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -533,4 +534,42 @@ test("grant show: a workspace name that would raise grants is capped, with one n
     if (saved === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
     else process.env.WORKFLOW_WORKSPACE_NAME = saved;
   }
+});
+
+// #549: grants follow the folder; `remotes` makes them follow the remote.
+test("grant show warns when this checkout's origin is a stricter workspace's remote, and when its workspace claims none", async () => {
+  const repo = path.join(checkout, "repo");
+  spawnSync("git", ["init", "-q"], { cwd: repo });
+  spawnSync("git", ["remote", "add", "origin", "git@github.com:acme/strict.git"], { cwd: repo });
+  const none = (await run(["show"], headless, {}, false)).text();
+  expect(none).toContain(
+    "warning: workspace w claims no remotes, so a folder outside it whose origin is git@github.com:acme/strict.git keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set w remotes=git@github.com:acme/strict.git",
+  );
+  writeFileSync(
+    file(),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "w",
+          glob: `${checkout.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "github", account: "octo" },
+          autonomy: { push: true, release: true },
+          remotes: ["https://github.com/me/*"],
+        },
+        {
+          name: "strict",
+          glob: "/nowhere/strict/**",
+          vcs: { provider: "github", account: "octo" },
+          autonomy: { push: false },
+          remotes: ["https://github.com/acme/strict"],
+        },
+      ],
+    }),
+  );
+  const shown = await run(["show"], headless);
+  expect(shown.json().data.grants.push).toBe(false);
+  expect(shown.json().data.note).toContain("capped at workspace strict");
+  expect(shown.json().data.remoteWarnings).toEqual([
+    "remote origin git@github.com:acme/strict.git is claimed by workspace strict (https://github.com/acme/strict): grants here never exceed strict's",
+  ]);
 });

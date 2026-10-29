@@ -494,8 +494,9 @@ function capAtRemotes(autonomy: Autonomy, cwd: string): Autonomy {
 /** The entries whose `remotes` claim one of `cwd`'s remote URLs (grant show, doctor). */
 export function remoteClaims(
   cwd: string,
+  dir: string = grantsDir(),
 ): { remote: string; url: string; workspace: string; pattern: string }[] | Error {
-  const claiming = loadWorkspacesFrom(grantsDir()).filter((entry) => entry.remotes?.length);
+  const claiming = loadWorkspacesFrom(dir).filter((entry) => entry.remotes?.length);
   if (claiming.length === 0) return [];
   const remotes = checkoutRemotes(cwd);
   if (remotes instanceof Error) return remotes;
@@ -503,17 +504,41 @@ export function remoteClaims(
     claiming.flatMap((entry) => {
       const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
       return pattern
-        ? [
-            {
-              remote: remote.name,
-              url: remote.url,
-              workspace: entry.name,
-              pattern,
-            },
-          ]
+        ? [{ remote: remote.name, url: remote.url, workspace: entry.name, pattern }]
         : [];
     }),
   );
+}
+
+/**
+ * What `grant show` and doctor warn about remotes (#549): a remote of this
+ * checkout another workspace claims (grants here are capped at it), and a
+ * workspace that claims no remotes (a checkout elsewhere whose origin is its
+ * remote keeps that folder's grants), with the command that sets them.
+ */
+export function remoteWarnings(cwd: string, dir: string = grantsDir()): string[] {
+  let own: WorkspaceConfig | null = null;
+  try {
+    own = resolveWorkspaceFrom(cwd, dir);
+  } catch {
+    return [];
+  }
+  const claims = remoteClaims(cwd, dir);
+  if (claims instanceof Error) return [`${claims.message}: grants here are capped at nothing`];
+  const out = claims
+    .filter((claim) => claim.workspace !== own?.name)
+    .map(
+      (claim) =>
+        `remote ${claim.remote} ${claim.url} is claimed by workspace ${claim.workspace} (${claim.pattern}): grants here never exceed ${claim.workspace}'s`,
+    );
+  if (own && !own.remotes?.length) {
+    const remotes = checkoutRemotes(cwd);
+    const origin = remotes instanceof Error ? undefined : remotes.find((r) => r.name === "origin");
+    out.push(
+      `workspace ${own.name} claims no remotes, so a folder outside it whose origin is ${origin ? origin.url : "one of its remotes"} keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set ${own.name} remotes=${origin ? origin.url : "<url>"}`,
+    );
+  }
+  return out;
 }
 
 const accountOf = (entry: unknown): unknown =>

@@ -2,6 +2,7 @@
 // (#419): a host whose allow rules miss a verb the workspace grants warns with
 // the command that writes them. Grants are seeded in a scratch config home.
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -225,4 +226,49 @@ test("Given ~/.cursor without a cli-config, When doctor runs, Then the warning s
   expect(row.detail).toContain("does not exist yet");
   expect(row.detail).toContain("`workit setup` writes it");
   expect(row.fix).toBe("workit setup --hosts=cursor");
+});
+
+// --- grant_remotes (#549) ----------------------------------------------------
+
+test("Given a workspace that claims no remotes, When doctor runs in its checkout, Then grant_remotes warns with the command naming its origin", () => {
+  const { home, cwd } = setup({ autonomy: { push: true } });
+  spawnSync("git", ["init", "-q"], { cwd });
+  spawnSync("git", ["remote", "add", "origin", "git@github.com:me/app.git"], { cwd });
+  const row = rows(home, cwd).get("grant_remotes")!;
+  expect(row.status).toBe("warn");
+  expect(row.detail).toContain("workspace w claims no remotes");
+  expect(row.fix).toBe(
+    "in your own terminal: workit workspace set w remotes=git@github.com:me/app.git",
+  );
+});
+
+test("Given a checkout whose origin a stricter workspace claims, When doctor runs, Then grant_remotes warns naming that workspace", () => {
+  const { home, cwd } = setup(null);
+  spawnSync("git", ["init", "-q"], { cwd });
+  spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/strict.git"], { cwd });
+  writeFileSync(
+    path.join(configHome.configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        { name: "open", glob: `${cwd.replaceAll("\\", "/")}/**`, remotes: ["git@github.com:me/*"] },
+        {
+          name: "strict",
+          glob: `${scratch.replaceAll("\\", "/")}/strict/**`,
+          autonomy: { push: false },
+          remotes: ["git@github.com:ACME/strict.git"],
+        },
+      ],
+    }),
+  );
+  const row = rows(home, cwd).get("grant_remotes")!;
+  expect(row.status).toBe("warn");
+  expect(row.detail).toContain("is claimed by workspace strict");
+  expect(row.detail).not.toContain("claims no remotes");
+});
+
+test("Given a workspace whose remotes claim its own origin, When doctor runs, Then grant_remotes passes", () => {
+  const { home, cwd } = setup({ remotes: ["https://github.com/me/app"] });
+  spawnSync("git", ["init", "-q"], { cwd });
+  spawnSync("git", ["remote", "add", "origin", "git@github.com:me/app.git"], { cwd });
+  expect(rows(home, cwd).get("grant_remotes")!.status).toBe("pass");
 });
