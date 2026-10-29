@@ -35,6 +35,26 @@ const USAGE =
   "Usage: workit upgrade [--hosts=opencode,cursor,codex,pi,claude-code|none] [--cli] [--preview | --yes | --apply --confirm] [--json]\n       workit upgrade --check [--json]\n       workit upgrade --set-updates=prompt|auto|off\n";
 
 export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}): Promise<number> {
+  const { env } = upgradePaths(deps);
+  const handBack = env[CONTINUE_ENV] !== undefined ? env[ROWS_ENV] : undefined;
+  const handed: { rows?: HostOutcome[] } = {};
+  const code = await upgradeOnce(argv, deps, handed);
+  if (!handBack) return code;
+  // Re-executed by the older CLI: it reports the exit code (and the one failure
+  // line under it), so this process hands both back and exits 0.
+  try {
+    writeFileSync(handBack, JSON.stringify({ code, rows: handed.rows ?? [] }));
+    return 0;
+  } catch {
+    return code;
+  }
+}
+
+async function upgradeOnce(
+  argv: string[],
+  deps: UpgradeDeps,
+  handed: { rows?: HostOutcome[] },
+): Promise<number> {
   const out = deps.out ?? process.stdout;
   // Read-only and settings forms: one flag each (plus --json for --check).
   const setting = argv.find((arg) => arg.startsWith("--set-updates="));
@@ -152,7 +172,16 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   if (json) for (const warning of plan.warnings ?? []) out.write(`warning: ${warning}\n`);
   // After the CLI updated, the new CLI finishes: the same flags, narrowed to the hosts.
   // An injected host runner without a re-exec seam is a test: it finishes here.
-  const reexec = deps.reexec ?? (deps.run ? undefined : spawnUpgrade(out === process.stderr));
+  const reexec =
+    deps.reexec ??
+    (deps.run && !deps.cliEntry
+      ? undefined
+      : spawnUpgrade({
+          entry: deps.cliEntry ?? process.argv[1],
+          out,
+          toStderr: out === process.stderr,
+          json,
+        }));
   const handoff = async (cli: HostOutcome): Promise<number | undefined> => {
     if (!reexec || (deps.cliOnDisk ?? runningCliVersion)() !== plan.cli?.latest) return undefined;
     const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-upgrade-"));
@@ -170,8 +199,10 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
           WORKIT_UPDATE_CHECK: "0",
         },
       );
-      if (code !== undefined) deps.onResult?.(priorRows(readText(rowsFile)) ?? [cli]);
-      return code;
+      if (code === undefined) return undefined;
+      const back = handedBack(readText(rowsFile));
+      deps.onResult?.(back?.rows.length ? back.rows : [cli]);
+      return back?.code ?? code;
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
@@ -208,12 +239,7 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
       });
   }
   deps.onResult?.(result.hosts);
-  if (continued && env[ROWS_ENV])
-    try {
-      writeFileSync(env[ROWS_ENV], JSON.stringify(result.hosts));
-    } catch {
-      // the older CLI then reports only the CLI row to its caller
-    }
+  handed.rows = result.hosts;
   const failed = !result.ok || !permissionsOk;
   const cliVersion =
     plan.cli && result.hosts.some((h) => h.host === "cli" && h.status === "updated")
@@ -295,6 +321,22 @@ const priorRows = (text: string | undefined): HostOutcome[] | undefined => {
   }
 };
 
+/** What the re-executed upgrade hands back: its exit code and rows. */
+const handedBack = (
+  text: string | undefined,
+): { code: number | undefined; rows: HostOutcome[] } | undefined => {
+  if (text === undefined) return undefined;
+  try {
+    const value = JSON.parse(text) as { code?: unknown; rows?: unknown };
+    return {
+      code: typeof value.code === "number" ? value.code : undefined,
+      rows: priorRows(JSON.stringify(value.rows ?? [])) ?? [],
+    };
+  } catch {
+    return undefined;
+  }
+};
+
 /** The version in the running entry's package.json as it is on disk now. */
 const runningCliVersion = (): string | undefined => {
   const script = process.argv[1];
@@ -317,17 +359,29 @@ const cliPackageVersion = (text: string | undefined): string | undefined => {
   }
 };
 
-/** `workit upgrade <argv>` from the same entry script, now the new package on disk. */
+/**
+ * `workit upgrade <argv>` from the same entry script, now the new package on
+ * disk. Under --json its stdout is captured and passed on, so stdout stays one
+ * JSON document; otherwise it goes where this run's report goes.
+ */
 const spawnUpgrade =
-  (toStderr: boolean) =>
+  (options: {
+    entry: string | undefined;
+    out: { write: (text: string) => void };
+    toStderr: boolean;
+    json: boolean;
+  }) =>
   (argv: string[], extra: Record<string, string>): number | undefined => {
-    const script = process.argv[1];
-    if (!script) return undefined;
-    const result = spawnSync(process.execPath, [script, "upgrade", ...argv], {
-      stdio: ["inherit", toStderr ? 2 : "inherit", "inherit"],
+    if (!options.entry) return undefined;
+    const result = spawnSync(process.execPath, [options.entry, "upgrade", ...argv], {
+      stdio: ["inherit", options.json ? "pipe" : options.toStderr ? 2 : "inherit", "inherit"],
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
       env: { ...process.env, ...extra },
     });
-    return result.error ? undefined : (result.status ?? 1);
+    if (result.error) return undefined;
+    if (options.json && result.stdout) options.out.write(result.stdout);
+    return result.status ?? 1;
   };
 
 export async function runLaunchCommand(argv: string[], deps: UpgradeDeps = {}): Promise<number> {

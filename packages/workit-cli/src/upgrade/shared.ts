@@ -85,6 +85,8 @@ export type UpgradeDeps = {
   probeTimeoutMs?: number;
   /** The CLI version the running entry has on disk now (test seam; default reads its package.json). */
   cliOnDisk?: () => string | undefined;
+  /** The CLI entry script the default re-exec starts (test seam; default the running one). */
+  cliEntry?: string;
   /** Run `workit upgrade <argv>` with the newly installed CLI and extra env; its exit code,
    *  or undefined when it could not start (test seam; default spawns the same entry script). */
   reexec?: (

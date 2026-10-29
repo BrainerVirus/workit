@@ -824,3 +824,85 @@ test("Given one probe never answers, When upgrade plans, Then that host reads co
     w.cleanup();
   }
 });
+
+/** A stand-in for the new CLI's entry script: one JSON report on stdout, its code in the rows file. */
+const fakeEntry = (home: string, code: number) => {
+  const file = path.join(home, "new-cli.mjs");
+  write(
+    file,
+    `import { writeFileSync } from "node:fs";
+const rows = [{ host: "cli", status: "updated", reason: "1.0.0 -> 2.0.0" }, { host: "pi", status: ${code ? '"failed"' : '"updated"'}, reason: "x" }];
+writeFileSync(process.env.WORKIT_UPGRADE_ROWS, JSON.stringify({ code: ${code}, rows }));
+process.stdout.write(JSON.stringify({ ok: ${code === 0}, argv: process.argv.slice(2), hosts: rows }, null, 2) + "\\n");
+`,
+  );
+  return file;
+};
+
+test("Given --yes --json and a CLI that updates, When the new CLI finishes, Then stdout is one JSON document and the exit code is the new CLI's", async () => {
+  for (const code of [0, 1]) {
+    const w = world();
+    try {
+      const rows: string[] = [];
+      const result = await runUpgradeCommand(["--yes", "--json"], {
+        ...w.deps,
+        cliEntry: fakeEntry(w.home, code),
+        cliOnDisk: () => "2.0.0",
+        onResult: (hosts) => rows.push(...hosts.map((h) => `${h.host}:${h.status}`)),
+      });
+      expect(result).toBe(code);
+      const report = JSON.parse(w.text());
+      expect(report.argv).toEqual([
+        "upgrade",
+        "--yes",
+        "--json",
+        "--hosts=opencode,cursor,codex,pi,claude-code",
+      ]);
+      expect(rows).toEqual(["cli:updated", code ? "pi:failed" : "pi:updated"]);
+    } finally {
+      w.cleanup();
+    }
+  }
+});
+
+test("Given --yes --json and a failed CLI install, Then stdout is one JSON document with the CLI row failed", async () => {
+  const w = world();
+  try {
+    const run = (command: string, args: string[]) =>
+      command === "npm" && args[0] === "install"
+        ? { status: 1, stdout: "", stderr: "EACCES" }
+        : w.deps.run(command, args);
+    expect(
+      await runUpgradeCommand(["--yes", "--json"], { ...w.deps, run, cliOnDisk: () => "1.0.0" }),
+    ).toBe(1);
+    const report = JSON.parse(w.text());
+    expect(report.hosts.find((h: { host: string }) => h.host === "cli").status).toBe("failed");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given the re-executed upgrade fails a host, Then it hands its exit code back and exits 0, so the failure line prints once (from the older CLI)", async () => {
+  const w = world();
+  try {
+    w.state.codexFails = true;
+    const rowsFile = path.join(w.home, "rows.json");
+    const code = await runUpgradeCommand(["--yes", "--hosts=codex"], {
+      ...w.deps,
+      env: {
+        WORKIT_UPGRADE_CONTINUE: JSON.stringify([
+          { host: "cli", status: "updated", reason: "1.0.0 -> 2.0.0" },
+        ]),
+        WORKIT_UPGRADE_ROWS: rowsFile,
+      },
+    });
+    expect(code).toBe(0);
+    const back = JSON.parse(readFileSync(rowsFile, "utf8"));
+    expect(back.code).toBe(1);
+    expect(
+      back.rows.map((row: { host: string; status: string }) => `${row.host}:${row.status}`),
+    ).toEqual(["cli:updated", "codex:failed"]);
+  } finally {
+    w.cleanup();
+  }
+});
