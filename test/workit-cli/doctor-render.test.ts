@@ -58,7 +58,11 @@ test("Given a pipe, NO_COLOR or CI, When the report renders, Then it is the unch
 });
 
 test("Given FORCE_COLOR, When the report renders, Then statuses, ids, fixes and the summary are colored", () => {
-  const lines = renderDoctor(report, knowledge, createStyle({ env: { FORCE_COLOR: "1" } }));
+  const lines = renderDoctor(
+    report,
+    knowledge,
+    createStyle({ stream: {}, env: { FORCE_COLOR: "1" } }),
+  );
   const text = lines.join("\n");
   expect(lines[0]).toContain("\x1b[1;31mproblems found\x1b[0m");
   expect(text).toContain("\x1b[32mok  \x1b[0m \x1b[1mcli_version      \x1b[0m");
@@ -104,7 +108,11 @@ test("Given a clean report, When it renders in color, Then the summary is green 
     summary: { passed: 1, warned: 0, failed: 0, total: 1 },
     checks: [report.checks[0]],
   } as DoctorReport;
-  const lines = renderDoctor(clean, knowledge, createStyle({ env: { FORCE_COLOR: "1" } }));
+  const lines = renderDoctor(
+    clean,
+    knowledge,
+    createStyle({ stream: {}, env: { FORCE_COLOR: "1" } }),
+  );
   expect(lines[0]).toContain("\x1b[32mhealthy\x1b[0m");
   expect(lines.join("\n")).not.toContain("Needs attention");
   expect(lines.at(-1)).toBe("\x1b[32mpassed 1 / warned 0 / failed 0\x1b[0m");

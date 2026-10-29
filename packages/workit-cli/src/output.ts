@@ -4,6 +4,8 @@
 // same exit codes everywhere. Kept dependency-free: the router loads it on the
 // cold path.
 
+import { createStyle, type TerminalStream } from "./style";
+
 export type EnvelopeCode =
   | "ok"
   | "failed"
@@ -60,6 +62,11 @@ export type Io = {
   env: NodeJS.ProcessEnv;
   stdout: (text: string) => void;
   stderr: (text: string) => void;
+  /**
+   * The real streams behind stdout/stderr, when they are the process's own:
+   * human output colors only for a terminal. Absent (a capture, a test) = plain.
+   */
+  terminals?: { stdout?: TerminalStream; stderr?: TerminalStream };
 };
 
 export type Verb = { run: (argv: string[], io: Io) => Promise<number> };
@@ -139,11 +146,12 @@ export async function withFailureLine(
     },
   });
   if (code === 0) return code;
+  const red = createStyle({ stream: io.terminals?.stderr, env: io.env, json: io.json }).fail;
   if (outcome)
     io.stderr(
-      `workit: error: ${outcome} (${reason ?? EXIT_NAMES[code] ?? "failed"}, exit ${code})\n`,
+      `${red(`workit: error: ${outcome} (${reason ?? EXIT_NAMES[code] ?? "failed"}, exit ${code})`)}\n`,
     );
-  else if (!wrote) io.stderr(`workit: error: ${command} failed (exit ${code})\n`);
+  else if (!wrote) io.stderr(`${red(`workit: error: ${command} failed (exit ${code})`)}\n`);
   return code;
 }
 

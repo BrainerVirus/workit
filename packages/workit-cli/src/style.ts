@@ -7,7 +7,7 @@
 
 import { stripVTControlCharacters } from "node:util";
 
-type TerminalStream = { isTTY?: boolean; columns?: number };
+export type TerminalStream = { isTTY?: boolean; columns?: number };
 type TerminalMode = "spinner" | "plain" | "off";
 export type StyleOptions = { stream?: TerminalStream; env?: NodeJS.ProcessEnv; json?: boolean };
 
@@ -22,9 +22,12 @@ export const terminalMode = (options: StyleOptions): TerminalMode => {
   return "spinner";
 };
 
-/** Color on for a color TTY; FORCE_COLOR forces it anywhere but --json. */
+/**
+ * Color on for a color TTY. FORCE_COLOR forces it on any real stream (a pipe)
+ * but never under --json, nor without a stream (a capture or a test fake).
+ */
 export const colorEnabled = (options: StyleOptions): boolean => {
-  if (options.json) return false;
+  if (options.json || !options.stream) return false;
   if (truthy((options.env ?? process.env).FORCE_COLOR)) return true;
   return terminalMode(options) === "spinner";
 };

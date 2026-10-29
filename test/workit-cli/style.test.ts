@@ -25,6 +25,7 @@ test("color is on only for a TTY without NO_COLOR, CI or TERM=dumb", () => {
 
 test("FORCE_COLOR forces color on a pipe but never under --json", () => {
   expect(colorEnabled({ stream: { isTTY: false }, env: { FORCE_COLOR: "1" } })).toBe(true);
+  expect(colorEnabled({ stream: undefined, env: { FORCE_COLOR: "1" } })).toBe(false);
   expect(colorEnabled({ stream: { isTTY: false }, env: { FORCE_COLOR: "0" } })).toBe(false);
   expect(colorEnabled({ stream: { isTTY: false }, env: { FORCE_COLOR: "1" }, json: true })).toBe(
     false,
@@ -117,4 +118,28 @@ test("spinnerPaint is self-contained, so the helper process can run its source",
   const copy = runInNewContext(`(${spinnerPaint.toString()})`, {}) as typeof spinnerPaint;
   for (const env of [{ COLORTERM: "truecolor" }, { TERM: "xterm-256color" }, {}])
     expect(copy(1234, env, "◒")).toBe(spinnerPaint(1234, env, "◒"));
+});
+
+test("the `workit: error:` outcome line is red on a color stderr and plain otherwise", async () => {
+  const { withFailureLine } = await import("@/packages/workit-cli/src/output");
+  const run = async (terminals: { stderr?: { isTTY?: boolean } } | undefined) => {
+    const err: string[] = [];
+    const io = {
+      json: false,
+      cwd: "/",
+      env: {},
+      stdout: () => {},
+      stderr: (text: string) => void err.push(text),
+      ...(terminals ? { terminals } : {}),
+    };
+    await withFailureLine(io, "pr merge", async () => 1, "PR not merged");
+    return err.at(-1);
+  };
+  expect(await run(undefined)).toBe("workit: error: PR not merged (failed, exit 1)\n");
+  expect(await run({ stderr: { isTTY: false } })).toBe(
+    "workit: error: PR not merged (failed, exit 1)\n",
+  );
+  expect(await run({ stderr: { isTTY: true } })).toBe(
+    "\x1b[1;31mworkit: error: PR not merged (failed, exit 1)\x1b[0m\n",
+  );
 });

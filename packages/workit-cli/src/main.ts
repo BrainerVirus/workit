@@ -152,7 +152,17 @@ export async function main(
 ): Promise<number> {
   const parsed = parseGlobals(argv);
   const cwd = path.resolve(overrides.cwd ?? process.cwd(), parsed.cwd ?? ".");
-  const io: Io = { ...defaultIo(parsed.json), ...overrides, json: parsed.json, cwd };
+  const io: Io = {
+    ...defaultIo(parsed.json),
+    // A caller that replaces a stream writes somewhere else: no terminal behind it.
+    terminals: {
+      ...(overrides.stdout ? {} : { stdout: process.stdout }),
+      ...(overrides.stderr ? {} : { stderr: process.stderr }),
+    },
+    ...overrides,
+    json: parsed.json,
+    cwd,
+  };
   if (parsed.error) return emit(io, fail("invalid_input", parsed.error));
   if (parsed.session !== undefined) {
     // The same gate the env var meets (verdicts, commits): where the host's

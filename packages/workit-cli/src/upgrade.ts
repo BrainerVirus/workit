@@ -9,6 +9,7 @@ import {
   planHostPermissions,
 } from "./admin/host-permissions";
 import { createProgress } from "./progress";
+import { createStyle } from "./style";
 import { applyUpgrade } from "./upgrade/apply";
 import { planCli, previewUpgrade } from "./upgrade/plan";
 import { askConfirm, summary, table } from "./upgrade/report";
@@ -60,6 +61,12 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   // Issue #297: refresh a Workit permission block `workit setup` already
   // wrote (never add one, never set the shell); the diff is part of the plan.
   const { home, env } = upgradePaths(deps);
+  // Color only when the report goes to the real stdout; an injected `out` stays plain.
+  const style = createStyle({
+    stream: out === process.stdout ? process.stdout : undefined,
+    env,
+    json,
+  });
   const permissions = planHostPermissions({
     hosts: raw,
     refreshOnly: true,
@@ -78,26 +85,26 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   const withPermissions = <T extends object>(value: T) =>
     permissions.changes.length ? { ...value, permissions: permissionPreview } : value;
   const applyCommand = `workit upgrade ${[...(hostFlag === undefined ? [] : [`--hosts=${hostFlag}`]), ...(flags.has("--cli") ? ["--cli"] : []), "--yes"].join(" ")}`;
-  const nothingChanged = `preview only; nothing changed. Apply with: ${applyCommand}\n`;
+  const nothingChanged = `${style.dim("preview only; nothing changed.")} Apply with: ${style.command(applyCommand)}\n`;
   if (json && !legacy && !flags.has("--yes")) {
     // --json without an apply flag is the machine-readable preview.
     out.write(JSON.stringify(withPermissions(plan), null, 2) + "\n");
     return plan.blocked.length ? 1 : 0;
   }
-  if (!json) out.write(summary(plan, permissions.changes));
+  if (!json) out.write(summary(plan, permissions.changes, style));
   if (flags.has("--preview")) {
     out.write(nothingChanged);
     return plan.blocked.length ? 1 : 0;
   }
   if (plan.blocked.length) {
-    out.write(`Upgrade blocked: ${plan.blocked.join("; ")}\nNothing changed.\n`);
+    out.write(`${style.fail("Upgrade blocked:")} ${plan.blocked.join("; ")}\nNothing changed.\n`);
     return 1;
   }
   const work =
     plan.entries.length + plan.migrations.length + (plan.cli ? 1 : 0) + permissions.changes.length;
   if (work > 0 && !flags.has("--yes") && !legacy) {
     const confirmed = await (deps.confirm ?? ((q: string) => askConfirm(q, out)))(
-      "Apply this upgrade? [y/N] ",
+      `${style.bold("Apply this upgrade?")} [y/N] `,
     );
     if (!confirmed) {
       out.write(nothingChanged);
@@ -158,17 +165,18 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     return failed ? 1 : 0;
   }
   if (result.error && result.hosts.every((h) => h.status !== "failed"))
-    out.write(`Upgrade stopped: ${result.error}\n`);
-  out.write(table(result.hosts));
-  if (permissions.refused) out.write(`permissions: not refreshed: ${permissions.refused}\n`);
-  if (result.backup) out.write(`Backup: ${result.backup}\n`);
+    out.write(`${style.fail("Upgrade stopped:")} ${result.error}\n`);
+  out.write(table(result.hosts, style));
+  if (permissions.refused)
+    out.write(`permissions: ${style.warn("not refreshed:")} ${permissions.refused}\n`);
+  if (result.backup) out.write(`Backup: ${style.path(result.backup)}\n`);
   out.write(
     left.length === 0
-      ? "Verified: workit doctor is clean for versions, assets, agents and permissions.\n"
-      : `Left after upgrade (workit doctor):\n${left
+      ? `${style.ok("Verified:")} workit doctor is clean for versions, assets, agents and permissions.\n`
+      : `${style.warn("Left after upgrade (workit doctor):")}\n${left
           .map(
             (check) =>
-              `  ${check.id}: ${check.detail}${check.fix ? `\n    fix: ${check.fix}` : ""}`,
+              `  ${style.bold(check.id)}: ${check.detail}${check.fix ? `\n    fix: ${style.command(check.fix)}` : ""}`,
           )
           .join("\n")}\n`,
   );

@@ -151,7 +151,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   for (const line of renderDoctor(
     report,
     knowledgeLine,
-    createStyle({ stream: process.stdout, env: io.env, json: io.json }),
+    createStyle({ stream: io.terminals?.stdout, env: io.env, json: io.json }),
   ))
     io.stdout(`${line}\n`);
   return report.exitCode;
