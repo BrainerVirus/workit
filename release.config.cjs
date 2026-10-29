@@ -18,6 +18,28 @@ module.exports = {
       "@semantic-release/release-notes-generator",
       {
         preset: "conventionalcommits",
+        // analyze-release-scope releases on a product-path change of ANY type,
+        // but the preset lists only feat/fix/perf/revert by default, so a
+        // refactor-, docs- or chore-only release shipped header-only notes
+        // (v8.38.3, v8.37.4, …). Every type that can release gets a section.
+        // The scoped chore(release) entry comes first (the writer takes the
+        // first match) and hides the manifest-sync commits.
+        presetConfig: {
+          types: [
+            { type: "feat", section: "Features" },
+            { type: "fix", section: "Bug Fixes" },
+            { type: "perf", section: "Performance Improvements" },
+            { type: "revert", section: "Reverts" },
+            { type: "refactor", section: "Code Refactoring" },
+            { type: "docs", section: "Documentation" },
+            { type: "test", section: "Tests" },
+            { type: "build", section: "Build System" },
+            { type: "ci", section: "Continuous Integration" },
+            { type: "chore", scope: "release", hidden: true },
+            { type: "chore", section: "Miscellaneous Chores" },
+            { type: "style", section: "Styles", hidden: true },
+          ],
+        },
         // Notes come from PR titles (squash = PR title, blank body). Defence in
         // depth for any commit body that still reaches the parser: drop git
         // trailers and keep a breaking note to its first paragraph, so release
