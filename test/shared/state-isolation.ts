@@ -15,6 +15,12 @@ import path from "node:path";
 for (const key of ["OPENCODE_SESSION_ID", "PI_SESSION_ID", "CODEX_THREAD_ID", "WORKIT_HOST"])
   delete process.env[key];
 
+// A shell's (or CI runner's) XDG dirs would point a test that sets only HOME
+// at the developer's real ~/.config (OpenCode config, Workit config): every
+// test resolves them under its own HOME unless it sets them itself.
+for (const key of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"])
+  delete process.env[key];
+
 // Always a fresh dir, never an inherited one: `bun test --parallel` workers
 // inherit the coordinator's env, and a shared dir made every worker share one
 // ledger and its locks, and the first worker to finish deleted it under the

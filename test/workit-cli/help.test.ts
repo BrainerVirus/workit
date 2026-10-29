@@ -40,7 +40,7 @@ const mainEntry = path.join(cliSrc, "main.ts");
 const PARSERS: Record<string, string[]> = {
   init: ["verbs/init.ts"],
   setup: ["verbs/setup.ts"],
-  upgrade: ["upgrade.ts#runUpgradeCommand"],
+  upgrade: ["upgrade.ts#upgradeOnce"],
   launch: ["upgrade.ts#runLaunchCommand"],
   doctor: ["verbs/doctor.ts"],
   gc: ["verbs/gc.ts"],
