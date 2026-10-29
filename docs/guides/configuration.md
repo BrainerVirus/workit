@@ -107,8 +107,8 @@ not have to repeat it in a host's memory or rules file.
 
 A workspace's `trailers` (default `true`) says whether commits carry the
 `Workit-Session:` trailer. Set `"trailers": false` on a workspace (a work
-repository whose history should not name agent sessions) and edit it yourself
-in `workspaces.json`: `workit git commit` then writes no trailer and records
+repository whose history should not name agent sessions) in `workspaces.json`
+or with `workit workspace set <name> trailers=false`: `workit git commit` then writes no trailer and records
 the author in the ledger only (`commit.recorded`), so a verdict from the same
 session is still refused as the author's, and an amend drops the old
 commit's `Workit-Session:` lines. A workspace nested inside another (a repo
@@ -560,5 +560,5 @@ workit lock status                # the holders, then the queue in arrival order
 | Field   | Default                       | Where     | Meaning                                     |
 | ------- | ----------------------------- | --------- | ------------------------------------------- |
 | `light` | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease      |
-| `heavy` | `test`, `build`               | both      | Named checks that queue; a repo only adds   |
+| `heavy` | `test`, `build`, `packaging`  | both      | Named checks that queue; a repo only adds   |
 | `wait`  | `1800` (30 min)               | both      | How long a queued check waits before exit 4 |
