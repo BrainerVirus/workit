@@ -508,6 +508,7 @@ export async function applyUpgrade(
           "Updating the CLI",
           () => applyCli(plan.cli!, runAsync, backup),
           statusOf,
+          { signals: true },
         ),
       );
     } catch (error) {
