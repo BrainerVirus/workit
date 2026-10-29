@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import pkg from "../package.json" with { type: "json" };
 import { type HostId } from "./admin/detect-hosts";
 import { hostCommand, type HostInstallCommand } from "./admin/host-install";
@@ -14,7 +17,14 @@ import { applyUpgrade } from "./upgrade/apply";
 import { runUpdateCheck, runSetUpdates } from "./upgrade/check";
 import { planCli, previewUpgrade } from "./upgrade/plan";
 import { askConfirm, summary, table } from "./upgrade/report";
-import { HOSTS, LAUNCH_HOSTS, runner, upgradePaths, type UpgradeDeps } from "./upgrade/shared";
+import {
+  HOSTS,
+  LAUNCH_HOSTS,
+  runner,
+  upgradePaths,
+  type HostOutcome,
+  type UpgradeDeps,
+} from "./upgrade/shared";
 
 export { applyUpgrade } from "./upgrade/apply";
 export { previewUpgrade } from "./upgrade/plan";
@@ -63,17 +73,19 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   const legacy = flags.has("--apply");
   const json = flags.has("--json") || legacy;
   const run = runner(deps);
+  const { home, env } = upgradePaths(deps);
+  // Set by an older CLI that just installed this one: the CLI is done, finish the hosts.
+  const continued = env[CONTINUE_ENV] !== undefined ? priorRows(env[CONTINUE_ENV]) : undefined;
   const progress = deps.progress ?? createProgress({ stream: process.stderr, json });
   const plan = progress.runSync("Planning the upgrade", () => {
     const planned = previewUpgrade(raw as HostId[], deps);
     // The global CLI is part of the default upgrade; --hosts narrows it to hosts unless --cli.
-    if (hostFlag === undefined || flags.has("--cli")) planCli(planned, run);
+    if (!continued && (hostFlag === undefined || flags.has("--cli"))) planCli(planned, run);
     return planned;
   });
   plan.ok = plan.blocked.length === 0 && plan.failed.length === 0;
   // Issue #297: refresh a Workit permission block `workit setup` already
   // wrote (never add one, never set the shell); the diff is part of the plan.
-  const { home, env } = upgradePaths(deps);
   // Color only when the report goes to the real stdout or stderr (the launch
   // check's upgrade); an injected `out` stays plain.
   const style = createStyle({
@@ -106,7 +118,12 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     out.write(JSON.stringify(withPermissions(plan), null, 2) + "\n");
     return plan.blocked.length ? 1 : 0;
   }
-  if (!json) out.write(summary(plan, permissions.changes, style));
+  if (!json)
+    out.write(
+      continued
+        ? `Continuing the upgrade with the new CLI (workit ${pkg.version}).\n`
+        : summary(plan, permissions.changes, style),
+    );
   if (flags.has("--preview")) {
     out.write(nothingChanged);
     return plan.blocked.length ? 1 : 0;
@@ -127,7 +144,42 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
     }
   }
   if (json) for (const warning of plan.warnings ?? []) out.write(`warning: ${warning}\n`);
-  const result = await applyUpgrade(plan, { ...deps, progress });
+  // After the CLI updated, the new CLI finishes: the same flags, narrowed to the hosts.
+  // An injected host runner without a re-exec seam is a test: it finishes here.
+  const reexec = deps.reexec ?? (deps.run ? undefined : spawnUpgrade(out === process.stderr));
+  const handoff = async (cli: HostOutcome): Promise<number | undefined> => {
+    if (!reexec || (deps.cliOnDisk ?? runningCliVersion)() !== plan.cli?.latest) return undefined;
+    const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-upgrade-"));
+    const rowsFile = path.join(scratch, "rows.json");
+    try {
+      const code = await reexec(
+        [
+          ...(legacy ? ["--apply", "--confirm"] : ["--yes"]),
+          ...(flags.has("--json") ? ["--json"] : []),
+          `--hosts=${raw.length ? raw.join(",") : "none"}`,
+        ],
+        {
+          [CONTINUE_ENV]: JSON.stringify([cli]),
+          [ROWS_ENV]: rowsFile,
+          WORKIT_UPDATE_CHECK: "0",
+        },
+      );
+      if (code !== undefined) deps.onResult?.(priorRows(readText(rowsFile)) ?? [cli]);
+      return code;
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  };
+  const result = await applyUpgrade(
+    plan,
+    { ...deps, progress },
+    continued || !reexec ? {} : { handoff },
+  );
+  if (result.handedOff !== undefined) return result.handedOff;
+  if (continued?.length) {
+    result.hosts.unshift(...continued);
+    if (continued.some((row) => row.status === "failed")) result.ok = false;
+  }
   let permissionsOk = true;
   let written: ReturnType<typeof applyHostPermissions> | undefined;
   if (
@@ -150,10 +202,17 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
       });
   }
   deps.onResult?.(result.hosts);
+  if (continued && env[ROWS_ENV])
+    try {
+      writeFileSync(env[ROWS_ENV], JSON.stringify(result.hosts));
+    } catch {
+      // the older CLI then reports only the CLI row to its caller
+    }
   const failed = !result.ok || !permissionsOk;
-  const cliVersion = result.hosts.some((h) => h.host === "cli" && h.status === "updated")
-    ? plan.cli!.latest
-    : pkg.version;
+  const cliVersion =
+    plan.cli && result.hosts.some((h) => h.host === "cli" && h.status === "updated")
+      ? plan.cli.latest
+      : pkg.version;
   const report = progress.runSync("Checking the result with workit doctor", () =>
     (
       deps.doctor ??
@@ -198,6 +257,72 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   );
   return failed ? 1 : 0;
 }
+
+/** Marks the upgrade the older CLI re-executes: the rows it already has (JSON). */
+const CONTINUE_ENV = "WORKIT_UPGRADE_CONTINUE";
+/** Where the re-executed upgrade writes its rows for the older CLI's caller. */
+const ROWS_ENV = "WORKIT_UPGRADE_ROWS";
+
+const readText = (file: string): string | undefined => {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+/** Rows handed between the two CLIs; anything unreadable is no rows. */
+const priorRows = (text: string | undefined): HostOutcome[] | undefined => {
+  if (text === undefined) return undefined;
+  try {
+    const rows: unknown = JSON.parse(text);
+    return Array.isArray(rows)
+      ? rows.filter(
+          (row): row is HostOutcome =>
+            typeof row?.host === "string" &&
+            typeof row?.status === "string" &&
+            typeof row?.reason === "string",
+        )
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+/** The version in the running entry's package.json as it is on disk now. */
+const runningCliVersion = (): string | undefined => {
+  const script = process.argv[1];
+  if (!script) return undefined;
+  let dir = path.dirname(script);
+  for (let depth = 0; depth < 4; depth += 1, dir = path.dirname(dir)) {
+    const found = cliPackageVersion(readText(path.join(dir, "package.json")));
+    if (found) return found;
+  }
+  return undefined;
+};
+
+const cliPackageVersion = (text: string | undefined): string | undefined => {
+  if (text === undefined) return undefined;
+  try {
+    const found = JSON.parse(text) as { name?: unknown; version?: unknown };
+    return found.name === pkg.name && typeof found.version === "string" ? found.version : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** `workit upgrade <argv>` from the same entry script, now the new package on disk. */
+const spawnUpgrade =
+  (toStderr: boolean) =>
+  (argv: string[], extra: Record<string, string>): number | undefined => {
+    const script = process.argv[1];
+    if (!script) return undefined;
+    const result = spawnSync(process.execPath, [script, "upgrade", ...argv], {
+      stdio: ["inherit", toStderr ? 2 : "inherit", "inherit"],
+      env: { ...process.env, ...extra },
+    });
+    return result.error ? undefined : (result.status ?? 1);
+  };
 
 export async function runLaunchCommand(argv: string[], deps: UpgradeDeps = {}): Promise<number> {
   const [host, ...args] = argv;

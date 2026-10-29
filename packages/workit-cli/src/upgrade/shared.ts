@@ -75,6 +75,14 @@ export type UpgradeDeps = {
   progress?: Progress;
   /** The per-host rows of an applied upgrade (the launch check names failed hosts). */
   onResult?: (hosts: HostOutcome[]) => void;
+  /** The CLI version the running entry has on disk now (test seam; default reads its package.json). */
+  cliOnDisk?: () => string | undefined;
+  /** Run `workit upgrade <argv>` with the newly installed CLI and extra env; its exit code,
+   *  or undefined when it could not start (test seam; default spawns the same entry script). */
+  reexec?: (
+    argv: string[],
+    env: Record<string, string>,
+  ) => number | undefined | Promise<number | undefined>;
 };
 export type Source = {
   host: HostId;

@@ -689,3 +689,94 @@ test("Given `opencode plugin list` never reports the target, When upgrade runs, 
     w.cleanup();
   }
 });
+
+/** The new binary, in process: the same command with the env the old one hands it. */
+const newBinary =
+  (w: ReturnType<typeof world>, seen: { argv: string[]; env: Record<string, string> }[]) =>
+  async (argv: string[], env: Record<string, string>) => {
+    seen.push({ argv, env });
+    return runUpgradeCommand(argv, { ...w.deps, env: { ...env } });
+  };
+
+test("Given a plain `workit upgrade` with a newer CLI, When it applies, Then the CLI installs first and the new binary upgrades the hosts with one table and exit code", async () => {
+  const w = world();
+  try {
+    const seen: { argv: string[]; env: Record<string, string> }[] = [];
+    const code = await runUpgradeCommand([], {
+      ...w.deps,
+      cliOnDisk: () => "2.0.0",
+      reexec: newBinary(w, seen),
+    });
+    expect(code, w.text()).toBe(0);
+    const install = w.calls.findIndex((call) => call.join(" ").startsWith("npm install --global"));
+    const firstHost = w.calls.findIndex((call) =>
+      /^(?:claude plugin update|codex plugin add|pi update)\b/.test(call.join(" ")),
+    );
+    expect(install).toBeGreaterThanOrEqual(0);
+    expect(install).toBeLessThan(firstHost);
+    // Re-executed once, with the hosts only, confirmed, and never re-planning the CLI.
+    expect(seen).toHaveLength(1);
+    expect(seen[0].argv).toEqual(["--yes", "--hosts=opencode,cursor,codex,pi,claude-code"]);
+    expect(
+      w.calls.filter((call) => call.join(" ").startsWith("npm install --global")),
+    ).toHaveLength(1);
+    expect(w.calls.filter((call) => call.join(" ") === "npm root --global")).toHaveLength(2);
+    const text = w.text();
+    expect(text).toContain("Continuing the upgrade with the new CLI");
+    expect(text).toMatch(/cli +updated +1\.0\.0 -> 2\.0\.0/);
+    expect(text).toMatch(/claude-code +updated +1\.0\.0 -> 2\.0\.0/);
+    expect(text).toMatch(/pi +updated +1\.0\.0 -> 2\.0\.0/);
+    expect(text.match(/^Result:/gm)).toHaveLength(1);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given the new binary fails a host, Then the exit code is 1 and the table still has the CLI row", async () => {
+  const w = world();
+  try {
+    w.state.codexFails = true;
+    const seen: { argv: string[]; env: Record<string, string> }[] = [];
+    const rows: string[] = [];
+    const code = await runUpgradeCommand(["--yes"], {
+      ...w.deps,
+      cliOnDisk: () => "2.0.0",
+      reexec: newBinary(w, seen),
+      onResult: (hosts) => rows.push(...hosts.map((h) => `${h.host}:${h.status}`)),
+    });
+    expect(code).toBe(1);
+    expect(w.text()).toMatch(/cli +updated/);
+    expect(w.text()).toMatch(/codex +FAILED/);
+    expect(rows).toContain("cli:updated");
+    expect(rows).toContain("codex:failed");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given the CLI install fails, Then the hosts still upgrade with the current code, the CLI row says so, and nothing is re-executed", async () => {
+  const w = world();
+  try {
+    const seen: { argv: string[]; env: Record<string, string> }[] = [];
+    const run = (command: string, args: string[]) =>
+      command === "npm" && args[0] === "install"
+        ? { status: 1, stdout: "", stderr: "EACCES" }
+        : w.deps.run(command, args);
+    const code = await runUpgradeCommand(["--yes"], {
+      ...w.deps,
+      run,
+      cliOnDisk: () => "1.0.0",
+      reexec: newBinary(w, seen),
+    });
+    expect(code).toBe(1);
+    expect(seen).toHaveLength(0);
+    const text = w.text();
+    expect(text).toMatch(
+      /cli +FAILED +CLI update failed.*hosts upgraded with workit \d+\.\d+\.\d+/,
+    );
+    expect(text).toMatch(/pi +updated +1\.0\.0 -> 2\.0\.0/);
+    expect(text).toMatch(/claude-code +updated/);
+  } finally {
+    w.cleanup();
+  }
+});
