@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sshSeam } from "@/packages/workit-core/src/core/remotes";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { runGrant, type GrantDeps } from "@/packages/workit-cli/src/verbs/grant";
 
@@ -15,6 +16,8 @@ let checkout = "";
 let configHome: ConfigHome;
 beforeAll(() => {
   configHome = useConfigHome("wk-grant-config-");
+  // ssh aliases resolve through an empty config, never the machine's (#549).
+  sshSeam.read = () => ({ text: "", home: os.tmpdir() });
   configDir = configHome.configDir;
 });
 afterAll(() => {

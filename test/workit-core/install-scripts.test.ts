@@ -255,6 +255,8 @@ const STUB_CORE_FILES = [
   // doctor's *_permissions rows (#297) resolve the state dir here.
   "heavy-words.ts",
   "role-models.ts",
+  // workspaces.ts validates `remotes` patterns, autonomy caps by them (#549).
+  "remotes.ts",
 ];
 // doctor's *_permissions rows read Workit's verb list (hooks/delivery-verbs.ts).
 const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts", "hook-runs.ts"];
@@ -283,6 +285,12 @@ function copyCoreSources(stub: string) {
       path.join(repoRoot, "packages/workit-core/src/core", name),
       path.join(stub, "packages/workit-core/src/core", name),
     );
+  // remotes.ts resolves ssh aliases as deriveForge does (#549).
+  mkdirSync(path.join(stub, "packages/workit-core/src/git"), { recursive: true });
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/src/git/rev.ts"),
+    path.join(stub, "packages/workit-core/src/git/rev.ts"),
+  );
   // doctor's grant_endpoint row reads the grant/endpoint mismatch (#431).
   cpSync(
     path.join(repoRoot, "packages/workit-core/src/autonomy.ts"),

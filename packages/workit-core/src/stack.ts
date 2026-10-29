@@ -1477,7 +1477,7 @@ function pushBranch(
     };
   const grant = requireGrant(cwd, "push", {
     forge: !plan.data.local,
-    target: pushTarget(cwd, plan.data.remote),
+    target: () => pushTarget(cwd, plan.data.remote),
   });
   if (!grant.allowed)
     return stackFail("blocked", grant.error, grant.unblock, {

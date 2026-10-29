@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
+import { sshSeam, userGitSeam } from "@/packages/workit-core/src/core/remotes";
 import { GIT_REDIRECT_ENV } from "@/packages/workit-core/src/git/env-redirect";
 import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remote";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
@@ -16,10 +17,16 @@ import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 setDefaultTimeout(60_000);
 
 let configHome: ConfigHome;
+const savedSsh = sshSeam.read;
 beforeAll(() => {
   configHome = useConfigHome("wk-git-env-config-");
+  // ssh aliases resolve through an empty config, never the machine's.
+  sshSeam.read = () => ({ text: "", home: os.tmpdir() });
 });
-afterAll(() => configHome.restore());
+afterAll(() => {
+  configHome.restore();
+  sshSeam.read = savedSsh;
+});
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -411,3 +418,244 @@ for (const redirect of ["pushurl", "pushInsteadOf", "branch pushRemote"] as cons
     expect(repo.remoteTip("feature/fork")).toBeNull();
     expect(tip(fork)).toBeNull();
   });
+
+// #549 fix round (verdict mvu317i1): a push whose URL does not name strict's
+// repository as written still reaches it: a symlinked, `..`, trailing-slash,
+// file:// or relative path; a receivepack; an ssh command. Each is capped.
+const claimedWorld = () => {
+  const repo = strictRepo();
+  const open = plainFolder();
+  const glob = (dir: string) => `${dir.replaceAll("\\", "/")}/**`;
+  writeFileSync(
+    path.join(configHome.configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "strict",
+          glob: glob(repo.root),
+          autonomy: { release: false, push: false },
+          remotes: [repo.bare],
+        },
+        { name: "open", glob: glob(open), autonomy: { release: true, push: true } },
+      ],
+    }),
+  );
+  const git = (cwd: string, ...args: string[]) => {
+    const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  // An unclaimed bare remote in open: what an innocent URL names.
+  const innocent = path.join(open, "innocent.git");
+  git(open, "init", "-q", "--bare", "-b", "main", innocent);
+  /** A fresh checkout in open with origin `url`, on feature/x one commit ahead. */
+  const attacker = (url: string, name = "atk") => {
+    const at = path.join(open, name);
+    mkdirSync(at, { recursive: true });
+    git(at, "init", "-q", "-b", "main");
+    for (const [key, value] of [
+      ["user.name", "t"],
+      ["user.email", "t@t"],
+      ["commit.gpgsign", "false"],
+    ])
+      git(at, "config", key, value);
+    git(at, "remote", "add", "origin", url);
+    git(at, "commit", "-q", "--allow-empty", "-m", "chore: base");
+    git(at, "switch", "-q", "-c", "feature/x");
+    git(at, "commit", "-q", "--allow-empty", "-m", "chore: x");
+    return at;
+  };
+  const tip = (bare: string) =>
+    spawnSync("git", ["rev-parse", "--verify", "-q", "refs/heads/feature/x"], {
+      cwd: bare,
+      encoding: "utf8",
+    }).stdout.trim() || null;
+  return { repo, open, git, innocent, attacker, tip };
+};
+
+const refused = async (
+  cwd: string,
+  argv: string[],
+  label: string,
+  env?: Record<string, string>,
+) => {
+  const result = env
+    ? await withProcessEnv(env, () => run([...argv, "--json"], cwd))
+    : await run([...argv, "--json"], cwd);
+  expect(result.code, `${label}: ${result.stdout}${result.stderr}`).toBe(3);
+  expect(result.stdout, label).toContain("grant_required");
+  return result;
+};
+
+test.skipIf(process.platform === "win32")(
+  "Given strict's bare remote reached through a symlinked path, a trailing slash, `..` after a symlink, its file:// form or a relative path through a symlink, When workit git push -u runs in open, Then each exits 3 and strict does not move",
+  async () => {
+    const { repo, open, attacker, tip } = claimedWorld();
+    // links/rl -> <root>/sub, so links/rl/.. is <root> on disk but `links` as text.
+    mkdirSync(path.join(repo.root, "sub"));
+    const links = path.join(open, "links");
+    mkdirSync(links);
+    symlinkSync(repo.root, path.join(links, "root"));
+    symlinkSync(path.join(repo.root, "sub"), path.join(links, "rl"));
+    mkdirSync(path.join(open, "deep"));
+    symlinkSync(path.join(repo.root, "sub"), path.join(open, "deep", "r"));
+    const forms = [
+      path.join(links, "root", "remote"),
+      `${path.join(links, "root", "remote.git")}/`,
+      `${links}/rl/../remote.git`,
+      `file://${links}/rl/../remote.git`,
+      "../deep/r/../remote.git",
+    ];
+    for (const [index, url] of forms.entries()) {
+      const at = attacker(url, `atk-${index}`);
+      const result = await refused(at, ["git", "push", "--set-upstream"], url);
+      // Matched as strict's repository, not merely refused as unknown.
+      expect(result.stdout, url).toContain("workspace strict claims");
+      expect(tip(repo.bare), url).toBeNull();
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given an innocent origin whose receivepack runs on strict's repository, from repo config or GIT_CONFIG_COUNT, When workit git push runs, Then it exits 3 naming the receivepack and strict does not move",
+  async () => {
+    const { repo, innocent, attacker, git, tip } = claimedWorld();
+    const pack = `git-receive-pack '${repo.bare}' #`;
+    const configured = attacker(innocent, "atk-config");
+    git(configured, "config", "remote.origin.receivepack", pack);
+    const first = await refused(configured, ["git", "push", "--set-upstream"], "config");
+    expect(first.stdout).toContain("remote.origin.receivepack");
+    const injected = attacker(innocent, "atk-env");
+    await refused(injected, ["git", "push", "--set-upstream"], "env", {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "remote.origin.receivepack",
+      GIT_CONFIG_VALUE_0: pack,
+    });
+    expect(tip(repo.bare)).toBeNull();
+    expect(tip(innocent)).toBeNull();
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given an innocent ssh origin and an ssh command that serves strict's repository, from repo config or GIT_SSH_COMMAND, When workit git push runs, Then it exits 3; the same command in the user's own global config pushes",
+  async () => {
+    const { repo, open, innocent, attacker, git, tip } = claimedWorld();
+    const ssh = (target: string, name: string) => {
+      const file = path.join(open, name);
+      writeFileSync(
+        file,
+        `#!/bin/sh\nfor last; do :; done\ncase "$last" in\n  git-receive-pack*) exec git receive-pack '${target}' ;;\n  git-upload-pack*) exec git upload-pack '${target}' ;;\nesac\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      return file;
+    };
+    const toStrict = ssh(repo.bare, "fake-ssh-strict");
+    const url = "git@innocent.invalid:acme/innocent.git";
+    const configured = attacker(url, "atk-ssh-config");
+    git(configured, "config", "core.sshCommand", toStrict);
+    const first = await refused(configured, ["git", "push", "--set-upstream"], "core.sshCommand");
+    expect(first.stdout).toContain("core.sshcommand");
+    const env = attacker(url, "atk-ssh-env");
+    await refused(env, ["git", "push", "--set-upstream"], "GIT_SSH_COMMAND", {
+      GIT_SSH_COMMAND: toStrict,
+    });
+    expect(tip(repo.bare)).toBeNull();
+    // The user's own ~/.gitconfig (the account home, swapped here) is their setup.
+    const home = path.join(open, "home");
+    mkdirSync(home);
+    writeFileSync(
+      path.join(home, ".gitconfig"),
+      `[core]\n\tsshCommand = ${ssh(innocent, "fake-ssh-innocent")}\n`,
+    );
+    const previous = userGitSeam.home;
+    userGitSeam.home = () => home;
+    try {
+      const allowed = attacker(url, "atk-ssh-global");
+      const result = await withProcessEnv({ HOME: home }, () =>
+        run(["git", "push", "--set-upstream", "--json"], allowed),
+      );
+      expect(result.code, result.stdout + result.stderr).toBe(0);
+      expect(tip(innocent)).not.toBeNull();
+    } finally {
+      userGitSeam.home = previous;
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given a fresh git-flow checkout whose origin reaches strict through a symlink or a receivepack, When workit git push --release develop runs, Then it exits 3 and develop does not move",
+  async () => {
+    const { repo, open, innocent, git } = claimedWorld();
+    const develop = repo.remoteTip("develop");
+    symlinkSync(repo.root, path.join(open, "alias"));
+    const viaLink = freshClone(repo, open);
+    git(viaLink, "remote", "set-url", "origin", path.join(open, "alias", "remote"));
+    const linked = await refused(viaLink, ["git", "push", "--release", "develop"], "symlink");
+    expect(linked.stdout).toContain("workspace strict claims");
+    git(viaLink, "remote", "set-url", "origin", innocent);
+    git(viaLink, "config", "remote.origin.receivepack", `git-receive-pack '${repo.bare}' #`);
+    await refused(viaLink, ["git", "push", "--release", "develop"], "receivepack");
+    expect(repo.remoteTip("develop")).toBe(develop);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given a submodule in open whose origin reaches strict through a symlink, When workit git push runs in the submodule, Then it exits 3 and strict does not move",
+  async () => {
+    const { repo, open, attacker, git, tip } = claimedWorld();
+    symlinkSync(repo.root, path.join(open, "alias"));
+    const superproject = attacker(path.join(open, "innocent.git"), "super");
+    git(
+      superproject,
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "add",
+      "-q",
+      repo.bare,
+      "sub",
+    );
+    const sub = path.join(superproject, "sub");
+    for (const [key, value] of [
+      ["user.name", "t"],
+      ["user.email", "t@t"],
+      ["commit.gpgsign", "false"],
+    ])
+      git(sub, "config", key, value);
+    git(sub, "remote", "set-url", "origin", path.join(open, "alias", "remote"));
+    git(sub, "switch", "-q", "-c", "feature/x");
+    git(sub, "commit", "-q", "--allow-empty", "-m", "chore: sub");
+    await refused(sub, ["git", "push", "--set-upstream"], "submodule");
+    expect(tip(repo.bare)).toBeNull();
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given the same path forms naming an unclaimed bare remote, When workit git push -u runs in open, Then each pushes (the forms resolve to a repository, they are not refused as unknown)",
+  async () => {
+    const { open, git, attacker } = claimedWorld();
+    const store = path.join(open, "store");
+    mkdirSync(path.join(store, "sub"), { recursive: true });
+    const links = path.join(open, "links");
+    mkdirSync(links);
+    symlinkSync(store, path.join(links, "root"));
+    symlinkSync(path.join(store, "sub"), path.join(links, "rl"));
+    mkdirSync(path.join(open, "deep"));
+    symlinkSync(path.join(store, "sub"), path.join(open, "deep", "r"));
+    const forms = [
+      path.join(links, "root", "own"),
+      `${path.join(links, "root", "own.git")}/`,
+      `${links}/rl/../own.git`,
+      `file://${links}/rl/../own.git`,
+      "../deep/r/../own.git",
+    ];
+    for (const [index, url] of forms.entries()) {
+      const bare = path.join(store, "own.git");
+      rmSync(bare, { recursive: true, force: true });
+      git(open, "init", "-q", "--bare", "-b", "main", bare);
+      const at = attacker(url, `own-${index}`);
+      const result = await run(["git", "push", "--set-upstream", "--json"], at);
+      expect(result.code, `${url}: ${result.stdout}${result.stderr}`).toBe(0);
+    }
+  },
+);

@@ -9,6 +9,7 @@ import path from "node:path";
 import { remoteClaims, requireGrant, resolveAutonomy } from "@/packages/workit-core/src/autonomy";
 import {
   forgeTarget,
+  sshSeam,
   pushTarget,
   remoteKey,
   remoteMatches,
@@ -29,11 +30,14 @@ const checkout = (at: string, origin?: string) => {
   if (origin) git(at, "remote", "add", "origin", origin);
   return at;
 };
+const savedSsh = sshSeam.read;
 beforeAll(() => {
+  sshSeam.read = () => ({ text: "", home: os.tmpdir() });
   configHome = useConfigHome("wk-remote-cap-config-");
   root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-remote-cap-"))).replaceAll("\\", "/");
 });
 afterAll(() => {
+  sshSeam.read = savedSsh;
   configHome.restore();
   rmSync(root, { recursive: true, force: true });
 });
@@ -78,7 +82,10 @@ test("Given the ssh, scp-like and https forms of one repository, When they are n
   expect(remoteMatches("https://github.com/acme/strict", "github.com/acme/strict2")).toBe(false);
   expect(remoteMatches("https://github.com/acme/strict", "gitlab.com/acme/strict")).toBe(false);
   expect(remoteKey("ext::sh -c evil")).toBeNull();
-  expect(remoteKey("/srv/git/strict.git")).toBe("file:/srv/git/strict");
+  // A pattern naming no repository yet compares as written (platform paths).
+  const local = remoteKey("/srv/git/strict.git");
+  expect(local).toStartWith("file:");
+  expect(local).toBe(remoteKey("/srv/git/strict"));
 });
 
 test("Given a remotes pattern that is not a remote URL, When workspaces.json is read, Then it is invalid", () => {
@@ -203,4 +210,53 @@ test("Given a fork whose upstream strict claims, When the action targets the for
   const missing = requireGrant(fork, "push", { target: pushTarget(fork, "nope") });
   expect(missing.allowed).toBe(false);
   if (!missing.allowed) expect(missing.error).toContain("push URLs of remote nope");
+});
+
+// #549 fix round: forms that normalized wrong or not at all.
+test("Given a trailing-dot host, a ~user path, .. segments or a doubled .git, When normalized, Then the host is trimmed and the rest fail closed", () => {
+  expect(remoteKey("https://github.com./acme/strict")).toBe("github.com/acme/strict");
+  expect(remoteKey("git@github.com.:acme/strict.git")).toBe("github.com/acme/strict");
+  expect(remoteKey("git@github.com:~acme/strict.git")).toBeNull();
+  expect(remoteKey("ssh://git@github.com/~acme/strict.git")).toBeNull();
+  expect(remoteKey("https://github.com/other/../acme/strict")).toBeNull();
+  expect(remoteKey("git@github.com:other/../acme/strict.git")).toBeNull();
+  expect(remoteKey("git@github.com:acme/strict.git.git")).toBeNull();
+  expect(remoteKey("git@ssh.github.com:acme/strict.git")).toBe("github.com/acme/strict");
+});
+
+test("Given an ssh alias for github.com in the user's ssh config, When a fresh repository's origin uses the alias, Then a push to it is capped by the github.com claim", () => {
+  workspaces(["https://github.com/acme/strict"]);
+  const saved = sshSeam.read;
+  sshSeam.read = () => ({
+    text: "Host github-work.com\n  HostName github.com\n",
+    home: os.tmpdir(),
+  });
+  try {
+    const fresh = checkout(`${root}/open/alias`, "git@github-work.com:acme/strict.git");
+    const push = requireGrant(fresh, "push", { target: () => pushTarget(fresh, "origin") });
+    expect(push.allowed).toBe(false);
+    if (!push.allowed) expect(push.error).toContain("capped at workspace strict");
+    expect(requireGrant(fresh, "push").allowed).toBe(false);
+  } finally {
+    sshSeam.read = saved;
+  }
+  // Without the alias it is another host: the folder's grants.
+  const other = checkout(`${root}/open/alias2`, "git@github-work.com:acme/strict.git");
+  expect(requireGrant(other, "push", { target: () => pushTarget(other, "origin") }).allowed).toBe(
+    true,
+  );
+});
+
+test("Given no workspace claims remotes, When a push target is lazy, Then it is never resolved", () => {
+  workspaces(undefined);
+  const fresh = checkout(`${root}/open/lazy`, "git@github.com:acme/strict.git");
+  let resolved = 0;
+  const push = requireGrant(fresh, "push", {
+    target: () => {
+      resolved += 1;
+      return pushTarget(fresh, "origin");
+    },
+  });
+  expect(push.allowed).toBe(true);
+  expect(resolved).toBe(0);
 });

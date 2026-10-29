@@ -383,7 +383,7 @@ async function push(argv: string[], io: Io): Promise<number> {
   const checked = identity?.data ?? null;
   const grant = requireGrant(io.cwd, "push", {
     forge: checked?.forge != null,
-    target: pushTarget(io.cwd, plan.data.remote),
+    target: () => pushTarget(io.cwd, plan.data.remote),
   });
   if (!grant.allowed)
     return emit(
@@ -430,7 +430,7 @@ async function push(argv: string[], io: Io): Promise<number> {
 async function releasePush(names: string[], io: Io): Promise<number> {
   const plan = releasePushPreflight(io.cwd, names);
   if (!plan.ok) return forgeFail(io, plan);
-  const target = pushTarget(io.cwd, plan.data.remote);
+  const target = () => pushTarget(io.cwd, plan.data.remote);
   const release = requireGrant(io.cwd, "release", { target });
   if (!release.allowed)
     return emit(

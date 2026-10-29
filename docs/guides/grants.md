@@ -79,8 +79,25 @@ claims never exceeds its grants, wherever the folder is:
   repository it acts on (the PR's base). Elsewhere every remote of the
   checkout counts. Several matching entries give the lowest of them, and the
   refusal names the capping workspace and the remote it matched.
+- A local path or `file://` URL compares as the repository git reaches
+  (symlinks followed before `..`, git's `X`, `X.git` and `X/.git` forms, a
+  relative path from the checkout's top). An ssh host alias resolves through
+  your `~/.ssh/config` as Workit's forge detection does (`github-work.com`
+  with `HostName github.com` is `github.com`), and `ssh.github.com` is
+  `github.com`.
 - A target Workit cannot resolve (an unknown remote, a `<transport>::`
-  helper URL, a git error) grants nothing there.
+  helper URL, a local path that names no repository, a `~user` or `..` forge
+  path, a git error) grants nothing there.
+- A push whose transport is overridden reaches something its URL does not
+  name, so it grants nothing: the remote's `receivepack` or `vcs`,
+  `core.gitProxy`, or `core.sshCommand` set in the repository, a worktree, an
+  include, `-c` or `GIT_CONFIG_*`, and `GIT_SSH`, `GIT_SSH_COMMAND` or
+  `GIT_PROXY_COMMAND` in the environment. A `core.sshCommand` in your own
+  `~/.gitconfig` (or `~/.config/git/config`, read from your account's home,
+  never one `HOME` or `GIT_CONFIG_GLOBAL` points elsewhere) or the system
+  config is your setup and is allowed.
+- None of this runs, and no extra git is asked, while no workspace sets
+  `remotes`.
 
 **Forks.** In a fork whose `upstream` is a claimed repository, a push to your
 own `origin` keeps the folder's grants; a PR whose base is the upstream, or a

@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { sshSeam } from "@/packages/workit-core/src/core/remotes";
 import { runDoctor, type DoctorCheck } from "@/packages/workit-cli/src/admin/doctor";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
@@ -13,6 +14,8 @@ const scratch = mkdtempSync(path.join(tmpdir(), "workit-doctor-grants-"));
 let configHome: ConfigHome;
 beforeAll(() => {
   configHome = useConfigHome("wk-doctor-grants-config-");
+  // ssh aliases resolve through an empty config, never the machine's (#549).
+  sshSeam.read = () => ({ text: "", home: tmpdir() });
 });
 afterAll(() => {
   configHome.restore();

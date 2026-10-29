@@ -180,7 +180,8 @@ async function finish(argv: string[], io: Io): Promise<number> {
   const actor = actorFromEnv(io.env);
   const local = isLocalRemote(io.cwd, plan.remote);
   // The remote the finish pushes to; none named: every remote counts.
-  const target = plan.remote ? pushTarget(io.cwd, plan.remote) : undefined;
+  const remote = plan.remote;
+  const target = remote ? () => pushTarget(io.cwd, remote) : undefined;
   const release = requireGrant(io.cwd, "release", { target });
   const push = requireGrant(io.cwd, "push", { forge: !local, target });
   const steps = stepsOf(plan);
@@ -305,7 +306,7 @@ async function publish(argv: string[], io: Io): Promise<number> {
   const checked = identity?.data ?? null;
   const grant = requireGrant(io.cwd, "push", {
     forge: checked?.forge != null,
-    target: pushTarget(io.cwd, plan.data.remote),
+    target: () => pushTarget(io.cwd, plan.data.remote),
   });
   if (!grant.allowed) return blocked(io, grant);
   const actor = actorFromEnv(io.env);

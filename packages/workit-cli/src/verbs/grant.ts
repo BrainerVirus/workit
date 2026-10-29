@@ -38,6 +38,7 @@ import {
   raises,
   raisesEndpoint,
   remoteFindings,
+  remotesClaimed,
   targetClaims,
   resolveAutonomy,
   writeGrants,
@@ -154,7 +155,8 @@ function show(argv: string[], io: Io): number {
     );
   }
   // Where a push from here goes, and which entry's remotes cap it (#549).
-  const pushRemote = pushRemoteName(io.cwd);
+  // Only when some workspace claims remotes: no extra git otherwise.
+  const pushRemote = remotesClaimed() ? pushRemoteName(io.cwd) : null;
   const target = pushRemote ? pushTarget(io.cwd, pushRemote) : undefined;
   const claims = target ? targetClaims(target) : [];
   const pushView = pushRemote

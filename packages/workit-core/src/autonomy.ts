@@ -36,7 +36,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveConfigDir } from "./core/config";
 import { writeFileAtomic } from "./core/safe-write";
-import { checkoutRemotes, remoteMatches, type GrantTarget } from "./core/remotes";
+import { checkoutRemotes, remoteMatches, type GrantTarget, type LazyTarget } from "./core/remotes";
 import {
   checkoutsAbove,
   loadWorkspacesFrom,
@@ -438,7 +438,7 @@ function capAt(
 }
 
 /** The grants for the workspace `cwd` belongs to (read-only). */
-export function resolveAutonomy(cwd: string, target?: GrantTarget): Autonomy {
+export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
   const override = grantsOverride();
   // No entry: the D4 defaults.
   if (override) return { ...autonomyOf(null), note: override };
@@ -470,12 +470,14 @@ export function resolveAutonomy(cwd: string, target?: GrantTarget): Autonomy {
  * folder's grants. Git is asked only when some entry claims remotes; a git
  * error or an unreadable URL caps at nothing.
  */
-function capAtRemotes(autonomy: Autonomy, cwd: string, target?: GrantTarget): Autonomy {
+function capAtRemotes(autonomy: Autonomy, cwd: string, target?: LazyTarget): Autonomy {
   const claiming = loadWorkspacesFrom(grantsDir()).filter((entry) => entry.remotes?.length);
   if (claiming.length === 0) return autonomy;
   // The action's own target when the verb names it (a fork pushes to its own
   // origin with the folder's grants); every remote otherwise.
-  const remotes = target === undefined ? checkoutRemotes(cwd) : target;
+  // Git is asked only now, when some entry claims remotes (no extra call otherwise).
+  const remotes =
+    target === undefined ? checkoutRemotes(cwd) : typeof target === "function" ? target() : target;
   if (remotes instanceof Error)
     return capAt(
       autonomy,
@@ -497,6 +499,10 @@ function capAtRemotes(autonomy: Autonomy, cwd: string, target?: GrantTarget): Au
     }
   return capped;
 }
+
+/** Whether any workspace claims remotes (then targets are worth resolving). */
+export const remotesClaimed = (dir: string = grantsDir()): boolean =>
+  loadWorkspacesFrom(dir).some((entry) => entry.remotes?.length);
 
 /** The entries whose `remotes` claim one of a target's URLs (grant show). */
 export function targetClaims(
@@ -592,7 +598,7 @@ export function requireGrant(
   options: {
     forge?: boolean;
     /** What the action pushes to or acts on (core/remotes.ts pushTarget, forgeTarget). */
-    target?: GrantTarget;
+    target?: LazyTarget;
   } = {},
 ): GrantDecision {
   let autonomy: Autonomy;
