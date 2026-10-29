@@ -55,3 +55,24 @@ test("Given a malformed config or cache, When doctor runs, Then updates stays in
   expect(unknownMode.detail).toBe("updates: prompt; no latest CLI version cached yet");
   expect(row("[1, 2]", "null").status).toBe("info");
 });
+
+test("Given XDG_CONFIG_HOME and XDG_STATE_HOME, When doctor runs without explicit dirs, Then it reads the same files as --set-updates and the launch check", () => {
+  const root = path.join(scratch, "xdg");
+  const xdgConfig = path.join(root, "xdg-config");
+  const xdgState = path.join(root, "xdg-state");
+  mkdirSync(path.join(xdgConfig, "workit"), { recursive: true });
+  mkdirSync(path.join(xdgState, "workit"), { recursive: true });
+  writeFileSync(path.join(xdgConfig, "workit/config.json"), JSON.stringify({ updates: "off" }));
+  writeFileSync(
+    path.join(xdgState, "workit/update-check.json"),
+    JSON.stringify({ checkedAt: Date.now(), latest: "9.2.0" }),
+  );
+  const found = runDoctor({
+    host: "cli",
+    home: root,
+    cwd: root,
+    dev: path.join(root, "no-dev"),
+    env: { HOME: root, PATH: emptyBin, XDG_CONFIG_HOME: xdgConfig, XDG_STATE_HOME: xdgState },
+  }).checks.find((check) => check.id === "updates")!;
+  expect(found.detail).toBe("updates: off; latest CLI 9.2.0 (checked just now)");
+});

@@ -131,11 +131,16 @@ export function runUpdateCheck(json: boolean, deps: UpgradeDeps): number {
   out.write(
     `${style.bold("Workit versions")} (updates: ${updates}; change with ${style.command(`workit upgrade --set-updates=${UPDATES_MODES.join("|")}`)})\n${rows.join("")}`,
   );
-  out.write(
-    pending
-      ? `Apply with: ${style.command(APPLY)} (upgrades the CLI and every host plugin together)\n`
-      : `${style.ok("Everything is current.")}\n`,
-  );
+  const unchecked = components.filter((entry) => entry.status === "unavailable");
+  if (unchecked.length)
+    out.write(
+      `${style.warn("Could not check: registry unavailable")} for ${unchecked.map((entry) => entry.component).join(", ")}\n`,
+    );
+  if (pending)
+    out.write(
+      `Apply with: ${style.command(APPLY)} (upgrades the CLI and every host plugin together)\n`,
+    );
+  else if (!unchecked.length) out.write(`${style.ok("Everything is current.")}\n`);
   out.write(`${style.dim("check only; nothing changed.")}\n`);
   return 0;
 }

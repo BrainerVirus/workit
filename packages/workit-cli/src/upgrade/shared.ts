@@ -72,6 +72,8 @@ export type UpgradeDeps = {
   out?: { write: (text: string) => void };
   /** Step feedback on stderr (default: none; the CLI passes a TTY spinner). */
   progress?: Progress;
+  /** The per-host rows of an applied upgrade (the launch check names failed hosts). */
+  onResult?: (hosts: HostOutcome[]) => void;
 };
 export type Source = {
   host: HostId;

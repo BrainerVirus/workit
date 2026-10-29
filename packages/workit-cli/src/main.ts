@@ -208,6 +208,7 @@ export async function main(
     overrides.stdout === undefined &&
     overrides.stderr === undefined &&
     process.stdin.isTTY &&
+    process.stdout.isTTY &&
     process.stderr.isTTY
   ) {
     const { launchUpdateCheck } = await import("./update-check");
@@ -216,6 +217,7 @@ export async function main(
       {
         env: io.env,
         stdin: process.stdin,
+        stdout: process.stdout,
         stderr: process.stderr,
         write: (text) => void process.stderr.write(text),
       },

@@ -15,6 +15,7 @@ import {
   type UpdatesMode,
 } from "@brainervirus/workit-core/src/core/config";
 import pkg from "../package.json" with { type: "json" };
+import { isPromptAbort } from "./prompt";
 import { createStyle, terminalMode, type TerminalStream } from "./style";
 import { registryVersion, runner, upgradePaths, versionAtLeast } from "./upgrade/shared";
 
@@ -135,9 +136,14 @@ export type LaunchContext = {
   json: boolean;
 };
 
+/** What the full upgrade reports back: its exit code and the rows that failed. */
+export type UpgradeOutcome = { code: number; failed: { host: string; fix?: string }[] };
+
 export type LaunchDeps = {
   env: NodeJS.ProcessEnv;
   stdin: { isTTY?: boolean };
+  /** Any redirection (stdout included) makes the launch non-interactive. */
+  stdout: { isTTY?: boolean };
   stderr: TerminalStream;
   write: (text: string) => void;
   now?: () => number;
@@ -147,8 +153,10 @@ export type LaunchDeps = {
   refresh?: () => void;
   /** Ask one line on the terminal. */
   ask?: (question: string) => Promise<string>;
-  /** The full upgrade: `workit upgrade --yes`. Returns its exit code. */
-  upgrade?: () => Promise<number>;
+  /** The full upgrade: `workit upgrade --yes`, its report on stderr. */
+  upgrade?: () => Promise<UpgradeOutcome>;
+  /** The CLI package version now on disk (test seam; default reads the entry's package.json). */
+  cliOnDisk?: () => string | undefined;
   /** Run the original command with the upgraded binary; returns its exit code. */
   reexec?: (argv: readonly string[]) => number | undefined;
 };
@@ -158,6 +166,7 @@ export const interactiveLaunch = (context: LaunchContext, deps: LaunchDeps): boo
   !SILENT_COMMANDS.has(context.command) &&
   deps.env[QUIET_ENV] !== "0" &&
   deps.stdin.isTTY === true &&
+  deps.stdout.isTTY === true &&
   deps.stderr.isTTY === true &&
   terminalMode({ stream: deps.stderr, env: deps.env, json: context.json }) !== "off" &&
   agentHostMarker(deps.env) === undefined;
@@ -194,8 +203,11 @@ export async function launchUpdateCheck(
       answer = await (deps.ask ?? defaultAsk)(
         `${style.bold("Workit update available:")} ${installed} -> ${style.ok(latest)}  ${style.command("[u]")}pgrade now / ${style.command("[s]")}kip for now / ${style.command("[n]")}ever for this version: `,
       );
-    } catch {
-      return undefined;
+    } catch (error) {
+      // Ctrl-C or Ctrl-D: the user cancelled the launch itself (as prompt.ts).
+      if (!isPromptAbort(error)) return undefined;
+      deps.write("\nCancelled.\n");
+      return CANCELLED_EXIT;
     }
     const choice = answer.trim().toLowerCase();
     if (choice === "n" || choice === "never") {
@@ -218,21 +230,65 @@ export async function launchUpdateCheck(
     );
   }
   writeUpdateCache(deps.env, { ...readUpdateCache(deps.env), snoozedAt: now });
-  const code = await (deps.upgrade ?? defaultUpgrade)();
-  if (code !== 0) {
+  const outcome = await (deps.upgrade ?? defaultUpgrade)();
+  if (outcome.code !== 0 && outcome.failed.length)
     deps.write(
-      `${style.warn("Upgrade did not finish;")} running your command with ${installed}.\n`,
+      `${style.warn("Upgrade incomplete:")} ${outcome.failed
+        .map((row) => `${row.host} failed${row.fix ? ` (fix: ${row.fix})` : ""}`)
+        .join("; ")}\n`,
     );
+  // Re-execute only when the CLI package on disk really changed: an upgrade
+  // that left it alone (a failure, an npx or linked CLI) never loops.
+  const onDisk = (deps.cliOnDisk ?? defaultCliOnDisk)();
+  if (!onDisk || onDisk === installed) {
+    if (outcome.code !== 0)
+      deps.write(
+        `${style.warn("Upgrade did not finish;")} running your command with ${installed}.\n`,
+      );
     return undefined;
   }
   return (deps.reexec ?? defaultReexec)(context.argv);
 }
 
+/** 128 + SIGINT, as prompt.ts uses for a cancelled question. */
+const CANCELLED_EXIT = 130;
+
+/** The version in the package.json of the running entry's package, as it is on disk now. */
+const defaultCliOnDisk = (): string | undefined => {
+  const script = process.argv[1];
+  if (!script) return undefined;
+  let dir = path.dirname(script);
+  for (let depth = 0; depth < 4; depth += 1, dir = path.dirname(dir)) {
+    try {
+      const found = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as {
+        name?: unknown;
+        version?: unknown;
+      };
+      if (found.name === CLI_PACKAGE && typeof found.version === "string") return found.version;
+    } catch {
+      // not here; look one level up
+    }
+  }
+  return undefined;
+};
+
 const defaultAsk = async (question: string): Promise<string> =>
   (await import("./prompt")).askLine(question, process.stderr);
 
-const defaultUpgrade = async (): Promise<number> =>
-  (await import("./upgrade")).runUpgradeCommand(["--yes"]);
+/** `workit upgrade --yes` with its whole report on stderr: the command's stdout stays its own. */
+const defaultUpgrade = async (): Promise<UpgradeOutcome> => {
+  const failed: UpgradeOutcome["failed"] = [];
+  const code = await (
+    await import("./upgrade")
+  ).runUpgradeCommand(["--yes"], {
+    out: process.stderr,
+    onResult: (hosts) => {
+      for (const row of hosts)
+        if (row.status === "failed") failed.push({ host: row.host, fix: row.fix });
+    },
+  });
+  return { code, failed };
+};
 
 /** The same entry script, now the upgraded package on disk, with the same argv. */
 const defaultReexec = (argv: readonly string[]): number | undefined => {

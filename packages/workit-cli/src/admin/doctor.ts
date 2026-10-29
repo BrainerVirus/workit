@@ -224,6 +224,8 @@ type Resolved = {
   home: string;
   configDir: string;
   stateDir: string;
+  /** The dirs the caller passed (a fixture); unset, readers resolve them from env like the CLI. */
+  explicitDirs: { config?: string; state?: string };
   cwd: string;
   workspaceRoot: string;
   dev: string | null;
@@ -303,6 +305,7 @@ const resolve = (options: DoctorOptions): Resolved => {
   // there is a dev checkout (`""` read as one by some rows and none by others).
   const dev = options.dev?.trim() || env.WORKFLOW_TOOLKIT_DEV?.trim() || findDevFromCwd(cwd);
   return {
+    explicitDirs: { config: options.configDir, state: options.stateDir },
     host: options.host ?? "cli",
     home,
     configDir,
@@ -3387,8 +3390,10 @@ const checkGrantRules =
  * info: a newer release is offered on the next interactive launch.
  */
 const checkUpdates = (res: Resolved): DoctorCheck => {
-  const mode = readUpdatesMode(res.env, res.configDir);
-  const cache = readUpdateCache(res.env, res.stateDir);
+  // The same resolution as `--set-updates`, `--check` and the launch check
+  // (XDG_CONFIG_HOME, XDG_STATE_HOME); a fixture's explicit dirs win.
+  const mode = readUpdatesMode(res.env, res.explicitDirs.config);
+  const cache = readUpdateCache(res.env, res.explicitDirs.state);
   const checked =
     cache.checkedAt === undefined
       ? ""

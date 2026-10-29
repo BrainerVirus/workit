@@ -82,7 +82,10 @@ Workit update available: 8.41.1 -> 8.42.0  [u]pgrade now / [s]kip for now / [n]e
 
 `u` runs the full upgrade (`workit upgrade --yes`: the CLI and every host
 plugin together, never one without the other), prints its per-host table, then
-runs the command you typed with the new binary. `s` (or Enter) asks again on the
+runs the command you typed with the new binary (only if the CLI package was
+replaced; a failed host is named with its fix). Everything the check prints
+goes to stderr. Ctrl-C or Ctrl-D at the question prints `Cancelled.`, exits
+130 and runs nothing. `s` (or Enter) asks again on the
 first launch after 24 hours. `n` stays silent for that version and asks again
 when a newer one is published.
 
@@ -99,7 +102,7 @@ The command never waits on the network. The latest version is cached in Workit
 state (`~/.local/state/workit/update-check.json`) for 24 hours; a stale cache is
 refreshed by a detached background process that prints nothing, and an offline
 or failing registry is silent. The check runs only on an interactive human
-launch: stdin and stderr are terminals, `CI` is unset, there is no `--json`,
+launch: stdin, stdout and stderr are terminals (any redirection skips it), `CI` is unset, there is no `--json`,
 and the shell is not an agent host's (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
 or any `CODEX_*`, `OPENCODE*`, `CURSOR_*` or `PI_*` variable except
 `CODEX_HOME` and `PI_CODING_AGENT_DIR`). Hooks and the MCP server never have a

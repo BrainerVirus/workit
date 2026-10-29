@@ -74,9 +74,11 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   // Issue #297: refresh a Workit permission block `workit setup` already
   // wrote (never add one, never set the shell); the diff is part of the plan.
   const { home, env } = upgradePaths(deps);
-  // Color only when the report goes to the real stdout; an injected `out` stays plain.
+  // Color only when the report goes to the real stdout or stderr (the launch
+  // check's upgrade); an injected `out` stays plain.
   const style = createStyle({
-    stream: out === process.stdout ? process.stdout : undefined,
+    stream:
+      out === process.stdout ? process.stdout : out === process.stderr ? process.stderr : undefined,
     env,
     json,
   });
@@ -147,6 +149,7 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
         ...(entry.status === "written" ? {} : { fix: `workit setup --hosts=${entry.host}` }),
       });
   }
+  deps.onResult?.(result.hosts);
   const failed = !result.ok || !permissionsOk;
   const cliVersion = result.hosts.some((h) => h.host === "cli" && h.status === "updated")
     ? plan.cli!.latest

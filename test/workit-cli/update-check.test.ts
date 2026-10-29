@@ -51,10 +51,14 @@ const setup = (cache?: UpdateCache, config?: Record<string, unknown>) => {
   };
   const written: string[] = [];
   let answer = "s";
-  let upgradeCode = 0;
+  // The fake upgrade: its exit code, the hosts it reports failed, and whether
+  // it replaced the CLI package on disk (what the re-exec depends on).
+  let outcome = { code: 0, failed: [] as { host: string; fix?: string }[], replacesCli: true };
+  let onDisk = "1.0.0";
   const deps = (over: Partial<LaunchDeps> = {}): LaunchDeps => ({
     env,
     stdin: { isTTY: true },
+    stdout: { isTTY: true },
     stderr: { isTTY: true },
     write: (text) => void written.push(stripVTControlCharacters(text)),
     now: () => NOW,
@@ -66,8 +70,10 @@ const setup = (cache?: UpdateCache, config?: Record<string, unknown>) => {
     },
     upgrade: async () => {
       calls.upgrade += 1;
-      return upgradeCode;
+      if (outcome.replacesCli) onDisk = "2.0.0";
+      return { code: outcome.code, failed: outcome.failed };
     },
+    cliOnDisk: () => onDisk,
     reexec: (argv) => {
       calls.reexec.push([...argv]);
       return 7;
@@ -81,7 +87,19 @@ const setup = (cache?: UpdateCache, config?: Record<string, unknown>) => {
     written,
     deps,
     answer: (value: string) => void (answer = value),
-    upgradeFails: () => void (upgradeCode = 1),
+    upgradeFails: () =>
+      void (outcome = {
+        code: 1,
+        failed: [{ host: "cli", fix: "npm install --global @brainervirus/workit-cli@latest" }],
+        replacesCli: false,
+      }),
+    hostFails: () =>
+      void (outcome = {
+        code: 1,
+        failed: [{ host: "cursor", fix: "workit upgrade --hosts=cursor" }],
+        replacesCli: true,
+      }),
+    cliUntouched: () => void (outcome = { code: 0, failed: [], replacesCli: false }),
     cacheFile: path.join(home, "state/update-check.json"),
   };
 };
@@ -102,6 +120,7 @@ test("given a non-interactive launch, then nothing is asked, upgraded, refreshed
   const cases: [string, Partial<LaunchDeps>, Partial<LaunchContext>, NodeJS.ProcessEnv][] = [
     ["stdin not a TTY", { stdin: { isTTY: false } }, {}, {}],
     ["stderr not a TTY", { stderr: { isTTY: false } }, {}, {}],
+    ["stdout redirected", { stdout: { isTTY: false } }, {}, {}],
     ["CI", {}, {}, { CI: "true" }],
     ["--json", {}, { json: true }, {}],
     ["Claude Code", {}, {}, { CLAUDECODE: "1" }],
@@ -334,6 +353,12 @@ test("given --check, then it prints installed vs latest and the apply command, c
     latest: null,
     status: "unavailable",
   });
+  // The text form never calls an unchecked install current.
+  out = "";
+  const offlineDeps = { ...deps, run: registry({}) };
+  expect(await runUpgradeCommand(["--check"], offlineDeps)).toBe(0);
+  expect(out).toContain("Could not check: registry unavailable");
+  expect(out).not.toContain("Everything is current.");
 });
 
 test("given --set-updates, then config.json keeps its other keys; a bad mode is a usage error", async () => {
@@ -365,4 +390,47 @@ test("given --set-updates, then config.json keeps its other keys; a bad mode is 
     }),
   ).toBe(0);
   expect(existsSync(path.join(bare.home, ".config/workit/config.json"))).toBe(true);
+});
+
+test("given Ctrl-C or Ctrl-D at the prompt, then it prints Cancelled., exits 130, runs nothing and records nothing", async () => {
+  for (const name of ["AbortError", "ABORT_ERR"]) {
+    const t = setup(fresh());
+    const before = readFileSync(t.cacheFile, "utf8");
+    const abort = Object.assign(new Error("The operation was aborted"), {
+      name: name === "AbortError" ? "AbortError" : "Error",
+      code: name,
+    });
+    const result = await launchUpdateCheck(
+      context(),
+      t.deps({
+        ask: async () => {
+          throw abort;
+        },
+      }),
+    );
+    expect(result).toBe(130);
+    expect(t.written.join("")).toBe("\nCancelled.\n");
+    expect(t.calls.upgrade).toBe(0);
+    expect(t.calls.reexec).toEqual([]);
+    expect(readFileSync(t.cacheFile, "utf8")).toBe(before);
+  }
+});
+
+test("given a host fails but the CLI package was replaced, then it names the host and its fix and re-runs on the new CLI", async () => {
+  const t = setup(fresh(), { updates: "auto" });
+  t.hostFails();
+  expect(await launchUpdateCheck(context(), t.deps())).toBe(7);
+  expect(t.calls.reexec).toEqual([["status", "--all"]]);
+  expect(t.written.join("")).toContain(
+    "Upgrade incomplete: cursor failed (fix: workit upgrade --hosts=cursor)",
+  );
+});
+
+test("given an upgrade that leaves the CLI package as it was, then it never re-executes (no loop)", async () => {
+  const t = setup(fresh());
+  t.answer("u");
+  t.cliUntouched();
+  expect(await launchUpdateCheck(context(), t.deps())).toBeUndefined();
+  expect(t.calls.upgrade).toBe(1);
+  expect(t.calls.reexec).toEqual([]);
 });
