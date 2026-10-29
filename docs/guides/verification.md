@@ -16,7 +16,11 @@ The command runs without a shell (unless `--shell "<cmd>"`) and records exit
 code, duration, HEAD, worktree tree key and patch-id as `observer: workit_cli`
 evidence. The exit code is the command's; `--timeout <s>` kills the whole
 process tree. It prints only the last 60 lines of the output (a failure's
-tail, never its head) and one summary line with the check name, exit code,
+tail, never its head). stdout and stderr arrive on separate pipes, so the
+child's last 10 stderr lines are shown after the tail when the merged log
+holds them earlier, and a failing run also lists up to 15 failing-test or
+error lines (`(fail) name`, `FAIL`, `✗`, `error:`) from the omitted head. It
+ends with one summary line with the check name, exit code,
 duration, `warnings: N` when the output has tool warning lines (a green check can still carry findings; `data.warnings` in JSON) and `log: <path>` to the full redacted log; `--full` streams the whole
 output as it runs instead.
 
@@ -47,17 +51,19 @@ the legacy file, and `workit doctor --fix` moves it into `.workit/`.
 
 ### Heavy commands and the lease
 
-Heavy work (tests, builds, lint, typecheck, installs, image builds) shares one
-machine-wide lease, so parallel agents cannot exhaust the machine's memory and
+Heavy work (tests, builds, installs, image builds) shares one
+machine-wide lease (the named checks `lint`, `typecheck` and `format` are light
+and skip it), so parallel agents cannot exhaust the machine's memory and
 CPU ([delivery guide](delivery.md#heavy-checks-share-the-machine)). Run heavy
 commands through `workit check`, never with a hand-made `flock`:
 
 ```bash
-workit check test                    # test, build and typecheck take the lease
+workit check test                    # test, build and packaging take the lease
 workit check --heavy -- npx jest     # an ad-hoc heavy command
 workit lock status                   # who holds the lease
 workit lock wait --timeout 300       # wait for a free slot without taking it
 workit check test --no-lease --reason "machine idle, bisecting a hang"
+workit check test --wait 45m         # a queued check waits its turn (default 30 min); --no-wait exits 4 at once
 ```
 
 The shell hook catches the raw form, after every other Workit gate (branch
@@ -531,6 +537,11 @@ changes. Some of that state reaches beyond the branch:
   optional. The rest of the request still goes in `--payload`
   (`{"reason": "…"}` or `{"report": …}`). If the command fails, the error
   names the exact `--task <id>` command to retry with.
+- **Findings.** `workit finding list [--branch <b>] [--status open|resolved]`
+  lists the task's findings with their ids. They are task records, not ledger
+  rows, so `workit ledger list --type finding` prints a note pointing there.
+- **Delivered tasks close.** A task whose branch the ledger shows merged and
+  delivery-verified closes by itself ([delivery](delivery.md#pull-requests-and-ci)).
 - **Short ids.** `workit finding resolve` (`findingId`), `workit worker
   cancel|report` (`workerId`) and the finding ids inside a worker report accept
   a full UUID or an unambiguous prefix of 8 or more characters, the short id

@@ -560,5 +560,5 @@ workit lock status                # the holders, then the queue in arrival order
 | Field   | Default                       | Where     | Meaning                                     |
 | ------- | ----------------------------- | --------- | ------------------------------------------- |
 | `light` | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease      |
-| `heavy` | `test`, `build`               | both      | Named checks that queue; a repo only adds   |
+| `heavy` | `test`, `build`, `packaging`  | both      | Named checks that queue; a repo only adds   |
 | `wait`  | `1800` (30 min)               | both      | How long a queued check waits before exit 4 |

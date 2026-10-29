@@ -20,13 +20,21 @@ const markdownUnder = (dir: string): string[] =>
 
 // Mentions of commands that do not exist, on purpose: removed verbs in the
 // migration notes, the wrong spelling a hint corrects, hook message prefixes.
-const INTENTIONAL = new Set([
-  "workit cutover", // removed in 3.0 (migration notes)
-  "workit action", // removed in 6.0 (migration notes)
-  "workit status", // the wrong form whose unblock names `workit task status`
-  "workit migration pending", // a hook message
-  "workit context skipped", // a hook message
+const INTENTIONAL = new Map<string, string[]>([
+  ["workit cutover", ["README.md", "docs/guides/migration.md"]], // removed in 3.0 (migration notes)
+  ["workit action", ["docs/guides/migration.md"]], // removed in 6.0 (migration notes)
+  ["workit status", ["README.md"]], // the wrong form whose unblock names `workit task status`
+  ["workit migration pending", ["README.md", "docs/guides/configuration.md"]], // a hook message
+  ["workit context skipped", ["README.md", "docs/guides/claude-code.md"]], // a hook message
 ]);
+
+/** Whether `shown` is an intentional mention of a missing command, and `file` is where it may be. */
+const isIntentional = (file: string, shown: string): boolean =>
+  [...INTENTIONAL].some(
+    ([mention, files]) =>
+      files.includes(file.replaceAll("\\", "/")) &&
+      (shown === mention || shown.startsWith(`${mention} `)),
+  );
 
 const DOCS = (): string[] => [
   "README.md",
@@ -125,13 +133,17 @@ function findings(file: string, markdown: string): string[] {
   return codeSnippets(markdown).flatMap(({ line, text }) =>
     invocations(text).flatMap((argv) => {
       const shown = `workit ${argv.join(" ")}`;
-      if ([...INTENTIONAL].some((mention) => shown === mention || shown.startsWith(`${mention} `)))
-        return [];
+      if (isIntentional(file, shown)) return [];
       const why = problem(argv);
       return why ? [`${file}:${line}: ${shown}\n    ${why}`] : [];
     }),
   );
 }
+
+test("an intentional mention is allowed only in the file that owns it", () => {
+  expect(findings("README.md", "Run `workit cutover` once.")).toEqual([]);
+  expect(findings("docs/guides/delivery.md", "Run `workit cutover` once.")).toHaveLength(1);
+});
 
 test("the gate catches a seeded fake verb, subcommand and flag", () => {
   const seeded = [
