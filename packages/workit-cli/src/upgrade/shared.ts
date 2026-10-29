@@ -7,6 +7,7 @@ import { type HostId } from "../admin/detect-hosts";
 import { hostCommand, runHostCommand, type HostInstallCommand } from "../admin/host-install";
 import { type DoctorCheck } from "../admin/doctor";
 import { type Progress } from "../progress";
+import { workitConfigDir } from "../update-settings";
 
 /** Hosts `workit launch` can start. */
 export const LAUNCH_HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
@@ -143,8 +144,7 @@ export const upgradePaths = (deps: UpgradeDeps) => {
   return {
     home,
     env,
-    configDir:
-      env.WORKFLOW_TOOLKIT_CONFIG ?? env.WORKFLOW_TOOLKIT_CONFIG_DIR ?? path.join(xdg, "workit"),
+    configDir: workitConfigDir(env),
     opencodeConfig: path.join(xdg, "opencode/opencode.json"),
     piSettings: path.join(env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi/agent"), "settings.json"),
     codexHome,

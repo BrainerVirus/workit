@@ -285,6 +285,11 @@ test(
       cpSync(path.join(REPO_ROOT, "packages/workit-cli/src/admin"), path.join(install, "admin"), {
         recursive: true,
       });
+      // admin/doctor.ts reads the updates setting through ../update-settings.
+      cpSync(
+        path.join(REPO_ROOT, "packages/workit-cli/src/update-settings.ts"),
+        path.join(install, "update-settings.ts"),
+      );
       writeFileSync(path.join(install, "runner.ts"), SCAFFOLD_RUNNER, "utf8");
 
       const cfg = path.join(home, ".config", "workflow-toolkit");

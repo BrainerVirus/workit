@@ -299,6 +299,11 @@ function copyCoreSources(stub: string) {
       path.join(repoRoot, "packages/workit-cli/src/admin", name),
       path.join(stub, "packages/workit-cli/src/admin", name),
     );
+  // doctor's updates row reads the setting and the launch-check cache.
+  cpSync(
+    path.join(repoRoot, "packages/workit-cli/src/update-settings.ts"),
+    path.join(stub, "packages/workit-cli/src/update-settings.ts"),
+  );
   // doctor's checks_config row and --fix read the checks config path through check-config.ts.
   cpSync(
     path.join(repoRoot, "packages/workit-core/src/check-config.ts"),

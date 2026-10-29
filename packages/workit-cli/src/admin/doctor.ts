@@ -90,7 +90,7 @@ import {
   type SessionHookStatus,
 } from "@brainervirus/workit-core/src/git/session-hook";
 import { readHookRuns } from "@brainervirus/workit-core/src/hooks/hook-runs";
-import { readUpdateCache, readUpdatesMode } from "../update-check";
+import { readUpdateCache, readUpdatesMode } from "../update-settings";
 import {
   grantedCommands,
   permissionCoverage,
@@ -3386,7 +3386,7 @@ const checkGrantRules =
 
 /**
  * The launch update check's setting and its cached registry answer
- * (update-check.ts). Local files only: no registry call, no spawn. Always
+ * (update-settings.ts). Local files only: no registry call, no spawn. Always
  * info: a newer release is offered on the next interactive launch.
  */
 const checkUpdates = (res: Resolved): DoctorCheck => {
