@@ -338,3 +338,76 @@ for (const claimed of [true, false])
     expect(envelope.unblock).toContain(`workspace "strict"`);
     expect(repo.remoteTip("develop")).toBe(develop);
   });
+
+// #549 forks: the cap follows the remote the push actually targets. A fork
+// (origin = own, upstream = strict's claimed remote) pushes to origin with the
+// folder's grants; anything that sends the push to strict's remote is capped.
+const forkLayout = () => {
+  const repo = strictRepo();
+  const open = plainFolder();
+  const glob = (dir: string) => `${dir.replaceAll("\\", "/")}/**`;
+  writeFileSync(
+    path.join(configHome.configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "strict",
+          glob: glob(repo.root),
+          autonomy: { release: false, push: false },
+          remotes: [repo.bare],
+        },
+        { name: "open", glob: glob(open), autonomy: { release: true, push: true } },
+      ],
+    }),
+  );
+  const fork = path.join(open, "fork.git");
+  const git = (cwd: string, ...args: string[]) => {
+    const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  git(open, "clone", "-q", "--bare", repo.bare, fork);
+  const clone = path.join(open, "clone");
+  git(open, "clone", "-q", fork, clone);
+  for (const [key, value] of [
+    ["user.name", "t"],
+    ["user.email", "t@t"],
+    ["commit.gpgsign", "false"],
+  ])
+    git(clone, "config", key, value);
+  git(clone, "remote", "add", "upstream", repo.bare);
+  git(clone, "switch", "-q", "-c", "feature/fork");
+  writeFileSync(path.join(clone, "fork.txt"), "fork\n");
+  git(clone, "add", "-A");
+  git(clone, "commit", "-qm", "chore: fork");
+  const tip = (bare: string) =>
+    spawnSync("git", ["rev-parse", "--verify", "-q", "refs/heads/feature/fork"], {
+      cwd: bare,
+      encoding: "utf8",
+    }).stdout.trim() || null;
+  return { repo, clone, fork, git, tip };
+};
+
+test("Given a fork whose upstream is strict's claimed remote, When workit git push targets origin (the fork), Then the open workspace's grants apply and the fork moves", async () => {
+  const { repo, clone, fork, tip } = forkLayout();
+  const result = await run(["git", "push", "--set-upstream", "--json"], clone);
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(tip(fork)).not.toBeNull();
+  expect(repo.remoteTip("feature/fork")).toBeNull();
+});
+
+for (const redirect of ["pushurl", "pushInsteadOf", "branch pushRemote"] as const)
+  test(`Given a fork whose ${redirect} sends the push to strict's claimed remote, When workit git push runs, Then it exits 3 grant_required naming strict and nothing moves`, async () => {
+    const { repo, clone, fork, git, tip } = forkLayout();
+    if (redirect === "pushurl") git(clone, "remote", "set-url", "--push", "origin", repo.bare);
+    else if (redirect === "pushInsteadOf")
+      git(clone, "config", `url.${repo.bare}.pushInsteadOf`, fork);
+    else git(clone, "config", "branch.feature/fork.pushRemote", "upstream");
+    const result = await run(["git", "push", "--set-upstream", "--json"], clone);
+    expect(result.code, result.stdout + result.stderr).toBe(3);
+    const envelope = JSON.parse(result.stdout) as { error: string };
+    expect(envelope.error).toContain("grant_required");
+    expect(envelope.error).toContain(`workspace strict claims ${repo.bare}`);
+    expect(repo.remoteTip("feature/fork")).toBeNull();
+    expect(tip(fork)).toBeNull();
+  });

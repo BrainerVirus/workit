@@ -7,7 +7,13 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import { remoteClaims, requireGrant, resolveAutonomy } from "@/packages/workit-core/src/autonomy";
-import { remoteKey, remoteMatches } from "@/packages/workit-core/src/core/remotes";
+import {
+  forgeTarget,
+  pushTarget,
+  remoteKey,
+  remoteMatches,
+} from "@/packages/workit-core/src/core/remotes";
+import { baseTarget } from "@/packages/workit-core/src/forge/pr-ops";
 import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
@@ -172,4 +178,29 @@ test("Given a linked worktree of a fresh repository with strict's remote, When g
   );
   git(fresh, "worktree", "add", "-q", "-b", "wt", `${root}/open/wt-linked`);
   expect(requireGrant(`${root}/open/wt-linked`, "push").allowed).toBe(false);
+});
+
+// #549 forks: a verb names its target; only that target is matched.
+test("Given a fork whose upstream strict claims, When the action targets the fork or the strict base repository, Then only the strict target is capped, and an unresolvable target grants nothing", () => {
+  workspaces(["https://github.com/acme/strict"]);
+  const fork = checkout(`${root}/open/fork`, "git@github.com:me/strict.git");
+  git(fork, "remote", "add", "upstream", "git@github.com:acme/strict.git");
+  // No target (an unwired call site): every remote counts, as before.
+  expect(requireGrant(fork, "push").allowed).toBe(false);
+  // Pushing to origin, the fork: the folder's grants.
+  expect(requireGrant(fork, "push", { target: pushTarget(fork, "origin") }).allowed).toBe(true);
+  expect(requireGrant(fork, "push", { target: pushTarget(fork, "upstream") }).allowed).toBe(false);
+  // A PR whose base repository is strict (the forge layer's base repo).
+  const base = baseTarget({ forge: { apiHost: "github.com", repo: "acme/strict" } } as never);
+  const pr = requireGrant(fork, "pr", { target: base });
+  expect(pr.allowed).toBe(false);
+  if (!pr.allowed) expect(pr.error).toContain("capped at workspace strict");
+  const own = baseTarget({ forge: { apiHost: "github.com", repo: "me/strict" } } as never);
+  expect(requireGrant(fork, "pr", { target: own }).allowed).toBe(true);
+  expect(requireGrant(fork, "merge", { target: forgeTarget("github.com", "") }).allowed).toBe(
+    false,
+  );
+  const missing = requireGrant(fork, "push", { target: pushTarget(fork, "nope") });
+  expect(missing.allowed).toBe(false);
+  if (!missing.allowed) expect(missing.error).toContain("push URLs of remote nope");
 });

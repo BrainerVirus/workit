@@ -25,6 +25,7 @@ import {
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import type { ForgePrStatus } from "@brainervirus/workit-core/src/forge/types";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
+import { forgeTarget } from "@brainervirus/workit-core/src/core/remotes";
 import { emit, fail, ok, type Io } from "../output";
 import { progressFor } from "../progress";
 import {
@@ -249,7 +250,9 @@ async function rerun(argv: string[], io: Io): Promise<number> {
         },
       ),
     );
-  const grant = requireGrant(io.cwd, "rerun");
+  const grant = requireGrant(io.cwd, "rerun", {
+    target: forgeTarget(resolved.forge.apiHost, resolved.forge.repo),
+  });
   if (!grant.allowed)
     return emit(
       io,

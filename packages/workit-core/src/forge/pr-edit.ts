@@ -13,7 +13,7 @@ import { recordedBaseKey, workspaceReleaseTracks } from "../core/release-tracks"
 import { vcsConfig } from "../core/vcs-config";
 import { GIT_TIMEOUTS } from "../git/rev";
 import { listStacks } from "../stack";
-import { checkNames } from "./pr-ops";
+import { baseTarget, checkNames } from "./pr-ops";
 import { selectPr } from "./report";
 import type { ResolvedForge } from "./resolve";
 import {
@@ -30,7 +30,7 @@ const label = (resolved: ResolvedForge, number: number): string =>
 
 /** The grant, the PR number and its metadata; refuses a closed or merged PR. */
 function openPr(cwd: string, resolved: ResolvedForge, pr: number | null): ForgeResult<PrMeta> {
-  const grant = requireGrant(cwd, "pr");
+  const grant = requireGrant(cwd, "pr", { target: baseTarget(resolved) });
   if (!grant.allowed) return failure("blocked", grant.error, grant.unblock);
   const number = selectPr(cwd, resolved, { pr });
   if (!number.ok) return number;

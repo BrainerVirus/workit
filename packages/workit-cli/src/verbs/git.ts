@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
+import { pushTarget } from "@brainervirus/workit-core/src/core/remotes";
 import {
   allowedKinds,
   BRANCH_KINDS,
@@ -380,7 +381,10 @@ async function push(argv: string[], io: Io): Promise<number> {
   const identity = plan.data.local ? null : pushIdentity(io, plan.data.branch);
   if (identity && !identity.ok) return forgeFail(io, identity);
   const checked = identity?.data ?? null;
-  const grant = requireGrant(io.cwd, "push", { forge: checked?.forge != null });
+  const grant = requireGrant(io.cwd, "push", {
+    forge: checked?.forge != null,
+    target: pushTarget(io.cwd, plan.data.remote),
+  });
   if (!grant.allowed)
     return emit(
       io,
@@ -426,7 +430,8 @@ async function push(argv: string[], io: Io): Promise<number> {
 async function releasePush(names: string[], io: Io): Promise<number> {
   const plan = releasePushPreflight(io.cwd, names);
   if (!plan.ok) return forgeFail(io, plan);
-  const release = requireGrant(io.cwd, "release");
+  const target = pushTarget(io.cwd, plan.data.remote);
+  const release = requireGrant(io.cwd, "release", { target });
   if (!release.allowed)
     return emit(
       io,
@@ -439,7 +444,7 @@ async function releasePush(names: string[], io: Io): Promise<number> {
   const identity = plan.data.local ? null : pushIdentity(io, firstBranch ?? plan.data.refs[0].name);
   if (identity && !identity.ok) return forgeFail(io, identity);
   const checked = identity?.data ?? null;
-  const pushGrant = requireGrant(io.cwd, "push", { forge: checked?.forge != null });
+  const pushGrant = requireGrant(io.cwd, "push", { forge: checked?.forge != null, target });
   if (!pushGrant.allowed)
     return emit(
       io,

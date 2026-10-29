@@ -36,7 +36,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveConfigDir } from "./core/config";
 import { writeFileAtomic } from "./core/safe-write";
-import { checkoutRemotes, remoteMatches } from "./core/remotes";
+import { checkoutRemotes, remoteMatches, type GrantTarget } from "./core/remotes";
 import {
   checkoutsAbove,
   loadWorkspacesFrom,
@@ -438,7 +438,7 @@ function capAt(
 }
 
 /** The grants for the workspace `cwd` belongs to (read-only). */
-export function resolveAutonomy(cwd: string): Autonomy {
+export function resolveAutonomy(cwd: string, target?: GrantTarget): Autonomy {
   const override = grantsOverride();
   // No entry: the D4 defaults.
   if (override) return { ...autonomyOf(null), note: override };
@@ -460,7 +460,7 @@ export function resolveAutonomy(cwd: string): Autonomy {
       "a worktree or submodule never exceeds it",
       true,
     );
-  return capAtRemotes(autonomy, cwd);
+  return capAtRemotes(autonomy, cwd, target);
 }
 
 /**
@@ -470,14 +470,21 @@ export function resolveAutonomy(cwd: string): Autonomy {
  * folder's grants. Git is asked only when some entry claims remotes; a git
  * error or an unreadable URL caps at nothing.
  */
-function capAtRemotes(autonomy: Autonomy, cwd: string): Autonomy {
+function capAtRemotes(autonomy: Autonomy, cwd: string, target?: GrantTarget): Autonomy {
   const claiming = loadWorkspacesFrom(grantsDir()).filter((entry) => entry.remotes?.length);
   if (claiming.length === 0) return autonomy;
-  const remotes = checkoutRemotes(cwd);
+  // The action's own target when the verb names it (a fork pushes to its own
+  // origin with the folder's grants); every remote otherwise.
+  const remotes = target === undefined ? checkoutRemotes(cwd) : target;
   if (remotes instanceof Error)
-    return capAt(autonomy, remotes, "git", "a remote URL that cannot be read never raises grants");
+    return capAt(
+      autonomy,
+      remotes,
+      target === undefined ? "git" : "target",
+      "a target that cannot be resolved never raises grants",
+    );
   let capped = autonomy;
-  for (const remote of remotes)
+  for (const remote of Array.isArray(remotes) ? remotes : remotes.remotes)
     for (const entry of claiming) {
       const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
       if (pattern)
@@ -489,6 +496,21 @@ function capAtRemotes(autonomy: Autonomy, cwd: string): Autonomy {
         );
     }
   return capped;
+}
+
+/** The entries whose `remotes` claim one of a target's URLs (grant show). */
+export function targetClaims(
+  target: GrantTarget,
+  dir: string = grantsDir(),
+): { url: string; workspace: string; pattern: string }[] | Error {
+  if (target instanceof Error) return target;
+  const claiming = loadWorkspacesFrom(dir).filter((entry) => entry.remotes?.length);
+  return target.remotes.flatMap((remote) =>
+    claiming.flatMap((entry) => {
+      const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
+      return pattern ? [{ url: remote.url, workspace: entry.name, pattern }] : [];
+    }),
+  );
 }
 
 /** The entries whose `remotes` claim one of `cwd`'s remote URLs (grant show, doctor). */
@@ -534,7 +556,7 @@ export function remoteFindings(
     .filter((claim) => claim.workspace !== own?.name)
     .map(
       (claim) =>
-        `remote ${claim.remote} ${claim.url} is claimed by workspace ${claim.workspace} (${claim.pattern}): grants here never exceed ${claim.workspace}'s`,
+        `remote ${claim.remote} ${claim.url} is claimed by workspace ${claim.workspace} (${claim.pattern}): an action that targets it never exceeds ${claim.workspace}'s grants`,
     );
   const notes: string[] = [];
   if (own && !own.remotes?.length) {
@@ -567,11 +589,15 @@ export const grantHint = (workspace: string | null, kind: GrantKind): string =>
 export function requireGrant(
   cwd: string,
   kind: GrantKind,
-  options: { forge?: boolean } = {},
+  options: {
+    forge?: boolean;
+    /** What the action pushes to or acts on (core/remotes.ts pushTarget, forgeTarget). */
+    target?: GrantTarget;
+  } = {},
 ): GrantDecision {
   let autonomy: Autonomy;
   try {
-    autonomy = resolveAutonomy(cwd);
+    autonomy = resolveAutonomy(cwd, options.target);
   } catch (error) {
     return {
       allowed: false,

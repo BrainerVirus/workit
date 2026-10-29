@@ -571,7 +571,15 @@ test("grant show warns when this checkout's origin is a stricter workspace's rem
   expect(shown.json().data.grants.push).toBe(false);
   expect(shown.json().data.note).toContain("capped at workspace strict");
   expect(shown.json().data.remoteNotes).toBeUndefined();
+  expect(shown.json().data.pushTarget).toEqual({
+    remote: "origin",
+    urls: ["git@github.com:acme/strict.git"],
+    cappedBy: [{ workspace: "strict", pattern: "https://github.com/acme/strict" }],
+  });
+  expect((await run(["show"], headless, {}, false)).text()).toContain(
+    "push target: origin (git@github.com:acme/strict.git): capped at workspace strict (https://github.com/acme/strict)",
+  );
   expect(shown.json().data.remoteWarnings).toEqual([
-    "remote origin git@github.com:acme/strict.git is claimed by workspace strict (https://github.com/acme/strict): grants here never exceed strict's",
+    "remote origin git@github.com:acme/strict.git is claimed by workspace strict (https://github.com/acme/strict): an action that targets it never exceeds strict's grants",
   ]);
 });

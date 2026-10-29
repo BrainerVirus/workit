@@ -27,6 +27,7 @@ import {
   type VerificationMode,
 } from "../autonomy";
 import { branchKindOf, flowRoute, gitFlowOf, isProtectedTarget } from "../core/branch";
+import { forgeTarget } from "../core/remotes";
 import { vcsConfig } from "../core/vcs-config";
 import { workspaceTrailers } from "../core/workspaces";
 import { workspaceReleaseTracks } from "../core/release-tracks";
@@ -62,6 +63,10 @@ const VERIFY_DELAYS_MS = [1_000, 2_000, 4_000];
 
 const noun = (resolved: ResolvedForge): string =>
   resolved.forge.kind === "github" ? "pull request" : "merge request";
+
+/** The base repository a PR or merge acts on (#549: a fork's PR to a claimed upstream is capped). */
+export const baseTarget = (resolved: ResolvedForge) =>
+  forgeTarget(resolved.forge.apiHost, resolved.forge.repo);
 
 const grantBlocked = (decision: Extract<ReturnType<typeof requireGrant>, { allowed: false }>) =>
   failure("blocked", decision.error, decision.unblock);
@@ -264,7 +269,7 @@ export async function createPullRequest(
     input.reviewers ?? [],
   );
   if (names) return failure("invalid_input", names);
-  const grant = requireGrant(cwd, "pr");
+  const grant = requireGrant(cwd, "pr", { target: baseTarget(resolved) });
   if (!grant.allowed) return grantBlocked(grant);
   const source = boundSource(cwd, resolved);
   if (!source.ok) return source;
@@ -685,7 +690,7 @@ export async function mergePullRequest(
   input: MergeInput,
   sleep: Sleep,
 ): Promise<MergeResult> {
-  const grant = requireGrant(cwd, "merge");
+  const grant = requireGrant(cwd, "merge", { target: baseTarget(resolved) });
   if (!grant.allowed) return refuse(grant.error, grant.unblock, { reason: "grant_required" });
   const bypass = input.unverified ?? null;
   if (bypass && !bypass.reason.trim())

@@ -71,13 +71,22 @@ claims never exceeds its grants, wherever the folder is:
   equal; the host and the path compare case-insensitively, and a trailing
   `.git` is ignored. A pattern ending in `/*` claims everything under that
   owner or group. A local path claims that repository.
-- Every fetch and push URL of the checkout counts, as git resolves them
-  (`pushurl` and `insteadOf` applied), so pushing, PRs, merges, stacks,
-  releases and CI reruns are all capped. A checkout matched by several
-  entries gets the lowest of them, and the refusal names the capping
-  workspace and the remote it matched.
-- A remote URL Workit cannot read (a `<transport>::` helper, for example) or
-  a git error grants nothing there.
+- Each action is matched by what it targets: `workit git push` (and
+  `--release`, `release finish` and `publish`, a stack push) by every push URL
+  of the remote git pushes the branch to (`branch.<b>.pushRemote`,
+  `remote.pushDefault`, `branch.<b>.remote`, then `origin`; `pushurl` and
+  `pushInsteadOf` applied); a PR, merge, stack land or CI rerun by the forge
+  repository it acts on (the PR's base). Elsewhere every remote of the
+  checkout counts. Several matching entries give the lowest of them, and the
+  refusal names the capping workspace and the remote it matched.
+- A target Workit cannot resolve (an unknown remote, a `<transport>::`
+  helper URL, a git error) grants nothing there.
+
+**Forks.** In a fork whose `upstream` is a claimed repository, a push to your
+own `origin` keeps the folder's grants; a PR whose base is the upstream, or a
+push that a `pushurl`, `pushInsteadOf` or `pushRemote` sends to it, is capped
+at the claiming workspace. `workit grant show` prints the push target and the
+entry that caps it.
 
 `remotes` decides where an entry's grants reach, so only you change it, at
 your own terminal: `workit workspace set work remotes=git@github.com:acme/*`

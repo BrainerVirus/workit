@@ -38,6 +38,7 @@ import {
   raises,
   raisesEndpoint,
   remoteFindings,
+  targetClaims,
   resolveAutonomy,
   writeGrants,
   type DefaultEndpoint,
@@ -51,7 +52,9 @@ import {
   describeReleaseTracks,
   releaseTracksReport,
 } from "@brainervirus/workit-core/src/core/release-tracks";
+import { pushTarget } from "@brainervirus/workit-core/src/core/remotes";
 import { roleModelIssues } from "@brainervirus/workit-core/src/core/role-models";
+import { pushRemoteName } from "@brainervirus/workit-core/src/git/rev";
 import { workspaceTierModelIssues } from "@brainervirus/workit-core/src/core/workspaces";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
@@ -150,9 +153,22 @@ function show(argv: string[], io: Io): number {
       ]),
     );
   }
+  // Where a push from here goes, and which entry's remotes cap it (#549).
+  const pushRemote = pushRemoteName(io.cwd);
+  const target = pushRemote ? pushTarget(io.cwd, pushRemote) : undefined;
+  const claims = target ? targetClaims(target) : [];
+  const pushView = pushRemote
+    ? {
+        remote: pushRemote,
+        urls: target instanceof Error || !target ? [] : target.remotes.map((item) => item.url),
+        ...(claims instanceof Error
+          ? { error: claims.message }
+          : { cappedBy: claims.map(({ workspace, pattern }) => ({ workspace, pattern })) }),
+      }
+    : null;
   let autonomy;
   try {
-    autonomy = resolveAutonomy(io.cwd);
+    autonomy = resolveAutonomy(io.cwd, target);
   } catch (error) {
     return emit(io, fail("invalid_input", error instanceof Error ? error.message : String(error)));
   }
@@ -168,6 +184,7 @@ function show(argv: string[], io: Io): number {
   const shown = {
     ...autonomy,
     ...(remotes.warnings.length ? { remoteWarnings: remotes.warnings } : {}),
+    ...(pushView ? { pushTarget: pushView } : {}),
     ...(remotes.notes.length ? { remoteNotes: remotes.notes } : {}),
     ...(tracks.tracks.length || tracks.error ? { releaseTracks: tracks } : {}),
     ...(tierModelIssues.length ? { tierModelIssues } : {}),
@@ -181,6 +198,17 @@ function show(argv: string[], io: Io): number {
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
     ...describe(data.grants, data.configured, data, data.verification),
+    ...(pushView
+      ? [
+          `push target: ${pushView.remote}${pushView.urls.length ? ` (${pushView.urls.join(", ")})` : ""}: ${
+            "error" in pushView
+              ? `cannot be resolved, nothing granted (${pushView.error})`
+              : pushView.cappedBy?.length
+                ? `capped at ${pushView.cappedBy.map(({ workspace, pattern }) => `workspace ${workspace} (${pattern})`).join(", ")}`
+                : "no workspace claims it"
+          }`,
+        ]
+      : []),
     ...(endpointMismatch(data) ? [`note: ${endpointMismatch(data)}`] : []),
     ...describeReleaseTracks(tracks).map((line) => `  ${line}`),
     "raising a grant needs the user: workit grant set <workspace> <kind>=<value>",

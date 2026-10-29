@@ -87,6 +87,13 @@ export const remoteMatches = (pattern: string, key: string): boolean => {
   return parsed.owner ? key.startsWith(`${parsed.key}/`) : key === parsed.key;
 };
 
+/** A local path relative to the checkout (git reads it from the top). */
+const isRelative = (url: string): boolean =>
+  !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(url) &&
+  !path.isAbsolute(url) &&
+  !WINDOWS_DRIVE.test(url) &&
+  !SCP_LIKE.test(url);
+
 export type CheckoutRemote = { name: string; url: string; key: string };
 
 /**
@@ -124,10 +131,56 @@ export const checkoutRemotes = (cwd: string): CheckoutRemote[] | Error => {
     const match = /^([^\t]+)\t(.*) \((?:fetch|push)\)$/u.exec(line);
     if (!match) continue;
     const [, name, url] = match;
-    const relative = !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(url) && !path.isAbsolute(url);
-    const key = remoteKey(url, relative && !SCP_LIKE.test(url) ? base() : undefined);
+    const key = remoteKey(url, isRelative(url) ? base() : undefined);
     if (key === null) return Error(`remote ${name} of ${cwd} has a URL workit cannot read: ${url}`);
     if (!out.some((item) => item.key === key)) out.push({ name, url, key });
   }
   return out;
+};
+
+/**
+ * What a grant-gated action targets (#549 forks): the push URLs of the remote
+ * a push goes to, or the forge repository a PR, merge or rerun acts on. Only
+ * these are matched against `remotes`; an Error (unresolvable target) grants
+ * nothing. Without a target, every remote of the checkout counts.
+ */
+export type GrantTarget = { remotes: CheckoutRemote[] } | Error;
+
+/** Every push URL of `remote` (`pushurl` and `pushInsteadOf` applied). */
+export const pushTarget = (cwd: string, remote: string): GrantTarget => {
+  const env = { ...process.env };
+  for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"])
+    delete env[name];
+  if (!remote || remote.startsWith("-"))
+    return Error(`push remote ${JSON.stringify(remote)} cannot be resolved`);
+  const git = (args: string[]) =>
+    spawnSync("git", args, { cwd, env, encoding: "utf8", timeout: 5000, windowsHide: true });
+  const run = git(["remote", "get-url", "--push", "--all", remote]);
+  const urls = run.status === 0 ? run.stdout.split(/\r?\n/u).map((url) => url.trim()) : [];
+  if (!urls.some(Boolean))
+    return Error(`git could not resolve the push URLs of remote ${remote} in ${cwd}`);
+  let top: string | undefined;
+  const base = (): string => {
+    if (top === undefined) {
+      const at = git(["rev-parse", "--show-toplevel"]);
+      top = at.status === 0 && at.stdout.trim() ? at.stdout.trim() : cwd;
+    }
+    return top;
+  };
+  const remotes: CheckoutRemote[] = [];
+  for (const url of urls.filter(Boolean)) {
+    const key = remoteKey(url, isRelative(url) ? base() : undefined);
+    if (key === null) return Error(`remote ${remote} has a push URL workit cannot read: ${url}`);
+    remotes.push({ name: remote, url, key });
+  }
+  return { remotes };
+};
+
+/** The forge repository a PR, merge or CI rerun acts on, as its https URL. */
+export const forgeTarget = (host: string, repo: string): GrantTarget => {
+  const url = `https://${host}/${repo}`;
+  const key = host && repo ? remoteKey(url) : null;
+  return key === null
+    ? Error(`the forge repository ${JSON.stringify(repo)} on ${host} cannot be resolved`)
+    : { remotes: [{ name: "forge", url, key }] };
 };
