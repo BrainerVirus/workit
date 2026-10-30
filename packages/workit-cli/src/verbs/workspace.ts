@@ -68,6 +68,7 @@ import {
   type WorkspacesResult,
 } from "@brainervirus/workit-core/src/core/workspaces";
 import { configFilePath } from "@brainervirus/workit-core/src/core/config";
+import { withSchemaRef } from "@brainervirus/workit-core/src/core/config-schemas";
 import { closest } from "../help";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
@@ -245,7 +246,7 @@ const save = (
   current: WorkspacesResult,
   entries: Entry[],
 ): { ok: true; path: string; backup: string | null } | { ok: false; error: string } => {
-  const document = { ...current.document, workspaces: entries };
+  const document = withSchemaRef("workspaces.json", { ...current.document, workspaces: entries });
   const validated = validateWorkspacesDocument(document, current.path);
   if (validated.status !== "valid")
     return { ok: false, error: validated.error ?? "invalid workspaces.json" };

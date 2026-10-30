@@ -45,6 +45,11 @@ import {
   isConfigObject,
   readConfigFromDir,
 } from "@brainervirus/workit-core/src/core/config";
+import {
+  CONFIG_SCHEMA_BASE_URL,
+  configSchemaIssues,
+  type ConfigSchemaFile,
+} from "@brainervirus/workit-core/src/core/config-schemas";
 import { hookNodeReport } from "./hook-node";
 import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
 import {
@@ -150,6 +155,7 @@ type DoctorCheckId =
   | "codex_grant_rules"
   | "cursor_grant_rules"
   | "checks_config"
+  | "config_schema"
   | "updates"
   | "claude_permissions"
   | "codex_permissions"
@@ -2208,6 +2214,35 @@ const checkMalformedConfig = (res: Resolved): DoctorCheck => {
   };
 };
 
+/**
+ * Each config file checked against its published JSON Schema (#614), naming
+ * the file and the JSON path of every bad value. A warning, never a failure:
+ * Workit itself reads these values leniently and falls back.
+ */
+const checkConfigSchema = (res: Resolved): DoctorCheck => {
+  const files: Record<ConfigSchemaFile, string> = {
+    "config.json": path.join(res.configDir, "config.json"),
+    "workspaces.json": path.join(res.configDir, "workspaces.json"),
+    "vcs.json": res.env.WORKFLOW_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"),
+    "youtrack.json": res.env.WORKFLOW_YOUTRACK_CONFIG ?? path.join(res.configDir, "youtrack.json"),
+  };
+  const problems: string[] = [];
+  for (const [name, file] of Object.entries(files) as Array<[ConfigSchemaFile, string]>) {
+    const parsed = existsSync(file) ? readJson(file) : null;
+    if (!parsed) continue;
+    for (const issue of configSchemaIssues(name, parsed))
+      problems.push(`${file} ${issue.path}: ${issue.message}`);
+  }
+  if (problems.length === 0)
+    return { id: "config_schema", status: "pass", detail: "config files match their schemas" };
+  return {
+    id: "config_schema",
+    status: "warn",
+    detail: problems.join("; "),
+    fix: `Fix the named values (an editor reading "$schema" underlines them); the schemas are under ${CONFIG_SCHEMA_BASE_URL}`,
+  };
+};
+
 /** The effective branch preset, marked when the repository's branches chose it. */
 const branchPresetLine = (res: Resolved, workspace: WorkspaceConfig | null): string[] => {
   try {
@@ -3551,6 +3586,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkStaleInstall,
   checkDuplicateRegistration,
   checkMalformedConfig,
+  checkConfigSchema,
   checkWorkspaceMismatch,
   checkWorkspaceLock,
   checkSessionHook,

@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unpkg.com/@brainervirus/workit-core/schemas/youtrack.json",
+  "title": "Workit YouTrack settings (~/.config/workit/youtrack.json)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "The JSON Schema this file follows; Workit writes it and keeps your value."
+    },
+    "baseUrl": {
+      "description": "The YouTrack URL (required to use YouTrack).",
+      "type": "string"
+    },
+    "tokenFile": {
+      "description": "The file holding the YouTrack token (mode 0600).",
+      "type": "string"
+    },
+    "locale": {
+      "description": "The language of issue updates.",
+      "type": "string"
+    },
+    "timezone": {
+      "description": "The IANA timezone that decides a work item's day; default the process timezone.",
+      "type": "string"
+    },
+    "meetingIssue": {
+      "description": "The issue meeting time is logged on.",
+      "type": "string"
+    },
+    "meetingIssues": {
+      "description": "Named meetings, each with its issue, label, work item text and URL.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "issue": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "workItemText": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "meetingWorkItemText": {
+      "description": "The work item text for meeting time (default Meetings).",
+      "type": "string"
+    },
+    "tokenDefaults": {
+      "description": "What the setup wizard pre-fills when you create a token.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "profileTab": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": {}
+}

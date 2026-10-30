@@ -33,6 +33,10 @@ import {
   workspacesRevision,
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces";
+import {
+  isConfigSchemaFile,
+  withSchemaRef,
+} from "@brainervirus/workit-core/src/core/config-schemas";
 import { GITIGNORE_ENTRIES } from "@brainervirus/workit-core/src/core/gitignore";
 import { planHygieneFiles, projectTarget } from "@brainervirus/workit-core/src/core/hygiene";
 import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
@@ -595,6 +599,12 @@ function deepMerge(
   return out;
 }
 
+/** A config file setup writes starts with `"$schema"` (#614), keeping the user's own value. */
+const schemaFirst = (file: string, document: Record<string, unknown>): Record<string, unknown> => {
+  const name = path.basename(file);
+  return isConfigSchemaFile(name) ? withSchemaRef(name, document) : document;
+};
+
 const readFileSafe = (p: string): string | null => {
   try {
     return readFileSync(p, "utf8");
@@ -660,7 +670,7 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
         return { platform: "core", file: m.path, status: "Skipped", detail: "already configured" };
       }
       mkdirSync(dir, { recursive: true });
-      writeFileSync(m.path, JSON.stringify(merged, null, 2) + "\n", "utf8");
+      writeFileSync(m.path, JSON.stringify(schemaFirst(m.path, merged), null, 2) + "\n", "utf8");
       return existing.kind === "record"
         ? { platform: "core", file: m.path, status: "Configured" }
         : { platform: "core", file: m.path, status: "Installed" };
@@ -699,7 +709,12 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
       if (proposed.status !== "valid") {
         return { platform: "core", file: m.path, status: "Failed", detail: proposed.error };
       }
-      const next = JSON.stringify({ ...document, workspaces: m.entries }, null, 2) + "\n";
+      const next =
+        JSON.stringify(
+          withSchemaRef("workspaces.json", { ...document, workspaces: m.entries }),
+          null,
+          2,
+        ) + "\n";
       if (prev === next)
         return { platform: "core", file: m.path, status: "Skipped", detail: "already configured" };
       mkdirSync(dir, { recursive: true });
@@ -792,7 +807,7 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
         };
       }
       mkdirSync(path.dirname(m.path), { recursive: true });
-      writeFileSync(m.path, JSON.stringify(merged, null, 2) + "\n", "utf8");
+      writeFileSync(m.path, JSON.stringify(schemaFirst(m.path, merged), null, 2) + "\n", "utf8");
       return existing.kind === "record"
         ? { platform: "core", file: m.path, status: "Configured" }
         : { platform: "core", file: m.path, status: "Installed" };
