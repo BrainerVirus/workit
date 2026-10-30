@@ -901,6 +901,38 @@ test("Given workspace set changelogPath, Then a path or a JSON list is stored no
   expect(byName("work").changelogPath).toBeUndefined();
 });
 
+test("Given a glob changelogPath in a monorepo checkout, When grant show runs, Then it names the tracked changelogs the glob matches here", async () => {
+  const repo = path.join(root, "work");
+  const git = (...args: string[]) =>
+    expect(
+      spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: repo })
+        .status,
+    ).toBe(0);
+  git("init", "-q", "-b", "main");
+  for (const pkg of ["a", "b"]) {
+    mkdirSync(path.join(repo, "projects", pkg), { recursive: true });
+    writeFileSync(path.join(repo, "projects", pkg, "CHANGELOG.md"), "# Changelog\n");
+  }
+  git("add", "projects");
+  git("commit", "-q", "-m", "init");
+  expect(
+    (await run(["set", "work", "changelog=update", 'changelogPath=["projects/*/CHANGELOG.md"]']))
+      .code,
+  ).toBe(0);
+  let stdout = "";
+  const io: Io = {
+    json: false,
+    cwd: repo,
+    env: AGENT_ENV,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  };
+  expect(await runGrant(["show"], io)).toBe(0);
+  expect(stdout).toContain(
+    "  changelog file: projects/*/CHANGELOG.md; here: projects/a/CHANGELOG.md, projects/b/CHANGELOG.md\n",
+  );
+});
+
 test("Given workspace set prTemplate=workit, auto, repo or a repo-relative path, Then workspaces.json stores it and grant show prints it; another word or a path leaving the repo is refused", async () => {
   let stdout = "";
   const io: Io = {
