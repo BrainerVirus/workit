@@ -388,6 +388,34 @@ Another word, an absolute path or one that climbs out with `..` is refused.
 `workit init`'s advanced workspace settings offer auto, repo and workit. An
 unknown value hand-written in `workspaces.json` reads as auto, with a note.
 
+### Release notes
+
+`releaseNotes` decides what `workit release finish` publishes on the GitHub
+or GitLab release ([delivery](delivery.md#release-notes)). A release track
+can set its own (`releaseTracks.<track>.releaseNotes`), which wins over the
+workspace's for that track.
+
+- `auto` (default): the draft from `workit release notes draft <version>`
+  when there is one, else the notes built from the version's changelog
+  section.
+- `off`: no forge release; the finish still merges, tags and pushes, and says
+  why.
+- `review`: `finish` refuses (`release_notes_unapproved`) before any merge,
+  tag or push until the user approves the current draft with
+  `workit release notes approve <version>` in their own terminal. An edit to
+  the draft after the approval needs a new one.
+
+```bash
+workit workspace set work releaseNotes=review
+workit workspace set work releaseTracks.nun.releaseNotes=off
+workit workspace set work releaseNotes=null   # back to auto
+```
+
+Another word is refused. `workit grant show` prints the mode and each track
+that overrides it, and `workit init`'s advanced workspace settings offer auto,
+off and review. An unknown value hand-written in `workspaces.json` reads as
+auto, with a note.
+
 ### Models per role
 
 Subagents inherit the lead's model unless the spawn names one, so a lead on a

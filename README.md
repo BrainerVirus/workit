@@ -357,7 +357,7 @@ Global flags:
 | `workit stack plan\|status\|sync\|land` | Base-branch PR stacks |
 | `workit fanout plan\|brief\|check\|status\|worktree` | Register parallel slices (complete briefs, disjoint scopes); render each worker's brief with the standing orders; watch them (STUCK, PR, CI, verdict, landed); create and release slice worktrees; gate fan-in on scope, merge conflicts and landing order |
 | `workit verify-delivery [push\|pr\|merge\|release]` | Confirm on the remote that it landed |
-| `workit release start\|finish\|publish` | git-flow releases without the git-flow binary: cut, finish (merge, tag, merge back) and publish per release track |
+| `workit release start\|finish\|publish\|notes` | git-flow releases without the git-flow binary: cut, finish (merge, tag, merge back, forge release with user-facing notes) and publish per release track; `notes draft\|show\|approve` drafts the release notes, and under `releaseNotes: review` only the user approves them ([release notes](docs/guides/delivery.md#release-notes)) |
 | `workit youtrack note\|time\|meeting` | YouTrack comments and work time |
 | `workit changelog apply` | Add entries under the changelog's Unreleased section |
 | `workit <family> <action>` | Low-level task families: `task`, `policy`, `evidence`, `finding`, `decision`, `worker`, `state` |

@@ -16,6 +16,16 @@
    branch, pushes production, develop and the tag atomically, creates the
    GitHub or GitLab release and verifies the tag on the remote. It needs the
    `release` and `push` grants; when blocked, report the grant it names.
+   Before it, the release notes (workspace `releaseNotes`, `workit grant
+   show` prints it; `off` skips the forge release):
+   `workit release notes draft <version>` writes the draft and prints its
+   path. Add a `## Highlights` section at its top: 1-3 bullets of what users
+   get, from the user's pointers, in their words, not commit subjects.
+   Rerunning draft keeps them. Under `review`, finish refuses
+   (`release_notes_unapproved`) until the user approves: show the user the
+   draft and stop. They run `workit release notes approve <version>` in
+   their own terminal; never run it for them. Edit the draft after approval
+   only when they ask, then they approve again.
 4. Interrupted (a conflict, a failed push, no forge release yet): fix the
    cause and rerun the `resume` command it printed. Steps already done are
    skipped, never repeated.
