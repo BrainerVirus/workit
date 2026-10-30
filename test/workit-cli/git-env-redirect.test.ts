@@ -678,3 +678,27 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+// #549 N2/N3 (#589): a local remote whose refs and objects are symlinks into
+// strict's repository, or whose commondir names it, is strict's repository.
+test.skipIf(process.platform === "win32")(
+  "Given an origin whose refs and objects borrow strict's (N2) or whose commondir names strict's repository (N3), When workit git push -u runs in open, Then each exits 3 as strict's and strict does not move",
+  async () => {
+    const { repo, open, attacker, tip } = claimedWorld();
+    const borrowed = path.join(open, "borrowed.git");
+    mkdirSync(borrowed);
+    writeFileSync(path.join(borrowed, "HEAD"), "ref: refs/heads/main\n");
+    for (const name of ["refs", "objects"])
+      symlinkSync(path.join(repo.bare, name), path.join(borrowed, name));
+    const common = path.join(open, "common.git");
+    mkdirSync(path.join(common, "refs"), { recursive: true });
+    mkdirSync(path.join(common, "objects"));
+    writeFileSync(path.join(common, "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(path.join(common, "commondir"), path.relative(common, repo.bare));
+    for (const [index, url] of [borrowed, common].entries()) {
+      const result = await refused(attacker(url, `atk-n${index}`), ["git", "push", "-u"], url);
+      expect(result.stdout, url).toContain("workspace strict claims");
+    }
+    expect(tip(repo.bare)).toBeNull();
+  },
+);
