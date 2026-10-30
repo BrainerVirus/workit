@@ -202,11 +202,33 @@ test("Given strict's pr and merge are false and its forge repository claimed, Wh
     expect(denied(w.inStrict, command), command).toContain("pr grant");
   const merge = denied(w.inStrict, "gh pr merge 1");
   expect(merge).toContain("merge grant");
-  // From open: the base strict claims, or a base the hook cannot tell while remotes are claimed.
+  // From open: -R names the base.
   expect(denied(w.own, "gh pr create -R acme/strict --fill")).toContain("pr grant");
-  expect(denied(w.own, "gh pr create --fill")).toContain("pr grant");
   notDenied(w.own, "gh pr create -R acme/open --fill");
   notDenied(w.own, "gh pr view 1");
+});
+
+test("Given open's checkouts and no -R, When raw gh PR commands run, Then the base resolves as gh does: gh-resolved, else upstream, else origin", () => {
+  const w = world();
+  const remotes = (origin: string, upstream?: string) => {
+    git(w.own, "remote", "set-url", "origin", origin);
+    if (upstream) git(w.own, "remote", "add", "upstream", upstream);
+  };
+  remotes("git@github.com:acme/open.git");
+  notDenied(w.own, "gh pr create --fill");
+  remotes("git@github.com:acme/strict.git");
+  for (const command of ["gh pr create --fill", "gh pr edit 1 --title x", "gh pr ready 1"])
+    expect(denied(w.own, command), command).toContain("pr grant");
+  expect(denied(w.own, "gh pr merge 1")).toContain("merge grant");
+  // A fork: gh targets upstream (strict's) unless set-default picked the fork.
+  remotes("git@github.com:me/fork.git", "https://github.com/acme/strict");
+  expect(denied(w.own, "gh pr create --fill")).toContain("strict");
+  git(w.own, "config", "remote.origin.gh-resolved", "base");
+  notDenied(w.own, "gh pr create --fill");
+  // Nothing resolves: undetermined, denied while remotes are claimed.
+  git(w.own, "remote", "remove", "upstream");
+  git(w.own, "remote", "remove", "origin");
+  expect(denied(w.own, "gh pr create --fill")).toContain("pr grant");
 });
 
 test("Given every grant false in a Workit workspace, When local-only commands run, Then each gets the same decision as with no workspaces at all", () => {

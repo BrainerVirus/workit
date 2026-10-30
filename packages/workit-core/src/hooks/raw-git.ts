@@ -1939,15 +1939,28 @@ export function rawGitPre(
   }
 }
 
-/** The forge repository `-R` names (gh: `[HOST/]OWNER/REPO`; glab: a URL only), else an Error. */
-const forgeRepo = (gh: boolean, repo = "", env: Record<string, string>) => {
-  const host = gh ? (env.GH_HOST ?? process.env.GH_HOST ?? "github.com") : "";
-  const url = /:\/\/|@/.test(repo)
+/**
+ * The forge repository a gh/glab call acts on: `-R` (gh `[HOST/]OWNER/REPO`
+ * or GH_REPO; glab a URL only), else the cwd's as gh resolves it: the
+ * `gh repo set-default` remote (`gh-resolved`), else upstream, else origin.
+ */
+const forgeRepo = (gh: boolean, named: string, env: Record<string, string>, config: GitConfig) => {
+  const repo = named || (gh ? (env.GH_REPO ?? process.env.GH_REPO ?? "") : "");
+  const host = env.GH_HOST ?? process.env.GH_HOST ?? "github.com";
+  let url = /:\/\/|@/.test(repo)
     ? repo
     : gh && repo
       ? `https://${repo.split("/").length > 2 ? "" : `${host}/`}${repo}`
       : "";
-  const key = env.GH_REPO || env.GITLAB_HOST ? null : remoteKey(url);
+  if (!repo) {
+    const resolved = gh
+      ? [...config.keys()].find((key) => /^remote\..+\.gh-resolved$/.test(key))?.slice(7, -12)
+      : undefined;
+    const remote =
+      resolved ?? ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));
+    url = rewrittenUrl(configValue(config, `remote.${remote}.url`) ?? "", config);
+  }
+  const key = env.GITLAB_HOST ? null : remoteKey(url);
   return key ? { remotes: [{ name: "forge", url, key }] } : Error("its repository is unknown");
 };
 
@@ -1967,8 +1980,9 @@ const grantRefusal = (
   let target: LazyTarget = () =>
     forgeRepo(
       action.kind !== "commit" && "forge" in action && action.forge === "gh",
-      "repo" in action ? action.repo : "",
+      ("repo" in action && action.repo) || "",
       env,
+      gitConfig(repo.dir, invocation, cache),
     );
   if (action.kind === "push") {
     target = () => {

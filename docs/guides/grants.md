@@ -124,9 +124,10 @@ the push remote or URL, `pushurl` and `insteadOf`, a local path through
 symlinks, a `commondir` file, or `refs`/`objects` borrowed from another
 repository; `--receive-pack`, an ssh command or a remote the shell computes
 make it unknown, which grants nothing while a workspace claims remotes. A PR's
-base is read from `-R` (gh `[HOST/]OWNER/REPO`, glab a full URL); without one,
-while any workspace claims remotes, the raw command is denied and
-`workit pr create` (which resolves the base) is the way. A folder outside every
+base is read from `-R` (gh `[HOST/]OWNER/REPO` or `GH_REPO`, glab a full URL),
+else from the checkout as gh resolves it: the `gh repo set-default` remote, else
+`upstream`, else `origin`. Only when none resolves, while a workspace claims
+remotes, is the raw command denied in favour of `workit pr create`. A folder outside every
 workspace keeps today's behaviour while no workspace claims remotes, and a
 workspace that grants the action and claims nothing costs the hook no git call.
 
