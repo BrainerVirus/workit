@@ -4,6 +4,7 @@
 // only `init`/`uninstall` ever load ink/react (through index.tsx).
 import path from "node:path";
 import { gitRedirectRefusal, gitRedirectsIn } from "@brainervirus/workit-core/src/git/env-redirect";
+import { configFilePath } from "@brainervirus/workit-core/src/core/config";
 import { sessionClaimRefusal } from "@brainervirus/workit-core/src/host-session";
 import pkg from "../package.json" with { type: "json" };
 import {
@@ -335,7 +336,7 @@ async function guarded(io: Io, run: () => Promise<number>): Promise<number> {
     return emit(
       io,
       fail("blocked", error.message, {
-        unblock: "fix ~/.config/workit/workspaces.json (workit init → Workspaces)",
+        unblock: `fix ${configFilePath("workspaces.json")} (workit init → Workspaces)`,
       }),
     );
   }
