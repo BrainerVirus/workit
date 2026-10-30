@@ -53,6 +53,7 @@ import {
   CHANGELOG_MODES,
   DOCS_MODES,
   PR_TEMPLATE_MODES,
+  RELEASE_NOTES_MODES,
   WorkspaceConfigError,
   changelogPathsOf,
   prTemplateOf,
@@ -109,6 +110,7 @@ const SETTABLE_KEYS = new Set([
   "docs",
   "changelogPath",
   "prTemplate",
+  "releaseNotes",
   "defaultProfile",
   "profiles",
   "releaseTracks",
@@ -118,6 +120,7 @@ const SETTABLE_KEYS = new Set([
 const CHOICES: Record<string, readonly string[]> = {
   changelog: CHANGELOG_MODES,
   docs: DOCS_MODES,
+  releaseNotes: RELEASE_NOTES_MODES,
 };
 const SEGMENT = /^[A-Za-z0-9_-]+$/u;
 const UNSAFE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
@@ -486,6 +489,17 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
     const choices = CHOICES[keyPath[0]];
     if (choices && (keyPath.length > 1 || (value !== null && !choices.includes(value as string))))
       return usage(io, `${spec}: ${keyPath[0]} must be ${choices.join(", ")} (or null to unset)`);
+    // A release track's own releaseNotes: one of the modes, like the workspace's.
+    if (
+      keyPath[0] === "releaseTracks" &&
+      keyPath[2] === "releaseNotes" &&
+      (keyPath.length > 3 ||
+        (value !== null && !(RELEASE_NOTES_MODES as readonly unknown[]).includes(value)))
+    )
+      return usage(
+        io,
+        `${spec}: releaseNotes must be ${RELEASE_NOTES_MODES.join(", ")} (or null to unset)`,
+      );
     if (keyPath[0] === "changelogPath" && value !== null) {
       const paths = keyPath.length === 1 ? changelogPathsOf(value) : null;
       if (!paths)

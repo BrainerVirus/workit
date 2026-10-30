@@ -15,6 +15,7 @@ import {
   CHANGELOG_MODES,
   DOCS_MODES,
   PR_TEMPLATE_MODES,
+  RELEASE_NOTES_MODES,
   validateWorkspaceGlob,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
@@ -158,7 +159,7 @@ export type WizardAction =
     }
   | {
       type: "workspaceStepSet";
-      key: "changelog" | "docs" | "prTemplate";
+      key: "changelog" | "docs" | "prTemplate" | "releaseNotes";
       value: string;
     }
   | { type: "workspaceProfileCreate"; name: string }
@@ -740,9 +741,10 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         changelog: CHANGELOG_MODES,
         docs: DOCS_MODES,
         prTemplate: PR_TEMPLATE_MODES,
+        releaseNotes: RELEASE_NOTES_MODES,
       }[action.key];
       if (!allowed.includes(action.value)) return draft;
-      // The default (`off`, or `auto` for prTemplate) leaves no key behind, so an
+      // The default (`off`, or `auto` for prTemplate and releaseNotes) leaves no key behind, so an
       // untouched entry stays byte-identical.
       const { [action.key]: _previous, ...rest } = draft.workspaceDraft;
       return {
