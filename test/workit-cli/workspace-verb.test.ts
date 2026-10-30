@@ -14,7 +14,7 @@ import path from "node:path";
 import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { resolveAutonomy } from "@/packages/workit-core/src/autonomy";
 import type { Io } from "@/packages/workit-cli/src/output";
-import type { GrantDeps } from "@/packages/workit-cli/src/verbs/grant";
+import { runGrant, type GrantDeps } from "@/packages/workit-cli/src/verbs/grant";
 import { runWorkspace } from "@/packages/workit-cli/src/verbs/workspace";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
@@ -828,4 +828,75 @@ test("rm of an entry with remotes is a raise: checkouts of its remotes stop bein
   const result = await run(["rm", "claims"], root, AGENT_ENV, headless);
   expect(result.json().code).toBe("blocked");
   expect(result.json().error).toContain("remotes");
+});
+
+test("Given workspace set changelog=create docs=when-user-facing, Then workspaces.json stores both and grant show prints them", async () => {
+  const result = await run(["set", "work", "changelog=create", "docs=when-user-facing"]);
+  expect(result.code).toBe(0);
+  expect(byName("work").changelog).toBe("create");
+  expect(byName("work").docs).toBe("when-user-facing");
+  let stdout = "";
+  const io: Io = {
+    json: false,
+    cwd: path.join(root, "work"),
+    env: AGENT_ENV,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  };
+  expect(await runGrant(["show"], io)).toBe(0);
+  expect(stdout).toContain(
+    "  changelog: create (a user-facing PR adds an Unreleased entry before workit pr create, creating CHANGELOG.md if missing)\n",
+  );
+  expect(stdout).toContain(
+    "  docs: when-user-facing (a user-facing PR updates the docs its diff made false)\n",
+  );
+  stdout = "";
+  expect(await runGrant(["show", "work"], io)).toBe(0);
+  expect(stdout).toContain("  changelog: create (");
+  // null unsets: back to the default off.
+  expect((await run(["set", "work", "changelog=null"])).code).toBe(0);
+  expect(byName("work").changelog).toBeUndefined();
+});
+
+test("Given an invalid changelog or docs value, When workspace set runs, Then it is refused with the allowed list and nothing is written", async () => {
+  const before = readFileSync(file(), "utf8");
+  const changelog = await run(["set", "work", "changelog=always"]);
+  expect(changelog.code).toBe(2);
+  expect(changelog.json().error).toContain("changelog must be off, update, create");
+  const docs = await run(["set", "work", "docs=true"]);
+  expect(docs.code).toBe(2);
+  expect(docs.json().error).toContain("docs must be off, when-user-facing");
+  expect(readFileSync(file(), "utf8")).toBe(before);
+});
+
+test("Given workspace set changelogPath, Then a path or a JSON list is stored normalized, grant show names the file, and a path leaving the repo is refused", async () => {
+  expect(
+    (await run(["set", "work", "changelog=update", "changelogPath=./docs/CHANGELOG.md"])).code,
+  ).toBe(0);
+  expect(byName("work").changelogPath).toBe("docs/CHANGELOG.md");
+  let stdout = "";
+  const io: Io = {
+    json: false,
+    cwd: path.join(root, "work"),
+    env: AGENT_ENV,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  };
+  expect(await runGrant(["show"], io)).toBe(0);
+  expect(stdout).toContain("  changelog file: docs/CHANGELOG.md\n");
+  const list = '["packages/a/CHANGELOG.md","packages/b/CHANGELOG.md"]';
+  expect((await run(["set", "work", `changelogPath=${list}`])).code).toBe(0);
+  expect(byName("work").changelogPath).toEqual([
+    "packages/a/CHANGELOG.md",
+    "packages/b/CHANGELOG.md",
+  ]);
+  const before = readFileSync(file(), "utf8");
+  for (const bad of ["../CHANGELOG.md", "/abs/CHANGELOG.md"]) {
+    const refused = await run(["set", "work", `changelogPath=${bad}`]);
+    expect(refused.code, bad).toBe(2);
+    expect(refused.json().error).toContain("changelogPath must be a repo-relative path");
+  }
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect((await run(["set", "work", "changelogPath=null"])).code).toBe(0);
+  expect(byName("work").changelogPath).toBeUndefined();
 });

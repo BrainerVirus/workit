@@ -465,7 +465,7 @@ export const VERBS: readonly VerbEntry[] = [
           head: "pr create opens the PR for the current branch: git switch <branch>, then workit pr create (--base sets the target)",
         },
         usage:
-          "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft]",
+          "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>]",
         summary:
           "Open a PR/MR for the pushed branch, verified against the local HEAD, linking its issues",
       },

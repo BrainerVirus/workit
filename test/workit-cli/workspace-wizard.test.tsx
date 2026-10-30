@@ -654,6 +654,9 @@ test("advanced workspace menu exposes typed profile and release-track controls",
     expect(tty.lastFrame()).toContain("Advanced workspace settings");
     expect(tty.lastFrame()).toContain("Manage profiles");
     expect(tty.lastFrame()).toContain("Manage release tracks");
+    // The changelog and docs steps are offered, both off by default.
+    expect(tty.lastFrame()).toContain("Changelog step before a PR: off");
+    expect(tty.lastFrame()).toContain("Docs refresh before a PR: off");
     tty.unmount();
   } finally {
     process.chdir(previous);
@@ -1242,4 +1245,25 @@ test("Step 6 prints the git toplevel of the resolved basePath as the exact hygie
     clean(project);
     clean(repo);
   }
+});
+
+test("Given the workspace editor, When changelog and docs steps are set, Then the draft stores them and off removes the key", () => {
+  const draft: WizardDraft = {
+    ...createInitialDraft(seedConfig),
+    workspaceDraft: { name: "work", glob: "/w/**" },
+  };
+  const on = reducer(
+    reducer(draft, { type: "workspaceStepSet", key: "changelog", value: "create" }),
+    { type: "workspaceStepSet", key: "docs", value: "when-user-facing" },
+  );
+  expect(on.workspaceDraft).toEqual({
+    name: "work",
+    glob: "/w/**",
+    changelog: "create",
+    docs: "when-user-facing",
+  });
+  const invalid = reducer(on, { type: "workspaceStepSet", key: "changelog", value: "always" });
+  expect(invalid.workspaceDraft?.changelog).toBe("create");
+  const off = reducer(on, { type: "workspaceStepSet", key: "changelog", value: "off" });
+  expect(off.workspaceDraft).toEqual({ name: "work", glob: "/w/**", docs: "when-user-facing" });
 });

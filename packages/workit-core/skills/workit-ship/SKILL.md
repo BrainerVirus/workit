@@ -31,8 +31,8 @@ denial, a review comment that needs a product decision, a required update
 that repeats because the base keeps moving, or after 3 failed fix attempts on
 the same check. Fix round and recheck both failed: a decider (workit-fanout).
 
-1. **Open.** Full local check first, push once: `workit git push`, then `workit pr
-   create --title "<title>" --body-file <f|->` plus `--issue <#n|ID>` (`--refs`:
+1. **Open.** Last before the PR, if `workit grant show` has `changelog: update|create`: write the Unreleased entry with `workit changelog apply`, commit it; with `docs: when-user-facing` fix only docs the diff made false (`references/changelog.md`).
+   Full local check, push once: `workit git push`, then `workit pr create --title "<title>" --body-file <f|->` plus `--issue <#n|ID>` (`--refs`:
    no close; body: `references/pr-body.md`; `workit pr edit`). A stack: `workit
    stack plan <bottom> ... <top>`, one `workit pr create --base <parent> --fill`
    per branch, then `workit stack sync`. Finish the whole stack before babysitting any PR.
