@@ -208,7 +208,11 @@ again rebuilds the rest from the changelog and keeps the Highlights unless
   release body is then exactly that draft. `approve` refuses an agent shell
   or a session without a terminal (as raising a grant does), prints the notes
   and asks the user to type the version; an edit after it needs a new
-  approval.
+  approval. Like a grant raise, this check reads the shell it runs in: it
+  keeps a cooperating agent from approving, but an agent that hides its
+  environment can get past it. What stops that is the host asking the user
+  before an unknown command runs, so keep review-mode workspaces on a host
+  permission mode that asks (not a bypass or auto-approve mode).
 
 Outside git-flow the same modes apply in two places:
 
