@@ -263,7 +263,12 @@ shape  →  implement  →  review  →  ship
    the `merge` grant allows it, and then deletes the merged head branch
    (workspace `deleteBranch`, `--keep-branch` to opt out; never a protected,
    fork, stack-parent or foreign-author branch). `workit verify-delivery`
-   confirms it landed.
+   confirms it landed. A workspace can opt in to a changelog step
+   (`workit workspace set <ws> changelog=update|create docs=when-user-facing`,
+   default off): ship writes the Unreleased entry with
+   `workit changelog apply` before the PR, and `pr create` refuses a
+   user-facing PR without one unless given `--no-changelog "<reason>"`
+   ([changelog gate](docs/guides/delivery.md#changelog-gate)).
 
 For independent slices, **fanout** runs one worker per isolated worktree with
 a fixed brief and file-scope manifest, and a non-author verifier per slice.

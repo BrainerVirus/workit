@@ -11,7 +11,11 @@ import type {
   WorkspaceBranchPolicy,
   WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
-import { validateWorkspaceGlob } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import {
+  CHANGELOG_MODES,
+  DOCS_MODES,
+  validateWorkspaceGlob,
+} from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
   loadWorkspaces,
   parseList,
@@ -151,6 +155,7 @@ export type WizardAction =
       field: import("./logic").WorkspaceEditorField;
       value: string;
     }
+  | { type: "workspaceStepSet"; key: "changelog" | "docs"; value: string }
   | { type: "workspaceProfileCreate"; name: string }
   | { type: "workspaceProfileDelete"; name: string }
   | { type: "workspaceProfileDefault"; name: string }
@@ -722,6 +727,17 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
           commitPreset: draft.values.commitPolicy.preset,
         }),
         screen: "workspaceAdvanced",
+      };
+    }
+    case "workspaceStepSet": {
+      if (!draft.workspaceDraft) return draft;
+      const allowed: readonly string[] = action.key === "changelog" ? CHANGELOG_MODES : DOCS_MODES;
+      if (!allowed.includes(action.value)) return draft;
+      // `off` is the default: it leaves no key behind, so an untouched entry stays byte-identical.
+      const { [action.key]: _previous, ...rest } = draft.workspaceDraft;
+      return {
+        ...draft,
+        workspaceDraft: action.value === "off" ? rest : { ...rest, [action.key]: action.value },
       };
     }
     case "globalCommitOpen":

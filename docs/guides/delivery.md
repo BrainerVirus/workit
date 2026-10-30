@@ -331,7 +331,7 @@ and how to fix it.
 ## Pull requests and CI
 
 ```bash
-workit pr create (--title <t> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft]
+workit pr create (--title <t> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>]
 workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
 workit pr ready [--undo]               # mark the draft ready (or back to draft)
 workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
@@ -356,6 +356,8 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   is read; a JS, TS or YAML config, custom `ignores` or another shareable config
   is left to CI and a note says so. A level-2 rule refuses with a usage error
   naming the rule broken; a level-1 rule only warns.
+- `pr create` runs the [changelog gate](#changelog-gate) when the workspace
+  turns it on.
 - `pr create --fill` takes the title from the oldest commit and the body from
   the commit messages (one commit: its body; several: each subject with its
   body), leaving out Workit's `Workit-Session:` trailer. `--body-file -` reads
@@ -446,6 +448,33 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 - A forge refusal (HTTP 405/422) shows the forge's own reason, such as "No
   commits between main and feature/x". Network errors and 5xx answers exit 5
   (`unavailable`, retry), not 1.
+
+### Changelog gate
+
+With the workspace's `changelog` set to `update` or `create`
+([configuration](configuration.md#changelog-and-docs-steps); default `off`,
+which changes nothing), `pr create` checks the branch before it opens a PR:
+
+- A PR titled chore, test, docs, ci, build or style (without `!`) is not
+  user-facing and passes.
+- Otherwise the branch must add at least one bullet under `## [Unreleased]` in
+  CHANGELOG.md, compared with its merge base on the PR base. Without one,
+  `pr create` exits 3 with `changelog_required` (`data.reason` in `--json`),
+  opens nothing, and its `unblock:` line names the
+  `workit changelog apply --entries '{"Added": ["…"]}'` command to run (the
+  category follows the title: feat is Added, fix is Fixed, else Changed).
+  Commit and push the entry, then run `pr create` again.
+- Under `update`, a repo with no CHANGELOG.md passes with one line saying
+  there is nothing to update; under `create` the entry is still required.
+- `--no-changelog "<reason>"` opens the PR without an entry and writes the
+  reason into the PR body (`Changelog: no entry (--no-changelog): <reason>`);
+  an empty reason is a usage error.
+- A base this checkout cannot resolve is not checked: a note says to fetch and
+  rerun.
+
+The gate only reads CHANGELOG.md; entries are written by
+`workit changelog apply`, which merges into Unreleased and never rewrites or
+reorders existing entries.
 
 ### Linking issues
 

@@ -44,7 +44,15 @@ import {
 import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
-import { workspaceDeleteBranch } from "@brainervirus/workit-core/src/core/workspaces";
+import {
+  workspaceChangelog,
+  workspaceDeleteBranch,
+} from "@brainervirus/workit-core/src/core/workspaces";
+import {
+  CHANGELOG_FILE,
+  changelogGate,
+  type ChangelogGate,
+} from "@brainervirus/workit-core/src/core/changelog-gate";
 import {
   cleanupMergedBranch,
   type LocalCleanup,
@@ -272,7 +280,7 @@ function refuseTitle(io: Io, title: string, line: string): number | null {
 
 const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]";
 const CREATE_USAGE =
-  "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--json]";
+  "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>] [--json]";
 const MERGE_USAGE =
   "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
@@ -525,10 +533,14 @@ async function create(argv: string[], io: Io): Promise<number> {
     reviewer: "list",
     issue: "list",
     refs: "boolean",
+    "no-changelog": "value",
   });
   if (typeof flags === "string") return usage(io, flags, CREATE_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, CREATE_USAGE);
+  const skipChangelog = flags.values["no-changelog"]?.trim() ?? null;
+  if (skipChangelog === "")
+    return usage(io, "--no-changelog needs the reason this PR has no entry", CREATE_USAGE);
   const fill = flags.booleans.has("fill");
   if (!fill && !flags.values.title) return usage(io, "pass --title <t> or --fill", CREATE_USAGE);
   if (flags.values.body !== undefined && flags.values["body-file"] !== undefined)
@@ -605,6 +617,27 @@ async function create(argv: string[], io: Io): Promise<number> {
     const filled = refuseTitle(io, title, CREATE_USAGE);
     if (filled !== null) return filled;
   }
+  const changelog = changelogGate({
+    cwd: io.cwd,
+    mode: workspaceChangelog(io.cwd).changelog,
+    title,
+    base,
+    skipReason: skipChangelog,
+  });
+  if (changelog.status === "missing")
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `changelog_required: the workspace's changelog step is ${changelog.mode} and this user-facing PR adds no entry under ## [Unreleased] in ${CHANGELOG_FILE}`,
+        {
+          data: { reason: "changelog_required", changelog },
+          unblock: `${changelog.command}, commit and push ${CHANGELOG_FILE}, then rerun workit pr create; or pass --no-changelog "<why this PR needs no entry>"`,
+        },
+      ),
+    );
+  if (changelog.status === "skipped")
+    body = `${body ?? ""}${body ? "\n\n" : ""}Changelog: no entry (--no-changelog): ${changelog.reason}`;
   const forge = connected.data.forge;
   const planned = planIssueLinks(io.cwd, {
     issues: flags.lists.issue ?? [],
@@ -660,6 +693,7 @@ async function create(argv: string[], io: Io): Promise<number> {
     ...(planned.data.warnings.length ? { warnings: planned.data.warnings } : {}),
     ...(releaseTrack ? { releaseTrack } : {}),
     ...(route ? { flow: route } : {}),
+    ...(changelog.status === "off" ? {} : { changelog }),
   };
   return emit(io, ok(created), (data: CreateOutcome & { releaseTrack?: ResolvedReleaseTrack }) => [
     `${data.created ? "opened" : "found open"} ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number}${data.draft && data.created ? " (draft)" : ""}: ${data.branch} -> ${data.base}  ${data.url}`,
@@ -675,9 +709,33 @@ async function create(argv: string[], io: Io): Promise<number> {
     `head ${data.head.slice(0, 12)} verified on the forge`,
     ...issueLines(links, opened, linked, backlinks, data.number),
     ...planned.data.warnings.map((warning) => `note: ${warning}`),
+    ...changelogLines(changelog),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     `next: ${data.next}${endpointNote(io.cwd)}`,
   ]);
+}
+
+/** What the changelog gate let through, in one line; nothing when it is off. */
+function changelogLines(gate: ChangelogGate): string[] {
+  switch (gate.status) {
+    case "off":
+    case "missing":
+      return [];
+    case "not-user-facing":
+      return [`changelog: no entry needed (${gate.type} is not user-facing)`];
+    case "skipped":
+      return [`changelog: no entry (--no-changelog: ${gate.reason}); recorded in the PR body`];
+    case "no-file":
+      return [`changelog: update is on but this repo has no ${CHANGELOG_FILE}; nothing to update`];
+    case "base-unknown":
+      return [
+        `note: changelog: ${gate.base} does not resolve in this checkout, so the Unreleased entry was not checked (git fetch, then rerun to check it)`,
+      ];
+    case "has-entry":
+      return [
+        `changelog: ${gate.added.length} new Unreleased ${gate.added.length === 1 ? "entry" : "entries"}`,
+      ];
+  }
 }
 
 /** `; <grant/endpoint mismatch>` when the workspace grants more than its endpoint does. */

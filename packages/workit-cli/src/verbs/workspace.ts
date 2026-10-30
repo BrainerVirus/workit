@@ -50,6 +50,8 @@ import {
 import { checkoutRemotes, remotePattern } from "@brainervirus/workit-core/src/core/remotes";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import {
+  CHANGELOG_MODES,
+  DOCS_MODES,
   WorkspaceConfigError,
   globRoot,
   globSpecificity,
@@ -100,11 +102,18 @@ const SETTABLE_KEYS = new Set([
   "models",
   "fanout",
   "delegation",
+  "changelog",
+  "docs",
   "defaultProfile",
   "profiles",
   "releaseTracks",
   "resources",
 ]);
+/** Keys whose value is one of a fixed set: anything else is refused, never written. */
+const CHOICES: Record<string, readonly string[]> = {
+  changelog: CHANGELOG_MODES,
+  docs: DOCS_MODES,
+};
 const SEGMENT = /^[A-Za-z0-9_-]+$/u;
 const UNSAFE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -468,7 +477,11 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
         io,
         `${spec}: unknown key ${keyPath[0]} (settable: ${[...SETTABLE_KEYS].join(", ")})`,
       );
-    changes.push({ path: keyPath, value: parseSetValue(spec.slice(eq + 1)) });
+    const value = parseSetValue(spec.slice(eq + 1));
+    const choices = CHOICES[keyPath[0]];
+    if (choices && (keyPath.length > 1 || (value !== null && !choices.includes(value as string))))
+      return usage(io, `${spec}: ${keyPath[0]} must be ${choices.join(", ")} (or null to unset)`);
+    changes.push({ path: keyPath, value });
   }
   if (grantSpecs.length)
     return emit(
