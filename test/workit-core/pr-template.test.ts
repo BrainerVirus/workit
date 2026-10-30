@@ -38,13 +38,17 @@ const picked = (cwd: string, setting: string) => {
 test("Given a repo with .github/pull_request_template.md, When prTemplate is auto, Then that file is the template", () => {
   const cwd = repoWith({ ".github/pull_request_template.md": "## What\n\n## Why\n" });
   const template = picked(cwd, "auto");
-  expect(template).toMatchObject({ source: "repo", path: ".github/pull_request_template.md" });
+  expect(template).toMatchObject({
+    source: "repo",
+    path: ".github/pull_request_template.md",
+    enforced: true,
+  });
   expect(template.headings).toEqual(["What", "Why"]);
 });
 
 test("Given no repo template, When prTemplate is auto, Then Workit's template applies; When it is repo, Then it is refused naming the paths searched", () => {
   const cwd = repoWith({});
-  expect(picked(cwd, "auto")).toMatchObject({ source: "workit", path: null });
+  expect(picked(cwd, "auto")).toMatchObject({ source: "workit", path: null, enforced: false });
   expect(picked(cwd, "auto").headings).toEqual(["Summary", "Evidence", "Merge danger"]);
   const refused = resolvePrTemplate(cwd, "repo");
   expect(refused.ok).toBe(false);
@@ -56,7 +60,7 @@ test("Given no repo template, When prTemplate is auto, Then Workit's template ap
 
 test("Given a repo template, When prTemplate is workit, Then Workit's template applies", () => {
   const cwd = repoWith({ ".github/pull_request_template.md": "## What\n" });
-  expect(picked(cwd, "workit").content).toBe(WORKIT_PR_TEMPLATE);
+  expect(picked(cwd, "workit")).toMatchObject({ content: WORKIT_PR_TEMPLATE, enforced: true });
 });
 
 test("Given GitLab Default.md and Feature.md, When prTemplate is auto, Then Default.md applies; When it names Feature.md, Then Feature.md applies", () => {
@@ -102,6 +106,7 @@ const TEMPLATE: PrTemplate = {
   path: ".github/pull_request_template.md",
   content: "## Summary\n<!-- what changed -->\n\n## Testing\n- [ ] unit\n- [ ] manual\n",
   headings: ["Summary", "Testing"],
+  enforced: true,
 };
 
 test("Given a template with Summary and Testing, When the body omits Testing, Then Testing is missing", () => {

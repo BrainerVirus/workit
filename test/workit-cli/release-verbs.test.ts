@@ -669,3 +669,33 @@ test.skipIf(process.platform === "win32")(
     expect(rows(repo.cwd, "release.pr_opened")).toHaveLength(1);
   },
 );
+
+test("Given github-flow and an enforced repo PR template, When release finish opens its PR, Then the generated body is not checked against the template", async () => {
+  const repo = forgeRepo({ preset: "github-flow" });
+  await run(["release", "start", "1.0.0"], repo.cwd);
+  repo.write(".github/pull_request_template.md", "## Summary\n<!-- what -->\n\n## Testing\n");
+  const tip = bump(repo, "1.0.0");
+  const runner = replayRunner(
+    forgeRoutes({
+      "GET repos/o/r/branches/main": fixture("github/branch-main.json"),
+      "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
+      "graphql find": fixture("github/find-none.json"),
+      "POST repos/o/r/pulls": JSON.stringify({
+        number: 7,
+        html_url: "https://github.com/o/r/pull/7",
+        state: "open",
+        head: { ref: "release/1.0.0", sha: tip },
+      }),
+    }),
+  );
+  Object.assign(forgeDeps, { runner, sleep: async () => {}, now: () => 0 });
+  const finished = await withHome(configHome.home, () =>
+    run(["release", "finish", "--json"], repo.cwd),
+  );
+  expect(finished.code, finished.stdout + finished.stderr).toBe(0);
+  const pr = runner.calls.find(
+    (call) => call.method === "POST" && call.endpoint === "repos/o/r/pulls",
+  );
+  expect(pr?.vars.title).toBe("chore(release): 1.0.0");
+  expect(JSON.stringify(pr)).not.toContain("## Testing");
+});

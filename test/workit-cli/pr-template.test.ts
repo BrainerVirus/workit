@@ -123,6 +123,7 @@ test("Given no repo template, When workit pr template runs, Then it prints Worki
   expect(result.stdout).toContain(
     "template: Workit's (prTemplate auto: this repo has no PR template;",
   );
+  expect(result.stdout).toContain("a suggestion: fill every heading");
   expect(result.stdout).toContain("## Merge danger");
 });
 
@@ -202,8 +203,18 @@ test("Given both headings present and the comment replaced, When pr create runs,
   expect(JSON.stringify(opened(runner.calls)[0])).toContain("## Testing");
 });
 
-test("Given no repo template, When pr create --body lacks Workit's headings, Then it is refused; When it has them, Then the PR opens", async () => {
+test("Given no repo template and prTemplate unset, When pr create --body or --fill runs, Then the PR opens as before with no template line", async () => {
   const { repo, runner } = setup({});
+  const body = await create(repo, "Why: y");
+  expect(body.code).toBe(0);
+  expect(body.stdout + body.stderr).not.toContain("template");
+  const fill = await run(["pr", "create", "--base", "main", "--fill"], repo.cwd);
+  expect(fill.code).toBe(0);
+  expect(opened(runner.calls).length).toBeGreaterThanOrEqual(1);
+});
+
+test("Given prTemplate workit and no repo template, When the body lacks Summary, Evidence and Merge danger, Then pr_template_unfilled; When it has them, Then the PR opens", async () => {
+  const { repo, runner } = setup({}, { prTemplate: "workit" });
   const refused = await create(repo, "Why: y", "--json");
   expect(refused.code).toBe(3);
   expect(refused.json().data).toMatchObject({
@@ -211,7 +222,15 @@ test("Given no repo template, When pr create --body lacks Workit's headings, The
     template: "workit",
     missingHeadings: ["Summary", "Evidence", "Merge danger"],
   });
+  expect(opened(runner.calls)).toHaveLength(0);
   const filled = await create(repo, "## Summary\nx\n\n## Evidence\ny\n\n## Merge danger\nz\n");
   expect(filled.code).toBe(0);
   expect(opened(runner.calls)).toHaveLength(1);
+});
+
+test("Given workit help pr create, Then its usage offers no flag that skips the template check", async () => {
+  const help = await run(["help", "pr", "create"], process.cwd());
+  expect(help.code).toBe(0);
+  expect(help.stdout).toContain("workit pr create ");
+  expect(help.stdout).not.toMatch(/--(?:no-template|skip-template|no-pr-template)\b/u);
 });

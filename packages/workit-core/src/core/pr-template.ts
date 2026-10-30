@@ -31,6 +31,12 @@ export type PrTemplate = {
   /** The workspace setting that chose it: auto, repo, workit or a path. */
   setting: string;
   source: "repo" | "workit";
+  /**
+   * Whether `workit pr create` checks a body against it: a repo template, or
+   * Workit's when the workspace sets `prTemplate: workit`. Under `auto` in a
+   * repo with no template, Workit's is only a suggestion.
+   */
+  enforced: boolean;
   /** Repo-relative path of the repo template; null for Workit's. */
   path: string | null;
   content: string;
@@ -55,6 +61,7 @@ const fromRepo = (setting: string, root: string, rel: string): PrTemplate => {
     path: rel,
     content,
     headings: markdownHeadings(content),
+    enforced: true,
   };
 };
 
@@ -75,6 +82,7 @@ export function resolvePrTemplate(cwd: string, setting: string): PrTemplateResul
     path: null,
     content: WORKIT_PR_TEMPLATE,
     headings: markdownHeadings(WORKIT_PR_TEMPLATE),
+    enforced: setting === "workit",
   };
   if (setting === "workit") return { ok: true, template: workit };
   if (setting === "auto" || setting === "repo") {

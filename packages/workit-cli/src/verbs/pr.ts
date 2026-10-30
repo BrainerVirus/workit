@@ -340,7 +340,9 @@ async function template(argv: string[], io: Io): Promise<number> {
     data.path
       ? `template: ${data.path} (the repo's, prTemplate ${data.setting})`
       : `template: Workit's (prTemplate ${data.setting}${data.setting === "auto" ? ": this repo has no PR template" : ""}; guidance in the ship skill's references/pr-body.md)`,
-    `fill every heading (${data.headings.join(", ")}) and replace each <!-- --> comment; workit pr create refuses a body that does not`,
+    data.enforced
+      ? `fill every heading (${data.headings.join(", ")}) and replace each <!-- --> comment; workit pr create refuses a body that does not`
+      : `a suggestion: fill every heading (${data.headings.join(", ")}) and replace each <!-- --> comment; workit pr create checks it only with ${prTemplateHint(found.workspace, "workit")}`,
     "",
     data.content.trimEnd(),
   ]);
@@ -584,7 +586,18 @@ const acceptedHow = (verdict: {
       ? carryLabel(verdict.carry)
       : verdict.basis;
 
-async function create(argv: string[], io: Io): Promise<number> {
+/**
+ * In-process options a calling verb passes; never a flag. `releasePr`: the PR
+ * `workit release finish` opens, whose body Workit generates, skips the PR
+ * template check.
+ */
+type CreateInternal = { releasePr?: boolean };
+
+/** `pr create` for the release PR `workit release finish` opens (no template check). */
+export const runReleasePr = (argv: string[], io: Io): Promise<number> =>
+  create(argv, io, { releasePr: true });
+
+async function create(argv: string[], io: Io, internal: CreateInternal = {}): Promise<number> {
   const flags = parseFlags(argv, {
     base: "value",
     track: "value",
@@ -666,7 +679,7 @@ async function create(argv: string[], io: Io): Promise<number> {
   }
   if (!base)
     return usage(io, "no default target branch is configured; pass --base <b>", CREATE_USAGE);
-  const prTemplate = prTemplateFor(io);
+  const prTemplate = internal.releasePr ? null : prTemplateFor(io);
   if (typeof prTemplate === "number") return prTemplate;
 
   // A given title is checked before any forge call; a --fill title once it is derived.
@@ -728,8 +741,10 @@ async function create(argv: string[], io: Io): Promise<number> {
         },
       ),
     );
-  const unfilled = checkPrBody(body ?? "", prTemplate.template);
-  if (unfilled.missingHeadings.length || unfilled.leftComments.length)
+  const unfilled = prTemplate?.template.enforced
+    ? checkPrBody(body ?? "", prTemplate.template)
+    : null;
+  if (prTemplate && unfilled && (unfilled.missingHeadings.length || unfilled.leftComments.length))
     return emit(io, unfilledTemplate(prTemplate.template, unfilled, prTemplate.workspace));
   if (changelog.status === "skipped")
     body = `${body ?? ""}${body ? "\n\n" : ""}Changelog: no entry (--no-changelog): ${changelog.reason}`;

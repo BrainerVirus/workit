@@ -163,7 +163,7 @@ const describeSteps = (changelog: ChangelogMode, docs: DocsMode, paths: string[]
 ];
 
 const PR_TEMPLATE_TEXT: Record<string, string> = {
-  auto: "the repo's GitHub/GitLab PR template, else Workit's",
+  auto: "the repo's GitHub/GitLab PR template, checked by workit pr create; without one, Workit's as a suggestion",
   repo: "the repo's GitHub/GitLab PR template; workit pr create refuses without one",
   workit: "Workit's Summary, Evidence, Merge danger",
 };
@@ -291,7 +291,12 @@ function show(argv: string[], io: Io): number {
     ...describeSteps(data.changelog, data.docs, data.changelogPaths),
     describePrTemplate(
       data.prTemplate,
-      picked.ok ? (picked.template.path ?? "Workit's") : "missing, so workit pr create refuses",
+      !picked.ok
+        ? "missing, so workit pr create refuses"
+        : (picked.template.path ??
+            (picked.template.enforced
+              ? "Workit's"
+              : "no repo template; Workit's is a suggestion, not checked")),
     ),
     ...(pushView
       ? [
