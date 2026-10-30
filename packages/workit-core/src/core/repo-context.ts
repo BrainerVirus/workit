@@ -9,7 +9,12 @@ import { gitRevisionParts, resolveGitRevision } from "../core";
 // release-notes-context.sh). Each generator returns the same stdout text shape
 // the shell produced (## sections).
 
-export type ContextResult = { stdout: string; stderr: string; exitCode: number; cwd: string };
+export type ContextResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  cwd: string;
+};
 
 // Range/revision values are passed as positional git arguments.  Reject option
 // syntax and control characters before any context generator invokes git; the
@@ -176,22 +181,49 @@ const probeCaseInsensitive = (dir: string, wanted: string): string | null => {
   return null;
 };
 
+/** The single-file PR/MR templates GitHub and GitLab read, in the order Workit tries them. */
+export const PR_TEMPLATE_FILES = [
+  ".gitlab/merge_request_templates/Default.md",
+  ".gitlab/merge_request_templates/default.md",
+  ".gitlab/merge_request_templates/merge_request_template.md",
+  ".github/PULL_REQUEST_TEMPLATE.md",
+  ".github/pull_request_template.md",
+  ".github/PULL_REQUEST_TEMPLATE/pull_request_template.md",
+  "docs/PULL_REQUEST_TEMPLATE.md",
+  "PULL_REQUEST_TEMPLATE.md",
+] as const;
+
+/**
+ * Template directories with no forge default: one `.md` file in them is the
+ * template; several leave the choice to `prTemplate: <path>`.
+ */
+export const PR_TEMPLATE_DIRS = [
+  ".gitlab/merge_request_templates",
+  ".github/PULL_REQUEST_TEMPLATE",
+] as const;
+
+const singleMarkdown = (dir: string): string | null => {
+  try {
+    const files = readdirSync(dir, { withFileTypes: true }).filter(
+      (entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"),
+    );
+    return files.length === 1 ? files[0].name : null;
+  } catch {
+    return null;
+  }
+};
+
 export const findPrTemplate = (cwd: string): string | null => {
-  for (const rel of [
-    ".gitlab/merge_request_templates/Default.md",
-    ".gitlab/merge_request_templates/default.md",
-    ".gitlab/merge_request_templates/merge_request_template.md",
-    ".github/PULL_REQUEST_TEMPLATE.md",
-    ".github/pull_request_template.md",
-    ".github/PULL_REQUEST_TEMPLATE/pull_request_template.md",
-    "docs/PULL_REQUEST_TEMPLATE.md",
-    "PULL_REQUEST_TEMPLATE.md",
-  ]) {
+  for (const rel of PR_TEMPLATE_FILES) {
     const parts = rel.split("/");
     const base = parts[parts.length - 1];
     const dir = parts.length > 1 ? path.join(cwd, ...parts.slice(0, -1)) : cwd;
     const actual = probeCaseInsensitive(dir, base);
     if (actual) return [...parts.slice(0, -1), actual].join("/");
+  }
+  for (const rel of PR_TEMPLATE_DIRS) {
+    const only = singleMarkdown(path.join(cwd, ...rel.split("/")));
+    if (only) return `${rel}/${only}`;
   }
   return null;
 };
@@ -225,7 +257,9 @@ const packageScripts = (cwd: string, keys: string[]): string[] => {
   const pkgPath = path.join(cwd, "package.json");
   if (!existsSync(pkgPath)) return [];
   try {
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { scripts?: Record<string, string> };
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
+      scripts?: Record<string, string>;
+    };
     return keys
       .filter((k) => pkg.scripts && typeof pkg.scripts[k] === "string")
       .map((k) => `${k}: ${pkg.scripts?.[k]}`);
@@ -451,7 +485,12 @@ export function docsRefreshContext(root: string, range?: string): ContextResult 
 export function releaseNotesContext(root: string, rangeOrTag: string): ContextResult {
   const cwd = path.resolve(repoRoot(root));
   if (!rangeOrTag) {
-    return { stdout: "", stderr: "ERROR: release tag or range required\n", exitCode: 1, cwd };
+    return {
+      stdout: "",
+      stderr: "ERROR: release tag or range required\n",
+      exitCode: 1,
+      cwd,
+    };
   }
   if (!isResolvableContextRange(cwd, rangeOrTag)) return invalidRange(cwd);
   const resolvedRange = rangeArgOrDefault(rangeOrTag, cwd);

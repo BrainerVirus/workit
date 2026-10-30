@@ -14,6 +14,7 @@ import type {
 import {
   CHANGELOG_MODES,
   DOCS_MODES,
+  PR_TEMPLATE_MODES,
   validateWorkspaceGlob,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
@@ -155,7 +156,11 @@ export type WizardAction =
       field: import("./logic").WorkspaceEditorField;
       value: string;
     }
-  | { type: "workspaceStepSet"; key: "changelog" | "docs"; value: string }
+  | {
+      type: "workspaceStepSet";
+      key: "changelog" | "docs" | "prTemplate";
+      value: string;
+    }
   | { type: "workspaceProfileCreate"; name: string }
   | { type: "workspaceProfileDelete"; name: string }
   | { type: "workspaceProfileDefault"; name: string }
@@ -731,13 +736,19 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
     }
     case "workspaceStepSet": {
       if (!draft.workspaceDraft) return draft;
-      const allowed: readonly string[] = action.key === "changelog" ? CHANGELOG_MODES : DOCS_MODES;
+      const allowed: readonly string[] = {
+        changelog: CHANGELOG_MODES,
+        docs: DOCS_MODES,
+        prTemplate: PR_TEMPLATE_MODES,
+      }[action.key];
       if (!allowed.includes(action.value)) return draft;
-      // `off` is the default: it leaves no key behind, so an untouched entry stays byte-identical.
+      // The default (`off`, or `auto` for prTemplate) leaves no key behind, so an
+      // untouched entry stays byte-identical.
       const { [action.key]: _previous, ...rest } = draft.workspaceDraft;
       return {
         ...draft,
-        workspaceDraft: action.value === "off" ? rest : { ...rest, [action.key]: action.value },
+        workspaceDraft:
+          action.value === allowed[0] ? rest : { ...rest, [action.key]: action.value },
       };
     }
     case "globalCommitOpen":

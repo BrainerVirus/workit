@@ -467,7 +467,13 @@ export const VERBS: readonly VerbEntry[] = [
         usage:
           "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>]",
         summary:
-          "Open a PR/MR for the pushed branch, verified against the local HEAD, linking its issues",
+          "Open a PR/MR for the pushed branch, verified against the local HEAD, linking its issues; refuses a body that leaves the PR template unfilled",
+      },
+      {
+        name: "template",
+        usage: "workit pr template",
+        summary:
+          "Print the PR description template to fill (the repo's GitHub/GitLab template, else Workit's; workspace prTemplate) and where it came from",
       },
       {
         name: "ready",
@@ -500,6 +506,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
     ],
     examples: [
+      "workit pr template",
       'workit pr create --title "fix(cli): answer help flags first" --body-file pr.md',
       "workit pr merge --method squash --delete-branch",
     ],

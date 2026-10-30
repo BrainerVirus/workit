@@ -61,12 +61,15 @@ import {
   DEFAULT_CHANGELOG_PATH,
   DOCS_MODES,
   changelogPathsOf,
+  prTemplateOf,
   readWorkspacesResult,
   workspaceChangelog,
+  workspacePrTemplate,
   workspaceTierModelIssues,
   type ChangelogMode,
   type DocsMode,
 } from "@brainervirus/workit-core/src/core/workspaces";
+import { resolvePrTemplate } from "@brainervirus/workit-core/src/core/pr-template";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 
@@ -159,12 +162,35 @@ const describeSteps = (changelog: ChangelogMode, docs: DocsMode, paths: string[]
   `  docs: ${docs} (${docs === "off" ? "no docs refresh step" : "a user-facing PR updates the docs its diff made false"})`,
 ];
 
+const PR_TEMPLATE_TEXT: Record<string, string> = {
+  auto: "the repo's GitHub/GitLab PR template, else Workit's",
+  repo: "the repo's GitHub/GitLab PR template; workit pr create refuses without one",
+  workit: "Workit's Summary, Evidence, Merge danger",
+};
+
+/** The PR description template line: the setting, and the file it picks when known. */
+const describePrTemplate = (setting: string, picked?: string): string =>
+  `  pr template: ${setting} (${PR_TEMPLATE_TEXT[setting] ?? "this repo file"}${
+    picked ? `; here: ${picked}` : ""
+  }; workit pr template prints it)`;
+
 /** An entry's own changelog and docs steps; a value this version does not know reads as off. */
 const ownSteps = (
   entry: unknown,
-): { changelog: ChangelogMode; docs: DocsMode; changelogPaths: string[] } => {
-  const own = (entry ?? {}) as { changelog?: unknown; docs?: unknown; changelogPath?: unknown };
+): {
+  changelog: ChangelogMode;
+  docs: DocsMode;
+  changelogPaths: string[];
+  prTemplate: string;
+} => {
+  const own = (entry ?? {}) as {
+    changelog?: unknown;
+    docs?: unknown;
+    changelogPath?: unknown;
+    prTemplate?: unknown;
+  };
   return {
+    prTemplate: prTemplateOf(own.prTemplate) ?? "auto",
     changelog: CHANGELOG_MODES.find((mode) => mode === own.changelog) ?? "off",
     docs: DOCS_MODES.find((mode) => mode === own.docs) ?? "off",
     changelogPaths: (own.changelogPath === undefined
@@ -196,6 +222,7 @@ function show(argv: string[], io: Io): number {
         `${entry.name} (${entry.glob})`,
         ...describe(entry.grants, entry.configured, entry, entry.verification),
         ...describeSteps(entry.changelog, entry.docs, entry.changelogPaths),
+        describePrTemplate(entry.prTemplate),
         ...(endpointMismatch({ ...entry, workspace: entry.name })
           ? [`note: ${endpointMismatch({ ...entry, workspace: entry.name })}`]
           : []),
@@ -213,7 +240,12 @@ function show(argv: string[], io: Io): number {
         urls: target instanceof Error || !target ? [] : target.remotes.map((item) => item.url),
         ...(claims instanceof Error
           ? { error: claims.message }
-          : { cappedBy: claims.map(({ workspace, pattern }) => ({ workspace, pattern })) }),
+          : {
+              cappedBy: claims.map(({ workspace, pattern }) => ({
+                workspace,
+                pattern,
+              })),
+            }),
       }
     : null;
   let autonomy;
@@ -231,11 +263,14 @@ function show(argv: string[], io: Io): number {
     ? { warnings: [], notes: [] }
     : remoteFindings(io.cwd);
   const steps = workspaceChangelog(io.cwd);
+  const prTemplate = workspacePrTemplate(io.cwd);
+  const picked = resolvePrTemplate(io.cwd, prTemplate.setting);
   const shown = {
     ...autonomy,
     changelog: steps.changelog,
     docs: steps.docs,
     changelogPaths: steps.paths,
+    prTemplate: prTemplate.setting,
     ...(remotes.warnings.length ? { remoteWarnings: remotes.warnings } : {}),
     ...(pushView ? { pushTarget: pushView } : {}),
     ...(remotes.notes.length ? { remoteNotes: remotes.notes } : {}),
@@ -246,6 +281,7 @@ function show(argv: string[], io: Io): number {
     ...(data.note ? [`note: ${data.note}`] : []),
     ...tierModelIssues.map((issue) => `note: ${issue}`),
     ...steps.issues.map((issue) => `note: ${issue}`),
+    ...prTemplate.issues.map((issue) => `note: ${issue}`),
     ...remotes.warnings.map((warning) => `warning: ${warning}`),
     ...remotes.notes.map((note) => `note: ${note}`),
     data.workspace
@@ -253,6 +289,10 @@ function show(argv: string[], io: Io): number {
       : "no workspace matches this checkout: D4 defaults apply",
     ...describe(data.grants, data.configured, data, data.verification),
     ...describeSteps(data.changelog, data.docs, data.changelogPaths),
+    describePrTemplate(
+      data.prTemplate,
+      picked.ok ? (picked.template.path ?? "Workit's") : "missing, so workit pr create refuses",
+    ),
     ...(pushView
       ? [
           `push target: ${pushView.remote}${pushView.urls.length ? ` (${pushView.urls.join(", ")})` : ""}: ${
@@ -312,7 +352,10 @@ async function change(
   }
   const raised: { kind: string; value: string }[] = changes
     .filter(({ kind, value }) => raises(kind, entry.grants[kind], value ?? DEFAULT_GRANTS[kind]))
-    .map(({ kind, value }) => ({ kind, value: String(value ?? DEFAULT_GRANTS[kind]) }));
+    .map(({ kind, value }) => ({
+      kind,
+      value: String(value ?? DEFAULT_GRANTS[kind]),
+    }));
   if (endpoint && raisesEndpoint(entry.defaultEndpoint, endpoint))
     raised.push({ kind: "defaultEndpoint", value: endpoint });
   // Strictest first: independent > proportional > self (the author's own

@@ -175,6 +175,15 @@ const workspaceConfigSchema = z
      */
     changelogPath: z.unknown().optional(),
     /**
+     * Which template a PR description fills: `auto` (default: the repo's
+     * GitHub/GitLab template, else Workit's), `repo` (the repo's, refused when
+     * it has none), `workit` (Workit's Summary/Evidence/Merge danger) or a
+     * repo-relative path to one `.md` file. `workit pr create` enforces it
+     * (core/pr-template.ts). Read leniently (workspacePrTemplate): an unknown
+     * value reads as auto.
+     */
+    prTemplate: z.unknown().optional(),
+    /**
      * Whether commits get the `Workit-Session:` trailer (default true). With
      * `false`, `workit git commit` and the session hook write none and
      * authorship lives in the ledger only (`commit.recorded`).
@@ -1190,6 +1199,42 @@ export const workspaceChangelog = (
     pathConfigured: configured !== null,
     workspace: inheritedSetting(cwd, dir, () => true)?.workspace ?? null,
     issues,
+  };
+};
+
+export const PR_TEMPLATE_MODES = ["auto", "repo", "workit"] as const;
+export type PrTemplateMode = (typeof PR_TEMPLATE_MODES)[number];
+
+/**
+ * A `prTemplate` value in its stored form: a mode, or a repo-relative `.md`
+ * path in `/` form; null for anything else (another word, an absolute path,
+ * one climbing out with `..`).
+ */
+export const prTemplateOf = (value: unknown): string | null => {
+  if ((PR_TEMPLATE_MODES as readonly unknown[]).includes(value)) return value as PrTemplateMode;
+  const file = changelogPathOf(value);
+  return file && file.toLowerCase().endsWith(".md") ? file : null;
+};
+
+/**
+ * The workspace's `prTemplate` (default `auto`), inherited like `trailers`. A
+ * value this version does not know reads as auto and is named in `issues`.
+ */
+export const workspacePrTemplate = (
+  cwd: string,
+  dir?: string,
+): { setting: string; workspace: string | null; issues: string[] } => {
+  const source = inheritedSetting(cwd, dir, (entry) => entry.prTemplate !== undefined)?.source;
+  const setting = source ? prTemplateOf(source.prTemplate) : null;
+  return {
+    setting: setting ?? "auto",
+    workspace: inheritedSetting(cwd, dir, () => true)?.workspace ?? null,
+    issues:
+      source && !setting
+        ? [
+            `prTemplate ${JSON.stringify(source.prTemplate)} in workspace ${source.name} is not ${PR_TEMPLATE_MODES.join("|")} or a repo-relative .md path; read as auto`,
+          ]
+        : [],
   };
 };
 
