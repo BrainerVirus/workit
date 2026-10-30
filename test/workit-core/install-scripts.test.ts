@@ -255,6 +255,7 @@ const STUB_CORE_FILES = [
   // doctor's *_permissions rows (#297) resolve the state dir here.
   "heavy-words.ts",
   "role-models.ts",
+  "config-schemas.ts",
   // workspaces.ts validates `remotes` patterns, autonomy caps by them (#549).
   "remotes.ts",
   // doctor's hook_node row resolves the hook Node (also copied into the launchers).
