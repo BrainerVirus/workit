@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import pkg from "../package.json" with { type: "json" };
 import { type HostId } from "./admin/detect-hosts";
 import { hostCommand, type HostInstallCommand } from "./admin/host-install";
@@ -96,7 +97,11 @@ async function upgradeOnce(
   const { home, env } = upgradePaths(deps);
   // Set by an older CLI that just installed this one: the CLI is done, finish the hosts.
   const continued = env[CONTINUE_ENV] !== undefined ? priorRows(env[CONTINUE_ENV]) : undefined;
-  const progress = deps.progress ?? createProgress({ stream: process.stderr, json });
+  // On a color terminal the run reads as screens: each step clears its own line,
+  // the plan clears once confirmed, and the result report is what stays.
+  const progress =
+    deps.progress ?? createProgress({ stream: process.stderr, json, transient: true });
+  const screens = progress.mode === "spinner" && out === process.stdout;
   // The global CLI is part of the default upgrade; --hosts narrows it to hosts unless --cli.
   const withCli = !continued && (hostFlag === undefined || flags.has("--cli"));
   const checking = raw.length + (withCli ? 1 : 0);
@@ -145,11 +150,10 @@ async function upgradeOnce(
     out.write(JSON.stringify(withPermissions(plan), null, 2) + "\n");
     return plan.blocked.length ? 1 : 0;
   }
-  if (!json)
+  const shown = continued ? "" : summary(plan, permissions.changes, style);
+  if (!json && !(continued && screens))
     out.write(
-      continued
-        ? `Continuing the upgrade with the new CLI (workit ${pkg.version}).\n`
-        : summary(plan, permissions.changes, style),
+      continued ? `Continuing the upgrade with the new CLI (workit ${pkg.version}).\n` : shown,
     );
   if (flags.has("--preview")) {
     out.write(nothingChanged);
@@ -162,13 +166,14 @@ async function upgradeOnce(
   const work =
     plan.entries.length + plan.migrations.length + (plan.cli ? 1 : 0) + permissions.changes.length;
   if (work > 0 && !flags.has("--yes") && !legacy) {
-    const confirmed = await (deps.confirm ?? ((q: string) => askConfirm(q, out)))(
-      `${style.bold("Apply this upgrade?")} [y/N] `,
-    );
+    const question = `${style.bold("Apply this upgrade?")} [y/N] `;
+    const confirmed = await (deps.confirm ?? ((q: string) => askConfirm(q, out)))(question);
     if (!confirmed) {
       out.write(nothingChanged);
       return 0;
     }
+    // The plan has been read and accepted: clear it with the answered prompt.
+    if (screens) out.write(eraseAbove(`${shown}${question}y\n`, process.stdout.columns));
   }
   if (json) for (const warning of plan.warnings ?? []) out.write(`warning: ${warning}\n`);
   // After the CLI updated, the new CLI finishes: the same flags, narrowed to the hosts.
@@ -290,6 +295,17 @@ async function upgradeOnce(
   );
   return failed ? 1 : 0;
 }
+
+/** Move up over the terminal rows `text` filled (wrapped at `columns`) and clear them. */
+export const eraseAbove = (text: string, columns: number | undefined): string => {
+  const lines = stripVTControlCharacters(text).replace(/\n$/, "");
+  if (!lines) return "";
+  const width = columns && columns > 0 ? columns : 80;
+  const rows = lines
+    .split("\n")
+    .reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / width)), 0);
+  return `\x1b[${rows}A\r\x1b[0J`;
+};
 
 /** Marks the upgrade the older CLI re-executes: the rows it already has (JSON). */
 const CONTINUE_ENV = "WORKIT_UPGRADE_CONTINUE";

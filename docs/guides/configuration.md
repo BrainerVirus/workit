@@ -61,6 +61,14 @@ wrote. A registered Cursor whose plugin files are missing is reinstalled with
 the same installer `workit init` uses, without touching workspaces or other
 config.
 
+On a color terminal the run reads as three screens: the plan and its
+question, then one live line (`[2/5] Updating opencode`) that replaces itself
+as each step finishes, then only the result table. The plan clears once you
+answer, and a step's line stays only when it failed. Every host row shows
+installed and target versions; OpenCode and Claude Code, which resolve their
+own update, are "already current" when their installed version is the
+published one.
+
 The CLI updates first. When it updated, `workit upgrade` continues on the new
 version: it starts the new CLI with the same flags, limited to the hosts, so the
 host steps run with the release you just installed. The table and the exit code

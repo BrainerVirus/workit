@@ -62,10 +62,7 @@ export async function runUpdateCheck(json: boolean, deps: UpgradeDeps): Promise<
   const checking = HOSTS.length + 1;
   // Every registry and inventory probe at once (the CLI's too), behind one spinner.
   const probes = await progress.run(`Checking ${checking} hosts`, () =>
-    runProbes(HOSTS, true, deps, {
-      check: true,
-      registries: ["@brainervirus/workit-claude-code"],
-    }),
+    runProbes(HOSTS, true, deps, { check: true }),
   );
   const run = probedRunner(deps, probes);
   const latest = (name: string) => registryVersion(run, name);

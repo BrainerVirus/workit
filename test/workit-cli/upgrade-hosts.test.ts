@@ -143,6 +143,8 @@ test("Given a plain `workit upgrade`, When it is confirmed once, Then the CLI, C
     const text = w.text();
     expect(text).toContain("Workit upgrade plan:");
     expect(text).toContain("cli         update 1.0.0 -> 2.0.0");
+    // Claude Code resolves its own update; the plan still shows the npm target.
+    expect(text).toContain("claude-code update 1.0.0 -> 2.0.0");
     expect(ran(w.calls, "npm install --global @brainervirus/workit-cli@2.0.0")).toBe(true);
     expect(ran(w.calls, "claude plugin marketplace update workit")).toBe(true);
     expect(ran(w.calls, "claude plugin update workit@workit")).toBe(true);
@@ -358,11 +360,35 @@ test("Given OpenCode with `opencode plugin update`, Then upgrade runs the scoped
       }),
     ).toBe(0);
     expect(ran(w.calls, "opencode plugin update @brainervirus/workit-opencode")).toBe(true);
+    expect(w.text()).toMatch(/opencode +update 1\.0\.0 -> 2\.0\.0\n/);
     expect(
       w.calls.some((call) => call[0] === "opencode" && call[2] === "update" && call.length === 3),
     ).toBe(false);
     expect(w.text()).toMatch(/opencode +updated +1\.0\.0 -> 2\.0\.0; OpenCode V2 loads it live/);
     expect(w.text()).not.toContain("restart opencode serve");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given Claude Code and OpenCode already at the published version, When upgrade previews, Then both read already current and nothing is planned", async () => {
+  const w = world();
+  try {
+    write(path.join(w.home, ".config/opencode/opencode.json"), {
+      plugins: ["@brainervirus/workit-opencode"],
+    });
+    const run = (command: string, args: string[]) => {
+      if (command === "npm" && args[0] === "view") return { status: 0, stdout: "1.0.0\n" };
+      if (command === "opencode" && args.join(" ") === "plugin --help")
+        return { status: 0, stdout: OPENCODE_HELP };
+      return w.deps.run(command, args);
+    };
+    expect(
+      await runUpgradeCommand(["--hosts=claude-code,opencode", "--preview"], { ...w.deps, run }),
+    ).toBe(0);
+    expect(w.text()).toMatch(/claude-code already current \(1\.0\.0\)/);
+    expect(w.text()).toMatch(/opencode +already current \(1\.0\.0\)/);
+    expect(w.text()).not.toContain(" update ");
   } finally {
     w.cleanup();
   }

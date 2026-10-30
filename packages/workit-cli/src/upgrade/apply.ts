@@ -403,9 +403,10 @@ export async function applyUpgrade(
     }
   const listed = plan.entries.length ? listProcesses(deps) : [];
   const running = (listed ?? []).flatMap((entry) => classifyProcess(entry) ?? []);
-  for (const entry of plan.entries) {
+  for (const [index, entry] of plan.entries.entries()) {
     const before = hosts.length;
-    const step = progress.start(`Updating ${entry.host}`);
+    const count = plan.entries.length > 1 ? `[${index + 1}/${plan.entries.length}] ` : "";
+    const step = progress.start(`${count}Updating ${entry.host}`);
     try {
       if (entry.host === "cursor" && cursorBackupError) {
         hosts.push({
