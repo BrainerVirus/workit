@@ -8,6 +8,7 @@ import {
   runLaunchCommand,
   runUpgradeCommand,
 } from "@/packages/workit-cli/src/upgrade";
+import { codexInventoryAnswer } from "./codex-fake";
 import { createProgress } from "@/packages/workit-cli/src/progress";
 
 const fixture = () => {
@@ -267,32 +268,28 @@ test("explicit home isolates inherited config overrides and explicit config root
 test("Codex current inventory skips updates and other marketplaces remain untouched", () => {
   const f = fixture();
   try {
+    const rows = [
+      {
+        name: "workit",
+        marketplaceName: "workflow-toolkit",
+        version: "2.1.0",
+        source: {
+          source: "npm",
+          package: "@brainervirus/workit-codex",
+          version: "latest",
+        },
+      },
+      {
+        name: "workit",
+        marketplaceName: "unrelated",
+        version: "0.1.0",
+        source: { source: "npm", package: "unrelated-workit" },
+      },
+    ];
     const run = (command: string, args: string[]) =>
-      command === "codex"
-        ? {
-            status: 0,
-            stdout: JSON.stringify({
-              installed: [
-                {
-                  name: "workit",
-                  marketplaceName: "workflow-toolkit",
-                  version: "2.1.0",
-                  source: {
-                    source: "npm",
-                    package: "@brainervirus/workit-codex",
-                    version: "latest",
-                  },
-                },
-                {
-                  name: "workit",
-                  marketplaceName: "unrelated",
-                  version: "0.1.0",
-                  source: { source: "npm", package: "unrelated-workit" },
-                },
-              ],
-            }),
-          }
-        : f.deps.run(command, args);
+      (command === "codex"
+        ? codexInventoryAnswer(args, rows, ["workflow-toolkit", "unrelated"])
+        : undefined) ?? f.deps.run(command, args);
     const plan = previewUpgrade(["codex"], { ...f.deps, run });
     expect(plan.entries).toEqual([]);
     expect(plan.skipped.map((entry) => entry.reason)).toEqual([

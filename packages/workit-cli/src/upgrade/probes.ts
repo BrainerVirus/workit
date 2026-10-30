@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { type HostId } from "../admin/detect-hosts";
 import { CLI_PACKAGE } from "../update-check";
+import { CODEX_INVENTORY_ARGS, codexInventory } from "./codex-inventory";
 import { OPENCODE_NOT_READY, waitForOpencodePlugin, type OpencodePlugin } from "./opencode";
 import {
   OPENCODE_PACKAGE,
@@ -97,7 +98,8 @@ export const runProbes = async (
     for (const name of options.registries ?? []) add(...registry(name));
     if (hosts.includes("cursor")) add(...registry("@brainervirus/workit-cursor"));
     if (hosts.includes("codex")) {
-      add("codex", ["plugin", "list", "--json"]);
+      // The inventory merges several local commands: one probe, one timeout.
+      add("codex", CODEX_INVENTORY_ARGS, () => codexInventory(run));
       add(...registry("@brainervirus/workit-codex"));
     }
     if (hosts.includes("pi")) {

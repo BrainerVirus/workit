@@ -9,6 +9,7 @@ import { recordHookNode } from "../admin/hook-node";
 import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import { createProgress, type StepStatus } from "../progress";
+import { codexInventory } from "./codex-inventory";
 import { classifyProcess, describe, listProcesses } from "./processes";
 import {
   OPENCODE_NOT_READY,
@@ -239,9 +240,7 @@ const applyEntry = async (
         };
   }
   const verify =
-    entry.host === "codex"
-      ? await runAsync("codex", ["plugin", "list", "--json"])
-      : await runAsync("pi", ["list"]);
+    entry.host === "codex" ? await codexInventory(runAsync) : await runAsync("pi", ["list"]);
   if (verify.status !== 0)
     return fail(
       `update verification failed${stderrTail(verify.stderr) ? `: ${stderrTail(verify.stderr)}` : ""}`,

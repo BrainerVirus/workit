@@ -316,7 +316,8 @@ codex plugin add workit@workflow-toolkit
 Update with `workit upgrade`: it runs
 `codex plugin marketplace upgrade workflow-toolkit` and
 `codex plugin add workit@workflow-toolkit` (the native fallback) and refreshes
-the agent files. The Codex app-server daemon keeps running: Codex checks the
+the agent files (it finds the plugin in any configured marketplace, without
+fetching Codex's remote catalog). The Codex app-server daemon keeps running: Codex checks the
 installed plugin version each time it resolves plugins, so a new thread (desktop,
 IDE or CLI) loads the new version without a restart. Open interactive Codex
 sessions are never killed; that host is skipped with its pid. Uninstall with
