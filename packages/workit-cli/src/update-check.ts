@@ -6,8 +6,6 @@
 // once the 24 h window has passed. Every other launch (a pipe, CI, --json, an
 // agent host's shell, a hook) skips all of it and stays byte-identical.
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import pkg from "../package.json" with { type: "json" };
 import { isPromptAbort } from "./prompt";
 import { createStyle, terminalMode, type TerminalStream } from "./style";
@@ -22,6 +20,7 @@ const QUIET_ENV = "WORKIT_UPDATE_CHECK";
 const REFRESH_ENV = "WORKIT_UPDATE_REFRESH";
 
 import {
+  cliVersionOnDisk,
   readUpdateCache,
   readUpdatesMode,
   writeUpdateCache,
@@ -170,7 +169,7 @@ export async function launchUpdateCheck(
     );
   // Re-execute only when the CLI package on disk really changed: an upgrade
   // that left it alone (a failure, an npx or linked CLI) never loops.
-  const onDisk = (deps.cliOnDisk ?? defaultCliOnDisk)();
+  const onDisk = (deps.cliOnDisk ?? cliVersionOnDisk)();
   if (!onDisk || onDisk === installed) {
     if (outcome.code !== 0)
       deps.write(
@@ -183,25 +182,6 @@ export async function launchUpdateCheck(
 
 /** 128 + SIGINT, as prompt.ts uses for a cancelled question. */
 const CANCELLED_EXIT = 130;
-
-/** The version in the package.json of the running entry's package, as it is on disk now. */
-const defaultCliOnDisk = (): string | undefined => {
-  const script = process.argv[1];
-  if (!script) return undefined;
-  let dir = path.dirname(script);
-  for (let depth = 0; depth < 4; depth += 1, dir = path.dirname(dir)) {
-    try {
-      const found = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as {
-        name?: unknown;
-        version?: unknown;
-      };
-      if (found.name === CLI_PACKAGE && typeof found.version === "string") return found.version;
-    } catch {
-      // not here; look one level up
-    }
-  }
-  return undefined;
-};
 
 const defaultAsk = async (question: string): Promise<string> =>
   (await import("./prompt")).askLine(question, process.stderr);

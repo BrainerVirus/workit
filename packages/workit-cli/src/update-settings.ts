@@ -1,6 +1,6 @@
 // The `updates` setting and the launch-check cache. Local files only, so
 // doctor reads them without the launch check's prompt, styles and runners.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { stateDir } from "@brainervirus/workit-core/src/core/heavy-words";
@@ -87,4 +87,33 @@ export const writeUpdatesMode = (env: NodeJS.ProcessEnv, mode: UpdatesMode): str
   } catch (error) {
     return error instanceof Error ? error.message : `cannot write ${file}`;
   }
+};
+
+/**
+ * The CLI version in the package.json of `script`'s package, as it is on disk
+ * now. npm's `bin/workit` is a symlink and Node keeps it in argv[1], so the
+ * search starts from the real file.
+ */
+export const cliVersionOnDisk = (script = process.argv[1]): string | undefined => {
+  if (!script) return undefined;
+  let real = script;
+  try {
+    real = realpathSync(script);
+  } catch {
+    // a missing script has no package to read; the search below finds none
+  }
+  let dir = path.dirname(real);
+  for (let depth = 0; depth < 4; depth += 1, dir = path.dirname(dir)) {
+    try {
+      const found = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as {
+        name?: unknown;
+        version?: unknown;
+      };
+      if (found.name === "@brainervirus/workit-cli" && typeof found.version === "string")
+        return found.version;
+    } catch {
+      // not here; look one level up
+    }
+  }
+  return undefined;
 };

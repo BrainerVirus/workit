@@ -24,6 +24,7 @@ import { applyUpgrade, previewUpgrade } from "@/packages/workit-cli/src/upgrade"
 import { table } from "@/packages/workit-cli/src/upgrade/report";
 import {
   asyncRunner,
+  failureReason,
   runner,
   stderrTail,
   type CommandResult,
@@ -210,6 +211,23 @@ test("Given `opencode plugin update` fails twice, Then the row is FAILED with th
 test("stderrTail keeps the last five non-empty lines", () => {
   expect(stderrTail("a\nb\n\nc\nd\ne\nf\n")).toBe("b | c | d | e | f");
   expect(stderrTail(undefined)).toBe("");
+});
+
+test("Given a command that fails with its reason on stdout and nothing on stderr, Then the reason shows that stdout tail", () => {
+  const command = { command: "claude", args: ["plugin", "update", "workit@workit"] };
+  expect(
+    failureReason(command, {
+      status: 1,
+      stdout:
+        "Updating plugin...\n✘ Failed to update plugin workit@workit: version 8.45.2 not found\n",
+      stderr: "",
+    }),
+  ).toBe(
+    "`claude plugin update workit@workit` failed: Updating plugin... | ✘ Failed to update plugin workit@workit: version 8.45.2 not found",
+  );
+  expect(failureReason(command, { status: 1, stdout: "", stderr: "boom" })).toBe(
+    "`claude plugin update workit@workit` failed: boom",
+  );
 });
 
 test("Given a current row and a permissions row, Then the table never repeats the status and the permissions row is not a host row", () => {

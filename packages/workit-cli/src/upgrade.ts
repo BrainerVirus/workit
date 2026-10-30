@@ -13,6 +13,7 @@ import {
 } from "./admin/host-permissions";
 import { createProgress } from "./progress";
 import { createStyle } from "./style";
+import { cliVersionOnDisk } from "./update-settings";
 import { applyUpgrade } from "./upgrade/apply";
 import { runUpdateCheck, runSetUpdates } from "./upgrade/check";
 import { planCli, previewUpgrade, probedRunner } from "./upgrade/plan";
@@ -183,7 +184,7 @@ async function upgradeOnce(
           json,
         }));
   const handoff = async (cli: HostOutcome): Promise<number | undefined> => {
-    if (!reexec || (deps.cliOnDisk ?? runningCliVersion)() !== plan.cli?.latest) return undefined;
+    if (!reexec || (deps.cliOnDisk ?? cliVersionOnDisk)() !== plan.cli?.latest) return undefined;
     const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-upgrade-"));
     const rowsFile = path.join(scratch, "rows.json");
     try {
@@ -332,28 +333,6 @@ const handedBack = (
       code: typeof value.code === "number" ? value.code : undefined,
       rows: priorRows(JSON.stringify(value.rows ?? [])) ?? [],
     };
-  } catch {
-    return undefined;
-  }
-};
-
-/** The version in the running entry's package.json as it is on disk now. */
-const runningCliVersion = (): string | undefined => {
-  const script = process.argv[1];
-  if (!script) return undefined;
-  let dir = path.dirname(script);
-  for (let depth = 0; depth < 4; depth += 1, dir = path.dirname(dir)) {
-    const found = cliPackageVersion(readText(path.join(dir, "package.json")));
-    if (found) return found;
-  }
-  return undefined;
-};
-
-const cliPackageVersion = (text: string | undefined): string | undefined => {
-  if (text === undefined) return undefined;
-  try {
-    const found = JSON.parse(text) as { name?: unknown; version?: unknown };
-    return found.name === pkg.name && typeof found.version === "string" ? found.version : undefined;
   } catch {
     return undefined;
   }
