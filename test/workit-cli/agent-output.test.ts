@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
-import { runTaskCommand } from "@/packages/workit-cli/src/task";
+import { gapText, runTaskCommand } from "@/packages/workit-cli/src/task";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { nextHint } from "@/packages/workit-core/src/forge/pr-ops";
 import { summarizeRow, type ReadRow } from "@/packages/workit-core/src/ledger";
@@ -113,4 +113,13 @@ test("Given a task, When task inspect renders human output, Then it prints the t
   expect(code).toBe(0);
   expect(out).toContain(id);
   expect(err).not.toContain("uncaught_failure");
+});
+
+test("Given open requirements with and without a reason, When rendered as policy gaps, Then each reads as one line", () => {
+  expect(gapText({ reason: "a plan is required" })).toBe("a plan is required");
+  expect(gapText({ dimension: "verification", before: "merge", status: "open" })).toBe(
+    "verification (before merge): open",
+  );
+  expect(gapText({ dimension: "plan" })).toBe("plan: unmet");
+  expect(gapText({ id: "req-1" })).toBe("req-1");
 });

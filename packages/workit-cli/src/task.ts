@@ -504,12 +504,23 @@ function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false)
     const reqs = row?.requirements;
     const open: any[] = Array.isArray(reqs) ? reqs : Array.isArray(reqs?.open) ? reqs.open : [];
     for (const gap of open.filter((item: any) => item?.status !== "satisfied"))
-      write(
-        stream,
-        `policy gap: ${gap.reason ?? (gap.dimension ? `${gap.dimension}${gap.before ? ` (before ${gap.before})` : ""}: ${gap.status ?? "unmet"}` : (gap.id ?? "unmet"))}`,
-      );
+      write(stream, `policy gap: ${gapText(gap)}`);
   }
 }
+
+/** One open requirement: its reason, else `<dimension> (before <x>): <status>`. */
+export const gapText = (gap: {
+  reason?: string;
+  dimension?: string;
+  before?: string;
+  status?: string;
+  id?: string;
+}): string => {
+  if (gap.reason) return gap.reason;
+  if (!gap.dimension) return gap.id ?? "unmet";
+  const before = gap.before ? ` (before ${gap.before})` : "";
+  return `${gap.dimension}${before}: ${gap.status ?? "unmet"}`;
+};
 
 const FINDING_LIST_USAGE = "workit finding list [--branch <b>] [--status open|resolved] [--json]";
 
