@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (changelog and docs checks)
+
+- `changelogPath` takes globs such as `["projects/*/CHANGELOG.md"]`. In a
+  monorepo with a changelog per package, `workit pr create` asks for an
+  Unreleased entry in the changelog of each package the PR touches and names
+  any that lack one; `workit grant show` lists the files the glob matches in
+  the checkout (#620).
+- When a workspace turns on the changelog or docs step, `workit pr create`
+  prints one `changelog:` and one `docs:` line on every run (passed, skipped,
+  bypassed or blocked) and records each as a `pr.check` ledger row. The docs
+  check never blocks.
+
 ### Changed (ledger integrity)
 
 - **`--supersedes` is scoped to one branch and kind.** A row supersedes only

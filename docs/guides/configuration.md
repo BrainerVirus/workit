@@ -331,20 +331,26 @@ Both are off by default.
   (`workit changelog apply` creates the file). See
   [delivery](delivery.md#changelog-gate).
 - `changelogPath`: where the changelog lives, repo-relative (default
-  `CHANGELOG.md` at the root). A JSON list names one changelog per package in
-  a monorepo; an entry in any of them satisfies the gate. Without it, a repo
+  `CHANGELOG.md` at the root). A JSON list names more than one; an entry in
+  any of them satisfies the gate. A glob (`projects/*/CHANGELOG.md`, `*` and
+  `?` within one directory, `**` across them) makes each tracked file it
+  matches the changelog of its directory: every such package the diff touches
+  needs its own entry, and a diff touching none of them needs one in any.
+  Without it, a repo
   whose only changelog sits elsewhere is told the exact
   `workit workspace set <ws> changelogPath=<file>` to run, and the
   `workit changelog apply` command the gate prints carries `--path <file>`.
 - `docs`: `off` (default) or `when-user-facing`. When it is on, the ship skill
   updates only the README and guide lines the diff made false, names public
   surfaces no doc covers in the PR body, and reports a pass that changed
-  nothing.
+  nothing. `pr create` checks it without blocking: a doc file in the diff, or
+  a `Docs` line in the PR body.
 
 ```bash
 workit workspace set work changelog=create docs=when-user-facing
 workit workspace set work changelogPath=docs/CHANGELOG.md
 workit workspace set work 'changelogPath=["packages/a/CHANGELOG.md","packages/b/CHANGELOG.md"]'
+workit workspace set work 'changelogPath=["projects/*/CHANGELOG.md"]'
 workit workspace set work changelog=null   # back to off
 ```
 
