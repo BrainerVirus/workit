@@ -150,6 +150,20 @@ Global config lives in `~/.config/workit/` (`config.json`, `workspaces.json`,
 globs to hosting (GitHub/GitLab), trackers, branch/commit policy and
 [grants](grants.md); the narrowest glob wins.
 
+Each file has a JSON Schema, generated from the schemas Workit validates with
+and shipped in `@brainervirus/workit-core` under `schemas/`. With the first key
+`"$schema": "https://unpkg.com/@brainervirus/workit-core/schemas/workspaces.json"`
+(or `config.json`, `vcs.json`, `youtrack.json`), VS Code and other editors
+complete keys and allowed values (`changelog`: `off | update | create`), show
+each field's description on hover and underline an unknown key or a bad value.
+`workit setup`, `workit init` and `workit workspace set` write it at the top of
+the files they create or rewrite and keep a value you set yourself.
+`workit doctor`'s `config_schema` row checks the files against the same
+schemas and names the file and JSON path of each bad value
+(`workspaces[0].changelog`). It warns rather than fails: Workit still reads a
+value it does not know as the default and says so, so a file written for a
+newer Workit keeps working in an older one.
+
 `workit init` edits the entries you open and leaves every other entry
 byte-for-byte as it was. To add or adjust one entry without the wizard:
 

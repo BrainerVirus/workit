@@ -23,7 +23,7 @@ beforeAll(() => {
 afterAll(() => configHome.restore());
 
 const file = () => path.join(configHome.configDir, "workspaces.json");
-const ENTRY = { name: "work", glob: "/home/u/work/**", vcs: { provider: "github" } };
+const ENTRY = { name: "work", glob: "/home/u/work/**", vcs: { provider: "github" as const } };
 
 beforeEach(() => {
   writeFileSync(file(), `${JSON.stringify({ workspaces: [ENTRY] }, null, 2)}\n`);

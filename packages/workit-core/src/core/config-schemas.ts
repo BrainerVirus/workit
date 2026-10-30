@@ -51,9 +51,14 @@ export const isConfigSchemaFile = (name: string): name is ConfigSchemaFile =>
 export const withSchemaRef = <T extends Record<string, unknown>>(
   file: ConfigSchemaFile,
   document: T,
-): T => {
+): T & { $schema: unknown } => {
   const { $schema, ...rest } = document;
-  return { $schema: $schema === undefined ? configSchemaUrl(file) : $schema, ...rest } as T;
+  return {
+    $schema: $schema === undefined ? configSchemaUrl(file) : $schema,
+    ...rest,
+  } as unknown as T & {
+    $schema: unknown;
+  };
 };
 
 type JsonSchema = Record<string, unknown>;
@@ -99,8 +104,6 @@ const DEFINITIONS: Record<string, JsonSchema> = {
   tierModel: { anyOf: [nonBlankString, perHost(nonBlankString)] },
 };
 
-const shapeOf = <T extends z.ZodType>(schema: z.ZodOptional<z.ZodObject<{ [k: string]: T }>>) =>
-  schema.unwrap().shape;
 const entry = workspaceConfigSchema.shape;
 
 /** Editor-only definitions for the leniently read fields, keyed by their zod def. */
@@ -133,11 +136,11 @@ const EDITOR_DEFINITIONS = new Map<unknown, JsonSchema>([
   ],
   [entry.releaseNotes, enumOf(RELEASE_NOTES_MODES)],
   [releaseTrackSchema.shape.releaseNotes, enumOf(RELEASE_NOTES_MODES)],
-  [shapeOf(entry.vcs).host, nonBlankString],
-  [shapeOf(entry.issues).relation, enumOf(["closes", "refs"])],
-  [shapeOf(entry.issues).repo, string("owner/name")],
-  [shapeOf(entry.issues).host, nonBlankString],
-  [shapeOf(entry.fanout).tierModels, perTier(ref("tierModel"))],
+  [entry.vcs.unwrap().shape.host, nonBlankString],
+  [entry.issues.unwrap().shape.relation, enumOf(["closes", "refs"])],
+  [entry.issues.unwrap().shape.repo, string("owner/name")],
+  [entry.issues.unwrap().shape.host, nonBlankString],
+  [entry.fanout.unwrap().shape.tierModels, perTier(ref("tierModel"))],
   [
     modelRoles,
     closed(
@@ -311,7 +314,7 @@ const youtrackFileSchema = z
 
 /** Objects whose unknown keys stay allowed in the closed files' editor schemas. */
 const OPEN_OBJECTS = new Set<unknown>([
-  shapeOf(entry.branchPolicy).prefixes.unwrap()._zod.def,
+  entry.branchPolicy.unwrap().shape.prefixes.unwrap()._zod.def,
   releaseTrackSchema.shape.naming.unwrap()._zod.def,
 ]);
 
@@ -505,7 +508,9 @@ const check = (
     if (!target) throw new Error(`unresolved $ref ${schema.$ref}`);
     return check(root, target, value, at, out);
   }
-  const issue = (message: string) => out.push({ path: at || "(root)", message });
+  const issue = (message: string): void => {
+    out.push({ path: at || "(root)", message });
+  };
   const branches = (schema.anyOf ?? schema.oneOf) as JsonSchema[] | undefined;
   if (branches) {
     const results = branches.map((branch) => {
