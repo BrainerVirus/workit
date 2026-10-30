@@ -60,7 +60,9 @@ commands through `workit check`, never with a hand-made `flock`:
 ```bash
 workit check test                    # test, build and packaging take the lease
 workit check --heavy -- npx jest     # an ad-hoc heavy command
-workit lock status                   # who holds the lease
+workit lock status                   # who holds the lease, who waits, which holder looks stuck?
+workit lock reap                     # free a stuck? holder's slot (or: workit lock reap <pid|session|dir>)
+workit lock cancel                   # drop this session's queued checks (or: <pid|session|dir>)
 workit lock wait --timeout 300       # wait for a free slot without taking it
 workit check test --no-lease --reason "machine idle, bisecting a hang"
 workit check test --wait 45m         # a queued check waits its turn (default 30 min); --no-wait exits 4 at once
@@ -74,7 +76,7 @@ never gets it past them.
 - **One heavy command** (`npx jest`, `npm run test:ci`, `cargo test`, `docker
   build`, also behind `flock`, `nice`, `env`, `timeout` or `bash -c '<one
   command>'`) runs as `workit check --heavy -- <cmd>` on Claude Code, OpenCode
-  and Pi. A busy lease queues the command first-come-first-served
+  and Pi. A busy lease queues the command round-robin per session
   ([delivery guide](delivery.md#heavy-checks-share-the-machine)); run a long
   check in the background, since the shell tool's own timeout can end a
   foreground wait. The rewrite uses only flags every supported CLI accepts. Codex and Cursor
@@ -102,6 +104,28 @@ whether the hook gates a command. The hook leaves commands alone when no
 `workit` is on PATH, and `WORKIT_HEAVY_GATE=0` in the host's environment turns
 the gate off for that host. `--no-lease` needs `--reason`, recorded on the run
 as `noLease`.
+
+#### Stuck holders, cancelled waits, fairness
+
+- **Round-robin per session.** The queue serves sessions in turn: a session's
+  second queued check goes after every other session's first, counting the
+  slots it already holds, so one session's chain of jobs cannot starve
+  another's single lint.
+- **`stuck?`.** `workit lock status` marks a holder `stuck?`, with its age, once
+  it has held its slot past `resources.maxHold` (default 15 min; a repo can
+  only lower it) or its check printed nothing and used no CPU for 5 min.
+  `workit lock reap` frees that slot and records a `lease.reaped` ledger row
+  naming the pid, session and command; the process itself keeps running, so
+  stop it yourself if it is truly hung. A holder silent past 3x its max hold
+  is reaped by the next check that queues.
+- **Owners and cancel.** A queued check leaves the queue when the process that
+  started it ends, and `workit lock status` drops dead waiters and frees dead
+  holders' slots before it prints. `workit lock cancel [<pid|session|dir>]`
+  (default: your session) ends your own queued checks without `kill`; each
+  exits 4 with `cancelled while queued for the heavy-check lease`.
+- **Gave up waiting.** A check whose wait ran out exits 4 and says `queued
+  behind <holder>, <age>` in its output and in `--json` (`lease.queuedBehind`),
+  so a verifier can report missing evidence instead of dropping it.
 
 ## `workit ledger`: decisions, rulings, verdicts
 
