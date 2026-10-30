@@ -739,11 +739,14 @@ function waitersAhead(
   return order.findIndex((entry) => entry.name === own);
 }
 
-/** Live holders of the slots, read without reclaiming. */
+/** Live holders of the slots, read without reclaiming; one past its auto-reap bound does not count. */
 function liveHolders(options: AcquireOptions): LeaseHolder[] {
-  return leaseSlots(options.dir, options.slots, options.probe, options.maxHoldMs)
-    .filter((slot) => slot.holder && !slot.stale)
-    .map((slot) => slot.holder as LeaseHolder);
+  const maxHold = options.maxHoldMs ?? DEFAULT_MAX_HOLD_MS;
+  return leaseSlots(options.dir, options.slots, options.probe, maxHold).flatMap((slot) => {
+    if (!slot.holder || slot.stale) return [];
+    const record = parseLease(readText(path.join(options.dir, `slot-${slot.slot}.json`)));
+    return record && autoReapReason(record, maxHold, options.probe?.now) ? [] : [slot.holder];
+  });
 }
 
 function writeTicket(file: string, record: LeaseRecord): void {

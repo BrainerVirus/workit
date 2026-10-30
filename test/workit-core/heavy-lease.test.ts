@@ -79,7 +79,7 @@ const lease = (overrides: Partial<LeaseRecord> = {}): LeaseRecord => ({
   check: "test",
   cwd: "/repo/held",
   session: "s-held",
-  startedAt: ago(MIN),
+  startedAt: new Date().toISOString(),
   scope: null,
   ...overrides,
 });
@@ -106,7 +106,9 @@ test("G a holder past its max hold or silent for 5 min, T it is stuck with its a
   expect(stuckReason(lease({ startedAt: ago(16 * MIN) }), 15 * MIN, NOW)).toBe(
     "held 16m, past its 15m limit",
   );
-  expect(stuckReason(lease({ heartbeatAt: ago(6 * MIN) }), 15 * MIN, NOW)).toBeNull();
+  expect(
+    stuckReason(lease({ startedAt: ago(7 * MIN), heartbeatAt: ago(MIN) }), 15 * MIN, NOW),
+  ).toBeNull();
   expect(
     stuckReason(lease({ startedAt: ago(7 * MIN), heartbeatAt: ago(6 * MIN) }), 15 * MIN, NOW),
   ).toBe("no heartbeat for 6m");
@@ -243,13 +245,13 @@ test("G session A with three queued jobs and session B with one, W slots free up
   if (!holder.ok) throw new Error(holder.reason);
   const order: string[] = [];
   const queue = async (check: string, session: string, pid: number) => {
-    const waiter = acquireLease(options(dir, { check, session, pid }));
     const count = queueFiles(dir).length;
-    await until(() => queueFiles(dir).length === count + 1);
-    return waiter.then((got) => {
+    const done = acquireLease(options(dir, { check, session, pid })).then((got) => {
       order.push(check);
       return got;
     });
+    await until(() => queueFiles(dir).length === count + 1);
+    return { check, done };
   };
   const waiters = [
     await queue("a1", "s-a", 900_101),
@@ -260,8 +262,8 @@ test("G session A with three queued jobs and session B with one, W slots free up
   holder.lease.release();
   for (let served = 0; served < waiters.length; served += 1) {
     await until(() => order.length === served + 1);
-    const got = await waiters[["a1", "a2", "a3", "b1"].indexOf(order[served])];
-    if (!got.ok) throw new Error(got.reason);
+    const got = await waiters.find((waiter) => waiter.check === order[served])?.done;
+    if (!got?.ok) throw new Error("not served");
     got.lease.release();
   }
   expect(order).toEqual(["a1", "b1", "a2", "a3"]);
