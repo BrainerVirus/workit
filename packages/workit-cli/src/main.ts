@@ -10,6 +10,7 @@ import {
   checkFlags,
   commandUnblock,
   firstWord,
+  flagLines,
   helpAsValue,
   takesPositionals,
   subcommandHelp,
@@ -232,7 +233,7 @@ export async function main(
     if (wantsHelp(verbArgs)) {
       const word = firstWord(verbArgs);
       const sub = word === undefined ? undefined : findSubcommand(entry, word);
-      const asValue = helpAsValue(verbArgs, sub ? [sub.usage] : usageLines(entry));
+      const asValue = helpAsValue(verbArgs, flagLines(entry, sub));
       if (asValue)
         return emit(
           routed,

@@ -79,6 +79,20 @@ export type HelpDoc = {
 export const usageLines = (entry: VerbEntry): string[] =>
   entry.subcommands?.length ? entry.subcommands.map((sub) => sub.usage) : [entry.usage];
 
+/**
+ * The lines whose flags the router and the value-flag reader accept: the usage
+ * lines (of `sub`, else of every subcommand) plus the engine flags they take,
+ * which are listed once in the verb's note rather than on each usage line.
+ */
+export const flagLines = (entry: VerbEntry, sub?: SubcommandEntry): string[] => {
+  const engine = new Set(
+    (sub ? [sub] : (entry.subcommands ?? [])).flatMap((item) =>
+      item.engineFlags ? [item.engineFlags] : [],
+    ),
+  );
+  return [...(sub ? [sub.usage] : usageLines(entry)), ...engine];
+};
+
 const examplesFor = (entry: VerbEntry, sub?: SubcommandEntry): string[] =>
   (entry.examples ?? []).filter((example) =>
     sub ? new RegExp(`^workit ${entry.name} ${sub.name}(?![\\w-])`, "u").test(example) : true,
@@ -94,13 +108,11 @@ export function verbHelp(entry: VerbEntry): HelpDoc {
   const usages = usageLines(entry);
   const examples = examplesFor(entry);
   const text = [
+    `workit ${entry.name}: ${entry.summary}`,
+    "",
     ...(subs.length
-      ? [
-          `workit ${entry.name}: ${entry.summary}`,
-          "",
-          ...subs.flatMap((sub) => [`usage: ${sub.usage}`, `    ${sub.summary}`]),
-        ]
-      : [`usage: ${entry.usage}`, "", entry.summary]),
+      ? subs.flatMap((sub) => [`usage: ${sub.usage}`, `    ${sub.summary}`])
+      : [`usage: ${entry.usage}`]),
     ...noteBlock(entry),
     ...exampleBlock(examples),
     "",
@@ -210,7 +222,7 @@ export function checkFlags(entry: VerbEntry, args: readonly string[]): FlagCheck
   const word = firstWord(args);
   const sub = word === undefined ? undefined : findSubcommand(entry, word);
   const lines =
-    sub && !entry.sharedParser && !/ …/u.test(sub.usage) ? [sub.usage] : usageLines(entry);
+    sub && !entry.sharedParser && !/ …/u.test(sub.usage) ? flagLines(entry, sub) : flagLines(entry);
   const takes = valueFlags(lines);
   const known = new Set<string>();
   for (const line of lines)

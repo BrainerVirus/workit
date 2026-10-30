@@ -25,6 +25,8 @@ export type SubcommandEntry = {
   flagHints?: Readonly<Record<string, string>>;
   /** Flags the parser refuses with its own guidance; the router leaves them to it. */
   deferredFlags?: readonly string[];
+  /** Engine flags this subcommand accepts; the verb's note lists them once, not on the usage line. */
+  engineFlags?: string;
 };
 
 export type VerbEntry = {
@@ -118,8 +120,9 @@ const TASK_IMPLICIT: SubcommandEntry[] = [
   },
   {
     name: "start",
-    usage: `workit task start "<objective>" | task start ${FAMILY_OPTIONS}`,
+    usage: 'workit task start "<objective>"',
     summary: "Start tracking the current branch's task (idempotent per branch)",
+    engineFlags: FAMILY_OPTIONS,
   },
   {
     name: "note",
@@ -128,8 +131,9 @@ const TASK_IMPLICIT: SubcommandEntry[] = [
   },
   {
     name: "close",
-    usage: `workit task close [--outcome verified|limited|stopped] [--summary "<t>"] [--confirm] | task close ${FAMILY_OPTIONS}`,
+    usage: 'workit task close [--outcome verified|limited|stopped] [--summary "<t>"]',
     summary: "Close the current branch's task, or a task by id",
+    engineFlags: FAMILY_OPTIONS,
   },
   {
     name: "adopt",
@@ -142,25 +146,37 @@ const familySubcommands = (name: Family): SubcommandEntry[] => {
   const implicit = name === "task" ? TASK_IMPLICIT : [];
   const grammar = Object.entries(FAMILY_ACTIONS[name])
     .filter(([action]) => !implicit.some((entry) => entry.name === action))
-    .map(([action, summary]) => ({
-      name: action,
-      usage:
+    .map(([action, summary]): SubcommandEntry => {
+      if (name === "finding" && action === "list")
+        return {
+          name: action,
+          usage: "workit finding list [--branch <b>] [--status open|resolved] [--json]",
+          summary,
+        };
+      const usage =
         name === "task" && action === "list"
-          ? `workit task list [--status all] ${FAMILY_OPTIONS}`
-          : name === "finding" && action === "list"
-            ? "workit finding list [--branch <b>] [--status open|resolved] [--json]"
-            : name === "policy" && action !== "explain"
-              ? `workit policy ${action} ${POLICY_JUDGE} ${FAMILY_OPTIONS}`
-              : name === "worker" && action !== "assign"
-                ? `workit worker ${action} [<workerId>] ${FAMILY_OPTIONS}`
-                : `workit ${name} ${action} ${FAMILY_OPTIONS}`,
-      summary,
-    }));
+          ? "workit task list [--status all]"
+          : name === "policy" && action !== "explain"
+            ? `workit policy ${action} ${POLICY_JUDGE}`
+            : name === "worker" && action !== "assign"
+              ? `workit worker ${action} [<workerId>]`
+              : `workit ${name} ${action}`;
+      return { name: action, usage, summary, engineFlags: FAMILY_OPTIONS };
+    });
   return [...implicit, ...grammar];
 };
 
-const family = (name: Family): VerbEntry =>
-  withSubcommands({
+/** The engine flags once, under the list: every action that takes them, and the ones that do not. */
+const engineNote = (subs: readonly SubcommandEntry[]): string[] => {
+  const plain = subs.filter((sub) => !sub.engineFlags).map((sub) => sub.name);
+  if (plain.length === subs.length) return [];
+  const except = plain.length ? ` except ${plain.join(", ")}` : "";
+  return [`Engine flags, taken by every action above${except}: ${FAMILY_OPTIONS}`];
+};
+
+const family = (name: Family): VerbEntry => {
+  const subcommands = familySubcommands(name);
+  return withSubcommands({
     name,
     group: "task",
     summary:
@@ -169,7 +185,8 @@ const family = (name: Family): VerbEntry =>
         : name === "policy"
           ? "Judge the branch's work; Workit derives its checks, verdicts, decision and plan gates"
           : `Inspect and control a Workit task (${name} family)`,
-    subcommands: familySubcommands(name),
+    subcommands,
+    notes: engineNote(subcommands),
     ...(name === "task"
       ? {
           examples: [
@@ -186,6 +203,7 @@ const family = (name: Family): VerbEntry =>
         : {}),
     load: async () => (await import("./family")).familyVerb(name),
   });
+};
 
 /** A verb with subcommands lists their names on its one-line usage. */
 function withSubcommands(
