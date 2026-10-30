@@ -428,8 +428,8 @@ test("Given forge REST calls on strict's repository (A4), When they merge, open 
 test("Given env set for a nested shell (A5), When it runs a raw push or PR, Then the nested command is judged with it, and strict does not move", () => {
   const w = world();
   for (const command of [
-    `GIT_DIR=${w.inStrict}/.git bash -c 'git push origin feature/x'`,
-    `export GIT_DIR=${w.inStrict}/.git; sh -c 'git push origin feature/x'`,
+    `GIT_DIR='${w.inStrict}/.git' bash -c 'git push origin feature/x'`,
+    `export GIT_DIR='${w.inStrict}/.git'; sh -c 'git push origin feature/x'`,
     "GH_REPO=acme/strict bash -c 'gh pr create --fill'",
     "export GH_REPO=acme/strict; sh -c 'gh pr create --fill'",
   ])
