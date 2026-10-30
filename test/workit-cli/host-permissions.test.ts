@@ -213,7 +213,12 @@ test("Given a Codex home, When setup and uninstall run, Then Workit's rules file
   if (rules === "unreadable") return;
   expect(rules.allow).toContain("workit pr");
   expect(rules.allow).not.toContain("workit check");
-  expect(rules.deny).toEqual(["workit grant"]);
+  expect(rules.deny).toEqual([
+    "workit grant",
+    "workit release notes approve",
+    "workit grant set",
+    "workit grant raise",
+  ]);
   applyUninstall(planUninstall({ home, env }), { home, env });
   expect(existsSync(file)).toBe(false);
 });
@@ -535,15 +540,15 @@ test("Given a block with the old auto-mode line, When `workit upgrade` refreshes
 test("Given settings with only the old auto-mode line and no record, When uninstall runs, Then the old line is removed", () => {
   const settings = { autoMode: { allow: ["$defaults", OLD_AUTO_ALLOW] } };
   const { next } = removeOwnedEntries(settings, null, "claude-code");
-  expect(next.autoMode).toBeUndefined();
+  expect(next.autoMode).toEqual({ allow: ["$defaults"] });
 });
 
 test("Given Codex and Cursor, When rules are written, Then Codex prompts and Cursor denies the user-only calls", () => {
   expect(codexRulesText()).toContain(
-    'pattern = ["workit", "release", "notes", "approve"],\n    decision = "prompt"',
+    'pattern = ["workit","release","notes","approve"],\n    decision = "prompt"',
   );
   expect(codexRulesText()).toContain(
-    'pattern = ["workit", "grant", "raise"],\n    decision = "prompt"',
+    'pattern = ["workit","grant","raise"],\n    decision = "prompt"',
   );
   expect(CURSOR_DENY).toContain("Shell(workit release notes approve)");
 });
