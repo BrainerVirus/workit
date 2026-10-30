@@ -28,9 +28,13 @@
         "apiUrl": {
           "description": "The GitHub API URL.",
           "type": "string"
+        },
+        "tokenFile": {
+          "description": "A file holding the GitHub token.",
+          "type": "string"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": {}
     },
     "gitlab": {
       "description": "GitLab settings.",
@@ -43,9 +47,13 @@
         "apiUrl": {
           "description": "The GitLab API URL.",
           "type": "string"
+        },
+        "tokenFile": {
+          "description": "A file holding the GitLab token.",
+          "type": "string"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": {}
     },
     "pr": {
       "description": "PR style defaults.",
@@ -64,7 +72,7 @@
           "type": "boolean"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": {}
     }
   },
   "additionalProperties": {}
