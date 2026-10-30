@@ -19,7 +19,7 @@ Otherwise:
    merges into `## [Unreleased]` and creates the Keep a Changelog file when it
    is missing. Never clobber CHANGELOG.md: never rewrite, reorder or delete an
    existing entry, and never hand-edit released sections.
-3. Commit it (`workit git commit -m "docs(changelog): …" -- CHANGELOG.md`)
+3. Commit it (`workit git commit -m "<message>" -- CHANGELOG.md`)
    with the change, then push.
 
 `workit pr create` refuses a user-facing PR without a new Unreleased bullet
