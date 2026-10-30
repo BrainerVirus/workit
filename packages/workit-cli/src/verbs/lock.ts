@@ -1,10 +1,14 @@
 // `workit lock` (issue #325): the machine-wide heavy-check lease under its
-// own name. `status` shows who holds it and who is queued (#508), `wait`
-// waits for a free slot without
-// taking it, `run` is `workit check --heavy`, and `heavy` lists, tests and
-// extends which commands the shell hook gates (core/heavy.ts).
+// own name. `status` shows who holds it and who is queued (#508), first
+// dropping what no longer holds or waits and marking stuck holders (#608);
+// `reap` frees a stuck holder's slot, `cancel` drops queued waiters, `wait`
+// waits for a free slot without taking it, `run` is `workit check --heavy`,
+// and `heavy` lists, tests and extends which commands the shell hook gates
+// (core/heavy.ts).
 //
 //   workit lock status
+//   workit lock reap [<pid|session|dir>]
+//   workit lock cancel [<pid|session|dir>]   # default: this session's waiters
 //   workit lock wait [--timeout <dur>]
 //   workit lock run [--shell] [--wait <dur> | --no-wait] [--timeout <s>] -- <cmd…>
 //   workit lock heavy list | add <pattern> | remove <pattern> | test <cmd…>
@@ -20,21 +24,32 @@ import {
   repoPatterns,
 } from "@brainervirus/workit-core/src/core/heavy";
 import {
+  DEFAULT_MAX_HOLD_MS,
   describeHolder,
+  fairOrder,
   formatWait,
   leaseDir,
   leaseQueue,
   leaseSlots,
   parseWait,
+  readGrants,
   resolveResourceSettings,
+  SILENT_MS,
   type QueueEntry,
   type SlotState,
 } from "@brainervirus/workit-core/src/core/resources";
+import {
+  cancelWaiters,
+  parseTarget,
+  pruneLease,
+  reapStuck,
+} from "@brainervirus/workit-core/src/core/heavy-lease";
+import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
 import { emit, fail, ok, type Io } from "../output";
-import { workspaceResources } from "./check";
+import { recordReaped, workspaceResources } from "./check";
 
 const USAGE =
-  "workit lock status | wait [--timeout <dur>] | run [--shell] [--wait <dur> | --no-wait] [--timeout <s>] -- <cmd…> | heavy list|add|remove|test";
+  "workit lock status | reap [<pid|session|dir>] | cancel [<pid|session|dir>] | wait [--timeout <dur>] | run [--shell] [--wait <dur> | --no-wait] [--timeout <s>] -- <cmd…> | heavy list|add|remove|test";
 
 async function settingsFor(io: Io) {
   const workspace = await workspaceResources(io);
@@ -47,9 +62,17 @@ async function settingsFor(io: Io) {
 
 const held = (slots: SlotState[]) => slots.filter((slot) => slot.holder && !slot.stale);
 
-function slotLines(slots: SlotState[], queue: QueueEntry[] = []): string[] {
+/** The live waiters in serving order (round-robin per session). */
+const servingOrder = (dir: string, slots: SlotState[], queue: QueueEntry[]): QueueEntry[] =>
+  fairOrder(
+    queue.filter((entry) => !entry.stale),
+    held(slots).flatMap((slot) => (slot.holder ? [slot.holder] : [])),
+    readGrants(dir),
+  );
+
+function slotLines(slots: SlotState[], waiting: QueueEntry[] = []): string[] {
   const busy = held(slots).length;
-  const waiting = queue.filter((entry) => !entry.stale);
+  const stuck = slots.some((slot) => slot.stuck);
   return [
     `heavy-check lease: ${busy} of ${slots.length} slot${slots.length === 1 ? "" : "s"} held`,
     ...slots.map((slot) =>
@@ -57,26 +80,91 @@ function slotLines(slots: SlotState[], queue: QueueEntry[] = []): string[] {
         ? `  slot ${slot.slot}: ${describeHolder(slot.holder)}${slot.stale ? ` (stale: ${slot.stale}; the next heavy check reclaims it)` : ""}`
         : `  slot ${slot.slot}: free`,
     ),
-    `queue: ${waiting.length ? `${waiting.length} waiting, first come, first served` : "empty"}`,
+    ...(stuck ? ["  a stuck? holder's slot is freed by: workit lock reap [<pid>]"] : []),
+    `queue: ${waiting.length ? `${waiting.length} waiting, round-robin per session` : "empty"}`,
     ...waiting.map((entry, index) => `  ${index + 1}. ${describeHolder(entry.holder)}`),
   ];
 }
 
 async function status(io: Io): Promise<number> {
   const settings = await settingsFor(io);
-  const slots = leaseSlots(leaseDir(io.env), settings.slots);
-  const queue = leaseQueue(leaseDir(io.env));
-  const waiting = queue.filter((entry) => !entry.stale).map((entry) => entry.holder);
+  const maxHold = settings.maxHoldMs ?? DEFAULT_MAX_HOLD_MS;
+  const dir = leaseDir(io.env);
+  const pruned = pruneLease(dir, settings.slots);
+  const slots = leaseSlots(dir, settings.slots, {}, maxHold);
+  const waiting = servingOrder(dir, slots, leaseQueue(dir));
   return emit(
     io,
     ok({
-      dir: leaseDir(io.env),
+      dir,
       slots,
-      queue: waiting,
+      queue: waiting.map((entry) => entry.holder),
+      pruned,
       waitMs: settings.waitMs,
+      maxHoldMs: maxHold,
       light: settings.light,
     }),
-    () => slotLines(slots, queue),
+    () => [
+      ...pruned.map(
+        (item) =>
+          `workit: dropped ${item.kind === "slot" ? "a dead holder's slot" : "a queued waiter"} (${item.reason}): ${describeHolder(item)}`,
+      ),
+      ...slotLines(slots, waiting),
+    ],
+  );
+}
+
+const targetArg = (args: string[]): string | undefined => args.find((arg) => arg !== "--json");
+
+async function reap(args: string[], io: Io): Promise<number> {
+  const settings = await settingsFor(io);
+  const maxHold = settings.maxHoldMs ?? DEFAULT_MAX_HOLD_MS;
+  const dir = leaseDir(io.env);
+  const raw = targetArg(args);
+  const pruned = pruneLease(dir, settings.slots);
+  const reaped = reapStuck(dir, settings.slots, maxHold, {
+    target: raw ? parseTarget(raw, io.cwd) : null,
+  });
+  const recorded = reaped.map((item) => {
+    const row = recordReaped(io, item, "lock reap");
+    return { ...item, ledgerRowId: row.ok ? String(row.value.id) : null };
+  });
+  return emit(io, ok({ dir, reaped: recorded, pruned }), () =>
+    recorded.length || pruned.length
+      ? [
+          ...pruned.map(
+            (item) =>
+              `workit: dropped ${item.kind === "slot" ? "a dead holder's slot" : "a queued waiter"} (${item.reason}): ${describeHolder(item)}`,
+          ),
+          ...recorded.map(
+            (item) =>
+              `workit: reaped slot ${item.slot} (${item.reason}): ${describeHolder({ ...item, stuck: null })}; pid ${item.pid} still runs outside the lease${item.ledgerRowId ? `; ledger ${item.ledgerRowId}` : ""}`,
+          ),
+        ]
+      : [
+          `workit: no stuck holder${raw ? ` matching ${raw}` : ""} (a holder is stuck past ${formatWait(maxHold)} held, or ${formatWait(SILENT_MS)} without output or CPU)`,
+        ],
+  );
+}
+
+async function cancel(args: string[], io: Io): Promise<number> {
+  const raw = targetArg(args) ?? hostSessionFromEnv(io.env).session ?? undefined;
+  if (!raw)
+    return emit(
+      io,
+      fail("invalid_input", "cancel needs a pid, session or directory outside a session", {
+        unblock: "workit lock cancel <pid|session|dir>",
+      }),
+    );
+  const dir = leaseDir(io.env);
+  const cancelled = cancelWaiters(dir, parseTarget(raw, io.cwd), `workit lock cancel ${raw}`);
+  return emit(io, ok({ dir, target: raw, cancelled }), () =>
+    cancelled.length
+      ? cancelled.map(
+          (item) =>
+            `workit: cancelled a queued ${describeHolder(item)}${item.how === "signal" ? " (an older workit: sent SIGTERM)" : item.how === "gone" ? " (already gone)" : ""}`,
+        )
+      : [`workit: no queued waiter matches ${raw}`],
   );
 }
 
@@ -266,6 +354,8 @@ async function heavy(args: string[], io: Io): Promise<number> {
 export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv;
   if (sub === "status") return status(io);
+  if (sub === "reap") return reap(rest, io);
+  if (sub === "cancel") return cancel(rest, io);
   if (sub === "wait") return wait(rest, io);
   if (sub === "run") return runHeavy(rest, io);
   if (sub === "heavy") return heavy(rest, io);

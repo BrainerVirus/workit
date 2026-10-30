@@ -23,8 +23,9 @@
 //   the worktree leaves stale evidence (`modifiedWorktree`).
 // - A heavy check (a named check listed in `resources.heavy`, default
 //   test/build; an ad-hoc one only with --heavy) first takes a machine-wide
-//   lease (core/resources.ts), queueing first come, first served for a free
-//   slot, and on
+//   lease (core/resources.ts), queueing round-robin per session for a free
+//   slot (#608: `workit lock cancel` ends the wait, a stuck holder is shown
+//   and can be reaped), and on
 //   Linux with a delegated user systemd runs in its own `systemd-run --user
 //   --scope` with MemoryMax and CPUQuota. `--json` reports `lease` and `scope`.
 //   `--no-lease` skips both and needs `--reason`, recorded as `noLease`.
@@ -33,7 +34,7 @@
 //   position, elapsed) and waits `--wait <dur>` ("90", "90s", "30m"), else
 //   `resources.wait` (default 30 min); `--no-wait` gives up at once (#508).
 // - Exit code: the command's own (4 on --timeout, on --no-wait with the lease
-//   busy, or a lease wait that timed out, 2 on usage). When the
+//   busy, or a lease wait that timed out or was cancelled, 2 on usage). When the
 //   command passed but the evidence could not be recorded, the recording
 //   error's code (busy 4, unavailable 5) so a green run is never mistaken for
 //   recorded evidence.
@@ -83,8 +84,10 @@ import {
   updateLease,
   type HeldLease,
   type LeaseHolder,
+  type Reclaimed,
   type ResourceSettings,
 } from "@brainervirus/workit-core/src/core/resources";
+import { startHeartbeat } from "@brainervirus/workit-core/src/core/heavy-lease";
 
 const USAGE =
   'workit check <name> [--full] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
@@ -435,7 +438,7 @@ type LeaseReport = {
   waitedMs: number;
   /** The first holder this run waited on; null when the lease was free. */
   holder: LeaseHolder | null;
-  reclaimed: Array<LeaseHolder & { reason: string }>;
+  reclaimed: Reclaimed[];
   /** Set when an outer heavy check already holds the lease for this process tree. */
   inherited: boolean;
 };
@@ -451,9 +454,36 @@ type HeavyRun = {
   env: NodeJS.ProcessEnv;
 };
 
+/** "queued behind test, pid 12, session s1, 28m 12s, /wt" for a gave-up wait (#608). */
+export function queuedBehind(holders: LeaseHolder[], position: number): string {
+  const ahead = position - 1;
+  const waiters = ahead > 0 ? `${ahead} waiter${ahead === 1 ? "" : "s"} ahead` : "";
+  if (!holders.length) return `queued behind ${waiters || "nobody"}`;
+  return `queued behind ${holders.map((holder) => describeHolder(holder)).join("; ")}${waiters ? `, then ${waiters}` : ""}`;
+}
+
+/** A ledger row naming a holder whose slot was freed while it still ran (#608). */
+export function recordReaped(
+  io: Io,
+  holder: LeaseHolder & { reason: string },
+  by: "auto" | "lock reap",
+) {
+  return appendObserved(io.cwd, {
+    type: "lease.reaped",
+    actor: actorFromEnv(io.env),
+    by,
+    pid: holder.pid,
+    session: holder.session,
+    check: holder.check,
+    cwd: holder.cwd,
+    startedAt: holder.startedAt,
+    reason: holder.reason,
+  });
+}
+
 /**
  * Take the machine lease (or reuse an outer run's) and pick the scope for a
- * heavy check. A number is the exit code when the wait timed out.
+ * heavy check. A number is the exit code when the wait timed out or was cancelled.
  */
 async function prepareHeavy(
   io: Io,
@@ -486,6 +516,7 @@ async function prepareHeavy(
     // Where the holder cannot be identified (no /proc), its lease ends with
     // the check's timeout, else after MAX_UNVERIFIED_RUN_MS.
     maxAgeMs: (timeoutMs || MAX_UNVERIFIED_RUN_MS) + 60_000,
+    maxHoldMs: settings.maxHoldMs,
     onStatus: (status) => {
       const slots = `${settings.slots} slot${settings.slots === 1 ? "" : "s"}`;
       const holders = status.holders.map((holder) => describeHolder(holder)).join("; ");
@@ -503,25 +534,44 @@ async function prepareHeavy(
     },
   });
   (waiting as ProgressStep | null)?.end(acquired.ok ? "done" : "failed");
+  if (!acquired.ok && acquired.reason === "cancelled") {
+    emit(
+      io,
+      fail(
+        "busy",
+        `cancelled while queued for the heavy-check lease after ${formatWait(acquired.waitedMs)} (${acquired.by}); the check did not run`,
+        {
+          data: { lease: { cancelled: true, by: acquired.by, waitedMs: acquired.waitedMs } },
+          unblock: `workit check ${label} (run it again when you want it)`,
+        },
+      ),
+    );
+    return 4;
+  }
   if (!acquired.ok && acquired.reason === "timeout") {
     const holders = acquired.holders.map((holder) => describeHolder(holder)).join("; ");
     const waited = formatWait(acquired.waitedMs);
+    const behind = queuedBehind(acquired.holders, acquired.position);
+    const stuck = acquired.holders.some((holder) => holder.stuck);
     emit(
       io,
       fail(
         "busy",
         settings.waitMs === 0
-          ? `the heavy-check lease is busy (--no-wait): held by ${holders || "nobody; waiters ahead"}`
-          : `the heavy-check lease stayed busy for ${waited} (position ${acquired.position} in the queue)`,
+          ? `the heavy-check lease is busy (--no-wait): ${behind}`
+          : `the heavy-check lease stayed busy for ${waited} (position ${acquired.position} in the queue): ${behind}`,
         {
           data: {
             lease: {
               waitedMs: acquired.waitedMs,
               holders: acquired.holders,
               position: acquired.position,
+              queuedBehind: behind,
             },
           },
-          unblock: `wait for ${holders || "the waiters ahead"} to finish (each holder's age is shown; a full test suite takes minutes), then run it again, or queue longer with --wait 30m`,
+          unblock: stuck
+            ? `workit lock reap (a holder looks stuck), then run it again`
+            : `wait for ${holders || "the waiters ahead"} to finish (each holder's age is shown; a full test suite takes minutes), then run it again, or queue longer with --wait 30m`,
         },
       ),
     );
@@ -531,10 +581,12 @@ async function prepareHeavy(
   if (acquired.ok) lease = acquired.lease;
   // Fail open: an unwritable state dir must not stop the check.
   else io.stderr(`workit: running without the heavy-check lease: ${acquired.error}\n`);
-  for (const stale of lease?.reclaimed ?? [])
+  for (const stale of lease?.reclaimed ?? []) {
     io.stderr(
-      `workit: reclaimed a stale heavy-check lease (${stale.reason}): ${describeHolder(stale)}\n`,
+      `workit: reclaimed a ${stale.reaped ? "stuck" : "stale"} heavy-check lease (${stale.reason}): ${describeHolder(stale)}\n`,
     );
+    if (stale.reaped) recordReaped(io, stale, "auto");
+  }
   const leaseReport: LeaseReport | null = lease
     ? {
         slot: lease.slot,
@@ -671,6 +723,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (options.noLease)
     io.stderr(`workit: running without the heavy-check lease: ${options.reason}\n`);
   const lease = heavy?.lease ?? null;
+  const heartbeat = lease ? startHeartbeat(lease) : null;
+  const beat = <T extends unknown[]>(sink: (...args: T) => void) =>
+    heartbeat
+      ? (...args: T) => {
+          heartbeat.touch();
+          sink(...args);
+        }
+      : sink;
   let result: Awaited<ReturnType<typeof runCheckCommand>>;
   let stderrTail = "";
   try {
@@ -688,13 +748,13 @@ export async function run(argv: string[], io: Io): Promise<number> {
         }),
       heavy?.wrapper ?? null,
       options.full
-        ? { onStdout: io.json ? io.stderr : io.stdout, onStderr: io.stderr }
+        ? { onStdout: beat(io.json ? io.stderr : io.stdout), onStderr: beat(io.stderr) }
         : // One bounded writer (below) is the only path from the child to the agent.
           {
-            onStdout: () => {},
-            onStderr: (text) => {
+            onStdout: beat(() => {}),
+            onStderr: beat((text: string) => {
               stderrTail = (stderrTail + text).slice(-STDERR_KEEP_CHARS);
-            },
+            }),
           },
     );
     result = scoped.result;
@@ -705,6 +765,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       heavy.scope = { unit: null, reason: `systemd-run failed: ${scoped.fallback}` };
     }
   } finally {
+    heartbeat?.stop();
     lease?.release();
   }
   // Fail safe: a command that changed the worktree leaves stale evidence.

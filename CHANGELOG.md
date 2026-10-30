@@ -219,6 +219,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A stuck heavy check no longer starves every other agent: `workit lock
+  status` marks a holder `stuck?` past `resources.maxHold` (default 15 min) or
+  after 5 min with no output or CPU, `workit lock reap` frees its slot and
+  records it in the ledger, and a holder silent past 3x the limit is reaped
+  automatically. `workit lock cancel [<pid|session|dir>]` drops queued checks
+  without `kill`; waiters whose starting process ended leave the queue; the
+  queue serves sessions round-robin; and a check that gives up says `queued
+  behind <holder>, <age>` (#608).
 - `workit release notes approve` and `workit grant set|raise` always reach
   the host's permission prompt or a deny: Claude Code (also in auto mode),
   Codex and Cursor get managed rules for them, and `workit upgrade` replaces
