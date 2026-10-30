@@ -103,7 +103,9 @@ const capLine = (line: string): string =>
 /** The brief within MAX_BRIEF_BYTES, writing the whole one to a file when it is longer. */
 function bounded(brief: Brief, cwd: string): string[] {
   const { body, tail } = render(brief);
-  if (bytes([...body, ...tail]) <= MAX_BRIEF_BYTES) return [...body, ...tail];
+  // The branch line, then the note/next step, then the evidence: an agent reads the top.
+  const [first, ...rest] = body;
+  if (bytes([...body, ...tail]) <= MAX_BRIEF_BYTES) return [first, ...tail, ...rest];
   const store = storeRoot(cwd);
   let file: string | null = null;
   if (store.ok)
@@ -111,7 +113,7 @@ function bounded(brief: Brief, cwd: string): string[] {
       const dir = path.join(store.value.root, "handoff");
       fs.mkdirSync(dir, { recursive: true });
       file = path.join(dir, `${(brief.branch ?? "detached").replaceAll(/[^\w.-]+/gu, "-")}.txt`);
-      fs.writeFileSync(file, `${[...body, ...tail].join("\n")}\n`, {
+      fs.writeFileSync(file, `${[first, ...tail, ...rest].join("\n")}\n`, {
         mode: 0o600,
       });
     } catch {
@@ -120,12 +122,12 @@ function bounded(brief: Brief, cwd: string): string[] {
   const pointer = `… cut to ${MAX_BRIEF_BYTES} bytes; full brief: ${file ?? "not written (workit handoff --json has it all)"}`;
   const cappedTail = tail.map(capLine);
   const kept: string[] = [];
-  for (const line of body) {
+  for (const line of rest) {
     const cut = line.length > 400 ? `${line.slice(0, 400)}…` : line;
-    if (bytes([...kept, cut, pointer, ...cappedTail]) > MAX_BRIEF_BYTES) break;
+    if (bytes([first, ...cappedTail, ...kept, cut, pointer]) > MAX_BRIEF_BYTES) break;
     kept.push(cut);
   }
-  return [...kept, pointer, ...cappedTail];
+  return [first, ...cappedTail, ...kept, pointer];
 }
 
 async function resumeBrief(argv: string[], io: Io): Promise<number> {

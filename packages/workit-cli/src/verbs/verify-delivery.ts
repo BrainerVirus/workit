@@ -36,11 +36,11 @@ const ENDPOINTS: Record<string, DeliveryEndpoint> = {
   released: "released",
 };
 
-const render = (report: DeliveryReport): string[] => [
+const render = (report: DeliveryReport, notes = true): string[] => [
   `${report.expect}: ${report.delivered ? "delivered" : "NOT delivered"}${report.branch ? ` (${report.branch}${report.sha ? ` @ ${report.sha.slice(0, 12)}` : ""})` : ""}${report.pr ? ` #${report.pr}` : ""}`,
   ...report.observations.map(
     (entry) =>
-      `  ${entry.ok ? "ok" : "x "} ${entry.kind}: expected ${entry.expected ?? "-"}, observed ${entry.observed ?? "(none)"}${entry.note ? ` — ${entry.note}` : ""}`,
+      `  ${entry.ok ? "ok" : "x "} ${entry.kind}: expected ${entry.expected ?? "-"}, observed ${entry.observed ?? "(none)"}${notes && entry.note ? ` — ${entry.note}` : ""}`,
   ),
 ];
 
@@ -125,8 +125,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   if (report.delivered) return emit(io, ok(report), render);
   const failed = report.observations.filter((entry) => !entry.ok);
-  // Human mode: the observations too, not just the error line.
-  if (!io.json) for (const line of render(report)) io.stdout(`${line}\n`);
+  // Human mode: the observations too; the reason is the error line's, once.
+  if (!io.json) for (const line of render(report, false)) io.stdout(`${line}\n`);
   return emit(
     io,
     fail(

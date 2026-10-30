@@ -497,11 +497,30 @@ function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false)
   for (const row of rows) {
     if (row && typeof row === "object" && "id" in row && "status" in row)
       write(stream, `${row.id} ${row.status}${row.objective ? ` — ${row.objective}` : ""}`);
+    else if (row === null || row === undefined)
+      write(stream, "nothing applies: no policy row matches this request");
     else write(stream, JSON.stringify(row, null, 2));
-    for (const gap of row?.requirements?.filter((item: any) => item.status !== "satisfied") ?? [])
-      write(stream, `policy gap: ${gap.reason}`);
+    // The engine reports requirements as {total, unmet, open: [...]}; older shapes were a list.
+    const reqs = row?.requirements;
+    const open: any[] = Array.isArray(reqs) ? reqs : Array.isArray(reqs?.open) ? reqs.open : [];
+    for (const gap of open.filter((item: any) => item?.status !== "satisfied"))
+      write(stream, `policy gap: ${gapText(gap)}`);
   }
 }
+
+/** One open requirement: its reason, else `<dimension> (before <x>): <status>`. */
+export const gapText = (gap: {
+  reason?: string;
+  dimension?: string;
+  before?: string;
+  status?: string;
+  id?: string;
+}): string => {
+  if (gap.reason) return gap.reason;
+  if (!gap.dimension) return gap.id ?? "unmet";
+  const before = gap.before ? ` (before ${gap.before})` : "";
+  return `${gap.dimension}${before}: ${gap.status ?? "unmet"}`;
+};
 
 const FINDING_LIST_USAGE = "workit finding list [--branch <b>] [--status open|resolved] [--json]";
 

@@ -246,6 +246,10 @@ const verdictLines = (check: CoveredCheck): string[] => {
       `reverify: focused (${check.reverify.files.join(", ")}): re-check only the change since ${check.reverify.since.slice(0, 12)}`,
     );
   for (const warning of check.warnings) lines.push(`warning: ${warning}`);
+  if (!check.accepted.accepted && check.accepted.reasons.includes("no_verdict"))
+    lines.push(
+      `next: workit ledger verdict verified|failed --how "<what you ran>" --branch ${check.branch}  # a non-author session records it`,
+    );
   return lines;
 };
 
@@ -416,7 +420,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
           : data.rows.length
             ? data.rows.map((row) => {
                 const line = summarizeRow(row);
-                return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${line.labels.length ? ` (${line.labels.join(", ")})` : ""}  ${line.summary}`;
+                return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${line.labels.length ? ` (${line.labels.join(", ")})` : ""}${line.summary === line.type ? "" : `  ${line.summary}`}`;
               })
             : "ledger is empty",
     );
