@@ -13,6 +13,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { recordHookNode } from "./hook-node";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -1283,6 +1284,10 @@ export function applySetupPreview(
   }
 
   const res = resolveApply(preview, options);
+  // Hook launchers find a Node >= the floor from this record when the PATH node is older.
+  recordHookNode(
+    options.stateDir ? { ...res.env, WORKFLOW_TOOLKIT_STATE: options.stateDir } : res.env,
+  );
   const entries: SetupResultEntry[] = [];
   // AR-09/AR-13: Apply dispatches ONLY the reviewed mutation union. The adapter
   // source is re-resolved with the apply options (dev/cwd); a resolution

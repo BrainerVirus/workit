@@ -257,10 +257,18 @@ const STUB_CORE_FILES = [
   "role-models.ts",
   // workspaces.ts validates `remotes` patterns, autonomy caps by them (#549).
   "remotes.ts",
+  // doctor's hook_node row resolves the hook Node (also copied into the launchers).
+  "node-resolve.mjs",
 ];
 // doctor's *_permissions rows read Workit's verb list (hooks/delivery-verbs.ts).
 const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts", "hook-runs.ts"];
-const STUB_ADMIN_FILES = ["registration.ts", "doctor.ts", "host-install.ts", "host-permissions.ts"];
+const STUB_ADMIN_FILES = [
+  "registration.ts",
+  "doctor.ts",
+  "host-install.ts",
+  "host-permissions.ts",
+  "hook-node.ts",
+];
 
 function copyCoreSources(stub: string) {
   mkdirSync(path.join(stub, "node_modules", "@brainervirus"), { recursive: true });
@@ -494,7 +502,7 @@ rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor
   mkdirSync(path.join(cursorPkg, "mcp"), { recursive: true });
   mkdirSync(path.join(cursorPkg, "hooks"), { recursive: true });
   // The committed hook manifest and launcher, as the real package ships them.
-  for (const file of ["hooks-cursor.json", "launch.mjs", "launch-runtime.mjs"])
+  for (const file of ["hooks-cursor.json", "launch.mjs", "launch-runtime.mjs", "node-resolve.mjs"])
     cpSync(
       path.join(repoRoot, "packages/workit-cursor/hooks", file),
       path.join(cursorPkg, "hooks", file),

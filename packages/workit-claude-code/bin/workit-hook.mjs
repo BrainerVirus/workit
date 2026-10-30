@@ -17,6 +17,14 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync }
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  HOOK_NODE_REEXEC_ENV,
+  floorMessage,
+  floorOfRange,
+  nodeFloorNotice,
+  reexecOnNode,
+  resolveHookNode,
+} from "./node-resolve.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "src", "run.ts");
@@ -33,30 +41,53 @@ const failOpen = (reason) => {
   process.stdout.write("{}\n");
 };
 
-// A Node below this package's own engines minimum cannot load dist: fail open
-// with one clear line instead of a syntax error. WORKIT_HOOK_NODE_VERSION
-// stands in for process.versions.node (tests). An unreadable minimum never blocks.
-const nodeFloorMessage = () => {
+// A Node below this package's own engines minimum cannot load dist. The launcher
+// then looks for a Node that can (bin/node-resolve.mjs: $WORKIT_NODE, the node
+// `workit setup` recorded, a version-manager scan) and re-runs itself on it with
+// stdin, stdout, stderr and the exit code passed through; WORKIT_HOOK_REEXEC
+// stops a second hop. With none found it fails open with one clear line, and a
+// SessionStart tells the agent once that the hooks are off.
+// WORKIT_HOOK_NODE_VERSION stands in for process.versions.node (tests). An
+// unreadable minimum never blocks.
+const nodeFloor = () => {
   try {
-    const found = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
     const range = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).engines?.node;
-    const min = /^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(range ?? ""));
-    if (!min) return null;
-    const need = [min[1], min[2] ?? 0, min[3] ?? 0].map(Number);
-    const have = String(found).replace(/^v/, "").split(".").map(Number);
-    for (let i = 0; i < 3; i++) {
-      const a = have[i] ?? 0;
-      if (Number.isNaN(a)) return null;
-      if (a !== need[i]) return a < need[i] ? `needs Node ${range}, found ${found}` : null;
-    }
-    return null;
+    const floor = floorOfRange(range);
+    return floor ? { range, floor } : null;
   } catch {
     return null;
   }
 };
-const tooOld = nodeFloorMessage();
-if (tooOld) {
-  failOpen(tooOld);
+const hookNode = nodeFloor();
+const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
+const tooOld = hookNode ? floorMessage(foundNode, hookNode.floor, hookNode.range) : null;
+if (tooOld && hookNode) {
+  if (!process.env[HOOK_NODE_REEXEC_ENV]) {
+    const found = resolveHookNode({ env: process.env, floor: hookNode.floor });
+    const code = found
+      ? reexecOnNode(found.path, fileURLToPath(import.meta.url), process.argv.slice(2), process.env)
+      : null;
+    if (code !== null) process.exit(code);
+  }
+  process.stderr.write(`[workit] Claude Code hook unavailable: ${tooOld}\n`);
+  let early = "";
+  for await (const chunk of process.stdin) early += String(chunk);
+  let event;
+  try {
+    event = JSON.parse(early).hook_event_name;
+  } catch {
+    event = undefined;
+  }
+  process.stdout.write(
+    event === "SessionStart"
+      ? `${JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "SessionStart",
+            additionalContext: nodeFloorNotice(foundNode, hookNode.range),
+          },
+        })}\n`
+      : "{}\n",
+  );
   process.exit(0);
 }
 

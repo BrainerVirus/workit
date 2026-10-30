@@ -129,6 +129,7 @@ test(
     const files = listTarball(byName(packs, CURSOR).tarball);
     expect(files).toContain("hooks/launch.mjs");
     expect(files).toContain("hooks/launch-runtime.mjs");
+    expect(files).toContain("hooks/node-resolve.mjs");
   },
   { timeout: 60_000 },
 );

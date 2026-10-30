@@ -36,7 +36,8 @@
     "commands/",
     "hooks/hooks-cursor.json",
     "hooks/launch.mjs",
-    "hooks/launch-runtime.mjs"
+    "hooks/launch-runtime.mjs",
+    "hooks/node-resolve.mjs"
   ],
   "type": "module",
   "publishConfig": {

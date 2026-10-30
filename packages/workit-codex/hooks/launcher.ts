@@ -13,38 +13,68 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  HOOK_NODE_REEXEC_ENV,
+  floorMessage,
+  floorOfRange,
+  nodeFloorNotice,
+  reexecOnNode,
+  resolveHookNode,
+} from "@brainervirus/workit-core/src/core/node-resolve.mjs";
 
-/** A Node below this package's own engines minimum cannot load the bundle: the
- * message for a fail-open answer, else null. WORKIT_HOOK_NODE_VERSION stands
- * in for process.versions.node (tests); an unreadable minimum never blocks. */
-const nodeFloorMessage = (): string | null => {
+/** A Node below this package's own engines minimum cannot load the bundle. The
+ * launcher then re-runs itself on a Node that can (core/node-resolve.mjs:
+ * $WORKIT_NODE, the node `workit setup` recorded, a version-manager scan), with
+ * stdin, stdout, stderr and the exit code passed through; WORKIT_HOOK_REEXEC
+ * stops a second hop. With none found it fails open (`{}`, exit 0, one stderr
+ * line) and a SessionStart tells the agent once that the hooks are off.
+ * WORKIT_HOOK_NODE_VERSION stands in for process.versions.node (tests); an
+ * unreadable minimum never blocks. */
+const nodeFloor = (): { range: string; floor: number[] } | null => {
   try {
-    const found = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
     const range = (
       JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
         engines?: { node?: string };
       }
     ).engines?.node;
-    const min = /^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(range ?? ""));
-    if (!min) return null;
-    const need = [min[1], min[2] ?? 0, min[3] ?? 0].map(Number);
-    const have = String(found).replace(/^v/, "").split(".").map(Number);
-    for (let i = 0; i < 3; i++) {
-      const a = have[i] ?? 0;
-      if (Number.isNaN(a)) return null;
-      if (a !== need[i]) return a < need[i] ? `needs Node ${range}, found ${found}` : null;
-    }
-    return null;
+    const floor = floorOfRange(range);
+    return floor && range ? { range, floor } : null;
   } catch {
     return null;
   }
 };
 
-const tooOld = nodeFloorMessage();
-if (tooOld) {
+const hookNode = nodeFloor();
+const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
+const tooOld = hookNode ? floorMessage(foundNode, hookNode.floor, hookNode.range) : null;
+if (tooOld && hookNode) {
+  if (!process.env[HOOK_NODE_REEXEC_ENV]) {
+    const found = resolveHookNode({ env: process.env, floor: hookNode.floor });
+    const code = found
+      ? reexecOnNode(found.path, fileURLToPath(import.meta.url), process.argv.slice(2), process.env)
+      : null;
+    if (code !== null) process.exit(code);
+  }
   process.stderr.write(`[workit] Codex hook unavailable: ${tooOld}\n`);
-  process.stdout.write("{}\n");
+  let early = "";
+  for await (const chunk of process.stdin) early += String(chunk);
+  let event: unknown;
+  try {
+    event = (JSON.parse(early) as { hook_event_name?: unknown }).hook_event_name;
+  } catch {
+    event = undefined;
+  }
+  process.stdout.write(
+    event === "SessionStart"
+      ? `${JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "SessionStart",
+            additionalContext: nodeFloorNotice(foundNode, hookNode.range),
+          },
+        })}\n`
+      : "{}\n",
+  );
   process.exit(0);
 }
 

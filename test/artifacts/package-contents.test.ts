@@ -113,6 +113,7 @@ test(
       "hooks/hooks-cursor.json",
       "hooks/launch.mjs",
       "hooks/launch-runtime.mjs",
+      "hooks/node-resolve.mjs",
     ]) {
       expect(entries, required).toContain(required);
     }

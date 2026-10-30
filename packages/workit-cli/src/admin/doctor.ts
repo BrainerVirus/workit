@@ -45,6 +45,7 @@ import {
   isConfigObject,
   readConfigFromDir,
 } from "@brainervirus/workit-core/src/core/config";
+import { hookNodeReport } from "./hook-node";
 import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
 import {
   CHECKS_FILE,
@@ -111,6 +112,7 @@ type DoctorHost = "cli" | "opencode" | "cursor";
 
 type DoctorCheckId =
   | "runtime"
+  | "hook_node"
   | "versions"
   | "codex_pin"
   | "codex_hooks"
@@ -499,6 +501,37 @@ const checkRuntime = (res: Resolved): DoctorCheck => {
     id: "runtime",
     status: bunOk && !pathOld ? "pass" : "info",
     detail: `node ${running} (>=${SUPPORT_MATRIX.node.minimum})${pathNote}, ${bunOk ? `bun ${bunVersion}` : "no bun (needed only for a dev checkout)"}`,
+  };
+};
+
+// Claude Code, Codex and Cursor start their hooks with the PATH `node`. Below the
+// floor the launchers look for a newer one themselves (a recorded node, then a
+// version-manager scan); with none they fail open and every verdict fails with
+// no_session, so this is the one place that says so.
+const checkHookNode = (res: Resolved): DoctorCheck => {
+  const floor = SUPPORT_MATRIX.node.minimum;
+  const report = hookNodeReport(
+    { ...res.env, HOME: res.home, WORKFLOW_TOOLKIT_STATE: res.stateDir },
+    versionOf("node", res.env),
+  );
+  if (report.pathOk)
+    return {
+      id: "hook_node",
+      status: "pass",
+      detail: `hooks run on the PATH node ${report.pathVersion} (>=${floor})`,
+    };
+  const found = report.pathVersion ?? "none on PATH";
+  if (report.resolved)
+    return {
+      id: "hook_node",
+      status: "info",
+      detail: `PATH node is ${found} (below ${floor}); hooks re-run on ${report.resolved.path}${report.resolved.version ? ` (${report.resolved.version})` : ""}, from ${{ env: "WORKIT_NODE", recorded: "the node recorded by workit setup", scan: "a version-manager scan" }[report.resolved.source]}`,
+    };
+  return {
+    id: "hook_node",
+    status: "warn",
+    detail: `PATH node is ${found} (below ${floor}) and no Node ${floor}+ was found: Claude Code, Codex and Cursor hooks are off (they fail open; verdicts fail with no_session)`,
+    fix: `Install Node ${floor} (fnm install ${floor}), or run \`workit setup\` from a Node ${floor} shell so Workit records it, or set WORKIT_NODE to a Node ${floor}+ binary`,
   };
 };
 
@@ -3497,6 +3530,7 @@ const checkHookRuns = (res: Resolved): DoctorCheck => {
 
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
+  checkHookNode,
   checkVersions,
   checkCodexPin,
   checkCodexHooks,
