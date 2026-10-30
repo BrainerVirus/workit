@@ -593,9 +593,11 @@ const acceptedHow = (verdict: {
  */
 type CreateInternal = { releasePr?: boolean };
 
-/** `pr create` for the release PR `workit release finish` opens (no template check). */
+/** `pr create …` for the release PR `workit release finish` opens (no template check). */
 export const runReleasePr = (argv: string[], io: Io): Promise<number> =>
-  create(argv, io, { releasePr: true });
+  argv[0] === "create"
+    ? create(argv.slice(1), io, { releasePr: true })
+    : usage(io, "the release PR runs pr create only", CREATE_USAGE);
 
 async function create(argv: string[], io: Io, internal: CreateInternal = {}): Promise<number> {
   const flags = parseFlags(argv, {
