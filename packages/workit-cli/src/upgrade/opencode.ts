@@ -98,7 +98,7 @@ const parsePluginList = (result: CommandResult): OpencodePlugin => {
 };
 
 /** One reading in HOME's location: the api when it answers, else the text listing. */
-export const readOpencodePlugin = async (run: AsyncRun, home: string): Promise<OpencodePlugin> =>
+const readOpencodePlugin = async (run: AsyncRun, home: string): Promise<OpencodePlugin> =>
   parsePluginApi(await run("opencode", pluginApiArgs(home), { cwd: home })) ??
   parsePluginList(await run("opencode", PLUGIN_LIST, { cwd: home }));
 

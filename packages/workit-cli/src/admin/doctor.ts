@@ -3082,9 +3082,7 @@ const checkClaudeSessionPlugin = (res: Resolved): DoctorCheck => {
       status: "info",
       detail: "could not list running claude processes (ps) — skipping",
     };
-  const stale = running.filter(
-    (proc) => !/\bapp-server\b/.test(proc.args) && startedBefore(proc, latest.at),
-  );
+  const stale = running.filter((proc) => startedBefore(proc, latest.at));
   if (stale.length === 0)
     return {
       id,
