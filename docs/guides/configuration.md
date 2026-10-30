@@ -26,7 +26,13 @@ CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
 
 Planning checks every host at once (registry versions and host inventories,
 each probe bounded by its own timeout), so it takes about as long as the slowest
-host; a host whose probe does not answer is listed as could not check. On a
+host; a host whose probe does not answer is listed as could not check. Codex's
+inventory lists only the plugins of the marketplaces configured on the machine
+(`codex plugin marketplace list --json`, then `codex plugin list --json
+--marketplace <name>` for each, skipping Codex's remote catalog marketplaces),
+because an unscoped `codex plugin list` also fetches OpenAI's remote catalog and
+can take 30 s or more; a Codex without those options falls back to the unscoped
+list. On a
 terminal, upgrade shows a spinner on stderr with the current step (`Checking N
 hosts`, each host, the doctor check) and leaves one
 `✓`, `✗` or `–` line per step. It stays silent with `--json`, `CI=true`, and

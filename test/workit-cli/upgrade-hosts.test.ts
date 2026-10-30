@@ -11,6 +11,7 @@ import {
   runUpgradeCommand,
   type HostProcess,
 } from "@/packages/workit-cli/src/upgrade";
+import { codexInventoryAnswer } from "./codex-fake";
 
 const write = (file: string, value: unknown) => {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -74,20 +75,17 @@ const world = () => {
         status: 0,
         stdout: `npm:@brainervirus/workit-pi\n  ${piRoot}\n`,
       };
-    if (command === "codex" && line === "plugin list --json")
-      return {
-        status: 0,
-        stdout: JSON.stringify({
-          installed: [
-            {
-              name: "workit",
-              marketplaceName: "workflow-toolkit",
-              version: codexVersion,
-              source: { source: "npm", package: "@brainervirus/workit-codex" },
-            },
-          ],
-        }),
-      };
+    if (command === "codex") {
+      const answer = codexInventoryAnswer(args, [
+        {
+          name: "workit",
+          marketplaceName: "workflow-toolkit",
+          version: codexVersion,
+          source: { source: "npm", package: "@brainervirus/workit-codex" },
+        },
+      ]);
+      if (answer) return answer;
+    }
     if (command === "codex" && args[0] === "plugin" && args[1] === "add") {
       if (state.codexFails) return { status: 1, stdout: "" };
       codexVersion = "2.0.0";
@@ -535,27 +533,25 @@ test("Given Codex registered in config.toml with its plugin cache missing, When 
     );
     let added = false;
     const run = (command: string, args: string[]) => {
-      const line = args.join(" ");
-      if (command === "codex" && line === "plugin list --json") {
+      if (command === "codex") {
         w.calls.push([command, ...args]);
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            installed: added
-              ? [
-                  {
-                    name: "workit",
-                    marketplaceName: "workflow-toolkit",
-                    version: "2.0.0",
-                    source: {
-                      source: "npm",
-                      package: "@brainervirus/workit-codex",
-                    },
+        const answer = codexInventoryAnswer(
+          args,
+          added
+            ? [
+                {
+                  name: "workit",
+                  marketplaceName: "workflow-toolkit",
+                  version: "2.0.0",
+                  source: {
+                    source: "npm",
+                    package: "@brainervirus/workit-codex",
                   },
-                ]
-              : [],
-          }),
-        };
+                },
+              ]
+            : [],
+        );
+        if (answer) return answer;
       }
       if (command === "codex" && args[0] === "plugin" && args[1] === "add") added = true;
       return w.deps.run(command, args);
@@ -834,22 +830,181 @@ test("Given every host probe takes 1 s, When upgrade plans, Then the probes run 
   }
 });
 
-test("Given one probe never answers, When upgrade plans, Then that host reads could not check after the probe timeout and the others still plan", async () => {
+const hangs =
+  (line: string, then: (command: string, args: string[]) => any) =>
+  async (command: string, args: string[]) =>
+    command === "codex" && args.join(" ") === line
+      ? new Promise<never>(() => {})
+      : then(command, args);
+
+test("Given an unscoped `codex plugin list` that hangs past the probe timeout while the scoped calls answer, When upgrade plans, Then Codex is planned with no timeout", async () => {
   const w = world();
   try {
-    const runAsync = async (command: string, args: string[]) =>
-      command === "codex" && args.join(" ") === "plugin list --json"
-        ? new Promise<never>(() => {})
-        : w.deps.run(command, args);
+    const runAsync = hangs("plugin list --json", w.deps.run);
     const started = Date.now();
     expect(
-      await runUpgradeCommand(["--preview"], { ...w.deps, runAsync, probeTimeoutMs: 200 }),
+      await runUpgradeCommand(["--preview"], {
+        ...w.deps,
+        runAsync,
+        probeTimeoutMs: 200,
+      }),
     ).toBe(0);
     expect(Date.now() - started).toBeLessThan(2000);
+    expect(w.text()).toMatch(/codex +update 1\.0\.0 -> 2\.0\.0/);
+    expect(w.text()).not.toMatch(/timed out/);
+    expect(w.text()).toMatch(/pi +update 1\.0\.0 -> 2\.0\.0/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given the unscoped `codex plugin list` hangs, When upgrade applies, Then the post-update verification reports Codex updated", async () => {
+  const w = world();
+  try {
+    const runAsync = hangs("plugin list --json", w.deps.run);
+    expect(
+      await runUpgradeCommand(["--hosts=codex", "--yes"], {
+        ...w.deps,
+        runAsync,
+      }),
+    ).toBe(0);
+    expect(w.text()).toMatch(/codex +updated +1\.0\.0 -> 2\.0\.0/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a scoped Codex listing that never answers, When upgrade plans, Then Codex reads could not check after the probe timeout and the others still plan", async () => {
+  const w = world();
+  try {
+    const runAsync = hangs("plugin list --json --marketplace workflow-toolkit", w.deps.run);
+    expect(
+      await runUpgradeCommand(["--preview"], {
+        ...w.deps,
+        runAsync,
+        probeTimeoutMs: 200,
+      }),
+    ).toBe(0);
     expect(w.text()).toMatch(
-      /codex +cannot upgrade: could not check: `codex plugin list --json` timed out/,
+      /codex +cannot upgrade: could not check: `codex plugin list --json --marketplace <configured>` timed out/,
     );
     expect(w.text()).toMatch(/pi +update 1\.0\.0 -> 2\.0\.0/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+/** The Codex-only world with `codex` answering through `answer`; the rest as in `world`. */
+const codexWith = (answer: (args: string[]) => ReturnType<typeof codexInventoryAnswer>) => {
+  const w = world();
+  const run = (command: string, args: string[]) =>
+    (command === "codex" ? answer(args) : undefined) ?? w.deps.run(command, args);
+  return { w, run };
+};
+
+const WORKIT_ROW = {
+  name: "workit",
+  marketplaceName: "workflow-toolkit",
+  version: "1.0.0",
+  source: { source: "npm", package: "@brainervirus/workit-codex" },
+};
+
+test("Given Workit installed from a marketplace other than the default and remote marketplaces configured, When upgrade plans, Then only local marketplaces are listed and the row is found and classified as local", () => {
+  const listed: string[] = [];
+  const { w, run } = codexWith((args) => {
+    listed.push(args.join(" "));
+    return codexInventoryAnswer(
+      args,
+      [
+        {
+          ...WORKIT_ROW,
+          marketplaceName: "my-fork",
+          version: "0.9.0",
+          source: undefined,
+        },
+      ],
+      ["openai-curated-remote", "openai-bundled", "my-fork", "workspace-directory"],
+    );
+  });
+  try {
+    const plan = previewUpgrade(["codex"], { ...w.deps, run });
+    expect(plan.skipped.map((entry) => entry.reason)).toEqual([
+      "local source preserved; change its source explicitly to upgrade",
+    ]);
+    expect(listed).toEqual([
+      "plugin marketplace list --json",
+      "plugin list --json --marketplace openai-bundled",
+      "plugin list --json --marketplace my-fork",
+    ]);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a Codex without `plugin marketplace list --json`, When upgrade plans, Then the unscoped list is the fallback", () => {
+  const { w, run } = codexWith((args) => {
+    const line = args.join(" ");
+    if (line === "plugin marketplace list --json") return { status: 2, stdout: "" };
+    if (line === "plugin list --json")
+      return { status: 0, stdout: JSON.stringify({ installed: [WORKIT_ROW] }) };
+    return undefined;
+  });
+  try {
+    expect(previewUpgrade(["codex"], { ...w.deps, run }).entries).toEqual([
+      expect.objectContaining({ host: "codex", installedVersion: "1.0.0" }),
+    ]);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a Codex listing marketplaces as a bare JSON array, When upgrade plans, Then the scoped listings still run", () => {
+  const { w, run } = codexWith((args) =>
+    args.join(" ") === "plugin marketplace list --json"
+      ? { status: 0, stdout: JSON.stringify([{ name: "workflow-toolkit" }]) }
+      : codexInventoryAnswer(args, [WORKIT_ROW]),
+  );
+  try {
+    expect(previewUpgrade(["codex"], { ...w.deps, run }).entries).toEqual([
+      expect.objectContaining({ host: "codex", installedVersion: "1.0.0" }),
+    ]);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a Codex that rejects `--marketplace`, When upgrade plans, Then the unscoped list is the fallback", () => {
+  const { w, run } = codexWith((args) => {
+    const line = args.join(" ");
+    if (line === "plugin list --json")
+      return { status: 0, stdout: JSON.stringify({ installed: [WORKIT_ROW] }) };
+    if (line.includes("--marketplace")) return { status: 2, stdout: "" };
+    return codexInventoryAnswer(args, []);
+  });
+  try {
+    expect(previewUpgrade(["codex"], { ...w.deps, run }).entries).toEqual([
+      expect.objectContaining({ host: "codex", installedVersion: "1.0.0" }),
+    ]);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given `codex plugin marketplace list --json` that is not JSON, When upgrade plans, Then Codex cannot be checked and the reason says so", () => {
+  const { w, run } = codexWith((args) =>
+    args.join(" ") === "plugin marketplace list --json"
+      ? { status: 0, stdout: "not json" }
+      : undefined,
+  );
+  try {
+    // Codex is installed (its config exists): CI has no real codex on PATH.
+    write(
+      path.join(w.home, ".codex/config.toml"),
+      '[plugins."workit@workflow-toolkit"]\nenabled = true\n',
+    );
+    const plan = previewUpgrade(["codex"], { ...w.deps, run });
+    expect(plan.ok).toBe(false);
+    expect(JSON.stringify(plan)).toContain("Codex plugin inventory");
   } finally {
     w.cleanup();
   }

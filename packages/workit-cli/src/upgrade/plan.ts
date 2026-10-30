@@ -1,5 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, lstatSync, readFileSync } from "node:fs";
 import { opencodeReading, opencodeScratchEnv, probeKey, type ProbeCache } from "./probes";
+import { CODEX_INVENTORY_ARGS, CODEX_INVENTORY_KEY, codexInventorySync } from "./codex-inventory";
 import { OPENCODE_NOT_READY } from "./opencode";
 import path from "node:path";
 import os from "node:os";
@@ -149,7 +150,7 @@ export const sources = (
     }
   });
   guard("codex", () => {
-    const listing = run("codex", ["plugin", "list", "--json"]);
+    const listing = run("codex", CODEX_INVENTORY_ARGS);
     if (listing.timedOut) throw new Error(`could not check: ${listing.stderr}`);
     if (listing.status !== 0) {
       let available = false;
@@ -223,9 +224,14 @@ const opencodeProbe = (deps: UpgradeDeps, args: string[], probes?: ProbeCache): 
 /** The planning runner: a probe's result when `runProbes` already has it, else the command. */
 export const probedRunner = (deps: UpgradeDeps, probes?: ProbeCache): ReturnType<typeof runner> => {
   const run = runner(deps);
-  return probes
-    ? (command, args) => probes.get(probeKey(command, args)) ?? run(command, args)
-    : run;
+  return (command, args) => {
+    const key = probeKey(command, args);
+    // The merged Codex inventory is no command of its own: unprobed, it is several.
+    return (
+      probes?.get(key) ??
+      (key === CODEX_INVENTORY_KEY ? codexInventorySync(run) : run(command, args))
+    );
+  };
 };
 
 export function previewUpgrade(
