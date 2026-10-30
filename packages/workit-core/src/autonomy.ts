@@ -500,6 +500,22 @@ function capAtRemotes(autonomy: Autonomy, cwd: string, target?: LazyTarget): Aut
   return capped;
 }
 
+/**
+ * Whether grants could stop a raw `kind` command: a workspace claims remotes,
+ * or an entry leaves `kind` ungranted (or has grants but no account). False
+ * costs no git call (the shell hook asks first).
+ */
+export const grantsMatter = (kind: GrantKind): boolean =>
+  !grantsOverride() &&
+  loadWorkspacesFrom(grantsDir()).some((entry) => {
+    const autonomy = autonomyOf(entry);
+    return (
+      entry.remotes?.length ||
+      autonomy.grants[kind] === false ||
+      (autonomy.configured.length > 0 && !autonomy.accountConfigured)
+    );
+  });
+
 /** Whether any workspace claims remotes (then targets are worth resolving). */
 export const remotesClaimed = (dir: string = grantsDir()): boolean =>
   loadWorkspacesFrom(dir).some((entry) => entry.remotes?.length);
@@ -532,7 +548,14 @@ export function remoteClaims(
     claiming.flatMap((entry) => {
       const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
       return pattern
-        ? [{ remote: remote.name, url: remote.url, workspace: entry.name, pattern }]
+        ? [
+            {
+              remote: remote.name,
+              url: remote.url,
+              workspace: entry.name,
+              pattern,
+            },
+          ]
         : [];
     }),
   );
@@ -557,7 +580,10 @@ export function remoteFindings(
   }
   const claims = remoteClaims(cwd, dir);
   if (claims instanceof Error)
-    return { warnings: [`${claims.message}: grants here are capped at nothing`], notes: [] };
+    return {
+      warnings: [`${claims.message}: grants here are capped at nothing`],
+      notes: [],
+    };
   const warnings = claims
     .filter((claim) => claim.workspace !== own?.name)
     .map(
@@ -651,6 +677,41 @@ export function requireGrant(
     source: configured ? autonomy.source : "default",
     allowUnverified: kind === "merge" && value === true,
     workspace,
+  };
+}
+
+/**
+ * Why a raw shell command (the pre-tool hook: `git push`, `gh pr create`, a
+ * release) may not run, or null. Only what a workspace governs is judged: a
+ * workspace claims remotes, or some entry could leave `kind` ungranted
+ * (otherwise no git runs). A folder outside every workspace, with nothing
+ * claimed, keeps today's behaviour. A target that cannot be resolved denies.
+ */
+export function rawGrantDenial(
+  cwd: string,
+  kind: GrantKind,
+  target?: LazyTarget,
+): { error: string; unblock: string } | null {
+  const claimed = remotesClaimed();
+  if (!grantsMatter(kind)) return null;
+  let autonomy: Autonomy;
+  try {
+    autonomy = resolveAutonomy(cwd, target);
+  } catch (error) {
+    return claimed
+      ? {
+          error: String(error),
+          unblock: "fix ~/.config/workit/workspaces.json",
+        }
+      : null;
+  }
+  const { workspace, note } = autonomy;
+  const capped = autonomy.unblocks?.[kind];
+  // No entry and no cap: the folder is outside every workspace.
+  if (autonomy.grants[kind] !== false || (workspace === null && !capped)) return null;
+  return {
+    error: `${kind} is not granted for ${workspace ? `workspace ${workspace}` : "this checkout"}${note ? ` (${note})` : ""}`,
+    unblock: capped ?? grantHint(workspace, kind),
   };
 }
 

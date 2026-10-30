@@ -27,7 +27,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { releaseBranch, resolveBranchPolicyFor, validateBranchNameFor } from "../core/branch";
+import { grantsMatter, rawGrantDenial, type GrantKind } from "../autonomy";
 import { releaseTagPrefixOf } from "../core/branch-policy";
+import { pushTarget, remoteKey, type LazyTarget } from "../core/remotes";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
 import { appendHookObserved, readLedger } from "../ledger";
 import { resolveStore, resolveTaskKey, type StoreLocation } from "../store/paths";
@@ -67,7 +69,9 @@ const EVALS = new Set(["eval", "iex", "invoke-expression"]);
  * a value, and how many operands come before the command (`timeout 30`).
  */
 const WRAPPERS: Record<string, { values: string; operands?: number }> = {
-  sudo: { values: "-u -g -h -p -C -D -R -T -r -t -U --user --group --host --prompt --chdir" },
+  sudo: {
+    values: "-u -g -h -p -C -D -R -T -r -t -U --user --group --host --prompt --chdir",
+  },
   doas: { values: "-u -C" },
   command: { values: "" },
   builtin: { values: "" },
@@ -112,7 +116,9 @@ const GIT_VALUE_OPTIONS = new Set([
 /** git global options that change which configuration it reads. */
 const GIT_CONFIG_OPTIONS = new Set(["-c", "--config-env", "--git-dir"]);
 /** Environment that changes which configuration git reads; nothing that runs code. */
-const GIT_CONFIG_ENV = /^GIT_(?:CONFIG\w*|DIR|COMMON_DIR|WORK_TREE)$/;
+// Also what decides where a push or a forge call goes (the grant target).
+const GIT_CONFIG_ENV =
+  /^(?:GIT_(?:CONFIG\w*|DIR|COMMON_DIR|WORK_TREE|SSH|SSH_COMMAND|PROXY_COMMAND|EXEC_PATH)|GH_HOST|GH_REPO|GITLAB_HOST|GL_HOST)$/;
 const ASSIGNMENT = /^([A-Za-z_]\w*)=([\s\S]*)$/;
 /** Nested scripts (`bash -c`, `eval`, aliases) are followed this deep. */
 const MAX_DEPTH = 4;
@@ -655,6 +661,7 @@ function walk(
         tool: name,
         dir,
         args: words.slice(1),
+        ...(Object.keys({ ...exported, ...env }).length ? { env: { ...exported, ...env } } : {}),
         ...(stdin === undefined ? {} : { stdin }),
       });
     else if (name === "git") {
@@ -836,7 +843,10 @@ const WORKIT_GLOBAL = /^--(?:cwd|session|token|as)(=|$)/;
  * parseGlobals, `--cwd` counts anywhere before `--`, so `workit <verb> --cwd
  * <dir> …` (the form host allow rules match) runs in `<dir>` here too.
  */
-export function skipWorkitGlobals(args: readonly string[]): { rest: string[]; cwd: string | null } {
+export function skipWorkitGlobals(args: readonly string[]): {
+  rest: string[];
+  cwd: string | null;
+} {
   let cwd: string | null = null;
   let at = 0;
   for (; at < args.length; at++) {
@@ -891,9 +901,20 @@ export type RawAction =
       globs?: Array<{ source: string; destination: string }>;
       /** `:` (or push.default=matching): every branch both sides have. */
       matching?: true;
+      /** `--follow-tags`: annotated tags may go along. */
+      followTags?: true;
+      /** `--receive-pack`/`--exec`: a command, not the URL, decides what is reached. */
+      transport?: true;
     }
   | { kind: "merge"; forge: "gh" | "glab"; via?: "api" }
-  | { kind: "pr-create"; forge: "gh" | "glab" }
+  | { kind: "pr-create"; forge: "gh" | "glab"; repo?: string }
+  /** `gh pr edit|ready`, `glab mr update` (pr), `gh release create|edit|delete`, `glab release create`. */
+  | {
+      kind: "forge";
+      forge: "gh" | "glab";
+      grant: "pr" | "release";
+      repo?: string;
+    }
   | { kind: "pr-read"; forge: "gh" | "glab" };
 
 /** git push options that take the next word as their value. */
@@ -956,6 +977,8 @@ export const pushAction = (args: string[]): RawAction | null => {
   let deletes = false;
   let allBranches = false;
   let mirror = false;
+  let followTags = false;
+  let transport = false;
   let remote: string | null = null;
   // The last of --dry-run (or an abbreviation, or -n) and --no-dry-run wins.
   let dryRun = false;
@@ -971,7 +994,11 @@ export const pushAction = (args: string[]): RawAction | null => {
     else if (/^--no-dr(?:y(?:-(?:r(?:un?)?)?)?)?$/.test(arg)) dryRun = false;
     else if (arg === "--repo") remote = args[++index] ?? null;
     else if (arg.startsWith("--repo=")) remote = arg.slice("--repo=".length);
-    else if (PUSH_VALUE_OPTIONS.has(arg)) index++;
+    else if (/^--(?:receive-pack|exec)(?:=|$)/.test(arg)) {
+      transport = true;
+      if (!arg.includes("=")) index++;
+    } else if (PUSH_VALUE_OPTIONS.has(arg)) index++;
+    else if (arg === "--follow-tags") followTags = true;
     else if (arg === "--force" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(arg)) force = true;
     else if (arg.startsWith("--force-with-lease") || arg === "--force-if-includes") lease = true;
     else if (arg === "--delete" || arg === "-d") deletes = true;
@@ -1002,6 +1029,8 @@ export const pushAction = (args: string[]): RawAction | null => {
     ...(implicit ? { implicit: true as const } : {}),
     ...(parsed.globs.length ? { globs: parsed.globs } : {}),
     ...(parsed.matching ? { matching: true as const } : {}),
+    ...(followTags ? { followTags: true as const } : {}),
+    ...(transport ? { transport: true as const } : {}),
   };
 };
 
@@ -1166,17 +1195,27 @@ export function rawAction(invocation: RawInvocation): RawAction | null {
   }
   const forge = invocation.tool;
   const noun = forge === "gh" ? "pr" : "mr";
-  if (first !== noun) return null;
+  if (first !== noun && first !== "release") return null;
   // The verb stands after any options (`gh pr -R o/r merge 1`).
   const values = VALUE_OPTIONS[forge];
   let second: string | undefined;
-  for (let index = 1; index < args.length && second === undefined; index++) {
+  let repo: string | undefined;
+  for (let index = 1; index < args.length; index++) {
     const arg = args[index];
-    if (values.has(arg)) index++;
-    else if (!arg.startsWith("-")) second = arg;
+    if (arg === "-R" || arg === "--repo") repo = args[++index];
+    else if (arg.startsWith("--repo=")) repo = arg.slice(7);
+    else if (values.has(arg)) index++;
+    else if (!arg.startsWith("-")) second ??= arg;
   }
+  const named = repo === undefined ? {} : { repo };
+  if (first === "release")
+    return (forge === "gh" ? ["create", "edit", "delete"] : ["create"]).includes(second ?? "")
+      ? { kind: "forge", forge, grant: "release", ...named }
+      : null;
   if (second === "merge") return { kind: "merge", forge };
-  if (second === "create") return { kind: "pr-create", forge };
+  if (second === "create") return { kind: "pr-create", forge, ...named };
+  if ((forge === "gh" ? ["edit", "ready"] : ["update"]).includes(second ?? ""))
+    return { kind: "forge", forge, grant: "pr", ...named };
   if (["view", "checks", "status", "ci", "list"].includes(second ?? ""))
     return { kind: "pr-read", forge };
   return null;
@@ -1262,7 +1301,12 @@ const gitConfig = (dir: string, invocation: RawInvocation, cache: ConfigCache): 
     encoding: "utf8",
     timeout: 3_000,
     windowsHide: true,
-    env: { ...process.env, ...invocation.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
+    env: {
+      ...process.env,
+      ...invocation.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_OPTIONAL_LOCKS: "0",
+    },
   });
   for (const entry of (listed.status === 0 ? listed.stdout : "").split("\0")) {
     if (!entry) continue;
@@ -1524,10 +1568,18 @@ const refusal = (action: RawAction, branch: string | null, dir?: string): string
 type PushAction = Extract<RawAction, { kind: "push" }>;
 
 /** The local branches and tags, and the remote's branches as last fetched: one git call. */
-type RefFacts = { heads: Set<string>; tags: Set<string>; remoteHeads: Set<string> };
+type RefFacts = {
+  heads: Set<string>;
+  tags: Set<string>;
+  remoteHeads: Set<string>;
+};
 
 const refFacts = (repo: Repo, remote: string): RefFacts => {
-  const facts: RefFacts = { heads: new Set(), tags: new Set(), remoteHeads: new Set() };
+  const facts: RefFacts = {
+    heads: new Set(),
+    tags: new Set(),
+    remoteHeads: new Set(),
+  };
   const listed = spawnSync(
     "git",
     ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/tags", `refs/remotes/${remote}`],
@@ -1710,6 +1762,7 @@ const nudgeFor = (action: RawAction, host: HookInput["host"], session: string): 
       return `workit: prefer ${quote("workit pr create --fill")} (or --title/--body): it records the PR the merge gate checks.`;
     // Read-only: raw is fine (the contract says so once).
     case "pr-read":
+    case "forge":
     case "merge":
       return null;
   }
@@ -1740,38 +1793,48 @@ const pushRefusal = (action: PushAction, repo: Repo, config: GitConfig): string 
   );
 };
 
-type Located = { action: RawAction; repo: Repo; invocation: RawInvocation };
+type Located = {
+  action: RawAction;
+  repo: Repo;
+  invocation: RawInvocation;
+  workit: boolean;
+};
 
 /**
  * Raw invocations with a meaning, each with its Workit repository. A git
  * subcommand that is not one of git's own is resolved as an alias first
- * (inside a Workit workspace only: that costs one config read).
+ * (inside a Workit workspace only: that costs one config read). `all` keeps
+ * those in any repository too (`workit: false`): grants govern them.
  */
 const actionsIn = (
   cwd: string,
   command: string,
   dialect: ShellDialect,
   cache: ConfigCache = new Map(),
+  all = false,
 ): Located[] => {
   const out: Located[] = [];
-  const repos = new Map<string, Repo | null>();
-  const repoFor = (relative: string | null): Repo | null => {
+  const repos = new Map<string, { repo: Repo; workit: boolean } | null>();
+  const repoFor = (relative: string | null) => {
     const dir = path.resolve(cwd, relative ?? ".");
     if (!repos.has(dir)) {
       const repo = repoAt(dir);
-      repos.set(dir, repo && isWorkitWorkspace(repo) ? repo : null);
+      const workit = repo !== null && isWorkitWorkspace(repo);
+      repos.set(dir, repo && (workit || all) ? { repo, workit } : null);
     }
     return repos.get(dir) ?? null;
   };
   for (const raw of rawInvocations(command, dialect)) {
     if (raw.dir === undefined) continue;
     const known = raw.tool !== "git" || GIT_COMMANDS.has(raw.args[0] ?? "");
-    if (!known && !repoFor(raw.dir)) continue;
+    // An alias outside a Workit workspace is read only when a grant could stop a push.
+    const found = known ? null : repoFor(raw.dir);
+    if (!known && !(found?.workit || (found && grantsMatter("push")))) continue;
     for (const invocation of known ? [raw] : expandGitAliases(cwd, raw, cache)) {
       if (invocation.dir === undefined) continue;
       const action = rawAction(invocation);
-      const repo = action ? repoFor(invocation.dir) : null;
-      if (action && repo) out.push({ action, repo, invocation });
+      const at = action ? repoFor(invocation.dir) : null;
+      if (action && at) out.push({ action, invocation, ...at });
     }
   }
   return out;
@@ -1850,7 +1913,14 @@ export function rawGitPre(
       (raw) => raw.redirect && rawAction(raw)?.kind === "push",
     );
     if (blind?.redirect) return deny(blindRedirect(blind.redirect));
-    for (const { action, repo, invocation } of actionsIn(input.cwd, command, dialect, cache)) {
+    const located = actionsIn(input.cwd, command, dialect, cache, true);
+    // Grants first (#589): a resolved "not granted" denies; only a crash fails open.
+    for (const { action, repo, invocation } of located) {
+      const refused = grantRefusal(action, repo, invocation, cache);
+      if (refused) return deny(refused);
+    }
+    for (const { action, repo, invocation, workit } of located) {
+      if (!workit) continue;
       store ??= repo.location.dir;
       if (action.kind === "merge") return deny(refusal(action, null));
       if (action.kind === "push") {
@@ -1869,7 +1939,96 @@ export function rawGitPre(
   }
 }
 
-const deny = (reason: string): HookDecision => ({ kind: "deny", reason, unblock: null });
+/** The forge repository `-R` names (gh: `[HOST/]OWNER/REPO`; glab: a URL only), else an Error. */
+const forgeRepo = (gh: boolean, repo = "", env: Record<string, string>) => {
+  const host = gh ? (env.GH_HOST ?? process.env.GH_HOST ?? "github.com") : "";
+  const url = /:\/\/|@/.test(repo)
+    ? repo
+    : gh && repo
+      ? `https://${repo.split("/").length > 2 ? "" : `${host}/`}${repo}`
+      : "";
+  const key = env.GH_REPO || env.GITLAB_HOST ? null : remoteKey(url);
+  return key ? { remotes: [{ name: "forge", url, key }] } : Error("its repository is unknown");
+};
+
+/**
+ * Why a raw command the grants govern does not run (#589), or null: a push
+ * of branches (push) or tags (release), a PR/MR create or edit (pr), a
+ * forge release (release), a merge (merge). Local commands are never judged.
+ */
+const grantRefusal = (
+  action: RawAction,
+  repo: Repo,
+  invocation: RawInvocation,
+  cache: ConfigCache,
+): string | null => {
+  const env = invocation.env ?? {};
+  const kinds: GrantKind[] = [];
+  let target: LazyTarget = () =>
+    forgeRepo(
+      action.kind !== "commit" && "forge" in action && action.forge === "gh",
+      "repo" in action ? action.repo : "",
+      env,
+    );
+  if (action.kind === "push") {
+    target = () => {
+      const config = gitConfig(repo.dir, invocation, cache);
+      const remote = action.remote ?? pushRemoteOf(config, repo.branch) ?? "origin";
+      if (action.transport || /[$`]/.test(remote))
+        return Error("--receive-pack or the shell decides it");
+      const replay = (invocation.config ?? []).filter(
+        (item, at, all) => !item.startsWith("--git-dir") && all[at - 1] !== "--git-dir",
+      );
+      return pushTarget(
+        repo.dir,
+        config.has(`remote.${remote}.url`) ? remote : rewrittenUrl(remote, config),
+        { config: replay, env },
+      );
+    };
+    if (
+      action.targets.some((name) => !name || !localTag(repo, name)) ||
+      action.allBranches ||
+      action.mirror ||
+      action.globs ||
+      action.matching
+    )
+      kinds.push("push");
+    if (
+      action.tags ||
+      action.allTags ||
+      action.mirror ||
+      action.targets.some((name) => name && localTag(repo, name))
+    )
+      kinds.push("release");
+  } else if (action.kind === "merge") kinds.push("merge");
+  else if (action.kind === "pr-create") kinds.push("pr");
+  else if (action.kind === "forge") kinds.push(action.grant);
+  for (const kind of kinds) {
+    const denied = rawGrantDenial(repo.dir, kind, target);
+    if (denied)
+      return `${action.kind === "merge" ? `${refusal(action, null)} ` : ""}workit: raw ${quote(invocation.tool)} here needs the ${kind} grant: ${denied.error}. ${denied.unblock}; meanwhile ${quote(kind === "push" ? "workit git push" : kind === "release" ? "workit git push --release" : `workit pr ${kind === "pr" ? "create" : kind}`)} says what is allowed.`;
+  }
+  return null;
+};
+
+/** A local tag `name` (`git push origin v1.0` pushes the tag): read from the git dir. */
+const localTag = (repo: Repo, name: string): boolean => {
+  const common = path.dirname(repo.location.dir);
+  try {
+    return (
+      fs.existsSync(path.join(common, "refs/tags", name)) ||
+      fs.readFileSync(path.join(common, "packed-refs"), "utf8").includes(` refs/tags/${name}\n`)
+    );
+  } catch {
+    return false;
+  }
+};
+
+const deny = (reason: string): HookDecision => ({
+  kind: "deny",
+  reason,
+  unblock: null,
+});
 
 const blindRedirect = (from: string): string =>
   `workit: ${quote(from)} sends this push to a repository the shell hook cannot read, so it does not run. ${from.startsWith("-") ? `Drop ${quote(from)}` : `Unset ${from}`}, or cd into the repository and push with ${quote("workit git push")}.`;
@@ -1929,7 +2088,12 @@ export function noteRawCommit(input: HookInput, command: string, key: string): v
   }
 }
 
-type HeadCommit = { sha: string; committed: number; subject: string; trailer: string | null };
+type HeadCommit = {
+  sha: string;
+  committed: number;
+  subject: string;
+  trailer: string | null;
+};
 
 const headCommit = (dir: string): HeadCommit | null => {
   const run = spawnSync(
@@ -1944,14 +2108,24 @@ const headCommit = (dir: string): HeadCommit | null => {
       encoding: "utf8",
       timeout: 5_000,
       windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_OPTIONAL_LOCKS: "0",
+        LC_ALL: "C",
+      },
     },
   );
   const [sha, committed, subject = "", trailer = ""] = (
     run.status === 0 ? run.stdout.trim() : ""
   ).split("\x1f");
   return sha && /^[0-9a-f]{40,64}$/.test(sha)
-    ? { sha, committed: Number(committed), subject, trailer: trailer.trim() || null }
+    ? {
+        sha,
+        committed: Number(committed),
+        subject,
+        trailer: trailer.trim() || null,
+      }
     : null;
 };
 

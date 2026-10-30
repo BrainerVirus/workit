@@ -33,7 +33,9 @@ const accountHome = (): string => {
  * account's own ~/.ssh/config (ssh reads the passwd home, never $HOME). Tests
  * swap `read` in-process.
  */
-export const sshSeam: { read: () => SshConfig } = { read: () => readSshConfig(accountHome()) };
+export const sshSeam: { read: () => SshConfig } = {
+  read: () => readSshConfig(accountHome()),
+};
 
 /**
  * `host/owner/repo`, lowercased, or null when the path is not a plain forge
@@ -67,8 +69,25 @@ const canonical = (real: string): string => {
   return `file:${caseless ? slashed.toLowerCase() : slashed}`;
 };
 
-/** The real path of a git directory at `at` (a repository, or a `gitdir:` file), else null. */
-const gitDirAt = (at: string): string | null => {
+const isRepoDir = (dir: string): boolean =>
+  ["HEAD", "objects", "refs"].every((name) => {
+    try {
+      lstatSync(`${dir}/${name}`);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+/**
+ * The real path of the git directory at `at` (a repository, or a `gitdir:`
+ * file), keyed as git reads it: a `commondir` file (read relative to the git
+ * directory, as git does) names the repository whose refs and objects a push
+ * writes (#549 N3), and refs, objects, config or packed-refs that resolve
+ * into another repository make it that repository (the #552 rule, N2); null
+ * when it is none, or borrows from something that is not one repository.
+ */
+const gitDirAt = (at: string, depth = 0): string | null => {
   let real: string;
   try {
     // libc realpath: symlinks are followed before `..`, as the kernel does.
@@ -76,22 +95,40 @@ const gitDirAt = (at: string): string | null => {
   } catch {
     return null;
   }
+  if (depth > 8) return null;
   try {
     if (statSync(real).isFile()) {
       const pointer = /^gitdir:\s*(.+?)\s*$/mu.exec(readFileSync(real, "utf8"))?.[1];
       if (!pointer) return null;
       const target = path.isAbsolute(pointer) ? pointer : `${path.dirname(real)}/${pointer}`;
-      return gitDirAt(target);
+      return gitDirAt(target, depth + 1);
     }
-    const isRepo = ["HEAD", "objects", "refs"].every((name) => {
+    let common: string | undefined;
+    try {
+      common = readFileSync(`${real}/commondir`, "utf8").trim();
+    } catch {}
+    if (common !== undefined) {
+      lstatSync(`${real}/HEAD`);
+      return gitDirAt(path.isAbsolute(common) ? common : `${real}/${common}`, depth + 1);
+    }
+    if (!isRepoDir(real)) return null;
+    let lender: string | null = null;
+    for (const name of ["refs", "objects", "config", "packed-refs"]) {
+      const item = `${real}/${name}`;
       try {
-        lstatSync(`${real}/${name}`);
-        return true;
+        lstatSync(item);
       } catch {
-        return false;
+        continue;
       }
-    });
-    return isRepo ? real : null;
+      const resolved = realpathSync.native(item);
+      const rel = path.relative(real, resolved);
+      if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) continue;
+      const owner =
+        path.basename(resolved) === name ? gitDirAt(path.dirname(resolved), depth + 1) : null;
+      if (owner === null || (lender !== null && lender !== owner)) return null;
+      lender = owner;
+    }
+    return lender ?? real;
   } catch {
     return null;
   }
@@ -287,15 +324,19 @@ const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]
 const transportOverride = (
   git: (args: string[]) => ReturnType<typeof spawnSync>,
   remote: string,
+  vars: NodeJS.ProcessEnv,
 ): string | null => {
-  const env = TRANSPORT_ENV.find((name) => process.env[name]);
+  const env = TRANSPORT_ENV.find((name) => vars[name]);
   if (env) return env;
   // GIT_EXEC_PATH can swap the git-receive-pack a local push runs. git sets it
   // for its own hooks, so only a value other than git's own exec path counts.
-  const execPath = process.env.GIT_EXEC_PATH;
+  const execPath = vars.GIT_EXEC_PATH;
   if (execPath) {
-    const { GIT_EXEC_PATH: _set, ...rest } = process.env;
-    const own = spawnSync("git", ["--exec-path"], { env: rest, encoding: "utf8" });
+    const { GIT_EXEC_PATH: _set, ...rest } = vars;
+    const own = spawnSync("git", ["--exec-path"], {
+      env: rest,
+      encoding: "utf8",
+    });
     if (own.status !== 0 || realOrSelf(own.stdout.trim()) !== realOrSelf(execPath))
       return "GIT_EXEC_PATH";
   }
@@ -321,22 +362,42 @@ const transportOverride = (
   return null;
 };
 
-/** Every push URL of `remote` (`pushurl` and `pushInsteadOf` applied). */
-export const pushTarget = (cwd: string, remote: string): GrantTarget => {
-  const env = { ...process.env };
+/**
+ * Every push URL of `remote` (`pushurl` and `pushInsteadOf` applied), or the
+ * URL a push names in its place, already rewritten. `replay` carries a raw command's own
+ * `-c` options and environment (the shell hook), so they count too.
+ */
+export const pushTarget = (
+  cwd: string,
+  remote: string,
+  replay: { config?: string[]; env?: Record<string, string> } = {},
+): GrantTarget => {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...replay.env };
   for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"])
     delete env[name];
   if (!remote || remote.startsWith("-"))
     return Error(`push remote ${JSON.stringify(remote)} cannot be resolved`);
   const git = (args: string[]) =>
-    spawnSync("git", args, { cwd, env, encoding: "utf8", timeout: 5000, windowsHide: true });
-  const override = transportOverride(git, remote);
+    spawnSync("git", [...(replay.config ?? []), ...args], {
+      cwd,
+      env,
+      encoding: "utf8",
+      timeout: 5000,
+      windowsHide: true,
+    });
+  const override = transportOverride(git, remote, env);
   if (override)
     return Error(
       `${override} decides what the push to ${remote} reaches, not its URL, so its target is unknown`,
     );
   const run = git(["remote", "get-url", "--push", "--all", remote]);
-  const urls = run.status === 0 ? run.stdout.split(/\r?\n/u).map((url) => url.trim()) : [];
+  // No remote by that name: git pushes to it as a URL (the caller applies insteadOf).
+  const urls =
+    run.status === 0
+      ? run.stdout.split(/\r?\n/u).map((url) => url.trim())
+      : run.status === 2
+        ? [remote]
+        : [];
   if (!urls.some(Boolean))
     return Error(`git could not resolve the push URLs of remote ${remote} in ${cwd}`);
   let top: string | undefined;
