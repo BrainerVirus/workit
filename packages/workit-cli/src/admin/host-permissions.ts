@@ -14,7 +14,8 @@
 // cannot exclude `workit check -- <cmd>`, so the names are listed and the CLI
 // refuses `workit check <name> -- <cmd>`) and `workit lock status|wait`.
 // Never: `workit check -- …`, `workit lock run -- …`, `workit grant …`, or any
-// verb outside WORKIT_ALLOWED_VERBS.
+// verb outside WORKIT_ALLOWED_VERBS. The user-only calls (WORKIT_USER_ONLY,
+// #615) are asked (Claude Code, Codex) or denied (Cursor) on top of that.
 //
 // The merges are pure (input record in, record and added entries out), the
 // entries Workit added are recorded in its state dir so uninstall removes
@@ -33,7 +34,10 @@ import os from "node:os";
 import path from "node:path";
 import { stateDir as workitStateDir } from "@brainervirus/workit-core/src/core/heavy-words";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
-import { WORKIT_ALLOWED_VERBS } from "@brainervirus/workit-core/src/hooks/delivery-verbs";
+import {
+  WORKIT_ALLOWED_VERBS,
+  WORKIT_USER_ONLY,
+} from "@brainervirus/workit-core/src/hooks/delivery-verbs";
 import { claudeConfigDir } from "./host-install";
 
 export type PermissionHost = "claude-code" | "codex" | "cursor";
@@ -56,14 +60,23 @@ export const CLAUDE_ALLOW: readonly string[] = [
   ...LEASE_PREFIXES.map((rest) => `Bash(workit ${rest.join(" ")} *)`),
   "Bash(workit --version)",
 ];
-// Ask beats allow, so a bypass flag still reaches the user (also in auto mode).
+// Ask beats allow, so a bypass flag or a user-only call (WORKIT_USER_ONLY, #615)
+// still reaches the user (also in auto mode). The `workit * …` form covers a
+// `--cwd <dir>` before the verb.
 export const CLAUDE_ASK: readonly string[] = [
   "Bash(workit * --unverified*)",
   "Bash(workit * --overwrite-unintegrated*)",
+  ...WORKIT_USER_ONLY.flatMap((words) => [
+    `Bash(workit ${words.join(" ")}*)`,
+    `Bash(workit * ${words.join(" ")}*)`,
+  ]),
 ];
 const AUTO_MODE_ENVIRONMENT =
   "Org-specific CLIs: workit — the user's delivery CLI. Its push, pr merge, release and PR-thread verbs run only under per-workspace grants and non-author verdicts the user configured in ~/.config/workit, outside the agent's reach.";
 const AUTO_MODE_ALLOW =
+  "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `workit release notes approve`, `workit grant set|raise`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
+/** The auto-mode line before #615; a refresh replaces it and uninstall still removes it. */
+const AUTO_MODE_ALLOW_V1 =
   "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `--unverified`, `--admin` or any bypass flag.";
 const DEFAULTS = "$defaults";
 
@@ -72,6 +85,10 @@ export const CURSOR_ALLOW: readonly string[] = [
   ...LEASE_PREFIXES.map((rest) => `Shell(workit ${rest.join(" ")})`),
   "Shell(workit --version)",
 ];
+/** Cursor has no prompt rule, so the user-only calls are denied (the user runs them in a terminal). */
+export const CURSOR_DENY: readonly string[] = WORKIT_USER_ONLY.map(
+  (words) => `Shell(workit ${words.join(" ")})`,
+);
 
 const CODEX_HEADER =
   "# Workit-owned: written by `workit setup`, removed by `workit uninstall`.\n" +
@@ -92,7 +109,11 @@ export const codexRulesText = (): string => {
       `prefix_rule(\n    pattern = ${JSON.stringify(["workit", ...rest])},\n    decision = "allow",\n    justification = "Workit heavy-check lease: runs the repo's configured check, or reads the lease",\n)\n`,
   );
   const grant = `prefix_rule(\n    pattern = ["workit", "grant"],\n    decision = "prompt",\n    justification = "Changing Workit grants needs the user",\n)\n`;
-  return `${CODEX_HEADER}\n${[...rules, ...lease, grant].join("\n")}`;
+  const userOnly = WORKIT_USER_ONLY.map(
+    (words) =>
+      `prefix_rule(\n    pattern = ${JSON.stringify(["workit", ...words])},\n    decision = "prompt",\n    justification = "Only the user runs this Workit call (approval or grant change)",\n)\n`,
+  );
+  return `${CODEX_HEADER}\n${[...rules, ...lease, grant, ...userOnly].join("\n")}`;
 };
 
 // ---------------------------------------------------------------------------
@@ -172,6 +193,16 @@ const appendList = (
 
 type HostMerge = { config: Json; owned: OwnedEntries; error?: string };
 
+/** Remove the entries a past Workit version offered that this one replaced (#615). */
+const dropPrior = (config: Json, host: "claude-code" | "cursor"): void => {
+  for (const [dotted, prior] of Object.entries(PRIOR_ENTRIES[host])) {
+    const at = valueAt(config, dotted);
+    const list = at?.parent[at.key];
+    if (at && Array.isArray(list))
+      at.parent[at.key] = list.filter((entry) => !prior.includes(entry as string));
+  }
+};
+
 /**
  * Claude Code user settings with Workit's block. `shell` (a bash path) is set
  * as `env.CLAUDE_CODE_SHELL` only when no value is set; `skip` leaves out the
@@ -186,6 +217,7 @@ function mergeClaudeSettings(settings: Json, shell: string | null, skip: Skip = 
     appendList(config, "autoMode.environment", [AUTO_MODE_ENVIRONMENT], owned, [DEFAULTS], skip) ??
     appendList(config, "autoMode.allow", [AUTO_MODE_ALLOW], owned, [DEFAULTS], skip);
   if (error) return { config: settings, owned: emptyOwned(), error };
+  dropPrior(config, "claude-code");
   if (shell) {
     const env = objectAt(config, ["env"], owned);
     if (!env)
@@ -206,7 +238,9 @@ function mergeClaudeSettings(settings: Json, shell: string | null, skip: Skip = 
 function mergeCursorCliConfig(config: Json, skip: Skip = {}): HostMerge {
   const next = clone(config);
   const owned = emptyOwned();
-  const error = appendList(next, "permissions.allow", CURSOR_ALLOW, owned, [], skip);
+  const error =
+    appendList(next, "permissions.allow", CURSOR_ALLOW, owned, [], skip) ??
+    appendList(next, "permissions.deny", CURSOR_DENY, owned, [], skip);
   return error ? { config, owned: emptyOwned(), error } : { config: next, owned };
 }
 
@@ -223,7 +257,10 @@ const CANONICAL: Record<"claude-code" | "cursor", OwnedEntries> = {
     env: {},
   },
   cursor: {
-    lists: { "permissions.allow": [...CURSOR_ALLOW] },
+    lists: {
+      "permissions.allow": [...CURSOR_ALLOW],
+      "permissions.deny": [...CURSOR_DENY],
+    },
     created: [],
     env: {},
   },
@@ -242,10 +279,10 @@ const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | nu
 /**
  * Entries earlier Workit versions offered that this one no longer does, per
  * host and dotted path. Add an entry here when it leaves the canonical lists,
- * so uninstall still removes it. None yet: no release has shipped a block.
+ * so uninstall still removes it, and a merge drops them from the list it writes.
  */
 const PRIOR_ENTRIES: Record<"claude-code" | "cursor", Record<string, readonly string[]>> = {
-  "claude-code": {},
+  "claude-code": { "autoMode.allow": [AUTO_MODE_ALLOW_V1] },
   cursor: {},
 };
 
@@ -264,7 +301,7 @@ const CREATED_PATHS: Record<"claude-code" | "cursor", ReadonlySet<string>> = {
     "autoMode.allow",
     "env",
   ]),
-  cursor: new Set(["permissions", "permissions.allow"]),
+  cursor: new Set(["permissions", "permissions.allow", "permissions.deny"]),
 };
 
 /** Where `findBash` looks first, so a Workit-written `CLAUDE_CODE_SHELL` is one of these or the PATH hit. */
@@ -301,6 +338,12 @@ const trustedOwned = (
   };
 };
 
+/** The canonical entries plus the prior ones, for removal without a record. */
+const withPrior = (host: "claude-code" | "cursor"): OwnedEntries => ({
+  ...CANONICAL[host],
+  lists: unionLists(CANONICAL[host].lists, PRIOR_ENTRIES[host]),
+});
+
 /**
  * The inverse of a merge: drop the entries `owned` names, the env values it
  * set (when unchanged), and the containers it created once they hold nothing
@@ -314,7 +357,7 @@ export function removeOwnedEntries(
   shellEnv: NodeJS.ProcessEnv = process.env,
 ): { next: Json; changed: boolean } {
   const next = clone(config);
-  const record = owned ? trustedOwned(owned, host, shellEnv) : CANONICAL[host];
+  const record = owned ? trustedOwned(owned, host, shellEnv) : withPrior(host);
   let changed = false;
   for (const [dotted, entries] of Object.entries(record.lists)) {
     const at = valueAt(next, dotted);

@@ -207,6 +207,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit release notes approve` and `workit grant set|raise` always reach
+  the host's permission prompt or a deny: Claude Code (also in auto mode),
+  Codex and Cursor get managed rules for them, and `workit upgrade` replaces
+  the old auto-mode text. Pi has no permission layer, so only the CLI check
+  applies there. The CLI check stops a cooperating agent; the host prompt stops
+  a determined one (#615).
 - `workit workspace set` points a path-like key such as `path=` at `glob`
   (with the workspaces.json path and `workspace add <name> --glob <g> --from
   <ws>`) and suggests the nearest key for a misspelt one. Hints naming

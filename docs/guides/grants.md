@@ -241,6 +241,13 @@ agent shells (no TTY, or an agent marker such as `CLAUDECODE`, `OPENCODE`,
 refused with `blocked` and the command to run yourself. Lowering is always
 allowed. Each write keeps `workspaces.json.bak`.
 
+That check keeps a cooperating agent out; it is a deterrent, not a boundary, because an
+agent could hide its markers and fake a terminal. The host's prompt is what stops a
+determined one. `workit setup` writes it for you: Claude Code `ask` rules (also in auto
+mode), Codex `prompt` rules and Cursor `deny` entries for `workit grant set|raise` and
+`workit release notes approve`. Pi has no permission layer, so there the CLI check is the
+only stop. OpenCode asks, since its plugin never auto-allows these calls.
+
 ## Default endpoint
 
 `defaultEndpoint` says how far an agent goes when a request implies delivery
