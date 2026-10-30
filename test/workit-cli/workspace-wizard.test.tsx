@@ -1249,7 +1249,7 @@ test("Step 6 prints the git toplevel of the resolved basePath as the exact hygie
 
 test("Given the workspace editor, When changelog and docs steps are set, Then the draft stores them and off removes the key", () => {
   const draft: WizardDraft = {
-    ...createInitialDraft(seedConfig, []),
+    ...createInitialDraft(seedConfig),
     workspaceDraft: { name: "work", glob: "/w/**" },
   };
   const on = reducer(
