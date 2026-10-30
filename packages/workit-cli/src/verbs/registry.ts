@@ -580,7 +580,7 @@ export const VERBS: readonly VerbEntry[] = [
         usage:
           "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]]",
         summary:
-          "Push the current branch and verify the remote tip (never a blind --force); --release finishes a git-flow release",
+          "Push the current branch and verify the remote tip (never a blind --force); --release finishes a git-flow release, and a pushed release tag gets its forge release with the release notes",
       },
       {
         name: "trailers",

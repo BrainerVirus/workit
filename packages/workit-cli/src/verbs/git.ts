@@ -31,10 +31,15 @@ import {
 } from "@brainervirus/workit-core/src/git/ops";
 import { gitStage, gitUnstage, type StageOutcome } from "@brainervirus/workit-core/src/git/stage";
 import { workspaceTrailers } from "@brainervirus/workit-core/src/core/workspaces";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+import { actorFromEnv, appendObserved } from "@brainervirus/workit-core/src/ledger";
+import {
+  releaseNotesForTag,
+  type ReleaseNotesDecision,
+} from "@brainervirus/workit-core/src/git/release";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
-import { forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
+import { success, type ForgeResult } from "@brainervirus/workit-core/src/forge/types";
+import { connect, forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
 
 const BRANCH_USAGE =
   "workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
@@ -322,7 +327,16 @@ function unstage(argv: string[], io: Io): number {
   return emit(io, ok(result.data), stagedLines);
 }
 
-async function push(argv: string[], io: Io): Promise<number> {
+type PushOptions = {
+  /** Publish the forge release of a pushed tag (not when `release finish` pushes: it publishes it). */
+  forgeRelease: boolean;
+};
+
+async function push(
+  argv: string[],
+  io: Io,
+  options: PushOptions = { forgeRelease: true },
+): Promise<number> {
   if (argv.includes("--force") || argv.includes("-f"))
     return usage(
       io,
@@ -352,7 +366,7 @@ async function push(argv: string[], io: Io): Promise<number> {
         "--release takes only ref names (a comma list or a repeated flag: --release main,v1.2.0)",
         PUSH_USAGE,
       );
-    return releasePush(release, io);
+    return releasePush(release, io, options);
   }
   if (flags.positionals.length)
     return usage(
@@ -427,9 +441,33 @@ async function push(argv: string[], io: Io): Promise<number> {
  * and develop branches and the release tag (`v*` or git-flow's configured prefix), which `workit git push` refuses.
  * Needs the `release` grant (never a default) and the `push` grant.
  */
-async function releasePush(names: string[], io: Io): Promise<number> {
+async function releasePush(names: string[], io: Io, options: PushOptions): Promise<number> {
   const plan = releasePushPreflight(io.cwd, names);
   if (!plan.ok) return forgeFail(io, plan);
+  // Each pushed release tag's notes (workspace or track releaseNotes); under
+  // review an unapproved draft refuses before anything is pushed.
+  const tagNotes: Array<{ tag: string; version: string; decision: ReleaseNotesDecision }> = [];
+  if (options.forgeRelease)
+    for (const ref of plan.data.refs)
+      if (ref.kind === "tag" && ref.release)
+        tagNotes.push({
+          tag: ref.name,
+          version: ref.release.version,
+          decision: releaseNotesForTag(io.cwd, {
+            name: ref.name,
+            production: ref.production ?? plan.data.production ?? "main",
+            ...ref.release,
+          }),
+        });
+  const unapproved = tagNotes.find((entry) => "blocked" in entry.decision);
+  if (unapproved && "blocked" in unapproved.decision)
+    return emit(
+      io,
+      fail("blocked", `${unapproved.decision.blocked}; nothing was pushed`, {
+        unblock: unapproved.decision.unblock,
+        data: { reason: "release_notes_unapproved", tag: unapproved.tag },
+      }),
+    );
   const target = () => pushTarget(io.cwd, plan.data.remote);
   const release = requireGrant(io.cwd, "release", { target });
   if (!release.allowed)
@@ -459,14 +497,86 @@ async function releasePush(names: string[], io: Io): Promise<number> {
     ...(checked ? { identity: { ...checked } } : {}),
   });
   if (!result.ok) return forgeFail(io, result);
-  return emit(io, ok({ ...result.data, identity: checked }), (data: ReleasePushOutcome) => [
-    ...data.refs.map((ref) =>
-      ref.pushed
-        ? `pushed ${ref.name} ${short(ref.previous)} -> ${short(ref.sha)} to ${data.remote}; remote tip verified`
-        : `nothing to push: ${data.remote} ${ref.name} is already at ${short(ref.sha)}`,
-    ),
-    ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
-  ]);
+  const published = publishTagReleases(io, tagNotes, plan.data.local);
+  // The refs are pushed: a rerun finds them there and only publishes.
+  if (!published.ok)
+    return forgeFail(io, published, {
+      step: "forge-release",
+      resume: `workit git push --release ${names.join(",")}`,
+    });
+  const { forgeReleases, notes } = published.data;
+  return emit(
+    io,
+    ok({ ...result.data, identity: checked, ...(tagNotes.length ? { forgeReleases, notes } : {}) }),
+    (data: ReleasePushOutcome) => [
+      ...data.refs.map((ref) =>
+        ref.pushed
+          ? `pushed ${ref.name} ${short(ref.previous)} -> ${short(ref.sha)} to ${data.remote}; remote tip verified`
+          : `nothing to push: ${data.remote} ${ref.name} is already at ${short(ref.sha)}`,
+      ),
+      ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
+      ...forgeReleases.map(
+        (entry) =>
+          `forge release ${entry.tag}${entry.created ? " created" : " already there"}${entry.url ? `: ${entry.url}` : ""}`,
+      ),
+      ...notes.map((note) => `note: ${note}`),
+    ],
+  );
+}
+
+type TagRelease = { tag: string; url: string | null; created: boolean };
+
+/**
+ * The forge release of each pushed tag, with its release notes: found when
+ * it exists (a rerun), else created. None for a local-path remote or under
+ * releaseNotes off.
+ */
+function publishTagReleases(
+  io: Io,
+  tagNotes: Array<{ tag: string; version: string; decision: ReleaseNotesDecision }>,
+  local: boolean,
+): ForgeResult<{ forgeReleases: TagRelease[]; notes: string[] }> {
+  const forgeReleases: TagRelease[] = [];
+  const notes: string[] = [];
+  const wanted = tagNotes.filter((entry) => {
+    if (!entry.decision.publish && "reason" in entry.decision)
+      notes.push(`${entry.tag}: ${entry.decision.reason}`);
+    return entry.decision.publish;
+  });
+  if (!wanted.length) return success({ forgeReleases, notes });
+  if (local) {
+    notes.push("the remote is a local path: no forge release");
+    return success({ forgeReleases, notes });
+  }
+  const connected = connect(io);
+  if (!connected.ok) return connected;
+  const forge = connected.data.forge;
+  for (const entry of wanted) {
+    if (!entry.decision.publish) continue;
+    const found = forge.findRelease(entry.tag);
+    if (!found.ok) return found;
+    let release: TagRelease;
+    if (found.data) release = { tag: entry.tag, url: found.data.url, created: false };
+    else {
+      const created = forge.createRelease({
+        tag: entry.tag,
+        name: entry.tag,
+        body: entry.decision.body,
+      });
+      if (!created.ok) return created;
+      release = { tag: entry.tag, url: created.data.url, created: true };
+    }
+    forgeReleases.push(release);
+    appendObserved(io.cwd, {
+      type: "release.forge_released",
+      actor: actorFromEnv(io.env),
+      version: entry.version,
+      tag: entry.tag,
+      url: release.url,
+      created: release.created,
+    });
+  }
+  return success({ forgeReleases, notes });
 }
 
 /**
@@ -481,6 +591,13 @@ function trailers(argv: string[], io: Io): number {
 }
 
 const READ_ONLY = new Set(["status", "diff", "log", "fetch", "show", "blame"]);
+
+/** `release finish`'s push: `git push --release` without the forge release (finish publishes it). */
+export async function runFinishPush(argv: string[], io: Io): Promise<number> {
+  const [sub, ...rest] = argv;
+  if (sub !== "push") return usage(io, "runFinishPush only pushes", PUSH_USAGE);
+  return push(rest, io, { forgeRelease: false });
+}
 
 export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv;

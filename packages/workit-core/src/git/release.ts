@@ -962,14 +962,14 @@ export function releaseNotesDecision(
       return {
         publish: false,
         mode: "review",
-        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and ${plan.version} has no draft; nothing was merged, tagged or pushed`,
+        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and ${plan.version} has no draft`,
         unblock: `${draftCmd}  # write the Highlights, show the user, then ask the user to run, in a terminal outside the agent host: ${approveCmd}`,
       };
     if (!approved || approved.sha256 !== draft.sha256)
       return {
         publish: false,
         mode: "review",
-        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and the draft of ${plan.version} (${draft.path}) ${approved ? "changed after the user approved it" : "is not approved"}; nothing was merged, tagged or pushed`,
+        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and the draft of ${plan.version} (${draft.path}) ${approved ? "changed after the user approved it" : "is not approved"}`,
         unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${approveCmd}  # the draft: ${draftCmd}`,
       };
     return {
@@ -990,4 +990,29 @@ export function releaseNotesDecision(
       compare: compareLink(cwd, plan.production, plan.tagPrefix, plan.version, plan.tag).compare,
     }),
   };
+}
+
+/**
+ * The notes decision for a release tag `workit git push --release` pushes
+ * (the release PR path: the tag is made after the PR merged). The changelog
+ * section is read at the tag.
+ */
+export function releaseNotesForTag(
+  cwd: string,
+  tag: {
+    name: string;
+    production: string;
+    version: string;
+    track: string | null;
+    tagPrefix: string;
+  },
+): ReleaseNotesDecision {
+  return releaseNotesDecision(cwd, {
+    version: tag.version,
+    track: tag.track,
+    tag: tag.name,
+    tagPrefix: tag.tagPrefix,
+    production: tag.production,
+    changelog: changelogSection(cwd, `refs/tags/${tag.name}`, tag.version),
+  });
 }

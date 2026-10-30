@@ -1340,6 +1340,8 @@ export type ReleaseRef = {
   sha: string;
   /** A tag's line production branch: the tag's commit must be on it. */
   production?: string | null;
+  /** A tag's version, line and prefix (`v` + `1.4.0`): its release notes are read from them. */
+  release?: { version: string; track: string | null; tagPrefix: string };
 };
 
 export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & {
@@ -1497,6 +1499,11 @@ export function releasePushPreflight(
         ref: `refs/tags/${tagName}`,
         sha: tag,
         production: line.track === null ? production : line.production,
+        release: {
+          version: tagName.slice(line.tagPrefix.length),
+          track: line.track,
+          tagPrefix: line.tagPrefix,
+        },
       });
       continue;
     }

@@ -140,17 +140,23 @@ const stepsOf = (plan: FinishPlan, forgeStep: string) => [
 /** Outside git-flow the trunk moves only through review: push the branch and open the release PR. */
 async function releasePr(io: Io, plan: FinishPlan, dryRun: boolean): Promise<number> {
   const title = `chore(release): ${plan.version}`;
-  if (dryRun)
+  // The PR body is the release notes (off: the changelog section, as before);
+  // under review the PR opens only on the approved draft.
+  const decision = releaseNotesDecision(io.cwd, plan);
+  const steps = [`push ${plan.branch}`, `open a PR ${plan.branch} -> ${plan.production}: ${title}`];
+  if ("blocked" in decision)
     return emit(
       io,
-      ok({
-        ...plan,
-        steps: [`push ${plan.branch}`, `open a PR ${plan.branch} -> ${plan.production}: ${title}`],
+      fail("blocked", `${decision.blocked}; nothing was pushed and no PR opened`, {
+        unblock: decision.unblock,
+        data: { ...plan, steps, reason: "release_notes_unapproved", step: "release-notes" },
       }),
-      () => [
-        `would push ${plan.branch} and open a release PR into ${plan.production} (not git-flow: the trunk moves only through review)`,
-      ],
     );
+  const body = decision.publish ? decision.body : (plan.changelog ?? `Release ${plan.version}`);
+  if (dryRun)
+    return emit(io, ok({ ...plan, steps }), () => [
+      `would push ${plan.branch} and open a release PR into ${plan.production} (not git-flow: the trunk moves only through review)`,
+    ]);
   const switched = switchToRelease(io.cwd, plan);
   if (!switched.ok) return forgeFail(io, switched);
   const pushed = await progressFor(io).run(
@@ -165,14 +171,7 @@ async function releasePr(io: Io, plan: FinishPlan, dryRun: boolean): Promise<num
       subVerb(
         // The release PR's body is generated: runReleasePr skips the PR template check.
         () => import("./pr").then((verb) => ({ run: verb.runReleasePr })),
-        [
-          "create",
-          "--base",
-          plan.production,
-          "--title",
-          title,
-          `--body=${plan.changelog ?? `Release ${plan.version}`}`,
-        ],
+        ["create", "--base", plan.production, "--title", title, `--body=${body}`],
         io,
       ),
     (r) => (r.ok ? "done" : "failed"),
@@ -185,7 +184,11 @@ async function releasePr(io: Io, plan: FinishPlan, dryRun: boolean): Promise<num
   });
   return emit(io, ok({ ...plan, pr: pr.data }), () => [
     `opened the release PR ${String((pr.data as { url?: string }).url ?? "")} into ${plan.production}`,
-    `next: once it merges, tag the merged commit ${plan.tag} and: workit git push --release ${plan.tag}`,
+    `next: once it merges, tag the merged commit ${plan.tag} and: workit git push --release ${plan.tag}  # ${
+      decision.publish
+        ? "it also publishes the forge release with these release notes"
+        : "releaseNotes is off: no forge release"
+    }`,
   ]);
 }
 
@@ -225,7 +228,7 @@ async function finish(argv: string[], io: Io): Promise<number> {
   if ("blocked" in decision)
     return emit(
       io,
-      fail("blocked", decision.blocked, {
+      fail("blocked", `${decision.blocked}; nothing was merged, tagged or pushed`, {
         unblock: decision.unblock,
         data: {
           ...plan,
@@ -267,7 +270,8 @@ async function finish(argv: string[], io: Io): Promise<number> {
     "Pushing the release branches and tag",
     () =>
       subVerb(
-        () => import("./git"),
+        // The finish publishes the forge release itself (step 6), not the push.
+        () => import("./git").then((verb) => ({ run: verb.runFinishPush })),
         ["push", ...[...plan.pushBranches, plan.tag].flatMap((ref) => ["--release", ref])],
         io,
       ),
