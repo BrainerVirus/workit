@@ -49,7 +49,6 @@ import {
   workspaceDeleteBranch,
 } from "@brainervirus/workit-core/src/core/workspaces";
 import {
-  CHANGELOG_FILE,
   changelogGate,
   type ChangelogGate,
 } from "@brainervirus/workit-core/src/core/changelog-gate";
@@ -617,11 +616,14 @@ async function create(argv: string[], io: Io): Promise<number> {
     const filled = refuseTitle(io, title, CREATE_USAGE);
     if (filled !== null) return filled;
   }
+  const steps = workspaceChangelog(io.cwd);
   const changelog = changelogGate({
     cwd: io.cwd,
-    mode: workspaceChangelog(io.cwd).changelog,
+    mode: steps.changelog,
     title,
     base,
+    paths: steps.paths,
+    pathConfigured: steps.pathConfigured,
     skipReason: skipChangelog,
   });
   if (changelog.status === "missing")
@@ -629,10 +631,14 @@ async function create(argv: string[], io: Io): Promise<number> {
       io,
       fail(
         "blocked",
-        `changelog_required: the workspace's changelog step is ${changelog.mode} and this user-facing PR adds no entry under ## [Unreleased] in ${CHANGELOG_FILE}`,
+        `changelog_required: the workspace's changelog step is ${changelog.mode} and this user-facing PR adds no entry under ## [Unreleased] in ${steps.paths.join(" or ")}${
+          changelog.candidates.length
+            ? `; this repo has ${changelog.candidates.join(", ")}: to use it, ${pathHint(steps.workspace, changelog.candidates[0])}`
+            : ""
+        }`,
         {
           data: { reason: "changelog_required", changelog },
-          unblock: `${changelog.command}, commit and push ${CHANGELOG_FILE}, then rerun workit pr create; or pass --no-changelog "<why this PR needs no entry>"`,
+          unblock: `${changelog.command}, commit and push ${changelog.file}, then rerun workit pr create; or pass --no-changelog "<why this PR needs no entry>"`,
         },
       ),
     );
@@ -709,14 +715,18 @@ async function create(argv: string[], io: Io): Promise<number> {
     `head ${data.head.slice(0, 12)} verified on the forge`,
     ...issueLines(links, opened, linked, backlinks, data.number),
     ...planned.data.warnings.map((warning) => `note: ${warning}`),
-    ...changelogLines(changelog),
+    ...changelogLines(changelog, steps.workspace),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     `next: ${data.next}${endpointNote(io.cwd)}`,
   ]);
 }
 
+/** The command that points the workspace's changelog step at `file`. */
+const pathHint = (workspace: string | null, file: string): string =>
+  `workit workspace set ${workspace ?? "<workspace>"} changelogPath=${file}`;
+
 /** What the changelog gate let through, in one line; nothing when it is off. */
-function changelogLines(gate: ChangelogGate): string[] {
+function changelogLines(gate: ChangelogGate, workspace: string | null): string[] {
   switch (gate.status) {
     case "off":
     case "missing":
@@ -726,14 +736,20 @@ function changelogLines(gate: ChangelogGate): string[] {
     case "skipped":
       return [`changelog: no entry (--no-changelog: ${gate.reason}); recorded in the PR body`];
     case "no-file":
-      return [`changelog: update is on but this repo has no ${CHANGELOG_FILE}; nothing to update`];
+      return [
+        `changelog: update is on but this repo has no ${gate.paths.join(" or ")}; nothing to update${
+          gate.candidates.length
+            ? `; found ${gate.candidates.join(", ")}: to use it, ${pathHint(workspace, gate.candidates[0])}`
+            : ""
+        }`,
+      ];
     case "base-unknown":
       return [
         `note: changelog: ${gate.base} does not resolve in this checkout, so the Unreleased entry was not checked (git fetch, then rerun to check it)`,
       ];
     case "has-entry":
       return [
-        `changelog: ${gate.added.length} new Unreleased ${gate.added.length === 1 ? "entry" : "entries"}`,
+        `changelog: ${gate.added.length} new Unreleased ${gate.added.length === 1 ? "entry" : "entries"} in ${gate.file}`,
       ];
   }
 }

@@ -53,6 +53,7 @@ import {
   CHANGELOG_MODES,
   DOCS_MODES,
   WorkspaceConfigError,
+  changelogPathsOf,
   globRoot,
   globSpecificity,
   overlappingEntries,
@@ -104,6 +105,7 @@ const SETTABLE_KEYS = new Set([
   "delegation",
   "changelog",
   "docs",
+  "changelogPath",
   "defaultProfile",
   "profiles",
   "releaseTracks",
@@ -481,6 +483,16 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
     const choices = CHOICES[keyPath[0]];
     if (choices && (keyPath.length > 1 || (value !== null && !choices.includes(value as string))))
       return usage(io, `${spec}: ${keyPath[0]} must be ${choices.join(", ")} (or null to unset)`);
+    if (keyPath[0] === "changelogPath" && value !== null) {
+      const paths = keyPath.length === 1 ? changelogPathsOf(value) : null;
+      if (!paths)
+        return usage(
+          io,
+          `${spec}: changelogPath must be a repo-relative path or a JSON list of them (e.g. docs/CHANGELOG.md), or null to unset`,
+        );
+      changes.push({ path: keyPath, value: paths.length === 1 ? paths[0] : paths });
+      continue;
+    }
     changes.push({ path: keyPath, value });
   }
   if (grantSpecs.length)

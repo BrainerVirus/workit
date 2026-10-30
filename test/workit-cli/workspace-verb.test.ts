@@ -868,3 +868,35 @@ test("Given an invalid changelog or docs value, When workspace set runs, Then it
   expect(docs.json().error).toContain("docs must be off, when-user-facing");
   expect(readFileSync(file(), "utf8")).toBe(before);
 });
+
+test("Given workspace set changelogPath, Then a path or a JSON list is stored normalized, grant show names the file, and a path leaving the repo is refused", async () => {
+  expect(
+    (await run(["set", "work", "changelog=update", "changelogPath=./docs/CHANGELOG.md"])).code,
+  ).toBe(0);
+  expect(byName("work").changelogPath).toBe("docs/CHANGELOG.md");
+  let stdout = "";
+  const io: Io = {
+    json: false,
+    cwd: path.join(root, "work"),
+    env: AGENT_ENV,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  };
+  expect(await runGrant(["show"], io)).toBe(0);
+  expect(stdout).toContain("  changelog file: docs/CHANGELOG.md\n");
+  const list = '["packages/a/CHANGELOG.md","packages/b/CHANGELOG.md"]';
+  expect((await run(["set", "work", `changelogPath=${list}`])).code).toBe(0);
+  expect(byName("work").changelogPath).toEqual([
+    "packages/a/CHANGELOG.md",
+    "packages/b/CHANGELOG.md",
+  ]);
+  const before = readFileSync(file(), "utf8");
+  for (const bad of ["../CHANGELOG.md", "/abs/CHANGELOG.md"]) {
+    const refused = await run(["set", "work", `changelogPath=${bad}`]);
+    expect(refused.code, bad).toBe(2);
+    expect(refused.json().error).toContain("changelogPath must be a repo-relative path");
+  }
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect((await run(["set", "work", "changelogPath=null"])).code).toBe(0);
+  expect(byName("work").changelogPath).toBeUndefined();
+});

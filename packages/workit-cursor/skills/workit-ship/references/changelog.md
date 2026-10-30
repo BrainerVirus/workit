@@ -1,25 +1,29 @@
 # Changelog and docs before the PR
 
-Read the workspace's steps in `workit grant show` (`changelog:` and `docs:`).
+Read the workspace's steps in `workit grant show` (`changelog:`, `changelog
+file:` and `docs:`).
 Both default to `off`: then skip this file. Do them last, on the final diff,
 right before `workit pr create`.
 
 ## Changelog (`changelog: update|create`)
 
 A PR whose title type is chore, test, docs, ci, build or style (no `!`) needs
-no entry. Under `update`, a repo without CHANGELOG.md needs none either.
-Otherwise:
+no entry. Under `update`, a repo without its changelog file needs none either.
+The file is CHANGELOG.md at the root unless `changelog file:` names another
+path (or several, one per package: write the entry in the one the change
+belongs to). Otherwise:
 
 1. Write one bullet per change a user can see, leading with what they can now
    do, not with internals: "Added: `workit pr create --no-changelog <reason>`
    skips the changelog check with a recorded reason", not "refactor gate
    module".
 2. Apply it only with `workit changelog apply --entries '{"Added": ["…"]}'`
-   (categories: Added, Changed, Deprecated, Removed, Fixed, Security). It
+   (categories: Added, Changed, Deprecated, Removed, Fixed, Security), adding
+   `--path <file>` when the file is not the root CHANGELOG.md. It
    merges into `## [Unreleased]` and creates the Keep a Changelog file when it
    is missing. Never clobber CHANGELOG.md: never rewrite, reorder or delete an
    existing entry, and never hand-edit released sections.
-3. Commit it (`workit git commit -m "<message>" -- CHANGELOG.md`)
+3. Commit it (`workit git commit -m "<message>" -- <file>`)
    with the change, then push.
 
 `workit pr create` refuses a user-facing PR without a new Unreleased bullet

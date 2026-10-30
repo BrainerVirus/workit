@@ -330,6 +330,12 @@ Both are off by default.
   and says in one line when there is none; `create` asks for it always
   (`workit changelog apply` creates the file). See
   [delivery](delivery.md#changelog-gate).
+- `changelogPath`: where the changelog lives, repo-relative (default
+  `CHANGELOG.md` at the root). A JSON list names one changelog per package in
+  a monorepo; an entry in any of them satisfies the gate. Without it, a repo
+  whose only changelog sits elsewhere is told the exact
+  `workit workspace set <ws> changelogPath=<file>` to run, and the
+  `workit changelog apply` command the gate prints carries `--path <file>`.
 - `docs`: `off` (default) or `when-user-facing`. When it is on, the ship skill
   updates only the README and guide lines the diff made false, names public
   surfaces no doc covers in the PR body, and reports a pass that changed
@@ -337,11 +343,15 @@ Both are off by default.
 
 ```bash
 workit workspace set work changelog=create docs=when-user-facing
+workit workspace set work changelogPath=docs/CHANGELOG.md
+workit workspace set work 'changelogPath=["packages/a/CHANGELOG.md","packages/b/CHANGELOG.md"]'
 workit workspace set work changelog=null   # back to off
 ```
 
-Any other value is refused with the allowed list. `workit grant show` prints
-both, and `workit init`'s advanced workspace settings offer them. An unknown
+Any other value is refused with the allowed list, and a `changelogPath` that
+is absolute or climbs out with `..` is refused. `workit grant show` prints the
+steps and the changelog file, and `workit init`'s advanced workspace settings
+offer the two steps (the path is set with `workit workspace set`). An unknown
 value hand-written in `workspaces.json` reads as off, with a note.
 
 ### Models per role

@@ -58,7 +58,9 @@ import { roleModelIssues } from "@brainervirus/workit-core/src/core/role-models"
 import { pushRemoteName } from "@brainervirus/workit-core/src/git/rev";
 import {
   CHANGELOG_MODES,
+  DEFAULT_CHANGELOG_PATH,
   DOCS_MODES,
+  changelogPathsOf,
   readWorkspacesResult,
   workspaceChangelog,
   workspaceTierModelIssues,
@@ -149,17 +151,25 @@ const CHANGELOG_TEXT: Record<ChangelogMode, string> = {
 };
 
 /** The changelog and docs steps before a PR opens (`workit workspace set` changes them). */
-const describeSteps = (changelog: ChangelogMode, docs: DocsMode): string[] => [
+const describeSteps = (changelog: ChangelogMode, docs: DocsMode, paths: string[]): string[] => [
   `  changelog: ${changelog} (${CHANGELOG_TEXT[changelog]})`,
+  ...(changelog !== "off" || paths.join() !== DEFAULT_CHANGELOG_PATH
+    ? [`  changelog file: ${paths.join(", ")}`]
+    : []),
   `  docs: ${docs} (${docs === "off" ? "no docs refresh step" : "a user-facing PR updates the docs its diff made false"})`,
 ];
 
 /** An entry's own changelog and docs steps; a value this version does not know reads as off. */
-const ownSteps = (entry: unknown): { changelog: ChangelogMode; docs: DocsMode } => {
-  const own = (entry ?? {}) as { changelog?: unknown; docs?: unknown };
+const ownSteps = (
+  entry: unknown,
+): { changelog: ChangelogMode; docs: DocsMode; changelogPaths: string[] } => {
+  const own = (entry ?? {}) as { changelog?: unknown; docs?: unknown; changelogPath?: unknown };
   return {
     changelog: CHANGELOG_MODES.find((mode) => mode === own.changelog) ?? "off",
     docs: DOCS_MODES.find((mode) => mode === own.docs) ?? "off",
+    changelogPaths: (own.changelogPath === undefined
+      ? null
+      : changelogPathsOf(own.changelogPath)) ?? [DEFAULT_CHANGELOG_PATH],
   };
 };
 
@@ -185,7 +195,7 @@ function show(argv: string[], io: Io): number {
       rows.flatMap((entry) => [
         `${entry.name} (${entry.glob})`,
         ...describe(entry.grants, entry.configured, entry, entry.verification),
-        ...describeSteps(entry.changelog, entry.docs),
+        ...describeSteps(entry.changelog, entry.docs, entry.changelogPaths),
         ...(endpointMismatch({ ...entry, workspace: entry.name })
           ? [`note: ${endpointMismatch({ ...entry, workspace: entry.name })}`]
           : []),
@@ -225,6 +235,7 @@ function show(argv: string[], io: Io): number {
     ...autonomy,
     changelog: steps.changelog,
     docs: steps.docs,
+    changelogPaths: steps.paths,
     ...(remotes.warnings.length ? { remoteWarnings: remotes.warnings } : {}),
     ...(pushView ? { pushTarget: pushView } : {}),
     ...(remotes.notes.length ? { remoteNotes: remotes.notes } : {}),
@@ -241,7 +252,7 @@ function show(argv: string[], io: Io): number {
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
     ...describe(data.grants, data.configured, data, data.verification),
-    ...describeSteps(data.changelog, data.docs),
+    ...describeSteps(data.changelog, data.docs, data.changelogPaths),
     ...(pushView
       ? [
           `push target: ${pushView.remote}${pushView.urls.length ? ` (${pushView.urls.join(", ")})` : ""}: ${

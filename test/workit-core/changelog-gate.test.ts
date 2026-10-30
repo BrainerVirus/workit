@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -38,8 +38,15 @@ const RELEASED = `# Changelog
 - First release
 `;
 
-/** A repo on main (with `baseChangelog`, if any), then feature/x checked out with one more commit. */
-const repo = (baseChangelog: string | null, branchChangelog?: string | null) => {
+/**
+ * A repo on main (with `baseChangelog`, if any, at `file`), then feature/x
+ * checked out with one more commit.
+ */
+const repo = (
+  baseChangelog: string | null,
+  branchChangelog?: string | null,
+  file = "CHANGELOG.md",
+) => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-changelog-gate-"));
   dirs.push(cwd);
   git(cwd, "init", "-q", "-b", "main");
@@ -47,12 +54,13 @@ const repo = (baseChangelog: string | null, branchChangelog?: string | null) => 
   git(cwd, "config", "user.name", "t");
   git(cwd, "config", "commit.gpgsign", "false");
   writeFileSync(path.join(cwd, "a.txt"), "a\n");
-  if (baseChangelog !== null) writeFileSync(path.join(cwd, "CHANGELOG.md"), baseChangelog);
+  mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true });
+  if (baseChangelog !== null) writeFileSync(path.join(cwd, file), baseChangelog);
   git(cwd, "add", "-A");
   git(cwd, "commit", "-q", "-m", "base");
   git(cwd, "switch", "-q", "-c", "feature/x");
   writeFileSync(path.join(cwd, "b.txt"), "b\n");
-  if (branchChangelog) writeFileSync(path.join(cwd, "CHANGELOG.md"), branchChangelog);
+  if (branchChangelog) writeFileSync(path.join(cwd, file), branchChangelog);
   git(cwd, "add", "-A");
   git(cwd, "commit", "-q", "-m", "change");
   return cwd;
@@ -69,13 +77,20 @@ test("Given changelog create and no CHANGELOG.md, When a feat PR adds none, Then
   expect(gate(repo(null), "create")).toEqual({
     status: "missing",
     mode: "create",
+    file: "CHANGELOG.md",
     category: "Added",
     command: `workit changelog apply --entries '{"Added": ["<what users can now do>"]}'`,
+    candidates: [],
   });
 });
 
 test("Given changelog update and no CHANGELOG.md, When a fix PR runs, Then there is nothing to update", () => {
-  expect(gate(repo(null), "update", "fix: y")).toEqual({ status: "no-file", mode: "update" });
+  expect(gate(repo(null), "update", "fix: y")).toEqual({
+    status: "no-file",
+    mode: "update",
+    paths: ["CHANGELOG.md"],
+    candidates: [],
+  });
 });
 
 test("Given an existing CHANGELOG.md, When the branch only keeps the Unreleased entries it inherited, Then a fix PR still needs its own", () => {
@@ -92,6 +107,7 @@ test("Given the branch adds a bullet under Unreleased, When the gate runs, Then 
   expect(gate(repo(RELEASED, added), "update")).toEqual({
     status: "has-entry",
     mode: "update",
+    file: "CHANGELOG.md",
     added: ["You can now skip the gate with a reason"],
   });
 });
@@ -106,6 +122,7 @@ test("Given changelog create, When the branch creates CHANGELOG.md with an Unrel
   expect(gate(repo(null, created), "create")).toEqual({
     status: "has-entry",
     mode: "create",
+    file: "CHANGELOG.md",
     added: ["Brand new"],
   });
 });
@@ -143,4 +160,55 @@ test("Given a changelog text, When its Unreleased bullets are read, Then release
   expect(unreleasedBullets(RELEASED)).toEqual(["Older unreleased thing"]);
   expect(unreleasedBullets("# Changelog\n\n## [Unreleased]\n\n* last line")).toEqual(["last line"]);
   expect(unreleasedBullets("# Changelog\n")).toEqual([]);
+});
+
+const withEntry = (text: string) =>
+  text.replace("- Older unreleased thing\n", "- Older unreleased thing\n- You can now x\n");
+
+test("Given changelogPath docs/CHANGELOG.md, When the branch adds an entry there, Then it passes; without one, the apply command names --path", () => {
+  const paths = ["docs/CHANGELOG.md"];
+  const run = (cwd: string) =>
+    changelogGate({
+      cwd,
+      mode: "update",
+      title: "feat: x",
+      base: "main",
+      paths,
+      pathConfigured: true,
+    });
+  expect(run(repo(RELEASED, withEntry(RELEASED), "docs/CHANGELOG.md"))).toMatchObject({
+    status: "has-entry",
+    file: "docs/CHANGELOG.md",
+  });
+  expect(run(repo(RELEASED, null, "docs/CHANGELOG.md"))).toMatchObject({
+    status: "missing",
+    file: "docs/CHANGELOG.md",
+    command: `workit changelog apply --entries '{"Added": ["<what users can now do>"]}' --path docs/CHANGELOG.md`,
+  });
+});
+
+test("Given a monorepo list of changelogs, When the branch adds an entry to any one of them, Then it passes", () => {
+  const cwd = repo(RELEASED, withEntry(RELEASED), "packages/b/CHANGELOG.md");
+  const result = changelogGate({
+    cwd,
+    mode: "update",
+    title: "fix: y",
+    base: "main",
+    paths: ["packages/a/CHANGELOG.md", "packages/b/CHANGELOG.md"],
+    pathConfigured: true,
+  });
+  expect(result).toMatchObject({ status: "has-entry", file: "packages/b/CHANGELOG.md" });
+});
+
+test("Given no changelogPath and no root CHANGELOG.md, When the repo keeps one elsewhere, Then the result names it so the setting can point there", () => {
+  const cwd = repo(RELEASED, null, "docs/CHANGELOG.md");
+  expect(gate(cwd, "update")).toMatchObject({
+    status: "no-file",
+    candidates: ["docs/CHANGELOG.md"],
+  });
+  expect(gate(cwd, "create")).toMatchObject({
+    status: "missing",
+    file: "CHANGELOG.md",
+    candidates: ["docs/CHANGELOG.md"],
+  });
 });

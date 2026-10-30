@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -82,9 +82,10 @@ const setup = (entry: Record<string, unknown> = {}) => {
   return { repo, runner };
 };
 
-/** Commit `CHANGELOG.md` with `text` on feature/x and push it. */
-const commitChangelog = (repo: ForgeRepo, text: string) => {
-  writeFileSync(path.join(repo.cwd, "CHANGELOG.md"), text);
+/** Commit the changelog `file` with `text` on feature/x and push it. */
+const commitChangelog = (repo: ForgeRepo, text: string, file = "CHANGELOG.md") => {
+  mkdirSync(path.dirname(path.join(repo.cwd, file)), { recursive: true });
+  writeFileSync(path.join(repo.cwd, file), text);
   repo.git("add", "-A");
   repo.git("commit", "-q", "-m", "docs(changelog): entry");
   repo.git("push", "-q", path.join(repo.root, "remote.git"), "feature/x");
@@ -138,7 +139,7 @@ test("Given changelog create and a branch that adds an Unreleased bullet, When p
   const result = await create(repo);
   expect(result.code).toBe(0);
   expect(opened(runner.calls)).toHaveLength(1);
-  expect(result.stdout).toContain("changelog: 1 new Unreleased entry\n");
+  expect(result.stdout).toContain("changelog: 1 new Unreleased entry in CHANGELOG.md\n");
 });
 
 test("Given the gate is on, When the PR title is a non-user-facing type, Then it opens without an entry", async () => {
@@ -170,4 +171,21 @@ test("Given the gate is on, When --no-changelog has an empty reason, Then it is 
     expect(result.code, JSON.stringify(reason)).toBe(2);
   }
   expect(opened(runner.calls)).toHaveLength(0);
+});
+
+test("Given changelogPath docs/CHANGELOG.md, When the branch adds an entry there, Then the PR opens; without the setting, the refusal names the file and the command to point at it", async () => {
+  const entry = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- You can now x\n";
+  const pointed = setup({ changelog: "create", changelogPath: "docs/CHANGELOG.md" });
+  commitChangelog(pointed.repo, entry, "docs/CHANGELOG.md");
+  const passed = await create(pointed.repo);
+  expect(passed.code).toBe(0);
+  expect(passed.stdout).toContain("changelog: 1 new Unreleased entry in docs/CHANGELOG.md\n");
+
+  const unset = setup({ changelog: "create" });
+  commitChangelog(unset.repo, "# Changelog\n\n## [Unreleased]\n", "docs/CHANGELOG.md");
+  const refused = await create(unset.repo);
+  expect(refused.code).toBe(3);
+  expect(opened(unset.runner.calls)).toHaveLength(0);
+  expect(refused.stderr).toContain("this repo has docs/CHANGELOG.md");
+  expect(refused.stderr).toContain("workit workspace set w changelogPath=docs/CHANGELOG.md");
 });

@@ -169,6 +169,12 @@ const workspaceConfigSchema = z
      */
     docs: z.unknown().optional(),
     /**
+     * Where the changelog lives, repo-relative: one path or a list (a monorepo
+     * with one changelog per package; any of them satisfies the gate). Default
+     * CHANGELOG.md at the repo root. Read leniently like `changelog`.
+     */
+    changelogPath: z.unknown().optional(),
+    /**
      * Whether commits get the `Workit-Session:` trailer (default true). With
      * `false`, `workit git commit` and the session hook write none and
      * authorship lives in the ledger only (`commit.recorded`).
@@ -1109,15 +1115,49 @@ const isChangelogMode = (value: unknown): value is ChangelogMode =>
 const isDocsMode = (value: unknown): value is DocsMode =>
   (DOCS_MODES as readonly unknown[]).includes(value);
 
+export const DEFAULT_CHANGELOG_PATH = "CHANGELOG.md";
+
 /**
- * The workspace's changelog and docs steps, both default `off`; each is
- * inherited like `trailers`. A value this version does not know reads as off
- * and is named in `issues`, so `grant show` can say why.
+ * A repo-relative changelog path in `/` form, or null when `value` is not one
+ * (absolute, empty, or climbing out with `..`).
+ */
+export const changelogPathOf = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const parts = value
+    .trim()
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((part) => part && part !== ".");
+  if (!parts.length || value.trim().startsWith("/") || /^[A-Za-z]:/u.test(value.trim()))
+    return null;
+  return parts.includes("..") ? null : parts.join("/");
+};
+
+/** `changelogPath` as a list of valid paths, or null when any entry is invalid. */
+export const changelogPathsOf = (value: unknown): string[] | null => {
+  const list = Array.isArray(value) ? value : [value];
+  const paths = list.map(changelogPathOf).filter((one) => one !== null);
+  return list.length && paths.length === list.length ? paths : null;
+};
+
+/**
+ * The workspace's changelog and docs steps, both default `off`, and where the
+ * changelog lives (default CHANGELOG.md); each is inherited like `trailers`. A
+ * value this version does not know reads as the default and is named in
+ * `issues`, so `grant show` can say why.
  */
 export const workspaceChangelog = (
   cwd: string,
   dir?: string,
-): { changelog: ChangelogMode; docs: DocsMode; issues: string[] } => {
+): {
+  changelog: ChangelogMode;
+  docs: DocsMode;
+  paths: string[];
+  pathConfigured: boolean;
+  /** The workspace matching cwd, for a `workit workspace set` hint. */
+  workspace: string | null;
+  issues: string[];
+} => {
   const issues: string[] = [];
   const read = <T extends string>(
     key: "changelog" | "docs",
@@ -1133,9 +1173,22 @@ export const workspaceChangelog = (
     );
     return "off";
   };
+  const pathSource = inheritedSetting(
+    cwd,
+    dir,
+    (entry) => entry.changelogPath !== undefined,
+  )?.source;
+  const configured = pathSource ? changelogPathsOf(pathSource.changelogPath) : null;
+  if (pathSource && !configured)
+    issues.push(
+      `changelogPath ${JSON.stringify(pathSource.changelogPath)} in workspace ${pathSource.name} is not a repo-relative path or list of them; read as ${DEFAULT_CHANGELOG_PATH}`,
+    );
   return {
     changelog: read("changelog", isChangelogMode, CHANGELOG_MODES),
     docs: read("docs", isDocsMode, DOCS_MODES),
+    paths: configured ?? [DEFAULT_CHANGELOG_PATH],
+    pathConfigured: configured !== null,
+    workspace: inheritedSetting(cwd, dir, () => true)?.workspace ?? null,
     issues,
   };
 };

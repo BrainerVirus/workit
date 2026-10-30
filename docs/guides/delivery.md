@@ -458,13 +458,18 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
 - A PR titled chore, test, docs, ci, build or style (without `!`) is not
   user-facing and passes.
 - Otherwise the branch must add at least one bullet under `## [Unreleased]` in
-  CHANGELOG.md, compared with its merge base on the PR base. Without one,
+  the changelog (CHANGELOG.md, or the workspace's `changelogPath`: any one of
+  a list counts), compared with its merge base on the PR base. Without one,
   `pr create` exits 3 with `changelog_required` (`data.reason` in `--json`),
   opens nothing, and its `unblock:` line names the
   `workit changelog apply --entries '{"Added": ["…"]}'` command to run (the
-  category follows the title: feat is Added, fix is Fixed, else Changed).
+  category follows the title: feat is Added, fix is Fixed, else Changed; a
+  file other than the root CHANGELOG.md adds `--path <file>`). When the root
+  has no changelog but the repo keeps one elsewhere, the refusal names it and
+  the `workit workspace set <ws> changelogPath=<file>` that points the gate
+  there.
   Commit and push the entry, then run `pr create` again.
-- Under `update`, a repo with no CHANGELOG.md passes with one line saying
+- Under `update`, a repo without its changelog file passes with one line saying
   there is nothing to update; under `create` the entry is still required.
 - `--no-changelog "<reason>"` opens the PR without an entry and writes the
   reason into the PR body (`Changelog: no entry (--no-changelog): <reason>`);
@@ -472,7 +477,7 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
 - A base this checkout cannot resolve is not checked: a note says to fetch and
   rerun.
 
-The gate only reads CHANGELOG.md; entries are written by
+The gate only reads the changelog; entries are written by
 `workit changelog apply`, which merges into Unreleased and never rewrites or
 reorders existing entries.
 
