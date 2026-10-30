@@ -67,7 +67,9 @@ reason and the native command that fixes it) and exits 1 if any host failed.
 It then runs doctor's version, asset, agent, stale-install and permission
 checks and prints "clean" or what is left. The OpenCode row compares the plugin
 version before and after the update with the published one: it is "already
-current" only when it already matched before the update.
+current" only when it already matched before the update. OpenCode V2 loads the
+update into its running service, so upgrade waits (up to 20 s) until OpenCode
+lists the new version; it names `opencode serve` to restart only if it never does.
 
 Running hosts: zombie processes and helpers that load no plugin are ignored.
 The Codex app-server daemon is stopped with `codex app-server daemon stop` and

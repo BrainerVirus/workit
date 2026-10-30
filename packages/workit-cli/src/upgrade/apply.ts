@@ -9,7 +9,12 @@ import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import { createProgress, type StepStatus } from "../progress";
 import { classifyProcess, describe, listProcesses } from "./processes";
-import { OPENCODE_NOT_READY, readOpencodePlugin, waitForOpencodePlugin } from "./opencode";
+import {
+  OPENCODE_NOT_READY,
+  OPENCODE_STALE,
+  waitForOpencodePlugin,
+  waitForOpencodeVersion,
+} from "./opencode";
 import {
   CLI_FIX,
   CODEX_MARKETPLACE,
@@ -61,29 +66,23 @@ export type UpgradeResult = {
   hosts: HostOutcome[];
 };
 
-/** The installed Workit OpenCode plugin version, as OpenCode itself reports it. */
-const opencodeVersion = async (
-  run: ReturnType<typeof asyncRunner>,
-  home: string,
-): Promise<string | undefined> => (await readOpencodePlugin(run, home)).version;
-
 /**
  * OpenCode's row from the plugin version before the update, after it, and the
- * published target. OpenCode can report the old version for a
- * moment after the update rewrote the cache, so a reading below the target is
- * taken once more. Only a version that already equaled the target before the
- * update is "already current"; a version below the target is never current.
+ * published target. V2 loads the update live but lists the old version for a
+ * moment, so the reading after waits for the target (bounded). Only a version
+ * that already equaled the target before the update is "already current"; a
+ * version below the target is never current.
  */
 const opencodeOutcome = async (
   before: string | undefined,
   target: string | undefined,
   runAsync: ReturnType<typeof asyncRunner>,
   home: string,
+  ready: UpgradeDeps["opencodeReady"],
 ): Promise<HostOutcome> => {
   const below = (version: string | undefined) =>
     target !== undefined && (version === undefined || !versionAtLeast(version, target));
-  let after = await opencodeVersion(runAsync, home);
-  if (below(after)) after = (await opencodeVersion(runAsync, home)) ?? after;
+  const after = await waitForOpencodeVersion(runAsync, home, target, ready);
   const live = "OpenCode V2 loads it live";
   if (before && target && versionAtLeast(before, target))
     return { host: "opencode", status: "current", reason: `already current (${before})` };
@@ -91,7 +90,7 @@ const opencodeOutcome = async (
     return {
       host: "opencode",
       status: "updated",
-      reason: `update ran, but OpenCode still lists ${after} (published ${target}); the doctor below checks its package cache`,
+      reason: `${OPENCODE_STALE} ${after} (published ${target}); the doctor below checks its package cache`,
     };
   if (before && after && after !== before)
     return { host: "opencode", status: "updated", reason: `${before} -> ${after}; ${live}` };
@@ -220,7 +219,8 @@ const applyEntry = async (
       result = await runAsync(command.command, command.args, where);
     if (result.status !== 0) return fail(failureReason(command, result));
   }
-  if (entry.host === "opencode") return opencodeOutcome(before, entry.published, runAsync, home);
+  if (entry.host === "opencode")
+    return opencodeOutcome(before, entry.published, runAsync, home, context.opencodeReady);
   if (entry.host === "claude-code") {
     const after = claudeWorkitInstalls(home, env, null).find(
       (install) => install.id === entry.selector,
@@ -516,7 +516,8 @@ export async function applyUpgrade(
         const servers = running.filter(
           (proc) => proc.host === "opencode" && proc.kind === "daemon",
         );
-        if (servers.length && outcome.status === "updated")
+        // V2 loads an update live: a restart only for one it never listed.
+        if (servers.length && outcome.reason.startsWith(OPENCODE_STALE))
           outcome = {
             ...outcome,
             reason: `${outcome.reason}; restart opencode serve (${servers.map(describe).join("; ")}) to load it`,
