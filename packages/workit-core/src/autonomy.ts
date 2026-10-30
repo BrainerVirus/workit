@@ -36,7 +36,13 @@ import os from "node:os";
 import path from "node:path";
 import { resolveConfigDir } from "./core/config";
 import { writeFileAtomic } from "./core/safe-write";
-import { checkoutRemotes, remoteMatches, type GrantTarget, type LazyTarget } from "./core/remotes";
+import {
+  checkoutRemotes,
+  remoteMatches,
+  type CheckoutRemote,
+  type GrantTarget,
+  type LazyTarget,
+} from "./core/remotes";
 import {
   checkoutsAbove,
   loadWorkspacesFrom,
@@ -535,30 +541,27 @@ export function targetClaims(
   );
 }
 
+/** The entries whose `remotes` claim one of `remotes` (grant show, doctor). */
+const claimsOf = (remotes: CheckoutRemote[], dir: string) => {
+  const claiming = loadWorkspacesFrom(dir).filter((entry) => entry.remotes?.length);
+  return remotes.flatMap((remote) =>
+    claiming.flatMap((entry) => {
+      const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
+      return pattern
+        ? [{ remote: remote.name, url: remote.url, workspace: entry.name, pattern }]
+        : [];
+    }),
+  );
+};
+
 /** The entries whose `remotes` claim one of `cwd`'s remote URLs (grant show, doctor). */
 export function remoteClaims(
   cwd: string,
   dir: string = grantsDir(),
 ): { remote: string; url: string; workspace: string; pattern: string }[] | Error {
-  const claiming = loadWorkspacesFrom(dir).filter((entry) => entry.remotes?.length);
-  if (claiming.length === 0) return [];
+  if (!remotesClaimed(dir)) return [];
   const remotes = checkoutRemotes(cwd);
-  if (remotes instanceof Error) return remotes;
-  return remotes.flatMap((remote) =>
-    claiming.flatMap((entry) => {
-      const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
-      return pattern
-        ? [
-            {
-              remote: remote.name,
-              url: remote.url,
-              workspace: entry.name,
-              pattern,
-            },
-          ]
-        : [];
-    }),
-  );
+  return remotes instanceof Error ? remotes : claimsOf(remotes, dir);
 }
 
 /**
@@ -566,7 +569,8 @@ export function remoteClaims(
  * checkout another workspace claims (a warning: grants here are capped at
  * it), and a workspace that claims no remotes (a note, since every entry
  * starts without: a checkout elsewhere whose origin is its remote keeps that
- * folder's grants), with the command that sets them.
+ * folder's grants), with the command that claims a remote no other workspace
+ * claims. Git is asked once, and only when one of them needs it.
  */
 export function remoteFindings(
   cwd: string,
@@ -578,24 +582,24 @@ export function remoteFindings(
   } catch {
     return { warnings: [], notes: [] };
   }
-  const claims = remoteClaims(cwd, dir);
-  if (claims instanceof Error)
-    return {
-      warnings: [`${claims.message}: grants here are capped at nothing`],
-      notes: [],
-    };
-  const warnings = claims
-    .filter((claim) => claim.workspace !== own?.name)
-    .map(
-      (claim) =>
-        `remote ${claim.remote} ${claim.url} is claimed by workspace ${claim.workspace} (${claim.pattern}): an action that targets it never exceeds ${claim.workspace}'s grants`,
-    );
+  const unclaimed = own !== null && !own.remotes?.length;
+  if (!unclaimed && !remotesClaimed(dir)) return { warnings: [], notes: [] };
+  const remotes = checkoutRemotes(cwd);
+  if (remotes instanceof Error && remotesClaimed(dir))
+    return { warnings: [`${remotes.message}: grants here are capped at nothing`], notes: [] };
+  const listed = remotes instanceof Error ? [] : remotes;
+  const others = claimsOf(listed, dir).filter((claim) => claim.workspace !== own?.name);
+  const warnings = others.map(
+    (claim) =>
+      `remote ${claim.remote} ${claim.url} is claimed by workspace ${claim.workspace} (${claim.pattern}): an action that targets it never exceeds ${claim.workspace}'s grants`,
+  );
   const notes: string[] = [];
-  if (own && !own.remotes?.length) {
-    const remotes = checkoutRemotes(cwd);
-    const origin = remotes instanceof Error ? undefined : remotes.find((r) => r.name === "origin");
+  if (own && unclaimed) {
+    // Never suggest a remote another workspace already claims.
+    const free = listed.filter((remote) => !others.some((claim) => claim.url === remote.url));
+    const suggest = free.find((remote) => remote.name === "origin") ?? free[0];
     notes.push(
-      `workspace ${own.name} claims no remotes, so a folder outside it whose origin is ${origin ? origin.url : "one of its remotes"} keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set ${own.name} remotes=${origin ? origin.url : "<url>"}`,
+      `workspace ${own.name} claims no remotes, so a folder outside it whose origin is ${suggest ? suggest.url : "one of its remotes"} keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set ${own.name} remotes=${suggest ? suggest.url : "<url>"}`,
     );
   }
   return { warnings, notes };
