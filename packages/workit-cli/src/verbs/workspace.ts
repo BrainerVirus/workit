@@ -52,8 +52,10 @@ import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import {
   CHANGELOG_MODES,
   DOCS_MODES,
+  PR_TEMPLATE_MODES,
   WorkspaceConfigError,
   changelogPathsOf,
+  prTemplateOf,
   globRoot,
   globSpecificity,
   overlappingEntries,
@@ -106,6 +108,7 @@ const SETTABLE_KEYS = new Set([
   "changelog",
   "docs",
   "changelogPath",
+  "prTemplate",
   "defaultProfile",
   "profiles",
   "releaseTracks",
@@ -490,7 +493,20 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
           io,
           `${spec}: changelogPath must be a repo-relative path or a JSON list of them (e.g. docs/CHANGELOG.md), or null to unset`,
         );
-      changes.push({ path: keyPath, value: paths.length === 1 ? paths[0] : paths });
+      changes.push({
+        path: keyPath,
+        value: paths.length === 1 ? paths[0] : paths,
+      });
+      continue;
+    }
+    if (keyPath[0] === "prTemplate" && value !== null) {
+      const chosen = keyPath.length === 1 ? prTemplateOf(value) : null;
+      if (!chosen)
+        return usage(
+          io,
+          `${spec}: prTemplate must be ${PR_TEMPLATE_MODES.join(", ")} or a repo-relative .md path (e.g. .gitlab/merge_request_templates/Feature.md), or null to unset`,
+        );
+      changes.push({ path: keyPath, value: chosen });
       continue;
     }
     changes.push({ path: keyPath, value });
@@ -610,7 +626,11 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
   };
   const specificity = globSpecificity(removed.glob);
   const raised: Raise[] = [
-    { taker: "defaults", kinds: raisedKinds(before, defaults), reason: "no entry matches" },
+    {
+      taker: "defaults",
+      kinds: raisedKinds(before, defaults),
+      reason: "no entry matches",
+    },
     ...remaining.map((entry) => ({
       taker: entry.name,
       kinds: raisedKinds(before, ceilingOf(entry)),
@@ -665,9 +685,16 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
   const at = globRoot(removed.glob);
   let covers: { at: string; workspace: string | null; error?: string };
   try {
-    covers = { at, workspace: resolveWorkspaceFromEntries(at, remaining)?.name ?? null };
+    covers = {
+      at,
+      workspace: resolveWorkspaceFromEntries(at, remaining)?.name ?? null,
+    };
   } catch (error) {
-    covers = { at, workspace: null, error: error instanceof Error ? error.message : String(error) };
+    covers = {
+      at,
+      workspace: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
   const coveringCeiling = ceilingOf(remaining.find((entry) => entry.name === covers.workspace));
   return emit(

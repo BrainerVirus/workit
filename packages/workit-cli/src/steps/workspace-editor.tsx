@@ -19,9 +19,9 @@ import {
 } from "./options";
 
 type Kind = "profile" | "track";
-type StepKey = "changelog" | "docs";
+type StepKey = "changelog" | "docs" | "prTemplate";
 
-/** The steps before a PR opens: one fixed choice each, default off (no key written). */
+/** The steps before a PR opens: one fixed choice each; the first is the default (no key written). */
 const STEPS: Record<StepKey, { label: string; choices: { label: string; value: string }[] }> = {
   changelog: {
     label: "Changelog step before a PR",
@@ -38,12 +38,25 @@ const STEPS: Record<StepKey, { label: string; choices: { label: string; value: s
       { label: "When user-facing behavior changed", value: "when-user-facing" },
     ],
   },
+  prTemplate: {
+    label: "PR description template",
+    choices: [
+      {
+        label: "Auto: the repo's template, else Workit's (default)",
+        value: "auto",
+      },
+      { label: "The repo's template (refuse without one)", value: "repo" },
+      { label: "Workit's Summary / Evidence / Merge danger", value: "workit" },
+    ],
+  },
 };
 
+// A prTemplate path (set with `workit workspace set`) shows as itself.
 const stepValue = (workspace: WorkspaceConfig, key: StepKey): string =>
-  STEPS[key].choices.some((choice) => choice.value === workspace[key])
+  STEPS[key].choices.some((choice) => choice.value === workspace[key]) ||
+  (key === "prTemplate" && typeof workspace[key] === "string")
     ? String(workspace[key])
-    : "off";
+    : STEPS[key].choices[0].value;
 
 // Each view is its own component, so a list control never carries its
 // highlighted row into the next view: every list opens on its declared value.
@@ -124,6 +137,7 @@ const MAIN_OPTIONS = [
   ...WORKSPACE_ADVANCED_FIELDS,
   { label: STEPS.changelog.label, value: "step:changelog" as const },
   { label: STEPS.docs.label, value: "step:docs" as const },
+  { label: STEPS.prTemplate.label, value: "step:prTemplate" as const },
   { label: "Manage profiles", value: "profiles" as const },
   { label: "Manage release tracks", value: "tracks" as const },
   { label: "Save workspace settings", value: "save" as const },
@@ -228,6 +242,7 @@ function MainMenu({ workspace, dispatch, setView }: MenuProps): JSX.Element {
           else if (value === "tracks") setView({ mode: "menu", kind: "track" });
           else if (value === "step:changelog") setView({ mode: "step", key: "changelog" });
           else if (value === "step:docs") setView({ mode: "step", key: "docs" });
+          else if (value === "step:prTemplate") setView({ mode: "step", key: "prTemplate" });
           else dispatch({ type: "workspaceAdvancedSelect", field: value });
         }}
       />

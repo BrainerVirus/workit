@@ -47,7 +47,14 @@ import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
 import {
   workspaceChangelog,
   workspaceDeleteBranch,
+  workspacePrTemplate,
 } from "@brainervirus/workit-core/src/core/workspaces";
+import {
+  checkPrBody,
+  resolvePrTemplate,
+  templateLabel,
+  type PrTemplate,
+} from "@brainervirus/workit-core/src/core/pr-template";
 import {
   changelogGate,
   type ChangelogGate,
@@ -288,7 +295,58 @@ const EDIT_USAGE =
 const THREADS_USAGE = "workit pr threads [--pr <n>] [--json]";
 const REPLY_USAGE =
   "workit pr reply [--pr <n>] --thread <id> [--body-file <f|->] [--resolve] [--json]";
-const USAGE = "workit pr status|create|merge|ready|edit|threads|reply ... (workit help pr)";
+const TEMPLATE_USAGE = "workit pr template [--json]";
+const USAGE =
+  "workit pr status|create|template|merge|ready|edit|threads|reply ... (workit help pr)";
+
+/** The command that sets the workspace's prTemplate. */
+const prTemplateHint = (workspace: string | null, value: string): string =>
+  `workit workspace set ${workspace ?? "<workspace>"} prTemplate=${value}`;
+
+/**
+ * The workspace's PR template, or the exit code of the refusal when its
+ * setting names a template this repo does not have.
+ */
+function prTemplateFor(io: Io): { template: PrTemplate; workspace: string | null } | number {
+  const configured = workspacePrTemplate(io.cwd);
+  const resolved = resolvePrTemplate(io.cwd, configured.setting);
+  if (resolved.ok) return { template: resolved.template, workspace: configured.workspace };
+  const what =
+    resolved.setting === "repo"
+      ? `prTemplate is repo and this repo has no PR template (looked in ${resolved.lookedIn.join(", ")})`
+      : `prTemplate is ${resolved.setting} and that file is not in this repo`;
+  return emit(
+    io,
+    fail("blocked", `pr_template_missing: ${what}; opened nothing`, {
+      data: {
+        reason: "pr_template_missing",
+        setting: resolved.setting,
+        lookedIn: resolved.lookedIn,
+      },
+      unblock: `add the template, or ${prTemplateHint(configured.workspace, "workit")}  # or prTemplate=auto`,
+    }),
+  );
+}
+
+async function template(argv: string[], io: Io): Promise<number> {
+  const flags = parseFlags(argv, {});
+  if (typeof flags === "string") return usage(io, flags, TEMPLATE_USAGE);
+  if (flags.positionals.length)
+    return usage(io, `unexpected argument ${flags.positionals[0]}`, TEMPLATE_USAGE);
+  const found = prTemplateFor(io);
+  if (typeof found === "number") return found;
+  const { template: chosen } = found;
+  return emit(io, ok(chosen), (data: PrTemplate) => [
+    data.path
+      ? `template: ${data.path} (the repo's, prTemplate ${data.setting})`
+      : `template: Workit's (prTemplate ${data.setting}${data.setting === "auto" ? ": this repo has no PR template" : ""}; guidance in the ship skill's references/pr-body.md)`,
+    data.enforced
+      ? `fill every heading (${data.headings.join(", ")}) and replace each <!-- --> comment; workit pr create refuses a body that does not`
+      : `a suggestion: fill every heading (${data.headings.join(", ")}) and replace each <!-- --> comment; workit pr create checks it only with ${prTemplateHint(found.workspace, "workit")}`,
+    "",
+    data.content.trimEnd(),
+  ]);
+}
 
 /** `--body-file <path>`, or `-` for stdin. A string is the usage error. */
 function readBodyFile(io: Io, file: string): { body: string } | string {
@@ -305,7 +363,11 @@ const prLabel = (kind: string, number: number): string =>
   `${kind === "github" ? "PR #" : "MR !"}${number}`;
 
 async function status(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { pr: "value", branch: "value", "log-lines": "value" });
+  const flags = parseFlags(argv, {
+    pr: "value",
+    branch: "value",
+    "log-lines": "value",
+  });
   if (typeof flags === "string") return usage(io, flags, STATUS_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, STATUS_USAGE);
@@ -333,7 +395,12 @@ async function status(argv: string[], io: Io): Promise<number> {
   const issues = issuesBlock(io.cwd, doc);
   return emit(
     io,
-    ok({ ...doc, nextHint: hint, verdict: verdictBlock(io.cwd, doc.head.branch, doc), issues }),
+    ok({
+      ...doc,
+      nextHint: hint,
+      verdict: verdictBlock(io.cwd, doc.head.branch, doc),
+      issues,
+    }),
     (data) => {
       const lines = renderStatus(data);
       if (data.issues?.length)
@@ -519,7 +586,20 @@ const acceptedHow = (verdict: {
       ? carryLabel(verdict.carry)
       : verdict.basis;
 
-async function create(argv: string[], io: Io): Promise<number> {
+/**
+ * In-process options a calling verb passes; never a flag. `releasePr`: the PR
+ * `workit release finish` opens, whose body Workit generates, skips the PR
+ * template check.
+ */
+type CreateInternal = { releasePr?: boolean };
+
+/** `pr create …` for the release PR `workit release finish` opens (no template check). */
+export const runReleasePr = (argv: string[], io: Io): Promise<number> =>
+  argv[0] === "create"
+    ? create(argv.slice(1), io, { releasePr: true })
+    : Promise.resolve(usage(io, "the release PR runs pr create only", CREATE_USAGE));
+
+async function create(argv: string[], io: Io, internal: CreateInternal = {}): Promise<number> {
   const flags = parseFlags(argv, {
     base: "value",
     track: "value",
@@ -575,7 +655,9 @@ async function create(argv: string[], io: Io): Promise<number> {
         }),
       );
   } else {
-    const resolved = vcsConfig("resolve", io.cwd, { track: flags.values.track ?? null });
+    const resolved = vcsConfig("resolve", io.cwd, {
+      track: flags.values.track ?? null,
+    });
     if (resolved.ok === false)
       return emit(
         io,
@@ -599,6 +681,8 @@ async function create(argv: string[], io: Io): Promise<number> {
   }
   if (!base)
     return usage(io, "no default target branch is configured; pass --base <b>", CREATE_USAGE);
+  const prTemplate = internal.releasePr ? null : prTemplateFor(io);
+  if (typeof prTemplate === "number") return prTemplate;
 
   // A given title is checked before any forge call; a --fill title once it is derived.
   const given = flags.values.title ? refuseTitle(io, flags.values.title, CREATE_USAGE) : null;
@@ -659,6 +743,11 @@ async function create(argv: string[], io: Io): Promise<number> {
         },
       ),
     );
+  const unfilled = prTemplate?.template.enforced
+    ? checkPrBody(body ?? "", prTemplate.template)
+    : null;
+  if (prTemplate && unfilled && (unfilled.missingHeadings.length || unfilled.leftComments.length))
+    return emit(io, unfilledTemplate(prTemplate.template, unfilled, prTemplate.workspace));
   if (changelog.status === "skipped")
     body = `${body ?? ""}${body ? "\n\n" : ""}Changelog: no entry (--no-changelog): ${changelog.reason}`;
   const forge = connected.data.forge;
@@ -694,12 +783,18 @@ async function create(argv: string[], io: Io): Promise<number> {
   // Only a PR this call opened carries the lines; a reused one keeps its body.
   const opened = result.data.created;
   const linked = opened
-    ? recordIssueLinks(io.cwd, result.data, links, { actor, forge: forge.kind, repo: forge.repo })
+    ? recordIssueLinks(io.cwd, result.data, links, {
+        actor,
+        forge: forge.kind,
+        repo: forge.repo,
+      })
     : [];
   const backlinks: BacklinkOutcome[] =
     opened && planned.data.backlink && links.length
       ? await progressFor(io).run("Posting issue backlinks", () =>
-          postBacklinks(io.cwd, connected.data, result.data, links, { env: io.env }),
+          postBacklinks(io.cwd, connected.data, result.data, links, {
+            env: io.env,
+          }),
         )
       : [];
   const created = {
@@ -736,6 +831,41 @@ async function create(argv: string[], io: Io): Promise<number> {
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     `next: ${data.next}${endpointNote(io.cwd)}`,
   ]);
+}
+
+/** The refusal for a body that leaves the template's headings out or keeps its placeholder comments. */
+function unfilledTemplate(
+  chosen: PrTemplate,
+  check: ReturnType<typeof checkPrBody>,
+  workspace: string | null,
+): ReturnType<typeof fail> {
+  const gaps = [
+    ...(check.missingHeadings.length
+      ? [`it has no heading ${check.missingHeadings.map((heading) => `"${heading}"`).join(", ")}`]
+      : []),
+    ...(check.leftComments.length
+      ? [
+          `it still has ${check.leftComments.length} of the template's <!-- --> placeholder comments`,
+        ]
+      : []),
+  ];
+  return fail(
+    "blocked",
+    `pr_template_unfilled: the body does not fill ${templateLabel(chosen)}: ${gaps.join("; ")}; opened nothing`,
+    {
+      data: {
+        reason: "pr_template_unfilled",
+        template: chosen.path ?? "workit",
+        setting: chosen.setting,
+        ...check,
+      },
+      unblock: `workit pr template prints it: fill each heading, replace each comment, then rerun workit pr create${
+        chosen.path
+          ? `; to use Workit's template instead: ${prTemplateHint(workspace, "workit")}`
+          : ""
+      }`,
+    },
+  );
 }
 
 /** The command that points the workspace's changelog step at `file`. */
@@ -1078,6 +1208,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv;
   if (sub === "status") return status(rest, io);
   if (sub === "create") return create(rest, io);
+  if (sub === "template") return template(rest, io);
   if (sub === "merge") return merge(rest, io);
   if (sub === "ready") return ready(rest, io);
   if (sub === "edit") return edit(rest, io);

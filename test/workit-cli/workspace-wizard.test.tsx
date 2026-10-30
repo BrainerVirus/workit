@@ -657,6 +657,7 @@ test("advanced workspace menu exposes typed profile and release-track controls",
     // The changelog and docs steps are offered, both off by default.
     expect(tty.lastFrame()).toContain("Changelog step before a PR: off");
     expect(tty.lastFrame()).toContain("Docs refresh before a PR: off");
+    expect(tty.lastFrame()).toContain("PR description template: auto");
     tty.unmount();
   } finally {
     process.chdir(previous);
@@ -1266,4 +1267,19 @@ test("Given the workspace editor, When changelog and docs steps are set, Then th
   expect(invalid.workspaceDraft?.changelog).toBe("create");
   const off = reducer(on, { type: "workspaceStepSet", key: "changelog", value: "off" });
   expect(off.workspaceDraft).toEqual({ name: "work", glob: "/w/**", docs: "when-user-facing" });
+});
+
+test("Given the workspace editor, When the PR template is set, Then the draft stores repo or workit and auto removes the key", () => {
+  const draft: WizardDraft = {
+    ...createInitialDraft(seedConfig),
+    workspaceDraft: { name: "work", glob: "/w/**" },
+  };
+  const workit = reducer(draft, { type: "workspaceStepSet", key: "prTemplate", value: "workit" });
+  expect(workit.workspaceDraft).toEqual({ name: "work", glob: "/w/**", prTemplate: "workit" });
+  const repo = reducer(workit, { type: "workspaceStepSet", key: "prTemplate", value: "repo" });
+  expect(repo.workspaceDraft?.prTemplate).toBe("repo");
+  const invalid = reducer(repo, { type: "workspaceStepSet", key: "prTemplate", value: "off" });
+  expect(invalid.workspaceDraft?.prTemplate).toBe("repo");
+  const auto = reducer(repo, { type: "workspaceStepSet", key: "prTemplate", value: "auto" });
+  expect(auto.workspaceDraft).toEqual({ name: "work", glob: "/w/**" });
 });

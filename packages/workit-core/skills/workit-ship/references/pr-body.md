@@ -1,7 +1,9 @@
 # PR body
 
-Write the body so a reviewer can judge the change fast. Use three sections, in
-this order, and nothing else the reviewer has to read.
+Write the body so a reviewer can judge the change fast. This is Workit's
+template; when `workit pr template` prints the repo's own, fill that one
+instead. Use three sections, in this order, and nothing else the reviewer has
+to read.
 
 1. **Summary:** the smallest visual that makes the change clear (pseudocode, a
    call tree, a file tree, a Mermaid diagram or one diff hunk), with a sentence

@@ -15,6 +15,7 @@ import {
   workspacesPath,
   workspaceOverlaps,
   workspaceChangelog,
+  workspacePrTemplate,
   workspaceDelegation,
   workspaceTrailers,
   type WorkspaceConfig,
@@ -851,6 +852,36 @@ test("workspaceChangelog: given changelogPath as a path or a list, then it is re
       paths: ["CHANGELOG.md"],
       pathConfigured: false,
       issues: [expect.stringContaining("is not a repo-relative path")],
+    });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("workspacePrTemplate: given no setting, then auto; given a mode or a repo-relative .md path, then it is read and inherited; given anything else, then auto with a note", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-pr-template-"));
+  const work = { name: "work", glob: "/home/*/Documents/projects/work/**" };
+  const app = { name: "app", glob: "/home/*/Documents/projects/work/app/**" };
+  const cwd = "/home/u/Documents/projects/work/app";
+  const read = (entries: unknown[]) => {
+    writeWorkspaces(dir, JSON.stringify({ workspaces: entries }));
+    let result: ReturnType<typeof workspacePrTemplate> | undefined;
+    withIsolatedConfig(dir, () => {
+      result = workspacePrTemplate(cwd);
+    });
+    return result;
+  };
+  expect(read([work, app])).toEqual({ setting: "auto", workspace: "app", issues: [] });
+  expect(read([{ ...work, prTemplate: "workit" }, app])).toEqual({
+    setting: "workit",
+    workspace: "app",
+    issues: [],
+  });
+  expect(
+    read([work, { ...app, prTemplate: "./.gitlab/merge_request_templates/Feature.md" }]),
+  ).toMatchObject({ setting: ".gitlab/merge_request_templates/Feature.md", issues: [] });
+  for (const bad of ["always", "../pr.md", "/etc/pr.md", "docs/pr.txt", 7])
+    expect(read([{ ...work, prTemplate: bad }]), String(bad)).toMatchObject({
+      setting: "auto",
+      issues: [expect.stringContaining("is not auto|repo|workit or a repo-relative .md path")],
     });
   rmSync(dir, { recursive: true, force: true });
 });

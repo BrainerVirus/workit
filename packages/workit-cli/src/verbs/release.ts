@@ -135,7 +135,8 @@ async function releasePr(io: Io, plan: FinishPlan, dryRun: boolean): Promise<num
     "Opening the release PR",
     () =>
       subVerb(
-        () => import("./pr"),
+        // The release PR's body is generated: runReleasePr skips the PR template check.
+        () => import("./pr").then((verb) => ({ run: verb.runReleasePr })),
         [
           "create",
           "--base",
