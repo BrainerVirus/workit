@@ -43,7 +43,8 @@ import {
 } from "@brainervirus/workit-core/src/forge/pr-ops";
 import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
-import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
+import { currentBranch, headSha } from "@brainervirus/workit-core/src/git/rev";
+import { configDir } from "@brainervirus/workit-core/src/core/config";
 import {
   workspaceChangelog,
   workspaceDeleteBranch,
@@ -57,8 +58,16 @@ import {
 } from "@brainervirus/workit-core/src/core/pr-template";
 import {
   changelogGate,
+  resolveForkPoint,
   type ChangelogGate,
+  type ForkPoint,
 } from "@brainervirus/workit-core/src/core/changelog-gate";
+import {
+  docsGate,
+  recordPrChecks,
+  type DocsGate,
+  type PrCheckOutcome,
+} from "@brainervirus/workit-core/src/core/docs-gate";
 import {
   cleanupMergedBranch,
   type LocalCleanup,
@@ -662,7 +671,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
       return emit(
         io,
         fail("blocked", String(resolved.error), {
-          unblock: "fix ~/.config/workit/vcs.json or pass --base <b>",
+          unblock: `fix ${path.join(configDir(), "vcs.json")} or pass --base <b>`,
         }),
       );
     releaseTrack = resolved.releaseTrack ?? null;
@@ -701,6 +710,8 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     if (filled !== null) return filled;
   }
   const steps = workspaceChangelog(io.cwd);
+  let point: ForkPoint | null = null;
+  const forkPoint = () => (point ??= resolveForkPoint(io.cwd, base, connected.data.baseRemote));
   const changelog = changelogGate({
     cwd: io.cwd,
     mode: steps.changelog,
@@ -710,13 +721,31 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     paths: steps.paths,
     pathConfigured: steps.pathConfigured,
     skipReason: skipChangelog,
+    forkPoint,
   });
+  const docs = docsGate({ cwd: io.cwd, mode: steps.docs, title, body, forkPoint });
+  const checks = checkOutcomes(changelog, docs, steps.workspace);
+  const unrecorded = checks.length
+    ? recordPrChecks(
+        io.cwd,
+        { actor: actorFromEnv(io.env), branch, head: headSha(io.cwd), base },
+        checks,
+      )
+    : null;
+  if (!io.json) {
+    for (const check of checks) io.stdout(`${check.line}\n`);
+    if (unrecorded) io.stdout(`ledger: checks not recorded (${unrecorded})\n`);
+  }
+  const checkData = {
+    ...(changelog.status === "off" ? {} : { changelog }),
+    ...(docs.status === "off" ? {} : { docs }),
+  };
   if (changelog.status === "missing")
     return emit(
       io,
       fail(
         "blocked",
-        `changelog_required: the workspace's changelog step is ${changelog.mode} and this user-facing PR adds no entry under ## [Unreleased] in ${steps.paths.join(" or ")}${
+        `changelog_required: the workspace's changelog step is ${changelog.mode} and this user-facing PR adds no entry under ## [Unreleased] in ${missingIn(changelog)}${
           changelog.staleBase
             ? ` (compared with this checkout's older copy of the base: the fetch failed: ${changelog.staleBase})`
             : ""
@@ -726,7 +755,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
             : ""
         }`,
         {
-          data: { reason: "changelog_required", changelog },
+          data: { reason: "changelog_required", ...checkData },
           unblock: `${changelog.command}, commit and push ${changelog.file}, then rerun workit pr create; or pass --no-changelog "<why this PR needs no entry>"`,
         },
       ),
@@ -738,7 +767,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
         "blocked",
         `changelog_base_unknown: ${changelog.remote}/${changelog.base} is not in this checkout (git fetch ${changelog.remote} ${changelog.base}: ${changelog.fetch}), so the Unreleased entry this PR adds cannot be compared with its base; opened nothing`,
         {
-          data: { reason: "changelog_base_unknown", changelog },
+          data: { reason: "changelog_base_unknown", ...checkData },
           unblock: `git fetch ${changelog.remote} ${changelog.base}  # a shallow clone: git fetch --unshallow ${changelog.remote} ${changelog.base}; then rerun workit pr create`,
         },
       ),
@@ -811,7 +840,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     ...(planned.data.warnings.length ? { warnings: planned.data.warnings } : {}),
     ...(releaseTrack ? { releaseTrack } : {}),
     ...(route ? { flow: route } : {}),
-    ...(changelog.status === "off" ? {} : { changelog }),
+    ...checkData,
   };
   return emit(io, ok(created), (data: CreateOutcome & { releaseTrack?: ResolvedReleaseTrack }) => [
     `${data.created ? "opened" : "found open"} ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number}${data.draft && data.created ? " (draft)" : ""}: ${data.branch} -> ${data.base}  ${data.url}`,
@@ -827,7 +856,6 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     `head ${data.head.slice(0, 12)} verified on the forge`,
     ...issueLines(links, opened, linked, backlinks, data.number),
     ...planned.data.warnings.map((warning) => `note: ${warning}`),
-    ...changelogLines(changelog, steps.workspace),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     `next: ${data.next}${endpointNote(io.cwd)}`,
   ]);
@@ -872,34 +900,75 @@ function unfilledTemplate(
 const pathHint = (workspace: string | null, file: string): string =>
   `workit workspace set ${workspace ?? "<workspace>"} changelogPath=${file}`;
 
-/** What the changelog gate let through, in one line; nothing when it is off. */
-function changelogLines(gate: ChangelogGate, workspace: string | null): string[] {
+/** Where a missing entry was expected: the package changelogs lacking one, else every file read. */
+const missingIn = (gate: Extract<ChangelogGate, { status: "missing" }>): string =>
+  gate.lacking?.length
+    ? `${gate.lacking.join(", ")} (each changelog of a package the diff touches needs its own entry)`
+    : gate.looked.join(" or ");
+
+/**
+ * One printed and recorded line per `pr create` check when either step is on;
+ * nothing when both are off. A stale-base note rides on the changelog line.
+ */
+function checkOutcomes(
+  changelog: ChangelogGate,
+  docs: DocsGate,
+  workspace: string | null,
+): PrCheckOutcome[] {
+  if (changelog.status === "off" && docs.status === "off") return [];
+  return [
+    { check: "changelog", status: changelog.status, line: changelogLine(changelog, workspace) },
+    { check: "docs", status: docs.status, line: docsLine(docs) },
+  ];
+}
+
+/** What the changelog check decided, in one line. */
+function changelogLine(gate: ChangelogGate, workspace: string | null): string {
   switch (gate.status) {
     case "off":
+      return "changelog: off (the workspace has no changelog step)";
     case "missing":
+      return `changelog: blocked: no new Unreleased entry in ${missingIn(gate)}`;
     case "base-unknown":
-      return [];
+      return `changelog: blocked: ${gate.remote}/${gate.base} is not in this checkout, so the entry cannot be compared`;
     case "not-user-facing":
-      return [`changelog: no entry needed (${gate.type} is not user-facing)`];
+      return `changelog: no entry needed (${gate.type} is not user-facing)`;
     case "skipped":
-      return [`changelog: no entry (--no-changelog: ${gate.reason}); recorded in the PR body`];
+      return `changelog: no entry (--no-changelog: ${gate.reason}); recorded in the PR body`;
     case "no-file":
-      return [
-        `changelog: update is on but this repo has no ${gate.paths.join(" or ")}; nothing to update${
-          gate.candidates.length
-            ? `; found ${gate.candidates.join(", ")}: to use it, ${pathHint(workspace, gate.candidates[0])}`
-            : ""
-        }`,
-      ];
+      return `changelog: update is on but this repo has no ${gate.paths.join(" or ")}; nothing to update${
+        gate.candidates.length
+          ? `; found ${gate.candidates.join(", ")}: to use it, ${pathHint(workspace, gate.candidates[0])}`
+          : ""
+      }`;
     case "has-entry":
-      return [
-        ...(gate.staleBase
-          ? [
-              `note: changelog: could not fetch the PR base (${gate.staleBase}); compared with this checkout's older copy of it`,
-            ]
-          : []),
-        `changelog: ${gate.added.length} new Unreleased ${gate.added.length === 1 ? "entry" : "entries"} in ${gate.file}`,
-      ];
+      return `changelog: ${
+        gate.files
+          ? `new Unreleased entries in ${gate.files.join(", ")}`
+          : `${gate.added.length} new Unreleased ${gate.added.length === 1 ? "entry" : "entries"} in ${gate.file}`
+      }${
+        gate.staleBase
+          ? ` (compared with this checkout's older copy of the PR base: the fetch failed: ${gate.staleBase})`
+          : ""
+      }`;
+  }
+}
+
+/** What the docs check saw, in one line. */
+function docsLine(gate: DocsGate): string {
+  switch (gate.status) {
+    case "off":
+      return "docs: off (the workspace has no docs step)";
+    case "not-user-facing":
+      return `docs: no check needed (${gate.type} is not user-facing)`;
+    case "base-unknown":
+      return `docs: not checked: ${gate.remote}/${gate.base} is not in this checkout`;
+    case "updated":
+      return `docs: updated ${gate.files.join(", ")}`;
+    case "reported":
+      return "docs: no doc changed; the PR body reports the docs pass";
+    case "unconfirmed":
+      return "docs: no doc changed and the PR body has no Docs line; fix any README or guide line this diff made false, or say which you checked under Docs in the body";
   }
 }
 

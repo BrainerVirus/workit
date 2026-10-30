@@ -524,7 +524,10 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
   user-facing and passes.
 - Otherwise the branch must add at least one bullet under `## [Unreleased]` in
   the changelog (CHANGELOG.md, or the workspace's `changelogPath`: any one of
-  a list counts), compared with its merge base on the PR base. Without one,
+  a list counts), compared with its merge base on the PR base. With a glob
+  such as `projects/*/CHANGELOG.md`, each package the diff touches needs an
+  entry in its own changelog, and the refusal names the ones that lack it.
+  Without one,
   `pr create` exits 3 with `changelog_required` (`data.reason` in `--json`),
   opens nothing, and its `unblock:` line names the
   `workit changelog apply --entries '{"Added": ["…"]}'` command to run (the
@@ -549,6 +552,13 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
   saying the fetch failed.
 - Under `update`, a branch that deletes the changelog is refused like one that
   adds no entry.
+
+When the workspace turns on `changelog` or `docs`, `pr create` prints one
+`changelog:` and one `docs:` line on every run (passed, skipped and why,
+bypassed with `--no-changelog`, or blocked) and records each as a `pr.check`
+ledger row on the branch, so `workit ledger` shows whether the steps ran. The
+docs check never blocks: it reports the doc files the diff changed, a `Docs`
+line in the PR body, or neither.
 
 The gate only reads the changelog; entries are written by
 `workit changelog apply`, which merges into Unreleased and never rewrites or

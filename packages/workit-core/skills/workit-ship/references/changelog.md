@@ -11,7 +11,8 @@ A PR whose title type is chore, test, docs, ci, build or style (no `!`) needs
 no entry. Under `update`, a repo without its changelog file needs none either.
 The file is CHANGELOG.md at the root unless `changelog file:` names another
 path (or several, one per package: write the entry in the one the change
-belongs to). Otherwise:
+belongs to; with a glob such as `projects/*/CHANGELOG.md`, every package the
+diff touches needs its own entry). Otherwise:
 
 1. Write one bullet per change a user can see, leading with what they can now
    do, not with internals: "Added: `workit pr create --no-changelog <reason>`
@@ -42,3 +43,4 @@ Only when user-facing behavior changed (same types as above):
    PR body as uncovered instead.
 3. A pass that changed nothing is still reported in the PR body: "Docs:
    checked README.md, docs/guides/x.md; nothing the diff made false."
+   `workit pr create` prints a `docs:` line saying which it found.

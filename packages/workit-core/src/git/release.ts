@@ -17,6 +17,7 @@ import { readLedger, appendObserved, type LedgerActor } from "../ledger";
 import { failure, success, type ForgeResult } from "../forge/types";
 import { vcsConfig } from "../core/vcs-config";
 import { trackBranchName } from "../core/release-tracks";
+import { resolveChangelogPaths } from "../core/changelog-gate";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -349,8 +350,8 @@ const isAncestor = (cwd: string, ancestor: string, descendant: string): boolean 
   git(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]).ok;
 
 /**
- * The changelog section for `version` at `ref` (`file`: the workspace's first
- * changelogPath, default CHANGELOG.md): a `## [1.4.0]`, `## 1.4.0` or
+ * The changelog section for `version` at `ref` (`file`: the first file the
+ * workspace's changelogPath resolves to at `ref`, default CHANGELOG.md): a `## [1.4.0]`, `## 1.4.0` or
  * `# [1.4.0](…)` heading (a `v` before the version is fine), up to the next
  * heading of the same or a higher level. Null without one.
  */
@@ -358,8 +359,9 @@ export function changelogSection(
   cwd: string,
   ref: string,
   version: string,
-  file: string = workspaceChangelog(cwd).paths[0],
+  file: string | undefined = resolveChangelogPaths(cwd, workspaceChangelog(cwd).paths, ref)[0],
 ): string | null {
+  if (!file) return null;
   const shown = git(cwd, ["show", `${ref}:${file}`]);
   if (!shown.ok) return null;
   const lines = shown.stdout.split(/\r?\n/u);
