@@ -36,7 +36,27 @@ export const WORKIT_ALLOWED_VERBS = [
  */
 export const WORKIT_BYPASS_FLAGS = ["--unverified", "--overwrite-unintegrated"] as const;
 
+/**
+ * Calls only the user runs (issue #615). The CLI's TTY and agent-marker check
+ * deters a cooperating agent; the host's prompt is what stops a determined
+ * one, so no host rule or hook allow may cover these. `release` is an allowed
+ * verb and `release notes approve` is inside it, so each host also asks or
+ * denies these words explicitly.
+ */
+export const WORKIT_USER_ONLY: readonly (readonly string[])[] = [
+  ["release", "notes", "approve"],
+  ["grant", "set"],
+  ["grant", "raise"],
+];
+
 const ALLOWED = new Set<string>(WORKIT_ALLOWED_VERBS);
+
+/** Do `needle`'s words appear in order in `words` (flags and values between them still match)? */
+const hasWordsInOrder = (words: readonly string[], needle: readonly string[]): boolean => {
+  let at = 0;
+  for (const word of words) if (word === needle[at] && (at += 1) === needle.length) return true;
+  return false;
+};
 
 const isBypass = (word: string): boolean =>
   WORKIT_BYPASS_FLAGS.some((flag) => word === flag || word.startsWith(`${flag}=`));
@@ -70,6 +90,8 @@ export const isAllowedWorkitCall = (
   if (!ALLOWED.has(verb)) return false;
   const end = words.indexOf("--");
   const limit = end < 0 ? words.length : end;
+  const call = words.slice(at, limit);
+  if (WORKIT_USER_ONLY.some((needle) => hasWordsInOrder(call, needle))) return false;
   return !words.slice(0, limit).some(isBypass) && !expands.some((index) => index < limit);
 };
 

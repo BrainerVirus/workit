@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { requireGrant } from "../autonomy";
 import { isProtectedTarget } from "../core/branch";
 import { recordedBaseKey, workspaceReleaseTracks } from "../core/release-tracks";
+import { configFilePath } from "../core/config";
 import { vcsConfig } from "../core/vcs-config";
 import { GIT_TIMEOUTS } from "../git/rev";
 import { listStacks } from "../stack";
@@ -117,7 +118,7 @@ function checkBase(cwd: string, meta: PrMeta, base: string): ForgeResult<void> {
     ...(owners.length === 1 ? { track: owners[0].name } : {}),
   });
   if (config.ok === false)
-    return failure("blocked", String(config.error), "fix ~/.config/workit/vcs.json");
+    return failure("blocked", String(config.error), `fix ${configFilePath("vcs.json")}`);
   const blocking = config.releaseTrack?.blocking;
   if (blocking)
     return failure(

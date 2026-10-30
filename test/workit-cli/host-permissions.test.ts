@@ -9,6 +9,8 @@ import {
   CLAUDE_ASK,
   codexRulesText,
   CURSOR_ALLOW,
+  CURSOR_DENY,
+  removeOwnedEntries,
   permissionHealth,
   planHostPermissions,
 } from "@/packages/workit-cli/src/admin/host-permissions";
@@ -87,6 +89,12 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
   expect(value.permissions.ask).toEqual([
     "Bash(workit * --unverified*)",
     "Bash(workit * --overwrite-unintegrated*)",
+    "Bash(workit release notes approve*)",
+    "Bash(workit * release notes approve*)",
+    "Bash(workit grant set*)",
+    "Bash(workit * grant set*)",
+    "Bash(workit grant raise*)",
+    "Bash(workit * grant raise*)",
   ]);
   expect(value.autoMode.environment.slice(0, 2)).toEqual([
     "$defaults",
@@ -97,6 +105,7 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
   expect(value.autoMode.allow).toHaveLength(2);
   expect(value.autoMode.allow[0]).toBe("$defaults");
   expect(value.autoMode.allow[1]).toStartWith("Workit-gated delivery:");
+  expect(value.autoMode.allow[1]).toContain("Does NOT cover `workit release notes approve`");
   expect(value.env.FOO).toBe("1");
   expect(value.env.CLAUDE_CODE_SHELL).toMatch(/[\\/]bash$/);
 
@@ -204,7 +213,12 @@ test("Given a Codex home, When setup and uninstall run, Then Workit's rules file
   if (rules === "unreadable") return;
   expect(rules.allow).toContain("workit pr");
   expect(rules.allow).not.toContain("workit check");
-  expect(rules.deny).toEqual(["workit grant"]);
+  expect(rules.deny).toEqual([
+    "workit grant",
+    "workit release notes approve",
+    "workit grant set",
+    "workit grant raise",
+  ]);
   applyUninstall(planUninstall({ home, env }), { home, env });
   expect(existsSync(file)).toBe(false);
 });
@@ -490,4 +504,51 @@ test("Given a tampered ownership record naming the user's own `Bash(workit …)`
   const after = JSON.parse(readFileSync(settings, "utf8"));
   expect(after.permissions.ask).toEqual(["Bash(workit grant *)", "Bash(workit pr merge *)"]);
   expect(after.env).toEqual({ CLAUDE_CODE_SHELL: "/opt/my/bash" });
+});
+
+const OLD_AUTO_ALLOW =
+  "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `--unverified`, `--admin` or any bypass flag.";
+
+test("Given a block with the old auto-mode line, When `workit upgrade` refreshes, Then the old line is replaced once and uninstall removes the new one", async () => {
+  const { env, home, settings } = sandbox();
+  writeFileSync(settings, JSON.stringify(USER_SETTINGS, null, 2) + "\n");
+  expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+  const value = JSON.parse(readFileSync(settings, "utf8"));
+  value.autoMode.allow = ["$defaults", OLD_AUTO_ALLOW];
+  writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
+  editRecord(env, (record) => {
+    const host = record.hosts["claude-code"];
+    host.owned.lists["autoMode.allow"] = [OLD_AUTO_ALLOW];
+    host.offered["autoMode.allow"] = [OLD_AUTO_ALLOW];
+  });
+  const plan = planHostPermissions({
+    home,
+    env,
+    hosts: ["claude-code"],
+    refreshOnly: true,
+  });
+  expect(applyHostPermissions(plan, { home, env })[0].status).toBe("written");
+  const after = JSON.parse(readFileSync(settings, "utf8"));
+  expect(after.autoMode.allow).toHaveLength(2);
+  expect(after.autoMode.allow[1]).toContain("workit grant set|raise");
+
+  const result = applyUninstall(planUninstall({ home, env }), { home, env });
+  expect(result.ok).toBe(true);
+  expect(JSON.parse(readFileSync(settings, "utf8"))).toEqual(USER_SETTINGS);
+});
+
+test("Given settings with only the old auto-mode line and no record, When uninstall runs, Then the old line is removed", () => {
+  const settings = { autoMode: { allow: ["$defaults", OLD_AUTO_ALLOW] } };
+  const { next } = removeOwnedEntries(settings, null, "claude-code");
+  expect(next.autoMode).toEqual({ allow: ["$defaults"] });
+});
+
+test("Given Codex and Cursor, When rules are written, Then Codex prompts and Cursor denies the user-only calls", () => {
+  expect(codexRulesText()).toContain(
+    'pattern = ["workit","release","notes","approve"],\n    decision = "prompt"',
+  );
+  expect(codexRulesText()).toContain(
+    'pattern = ["workit","grant","raise"],\n    decision = "prompt"',
+  );
+  expect(CURSOR_DENY).toContain("Shell(workit release notes approve)");
 });

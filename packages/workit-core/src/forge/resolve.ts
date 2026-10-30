@@ -12,6 +12,7 @@
 //   <vcs.account>`, else the CLI's default login. The token is never printed.
 // Config is read, never written.
 import fs from "node:fs";
+import { configFilePath } from "../core/config";
 import { readVcsConfig } from "../core/vcs-config";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
 import {
@@ -181,7 +182,7 @@ function resolveCredential(
       return failure(
         "blocked",
         `token_host_unverified: push host ${derived.host} only looks like ${kind}; workspace ${workspace?.name ?? "?"} vcs.tokenFile is not sent to it`,
-        `if ${apiHost} is your ${kind} server, set ${kind}.host in ~/.config/workit/vcs.json (or vcs.host for the workspace); otherwise fix the push remote`,
+        `if ${apiHost} is your ${kind} server, set ${kind}.host in ${configFilePath("vcs.json")} (or vcs.host for the workspace); otherwise fix the push remote`,
       );
     // Like youtrack.token: a token other users can read is refused (N14).
     if (process.platform !== "win32") {
@@ -205,14 +206,14 @@ function resolveCredential(
       return failure(
         "blocked",
         `workspace ${workspace?.name ?? "?"} vcs.tokenFile cannot be read`,
-        "fix vcs.tokenFile in ~/.config/workit/workspaces.json",
+        `fix vcs.tokenFile in ${configFilePath("workspaces.json")}`,
       );
     }
     if (!token)
       return failure(
         "blocked",
         `workspace ${workspace?.name ?? "?"} vcs.tokenFile is empty`,
-        "fix vcs.tokenFile in ~/.config/workit/workspaces.json",
+        `fix vcs.tokenFile in ${configFilePath("workspaces.json")}`,
       );
     return success({ token, credential: "workspace_token_file" });
   }
@@ -293,7 +294,7 @@ export function resolveForge(
     return failure(
       "blocked",
       error instanceof Error ? error.message : String(error),
-      "fix ~/.config/workit/workspaces.json (workit init → Workspaces)",
+      `fix ${configFilePath("workspaces.json")} (workit init → Workspaces)`,
     );
   }
   const hosts = configuredHosts();
@@ -434,7 +435,7 @@ export function checkPushIdentity(
     return failure(
       "blocked",
       error instanceof Error ? error.message : String(error),
-      "fix ~/.config/workit/workspaces.json (workit init → Workspaces)",
+      `fix ${configFilePath("workspaces.json")} (workit init → Workspaces)`,
     );
   }
   const account = workspace?.vcs?.account ?? null;
