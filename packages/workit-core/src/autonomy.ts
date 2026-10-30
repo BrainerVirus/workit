@@ -36,7 +36,13 @@ import os from "node:os";
 import path from "node:path";
 import { resolveConfigDir } from "./core/config";
 import { writeFileAtomic } from "./core/safe-write";
-import { checkoutRemotes, remoteMatches, type GrantTarget, type LazyTarget } from "./core/remotes";
+import {
+  checkoutRemotes,
+  remoteMatches,
+  type CheckoutRemote,
+  type GrantTarget,
+  type LazyTarget,
+} from "./core/remotes";
 import {
   checkoutsAbove,
   loadWorkspacesFrom,
@@ -500,6 +506,22 @@ function capAtRemotes(autonomy: Autonomy, cwd: string, target?: LazyTarget): Aut
   return capped;
 }
 
+/**
+ * Whether grants could stop a raw `kind` command: a workspace claims remotes,
+ * or an entry leaves `kind` ungranted (or has grants but no account). False
+ * costs no git call (the shell hook asks first).
+ */
+export const grantsMatter = (kind: GrantKind): boolean =>
+  !grantsOverride() &&
+  loadWorkspacesFrom(grantsDir()).some((entry) => {
+    const autonomy = autonomyOf(entry);
+    return (
+      entry.remotes?.length ||
+      autonomy.grants[kind] === false ||
+      (autonomy.configured.length > 0 && !autonomy.accountConfigured)
+    );
+  });
+
 /** Whether any workspace claims remotes (then targets are worth resolving). */
 export const remotesClaimed = (dir: string = grantsDir()): boolean =>
   loadWorkspacesFrom(dir).some((entry) => entry.remotes?.length);
@@ -519,15 +541,9 @@ export function targetClaims(
   );
 }
 
-/** The entries whose `remotes` claim one of `cwd`'s remote URLs (grant show, doctor). */
-export function remoteClaims(
-  cwd: string,
-  dir: string = grantsDir(),
-): { remote: string; url: string; workspace: string; pattern: string }[] | Error {
+/** The entries whose `remotes` claim one of `remotes` (grant show, doctor). */
+const claimsOf = (remotes: CheckoutRemote[], dir: string) => {
   const claiming = loadWorkspacesFrom(dir).filter((entry) => entry.remotes?.length);
-  if (claiming.length === 0) return [];
-  const remotes = checkoutRemotes(cwd);
-  if (remotes instanceof Error) return remotes;
   return remotes.flatMap((remote) =>
     claiming.flatMap((entry) => {
       const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
@@ -536,6 +552,16 @@ export function remoteClaims(
         : [];
     }),
   );
+};
+
+/** The entries whose `remotes` claim one of `cwd`'s remote URLs (grant show, doctor). */
+export function remoteClaims(
+  cwd: string,
+  dir: string = grantsDir(),
+): { remote: string; url: string; workspace: string; pattern: string }[] | Error {
+  if (!remotesClaimed(dir)) return [];
+  const remotes = checkoutRemotes(cwd);
+  return remotes instanceof Error ? remotes : claimsOf(remotes, dir);
 }
 
 /**
@@ -543,7 +569,8 @@ export function remoteClaims(
  * checkout another workspace claims (a warning: grants here are capped at
  * it), and a workspace that claims no remotes (a note, since every entry
  * starts without: a checkout elsewhere whose origin is its remote keeps that
- * folder's grants), with the command that sets them.
+ * folder's grants), with the command that claims a remote no other workspace
+ * claims. Git is asked once, and only when one of them needs it.
  */
 export function remoteFindings(
   cwd: string,
@@ -555,21 +582,24 @@ export function remoteFindings(
   } catch {
     return { warnings: [], notes: [] };
   }
-  const claims = remoteClaims(cwd, dir);
-  if (claims instanceof Error)
-    return { warnings: [`${claims.message}: grants here are capped at nothing`], notes: [] };
-  const warnings = claims
-    .filter((claim) => claim.workspace !== own?.name)
-    .map(
-      (claim) =>
-        `remote ${claim.remote} ${claim.url} is claimed by workspace ${claim.workspace} (${claim.pattern}): an action that targets it never exceeds ${claim.workspace}'s grants`,
-    );
+  const unclaimed = own !== null && !own.remotes?.length;
+  if (!unclaimed && !remotesClaimed(dir)) return { warnings: [], notes: [] };
+  const remotes = checkoutRemotes(cwd);
+  if (remotes instanceof Error && remotesClaimed(dir))
+    return { warnings: [`${remotes.message}: grants here are capped at nothing`], notes: [] };
+  const listed = remotes instanceof Error ? [] : remotes;
+  const others = claimsOf(listed, dir).filter((claim) => claim.workspace !== own?.name);
+  const warnings = others.map(
+    (claim) =>
+      `remote ${claim.remote} ${claim.url} is claimed by workspace ${claim.workspace} (${claim.pattern}): an action that targets it never exceeds ${claim.workspace}'s grants`,
+  );
   const notes: string[] = [];
-  if (own && !own.remotes?.length) {
-    const remotes = checkoutRemotes(cwd);
-    const origin = remotes instanceof Error ? undefined : remotes.find((r) => r.name === "origin");
+  if (own && unclaimed) {
+    // Never suggest a remote another workspace already claims.
+    const free = listed.filter((remote) => !others.some((claim) => claim.url === remote.url));
+    const suggest = free.find((remote) => remote.name === "origin") ?? free[0];
     notes.push(
-      `workspace ${own.name} claims no remotes, so a folder outside it whose origin is ${origin ? origin.url : "one of its remotes"} keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set ${own.name} remotes=${origin ? origin.url : "<url>"}`,
+      `workspace ${own.name} claims no remotes, so a folder outside it whose origin is ${suggest ? suggest.url : "one of its remotes"} keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set ${own.name} remotes=${suggest ? suggest.url : "<url>"}`,
     );
   }
   return { warnings, notes };
@@ -652,6 +682,61 @@ export function requireGrant(
     allowUnverified: kind === "merge" && value === true,
     workspace,
   };
+}
+
+/**
+ * Why a raw shell command (the pre-tool hook: `git push`, `gh pr create`, a
+ * release) may not run, or null. Only what a workspace governs is judged: a
+ * workspace claims remotes, or some entry could leave `kind` ungranted
+ * (otherwise no git runs). A folder outside every workspace, with nothing
+ * claimed, keeps today's behaviour. A target that cannot be resolved denies.
+ */
+export function rawGrantDenial(
+  cwd: string,
+  kind: GrantKind,
+  target?: LazyTarget,
+): { error: string; unblock: string } | null {
+  const claimed = remotesClaimed();
+  if (!grantsMatter(kind)) return null;
+  // Resolved once: the cap and the claim check below share it.
+  let resolved: GrantTarget | undefined;
+  const lazy = target && (() => (resolved ??= typeof target === "function" ? target() : target));
+  let autonomy: Autonomy;
+  try {
+    autonomy = resolveAutonomy(cwd, lazy);
+  } catch (error) {
+    return claimed
+      ? {
+          error: String(error),
+          unblock: "fix ~/.config/workit/workspaces.json",
+        }
+      : null;
+  }
+  const { workspace, note } = autonomy;
+  const capped = autonomy.unblocks?.[kind];
+  if (autonomy.grants[kind] !== false) return null;
+  if (workspace !== null || capped)
+    return {
+      error: `${kind} is not granted for ${workspace ? `workspace ${workspace}` : "this checkout"}${note ? ` (${note})` : ""}`,
+      unblock: capped ?? grantHint(workspace, kind),
+    };
+  // A folder outside every workspace: judged only by a workspace that claims
+  // the target and does not grant `kind` (a default-false grant records no cap).
+  if (!claimed || !lazy) return null;
+  const claims = targetClaims(lazy());
+  if (claims instanceof Error)
+    return { error: `${kind}: ${claims.message}`, unblock: "name a target workit can resolve" };
+  const entries = loadWorkspacesFrom(grantsDir());
+  const strict = claims.find(({ workspace: name }) => {
+    const entry = entries.find((item) => item.name === name);
+    return entry && autonomyOf(entry).grants[kind] === false;
+  });
+  return strict
+    ? {
+        error: `${kind} is not granted for workspace ${strict.workspace}, which claims ${strict.url} (${strict.pattern})`,
+        unblock: grantHint(strict.workspace, kind),
+      }
+    : null;
 }
 
 /** Whether `next` grants more than `current` (false < "verified" < true). */

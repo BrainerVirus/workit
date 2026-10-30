@@ -1,5 +1,6 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
+import * as childProcess from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -585,4 +586,50 @@ test("grant show warns when this checkout's origin is a stricter workspace's rem
   expect(shown.json().data.remoteWarnings).toEqual([
     "remote origin git@github.com:acme/strict.git is claimed by workspace strict (https://github.com/acme/strict): an action that targets it never exceeds strict's grants",
   ]);
+});
+
+test("grant show asks git for the remotes once, and never suggests claiming a remote another workspace claims", async () => {
+  const repo = path.join(checkout, "repo");
+  spawnSync("git", ["init", "-q"], { cwd: repo });
+  spawnSync("git", ["remote", "add", "origin", "git@github.com:acme/strict.git"], { cwd: repo });
+  const remoteCalls = async () => {
+    const spy = spyOn(childProcess, "spawnSync");
+    try {
+      const text = (await run(["show"], headless, {}, false)).text();
+      const calls = spy.mock.calls.filter(
+        ([, args]) => Array.isArray(args) && args[0] === "remote" && args[1] === "-v",
+      ).length;
+      return { text, calls };
+    } finally {
+      spy.mockRestore();
+    }
+  };
+  // No workspace claims remotes: the note's one lookup, as before.
+  expect((await remoteCalls()).calls).toBe(1);
+  writeFileSync(
+    file(),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "w",
+          glob: `${checkout.replaceAll("\\", "/")}/**`,
+          vcs: { provider: "github", account: "octo" },
+          autonomy: { push: true },
+        },
+        {
+          name: "strict",
+          glob: "/nowhere/strict/**",
+          vcs: { provider: "github", account: "octo" },
+          autonomy: { push: false },
+          remotes: ["https://github.com/acme/strict"],
+        },
+      ],
+    }),
+  );
+  // Claimed: the findings read them once (the cap reads the push target).
+  const claimed = await remoteCalls();
+  expect(claimed.calls).toBe(1);
+  expect(claimed.text).toContain("is claimed by workspace strict");
+  expect(claimed.text).toContain("workit workspace set w remotes=<url>");
+  expect(claimed.text).not.toContain("remotes=git@github.com:acme/strict.git");
 });

@@ -108,13 +108,43 @@ inside a permissive folder, a remote added by tooling, the same repository
 spelled as https, `git@host:`, `ssh://` or an ssh host alias, and a push
 redirected by `pushurl`, `pushInsteadOf`, `pushRemote`, an include or
 `GIT_CONFIG_*`. It caps Workit's own verbs (`workit git push`, `workit pr`,
-`workit release`, stack and CI verbs). It is not a boundary against an agent
-that sets out to evade it. A raw `git push` of a feature branch is only nudged,
-never refused, and the same goes for a push through an `ssh` program placed
-earlier on `PATH`, or through a hand-built git directory whose `refs`, `objects`
-or `commondir` point into a claimed local repository. Workit does not try to
-detect these. As the [trust model](#trust-model) says, the hard boundary is your
-host's permission prompt and sandbox: deny or ask on raw `git push` and on edits
+`workit release`, stack and CI verbs), and since #589 the raw commands too.
+
+Grants govern only what leaves the machine or changes shared state: a raw
+`git push` of branches (force and deletes included) needs `push`; a push of
+tags (`refs/tags/*`, `--tags`, a local tag's name) and `gh release
+create|edit|delete` or `glab release create` need `release`; `gh pr
+create|edit|ready` and `glab mr create|update` need `pr`; `gh pr merge` and
+`glab mr merge` need `merge`. The shell hook denies such a command when the
+grant of the workspace it targets forbids it, naming the workspace that caps it
+and the `workit grant set` command; a granted one keeps today's nudge. Local
+commands (`commit`, `stash`, `reset`, `rebase`, `switch`, `fetch`, `branch`,
+…) are never judged by grants. A push target resolves as in `workit git push`:
+the push remote or URL, `pushurl` and `insteadOf`, a local path through
+symlinks, a `commondir` file, or `refs`/`objects` borrowed from another
+repository; `--receive-pack`, an ssh command or a remote the shell computes
+make it unknown, which grants nothing while a workspace claims remotes. A PR's
+base is read from `-R`/`--repo` in any spelling (gh `[HOST/]OWNER/REPO` or
+`GH_REPO`; glab `[HOST/]GROUP/REPO` or a URL, the host from `GITLAB_HOST` or
+gitlab.com), even outside a git repository, else from the checkout as gh resolves
+it: the `gh repo set-default` remote, else `upstream`, else `origin`. Only when
+none resolves, while a workspace claims remotes, is the raw command denied in
+favour of `workit pr create`. `gh api`/`glab api` REST writes are judged like
+their verb (a PR merge, a PR create or edit, a release); reads never are. Env
+set for a nested shell (`GIT_DIR=… bash -c '…'`, an earlier `export`) counts. A
+folder outside every workspace is judged only when its target is claimed by a
+workspace that does not grant the action, and a workspace that grants the action
+and claims nothing costs the hook no git call.
+
+It is not a boundary against an agent that sets out to evade it. Not detected: a
+push through an `ssh` program placed earlier on `PATH` (N1); a `gh` alias; a `git
+push --follow-tags` that carries a new annotated tag; a command the shell builds
+(`$(echo git) push`); `curl` or `hub` against the forge API; GraphQL mutations
+other than merges; `.git/hooks` scripts an agent writes; a claimed local path
+spelled `ssh://localhost/<path>`; and `gh pr review|close` or `gh release
+upload`, which grants do not govern. As the
+[trust model](#trust-model) says, the hard boundary is your host's permission
+prompt and sandbox: deny or ask on raw `git push` and on edits
 to `PATH` in the repositories you want held to their workspace's grants.
 
 **Forks.** In a fork whose `upstream` is a claimed repository, a push to your

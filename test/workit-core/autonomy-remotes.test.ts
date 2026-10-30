@@ -198,18 +198,25 @@ test("Given a fork whose upstream strict claims, When the action targets the for
   expect(requireGrant(fork, "push", { target: pushTarget(fork, "origin") }).allowed).toBe(true);
   expect(requireGrant(fork, "push", { target: pushTarget(fork, "upstream") }).allowed).toBe(false);
   // A PR whose base repository is strict (the forge layer's base repo).
-  const base = baseTarget({ forge: { apiHost: "github.com", repo: "acme/strict" } } as never);
+  const base = baseTarget({
+    forge: { apiHost: "github.com", repo: "acme/strict" },
+  } as never);
   const pr = requireGrant(fork, "pr", { target: base });
   expect(pr.allowed).toBe(false);
   if (!pr.allowed) expect(pr.error).toContain("capped at workspace strict");
-  const own = baseTarget({ forge: { apiHost: "github.com", repo: "me/strict" } } as never);
+  const own = baseTarget({
+    forge: { apiHost: "github.com", repo: "me/strict" },
+  } as never);
   expect(requireGrant(fork, "pr", { target: own }).allowed).toBe(true);
   expect(requireGrant(fork, "merge", { target: forgeTarget("github.com", "") }).allowed).toBe(
     false,
   );
-  const missing = requireGrant(fork, "push", { target: pushTarget(fork, "nope") });
+  const missing = requireGrant(fork, "push", {
+    target: pushTarget(fork, "nope"),
+  });
   expect(missing.allowed).toBe(false);
-  if (!missing.allowed) expect(missing.error).toContain("push URLs of remote nope");
+  if (!missing.allowed)
+    expect(missing.error).toContain("remote nope has a push URL that names no repository");
 });
 
 // #549 fix round: forms that normalized wrong or not at all.
@@ -233,7 +240,9 @@ test("Given an ssh alias for github.com in the user's ssh config, When a fresh r
   });
   try {
     const fresh = checkout(`${root}/open/alias`, "git@github-work.com:acme/strict.git");
-    const push = requireGrant(fresh, "push", { target: () => pushTarget(fresh, "origin") });
+    const push = requireGrant(fresh, "push", {
+      target: () => pushTarget(fresh, "origin"),
+    });
     expect(push.allowed).toBe(false);
     if (!push.allowed) expect(push.error).toContain("capped at workspace strict");
     expect(requireGrant(fresh, "push").allowed).toBe(false);
@@ -259,4 +268,18 @@ test("Given no workspace claims remotes, When a push target is lazy, Then it is 
   });
   expect(push.allowed).toBe(true);
   expect(resolved).toBe(0);
+});
+
+test("Given Git for Windows, When a remote starts with a drive letter (`C:\\r.git`, `C:r.git`), Then it is a local path, never an scp-like ssh host", () => {
+  const saved = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    for (const url of ["C:\\nowhere\\r.git", "C:nowhere\\r.git", "c:r.git"]) {
+      // A target that names no repository is unknown (grants nothing), not a forge key.
+      expect(remoteKey(url, root), url).toBeNull();
+      expect(remoteKey(url), url).toStartWith("file:");
+    }
+  } finally {
+    Object.defineProperty(process, "platform", saved);
+  }
 });

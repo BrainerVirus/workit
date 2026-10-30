@@ -178,7 +178,6 @@ function show(argv: string[], io: Io): number {
   // decides where push/pr/merge land, so the grant view shows it too.
   const tracks = releaseTracksReport(io.cwd);
   const tierModelIssues = [...workspaceTierModelIssues(io.cwd), ...roleModelIssues(io.cwd)];
-  // Remote URLs another workspace claims, or none claimed here (#549).
   // Remote URLs another workspace claims (warning), or none claimed here (note, #549).
   const remotes = autonomy.note?.includes("grants are read only from")
     ? { warnings: [], notes: [] }
