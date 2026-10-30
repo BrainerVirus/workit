@@ -692,23 +692,67 @@ export function leaseQueue(dir: string, probe: LeaseProbe = {}): QueueEntry[] {
 const sessionKey = (holder: Pick<LeaseHolder, "session" | "pid">): string =>
   holder.session ?? `pid:${holder.pid}`;
 
+/** A slot handed out: whose session, and when (ms). */
+export type Grant = { key: string; at: number };
+
+const GRANTS_FILE = "grants.json";
+/** Grants older than this no longer weigh on anyone's turn. */
+const GRANT_TTL_MS = 2 * 3_600_000;
+const MAX_GRANTS = 256;
+
+/** Recent grants (best effort: unreadable means none). */
+export function readGrants(dir: string, now = Date.now()): Grant[] {
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(path.join(dir, GRANTS_FILE), "utf8"));
+    const list = isRecord(value) && Array.isArray(value.grants) ? value.grants : [];
+    return list.filter(
+      (item): item is Grant =>
+        isRecord(item) &&
+        typeof item.key === "string" &&
+        typeof item.at === "number" &&
+        now - item.at < GRANT_TTL_MS,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Note a grant for the round-robin. A lost race drops one note, never a slot. */
+function recordGrant(dir: string, holder: LeaseHolder, at: number): void {
+  try {
+    const grants = [...readGrants(dir, at), { key: sessionKey(holder), at }].slice(-MAX_GRANTS);
+    const file = path.join(dir, GRANTS_FILE);
+    const temp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, `${JSON.stringify({ grants })}\n`, { mode: 0o600 });
+    fs.renameSync(temp, file);
+  } catch {
+    // Fairness is best effort.
+  }
+}
+
 /**
  * `waiting` (live, in arrival order) in serving order: round-robin per
- * session, a session's slots held in `holders` counting as its earlier turns.
+ * session. A waiter's round counts its session's waiters ahead of it, the
+ * slots its session held when it queued (`holders`), and the slots its
+ * session was granted since (`grants`); arrival order breaks ties.
  */
 export function fairOrder<T extends { holder: LeaseHolder }>(
   waiting: T[],
   holders: LeaseHolder[],
+  grants: Grant[] = [],
 ): T[] {
-  const turns = new Map<string, number>();
-  for (const holder of holders)
-    turns.set(sessionKey(holder), (turns.get(sessionKey(holder)) ?? 0) + 1);
+  const ahead = new Map<string, number>();
   return waiting
     .map((entry, arrival) => {
       const key = sessionKey(entry.holder);
-      const round = turns.get(key) ?? 0;
-      turns.set(key, round + 1);
-      return { entry, round, arrival };
+      const queuedAt = Date.parse(entry.holder.startedAt);
+      const before = ahead.get(key) ?? 0;
+      ahead.set(key, before + 1);
+      const held = holders.filter(
+        (holder) => sessionKey(holder) === key && Date.parse(holder.startedAt) < queuedAt,
+      ).length;
+      const granted = grants.filter((grant) => grant.key === key && grant.at >= queuedAt).length;
+      return { entry, round: before + held + granted, arrival };
     })
     .toSorted((a, b) => a.round - b.round || a.arrival - b.arrival)
     .map(({ entry }) => entry);
@@ -735,6 +779,7 @@ function waitersAhead(
   const order = fairOrder(
     [...live, { name: own, holder: self }].toSorted((a, b) => (a.name < b.name ? -1 : 1)),
     holders,
+    readGrants(options.dir, options.probe?.now),
   );
   return order.findIndex((entry) => entry.name === own);
 }
@@ -866,6 +911,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         record.heartbeatAt = now;
         const outcome = tryOnce(options, record, reclaimed);
         if ("slot" in outcome) {
+          recordGrant(options.dir, self, clock.now());
           const waitedMs = queued ? waited : 0;
           leave();
           const { file, slot } = outcome;

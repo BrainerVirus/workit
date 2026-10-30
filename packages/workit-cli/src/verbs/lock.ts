@@ -32,6 +32,7 @@ import {
   leaseQueue,
   leaseSlots,
   parseWait,
+  readGrants,
   resolveResourceSettings,
   SILENT_MS,
   type QueueEntry,
@@ -62,10 +63,11 @@ async function settingsFor(io: Io) {
 const held = (slots: SlotState[]) => slots.filter((slot) => slot.holder && !slot.stale);
 
 /** The live waiters in serving order (round-robin per session). */
-const servingOrder = (slots: SlotState[], queue: QueueEntry[]): QueueEntry[] =>
+const servingOrder = (dir: string, slots: SlotState[], queue: QueueEntry[]): QueueEntry[] =>
   fairOrder(
     queue.filter((entry) => !entry.stale),
     held(slots).flatMap((slot) => (slot.holder ? [slot.holder] : [])),
+    readGrants(dir),
   );
 
 function slotLines(slots: SlotState[], waiting: QueueEntry[] = []): string[] {
@@ -90,7 +92,7 @@ async function status(io: Io): Promise<number> {
   const dir = leaseDir(io.env);
   const pruned = pruneLease(dir, settings.slots);
   const slots = leaseSlots(dir, settings.slots, {}, maxHold);
-  const waiting = servingOrder(slots, leaseQueue(dir));
+  const waiting = servingOrder(dir, slots, leaseQueue(dir));
   return emit(
     io,
     ok({

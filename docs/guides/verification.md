@@ -109,8 +109,8 @@ as `noLease`.
 
 - **Round-robin per session.** The queue serves sessions in turn: a session's
   second queued check goes after every other session's first, counting the
-  slots it already holds, so one session's chain of jobs cannot starve
-  another's single lint.
+  slots it already held when it queued and those it was granted since, so one
+  session's chain of jobs cannot starve another's single lint.
 - **`stuck?`.** `workit lock status` marks a holder `stuck?`, with its age, once
   it has held its slot past `resources.maxHold` (default 15 min; a repo can
   only lower it) or its check printed nothing and used no CPU for 5 min.
