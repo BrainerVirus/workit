@@ -45,7 +45,7 @@ const executable = (file: string, body: string) => {
 const plugin = (opts: { version?: string; bundled?: string } = {}) => {
   const root = scratch();
   mkdirSync(path.join(root, "hooks"), { recursive: true });
-  for (const file of ["launch.mjs", "launch-runtime.mjs"])
+  for (const file of ["launch.mjs", "launch-runtime.mjs", "node-resolve.mjs"])
     copyFileSync(path.join(HOOKS_SRC, file), path.join(root, "hooks", file));
   if (opts.version)
     writeFileSync(
@@ -313,8 +313,10 @@ test("#424: Given Node below the package engines minimum, When the launcher runs
     path.join(root, "package.json"),
     JSON.stringify({ name: PKG, version: "1.2.3", engines: { node: ">=24" } }),
   );
+  const home = scratch();
   const old = launch(root, SHELL_PAYLOAD, {
     PATH: "/usr/bin:/bin",
+    HOME: home,
     WORKIT_HOOK_NODE_VERSION: "20.11.1",
   });
   expect(old.status).toBe(0);
@@ -324,7 +326,44 @@ test("#424: Given Node below the package engines minimum, When the launcher runs
   );
   const ok = launch(root, SHELL_PAYLOAD, {
     PATH: "/usr/bin:/bin",
+    HOME: home,
     WORKIT_HOOK_NODE_VERSION: "24.1.0",
   });
   expect(ok.stderr).not.toContain("needs Node");
+
+  // A Node >= 24 resolves: the launcher re-runs on it, everything passed through.
+  const fake = path.join(scratch(), "node");
+  executable(
+    fake,
+    '#!/bin/sh\necho "ARGV $*"\ncat\necho "guard=$WORKIT_HOOK_REEXEC version=${WORKIT_HOOK_NODE_VERSION-unset}" >&2\nexit 3\n',
+  );
+  const env = { PATH: "/usr/bin:/bin", HOME: home, WORKIT_HOOK_NODE_VERSION: "20.11.1" };
+  const again = launch(root, SHELL_PAYLOAD, { ...env, WORKIT_NODE: fake });
+  expect(again.status).toBe(3);
+  expect(again.stdout).toContain(
+    `ARGV ${path.join(root, "hooks", "launch.mjs")} workit-cursor-hook`,
+  );
+  expect(again.stdout).toContain("beforeShellExecution");
+  expect(again.stderr).toContain("guard=1 version=unset");
+  // The guard stops a second hop.
+  const looped = launch(root, SHELL_PAYLOAD, {
+    ...env,
+    WORKIT_NODE: fake,
+    WORKIT_HOOK_REEXEC: "1",
+  });
+  expect(looped.status).toBe(0);
+  expect(JSON.parse(looped.stdout)).toEqual({});
+
+  // No Node 24: sessionStart tells the agent once, other events stay quiet.
+  const start = spawnSync(
+    NODE,
+    [path.join(root, "hooks", "launch.mjs"), "workit-cursor-session-start"],
+    {
+      input: JSON.stringify({ hook_event_name: "sessionStart", conversation_id: "c1" }),
+      encoding: "utf8",
+      env: isolated(env),
+    },
+  );
+  expect(start.status).toBe(0);
+  expect(JSON.parse(start.stdout).additional_context).toContain("Workit hooks are off");
 });

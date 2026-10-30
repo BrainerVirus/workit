@@ -227,7 +227,7 @@ for each running `claude` process that started before the install.
 
 ## OpenCode
 
-Requires OpenCode 2.0.18+ and Node.js 24+.
+Requires OpenCode 2.0.18+ and Node.js 24+. OpenCode (and Pi) run Workit in-process, so a repo-pinned `node` on `PATH` does not affect their hooks; Claude Code, Codex and Cursor look for a Node 24+ themselves (see the [Claude Code guide](claude-code.md)).
 
 ```json
 {

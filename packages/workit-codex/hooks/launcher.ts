@@ -14,12 +14,17 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** A Node below this package's own engines minimum cannot load the bundle: the
- * message for a fail-open answer, else null. WORKIT_HOOK_NODE_VERSION stands
- * in for process.versions.node (tests); an unreadable minimum never blocks. */
-const nodeFloorMessage = (): string | null => {
+/** A Node below this package's own engines minimum cannot load the bundle. The
+ * launcher then re-runs itself on a Node that can (core/node-resolve.mjs, loaded
+ * only then so a current Node never parses it: $WORKIT_NODE, the node `workit
+ * setup` recorded, a version-manager scan), with stdin, stdout, stderr and the
+ * exit code passed through; WORKIT_HOOK_REEXEC stops a second hop. With none
+ * found it fails open (`{}`, exit 0, one stderr line) and a SessionStart tells
+ * the agent once that the hooks are off. WORKIT_HOOK_NODE_VERSION stands in for
+ * process.versions.node (tests); an unreadable minimum never blocks. */
+const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
+const nodeFloor = (): { range: string; floor: number[] } | null => {
   try {
-    const found = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
     const range = (
       JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
@@ -27,13 +32,13 @@ const nodeFloorMessage = (): string | null => {
       }
     ).engines?.node;
     const min = /^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(range ?? ""));
-    if (!min) return null;
-    const need = [min[1], min[2] ?? 0, min[3] ?? 0].map(Number);
-    const have = String(found).replace(/^v/, "").split(".").map(Number);
+    if (!min || !range) return null;
+    const floor = [min[1], min[2] ?? 0, min[3] ?? 0].map(Number);
+    const have = String(foundNode).replace(/^v/, "").split(".").map(Number);
     for (let i = 0; i < 3; i++) {
       const a = have[i] ?? 0;
       if (Number.isNaN(a)) return null;
-      if (a !== need[i]) return a < need[i] ? `needs Node ${range}, found ${found}` : null;
+      if (a !== floor[i]) return a < floor[i] ? { range, floor } : null;
     }
     return null;
   } catch {
@@ -41,11 +46,23 @@ const nodeFloorMessage = (): string | null => {
   }
 };
 
-const tooOld = nodeFloorMessage();
+const tooOld = nodeFloor();
 if (tooOld) {
-  process.stderr.write(`[workit] Codex hook unavailable: ${tooOld}\n`);
-  process.stdout.write("{}\n");
-  process.exit(0);
+  const { handleBelowFloor } = await import("@brainervirus/workit-core/src/core/node-resolve.mjs");
+  process.exit(
+    await handleBelowFloor({
+      host: "Codex",
+      ...tooOld,
+      found: foundNode,
+      script: fileURLToPath(import.meta.url),
+      argv: process.argv.slice(2),
+      env: process.env,
+      isStart: (event) => event === "SessionStart",
+      notice: (additionalContext) => ({
+        hookSpecificOutput: { hookEventName: "SessionStart", additionalContext },
+      }),
+    }),
+  );
 }
 
 // Loaded after the floor check: a static import would evaluate the runtime first.

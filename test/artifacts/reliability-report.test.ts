@@ -71,13 +71,14 @@ test(
     // info (no host permission block, #297); hook_runs and the three *_grant_rules
     // rows are info (no hook run recorded, no workspace, #419, #433);
     // codex_session_plugin passes (no Codex process running, #561); updates
-    // is info (the launch update check's setting, local files only).
+    // is info (the launch update check's setting, local files only); hook_node
+    // passes (the PATH node meets the floor).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 39,
+      passed: 40,
       warned: 1,
       failed: 1,
-      total: 41,
+      total: 42,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -123,10 +124,10 @@ test(
       // check's setting, local files only).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 39,
+        passed: 40,
         warned: 1,
         failed: 1,
-        total: 41,
+        total: 42,
         fixes: 1,
       });
     } finally {

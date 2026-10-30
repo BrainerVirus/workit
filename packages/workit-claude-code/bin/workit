@@ -4,6 +4,10 @@
 # package: run the bundled dist/workit.js with node.
 # WORKIT_CLAUDE_RUNTIME=source|dist forces one; WORKIT_SHIM_TRACE=1 prints
 # the resolved entry on stderr.
+# When the PATH node is below the floor (24), the dist runs on a Node that is:
+# $WORKIT_NODE, the node `workit setup` recorded in <state dir>/node.json, then
+# the highest fnm/nvm/volta/mise/asdf install (same order as hooks, see
+# bin/node-resolve.mjs; a test holds the floor equal).
 set -e
 here=$(dirname "$0")
 root=$(cd "$here/.." && pwd)
@@ -20,5 +24,53 @@ if [ -n "$entry" ]; then
   [ "${WORKIT_SHIM_TRACE:-}" = "1" ] && echo "workit-shim: source $entry" >&2
   exec bun "$entry" "$@"
 fi
-[ "${WORKIT_SHIM_TRACE:-}" = "1" ] && echo "workit-shim: dist $root/dist/workit.js" >&2
-exec node "$root/dist/workit.js" "$@"
+node_floor=24
+node_bin=node
+node_major=$(node -v 2>/dev/null | sed 's/^v//; s/\..*$//')
+case "$node_major" in
+  ''|*[!0-9]*) node_major=0 ;;
+esac
+if [ "$node_major" -lt "$node_floor" ]; then
+  found=""
+  if [ -n "${WORKIT_NODE:-}" ] && [ -x "$WORKIT_NODE" ]; then
+    found="$WORKIT_NODE"
+  fi
+  if [ -z "$found" ]; then
+    if [ -n "${WORKFLOW_TOOLKIT_STATE:-}" ]; then state="$WORKFLOW_TOOLKIT_STATE"
+    elif [ -n "${XDG_STATE_HOME:-}" ]; then state="$XDG_STATE_HOME/workit"
+    elif [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then state="$HOME/Library/Application Support/workit"
+    else state="$HOME/.local/state/workit"; fi
+    recorded=$(sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state/node.json" 2>/dev/null | head -n 1)
+    rv=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"v\{0,1\}\([0-9]*\).*/\1/p' "$state/node.json" 2>/dev/null | head -n 1)
+    if [ -n "$recorded" ] && [ -x "$recorded" ] && [ "${rv:-0}" -ge "$node_floor" ]; then
+      found="$recorded"
+    fi
+  fi
+  if [ -z "$found" ]; then
+    candidates=""
+    for spec in \
+      "${FNM_DIR:-$HOME/.local/share/fnm}/node-versions|installation/bin/node" \
+      "$HOME/Library/Application Support/fnm/node-versions|installation/bin/node" \
+      "${NVM_DIR:-$HOME/.nvm}/versions/node|bin/node" \
+      "${VOLTA_HOME:-$HOME/.volta}/tools/image/node|bin/node" \
+      "${MISE_DATA_DIR:-$HOME/.local/share/mise}/installs/node|bin/node" \
+      "${ASDF_DATA_DIR:-$HOME/.asdf}/installs/nodejs|bin/node"; do
+      base=${spec%%|*}
+      rel=${spec#*|}
+      for dir in "$base"/*; do
+        name=${dir##*/}
+        v=${name#v}
+        major=${v%%.*}
+        case "$major" in ''|*[!0-9]*) continue ;; esac
+        if [ "$major" -ge "$node_floor" ] && [ -x "$dir/$rel" ]; then
+          candidates="$candidates
+$v $dir/$rel"
+        fi
+      done
+    done
+    found=$(printf '%s\n' "$candidates" | sed '/^$/d' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1 | sed 's/^[^ ]* //')
+  fi
+  if [ -n "$found" ]; then node_bin="$found"; fi
+fi
+[ "${WORKIT_SHIM_TRACE:-}" = "1" ] && echo "workit-shim: dist $root/dist/workit.js (node $node_bin)" >&2
+exec "$node_bin" "$root/dist/workit.js" "$@"

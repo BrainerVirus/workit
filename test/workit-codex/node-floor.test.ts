@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { bareNodeEnv, fakeNode } from "../shared/helpers/hook-node";
 
 const LAUNCHER = path.resolve(import.meta.dir, "../../packages/workit-codex/hooks/launcher.ts");
 const dirs: string[] = [];
@@ -53,7 +54,7 @@ const builtDist = () => {
 
 for (const entry of ["source", "dist"] as const)
   test(`[${entry}] Given Node 20, When the Codex hook runs, Then it answers {} and names both versions`, () => {
-    const env = { ...process.env, WORKIT_HOOK_NODE_VERSION: "20.11.1" };
+    const env = bareNodeEnv({ WORKIT_HOOK_NODE_VERSION: "20.11.1" });
     const child =
       entry === "source"
         ? spawnSync(process.execPath, [LAUNCHER], { input: payload, encoding: "utf8", env })
@@ -64,3 +65,33 @@ for (const entry of ["source", "dist"] as const)
       "[workit] Codex hook unavailable: needs Node >=24, found 20.11.1",
     );
   }, 60_000);
+
+const SESSION_START = JSON.stringify({ hook_event_name: "SessionStart", session_id: "s1" });
+const runSource = (env: Record<string, string>, input = payload) =>
+  spawnSync(process.execPath, [LAUNCHER], {
+    input,
+    encoding: "utf8",
+    env: bareNodeEnv({ WORKIT_HOOK_NODE_VERSION: "20.11.1", ...env }),
+  });
+
+test("Given Node 20 on PATH and a Node 24 resolved, When the Codex hook fires, Then it re-runs on it with stdin, stdout, stderr and the exit code passed through", () => {
+  const child = runSource({ WORKIT_NODE: fakeNode() });
+  expect(child.status).toBe(3);
+  expect(child.stdout).toContain(`ARGV ${LAUNCHER}`);
+  expect(child.stdout).toContain(payload);
+  expect(child.stderr).toContain("guard=1 version=unset");
+});
+
+test("Given the re-exec guard is set, When the PATH node is still too old, Then the Codex hook fails open instead of looping", () => {
+  const child = runSource({ WORKIT_NODE: fakeNode(), WORKIT_HOOK_REEXEC: "1" });
+  expect(child.status).toBe(0);
+  expect(JSON.parse(child.stdout)).toEqual({});
+});
+
+test("Given no Node 24, When Codex fires SessionStart, Then the hook output tells the agent the hooks are off", () => {
+  const child = runSource({}, SESSION_START);
+  expect(child.status).toBe(0);
+  const out = JSON.parse(child.stdout);
+  expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
+  expect(out.hookSpecificOutput.additionalContext).toContain("Workit hooks are off");
+});

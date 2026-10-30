@@ -23,37 +23,47 @@ import {
   runCursorHookLaunch,
   touchCursorHookHeartbeat,
 } from "./launch-runtime.mjs";
+import { floorMessage, floorOfRange, handleBelowFloor } from "./node-resolve.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// A Node below this package's own engines minimum cannot run the bundled hook:
-// fail open with one clear line. WORKIT_HOOK_NODE_VERSION stands in for
-// process.versions.node (tests). An unreadable minimum never blocks.
-const nodeFloorMessage = () => {
+// A Node below this package's own engines minimum cannot run the bundled hook.
+// The launcher then re-runs itself on a Node that can (hooks/node-resolve.mjs:
+// $WORKIT_NODE, the node `workit setup` recorded, a version-manager scan), with
+// stdin, stdout, stderr and the exit code passed through; WORKIT_HOOK_REEXEC
+// stops a second hop. With none found it fails open with one clear line, and a
+// sessionStart tells the agent once that the hooks are off.
+// WORKIT_HOOK_NODE_VERSION stands in for process.versions.node (tests). An
+// unreadable minimum never blocks.
+const nodeFloor = () => {
   try {
-    const found = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
     const range = JSON.parse(readFileSync(path.join(pluginRoot, "package.json"), "utf8")).engines
       ?.node;
-    const min = /^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(range ?? ""));
-    if (!min) return null;
-    const need = [min[1], min[2] ?? 0, min[3] ?? 0].map(Number);
-    const have = String(found).replace(/^v/, "").split(".").map(Number);
-    for (let i = 0; i < 3; i++) {
-      const a = have[i] ?? 0;
-      if (Number.isNaN(a)) return null;
-      if (a !== need[i]) return a < need[i] ? `needs Node ${range}, found ${found}` : null;
-    }
-    return null;
+    const floor = floorOfRange(range);
+    return floor ? { range, floor } : null;
   } catch {
     return null;
   }
 };
-const tooOld = nodeFloorMessage();
-if (tooOld && process.argv[2] !== "--probe") {
-  process.stderr.write(`[workit] Cursor hook unavailable: ${tooOld}\n`);
-  process.stdout.write("{}\n");
-  process.exit(0);
-}
+const hookNode = nodeFloor();
+const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
+const tooOld = hookNode ? floorMessage(foundNode, hookNode.floor, hookNode.range) : null;
+// --probe reports on stdout and never reads stdin: it keeps its own answer.
+if (tooOld && hookNode && process.argv[2] !== "--probe")
+  process.exit(
+    await handleBelowFloor({
+      host: "Cursor",
+      range: hookNode.range,
+      floor: hookNode.floor,
+      found: foundNode,
+      script: fileURLToPath(import.meta.url),
+      argv: process.argv.slice(2),
+      env: process.env,
+      isStart: (event) =>
+        event === "sessionStart" || process.argv[2] === "workit-cursor-session-start",
+      notice: (additional_context) => ({ additional_context }),
+    }),
+  );
 
 // `--probe <bin>` (for `workit doctor`): run one no-op preCompact through
 // the candidate Cursor would use and print which one it was and how it went.

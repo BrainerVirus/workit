@@ -94,7 +94,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
   );
   mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
   // The real hook launcher, as an install copies it.
-  for (const file of ["launch.mjs", "launch-runtime.mjs"])
+  for (const file of ["launch.mjs", "launch-runtime.mjs", "node-resolve.mjs"])
     copyFileSync(
       path.join(import.meta.dir, "..", "..", "..", "packages", "workit-cursor", "hooks", file),
       path.join(pluginDir, "hooks", file),

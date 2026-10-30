@@ -132,12 +132,37 @@ workit does not register yet is marked `none` there and listed below as
 missing.
 
 Node floor (#424): the Claude Code, Codex and Cursor hooks are separate `node`
-processes resolved from `PATH`. Each launcher reads the minimum from its own
-package's `engines.node` and, on an older Node, fails open (`{}`, exit 0) with
-`[workit] <Host> hook unavailable: needs Node >=24, found <v>` on stderr before
-loading dist; an unreadable minimum never blocks. `WORKIT_HOOK_NODE_VERSION`
-overrides the found version (tests). OpenCode and Pi hooks run in-process in the
-host's own runtime, so the `PATH` Node does not apply to them.
+processes resolved from `PATH`, and a repo pinned to Node 16/18/22 by a version
+manager puts an old Node there. Each launcher reads the minimum from its own
+package's `engines.node` (an unreadable minimum never blocks). Only below it
+does anything extra run, so a current Node costs nothing. The launcher then
+looks for a Node that meets the floor (`core/node-resolve.mjs`: carried as a
+byte-equal copy in `claude-code/bin/` and `cursor/hooks/`, imported into the
+Codex bundle; a test holds the copies equal) in this order: (1) `WORKIT_NODE`;
+(2) the absolute `process.execPath` that `workit setup` or `workit upgrade`
+recorded in `<state dir>/node.json` (same dir resolution as the other state, so
+`WORKFLOW_TOOLKIT_STATE` and XDG apply), when it exists and was >= the floor;
+(3) a directory-listing scan (no spawning, at most 200 entries per root) of
+fnm (`$FNM_DIR`, `~/.local/share/fnm`, `%APPDATA%/fnm`), nvm (`$NVM_DIR`,
+`~/.nvm`, nvm-windows `%NVM_HOME%`), volta, mise and asdf installs, highest
+version wins. A hit re-runs the same launcher on that Node with stdin, stdout,
+stderr and the exit code passed through; `WORKIT_HOOK_REEXEC=1` on the child
+stops a second hop. With no hit the hook fails open (`{}`, exit 0) with
+`[workit] <Host> hook unavailable: needs Node >=24, found <v>` on stderr, and
+a `SessionStart` answers once with context that the hooks are off (Claude Code
+and Codex `hookSpecificOutput.additionalContext`, Cursor `additional_context`);
+other events stay quiet. The launcher code stays on Node 16 syntax and
+`node:` builtins (a test runs it under the oldest installed Node when there is
+one, else checks the source for newer syntax). The Claude plugin's `bin/workit`
+shim does the same in POSIX sh when the PATH node is below 24. `workit doctor`
+row `hook_node` reports which Node the hooks run on (pass: PATH node; info: a
+recorded or scanned one; warn: none, hooks off), and the `no_session` unblock
+hint names it as a likely cause. `WORKIT_HOOK_NODE_VERSION` overrides the
+found version (tests). OpenCode and Pi hooks run in-process in the host's own
+runtime, so the `PATH` Node does not apply to them. The Codex MCP entry
+(`.mcp.json`) starts `bin/launch-mcp.mjs`, which does the same re-run for
+`dist/launch-mcp.js` with stdio inherited (stdout stays pure JSON-RPC); with no
+Node 24 it writes one stderr line and exits 1.
 
 N = native, P = partial, X = missing (the host has a mechanism workit does not
 use yet), L = host limit (the host has no mechanism for it).

@@ -38,6 +38,7 @@
   "exports": {
     "./hooks": "./src/hooks/index.ts",
     "./src/*.ts": "./src/*.ts",
+    "./src/*.mjs": "./src/*.mjs",
     "./src/*": "./src/*.ts",
     "./package.json": "./package.json"
   },

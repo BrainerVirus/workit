@@ -5,6 +5,7 @@ import pkg from "../../package.json" with { type: "json" };
 import { claudeWorkitInstalls } from "../admin/host-install";
 import { readSetupState } from "../admin/setup-state";
 import { type HostCommandResult } from "../admin/host-install";
+import { recordHookNode } from "../admin/hook-node";
 import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import { createProgress, type StepStatus } from "../progress";
@@ -332,6 +333,8 @@ export async function applyUpgrade(
       };
   const paths = upgradePaths(deps);
   const { home, configDir } = paths;
+  // Hook launchers find a Node >= the floor from this record when the PATH node is older.
+  recordHookNode(deps.env ?? process.env);
   const backup = path.join(
     home,
     ".local/state/workit/upgrades",
