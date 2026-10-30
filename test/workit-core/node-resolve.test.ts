@@ -27,6 +27,9 @@ import { PLUGIN_DIR } from "../workit-claude-code/plugin-helpers";
 const REPO = path.resolve(import.meta.dir, "../..");
 const CANONICAL = path.join(REPO, "packages/workit-core/src/core/node-resolve.mjs");
 
+// The version managers lay node out as bin/node, or node.exe on Windows.
+const EXE = process.platform === "win32" ? ["node.exe"] : ["bin", "node"];
+
 const install = (file: string) => {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, "#!/bin/sh\n");
@@ -55,13 +58,13 @@ test("the launcher copies of node-resolve.mjs equal the core file, and the floor
 test("Given $WORKIT_NODE, a recorded node and installs, When resolving, Then env wins, then the record, then the highest scanned >= 24", () => {
   const env = bareNodeEnv();
   const fnm = scratchDir("wk-fnm-");
-  install(path.join(fnm, "node-versions", "v22.19.0", "installation", "bin", "node"));
-  install(path.join(fnm, "node-versions", "v24.14.0", "installation", "bin", "node"));
-  const best = install(path.join(fnm, "node-versions", "v25.9.0", "installation", "bin", "node"));
+  install(path.join(fnm, "node-versions", "v22.19.0", "installation", ...EXE));
+  install(path.join(fnm, "node-versions", "v24.14.0", "installation", ...EXE));
+  const best = install(path.join(fnm, "node-versions", "v25.9.0", "installation", ...EXE));
   const nvm = scratchDir("wk-nvm-");
-  install(path.join(nvm, "versions", "node", "v24.20.0", "bin", "node"));
+  install(path.join(nvm, "versions", "node", "v24.20.0", ...EXE));
   const volta = scratchDir("wk-volta-");
-  install(path.join(volta, "tools", "image", "node", "16.20.2", "bin", "node"));
+  install(path.join(volta, "tools", "image", "node", "16.20.2", ...EXE));
   const scanEnv = { ...env, FNM_DIR: fnm, NVM_DIR: nvm, VOLTA_HOME: volta };
 
   expect(resolveHookNode({ env: scanEnv, floor: HOOK_NODE_FLOOR })).toEqual({
@@ -207,49 +210,68 @@ test("Given the oldest Node >= 16 on this machine, When it runs the Claude launc
   expect(child.stdout).toContain("PreToolUse");
 });
 
-test("Given the Claude plugin shim on a PATH node below 24, When it runs, Then it resolves $WORKIT_NODE, the record, then the highest install", () => {
-  const shim = path.join(PLUGIN_DIR, "bin/workit");
-  const root = scratchDir("wk-shim-");
-  const bin = path.join(root, "bin");
-  mkdirSync(path.join(root, "dist"), { recursive: true });
-  writeFileSync(path.join(root, "dist", "workit.js"), "");
-  // An installed-layout plugin (no monorepo sibling) whose PATH node says v20.
-  mkdirSync(bin, { recursive: true });
-  writeFileSync(path.join(bin, "workit"), readFileSync(shim));
-  chmodSync(path.join(bin, "workit"), 0o755);
-  const old = install(path.join(root, "oldbin", "node"));
-  writeFileSync(old, '#!/bin/sh\n[ "$1" = "-v" ] && echo v20.1.0\n');
-  const reportNode = (version: string) =>
-    '#!/bin/sh\n[ "$1" = "-v" ] && { echo v' +
-    version +
-    '; exit 0; }\necho "SHIM-RAN-ON ' +
-    version +
-    ' $*"\n';
-  const env = bareNodeEnv({
-    PATH: `${path.dirname(old)}:/usr/bin:/bin`,
-    WORKIT_CLAUDE_RUNTIME: "dist",
-  });
-  const fnm = scratchDir("wk-fnm-");
-  for (const version of ["22.19.0", "24.14.0", "24.22.1"]) {
-    const file = path.join(fnm, "node-versions", `v${version}`, "installation/bin/node");
-    install(file);
-    writeFileSync(file, reportNode(version));
-  }
-  const run = (extra: Record<string, string> = {}) =>
-    spawnSync("sh", [path.join(bin, "workit"), "arg1"], {
-      encoding: "utf8",
-      env: { ...env, FNM_DIR: fnm, ...extra },
+// bin/workit is POSIX sh.
+test.skipIf(process.platform === "win32")(
+  "Given the Claude plugin shim on a PATH node below 24, When it runs, Then it resolves $WORKIT_NODE, the record, then the highest install",
+  () => {
+    const shim = path.join(PLUGIN_DIR, "bin/workit");
+    const root = scratchDir("wk-shim-");
+    const bin = path.join(root, "bin");
+    mkdirSync(path.join(root, "dist"), { recursive: true });
+    writeFileSync(path.join(root, "dist", "workit.js"), "");
+    // An installed-layout plugin (no monorepo sibling) whose PATH node says v20.
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(path.join(bin, "workit"), readFileSync(shim));
+    chmodSync(path.join(bin, "workit"), 0o755);
+    const old = install(path.join(root, "oldbin", "node"));
+    writeFileSync(old, '#!/bin/sh\n[ "$1" = "-v" ] && echo v20.1.0\n');
+    const reportNode = (version: string) =>
+      '#!/bin/sh\n[ "$1" = "-v" ] && { echo v' +
+      version +
+      '; exit 0; }\necho "SHIM-RAN-ON ' +
+      version +
+      ' $*"\n';
+    const env = bareNodeEnv({
+      PATH: `${path.dirname(old)}:/usr/bin:/bin`,
+      WORKIT_CLAUDE_RUNTIME: "dist",
     });
-  expect(run().stdout).toContain("SHIM-RAN-ON 24.22.1");
-  const explicit = install(path.join(scratchDir("wk-explicit-"), "node"));
-  writeFileSync(explicit, reportNode("30.0.0"));
-  expect(run({ WORKIT_NODE: explicit }).stdout).toContain("SHIM-RAN-ON 30.0.0");
-  const recorded = install(path.join(scratchDir("wk-recorded-"), "node"));
-  writeFileSync(recorded, reportNode("26.0.0"));
-  mkdirSync(env.WORKFLOW_TOOLKIT_STATE, { recursive: true });
-  writeFileSync(
-    path.join(env.WORKFLOW_TOOLKIT_STATE, "node.json"),
-    JSON.stringify({ path: recorded, version: "26.0.0" }),
-  );
-  expect(run().stdout).toContain("SHIM-RAN-ON 26.0.0");
-});
+    const fnm = scratchDir("wk-fnm-");
+    for (const version of ["22.19.0", "24.14.0", "24.22.1"]) {
+      const file = path.join(fnm, "node-versions", `v${version}`, "installation/bin/node");
+      install(file);
+      writeFileSync(file, reportNode(version));
+    }
+    const run = (extra: Record<string, string> = {}) =>
+      spawnSync("sh", [path.join(bin, "workit"), "arg1"], {
+        encoding: "utf8",
+        env: { ...env, FNM_DIR: fnm, ...extra },
+      });
+    expect(run().stdout).toContain("SHIM-RAN-ON 24.22.1");
+    const explicit = install(path.join(scratchDir("wk-explicit-"), "node"));
+    writeFileSync(explicit, reportNode("30.0.0"));
+    expect(run({ WORKIT_NODE: explicit }).stdout).toContain("SHIM-RAN-ON 30.0.0");
+    const recorded = install(path.join(scratchDir("wk-recorded-"), "node"));
+    writeFileSync(recorded, reportNode("26.0.0"));
+    mkdirSync(env.WORKFLOW_TOOLKIT_STATE, { recursive: true });
+    writeFileSync(
+      path.join(env.WORKFLOW_TOOLKIT_STATE, "node.json"),
+      JSON.stringify({ path: recorded, version: "26.0.0" }),
+    );
+    expect(run().stdout).toContain("SHIM-RAN-ON 26.0.0");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given a state dir behind a symlink (macOS /var), When setup records the node, Then node.json is written",
+  () => {
+    const real = scratchDir("wk-real-state-");
+    const link = path.join(scratchDir("wk-link-"), "state");
+    symlinkSync(real, link);
+    const file = recordHookNode(bareNodeEnv({ WORKFLOW_TOOLKIT_STATE: link }), {
+      execPath: "/opt/node/bin/node",
+      version: "24.1.0",
+    });
+    expect(file).toBe(path.join(link, "node.json"));
+    expect(readFileSync(path.join(real, "node.json"), "utf8")).toContain("/opt/node/bin/node");
+  },
+);

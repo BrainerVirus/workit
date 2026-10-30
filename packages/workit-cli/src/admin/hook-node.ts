@@ -5,6 +5,8 @@
 // record the node they run on in <state dir>/node.json for them, and
 // `workit doctor` reports which Node the hooks will end up on.
 import { spawnSync } from "node:child_process";
+import { mkdirSync, realpathSync } from "node:fs";
+import path from "node:path";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import {
   HOOK_NODE_FLOOR,
@@ -25,8 +27,11 @@ export const recordHookNode = (
   try {
     const file = nodeRecord({ env, floor: HOOK_NODE_FLOOR, ...node });
     if (!file) return null;
+    // writeFileAtomic refuses a symlinked parent (macOS /var -> /private/var, a
+    // linked home): write through the real directory, report the logical file.
+    mkdirSync(path.dirname(file), { recursive: true });
     writeFileAtomic(
-      file,
+      path.join(realpathSync(path.dirname(file)), path.basename(file)),
       `${JSON.stringify({ path: node.execPath, version: node.version, recordedAt: new Date().toISOString() })}\n`,
     );
     return file;
