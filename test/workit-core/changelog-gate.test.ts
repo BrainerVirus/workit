@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   changelogGate,
   nonUserFacingType,
+  resolveChangelogPaths,
   unreleasedBullets,
 } from "@/packages/workit-core/src/core/changelog-gate";
 
@@ -88,6 +89,7 @@ test("Given changelog create and no CHANGELOG.md, When a feat PR adds none, Then
     category: "Added",
     command: `workit changelog apply --entries '{"Added": ["<what users can now do>"]}'`,
     candidates: [],
+    looked: ["CHANGELOG.md"],
   });
 });
 
@@ -259,4 +261,109 @@ test("Given the base cannot be fetched but an older local copy resolves, When th
   // With the remote back, the fetch succeeds and the note goes away.
   const fresh = repo(RELEASED, withEntry(RELEASED));
   expect(gate(fresh, "update")).not.toHaveProperty("staleBase");
+});
+
+/**
+ * A monorepo on main with a root index changelog (no Unreleased) and
+ * per-package changelogs under projects/, then feature/x writing `files`.
+ */
+const monorepo = (files: Record<string, string>) => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-changelog-mono-"));
+  dirs.push(cwd);
+  const origin = mkdtempSync(path.join(os.tmpdir(), "wk-changelog-mono-origin-"));
+  dirs.push(origin);
+  git(cwd, "init", "-q", "-b", "main");
+  git(cwd, "config", "user.email", "t@example.test");
+  git(cwd, "config", "user.name", "t");
+  git(cwd, "config", "commit.gpgsign", "false");
+  writeFileSync(
+    path.join(cwd, "CHANGELOG.md"),
+    "# Changelog\n\nSee each package's CHANGELOG.md.\n",
+  );
+  writeFileSync(path.join(cwd, "b.txt"), "b\n");
+  for (const name of ["a", "b"]) {
+    mkdirSync(path.join(cwd, "projects", name), { recursive: true });
+    writeFileSync(path.join(cwd, "projects", name, "CHANGELOG.md"), RELEASED);
+    writeFileSync(path.join(cwd, "projects", name, "index.ts"), "export {};\n");
+  }
+  git(cwd, "add", "-A");
+  git(cwd, "commit", "-q", "-m", "base");
+  git(origin, "init", "-q", "--bare");
+  git(cwd, "remote", "add", "origin", origin);
+  git(cwd, "push", "-q", "origin", "main");
+  git(cwd, "switch", "-q", "-c", "feature/x");
+  for (const [file, text] of Object.entries(files)) writeFileSync(path.join(cwd, file), text);
+  git(cwd, "add", "-A");
+  git(cwd, "commit", "-q", "--allow-empty", "-m", "packages change");
+  return cwd;
+};
+
+const globGate = (cwd: string, paths = ["projects/*/CHANGELOG.md"]) =>
+  changelogGate({
+    cwd,
+    mode: "update",
+    title: "feat: x",
+    base: "main",
+    paths,
+    pathConfigured: true,
+  });
+
+test("Given changelogPath projects/*/CHANGELOG.md and a root index without Unreleased, When the branch adds an entry to projects/a, Then it passes and names projects/a/CHANGELOG.md", () => {
+  const cwd = monorepo({
+    "projects/a/index.ts": "export const a = 1;\n",
+    "projects/a/CHANGELOG.md": withEntry(RELEASED),
+  });
+  expect(globGate(cwd)).toEqual({
+    status: "has-entry",
+    mode: "update",
+    file: "projects/a/CHANGELOG.md",
+    added: ["You can now x"],
+  });
+});
+
+test("Given per-package changelogs, When the diff touches projects/a and projects/b but only projects/a gains an entry, Then it is missing and names projects/b/CHANGELOG.md", () => {
+  const cwd = monorepo({
+    "projects/a/index.ts": "export const a = 1;\n",
+    "projects/b/index.ts": "export const b = 1;\n",
+    "projects/a/CHANGELOG.md": withEntry(RELEASED),
+  });
+  expect(globGate(cwd)).toMatchObject({
+    status: "missing",
+    file: "projects/b/CHANGELOG.md",
+    lacking: ["projects/b/CHANGELOG.md"],
+    command: `workit changelog apply --entries '{"Added": ["<what users can now do>"]}' --path projects/b/CHANGELOG.md`,
+  });
+});
+
+test("Given per-package changelogs, When both touched packages gain an entry, Then it passes and lists both files", () => {
+  const cwd = monorepo({
+    "projects/a/CHANGELOG.md": withEntry(RELEASED),
+    "projects/b/CHANGELOG.md": withEntry(RELEASED),
+  });
+  expect(globGate(cwd)).toMatchObject({
+    status: "has-entry",
+    files: ["projects/a/CHANGELOG.md", "projects/b/CHANGELOG.md"],
+  });
+});
+
+test("Given per-package changelogs, When the diff touches no package and adds no entry, Then it is missing and names every file it read", () => {
+  const cwd = monorepo({ "b.txt": "changed\n" });
+  const result = globGate(cwd, ["CHANGELOG.md", "projects/*/CHANGELOG.md"]);
+  expect(result).toMatchObject({
+    status: "missing",
+    file: "CHANGELOG.md",
+    looked: ["CHANGELOG.md", "projects/a/CHANGELOG.md", "projects/b/CHANGELOG.md"],
+  });
+  expect(result).not.toHaveProperty("lacking");
+});
+
+test("Given a ** glob, When the changelog paths resolve, Then each matched tracked file is listed once", () => {
+  const cwd = monorepo({});
+  expect(resolveChangelogPaths(cwd, ["**/CHANGELOG.md", "projects/a/CHANGELOG.md"])).toEqual([
+    "CHANGELOG.md",
+    "projects/a/CHANGELOG.md",
+    "projects/b/CHANGELOG.md",
+  ]);
+  expect(resolveChangelogPaths(cwd, ["projects/?/CHANGELOG.md"])).toHaveLength(2);
+  expect(resolveChangelogPaths(cwd, ["projects/*.md"])).toEqual([]);
 });

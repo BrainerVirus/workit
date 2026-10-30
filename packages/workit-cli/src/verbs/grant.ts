@@ -73,6 +73,10 @@ import {
   type DocsMode,
 } from "@brainervirus/workit-core/src/core/workspaces";
 import { resolvePrTemplate } from "@brainervirus/workit-core/src/core/pr-template";
+import {
+  isChangelogGlob,
+  resolveChangelogPaths,
+} from "@brainervirus/workit-core/src/core/changelog-gate";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 
@@ -156,11 +160,23 @@ const CHANGELOG_TEXT: Record<ChangelogMode, string> = {
     "a user-facing PR adds an Unreleased entry before workit pr create, creating CHANGELOG.md if missing",
 };
 
+/** The files a glob `changelogPath` matches in this checkout, or "" when every path is plain. */
+const resolvedHere = (cwd: string, paths: string[]): string => {
+  if (!paths.some(isChangelogGlob)) return "";
+  const files = resolveChangelogPaths(cwd, paths);
+  return `; here: ${files.length ? files.join(", ") : "no tracked file matches"}`;
+};
+
 /** The changelog and docs steps before a PR opens (`workit workspace set` changes them). */
-const describeSteps = (changelog: ChangelogMode, docs: DocsMode, paths: string[]): string[] => [
+const describeSteps = (
+  changelog: ChangelogMode,
+  docs: DocsMode,
+  paths: string[],
+  here = "",
+): string[] => [
   `  changelog: ${changelog} (${CHANGELOG_TEXT[changelog]})`,
   ...(changelog !== "off" || paths.join() !== DEFAULT_CHANGELOG_PATH
-    ? [`  changelog file: ${paths.join(", ")}`]
+    ? [`  changelog file: ${paths.join(", ")}${here}`]
     : []),
   `  docs: ${docs} (${docs === "off" ? "no docs refresh step" : "a user-facing PR updates the docs its diff made false"})`,
 ];
@@ -326,7 +342,12 @@ function show(argv: string[], io: Io): number {
       ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
     ...describe(data.grants, data.configured, data, data.verification),
-    ...describeSteps(data.changelog, data.docs, data.changelogPaths),
+    ...describeSteps(
+      data.changelog,
+      data.docs,
+      data.changelogPaths,
+      resolvedHere(io.cwd, data.changelogPaths),
+    ),
     describePrTemplate(
       data.prTemplate,
       !picked.ok
