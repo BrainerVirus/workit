@@ -633,6 +633,10 @@ async function create(argv: string[], io: Io): Promise<number> {
       fail(
         "blocked",
         `changelog_required: the workspace's changelog step is ${changelog.mode} and this user-facing PR adds no entry under ## [Unreleased] in ${steps.paths.join(" or ")}${
+          changelog.staleBase
+            ? ` (compared with this checkout's older copy of the base: the fetch failed: ${changelog.staleBase})`
+            : ""
+        }${
           changelog.candidates.length
             ? `; this repo has ${changelog.candidates.join(", ")}: to use it, ${pathHint(steps.workspace, changelog.candidates[0])}`
             : ""
@@ -759,6 +763,11 @@ function changelogLines(gate: ChangelogGate, workspace: string | null): string[]
       ];
     case "has-entry":
       return [
+        ...(gate.staleBase
+          ? [
+              `note: changelog: could not fetch the PR base (${gate.staleBase}); compared with this checkout's older copy of it`,
+            ]
+          : []),
         `changelog: ${gate.added.length} new Unreleased ${gate.added.length === 1 ? "entry" : "entries"} in ${gate.file}`,
       ];
   }

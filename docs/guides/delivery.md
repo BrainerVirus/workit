@@ -479,7 +479,9 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
   still cannot be compared (a branch the remote does not have, a shallow
   clone, offline) blocks with `changelog_base_unknown`, opens nothing, and its
   `unblock:` line is the `git fetch <remote> <base>` to run (with
-  `--unshallow` for a shallow clone).
+  `--unshallow` for a shallow clone). When the fetch fails but an older local
+  copy of the base exists, the gate compares with that copy and prints a note
+  saying the fetch failed.
 - Under `update`, a branch that deletes the changelog is refused like one that
   adds no entry.
 

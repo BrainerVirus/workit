@@ -27,7 +27,14 @@ export type ChangelogGate =
   | { status: "skipped"; mode: ChangelogMode; reason: string }
   | { status: "no-file"; mode: ChangelogMode; paths: string[]; candidates: string[] }
   | { status: "base-unknown"; mode: ChangelogMode; base: string; remote: string; fetch: string }
-  | { status: "has-entry"; mode: ChangelogMode; file: string; added: string[] }
+  | {
+      status: "has-entry";
+      mode: ChangelogMode;
+      file: string;
+      added: string[];
+      /** The fetch failed but a local copy of the base resolved: compared with that copy. */
+      staleBase?: string;
+    }
   | {
       status: "missing";
       mode: ChangelogMode;
@@ -35,6 +42,7 @@ export type ChangelogGate =
       category: string;
       command: string;
       candidates: string[];
+      staleBase?: string;
     };
 
 const TITLE_RE = /^(\w+)(?:\([^)]*\))?(!)?:/u;
@@ -114,12 +122,11 @@ const baseCommit = (
   base: string,
 ): { rev: string | null; fetchError: string | null } => {
   const tracking = `refs/remotes/${remote}/${base}`;
-  const fetched = base.startsWith("-")
-    ? null
-    : fetchRefs(cwd, remote, [`+refs/heads/${base}:${tracking}`]);
+  if (base.startsWith("-")) return { rev: null, fetchError: "a branch name cannot start with -" };
+  const fetched = fetchRefs(cwd, remote, [`+refs/heads/${base}:${tracking}`]);
   return {
     rev: resolveRef(cwd, tracking) ?? resolveRef(cwd, `refs/heads/${base}`),
-    fetchError: fetched && !fetched.ok ? fetched.error : null,
+    fetchError: fetched.ok ? null : fetched.error,
   };
 };
 
@@ -157,6 +164,8 @@ export function changelogGate(input: {
     remote,
     fetch: resolved.fetchError ?? "the base has no common history with this branch here",
   };
+  // The fetch failed but an older local copy resolved: the comparison stands, and says so.
+  const stale = resolved.rev && resolved.fetchError ? { staleBase: resolved.fetchError } : {};
   const category = categoryFor(title);
   // A file the base has and the branch deleted is an entry removed, not "nothing to update".
   const deleted = fork ? paths.find((file) => fileAt(cwd, fork, file) !== null) : undefined;
@@ -169,6 +178,7 @@ export function changelogGate(input: {
     category,
     command: applyCommand(category, file),
     candidates,
+    ...stale,
   };
   if (!present.length) {
     if (mode === "create" || deleted) return missing;
@@ -181,7 +191,7 @@ export function changelogGate(input: {
       unreleasedBullets(fileAt(cwd, fork, changed) ?? "").map((bullet) => bullet.toLowerCase()),
     );
     const added = unreleasedBullets(text).filter((bullet) => !before.has(bullet.toLowerCase()));
-    if (added.length) return { status: "has-entry", mode, file: changed, added };
+    if (added.length) return { status: "has-entry", mode, file: changed, added, ...stale };
   }
   return missing;
 }

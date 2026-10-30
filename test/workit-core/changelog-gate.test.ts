@@ -58,6 +58,10 @@ const repo = (
   if (baseChangelog !== null) writeFileSync(path.join(cwd, file), baseChangelog);
   git(cwd, "add", "-A");
   git(cwd, "commit", "-q", "-m", "base");
+  // A bare origin the gate fetches the base from, as a real checkout has.
+  git(cwd, "init", "-q", "--bare", path.join(cwd, ".origin.git"));
+  git(cwd, "remote", "add", "origin", path.join(cwd, ".origin.git"));
+  git(cwd, "push", "-q", "origin", "main");
   git(cwd, "switch", "-q", "-c", "feature/x");
   writeFileSync(path.join(cwd, "b.txt"), "b\n");
   if (branchChangelog) writeFileSync(path.join(cwd, file), branchChangelog);
@@ -244,4 +248,15 @@ test("Given no changelogPath and no root CHANGELOG.md, When the repo keeps one e
     file: "CHANGELOG.md",
     candidates: ["docs/CHANGELOG.md"],
   });
+});
+
+test("Given the base cannot be fetched but an older local copy resolves, When the gate runs, Then it compares with that copy and says the fetch failed", () => {
+  const cwd = repo(RELEASED, withEntry(RELEASED));
+  git(cwd, "remote", "remove", "origin");
+  const result = gate(cwd, "update");
+  expect(result.status).toBe("has-entry");
+  expect(result).toHaveProperty("staleBase", expect.stringMatching(/\S/u));
+  // With the remote back, the fetch succeeds and the note goes away.
+  const fresh = repo(RELEASED, withEntry(RELEASED));
+  expect(gate(fresh, "update")).not.toHaveProperty("staleBase");
 });
