@@ -540,8 +540,9 @@ export function rawInvocations(
   command: string,
   dialect: ShellDialect = "posix",
   depth = 0,
+  inherited: Record<string, string> = {},
 ): readonly RawInvocation[] {
-  if (depth > 0) return walk(command, dialect, depth);
+  if (depth > 0) return walk(command, dialect, depth, undefined, inherited);
   const key = `${dialect}\0${command}`;
   const cached = RECENT.get(key);
   if (cached) return cached;
@@ -583,6 +584,7 @@ function walk(
   dialect: ShellDialect,
   depth: number,
   seen?: string[][],
+  inherited: Record<string, string> = {},
 ): RawInvocation[] {
   const found: RawInvocation[] = [];
   let dir: Dir = null;
@@ -591,13 +593,16 @@ function walk(
   const vars = new Map<string, string[]>();
   // `export GIT_DIR=…` and earlier `git remote add` / `git config` in the
   // same command change what the git invocations after them see.
-  const exported: Record<string, string> = {};
+  const exported: Record<string, string> = { ...inherited };
+  // A nested shell inherits the exports and its own prefix (`GIT_DIR=x bash -c …`).
+  let prefix: Record<string, string> = {};
   const sessionConfig: string[] = [];
   const nested = (script: string | null | undefined, inner: ShellDialect) => {
     if (!script || depth >= MAX_DEPTH) return;
+    const env = { ...exported, ...prefix };
     const inside = seen
-      ? walk(script, inner, depth + 1, seen)
-      : rawInvocations(script, inner, depth + 1);
+      ? walk(script, inner, depth + 1, seen, env)
+      : rawInvocations(script, inner, depth + 1, env);
     for (const invocation of inside)
       found.push({ ...invocation, dir: rebase(dir, invocation.dir) });
   };
@@ -607,6 +612,7 @@ function walk(
     const split = splitString(line);
     if (split !== null) return nested(split, "posix");
     const { words, env } = stripPrefixes(line);
+    prefix = env;
     const name = commandName(words[0]);
     if (!name) return;
     seen?.push(words);
@@ -906,7 +912,7 @@ export type RawAction =
       /** `--receive-pack`/`--exec`: a command, not the URL, decides what is reached. */
       transport?: true;
     }
-  | { kind: "merge"; forge: "gh" | "glab"; via?: "api" }
+  | { kind: "merge"; forge: "gh" | "glab"; via?: "api"; repo?: string }
   | { kind: "pr-create"; forge: "gh" | "glab"; repo?: string }
   /** `gh pr edit|ready`, `glab mr update` (pr), `gh release create|edit|delete`, `glab release create`. */
   | {
@@ -1116,7 +1122,7 @@ const GRAPHQL_MERGE =
  * merge mutation. Options are read wherever they stand; a help flag does not
  * excuse a merge (it can be another option's value).
  */
-const apiMerges = (tool: "gh" | "glab", args: string[], stdin?: string): boolean => {
+const apiAction = (tool: "gh" | "glab", args: string[], stdin?: string): RawAction | null => {
   const request = { method: null as string | null, body: false };
   let endpoint: string | null = null;
   const values: string[] = [];
@@ -1147,12 +1153,36 @@ const apiMerges = (tool: "gh" | "glab", args: string[], stdin?: string): boolean
       }
     } else endpoint ??= arg;
   }
-  if (!endpoint) return false;
+  if (!endpoint) return null;
   endpoint = endpoint.replace(/(?<!:)\/{2,}/g, "/");
+  const merge = { kind: "merge" as const, forge: tool, via: "api" as const };
   if (/(?:^|\/)graphql\/?$/i.test(endpoint))
-    return values.some((value) => GRAPHQL_MERGE.test(value));
+    return values.some((value) => GRAPHQL_MERGE.test(value)) ? merge : null;
   const verb = request.method ?? (request.body ? "POST" : "GET");
-  return verb !== "GET" && verb !== "HEAD" && API_MERGE[tool].test(endpoint);
+  if (verb === "GET" || verb === "HEAD") return null;
+  // The repository the path names: gh `repos/OWNER/REPO/…` ({owner} placeholders
+  // are the checkout's), glab `projects/<url-encoded path or id>/…`.
+  const named =
+    tool === "gh"
+      ? /(?:^|\/)repos\/([^/{]+\/[^/{]+)\//i.exec(endpoint)?.[1]
+      : /(?:^|\/)projects\/([^/]+)\//i.exec(endpoint)?.[1];
+  let repo: string | undefined;
+  try {
+    repo = named === undefined ? undefined : decodeURIComponent(named) || "?";
+  } catch {
+    repo = "?";
+  }
+  const at = repo === undefined ? {} : { repo };
+  if (API_MERGE[tool].test(endpoint)) return { ...merge, ...at };
+  const grant = /\/releases(?:\/|$|\?)/i.test(endpoint)
+    ? "release"
+    : (tool === "gh"
+          ? /\/pulls(?:\/\d+)?\/?(?:\?|$)/i
+          : /\/merge_requests(?:\/\d+)?\/?(?:\?|$)/i
+        ).test(endpoint)
+      ? "pr"
+      : null;
+  return grant ? { kind: "forge", forge: tool, grant, ...at } : null;
 };
 
 /** `git subtree push --prefix=<dir> <remote> <branch>`: a push of `<branch>` to `<remote>`. */
@@ -1171,9 +1201,7 @@ const subtreePush = (args: string[]): RawAction | null => {
 export function rawAction(invocation: RawInvocation): RawAction | null {
   const args = invocation.args;
   if (invocation.tool !== "git" && args[0] === "api")
-    return apiMerges(invocation.tool, args, invocation.stdin)
-      ? { kind: "merge", forge: invocation.tool, via: "api" }
-      : null;
+    return apiAction(invocation.tool, args, invocation.stdin);
   if (asksHelp(invocation)) return null;
   const [first] = args;
   if (invocation.tool === "git") {
@@ -1203,7 +1231,7 @@ export function rawAction(invocation: RawInvocation): RawAction | null {
   for (let index = 1; index < args.length; index++) {
     const arg = args[index];
     if (arg === "-R" || arg === "--repo") repo = args[++index];
-    else if (arg.startsWith("--repo=")) repo = arg.slice(7);
+    else if (/^(?:--repo=|-R)/.test(arg)) repo = arg.replace(/^(?:--repo|-R)=?/, "");
     else if (values.has(arg)) index++;
     else if (!arg.startsWith("-")) second ??= arg;
   }
@@ -1212,7 +1240,7 @@ export function rawAction(invocation: RawInvocation): RawAction | null {
     return (forge === "gh" ? ["create", "edit", "delete"] : ["create"]).includes(second ?? "")
       ? { kind: "forge", forge, grant: "release", ...named }
       : null;
-  if (second === "merge") return { kind: "merge", forge };
+  if (second === "merge") return { kind: "merge", forge, ...named };
   if (second === "create") return { kind: "pr-create", forge, ...named };
   if ((forge === "gh" ? ["edit", "ready"] : ["update"]).includes(second ?? ""))
     return { kind: "forge", forge, grant: "pr", ...named };
@@ -1833,7 +1861,22 @@ const actionsIn = (
     for (const invocation of known ? [raw] : expandGitAliases(cwd, raw, cache)) {
       if (invocation.dir === undefined) continue;
       const action = rawAction(invocation);
-      const at = action ? repoFor(invocation.dir) : null;
+      // A forge call that names its repository is judged even outside a checkout.
+      const at = !action
+        ? null
+        : (repoFor(invocation.dir) ??
+          (all &&
+          invocation.tool !== "git" &&
+          explicitRepo(
+            invocation.tool === "gh",
+            ("repo" in action && action.repo) || "",
+            invocation.env ?? {},
+          )
+            ? {
+                repo: { dir: path.resolve(cwd, invocation.dir ?? "."), branch: null } as Repo,
+                workit: false,
+              }
+            : null));
       if (action && at) out.push({ action, invocation, ...at });
     }
   }
@@ -1945,12 +1988,23 @@ export function rawGitPre(
  * `gh repo set-default` remote (`gh-resolved`), else upstream, else origin.
  */
 const forgeRepo = (gh: boolean, named: string, env: Record<string, string>, config: GitConfig) => {
-  const repo = named || (gh ? (env.GH_REPO ?? process.env.GH_REPO ?? "") : "");
-  const host = env.GH_HOST ?? process.env.GH_HOST ?? "github.com";
+  const repo = explicitRepo(gh, named, env);
+  const host = (
+    gh
+      ? (env.GH_HOST ?? process.env.GH_HOST ?? "github.com")
+      : (env.GITLAB_HOST ??
+        env.GL_HOST ??
+        process.env.GITLAB_HOST ??
+        process.env.GL_HOST ??
+        "gitlab.com")
+  ).replace(/^\w+:\/\/|\/+$/g, "");
+  const parts = repo.split("/");
+  // gh `[HOST/]OWNER/REPO`; glab `[HOST/]GROUP/…/REPO`, a host having a dot.
+  const hosted = gh ? parts.length > 2 : parts.length > 2 && parts[0].includes(".");
   let url = /:\/\/|@/.test(repo)
     ? repo
-    : gh && repo
-      ? `https://${repo.split("/").length > 2 ? "" : `${host}/`}${repo}`
+    : parts.length > 1
+      ? `https://${hosted ? "" : `${host}/`}${repo}`
       : "";
   if (!repo) {
     const resolved = gh
@@ -1960,9 +2014,13 @@ const forgeRepo = (gh: boolean, named: string, env: Record<string, string>, conf
       resolved ?? ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));
     url = rewrittenUrl(configValue(config, `remote.${remote}.url`) ?? "", config);
   }
-  const key = env.GITLAB_HOST ? null : remoteKey(url);
+  const key = remoteKey(url);
   return key ? { remotes: [{ name: "forge", url, key }] } : Error("its repository is unknown");
 };
+
+/** The repository a gh/glab call names itself (`-R`, an API path, GH_REPO), or "". */
+const explicitRepo = (gh: boolean, named: string, env: Record<string, string>): string =>
+  named || (gh ? (env.GH_REPO ?? process.env.GH_REPO ?? "") : "");
 
 /**
  * Why a raw command the grants govern does not run (#589), or null: a push

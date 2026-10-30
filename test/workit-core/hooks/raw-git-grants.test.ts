@@ -72,7 +72,9 @@ const world = (options: { claim?: boolean; openGrants?: Record<string, unknown> 
           glob: `${strict}/**`,
           vcs: { provider: "github", account: "me" },
           autonomy: { push: false, pr: false, merge: false, release: false },
-          ...(options.claim === false ? {} : { remotes: [bare, "github.com/acme/strict"] }),
+          ...(options.claim === false
+            ? {}
+            : { remotes: [bare, "github.com/acme/strict", "gitlab.com/acme/strict"] }),
         },
         {
           name: "open",
@@ -108,6 +110,14 @@ const world = (options: { claim?: boolean; openGrants?: Record<string, unknown> 
     atk: checkout(path.join(open, "atk"), bare),
     own: checkout(path.join(open, "own"), innocent),
     inStrict: checkout(path.join(strict, "work"), bare),
+    /** Outside every workspace, origin strict's claimed remote. */
+    outside: checkout(path.join(base, "outside"), bare),
+    /** A folder that is no git repository at all. */
+    plain: (() => {
+      const at = path.join(base, "plain");
+      mkdirSync(at);
+      return at;
+    })(),
   };
 };
 
@@ -141,7 +151,8 @@ test("Given open's checkout whose origin is strict's claimed remote, When raw gi
     "git push --force origin feature/x",
     "git push --force-with-lease origin feature/x",
     "git push origin HEAD:refs/heads/feature/y",
-    `git push ${w.bare} feature/x`,
+    `git push '${w.bare}' feature/x`,
+    `git push ${w.bare.replaceAll("\\", "/")} feature/x`,
     `git push file://${w.bare} feature/x`,
     "git push --receive-pack=git-receive-pack origin feature/x",
   ]) {
@@ -352,3 +363,83 @@ for (const host of ["claude_code", "codex", "cursor", "opencode", "pi"] as const
     expect(reason).toContain("push grant");
     expect(reason).toContain("strict");
   });
+
+// Fix round (verdict mvu8gudf): each case below was allowed at 81337fa9.
+test("Given a checkout outside every workspace whose origin strict claims (A1), When raw tag pushes, a forge release or a merge run, Then each is denied naming strict, and strict gets no tag", () => {
+  const w = world();
+  git(w.outside, "tag", "v1");
+  for (const [command, kind] of [
+    ["git push origin v1", "release"],
+    ["git push --tags", "release"],
+    ["git push origin HEAD:refs/tags/v9", "release"],
+    ["git push -u origin feature/x", "push"],
+    ["gh release create v1 -R acme/strict", "release"],
+    ["gh pr merge 1 -R acme/strict", "merge"],
+  ]) {
+    const reason = denied(w.outside, command);
+    expect(reason, command).toContain(`${kind} grant`);
+    expect(reason, command).toContain("strict");
+  }
+  expect(
+    childProcess.spawnSync("git", ["tag", "-l"], { cwd: w.bare, encoding: "utf8" }).stdout.trim(),
+  ).toBe("");
+});
+
+test("Given a folder that is no git repository (A2), When gh/glab name strict's repository with -R or GH_REPO, Then each is denied; without a named repository it runs as today", () => {
+  const w = world();
+  for (const command of [
+    "gh pr create -R acme/strict --fill",
+    "GH_REPO=acme/strict gh pr create --fill",
+    "gh release create v1 --repo=acme/strict",
+    "glab mr create -R gitlab.com/acme/strict --fill",
+  ])
+    expect(denied(w.plain, command), command).toContain("grant");
+  notDenied(w.plain, "gh pr create --fill");
+  notDenied(w.plain, "gh pr create -R acme/open --fill");
+});
+
+test("Given every attached -R spelling gh and glab accept (A3), When it names strict's repository, Then it is denied", () => {
+  const w = world();
+  for (const command of [
+    "gh pr create -Racme/strict --fill",
+    "gh pr create -R=acme/strict --fill",
+    "gh pr create --repo=acme/strict --fill",
+    "gh pr create --fill -R https://github.com/acme/strict",
+    "glab mr create -Rgitlab.com/acme/strict --fill",
+  ])
+    expect(denied(w.own, command), command).toContain("pr grant");
+});
+
+test("Given forge REST calls on strict's repository (A4), When they merge, open or edit a PR, or write a release, Then each is denied like its verb; reads run", () => {
+  const w = world();
+  for (const [command, kind] of [
+    ["gh api repos/acme/strict/pulls/1/merge -X PUT", "merge"],
+    ["gh api -X POST repos/acme/strict/pulls -f title=x", "pr"],
+    ["gh api --method PATCH repos/acme/strict/pulls/3 -f title=y", "pr"],
+    ["gh api repos/acme/strict/releases -f tag_name=v1", "release"],
+    ["gh api -X DELETE repos/acme/strict/releases/7", "release"],
+    ["glab api -X POST projects/acme%2Fstrict/merge_requests", "pr"],
+  ])
+    expect(denied(w.own, command), command).toContain(`${kind} grant`);
+  notDenied(w.own, "gh api repos/acme/strict/pulls");
+  notDenied(w.own, "gh api repos/acme/strict/releases/latest");
+});
+
+test("Given env set for a nested shell (A5), When it runs a raw push or PR, Then the nested command is judged with it, and strict does not move", () => {
+  const w = world();
+  for (const command of [
+    `GIT_DIR=${w.inStrict}/.git bash -c 'git push origin feature/x'`,
+    `export GIT_DIR=${w.inStrict}/.git; sh -c 'git push origin feature/x'`,
+    "GH_REPO=acme/strict bash -c 'gh pr create --fill'",
+    "export GH_REPO=acme/strict; sh -c 'gh pr create --fill'",
+  ])
+    expect(denied(w.own, command), command).toContain("grant");
+  expect(w.tip(w.bare)).toBeNull();
+});
+
+test("Given glab -R naming open's unclaimed repository as OWNER/REPO or HOST/OWNER/REPO, When a workspace claims remotes, Then the granted MR runs", () => {
+  const w = world();
+  notDenied(w.own, "glab mr create -R acme/open --fill");
+  notDenied(w.own, "glab mr create -R gitlab.com/acme/open --fill");
+  expect(denied(w.own, "glab mr create -R acme/strict --fill")).toContain("pr grant");
+});

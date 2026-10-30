@@ -205,7 +205,13 @@ export const remoteKey = (url: string, base?: string | (() => string)): string |
       return null;
     }
   }
-  if (path.isAbsolute(value) || WINDOWS_DRIVE.test(value)) return fileKey(value, strict);
+  // Git for Windows reads any `X:` start as a drive (`C:\r.git`, `C:r.git`), never scp.
+  if (
+    path.isAbsolute(value) ||
+    WINDOWS_DRIVE.test(value) ||
+    (process.platform === "win32" && /^[A-Za-z]:/u.test(value))
+  )
+    return fileKey(value, strict);
   const scp = SCP_LIKE.exec(value);
   if (scp) return forgeKey(scp[1], scp[2], true);
   // Joined as text: `..` after a symlink is resolved by the filesystem.

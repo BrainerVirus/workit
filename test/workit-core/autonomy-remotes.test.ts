@@ -269,3 +269,17 @@ test("Given no workspace claims remotes, When a push target is lazy, Then it is 
   expect(push.allowed).toBe(true);
   expect(resolved).toBe(0);
 });
+
+test("Given Git for Windows, When a remote starts with a drive letter (`C:\\r.git`, `C:r.git`), Then it is a local path, never an scp-like ssh host", () => {
+  const saved = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    for (const url of ["C:\\nowhere\\r.git", "C:nowhere\\r.git", "c:r.git"]) {
+      // A target that names no repository is unknown (grants nothing), not a forge key.
+      expect(remoteKey(url, root), url).toBeNull();
+      expect(remoteKey(url), url).toStartWith("file:");
+    }
+  } finally {
+    Object.defineProperty(process, "platform", saved);
+  }
+});

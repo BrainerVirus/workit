@@ -124,16 +124,25 @@ the push remote or URL, `pushurl` and `insteadOf`, a local path through
 symlinks, a `commondir` file, or `refs`/`objects` borrowed from another
 repository; `--receive-pack`, an ssh command or a remote the shell computes
 make it unknown, which grants nothing while a workspace claims remotes. A PR's
-base is read from `-R` (gh `[HOST/]OWNER/REPO` or `GH_REPO`, glab a full URL),
-else from the checkout as gh resolves it: the `gh repo set-default` remote, else
-`upstream`, else `origin`. Only when none resolves, while a workspace claims
-remotes, is the raw command denied in favour of `workit pr create`. A folder outside every
-workspace keeps today's behaviour while no workspace claims remotes, and a
-workspace that grants the action and claims nothing costs the hook no git call.
+base is read from `-R`/`--repo` in any spelling (gh `[HOST/]OWNER/REPO` or
+`GH_REPO`; glab `[HOST/]GROUP/REPO` or a URL, the host from `GITLAB_HOST` or
+gitlab.com), even outside a git repository, else from the checkout as gh resolves
+it: the `gh repo set-default` remote, else `upstream`, else `origin`. Only when
+none resolves, while a workspace claims remotes, is the raw command denied in
+favour of `workit pr create`. `gh api`/`glab api` REST writes are judged like
+their verb (a PR merge, a PR create or edit, a release); reads never are. Env
+set for a nested shell (`GIT_DIR=… bash -c '…'`, an earlier `export`) counts. A
+folder outside every workspace is judged only when its target is claimed by a
+workspace that does not grant the action, and a workspace that grants the action
+and claims nothing costs the hook no git call.
 
-It is not a boundary against an agent that sets out to evade it: a push through
-an `ssh` program placed earlier on `PATH` (N1), a `gh` alias, or a `git push
---follow-tags` that carries a new annotated tag is not detected. As the
+It is not a boundary against an agent that sets out to evade it. Not detected: a
+push through an `ssh` program placed earlier on `PATH` (N1); a `gh` alias; a `git
+push --follow-tags` that carries a new annotated tag; a command the shell builds
+(`$(echo git) push`); `curl` or `hub` against the forge API; GraphQL mutations
+other than merges; `.git/hooks` scripts an agent writes; a claimed local path
+spelled `ssh://localhost/<path>`; and `gh pr review|close` or `gh release
+upload`, which grants do not govern. As the
 [trust model](#trust-model) says, the hard boundary is your host's permission
 prompt and sandbox: deny or ask on raw `git push` and on edits
 to `PATH` in the repositories you want held to their workspace's grants.

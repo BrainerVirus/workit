@@ -698,9 +698,12 @@ export function rawGrantDenial(
 ): { error: string; unblock: string } | null {
   const claimed = remotesClaimed();
   if (!grantsMatter(kind)) return null;
+  // Resolved once: the cap and the claim check below share it.
+  let resolved: GrantTarget | undefined;
+  const lazy = target && (() => (resolved ??= typeof target === "function" ? target() : target));
   let autonomy: Autonomy;
   try {
-    autonomy = resolveAutonomy(cwd, target);
+    autonomy = resolveAutonomy(cwd, lazy);
   } catch (error) {
     return claimed
       ? {
@@ -711,12 +714,29 @@ export function rawGrantDenial(
   }
   const { workspace, note } = autonomy;
   const capped = autonomy.unblocks?.[kind];
-  // No entry and no cap: the folder is outside every workspace.
-  if (autonomy.grants[kind] !== false || (workspace === null && !capped)) return null;
-  return {
-    error: `${kind} is not granted for ${workspace ? `workspace ${workspace}` : "this checkout"}${note ? ` (${note})` : ""}`,
-    unblock: capped ?? grantHint(workspace, kind),
-  };
+  if (autonomy.grants[kind] !== false) return null;
+  if (workspace !== null || capped)
+    return {
+      error: `${kind} is not granted for ${workspace ? `workspace ${workspace}` : "this checkout"}${note ? ` (${note})` : ""}`,
+      unblock: capped ?? grantHint(workspace, kind),
+    };
+  // A folder outside every workspace: judged only by a workspace that claims
+  // the target and does not grant `kind` (a default-false grant records no cap).
+  if (!claimed || !lazy) return null;
+  const claims = targetClaims(lazy());
+  if (claims instanceof Error)
+    return { error: `${kind}: ${claims.message}`, unblock: "name a target workit can resolve" };
+  const entries = loadWorkspacesFrom(grantsDir());
+  const strict = claims.find(({ workspace: name }) => {
+    const entry = entries.find((item) => item.name === name);
+    return entry && autonomyOf(entry).grants[kind] === false;
+  });
+  return strict
+    ? {
+        error: `${kind} is not granted for workspace ${strict.workspace}, which claims ${strict.url} (${strict.pattern})`,
+        unblock: grantHint(strict.workspace, kind),
+      }
+    : null;
 }
 
 /** Whether `next` grants more than `current` (false < "verified" < true). */
