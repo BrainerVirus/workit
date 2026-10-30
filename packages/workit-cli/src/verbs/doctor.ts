@@ -130,8 +130,20 @@ export async function run(argv: string[], io: Io): Promise<number> {
           findings: knowledge.findings.length,
         }
       : { unavailable: true };
+    // Shared envelope fields (ok, code, error, unblock) beside the report's own.
+    const firstFix = report.fixes[0]?.fix;
+    const envelope = {
+      ok: report.ok,
+      code: report.ok ? "ok" : "failed",
+      ...(report.ok
+        ? {}
+        : {
+            error: `${report.summary.failed} check(s) failed, ${report.summary.warned} warned (see checks)`,
+          }),
+      ...(firstFix ? { unblock: firstFix } : {}),
+    };
     io.stdout(
-      `${JSON.stringify({ ...report, ...(fixLock ? { fixLock } : {}), ...(sessionHook ? { sessionHook } : {}), ...(checksConfig ? { checksConfig } : {}), knowledge: summary }, null, 2)}\n`,
+      `${JSON.stringify({ ...report, ...envelope, ...(fixLock ? { fixLock } : {}), ...(sessionHook ? { sessionHook } : {}), ...(checksConfig ? { checksConfig } : {}), knowledge: summary }, null, 2)}\n`,
     );
     return report.exitCode;
   }
