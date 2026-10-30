@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (config JSON Schemas)
+
+- `workspaces.json`, `config.json`, `vcs.json` and `youtrack.json` have JSON
+  Schemas generated from Workit's own validation, published at
+  `https://unpkg.com/@brainervirus/workit-core/schemas/<file>.json`. Editors
+  complete keys and allowed values, show descriptions and underline unknown
+  keys or bad values. `workit setup` and `workit workspace set` write
+  `"$schema"` first and keep a value you set yourself; `workit doctor`'s new
+  `config_schema` row names the file and JSON path of each bad value (#614).
+
 ### Added (changelog and docs checks)
 
 - `changelogPath` takes globs such as `["projects/*/CHANGELOG.md"]`. In a

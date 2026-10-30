@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unpkg.com/@brainervirus/workit-core/schemas/config.json",
+  "title": "Workit config (~/.config/workit/config.json)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "The JSON Schema this file follows; Workit writes it and keeps your value."
+    },
+    "locale": {
+      "description": "The language of Workit's prompts and drafts, e.g. en or es-419.",
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-(?:[A-Z]{2}|[0-9]{3}))?$"
+    },
+    "localeOptions": {
+      "description": "The locales the setup wizard offers.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "branchPolicy": {
+      "description": "The global branch policy; a workspace's `branchPolicy` overrides it.",
+      "type": "object",
+      "properties": {
+        "preset": {
+          "type": "string",
+          "enum": ["gitflow", "github-flow", "trunk-based", "custom"],
+          "description": "The branch model: gitflow, github-flow, trunk-based or custom."
+        },
+        "allowed": {
+          "description": "Branch name globs a new branch must match.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "protected": {
+          "description": "Branches nobody commits to directly.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["preset"],
+      "additionalProperties": false
+    },
+    "commitPolicy": {
+      "description": "The global commit policy; a workspace's `commitPolicy` overrides it.",
+      "type": "object",
+      "properties": {
+        "preset": {
+          "type": "string",
+          "enum": ["conventional", "gitmoji", "ticket-prefix", "freeform", "custom", "auto"],
+          "description": "The commit message flavor, e.g. conventional."
+        },
+        "pattern": {
+          "description": "A regular expression every commit subject must match.",
+          "type": "string"
+        }
+      },
+      "required": ["preset"],
+      "additionalProperties": false
+    },
+    "updates": {
+      "description": "How an interactive launch handles a newer release: prompt (default), auto or off. Set with `workit upgrade --set-updates`.",
+      "type": "string",
+      "enum": ["prompt", "auto", "off"]
+    }
+  },
+  "additionalProperties": false
+}

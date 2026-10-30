@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unpkg.com/@brainervirus/workit-core/schemas/vcs.json",
+  "title": "Workit forge settings (~/.config/workit/vcs.json)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "The JSON Schema this file follows; Workit writes it and keeps your value."
+    },
+    "provider": {
+      "description": "The forge when no workspace or remote names one.",
+      "type": "string",
+      "enum": ["github", "gitlab"]
+    },
+    "defaultTargetBranch": {
+      "description": "The branch PRs target when neither the workspace nor its branch preset names one.",
+      "type": "string"
+    },
+    "github": {
+      "description": "GitHub settings.",
+      "type": "object",
+      "properties": {
+        "host": {
+          "description": "The GitHub host, for a self-hosted server.",
+          "type": "string"
+        },
+        "apiUrl": {
+          "description": "The GitHub API URL.",
+          "type": "string"
+        },
+        "tokenFile": {
+          "description": "A file holding the GitHub token.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "gitlab": {
+      "description": "GitLab settings.",
+      "type": "object",
+      "properties": {
+        "host": {
+          "description": "The GitLab host, for a self-hosted server.",
+          "type": "string"
+        },
+        "apiUrl": {
+          "description": "The GitLab API URL.",
+          "type": "string"
+        },
+        "tokenFile": {
+          "description": "A file holding the GitLab token.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "pr": {
+      "description": "PR style defaults.",
+      "type": "object",
+      "properties": {
+        "squashOnMerge": {
+          "type": "boolean"
+        },
+        "removeSourceBranch": {
+          "type": "boolean"
+        },
+        "pushBranch": {
+          "type": "boolean"
+        },
+        "confirmSkip": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": {}
+    }
+  },
+  "additionalProperties": {}
+}

@@ -75,10 +75,10 @@ test(
     // passes (the PATH node meets the floor).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 40,
+      passed: 41,
       warned: 1,
       failed: 1,
-      total: 42,
+      total: 43,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -124,10 +124,10 @@ test(
       // check's setting, local files only).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 40,
+        passed: 41,
         warned: 1,
         failed: 1,
-        total: 42,
+        total: 43,
         fixes: 1,
       });
     } finally {

@@ -296,10 +296,19 @@ export const mergeConfigValues = (input: ConfigInput, current: ToolkitConfig): T
   ...(current.updates ? { updates: current.updates } : {}),
 });
 
+/** A rewrite keeps the file's `"$schema"` first (setup writes it; core/config-schemas.ts). */
 export const writeConfig = (config: ToolkitConfig): void => {
   const dir = configDir();
+  const file = path.join(dir, "config.json");
+  let schema: unknown;
+  try {
+    schema = (JSON.parse(readSafe(file) ?? "{}") as { $schema?: unknown }).$schema;
+  } catch {
+    schema = undefined;
+  }
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "config.json"), JSON.stringify(config, null, 2) + "\n", "utf8");
+  const document = schema === undefined ? config : { $schema: schema, ...config };
+  writeFileSync(file, JSON.stringify(document, null, 2) + "\n", "utf8");
 };
 
 // Configuration provenance for startup diagnostics: where config.json came from

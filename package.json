@@ -35,6 +35,7 @@
     "test:acceptance": "bun test test/acceptance/deterministic.test.ts",
     "write:capabilities": "bun scripts/write-capabilities.ts",
     "write:budget": "bun scripts/write-budget.ts",
+    "write:schemas": "bun packages/workit-core/scripts/write-schemas.ts",
     "validate:cursor-marketplace": "bun packages/workit-core/scripts/validate-cursor-marketplace.ts",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",

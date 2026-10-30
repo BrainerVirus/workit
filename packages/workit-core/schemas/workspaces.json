@@ -1,0 +1,872 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unpkg.com/@brainervirus/workit-core/schemas/workspaces.json",
+  "title": "Workit workspaces (~/.config/workit/workspaces.json)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "The JSON Schema this file follows; Workit writes it and keeps your value."
+    },
+    "workspaces": {
+      "description": "Workspace entries, each mapping a path glob to its forge, policies and grants.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The workspace's unique name.",
+            "pattern": "\\S"
+          },
+          "glob": {
+            "type": "string",
+            "description": "The directories this entry covers, an absolute path glob with * and ** (`/home/you/work/**`); the narrowest match wins.",
+            "pattern": "\\S"
+          },
+          "vcs": {
+            "description": "The forge this workspace's repositories live on.",
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": ["gitlab", "github"],
+                "description": "The forge: github or gitlab."
+              },
+              "defaultTargetBranch": {
+                "description": "The branch PRs target by default.",
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "tokenFile": {
+                "description": "A file holding the forge token for this workspace.",
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "account": {
+                "description": "The forge login delivery runs as; grants need it to reach the forge.",
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "host": {
+                "type": "string",
+                "pattern": "\\S",
+                "description": "A self-hosted forge's host name."
+              }
+            },
+            "required": ["provider"],
+            "additionalProperties": false
+          },
+          "autoApprove": {
+            "description": "Legacy (≤4.x) standing approvals, read once as autonomy grants; use `autonomy`.",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                }
+              }
+            ]
+          },
+          "defaultEndpoint": {
+            "type": "string",
+            "enum": ["commit", "pr", "green", "merged"],
+            "description": "Where an unnamed request stops: commit (default), pr, green or merged. Set with `workit grant set`, like grants."
+          },
+          "verification": {
+            "description": "How a normal-risk behavior change is verified: proportional (default), self or independent. Set with `workit grant set`, like grants.",
+            "type": "string",
+            "enum": ["proportional", "self", "independent"]
+          },
+          "delegation": {
+            "type": "string",
+            "enum": ["inline-first", "lead-orchestrates"],
+            "description": "Who does the work: `inline-first` (default) keeps the lead working itself and refuses a slice without a reason to delegate; `lead-orchestrates` allows slices without one."
+          },
+          "changelog": {
+            "type": "string",
+            "enum": ["off", "update", "create"],
+            "description": "The Keep a Changelog step before a PR opens: `off` (default), `update` (an existing CHANGELOG.md needs an Unreleased entry from a user-facing PR) or `create` (the entry is required, creating the file). `workit pr create` enforces it."
+          },
+          "docs": {
+            "type": "string",
+            "enum": ["off", "when-user-facing"],
+            "description": "The docs refresh the ship skill does before a PR opens: `off` (default) or `when-user-facing`."
+          },
+          "changelogPath": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?![\\\\/]|[A-Za-z]:)(?!(?:.*[\\\\/])?\\.\\.(?:[\\\\/]|$)).*\\S",
+                "description": "A repo-relative changelog path or glob."
+              },
+              {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "^(?![\\\\/]|[A-Za-z]:)(?!(?:.*[\\\\/])?\\.\\.(?:[\\\\/]|$)).*\\S",
+                  "description": "A repo-relative changelog path or glob."
+                }
+              }
+            ],
+            "description": "Where the changelog lives, repo-relative: one path or glob, or a list (a monorepo with one changelog per package; any of them satisfies the gate). Default CHANGELOG.md at the repo root."
+          },
+          "prTemplate": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["auto", "repo", "workit"]
+              },
+              {
+                "type": "string",
+                "pattern": "^(?![\\\\/]|[A-Za-z]:)(?!(?:.*[\\\\/])?\\.\\.(?:[\\\\/]|$)).*\\S.*\\.[mM][dD]$",
+                "description": "A repo-relative path to one .md template."
+              }
+            ],
+            "description": "Which template a PR description fills: `auto` (default: the repo's GitHub/GitLab template, else Workit's), `repo` (the repo's, refused when it has none), `workit` (Workit's Summary/Evidence/Merge danger) or a repo-relative path to one `.md` file."
+          },
+          "releaseNotes": {
+            "type": "string",
+            "enum": ["auto", "off", "review"],
+            "description": "The release notes `workit release finish` publishes on the forge release: `auto` (default: the draft when there is one, else the notes built from the version's changelog section), `off` (no forge release) or `review` (finish refuses until `workit release notes approve`). A release track overrides it."
+          },
+          "trailers": {
+            "description": "Whether commits get the `Workit-Session:` trailer (default true). With false, authorship lives in the ledger only.",
+            "type": "boolean"
+          },
+          "deleteBranch": {
+            "description": "Whether `workit pr merge` deletes the head branch after a merge (default true); `--keep-branch` opts out for one merge.",
+            "type": "boolean"
+          },
+          "liveSessionGuard": {
+            "description": "Whether the live-session guard denies edits in a checkout another live agent session owns (default true).",
+            "type": "boolean"
+          },
+          "fanout": {
+            "description": "Fanout settings.",
+            "type": "object",
+            "properties": {
+              "tierModels": {
+                "type": "object",
+                "properties": {
+                  "mundane": {
+                    "$ref": "#/definitions/tierModel"
+                  },
+                  "standard": {
+                    "$ref": "#/definitions/tierModel"
+                  },
+                  "hard": {
+                    "$ref": "#/definitions/tierModel"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "The model per slice TIER (mundane, standard, hard), as one name or per host."
+              }
+            },
+            "additionalProperties": false
+          },
+          "models": {
+            "description": "Model and effort per role and host; the same key at the top of workspaces.json is the global default.",
+            "type": "object",
+            "properties": {
+              "roles": {
+                "type": "object",
+                "properties": {
+                  "decider": {
+                    "$ref": "#/definitions/roleModel"
+                  },
+                  "implementer": {
+                    "type": "object",
+                    "properties": {
+                      "mundane": {
+                        "$ref": "#/definitions/roleModel"
+                      },
+                      "standard": {
+                        "$ref": "#/definitions/roleModel"
+                      },
+                      "hard": {
+                        "$ref": "#/definitions/roleModel"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "verifier": {
+                    "$ref": "#/definitions/roleModel"
+                  },
+                  "reviewer": {
+                    "$ref": "#/definitions/roleModel"
+                  },
+                  "explore": {
+                    "$ref": "#/definitions/roleModel"
+                  },
+                  "babysit": {
+                    "$ref": "#/definitions/roleModel"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Per role (decider, implementer, verifier, reviewer, explore, babysit): a model name, `{ model, effort }`, or one of those per host (claude_code, opencode, codex, codex_cli, codex_desktop, cursor, pi, default). The implementer takes one per tier (mundane, standard, hard)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "resources": {
+            "type": "object",
+            "properties": {
+              "slots": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64,
+                "description": "How many heavy checks may run at once on this machine."
+              },
+              "scope": {
+                "type": "boolean",
+                "description": "False turns the systemd scope off (the lease still applies)."
+              },
+              "heavy": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Named checks that are heavy."
+              },
+              "light": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Named checks that never take the lease."
+              },
+              "memoryMax": {
+                "type": ["string", "number"],
+                "description": "MemoryMax of a heavy check's scope: a percent of RAM (\"40%\") or a size (\"8G\")."
+              },
+              "cpuQuota": {
+                "type": ["string", "number"],
+                "description": "CPUQuota of a heavy check's scope."
+              },
+              "wait": {
+                "type": ["number", "string"],
+                "description": "How long a heavy check waits for the lease (seconds, or a duration)."
+              }
+            },
+            "additionalProperties": false,
+            "description": "Heavy-check limits on this machine: slots, scope, heavy, light, memoryMax, cpuQuota, wait."
+          },
+          "remotes": {
+            "description": "Remote URLs this entry owns: a checkout pushing to or opening PRs on one never exceeds this entry's grants, wherever the folder is (`owner/*` claims a whole owner). Only the user changes it, in their own terminal.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "autonomy": {
+            "description": "Autonomy grants (D15): only ever set here, by the user, with `workit grant set`.",
+            "type": "object",
+            "properties": {
+              "push": {
+                "description": "The push grant: true, false, or \"verified\" (only after a verdict).",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "const": "verified"
+                  }
+                ]
+              },
+              "pr": {
+                "description": "The pr grant: true, false, or \"verified\" (only after a verdict).",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "const": "verified"
+                  }
+                ]
+              },
+              "merge": {
+                "description": "The merge grant: true, false, or \"verified\" (only after a verdict).",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "const": "verified"
+                  }
+                ]
+              },
+              "release": {
+                "description": "The release grant: true, false, or \"verified\" (only after a verdict).",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "const": "verified"
+                  }
+                ]
+              },
+              "rerun": {
+                "description": "The rerun grant: true, false, or \"verified\" (only after a verdict).",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "const": "verified"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "youtrack": {
+            "description": "YouTrack settings for this workspace.",
+            "type": "object",
+            "properties": {
+              "baseUrl": {
+                "description": "This workspace's YouTrack URL.",
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "link_issues": {
+                "description": "Legacy alias of `issues: { provider: youtrack, link: true }`.",
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "issues": {
+            "description": "The issue tracker PRs link to (any forge with any tracker).",
+            "type": "object",
+            "properties": {
+              "provider": {
+                "description": "The issue tracker PRs link to.",
+                "type": "string",
+                "enum": ["github", "gitlab", "youtrack"]
+              },
+              "link": {
+                "description": "Derive the issue from the branch name.",
+                "type": "boolean"
+              },
+              "relation": {
+                "type": "string",
+                "enum": ["closes", "refs"],
+                "description": "How a PR names its issue: `closes` (default) or `refs`."
+              },
+              "backlink": {
+                "description": "Post the PR URL on each linked issue after the PR is opened.",
+                "type": "boolean"
+              },
+              "link_on_pr": {
+                "description": "Legacy alias of `link`.",
+                "type": "boolean"
+              },
+              "repo": {
+                "type": "string",
+                "description": "The GitHub/GitLab repository (owner/name) that holds the issues; default the PR's own."
+              },
+              "host": {
+                "type": "string",
+                "pattern": "\\S",
+                "description": "That repository's host; default the PR's host, or the tracker's public one."
+              }
+            },
+            "additionalProperties": false
+          },
+          "branchPolicy": {
+            "description": "Which branches may be created and which are protected.",
+            "type": "object",
+            "properties": {
+              "preset": {
+                "type": "string",
+                "enum": ["gitflow", "github-flow", "trunk-based", "custom"],
+                "description": "The branch model: gitflow, github-flow, trunk-based or custom (allowed/protected set by hand)."
+              },
+              "developBranch": {
+                "description": "The integration branch gitflow uses (default develop).",
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "prefixes": {
+                "description": "The branch prefix per kind (feature/, bugfix/, release/, hotfix/).",
+                "type": "object",
+                "properties": {
+                  "feature": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "bugfix": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "release": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "hotfix": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  }
+                },
+                "required": ["feature", "bugfix", "release", "hotfix"],
+                "additionalProperties": {}
+              },
+              "allowed": {
+                "description": "Branch name globs a new branch must match (`feature/*`).",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                }
+              },
+              "protected": {
+                "description": "Branches nobody commits or pushes to directly.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                }
+              },
+              "integration": {
+                "description": "How work reaches its base: `pr` (default) opens a PR, `merge` merges locally.",
+                "type": "string",
+                "enum": ["pr", "merge"]
+              }
+            },
+            "required": ["preset"],
+            "additionalProperties": false
+          },
+          "commitPolicy": {
+            "description": "The commit message rules.",
+            "type": "object",
+            "properties": {
+              "preset": {
+                "type": "string",
+                "enum": ["conventional", "gitmoji", "ticket-prefix", "freeform", "custom", "auto"],
+                "description": "The commit message flavor, e.g. conventional."
+              },
+              "pattern": {
+                "description": "A regular expression every commit subject must match.",
+                "type": "string"
+              }
+            },
+            "required": ["preset"],
+            "additionalProperties": false
+          },
+          "defaultProfile": {
+            "description": "The profile used when none is named; must be a key of `profiles`.",
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "profiles": {
+            "description": "Named branch/commit policy variants of this workspace.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "branchPolicy": {
+                  "description": "This profile's branch policy.",
+                  "type": "object",
+                  "properties": {
+                    "preset": {
+                      "type": "string",
+                      "enum": ["gitflow", "github-flow", "trunk-based", "custom"],
+                      "description": "The branch model: gitflow, github-flow, trunk-based or custom (allowed/protected set by hand)."
+                    },
+                    "developBranch": {
+                      "description": "The integration branch gitflow uses (default develop).",
+                      "type": "string",
+                      "pattern": "\\S"
+                    },
+                    "prefixes": {
+                      "description": "The branch prefix per kind (feature/, bugfix/, release/, hotfix/).",
+                      "type": "object",
+                      "properties": {
+                        "feature": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        },
+                        "bugfix": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        },
+                        "release": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        },
+                        "hotfix": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        }
+                      },
+                      "required": ["feature", "bugfix", "release", "hotfix"],
+                      "additionalProperties": {}
+                    },
+                    "allowed": {
+                      "description": "Branch name globs a new branch must match (`feature/*`).",
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "\\S"
+                      }
+                    },
+                    "protected": {
+                      "description": "Branches nobody commits or pushes to directly.",
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "\\S"
+                      }
+                    },
+                    "integration": {
+                      "description": "How work reaches its base: `pr` (default) opens a PR, `merge` merges locally.",
+                      "type": "string",
+                      "enum": ["pr", "merge"]
+                    }
+                  },
+                  "required": ["preset"],
+                  "additionalProperties": false
+                },
+                "commitPolicy": {
+                  "description": "This profile's commit policy.",
+                  "type": "object",
+                  "properties": {
+                    "preset": {
+                      "type": "string",
+                      "enum": [
+                        "conventional",
+                        "gitmoji",
+                        "ticket-prefix",
+                        "freeform",
+                        "custom",
+                        "auto"
+                      ],
+                      "description": "The commit message flavor, e.g. conventional."
+                    },
+                    "pattern": {
+                      "description": "A regular expression every commit subject must match.",
+                      "type": "string"
+                    }
+                  },
+                  "required": ["preset"],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "releaseTracks": {
+            "description": "Named release tracks: production and integration branches, naming and versioning.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "strategy": {
+                  "description": "The branch model this track follows.",
+                  "type": "string",
+                  "enum": ["gitflow", "github-flow", "trunk-based", "custom"]
+                },
+                "productionBranch": {
+                  "type": "string",
+                  "description": "The branch releases land on (main).",
+                  "pattern": "\\S"
+                },
+                "integrationBranch": {
+                  "type": "string",
+                  "description": "The branch work integrates into (develop).",
+                  "pattern": "\\S"
+                },
+                "naming": {
+                  "description": "Branch name templates per kind, e.g. `feature/{name}`.",
+                  "type": "object",
+                  "properties": {
+                    "feature": {
+                      "type": "string",
+                      "pattern": "\\S"
+                    },
+                    "release": {
+                      "type": "string",
+                      "pattern": "\\S"
+                    },
+                    "hotfix": {
+                      "type": "string",
+                      "pattern": "\\S"
+                    }
+                  },
+                  "additionalProperties": {}
+                },
+                "baseBranch": {
+                  "description": "The branch new work starts from.",
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "mergeBackBranches": {
+                  "description": "Branches a finished release or hotfix is merged back into.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  }
+                },
+                "pullRequestTarget": {
+                  "description": "The branch PRs target.",
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "tagNamespace": {
+                  "description": "A prefix for this track's release tags.",
+                  "type": "string"
+                },
+                "versionSource": {
+                  "description": "Where the version comes from: package-json, git-tag or manual.",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "package-json"
+                        },
+                        "path": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        },
+                        "field": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        }
+                      },
+                      "required": ["kind", "path", "field"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "git-tag"
+                        }
+                      },
+                      "required": ["kind"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "manual"
+                        }
+                      },
+                      "required": ["kind"],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "requiredChecks": {
+                  "description": "CI checks that must pass before a release.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  }
+                },
+                "critical": {
+                  "description": "Fields an older Workit must not ignore: when one is unknown or malformed, Workit fails closed.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  }
+                },
+                "releaseNotes": {
+                  "type": "string",
+                  "enum": ["auto", "off", "review"],
+                  "description": "This track's release notes mode, over the workspace's `releaseNotes`."
+                }
+              },
+              "required": ["productionBranch", "integrationBranch"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["name", "glob"],
+        "additionalProperties": false
+      }
+    },
+    "models": {
+      "description": "The global default model and effort per role and host.",
+      "type": "object",
+      "properties": {
+        "roles": {
+          "type": "object",
+          "properties": {
+            "decider": {
+              "$ref": "#/definitions/roleModel"
+            },
+            "implementer": {
+              "type": "object",
+              "properties": {
+                "mundane": {
+                  "$ref": "#/definitions/roleModel"
+                },
+                "standard": {
+                  "$ref": "#/definitions/roleModel"
+                },
+                "hard": {
+                  "$ref": "#/definitions/roleModel"
+                }
+              },
+              "additionalProperties": false
+            },
+            "verifier": {
+              "$ref": "#/definitions/roleModel"
+            },
+            "reviewer": {
+              "$ref": "#/definitions/roleModel"
+            },
+            "explore": {
+              "$ref": "#/definitions/roleModel"
+            },
+            "babysit": {
+              "$ref": "#/definitions/roleModel"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Per role (decider, implementer, verifier, reviewer, explore, babysit): a model name, `{ model, effort }`, or one of those per host (claude_code, opencode, codex, codex_cli, codex_desktop, cursor, pi, default). The implementer takes one per tier (mundane, standard, hard)."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "roleModel": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/modelLeaf"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "claude_code": {
+              "$ref": "#/definitions/modelLeaf"
+            },
+            "opencode": {
+              "$ref": "#/definitions/modelLeaf"
+            },
+            "codex": {
+              "$ref": "#/definitions/modelLeaf"
+            },
+            "codex_cli": {
+              "$ref": "#/definitions/modelLeaf"
+            },
+            "codex_desktop": {
+              "$ref": "#/definitions/modelLeaf"
+            },
+            "cursor": {
+              "$ref": "#/definitions/modelLeaf"
+            },
+            "pi": {
+              "$ref": "#/definitions/modelLeaf"
+            },
+            "default": {
+              "$ref": "#/definitions/modelLeaf"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "tierModel": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "claude_code": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "opencode": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "codex": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "codex_cli": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "codex_desktop": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "cursor": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "pi": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "default": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "modelLeaf": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "A model name."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "description": "The model name."
+            },
+            "effort": {
+              "type": "string",
+              "description": "The reasoning effort."
+            }
+          },
+          "required": ["model"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}
