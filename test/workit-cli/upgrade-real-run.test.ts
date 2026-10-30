@@ -303,10 +303,10 @@ const codexDoctor = (
 };
 
 test.skipIf(process.platform === "win32")(
-  "Given Codex processes older and newer than the plugin install, Then doctor warns for the older ones and says new sessions load it",
+  "Given Codex sessions older and newer than the plugin install, Then doctor warns for the older ones and says new sessions load it",
   () => {
     const row = codexDoctor("stale", [
-      { pid: 4242, startedMs: INSTALLED - 3_600_000, args: "codex app-server" },
+      { pid: 4242, startedMs: INSTALLED - 3_600_000, args: "codex" },
       { pid: 4343, startedMs: INSTALLED + 60_000, args: "codex" },
     ]);
     expect(row.status).toBe("warn");
@@ -314,6 +314,26 @@ test.skipIf(process.platform === "win32")(
     expect(row.detail).not.toContain("pid 4343");
     expect(row.detail).toContain("Workit 8.40.8");
     expect(row.detail).toContain("new Codex sessions load it");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given only a Codex app-server daemon older than the plugin install, Then doctor does not warn: it loads a new plugin version for new threads",
+  () => {
+    const row = codexDoctor("daemon", [
+      {
+        pid: 4444,
+        startedMs: INSTALLED - 3_600_000,
+        args: "/home/u/.codex/packages/app-server-daemon/releases/0.166.0/bin/codex app-server --listen unix:// --managed-daemon",
+      },
+      {
+        pid: 4445,
+        startedMs: INSTALLED - 3_600_000,
+        args: "codex app-server daemon pid-update-loop",
+      },
+    ]);
+    expect(row.status).toBe("info");
+    expect(row.detail).not.toContain("pid 4444");
   },
 );
 

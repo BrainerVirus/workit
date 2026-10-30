@@ -271,7 +271,7 @@ test("Given zombies and Codex's pid-update-loop watcher, Then neither counts as 
   expect(classifyProcess({ pid: 6, state: "S", args: "/usr/bin/vim codex.ts" })).toBeNull();
 });
 
-test("Given Codex's app-server daemon is running, Then it is stopped, Codex updates, and the daemon is started again", async () => {
+test("Given Codex's app-server daemon is running, When Codex updates to a new version, Then the daemon is left running and the row says new threads load it", async () => {
   const w = world();
   try {
     const processes = () => [
@@ -289,20 +289,18 @@ test("Given Codex's app-server daemon is running, Then it is stopped, Codex upda
         processes,
       }),
     ).toBe(0);
-    expect(w.state.daemon).toEqual(["stop", "start"]);
-    const stop = w.calls.findIndex((call) => call.join(" ") === "codex app-server daemon stop");
-    const add = w.calls.findIndex((call) => call[1] === "plugin" || call[2] === "add");
-    expect(stop).toBeLessThan(
-      w.calls.findIndex((call) => call.join(" ") === "codex app-server daemon start"),
+    expect(w.state.daemon).toEqual([]);
+    expect(w.calls.findIndex((call) => call[1] === "plugin" || call[2] === "add")).toBeGreaterThan(
+      -1,
     );
-    expect(add).toBeGreaterThan(-1);
-    expect(w.text()).toContain("app-server daemon stopped and started again");
+    expect(w.text()).toMatch(/codex +updated +.*new Codex threads load it/);
+    expect(w.text()).not.toContain("daemon stopped");
   } finally {
     w.cleanup();
   }
 });
 
-test("Given Codex fails while its daemon is stopped, Then the daemon is still started again", async () => {
+test("Given Codex fails to update while its daemon runs, Then the daemon is never touched and only Codex fails", async () => {
   const w = world();
   try {
     w.state.codexFails = true;
@@ -311,27 +309,8 @@ test("Given Codex fails while its daemon is stopped, Then the daemon is still st
       ...w.deps,
       processes: () => [{ pid: 12, state: "Ssl", args: "codex app-server" }],
     });
-    expect(w.state.daemon).toEqual(["stop", "start"]);
+    expect(w.state.daemon).toEqual([]);
     expect(result.ok).toBe(false);
-  } finally {
-    w.cleanup();
-  }
-});
-
-test("Given the Codex agent refresh throws while its daemon is stopped, Then the daemon is still started and only Codex fails", async () => {
-  const w = world();
-  try {
-    w.state.agentsThrow = true;
-    const plan = previewUpgrade(["codex"], w.deps);
-    const result = await applyUpgrade(plan, {
-      ...w.deps,
-      processes: () => [{ pid: 12, state: "Ssl", args: "codex app-server" }],
-    });
-    expect(w.state.daemon).toEqual(["stop", "start"]);
-    expect(result.hosts.find((entry) => entry.host === "codex")).toMatchObject({
-      status: "failed",
-      reason: expect.stringContaining("spawn node ENOENT"),
-    });
   } finally {
     w.cleanup();
   }
@@ -384,9 +363,8 @@ test("Given OpenCode with `opencode plugin update`, Then upgrade runs the scoped
     expect(
       w.calls.some((call) => call[0] === "opencode" && call[2] === "update" && call.length === 3),
     ).toBe(false);
-    expect(w.text()).toMatch(
-      /opencode +updated +1\.0\.0 -> 2\.0\.0; OpenCode V2 loads it live; restart opencode serve \(pid 77/,
-    );
+    expect(w.text()).toMatch(/opencode +updated +1\.0\.0 -> 2\.0\.0; OpenCode V2 loads it live/);
+    expect(w.text()).not.toContain("restart opencode serve");
   } finally {
     w.cleanup();
   }
@@ -693,9 +671,50 @@ test("Given `opencode plugin list` still reports the old version right after the
 test("Given `opencode plugin list` never reports the target, When upgrade runs, Then the row never calls an older version current and names the target", async () => {
   const { w, run } = laggingOpencode(Number.POSITIVE_INFINITY);
   try {
-    await runUpgradeCommand(["--hosts=opencode", "--yes"], { ...w.deps, run });
+    await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+      ...w.deps,
+      run,
+      opencodeReady: { timeoutMs: 20, intervalMs: 1 },
+    });
     expect(w.text()).not.toMatch(/already current/);
     expect(w.text()).toMatch(/opencode .*8\.40\.8.*8\.44\.0/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given OpenCode V2 that loads the update live after several readings, When upgrade runs with its service up, Then it waits for the new version and asks for no restart", async () => {
+  const { w, run } = laggingOpencode(5);
+  try {
+    const processes = () => [{ pid: 77, state: "S", args: "opencode serve --service" }];
+    expect(
+      await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+        ...w.deps,
+        run,
+        processes,
+        opencodeReady: { intervalMs: 1 },
+      }),
+    ).toBe(0);
+    expect(w.text()).toMatch(/opencode +updated +8\.40\.8 -> 8\.44\.0; OpenCode V2 loads it live/);
+    expect(w.text()).not.toContain("still lists");
+    expect(w.text()).not.toContain("restart opencode serve");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given OpenCode never lists the update while its service runs, When upgrade gives up waiting, Then the row says so and names the service to restart", async () => {
+  const { w, run } = laggingOpencode(Number.POSITIVE_INFINITY);
+  try {
+    const processes = () => [{ pid: 77, state: "S", args: "opencode serve --service" }];
+    await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+      ...w.deps,
+      run,
+      processes,
+      opencodeReady: { timeoutMs: 20, intervalMs: 1 },
+    });
+    expect(w.text()).toMatch(/still lists 8\.40\.8 \(published 8\.44\.0\)/);
+    expect(w.text()).toContain("restart opencode serve (pid 77");
   } finally {
     w.cleanup();
   }

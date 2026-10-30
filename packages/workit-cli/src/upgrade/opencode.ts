@@ -29,6 +29,8 @@ const pluginApiArgs = (home: string): string[] => [
 const PLUGIN_LIST = ["plugin", "list"];
 const OPENCODE_READY_TIMEOUT_MS = 20_000;
 const READY_INTERVAL_MS = 500;
+/** Starts the OpenCode row whose update the service never listed. */
+export const OPENCODE_STALE = "update ran, but OpenCode still lists";
 export const OPENCODE_NOT_READY = `OpenCode did not finish loading its plugins (opencode api plugin.list never listed ${OPENCODE_PACKAGE})`;
 
 /** What OpenCode reports for the Workit plugin. */
@@ -96,11 +98,40 @@ const parsePluginList = (result: CommandResult): OpencodePlugin => {
 };
 
 /** One reading in HOME's location: the api when it answers, else the text listing. */
-export const readOpencodePlugin = async (run: AsyncRun, home: string): Promise<OpencodePlugin> =>
+const readOpencodePlugin = async (run: AsyncRun, home: string): Promise<OpencodePlugin> =>
   parsePluginApi(await run("opencode", pluginApiArgs(home), { cwd: home })) ??
   parsePluginList(await run("opencode", PLUGIN_LIST, { cwd: home }));
 
 type ReadyOptions = NonNullable<UpgradeDeps["opencodeReady"]>;
+
+/**
+ * After `opencode plugin update`, the version OpenCode lists: V2 swaps the
+ * plugin in the running service live, a moment after the command returns,
+ * so this polls until it reaches `target`, bounded like the readiness wait.
+ * The last reading when it never does.
+ */
+export const waitForOpencodeVersion = async (
+  run: AsyncRun,
+  home: string,
+  target: string | undefined,
+  options: ReadyOptions = {},
+): Promise<string | undefined> => {
+  const timeoutMs = options.timeoutMs ?? OPENCODE_READY_TIMEOUT_MS;
+  const intervalMs = options.intervalMs ?? READY_INTERVAL_MS;
+  const now = options.now ?? Date.now;
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + timeoutMs;
+  let version = (await readOpencodePlugin(run, home)).version;
+  if (target === undefined) return version;
+  const reached = (found: string | undefined) =>
+    found !== undefined && versionAtLeast(found, target);
+  while (!reached(version) && now() < deadline) {
+    await sleep(intervalMs);
+    version = (await readOpencodePlugin(run, home)).version ?? version;
+  }
+  return version;
+};
 
 /**
  * Poll until OpenCode lists the Workit package in HOME's location, bounded by

@@ -3104,10 +3104,12 @@ const checkClaudeSessionPlugin = (res: Resolved): DoctorCheck => {
 };
 
 /**
- * Codex loads a plugin when its app-server or CLI process starts; a process
- * that started before the installed Workit plugin version was written keeps
- * the old hooks until it restarts. The plugin cache directory's mtime is the
- * install time. Never fails; Windows has no `ps`, so it is not checked.
+ * A Codex session keeps the hooks and MCP servers its threads started with; one
+ * that started before the installed Workit plugin version was written keeps the
+ * old ones until it restarts. The app-server daemon is not counted: it checks
+ * the installed version on each lookup, so its new threads load a new version.
+ * The plugin cache directory's mtime is the install time. Never fails; Windows
+ * has no `ps`, so it is not checked.
  */
 const checkCodexSessionPlugin = (res: Resolved): DoctorCheck => {
   const id = "codex_session_plugin" as const;
@@ -3139,7 +3141,9 @@ const checkCodexSessionPlugin = (res: Resolved): DoctorCheck => {
       status: "info",
       detail: "could not list running codex processes (ps) — skipping",
     };
-  const stale = running.filter((proc) => startedBefore(proc, latest.at));
+  const stale = running.filter(
+    (proc) => !/\bapp-server\b/.test(proc.args) && startedBefore(proc, latest.at),
+  );
   if (stale.length === 0)
     return {
       id,
