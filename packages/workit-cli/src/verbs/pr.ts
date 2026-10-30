@@ -597,7 +597,7 @@ type CreateInternal = { releasePr?: boolean };
 export const runReleasePr = (argv: string[], io: Io): Promise<number> =>
   argv[0] === "create"
     ? create(argv.slice(1), io, { releasePr: true })
-    : usage(io, "the release PR runs pr create only", CREATE_USAGE);
+    : Promise.resolve(usage(io, "the release PR runs pr create only", CREATE_USAGE));
 
 async function create(argv: string[], io: Io, internal: CreateInternal = {}): Promise<number> {
   const flags = parseFlags(argv, {
