@@ -16,6 +16,7 @@ import {
   workspaceOverlaps,
   workspaceChangelog,
   workspacePrTemplate,
+  workspaceReleaseNotes,
   workspaceDelegation,
   workspaceTrailers,
   type WorkspaceConfig,
@@ -882,6 +883,53 @@ test("workspacePrTemplate: given no setting, then auto; given a mode or a repo-r
     expect(read([{ ...work, prTemplate: bad }]), String(bad)).toMatchObject({
       setting: "auto",
       issues: [expect.stringContaining("is not auto|repo|workit or a repo-relative .md path")],
+    });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("workspaceReleaseNotes: given no setting, then auto; a workspace mode is inherited; a release track's own mode wins for that track; anything else reads as auto with a note", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-release-notes-"));
+  const work = { name: "work", glob: "/home/*/Documents/projects/work/**" };
+  const app = { name: "app", glob: "/home/*/Documents/projects/work/app/**" };
+  const cwd = "/home/u/Documents/projects/work/app";
+  const track = { productionBranch: "main", integrationBranch: "develop" };
+  const read = (entries: unknown[], name?: string) => {
+    writeWorkspaces(dir, JSON.stringify({ workspaces: entries }));
+    let result: ReturnType<typeof workspaceReleaseNotes> | undefined;
+    withIsolatedConfig(dir, () => {
+      result = workspaceReleaseNotes(cwd, name);
+    });
+    return result;
+  };
+  expect(read([work, app])).toEqual({
+    mode: "auto",
+    from: "default",
+    workspace: "app",
+    tracks: {},
+    issues: [],
+  });
+  expect(read([{ ...work, releaseNotes: "review" }, app])).toMatchObject({
+    mode: "review",
+    from: "workspace",
+  });
+  const tracked = [
+    {
+      ...work,
+      releaseNotes: "review",
+      releaseTracks: { stable: { ...track, releaseNotes: "off" }, next: track },
+    },
+    app,
+  ];
+  expect(read(tracked, "stable")).toMatchObject({
+    mode: "off",
+    from: "track",
+    tracks: { stable: "off" },
+  });
+  expect(read(tracked, "next")).toMatchObject({ mode: "review", from: "workspace" });
+  for (const bad of ["always", true, 7])
+    expect(read([{ ...work, releaseNotes: bad }]), String(bad)).toMatchObject({
+      mode: "auto",
+      issues: [expect.stringContaining("is not auto|off|review; read as auto")],
     });
   rmSync(dir, { recursive: true, force: true });
 });
