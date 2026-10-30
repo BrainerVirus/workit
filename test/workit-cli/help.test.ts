@@ -11,7 +11,13 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { checkFlags, flagLines, takesPositionals, verbHelp } from "@/packages/workit-cli/src/help";
+import {
+  checkFlags,
+  flagLines,
+  subcommandHelp,
+  takesPositionals,
+  verbHelp,
+} from "@/packages/workit-cli/src/help";
 import { TASK_ACTIONS } from "@/packages/workit-cli/src/task";
 import {
   FAMILY_ACTIONS,
@@ -626,3 +632,11 @@ test("given -- after any verb or subcommand, then it ends the options: no-positi
     expect(result.code, `${argv.join(" ")}\n${result.stderr}`).toBe(0);
   }
 }, 120_000);
+
+test("Given one task action's help page, Then it names the engine flags that action takes, never a list 'above' it has not shown", () => {
+  const task = VERBS.find((verb) => verb.name === "task")!;
+  const page = (name: string) => subcommandHelp(task, findSubcommand(task, name)!).text;
+  expect(page("inspect")).toContain("This action also takes: [--task <id>]");
+  expect(page("inspect")).not.toContain("every action above");
+  expect(page("note")).not.toContain("This action also takes");
+});

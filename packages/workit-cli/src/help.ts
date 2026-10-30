@@ -1,7 +1,7 @@
 // Help for one verb or subcommand, from the registry (cold path: no verb module
 // loads). `workit help <verb> [<sub>]` and `--help`/`-h` anywhere before a bare
 // `--` both land here, so no verb ever sees a help flag.
-import { VERBS, findSubcommand } from "./verbs/registry";
+import { ENGINE_NOTE, VERBS, findSubcommand } from "./verbs/registry";
 import type { SubcommandEntry, VerbEntry, VerbGroup } from "./verbs/registry";
 
 const HELP_FLAGS = new Set(["--help", "-h"]);
@@ -146,7 +146,12 @@ export function subcommandHelp(entry: VerbEntry, sub: SubcommandEntry): HelpDoc 
       `usage: ${sub.usage}`,
       "",
       sub.summary,
-      ...noteBlock(entry),
+      // One action's page has no list above it: name the flags it takes itself.
+      ...noteBlock({
+        ...entry,
+        notes: (entry.notes ?? []).filter((note) => !note.startsWith(ENGINE_NOTE)),
+      }),
+      ...(sub.engineFlags ? ["", `This action also takes: ${sub.engineFlags}`] : []),
       ...exampleBlock(examples),
       "",
       ...(sub.aliases?.length ? [`aliases: ${sub.aliases.join(", ")}`] : []),

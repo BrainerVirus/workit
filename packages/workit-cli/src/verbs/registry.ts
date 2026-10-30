@@ -166,12 +166,14 @@ const familySubcommands = (name: Family): SubcommandEntry[] => {
   return [...implicit, ...grammar];
 };
 
+export const ENGINE_NOTE = "Engine flags, taken by every action above";
+
 /** The engine flags once, under the list: every action that takes them, and the ones that do not. */
 const engineNote = (subs: readonly SubcommandEntry[]): string[] => {
   const plain = subs.filter((sub) => !sub.engineFlags).map((sub) => sub.name);
   if (plain.length === subs.length) return [];
   const except = plain.length ? ` except ${plain.join(", ")}` : "";
-  return [`Engine flags, taken by every action above${except}: ${FAMILY_OPTIONS}`];
+  return [`${ENGINE_NOTE}${except}: ${FAMILY_OPTIONS}`];
 };
 
 const family = (name: Family): VerbEntry => {
