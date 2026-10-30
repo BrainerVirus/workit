@@ -96,6 +96,8 @@ const releaseTrackSchema = z
     versionSource: versionSourceSchema.optional(),
     requiredChecks: z.array(nonBlank).optional(),
     critical: z.array(nonBlank).optional(),
+    /** This track's `releaseNotes`, over the workspace's (workspaceReleaseNotes). Read leniently. */
+    releaseNotes: z.unknown().optional(),
   })
   .passthrough()
   .superRefine((track, context) => {
@@ -183,6 +185,15 @@ const workspaceConfigSchema = z
      * value reads as auto.
      */
     prTemplate: z.unknown().optional(),
+    /**
+     * The release notes `workit release finish` publishes on the forge
+     * release: `auto` (default: the draft when there is one, else the notes
+     * built from the version's changelog section), `off` (no forge release)
+     * or `review` (finish refuses until the user approves the draft with
+     * `workit release notes approve`). A release track overrides it. Read
+     * leniently (workspaceReleaseNotes): an unknown value reads as auto.
+     */
+    releaseNotes: z.unknown().optional(),
     /**
      * Whether commits get the `Workit-Session:` trailer (default true). With
      * `false`, `workit git commit` and the session hook write none and
@@ -1236,6 +1247,70 @@ export const workspacePrTemplate = (
           ]
         : [],
   };
+};
+
+export const RELEASE_NOTES_MODES = ["auto", "off", "review"] as const;
+export type ReleaseNotesMode = (typeof RELEASE_NOTES_MODES)[number];
+
+export const isReleaseNotesMode = (value: unknown): value is ReleaseNotesMode =>
+  (RELEASE_NOTES_MODES as readonly unknown[]).includes(value);
+
+const tracksOf = (entry: RuntimeEntry): Record<string, Record<string, unknown>> => {
+  const tracks = entry.releaseTracks;
+  return tracks && typeof tracks === "object" && !Array.isArray(tracks)
+    ? (tracks as Record<string, Record<string, unknown>>)
+    : {};
+};
+
+/**
+ * The release notes mode for cwd (default `auto`), inherited like `trailers`:
+ * the release track's own `releaseTracks.<track>.releaseNotes` wins over the
+ * workspace's `releaseNotes`. A value this version does not know reads as
+ * auto and is named in `issues`; `tracks` lists the tracks that override it.
+ */
+export const workspaceReleaseNotes = (
+  cwd: string,
+  track?: string | null,
+  dir?: string,
+): {
+  mode: ReleaseNotesMode;
+  /** Where the mode comes from: the track, the workspace, or the default. */
+  from: "track" | "workspace" | "default";
+  workspace: string | null;
+  /** Tracks that set their own mode. */
+  tracks: Record<string, ReleaseNotesMode>;
+  issues: string[];
+} => {
+  const issues: string[] = [];
+  const valid = (value: unknown, where: string): ReleaseNotesMode | null => {
+    if (isReleaseNotesMode(value)) return value;
+    issues.push(
+      `releaseNotes ${JSON.stringify(value)} in ${where} is not ${RELEASE_NOTES_MODES.join("|")}; read as auto`,
+    );
+    return null;
+  };
+  const workspace = inheritedSetting(cwd, dir, () => true)?.workspace ?? null;
+  const trackSource = inheritedSetting(
+    cwd,
+    dir,
+    (entry) => Object.keys(tracksOf(entry)).length > 0,
+  )?.source;
+  const tracks: Record<string, ReleaseNotesMode> = {};
+  for (const [name, config] of Object.entries(trackSource ? tracksOf(trackSource) : {}))
+    if (config?.releaseNotes !== undefined) {
+      const mode = valid(
+        config.releaseNotes,
+        `release track ${name} of workspace ${trackSource?.name}`,
+      );
+      if (mode) tracks[name] = mode;
+    }
+  const source = inheritedSetting(cwd, dir, (entry) => entry.releaseNotes !== undefined)?.source;
+  const own = source ? valid(source.releaseNotes, `workspace ${source.name}`) : null;
+  if (track && tracks[track])
+    return { mode: tracks[track], from: "track", workspace, tracks, issues };
+  return own
+    ? { mode: own, from: "workspace", workspace, tracks, issues }
+    : { mode: "auto", from: "default", workspace, tracks, issues };
 };
 
 /**

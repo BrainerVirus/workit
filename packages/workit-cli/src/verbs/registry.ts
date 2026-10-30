@@ -580,7 +580,7 @@ export const VERBS: readonly VerbEntry[] = [
         usage:
           "workit git push [-u|--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]]",
         summary:
-          "Push the current branch and verify the remote tip (never a blind --force); --release finishes a git-flow release",
+          "Push the current branch and verify the remote tip (never a blind --force); --release finishes a git-flow release, and a pushed release tag gets its forge release with the release notes",
       },
       {
         name: "trailers",
@@ -616,17 +616,25 @@ export const VERBS: readonly VerbEntry[] = [
         name: "finish",
         usage: "workit release finish [<version>] [--track <t>] [--dry-run]",
         summary:
-          "Merge into production, tag, merge back, delete the branch, push production, merge-back branches and the tag, publish the forge release; resumes an interrupted finish",
+          "Merge into production, tag, merge back, delete the branch, push production, merge-back branches and the tag, publish the forge release with the release notes; resumes an interrupted finish",
       },
       {
         name: "publish",
         usage: "workit release publish [<version>]",
         summary: "Push the release branch (opt-in: others commit to it or CI runs on it)",
       },
+      {
+        name: "notes",
+        usage:
+          "workit release notes draft <version> [--reset] | notes show <version> | notes approve <version>  [--track <t>]",
+        summary:
+          "Draft the forge release notes (Highlights, Breaking changes, Changes, Full changelog) in .git/workit/release-notes/, show them, or approve them (the user only, at a terminal; releaseNotes: review)",
+      },
     ],
     examples: [
       "workit release start 1.4.0",
       'workit git commit -m "chore(release): 1.4.0" -- package.json CHANGELOG.md',
+      "workit release notes draft 1.4.0",
       "workit release finish --dry-run",
       "workit release finish",
     ],

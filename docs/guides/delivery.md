@@ -134,8 +134,10 @@ ledger row:
    branches and the tag (`release.pushed`). The release branch is never in
    it; a published one is deleted on the remote at the tip it had, as
    git-flow does;
-6. a GitHub or GitLab release on the tag with the changelog section
-   (`release.forge_released`; none for a local-path remote);
+6. a GitHub or GitLab release on the tag with the
+   [release notes](#release-notes) (`release.forge_released`; none for a
+   local-path remote, and none under `releaseNotes: off`:
+   `release.notes_skipped` says why);
 7. `verify-delivery released` on the tag (`delivery.verified`), then
    `release.finished`.
 
@@ -163,7 +165,68 @@ integration branch).
 Outside git-flow (github-flow, trunk-based, custom, or a track whose
 `strategy` is not gitflow) the trunk moves only through review, so `finish`
 pushes the release branch and opens a release PR into the trunk instead; tag
-the merged commit and push it with `workit git push --release <tag>`.
+the merged commit and push it with `workit git push --release <tag>`. The PR
+body is the [release notes](#release-notes), and that push publishes the
+GitHub or GitLab release on the tag with them. Before release notes, this path
+created no forge release: under the default `auto` it now creates one, and
+`releaseNotes: off` keeps the old behavior.
+
+#### Release notes
+
+The forge release body is written for users, not the changelog verbatim:
+
+```markdown
+## Highlights          <!-- 1-3 bullets the agent writes; omitted when empty -->
+## Breaking changes    <!-- the Removed section and any bullet marked BREAKING; omitted when none -->
+## Changes             <!-- the version's ### Added/Changed/Deprecated/Removed/Fixed/Security -->
+**Full changelog**: https://github.com/o/r/compare/v1.3.0...v1.4.0
+```
+
+The compare link starts at the latest earlier tag with the same prefix
+(GitLab: `/-/compare/a...b`); without one it is left out. The changelog is the
+workspace's first `changelogPath` (default `CHANGELOG.md`). The tag message
+stays the changelog section.
+
+```bash
+workit release notes draft 1.4.0 [--reset]   # write .git/workit/release-notes/1.4.0.md and print it
+workit release notes show 1.4.0              # the draft and whether it is approved
+workit release notes approve 1.4.0           # the user only, in their own terminal
+```
+
+The draft lives in the git directory, never in a commit. The agent adds a
+`## Highlights` section at its top from the user's pointers; running `draft`
+again rebuilds the rest from the changelog and keeps the Highlights unless
+`--reset`. The workspace's (or release track's)
+[`releaseNotes`](configuration.md#release-notes) decides what `finish` does:
+
+- `auto` (default): it publishes the draft, else the notes built from the
+  changelog section (no Highlights).
+- `off`: no forge release; merge, tag and push still happen.
+- `review`: `finish` and `finish --dry-run` exit 3 with
+  `release_notes_unapproved` before any merge, tag or push until the newest
+  `release.notes.approved` row holds the sha256 of the current draft; the
+  release body is then exactly that draft. `approve` refuses an agent shell
+  or a session without a terminal (as raising a grant does), prints the notes
+  and asks the user to type the version; an edit after it needs a new
+  approval. Like a grant raise, this check reads the shell it runs in: it
+  keeps a cooperating agent from approving, but an agent that hides its
+  environment can get past it. What stops that is the host asking the user
+  before an unknown command runs, so keep review-mode workspaces on a host
+  permission mode that asks (not a bypass or auto-approve mode).
+
+Outside git-flow the same modes apply in two places:
+
+- `finish` opens the release PR with the notes as its body (`off`: the
+  changelog section, as before). Under `review` it refuses
+  (`release_notes_unapproved`) before pushing the branch or opening the PR.
+- `workit git push --release <tag>`, after the PR merged and the merge is
+  tagged, creates the forge release with the notes: the draft, else built
+  from the changelog section at the tag (`auto`), only the approved draft
+  (`review`: an unapproved or edited draft refuses before anything is
+  pushed), or none (`off`). A tag whose forge release exists is found, not
+  recreated, so a rerun after a forge error only publishes.
+
+A resumed finish finds an existing forge release instead of creating it again.
 
 ### Release push
 

@@ -938,3 +938,43 @@ test("Given workspace set prTemplate=workit, auto, repo or a repo-relative path,
   expect((await run(["set", "work", "prTemplate=null"])).code).toBe(0);
   expect(byName("work").prTemplate).toBeUndefined();
 });
+
+test("Given workspace set releaseNotes=review on the workspace and on a release track, Then workspaces.json stores both and grant show prints them; another word is refused", async () => {
+  let stdout = "";
+  const io: Io = {
+    json: false,
+    cwd: path.join(root, "work"),
+    env: AGENT_ENV,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  };
+  for (const value of ["off", "auto", "review"]) {
+    expect((await run(["set", "work", `releaseNotes=${value}`])).code, value).toBe(0);
+    expect(byName("work").releaseNotes).toBe(value);
+  }
+  const track = await run([
+    "set",
+    "work",
+    "releaseTracks.stable.productionBranch=main",
+    "releaseTracks.stable.integrationBranch=develop",
+    "releaseTracks.stable.releaseNotes=off",
+  ]);
+  expect(track.code, track.stderr).toBe(0);
+  expect(byName("work").releaseTracks).toMatchObject({ stable: { releaseNotes: "off" } });
+  expect(await runGrant(["show"], io)).toBe(0);
+  expect(stdout).toContain(
+    "  release notes: review (workit release finish refuses until the user approves the draft: workit release notes approve <version>); track stable: off\n",
+  );
+  stdout = "";
+  expect(await runGrant(["show", "work"], io)).toBe(0);
+  expect(stdout).toContain("  release notes: review (");
+  const before = readFileSync(file(), "utf8");
+  for (const spec of ["releaseNotes=always", "releaseTracks.stable.releaseNotes=manual"]) {
+    const refused = await run(["set", "work", spec]);
+    expect(refused.code, spec).toBe(2);
+    expect(refused.json().error).toContain("releaseNotes must be auto, off, review");
+  }
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect((await run(["set", "work", "releaseNotes=null"])).code).toBe(0);
+  expect(byName("work").releaseNotes).toBeUndefined();
+});

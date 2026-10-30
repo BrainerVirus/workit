@@ -658,6 +658,7 @@ test("advanced workspace menu exposes typed profile and release-track controls",
     expect(tty.lastFrame()).toContain("Changelog step before a PR: off");
     expect(tty.lastFrame()).toContain("Docs refresh before a PR: off");
     expect(tty.lastFrame()).toContain("PR description template: auto");
+    expect(tty.lastFrame()).toContain("Release notes on workit release finish: auto");
     tty.unmount();
   } finally {
     process.chdir(previous);
@@ -1281,5 +1282,20 @@ test("Given the workspace editor, When the PR template is set, Then the draft st
   const invalid = reducer(repo, { type: "workspaceStepSet", key: "prTemplate", value: "off" });
   expect(invalid.workspaceDraft?.prTemplate).toBe("repo");
   const auto = reducer(repo, { type: "workspaceStepSet", key: "prTemplate", value: "auto" });
+  expect(auto.workspaceDraft).toEqual({ name: "work", glob: "/w/**" });
+});
+
+test("Given the workspace editor, When release notes are set, Then the draft stores off or review and auto removes the key", () => {
+  const draft: WizardDraft = {
+    ...createInitialDraft(seedConfig),
+    workspaceDraft: { name: "work", glob: "/w/**" },
+  };
+  const review = reducer(draft, { type: "workspaceStepSet", key: "releaseNotes", value: "review" });
+  expect(review.workspaceDraft).toEqual({ name: "work", glob: "/w/**", releaseNotes: "review" });
+  const off = reducer(review, { type: "workspaceStepSet", key: "releaseNotes", value: "off" });
+  expect(off.workspaceDraft?.releaseNotes).toBe("off");
+  const invalid = reducer(off, { type: "workspaceStepSet", key: "releaseNotes", value: "always" });
+  expect(invalid.workspaceDraft?.releaseNotes).toBe("off");
+  const auto = reducer(off, { type: "workspaceStepSet", key: "releaseNotes", value: "auto" });
   expect(auto.workspaceDraft).toEqual({ name: "work", glob: "/w/**" });
 });

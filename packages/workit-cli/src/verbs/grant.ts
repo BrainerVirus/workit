@@ -62,6 +62,9 @@ import {
   DOCS_MODES,
   changelogPathsOf,
   prTemplateOf,
+  isReleaseNotesMode,
+  workspaceReleaseNotes,
+  type ReleaseNotesMode,
   readWorkspacesResult,
   workspaceChangelog,
   workspacePrTemplate,
@@ -168,6 +171,22 @@ const PR_TEMPLATE_TEXT: Record<string, string> = {
   workit: "Workit's Summary, Evidence, Merge danger",
 };
 
+const RELEASE_NOTES_TEXT: Record<ReleaseNotesMode, string> = {
+  auto: "workit release finish publishes the draft, else notes built from the changelog section",
+  off: "workit release finish creates no forge release",
+  review:
+    "workit release finish refuses until the user approves the draft: workit release notes approve <version>",
+};
+
+/** The release notes line: the workspace's mode and each release track that overrides it. */
+const describeReleaseNotes = (
+  mode: ReleaseNotesMode,
+  tracks: Record<string, ReleaseNotesMode>,
+): string =>
+  `  release notes: ${mode} (${RELEASE_NOTES_TEXT[mode]})${Object.entries(tracks)
+    .map(([name, own]) => `; track ${name}: ${own}`)
+    .join("")}`;
+
 /** The PR description template line: the setting, and the file it picks when known. */
 const describePrTemplate = (setting: string, picked?: string): string =>
   `  pr template: ${setting} (${PR_TEMPLATE_TEXT[setting] ?? "this repo file"}${
@@ -182,14 +201,28 @@ const ownSteps = (
   docs: DocsMode;
   changelogPaths: string[];
   prTemplate: string;
+  releaseNotes: ReleaseNotesMode;
+  releaseNotesTracks: Record<string, ReleaseNotesMode>;
 } => {
   const own = (entry ?? {}) as {
     changelog?: unknown;
     docs?: unknown;
     changelogPath?: unknown;
     prTemplate?: unknown;
+    releaseNotes?: unknown;
+    releaseTracks?: unknown;
   };
+  const tracks =
+    own.releaseTracks && typeof own.releaseTracks === "object"
+      ? (own.releaseTracks as Record<string, { releaseNotes?: unknown } | null>)
+      : {};
   return {
+    releaseNotes: isReleaseNotesMode(own.releaseNotes) ? own.releaseNotes : "auto",
+    releaseNotesTracks: Object.fromEntries(
+      Object.entries(tracks).flatMap(([name, track]) =>
+        isReleaseNotesMode(track?.releaseNotes) ? [[name, track.releaseNotes]] : [],
+      ),
+    ),
     prTemplate: prTemplateOf(own.prTemplate) ?? "auto",
     changelog: CHANGELOG_MODES.find((mode) => mode === own.changelog) ?? "off",
     docs: DOCS_MODES.find((mode) => mode === own.docs) ?? "off",
@@ -223,6 +256,7 @@ function show(argv: string[], io: Io): number {
         ...describe(entry.grants, entry.configured, entry, entry.verification),
         ...describeSteps(entry.changelog, entry.docs, entry.changelogPaths),
         describePrTemplate(entry.prTemplate),
+        describeReleaseNotes(entry.releaseNotes, entry.releaseNotesTracks),
         ...(endpointMismatch({ ...entry, workspace: entry.name })
           ? [`note: ${endpointMismatch({ ...entry, workspace: entry.name })}`]
           : []),
@@ -265,12 +299,15 @@ function show(argv: string[], io: Io): number {
   const steps = workspaceChangelog(io.cwd);
   const prTemplate = workspacePrTemplate(io.cwd);
   const picked = resolvePrTemplate(io.cwd, prTemplate.setting);
+  const releaseNotes = workspaceReleaseNotes(io.cwd);
   const shown = {
     ...autonomy,
     changelog: steps.changelog,
     docs: steps.docs,
     changelogPaths: steps.paths,
     prTemplate: prTemplate.setting,
+    releaseNotes: releaseNotes.mode,
+    ...(Object.keys(releaseNotes.tracks).length ? { releaseNotesTracks: releaseNotes.tracks } : {}),
     ...(remotes.warnings.length ? { remoteWarnings: remotes.warnings } : {}),
     ...(pushView ? { pushTarget: pushView } : {}),
     ...(remotes.notes.length ? { remoteNotes: remotes.notes } : {}),
@@ -282,6 +319,7 @@ function show(argv: string[], io: Io): number {
     ...tierModelIssues.map((issue) => `note: ${issue}`),
     ...steps.issues.map((issue) => `note: ${issue}`),
     ...prTemplate.issues.map((issue) => `note: ${issue}`),
+    ...releaseNotes.issues.map((issue) => `note: ${issue}`),
     ...remotes.warnings.map((warning) => `warning: ${warning}`),
     ...remotes.notes.map((note) => `note: ${note}`),
     data.workspace
@@ -298,6 +336,7 @@ function show(argv: string[], io: Io): number {
               ? "Workit's"
               : "no repo template; Workit's is a suggestion, not checked")),
     ),
+    describeReleaseNotes(releaseNotes.mode, releaseNotes.tracks),
     ...(pushView
       ? [
           `push target: ${pushView.remote}${pushView.urls.length ? ` (${pushView.urls.join(", ")})` : ""}: ${

@@ -19,7 +19,7 @@ import {
 } from "./options";
 
 type Kind = "profile" | "track";
-type StepKey = "changelog" | "docs" | "prTemplate";
+type StepKey = "changelog" | "docs" | "prTemplate" | "releaseNotes";
 
 /** The steps before a PR opens: one fixed choice each; the first is the default (no key written). */
 const STEPS: Record<StepKey, { label: string; choices: { label: string; value: string }[] }> = {
@@ -47,6 +47,14 @@ const STEPS: Record<StepKey, { label: string; choices: { label: string; value: s
       },
       { label: "The repo's template (refuse without one)", value: "repo" },
       { label: "Workit's Summary / Evidence / Merge danger", value: "workit" },
+    ],
+  },
+  releaseNotes: {
+    label: "Release notes on workit release finish",
+    choices: [
+      { label: "Auto: the draft, else built from the changelog (default)", value: "auto" },
+      { label: "Off: no forge release", value: "off" },
+      { label: "Review: the user approves the draft first", value: "review" },
     ],
   },
 };
@@ -138,6 +146,7 @@ const MAIN_OPTIONS = [
   { label: STEPS.changelog.label, value: "step:changelog" as const },
   { label: STEPS.docs.label, value: "step:docs" as const },
   { label: STEPS.prTemplate.label, value: "step:prTemplate" as const },
+  { label: STEPS.releaseNotes.label, value: "step:releaseNotes" as const },
   { label: "Manage profiles", value: "profiles" as const },
   { label: "Manage release tracks", value: "tracks" as const },
   { label: "Save workspace settings", value: "save" as const },
@@ -243,6 +252,7 @@ function MainMenu({ workspace, dispatch, setView }: MenuProps): JSX.Element {
           else if (value === "step:changelog") setView({ mode: "step", key: "changelog" });
           else if (value === "step:docs") setView({ mode: "step", key: "docs" });
           else if (value === "step:prTemplate") setView({ mode: "step", key: "prTemplate" });
+          else if (value === "step:releaseNotes") setView({ mode: "step", key: "releaseNotes" });
           else dispatch({ type: "workspaceAdvancedSelect", field: value });
         }}
       />
