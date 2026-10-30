@@ -11,7 +11,13 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { checkFlags, takesPositionals } from "@/packages/workit-cli/src/help";
+import {
+  checkFlags,
+  flagLines,
+  subcommandHelp,
+  takesPositionals,
+  verbHelp,
+} from "@/packages/workit-cli/src/help";
 import { TASK_ACTIONS } from "@/packages/workit-cli/src/task";
 import {
   FAMILY_ACTIONS,
@@ -115,14 +121,10 @@ const parserFlags = (verb: string): Set<string> => {
   return flags;
 };
 
-const usageLines = (entry: VerbEntry): string[] => [
-  entry.usage,
-  ...(entry.subcommands ?? []).map((sub) => sub.usage),
-];
-
+// The usage lines and the engine flags a note lists once (flagLines).
 const documentedFlags = (entry: VerbEntry): Set<string> => {
   const flags = new Set<string>();
-  for (const line of usageLines(entry))
+  for (const line of flagLines(entry))
     for (const match of line.matchAll(/(?<![\w-])(--[a-z][a-z0-9-]*|-[a-zA-Z])(?![\w])/gu))
       flags.add(match[1]);
   for (const flag of GLOBAL) flags.delete(flag);
@@ -172,12 +174,14 @@ test("given a flag that takes a value, then a dash-leading value is left to the 
   for (const entry of VERBS) {
     for (const sub of entry.subcommands ?? [{ name: "", usage: entry.usage }]) {
       const head = sub.name ? [sub.name] : [];
-      for (const match of sub.usage.matchAll(/(?<![\w-])(--[a-z][\w-]*) (?=[<"])/gu)) {
-        const args = [...head, match[1], "--x"];
-        expect(checkFlags(entry, args), `workit ${entry.name} ${sub.name} ${match[1]}`).toEqual({
-          args,
-        });
-      }
+      const lines = flagLines(entry, sub.name ? findSubcommand(entry, sub.name) : undefined);
+      for (const line of lines)
+        for (const match of line.matchAll(/(?<![\w-])(--[a-z][\w-]*) (?=[<"])/gu)) {
+          const args = [...head, match[1], "--x"];
+          expect(checkFlags(entry, args), `workit ${entry.name} ${sub.name} ${match[1]}`).toEqual({
+            args,
+          });
+        }
     }
   }
 });
@@ -224,6 +228,54 @@ test("given the task families, then help lists exactly the actions the family gr
     const subs = VERBS.find((entry) => entry.name === name)!.subcommands!.map((sub) => sub.name);
     for (const action of TASK_ACTIONS[name]) expect(subs, `${name} ${action}`).toContain(action);
   }
+});
+
+const ENGINE_FLAGS = [
+  "--task",
+  "--payload",
+  "--revision",
+  "--workspace-revision",
+  "--view",
+  "--actor",
+  "--confirm",
+];
+
+test("given workit task --help, then no subcommand line repeats the engine flags and one note under the list names them once", () => {
+  const help = verbHelp(VERBS.find((entry) => entry.name === "task")!).text;
+  const lines = help.split("\n");
+  const usage = lines.filter((line) => line.startsWith("usage: "));
+  expect(usage.length).toBeGreaterThan(10);
+  for (const line of usage)
+    for (const flag of ENGINE_FLAGS) expect(line, `${flag} on: ${line}`).not.toContain(flag);
+  const note = lines.filter((line) => line.startsWith("Engine flags, taken by every action above"));
+  expect(note).toHaveLength(1);
+  expect(help.indexOf(note[0])).toBeGreaterThan(help.lastIndexOf("usage: "));
+  for (const flag of ENGINE_FLAGS)
+    expect(note[0].split(flag).length - 1, `${flag} in the note`).toBe(1);
+});
+
+test("given every registered verb, when its help prints, then the first line is workit <verb>: <summary>", () => {
+  for (const entry of VERBS)
+    expect(verbHelp(entry).text.split("\n")[0], entry.name).toBe(
+      `workit ${entry.name}: ${entry.summary}`,
+    );
+});
+
+test("given the engine flags, then the router still passes them to the task and policy actions", () => {
+  const task = VERBS.find((entry) => entry.name === "task")!;
+  for (const args of [
+    ["inspect", "--task", "t1"],
+    ["inspect", "--payload", "-"],
+    ["revise", "--revision=abc", "--view", "x"],
+    ["close", "--payload", "@close.json", "--confirm"],
+    ["start", "--actor", "a", "--workspace-revision", "null"],
+    ["list", "--status", "all", "--confirm"],
+  ])
+    expect(checkFlags(task, args), args.join(" ")).toEqual({ args });
+  const policy = VERBS.find((entry) => entry.name === "policy")!;
+  expect(checkFlags(policy, ["assess", "--judge", "risk=normal", "--payload", "-"])).toEqual({
+    args: ["assess", "--judge", "risk=normal", "--payload", "-"],
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -580,3 +632,11 @@ test("given -- after any verb or subcommand, then it ends the options: no-positi
     expect(result.code, `${argv.join(" ")}\n${result.stderr}`).toBe(0);
   }
 }, 120_000);
+
+test("Given one task action's help page, Then it names the engine flags that action takes, never a list 'above' it has not shown", () => {
+  const task = VERBS.find((verb) => verb.name === "task")!;
+  const page = (name: string) => subcommandHelp(task, findSubcommand(task, name)!).text;
+  expect(page("inspect")).toContain("This action also takes: [--task <id>]");
+  expect(page("inspect")).not.toContain("every action above");
+  expect(page("note")).not.toContain("This action also takes");
+});
