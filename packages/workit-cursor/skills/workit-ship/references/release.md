@@ -33,4 +33,7 @@
 `workit release publish` pushes the release branch, and is the only verb
 that does. Use it only when the user asks (others commit to it, CI must run
 on it). Outside git-flow, finish pushes the branch and opens a release PR
-into the trunk instead.
+into the trunk instead, its body the release notes (draft and approve them
+first, as in step 3). Once it merges, tag the merge and run
+`workit git push --release <tag>`: it publishes the forge release with the
+same notes (under `review`, only the approved draft).

@@ -165,7 +165,11 @@ integration branch).
 Outside git-flow (github-flow, trunk-based, custom, or a track whose
 `strategy` is not gitflow) the trunk moves only through review, so `finish`
 pushes the release branch and opens a release PR into the trunk instead; tag
-the merged commit and push it with `workit git push --release <tag>`.
+the merged commit and push it with `workit git push --release <tag>`. The PR
+body is the [release notes](#release-notes), and that push publishes the
+GitHub or GitLab release on the tag with them. Before release notes, this path
+created no forge release: under the default `auto` it now creates one, and
+`releaseNotes: off` keeps the old behavior.
 
 #### Release notes
 
@@ -205,6 +209,18 @@ again rebuilds the rest from the changelog and keeps the Highlights unless
   or a session without a terminal (as raising a grant does), prints the notes
   and asks the user to type the version; an edit after it needs a new
   approval.
+
+Outside git-flow the same modes apply in two places:
+
+- `finish` opens the release PR with the notes as its body (`off`: the
+  changelog section, as before). Under `review` it refuses
+  (`release_notes_unapproved`) before pushing the branch or opening the PR.
+- `workit git push --release <tag>`, after the PR merged and the merge is
+  tagged, creates the forge release with the notes: the draft, else built
+  from the changelog section at the tag (`auto`), only the approved draft
+  (`review`: an unapproved or edited draft refuses before anything is
+  pushed), or none (`off`). A tag whose forge release exists is found, not
+  recreated, so a rerun after a forge error only publishes.
 
 A resumed finish finds an existing forge release instead of creating it again.
 

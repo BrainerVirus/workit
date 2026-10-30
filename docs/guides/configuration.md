@@ -391,7 +391,9 @@ unknown value hand-written in `workspaces.json` reads as auto, with a note.
 ### Release notes
 
 `releaseNotes` decides what `workit release finish` publishes on the GitHub
-or GitLab release ([delivery](delivery.md#release-notes)). A release track
+or GitLab release ([delivery](delivery.md#release-notes)). Outside git-flow it
+decides the release PR's body and the forge release that
+`workit git push --release <tag>` creates after the merge. A release track
 can set its own (`releaseTracks.<track>.releaseNotes`), which wins over the
 workspace's for that track.
 
@@ -399,11 +401,15 @@ workspace's for that track.
   when there is one, else the notes built from the version's changelog
   section.
 - `off`: no forge release; the finish still merges, tags and pushes, and says
-  why.
+  why. Outside git-flow the release PR body stays the changelog section.
+  Every other mode makes `workit git push --release <tag>` create the forge
+  release, which it did not before.
 - `review`: `finish` refuses (`release_notes_unapproved`) before any merge,
   tag or push until the user approves the current draft with
-  `workit release notes approve <version>` in their own terminal. An edit to
-  the draft after the approval needs a new one.
+  `workit release notes approve <version>` in their own terminal. Outside
+  git-flow, `finish` will not open the release PR and
+  `workit git push --release <tag>` will not push until then. An edit to the
+  draft after the approval needs a new one.
 
 ```bash
 workit workspace set work releaseNotes=review
