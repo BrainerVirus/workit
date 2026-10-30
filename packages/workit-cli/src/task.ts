@@ -497,9 +497,17 @@ function printHuman(result: Result<unknown>, deps: TaskCliDeps, handoff = false)
   for (const row of rows) {
     if (row && typeof row === "object" && "id" in row && "status" in row)
       write(stream, `${row.id} ${row.status}${row.objective ? ` — ${row.objective}` : ""}`);
+    else if (row === null || row === undefined)
+      write(stream, "nothing applies: no policy row matches this request");
     else write(stream, JSON.stringify(row, null, 2));
-    for (const gap of row?.requirements?.filter((item: any) => item.status !== "satisfied") ?? [])
-      write(stream, `policy gap: ${gap.reason}`);
+    // The engine reports requirements as {total, unmet, open: [...]}; older shapes were a list.
+    const reqs = row?.requirements;
+    const open: any[] = Array.isArray(reqs) ? reqs : Array.isArray(reqs?.open) ? reqs.open : [];
+    for (const gap of open.filter((item: any) => item?.status !== "satisfied"))
+      write(
+        stream,
+        `policy gap: ${gap.reason ?? (gap.dimension ? `${gap.dimension}${gap.before ? ` (before ${gap.before})` : ""}: ${gap.status ?? "unmet"}` : (gap.id ?? "unmet"))}`,
+      );
   }
 }
 

@@ -47,3 +47,17 @@ test("G a huge --note and --next, T the printed brief stays within 4 KB and the 
   expect(full).toContain("n".repeat(20_000));
   expect(full).toContain("m".repeat(20_000));
 });
+
+test("G a handoff with --next, T the next line is among the first lines", async () => {
+  const root = repo();
+  let stdout = "";
+  const code = await main(["handoff", "--next", "run the tests"], {
+    cwd: root,
+    env: { ...process.env, WORKIT_SESSION_ID: "s-reviewer" },
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  });
+  expect(code).toBe(0);
+  const lines = stdout.split("\n");
+  expect(lines.findIndex((line) => line.startsWith("next:"))).toBeLessThan(4);
+});

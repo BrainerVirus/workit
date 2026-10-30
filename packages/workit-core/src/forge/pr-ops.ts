@@ -523,6 +523,10 @@ export function nextHint(next: string, number: number): string | null {
       return `workit pr ready ${pr}`;
     case "IN_MERGE_QUEUE":
       return "the PR is already in the merge queue";
+    case "MERGED":
+      return "workit verify-delivery merged";
+    case "CLOSED":
+      return "the PR is closed; reopen it or open a new one: workit pr create --fill";
     case "NOT_MERGEABLE":
       return "workit pr status  # the forge reports it cannot merge yet";
     default:

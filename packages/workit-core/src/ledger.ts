@@ -2421,6 +2421,21 @@ export function summarizeRow(row: ReadRow): RowSummary {
     case "merge.unverified":
       summary = `#${row.pr ?? "?"} unverified merge requested at ${(row.head ?? "?").slice(0, 12)} (reason: ${text("reason")})`;
       break;
+    case "check": {
+      const argv = Array.isArray(row.argv) ? row.argv.map(String).join(" ") : "";
+      const exit = typeof row.exitCode === "number" ? `, exit ${row.exitCode}` : "";
+      summary = `${text("name") || argv || "check"} ${text("result") || "?"}${exit}${row.timedOut === true ? ", timed out" : ""}`;
+      break;
+    }
+    case "pr.merge.intent":
+      summary = `#${row.pr ?? "?"} merge requested (${text("method") || "?"}) at ${(row.head ?? "?").slice(0, 12)}`;
+      break;
+    case "pr.merge.verified":
+      summary = `#${row.pr ?? "?"} merge confirmed${text("mergeSha") ? ` -> ${text("mergeSha").slice(0, 12)}` : ""}`;
+      break;
+    case "fanout.planned":
+      summary = `${text("fanout")}: ${typeof row.slices === "number" ? row.slices : "?"} slice(s)`;
+      break;
     case "delivery.verified":
       summary = `${text("expect")} delivered at ${(row.head ?? "?").slice(0, 12)}`;
       break;
