@@ -248,7 +248,7 @@ const verdictLines = (check: CoveredCheck): string[] => {
   for (const warning of check.warnings) lines.push(`warning: ${warning}`);
   if (!check.accepted.accepted && check.accepted.reasons.includes("no_verdict"))
     lines.push(
-      `next: workit ledger verdict pass|fail --how "<what you ran>" --branch ${check.branch}  # a non-author session records it`,
+      `next: workit ledger verdict verified|failed --how "<what you ran>" --branch ${check.branch}  # a non-author session records it`,
     );
   return lines;
 };

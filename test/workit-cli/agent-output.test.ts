@@ -79,7 +79,8 @@ test("Given no verdict on the branch, When ledger check renders, Then the last l
   });
   expect(code).toBe(0);
   const last = stdout.trim().split("\n").at(-1) ?? "";
-  expect(last).toStartWith("next: workit ledger verdict");
+  // The hint names results the verb accepts, so an agent can copy it.
+  expect(last).toStartWith("next: workit ledger verdict verified|failed ");
 });
 
 test("Given a task, When task inspect renders human output, Then it prints the task line and exits 0", async () => {
