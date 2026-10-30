@@ -159,8 +159,10 @@ row `hook_node` reports which Node the hooks run on (pass: PATH node; info: a
 recorded or scanned one; warn: none, hooks off), and the `no_session` unblock
 hint names it as a likely cause. `WORKIT_HOOK_NODE_VERSION` overrides the
 found version (tests). OpenCode and Pi hooks run in-process in the host's own
-runtime, so the `PATH` Node does not apply to them. L: the Codex MCP launcher
-(`.mcp.json`) still starts `node dist/launch-mcp.js` from `PATH`.
+runtime, so the `PATH` Node does not apply to them. The Codex MCP entry
+(`.mcp.json`) starts `bin/launch-mcp.mjs`, which does the same re-run for
+`dist/launch-mcp.js` with stdio inherited (stdout stays pure JSON-RPC); with no
+Node 24 it writes one stderr line and exits 1.
 
 N = native, P = partial, X = missing (the host has a mechanism workit does not
 use yet), L = host limit (the host has no mechanism for it).

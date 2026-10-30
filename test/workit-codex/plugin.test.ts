@@ -39,7 +39,7 @@ test("Codex plugin ships the current manifest layout and the canonical method sk
     },
   ]);
   const mcp = JSON.parse(readFileSync(path.join(packageRoot, ".mcp.json"), "utf8"));
-  expect(mcp.mcpServers.workit).toMatchObject({ args: ["dist/launch-mcp.js"], cwd: "." });
+  expect(mcp.mcpServers.workit).toMatchObject({ args: ["bin/launch-mcp.mjs"], cwd: "." });
 });
 
 test("Codex MCP capabilities are conservative and surface detection is diagnostic only", () => {

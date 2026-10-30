@@ -39,6 +39,7 @@ test("the launcher copies of node-resolve.mjs equal the core file, and the floor
   for (const copy of [
     "packages/workit-claude-code/bin/node-resolve.mjs",
     "packages/workit-cursor/hooks/node-resolve.mjs",
+    "packages/workit-codex/bin/node-resolve.mjs",
   ])
     expect(readFileSync(path.join(REPO, copy), "utf8"), copy).toBe(core);
   for (const pkg of ["workit-claude-code", "workit-codex", "workit-cursor", "workit-cli"]) {
@@ -150,6 +151,7 @@ const LAUNCHER_FILES = [
   "packages/workit-core/src/core/node-resolve.mjs",
   "packages/workit-claude-code/bin/workit-hook.mjs",
   "packages/workit-cursor/hooks/launch.mjs",
+  "packages/workit-codex/bin/launch-mcp.mjs",
 ];
 const NEWER_THAN_NODE_16 =
   /\?\?=|\|\|=|&&=|structuredClone|import\.meta\.dirname|import\.meta\.filename|Object\.groupBy|\.toSorted\(|\.findLast\(|\bstatic\s*\{|\bwith\s*\{\s*type/;

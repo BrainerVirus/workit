@@ -26,6 +26,7 @@
     "dist/",
     ".codex-plugin/",
     ".mcp.json",
+    "bin/",
     "hooks/hooks.json",
     "skills/",
     "agents/"
