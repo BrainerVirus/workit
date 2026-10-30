@@ -14,6 +14,7 @@ import {
   validateWorkspacesDocument,
   workspacesPath,
   workspaceOverlaps,
+  workspaceChangelog,
   workspaceDelegation,
   workspaceTrailers,
   type WorkspaceConfig,
@@ -779,4 +780,40 @@ test("workspaceOverlaps reports a mid-glob wildcard overlap the roots do not sho
       { name: "b", glob: "/w/b/**" },
     ]),
   ).toEqual([]);
+});
+
+test("workspaceChangelog: given no setting, then both steps are off; given a value, then it is read and inherited; given an unknown one, then it reads as off with a note", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-changelog-"));
+  const work = { name: "work", glob: "/home/*/Documents/projects/work/**" };
+  const app = { name: "app", glob: "/home/*/Documents/projects/work/app/**" };
+  const cwd = "/home/u/Documents/projects/work/app";
+  writeWorkspaces(dir, JSON.stringify({ workspaces: [work, app] }));
+  withIsolatedConfig(dir, () => {
+    expect(workspaceChangelog(cwd)).toEqual({ changelog: "off", docs: "off", issues: [] });
+  });
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: [
+        { ...work, changelog: "create", docs: "when-user-facing" },
+        { ...app, changelog: "update" },
+      ],
+    }),
+  );
+  withIsolatedConfig(dir, () => {
+    expect(workspaceChangelog(cwd)).toEqual({
+      changelog: "update",
+      docs: "when-user-facing",
+      issues: [],
+    });
+  });
+  writeWorkspaces(dir, JSON.stringify({ workspaces: [{ ...work, changelog: "always" }] }));
+  withIsolatedConfig(dir, () => {
+    expect(workspaceChangelog(cwd)).toEqual({
+      changelog: "off",
+      docs: "off",
+      issues: ['changelog "always" in workspace work is not off|update|create; read as off'],
+    });
+  });
+  rmSync(dir, { recursive: true, force: true });
 });

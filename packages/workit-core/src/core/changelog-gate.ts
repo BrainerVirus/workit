@@ -17,7 +17,7 @@ import type { ChangelogMode } from "./workspaces";
 export const CHANGELOG_FILE = "CHANGELOG.md";
 
 /** Conventional Commit types whose change no user sees: no entry needed. */
-export const NON_USER_FACING_TYPES = ["chore", "test", "docs", "ci", "build", "style"] as const;
+const NON_USER_FACING_TYPES = ["chore", "test", "docs", "ci", "build", "style"] as const;
 
 export type ChangelogGate =
   | { status: "off" }
@@ -60,7 +60,7 @@ const categoryFor = (title: string): string => {
 };
 
 /** The command that writes the missing entry. */
-export const applyCommand = (category: string): string =>
+const applyCommand = (category: string): string =>
   `workit changelog apply --entries '{"${category}": ["<what users can now do>"]}'`;
 
 /** CHANGELOG.md at `rev`, or null when it is not in that commit. */
