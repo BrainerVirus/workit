@@ -997,6 +997,11 @@ test("Given `codex plugin marketplace list --json` that is not JSON, When upgrad
       : undefined,
   );
   try {
+    // Codex is installed (its config exists): CI has no real codex on PATH.
+    write(
+      path.join(w.home, ".codex/config.toml"),
+      '[plugins."workit@workflow-toolkit"]\nenabled = true\n',
+    );
     const plan = previewUpgrade(["codex"], { ...w.deps, run });
     expect(plan.ok).toBe(false);
     expect(JSON.stringify(plan)).toContain("Codex plugin inventory");
