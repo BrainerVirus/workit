@@ -622,6 +622,7 @@ async function create(argv: string[], io: Io): Promise<number> {
     mode: steps.changelog,
     title,
     base,
+    baseRemote: connected.data.baseRemote,
     paths: steps.paths,
     pathConfigured: steps.pathConfigured,
     skipReason: skipChangelog,
@@ -639,6 +640,18 @@ async function create(argv: string[], io: Io): Promise<number> {
         {
           data: { reason: "changelog_required", changelog },
           unblock: `${changelog.command}, commit and push ${changelog.file}, then rerun workit pr create; or pass --no-changelog "<why this PR needs no entry>"`,
+        },
+      ),
+    );
+  if (changelog.status === "base-unknown")
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `changelog_base_unknown: ${changelog.remote}/${changelog.base} is not in this checkout (git fetch ${changelog.remote} ${changelog.base}: ${changelog.fetch}), so the Unreleased entry this PR adds cannot be compared with its base; opened nothing`,
+        {
+          data: { reason: "changelog_base_unknown", changelog },
+          unblock: `git fetch ${changelog.remote} ${changelog.base}  # a shallow clone: git fetch --unshallow ${changelog.remote} ${changelog.base}; then rerun workit pr create`,
         },
       ),
     );
@@ -730,6 +743,7 @@ function changelogLines(gate: ChangelogGate, workspace: string | null): string[]
   switch (gate.status) {
     case "off":
     case "missing":
+    case "base-unknown":
       return [];
     case "not-user-facing":
       return [`changelog: no entry needed (${gate.type} is not user-facing)`];
@@ -742,10 +756,6 @@ function changelogLines(gate: ChangelogGate, workspace: string | null): string[]
             ? `; found ${gate.candidates.join(", ")}: to use it, ${pathHint(workspace, gate.candidates[0])}`
             : ""
         }`,
-      ];
-    case "base-unknown":
-      return [
-        `note: changelog: ${gate.base} does not resolve in this checkout, so the Unreleased entry was not checked (git fetch, then rerun to check it)`,
       ];
     case "has-entry":
       return [

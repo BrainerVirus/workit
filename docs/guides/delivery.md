@@ -474,8 +474,14 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
 - `--no-changelog "<reason>"` opens the PR without an entry and writes the
   reason into the PR body (`Changelog: no entry (--no-changelog): <reason>`);
   an empty reason is a usage error.
-- A base this checkout cannot resolve is not checked: a note says to fetch and
-  rerun.
+- The gate fetches the PR base from the base remote first (as `--fill` does),
+  so a fork or a stale local ref never shifts the comparison. A base that
+  still cannot be compared (a branch the remote does not have, a shallow
+  clone, offline) blocks with `changelog_base_unknown`, opens nothing, and its
+  `unblock:` line is the `git fetch <remote> <base>` to run (with
+  `--unshallow` for a shallow clone).
+- Under `update`, a branch that deletes the changelog is refused like one that
+  adds no entry.
 
 The gate only reads the changelog; entries are written by
 `workit changelog apply`, which merges into Unreleased and never rewrites or

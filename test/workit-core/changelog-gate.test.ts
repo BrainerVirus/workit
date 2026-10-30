@@ -66,6 +66,9 @@ const repo = (
   return cwd;
 };
 
+const withEntry = (text: string) =>
+  text.replace("- Older unreleased thing\n", "- Older unreleased thing\n- You can now x\n");
+
 const gate = (cwd: string, mode: "off" | "update" | "create", title = "feat: x", skip?: string) =>
   changelogGate({ cwd, mode, title, base: "main", skipReason: skip ?? null });
 
@@ -147,13 +150,46 @@ test("Given --no-changelog with a reason, When the gate is on, Then it passes an
   });
 });
 
-test("Given a base the checkout cannot resolve, When the gate runs, Then it does not block and says so", () => {
+test("Given a base neither the remote nor the checkout has, When the gate runs, Then it reports base-unknown with the fetch error, so pr create blocks", () => {
   const cwd = repo(RELEASED);
-  expect(changelogGate({ cwd, mode: "update", title: "feat: x", base: "nope" })).toEqual({
+  expect(changelogGate({ cwd, mode: "update", title: "feat: x", base: "nope" })).toMatchObject({
     status: "base-unknown",
     mode: "update",
     base: "nope",
+    remote: "origin",
   });
+});
+
+test("Given a stale local base, When the base remote has moved and added bullets the branch merged in, Then the gate fetches the base first and counts only the branch's own bullet", () => {
+  const upstream = repo(RELEASED);
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-changelog-clone-"));
+  dirs.push(cwd);
+  git(cwd, "clone", "-q", "-b", "main", upstream, ".");
+  git(cwd, "config", "user.email", "t@example.test");
+  git(cwd, "config", "user.name", "t");
+  git(cwd, "config", "commit.gpgsign", "false");
+  // Upstream main gains a bullet after the clone; the clone's origin/main is now stale.
+  git(upstream, "switch", "-q", "main");
+  writeFileSync(path.join(upstream, "CHANGELOG.md"), withEntry(RELEASED));
+  git(upstream, "commit", "-qam", "upstream entry");
+  // The branch merges upstream main by hand (fetching into FETCH_HEAD only), adding no bullet of its own.
+  git(cwd, "switch", "-q", "-c", "feature/y");
+  git(cwd, "pull", "-q", "--no-rebase", "--no-edit", upstream, "main");
+  const result = changelogGate({
+    cwd,
+    mode: "update",
+    title: "feat: y",
+    base: "main",
+    baseRemote: "origin",
+  });
+  expect(result.status).toBe("missing");
+});
+
+test("Given changelog update and a branch that deletes the changelog, When the gate runs, Then it is refused, not treated as nothing to update", () => {
+  const cwd = repo(RELEASED);
+  git(cwd, "rm", "-q", "CHANGELOG.md");
+  git(cwd, "commit", "-qm", "drop changelog");
+  expect(gate(cwd, "update")).toMatchObject({ status: "missing", file: "CHANGELOG.md" });
 });
 
 test("Given a changelog text, When its Unreleased bullets are read, Then released sections are left out", () => {
@@ -161,9 +197,6 @@ test("Given a changelog text, When its Unreleased bullets are read, Then release
   expect(unreleasedBullets("# Changelog\n\n## [Unreleased]\n\n* last line")).toEqual(["last line"]);
   expect(unreleasedBullets("# Changelog\n")).toEqual([]);
 });
-
-const withEntry = (text: string) =>
-  text.replace("- Older unreleased thing\n", "- Older unreleased thing\n- You can now x\n");
 
 test("Given changelogPath docs/CHANGELOG.md, When the branch adds an entry there, Then it passes; without one, the apply command names --path", () => {
   const paths = ["docs/CHANGELOG.md"];

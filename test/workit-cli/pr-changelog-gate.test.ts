@@ -189,3 +189,19 @@ test("Given changelogPath docs/CHANGELOG.md, When the branch adds an entry there
   expect(refused.stderr).toContain("this repo has docs/CHANGELOG.md");
   expect(refused.stderr).toContain("workit workspace set w changelogPath=docs/CHANGELOG.md");
 });
+
+test("Given the gate is on and a PR base that neither the remote nor the checkout has, When pr create runs, Then it blocks with changelog_base_unknown and a fetch fix, and opens nothing", async () => {
+  const { repo, runner } = setup({ changelog: "update" });
+  commitChangelog(repo, "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- You can now x\n");
+  const result = await run(
+    ["pr", "create", "--base", "release/9", "--title", "feat: x", "--body", "Why: y", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(3);
+  expect(opened(runner.calls)).toHaveLength(0);
+  const body = result.json();
+  expect(body.data.reason).toBe("changelog_base_unknown");
+  expect(body.unblock).toStartWith("git fetch ");
+  expect(body.unblock).toContain(" release/9");
+  expect(body.unblock).not.toContain("--no-changelog");
+});

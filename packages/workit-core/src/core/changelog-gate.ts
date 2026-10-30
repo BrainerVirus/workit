@@ -11,9 +11,11 @@
 // - `update` asks for an entry only where a changelog exists at HEAD.
 // - `create` asks for it always (`workit changelog apply` creates the file).
 // - `--no-changelog "<reason>"` skips it; the reason goes on the PR.
-// - A base that does not resolve locally never blocks: the gate says so.
+// - The base is fetched from the base remote first (as `--fill` does); one
+//   that still cannot be compared blocks with its own reason and a fetch fix,
+//   since an unchecked PR is exactly the forgotten entry the gate exists for.
 import { spawnSync } from "node:child_process";
-import { GIT_TIMEOUTS, mergeBase, pushRemoteName, resolveRef } from "../git/rev";
+import { GIT_TIMEOUTS, fetchRefs, mergeBase, pushRemoteName, resolveRef } from "../git/rev";
 import { DEFAULT_CHANGELOG_PATH, type ChangelogMode } from "./workspaces";
 
 /** Conventional Commit types whose change no user sees: no entry needed. */
@@ -24,7 +26,7 @@ export type ChangelogGate =
   | { status: "not-user-facing"; mode: ChangelogMode; type: string }
   | { status: "skipped"; mode: ChangelogMode; reason: string }
   | { status: "no-file"; mode: ChangelogMode; paths: string[]; candidates: string[] }
-  | { status: "base-unknown"; mode: ChangelogMode; base: string }
+  | { status: "base-unknown"; mode: ChangelogMode; base: string; remote: string; fetch: string }
   | { status: "has-entry"; mode: ChangelogMode; file: string; added: string[] }
   | {
       status: "missing";
@@ -101,10 +103,24 @@ const candidatesAt = (cwd: string): string[] => {
     .slice(0, 5);
 };
 
-/** The PR base as this checkout knows it: the push remote's ref, else the local branch. */
-const baseCommit = (cwd: string, base: string): string | null => {
-  const remote = pushRemoteName(cwd) ?? "origin";
-  return resolveRef(cwd, `refs/remotes/${remote}/${base}`) ?? resolveRef(cwd, `refs/heads/${base}`);
+/**
+ * The PR base, fetched from the base remote first so a fork or a stale ref
+ * never moves the fork point: that remote's ref, else the local branch. The
+ * fetch error (offline, no such branch) is kept for the block message.
+ */
+const baseCommit = (
+  cwd: string,
+  remote: string,
+  base: string,
+): { rev: string | null; fetchError: string | null } => {
+  const tracking = `refs/remotes/${remote}/${base}`;
+  const fetched = base.startsWith("-")
+    ? null
+    : fetchRefs(cwd, remote, [`+refs/heads/${base}:${tracking}`]);
+  return {
+    rev: resolveRef(cwd, tracking) ?? resolveRef(cwd, `refs/heads/${base}`),
+    fetchError: fetched && !fetched.ok ? fetched.error : null,
+  };
 };
 
 /** Whether a PR titled `title` from HEAD into `base` may open under `mode`. */
@@ -113,6 +129,8 @@ export function changelogGate(input: {
   mode: ChangelogMode;
   title: string;
   base: string;
+  /** The remote the PR targets (the forge's base remote); default the push remote, else origin. */
+  baseRemote?: string;
   /** Repo-relative changelog paths (default: CHANGELOG.md). */
   paths?: string[];
   /** Whether `paths` came from the workspace; if not, a missing root file names candidates. */
@@ -129,10 +147,21 @@ export function changelogGate(input: {
     const text = fileAt(cwd, "HEAD", file);
     return text === null ? [] : [{ file, text }];
   });
-  const candidates = present.length || input.pathConfigured ? [] : candidatesAt(cwd);
-  if (!present.length && mode === "update") return { status: "no-file", mode, paths, candidates };
+  const remote = input.baseRemote ?? pushRemoteName(cwd) ?? "origin";
+  const resolved = baseCommit(cwd, remote, base);
+  const fork = resolved.rev ? mergeBase(cwd, resolved.rev, "HEAD") : null;
+  const unknown: ChangelogGate = {
+    status: "base-unknown",
+    mode,
+    base,
+    remote,
+    fetch: resolved.fetchError ?? "the base has no common history with this branch here",
+  };
   const category = categoryFor(title);
-  const file = present[0]?.file ?? paths[0];
+  // A file the base has and the branch deleted is an entry removed, not "nothing to update".
+  const deleted = fork ? paths.find((file) => fileAt(cwd, fork, file) !== null) : undefined;
+  const file = present[0]?.file ?? deleted ?? paths[0];
+  const candidates = present.length || deleted || input.pathConfigured ? [] : candidatesAt(cwd);
   const missing: ChangelogGate = {
     status: "missing",
     mode,
@@ -141,10 +170,12 @@ export function changelogGate(input: {
     command: applyCommand(category, file),
     candidates,
   };
-  if (!present.length) return missing;
-  const baseRev = baseCommit(cwd, base);
-  const fork = baseRev ? mergeBase(cwd, baseRev, "HEAD") : null;
-  if (!fork) return { status: "base-unknown", mode, base };
+  if (!present.length) {
+    if (mode === "create" || deleted) return missing;
+    // Without a base the deletion check cannot run; `update` asks nothing of a repo with no file.
+    return { status: "no-file", mode, paths, candidates };
+  }
+  if (!fork) return unknown;
   for (const { file: changed, text } of present) {
     const before = new Set(
       unreleasedBullets(fileAt(cwd, fork, changed) ?? "").map((bullet) => bullet.toLowerCase()),
