@@ -207,6 +207,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit workspace set` points a path-like key such as `path=` at `glob`
+  (with the workspaces.json path and `workspace add <name> --glob <g> --from
+  <ws>`) and suggests the nearest key for a misspelt one. Hints naming
+  `vcs.json` or `workspaces.json` print the file Workit actually reads when
+  `WORKFLOW_TOOLKIT_CONFIG` redirects the config dir; the grants note says that
+  override never applies to grants (#617, #618).
 - `workit uninstall` now also removes Workit pins from the OpenCode 2.x
   `plugins` key (it only cleaned the V1-era `plugin` key, so a 2.x
   registration, including a checkout directory pin, survived uninstall).
