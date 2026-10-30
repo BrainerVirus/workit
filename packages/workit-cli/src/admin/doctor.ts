@@ -311,7 +311,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     options.configDir ??
     env.WORKFLOW_TOOLKIT_CONFIG ??
     env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
-    path.join(home, ".config", "workit");
+    path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workit");
   const stateDir =
     options.stateDir ?? env.WORKFLOW_TOOLKIT_STATE ?? path.join(home, ".local", "state", "workit");
   const cwd = options.cwd ?? process.cwd();

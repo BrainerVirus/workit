@@ -79,6 +79,9 @@ export const resolveConfigDir = (): string =>
   process.env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
   path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workit");
 
+/** The path of a file in the config dir Workit reads, for every hint that names one. */
+export const configFilePath = (name: string): string => path.join(resolveConfigDir(), name);
+
 // One-time lazy migration from the legacy ~/.config/workflow-toolkit dir.
 // migratedDir remembers the resolved dir already checked: configDir() is on
 // hot paths, so subsequent calls are one string compare. Re-checking per

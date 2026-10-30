@@ -34,7 +34,7 @@
 import { copyFileSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveConfigDir } from "./core/config";
+import { configFilePath, resolveConfigDir } from "./core/config";
 import { writeFileAtomic } from "./core/safe-write";
 import {
   checkoutRemotes,
@@ -81,7 +81,7 @@ export const grantsOverride = (): string | null => {
   const configured = path.resolve(resolveConfigDir());
   return configured === path.resolve(grantsDir())
     ? null
-    : `the config directory is redirected to ${configured} (WORKFLOW_TOOLKIT_CONFIG, WORKFLOW_TOOLKIT_CONFIG_DIR or XDG_CONFIG_HOME); grants are read only from ${path.join(grantsDir(), "workspaces.json")}, so the D4 defaults apply`;
+    : `the config directory is redirected to ${configured} (WORKFLOW_TOOLKIT_CONFIG, WORKFLOW_TOOLKIT_CONFIG_DIR or XDG_CONFIG_HOME), but that override does not apply to grants: grants are read only from ${path.join(grantsDir(), "workspaces.json")}, so the D4 defaults apply until grants are set there`;
 };
 
 export const GRANT_KINDS = ["push", "pr", "merge", "release", "rerun"] as const;
@@ -611,7 +611,7 @@ const accountOf = (entry: unknown): unknown =>
 const suggested = (kind: GrantKind): string => (kind === "merge" ? "verified" : "true");
 
 const accountHint = (workspace: string | null): string =>
-  `set vcs.account for workspace "${workspace ?? "?"}" in ~/.config/workit/workspaces.json`;
+  `set vcs.account for workspace "${workspace ?? "?"}" in ${configFilePath("workspaces.json")}`;
 
 /** The one way to clear a missing grant: the user raises it from a terminal. */
 export const grantHint = (workspace: string | null, kind: GrantKind): string =>
@@ -640,7 +640,7 @@ export function requireGrant(
       kind,
       reason: "config_invalid",
       error: `grant_unreadable: ${error instanceof Error ? error.message : String(error)}`,
-      unblock: "fix ~/.config/workit/workspaces.json (workit init → Workspaces)",
+      unblock: `fix ${configFilePath("workspaces.json")} (workit init → Workspaces)`,
       workspace: null,
     };
   }
@@ -708,7 +708,7 @@ export function rawGrantDenial(
     return claimed
       ? {
           error: String(error),
-          unblock: "fix ~/.config/workit/workspaces.json",
+          unblock: `fix ${configFilePath("workspaces.json")}`,
         }
       : null;
   }

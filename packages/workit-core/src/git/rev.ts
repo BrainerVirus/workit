@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { configFilePath } from "../core/config";
 
 const MAX_BUFFER = 256 * 1024 * 1024;
 
@@ -1136,7 +1137,7 @@ export function pushForge(
             : `unsupported_forge: cannot tell whether push host "${host}" is GitHub or GitLab; PR and CI verbs need one (workit git push still pushes with git)`
         : `push URL ${redactRemote(url)} of remote "${remote}" is not a GitHub/GitLab URL`,
       unblock: host
-        ? `if ${host} is an ssh alias of GitHub/GitLab, add "Host ${host}" with "HostName github.com" (or gitlab.com) to ~/.ssh/config; if it is a self-hosted GitHub/GitLab, set github.host or gitlab.host in ~/.config/workit/vcs.json; other forges (Bitbucket, Gitea…) have no PR/CI verbs`
+        ? `if ${host} is an ssh alias of GitHub/GitLab, add "Host ${host}" with "HostName github.com" (or gitlab.com) to ~/.ssh/config; if it is a self-hosted GitHub/GitLab, set github.host or gitlab.host in ${configFilePath("vcs.json")}; other forges (Bitbucket, Gitea…) have no PR/CI verbs`
         : `git remote set-url --push ${remote} <ssh-or-https-url>`,
     };
   }
@@ -1156,6 +1157,6 @@ export function forgeConflict(
   return {
     code: "blocked",
     error: `forge_mismatch: push remote ${derived.host} is ${derived.kind} but the workspace vcs.provider is ${configured}, so its account and grants do not apply; PR and CI verbs stop here (workit git push still pushes with git)`,
-    unblock: `add a workspace whose glob matches only this repo, with "vcs": {"provider": "${derived.kind}"} (and its account), to ~/.config/workit/workspaces.json; the most specific glob wins`,
+    unblock: `add a workspace whose glob matches only this repo, with "vcs": {"provider": "${derived.kind}"} (and its account), to ${configFilePath("workspaces.json")}; the most specific glob wins`,
   };
 }
