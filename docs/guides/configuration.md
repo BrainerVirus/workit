@@ -357,11 +357,14 @@ value hand-written in `workspaces.json` reads as off, with a note.
 ### PR description template
 
 `prTemplate` picks the template a PR description fills. `workit pr template`
-prints it and the file it came from, and `workit pr create` refuses a body
-that leaves it unfilled ([delivery](delivery.md#pr-description-template)).
+prints it and the file it came from. `workit pr create` refuses a body that
+leaves a chosen template unfilled: the repo's own, or Workit's when
+`prTemplate` is `workit` ([delivery](delivery.md#pr-description-template)).
 
-- `auto` (default): the repo's GitHub or GitLab template, else Workit's
-  (Summary, Evidence, Merge danger). Workit looks in
+- `auto` (default): the repo's GitHub or GitLab template, checked by
+  `pr create`. A repo without one is not checked: `pr create` works as before
+  and `workit pr template` prints Workit's (Summary, Evidence, Merge danger) as
+  a suggestion. Workit looks in
   `.gitlab/merge_request_templates/Default.md`,
   `.github/pull_request_template.md` (either case), its
   `.github/PULL_REQUEST_TEMPLATE/` and `docs/` variants and the repo root; a
@@ -369,7 +372,8 @@ that leaves it unfilled ([delivery](delivery.md#pr-description-template)).
   a path.
 - `repo`: the repo's template only; without one, `pr template` and
   `pr create` refuse (`pr_template_missing`) and name the paths searched.
-- `workit`: Workit's template, even when the repo has its own.
+- `workit`: Workit's template, checked by `pr create`, even when the repo has
+  its own.
 - A repo-relative `.md` path, e.g. `.gitlab/merge_request_templates/Feature.md`,
   to pick one of several.
 

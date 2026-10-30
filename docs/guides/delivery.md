@@ -498,8 +498,11 @@ from: the repo's GitHub or GitLab template when it has one, else Workit's
 Summary, Evidence and Merge danger (the workspace's `prTemplate` changes the
 choice: [configuration](configuration.md#pr-description-template)).
 
-`pr create` checks the body (`--body`, `--body-file` or the `--fill` one) before
-it opens anything:
+When a template is chosen (the repo has one, or `prTemplate` is `workit` or a
+path), `pr create` checks the body (`--body`, `--body-file` or the `--fill`
+one) before it opens anything. In a repo with no template and no `prTemplate`
+setting nothing is checked, and Workit's template printed by `pr template` is
+only a suggestion. The check:
 
 - Each Markdown heading of the template must appear as a heading in the body
   (any level, case ignored). Headings in code fences or comments do not count.
@@ -512,7 +515,9 @@ A body that misses a heading or keeps a comment exits 3 with
 `prTemplate: repo` and no repo template, or a path the repo lacks, `pr create`
 and `pr template` exit 3 with `pr_template_missing`, naming the paths searched
 and the `workit workspace set <ws> prTemplate=workit` that switches to Workit's.
-There is no flag to skip the check: set `prTemplate` instead.
+There is no flag to skip the check: set `prTemplate` instead. The release PR
+that `workit release finish` opens on a non-git-flow repo carries a generated
+body and is not checked.
 
 ### Linking issues
 

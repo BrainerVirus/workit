@@ -270,7 +270,8 @@ shape  →  implement  →  review  →  ship
    user-facing PR without one unless given `--no-changelog "<reason>"`
    ([changelog gate](docs/guides/delivery.md#changelog-gate)).
    The PR body fills the repo's GitHub or GitLab template, else Workit's
-   Summary, Evidence and Merge danger: `workit pr template` prints it, and
+   Summary, Evidence and Merge danger: `workit pr template` prints it. When a
+   template is chosen (the repo's, or Workit's with `prTemplate: workit`),
    `pr create` refuses a body that leaves out its headings or keeps its
    `<!-- -->` placeholders (workspace `prTemplate: auto|repo|workit|<path>`,
    [PR template](docs/guides/delivery.md#pr-description-template)).
