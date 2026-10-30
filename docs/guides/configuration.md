@@ -354,6 +354,36 @@ steps and the changelog file, and `workit init`'s advanced workspace settings
 offer the two steps (the path is set with `workit workspace set`). An unknown
 value hand-written in `workspaces.json` reads as off, with a note.
 
+### PR description template
+
+`prTemplate` picks the template a PR description fills. `workit pr template`
+prints it and the file it came from, and `workit pr create` refuses a body
+that leaves it unfilled ([delivery](delivery.md#pr-description-template)).
+
+- `auto` (default): the repo's GitHub or GitLab template, else Workit's
+  (Summary, Evidence, Merge danger). Workit looks in
+  `.gitlab/merge_request_templates/Default.md`,
+  `.github/pull_request_template.md` (either case), its
+  `.github/PULL_REQUEST_TEMPLATE/` and `docs/` variants and the repo root; a
+  template directory with exactly one `.md` file counts, one with several needs
+  a path.
+- `repo`: the repo's template only; without one, `pr template` and
+  `pr create` refuse (`pr_template_missing`) and name the paths searched.
+- `workit`: Workit's template, even when the repo has its own.
+- A repo-relative `.md` path, e.g. `.gitlab/merge_request_templates/Feature.md`,
+  to pick one of several.
+
+```bash
+workit workspace set work prTemplate=workit
+workit workspace set work prTemplate=.gitlab/merge_request_templates/Feature.md
+workit workspace set work prTemplate=null   # back to auto
+```
+
+Another word, an absolute path or one that climbs out with `..` is refused.
+`workit grant show` prints the setting and the file it picks, and
+`workit init`'s advanced workspace settings offer auto, repo and workit. An
+unknown value hand-written in `workspaces.json` reads as auto, with a note.
+
 ### Models per role
 
 Subagents inherit the lead's model unless the spawn names one, so a lead on a

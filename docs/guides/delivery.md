@@ -332,6 +332,7 @@ and how to fix it.
 
 ```bash
 workit pr create (--title <t> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>]
+workit pr template [--json]            # the PR template to fill (the repo's, else Workit's) and its source
 workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
 workit pr ready [--undo]               # mark the draft ready (or back to draft)
 workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
@@ -357,7 +358,8 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   is left to CI and a note says so. A level-2 rule refuses with a usage error
   naming the rule broken; a level-1 rule only warns.
 - `pr create` runs the [changelog gate](#changelog-gate) when the workspace
-  turns it on.
+  turns it on, and refuses a body that leaves the
+  [PR template](#pr-description-template) unfilled.
 - `pr create --fill` takes the title from the oldest commit and the body from
   the commit messages (one commit: its body; several: each subject with its
   body), leaving out Workit's `Workit-Session:` trailer. `--body-file -` reads
@@ -488,6 +490,29 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
 The gate only reads the changelog; entries are written by
 `workit changelog apply`, which merges into Unreleased and never rewrites or
 reorders existing entries.
+
+### PR description template
+
+`workit pr template` prints the template the PR body fills and where it came
+from: the repo's GitHub or GitLab template when it has one, else Workit's
+Summary, Evidence and Merge danger (the workspace's `prTemplate` changes the
+choice: [configuration](configuration.md#pr-description-template)).
+
+`pr create` checks the body (`--body`, `--body-file` or the `--fill` one) before
+it opens anything:
+
+- Each Markdown heading of the template must appear as a heading in the body
+  (any level, case ignored). Headings in code fences or comments do not count.
+- An HTML comment (`<!-- … -->`) copied from the template counts as unfilled:
+  replace it with the content it asks for. Checkboxes need not be ticked.
+
+A body that misses a heading or keeps a comment exits 3 with
+`pr_template_unfilled` (`data.reason`, `missingHeadings` and `leftComments` in
+`--json`), opens nothing, and names the missing headings and the template. With
+`prTemplate: repo` and no repo template, or a path the repo lacks, `pr create`
+and `pr template` exit 3 with `pr_template_missing`, naming the paths searched
+and the `workit workspace set <ws> prTemplate=workit` that switches to Workit's.
+There is no flag to skip the check: set `prTemplate` instead.
 
 ### Linking issues
 
