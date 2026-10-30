@@ -398,7 +398,19 @@ export const VERBS: readonly VerbEntry[] = [
         name: "status",
         usage: "workit lock status",
         summary:
-          "Show each lease slot (free, held by check, pid, session, age, directory, or stale) and the queue of waiting checks in arrival order",
+          "Show each lease slot (free, held by check, pid, session, age, directory, or stale) and the queue of waiting checks in serving order (round-robin per session), marking stuck? holders",
+      },
+      {
+        name: "reap",
+        usage: "workit lock reap [<pid|session|dir>]",
+        summary:
+          "Free the slot of a stuck? holder (past resources.maxHold, default 15 min, or 5 min without output or CPU) and record it in the ledger; the process keeps running",
+      },
+      {
+        name: "cancel",
+        usage: "workit lock cancel [<pid|session|dir>]",
+        summary:
+          "Drop queued heavy checks (default: this session's); each exits 4 saying it was cancelled",
       },
       {
         name: "wait",
@@ -420,6 +432,8 @@ export const VERBS: readonly VerbEntry[] = [
     ],
     examples: [
       "workit lock status",
+      "workit lock reap",
+      "workit lock cancel",
       "workit lock wait --timeout 300",
       "workit lock run -- npx jest",
       "workit lock heavy add 'mvn verify'",

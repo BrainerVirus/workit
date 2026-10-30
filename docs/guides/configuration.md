@@ -740,8 +740,9 @@ verified.
 The machine-wide heavy-check lease
 ([delivery guide](delivery.md#heavy-checks-share-the-machine)) is a queue, not
 a door that shuts. A heavy check that finds every slot held takes a ticket and
-waits its turn, first come, first served, across every agent and worktree of
-the user. It prints where it stands when it starts waiting and every 30 s
+waits its turn across every agent and worktree of the user. Sessions are
+served round-robin, so one session's chain of checks cannot starve another's
+single check. It prints where it stands when it starts waiting and every 30 s
 after:
 
 ```text
@@ -753,7 +754,9 @@ workit: still queued for the heavy-check lease: position 1, 4m 30s of 30m waited
 workit check test                 # queues up to resources.wait (default 30 min)
 workit check test --wait 45m      # wait longer: 90, 90s, 30m and 1h all work
 workit check test --no-wait       # exit 4 at once if the lease is busy
-workit lock status                # the holders, then the queue in arrival order
+workit lock status                # the holders (stuck? marked), then the queue in serving order
+workit lock reap                  # free a stuck? holder's slot; recorded in the ledger
+workit lock cancel                # drop this session's queued checks (each exits 4)
 ```
 
 - **Exit 4** (`busy`) means `--no-wait` met a busy lease, or the wait really
@@ -773,9 +776,15 @@ workit lock status                # the holders, then the queue in arrival order
   background call, or with a longer tool timeout.
 - **`resources.wait`** takes seconds (`1800`) or a duration (`"30m"`), from
   either config file.
+- **`resources.maxHold`** (same formats, default 15 min) is how long a holder
+  may keep a slot before `lock status` marks it `stuck?`; one with no output
+  and no CPU for 5 min is marked too. `workit lock reap` frees a stuck slot
+  without signalling the process, and a holder silent past 3x the limit is
+  reaped automatically. A repo can only lower it.
 
-| Field   | Default                       | Where     | Meaning                                     |
-| ------- | ----------------------------- | --------- | ------------------------------------------- |
-| `light` | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease      |
-| `heavy` | `test`, `build`, `packaging`  | both      | Named checks that queue; a repo only adds   |
-| `wait`  | `1800` (30 min)               | both      | How long a queued check waits before exit 4 |
+| Field     | Default                       | Where     | Meaning                                      |
+| --------- | ----------------------------- | --------- | -------------------------------------------- |
+| `light`   | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease       |
+| `heavy`   | `test`, `build`, `packaging`  | both      | Named checks that queue; a repo only adds    |
+| `wait`    | `1800` (30 min)               | both      | How long a queued check waits before exit 4  |
+| `maxHold` | `900` (15 min)                | both      | How long a holder runs before it is `stuck?` |

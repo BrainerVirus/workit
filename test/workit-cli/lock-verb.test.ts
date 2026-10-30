@@ -169,7 +169,7 @@ test("Given a lease held by another check, When `workit lock status` and `workit
     }),
   );
   const queued = await run(root, ["lock", "status"], env);
-  expect(queued.stdout).toContain("queue: 1 waiting, first come, first served");
+  expect(queued.stdout).toContain("queue: 1 waiting, round-robin per session");
   expect(queued.stdout).toContain("1. build, pid");
   const json = await run(root, ["lock", "status", "--json"], env);
   expect(json.json().data.queue).toEqual([expect.objectContaining({ cwd: "/repo/queued" })]);
