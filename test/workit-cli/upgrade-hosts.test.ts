@@ -271,7 +271,7 @@ test("Given zombies and Codex's pid-update-loop watcher, Then neither counts as 
   expect(classifyProcess({ pid: 6, state: "S", args: "/usr/bin/vim codex.ts" })).toBeNull();
 });
 
-test("Given Codex's app-server daemon is running, Then it is stopped, Codex updates, and the daemon is started again", async () => {
+test("Given Codex's app-server daemon is running, When Codex updates to a new version, Then the daemon is left running and the row says new threads load it", async () => {
   const w = world();
   try {
     const processes = () => [
@@ -289,20 +289,18 @@ test("Given Codex's app-server daemon is running, Then it is stopped, Codex upda
         processes,
       }),
     ).toBe(0);
-    expect(w.state.daemon).toEqual(["stop", "start"]);
-    const stop = w.calls.findIndex((call) => call.join(" ") === "codex app-server daemon stop");
-    const add = w.calls.findIndex((call) => call[1] === "plugin" || call[2] === "add");
-    expect(stop).toBeLessThan(
-      w.calls.findIndex((call) => call.join(" ") === "codex app-server daemon start"),
+    expect(w.state.daemon).toEqual([]);
+    expect(w.calls.findIndex((call) => call[1] === "plugin" || call[2] === "add")).toBeGreaterThan(
+      -1,
     );
-    expect(add).toBeGreaterThan(-1);
-    expect(w.text()).toContain("app-server daemon stopped and started again");
+    expect(w.text()).toMatch(/codex +updated +.*new Codex threads load it/);
+    expect(w.text()).not.toContain("daemon stopped");
   } finally {
     w.cleanup();
   }
 });
 
-test("Given Codex fails while its daemon is stopped, Then the daemon is still started again", async () => {
+test("Given Codex fails to update while its daemon runs, Then the daemon is never touched and only Codex fails", async () => {
   const w = world();
   try {
     w.state.codexFails = true;
@@ -311,27 +309,8 @@ test("Given Codex fails while its daemon is stopped, Then the daemon is still st
       ...w.deps,
       processes: () => [{ pid: 12, state: "Ssl", args: "codex app-server" }],
     });
-    expect(w.state.daemon).toEqual(["stop", "start"]);
+    expect(w.state.daemon).toEqual([]);
     expect(result.ok).toBe(false);
-  } finally {
-    w.cleanup();
-  }
-});
-
-test("Given the Codex agent refresh throws while its daemon is stopped, Then the daemon is still started and only Codex fails", async () => {
-  const w = world();
-  try {
-    w.state.agentsThrow = true;
-    const plan = previewUpgrade(["codex"], w.deps);
-    const result = await applyUpgrade(plan, {
-      ...w.deps,
-      processes: () => [{ pid: 12, state: "Ssl", args: "codex app-server" }],
-    });
-    expect(w.state.daemon).toEqual(["stop", "start"]);
-    expect(result.hosts.find((entry) => entry.host === "codex")).toMatchObject({
-      status: "failed",
-      reason: expect.stringContaining("spawn node ENOENT"),
-    });
   } finally {
     w.cleanup();
   }

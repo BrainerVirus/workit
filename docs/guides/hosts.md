@@ -313,19 +313,21 @@ codex plugin marketplace add https://github.com/BrainerVirus/workit.git
 codex plugin add workit@workflow-toolkit
 ```
 
-Update with `workit upgrade`: it stops the Codex app-server daemon
-(`codex app-server daemon stop`), runs
+Update with `workit upgrade`: it runs
 `codex plugin marketplace upgrade workflow-toolkit` and
-`codex plugin add workit@workflow-toolkit` (the native fallback), refreshes
-the agent files and starts the daemon again. Open interactive Codex sessions
-are never killed; that host is skipped with its pid. A new Codex session picks
-up the update. Uninstall with `workit uninstall`.
+`codex plugin add workit@workflow-toolkit` (the native fallback) and refreshes
+the agent files. The Codex app-server daemon keeps running: Codex checks the
+installed plugin version each time it resolves plugins, so a new thread (desktop,
+IDE or CLI) loads the new version without a restart. Open interactive Codex
+sessions are never killed; that host is skipped with its pid. Uninstall with
+`workit uninstall`.
 
-A running Codex app-server or CLI process loads the plugin once, when it
-starts. `workit doctor` (`codex_session_plugin`, Linux and macOS) warns for
-each `codex` process that started before the installed Workit plugin version
-was written (the plugin cache directory's time); new Codex sessions load the
-update. Where a host's processes cannot be listed (Windows has no `ps`), the row
+A thread that was already open keeps the hooks and MCP servers it started with.
+`workit doctor` (`codex_session_plugin`, Linux and macOS) warns for each
+interactive `codex` process that started before the installed Workit plugin
+version was written (the plugin cache directory's time); new Codex sessions load
+the update. The app-server daemon is not listed, because its new threads already
+load it. Where a host's processes cannot be listed (Windows has no `ps`), the row
 is informational and the check does not run.
 
 The plugin bundles documented lifecycle hooks and the shared MCP server.

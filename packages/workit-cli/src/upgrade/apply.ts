@@ -437,31 +437,11 @@ export async function applyUpgrade(
           continue;
         }
       }
-      // Codex's app-server daemon holds the plugin: stop it with Codex's own
-      // command and always start it again, whatever the update did.
-      const daemons = running.filter((proc) => proc.host === "codex" && proc.kind === "daemon");
-      const stopDaemon = entry.host === "codex" && daemons.length > 0;
-      const stopped = stopDaemon
-        ? // react-doctor-disable-next-line react-doctor/async-await-in-loop -- hosts upgrade one at a time on purpose: the Codex daemon must stop before its update and start after it, and the per-step progress lines read in order.
-          await progress.run(
-            "Stopping the Codex app-server daemon",
-            () => runAsync("codex", ["app-server", "daemon", "stop"]),
-            (result) => (result.status === 0 ? "done" : "failed"),
-          )
-        : null;
-      if (stopped && stopped.status !== 0) {
-        hosts.push({
-          host: "codex",
-          status: "failed",
-          reason: `could not stop the Codex app-server daemon (${daemons.map(describe).join("; ")})${stderrTail(stopped.stderr) ? `: ${stderrTail(stopped.stderr)}` : ""}`,
-          fix: "codex app-server daemon stop && workit upgrade --hosts=codex",
-        });
-        continue;
-      }
-      // Everything between the daemon's stop and start is caught, so the start
-      // below always runs.
+      // A running Codex app-server is left alone: it checks the installed plugin
+      // version on each lookup, so new threads load a new version without a restart.
       let outcome: HostOutcome;
       try {
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- hosts upgrade one at a time on purpose: the per-step progress lines read in order and one host's failure never races another's.
         outcome = await applyEntry(entry, {
           runAsync,
           paths,
@@ -477,10 +457,10 @@ export async function applyUpgrade(
               reason: `${outcome.reason}; ${agents.note}`,
               fix: agents.fix,
             };
-          else if (agents.note)
+          else
             outcome = {
               ...outcome,
-              reason: `${outcome.reason}; ${agents.note}`,
+              reason: `${outcome.reason}${agents.note ? `; ${agents.note}` : ""}; new Codex threads load it`,
             };
         }
       } catch (error) {
@@ -490,27 +470,6 @@ export async function applyUpgrade(
           reason: errorText(error),
           fix: entry.fix,
         };
-      }
-      if (stopDaemon) {
-        const started =
-          (
-            await progress.run(
-              "Restarting the Codex app-server daemon",
-              () => runAsync("codex", ["app-server", "daemon", "start"]),
-              (result) => (result.status === 0 ? "done" : "failed"),
-            )
-          ).status === 0;
-        outcome = started
-          ? {
-              ...outcome,
-              reason: `${outcome.reason}; app-server daemon stopped and started again`,
-            }
-          : {
-              ...outcome,
-              status: "failed",
-              reason: `${outcome.reason}; the app-server daemon did not start again`,
-              fix: "codex app-server daemon start",
-            };
       }
       if (entry.host === "opencode") {
         const servers = running.filter(

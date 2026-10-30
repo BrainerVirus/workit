@@ -131,8 +131,8 @@ codex plugin marketplace add https://github.com/BrainerVirus/workit.git
 codex plugin add workit@workflow-toolkit
 ```
 
-Update: `workit upgrade`, which stops and restarts the Codex app-server daemon
-around the update and refreshes the Codex agent files (fallback:
+Update: `workit upgrade`, which updates the plugin and refreshes the Codex agent
+files; the app-server daemon keeps running and its new threads load the update (fallback:
 `codex plugin marketplace upgrade workflow-toolkit && codex plugin add
 workit@workflow-toolkit`, then a new Codex session). Uninstall:
 `workit uninstall`.

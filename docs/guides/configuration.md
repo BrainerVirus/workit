@@ -28,7 +28,7 @@ Planning checks every host at once (registry versions and host inventories,
 each probe bounded by its own timeout), so it takes about as long as the slowest
 host; a host whose probe does not answer is listed as could not check. On a
 terminal, upgrade shows a spinner on stderr with the current step (`Checking N
-hosts`, each host, the Codex daemon stop and restart, the doctor check) and leaves one
+hosts`, each host, the doctor check) and leaves one
 `✓`, `✗` or `–` line per step. It stays silent with `--json`, `CI=true`, and
 when stderr is not a terminal; `NO_COLOR` or `TERM=dumb` print the finished
 step lines without animation. `workit ci wait` and `ci rerun`, a queued
@@ -72,8 +72,8 @@ update into its running service, so upgrade waits (up to 20 s) until OpenCode
 lists the new version; it names `opencode serve` to restart only if it never does.
 
 Running hosts: zombie processes and helpers that load no plugin are ignored.
-The Codex app-server daemon is stopped with `codex app-server daemon stop` and
-started again after the update, whatever the update did. An open interactive
+The Codex app-server daemon keeps running: it checks the installed plugin
+version on each lookup, so its new threads load the update. An open interactive
 session is never killed: that host is skipped with its pid and command line.
 
 `--hosts=opencode,cursor,codex,pi,claude-code` limits the hosts (and leaves the
