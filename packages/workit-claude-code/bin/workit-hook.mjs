@@ -17,14 +17,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync }
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  HOOK_NODE_REEXEC_ENV,
-  floorMessage,
-  floorOfRange,
-  nodeFloorNotice,
-  reexecOnNode,
-  resolveHookNode,
-} from "./node-resolve.mjs";
+import { floorMessage, floorOfRange, handleBelowFloor } from "./node-resolve.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "src", "run.ts");
@@ -61,35 +54,22 @@ const nodeFloor = () => {
 const hookNode = nodeFloor();
 const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
 const tooOld = hookNode ? floorMessage(foundNode, hookNode.floor, hookNode.range) : null;
-if (tooOld && hookNode) {
-  if (!process.env[HOOK_NODE_REEXEC_ENV]) {
-    const found = resolveHookNode({ env: process.env, floor: hookNode.floor });
-    const code = found
-      ? reexecOnNode(found.path, fileURLToPath(import.meta.url), process.argv.slice(2), process.env)
-      : null;
-    if (code !== null) process.exit(code);
-  }
-  process.stderr.write(`[workit] Claude Code hook unavailable: ${tooOld}\n`);
-  let early = "";
-  for await (const chunk of process.stdin) early += String(chunk);
-  let event;
-  try {
-    event = JSON.parse(early).hook_event_name;
-  } catch {
-    event = undefined;
-  }
-  process.stdout.write(
-    event === "SessionStart"
-      ? `${JSON.stringify({
-          hookSpecificOutput: {
-            hookEventName: "SessionStart",
-            additionalContext: nodeFloorNotice(foundNode, hookNode.range),
-          },
-        })}\n`
-      : "{}\n",
+if (tooOld && hookNode)
+  process.exit(
+    await handleBelowFloor({
+      host: "Claude Code",
+      range: hookNode.range,
+      floor: hookNode.floor,
+      found: foundNode,
+      script: fileURLToPath(import.meta.url),
+      argv: process.argv.slice(2),
+      env: process.env,
+      isStart: (event) => event === "SessionStart",
+      notice: (additionalContext) => ({
+        hookSpecificOutput: { hookEventName: "SessionStart", additionalContext },
+      }),
+    }),
   );
-  process.exit(0);
-}
 
 // Every Bash/PowerShell call and every file edit reaches this hook (branch
 // policy, raw git/forge steering and the before-write gate). Fast paths

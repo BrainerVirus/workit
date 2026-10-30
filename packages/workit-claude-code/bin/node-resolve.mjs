@@ -221,3 +221,37 @@ export const reexecOnNode = (nodePath, script, args, env) => {
   if (run.error) return null;
   return run.status === null ? 1 : run.status;
 };
+
+/**
+ * What a launcher does on a Node below its floor: re-run itself on a resolved
+ * Node (the child's exit code is returned), else fail open: one stderr line,
+ * and `{}` on stdout, except that a start event answers with `notice(text)` so
+ * the agent is told the hooks are off. Resolves to the exit code.
+ * @param {{ host: string, range: string, floor: number[], found: string, script: string,
+ *   argv: string[], env: NodeJS.ProcessEnv, isStart: (event: unknown) => boolean,
+ *   notice: (text: string) => unknown }} options
+ */
+export const handleBelowFloor = async (options) => {
+  if (!options.env[HOOK_NODE_REEXEC_ENV]) {
+    const hit = resolveHookNode({ env: options.env, floor: options.floor });
+    const code = hit ? reexecOnNode(hit.path, options.script, options.argv, options.env) : null;
+    if (code !== null) return code;
+  }
+  process.stderr.write(
+    `[workit] ${options.host} hook unavailable: needs Node ${options.range}, found ${options.found}\n`,
+  );
+  let early = "";
+  for await (const chunk of process.stdin) early += String(chunk);
+  let event;
+  try {
+    event = JSON.parse(early).hook_event_name;
+  } catch {
+    event = undefined;
+  }
+  process.stdout.write(
+    options.isStart(event)
+      ? `${JSON.stringify(options.notice(nodeFloorNotice(options.found, options.range)))}\n`
+      : "{}\n",
+  );
+  return 0;
+};

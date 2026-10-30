@@ -13,23 +13,16 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  HOOK_NODE_REEXEC_ENV,
-  floorMessage,
-  floorOfRange,
-  nodeFloorNotice,
-  reexecOnNode,
-  resolveHookNode,
-} from "@brainervirus/workit-core/src/core/node-resolve.mjs";
 
 /** A Node below this package's own engines minimum cannot load the bundle. The
- * launcher then re-runs itself on a Node that can (core/node-resolve.mjs:
- * $WORKIT_NODE, the node `workit setup` recorded, a version-manager scan), with
- * stdin, stdout, stderr and the exit code passed through; WORKIT_HOOK_REEXEC
- * stops a second hop. With none found it fails open (`{}`, exit 0, one stderr
- * line) and a SessionStart tells the agent once that the hooks are off.
- * WORKIT_HOOK_NODE_VERSION stands in for process.versions.node (tests); an
- * unreadable minimum never blocks. */
+ * launcher then re-runs itself on a Node that can (core/node-resolve.mjs, loaded
+ * only then so a current Node never parses it: $WORKIT_NODE, the node `workit
+ * setup` recorded, a version-manager scan), with stdin, stdout, stderr and the
+ * exit code passed through; WORKIT_HOOK_REEXEC stops a second hop. With none
+ * found it fails open (`{}`, exit 0, one stderr line) and a SessionStart tells
+ * the agent once that the hooks are off. WORKIT_HOOK_NODE_VERSION stands in for
+ * process.versions.node (tests); an unreadable minimum never blocks. */
+const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
 const nodeFloor = (): { range: string; floor: number[] } | null => {
   try {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,44 +31,38 @@ const nodeFloor = (): { range: string; floor: number[] } | null => {
         engines?: { node?: string };
       }
     ).engines?.node;
-    const floor = floorOfRange(range);
-    return floor && range ? { range, floor } : null;
+    const min = /^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(range ?? ""));
+    if (!min || !range) return null;
+    const floor = [min[1], min[2] ?? 0, min[3] ?? 0].map(Number);
+    const have = String(foundNode).replace(/^v/, "").split(".").map(Number);
+    for (let i = 0; i < 3; i++) {
+      const a = have[i] ?? 0;
+      if (Number.isNaN(a)) return null;
+      if (a !== floor[i]) return a < floor[i] ? { range, floor } : null;
+    }
+    return null;
   } catch {
     return null;
   }
 };
 
-const hookNode = nodeFloor();
-const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
-const tooOld = hookNode ? floorMessage(foundNode, hookNode.floor, hookNode.range) : null;
-if (tooOld && hookNode) {
-  if (!process.env[HOOK_NODE_REEXEC_ENV]) {
-    const found = resolveHookNode({ env: process.env, floor: hookNode.floor });
-    const code = found
-      ? reexecOnNode(found.path, fileURLToPath(import.meta.url), process.argv.slice(2), process.env)
-      : null;
-    if (code !== null) process.exit(code);
-  }
-  process.stderr.write(`[workit] Codex hook unavailable: ${tooOld}\n`);
-  let early = "";
-  for await (const chunk of process.stdin) early += String(chunk);
-  let event: unknown;
-  try {
-    event = (JSON.parse(early) as { hook_event_name?: unknown }).hook_event_name;
-  } catch {
-    event = undefined;
-  }
-  process.stdout.write(
-    event === "SessionStart"
-      ? `${JSON.stringify({
-          hookSpecificOutput: {
-            hookEventName: "SessionStart",
-            additionalContext: nodeFloorNotice(foundNode, hookNode.range),
-          },
-        })}\n`
-      : "{}\n",
+const tooOld = nodeFloor();
+if (tooOld) {
+  const { handleBelowFloor } = await import("@brainervirus/workit-core/src/core/node-resolve.mjs");
+  process.exit(
+    await handleBelowFloor({
+      host: "Codex",
+      ...tooOld,
+      found: foundNode,
+      script: fileURLToPath(import.meta.url),
+      argv: process.argv.slice(2),
+      env: process.env,
+      isStart: (event) => event === "SessionStart",
+      notice: (additionalContext) => ({
+        hookSpecificOutput: { hookEventName: "SessionStart", additionalContext },
+      }),
+    }),
   );
-  process.exit(0);
 }
 
 // Loaded after the floor check: a static import would evaluate the runtime first.

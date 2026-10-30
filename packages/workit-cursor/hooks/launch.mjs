@@ -23,14 +23,7 @@ import {
   runCursorHookLaunch,
   touchCursorHookHeartbeat,
 } from "./launch-runtime.mjs";
-import {
-  HOOK_NODE_REEXEC_ENV,
-  floorMessage,
-  floorOfRange,
-  nodeFloorNotice,
-  reexecOnNode,
-  resolveHookNode,
-} from "./node-resolve.mjs";
+import { floorMessage, floorOfRange, handleBelowFloor } from "./node-resolve.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -55,33 +48,22 @@ const nodeFloor = () => {
 const hookNode = nodeFloor();
 const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
 const tooOld = hookNode ? floorMessage(foundNode, hookNode.floor, hookNode.range) : null;
-if (tooOld && hookNode) {
-  if (!process.env[HOOK_NODE_REEXEC_ENV]) {
-    const found = resolveHookNode({ env: process.env, floor: hookNode.floor });
-    const code = found
-      ? reexecOnNode(found.path, fileURLToPath(import.meta.url), process.argv.slice(2), process.env)
-      : null;
-    if (code !== null) process.exit(code);
-  }
-  // --probe reports on stdout and never reads stdin; every other call fails open.
-  if (process.argv[2] !== "--probe") {
-    process.stderr.write(`[workit] Cursor hook unavailable: ${tooOld}\n`);
-    let early = "";
-    for await (const chunk of process.stdin) early += String(chunk);
-    let event;
-    try {
-      event = JSON.parse(early).hook_event_name;
-    } catch {
-      event = undefined;
-    }
-    process.stdout.write(
-      event === "sessionStart" || process.argv[2] === "workit-cursor-session-start"
-        ? `${JSON.stringify({ additional_context: nodeFloorNotice(foundNode, hookNode.range) })}\n`
-        : "{}\n",
-    );
-    process.exit(0);
-  }
-}
+// --probe reports on stdout and never reads stdin: it keeps its own answer.
+if (tooOld && hookNode && process.argv[2] !== "--probe")
+  process.exit(
+    await handleBelowFloor({
+      host: "Cursor",
+      range: hookNode.range,
+      floor: hookNode.floor,
+      found: foundNode,
+      script: fileURLToPath(import.meta.url),
+      argv: process.argv.slice(2),
+      env: process.env,
+      isStart: (event) =>
+        event === "sessionStart" || process.argv[2] === "workit-cursor-session-start",
+      notice: (additional_context) => ({ additional_context }),
+    }),
+  );
 
 // `--probe <bin>` (for `workit doctor`): run one no-op preCompact through
 // the candidate Cursor would use and print which one it was and how it went.
