@@ -19,7 +19,9 @@ export const summary = (
       ? `reinstall missing plugin files (${entry.latest})`
       : entry.latest
         ? version(entry.installedVersion ?? "?", entry.latest)
-        : `update (${style.command(entry.commands.map((c) => `${c.command} ${c.args.join(" ")}`).join(" && "))})`;
+        : entry.published
+          ? version(entry.installedVersion ?? "?", entry.published)
+          : `update (${style.command(entry.commands.map((c) => `${c.command} ${c.args.join(" ")}`).join(" && "))})`;
     lines.push(`${host(entry.host)}${what}`);
   }
   for (const skipped of plan.skipped)

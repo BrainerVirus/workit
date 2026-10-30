@@ -3,6 +3,7 @@
 import { expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { createStyle } from "@/packages/workit-cli/src/style";
+import { eraseAbove } from "@/packages/workit-cli/src/upgrade";
 import { summary, table } from "@/packages/workit-cli/src/upgrade/report";
 import type { HostOutcome, UpgradePlan } from "@/packages/workit-cli/src/upgrade/shared";
 
@@ -81,4 +82,37 @@ test("Given FORCE_COLOR, When the plan renders, Then it keeps its columns and hi
   expect(text).toContain("\x1b[1;31mcannot upgrade:\x1b[0m");
   expect(text).toContain("(run: \x1b[1;36mworkit setup --hosts=codex\x1b[0m)");
   expect(text).toContain("\x1b[2m/home/u/.cursor/cli-config.json\x1b[0m");
+});
+
+test("Given hosts that resolve their own update, When the plan renders, Then it shows the published version, not the command", () => {
+  const command = { command: "claude", args: ["plugin", "update", "workit@workit"] };
+  const own = {
+    ...plan,
+    blocked: [],
+    failed: [],
+    skipped: [],
+    migrations: [],
+    warnings: [],
+    cli: undefined,
+    entries: [
+      {
+        host: "opencode",
+        latest: "",
+        published: "8.45.6",
+        installedVersion: "8.45.5",
+        commands: [command],
+      },
+      { host: "pi", latest: "", installedVersion: "8.45.5", commands: [command] },
+    ],
+  } as unknown as UpgradePlan;
+  expect(summary(own, [])).toBe(`Workit upgrade plan:
+  opencode    update 8.45.5 -> 8.45.6
+  pi          update (claude plugin update workit@workit)
+`);
+});
+
+test("Given the answered plan, When it is erased, Then the cursor moves up over every row it filled, wrapped lines included", () => {
+  const text = `\x1b[1mWorkit upgrade plan:\x1b[0m\n  cli  update\n${"x".repeat(100)}\nApply this upgrade? [y/N] y\n`;
+  expect(eraseAbove(text, 80)).toBe("\x1b[5A\r\x1b[0J");
+  expect(eraseAbove("", 80)).toBe("");
 });

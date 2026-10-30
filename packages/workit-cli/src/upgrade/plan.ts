@@ -11,6 +11,7 @@ import { claudeWorkitInstalls, hostCommand, planHostInstall } from "../admin/hos
 import { OPENCODE_V1_FIX } from "../admin/doctor";
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import {
+  CLAUDE_CODE_PACKAGE,
   CLI_FIX,
   CODEX_MARKETPLACE,
   HOSTS,
@@ -281,6 +282,12 @@ export function previewUpgrade(
   // Workit 3 ships only the OpenCode V2 plugin entry: warn before an upgrade
   // leaves a 1.x host with a plugin it cannot load. Unknown versions stay quiet.
   let opencodeHelp: string | undefined;
+  // A host that resolves its own update is skipped once it runs the published version.
+  const current = (host: HostId, installed?: string, published?: string): boolean => {
+    if (!installed || !published || !versionAtLeast(installed, published)) return false;
+    plan.skipped.push({ host, reason: `already current (${installed})` });
+    return true;
+  };
   if (installedSources.some((source) => source.host === "opencode")) {
     const probe = opencodeProbe(deps, ["--version"], probes);
     const installed = probe.status === 0 ? probe.stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
@@ -317,10 +324,14 @@ export function previewUpgrade(
     }
     if (source.host === "claude-code") {
       const [market] = source.selector.split("@").slice(1);
+      // The marketplace installs this npm package: its version is the target shown.
+      const published = registryVersion(run, CLAUDE_CODE_PACKAGE);
+      if (current(source.host, source.installedVersion, published)) continue;
       plan.entries.push({
         host: "claude-code",
         selector: source.selector,
         latest: "",
+        ...(published ? { published } : {}),
         installedVersion: source.installedVersion,
         commands: [
           {
@@ -369,6 +380,7 @@ export function previewUpgrade(
         continue;
       }
       const published = registryVersion(run, OPENCODE_PACKAGE);
+      if (current("opencode", reading?.version, published)) continue;
       plan.entries.push({
         host: "opencode",
         selector: source.selector,

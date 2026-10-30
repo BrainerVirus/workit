@@ -6,6 +6,7 @@ import { CLI_PACKAGE } from "../update-check";
 import { CODEX_INVENTORY_ARGS, codexInventory } from "./codex-inventory";
 import { OPENCODE_NOT_READY, waitForOpencodePlugin, type OpencodePlugin } from "./opencode";
 import {
+  CLAUDE_CODE_PACKAGE,
   OPENCODE_PACKAGE,
   asyncRunner,
   objectOrNull,
@@ -60,8 +61,6 @@ const opencodeRegistersWorkit = (file: string): boolean => {
 export type ProbeOptions = {
   /** `workit upgrade --check`: versions only, no OpenCode --version/--help probes. */
   check?: boolean;
-  /** More registry versions to read (the check also reports Claude Code's). */
-  registries?: string[];
 };
 
 /**
@@ -95,7 +94,7 @@ export const runProbes = async (
       }
       add(...registry(OPENCODE_PACKAGE));
     }
-    for (const name of options.registries ?? []) add(...registry(name));
+    if (hosts.includes("claude-code")) add(...registry(CLAUDE_CODE_PACKAGE));
     if (hosts.includes("cursor")) add(...registry("@brainervirus/workit-cursor"));
     if (hosts.includes("codex")) {
       // The inventory merges several local commands: one probe, one timeout.

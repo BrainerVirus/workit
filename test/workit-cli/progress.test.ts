@@ -61,6 +61,25 @@ test("label updates redraw and failed and skipped steps leave one line each", ()
   expect(writes.at(-1)).toContain("– Cursor\n");
 });
 
+test("Given a transient progress on a color TTY, When steps end, Then done and skipped steps clear their line and a failed one stays", () => {
+  const { progress, writes } = rig({ transient: true });
+  progress.start("[1/2] Updating codex").end("done");
+  expect(writes.at(-1)).toBe("\r\x1b[2K");
+  progress.start("[2/2] Updating pi").end("skipped", "close pi");
+  expect(writes.at(-1)).toBe("\r\x1b[2K");
+  progress.start("Updating cursor").end("failed", "npm exited 1");
+  expect(writes.at(-1)).toContain("Updating cursor: npm exited 1\n");
+});
+
+test("Given a transient progress off a color TTY, When a step ends, Then a pipe gets nothing and NO_COLOR keeps the line", () => {
+  const { progress, writes } = rig({ transient: true, isTTY: false });
+  progress.start("Updating codex").end("done");
+  expect(writes).toEqual([]);
+  const plain = rig({ transient: true, env: { NO_COLOR: "1" } });
+  plain.progress.start("Updating codex").end("done");
+  expect(plain.writes.at(-1)).toBe("✓ Updating codex\n");
+});
+
 test("runSync draws a static line, not an animation, and classifies the result", () => {
   const { progress, writes } = rig();
   const value = progress.runSync(

@@ -52,6 +52,12 @@ export type ProgressOptions = {
   spawnTicker?: (label: string, began: number) => { stop: () => void } | undefined;
   /** Process seam for interrupt cleanup (default: the real process). */
   proc?: ProgressProcess;
+  /**
+   * On a color TTY, a step that ends done or skipped clears its line instead of
+   * leaving one: for a verb whose final report already lists every outcome.
+   * A failed step still leaves its line.
+   */
+  transient?: boolean;
 };
 type ProgressProcess = {
   pid: number;
@@ -187,6 +193,10 @@ export function createProgress(options: ProgressOptions = {}): Progress {
         finished = true;
         if (timer !== undefined) stop(timer);
         release();
+        if (mode === "spinner" && options.transient && status !== "failed") {
+          stream.write(CLEAR);
+          return;
+        }
         stream.write(
           `${mode === "spinner" ? CLEAR : ""}${glyphs[status]} ${text}${note ? `: ${note}` : ""}\n`,
         );

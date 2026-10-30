@@ -17,6 +17,7 @@ export const HOSTS: HostId[] = [...LAUNCH_HOSTS, "claude-code"];
  *  reloads plugins live; Claude Code loads the new version on its next session. */
 export const LIVE_HOSTS = new Set<HostId>(["opencode", "claude-code"]);
 export const OPENCODE_PACKAGE = "@brainervirus/workit-opencode";
+export const CLAUDE_CODE_PACKAGE = "@brainervirus/workit-claude-code";
 export const OPENCODE_UPDATE = `opencode plugin update ${OPENCODE_PACKAGE}`;
 export const CODEX_MARKETPLACE = "workflow-toolkit";
 export const CLI_FIX = "npm install --global @brainervirus/workit-cli@latest";
@@ -124,7 +125,7 @@ export type PlanEntry = {
   selector: string;
   /** Empty when the host resolves the version itself (Claude Code, OpenCode). */
   latest: string;
-  /** OpenCode: the published version its own update resolves to, when the registry answered. */
+  /** OpenCode, Claude Code: the published version their own update resolves to, when the registry answered. */
   published?: string;
   commands: Command[];
   /** A registered host whose plugin files are missing: reinstall, never just update. */
