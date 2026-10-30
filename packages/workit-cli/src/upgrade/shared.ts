@@ -53,12 +53,12 @@ const errorLine = (result: CommandResult): string | undefined =>
     .map((line) => line.trim())
     .find((line) => /\bError:/.test(line));
 
-/** "`cmd args` failed" plus the error message line and the stderr tail. */
+/** "`cmd args` failed" plus the error message line and the stderr tail (stdout's, when stderr is empty). */
 export const failureReason = (
   command: { command: string; args: string[] },
   result: CommandResult,
 ): string => {
-  const tail = stderrTail(result.stderr);
+  const tail = stderrTail(result.stderr) || stderrTail(result.stdout, 2);
   const message = errorLine(result);
   const detail = message && !tail.includes(message) ? [message, tail].filter(Boolean) : [tail];
   const text = detail.filter(Boolean).join(" | ");
