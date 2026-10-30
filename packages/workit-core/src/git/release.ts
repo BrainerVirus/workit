@@ -17,7 +17,16 @@ import { readLedger, appendObserved, type LedgerActor } from "../ledger";
 import { failure, success, type ForgeResult } from "../forge/types";
 import { vcsConfig } from "../core/vcs-config";
 import { trackBranchName } from "../core/release-tracks";
-import { resolveRuntimeWorkspacePolicy } from "../core/workspaces";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import {
+  resolveRuntimeWorkspacePolicy,
+  workspaceChangelog,
+  workspaceReleaseNotes,
+  type ReleaseNotesMode,
+} from "../core/workspaces";
+import { compareUrl, highlightsOf, previousTag, renderReleaseNotes } from "../core/release-notes";
 import {
   git,
   gitBranch,
@@ -27,7 +36,16 @@ import {
   releaseLinesOf,
   type ReleaseLine,
 } from "./ops";
-import { currentBranch, fetchRefs, pushRemoteName, remoteRefTip, resolveRef } from "./rev";
+import {
+  currentBranch,
+  deriveForge,
+  fetchRefs,
+  gitCommonDir,
+  pushRemoteName,
+  pushUrl,
+  remoteRefTip,
+  resolveRef,
+} from "./rev";
 
 export type ReleaseKind = "release" | "hotfix";
 
@@ -111,7 +129,12 @@ function lineFor(cwd: string, track: string | null): ForgeResult<ReleaseLine> {
 
 export function releaseStart(
   cwd: string,
-  input: { version: string; hotfix?: boolean; track?: string | null; actor: LedgerActor },
+  input: {
+    version: string;
+    hotfix?: boolean;
+    track?: string | null;
+    actor: LedgerActor;
+  },
 ): ForgeResult<ReleaseStartOutcome> {
   const version = input.version.trim();
   if (!validVersion(version))
@@ -221,7 +244,9 @@ export type FinishPlan = {
   /** A release.merged row exists (a merge resolved by hand has none). */
   mergeRecorded: boolean;
   state: FinishState;
-  /** The CHANGELOG.md section of this version, when there is one. */
+  /** The tag's prefix (`v` in v1.4.0). */
+  tagPrefix: string;
+  /** The changelog section of this version (the workspace's changelogPath), when there is one. */
   changelog: string | null;
   notes: string[];
   /** Said before merging, never blocking (integration mode pr). */
@@ -230,7 +255,12 @@ export type FinishPlan = {
 
 const KINDS: ReleaseKind[] = ["release", "hotfix"];
 
-type Located = { line: ReleaseLine; kind: ReleaseKind; version: string; branch: string };
+type Located = {
+  line: ReleaseLine;
+  kind: ReleaseKind;
+  version: string;
+  branch: string;
+};
 
 /**
  * Which release to finish: `version` (on the given or any line), else the
@@ -257,7 +287,11 @@ function locate(cwd: string, version: string | null, track: string | null): Forg
     return candidates.find((line) => line.track === name) ?? candidates[0];
   };
   const match = (branch: string): Located | null => {
-    const hits: Array<{ line: ReleaseLine; kind: ReleaseKind; version: string }> = [];
+    const hits: Array<{
+      line: ReleaseLine;
+      kind: ReleaseKind;
+      version: string;
+    }> = [];
     for (const line of lines)
       for (const kind of KINDS) {
         const found = versionIn(templateOf(line, kind), branch);
@@ -315,12 +349,18 @@ const isAncestor = (cwd: string, ancestor: string, descendant: string): boolean 
   git(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]).ok;
 
 /**
- * The CHANGELOG.md section for `version` at `ref`: a `## [1.4.0]`, `## 1.4.0`
- * or `# [1.4.0](…)` heading (a `v` before the version is fine), up to the next
+ * The changelog section for `version` at `ref` (`file`: the workspace's first
+ * changelogPath, default CHANGELOG.md): a `## [1.4.0]`, `## 1.4.0` or
+ * `# [1.4.0](…)` heading (a `v` before the version is fine), up to the next
  * heading of the same or a higher level. Null without one.
  */
-export function changelogSection(cwd: string, ref: string, version: string): string | null {
-  const shown = git(cwd, ["show", `${ref}:CHANGELOG.md`]);
+export function changelogSection(
+  cwd: string,
+  ref: string,
+  version: string,
+  file: string = workspaceChangelog(cwd).paths[0],
+): string | null {
+  const shown = git(cwd, ["show", `${ref}:${file}`]);
   if (!shown.ok) return null;
   const lines = shown.stdout.split(/\r?\n/u);
   const escaped = version.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -506,6 +546,7 @@ export function planReleaseFinish(
     tagTarget,
     mergeRecorded: mergedRow !== undefined,
     state,
+    tagPrefix: line.tagPrefix,
     changelog: changelogSection(cwd, branchTip ?? production, version),
     notes,
     warnings: integrationPrWarning(cwd, line.production),
@@ -558,7 +599,9 @@ const mergeNoFf = (
   into: string,
   version: string,
 ): ForgeResult<string> => {
-  const merged = git(cwd, ["merge", "--no-ff", "--no-edit", what], { timeoutMs: 10 * 60_000 });
+  const merged = git(cwd, ["merge", "--no-ff", "--no-edit", what], {
+    timeoutMs: 10 * 60_000,
+  });
   if (!merged.ok) {
     const conflicted = git(cwd, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).ok;
     return failure(
@@ -584,7 +627,12 @@ export function finishLocally(
   actor: LedgerActor,
 ): ForgeResult<LocalFinish> {
   const ran: string[] = [];
-  const base = { version: plan.version, release: plan.branch, tag: plan.tag, track: plan.track };
+  const base = {
+    version: plan.version,
+    release: plan.branch,
+    tag: plan.tag,
+    track: plan.track,
+  };
   let tagTarget = plan.tagTarget;
   // Once per release: a resumed finish reads the target back from this row.
   if (
@@ -656,7 +704,12 @@ export function finishLocally(
     const merged = mergeNoFf(cwd, plan.tag, name, plan.version);
     if (!merged.ok) return merged;
     ran.push(`merge-back ${name}`);
-    record(cwd, actor, { type: "release.merged_back", ...base, branch: name, head: merged.data });
+    record(cwd, actor, {
+      type: "release.merged_back",
+      ...base,
+      branch: name,
+      head: merged.data,
+    });
   }
   if (!plan.state.branchDeleted) {
     if (currentBranch(cwd) === plan.branch) {
@@ -716,4 +769,225 @@ export function releaseToPublish(cwd: string, version: string | null): ForgeResu
   if (!resolveRef(cwd, `refs/heads/${located.data.branch}`))
     return failure("not_found", `${located.data.branch} is not a local branch`);
   return located;
+}
+
+// ---------------------------------------------------------------------------
+// release notes: the draft, its approval, and what finish publishes
+
+export type ReleaseNotesContext = {
+  version: string;
+  tag: string;
+  track: string | null;
+  mode: ReleaseNotesMode;
+  /** Where the mode comes from (`track`, `workspace` or `default`). */
+  modeFrom: "track" | "workspace" | "default";
+  changelog: string | null;
+  /** The compare link from the previous tag, or null. */
+  compare: string | null;
+  previousTag: string | null;
+};
+
+/** The forge's compare link from the tag before `tag` (same prefix), or null. */
+function compareLink(
+  cwd: string,
+  production: string,
+  prefix: string,
+  version: string,
+  tag: string,
+) {
+  const before = previousTag(
+    git(cwd, ["tag", "-l"]).stdout.split("\n").filter(Boolean),
+    prefix,
+    version,
+  );
+  const remote = pushRemoteName(cwd, production);
+  const url = remote ? pushUrl(cwd, remote) : null;
+  const forge = url ? deriveForge(url) : null;
+  return {
+    previousTag: before,
+    compare:
+      before && forge
+        ? compareUrl(forge.kind, `https://${forge.apiHost}/${forge.repo}`, before, tag)
+        : null,
+  };
+}
+
+/**
+ * What the notes of `version` are built from: its release branch when one is
+ * here (or the tag once finished, else HEAD), the line's tag prefix, and the
+ * workspace's (or release track's) releaseNotes mode.
+ */
+export function releaseNotesContext(
+  cwd: string,
+  input: { version: string; track?: string | null },
+): ForgeResult<ReleaseNotesContext> {
+  const version = input.version.trim();
+  if (!validVersion(version))
+    return failure("invalid_input", `${JSON.stringify(version)} is not a version (e.g. 1.4.0)`);
+  const located = locate(cwd, version, input.track ?? null);
+  let line: ReleaseLine;
+  let ref = "HEAD";
+  if (located.ok) {
+    line = located.data.line;
+    if (resolveRef(cwd, `refs/heads/${located.data.branch}`)) ref = located.data.branch;
+  } else {
+    const lines = releaseLinesOf(cwd).filter(
+      (entry) => input.track == null || entry.track === input.track,
+    );
+    if (!lines.length)
+      return failure("invalid_input", `no release track ${JSON.stringify(input.track)}`);
+    line = lines[0];
+  }
+  const tag = `${line.tagPrefix}${version}`;
+  if (ref === "HEAD" && resolveRef(cwd, `refs/tags/${tag}`)) ref = tag;
+  const mode = workspaceReleaseNotes(cwd, line.track);
+  return success({
+    version,
+    tag,
+    track: line.track,
+    mode: mode.mode,
+    modeFrom: mode.from,
+    changelog: changelogSection(cwd, ref, version),
+    ...compareLink(cwd, line.production, line.tagPrefix, version, tag),
+  });
+}
+
+/** Where the draft of `version` lives: the git common dir, never committed. */
+export const releaseNotesDraftPath = (cwd: string, version: string): string | null => {
+  const common = gitCommonDir(cwd);
+  return common ? path.join(common, "workit", "release-notes", `${version}.md`) : null;
+};
+
+const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+export type ReleaseNotesDraft = { path: string; notes: string; sha256: string };
+
+/** The draft of `version`, or null when none was written. */
+export function readReleaseNotesDraft(cwd: string, version: string): ReleaseNotesDraft | null {
+  const file = releaseNotesDraftPath(cwd, version);
+  if (!file || !existsSync(file)) return null;
+  const notes = readFileSync(file, "utf8");
+  return { path: file, notes, sha256: sha256(notes) };
+}
+
+/**
+ * Write the draft of `version` from its changelog section. An existing
+ * draft's Highlights stay unless `reset`.
+ */
+export function writeReleaseNotesDraft(
+  cwd: string,
+  context: ReleaseNotesContext,
+  options: { reset?: boolean } = {},
+): ForgeResult<ReleaseNotesDraft & { keptHighlights: boolean }> {
+  const file = releaseNotesDraftPath(cwd, context.version);
+  if (!file) return failure("invalid_input", "not a git repository: nowhere to keep the draft");
+  const existing = options.reset ? null : readReleaseNotesDraft(cwd, context.version);
+  const highlights = existing ? highlightsOf(existing.notes) : null;
+  const notes = renderReleaseNotes({
+    version: context.version,
+    changelog: context.changelog,
+    highlights,
+    compare: context.compare,
+  });
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, notes);
+  return success({
+    path: file,
+    notes,
+    sha256: sha256(notes),
+    keptHighlights: highlights !== null,
+  });
+}
+
+/** The newest `release.notes.approved` row of `version`, or null. */
+export function latestReleaseNotesApproval(
+  cwd: string,
+  version: string,
+): { sha256: string } | null {
+  const row = releaseRows(cwd).findLast(
+    (entry) => entry.type === "release.notes.approved" && entry.version === version,
+  );
+  return row && typeof row.sha256 === "string" ? { sha256: row.sha256 } : null;
+}
+
+/** Record the user's approval of the draft as it is now. */
+export function recordReleaseNotesApproval(
+  cwd: string,
+  actor: LedgerActor,
+  draft: ReleaseNotesDraft & { version: string; tag: string },
+): void {
+  record(cwd, actor, {
+    type: "release.notes.approved",
+    version: draft.version,
+    tag: draft.tag,
+    sha256: draft.sha256,
+    path: draft.path,
+  });
+}
+
+export type ReleaseNotesDecision =
+  | { publish: false; mode: "off"; reason: string }
+  | {
+      publish: true;
+      mode: ReleaseNotesMode;
+      body: string;
+      source: "draft" | "changelog";
+    }
+  | { publish: false; mode: "review"; blocked: string; unblock: string };
+
+/**
+ * What finish publishes as the forge release body: nothing under `off`; the
+ * draft (else the notes built from the changelog) under `auto`; under
+ * `review` only the draft whose hash the newest approval names.
+ */
+export function releaseNotesDecision(
+  cwd: string,
+  plan: Pick<FinishPlan, "version" | "track" | "tag" | "tagPrefix" | "production" | "changelog">,
+): ReleaseNotesDecision {
+  const setting = workspaceReleaseNotes(cwd, plan.track);
+  const where =
+    setting.from === "track" ? `release track ${plan.track}` : `workspace ${setting.workspace}`;
+  if (setting.mode === "off")
+    return {
+      publish: false,
+      mode: "off",
+      reason: `releaseNotes is off (${where}): no forge release`,
+    };
+  const draft = readReleaseNotesDraft(cwd, plan.version);
+  if (setting.mode === "review") {
+    const approved = latestReleaseNotesApproval(cwd, plan.version);
+    const draftCmd = `workit release notes draft ${plan.version}`;
+    const approveCmd = `workit release notes approve ${plan.version}`;
+    if (!draft)
+      return {
+        publish: false,
+        mode: "review",
+        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and ${plan.version} has no draft; nothing was merged, tagged or pushed`,
+        unblock: `${draftCmd}  # write the Highlights, show the user, then ask the user to run, in a terminal outside the agent host: ${approveCmd}`,
+      };
+    if (!approved || approved.sha256 !== draft.sha256)
+      return {
+        publish: false,
+        mode: "review",
+        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and the draft of ${plan.version} (${draft.path}) ${approved ? "changed after the user approved it" : "is not approved"}; nothing was merged, tagged or pushed`,
+        unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${approveCmd}  # the draft: ${draftCmd}`,
+      };
+    return {
+      publish: true,
+      mode: "review",
+      body: draft.notes,
+      source: "draft",
+    };
+  }
+  if (draft) return { publish: true, mode: "auto", body: draft.notes, source: "draft" };
+  return {
+    publish: true,
+    mode: "auto",
+    source: "changelog",
+    body: renderReleaseNotes({
+      version: plan.version,
+      changelog: plan.changelog,
+      compare: compareLink(cwd, plan.production, plan.tagPrefix, plan.version, plan.tag).compare,
+    }),
+  };
 }
