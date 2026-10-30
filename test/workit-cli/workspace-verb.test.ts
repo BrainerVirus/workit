@@ -900,3 +900,41 @@ test("Given workspace set changelogPath, Then a path or a JSON list is stored no
   expect((await run(["set", "work", "changelogPath=null"])).code).toBe(0);
   expect(byName("work").changelogPath).toBeUndefined();
 });
+
+test("Given workspace set prTemplate=workit, auto, repo or a repo-relative path, Then workspaces.json stores it and grant show prints it; another word or a path leaving the repo is refused", async () => {
+  let stdout = "";
+  const io: Io = {
+    json: false,
+    cwd: path.join(root, "work"),
+    env: AGENT_ENV,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  };
+  for (const value of ["workit", "auto", "repo"]) {
+    expect((await run(["set", "work", `prTemplate=${value}`])).code, value).toBe(0);
+    expect(byName("work").prTemplate).toBe(value);
+  }
+  expect((await run(["set", "work", "prTemplate=workit"])).code).toBe(0);
+  expect(await runGrant(["show"], io)).toBe(0);
+  expect(stdout).toContain(
+    "  pr template: workit (Workit's Summary, Evidence, Merge danger; here: Workit's; workit pr template prints it)\n",
+  );
+  stdout = "";
+  expect(await runGrant(["show", "work"], io)).toBe(0);
+  expect(stdout).toContain("  pr template: workit (");
+  expect(
+    (await run(["set", "work", "prTemplate=./.gitlab/merge_request_templates/Feature.md"])).code,
+  ).toBe(0);
+  expect(byName("work").prTemplate).toBe(".gitlab/merge_request_templates/Feature.md");
+  const before = readFileSync(file(), "utf8");
+  for (const bad of ["always", "../pr.md", "/abs/pr.md"]) {
+    const refused = await run(["set", "work", `prTemplate=${bad}`]);
+    expect(refused.code, bad).toBe(2);
+    expect(refused.json().error).toContain(
+      "prTemplate must be auto, repo, workit or a repo-relative .md path",
+    );
+  }
+  expect(readFileSync(file(), "utf8")).toBe(before);
+  expect((await run(["set", "work", "prTemplate=null"])).code).toBe(0);
+  expect(byName("work").prTemplate).toBeUndefined();
+});
