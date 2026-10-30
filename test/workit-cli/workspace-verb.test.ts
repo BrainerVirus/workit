@@ -959,7 +959,7 @@ test("Given workspace set releaseNotes=review on the workspace and on a release 
     "releaseTracks.stable.integrationBranch=develop",
     "releaseTracks.stable.releaseNotes=off",
   ]);
-  expect(track.code, track.stdout).toBe(0);
+  expect(track.code, track.stderr).toBe(0);
   expect(byName("work").releaseTracks).toMatchObject({ stable: { releaseNotes: "off" } });
   expect(await runGrant(["show"], io)).toBe(0);
   expect(stdout).toContain(
