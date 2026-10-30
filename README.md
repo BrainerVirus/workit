@@ -36,7 +36,11 @@ Cursor, Codex CLI/desktop and Pi**, plus a standalone CLI.
 
 ## Quickstart
 
-Requires **Node.js 24+**. The setup wizard detects your hosts, installs the
+Requires **Node.js 24+**. Claude Code, Codex and Cursor hooks start the `node`
+on your `PATH`; in a repo pinned to an older Node they find a Node 24+ on their
+own (`WORKIT_NODE`, the Node `workit setup` recorded, then fnm, nvm, volta, mise
+and asdf installs). `workit doctor` (row `hook_node`) shows which Node they use;
+with none, install Node 24 or run `workit setup` from a Node 24 shell. The setup wizard detects your hosts, installs the
 ones you pick with their native commands, and writes your global config:
 
 ```bash
