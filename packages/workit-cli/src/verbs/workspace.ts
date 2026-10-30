@@ -67,6 +67,8 @@ import {
   workspaceMatches,
   type WorkspacesResult,
 } from "@brainervirus/workit-core/src/core/workspaces";
+import { configFilePath } from "@brainervirus/workit-core/src/core/config";
+import { closest } from "../help";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 import { agentMarker, type GrantDeps } from "./grant";
@@ -213,6 +215,18 @@ const raisedKinds = (before: Ceiling, after: Ceiling): string[] => [
   ...(raisesEndpoint(before.endpoint, after.endpoint) ? ["defaultEndpoint"] : []),
   ...(looser(before.verification, after.verification) ? ["verification"] : []),
 ];
+
+const PATH_LIKE_KEYS = new Set(["path", "dir", "directory", "root", "folder", "cwd"]);
+
+/** What to say for a key `set` does not take: where a path lives, or the key it nearly is. */
+const unknownKeyHint = (key: string): string | null => {
+  if (PATH_LIKE_KEYS.has(key.toLowerCase()))
+    return `a workspace's directories are set by its glob, which set does not change; edit "glob" in ${configFilePath("workspaces.json")} yourself, or add an entry: workit workspace add <name> --glob <g> --from <workspace>`;
+  const near = closest(key, SETTABLE_KEYS) ?? closest(key.toLowerCase(), SETTABLE_KEYS);
+  const caseMatch = [...SETTABLE_KEYS].find((known) => known.toLowerCase() === key.toLowerCase());
+  const pick = caseMatch ?? near;
+  return pick ? `did you mean ${pick}?` : null;
+};
 
 const usage = (io: Io, message: string): number =>
   emit(io, fail("invalid_input", `${message}\nusage: ${USAGE}`));
@@ -480,11 +494,13 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       );
     // Anything else (a case variant such as Autonomy or GLOB included) would
     // be an inert key: refused, never written.
-    if (!SETTABLE_KEYS.has(keyPath[0]))
+    if (!SETTABLE_KEYS.has(keyPath[0])) {
+      const hint = unknownKeyHint(keyPath[0]);
       return usage(
         io,
-        `${spec}: unknown key ${keyPath[0]} (settable: ${[...SETTABLE_KEYS].join(", ")})`,
+        `${spec}: unknown key ${keyPath[0]}${hint ? `; ${hint}` : ""} (settable: ${[...SETTABLE_KEYS].join(", ")})`,
       );
+    }
     const value = parseSetValue(spec.slice(eq + 1));
     const choices = CHOICES[keyPath[0]];
     if (choices && (keyPath.length > 1 || (value !== null && !choices.includes(value as string))))

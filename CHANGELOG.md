@@ -215,6 +215,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without `kill`; waiters whose starting process ended leave the queue; the
   queue serves sessions round-robin; and a check that gives up says `queued
   behind <holder>, <age>` (#608).
+- `workit release notes approve` and `workit grant set|raise` always reach
+  the host's permission prompt or a deny: Claude Code (also in auto mode),
+  Codex and Cursor get managed rules for them, and `workit upgrade` replaces
+  the old auto-mode text. Pi has no permission layer, so only the CLI check
+  applies there. The CLI check stops a cooperating agent; the host prompt stops
+  a determined one (#615).
+- `workit workspace set` points a path-like key such as `path=` at `glob`
+  (with the workspaces.json path and `workspace add <name> --glob <g> --from
+  <ws>`) and suggests the nearest key for a misspelt one. Hints naming
+  `vcs.json` or `workspaces.json` print the file Workit actually reads when
+  `WORKFLOW_TOOLKIT_CONFIG` redirects the config dir; the grants note says that
+  override never applies to grants (#617, #618).
 - `workit uninstall` now also removes Workit pins from the OpenCode 2.x
   `plugins` key (it only cleaned the V1-era `plugin` key, so a 2.x
   registration, including a checkout directory pin, survived uninstall).

@@ -44,6 +44,7 @@ import { releaseTagPrefixOf } from "../core/branch-policy";
 import { detectCommitFlavor, matchCommitFlavor } from "../core/commit-flavors";
 import { pushTargetIsStable } from "../core/pr-create";
 import { readReleaseTracks, recordBranchBase, trackBranchName } from "../core/release-tracks";
+import { configFilePath } from "../core/config";
 import { vcsConfig, type ResolvedReleaseTrack } from "../core/vcs-config";
 import {
   resolveRuntimeReleaseTracks,
@@ -332,7 +333,7 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
     return failure(
       "blocked",
       String(resolved.error),
-      "fix ~/.config/workit/vcs.json or pass --base <branch>",
+      `fix ${configFilePath("vcs.json")} or pass --base <branch>`,
     );
   if (resolved.ok !== false) {
     defaultTarget = String(resolved.defaultTargetBranch ?? "") || null;
