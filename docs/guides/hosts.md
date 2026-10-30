@@ -304,7 +304,9 @@ Limits: AskQuestion is policy-only, session start and compaction are
 non-blocking, arbitrary shell writes and Tab edits are not observable, and
 subagent stop identity is unstable, so native delegation is read-only. MCP is
 read-only for unattested callers; mutations run through
-`node_modules/.bin/workit <family> <action> --json`.
+`node_modules/.bin/workit <family> <action> --json`. Every verb's `--json` document
+carries the envelope fields `ok`, `code` and, on failure or when a fix exists, `error` and
+`unblock`, beside the verb's own fields.
 
 ## Codex CLI / desktop
 

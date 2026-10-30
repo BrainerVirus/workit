@@ -212,3 +212,13 @@ test("Given a git repository that is not a Workit workspace, When `workit doctor
   expect(check(report, "session_hook").status).toBe("pass");
   expect(existsSync(hook)).toBe(false);
 }, 30_000);
+
+test("Given a doctor run with a fix available, When --json is printed, Then the envelope fields sit beside the report", () => {
+  const box = sandbox();
+  const { report } = doctor(box) as { report: DoctorReport & Record<string, unknown> };
+  expect(report.code).toBe(report.ok ? "ok" : "failed");
+  expect(typeof report.exitCode).toBe("number");
+  expect(Array.isArray(report.checks)).toBe(true);
+  if (report.fixes.length > 0) expect(report.unblock).toBe(report.fixes[0].fix);
+  if (!report.ok) expect(typeof report.error).toBe("string");
+});

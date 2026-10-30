@@ -95,8 +95,25 @@ const outOf = (deps: TaskCliDeps) => deps.out ?? process.stdout;
 const errOf = (deps: TaskCliDeps) => deps.err ?? process.stderr;
 const write = (stream: Stream, value: string) =>
   stream.write(value.endsWith("\n") ? value : `${value}\n`);
+/** The next command for an engine failure an agent can fix itself; the others have none. */
+const ENGINE_UNBLOCK: Partial<Record<string, string>> = {
+  revision_conflict:
+    "re-read the current revision (the same command with --json, or workit task inspect --json), then retry with --revision <r>",
+  busy: "retry the same command: another Workit call holds this checkout's metadata lock",
+};
+
+/**
+ * The engine result plus the envelope fields every other verb's --json has:
+ * `code: "ok"` on success; a failure keeps its engine code and gains `unblock`
+ * when a fix command exists. Nothing is renamed or removed.
+ */
+export const withEnvelope = (result: Result<unknown>) => {
+  if (result.ok) return { ...result, code: "ok" as const };
+  const unblock = ENGINE_UNBLOCK[result.code];
+  return unblock ? { ...result, unblock } : result;
+};
 const jsonResult = (stream: Stream, result: Result<unknown>) =>
-  write(stream, JSON.stringify(result));
+  write(stream, JSON.stringify(withEnvelope(result)));
 
 const usage = (message: string): Result<never> => failure("invalid_input", message);
 const parseUsage = (message: string, json: boolean): ParseResult => ({
