@@ -41,6 +41,12 @@ export const DEFAULT_LIGHT_CHECKS = ["lint", "typecheck", "format"];
 const DEFAULT_SLOTS = 1;
 /** A queued heavy check waits its turn this long by default (#508). */
 const DEFAULT_WAIT_S = 1800;
+/** A holder past this hold time is shown `stuck?` (#608). */
+export const DEFAULT_MAX_HOLD_MS = 15 * 60_000;
+/** A holder whose check printed nothing and used no CPU for this long is shown `stuck?`. */
+export const SILENT_MS = 5 * 60_000;
+/** Past this many times its max hold, a silent holder is reclaimed by the next acquirer. */
+const AUTO_REAP_FACTOR = 3;
 const DEFAULT_MEMORY_SHARE = 0.4;
 const DEFAULT_CPU_SHARE = 0.7;
 const MAX_SLOTS = 64;
@@ -62,6 +68,8 @@ export type ResourceSettings = {
   cpuQuota: string;
   /** How long a heavy check waits for the lease before giving up. */
   waitMs: number;
+  /** How long a check may hold a slot before it is shown `stuck?` (#608); unset is DEFAULT_MAX_HOLD_MS. */
+  maxHoldMs?: number;
   /** False turns the systemd scope off (the lease still applies). */
   scope: boolean;
 };
@@ -204,22 +212,33 @@ export function resolveResourceSettings(
       else cpu = next;
     }
     if (value.wait !== undefined) {
-      const wait =
-        typeof value.wait === "number"
-          ? value.wait >= 0
-            ? value.wait * 1000
-            : null
-          : typeof value.wait === "string"
-            ? parseWait(value.wait)
-            : null;
+      const wait = durationValue(value.wait);
       if (wait !== null) settings.waitMs = wait;
       else warn("wait", 'must be a number of seconds or a duration ("30m")');
+    }
+    if (value.maxHold !== undefined) {
+      const hold = durationValue(value.maxHold);
+      if (hold === null || hold <= 0)
+        warn("maxHold", 'must be a positive number of seconds or a duration ("15m")');
+      else if (repo && hold > (settings.maxHoldMs ?? DEFAULT_MAX_HOLD_MS))
+        warn("maxHold", "a repo can only lower it");
+      else settings.maxHoldMs = hold;
     }
   }
   settings.memoryMax = String(memory);
   settings.cpuQuota = `${cpu}%`;
   return { settings, warnings };
 }
+
+/** Seconds (a number) or a duration ("30m") as ms; null when it is neither. */
+const durationValue = (value: unknown): number | null =>
+  typeof value === "number"
+    ? value >= 0
+      ? value * 1000
+      : null
+    : typeof value === "string"
+      ? parseWait(value)
+      : null;
 
 // ---------------------------------------------------------------------------
 // the machine lease
@@ -246,6 +265,15 @@ export type LeaseRecord = {
   startedAt: string;
   /** The check's systemd scope unit; it holds the lease while it has processes. */
   scope: string | null;
+  /** Last time the check printed or used CPU (#608); absent on older leases. */
+  heartbeatAt?: string | null;
+  /** The holder's max hold time; absent on older leases (the reader's own setting applies). */
+  maxHoldMs?: number | null;
+  /** The process that started workit (a queued ticket): its waiter leaves when it ends. */
+  ownerPid?: number | null;
+  ownerStart?: string | null;
+  /** The waiter honours a `workit lock cancel` marker (older ones get SIGTERM). */
+  cancellable?: boolean;
 };
 
 const readText = (file: string): string | null => {
@@ -315,7 +343,7 @@ function isAncestor(pid: number): boolean {
   return current === pid;
 }
 
-const parseLease = (text: string | null): LeaseRecord | null => {
+export const parseLease = (text: string | null): LeaseRecord | null => {
   if (!text) return null;
   try {
     const value: unknown = JSON.parse(text);
@@ -370,7 +398,46 @@ export function staleReason(lease: LeaseRecord, probe: LeaseProbe = {}): string 
   return holder;
 }
 
-export type LeaseHolder = Pick<LeaseRecord, "pid" | "check" | "cwd" | "session" | "startedAt">;
+/**
+ * Why a holder looks stuck (#608), or null: it has held its slot past its max
+ * hold time, or its check printed nothing and used no CPU for SILENT_MS. A
+ * lease from an older workit has no heartbeat; only its hold time counts.
+ */
+export function stuckReason(
+  lease: LeaseRecord,
+  maxHoldMs: number,
+  now = Date.now(),
+): string | null {
+  const limit = typeof lease.maxHoldMs === "number" ? lease.maxHoldMs : maxHoldMs;
+  const age = now - Date.parse(lease.startedAt);
+  const beat = lease.heartbeatAt ? now - Date.parse(lease.heartbeatAt) : null;
+  if (age > limit) return `held ${formatWait(age)}, past its ${formatWait(limit)} limit`;
+  if (beat !== null && beat > SILENT_MS) return `no heartbeat for ${formatWait(beat)}`;
+  return null;
+}
+
+/**
+ * Why the next acquirer reclaims a live but stuck holder, or null: held past
+ * AUTO_REAP_FACTOR times its max hold and silent for at least its max hold
+ * (no heartbeat at all counts as silent). A busy long run is never reclaimed.
+ */
+export function autoReapReason(
+  lease: LeaseRecord,
+  maxHoldMs: number,
+  now = Date.now(),
+): string | null {
+  const limit = typeof lease.maxHoldMs === "number" ? lease.maxHoldMs : maxHoldMs;
+  const age = now - Date.parse(lease.startedAt);
+  const beat = now - Date.parse(lease.heartbeatAt ?? lease.startedAt);
+  return age > AUTO_REAP_FACTOR * limit && beat > limit
+    ? `stuck: held ${formatWait(age)}, silent for ${formatWait(beat)}, past ${AUTO_REAP_FACTOR}x its ${formatWait(limit)} limit`
+    : null;
+}
+
+export type LeaseHolder = Pick<LeaseRecord, "pid" | "check" | "cwd" | "session" | "startedAt"> & {
+  /** Why the holder looks stuck (stuckReason); absent or null when it does not. */
+  stuck?: string | null;
+};
 
 const holderOf = (lease: LeaseRecord): LeaseHolder => ({
   pid: lease.pid,
@@ -380,8 +447,26 @@ const holderOf = (lease: LeaseRecord): LeaseHolder => ({
   startedAt: lease.startedAt,
 });
 
+/** Why a queued ticket's owner (the process that started its workit) is gone, or null. */
+export function ownerGone(record: LeaseRecord, probe: LeaseProbe = {}): string | null {
+  const owner = record.ownerPid;
+  if (typeof owner !== "number" || owner <= 1) return null;
+  if (!(probe.alive ?? pidAlive)(owner)) return `owner pid ${owner} is gone`;
+  const start = record.ownerStart ? (probe.start ?? processStart)(owner) : null;
+  return start && start !== record.ownerStart
+    ? `owner pid ${owner} now belongs to another process`
+    : null;
+}
+
+/** Why a queued ticket no longer waits: its waiter or the waiter's owner is gone. */
+export const ticketStale = (record: LeaseRecord, probe: LeaseProbe = {}): string | null =>
+  staleReason(record, probe) ?? ownerGone(record, probe);
+
 /** Remove a stale slot under a mkdir guard, re-checking it inside so a fresh holder is never removed. */
-function reclaim(file: string, stale: (lease: LeaseRecord | null, ageMs: number) => boolean) {
+export function reclaim(
+  file: string,
+  stale: (lease: LeaseRecord | null, ageMs: number) => boolean,
+) {
   const guard = `${file}.reclaim`;
   try {
     fs.mkdirSync(guard);
@@ -417,9 +502,12 @@ export type HeldLease = {
   waitedOn: LeaseHolder[];
   waitedMs: number;
   /** Stale leases reclaimed on the way, with the reason. */
-  reclaimed: Array<LeaseHolder & { reason: string }>;
+  reclaimed: Reclaimed[];
   release: () => void;
 };
+
+/** A slot reclaimed from a gone holder, or (`reaped`) from a live one past its auto-reap bound. */
+export type Reclaimed = LeaseHolder & { reason: string; reaped?: boolean };
 
 export type AcquireOptions = {
   dir: string;
@@ -431,6 +519,10 @@ export type AcquireOptions = {
   pollMs?: number;
   /** The age bound recorded on the lease (see LeaseRecord.maxAgeMs). */
   maxAgeMs?: number;
+  /** The max hold time recorded on the lease and applied to older leases (#608). */
+  maxHoldMs?: number;
+  /** The process that started this waiter (default: the parent); null records none. */
+  ownerPid?: number | null;
   /** Called once, when the first attempt finds every slot held. */
   onWait?: (holders: LeaseHolder[]) => void;
   /** Called when the wait starts and every `statusEveryMs` after (default 30 s). */
@@ -466,13 +558,20 @@ export type AcquireResult =
       /** Where this waiter stood when it gave up. */
       position: number;
     }
+  | {
+      ok: false;
+      reason: "cancelled";
+      /** Who cancelled it: `workit lock cancel`'s note, or the owner that ended. */
+      by: string;
+      waitedMs: number;
+    }
   | { ok: false; reason: "unavailable"; error: string };
 
 /** One pass over the slots: the slot taken, or the live holders. */
 function tryOnce(
   options: AcquireOptions,
   record: LeaseRecord,
-  reclaimed: HeldLease["reclaimed"],
+  reclaimed: Reclaimed[],
 ): { slot: number; file: string } | { holders: LeaseHolder[] } {
   const holders: LeaseHolder[] = [];
   const text = `${JSON.stringify(record)}\n`;
@@ -492,16 +591,26 @@ function tryOnce(
       }
       const lease = parseLease(readText(file));
       let reason: string | null = null;
+      let stuck = false;
       const removed = reclaim(file, (current, ageMs) => {
         reason = current
           ? staleReason(current, options.probe)
           : ageMs > UNREADABLE_TTL_MS
             ? "unreadable"
             : null;
+        if (current && reason === null) {
+          reason = autoReapReason(
+            current,
+            options.maxHoldMs ?? DEFAULT_MAX_HOLD_MS,
+            options.probe?.now,
+          );
+          stuck = reason !== null;
+        }
         return reason !== null;
       });
       if (removed) {
-        if (lease && reason) reclaimed.push({ ...holderOf(lease), reason });
+        if (lease && reason)
+          reclaimed.push({ ...holderOf(lease), reason, ...(stuck ? { reaped: true } : {}) });
         continue;
       }
       if (lease) holders.push(holderOf(lease));
@@ -522,19 +631,26 @@ function removeOwn(file: string, id: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// the queue (issue #508)
+// the queue (issues #508, #608)
 //
 // A waiter writes a ticket, `<leases>/queue/<ms>-<ns>-<id>.json` (a lease
-// record naming its process), and takes a slot only while fewer live waiters
-// stand ahead of it than there are free slots: first come, first served. A
-// ticket whose process died is stale by the same test as a slot
-// (staleReason), and the next waiter removes it under the same mkdir guard.
-// An older CLI that does not queue still races for a free slot; it can jump
-// the queue, never break it.
+// record naming its process and the process that started it), and takes a
+// slot only while fewer live waiters stand ahead of it than there are free
+// slots. "Ahead" is round-robin per session: a session's n-th waiter (counting
+// the slots it already holds) goes after every other session's earlier ones,
+// arrival order breaking ties, so one session's chain of jobs cannot starve
+// another's single check. A ticket whose waiter or owner died is stale
+// (ticketStale), and the next reader removes it under the same mkdir guard.
+// `workit lock cancel` drops a ticket and leaves a `<ticket>.cancel` marker
+// its waiter reads. An older CLI that does not queue still races for a free
+// slot; it can jump the queue, never break it.
 
 export const queueDir = (dir: string): string => path.join(dir, "queue");
 
 const TICKET = /^\d{15}-\d{16}-[\w-]+\.json$/u;
+
+/** The marker `workit lock cancel` leaves for a ticket's waiter. */
+export const cancelMarker = (ticket: string): string => `${ticket}.cancel`;
 
 /** A ticket name that sorts in arrival order. */
 const ticketName = (now: number, id: string): string =>
@@ -545,6 +661,8 @@ export type QueueEntry = {
   holder: LeaseHolder;
   id: string | null;
   stale: string | null;
+  /** The full ticket, for `workit lock cancel`. */
+  record?: LeaseRecord;
 };
 
 /** The queue's tickets in arrival order. Read-only: nothing is removed. */
@@ -564,31 +682,66 @@ export function leaseQueue(dir: string, probe: LeaseProbe = {}): QueueEntry[] {
       file,
       holder: holderOf(record),
       id: record.id,
-      stale: staleReason(record, probe),
+      stale: ticketStale(record, probe),
+      record,
     });
   }
   return entries;
 }
 
-/** The live tickets ahead of `own`, removing stale ones on the way. */
-function waitersAhead(options: AcquireOptions, own: string): number {
-  let ahead = 0;
+const sessionKey = (holder: Pick<LeaseHolder, "session" | "pid">): string =>
+  holder.session ?? `pid:${holder.pid}`;
+
+/**
+ * `waiting` (live, in arrival order) in serving order: round-robin per
+ * session, a session's slots held in `holders` counting as its earlier turns.
+ */
+export function fairOrder<T extends { holder: LeaseHolder }>(
+  waiting: T[],
+  holders: LeaseHolder[],
+): T[] {
+  const turns = new Map<string, number>();
+  for (const holder of holders)
+    turns.set(sessionKey(holder), (turns.get(sessionKey(holder)) ?? 0) + 1);
+  return waiting
+    .map((entry, arrival) => {
+      const key = sessionKey(entry.holder);
+      const round = turns.get(key) ?? 0;
+      turns.set(key, round + 1);
+      return { entry, round, arrival };
+    })
+    .toSorted((a, b) => a.round - b.round || a.arrival - b.arrival)
+    .map(({ entry }) => entry);
+}
+
+/** The live tickets served before `own` (a ticket name, or "~" before queueing), removing stale ones on the way. */
+function waitersAhead(
+  options: AcquireOptions,
+  own: string,
+  self: LeaseHolder,
+  holders: LeaseHolder[],
+): number {
+  const live: Array<{ name: string; holder: LeaseHolder }> = [];
   for (const entry of leaseQueue(options.dir, options.probe)) {
-    if (path.basename(entry.file) >= own) break;
-    if (!TICKET.test(path.basename(entry.file))) continue;
+    const name = path.basename(entry.file);
+    if (!TICKET.test(name) || name === own) continue;
     if (
       entry.stale &&
-      reclaim(entry.file, (current) => !current || staleReason(current, options.probe) !== null)
+      reclaim(entry.file, (current) => !current || ticketStale(current, options.probe) !== null)
     )
       continue;
-    ahead += 1;
+    live.push({ name, holder: entry.holder });
   }
-  return ahead;
+  const order = fairOrder(
+    [...live, { name: own, holder: self }].toSorted((a, b) => (a.name < b.name ? -1 : 1)),
+    holders,
+  );
+  return order.findIndex((entry) => entry.name === own);
 }
 
 /** Live holders of the slots, read without reclaiming. */
 function liveHolders(options: AcquireOptions): LeaseHolder[] {
-  return leaseSlots(options.dir, options.slots, options.probe)
+  return leaseSlots(options.dir, options.slots, options.probe, options.maxHoldMs)
     .filter((slot) => slot.holder && !slot.stale)
     .map((slot) => slot.holder as LeaseHolder);
 }
@@ -614,12 +767,27 @@ export function formatWait(ms: number): string {
   return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
 }
 
+/** The note a cancel marker carries, or null when there is none. */
+function cancelledBy(ticket: string): string | null {
+  const text = readText(cancelMarker(ticket));
+  if (text === null) return null;
+  try {
+    const value: unknown = JSON.parse(text);
+    if (isRecord(value) && typeof value.by === "string") return value.by;
+  } catch {
+    // A marker is a marker, whatever it says.
+  }
+  return "workit lock cancel";
+}
+
 /**
  * Take one of `slots` machine-wide lease slots. A slot free and nobody queued
  * ahead: it is taken at once. Otherwise the caller queues (a ticket in
- * `queue/`) and polls every `pollMs`, first come, first served, up to
- * `waitMs`; `onStatus` reports its place now and then. The returned lease is
- * released by `release()`, and on process exit as a backstop.
+ * `queue/`) and polls every `pollMs`, round-robin per session, up to
+ * `waitMs`; `onStatus` reports its place now and then. A `workit lock cancel`
+ * marker, or the end of the process that started this waiter, ends the wait
+ * as `cancelled`. The returned lease is released by `release()`, and on
+ * process exit as a backstop.
  */
 export async function acquireLease(options: AcquireOptions): Promise<AcquireResult> {
   const clock = options.clock ?? realClock;
@@ -638,6 +806,8 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     session: options.session,
     startedAt: new Date(clock.now()).toISOString(),
     scope: null,
+    heartbeatAt: null,
+    maxHoldMs: options.maxHoldMs ?? null,
   };
   try {
     fs.mkdirSync(options.dir, { recursive: true, mode: 0o700 });
@@ -645,16 +815,21 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     return { ok: false, reason: "unavailable", error: (error as Error).message };
   }
   const started = clock.now();
-  const reclaimed: HeldLease["reclaimed"] = [];
+  const reclaimed: Reclaimed[] = [];
   let waitedOn: LeaseHolder[] = [];
   const name = ticketName(started, record.id);
   const ticket = path.join(queueDir(options.dir), name);
+  const owner = options.ownerPid === undefined ? process.ppid : options.ownerPid;
   // A ticket outlives a waiter that never finds the slot it would take on
   // platforms without a process start time; its age bound is the wait.
   const ticketRecord: LeaseRecord = {
     ...record,
     maxAgeMs: options.waitMs + 60_000,
+    ownerPid: typeof owner === "number" && owner > 1 ? owner : null,
+    ownerStart: typeof owner === "number" && owner > 1 ? processStart(owner) : null,
+    cancellable: true,
   };
+  const self = holderOf(record);
   let queued = false;
   // Ctrl-C or SIGTERM while queued: give up the place, then exit as the signal would.
   const onSignal = (signal: NodeJS.Signals) => {
@@ -665,16 +840,27 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     process.off("exit", leave);
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    if (queued) removeOwn(ticket, record.id);
+    if (queued) {
+      removeOwn(ticket, record.id);
+      fs.rmSync(cancelMarker(ticket), { force: true });
+    }
     queued = false;
   };
   let nextStatus = 0;
   try {
     for (;;) {
       const waited = clock.now() - started;
-      const ahead = queued ? waitersAhead(options, name) : waitersAhead(options, "~");
-      const free = options.slots - liveHolders(options).length;
+      if (queued) {
+        const by = cancelledBy(ticket) ?? ownerGone(ticketRecord, options.probe);
+        if (by) return { ok: false, reason: "cancelled", by, waitedMs: waited };
+      }
+      const before = liveHolders(options);
+      const ahead = waitersAhead(options, queued ? name : "~", self, before);
+      const free = options.slots - before.length;
       if (ahead < free) {
+        const now = new Date(clock.now()).toISOString();
+        record.startedAt = now;
+        record.heartbeatAt = now;
         const outcome = tryOnce(options, record, reclaimed);
         if ("slot" in outcome) {
           const waitedMs = queued ? waited : 0;
@@ -725,7 +911,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         await new Promise<void>((resolve) => setImmediate(resolve));
         writeTicket(ticket, ticketRecord);
         queued = true;
-      } else if (!fs.existsSync(ticket)) {
+      } else if (!fs.existsSync(ticket) && !fs.existsSync(cancelMarker(ticket))) {
         // Wrongly reclaimed (a clock step past its age bound): stand in the same place again.
         writeTicket(ticket, ticketRecord);
       }
@@ -757,7 +943,10 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
  * stays held while they run, even if workit itself is killed. Never writes
  * over a slot that is no longer this lease's.
  */
-export function updateLease(lease: HeldLease, patch: Pick<Partial<LeaseRecord>, "scope" | "pgid">) {
+export function updateLease(
+  lease: HeldLease,
+  patch: Pick<Partial<LeaseRecord>, "scope" | "pgid" | "heartbeatAt">,
+) {
   Object.assign(lease.record, patch);
   try {
     if (parseLease(readText(lease.file))?.id !== lease.record.id) return;
@@ -799,11 +988,10 @@ export function heldLease(
   }
   return null;
 }
-/** "test, pid 123, 1m 40s, /repo/wt" for a waiting or timeout message. */
+/** "test, pid 123, 1m 40s, /repo/wt" for a waiting or timeout message; a stuck holder says so. */
 export function describeHolder(holder: LeaseHolder, now = Date.now()): string {
-  const seconds = Math.max(0, Math.round((now - Date.parse(holder.startedAt)) / 1000));
-  const age = seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
-  return `${holder.check}, pid ${holder.pid}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}`;
+  const age = formatWait(now - Date.parse(holder.startedAt));
+  return `${holder.check}, pid ${holder.pid}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}${holder.stuck ? `, stuck? (${holder.stuck})` : ""}`;
 }
 
 /** systemd-run's own failure before it ran the command (bus, unit, property). */
@@ -905,17 +1093,30 @@ export type SlotState = {
   holder: LeaseHolder | null;
   /** Why the lease in it no longer holds (the next acquirer reclaims it). */
   stale: string | null;
+  /** Why its live holder looks stuck (`workit lock reap` frees it), or null. */
+  stuck: string | null;
 };
 
-/** What each of `slots` lease slots holds right now. Read-only: nothing is reclaimed. */
-export function leaseSlots(dir: string, slots: number, probe: LeaseProbe = {}): SlotState[] {
+/**
+ * What each of `slots` lease slots holds right now. Read-only: nothing is
+ * reclaimed. `maxHoldMs` judges `stuck` for leases that do not carry their own.
+ */
+export function leaseSlots(
+  dir: string,
+  slots: number,
+  probe: LeaseProbe = {},
+  maxHoldMs = DEFAULT_MAX_HOLD_MS,
+): SlotState[] {
   const states: SlotState[] = [];
   for (let slot = 0; slot < slots; slot += 1) {
     const lease = parseLease(readText(path.join(dir, `slot-${slot}.json`)));
+    const stale = lease ? staleReason(lease, probe) : null;
+    const stuck = lease && !stale ? stuckReason(lease, maxHoldMs, probe.now) : null;
     states.push({
       slot,
-      holder: lease ? holderOf(lease) : null,
-      stale: lease ? staleReason(lease, probe) : null,
+      holder: lease ? { ...holderOf(lease), ...(stuck ? { stuck } : {}) } : null,
+      stale,
+      stuck,
     });
   }
   return states;
