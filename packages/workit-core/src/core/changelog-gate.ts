@@ -220,6 +220,9 @@ const expand = (paths: readonly string[], tracked: () => string[]): ChangelogFil
         out.push(match);
       }
   }
+  // Globs that match nothing here (a single-package repo under a monorepo setting) mean the root file.
+  if (!out.length && paths.every(isChangelogGlob))
+    out.push({ file: DEFAULT_CHANGELOG_PATH, pkg: null });
   return out;
 };
 
@@ -309,7 +312,7 @@ export function changelogGate(input: {
     ...stale,
   });
   if (!present.length) {
-    const file = deleted ?? paths.find((one) => !isChangelogGlob(one));
+    const file = deleted ?? atHead.find(({ pkg }) => pkg === null)?.file;
     if (file && (mode === "create" || deleted)) return missingOf(file);
     // Without a base the deletion check cannot run; `update` asks nothing of a repo with no file.
     return { status: "no-file", mode, paths, candidates };
