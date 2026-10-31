@@ -229,6 +229,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `changelogPath` glob such as `projects/*/CHANGELOG.md` that matches no
+  file in a repo falls back to the root `CHANGELOG.md`, so one workspace
+  setting serves both its monorepos and its single-package repos; under
+  `create` the root entry is required instead of the check passing silently.
 - A stuck heavy check no longer starves every other agent: `workit lock
   status` marks a holder `stuck?` past `resources.maxHold` (default 15 min) or
   after 5 min with no output or CPU, `workit lock reap` frees its slot and

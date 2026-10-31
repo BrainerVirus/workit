@@ -538,7 +538,10 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
   there.
   Commit and push the entry, then run `pr create` again.
 - Under `update`, a repo without its changelog file passes with one line saying
-  there is nothing to update; under `create` the entry is still required.
+  there is nothing to update; under `create` the entry is still required. A
+  glob such as `projects/*/CHANGELOG.md` that matches no file in a repo falls
+  back to the root `CHANGELOG.md`, so one workspace setting serves both its
+  monorepos and its single-package repos.
 - `--no-changelog "<reason>"` opens the PR without an entry and writes the
   reason into the PR body (`Changelog: no entry (--no-changelog): <reason>`);
   an empty reason is a usage error.

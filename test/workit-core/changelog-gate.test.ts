@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -12,6 +12,9 @@ import {
 
 // The opt-in changelog gate `workit pr create` runs: a user-facing PR needs a
 // bullet its branch adds under ## [Unreleased], compared with the PR base.
+
+// Each repo() spawns about a dozen git processes; one slow spawn on a Windows runner can pass 15 s.
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -252,6 +255,28 @@ test("Given no changelogPath and no root CHANGELOG.md, When the repo keeps one e
   });
 });
 
+const globOnly = (cwd: string, mode: "update" | "create") =>
+  changelogGate({
+    cwd,
+    mode,
+    title: "feat: x",
+    base: "main",
+    paths: ["projects/*/CHANGELOG.md"],
+    pathConfigured: true,
+  });
+
+test("Given a glob-only changelogPath that matches no file and no root CHANGELOG.md, When the gate runs, Then create requires the root file and update has nothing to update", () => {
+  const cwd = repo(null);
+  expect(globOnly(cwd, "create")).toMatchObject({ status: "missing", file: "CHANGELOG.md" });
+  expect(globOnly(cwd, "update")).toMatchObject({ status: "no-file" });
+});
+
+test("Given a glob-only changelogPath that matches no file, When the branch adds an entry to the root CHANGELOG.md, Then the root entry counts", () => {
+  const cwd = repo(RELEASED, withEntry(RELEASED));
+  expect(globOnly(cwd, "update")).toMatchObject({ status: "has-entry", file: "CHANGELOG.md" });
+  expect(resolveChangelogPaths(cwd, ["projects/*/CHANGELOG.md"])).toEqual(["CHANGELOG.md"]);
+});
+
 test("Given the base cannot be fetched but an older local copy resolves, When the gate runs, Then it compares with that copy and says the fetch failed", () => {
   const cwd = repo(RELEASED, withEntry(RELEASED));
   git(cwd, "remote", "remove", "origin");
@@ -357,7 +382,7 @@ test("Given per-package changelogs, When the diff touches no package and adds no
   expect(result).not.toHaveProperty("lacking");
 });
 
-test("Given a ** glob, When the changelog paths resolve, Then each matched tracked file is listed once", () => {
+test("Given a ** glob, When the changelog paths resolve, Then each matched tracked file is listed once, and globs matching nothing mean the root file", () => {
   const cwd = monorepo({});
   expect(resolveChangelogPaths(cwd, ["**/CHANGELOG.md", "projects/a/CHANGELOG.md"])).toEqual([
     "CHANGELOG.md",
@@ -365,5 +390,5 @@ test("Given a ** glob, When the changelog paths resolve, Then each matched track
     "projects/b/CHANGELOG.md",
   ]);
   expect(resolveChangelogPaths(cwd, ["projects/?/CHANGELOG.md"])).toHaveLength(2);
-  expect(resolveChangelogPaths(cwd, ["projects/*.md"])).toEqual([]);
+  expect(resolveChangelogPaths(cwd, ["projects/*.md"])).toEqual(["CHANGELOG.md"]);
 });
