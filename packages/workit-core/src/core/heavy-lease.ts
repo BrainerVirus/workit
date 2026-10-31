@@ -2,6 +2,7 @@
 // prune what no longer holds or waits, reap a stuck holder, cancel queued
 // waiters, and keep a holder's heartbeat while its check prints or uses CPU.
 // Only the CLI imports this module; hooks never do.
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -196,9 +197,38 @@ const terminate = (pid: number): boolean => {
   }
 };
 
-/** CPU ticks used so far by the processes of group `pgid` (Linux), or null. */
+/** `[[dd-]hh:]mm:ss[.cc]` from `ps` as hundredths of a second, or null. */
+function parseCpuTime(text: string): number | null {
+  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/u.exec(text);
+  if (!match) return null;
+  const [, days, hours, minutes, seconds] = match;
+  const total =
+    (Number(days ?? 0) * 24 + Number(hours ?? 0)) * 3600 + Number(minutes) * 60 + Number(seconds);
+  return Math.round(total * 100);
+}
+
+/** CPU hundredths of a second used so far by process group `pgid` (macOS, via `ps`), or null. */
+export function psGroupCpu(pgid: number, run: typeof spawnSync = spawnSync): number | null {
+  const result = run("ps", ["-axo", "pgid=,cputime="], { encoding: "utf8", timeout: 5000 });
+  if (result.error || result.status !== 0 || typeof result.stdout !== "string") return null;
+  let total = 0;
+  let seen = false;
+  for (const line of result.stdout.split("\n")) {
+    const [group, cputime] = line.trim().split(/\s+/u);
+    if (Number(group) !== pgid || cputime === undefined) continue;
+    const ticks = parseCpuTime(cputime);
+    if (ticks === null) continue;
+    seen = true;
+    total += ticks;
+  }
+  return seen ? total : null;
+}
+
+/** CPU ticks used so far by the processes of group `pgid` (Linux, macOS), or null. */
 export function groupCpuTicks(pgid: number): number | null {
-  if (process.platform !== "linux" || !(pgid > 0)) return null;
+  if (!(pgid > 0)) return null;
+  if (process.platform === "darwin") return psGroupCpu(pgid);
+  if (process.platform !== "linux") return null;
   let names: string[];
   try {
     names = fs.readdirSync("/proc");
