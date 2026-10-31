@@ -10,7 +10,7 @@ import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
 import { cwdRewrite, verbFirst } from "./cwd-normalize";
-import { workitBypassFlag } from "./delivery-verbs";
+import { userOnlyWorkitCall, workitBypassFlag } from "./delivery-verbs";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
 import {
@@ -202,6 +202,21 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       if (!postTool) settlePendingCommit(input);
       const raw = canDeny ? rawGitPre(input, event.command, { nudge: false }) : NONE;
       if (raw.kind === "deny") return raw;
+      // Only the user runs these (#615): a host rule cannot see a global
+      // option before the verb, so the words are read here.
+      const userOnly = userOnlyWorkitCall(event.command, event.dialect);
+      if (userOnly) {
+        if (input.host === "claude_code")
+          return {
+            kind: "ask",
+            reason: `Only the user runs \`workit ${userOnly.join(" ")}\`: the user decides this call.`,
+          };
+        if (canDeny && ["cursor", "codex_cli", "codex_desktop", "pi"].includes(input.host))
+          return {
+            kind: "deny",
+            reason: `Only the user runs \`workit ${userOnly.join(" ")}\`: run it in your own terminal.`,
+          };
+      }
       // An implementer subagent stays in its Workit worktree (#310).
       if (canDeny && implementerAgent(input, descriptor)) {
         const confined = confineImplementerShell(input, event.command, event.dialect);
