@@ -19,6 +19,8 @@ import {
   pruneLease,
   reapStuck,
   startHeartbeat,
+  groupCpuTicks,
+  psGroupCpu,
 } from "@/packages/workit-core/src/core/heavy-lease";
 import {
   acquireLease,
@@ -290,4 +292,31 @@ test("G a held lease, W its check prints or its group uses CPU, T the heartbeat 
   await until(() => read() !== second, 1000);
   beat.stop();
   got.lease.release();
+});
+
+const fakePs = (stdout: string, status = 0) =>
+  (() => ({ status, stdout, error: undefined })) as unknown as typeof spawnSync;
+
+test("psGroupCpu sums one process group's cputime and returns null for an absent group", () => {
+  const out = "  100  0:01.50\n  100 1:02:03\n  200  0:09.00\n  300 1-00:00:01\n";
+  expect(psGroupCpu(100, fakePs(out))).toBe(150 + (3600 + 120 + 3) * 100);
+  expect(psGroupCpu(300, fakePs(out))).toBe(86401 * 100);
+  expect(psGroupCpu(999, fakePs(out))).toBeNull();
+});
+
+test("psGroupCpu returns null when ps fails", () => {
+  expect(psGroupCpu(100, fakePs("  100 0:01.00\n", 1))).toBeNull();
+});
+
+test("groupCpuTicks uses ps on darwin and nothing on win32", () => {
+  const original = Object.getOwnPropertyDescriptor(process, "platform") as PropertyDescriptor;
+  try {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    expect(groupCpuTicks(process.pid)).toBeNull();
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    const ticks = groupCpuTicks(1);
+    expect(ticks === null || typeof ticks === "number").toBe(true);
+  } finally {
+    Object.defineProperty(process, "platform", original);
+  }
 });

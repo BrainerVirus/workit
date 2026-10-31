@@ -792,7 +792,10 @@ workit lock cancel                # drop this session's queued checks (each exit
   either config file.
 - **`resources.maxHold`** (same formats, default 15 min) is how long a holder
   may keep a slot before `lock status` marks it `stuck?`; one with no output
-  and no CPU for 5 min is marked too. `workit lock reap` frees a stuck slot
+  and no CPU for 5 min is marked too (CPU is read from `/proc` on Linux and
+  `ps` on macOS; on Windows only output counts as a heartbeat, so raise
+  `resources.maxHold` in your own config for a quiet long check).
+  `workit lock reap` frees a stuck slot
   without signalling the process, and a holder silent past 3x the limit is
   reaped automatically. A repo can only lower it.
 

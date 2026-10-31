@@ -113,7 +113,9 @@ as `noLease`.
   session's chain of jobs cannot starve another's single lint.
 - **`stuck?`.** `workit lock status` marks a holder `stuck?`, with its age, once
   it has held its slot past `resources.maxHold` (default 15 min; a repo can
-  only lower it) or its check printed nothing and used no CPU for 5 min.
+  only lower it) or its check printed nothing and used no CPU for 5 min. CPU is counted on Linux and macOS; on Windows only
+  output counts as a heartbeat, so raise `resources.maxHold` in your own
+  config for a quiet long check.
   `workit lock reap` frees that slot and records a `lease.reaped` ledger row
   naming the pid, session and command; the process itself keeps running, so
   stop it yourself if it is truly hung. A holder silent past 3x its max hold
