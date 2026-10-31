@@ -128,6 +128,40 @@ export const workitBypassFlag = (
 };
 
 /**
+ * The user-only words (`WORKIT_USER_ONLY`) a Workit call in `command` runs,
+ * or null. Each shell segment is read like `workitBypassFlag` does, so global
+ * `--json`, `--cwd <dir>`, `--cwd=<dir>` and `--session <id>` may come before
+ * the verb, which stays anchored: `workit help grant set` is not a match.
+ */
+export const userOnlyWorkitCall = (
+  command: string,
+  dialect: ShellDialect = "posix",
+): string[] | null => {
+  for (const segment of segmentsOf(command, dialect)) {
+    if (segment.unanalyzable) continue;
+    const start = segment.words.findIndex(isWorkitWord);
+    if (start < 0) continue;
+    const words = segment.words.slice(start + 1);
+    const end = words.indexOf("--");
+    const args = end < 0 ? words : words.slice(0, end);
+    let at = 0;
+    for (;;) {
+      const word = args[at];
+      if (word === "--json") at += 1;
+      else if (word === "--cwd" || word === "--session") at += 2;
+      else if (word?.startsWith("--cwd=")) at += 1;
+      else break;
+    }
+    const call = args.slice(at);
+    const found = WORKIT_USER_ONLY.find(
+      (needle) => call[0] === needle[0] && hasWordsInOrder(call, needle),
+    );
+    if (found) return [...found];
+  }
+  return null;
+};
+
+/**
  * Is the whole shell `command` allowed Workit calls only? Every segment must
  * be one, with no substitution, redirect, group or heredoc anywhere.
  */
