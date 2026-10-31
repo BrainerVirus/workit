@@ -229,6 +229,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On macOS a quiet but busy heavy check is no longer marked `stuck?` after
+  5 minutes: the heartbeat counts its process group's CPU through `ps`, as
+  Linux does through `/proc`. On Windows only output counts as a heartbeat;
+  raise `resources.maxHold` in your own config for a long quiet check.
 - A stuck heavy check no longer starves every other agent: `workit lock
   status` marks a holder `stuck?` past `resources.maxHold` (default 15 min) or
   after 5 min with no output or CPU, `workit lock reap` frees its slot and
