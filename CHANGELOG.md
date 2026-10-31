@@ -229,6 +229,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit release notes approve` and `workit grant set|raise` are denied
+  (Cursor, Codex, Pi) or asked (Claude Code) by Workit's shell hook however
+  `--json`, `--cwd` or `--session` are placed before the verb, closing the
+  Cursor prefix-match gap left by #623.
 - On macOS a quiet but busy heavy check is no longer marked `stuck?` after
   5 minutes: the heartbeat counts its process group's CPU through `ps`, as
   Linux does through `/proc`. On Windows only output counts as a heartbeat;
