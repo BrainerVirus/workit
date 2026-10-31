@@ -215,6 +215,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
           return {
             kind: "deny",
             reason: `Only the user runs \`workit ${userOnly.join(" ")}\`: run it in your own terminal.`,
+            unblock: null,
           };
       }
       // An implementer subagent stays in its Workit worktree (#310).
