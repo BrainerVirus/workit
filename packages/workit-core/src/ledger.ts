@@ -1452,7 +1452,7 @@ function effectiveOf(
     if (effIndependent && !rowIndependent && isCurrent(effective)) continue;
     if (
       effIndependent &&
-      FAILING.has(String(effective.result)) &&
+      effective.result === "failed" &&
       row.actor.session === effective.actor.session &&
       sameCode(effective, row)
     )
@@ -1894,16 +1894,27 @@ const required = (value: string | undefined | null, flag: string): LedgerResult<
   return text ? { ok: true, value: text } : err("invalid_input", `${flag} is required`);
 };
 
+/** The row a `--supersedes` value names: an id, or the row number `ledger list` prints (`#12` or `12`). */
+export function findSupersedeTarget<T extends { id: string; seq: number }>(
+  rows: readonly T[],
+  value: string,
+): T | undefined {
+  const byId = rows.find((row) => row.id === value);
+  if (byId) return byId;
+  const number = /^#?(\d+)$/.exec(value.trim());
+  return number ? rows.find((row) => row.seq === Number(number[1])) : undefined;
+}
+
 /** Refuse a supersede link that the reader would ignore. */
 function checkSupersede(
   context: RecordContext,
   type: string,
   row: { self?: boolean; kind?: string; branch?: string | null } = {},
-): LedgerResult<void> {
+): LedgerResult<string | undefined> {
   if (!context.supersedes) return { ok: true, value: undefined };
   const ledger = readLedger(context.cwd);
   if (!ledger.ok) return ledger;
-  const target = ledger.value.rows.find((candidate) => candidate.id === context.supersedes);
+  const target = findSupersedeTarget(ledger.value.rows, context.supersedes);
   if (!target) return err("not_found", `no ledger row ${context.supersedes} to supersede`);
   const branch =
     row.branch === undefined ? (context.branch ?? currentBranch(context.cwd)) : row.branch;
@@ -1914,7 +1925,7 @@ function checkSupersede(
   );
   return problem
     ? err("invalid_input", `--supersedes: ${problem}`)
-    : { ok: true, value: undefined };
+    : { ok: true, value: target.id };
 }
 
 export function recordDecision(
@@ -1940,7 +1951,7 @@ export function recordDecision(
   return appendRow<DecisionRow>(
     context.cwd,
     {
-      ...common(context, noteKey(context)),
+      ...common({ ...context, supersedes: link.value }, noteKey(context)),
       type: "decision",
       what: what.value,
       why: why.value,
@@ -1967,7 +1978,7 @@ export function recordRuling(
   return appendRow<RulingRow>(
     context.cwd,
     {
-      ...common(context, noteKey(context)),
+      ...common({ ...context, supersedes: link.value }, noteKey(context)),
       type: "ruling",
       what: what.value,
       why: why.value,
@@ -2083,7 +2094,7 @@ export function recordStanding(
   const recorded = appendRow<StandingRow>(
     context.cwd,
     {
-      ...common(context, noteKey(context)),
+      ...common({ ...context, supersedes: link.value }, noteKey(context)),
       type: "standing",
       fanout: input.fanout,
       what: what.value,
@@ -2238,6 +2249,12 @@ export function recordVerdict(
     return err("invalid_input", `--surface must be ${VERDICT_SURFACES.join("|")}`);
   const how = required(input.how, "--how");
   if (!how.ok) return how;
+  if (git(context.cwd, ["rev-parse", "--git-dir"]) === null)
+    return err(
+      "invalid_input",
+      `${context.cwd} is not inside a git checkout, so there is no commit to judge`,
+      "pass --cwd <the worktree or checkout the verdict is for>",
+    );
   const branch = context.branch ?? currentBranch(context.cwd);
   if (!branch)
     return err(
@@ -2286,7 +2303,7 @@ export function recordVerdict(
   return appendRow<VerdictRow>(
     context.cwd,
     {
-      ...common(context, key),
+      ...common({ ...context, supersedes: link.value }, key),
       type: "verdict",
       kind: kind as VerdictKind,
       result: input.result as VerdictResult,
